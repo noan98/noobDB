@@ -23,7 +23,14 @@ pub mod __test_api {
             None => (creds.to_string(), String::new()),
         };
         let (hostport, database) = match hostpart.split_once('/') {
-            Some((hp, d)) => (hp, if d.is_empty() { None } else { Some(d.to_string()) }),
+            Some((hp, d)) => (
+                hp,
+                if d.is_empty() {
+                    None
+                } else {
+                    Some(d.to_string())
+                },
+            ),
             None => (hostpart, None),
         };
         let (host, port) = match hostport.split_once(':') {

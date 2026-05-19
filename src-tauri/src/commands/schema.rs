@@ -5,10 +5,7 @@ use crate::error::{AppError, Result};
 use crate::state::AppState;
 
 #[tauri::command]
-pub async fn list_databases(
-    session_id: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<String>> {
+pub async fn list_databases(session_id: String, state: State<'_, AppState>) -> Result<Vec<String>> {
     let session = state
         .get(&session_id)
         .await

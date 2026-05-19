@@ -24,7 +24,10 @@ pub struct AppState {
 impl AppState {
     pub async fn insert(&self, session: Session) -> SessionId {
         let id = session.id.clone();
-        self.sessions.write().await.insert(id.clone(), Arc::new(session));
+        self.sessions
+            .write()
+            .await
+            .insert(id.clone(), Arc::new(session));
         id
     }
 
@@ -35,7 +38,6 @@ impl AppState {
     pub async fn remove(&self, id: &str) -> Option<Arc<Session>> {
         self.sessions.write().await.remove(id)
     }
-
 }
 
 /// Short base32-ish slug (8 chars) suitable for keyring target names.

@@ -158,7 +158,11 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
     }
     if matches!(
         type_name.as_str(),
-        "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED" | "INT UNSIGNED" | "BIGINT UNSIGNED"
+        "TINYINT UNSIGNED"
+            | "SMALLINT UNSIGNED"
+            | "MEDIUMINT UNSIGNED"
+            | "INT UNSIGNED"
+            | "BIGINT UNSIGNED"
     ) {
         if let Ok(v) = row.try_get::<Option<u64>, _>(i) {
             return v.map(Value::UInt).unwrap_or(Value::Null);
@@ -176,7 +180,9 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
     }
     if type_name == "DECIMAL" || type_name == "NEWDECIMAL" {
         if let Ok(v) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) {
-            return v.map(|d| Value::String(d.to_string())).unwrap_or(Value::Null);
+            return v
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null);
         }
     }
     if matches!(
@@ -184,15 +190,21 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
         "DATE" | "TIME" | "DATETIME" | "TIMESTAMP"
     ) {
         if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
-            return v.map(|d| Value::String(d.to_string())).unwrap_or(Value::Null);
+            return v
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null);
         }
         if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
-            return v.map(|d| Value::String(d.to_string())).unwrap_or(Value::Null);
+            return v
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null);
         }
     }
     if matches!(type_name.as_str(), "JSON") {
         if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(i) {
-            return v.map(|j| Value::String(j.to_string())).unwrap_or(Value::Null);
+            return v
+                .map(|j| Value::String(j.to_string()))
+                .unwrap_or(Value::Null);
         }
     }
     if matches!(

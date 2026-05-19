@@ -54,10 +54,7 @@ pub async fn test_connection(req: ConnectRequest) -> Result<String> {
 }
 
 #[tauri::command]
-pub async fn connect(
-    req: ConnectRequest,
-    state: State<'_, AppState>,
-) -> Result<ConnectResponse> {
+pub async fn connect(req: ConnectRequest, state: State<'_, AppState>) -> Result<ConnectResponse> {
     let profile_id = req.profile_id.clone();
     let (tunnel, opts) = build_options(&req).await?;
     let conn = Connection::connect(&opts).await?;

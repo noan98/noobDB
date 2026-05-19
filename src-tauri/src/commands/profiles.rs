@@ -32,7 +32,10 @@ pub async fn list_profiles() -> Result<Vec<ConnectionProfile>> {
 
 #[tauri::command]
 pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> {
-    let id = req.id.filter(|s| !s.is_empty()).unwrap_or_else(new_profile_id);
+    let id = req
+        .id
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(new_profile_id);
     let profile = ConnectionProfile {
         id: id.clone(),
         name: req.name,
