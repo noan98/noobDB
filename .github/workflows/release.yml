@@ -74,6 +74,12 @@ jobs:
             libayatana-appindicator3-dev \
             build-essential curl wget file libssl-dev
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -81,6 +87,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+
+      - name: Install frontend deps
+        run: npm install
+
+      - name: Build frontend (needed for tauri::generate_context!)
+        run: npm run build
 
       - name: cargo check
         working-directory: src-tauri
