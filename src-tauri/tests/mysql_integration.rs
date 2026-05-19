@@ -16,7 +16,10 @@ async fn mysql_roundtrip_when_env_set() {
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let conn = t::connect(&opts).await.expect("connect");
-    let res = conn.execute("SELECT 1 AS n, 'hello' AS s").await.expect("query");
+    let res = conn
+        .execute("SELECT 1 AS n, 'hello' AS s")
+        .await
+        .expect("query");
     assert_eq!(res.columns.len(), 2);
     assert_eq!(res.rows.len(), 1);
     let dbs = conn.databases().await.expect("show databases");
