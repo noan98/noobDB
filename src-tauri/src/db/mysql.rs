@@ -66,10 +66,8 @@ impl MySqlConn {
     }
 
     pub async fn databases(&self) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as("SHOW DATABASES")
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows.into_iter().map(|r| r.0).collect())
+        let rows: Vec<MySqlRow> = sqlx::query("SHOW DATABASES").fetch_all(&self.pool).await?;
+        rows.iter().map(|r| decode_text_col(r, 0)).collect()
     }
 
     pub async fn tables(&self, db: &str) -> Result<Vec<String>> {
@@ -77,8 +75,8 @@ impl MySqlConn {
             return Err(AppError::InvalidInput("invalid database name".into()));
         }
         let sql = format!("SHOW TABLES IN `{}`", db);
-        let rows: Vec<(String,)> = sqlx::query_as(&sql).fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(|r| r.0).collect())
+        let rows: Vec<MySqlRow> = sqlx::query(&sql).fetch_all(&self.pool).await?;
+        rows.iter().map(|r| decode_text_col(r, 0)).collect()
     }
 
     pub async fn columns(&self, db: &str, table: &str) -> Result<Vec<TableColumnInfo>> {
@@ -108,6 +106,15 @@ impl MySqlConn {
             })
             .collect())
     }
+}
+
+// MySQL 8 marks the `Database` column of `SHOW DATABASES` (and `Tables_in_*`
+// from `SHOW TABLES`) with the BINARY flag, which makes sqlx's `String`
+// decoder refuse the column. Read raw bytes and convert manually so the same
+// code works across MySQL 8 and MariaDB.
+fn decode_text_col(row: &MySqlRow, i: usize) -> Result<String> {
+    let bytes: Vec<u8> = row.try_get(i)?;
+    String::from_utf8(bytes).map_err(|e| AppError::Other(e.to_string()))
 }
 
 fn columns_of(rows: &[MySqlRow]) -> Vec<Column> {
