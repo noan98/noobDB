@@ -1,0 +1,64 @@
+[package]
+name = "tablex"
+version = "0.1.0"
+description = "tableX - Rust MySQL client with SSH tunnel"
+authors = ["tableX contributors"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "tablex_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io", "compat"] }
+futures-util = "0.3"
+
+# DB
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "mysql",
+    "chrono",
+    "json",
+    "rust_decimal",
+] }
+
+# SSH
+russh = "0.45"
+
+# Secrets / config
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+directories = "5"
+
+# Serialization & errors
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utility
+uuid = { version = "1", features = ["v4"] }
+data-encoding = "2"
+chrono = { version = "0.4", features = ["serde"] }
+rust_decimal = { version = "1", features = ["serde"] }
+rand = "0.8"
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
