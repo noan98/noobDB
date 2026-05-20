@@ -52,7 +52,7 @@ export function QueryEditor({ onRun, disabled }: Props) {
         <button className="primary" onClick={runSelectionOrAll} disabled={disabled || !hasContent}>
           Run (selection or all)
         </button>
-        <span style={{ color: "#6b7280", fontSize: 12 }}>
+        <span className="muted" style={{ fontSize: 12 }}>
           {disabled ? "Connect a session to run queries." : "Tip: select text to run only that fragment."}
         </span>
       </div>

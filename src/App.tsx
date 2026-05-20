@@ -7,8 +7,31 @@ import { ResultGrid } from "./components/ResultGrid";
 import { SchemaTree } from "./components/SchemaTree";
 
 type Tab = "query" | "schema";
+type Theme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "tablex.theme";
+
+function readInitialTheme(): Theme {
+  const saved = localStorage.getItem(THEME_STORAGE_KEY);
+  if (saved === "light" || saved === "dark") return saved;
+  if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    return "dark";
+  }
+  return "light";
+}
 
 export default function App() {
+  const [theme, setTheme] = useState<Theme>(readInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  }, []);
+
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<ConnectionProfile | null>(null);
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
@@ -90,7 +113,17 @@ export default function App() {
       <aside className="sidebar">
         <header>
           <span>Connections</span>
-          <button onClick={() => { setEditing(null); setShowForm(true); }}>+ New</button>
+          <div className="header-actions">
+            <button
+              className="icon"
+              onClick={toggleTheme}
+              title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              aria-label="Toggle theme"
+            >
+              {theme === "dark" ? "☀" : "☾"}
+            </button>
+            <button onClick={() => { setEditing(null); setShowForm(true); }}>+ New</button>
+          </div>
         </header>
         <ConnectionList
           profiles={profiles}
