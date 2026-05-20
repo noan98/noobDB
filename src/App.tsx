@@ -183,9 +183,10 @@ export default function App() {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
     }
+    const tab = tabs.find((tt) => tt.id === tabId);
     setStatus({ kind: "key", key: "statusRunningQuery" });
     try {
-      const r = await api.runQuery(sessionId, sql);
+      const r = await api.runQuery(sessionId, sql, tab?.database ?? null);
       updateTab(tabId, { result: r, preview: null });
       if (r.columns.length > 0) {
         setStatus({ kind: "key", key: "statusRowsIn", vars: { rows: r.rows.length, ms: r.elapsed_ms } });
@@ -195,16 +196,17 @@ export default function App() {
     } catch (e) {
       setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
     }
-  }, [sessionId, updateTab]);
+  }, [sessionId, updateTab, tabs]);
 
   const previewQueryInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
     }
+    const tab = tabs.find((tt) => tt.id === tabId);
     setStatus({ kind: "key", key: "statusRunningPreview" });
     try {
-      const p = await api.previewQuery(sessionId, sql);
+      const p = await api.previewQuery(sessionId, sql, tab?.database ?? null);
       updateTab(tabId, { preview: p, result: null });
       setStatus({
         kind: "key",
@@ -214,7 +216,7 @@ export default function App() {
     } catch (e) {
       setStatus({ kind: "key", key: "statusPreviewError", vars: { error: String(e) }, error: true });
     }
-  }, [sessionId, updateTab]);
+  }, [sessionId, updateTab, tabs]);
 
   const handleRunQuery = useCallback((sql: string) => {
     if (!activeTab) return;
@@ -381,6 +383,11 @@ export default function App() {
                     onChange={handleEditorChange}
                     disabled={!sessionId}
                     schemaTable={activeTab.schemaTable}
+                    activeTable={
+                      activeTab.kind === "table" && activeTab.database && activeTab.table
+                        ? { database: activeTab.database, name: activeTab.table }
+                        : null
+                    }
                   />
                   {activeTab.preview ? (
                     <PreviewGrid result={activeTab.preview} rowLimit={PREVIEW_ROW_LIMIT} />

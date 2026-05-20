@@ -8,24 +8,29 @@ use crate::state::AppState;
 pub async fn run_query(
     session_id: String,
     sql: String,
+    database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult> {
     let session = state
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    session.conn.execute(&sql).await
+    session.conn.execute(&sql, database.as_deref()).await
 }
 
 #[tauri::command]
 pub async fn preview_query(
     session_id: String,
     sql: String,
+    database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<PreviewResult> {
     let session = state
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    session.conn.preview_execute(&sql).await
+    session
+        .conn
+        .preview_execute(&sql, database.as_deref())
+        .await
 }

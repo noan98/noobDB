@@ -1,7 +1,8 @@
 use std::time::Instant;
 
 use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column as _, Row, TypeInfo, ValueRef};
+use sqlx::pool::PoolConnection;
+use sqlx::{Column as _, Connection as _, MySql, Row, TypeInfo, ValueRef};
 
 use super::types::{Column, PreviewResult, QueryResult, TableColumnInfo, Value};
 use super::DbConnectOptions;
@@ -40,7 +41,7 @@ impl MySqlConn {
         self.pool.close().await;
     }
 
-    pub async fn execute(&self, sql: &str) -> Result<QueryResult> {
+    pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
         let started = Instant::now();
         let trimmed = sql.trim_start().to_ascii_lowercase();
         let is_query = trimmed.starts_with("select")
@@ -50,8 +51,11 @@ impl MySqlConn {
             || trimmed.starts_with("explain")
             || trimmed.starts_with("with");
 
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+
         if is_query {
-            let rows: Vec<MySqlRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
+            let rows: Vec<MySqlRow> = sqlx::query(sql).fetch_all(&mut *conn).await?;
             let columns = columns_of(&rows);
             let rows_out = rows.iter().map(row_to_values).collect();
             Ok(QueryResult {
@@ -61,7 +65,7 @@ impl MySqlConn {
                 elapsed_ms: started.elapsed().as_millis() as u64,
             })
         } else {
-            let result = sqlx::query(sql).execute(&self.pool).await?;
+            let result = sqlx::query(sql).execute(&mut *conn).await?;
             Ok(QueryResult::empty(
                 result.rows_affected(),
                 started.elapsed().as_millis() as u64,
@@ -76,7 +80,11 @@ impl MySqlConn {
     /// Only INSERT / UPDATE / DELETE / REPLACE are accepted — DDL like
     /// CREATE/DROP/ALTER/TRUNCATE causes an implicit commit on MySQL and so
     /// cannot be safely previewed via rollback.
-    pub async fn preview_execute(&self, sql: &str) -> Result<PreviewResult> {
+    pub async fn preview_execute(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<PreviewResult> {
         let trimmed = sql.trim_start().to_ascii_lowercase();
         let is_mutation = trimmed.starts_with("insert")
             || trimmed.starts_with("update")
@@ -93,7 +101,9 @@ impl MySqlConn {
             .as_ref()
             .map(|t| format!("SELECT * FROM {} LIMIT {}", t, PREVIEW_ROW_LIMIT + 1));
 
-        let mut tx = self.pool.begin().await?;
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        let mut tx = conn.begin().await?;
         let started = Instant::now();
 
         let before_raw: Vec<MySqlRow> = match &limit_sql {
@@ -181,6 +191,23 @@ impl MySqlConn {
             })
             .collect())
     }
+}
+
+async fn apply_use_database(
+    conn: &mut PoolConnection<MySql>,
+    database: Option<&str>,
+) -> Result<()> {
+    let Some(db) = database else { return Ok(()) };
+    if db.is_empty() {
+        return Ok(());
+    }
+    if db.contains('`') {
+        return Err(AppError::InvalidInput("invalid database name".into()));
+    }
+    sqlx::query(&format!("USE `{}`", db))
+        .execute(&mut **conn)
+        .await?;
+    Ok(())
 }
 
 // MySQL 8 marks the `Database` column of `SHOW DATABASES` (and `Tables_in_*`

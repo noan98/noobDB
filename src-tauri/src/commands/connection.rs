@@ -47,7 +47,7 @@ pub struct SessionInfo {
 pub async fn test_connection(req: ConnectRequest) -> Result<String> {
     let (tunnel, opts) = build_options(&req).await?;
     let conn = Connection::connect(&opts).await?;
-    let _ = conn.execute("SELECT 1").await?;
+    let _ = conn.execute("SELECT 1", None).await?;
     conn.close().await;
     drop(tunnel);
     Ok("ok".into())
