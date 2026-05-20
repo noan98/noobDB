@@ -204,9 +204,14 @@ async fn apply_use_database(
     if db.contains('`') {
         return Err(AppError::InvalidInput("invalid database name".into()));
     }
-    sqlx::query(&format!("USE `{}`", db))
-        .execute(&mut **conn)
-        .await?;
+    // USE is not supported by MySQL's prepared statement protocol before 8.0.23
+    // (and not at all on MariaDB). sqlx::query goes through PREPARE/EXECUTE and
+    // gets back error 1295. raw_sql sends the statement via the text protocol,
+    // which all supported server versions accept. We invoke `Executor::execute`
+    // directly because `RawSql::execute` is an `async fn` whose lifetime bounds
+    // produce a non-`Send` future when bubbled up through `#[tauri::command]`.
+    let sql = format!("USE `{}`", db);
+    sqlx::Executor::execute(&mut **conn, sqlx::raw_sql(&sql)).await?;
     Ok(())
 }
 
