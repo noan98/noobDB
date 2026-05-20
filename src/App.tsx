@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ConnectionProfile, PreviewResult, QueryResult } from "./api/tauri";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
-import { QueryEditor } from "./components/QueryEditor";
+import { QueryEditor, type SchemaTable } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
@@ -51,6 +51,8 @@ export default function App() {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "key", key: "appDisconnected" });
+  const [openTable, setOpenTable] = useState<{ database: string; table: string } | null>(null);
+  const [schemaTable, setSchemaTable] = useState<SchemaTable | null>(null);
 
   const refreshProfiles = useCallback(async () => {
     try {
@@ -75,6 +77,8 @@ export default function App() {
       setSessionId(null);
       setResult(null);
       setPreview(null);
+      setOpenTable(null);
+      setSchemaTable(null);
     }
     try {
       const res = await api.connect({
@@ -109,8 +113,28 @@ export default function App() {
     setSelectedProfile(null);
     setResult(null);
     setPreview(null);
+    setOpenTable(null);
+    setSchemaTable(null);
     setStatus({ kind: "key", key: "appDisconnected" });
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !openTable) {
+      setSchemaTable(null);
+      return;
+    }
+    let cancelled = false;
+    const { database, table } = openTable;
+    api.describeTable(sessionId, database, table)
+      .then((cols) => {
+        if (cancelled) return;
+        setSchemaTable({ database, name: table, columns: cols.map((c) => c.name) });
+      })
+      .catch(() => {
+        if (!cancelled) setSchemaTable(null);
+      });
+    return () => { cancelled = true; };
+  }, [sessionId, openTable]);
 
   const handleRunQuery = useCallback(async (sql: string) => {
     if (!sessionId) {
@@ -191,6 +215,7 @@ export default function App() {
             await refreshProfiles();
           }}
           onPickTable={(db, tbl) => {
+            setOpenTable({ database: db, table: tbl });
             handleRunQuery(`SELECT * FROM \`${db}\`.\`${tbl}\` LIMIT 100`);
           }}
         />
@@ -234,7 +259,12 @@ export default function App() {
             </div>
 
             <div className="pane">
-              <QueryEditor onRun={handleRunQuery} onPreview={handlePreviewQuery} disabled={!sessionId} />
+              <QueryEditor
+                onRun={handleRunQuery}
+                onPreview={handlePreviewQuery}
+                disabled={!sessionId}
+                schemaTable={schemaTable}
+              />
               {preview ? (
                 <PreviewGrid result={preview} rowLimit={PREVIEW_ROW_LIMIT} />
               ) : (

@@ -476,6 +476,30 @@ label {
 [data-theme="dark"] .cm-editor.cm-focused .cm-selectionBackground,
 [data-theme="dark"] .cm-editor ::selection { background: var(--cm-selection) !important; }
 
+.cm-tooltip.cm-tooltip-autocomplete {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 12px;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul {
+  font-family: inherit;
+  max-height: 220px;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  padding: 2px 8px;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.cm-completionLabel { color: var(--text); }
+.cm-completionDetail { color: var(--text-muted); font-style: normal; }
+.cm-completionMatchedText { color: var(--accent); text-decoration: none; font-weight: 600; }
+
 /* ---------- Results grid ---------- */
 
 .results {
