@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ConnectionProfile, PreviewResult, QueryResult } from "./api/tauri";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { QueryEditor, type SchemaTable } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
+import { TabBar } from "./components/TabBar";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
-import { useT } from "./i18n";
+import { t as translate, useT } from "./i18n";
 
 const PREVIEW_ROW_LIMIT = 100;
 
@@ -26,6 +27,38 @@ function readInitialTheme(): Theme {
 type Status =
   | { kind: "literal"; text: string; error?: boolean }
   | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
+
+type TabKind = "table" | "query";
+
+interface Tab {
+  id: string;
+  kind: TabKind;
+  title: string;
+  database?: string;
+  table?: string;
+  sql: string;
+  result: QueryResult | null;
+  preview: PreviewResult | null;
+  schemaTable: SchemaTable | null;
+}
+
+let tabSeq = 0;
+function newTabId(): string {
+  tabSeq += 1;
+  return `tab_${Date.now().toString(36)}_${tabSeq.toString(36)}`;
+}
+
+function makeQueryTab(): Tab {
+  return {
+    id: newTabId(),
+    kind: "query",
+    title: translate("tabUntitledQuery"),
+    sql: "SELECT 1;",
+    result: null,
+    preview: null,
+    schemaTable: null,
+  };
+}
 
 export default function App() {
   const t = useT();
@@ -48,11 +81,19 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "key", key: "appDisconnected" });
-  const [openTable, setOpenTable] = useState<{ database: string; table: string } | null>(null);
-  const [schemaTable, setSchemaTable] = useState<SchemaTable | null>(null);
+
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+
+  const activeTab = useMemo(
+    () => tabs.find((tt) => tt.id === activeTabId) ?? null,
+    [tabs, activeTabId],
+  );
+
+  const updateTab = useCallback((id: string, patch: Partial<Tab>) => {
+    setTabs((prev) => prev.map((tt) => (tt.id === id ? { ...tt, ...patch } : tt)));
+  }, []);
 
   const refreshProfiles = useCallback(async () => {
     try {
@@ -67,18 +108,19 @@ export default function App() {
     refreshProfiles();
   }, [refreshProfiles]);
 
+  const closeAllTabs = useCallback(() => {
+    setTabs([]);
+    setActiveTabId(null);
+  }, []);
+
   const handleConnect = useCallback(async (profile: ConnectionProfile, password: string, passphrase: string) => {
     setConnectingId(profile.id);
     setErrorProfileId(null);
     setStatus({ kind: "key", key: "statusConnecting", vars: { name: profile.name } });
-    // Disconnect any previous session before connecting to a new one.
     if (sessionId) {
       try { await api.disconnect(sessionId); } catch (e) { console.warn(e); }
       setSessionId(null);
-      setResult(null);
-      setPreview(null);
-      setOpenTable(null);
-      setSchemaTable(null);
+      closeAllTabs();
     }
     try {
       const res = await api.connect({
@@ -93,6 +135,9 @@ export default function App() {
       });
       setSessionId(res.session_id);
       setSelectedProfile(profile);
+      const tab = makeQueryTab();
+      setTabs([tab]);
+      setActiveTabId(tab.id);
       setStatus({ kind: "key", key: "statusConnected", vars: { name: profile.name, id: res.session_id } });
     } catch (e) {
       setErrorProfileId(profile.id);
@@ -100,7 +145,7 @@ export default function App() {
     } finally {
       setConnectingId(null);
     }
-  }, [sessionId]);
+  }, [sessionId, closeAllTabs]);
 
   const handleDisconnect = useCallback(async () => {
     if (!sessionId) return;
@@ -111,32 +156,29 @@ export default function App() {
     }
     setSessionId(null);
     setSelectedProfile(null);
-    setResult(null);
-    setPreview(null);
-    setOpenTable(null);
-    setSchemaTable(null);
+    closeAllTabs();
     setStatus({ kind: "key", key: "appDisconnected" });
-  }, [sessionId]);
+  }, [sessionId, closeAllTabs]);
 
+  // Fetch schema for the active table tab so the editor can autocomplete columns.
   useEffect(() => {
-    if (!sessionId || !openTable) {
-      setSchemaTable(null);
-      return;
-    }
+    if (!sessionId || !activeTab) return;
+    if (activeTab.kind !== "table" || !activeTab.database || !activeTab.table) return;
+    if (activeTab.schemaTable) return;
     let cancelled = false;
-    const { database, table } = openTable;
+    const { id, database, table } = activeTab;
     api.describeTable(sessionId, database, table)
       .then((cols) => {
         if (cancelled) return;
-        setSchemaTable({ database, name: table, columns: cols.map((c) => c.name) });
+        updateTab(id, {
+          schemaTable: { database, name: table, columns: cols.map((c) => c.name) },
+        });
       })
-      .catch(() => {
-        if (!cancelled) setSchemaTable(null);
-      });
+      .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
-  }, [sessionId, openTable]);
+  }, [sessionId, activeTab, updateTab]);
 
-  const handleRunQuery = useCallback(async (sql: string) => {
+  const runQueryInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
@@ -144,8 +186,7 @@ export default function App() {
     setStatus({ kind: "key", key: "statusRunningQuery" });
     try {
       const r = await api.runQuery(sessionId, sql);
-      setResult(r);
-      setPreview(null);
+      updateTab(tabId, { result: r, preview: null });
       if (r.columns.length > 0) {
         setStatus({ kind: "key", key: "statusRowsIn", vars: { rows: r.rows.length, ms: r.elapsed_ms } });
       } else {
@@ -154,9 +195,9 @@ export default function App() {
     } catch (e) {
       setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
     }
-  }, [sessionId]);
+  }, [sessionId, updateTab]);
 
-  const handlePreviewQuery = useCallback(async (sql: string) => {
+  const previewQueryInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
@@ -164,8 +205,7 @@ export default function App() {
     setStatus({ kind: "key", key: "statusRunningPreview" });
     try {
       const p = await api.previewQuery(sessionId, sql);
-      setPreview(p);
-      setResult(null);
+      updateTab(tabId, { preview: p, result: null });
       setStatus({
         kind: "key",
         key: "statusPreviewDone",
@@ -174,7 +214,66 @@ export default function App() {
     } catch (e) {
       setStatus({ kind: "key", key: "statusPreviewError", vars: { error: String(e) }, error: true });
     }
-  }, [sessionId]);
+  }, [sessionId, updateTab]);
+
+  const handleRunQuery = useCallback((sql: string) => {
+    if (!activeTab) return;
+    runQueryInTab(activeTab.id, sql);
+  }, [activeTab, runQueryInTab]);
+
+  const handlePreviewQuery = useCallback((sql: string) => {
+    if (!activeTab) return;
+    previewQueryInTab(activeTab.id, sql);
+  }, [activeTab, previewQueryInTab]);
+
+  const handleEditorChange = useCallback((sql: string) => {
+    if (!activeTab) return;
+    updateTab(activeTab.id, { sql });
+  }, [activeTab, updateTab]);
+
+  const handleOpenTable = useCallback((database: string, table: string) => {
+    const existing = tabs.find(
+      (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
+    );
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+    const sql = `SELECT * FROM \`${database}\`.\`${table}\` LIMIT 100`;
+    const tab: Tab = {
+      id: newTabId(),
+      kind: "table",
+      title: `${database}.${table}`,
+      database,
+      table,
+      sql,
+      result: null,
+      preview: null,
+      schemaTable: null,
+    };
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+    runQueryInTab(tab.id, sql);
+  }, [tabs, runQueryInTab]);
+
+  const handleNewTab = useCallback(() => {
+    const tab = makeQueryTab();
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+  }, []);
+
+  const handleCloseTab = useCallback((id: string) => {
+    setTabs((prev) => {
+      const idx = prev.findIndex((tt) => tt.id === id);
+      if (idx === -1) return prev;
+      const next = prev.filter((tt) => tt.id !== id);
+      if (id === activeTabId) {
+        const neighbor = next[idx] ?? next[idx - 1] ?? null;
+        setActiveTabId(neighbor ? neighbor.id : null);
+      }
+      return next;
+    });
+  }, [activeTabId]);
 
   const statusText = status.kind === "literal" ? status.text : t(status.key, status.vars);
 
@@ -214,10 +313,7 @@ export default function App() {
             await api.deleteProfile(id);
             await refreshProfiles();
           }}
-          onPickTable={(db, tbl) => {
-            setOpenTable({ database: db, table: tbl });
-            handleRunQuery(`SELECT * FROM \`${db}\`.\`${tbl}\` LIMIT 100`);
-          }}
+          onPickTable={handleOpenTable}
         />
         <div className="sidebar-footer">
           <LanguageSwitcher />
@@ -258,17 +354,44 @@ export default function App() {
               {sessionId && <button onClick={handleDisconnect}>{t("appDisconnect")}</button>}
             </div>
 
-            <div className="pane">
-              <QueryEditor
-                onRun={handleRunQuery}
-                onPreview={handlePreviewQuery}
-                disabled={!sessionId}
-                schemaTable={schemaTable}
+            {sessionId && (
+              <TabBar
+                tabs={tabs.map((tt) => ({
+                  id: tt.id,
+                  kind: tt.kind,
+                  title: tt.title,
+                  database: tt.database,
+                  table: tt.table,
+                }))}
+                activeTabId={activeTabId}
+                onSelect={setActiveTabId}
+                onClose={handleCloseTab}
+                onNew={handleNewTab}
               />
-              {preview ? (
-                <PreviewGrid result={preview} rowLimit={PREVIEW_ROW_LIMIT} />
+            )}
+
+            <div className="pane">
+              {activeTab ? (
+                <>
+                  <QueryEditor
+                    key={activeTab.id}
+                    initialSql={activeTab.sql}
+                    onRun={handleRunQuery}
+                    onPreview={handlePreviewQuery}
+                    onChange={handleEditorChange}
+                    disabled={!sessionId}
+                    schemaTable={activeTab.schemaTable}
+                  />
+                  {activeTab.preview ? (
+                    <PreviewGrid result={activeTab.preview} rowLimit={PREVIEW_ROW_LIMIT} />
+                  ) : (
+                    <ResultGrid result={activeTab.result} />
+                  )}
+                </>
               ) : (
-                <ResultGrid result={result} />
+                <div className="pane-empty">
+                  {sessionId ? t("tabsEmpty") : t("editorHintDisabled")}
+                </div>
               )}
             </div>
           </>

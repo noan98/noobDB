@@ -90,6 +90,11 @@ const en = {
   treeNoTables: "(no tables)",
   treeLoading: "Loading...",
   treeTableTitle: "Double-click to SELECT * LIMIT 100",
+
+  tabNew: "New query tab",
+  tabClose: "Close tab",
+  tabUntitledQuery: "Query",
+  tabsEmpty: "No tabs open. Double-click a table or click + to start a query.",
 };
 
 type Key = keyof typeof en;
@@ -183,6 +188,11 @@ const ja: Dict = {
   treeNoTables: "(テーブルがありません)",
   treeLoading: "読み込み中...",
   treeTableTitle: "ダブルクリックで SELECT * LIMIT 100 を実行",
+
+  tabNew: "新しいクエリタブ",
+  tabClose: "タブを閉じる",
+  tabUntitledQuery: "クエリ",
+  tabsEmpty: "開いているタブがありません。テーブルをダブルクリックするか、+ を押してクエリを始めてください。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

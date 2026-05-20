@@ -26,8 +26,10 @@ export interface SchemaTable {
 interface Props {
   onRun: (sql: string) => void;
   onPreview?: (sql: string) => void;
+  onChange?: (sql: string) => void;
   disabled?: boolean;
   schemaTable?: SchemaTable | null;
+  initialSql?: string;
 }
 
 function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
@@ -51,19 +53,22 @@ function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
   });
 }
 
-export function QueryEditor({ onRun, onPreview, disabled, schemaTable }: Props) {
+export function QueryEditor({ onRun, onPreview, onChange, disabled, schemaTable, initialSql }: Props) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const sqlCompartment = useMemo(() => new Compartment(), []);
   const [hasContent, setHasContent] = useState(false);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   useEffect(() => {
     if (!hostRef.current) return;
+    const startDoc = initialSql ?? "SELECT 1;";
     const view = new EditorView({
       parent: hostRef.current,
       state: EditorState.create({
-        doc: "SELECT 1;",
+        doc: startDoc,
         extensions: [
           lineNumbers(),
           highlightActiveLine(),
@@ -81,13 +86,16 @@ export function QueryEditor({ onRun, onPreview, disabled, schemaTable }: Props) 
             ...closeBracketsKeymap,
           ]),
           EditorView.updateListener.of((u) => {
-            if (u.docChanged) setHasContent(u.state.doc.length > 0);
+            if (u.docChanged) {
+              setHasContent(u.state.doc.length > 0);
+              onChangeRef.current?.(u.state.doc.toString());
+            }
           }),
         ],
       }),
     });
     viewRef.current = view;
-    setHasContent(true);
+    setHasContent(startDoc.length > 0);
     return () => view.destroy();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
