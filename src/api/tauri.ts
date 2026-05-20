@@ -99,10 +99,10 @@ export const api = {
     invoke<void>("disconnect", { sessionId }),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
 
-  runQuery: (sessionId: string, sql: string) =>
-    invoke<QueryResult>("run_query", { sessionId, sql }),
-  previewQuery: (sessionId: string, sql: string) =>
-    invoke<PreviewResult>("preview_query", { sessionId, sql }),
+  runQuery: (sessionId: string, sql: string, database?: string | null) =>
+    invoke<QueryResult>("run_query", { sessionId, sql, database: database ?? null }),
+  previewQuery: (sessionId: string, sql: string, database?: string | null) =>
+    invoke<PreviewResult>("preview_query", { sessionId, sql, database: database ?? null }),
 
   listDatabases: (sessionId: string) =>
     invoke<string[]>("list_databases", { sessionId }),

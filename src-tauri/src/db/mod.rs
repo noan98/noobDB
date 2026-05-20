@@ -37,15 +37,19 @@ impl Connection {
         }
     }
 
-    pub async fn execute(&self, sql: &str) -> Result<QueryResult> {
+    pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
         match self {
-            Connection::MySql(c) => c.execute(sql).await,
+            Connection::MySql(c) => c.execute(sql, database).await,
         }
     }
 
-    pub async fn preview_execute(&self, sql: &str) -> Result<PreviewResult> {
+    pub async fn preview_execute(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<PreviewResult> {
         match self {
-            Connection::MySql(c) => c.preview_execute(sql).await,
+            Connection::MySql(c) => c.preview_execute(sql, database).await,
         }
     }
 

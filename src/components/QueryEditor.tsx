@@ -23,12 +23,18 @@ export interface SchemaTable {
   columns: string[];
 }
 
+export interface ActiveTable {
+  database: string;
+  name: string;
+}
+
 interface Props {
   onRun: (sql: string) => void;
   onPreview?: (sql: string) => void;
   onChange?: (sql: string) => void;
   disabled?: boolean;
   schemaTable?: SchemaTable | null;
+  activeTable?: ActiveTable | null;
   initialSql?: string;
 }
 
@@ -53,7 +59,7 @@ function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
   });
 }
 
-export function QueryEditor({ onRun, onPreview, onChange, disabled, schemaTable, initialSql }: Props) {
+export function QueryEditor({ onRun, onPreview, onChange, disabled, schemaTable, activeTable, initialSql }: Props) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -131,11 +137,23 @@ export function QueryEditor({ onRun, onPreview, onChange, disabled, schemaTable,
     if (text !== null) onPreview(text);
   };
 
+  const runLabel = activeTable
+    ? t("editorRunOnTable", { table: activeTable.name })
+    : t("editorRun");
+  const runTitle = activeTable
+    ? t("editorRunOnTableTitle", { database: activeTable.database, table: activeTable.name })
+    : undefined;
+
   return (
     <div className="editor">
       <div className="toolbar">
-        <button className="primary" onClick={runSelectionOrAll} disabled={disabled || !hasContent}>
-          {t("editorRun")}
+        <button
+          className="primary"
+          onClick={runSelectionOrAll}
+          disabled={disabled || !hasContent}
+          title={runTitle}
+        >
+          {runLabel}
         </button>
         {onPreview && (
           <button
