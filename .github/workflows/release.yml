@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     name: build (${{ matrix.platform }})
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +43,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "tableX ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
           args: ${{ matrix.args }}
 
   test:
