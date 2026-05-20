@@ -73,17 +73,17 @@ function formatNumber(v: number): string {
   return v.toString();
 }
 
-export function ResultGrid({ result }: Props) {
+/**
+ * Render a column/row pair as a TanStack-backed HTML table. Used by both
+ * `ResultGrid` (single result) and the preview view (before/after).
+ */
+export function DataGrid({ columns, rows }: { columns: Column[]; rows: CellValue[][] }) {
   const t = useT();
 
-  const columnKinds = useMemo<CellKind[]>(() => {
-    if (!result) return [];
-    return result.columns.map(classifyColumn);
-  }, [result]);
+  const columnKinds = useMemo<CellKind[]>(() => columns.map(classifyColumn), [columns]);
 
-  const columns = useMemo<ColumnDef<RowShape>[]>(() => {
-    if (!result) return [];
-    return result.columns.map((c, i) => {
+  const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
+    return columns.map((c, i) => {
       const kind = columnKinds[i];
       return {
         id: String(i),
@@ -131,22 +131,68 @@ export function ResultGrid({ result }: Props) {
         },
       };
     });
-  }, [result, columnKinds, t]);
+  }, [columns, columnKinds, t]);
 
   const data = useMemo<RowShape[]>(() => {
-    if (!result) return [];
-    return result.rows.map((r) => {
+    return rows.map((r) => {
       const o: RowShape = {};
       r.forEach((v, i) => (o[String(i)] = v));
       return o;
     });
-  }, [result]);
+  }, [rows]);
 
   const table = useReactTable({
     data,
-    columns,
+    columns: tableColumns,
     getCoreRowModel: getCoreRowModel(),
   });
+
+  const isNumericKind = (k: CellKind) => k === "number" || k === "decimal";
+
+  return (
+    <table>
+      <thead>
+        {table.getHeaderGroups().map((hg) => (
+          <tr key={hg.id}>
+            <th className="row-index" aria-hidden />
+            {hg.headers.map((h, idx) => {
+              const kind = columnKinds[idx] ?? "string";
+              return (
+                <th key={h.id} className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""}`}>
+                  {flexRender(h.column.columnDef.header, h.getContext())}
+                </th>
+              );
+            })}
+          </tr>
+        ))}
+      </thead>
+      <tbody>
+        {table.getRowModel().rows.map((row, rowIdx) => (
+          <tr key={row.id}>
+            <td className="row-index">{rowIdx + 1}</td>
+            {row.getVisibleCells().map((cell, idx) => {
+              const v = cell.getValue() as CellValue;
+              const kind = columnKinds[idx] ?? "string";
+              const isNull = v === null || v === undefined;
+              return (
+                <td
+                  key={cell.id}
+                  className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull ? "is-null" : ""}`}
+                  title={isNull ? t("resultNull") : String(v)}
+                >
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+export function ResultGrid({ result }: Props) {
+  const t = useT();
 
   if (!result) {
     return <div className="results empty">{t("resultEmpty")}</div>;
@@ -158,49 +204,9 @@ export function ResultGrid({ result }: Props) {
       </div>
     );
   }
-
-  const isNumericKind = (k: CellKind) => k === "number" || k === "decimal";
-
   return (
     <div className="results">
-      <table>
-        <thead>
-          {table.getHeaderGroups().map((hg) => (
-            <tr key={hg.id}>
-              <th className="row-index" aria-hidden />
-              {hg.headers.map((h, idx) => {
-                const kind = columnKinds[idx] ?? "string";
-                return (
-                  <th key={h.id} className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""}`}>
-                    {flexRender(h.column.columnDef.header, h.getContext())}
-                  </th>
-                );
-              })}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row, rowIdx) => (
-            <tr key={row.id}>
-              <td className="row-index">{rowIdx + 1}</td>
-              {row.getVisibleCells().map((cell, idx) => {
-                const v = cell.getValue() as CellValue;
-                const kind = columnKinds[idx] ?? "string";
-                const isNull = v === null || v === undefined;
-                return (
-                  <td
-                    key={cell.id}
-                    className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull ? "is-null" : ""}`}
-                    title={isNull ? t("resultNull") : String(v)}
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <DataGrid columns={result.columns} rows={result.rows} />
     </div>
   );
 }

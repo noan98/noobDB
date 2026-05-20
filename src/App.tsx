@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ConnectionProfile, QueryResult } from "./api/tauri";
+import { api, ConnectionProfile, PreviewResult, QueryResult } from "./api/tauri";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { QueryEditor } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
+import { PreviewGrid } from "./components/PreviewGrid";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import { useT } from "./i18n";
+
+const PREVIEW_ROW_LIMIT = 100;
 
 type Theme = "light" | "dark";
 
@@ -46,6 +49,7 @@ export default function App() {
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "key", key: "appDisconnected" });
 
   const refreshProfiles = useCallback(async () => {
@@ -70,6 +74,7 @@ export default function App() {
       try { await api.disconnect(sessionId); } catch (e) { console.warn(e); }
       setSessionId(null);
       setResult(null);
+      setPreview(null);
     }
     try {
       const res = await api.connect({
@@ -103,6 +108,7 @@ export default function App() {
     setSessionId(null);
     setSelectedProfile(null);
     setResult(null);
+    setPreview(null);
     setStatus({ kind: "key", key: "appDisconnected" });
   }, [sessionId]);
 
@@ -115,6 +121,7 @@ export default function App() {
     try {
       const r = await api.runQuery(sessionId, sql);
       setResult(r);
+      setPreview(null);
       if (r.columns.length > 0) {
         setStatus({ kind: "key", key: "statusRowsIn", vars: { rows: r.rows.length, ms: r.elapsed_ms } });
       } else {
@@ -122,6 +129,26 @@ export default function App() {
       }
     } catch (e) {
       setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
+    }
+  }, [sessionId]);
+
+  const handlePreviewQuery = useCallback(async (sql: string) => {
+    if (!sessionId) {
+      setStatus({ kind: "key", key: "statusNotConnected", error: true });
+      return;
+    }
+    setStatus({ kind: "key", key: "statusRunningPreview" });
+    try {
+      const p = await api.previewQuery(sessionId, sql);
+      setPreview(p);
+      setResult(null);
+      setStatus({
+        kind: "key",
+        key: "statusPreviewDone",
+        vars: { rows: p.rows_affected, ms: p.elapsed_ms },
+      });
+    } catch (e) {
+      setStatus({ kind: "key", key: "statusPreviewError", vars: { error: String(e) }, error: true });
     }
   }, [sessionId]);
 
@@ -207,8 +234,12 @@ export default function App() {
             </div>
 
             <div className="pane">
-              <QueryEditor onRun={handleRunQuery} disabled={!sessionId} />
-              <ResultGrid result={result} />
+              <QueryEditor onRun={handleRunQuery} onPreview={handlePreviewQuery} disabled={!sessionId} />
+              {preview ? (
+                <PreviewGrid result={preview} rowLimit={PREVIEW_ROW_LIMIT} />
+              ) : (
+                <ResultGrid result={result} />
+              )}
             </div>
           </>
         )}

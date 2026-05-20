@@ -49,3 +49,20 @@ pub struct TableColumnInfo {
     pub default: Option<String>,
     pub extra: String,
 }
+
+/// Result of a "dry-run" preview: the SQL is executed inside a transaction
+/// that is rolled back afterwards, so the live database is unchanged.
+/// `before_rows` and `after_rows` are snapshots of the auto-detected target
+/// table (LIMIT 100). When the target table can't be parsed from the SQL,
+/// they are empty and `target_table` is `None`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewResult {
+    pub target_table: Option<String>,
+    pub columns: Vec<Column>,
+    pub before_rows: Vec<Vec<Value>>,
+    pub after_rows: Vec<Vec<Value>>,
+    pub rows_affected: u64,
+    pub elapsed_ms: u64,
+    /// True if either snapshot was truncated by the LIMIT.
+    pub truncated: bool,
+}

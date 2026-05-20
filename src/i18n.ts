@@ -21,6 +21,9 @@ const en = {
   statusRowsIn: "{rows} rows in {ms} ms",
   statusRowsAffected: "{rows} rows affected ({ms} ms)",
   statusQueryError: "Query error: {error}",
+  statusRunningPreview: "Running preview (will roll back)...",
+  statusPreviewDone: "Preview: {rows} rows affected ({ms} ms) — rolled back, DB unchanged",
+  statusPreviewError: "Preview error: {error}",
 
   listEmpty: "No saved connections yet.",
   listNoMatches: "No connections match the filter.",
@@ -63,12 +66,24 @@ const en = {
   formSave: "Save",
 
   editorRun: "Run (selection or all)",
+  editorPreview: "Preview",
+  editorPreviewTitle: "Dry-run the statement in a transaction and show before/after — changes are rolled back.",
   editorHintDisabled: "Connect a session to run queries.",
   editorHint: "Tip: select text to run only that fragment.",
 
   resultEmpty: "No results yet. Run a query above.",
   resultExecuted: "Statement executed. {rows} rows affected ({ms} ms).",
   resultNull: "NULL",
+
+  previewBanner: "Preview — changes were rolled back. The database is unchanged.",
+  previewTargetTable: "Target table: {table}",
+  previewNoTarget: "Could not auto-detect the target table — showing affected row count only.",
+  previewRowsAffected: "{rows} rows affected ({ms} ms)",
+  previewBefore: "Before",
+  previewAfter: "After",
+  previewEmptyBefore: "(table was empty)",
+  previewEmptyAfter: "(table is empty after the statement)",
+  previewTruncated: "Snapshots truncated to {limit} rows.",
 
   treeNotConnected: "Not connected.",
   treeNoDatabases: "(no databases)",
@@ -99,6 +114,9 @@ const ja: Dict = {
   statusRowsIn: "{rows} 件取得 ({ms} ms)",
   statusRowsAffected: "影響行数 {rows} 件 ({ms} ms)",
   statusQueryError: "クエリエラー: {error}",
+  statusRunningPreview: "プレビュー実行中 (ロールバックされます)...",
+  statusPreviewDone: "プレビュー: 影響行数 {rows} 件 ({ms} ms) — ロールバック済み、DBは変更されていません",
+  statusPreviewError: "プレビューエラー: {error}",
 
   listEmpty: "保存された接続はまだありません。",
   listNoMatches: "条件に一致する接続がありません。",
@@ -141,12 +159,24 @@ const ja: Dict = {
   formSave: "保存",
 
   editorRun: "実行 (選択範囲または全体)",
+  editorPreview: "プレビュー",
+  editorPreviewTitle: "トランザクション内で試し実行し、Before/After を表示します（変更はロールバック）。",
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
   editorHint: "ヒント: テキストを選択するとその部分のみを実行できます。",
 
   resultEmpty: "まだ結果はありません。上のエディタでクエリを実行してください。",
   resultExecuted: "ステートメントを実行しました。影響行数 {rows} 件 ({ms} ms)。",
   resultNull: "NULL",
+
+  previewBanner: "プレビュー — 変更はロールバックされました。データベースは変更されていません。",
+  previewTargetTable: "対象テーブル: {table}",
+  previewNoTarget: "対象テーブルを自動検出できませんでした — 影響行数のみ表示しています。",
+  previewRowsAffected: "影響行数 {rows} 件 ({ms} ms)",
+  previewBefore: "実行前",
+  previewAfter: "実行後",
+  previewEmptyBefore: "(テーブルは空でした)",
+  previewEmptyAfter: "(実行後、テーブルは空です)",
+  previewTruncated: "スナップショットは {limit} 行に制限されています。",
 
   treeNotConnected: "接続されていません。",
   treeNoDatabases: "(データベースがありません)",
