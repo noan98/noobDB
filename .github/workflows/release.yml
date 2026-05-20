@@ -38,6 +38,30 @@ jobs:
       - name: Install frontend deps
         run: npm install
 
+      - name: Sync version to tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          TAG_REF: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_REF#v}"
+          echo "Syncing project version to ${VERSION}"
+          VERSION="${VERSION}" node -e '
+            const fs = require("fs");
+            const v = process.env.VERSION;
+            for (const f of ["package.json", "src-tauri/tauri.conf.json"]) {
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+            }
+            let toml = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+            toml = toml.replace(/^version = "[^"]*"/m, "version = \"" + v + "\"");
+            fs.writeFileSync("src-tauri/Cargo.toml", toml);
+            let lock = fs.readFileSync("src-tauri/Cargo.lock", "utf8");
+            lock = lock.replace(/(name = "tablex"\nversion = ")[^"]*"/, "$1" + v + "\"");
+            fs.writeFileSync("src-tauri/Cargo.lock", lock);
+          '
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
