@@ -112,8 +112,7 @@ impl MySqlConn {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         tx.rollback().await?;
 
-        let truncated =
-            before_raw.len() > PREVIEW_ROW_LIMIT || after_raw.len() > PREVIEW_ROW_LIMIT;
+        let truncated = before_raw.len() > PREVIEW_ROW_LIMIT || after_raw.len() > PREVIEW_ROW_LIMIT;
         let columns = if let Some(first) = after_raw.first().or_else(|| before_raw.first()) {
             columns_of(std::slice::from_ref(first))
         } else {
