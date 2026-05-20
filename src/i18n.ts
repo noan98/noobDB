@@ -4,11 +4,9 @@ export type Locale = "en" | "ja";
 
 const en = {
   appConnections: "Connections",
-  appNew: "+ New",
+  appNew: "New connection",
   appDisconnect: "Disconnect",
   appDisconnected: "Disconnected",
-  appTabQuery: "Query",
-  appTabSchema: "Schema",
   appLanguage: "Language",
   appThemeToLight: "Switch to light theme",
   appThemeToDark: "Switch to dark theme",
@@ -25,13 +23,21 @@ const en = {
   statusQueryError: "Query error: {error}",
 
   listEmpty: "No saved connections yet.",
+  listNoMatches: "No connections match the filter.",
+  listSearchPlaceholder: "Filter connections...",
   listDbPasswordPlaceholder: "DB password (blank = use saved)",
   listSshPassphrasePlaceholder: "SSH passphrase (blank = use saved)",
   listConnect: "Connect",
+  listConnecting: "Connecting...",
   listEdit: "Edit",
   listDelete: "Delete",
   listDeleteConfirm: 'Delete "{name}"?',
   listVia: "via SSH {host}",
+
+  statusBadge_connected: "Connected",
+  statusBadge_connecting: "Connecting...",
+  statusBadge_error: "Connection error",
+  statusBadge_idle: "Disconnected",
 
   formPickKeyTitle: "Select SSH private key",
   formConnectionOk: "Connection OK.",
@@ -66,6 +72,8 @@ const en = {
 
   treeNotConnected: "Not connected.",
   treeNoDatabases: "(no databases)",
+  treeNoTables: "(no tables)",
+  treeLoading: "Loading...",
   treeTableTitle: "Double-click to SELECT * LIMIT 100",
 };
 
@@ -73,12 +81,10 @@ type Key = keyof typeof en;
 type Dict = Record<Key, string>;
 
 const ja: Dict = {
-  appConnections: "接続先",
-  appNew: "＋ 新規",
+  appConnections: "接続",
+  appNew: "新規接続",
   appDisconnect: "切断",
   appDisconnected: "未接続",
-  appTabQuery: "クエリ",
-  appTabSchema: "スキーマ",
   appLanguage: "言語",
   appThemeToLight: "ライトテーマに切替",
   appThemeToDark: "ダークテーマに切替",
@@ -95,13 +101,21 @@ const ja: Dict = {
   statusQueryError: "クエリエラー: {error}",
 
   listEmpty: "保存された接続はまだありません。",
+  listNoMatches: "条件に一致する接続がありません。",
+  listSearchPlaceholder: "接続またはデータベースを検索",
   listDbPasswordPlaceholder: "DBパスワード (空欄で保存済みを使用)",
   listSshPassphrasePlaceholder: "SSHパスフレーズ (空欄で保存済みを使用)",
   listConnect: "接続",
+  listConnecting: "接続中...",
   listEdit: "編集",
   listDelete: "削除",
   listDeleteConfirm: "「{name}」を削除しますか？",
   listVia: "SSH {host} 経由",
+
+  statusBadge_connected: "接続中",
+  statusBadge_connecting: "接続処理中...",
+  statusBadge_error: "接続エラー",
+  statusBadge_idle: "未接続",
 
   formPickKeyTitle: "SSH秘密鍵を選択",
   formConnectionOk: "接続に成功しました。",
@@ -136,6 +150,8 @@ const ja: Dict = {
 
   treeNotConnected: "接続されていません。",
   treeNoDatabases: "(データベースがありません)",
+  treeNoTables: "(テーブルがありません)",
+  treeLoading: "読み込み中...",
   treeTableTitle: "ダブルクリックで SELECT * LIMIT 100 を実行",
 };
 
