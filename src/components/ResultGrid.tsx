@@ -51,11 +51,11 @@ export function ResultGrid({ result }: Props) {
   });
 
   if (!result) {
-    return <div className="results" style={{ padding: 16, color: "#6b7280" }}>{t("resultEmpty")}</div>;
+    return <div className="results empty">{t("resultEmpty")}</div>;
   }
   if (result.columns.length === 0) {
     return (
-      <div className="results" style={{ padding: 16, color: "#6b7280" }}>
+      <div className="results empty">
         {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
       </div>
     );

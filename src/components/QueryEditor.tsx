@@ -54,7 +54,7 @@ export function QueryEditor({ onRun, disabled }: Props) {
         <button className="primary" onClick={runSelectionOrAll} disabled={disabled || !hasContent}>
           {t("editorRun")}
         </button>
-        <span style={{ color: "#6b7280", fontSize: 12 }}>
+        <span className="muted" style={{ fontSize: 12 }}>
           {disabled ? t("editorHintDisabled") : t("editorHint")}
         </span>
       </div>

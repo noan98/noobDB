@@ -10,6 +10,9 @@ const en = {
   appTabQuery: "Query",
   appTabSchema: "Schema",
   appLanguage: "Language",
+  appThemeToLight: "Switch to light theme",
+  appThemeToDark: "Switch to dark theme",
+  appThemeToggle: "Toggle theme",
 
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
   statusConnecting: "Connecting to {name}...",
@@ -77,6 +80,9 @@ const ja: Dict = {
   appTabQuery: "クエリ",
   appTabSchema: "スキーマ",
   appLanguage: "言語",
+  appThemeToLight: "ライトテーマに切替",
+  appThemeToDark: "ダークテーマに切替",
+  appThemeToggle: "テーマを切替",
 
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
   statusConnecting: "{name} に接続中...",

@@ -9,6 +9,18 @@ import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import { useT } from "./i18n";
 
 type Tab = "query" | "schema";
+type Theme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "tablex.theme";
+
+function readInitialTheme(): Theme {
+  const saved = localStorage.getItem(THEME_STORAGE_KEY);
+  if (saved === "light" || saved === "dark") return saved;
+  if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    return "dark";
+  }
+  return "light";
+}
 
 type Status =
   | { kind: "literal"; text: string; error?: boolean }
@@ -16,6 +28,17 @@ type Status =
 
 export default function App() {
   const t = useT();
+  const [theme, setTheme] = useState<Theme>(readInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  }, []);
+
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<ConnectionProfile | null>(null);
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
@@ -99,7 +122,17 @@ export default function App() {
       <aside className="sidebar">
         <header>
           <span>{t("appConnections")}</span>
-          <button onClick={() => { setEditing(null); setShowForm(true); }}>{t("appNew")}</button>
+          <div className="header-actions">
+            <button
+              className="icon"
+              onClick={toggleTheme}
+              title={theme === "dark" ? t("appThemeToLight") : t("appThemeToDark")}
+              aria-label={t("appThemeToggle")}
+            >
+              {theme === "dark" ? "☀" : "☾"}
+            </button>
+            <button onClick={() => { setEditing(null); setShowForm(true); }}>{t("appNew")}</button>
+          </div>
         </header>
         <ConnectionList
           profiles={profiles}

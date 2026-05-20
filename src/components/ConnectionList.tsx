@@ -17,7 +17,7 @@ export function ConnectionList({ profiles, activeId, onConnect, onEdit, onDelete
   const [passphrase, setPassphrase] = useState("");
 
   if (profiles.length === 0) {
-    return <p style={{ padding: 12, color: "#6b7280" }}>{t("listEmpty")}</p>;
+    return <p className="muted" style={{ padding: 12 }}>{t("listEmpty")}</p>;
   }
 
   return (

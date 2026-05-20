@@ -167,8 +167,8 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
         )}
       </fieldset>
 
-      {message && <div className="full" style={{ color: "#15803d" }}>{message}</div>}
-      {error && <div className="full" style={{ color: "#b91c1c" }}>{error}</div>}
+      {message && <div className="full text-success">{message}</div>}
+      {error && <div className="full text-error">{error}</div>}
 
       <div className="actions">
         <button onClick={onCancel}>{t("formCancel")}</button>
