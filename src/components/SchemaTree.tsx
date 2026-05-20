@@ -50,13 +50,13 @@ export function SchemaTree({ sessionId, onPickTable }: Props) {
   };
 
   if (!sessionId) {
-    return <div className="tree" style={{ color: "#6b7280" }}>Not connected.</div>;
+    return <div className="tree empty">Not connected.</div>;
   }
 
   return (
     <div className="tree">
-      {error && <div style={{ color: "#b91c1c" }}>{error}</div>}
-      {databases.length === 0 && <div style={{ color: "#6b7280" }}>(no databases)</div>}
+      {error && <div className="text-error">{error}</div>}
+      {databases.length === 0 && <div className="empty">(no databases)</div>}
       {databases.map((db) => {
         const node = nodes[db];
         return (

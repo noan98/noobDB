@@ -49,11 +49,11 @@ export function ResultGrid({ result }: Props) {
   });
 
   if (!result) {
-    return <div className="results" style={{ padding: 16, color: "#6b7280" }}>No results yet. Run a query above.</div>;
+    return <div className="results empty">No results yet. Run a query above.</div>;
   }
   if (result.columns.length === 0) {
     return (
-      <div className="results" style={{ padding: 16, color: "#6b7280" }}>
+      <div className="results empty">
         Statement executed. {result.rows_affected} rows affected ({result.elapsed_ms} ms).
       </div>
     );
