@@ -315,6 +315,29 @@ label {
 .table-row { padding-left: 4px; }
 .table-row:hover { background: var(--bg-row-hover); }
 
+.tree-node.table > .tree-row.table-row {
+  padding-left: 4px;
+}
+.column-row {
+  padding: 3px 10px 3px 6px;
+  font-size: 12px;
+  cursor: default;
+  gap: 4px;
+}
+.column-row:hover { background: var(--bg-hover); }
+.column-icon { color: var(--text-muted); font-size: 11px; }
+.column-icon.is-pk { color: var(--cell-date); font-size: 11px; }
+.column-name {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-weight: 500;
+  color: var(--text);
+}
+.tree-badge.column-type {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  text-transform: lowercase;
+  font-size: 10px;
+}
+
 .tree-empty {
   padding: 4px 10px 4px 22px;
   font-size: 11px;
@@ -351,6 +374,13 @@ label {
 .tree-row-actions button {
   padding: 3px 8px;
   font-size: 11px;
+}
+
+.tree-row-actions.tree-row-actions-top {
+  padding: 6px 10px 6px 22px;
+  border-top: none;
+  border-bottom: 1px dashed var(--border-subtle);
+  background: var(--bg-muted);
 }
 
 /* ---------- Status dot ---------- */
