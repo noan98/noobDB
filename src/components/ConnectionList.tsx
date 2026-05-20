@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ConnectionProfile } from "../api/tauri";
+import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
+
+const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
 interface Props {
   profiles: ConnectionProfile[];
@@ -30,6 +32,8 @@ export function ConnectionList({
   const t = useT();
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
   const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
+  const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+  const [tableColumns, setTableColumns] = useState<Record<string, TableColumnInfo[]>>({});
   const [forms, setForms] = useState<Record<string, FormState>>({});
   const [showForm, setShowForm] = useState<Record<string, boolean>>({});
   const [databases, setDatabases] = useState<string[] | null>(null);
@@ -53,6 +57,8 @@ export function ConnectionList({
   useEffect(() => {
     setTables({});
     setExpandedDbs({});
+    setExpandedTables({});
+    setTableColumns({});
     if (sessionId) {
       setDatabases(null);
       loadDatabases();
@@ -98,6 +104,24 @@ export function ConnectionList({
     try {
       const list = await api.listTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const toggleTable = async (db: string, tbl: string) => {
+    if (!sessionId) return;
+    const key = tableKey(db, tbl);
+    const isOpen = expandedTables[key];
+    if (isOpen) {
+      setExpandedTables((prev) => ({ ...prev, [key]: false }));
+      return;
+    }
+    setExpandedTables((prev) => ({ ...prev, [key]: true }));
+    if (tableColumns[key]) return;
+    try {
+      const cols = await api.describeTable(sessionId, db, tbl);
+      setTableColumns((prev) => ({ ...prev, [key]: cols }));
     } catch (e) {
       setError(String(e));
     }
@@ -228,6 +252,18 @@ export function ConnectionList({
 
                     {isActive && sessionId && (
                       <>
+                        <div className="tree-row-actions tree-row-actions-top">
+                          <button onClick={() => onEdit(p)} title={t("listEditTitle")}>
+                            {t("listEditConnection")}
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id);
+                            }}
+                          >
+                            {t("listDelete")}
+                          </button>
+                        </div>
                         {databases === null ? (
                           <div className="tree-empty">{t("treeLoading")}</div>
                         ) : databases.length === 0 ? (
@@ -256,19 +292,55 @@ export function ConnectionList({
                                     ) : dbTables.length === 0 ? (
                                       <div className="tree-empty">{t("treeNoTables")}</div>
                                     ) : (
-                                      dbTables.map((tbl) => (
-                                        <div
-                                          key={tbl}
-                                          className="tree-row table-row"
-                                          role="treeitem"
-                                          onDoubleClick={() => onPickTable(db, tbl)}
-                                          title={t("treeTableTitle")}
-                                        >
-                                          <span className="tree-chevron empty" aria-hidden />
-                                          <span className="tree-icon table-icon" aria-hidden>▤</span>
-                                          <span className="tree-label">{tbl}</span>
-                                        </div>
-                                      ))
+                                      dbTables.map((tbl) => {
+                                        const tKey = tableKey(db, tbl);
+                                        const tOpen = !!expandedTables[tKey];
+                                        const cols = tableColumns[tKey];
+                                        return (
+                                          <div key={tbl} className="tree-node table">
+                                            <div
+                                              className="tree-row table-row"
+                                              role="treeitem"
+                                              aria-expanded={tOpen}
+                                              onClick={() => toggleTable(db, tbl)}
+                                              onDoubleClick={() => onPickTable(db, tbl)}
+                                              title={t("treeTableTitle")}
+                                            >
+                                              <span className="tree-chevron" aria-hidden>{tOpen ? "▾" : "▸"}</span>
+                                              <span className="tree-icon table-icon" aria-hidden>▤</span>
+                                              <span className="tree-label">{tbl}</span>
+                                            </div>
+                                            {tOpen && (
+                                              <div className="tree-children">
+                                                {cols === undefined ? (
+                                                  <div className="tree-empty">{t("treeLoading")}</div>
+                                                ) : cols.length === 0 ? (
+                                                  <div className="tree-empty">{t("treeNoColumns")}</div>
+                                                ) : (
+                                                  cols.map((col) => {
+                                                    const isPk = col.key === "PRI";
+                                                    return (
+                                                      <div
+                                                        key={col.name}
+                                                        className="tree-row column-row"
+                                                        role="treeitem"
+                                                        title={`${col.name}: ${col.data_type}${col.nullable ? "" : " NOT NULL"}${col.key ? " " + col.key : ""}${col.default !== null ? " DEFAULT " + col.default : ""}${col.extra ? " " + col.extra : ""}`}
+                                                      >
+                                                        <span className="tree-chevron empty" aria-hidden />
+                                                        <span className={`tree-icon column-icon ${isPk ? "is-pk" : ""}`} aria-hidden>
+                                                          {isPk ? "🔑" : "·"}
+                                                        </span>
+                                                        <span className="tree-label column-name">{col.name}</span>
+                                                        <span className="tree-badge column-type" title={col.data_type}>{col.data_type}</span>
+                                                      </div>
+                                                    );
+                                                  })
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })
                                     )}
                                   </div>
                                 )}
@@ -276,16 +348,6 @@ export function ConnectionList({
                             );
                           })
                         )}
-                        <div className="tree-row-actions">
-                          <button onClick={() => onEdit(p)}>{t("listEdit")}</button>
-                          <button
-                            onClick={() => {
-                              if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id);
-                            }}
-                          >
-                            {t("listDelete")}
-                          </button>
-                        </div>
                       </>
                     )}
                   </div>

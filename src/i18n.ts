@@ -33,6 +33,8 @@ const en = {
   listConnect: "Connect",
   listConnecting: "Connecting...",
   listEdit: "Edit",
+  listEditConnection: "Edit connection...",
+  listEditTitle: "Edit connection settings (host, port, credentials, SSH)",
   listDelete: "Delete",
   listDeleteConfirm: 'Delete "{name}"?',
   listVia: "via SSH {host}",
@@ -90,13 +92,24 @@ const en = {
   treeNotConnected: "Not connected.",
   treeNoDatabases: "(no databases)",
   treeNoTables: "(no tables)",
+  treeNoColumns: "(no columns)",
   treeLoading: "Loading...",
-  treeTableTitle: "Double-click to SELECT * LIMIT 100",
+  treeTableTitle: "Click to expand columns, double-click to SELECT * LIMIT 100",
 
   tabNew: "New query tab",
   tabClose: "Close tab",
   tabUntitledQuery: "Query",
   tabsEmpty: "No tabs open. Double-click a table or click + to start a query.",
+
+  gridFilterPlaceholder: "Filter...",
+  gridFilterAria: "Filter {column}",
+  gridSortAsc: "Sort ascending",
+  gridSortDesc: "Sort descending",
+  gridSortClear: "Clear sort",
+  gridFilteredCount: "Showing {shown} of {total} rows",
+  gridClearFilters: "Clear filters",
+  gridNoMatches: "No rows match the current filters.",
+  gridResizeColumn: "Drag to resize; double-click to reset",
 };
 
 type Key = keyof typeof en;
@@ -133,6 +146,8 @@ const ja: Dict = {
   listConnect: "接続",
   listConnecting: "接続中...",
   listEdit: "編集",
+  listEditConnection: "接続情報を編集...",
+  listEditTitle: "接続情報を編集 (ホスト・ポート・認証情報・SSH)",
   listDelete: "削除",
   listDeleteConfirm: "「{name}」を削除しますか？",
   listVia: "SSH {host} 経由",
@@ -190,13 +205,24 @@ const ja: Dict = {
   treeNotConnected: "接続されていません。",
   treeNoDatabases: "(データベースがありません)",
   treeNoTables: "(テーブルがありません)",
+  treeNoColumns: "(カラムがありません)",
   treeLoading: "読み込み中...",
-  treeTableTitle: "ダブルクリックで SELECT * LIMIT 100 を実行",
+  treeTableTitle: "クリックでカラム展開、ダブルクリックで SELECT * LIMIT 100",
 
   tabNew: "新しいクエリタブ",
   tabClose: "タブを閉じる",
   tabUntitledQuery: "クエリ",
   tabsEmpty: "開いているタブがありません。テーブルをダブルクリックするか、+ を押してクエリを始めてください。",
+
+  gridFilterPlaceholder: "絞り込み...",
+  gridFilterAria: "{column} を絞り込む",
+  gridSortAsc: "昇順で並び替え",
+  gridSortDesc: "降順で並び替え",
+  gridSortClear: "並び替えを解除",
+  gridFilteredCount: "{total} 件中 {shown} 件を表示",
+  gridClearFilters: "フィルターをクリア",
+  gridNoMatches: "条件に一致する行がありません。",
+  gridResizeColumn: "ドラッグでサイズ変更、ダブルクリックでリセット",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

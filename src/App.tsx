@@ -245,7 +245,7 @@ export default function App() {
     const tab: Tab = {
       id: newTabId(),
       kind: "table",
-      title: `${database}.${table}`,
+      title: table,
       database,
       table,
       sql,
