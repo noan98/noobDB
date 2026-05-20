@@ -634,7 +634,7 @@ label {
   font-size: 12px;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   color: var(--text);
-  width: max-content;
+  table-layout: fixed;
   min-width: 100%;
 }
 :where(.results, .preview-pane-body) th,
@@ -644,10 +644,10 @@ label {
   padding: 5px 10px;
   text-align: left;
   white-space: nowrap;
-  max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: middle;
+  position: relative;
 }
 :where(.results, .preview-pane-body) th {
   background: var(--bg-header);
@@ -709,6 +709,139 @@ label {
 :where(.results, .preview-pane-body) .cell-string { color: var(--text); }
 
 .results .empty { padding: 16px; color: var(--text-muted); }
+
+/* ---------- Per-column sort & filter ---------- */
+
+:where(.results, .preview-pane-body) th.is-sortable { padding: 0; }
+:where(.results, .preview-pane-body) th.is-sortable .th-sort-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: inherit;
+  user-select: none;
+}
+:where(.results, .preview-pane-body) th.is-sortable.align-right .th-sort-button {
+  justify-content: flex-end;
+}
+:where(.results, .preview-pane-body) th.is-sortable .th-sort-button:hover {
+  background: var(--bg-hover);
+}
+:where(.results, .preview-pane-body) th.is-sorted-asc .th-sort-button,
+:where(.results, .preview-pane-body) th.is-sorted-desc .th-sort-button {
+  background: var(--bg-active);
+}
+:where(.results, .preview-pane-body) th .th-sort-indicator {
+  font-size: 9px;
+  color: var(--accent);
+  width: 10px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+:where(.results, .preview-pane-body) th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc) .th-sort-indicator::before {
+  content: "↕";
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+:where(.results, .preview-pane-body) th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc):hover .th-sort-indicator::before {
+  opacity: 0.85;
+}
+
+:where(.results, .preview-pane-body) tr.filter-row th {
+  position: sticky;
+  top: 38px;
+  background: var(--bg-muted);
+  padding: 3px 6px;
+  font-weight: 400;
+  border-bottom: 1px solid var(--border-strong);
+  z-index: 2;
+}
+:where(.results, .preview-pane-body) tr.filter-row th.row-index {
+  top: 38px;
+  z-index: 3;
+  background: var(--bg-muted);
+}
+:where(.results, .preview-pane-body) .grid-filter-input {
+  width: 100%;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  border-radius: 4px;
+}
+:where(.results, .preview-pane-body) .grid-filter-input::placeholder {
+  color: var(--text-muted);
+}
+:where(.results, .preview-pane-body) .grid-filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+:where(.results, .preview-pane-body) td.grid-empty-cell {
+  padding: 14px;
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+  white-space: normal;
+}
+
+:where(.results, .preview-pane-body) .grid-filter-summary {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-muted));
+  border-bottom: 1px solid var(--border);
+}
+:where(.results, .preview-pane-body) .grid-filter-clear {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+}
+:where(.results, .preview-pane-body) .grid-filter-clear:hover {
+  background: var(--bg-hover);
+}
+
+/* ---------- Column resize handle ---------- */
+
+:where(.results, .preview-pane-body) thead th .th-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  background: transparent;
+  z-index: 3;
+}
+:where(.results, .preview-pane-body) thead th .th-resize-handle:hover,
+:where(.results, .preview-pane-body) thead th .th-resize-handle.is-resizing {
+  background: var(--accent);
+  opacity: 0.65;
+}
+:where(.results, .preview-pane-body) thead th.is-resizing {
+  user-select: none;
+}
 
 /* ---------- Preview (dry-run) view ---------- */
 

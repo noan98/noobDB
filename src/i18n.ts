@@ -97,6 +97,16 @@ const en = {
   tabClose: "Close tab",
   tabUntitledQuery: "Query",
   tabsEmpty: "No tabs open. Double-click a table or click + to start a query.",
+
+  gridFilterPlaceholder: "Filter...",
+  gridFilterAria: "Filter {column}",
+  gridSortAsc: "Sort ascending",
+  gridSortDesc: "Sort descending",
+  gridSortClear: "Clear sort",
+  gridFilteredCount: "Showing {shown} of {total} rows",
+  gridClearFilters: "Clear filters",
+  gridNoMatches: "No rows match the current filters.",
+  gridResizeColumn: "Drag to resize; double-click to reset",
 };
 
 type Key = keyof typeof en;
@@ -197,6 +207,16 @@ const ja: Dict = {
   tabClose: "タブを閉じる",
   tabUntitledQuery: "クエリ",
   tabsEmpty: "開いているタブがありません。テーブルをダブルクリックするか、+ を押してクエリを始めてください。",
+
+  gridFilterPlaceholder: "絞り込み...",
+  gridFilterAria: "{column} を絞り込む",
+  gridSortAsc: "昇順で並び替え",
+  gridSortDesc: "降順で並び替え",
+  gridSortClear: "並び替えを解除",
+  gridFilteredCount: "{total} 件中 {shown} 件を表示",
+  gridClearFilters: "フィルターをクリア",
+  gridNoMatches: "条件に一致する行がありません。",
+  gridResizeColumn: "ドラッグでサイズ変更、ダブルクリックでリセット",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
