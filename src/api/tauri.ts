@@ -71,6 +71,16 @@ export interface QueryResult {
   elapsed_ms: number;
 }
 
+export interface PreviewResult {
+  target_table: string | null;
+  columns: Column[];
+  before_rows: CellValue[][];
+  after_rows: CellValue[][];
+  rows_affected: number;
+  elapsed_ms: number;
+  truncated: boolean;
+}
+
 export interface TableColumnInfo {
   name: string;
   data_type: string;
@@ -91,6 +101,8 @@ export const api = {
 
   runQuery: (sessionId: string, sql: string) =>
     invoke<QueryResult>("run_query", { sessionId, sql }),
+  previewQuery: (sessionId: string, sql: string) =>
+    invoke<PreviewResult>("preview_query", { sessionId, sql }),
 
   listDatabases: (sessionId: string) =>
     invoke<string[]>("list_databases", { sessionId }),

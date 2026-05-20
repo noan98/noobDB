@@ -67,6 +67,7 @@ pub fn run() {
             commands::connection::disconnect,
             commands::connection::list_sessions,
             commands::query::run_query,
+            commands::query::preview_query,
             commands::schema::list_databases,
             commands::schema::list_tables,
             commands::schema::describe_table,

@@ -7,10 +7,11 @@ import { useT } from "../i18n";
 
 interface Props {
   onRun: (sql: string) => void;
+  onPreview?: (sql: string) => void;
   disabled?: boolean;
 }
 
-export function QueryEditor({ onRun, disabled }: Props) {
+export function QueryEditor({ onRun, onPreview, disabled }: Props) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -39,13 +40,24 @@ export function QueryEditor({ onRun, disabled }: Props) {
     return () => view.destroy();
   }, []);
 
-  const runSelectionOrAll = () => {
+  const currentText = (): string | null => {
     const view = viewRef.current;
-    if (!view) return;
+    if (!view) return null;
     const sel = view.state.selection.main;
     const text = sel.empty ? view.state.doc.toString() : view.state.sliceDoc(sel.from, sel.to);
-    if (text.trim().length === 0) return;
-    onRun(text);
+    if (text.trim().length === 0) return null;
+    return text;
+  };
+
+  const runSelectionOrAll = () => {
+    const text = currentText();
+    if (text !== null) onRun(text);
+  };
+
+  const previewSelectionOrAll = () => {
+    if (!onPreview) return;
+    const text = currentText();
+    if (text !== null) onPreview(text);
   };
 
   return (
@@ -54,6 +66,15 @@ export function QueryEditor({ onRun, disabled }: Props) {
         <button className="primary" onClick={runSelectionOrAll} disabled={disabled || !hasContent}>
           {t("editorRun")}
         </button>
+        {onPreview && (
+          <button
+            onClick={previewSelectionOrAll}
+            disabled={disabled || !hasContent}
+            title={t("editorPreviewTitle")}
+          >
+            {t("editorPreview")}
+          </button>
+        )}
         <span className="muted" style={{ fontSize: 12 }}>
           {disabled ? t("editorHintDisabled") : t("editorHint")}
         </span>

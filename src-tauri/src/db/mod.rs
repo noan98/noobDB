@@ -4,7 +4,7 @@ pub mod types;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use types::{QueryResult, TableColumnInfo};
+use types::{PreviewResult, QueryResult, TableColumnInfo};
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
 /// `host`/`port` will already point to the local end of the tunnel.
@@ -40,6 +40,12 @@ impl Connection {
     pub async fn execute(&self, sql: &str) -> Result<QueryResult> {
         match self {
             Connection::MySql(c) => c.execute(sql).await,
+        }
+    }
+
+    pub async fn preview_execute(&self, sql: &str) -> Result<PreviewResult> {
+        match self {
+            Connection::MySql(c) => c.preview_execute(sql).await,
         }
     }
 
