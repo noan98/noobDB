@@ -3,6 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { sql } from "@codemirror/lang-sql";
+import { useT } from "../i18n";
 
 interface Props {
   onRun: (sql: string) => void;
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export function QueryEditor({ onRun, disabled }: Props) {
+  const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [hasContent, setHasContent] = useState(false);
@@ -50,10 +52,10 @@ export function QueryEditor({ onRun, disabled }: Props) {
     <div className="editor">
       <div className="toolbar">
         <button className="primary" onClick={runSelectionOrAll} disabled={disabled || !hasContent}>
-          Run (selection or all)
+          {t("editorRun")}
         </button>
         <span style={{ color: "#6b7280", fontSize: 12 }}>
-          {disabled ? "Connect a session to run queries." : "Tip: select text to run only that fragment."}
+          {disabled ? t("editorHintDisabled") : t("editorHint")}
         </span>
       </div>
       <div className="cm" ref={hostRef} />

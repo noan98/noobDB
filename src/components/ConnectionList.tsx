@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ConnectionProfile } from "../api/tauri";
+import { useT } from "../i18n";
 
 interface Props {
   profiles: ConnectionProfile[];
@@ -10,12 +11,13 @@ interface Props {
 }
 
 export function ConnectionList({ profiles, activeId, onConnect, onEdit, onDelete }: Props) {
+  const t = useT();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [passphrase, setPassphrase] = useState("");
 
   if (profiles.length === 0) {
-    return <p style={{ padding: 12, color: "#6b7280" }}>No saved connections yet.</p>;
+    return <p style={{ padding: 12, color: "#6b7280" }}>{t("listEmpty")}</p>;
   }
 
   return (
@@ -26,29 +28,29 @@ export function ConnectionList({ profiles, activeId, onConnect, onEdit, onDelete
             <div className="name">{p.name}</div>
             <div className="meta">
               {p.user}@{p.host}:{p.port}{p.database ? `/${p.database}` : ""}
-              {p.ssh ? ` via SSH ${p.ssh.host}` : ""}
+              {p.ssh ? ` ${t("listVia", { host: p.ssh.host })}` : ""}
             </div>
           </div>
           {expanded === p.id && (
             <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
               <input
                 type="password"
-                placeholder="DB password (blank = use saved)"
+                placeholder={t("listDbPasswordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
               {p.ssh && (
                 <input
                   type="password"
-                  placeholder="SSH passphrase (blank = use saved)"
+                  placeholder={t("listSshPassphrasePlaceholder")}
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
                 />
               )}
               <div style={{ display: "flex", gap: 4 }}>
-                <button className="primary" onClick={() => { onConnect(p, password, passphrase); setPassword(""); setPassphrase(""); }}>Connect</button>
-                <button onClick={() => onEdit(p)}>Edit</button>
-                <button onClick={() => { if (confirm(`Delete "${p.name}"?`)) onDelete(p.id); }}>Delete</button>
+                <button className="primary" onClick={() => { onConnect(p, password, passphrase); setPassword(""); setPassphrase(""); }}>{t("listConnect")}</button>
+                <button onClick={() => onEdit(p)}>{t("listEdit")}</button>
+                <button onClick={() => { if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id); }}>{t("listDelete")}</button>
               </div>
             </div>
           )}
