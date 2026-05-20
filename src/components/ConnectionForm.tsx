@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, ConnectionProfile } from "../api/tauri";
+import { useT } from "../i18n";
 
 interface Props {
   initial: ConnectionProfile | null;
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
+  const t = useT();
   const [name, setName] = useState(initial?.name ?? "");
   const [host, setHost] = useState(initial?.host ?? "127.0.0.1");
   const [port, setPort] = useState(initial?.port ?? 3306);
@@ -31,7 +33,7 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
     const selected = await open({
       multiple: false,
       directory: false,
-      title: "Select SSH private key",
+      title: t("formPickKeyTitle"),
     });
     if (typeof selected === "string") setSshKeyPath(selected);
   };
@@ -59,7 +61,7 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
     setError(null); setMessage(null); setTesting(true);
     try {
       await api.testConnection(buildRequest());
-      setMessage("Connection OK.");
+      setMessage(t("formConnectionOk"));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -92,37 +94,37 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
 
   return (
     <div className="form">
-      <h2 className="full" style={{ margin: 0 }}>{initial ? `Edit "${initial.name}"` : "New Connection"}</h2>
+      <h2 className="full" style={{ margin: 0 }}>{initial ? t("formEditTitle", { name: initial.name }) : t("formNewTitle")}</h2>
 
       <div className="full">
-        <label>Name</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My DB" />
+        <label>{t("formName")}</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("formNamePlaceholder")} />
       </div>
 
       <fieldset>
-        <legend>MySQL</legend>
+        <legend>{t("formMysqlLegend")}</legend>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 12 }}>
           <div>
-            <label>Host</label>
+            <label>{t("formHost")}</label>
             <input value={host} onChange={(e) => setHost(e.target.value)} />
           </div>
           <div>
-            <label>Port</label>
+            <label>{t("formPort")}</label>
             <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 8 }}>
           <div>
-            <label>User</label>
+            <label>{t("formUser")}</label>
             <input value={user} onChange={(e) => setUser(e.target.value)} />
           </div>
           <div>
-            <label>Database (optional)</label>
+            <label>{t("formDatabase")}</label>
             <input value={database} onChange={(e) => setDatabase(e.target.value)} />
           </div>
         </div>
         <div style={{ marginTop: 8 }}>
-          <label>Password (saved to OS keyring; leave blank to keep existing)</label>
+          <label>{t("formDbPassword")}</label>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </div>
       </fieldset>
@@ -131,34 +133,34 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
         <legend>
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
             <input type="checkbox" style={{ width: "auto" }} checked={useSsh} onChange={(e) => setUseSsh(e.target.checked)} />
-            Use SSH tunnel
+            {t("formUseSsh")}
           </label>
         </legend>
         {useSsh && (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 12 }}>
               <div>
-                <label>SSH Host</label>
+                <label>{t("formSshHost")}</label>
                 <input value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
               </div>
               <div>
-                <label>Port</label>
+                <label>{t("formPort")}</label>
                 <input type="number" value={sshPort} onChange={(e) => setSshPort(Number(e.target.value))} />
               </div>
             </div>
             <div style={{ marginTop: 8 }}>
-              <label>SSH User</label>
+              <label>{t("formSshUser")}</label>
               <input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
             </div>
             <div style={{ marginTop: 8 }}>
-              <label>Private key path</label>
+              <label>{t("formPrivateKeyPath")}</label>
               <div className="row">
                 <input value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
-                <button onClick={pickKeyFile}>Browse...</button>
+                <button onClick={pickKeyFile}>{t("formBrowse")}</button>
               </div>
             </div>
             <div style={{ marginTop: 8 }}>
-              <label>Key passphrase (saved to keyring; leave blank to keep existing)</label>
+              <label>{t("formSshPassphrase")}</label>
               <input type="password" value={sshPassphrase} onChange={(e) => setSshPassphrase(e.target.value)} />
             </div>
           </>
@@ -169,9 +171,9 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
       {error && <div className="full text-error">{error}</div>}
 
       <div className="actions">
-        <button onClick={onCancel}>Cancel</button>
-        <button onClick={handleTest} disabled={testing}>{testing ? "Testing..." : "Test"}</button>
-        <button className="primary" onClick={handleSave}>Save</button>
+        <button onClick={onCancel}>{t("formCancel")}</button>
+        <button onClick={handleTest} disabled={testing}>{testing ? t("formTesting") : t("formTest")}</button>
+        <button className="primary" onClick={handleSave}>{t("formSave")}</button>
       </div>
     </div>
   );

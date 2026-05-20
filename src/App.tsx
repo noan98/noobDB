@@ -5,6 +5,8 @@ import { ConnectionForm } from "./components/ConnectionForm";
 import { QueryEditor } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
 import { SchemaTree } from "./components/SchemaTree";
+import { LanguageSwitcher } from "./components/LanguageSwitcher";
+import { useT } from "./i18n";
 
 type Tab = "query" | "schema";
 type Theme = "light" | "dark";
@@ -20,7 +22,12 @@ function readInitialTheme(): Theme {
   return "light";
 }
 
+type Status =
+  | { kind: "literal"; text: string; error?: boolean }
+  | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
+
 export default function App() {
+  const t = useT();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
 
   useEffect(() => {
@@ -29,7 +36,7 @@ export default function App() {
   }, [theme]);
 
   const toggleTheme = useCallback(() => {
-    setTheme((t) => (t === "dark" ? "light" : "dark"));
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
@@ -40,14 +47,14 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("query");
   const [result, setResult] = useState<QueryResult | null>(null);
-  const [status, setStatus] = useState<{ text: string; error?: boolean }>({ text: "Disconnected" });
+  const [status, setStatus] = useState<Status>({ kind: "key", key: "appDisconnected" });
 
   const refreshProfiles = useCallback(async () => {
     try {
       const list = await api.listProfiles();
       setProfiles(list);
     } catch (e) {
-      setStatus({ text: `Failed to load profiles: ${e}`, error: true });
+      setStatus({ kind: "key", key: "statusFailedLoadProfiles", vars: { error: String(e) }, error: true });
     }
   }, []);
 
@@ -56,7 +63,7 @@ export default function App() {
   }, [refreshProfiles]);
 
   const handleConnect = useCallback(async (profile: ConnectionProfile, password: string, passphrase: string) => {
-    setStatus({ text: `Connecting to ${profile.name}...` });
+    setStatus({ kind: "key", key: "statusConnecting", vars: { name: profile.name } });
     try {
       const res = await api.connect({
         profile_id: profile.id,
@@ -70,9 +77,9 @@ export default function App() {
       });
       setSessionId(res.session_id);
       setSelectedProfile(profile);
-      setStatus({ text: `Connected to ${profile.name} (session ${res.session_id})` });
+      setStatus({ kind: "key", key: "statusConnected", vars: { name: profile.name, id: res.session_id } });
     } catch (e) {
-      setStatus({ text: `Connection failed: ${e}`, error: true });
+      setStatus({ kind: "key", key: "statusConnectionFailed", vars: { error: String(e) }, error: true });
     }
   }, []);
 
@@ -86,43 +93,45 @@ export default function App() {
     setSessionId(null);
     setSelectedProfile(null);
     setResult(null);
-    setStatus({ text: "Disconnected" });
+    setStatus({ kind: "key", key: "appDisconnected" });
   }, [sessionId]);
 
   const handleRunQuery = useCallback(async (sql: string) => {
     if (!sessionId) {
-      setStatus({ text: "Not connected", error: true });
+      setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
     }
-    setStatus({ text: "Running query..." });
+    setStatus({ kind: "key", key: "statusRunningQuery" });
     try {
       const r = await api.runQuery(sessionId, sql);
       setResult(r);
       if (r.columns.length > 0) {
-        setStatus({ text: `${r.rows.length} rows in ${r.elapsed_ms} ms` });
+        setStatus({ kind: "key", key: "statusRowsIn", vars: { rows: r.rows.length, ms: r.elapsed_ms } });
       } else {
-        setStatus({ text: `${r.rows_affected} rows affected (${r.elapsed_ms} ms)` });
+        setStatus({ kind: "key", key: "statusRowsAffected", vars: { rows: r.rows_affected, ms: r.elapsed_ms } });
       }
     } catch (e) {
-      setStatus({ text: `Query error: ${e}`, error: true });
+      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
     }
   }, [sessionId]);
+
+  const statusText = status.kind === "literal" ? status.text : t(status.key, status.vars);
 
   return (
     <div className="app">
       <aside className="sidebar">
         <header>
-          <span>Connections</span>
+          <span>{t("appConnections")}</span>
           <div className="header-actions">
             <button
               className="icon"
               onClick={toggleTheme}
-              title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-              aria-label="Toggle theme"
+              title={theme === "dark" ? t("appThemeToLight") : t("appThemeToDark")}
+              aria-label={t("appThemeToggle")}
             >
               {theme === "dark" ? "☀" : "☾"}
             </button>
-            <button onClick={() => { setEditing(null); setShowForm(true); }}>+ New</button>
+            <button onClick={() => { setEditing(null); setShowForm(true); }}>{t("appNew")}</button>
           </div>
         </header>
         <ConnectionList
@@ -135,6 +144,9 @@ export default function App() {
             await refreshProfiles();
           }}
         />
+        <div className="sidebar-footer">
+          <LanguageSwitcher />
+        </div>
       </aside>
 
       <main className="main">
@@ -150,10 +162,10 @@ export default function App() {
         ) : (
           <>
             <div className="tabs">
-              <button className={`tab ${tab === "query" ? "active" : ""}`} onClick={() => setTab("query")}>Query</button>
-              <button className={`tab ${tab === "schema" ? "active" : ""}`} onClick={() => setTab("schema")}>Schema</button>
+              <button className={`tab ${tab === "query" ? "active" : ""}`} onClick={() => setTab("query")}>{t("appTabQuery")}</button>
+              <button className={`tab ${tab === "schema" ? "active" : ""}`} onClick={() => setTab("schema")}>{t("appTabSchema")}</button>
               <div style={{ flex: 1 }} />
-              {sessionId && <button onClick={handleDisconnect}>Disconnect</button>}
+              {sessionId && <button onClick={handleDisconnect}>{t("appDisconnect")}</button>}
             </div>
 
             <div className="pane">
@@ -163,16 +175,16 @@ export default function App() {
                   <ResultGrid result={result} />
                 </>
               ) : (
-                <SchemaTree sessionId={sessionId} onPickTable={(db, t) => {
+                <SchemaTree sessionId={sessionId} onPickTable={(db, tbl) => {
                   setTab("query");
-                  handleRunQuery(`SELECT * FROM \`${db}\`.\`${t}\` LIMIT 100`);
+                  handleRunQuery(`SELECT * FROM \`${db}\`.\`${tbl}\` LIMIT 100`);
                 }} />
               )}
             </div>
           </>
         )}
 
-        <div className={`status ${status.error ? "error" : ""}`}>{status.text}</div>
+        <div className={`status ${status.error ? "error" : ""}`}>{statusText}</div>
       </main>
     </div>
   );

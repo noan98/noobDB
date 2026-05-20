@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/tauri";
+import { useT } from "../i18n";
 
 interface Props {
   sessionId: string | null;
@@ -12,6 +13,7 @@ interface NodeState {
 }
 
 export function SchemaTree({ sessionId, onPickTable }: Props) {
+  const t = useT();
   const [databases, setDatabases] = useState<string[]>([]);
   const [nodes, setNodes] = useState<Record<string, NodeState>>({});
   const [error, setError] = useState<string | null>(null);
@@ -50,13 +52,13 @@ export function SchemaTree({ sessionId, onPickTable }: Props) {
   };
 
   if (!sessionId) {
-    return <div className="tree empty">Not connected.</div>;
+    return <div className="tree empty">{t("treeNotConnected")}</div>;
   }
 
   return (
     <div className="tree">
       {error && <div className="text-error">{error}</div>}
-      {databases.length === 0 && <div className="empty">(no databases)</div>}
+      {databases.length === 0 && <div className="empty">{t("treeNoDatabases")}</div>}
       {databases.map((db) => {
         const node = nodes[db];
         return (
@@ -64,9 +66,9 @@ export function SchemaTree({ sessionId, onPickTable }: Props) {
             <div className="db" onClick={() => toggle(db)}>
               {node?.expanded ? "▾" : "▸"} {db}
             </div>
-            {node?.expanded && node.tables?.map((t) => (
-              <div key={t} className="table" onDoubleClick={() => onPickTable(db, t)} title="Double-click to SELECT * LIMIT 100">
-                {t}
+            {node?.expanded && node.tables?.map((tbl) => (
+              <div key={tbl} className="table" onDoubleClick={() => onPickTable(db, tbl)} title={t("treeTableTitle")}>
+                {tbl}
               </div>
             ))}
           </div>
