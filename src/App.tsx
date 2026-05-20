@@ -4,11 +4,9 @@ import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { QueryEditor } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
-import { SchemaTree } from "./components/SchemaTree";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import { useT } from "./i18n";
 
-type Tab = "query" | "schema";
 type Theme = "light" | "dark";
 
 const THEME_STORAGE_KEY = "tablex.theme";
@@ -45,7 +43,8 @@ export default function App() {
   const [showForm, setShowForm] = useState(false);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("query");
+  const [connectingId, setConnectingId] = useState<string | null>(null);
+  const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "key", key: "appDisconnected" });
 
@@ -63,7 +62,15 @@ export default function App() {
   }, [refreshProfiles]);
 
   const handleConnect = useCallback(async (profile: ConnectionProfile, password: string, passphrase: string) => {
+    setConnectingId(profile.id);
+    setErrorProfileId(null);
     setStatus({ kind: "key", key: "statusConnecting", vars: { name: profile.name } });
+    // Disconnect any previous session before connecting to a new one.
+    if (sessionId) {
+      try { await api.disconnect(sessionId); } catch (e) { console.warn(e); }
+      setSessionId(null);
+      setResult(null);
+    }
     try {
       const res = await api.connect({
         profile_id: profile.id,
@@ -79,9 +86,12 @@ export default function App() {
       setSelectedProfile(profile);
       setStatus({ kind: "key", key: "statusConnected", vars: { name: profile.name, id: res.session_id } });
     } catch (e) {
+      setErrorProfileId(profile.id);
       setStatus({ kind: "key", key: "statusConnectionFailed", vars: { error: String(e) }, error: true });
+    } finally {
+      setConnectingId(null);
     }
-  }, []);
+  }, [sessionId]);
 
   const handleDisconnect = useCallback(async () => {
     if (!sessionId) return;
@@ -121,7 +131,7 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <header>
-          <span>{t("appConnections")}</span>
+          <span className="sidebar-title">{t("appConnections")}</span>
           <div className="header-actions">
             <button
               className="icon"
@@ -131,17 +141,30 @@ export default function App() {
             >
               {theme === "dark" ? "☀" : "☾"}
             </button>
-            <button onClick={() => { setEditing(null); setShowForm(true); }}>{t("appNew")}</button>
+            <button
+              className="icon"
+              onClick={() => { setEditing(null); setShowForm(true); }}
+              title={t("appNew")}
+              aria-label={t("appNew")}
+            >
+              +
+            </button>
           </div>
         </header>
         <ConnectionList
           profiles={profiles}
-          activeId={selectedProfile?.id ?? null}
+          activeProfileId={selectedProfile?.id ?? null}
+          sessionId={sessionId}
+          connectingId={connectingId}
+          errorProfileId={errorProfileId}
           onConnect={handleConnect}
           onEdit={(p) => { setEditing(p); setShowForm(true); }}
           onDelete={async (id) => {
             await api.deleteProfile(id);
             await refreshProfiles();
+          }}
+          onPickTable={(db, tbl) => {
+            handleRunQuery(`SELECT * FROM \`${db}\`.\`${tbl}\` LIMIT 100`);
           }}
         />
         <div className="sidebar-footer">
@@ -161,25 +184,31 @@ export default function App() {
           />
         ) : (
           <>
-            <div className="tabs">
-              <button className={`tab ${tab === "query" ? "active" : ""}`} onClick={() => setTab("query")}>{t("appTabQuery")}</button>
-              <button className={`tab ${tab === "schema" ? "active" : ""}`} onClick={() => setTab("schema")}>{t("appTabSchema")}</button>
+            <div className="topbar">
+              <div className="topbar-info">
+                {selectedProfile ? (
+                  <>
+                    <span className="status-dot status-connected" aria-hidden />
+                    <span className="topbar-name">{selectedProfile.name}</span>
+                    <span className="topbar-meta">
+                      {selectedProfile.user}@{selectedProfile.host}:{selectedProfile.port}
+                      {selectedProfile.database ? `/${selectedProfile.database}` : ""}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="status-dot status-idle" aria-hidden />
+                    <span className="topbar-meta">{t("appDisconnected")}</span>
+                  </>
+                )}
+              </div>
               <div style={{ flex: 1 }} />
               {sessionId && <button onClick={handleDisconnect}>{t("appDisconnect")}</button>}
             </div>
 
             <div className="pane">
-              {tab === "query" ? (
-                <>
-                  <QueryEditor onRun={handleRunQuery} disabled={!sessionId} />
-                  <ResultGrid result={result} />
-                </>
-              ) : (
-                <SchemaTree sessionId={sessionId} onPickTable={(db, tbl) => {
-                  setTab("query");
-                  handleRunQuery(`SELECT * FROM \`${db}\`.\`${tbl}\` LIMIT 100`);
-                }} />
-              )}
+              <QueryEditor onRun={handleRunQuery} disabled={!sessionId} />
+              <ResultGrid result={result} />
             </div>
           </>
         )}
