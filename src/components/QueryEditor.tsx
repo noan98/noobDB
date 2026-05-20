@@ -1,20 +1,61 @@
-import { useEffect, useRef, useState } from "react";
-import { EditorState } from "@codemirror/state";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { sql } from "@codemirror/lang-sql";
+import { sql, MySQL, type SQLNamespace } from "@codemirror/lang-sql";
+import {
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  completionKeymap,
+} from "@codemirror/autocomplete";
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  indentOnInput,
+  syntaxHighlighting,
+} from "@codemirror/language";
 import { useT } from "../i18n";
+
+export interface SchemaTable {
+  database: string;
+  name: string;
+  columns: string[];
+}
 
 interface Props {
   onRun: (sql: string) => void;
   onPreview?: (sql: string) => void;
   disabled?: boolean;
+  schemaTable?: SchemaTable | null;
 }
 
-export function QueryEditor({ onRun, onPreview, disabled }: Props) {
+function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
+  let schema: SQLNamespace | undefined;
+  let defaultTable: string | undefined;
+  let defaultSchema: string | undefined;
+  if (schemaTable && schemaTable.columns.length > 0) {
+    schema = {
+      [schemaTable.database]: { [schemaTable.name]: schemaTable.columns },
+      [schemaTable.name]: schemaTable.columns,
+    };
+    defaultTable = schemaTable.name;
+    defaultSchema = schemaTable.database;
+  }
+  return sql({
+    dialect: MySQL,
+    schema,
+    defaultTable,
+    defaultSchema,
+    upperCaseKeywords: true,
+  });
+}
+
+export function QueryEditor({ onRun, onPreview, disabled, schemaTable }: Props) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const sqlCompartment = useMemo(() => new Compartment(), []);
   const [hasContent, setHasContent] = useState(false);
 
   useEffect(() => {
@@ -27,8 +68,18 @@ export function QueryEditor({ onRun, onPreview, disabled }: Props) {
           lineNumbers(),
           highlightActiveLine(),
           history(),
-          sql(),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          indentOnInput(),
+          bracketMatching(),
+          closeBrackets(),
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          autocompletion(),
+          sqlCompartment.of(buildSqlExtension(schemaTable)),
+          keymap.of([
+            ...defaultKeymap,
+            ...historyKeymap,
+            ...completionKeymap,
+            ...closeBracketsKeymap,
+          ]),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) setHasContent(u.state.doc.length > 0);
           }),
@@ -38,7 +89,19 @@ export function QueryEditor({ onRun, onPreview, disabled }: Props) {
     viewRef.current = view;
     setHasContent(true);
     return () => view.destroy();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const schemaKey = schemaTable
+    ? `${schemaTable.database}.${schemaTable.name}|${schemaTable.columns.join(",")}`
+    : "";
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: sqlCompartment.reconfigure(buildSqlExtension(schemaTable)) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schemaKey]);
 
   const currentText = (): string | null => {
     const view = viewRef.current;
