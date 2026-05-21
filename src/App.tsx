@@ -16,7 +16,6 @@ import { QueryEditor, type SchemaTable } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
 import { TabBar } from "./components/TabBar";
-import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import { SettingsView } from "./components/SettingsView";
 import { Splitter } from "./components/Splitter";
 import { t as translate, useT } from "./i18n";
@@ -626,9 +625,6 @@ export default function App() {
           }}
           onPickTable={handleOpenTable}
         />
-        <div className="sidebar-footer">
-          <LanguageSwitcher />
-        </div>
       </aside>
 
       <main className="main">

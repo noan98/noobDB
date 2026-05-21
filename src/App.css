@@ -1161,13 +1161,6 @@ label {
 }
 .status.error { color: var(--text-error); background: var(--bg-error); }
 
-.sidebar-footer {
-  margin-top: auto;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-toolbar);
-}
-
 /* ---------- Settings ---------- */
 
 .settings {

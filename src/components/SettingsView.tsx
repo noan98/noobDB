@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useT } from "../i18n";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import {
   DEFAULT_DISPLAY_COUNT,
   DEFAULT_STREAM_PREFETCH_SIZE,
@@ -64,6 +65,18 @@ export function SettingsView({ theme, onClose }: Props) {
         <h2>{t("settingsTitle")}</h2>
         <button onClick={onClose}>{t("settingsClose")}</button>
       </header>
+
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <h3>{t("settingsLanguage")}</h3>
+        </div>
+        <div className="settings-toggle-row">
+          <LanguageSwitcher />
+          <span className="settings-help-inline">
+            {t("settingsLanguageHelp")}
+          </span>
+        </div>
+      </section>
 
       <section className="settings-section">
         <div className="settings-section-header">
