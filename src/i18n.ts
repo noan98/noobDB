@@ -108,6 +108,9 @@ const en = {
   previewAfter: "After",
   previewEmptyBefore: "(table was empty)",
   previewEmptyAfter: "(table is empty after the statement)",
+  previewNoAffectedBefore: "(no affected rows on this side)",
+  previewNoAffectedAfter: "(no affected rows on this side)",
+  previewAffectedOutsideSnapshot: "Affected rows are outside the first {limit}-row snapshot.",
   previewTruncated: "Snapshots truncated to {limit} rows.",
 
   treeNotConnected: "Not connected.",
@@ -242,6 +245,9 @@ const ja: Dict = {
   previewAfter: "実行後",
   previewEmptyBefore: "(テーブルは空でした)",
   previewEmptyAfter: "(実行後、テーブルは空です)",
+  previewNoAffectedBefore: "(影響のあるレコードはありません)",
+  previewNoAffectedAfter: "(影響のあるレコードはありません)",
+  previewAffectedOutsideSnapshot: "影響のあるレコードは先頭 {limit} 件のスナップショット範囲外です。",
   previewTruncated: "スナップショットは {limit} 行に制限されています。",
 
   treeNotConnected: "接続されていません。",
