@@ -313,6 +313,9 @@ export function DataGrid({
           {table.getHeaderGroups()[0]?.headers.map((h) => (
             <col key={h.id} style={{ width: h.getSize() }} />
           ))}
+          {/* Absorbs any extra width so the row-index and data columns
+              keep their declared sizes instead of stretching to fill. */}
+          <col />
         </colgroup>
         <thead>
           {table.getHeaderGroups().map((hg) => (
@@ -366,6 +369,7 @@ export function DataGrid({
                   </th>
                 );
               })}
+              <th className="col-filler" aria-hidden />
             </tr>
           ))}
           {enableColumnControls && (
@@ -387,6 +391,7 @@ export function DataGrid({
                   </th>
                 );
               })}
+              <th className="col-filler" aria-hidden />
             </tr>
           )}
         </thead>
@@ -397,6 +402,7 @@ export function DataGrid({
               <td className="grid-empty-cell" colSpan={columns.length}>
                 {t("gridNoMatches")}
               </td>
+              <td className="col-filler" aria-hidden />
             </tr>
           ) : (
             visibleRows.map((row, rowIdx) => (
@@ -417,6 +423,7 @@ export function DataGrid({
                     </td>
                   );
                 })}
+                <td className="col-filler" aria-hidden />
               </tr>
             ))
           )}

@@ -736,6 +736,18 @@ label {
 :where(.results, .preview-pane-body) tbody tr:nth-child(even) td.row-index { background: var(--bg-stripe); }
 :where(.results, .preview-pane-body) tbody tr:hover td.row-index { background: var(--bg-row-hover); }
 
+/* Trailing filler cell: with table-layout: fixed it absorbs the
+   extra width when columns don't fill the panel, so the row-index
+   and data columns keep their declared sizes. */
+:where(.results, .preview-pane-body) th.col-filler,
+:where(.results, .preview-pane-body) td.col-filler {
+  padding: 0;
+  border-right: none;
+  background: var(--bg-elevated);
+}
+:where(.results, .preview-pane-body) tbody tr:nth-child(even) td.col-filler { background: var(--bg-elevated); }
+:where(.results, .preview-pane-body) tbody tr:hover td.col-filler { background: var(--bg-elevated); }
+
 :where(.results, .preview-pane-body) .cell-null {
   color: var(--text-null);
   font-style: italic;
