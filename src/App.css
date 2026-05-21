@@ -1080,6 +1080,20 @@ label {
 .preview-affected { color: var(--text); }
 .preview-truncated { color: var(--cell-date); }
 
+.preview-sync-scroll {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.preview-sync-scroll input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
 .preview-grids {
   flex: 1;
   min-height: 0;

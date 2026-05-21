@@ -120,7 +120,6 @@ const en = {
   editorBuilder: "Query Builder",
   editorBuilderTitle: "Build a SELECT/INSERT/UPDATE/DELETE statement from a guided form.",
   editorHintDisabled: "Connect a session to run queries.",
-  editorHint: "Tip: select text to run only that fragment.",
 
   qbTitle: "Query Builder",
   qbClose: "Close",
@@ -164,6 +163,8 @@ const en = {
   previewNoAffectedAfter: "(no affected rows on this side)",
   previewAffectedOutsideSnapshot: "Affected rows are outside the first {limit}-row snapshot.",
   previewTruncated: "Snapshots truncated to {limit} rows.",
+  previewSyncScroll: "Sync scroll",
+  previewSyncScrollTitle: "Sync vertical and horizontal scroll between the before and after panes.",
 
   treeNotConnected: "Not connected.",
   treeNoDatabases: "(no databases)",
@@ -312,7 +313,6 @@ const ja: Dict = {
   editorBuilder: "クエリ組み立て",
   editorBuilderTitle: "フォームから SELECT/INSERT/UPDATE/DELETE 文を組み立てます。",
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
-  editorHint: "ヒント: テキストを選択するとその部分のみを実行できます。",
 
   qbTitle: "クエリ組み立て",
   qbClose: "閉じる",
@@ -356,6 +356,8 @@ const ja: Dict = {
   previewNoAffectedAfter: "(影響のあるレコードはありません)",
   previewAffectedOutsideSnapshot: "影響のあるレコードは先頭 {limit} 件のスナップショット範囲外です。",
   previewTruncated: "スナップショットは {limit} 行に制限されています。",
+  previewSyncScroll: "スクロールを同期",
+  previewSyncScrollTitle: "実行前後のペインで縦・横のスクロールを同期します。",
 
   treeNotConnected: "接続されていません。",
   treeNoDatabases: "(データベースがありません)",
