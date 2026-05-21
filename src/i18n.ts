@@ -130,6 +130,7 @@ const en = {
   qbCopy: "Copy",
   qbCopied: "Copied",
   qbExecute: "Execute",
+  qbPreviewRun: "Preview run",
   qbRemove: "Remove",
   qbLoading: "Loading...",
 
@@ -307,6 +308,7 @@ const ja: Dict = {
   qbCopy: "コピー",
   qbCopied: "コピー済み",
   qbExecute: "実行",
+  qbPreviewRun: "プレビュー実行",
   qbRemove: "削除",
   qbLoading: "読み込み中...",
 
