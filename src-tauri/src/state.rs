@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::task::AbortHandle;
 
 use crate::db::Connection;
 use crate::ssh::SshTunnel;
 
 pub type SessionId = String;
+pub type StreamId = String;
 
 pub struct Session {
     pub id: SessionId,
@@ -19,6 +21,9 @@ pub struct Session {
 #[derive(Default)]
 pub struct AppState {
     pub sessions: RwLock<HashMap<SessionId, Arc<Session>>>,
+    /// Active streaming tasks keyed by client-provided stream id.
+    /// Aborting the handle cancels the task and stops further events.
+    pub streams: RwLock<HashMap<StreamId, AbortHandle>>,
 }
 
 impl AppState {
@@ -37,6 +42,28 @@ impl AppState {
 
     pub async fn remove(&self, id: &str) -> Option<Arc<Session>> {
         self.sessions.write().await.remove(id)
+    }
+
+    pub async fn register_stream(&self, stream_id: StreamId, handle: AbortHandle) {
+        let mut map = self.streams.write().await;
+        if let Some(prev) = map.insert(stream_id, handle) {
+            // Cancel any previous task that reused this id — caller side
+            // should not normally collide, but never let two run concurrently.
+            prev.abort();
+        }
+    }
+
+    pub async fn forget_stream(&self, stream_id: &str) {
+        self.streams.write().await.remove(stream_id);
+    }
+
+    pub async fn cancel_stream(&self, stream_id: &str) -> bool {
+        if let Some(h) = self.streams.write().await.remove(stream_id) {
+            h.abort();
+            true
+        } else {
+            false
+        }
     }
 }
 

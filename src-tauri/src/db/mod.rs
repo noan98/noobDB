@@ -4,7 +4,7 @@ pub mod types;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use types::{PreviewResult, QueryResult, TableColumnInfo};
+use types::{PreviewResult, QueryResult, StreamBatch, TableColumnInfo};
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
 /// `host`/`port` will already point to the local end of the tunnel.
@@ -50,6 +50,36 @@ impl Connection {
     ) -> Result<PreviewResult> {
         match self {
             Connection::MySql(c) => c.preview_execute(sql, database).await,
+        }
+    }
+
+    pub async fn preview_execute_with_limit(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_limit: usize,
+    ) -> Result<PreviewResult> {
+        match self {
+            Connection::MySql(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
+        }
+    }
+
+    pub async fn execute_stream<F>(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        initial_batch: usize,
+        chunk_size: usize,
+        on_batch: F,
+    ) -> Result<QueryResult>
+    where
+        F: FnMut(StreamBatch) -> Result<()>,
+    {
+        match self {
+            Connection::MySql(c) => {
+                c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
+                    .await
+            }
         }
     }
 

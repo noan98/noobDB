@@ -1,5 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, ConnectionProfile, PreviewResult, QueryResult } from "./api/tauri";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import {
+  api,
+  CellValue,
+  Column,
+  ConnectionProfile,
+  PreviewResult,
+  QueryResult,
+  listenPreviewStream,
+  listenQueryStream,
+} from "./api/tauri";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { QueryEditor, type SchemaTable } from "./components/QueryEditor";
@@ -10,8 +20,6 @@ import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import { SettingsView } from "./components/SettingsView";
 import { t as translate, useT } from "./i18n";
 import { useSettings } from "./settings";
-
-const PREVIEW_ROW_LIMIT = 100;
 
 type Theme = "light" | "dark";
 
@@ -42,12 +50,20 @@ interface Tab {
   result: QueryResult | null;
   preview: PreviewResult | null;
   schemaTable: SchemaTable | null;
+  /** True while a streaming command is feeding rows into `result`/`preview`. */
+  streaming: boolean;
+  /** Snapshot row cap used for the active preview stream. */
+  previewRowLimit: number;
 }
 
 let tabSeq = 0;
 function newTabId(): string {
   tabSeq += 1;
   return `tab_${Date.now().toString(36)}_${tabSeq.toString(36)}`;
+}
+
+function newStreamId(tabId: string): string {
+  return `${tabId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function makeQueryTab(): Tab {
@@ -59,6 +75,25 @@ function makeQueryTab(): Tab {
     result: null,
     preview: null,
     schemaTable: null,
+    streaming: false,
+    previewRowLimit: 100,
+  };
+}
+
+function emptyResult(columns: Column[]): QueryResult {
+  return { columns, rows: [], rows_affected: 0, elapsed_ms: 0 };
+}
+
+function emptyPreview(): PreviewResult {
+  return {
+    target_table: null,
+    columns: [],
+    primary_key: [],
+    before_rows: [],
+    after_rows: [],
+    rows_affected: 0,
+    elapsed_ms: 0,
+    truncated: false,
   };
 }
 
@@ -103,9 +138,39 @@ export default function App() {
     [tabs, activeTabId],
   );
 
+  // Per-tab stream bookkeeping. Listener cleanup and the active stream id
+  // are held in refs so we don't trigger re-renders on every batch and so
+  // we can synchronously cancel from anywhere (tab close, disconnect).
+  const streamUnlistenRef = useRef<Map<string, UnlistenFn>>(new Map());
+  const streamIdRef = useRef<Map<string, string>>(new Map());
+
   const updateTab = useCallback((id: string, patch: Partial<Tab>) => {
     setTabs((prev) => prev.map((tt) => (tt.id === id ? { ...tt, ...patch } : tt)));
   }, []);
+
+  const patchTab = useCallback((id: string, patcher: (tab: Tab) => Tab) => {
+    setTabs((prev) => prev.map((tt) => (tt.id === id ? patcher(tt) : tt)));
+  }, []);
+
+  const detachStreamListener = useCallback((tabId: string) => {
+    const un = streamUnlistenRef.current.get(tabId);
+    if (un) {
+      un();
+      streamUnlistenRef.current.delete(tabId);
+    }
+    streamIdRef.current.delete(tabId);
+  }, []);
+
+  const cancelStreamForTab = useCallback(
+    async (tabId: string) => {
+      const sid = streamIdRef.current.get(tabId);
+      detachStreamListener(tabId);
+      if (sid) {
+        try { await api.cancelStream(sid); } catch { /* best-effort */ }
+      }
+    },
+    [detachStreamListener],
+  );
 
   const refreshProfiles = useCallback(async () => {
     try {
@@ -120,10 +185,13 @@ export default function App() {
     refreshProfiles();
   }, [refreshProfiles]);
 
-  const closeAllTabs = useCallback(() => {
+  const closeAllTabs = useCallback(async () => {
+    // Cancel any in-flight streams before tearing down tabs.
+    const ids = Array.from(streamIdRef.current.keys());
+    await Promise.all(ids.map((tid) => cancelStreamForTab(tid)));
     setTabs([]);
     setActiveTabId(null);
-  }, []);
+  }, [cancelStreamForTab]);
 
   const handleConnect = useCallback(async (profile: ConnectionProfile, password: string, passphrase: string) => {
     setConnectingId(profile.id);
@@ -132,7 +200,7 @@ export default function App() {
     if (sessionId) {
       try { await api.disconnect(sessionId); } catch (e) { console.warn(e); }
       setSessionId(null);
-      closeAllTabs();
+      await closeAllTabs();
     }
     try {
       const res = await api.connect({
@@ -161,6 +229,7 @@ export default function App() {
 
   const handleDisconnect = useCallback(async () => {
     if (!sessionId) return;
+    await closeAllTabs();
     try {
       await api.disconnect(sessionId);
     } catch (e) {
@@ -168,7 +237,6 @@ export default function App() {
     }
     setSessionId(null);
     setSelectedProfile(null);
-    closeAllTabs();
     setStatus({ kind: "key", key: "appDisconnected" });
   }, [sessionId, closeAllTabs]);
 
@@ -190,25 +258,127 @@ export default function App() {
     return () => { cancelled = true; };
   }, [sessionId, activeTab, updateTab]);
 
+  // Tabs ref kept in sync so streaming callbacks below can read the latest
+  // committed tab state without re-creating themselves on every batch.
+  const tabsRef = useRef<Tab[]>(tabs);
+  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
+
+  const nextRowCount = useCallback((tabId: string, justAdded: number) => {
+    const tt = tabsRef.current.find((x) => x.id === tabId);
+    if (tt?.result) return tt.result.rows.length;
+    return justAdded;
+  }, []);
+
   const runQueryInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
     }
     const tab = tabs.find((tt) => tt.id === tabId);
+    await cancelStreamForTab(tabId);
+
+    const streamId = newStreamId(tabId);
+    streamIdRef.current.set(tabId, streamId);
+    const startedAt = Date.now();
     setStatus({ kind: "key", key: "statusRunningQuery" });
-    try {
-      const r = await api.runQuery(sessionId, sql, tab?.database ?? null);
-      updateTab(tabId, { result: r, preview: null });
-      if (r.columns.length > 0) {
-        setStatus({ kind: "key", key: "statusRowsIn", vars: { rows: r.rows.length, ms: r.elapsed_ms } });
-      } else {
-        setStatus({ kind: "key", key: "statusRowsAffected", vars: { rows: r.rows_affected, ms: r.elapsed_ms } });
+    updateTab(tabId, { result: emptyResult([]), preview: null, streaming: true });
+
+    const finalize = () => {
+      const un = streamUnlistenRef.current.get(tabId);
+      if (un) {
+        un();
+        streamUnlistenRef.current.delete(tabId);
       }
+      streamIdRef.current.delete(tabId);
+    };
+
+    const unlisten = await listenQueryStream(streamId, {
+      onColumns: ({ columns }) => {
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
+        }));
+      },
+      onRows: ({ rows }) => {
+        patchTab(tabId, (tt) => {
+          if (!tt.result) return tt;
+          return {
+            ...tt,
+            result: {
+              ...tt.result,
+              rows: [...tt.result.rows, ...rows as CellValue[][]],
+              rows_affected: tt.result.rows.length + rows.length,
+              elapsed_ms: Date.now() - startedAt,
+            },
+          };
+        });
+        // Update live status with current row count.
+        setStatus((prev) => {
+          // Only override the "running" / "streaming" status — avoid clobbering
+          // an error a user is reading.
+          if (prev.kind === "key" && prev.error) return prev;
+          return {
+            kind: "key",
+            key: "statusStreaming",
+            vars: { rows: nextRowCount(tabId, rows.length), ms: Date.now() - startedAt },
+          };
+        });
+      },
+      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns }) => {
+        patchTab(tabId, (tt) => {
+          if (!hasColumns) {
+            return {
+              ...tt,
+              result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs },
+              streaming: false,
+            };
+          }
+          return {
+            ...tt,
+            result: tt.result
+              ? { ...tt.result, elapsed_ms: elapsedMs, rows_affected: totalRows }
+              : tt.result,
+            streaming: false,
+          };
+        });
+        if (hasColumns) {
+          setStatus({ kind: "key", key: "statusStreamingDone", vars: { rows: totalRows, ms: elapsedMs } });
+        } else {
+          setStatus({ kind: "key", key: "statusRowsAffected", vars: { rows: rowsAffected, ms: elapsedMs } });
+        }
+        finalize();
+      },
+      onError: ({ error }) => {
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+        setStatus({ kind: "key", key: "statusQueryError", vars: { error }, error: true });
+        finalize();
+      },
+    });
+    streamUnlistenRef.current.set(tabId, unlisten);
+
+    try {
+      await api.runQueryStream({
+        sessionId,
+        streamId,
+        sql,
+        database: tab?.database ?? null,
+        initialBatch: settings.defaultDisplayCount,
+        chunkSize: settings.streamPrefetchSize,
+      });
     } catch (e) {
+      patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
       setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
+      finalize();
     }
-  }, [sessionId, updateTab, tabs]);
+  }, [
+    sessionId,
+    tabs,
+    updateTab,
+    patchTab,
+    cancelStreamForTab,
+    settings.defaultDisplayCount,
+    settings.streamPrefetchSize,
+  ]);
 
   const previewQueryInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) {
@@ -216,19 +386,110 @@ export default function App() {
       return;
     }
     const tab = tabs.find((tt) => tt.id === tabId);
+    await cancelStreamForTab(tabId);
+
+    const streamId = newStreamId(tabId);
+    streamIdRef.current.set(tabId, streamId);
+    const startedAt = Date.now();
     setStatus({ kind: "key", key: "statusRunningPreview" });
+    const rowLimit = settings.defaultDisplayCount;
+    updateTab(tabId, {
+      result: null,
+      preview: emptyPreview(),
+      streaming: true,
+      previewRowLimit: rowLimit,
+    });
+
+    const finalize = () => {
+      const un = streamUnlistenRef.current.get(tabId);
+      if (un) {
+        un();
+        streamUnlistenRef.current.delete(tabId);
+      }
+      streamIdRef.current.delete(tabId);
+    };
+
+    const unlisten = await listenPreviewStream(streamId, {
+      onMeta: ({ targetTable, columns, primaryKey, rowsAffected, elapsedMs, truncated }) => {
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          preview: {
+            target_table: targetTable,
+            columns,
+            primary_key: primaryKey,
+            before_rows: [],
+            after_rows: [],
+            rows_affected: rowsAffected,
+            elapsed_ms: elapsedMs,
+            truncated,
+          },
+        }));
+      },
+      onBeforeRows: ({ rows }) => {
+        patchTab(tabId, (tt) => {
+          if (!tt.preview) return tt;
+          return {
+            ...tt,
+            preview: { ...tt.preview, before_rows: [...tt.preview.before_rows, ...rows as CellValue[][]] },
+          };
+        });
+        setStatus((prev) => {
+          if (prev.kind === "key" && prev.error) return prev;
+          return { kind: "key", key: "statusPreviewStreaming", vars: { ms: Date.now() - startedAt } };
+        });
+      },
+      onAfterRows: ({ rows }) => {
+        patchTab(tabId, (tt) => {
+          if (!tt.preview) return tt;
+          return {
+            ...tt,
+            preview: { ...tt.preview, after_rows: [...tt.preview.after_rows, ...rows as CellValue[][]] },
+          };
+        });
+      },
+      onDone: () => {
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+        const tt = tabsRef.current.find((x) => x.id === tabId);
+        const rowsAffected = tt?.preview?.rows_affected ?? 0;
+        const elapsedMs = tt?.preview?.elapsed_ms ?? Date.now() - startedAt;
+        setStatus({
+          kind: "key",
+          key: "statusPreviewDone",
+          vars: { rows: rowsAffected, ms: elapsedMs },
+        });
+        finalize();
+      },
+      onError: ({ error }) => {
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+        setStatus({ kind: "key", key: "statusPreviewError", vars: { error }, error: true });
+        finalize();
+      },
+    });
+    streamUnlistenRef.current.set(tabId, unlisten);
+
     try {
-      const p = await api.previewQuery(sessionId, sql, tab?.database ?? null);
-      updateTab(tabId, { preview: p, result: null });
-      setStatus({
-        kind: "key",
-        key: "statusPreviewDone",
-        vars: { rows: p.rows_affected, ms: p.elapsed_ms },
+      await api.previewQueryStream({
+        sessionId,
+        streamId,
+        sql,
+        database: tab?.database ?? null,
+        rowLimit,
+        chunkSize: settings.streamPrefetchSize,
       });
     } catch (e) {
+      patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
       setStatus({ kind: "key", key: "statusPreviewError", vars: { error: String(e) }, error: true });
+      finalize();
     }
-  }, [sessionId, updateTab, tabs]);
+  }, [
+    sessionId,
+    tabs,
+    updateTab,
+    patchTab,
+    cancelStreamForTab,
+    settings.defaultDisplayCount,
+    settings.streamPrefetchSize,
+  ]);
 
   const handleRunQuery = useCallback((sql: string) => {
     if (!activeTab) return;
@@ -253,7 +514,8 @@ export default function App() {
       setActiveTabId(existing.id);
       return;
     }
-    const sql = `SELECT * FROM \`${database}\`.\`${table}\` LIMIT 100`;
+    const limit = Math.max(1, settings.defaultDisplayCount);
+    const sql = `SELECT * FROM \`${database}\`.\`${table}\` LIMIT ${limit}`;
     const tab: Tab = {
       id: newTabId(),
       kind: "table",
@@ -264,11 +526,13 @@ export default function App() {
       result: null,
       preview: null,
       schemaTable: null,
+      streaming: false,
+      previewRowLimit: limit,
     };
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(tab.id);
     runQueryInTab(tab.id, sql);
-  }, [tabs, runQueryInTab]);
+  }, [tabs, runQueryInTab, settings.defaultDisplayCount]);
 
   const handleNewTab = useCallback(() => {
     const tab = makeQueryTab();
@@ -277,6 +541,7 @@ export default function App() {
   }, []);
 
   const handleCloseTab = useCallback((id: string) => {
+    cancelStreamForTab(id);
     setTabs((prev) => {
       const idx = prev.findIndex((tt) => tt.id === id);
       if (idx === -1) return prev;
@@ -287,7 +552,18 @@ export default function App() {
       }
       return next;
     });
-  }, [activeTabId]);
+  }, [activeTabId, cancelStreamForTab]);
+
+  // Clean up any active listeners when the app unmounts.
+  useEffect(() => {
+    return () => {
+      for (const un of streamUnlistenRef.current.values()) {
+        try { un(); } catch { /* ignore */ }
+      }
+      streamUnlistenRef.current.clear();
+      streamIdRef.current.clear();
+    };
+  }, []);
 
   const statusText = status.kind === "literal" ? status.text : t(status.key, status.vars);
 
@@ -412,9 +688,13 @@ export default function App() {
                     }
                   />
                   {activeTab.preview ? (
-                    <PreviewGrid result={activeTab.preview} rowLimit={PREVIEW_ROW_LIMIT} />
+                    <PreviewGrid
+                      result={activeTab.preview}
+                      rowLimit={activeTab.previewRowLimit}
+                      streaming={activeTab.streaming}
+                    />
                   ) : (
-                    <ResultGrid result={activeTab.result} />
+                    <ResultGrid result={activeTab.result} streaming={activeTab.streaming} />
                   )}
                 </>
               ) : (

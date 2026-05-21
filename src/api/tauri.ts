@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type DriverKind = "mysql";
 
@@ -105,6 +106,41 @@ export const api = {
   previewQuery: (sessionId: string, sql: string, database?: string | null) =>
     invoke<PreviewResult>("preview_query", { sessionId, sql, database: database ?? null }),
 
+  runQueryStream: (params: {
+    sessionId: string;
+    streamId: string;
+    sql: string;
+    database?: string | null;
+    initialBatch: number;
+    chunkSize: number;
+  }) =>
+    invoke<void>("run_query_stream", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      sql: params.sql,
+      database: params.database ?? null,
+      initialBatch: params.initialBatch,
+      chunkSize: params.chunkSize,
+    }),
+  previewQueryStream: (params: {
+    sessionId: string;
+    streamId: string;
+    sql: string;
+    database?: string | null;
+    rowLimit: number;
+    chunkSize: number;
+  }) =>
+    invoke<void>("preview_query_stream", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      sql: params.sql,
+      database: params.database ?? null,
+      rowLimit: params.rowLimit,
+      chunkSize: params.chunkSize,
+    }),
+  cancelStream: (streamId: string) =>
+    invoke<boolean>("cancel_stream", { streamId }),
+
   listDatabases: (sessionId: string) =>
     invoke<string[]>("list_databases", { sessionId }),
   listTables: (sessionId: string, database: string) =>
@@ -117,3 +153,108 @@ export const api = {
     invoke<ConnectionProfile>("save_profile", { req }),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
 };
+
+export interface QueryStreamColumnsEvent {
+  streamId: string;
+  columns: Column[];
+}
+
+export interface QueryStreamRowsEvent {
+  streamId: string;
+  rows: CellValue[][];
+}
+
+export interface QueryStreamDoneEvent {
+  streamId: string;
+  totalRows: number;
+  rowsAffected: number;
+  elapsedMs: number;
+  hasColumns: boolean;
+}
+
+export interface QueryStreamErrorEvent {
+  streamId: string;
+  error: string;
+}
+
+export interface PreviewStreamMetaEvent {
+  streamId: string;
+  targetTable: string | null;
+  columns: Column[];
+  primaryKey: string[];
+  rowsAffected: number;
+  elapsedMs: number;
+  truncated: boolean;
+  beforeTotal: number;
+  afterTotal: number;
+}
+
+export interface PreviewStreamRowsEvent {
+  streamId: string;
+  rows: CellValue[][];
+}
+
+export interface PreviewStreamDoneEvent {
+  streamId: string;
+}
+
+export interface PreviewStreamErrorEvent {
+  streamId: string;
+  error: string;
+}
+
+export interface QueryStreamHandlers {
+  onColumns?: (event: QueryStreamColumnsEvent) => void;
+  onRows?: (event: QueryStreamRowsEvent) => void;
+  onDone?: (event: QueryStreamDoneEvent) => void;
+  onError?: (event: QueryStreamErrorEvent) => void;
+}
+
+export interface PreviewStreamHandlers {
+  onMeta?: (event: PreviewStreamMetaEvent) => void;
+  onBeforeRows?: (event: PreviewStreamRowsEvent) => void;
+  onAfterRows?: (event: PreviewStreamRowsEvent) => void;
+  onDone?: (event: PreviewStreamDoneEvent) => void;
+  onError?: (event: PreviewStreamErrorEvent) => void;
+}
+
+/**
+ * Subscribes to all query-stream events for `streamId`. Events for other
+ * streams are ignored. Returns a function that detaches every listener.
+ */
+export async function listenQueryStream(
+  streamId: string,
+  handlers: QueryStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(cb?: (e: T) => void) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) cb(e.payload);
+    };
+  const unlisteners = await Promise.all([
+    listen<QueryStreamColumnsEvent>("query-stream:columns", filter(handlers.onColumns)),
+    listen<QueryStreamRowsEvent>("query-stream:rows", filter(handlers.onRows)),
+    listen<QueryStreamDoneEvent>("query-stream:done", filter(handlers.onDone)),
+    listen<QueryStreamErrorEvent>("query-stream:error", filter(handlers.onError)),
+  ]);
+  return () => unlisteners.forEach((un) => un());
+}
+
+export async function listenPreviewStream(
+  streamId: string,
+  handlers: PreviewStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(cb?: (e: T) => void) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) cb(e.payload);
+    };
+  const unlisteners = await Promise.all([
+    listen<PreviewStreamMetaEvent>("preview-stream:meta", filter(handlers.onMeta)),
+    listen<PreviewStreamRowsEvent>("preview-stream:before-rows", filter(handlers.onBeforeRows)),
+    listen<PreviewStreamRowsEvent>("preview-stream:after-rows", filter(handlers.onAfterRows)),
+    listen<PreviewStreamDoneEvent>("preview-stream:done", filter(handlers.onDone)),
+    listen<PreviewStreamErrorEvent>("preview-stream:error", filter(handlers.onError)),
+  ]);
+  return () => unlisteners.forEach((un) => un());
+}

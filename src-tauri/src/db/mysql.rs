@@ -1,15 +1,16 @@
 use std::time::Instant;
 
+use futures_util::StreamExt;
 use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, MySql, Row, TypeInfo, ValueRef};
 
-use super::types::{Column, PreviewResult, QueryResult, TableColumnInfo, Value};
+use super::types::{Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, Value};
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
 
-/// Snapshot row cap for preview before/after captures. Higher values give
-/// better visibility for large tables but cost more bandwidth.
+/// Default snapshot row cap for preview before/after captures when the
+/// caller does not override it via the streaming path.
 const PREVIEW_ROW_LIMIT: usize = 100;
 
 pub struct MySqlConn {
@@ -91,6 +92,100 @@ impl MySqlConn {
         sql: &str,
         database: Option<&str>,
     ) -> Result<PreviewResult> {
+        self.preview_execute_with_limit(sql, database, PREVIEW_ROW_LIMIT)
+            .await
+    }
+
+    /// Streams SELECT-shaped queries by yielding row batches through `on_batch`.
+    /// `initial_batch` controls the size of the first batch (so the UI can
+    /// show something immediately); subsequent batches use `chunk_size`.
+    ///
+    /// Non-query statements (INSERT/UPDATE/...) don't have rows to stream, so
+    /// they execute as a single step and the returned `QueryResult` carries
+    /// only `rows_affected`/`elapsed_ms`; no callbacks are made.
+    ///
+    /// `on_batch` is invoked synchronously between batches. Returning `Err`
+    /// from it aborts the stream and the error bubbles out of this function.
+    pub async fn execute_stream<F>(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        initial_batch: usize,
+        chunk_size: usize,
+        mut on_batch: F,
+    ) -> Result<QueryResult>
+    where
+        F: FnMut(StreamBatch) -> Result<()>,
+    {
+        let started = Instant::now();
+        let trimmed = sql.trim_start().to_ascii_lowercase();
+        let is_query = trimmed.starts_with("select")
+            || trimmed.starts_with("show")
+            || trimmed.starts_with("describe")
+            || trimmed.starts_with("desc ")
+            || trimmed.starts_with("explain")
+            || trimmed.starts_with("with");
+
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+
+        if !is_query {
+            let result = sqlx::query(sql).execute(&mut *conn).await?;
+            return Ok(QueryResult::empty(
+                result.rows_affected(),
+                started.elapsed().as_millis() as u64,
+            ));
+        }
+
+        let initial = initial_batch.max(1);
+        let chunk = chunk_size.max(1);
+        let mut stream = sqlx::query(sql).fetch(&mut *conn);
+        let mut columns: Vec<Column> = Vec::new();
+        let mut columns_emitted = false;
+        let mut buffer: Vec<Vec<Value>> = Vec::new();
+        let mut total: usize = 0;
+        let mut target = initial;
+
+        while let Some(row) = stream.next().await {
+            let row = row?;
+            if !columns_emitted {
+                columns = columns_of(std::slice::from_ref(&row));
+                on_batch(StreamBatch::Columns(columns.clone()))?;
+                columns_emitted = true;
+            }
+            buffer.push(row_to_values(&row));
+            if buffer.len() >= target {
+                total += buffer.len();
+                let batch = std::mem::take(&mut buffer);
+                on_batch(StreamBatch::Rows(batch))?;
+                target = chunk;
+            }
+        }
+        if !buffer.is_empty() {
+            total += buffer.len();
+            on_batch(StreamBatch::Rows(std::mem::take(&mut buffer)))?;
+        }
+        if !columns_emitted {
+            // Empty result set: still tell the client the column shape so
+            // headers can render.
+            on_batch(StreamBatch::Columns(columns.clone()))?;
+        }
+
+        Ok(QueryResult {
+            columns,
+            rows: Vec::new(),
+            rows_affected: total as u64,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
+    pub async fn preview_execute_with_limit(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_limit: usize,
+    ) -> Result<PreviewResult> {
+        let row_limit = row_limit.max(1);
         let trimmed = sql.trim_start().to_ascii_lowercase();
         let is_mutation = trimmed.starts_with("insert")
             || trimmed.starts_with("update")
@@ -121,7 +216,7 @@ impl MySqlConn {
                 "SELECT * FROM {}{} LIMIT {}",
                 t,
                 order_clause,
-                PREVIEW_ROW_LIMIT + 1
+                row_limit + 1
             )
         });
 
@@ -153,7 +248,7 @@ impl MySqlConn {
             if !pk_indices.is_empty() && pk_indices.len() == primary_key.len() {
                 before_raw
                     .iter()
-                    .take(PREVIEW_ROW_LIMIT)
+                    .take(row_limit)
                     .map(|r| pk_indices.iter().map(|&i| decode_cell(r, i)).collect())
                     .collect()
             } else {
@@ -190,7 +285,7 @@ impl MySqlConn {
         // AFTER is bounded by the captured PKs in the common path, but the
         // fallback runs the same LIMIT 101 query and can overshoot — guard
         // both sides so the banner stays accurate.
-        let truncated = before_raw.len() > PREVIEW_ROW_LIMIT || after_raw.len() > PREVIEW_ROW_LIMIT;
+        let truncated = before_raw.len() > row_limit || after_raw.len() > row_limit;
         let columns = if let Some(first) = before_raw.first().or_else(|| after_raw.first()) {
             columns_of(std::slice::from_ref(first))
         } else {
@@ -198,12 +293,12 @@ impl MySqlConn {
         };
         let before_rows: Vec<Vec<Value>> = before_raw
             .iter()
-            .take(PREVIEW_ROW_LIMIT)
+            .take(row_limit)
             .map(row_to_values)
             .collect();
         let after_rows: Vec<Vec<Value>> = after_raw
             .iter()
-            .take(PREVIEW_ROW_LIMIT)
+            .take(row_limit)
             .map(row_to_values)
             .collect();
 

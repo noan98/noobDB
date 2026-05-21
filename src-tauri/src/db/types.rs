@@ -50,6 +50,15 @@ pub struct TableColumnInfo {
     pub extra: String,
 }
 
+/// One unit produced by streaming SELECT execution. Columns are reported
+/// once (before any rows) so the UI can render headers immediately, then
+/// row batches arrive as they are read off the wire.
+#[derive(Debug, Clone)]
+pub enum StreamBatch {
+    Columns(Vec<Column>),
+    Rows(Vec<Vec<Value>>),
+}
+
 /// Result of a "dry-run" preview: the SQL is executed inside a transaction
 /// that is rolled back afterwards, so the live database is unchanged.
 /// `before_rows` and `after_rows` are snapshots of the auto-detected target
