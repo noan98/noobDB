@@ -286,8 +286,20 @@ async fn spawn_preview_stream(
                     after_total: p.after_rows.len(),
                 },
             );
-            emit_chunks(&app, &stream_id, EV_PREVIEW_BEFORE, &p.before_rows, chunk_size);
-            emit_chunks(&app, &stream_id, EV_PREVIEW_AFTER, &p.after_rows, chunk_size);
+            emit_chunks(
+                &app,
+                &stream_id,
+                EV_PREVIEW_BEFORE,
+                &p.before_rows,
+                chunk_size,
+            );
+            emit_chunks(
+                &app,
+                &stream_id,
+                EV_PREVIEW_AFTER,
+                &p.after_rows,
+                chunk_size,
+            );
             let _ = app.emit(
                 EV_PREVIEW_DONE,
                 PreviewDoneEvent {
