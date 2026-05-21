@@ -116,9 +116,14 @@ impl MySqlConn {
         };
         let order_clause = build_pk_order_clause(&primary_key);
 
-        let before_sql = target
-            .as_ref()
-            .map(|t| format!("SELECT * FROM {}{} LIMIT {}", t, order_clause, PREVIEW_ROW_LIMIT + 1));
+        let before_sql = target.as_ref().map(|t| {
+            format!(
+                "SELECT * FROM {}{} LIMIT {}",
+                t,
+                order_clause,
+                PREVIEW_ROW_LIMIT + 1
+            )
+        });
 
         let mut tx = conn.begin().await?;
         let started = Instant::now();
@@ -162,8 +167,7 @@ impl MySqlConn {
         // but for INSERT we want the LIMIT scan so newly inserted rows actually
         // show up in AFTER (their PKs weren't in BEFORE to anchor on).
         let is_insert = trimmed.starts_with("insert");
-        let use_pk_anchor =
-            !is_insert && target.is_some() && !captured_pks.is_empty();
+        let use_pk_anchor = !is_insert && target.is_some() && !captured_pks.is_empty();
         let after_raw: Vec<MySqlRow> = if use_pk_anchor {
             fetch_after_by_pk(
                 &mut tx,
@@ -495,10 +499,7 @@ fn tokenize_sql(sql: &str) -> Vec<String> {
 /// them in `Seq_in_index` order (so composite PKs are ordered correctly).
 /// On any failure — view target, MERGE table, lacking SELECT on the table —
 /// the caller treats an empty result as "PK unknown" and degrades gracefully.
-async fn fetch_primary_key(
-    conn: &mut PoolConnection<MySql>,
-    target: &str,
-) -> Result<Vec<String>> {
+async fn fetch_primary_key(conn: &mut PoolConnection<MySql>, target: &str) -> Result<Vec<String>> {
     // `target` is taken verbatim from the user's SQL (already quoted as
     // needed). `SHOW KEYS FROM ...` accepts both `tbl` and `` `db`.`tbl` ``.
     let sql = format!("SHOW KEYS FROM {} WHERE Key_name = 'PRIMARY'", target);
@@ -552,7 +553,10 @@ async fn fetch_after_by_pk(
     } else {
         format!(
             "({})",
-            std::iter::repeat("?").take(pk_idents.len()).collect::<Vec<_>>().join(",")
+            std::iter::repeat("?")
+                .take(pk_idents.len())
+                .collect::<Vec<_>>()
+                .join(",")
         )
     };
     let placeholders = std::iter::repeat(row_placeholder.as_str())
