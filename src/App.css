@@ -606,7 +606,6 @@ label {
 /* ---------- Editor ---------- */
 
 .editor {
-  border-bottom: 1px solid var(--border);
   min-height: 200px;
   display: flex;
   flex-direction: column;
@@ -946,8 +945,6 @@ label {
 
 .preview-grids {
   flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -956,9 +953,7 @@ label {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--border);
 }
-.preview-pane:last-child { border-right: none; }
 
 .preview-pane-header {
   padding: 5px 10px;
@@ -1003,14 +998,6 @@ label {
   font-style: italic;
 }
 
-@media (max-width: 900px) {
-  .preview-grids {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  }
-  .preview-pane { border-right: none; border-bottom: 1px solid var(--border); }
-  .preview-pane:last-child { border-bottom: none; }
-}
 
 /* ---------- Status bar ---------- */
 
@@ -1140,6 +1127,54 @@ label {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
+}
+
+/* ---------- Splitter (drag-to-resize panes) ---------- */
+
+.splitter {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.splitter.splitter-row { flex-direction: row; }
+.splitter.splitter-column { flex-direction: column; }
+
+.splitter-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Children dropped directly into a splitter pane fill the wrapper, even when
+   their own CSS doesn't set flex: 1 / min-*: 0 (e.g. .editor's 200px min). */
+.splitter-pane > .editor,
+.splitter-pane > .results,
+.splitter-pane > .preview,
+.splitter-pane > .preview-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.splitter-pane > .editor { min-height: 0; }
+
+.splitter-handle {
+  flex: 0 0 auto;
+  background: var(--border);
+  user-select: none;
+  touch-action: none;
+  transition: background 0.12s;
+  position: relative;
+  z-index: 4;
+}
+.splitter-handle-h { height: 5px; cursor: ns-resize; }
+.splitter-handle-v { width: 5px; cursor: ew-resize; }
+.splitter-handle:hover,
+.splitter-handle.is-dragging {
+  background: var(--accent);
 }
 
 .lang-switch {
