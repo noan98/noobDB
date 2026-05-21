@@ -417,6 +417,8 @@ export default function App() {
                           ? { database: activeTab.database, name: activeTab.table }
                           : null
                       }
+                      sessionId={sessionId}
+                      defaultDatabase={activeTab.database ?? selectedProfile?.database ?? null}
                     />
                   }
                   second={
@@ -427,6 +429,7 @@ export default function App() {
                     )
                   }
                 />
+
               ) : (
                 <div className="pane-empty">
                   {sessionId ? t("tabsEmpty") : t("editorHintDisabled")}
