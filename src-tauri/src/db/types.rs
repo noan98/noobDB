@@ -55,10 +55,16 @@ pub struct TableColumnInfo {
 /// `before_rows` and `after_rows` are snapshots of the auto-detected target
 /// table (LIMIT 100). When the target table can't be parsed from the SQL,
 /// they are empty and `target_table` is `None`.
+///
+/// `primary_key` carries the target table's primary-key column names (in
+/// index order). The frontend uses them to pair before/after rows by PK so
+/// the UPDATE diff is meaningful even if the underlying scan order differs
+/// or the statement was DELETE/INSERT.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreviewResult {
     pub target_table: Option<String>,
     pub columns: Vec<Column>,
+    pub primary_key: Vec<String>,
     pub before_rows: Vec<Vec<Value>>,
     pub after_rows: Vec<Vec<Value>>,
     pub rows_affected: u64,

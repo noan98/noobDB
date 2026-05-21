@@ -80,6 +80,12 @@ impl MySqlConn {
     /// Only INSERT / UPDATE / DELETE / REPLACE are accepted — DDL like
     /// CREATE/DROP/ALTER/TRUNCATE causes an implicit commit on MySQL and so
     /// cannot be safely previewed via rollback.
+    ///
+    /// When the target table has a primary key, both snapshots are ORDERed by
+    /// it and the AFTER snapshot is fetched by the exact PKs captured in
+    /// BEFORE — so the same rows are shown in both panels even if the
+    /// statement's WHERE clause stops matching after the change (e.g. an
+    /// UPDATE that flips the very column the WHERE filters on).
     pub async fn preview_execute(
         &self,
         sql: &str,
@@ -97,33 +103,95 @@ impl MySqlConn {
         }
 
         let target = extract_target_table(sql);
-        let limit_sql = target
-            .as_ref()
-            .map(|t| format!("SELECT * FROM {} LIMIT {}", t, PREVIEW_ROW_LIMIT + 1));
 
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
+
+        // Best-effort PK lookup — falls back to an empty Vec so a missing
+        // primary key, view target, or stripped privileges just degrades to
+        // the previous unordered snapshot behaviour.
+        let primary_key: Vec<String> = match target.as_deref() {
+            Some(t) => fetch_primary_key(&mut conn, t).await.unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let order_clause = build_pk_order_clause(&primary_key);
+
+        let before_sql = target.as_ref().map(|t| {
+            format!(
+                "SELECT * FROM {}{} LIMIT {}",
+                t,
+                order_clause,
+                PREVIEW_ROW_LIMIT + 1
+            )
+        });
+
         let mut tx = conn.begin().await?;
         let started = Instant::now();
 
-        let before_raw: Vec<MySqlRow> = match &limit_sql {
+        let before_raw: Vec<MySqlRow> = match &before_sql {
             Some(q) => sqlx::query(q).fetch_all(&mut *tx).await?,
             None => Vec::new(),
         };
 
+        // Indices of the PK columns in the row layout — needed both to
+        // re-fetch the AFTER snapshot by PK and so the frontend can pair
+        // rows when computing the diff.
+        let pk_indices: Vec<usize> = match (primary_key.is_empty(), before_raw.first()) {
+            (false, Some(first)) => primary_key
+                .iter()
+                .filter_map(|name| {
+                    first
+                        .columns()
+                        .iter()
+                        .position(|c| c.name() == name.as_str())
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        // Only use PK-based AFTER refetch when every PK column was located.
+        let captured_pks: Vec<Vec<Value>> =
+            if !pk_indices.is_empty() && pk_indices.len() == primary_key.len() {
+                before_raw
+                    .iter()
+                    .take(PREVIEW_ROW_LIMIT)
+                    .map(|r| pk_indices.iter().map(|&i| decode_cell(r, i)).collect())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
         let result = sqlx::query(sql).execute(&mut *tx).await?;
         let rows_affected = result.rows_affected();
 
-        let after_raw: Vec<MySqlRow> = match &limit_sql {
-            Some(q) => sqlx::query(q).fetch_all(&mut *tx).await?,
-            None => Vec::new(),
+        // PK-anchored refetch keeps the same rows visible after UPDATE/DELETE,
+        // but for INSERT we want the LIMIT scan so newly inserted rows actually
+        // show up in AFTER (their PKs weren't in BEFORE to anchor on).
+        let is_insert = trimmed.starts_with("insert");
+        let use_pk_anchor = !is_insert && target.is_some() && !captured_pks.is_empty();
+        let after_raw: Vec<MySqlRow> = if use_pk_anchor {
+            fetch_after_by_pk(
+                &mut tx,
+                target.as_ref().unwrap(),
+                &primary_key,
+                &captured_pks,
+                &order_clause,
+            )
+            .await?
+        } else {
+            match &before_sql {
+                Some(q) => sqlx::query(q).fetch_all(&mut *tx).await?,
+                None => Vec::new(),
+            }
         };
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
         tx.rollback().await?;
 
+        // AFTER is bounded by the captured PKs in the common path, but the
+        // fallback runs the same LIMIT 101 query and can overshoot — guard
+        // both sides so the banner stays accurate.
         let truncated = before_raw.len() > PREVIEW_ROW_LIMIT || after_raw.len() > PREVIEW_ROW_LIMIT;
-        let columns = if let Some(first) = after_raw.first().or_else(|| before_raw.first()) {
+        let columns = if let Some(first) = before_raw.first().or_else(|| after_raw.first()) {
             columns_of(std::slice::from_ref(first))
         } else {
             Vec::new()
@@ -142,6 +210,7 @@ impl MySqlConn {
         Ok(PreviewResult {
             target_table: target,
             columns,
+            primary_key,
             before_rows,
             after_rows,
             rows_affected,
@@ -424,6 +493,114 @@ fn tokenize_sql(sql: &str) -> Vec<String> {
         tokens.push(cur);
     }
     tokens
+}
+
+/// Looks up the target table's primary-key columns via `SHOW KEYS`. Returns
+/// them in `Seq_in_index` order (so composite PKs are ordered correctly).
+/// On any failure — view target, MERGE table, lacking SELECT on the table —
+/// the caller treats an empty result as "PK unknown" and degrades gracefully.
+async fn fetch_primary_key(conn: &mut PoolConnection<MySql>, target: &str) -> Result<Vec<String>> {
+    // `target` is taken verbatim from the user's SQL (already quoted as
+    // needed). `SHOW KEYS FROM ...` accepts both `tbl` and `` `db`.`tbl` ``.
+    let sql = format!("SHOW KEYS FROM {} WHERE Key_name = 'PRIMARY'", target);
+    let rows: Vec<MySqlRow> = sqlx::query(&sql).fetch_all(&mut **conn).await?;
+    let mut entries: Vec<(i64, String)> = rows
+        .iter()
+        .filter_map(|r| {
+            let seq = r.try_get::<i64, _>("Seq_in_index").ok()?;
+            let col = r.try_get::<String, _>("Column_name").ok()?;
+            Some((seq, col))
+        })
+        .collect();
+    entries.sort_by_key(|(s, _)| *s);
+    Ok(entries.into_iter().map(|(_, c)| c).collect())
+}
+
+fn build_pk_order_clause(pk_cols: &[String]) -> String {
+    if pk_cols.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = pk_cols
+        .iter()
+        .map(|c| format!("`{}`", c.replace('`', "``")))
+        .collect();
+    format!(" ORDER BY {}", parts.join(", "))
+}
+
+/// Refetches the AFTER snapshot using the exact PKs captured in BEFORE.
+/// Without this, an `UPDATE t SET flag=1 WHERE flag=0` would have a different
+/// row set after, and ORDER BY pk would let inserts/deletes shift everything.
+/// Anchoring by PK keeps the panels lined up row-for-row.
+async fn fetch_after_by_pk(
+    tx: &mut sqlx::Transaction<'_, MySql>,
+    target: &str,
+    pk_cols: &[String],
+    captured_pks: &[Vec<Value>],
+    order_clause: &str,
+) -> Result<Vec<MySqlRow>> {
+    if captured_pks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let pk_idents: Vec<String> = pk_cols
+        .iter()
+        .map(|c| format!("`{}`", c.replace('`', "``")))
+        .collect();
+    // Single-column PK → `WHERE pk IN (?, ?, ...)`. Composite PK →
+    // `WHERE (a,b) IN ((?,?), (?,?), ...)`. MySQL supports the row-constructor
+    // form natively, so we don't need to fall back to OR chains.
+    let row_placeholder = if pk_idents.len() == 1 {
+        "?".to_string()
+    } else {
+        format!(
+            "({})",
+            std::iter::repeat("?")
+                .take(pk_idents.len())
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    let placeholders = std::iter::repeat(row_placeholder.as_str())
+        .take(captured_pks.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let lhs = if pk_idents.len() == 1 {
+        pk_idents[0].clone()
+    } else {
+        format!("({})", pk_idents.join(","))
+    };
+    let sql = format!(
+        "SELECT * FROM {} WHERE {} IN ({}){}",
+        target, lhs, placeholders, order_clause
+    );
+    let mut q = sqlx::query(&sql);
+    for row_pks in captured_pks {
+        for v in row_pks {
+            q = bind_value(q, v);
+        }
+    }
+    Ok(q.fetch_all(&mut **tx).await?)
+}
+
+/// Binds one of our cross-driver `Value` variants onto a sqlx query. Only the
+/// scalar shapes a primary key can take are wired up — anything else is
+/// passed through as NULL, which simply means the corresponding row drops out
+/// of the AFTER snapshot rather than producing a type-mismatch error.
+fn bind_value<'q>(
+    q: sqlx::query::Query<'q, MySql, sqlx::mysql::MySqlArguments>,
+    v: &'q Value,
+) -> sqlx::query::Query<'q, MySql, sqlx::mysql::MySqlArguments> {
+    match v {
+        Value::Null => q.bind(Option::<i64>::None),
+        Value::Bool(b) => q.bind(*b),
+        Value::Int(i) => q.bind(*i),
+        Value::UInt(u) => q.bind(*u),
+        Value::Float(f) => q.bind(*f),
+        Value::String(s) => q.bind(s.as_str()),
+        // PKs over BLOB columns are exotic; binding the hex-encoded text
+        // would not round-trip. Treat as NULL — better to lose a row from
+        // AFTER than to mis-bind.
+        Value::Bytes(_) => q.bind(Option::<i64>::None),
+    }
 }
 
 fn strip_sql_comments(sql: &str) -> String {

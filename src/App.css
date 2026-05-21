@@ -960,6 +960,25 @@ label {
 }
 .preview-after .preview-pane-header { color: var(--text-success); }
 
+/* Cells whose value differs between the BEFORE and AFTER snapshots, and the
+   headers of any column that contains at least one such cell. Painted on
+   both panes so the user can scan either side and see the same diff. */
+.preview-pane-body td.is-changed {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.preview-pane-body tbody tr:nth-child(even) td.is-changed {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.preview-pane-body tbody tr:hover td.is-changed {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.preview-pane-body th.is-changed-col {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-header));
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.preview-pane-body th.is-changed-col .th-name { color: var(--accent); }
+
 .preview-pane-body {
   flex: 1;
   overflow: auto;
