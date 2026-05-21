@@ -4,6 +4,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirro
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { sql, MySQL, type SQLNamespace } from "@codemirror/lang-sql";
 import {
+  acceptCompletion,
   autocompletion,
   closeBrackets,
   closeBracketsKeymap,
@@ -103,6 +104,7 @@ export function QueryEditor({ onRun, onPreview, onChange, disabled, schemaTable,
           autocompletion(),
           sqlCompartment.of(buildSqlExtension(schemaTable)),
           keymap.of([
+            { key: "Tab", run: acceptCompletion },
             ...defaultKeymap,
             ...historyKeymap,
             ...completionKeymap,
