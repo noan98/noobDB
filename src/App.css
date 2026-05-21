@@ -732,6 +732,12 @@ label {
   z-index: 1;
   border-right: 1px solid var(--border-strong);
 }
+/* The header's row-index cell must stick on BOTH axes and cover any
+   data-row row-index cells scrolling underneath the sticky header. */
+:where(.results, .preview-pane-body) thead th.row-index {
+  top: 0;
+  z-index: 3;
+}
 :where(.results, .preview-pane-body) tbody tr:nth-child(even) td.row-index { background: var(--bg-stripe); }
 :where(.results, .preview-pane-body) tbody tr:hover td.row-index { background: var(--bg-row-hover); }
 
@@ -1433,16 +1439,34 @@ label {
 
 .qb-preview {
   margin: 0;
-  padding: 10px 12px;
   background: var(--bg-muted);
   border: 1px solid var(--border);
   border-radius: 6px;
+  overflow: hidden;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
   color: var(--text);
   line-height: 1.5;
+}
+.qb-preview .cm-editor {
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  line-height: inherit;
+}
+.qb-preview .cm-editor.cm-focused {
+  outline: none;
+}
+.qb-preview .cm-scroller {
+  font-family: inherit;
+  overflow: auto;
+}
+.qb-preview .cm-content {
+  padding: 10px 12px;
+}
+.qb-preview .cm-line {
+  padding: 0;
 }
 
 .lang-switch {

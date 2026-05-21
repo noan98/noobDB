@@ -1,6 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { sql as sqlLang, MySQL } from "@codemirror/lang-sql";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
+
+const qbHighlightStyle = HighlightStyle.define([
+  { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
+  { tag: [tags.string, tags.special(tags.string)], color: "var(--syntax-string)" },
+  { tag: [tags.number, tags.bool, tags.null], color: "var(--syntax-number)" },
+  {
+    tag: [tags.lineComment, tags.blockComment, tags.docComment],
+    color: "var(--syntax-comment)",
+    fontStyle: "italic",
+  },
+  {
+    tag: [tags.function(tags.variableName), tags.function(tags.propertyName)],
+    color: "var(--syntax-function)",
+  },
+  { tag: tags.operator, color: "var(--syntax-operator)" },
+]);
 
 export type QueryKind = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
 
@@ -23,6 +44,7 @@ interface Props {
   defaultDatabase?: string | null;
   defaultTable?: string | null;
   onExecute: (sql: string) => void;
+  onPreview?: (sql: string) => void;
   onClose: () => void;
 }
 
@@ -117,7 +139,7 @@ function buildSql(
   }
 }
 
-export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecute, onClose }: Props) {
+export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecute, onPreview, onClose }: Props) {
   const t = useT();
 
   const [kind, setKind] = useState<QueryKind>("SELECT");
@@ -203,6 +225,12 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
     onExecute(sql);
     onClose();
   }, [sql, onExecute, onClose]);
+
+  const handlePreview = useCallback(() => {
+    if (!onPreview) return;
+    onPreview(sql);
+    onClose();
+  }, [sql, onPreview, onClose]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -480,7 +508,7 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
 
           <section className="qb-section">
             <div className="qb-section-title">{t("qbPreview")}</div>
-            <pre className="qb-preview">{sql}</pre>
+            <SqlPreview sql={sql} />
           </section>
         </div>
 
@@ -488,6 +516,11 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
           <button onClick={onClose}>{t("qbClose")}</button>
           <div style={{ flex: 1 }} />
           <button onClick={handleCopy}>{copied ? t("qbCopied") : t("qbCopy")}</button>
+          {onPreview && kind !== "SELECT" && (
+            <button onClick={handlePreview} title={t("editorPreviewTitle")}>
+              {t("qbPreviewRun")}
+            </button>
+          )}
           <button className="primary" onClick={handleExecute}>{t("qbExecute")}</button>
         </footer>
       </div>
@@ -503,19 +536,65 @@ interface ColumnPickerProps {
 }
 
 function ColumnPicker({ value, options, onChange, placeholder }: ColumnPickerProps) {
-  const listId = useMemo(() => `qb-cols-${Math.random().toString(36).slice(2, 9)}`, []);
+  // Native <select> so the design matches the database / table / operator
+  // dropdowns. If `value` is set but the columns haven't loaded yet (or no
+  // longer contain it), include it as an extra option so the selection is
+  // preserved when re-rendering across loads.
+  const hasValue = value !== "";
+  const valueMissing = hasValue && !options.includes(value);
   return (
-    <>
-      <input
-        className="qb-col-input"
-        value={value}
-        list={listId}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <datalist id={listId}>
-        {options.map((c) => <option key={c} value={c} />)}
-      </datalist>
-    </>
+    <select
+      className="qb-col-input"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">{placeholder ?? "—"}</option>
+      {valueMissing && <option value={value}>{value}</option>}
+      {options.map((c) => (
+        <option key={c} value={c}>{c}</option>
+      ))}
+    </select>
   );
+}
+
+interface SqlPreviewProps {
+  sql: string;
+}
+
+function SqlPreview({ sql }: SqlPreviewProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
+
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const view = new EditorView({
+      parent: hostRef.current,
+      state: EditorState.create({
+        doc: sql,
+        extensions: [
+          EditorView.editable.of(false),
+          EditorState.readOnly.of(true),
+          syntaxHighlighting(qbHighlightStyle, { fallback: true }),
+          sqlLang({ dialect: MySQL, upperCaseKeywords: true }),
+          EditorView.lineWrapping,
+        ],
+      }),
+    });
+    viewRef.current = view;
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const current = view.state.doc.toString();
+    if (current === sql) return;
+    view.dispatch({ changes: { from: 0, to: current.length, insert: sql } });
+  }, [sql]);
+
+  return <div className="qb-preview" ref={hostRef} />;
 }

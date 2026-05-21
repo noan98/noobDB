@@ -217,6 +217,7 @@ export function QueryEditor({
           defaultDatabase={defaultDatabase ?? activeTable?.database ?? null}
           defaultTable={activeTable?.name ?? null}
           onExecute={(builtSql) => onRun(builtSql)}
+          onPreview={onPreview ? (builtSql) => onPreview(builtSql) : undefined}
           onClose={() => setShowBuilder(false)}
         />
       )}
