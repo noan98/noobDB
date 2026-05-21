@@ -11,11 +11,28 @@ import {
 } from "@codemirror/autocomplete";
 import {
   bracketMatching,
-  defaultHighlightStyle,
+  HighlightStyle,
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { useT } from "../i18n";
+
+const tableXHighlightStyle = HighlightStyle.define([
+  { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
+  { tag: [tags.string, tags.special(tags.string)], color: "var(--syntax-string)" },
+  { tag: [tags.number, tags.bool, tags.null], color: "var(--syntax-number)" },
+  {
+    tag: [tags.lineComment, tags.blockComment, tags.docComment],
+    color: "var(--syntax-comment)",
+    fontStyle: "italic",
+  },
+  {
+    tag: [tags.function(tags.variableName), tags.function(tags.propertyName)],
+    color: "var(--syntax-function)",
+  },
+  { tag: tags.operator, color: "var(--syntax-operator)" },
+]);
 
 export interface SchemaTable {
   database: string;
@@ -82,7 +99,7 @@ export function QueryEditor({ onRun, onPreview, onChange, disabled, schemaTable,
           indentOnInput(),
           bracketMatching(),
           closeBrackets(),
-          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          syntaxHighlighting(tableXHighlightStyle, { fallback: true }),
           autocompletion(),
           sqlCompartment.of(buildSqlExtension(schemaTable)),
           keymap.of([
