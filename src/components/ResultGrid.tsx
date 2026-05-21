@@ -16,6 +16,8 @@ import { useT } from "../i18n";
 
 interface Props {
   result: QueryResult | null;
+  /** True while batches are still arriving from a streaming query. */
+  streaming?: boolean;
 }
 
 interface RowShape {
@@ -433,13 +435,16 @@ export function DataGrid({
   );
 }
 
-export function ResultGrid({ result }: Props) {
+export function ResultGrid({ result, streaming }: Props) {
   const t = useT();
 
   if (!result) {
     return <div className="results empty">{t("resultEmpty")}</div>;
   }
   if (result.columns.length === 0) {
+    if (streaming) {
+      return <div className="results empty">{t("statusRunningQuery")}</div>;
+    }
     return (
       <div className="results empty">
         {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
@@ -447,7 +452,13 @@ export function ResultGrid({ result }: Props) {
     );
   }
   return (
-    <div className="results">
+    <div className={`results ${streaming ? "is-streaming" : ""}`}>
+      {streaming && (
+        <div className="results-streaming-banner" role="status" aria-live="polite">
+          <span className="results-streaming-dot" aria-hidden />
+          {t("statusStreaming", { rows: result.rows.length, ms: result.elapsed_ms })}
+        </div>
+      )}
       <DataGrid columns={result.columns} rows={result.rows} />
     </div>
   );

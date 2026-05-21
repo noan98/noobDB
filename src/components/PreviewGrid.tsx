@@ -7,6 +7,8 @@ import { Splitter } from "./Splitter";
 interface Props {
   result: PreviewResult;
   rowLimit: number;
+  /** True while preview snapshot rows are still arriving via the stream. */
+  streaming?: boolean;
 }
 
 interface Diff {
@@ -116,7 +118,7 @@ function pickRows<T>(rows: T[], indices: number[]): T[] {
   return indices.map((i) => rows[i]);
 }
 
-export function PreviewGrid({ result, rowLimit }: Props) {
+export function PreviewGrid({ result, rowLimit, streaming }: Props) {
   const t = useT();
   const hasSnapshots = result.columns.length > 0;
 
@@ -161,10 +163,15 @@ export function PreviewGrid({ result, rowLimit }: Props) {
     filteredAfterRows.length === 0;
 
   return (
-    <div className="preview">
+    <div className={`preview ${streaming ? "is-streaming" : ""}`}>
       <div className="preview-banner">
         <span className="preview-banner-dot" aria-hidden />
         <span className="preview-banner-text">{t("previewBanner")}</span>
+        {streaming && (
+          <span className="preview-banner-streaming">
+            {t("statusPreviewStreaming", { ms: result.elapsed_ms })}
+          </span>
+        )}
       </div>
       <div className="preview-meta">
         {result.target_table ? (

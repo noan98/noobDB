@@ -32,6 +32,16 @@ const en = {
   settingsColorOperatorSample: "=, +, <",
   settingsReset: "Reset to defaults",
   settingsClose: "Close",
+  settingsStreaming: "Record streaming",
+  settingsStreamingHelp: "Controls how the records panel and the preview before/after panels load rows.",
+  settingsDefaultDisplayCount: "Default display count",
+  settingsDefaultDisplayCountHelp: "Number of rows shown immediately. Also used as the LIMIT when opening a table.",
+  settingsStreamPrefetchSize: "Stream prefetch size",
+  settingsStreamPrefetchSizeHelp: "Chunk size used when fetching additional rows after the initial batch.",
+
+  statusStreaming: "Streaming... {rows} rows loaded ({ms} ms)",
+  statusStreamingDone: "{rows} rows in {ms} ms",
+  statusPreviewStreaming: "Streaming preview... ({ms} ms)",
 
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
   statusConnecting: "Connecting to {name}...",
@@ -199,6 +209,16 @@ const ja: Dict = {
   settingsColorOperatorSample: "=, +, <",
   settingsReset: "既定値に戻す",
   settingsClose: "閉じる",
+  settingsStreaming: "レコードのストリーミング",
+  settingsStreamingHelp: "レコードのパネルとプレビューの実行前後パネルでの読み込み方法を制御します。",
+  settingsDefaultDisplayCount: "デフォルトの表示件数",
+  settingsDefaultDisplayCountHelp: "初期表示する行数。テーブルを開くときの LIMIT としても使用されます。",
+  settingsStreamPrefetchSize: "ストリーム読み込み時の事前取得件数",
+  settingsStreamPrefetchSizeHelp: "初期分を表示した後、追加で取得する行数のチャンクサイズです。",
+
+  statusStreaming: "ストリーミング中... {rows} 件取得 ({ms} ms)",
+  statusStreamingDone: "{rows} 件取得 ({ms} ms)",
+  statusPreviewStreaming: "プレビューをストリーミング中... ({ms} ms)",
 
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
   statusConnecting: "{name} に接続中...",

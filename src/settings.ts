@@ -16,6 +16,10 @@ export interface Settings {
     light: SyntaxColors;
     dark: SyntaxColors;
   };
+  /** Initial number of rows displayed before streaming continues. */
+  defaultDisplayCount: number;
+  /** Chunk size used to fetch additional rows once the initial batch has been shown. */
+  streamPrefetchSize: number;
 }
 
 export const DEFAULT_SYNTAX_COLORS: Record<Theme, SyntaxColors> = {
@@ -37,11 +41,18 @@ export const DEFAULT_SYNTAX_COLORS: Record<Theme, SyntaxColors> = {
   },
 };
 
+export const DEFAULT_DISPLAY_COUNT = 100;
+export const DEFAULT_STREAM_PREFETCH_SIZE = 200;
+const MIN_BATCH = 1;
+const MAX_BATCH = 100_000;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
     dark: { ...DEFAULT_SYNTAX_COLORS.dark },
   },
+  defaultDisplayCount: DEFAULT_DISPLAY_COUNT,
+  streamPrefetchSize: DEFAULT_STREAM_PREFETCH_SIZE,
 };
 
 const STORAGE_KEY = "tablex.settings";
@@ -61,16 +72,30 @@ function sanitizeColors(input: unknown, fallback: SyntaxColors): SyntaxColors {
   return out;
 }
 
+function sanitizeCount(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.floor(input);
+  if (n < MIN_BATCH) return MIN_BATCH;
+  if (n > MAX_BATCH) return MAX_BATCH;
+  return n;
+}
+
 function loadInitial(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(raw) as { syntaxColors?: { light?: unknown; dark?: unknown } };
+    const parsed = JSON.parse(raw) as {
+      syntaxColors?: { light?: unknown; dark?: unknown };
+      defaultDisplayCount?: unknown;
+      streamPrefetchSize?: unknown;
+    };
     return {
       syntaxColors: {
         light: sanitizeColors(parsed.syntaxColors?.light, DEFAULT_SYNTAX_COLORS.light),
         dark: sanitizeColors(parsed.syntaxColors?.dark, DEFAULT_SYNTAX_COLORS.dark),
       },
+      defaultDisplayCount: sanitizeCount(parsed.defaultDisplayCount, DEFAULT_DISPLAY_COUNT),
+      streamPrefetchSize: sanitizeCount(parsed.streamPrefetchSize, DEFAULT_STREAM_PREFETCH_SIZE),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -110,6 +135,32 @@ export function resetSyntaxColors(theme: Theme): void {
       ...current.syntaxColors,
       [theme]: { ...DEFAULT_SYNTAX_COLORS[theme] },
     },
+  };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setDefaultDisplayCount(value: number): void {
+  const next = sanitizeCount(value, current.defaultDisplayCount);
+  if (next === current.defaultDisplayCount) return;
+  current = { ...current, defaultDisplayCount: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setStreamPrefetchSize(value: number): void {
+  const next = sanitizeCount(value, current.streamPrefetchSize);
+  if (next === current.streamPrefetchSize) return;
+  current = { ...current, streamPrefetchSize: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function resetStreamingDefaults(): void {
+  current = {
+    ...current,
+    defaultDisplayCount: DEFAULT_DISPLAY_COUNT,
+    streamPrefetchSize: DEFAULT_STREAM_PREFETCH_SIZE,
   };
   persist();
   listeners.forEach((cb) => cb());
