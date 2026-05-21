@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { CellValue, PreviewResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { DataGrid } from "./ResultGrid";
+import { Splitter } from "./Splitter";
 
 interface Props {
   result: PreviewResult;
@@ -121,38 +122,48 @@ export function PreviewGrid({ result, rowLimit }: Props) {
       </div>
 
       {hasSnapshots && (
-        <div className="preview-grids">
-          <section className="preview-pane preview-before">
-            <header className="preview-pane-header">{t("previewBefore")}</header>
-            <div className="preview-pane-body">
-              {result.before_rows.length === 0 ? (
-                <div className="preview-empty">{t("previewEmptyBefore")}</div>
-              ) : (
-                <DataGrid
-                  columns={result.columns}
-                  rows={result.before_rows}
-                  changedCells={diff.beforeChanges}
-                  changedColumns={diff.changedColumns}
-                />
-              )}
-            </div>
-          </section>
-          <section className="preview-pane preview-after">
-            <header className="preview-pane-header">{t("previewAfter")}</header>
-            <div className="preview-pane-body">
-              {result.after_rows.length === 0 ? (
-                <div className="preview-empty">{t("previewEmptyAfter")}</div>
-              ) : (
-                <DataGrid
-                  columns={result.columns}
-                  rows={result.after_rows}
-                  changedCells={diff.afterChanges}
-                  changedColumns={diff.changedColumns}
-                />
-              )}
-            </div>
-          </section>
-        </div>
+        <Splitter
+          direction="row"
+          className="preview-grids"
+          storageKey="tablex.split.preview"
+          defaultFraction={0.5}
+          minSize={140}
+          ariaLabel={t("splitterPreviewAria")}
+          first={
+            <section className="preview-pane preview-before">
+              <header className="preview-pane-header">{t("previewBefore")}</header>
+              <div className="preview-pane-body">
+                {result.before_rows.length === 0 ? (
+                  <div className="preview-empty">{t("previewEmptyBefore")}</div>
+                ) : (
+                  <DataGrid
+                    columns={result.columns}
+                    rows={result.before_rows}
+                    changedCells={diff.beforeChanges}
+                    changedColumns={diff.changedColumns}
+                  />
+                )}
+              </div>
+            </section>
+          }
+          second={
+            <section className="preview-pane preview-after">
+              <header className="preview-pane-header">{t("previewAfter")}</header>
+              <div className="preview-pane-body">
+                {result.after_rows.length === 0 ? (
+                  <div className="preview-empty">{t("previewEmptyAfter")}</div>
+                ) : (
+                  <DataGrid
+                    columns={result.columns}
+                    rows={result.after_rows}
+                    changedCells={diff.afterChanges}
+                    changedColumns={diff.changedColumns}
+                  />
+                )}
+              </div>
+            </section>
+          }
+        />
       )}
     </div>
   );
