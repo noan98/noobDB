@@ -17,6 +17,12 @@ interface Diff {
   afterChanges: boolean[][];
   // True for column j if any paired row differs on that column.
   changedColumns: boolean[];
+  // BEFORE row indices that are "affected": changed vs. their AFTER pair, or
+  // unpaired (i.e. about to be deleted by the statement).
+  affectedBefore: number[];
+  // AFTER row indices that are "affected": changed vs. their BEFORE pair, or
+  // unpaired (i.e. newly inserted by the statement).
+  affectedAfter: number[];
 }
 
 function valuesEqual(a: CellValue, b: CellValue): boolean {
@@ -49,6 +55,8 @@ function computeDiff(
   // which still produces sensible diffs for UPDATEs on tables without a PK
   // because both snapshots use the same `LIMIT` and scan order.
   const pairs: Array<[number, number]> = [];
+  const pairedBefore = new Set<number>();
+  const pairedAfter = new Set<number>();
   if (pkIndices.length > 0) {
     const afterByPk = new Map<string, number>();
     afterRows.forEach((row, i) => {
@@ -57,11 +65,19 @@ function computeDiff(
     beforeRows.forEach((row, i) => {
       const k = pkKey(row, pkIndices);
       const j = afterByPk.get(k);
-      if (j !== undefined) pairs.push([i, j]);
+      if (j !== undefined) {
+        pairs.push([i, j]);
+        pairedBefore.add(i);
+        pairedAfter.add(j);
+      }
     });
   } else {
     const n = Math.min(beforeRows.length, afterRows.length);
-    for (let i = 0; i < n; i++) pairs.push([i, i]);
+    for (let i = 0; i < n; i++) {
+      pairs.push([i, i]);
+      pairedBefore.add(i);
+      pairedAfter.add(i);
+    }
   }
 
   for (const [bi, ai] of pairs) {
@@ -76,7 +92,28 @@ function computeDiff(
     }
   }
 
-  return { beforeChanges, afterChanges, changedColumns };
+  // A BEFORE row is "affected" if it has any changed cell vs. its pair, or
+  // if it has no AFTER pair at all — the latter only happens with a PK
+  // (positional pairing always pairs same-index rows), and means the row was
+  // deleted. Likewise for AFTER (changed or newly inserted).
+  const affectedBefore: number[] = [];
+  beforeRows.forEach((_, i) => {
+    if (!pairedBefore.has(i) || beforeChanges[i].some((c) => c)) {
+      affectedBefore.push(i);
+    }
+  });
+  const affectedAfter: number[] = [];
+  afterRows.forEach((_, i) => {
+    if (!pairedAfter.has(i) || afterChanges[i].some((c) => c)) {
+      affectedAfter.push(i);
+    }
+  });
+
+  return { beforeChanges, afterChanges, changedColumns, affectedBefore, affectedAfter };
+}
+
+function pickRows<T>(rows: T[], indices: number[]): T[] {
+  return indices.map((i) => rows[i]);
 }
 
 export function PreviewGrid({ result, rowLimit }: Props) {
@@ -94,6 +131,34 @@ export function PreviewGrid({ result, rowLimit }: Props) {
       pkIndices,
     );
   }, [result.columns, result.before_rows, result.after_rows, result.primary_key]);
+
+  // The backend captures a `LIMIT` window of the target table for context;
+  // we trim that down here so only the rows the statement actually touches
+  // appear in the panes (updated/deleted in BEFORE, updated/inserted in
+  // AFTER). When the affected rows fall outside the snapshot window, both
+  // panes end up empty and we surface a hint below the meta line.
+  const filteredBeforeRows = useMemo(
+    () => pickRows(result.before_rows, diff.affectedBefore),
+    [result.before_rows, diff.affectedBefore],
+  );
+  const filteredAfterRows = useMemo(
+    () => pickRows(result.after_rows, diff.affectedAfter),
+    [result.after_rows, diff.affectedAfter],
+  );
+  const filteredBeforeChanges = useMemo(
+    () => pickRows(diff.beforeChanges, diff.affectedBefore),
+    [diff.beforeChanges, diff.affectedBefore],
+  );
+  const filteredAfterChanges = useMemo(
+    () => pickRows(diff.afterChanges, diff.affectedAfter),
+    [diff.afterChanges, diff.affectedAfter],
+  );
+
+  const noAffectedInSnapshot =
+    hasSnapshots &&
+    result.rows_affected > 0 &&
+    filteredBeforeRows.length === 0 &&
+    filteredAfterRows.length === 0;
 
   return (
     <div className="preview">
@@ -119,6 +184,11 @@ export function PreviewGrid({ result, rowLimit }: Props) {
             {t("previewTruncated", { limit: rowLimit })}
           </span>
         )}
+        {noAffectedInSnapshot && (
+          <span className="preview-truncated">
+            {t("previewAffectedOutsideSnapshot", { limit: rowLimit })}
+          </span>
+        )}
       </div>
 
       {hasSnapshots && (
@@ -133,13 +203,17 @@ export function PreviewGrid({ result, rowLimit }: Props) {
             <section className="preview-pane preview-before">
               <header className="preview-pane-header">{t("previewBefore")}</header>
               <div className="preview-pane-body">
-                {result.before_rows.length === 0 ? (
-                  <div className="preview-empty">{t("previewEmptyBefore")}</div>
+                {filteredBeforeRows.length === 0 ? (
+                  <div className="preview-empty">
+                    {result.before_rows.length === 0
+                      ? t("previewEmptyBefore")
+                      : t("previewNoAffectedBefore")}
+                  </div>
                 ) : (
                   <DataGrid
                     columns={result.columns}
-                    rows={result.before_rows}
-                    changedCells={diff.beforeChanges}
+                    rows={filteredBeforeRows}
+                    changedCells={filteredBeforeChanges}
                     changedColumns={diff.changedColumns}
                   />
                 )}
@@ -150,13 +224,17 @@ export function PreviewGrid({ result, rowLimit }: Props) {
             <section className="preview-pane preview-after">
               <header className="preview-pane-header">{t("previewAfter")}</header>
               <div className="preview-pane-body">
-                {result.after_rows.length === 0 ? (
-                  <div className="preview-empty">{t("previewEmptyAfter")}</div>
+                {filteredAfterRows.length === 0 ? (
+                  <div className="preview-empty">
+                    {result.after_rows.length === 0
+                      ? t("previewEmptyAfter")
+                      : t("previewNoAffectedAfter")}
+                  </div>
                 ) : (
                   <DataGrid
                     columns={result.columns}
-                    rows={result.after_rows}
-                    changedCells={diff.afterChanges}
+                    rows={filteredAfterRows}
+                    changedCells={filteredAfterChanges}
                     changedColumns={diff.changedColumns}
                   />
                 )}
