@@ -14,6 +14,8 @@ const en = {
   appSettings: "Settings",
 
   settingsTitle: "Settings",
+  settingsLanguage: "Language",
+  settingsLanguageHelp: "Choose the display language for the app.",
   settingsSyntaxHighlighting: "Syntax highlighting",
   settingsSyntaxHelp: "Editing colors for the {theme} theme.",
   settingsThemeLight: "light",
@@ -206,6 +208,8 @@ const ja: Dict = {
   appSettings: "設定",
 
   settingsTitle: "設定",
+  settingsLanguage: "言語",
+  settingsLanguageHelp: "アプリの表示言語を選択します。",
   settingsSyntaxHighlighting: "シンタックスハイライト",
   settingsSyntaxHelp: "{theme}テーマの色を編集しています。",
   settingsThemeLight: "ライト",
