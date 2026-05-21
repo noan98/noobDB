@@ -606,7 +606,6 @@ label {
 /* ---------- Editor ---------- */
 
 .editor {
-  border-bottom: 1px solid var(--border);
   min-height: 200px;
   display: flex;
   flex-direction: column;
@@ -946,8 +945,6 @@ label {
 
 .preview-grids {
   flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -956,9 +953,7 @@ label {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--border);
 }
-.preview-pane:last-child { border-right: none; }
 
 .preview-pane-header {
   padding: 5px 10px;
@@ -1003,14 +998,6 @@ label {
   font-style: italic;
 }
 
-@media (max-width: 900px) {
-  .preview-grids {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  }
-  .preview-pane { border-right: none; border-bottom: 1px solid var(--border); }
-  .preview-pane:last-child { border-bottom: none; }
-}
 
 /* ---------- Status bar ---------- */
 
@@ -1204,6 +1191,258 @@ label {
 @keyframes streaming-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* ---------- Splitter (drag-to-resize panes) ---------- */
+
+.splitter {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.splitter.splitter-row { flex-direction: row; }
+.splitter.splitter-column { flex-direction: column; }
+
+.splitter-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Children dropped directly into a splitter pane fill the wrapper, even when
+   their own CSS doesn't set flex: 1 / min-*: 0 (e.g. .editor's 200px min). */
+.splitter-pane > .editor,
+.splitter-pane > .results,
+.splitter-pane > .preview,
+.splitter-pane > .preview-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.splitter-pane > .editor { min-height: 0; }
+
+.splitter-handle {
+  flex: 0 0 auto;
+  background: var(--border);
+  user-select: none;
+  touch-action: none;
+  transition: background 0.12s;
+  position: relative;
+  z-index: 4;
+}
+.splitter-handle-h { height: 5px; cursor: ns-resize; }
+.splitter-handle-v { width: 5px; cursor: ew-resize; }
+.splitter-handle:hover,
+.splitter-handle.is-dragging {
+  background: var(--accent);
+}
+
+/* ---------- Modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+
+.modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: min(760px, 100%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-toolbar);
+}
+.modal-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-toolbar);
+}
+
+/* ---------- Query Builder ---------- */
+
+.qb-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qb-error {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-error);
+  color: var(--text-error);
+  border-radius: 6px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.qb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.qb-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.qb-section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.qb-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.qb-grid-2 > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qb-pill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.qb-pill {
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.qb-pill:hover {
+  background: var(--bg-hover);
+}
+.qb-pill.active {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.qb-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0;
+}
+.qb-checkbox input {
+  width: auto;
+  margin: 0;
+}
+
+.qb-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.qb-row > .qb-row-input { flex: 1; min-width: 0; }
+.qb-col-input { flex: 1; min-width: 0; }
+.qb-op { width: 110px; flex-shrink: 0; }
+.qb-eq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-weight: 600;
+  min-width: 16px;
+}
+
+.qb-icon-btn {
+  padding: 2px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.qb-icon-btn:hover:not(:disabled) { color: var(--text-error); border-color: var(--text-error); }
+
+.qb-small {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+.qb-limit-section {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.qb-limit-section label { margin: 0; }
+.qb-limit-input { max-width: 120px; }
+
+.qb-preview {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+  line-height: 1.5;
 }
 
 .lang-switch {

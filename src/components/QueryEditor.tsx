@@ -4,6 +4,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirro
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { sql, MySQL, type SQLNamespace } from "@codemirror/lang-sql";
 import {
+  acceptCompletion,
   autocompletion,
   closeBrackets,
   closeBracketsKeymap,
@@ -17,6 +18,7 @@ import {
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { useT } from "../i18n";
+import { QueryBuilder } from "./QueryBuilder";
 
 const tableXHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -53,6 +55,8 @@ interface Props {
   schemaTable?: SchemaTable | null;
   activeTable?: ActiveTable | null;
   initialSql?: string;
+  sessionId?: string | null;
+  defaultDatabase?: string | null;
 }
 
 function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
@@ -76,12 +80,23 @@ function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
   });
 }
 
-export function QueryEditor({ onRun, onPreview, onChange, disabled, schemaTable, activeTable, initialSql }: Props) {
+export function QueryEditor({
+  onRun,
+  onPreview,
+  onChange,
+  disabled,
+  schemaTable,
+  activeTable,
+  initialSql,
+  sessionId,
+  defaultDatabase,
+}: Props) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const sqlCompartment = useMemo(() => new Compartment(), []);
   const [hasContent, setHasContent] = useState(false);
+  const [showBuilder, setShowBuilder] = useState(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -103,6 +118,7 @@ export function QueryEditor({ onRun, onPreview, onChange, disabled, schemaTable,
           autocompletion(),
           sqlCompartment.of(buildSqlExtension(schemaTable)),
           keymap.of([
+            { key: "Tab", run: acceptCompletion },
             ...defaultKeymap,
             ...historyKeymap,
             ...completionKeymap,
@@ -181,11 +197,29 @@ export function QueryEditor({ onRun, onPreview, onChange, disabled, schemaTable,
             {t("editorPreview")}
           </button>
         )}
+        {sessionId && (
+          <button
+            onClick={() => setShowBuilder(true)}
+            disabled={disabled}
+            title={t("editorBuilderTitle")}
+          >
+            {t("editorBuilder")}
+          </button>
+        )}
         <span className="muted" style={{ fontSize: 12 }}>
           {disabled ? t("editorHintDisabled") : t("editorHint")}
         </span>
       </div>
       <div className="cm" ref={hostRef} />
+      {showBuilder && sessionId && (
+        <QueryBuilder
+          sessionId={sessionId}
+          defaultDatabase={defaultDatabase ?? activeTable?.database ?? null}
+          defaultTable={activeTable?.name ?? null}
+          onExecute={(builtSql) => onRun(builtSql)}
+          onClose={() => setShowBuilder(false)}
+        />
+      )}
     </div>
   );
 }
