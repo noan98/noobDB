@@ -8,6 +8,7 @@ import { PreviewGrid } from "./components/PreviewGrid";
 import { TabBar } from "./components/TabBar";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
 import { SettingsView } from "./components/SettingsView";
+import { Splitter } from "./components/Splitter";
 import { t as translate, useT } from "./i18n";
 import { useSettings } from "./settings";
 
@@ -396,29 +397,39 @@ export default function App() {
 
             <div className="pane">
               {activeTab ? (
-                <>
-                  <QueryEditor
-                    key={activeTab.id}
-                    initialSql={activeTab.sql}
-                    onRun={handleRunQuery}
-                    onPreview={handlePreviewQuery}
-                    onChange={handleEditorChange}
-                    disabled={!sessionId}
-                    schemaTable={activeTab.schemaTable}
-                    activeTable={
-                      activeTab.kind === "table" && activeTab.database && activeTab.table
-                        ? { database: activeTab.database, name: activeTab.table }
-                        : null
-                    }
-                    sessionId={sessionId}
-                    defaultDatabase={activeTab.database ?? selectedProfile?.database ?? null}
-                  />
-                  {activeTab.preview ? (
-                    <PreviewGrid result={activeTab.preview} rowLimit={PREVIEW_ROW_LIMIT} />
-                  ) : (
-                    <ResultGrid result={activeTab.result} />
-                  )}
-                </>
+                <Splitter
+                  direction="column"
+                  storageKey="tablex.split.editor"
+                  defaultFraction={0.4}
+                  minSize={120}
+                  ariaLabel={t("splitterEditorAria")}
+                  first={
+                    <QueryEditor
+                      key={activeTab.id}
+                      initialSql={activeTab.sql}
+                      onRun={handleRunQuery}
+                      onPreview={handlePreviewQuery}
+                      onChange={handleEditorChange}
+                      disabled={!sessionId}
+                      schemaTable={activeTab.schemaTable}
+                      activeTable={
+                        activeTab.kind === "table" && activeTab.database && activeTab.table
+                          ? { database: activeTab.database, name: activeTab.table }
+                          : null
+                      }
+                      sessionId={sessionId}
+                      defaultDatabase={activeTab.database ?? selectedProfile?.database ?? null}
+                    />
+                  }
+                  second={
+                    activeTab.preview ? (
+                      <PreviewGrid result={activeTab.preview} rowLimit={PREVIEW_ROW_LIMIT} />
+                    ) : (
+                      <ResultGrid result={activeTab.result} />
+                    )
+                  }
+                />
+
               ) : (
                 <div className="pane-empty">
                   {sessionId ? t("tabsEmpty") : t("editorHintDisabled")}

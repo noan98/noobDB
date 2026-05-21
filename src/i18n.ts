@@ -158,6 +158,9 @@ const en = {
   gridClearFilters: "Clear filters",
   gridNoMatches: "No rows match the current filters.",
   gridResizeColumn: "Drag to resize; double-click to reset",
+
+  splitterEditorAria: "Drag to resize editor and result area; double-click to reset",
+  splitterPreviewAria: "Drag to resize before and after panes; double-click to reset",
 };
 
 type Key = keyof typeof en;
@@ -319,6 +322,9 @@ const ja: Dict = {
   gridClearFilters: "フィルターをクリア",
   gridNoMatches: "条件に一致する行がありません。",
   gridResizeColumn: "ドラッグでサイズ変更、ダブルクリックでリセット",
+
+  splitterEditorAria: "ドラッグでエディタと結果領域のサイズを変更、ダブルクリックでリセット",
+  splitterPreviewAria: "ドラッグで実行前・実行後ペインの幅を変更、ダブルクリックでリセット",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
