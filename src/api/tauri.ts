@@ -19,6 +19,9 @@ export interface ConnectionProfile {
   user: string;
   database: string | null;
   ssh: SshProfile | null;
+  group: string | null;
+  color: string | null;
+  is_production: boolean;
 }
 
 export interface SshRequest extends SshProfile {
@@ -47,6 +50,9 @@ export interface SaveProfileRequest {
   ssh: SshProfile | null;
   db_password?: string;
   ssh_passphrase?: string;
+  group: string | null;
+  color: string | null;
+  is_production: boolean;
 }
 
 export interface SessionInfo {

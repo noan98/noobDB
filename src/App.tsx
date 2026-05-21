@@ -186,6 +186,14 @@ export default function App() {
     refreshProfiles();
   }, [refreshProfiles]);
 
+  // Keep the active profile pointer in sync when the profile is edited or
+  // when the saved list is refreshed for any other reason.
+  useEffect(() => {
+    if (!selectedProfile) return;
+    const fresh = profiles.find((p) => p.id === selectedProfile.id);
+    if (fresh && fresh !== selectedProfile) setSelectedProfile(fresh);
+  }, [profiles, selectedProfile]);
+
   const closeAllTabs = useCallback(async () => {
     // Cancel any in-flight streams before tearing down tabs.
     const ids = Array.from(streamIdRef.current.keys());
@@ -194,7 +202,11 @@ export default function App() {
     setActiveTabId(null);
   }, [cancelStreamForTab]);
 
-  const handleConnect = useCallback(async (profile: ConnectionProfile, password: string, passphrase: string) => {
+  const handleConnect = useCallback(async (profile: ConnectionProfile) => {
+    if (profile.is_production && settings.confirmProductionConnect) {
+      const ok = window.confirm(translate("productionConfirm", { name: profile.name }));
+      if (!ok) return;
+    }
     setConnectingId(profile.id);
     setErrorProfileId(null);
     setStatus({ kind: "key", key: "statusConnecting", vars: { name: profile.name } });
@@ -210,9 +222,9 @@ export default function App() {
         host: profile.host,
         port: profile.port,
         user: profile.user,
-        password,
+        password: "",
         database: profile.database,
-        ssh: profile.ssh ? { ...profile.ssh, passphrase } : null,
+        ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
       });
       setSessionId(res.session_id);
       setSelectedProfile(profile);
@@ -226,7 +238,7 @@ export default function App() {
     } finally {
       setConnectingId(null);
     }
-  }, [sessionId, closeAllTabs]);
+  }, [sessionId, closeAllTabs, settings.confirmProductionConnect]);
 
   const handleDisconnect = useCallback(async () => {
     if (!sessionId) return;

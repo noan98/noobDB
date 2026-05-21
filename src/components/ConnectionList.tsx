@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 
@@ -10,13 +10,17 @@ interface Props {
   sessionId: string | null;
   connectingId: string | null;
   errorProfileId: string | null;
-  onConnect: (profile: ConnectionProfile, password: string, passphrase: string) => void;
+  onConnect: (profile: ConnectionProfile) => void;
   onEdit: (profile: ConnectionProfile) => void;
   onDelete: (id: string) => void;
   onPickTable: (database: string, table: string) => void;
 }
 
-type FormState = { password: string; passphrase: string };
+interface ContextMenuState {
+  profile: ConnectionProfile;
+  x: number;
+  y: number;
+}
 
 export function ConnectionList({
   profiles,
@@ -33,13 +37,14 @@ export function ConnectionList({
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
   const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [tableColumns, setTableColumns] = useState<Record<string, TableColumnInfo[]>>({});
-  const [forms, setForms] = useState<Record<string, FormState>>({});
-  const [showForm, setShowForm] = useState<Record<string, boolean>>({});
   const [databases, setDatabases] = useState<string[] | null>(null);
   const [tables, setTables] = useState<Record<string, string[]>>({});
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const loadDatabases = useCallback(async () => {
     if (!sessionId) {
@@ -71,25 +76,45 @@ export function ConnectionList({
   useEffect(() => {
     if (activeProfileId) {
       setExpandedProfiles((prev) => ({ ...prev, [activeProfileId]: true }));
-      setShowForm((prev) => ({ ...prev, [activeProfileId]: false }));
     }
   }, [activeProfileId]);
 
-  const toggleProfile = (p: ConnectionProfile) => {
-    const isActive = p.id === activeProfileId;
-    const isOpen = expandedProfiles[p.id];
-    if (isActive) {
-      setExpandedProfiles({ ...expandedProfiles, [p.id]: !isOpen });
+  // Dismiss context menu on outside click / Escape / scroll.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
+      close();
+    };
+    window.addEventListener("mousedown", onClick);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("mousedown", onClick);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [contextMenu]);
+
+  const handleProfileClick = (p: ConnectionProfile) => {
+    if (p.id === activeProfileId) {
+      setExpandedProfiles((prev) => ({ ...prev, [p.id]: !prev[p.id] }));
       return;
     }
-    // Not connected: open inline connect form.
-    if (isOpen && showForm[p.id]) {
-      setShowForm({ ...showForm, [p.id]: false });
-      setExpandedProfiles({ ...expandedProfiles, [p.id]: false });
-    } else {
-      setExpandedProfiles({ ...expandedProfiles, [p.id]: true });
-      setShowForm({ ...showForm, [p.id]: true });
-    }
+    if (connectingId) return;
+    onConnect(p);
+  };
+
+  const handleProfileContextMenu = (e: React.MouseEvent, p: ConnectionProfile) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ profile: p, x: e.clientX, y: e.clientY });
   };
 
   const toggleDb = async (db: string) => {
@@ -127,27 +152,35 @@ export function ConnectionList({
     }
   };
 
-  const updateForm = (id: string, patch: Partial<FormState>) => {
-    setForms((prev) => {
-      const current = prev[id] ?? { password: "", passphrase: "" };
-      return { ...prev, [id]: { ...current, ...patch } };
-    });
-  };
-
-  const submitConnect = (p: ConnectionProfile) => {
-    const f = forms[p.id] ?? { password: "", passphrase: "" };
-    onConnect(p, f.password, f.passphrase);
-    setForms((prev) => ({ ...prev, [p.id]: { password: "", passphrase: "" } }));
-  };
-
   const visibleProfiles = profiles.filter((p) => {
     if (!filter.trim()) return true;
     const q = filter.trim().toLowerCase();
     if (p.name.toLowerCase().includes(q)) return true;
     if (p.host.toLowerCase().includes(q)) return true;
     if (p.database?.toLowerCase().includes(q)) return true;
+    if (p.group?.toLowerCase().includes(q)) return true;
     return false;
   });
+
+  /** Profiles grouped by their `group` field. `null` key = ungrouped. */
+  const grouped = useMemo(() => {
+    const anyGrouped = profiles.some((p) => p.group);
+    if (!anyGrouped) return null;
+    const map = new Map<string | null, ConnectionProfile[]>();
+    for (const p of visibleProfiles) {
+      const key = p.group ?? null;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(p);
+    }
+    const groups: { name: string | null; profiles: ConnectionProfile[] }[] = [];
+    const names = Array.from(map.keys())
+      .filter((k): k is string => k !== null)
+      .sort((a, b) => a.localeCompare(b));
+    for (const name of names) groups.push({ name, profiles: map.get(name)! });
+    const ungrouped = map.get(null);
+    if (ungrouped && ungrouped.length > 0) groups.push({ name: null, profiles: ungrouped });
+    return groups;
+  }, [profiles, visibleProfiles]);
 
   const profileStatus = (p: ConnectionProfile): "connected" | "connecting" | "error" | "idle" => {
     if (connectingId === p.id) return "connecting";
@@ -163,6 +196,145 @@ export function ConnectionList({
       case "error": return t("statusBadge_error");
       case "idle": return t("statusBadge_idle");
     }
+  };
+
+  const renderProfile = (p: ConnectionProfile) => {
+    const isActive = p.id === activeProfileId;
+    const isOpen = !!expandedProfiles[p.id];
+    const status = profileStatus(p);
+    const accent = p.color ?? undefined;
+    const rowStyle = accent
+      ? ({ borderLeftColor: accent } as React.CSSProperties)
+      : undefined;
+
+    return (
+      <div
+        key={p.id}
+        className={`tree-node profile ${isActive ? "active" : ""} ${p.is_production ? "is-production" : ""}`}
+      >
+        <div
+          className="tree-row profile-row"
+          style={rowStyle}
+          onClick={() => handleProfileClick(p)}
+          onContextMenu={(e) => handleProfileContextMenu(e, p)}
+          role="treeitem"
+          aria-expanded={isOpen}
+          title={`${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`}
+        >
+          <span className="tree-chevron" aria-hidden>{isOpen ? "▾" : "▸"}</span>
+          {accent ? (
+            <span
+              className="profile-color-chip"
+              style={{ background: accent }}
+              aria-hidden
+            />
+          ) : (
+            <span className="tree-icon profile-icon" aria-hidden>⛁</span>
+          )}
+          <span className="tree-label">{p.name}</span>
+          {p.is_production && (
+            <span
+              className="tree-badge production-badge"
+              style={accent ? { background: accent, color: "#fff", borderColor: accent } : undefined}
+              title={t("listProduction")}
+            >
+              {t("listProduction")}
+            </span>
+          )}
+          <span className={`status-dot status-${status}`} aria-label={statusLabel(status)} title={statusLabel(status)} />
+          <span className="tree-badge driver">{p.driver}</span>
+        </div>
+
+        {isOpen && isActive && sessionId && (
+          <div className="tree-children">
+            {databases === null ? (
+              <div className="tree-empty">{t("treeLoading")}</div>
+            ) : databases.length === 0 ? (
+              <div className="tree-empty">{t("treeNoDatabases")}</div>
+            ) : (
+              databases.map((db) => {
+                const dbOpen = !!expandedDbs[db];
+                const dbTables = tables[db];
+                return (
+                  <div key={db} className="tree-node db">
+                    <div
+                      className="tree-row db-row"
+                      onClick={() => toggleDb(db)}
+                      role="treeitem"
+                      aria-expanded={dbOpen}
+                      title={db}
+                    >
+                      <span className="tree-chevron" aria-hidden>{dbOpen ? "▾" : "▸"}</span>
+                      <span className="tree-icon db-icon" aria-hidden>▣</span>
+                      <span className="tree-label">{db}</span>
+                    </div>
+                    {dbOpen && (
+                      <div className="tree-children">
+                        {dbTables === undefined ? (
+                          <div className="tree-empty">{t("treeLoading")}</div>
+                        ) : dbTables.length === 0 ? (
+                          <div className="tree-empty">{t("treeNoTables")}</div>
+                        ) : (
+                          dbTables.map((tbl) => {
+                            const tKey = tableKey(db, tbl);
+                            const tOpen = !!expandedTables[tKey];
+                            const cols = tableColumns[tKey];
+                            return (
+                              <div key={tbl} className="tree-node table">
+                                <div
+                                  className="tree-row table-row"
+                                  role="treeitem"
+                                  aria-expanded={tOpen}
+                                  onClick={() => toggleTable(db, tbl)}
+                                  onDoubleClick={() => onPickTable(db, tbl)}
+                                  title={t("treeTableTitle")}
+                                >
+                                  <span className="tree-chevron" aria-hidden>{tOpen ? "▾" : "▸"}</span>
+                                  <span className="tree-icon table-icon" aria-hidden>▤</span>
+                                  <span className="tree-label">{tbl}</span>
+                                </div>
+                                {tOpen && (
+                                  <div className="tree-children">
+                                    {cols === undefined ? (
+                                      <div className="tree-empty">{t("treeLoading")}</div>
+                                    ) : cols.length === 0 ? (
+                                      <div className="tree-empty">{t("treeNoColumns")}</div>
+                                    ) : (
+                                      cols.map((col) => {
+                                        const isPk = col.key === "PRI";
+                                        return (
+                                          <div
+                                            key={col.name}
+                                            className="tree-row column-row"
+                                            role="treeitem"
+                                            title={`${col.name}: ${col.data_type}${col.nullable ? "" : " NOT NULL"}${col.key ? " " + col.key : ""}${col.default !== null ? " DEFAULT " + col.default : ""}${col.extra ? " " + col.extra : ""}`}
+                                          >
+                                            <span className="tree-chevron empty" aria-hidden />
+                                            <span className={`tree-icon column-icon ${isPk ? "is-pk" : ""}`} aria-hidden>
+                                              {isPk ? "🔑" : "·"}
+                                            </span>
+                                            <span className="tree-label column-name">{col.name}</span>
+                                            <span className="tree-badge column-type" title={col.data_type}>{col.data_type}</span>
+                                          </div>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -184,177 +356,67 @@ export function ConnectionList({
         <p className="muted" style={{ padding: 12 }}>{t("listNoMatches")}</p>
       ) : (
         <div className="tree" role="tree">
-          {visibleProfiles.map((p) => {
-            const isActive = p.id === activeProfileId;
-            const isOpen = !!expandedProfiles[p.id];
-            const showInlineForm = !!showForm[p.id] && !isActive;
-            const status = profileStatus(p);
-
-            return (
-              <div key={p.id} className={`tree-node profile ${isActive ? "active" : ""}`}>
-                <div
-                  className="tree-row profile-row"
-                  onClick={() => toggleProfile(p)}
-                  role="treeitem"
-                  aria-expanded={isOpen}
-                  title={`${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`}
-                >
-                  <span className="tree-chevron" aria-hidden>{isOpen ? "▾" : "▸"}</span>
-                  <span className="tree-icon profile-icon" aria-hidden>⛁</span>
-                  <span className="tree-label">{p.name}</span>
-                  <span className={`status-dot status-${status}`} aria-label={statusLabel(status)} title={statusLabel(status)} />
-                  <span className="tree-badge driver">{p.driver}</span>
-                </div>
-
-                {isOpen && (
-                  <div className="tree-children">
-                    {showInlineForm && (
-                      <div className="tree-form" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="password"
-                          placeholder={t("listDbPasswordPlaceholder")}
-                          value={forms[p.id]?.password ?? ""}
-                          onChange={(e) => updateForm(p.id, { password: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") submitConnect(p);
-                          }}
-                        />
-                        {p.ssh && (
-                          <input
-                            type="password"
-                            placeholder={t("listSshPassphrasePlaceholder")}
-                            value={forms[p.id]?.passphrase ?? ""}
-                            onChange={(e) => updateForm(p.id, { passphrase: e.target.value })}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") submitConnect(p);
-                            }}
-                          />
-                        )}
-                        <div className="tree-form-actions">
-                          <button
-                            className="primary"
-                            disabled={connectingId === p.id}
-                            onClick={() => submitConnect(p)}
-                          >
-                            {connectingId === p.id ? t("listConnecting") : t("listConnect")}
-                          </button>
-                          <button onClick={() => onEdit(p)}>{t("listEdit")}</button>
-                          <button
-                            onClick={() => {
-                              if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id);
-                            }}
-                          >
-                            {t("listDelete")}
-                          </button>
-                        </div>
+          {grouped === null
+            ? visibleProfiles.map(renderProfile)
+            : grouped.map((g) => {
+                const key = g.name ?? "__ungrouped__";
+                const groupOpen = expandedGroups[key] !== false;
+                const label = g.name ?? t("listGroupUngrouped");
+                return (
+                  <div key={key} className="tree-node profile-group">
+                    <div
+                      className="tree-row group-row"
+                      onClick={() =>
+                        setExpandedGroups((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
+                      }
+                      role="treeitem"
+                      aria-expanded={groupOpen}
+                    >
+                      <span className="tree-chevron" aria-hidden>{groupOpen ? "▾" : "▸"}</span>
+                      <span className="group-label">{label}</span>
+                      <span className="tree-badge group-count">{g.profiles.length}</span>
+                    </div>
+                    {groupOpen && (
+                      <div className="tree-children">
+                        {g.profiles.map(renderProfile)}
                       </div>
                     )}
-
-                    {isActive && sessionId && (
-                      <>
-                        <div className="tree-row-actions tree-row-actions-top">
-                          <button onClick={() => onEdit(p)} title={t("listEditTitle")}>
-                            {t("listEditConnection")}
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id);
-                            }}
-                          >
-                            {t("listDelete")}
-                          </button>
-                        </div>
-                        {databases === null ? (
-                          <div className="tree-empty">{t("treeLoading")}</div>
-                        ) : databases.length === 0 ? (
-                          <div className="tree-empty">{t("treeNoDatabases")}</div>
-                        ) : (
-                          databases.map((db) => {
-                            const dbOpen = !!expandedDbs[db];
-                            const dbTables = tables[db];
-                            return (
-                              <div key={db} className="tree-node db">
-                                <div
-                                  className="tree-row db-row"
-                                  onClick={() => toggleDb(db)}
-                                  role="treeitem"
-                                  aria-expanded={dbOpen}
-                                  title={db}
-                                >
-                                  <span className="tree-chevron" aria-hidden>{dbOpen ? "▾" : "▸"}</span>
-                                  <span className="tree-icon db-icon" aria-hidden>▣</span>
-                                  <span className="tree-label">{db}</span>
-                                </div>
-                                {dbOpen && (
-                                  <div className="tree-children">
-                                    {dbTables === undefined ? (
-                                      <div className="tree-empty">{t("treeLoading")}</div>
-                                    ) : dbTables.length === 0 ? (
-                                      <div className="tree-empty">{t("treeNoTables")}</div>
-                                    ) : (
-                                      dbTables.map((tbl) => {
-                                        const tKey = tableKey(db, tbl);
-                                        const tOpen = !!expandedTables[tKey];
-                                        const cols = tableColumns[tKey];
-                                        return (
-                                          <div key={tbl} className="tree-node table">
-                                            <div
-                                              className="tree-row table-row"
-                                              role="treeitem"
-                                              aria-expanded={tOpen}
-                                              onClick={() => toggleTable(db, tbl)}
-                                              onDoubleClick={() => onPickTable(db, tbl)}
-                                              title={t("treeTableTitle")}
-                                            >
-                                              <span className="tree-chevron" aria-hidden>{tOpen ? "▾" : "▸"}</span>
-                                              <span className="tree-icon table-icon" aria-hidden>▤</span>
-                                              <span className="tree-label">{tbl}</span>
-                                            </div>
-                                            {tOpen && (
-                                              <div className="tree-children">
-                                                {cols === undefined ? (
-                                                  <div className="tree-empty">{t("treeLoading")}</div>
-                                                ) : cols.length === 0 ? (
-                                                  <div className="tree-empty">{t("treeNoColumns")}</div>
-                                                ) : (
-                                                  cols.map((col) => {
-                                                    const isPk = col.key === "PRI";
-                                                    return (
-                                                      <div
-                                                        key={col.name}
-                                                        className="tree-row column-row"
-                                                        role="treeitem"
-                                                        title={`${col.name}: ${col.data_type}${col.nullable ? "" : " NOT NULL"}${col.key ? " " + col.key : ""}${col.default !== null ? " DEFAULT " + col.default : ""}${col.extra ? " " + col.extra : ""}`}
-                                                      >
-                                                        <span className="tree-chevron empty" aria-hidden />
-                                                        <span className={`tree-icon column-icon ${isPk ? "is-pk" : ""}`} aria-hidden>
-                                                          {isPk ? "🔑" : "·"}
-                                                        </span>
-                                                        <span className="tree-label column-name">{col.name}</span>
-                                                        <span className="tree-badge column-type" title={col.data_type}>{col.data_type}</span>
-                                                      </div>
-                                                    );
-                                                  })
-                                                )}
-                                              </div>
-                                            )}
-                                          </div>
-                                        );
-                                      })
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })
-                        )}
-                      </>
-                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                );
+              })}
+        </div>
+      )}
+
+      {contextMenu && (
+        <div
+          ref={menuRef}
+          className="context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="context-menu-item"
+            onClick={() => {
+              const p = contextMenu.profile;
+              setContextMenu(null);
+              onEdit(p);
+            }}
+          >
+            {t("contextMenuEdit")}
+          </button>
+          <button
+            type="button"
+            className="context-menu-item danger"
+            onClick={() => {
+              const p = contextMenu.profile;
+              setContextMenu(null);
+              if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id);
+            }}
+          >
+            {t("contextMenuDelete")}
+          </button>
         </div>
       )}
     </div>

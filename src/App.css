@@ -397,6 +397,137 @@ label {
   background: var(--bg-muted);
 }
 
+/* ---------- Profile groups, color accent, production badge ---------- */
+
+.tree-node.profile-group > .tree-row.group-row {
+  cursor: pointer;
+  padding: 6px 10px 6px 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  border-left: 2px solid transparent;
+}
+.tree-node.profile-group > .tree-row.group-row:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.tree-node.profile-group > .tree-children {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: none;
+}
+.group-label {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-badge.group-count {
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.profile-color-chip {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin: 0 2px 0 0;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18) inset;
+}
+
+.tree-node.profile.is-production > .tree-row.profile-row {
+  background: color-mix(in srgb, var(--status-error) 6%, transparent);
+}
+.tree-node.profile.is-production.active > .tree-row.profile-row {
+  background: color-mix(in srgb, var(--status-error) 12%, var(--bg-active));
+}
+
+.tree-badge.production-badge {
+  background: var(--status-error);
+  color: #fff;
+  border-color: var(--status-error);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+/* ---------- Context menu (right-click on profile) ---------- */
+
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.context-menu-item {
+  display: block;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.context-menu-item:hover { background: var(--bg-hover); }
+.context-menu-item.danger { color: var(--text-error); }
+.context-menu-item.danger:hover {
+  background: color-mix(in srgb, var(--status-error) 12%, transparent);
+}
+
+/* ---------- Color swatch picker (connection form) ---------- */
+
+.color-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+.color-swatch.selected {
+  border-color: var(--text);
+}
+
+/* ---------- Settings toggle row ---------- */
+
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-muted);
+}
+.settings-toggle-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-toggle-label input[type="checkbox"] {
+  width: auto;
+}
+
 /* ---------- Status dot ---------- */
 
 .status-dot {
