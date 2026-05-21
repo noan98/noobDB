@@ -1,4 +1,5 @@
-import { PreviewResult } from "../api/tauri";
+import { useMemo } from "react";
+import { CellValue, PreviewResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { DataGrid } from "./ResultGrid";
 
@@ -7,9 +8,91 @@ interface Props {
   rowLimit: number;
 }
 
+interface Diff {
+  // changedCells[i][j] is true when before_rows[i] and the paired after row
+  // differ on column j. Indexed by the original BEFORE row position.
+  beforeChanges: boolean[][];
+  // Same shape, indexed by original AFTER row position.
+  afterChanges: boolean[][];
+  // True for column j if any paired row differs on that column.
+  changedColumns: boolean[];
+}
+
+function valuesEqual(a: CellValue, b: CellValue): boolean {
+  if (a === b) return true;
+  if (a === null || a === undefined) return b === null || b === undefined;
+  if (b === null || b === undefined) return false;
+  // Cross-type compare (e.g. boolean `true` vs string "1") is rare in
+  // practice — backend decodes both snapshots with the same column types.
+  // Fall back to string comparison so numeric/decimal precision swings or
+  // an Int(1) vs Bool(true) round-trip don't show up as spurious diffs.
+  return String(a) === String(b);
+}
+
+function pkKey(row: CellValue[], pkIndices: number[]): string {
+  // JSON gives us a stable, unambiguous join even for composite keys.
+  return JSON.stringify(pkIndices.map((i) => row[i] ?? null));
+}
+
+function computeDiff(
+  columns: number,
+  beforeRows: CellValue[][],
+  afterRows: CellValue[][],
+  pkIndices: number[],
+): Diff {
+  const beforeChanges = beforeRows.map(() => new Array(columns).fill(false));
+  const afterChanges = afterRows.map(() => new Array(columns).fill(false));
+  const changedColumns = new Array<boolean>(columns).fill(false);
+
+  // Pair by PK when available; otherwise fall back to positional pairing,
+  // which still produces sensible diffs for UPDATEs on tables without a PK
+  // because both snapshots use the same `LIMIT` and scan order.
+  const pairs: Array<[number, number]> = [];
+  if (pkIndices.length > 0) {
+    const afterByPk = new Map<string, number>();
+    afterRows.forEach((row, i) => {
+      afterByPk.set(pkKey(row, pkIndices), i);
+    });
+    beforeRows.forEach((row, i) => {
+      const k = pkKey(row, pkIndices);
+      const j = afterByPk.get(k);
+      if (j !== undefined) pairs.push([i, j]);
+    });
+  } else {
+    const n = Math.min(beforeRows.length, afterRows.length);
+    for (let i = 0; i < n; i++) pairs.push([i, i]);
+  }
+
+  for (const [bi, ai] of pairs) {
+    const bRow = beforeRows[bi];
+    const aRow = afterRows[ai];
+    for (let c = 0; c < columns; c++) {
+      if (!valuesEqual(bRow[c], aRow[c])) {
+        beforeChanges[bi][c] = true;
+        afterChanges[ai][c] = true;
+        changedColumns[c] = true;
+      }
+    }
+  }
+
+  return { beforeChanges, afterChanges, changedColumns };
+}
+
 export function PreviewGrid({ result, rowLimit }: Props) {
   const t = useT();
   const hasSnapshots = result.columns.length > 0;
+
+  const diff = useMemo<Diff>(() => {
+    const pkIndices = result.primary_key
+      .map((name) => result.columns.findIndex((c) => c.name === name))
+      .filter((i) => i >= 0);
+    return computeDiff(
+      result.columns.length,
+      result.before_rows,
+      result.after_rows,
+      pkIndices,
+    );
+  }, [result.columns, result.before_rows, result.after_rows, result.primary_key]);
 
   return (
     <div className="preview">
@@ -45,7 +128,12 @@ export function PreviewGrid({ result, rowLimit }: Props) {
               {result.before_rows.length === 0 ? (
                 <div className="preview-empty">{t("previewEmptyBefore")}</div>
               ) : (
-                <DataGrid columns={result.columns} rows={result.before_rows} />
+                <DataGrid
+                  columns={result.columns}
+                  rows={result.before_rows}
+                  changedCells={diff.beforeChanges}
+                  changedColumns={diff.changedColumns}
+                />
               )}
             </div>
           </section>
@@ -55,7 +143,12 @@ export function PreviewGrid({ result, rowLimit }: Props) {
               {result.after_rows.length === 0 ? (
                 <div className="preview-empty">{t("previewEmptyAfter")}</div>
               ) : (
-                <DataGrid columns={result.columns} rows={result.after_rows} />
+                <DataGrid
+                  columns={result.columns}
+                  rows={result.after_rows}
+                  changedCells={diff.afterChanges}
+                  changedColumns={diff.changedColumns}
+                />
               )}
             </div>
           </section>

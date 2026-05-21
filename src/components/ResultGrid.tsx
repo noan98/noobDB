@@ -176,15 +176,23 @@ const includesFilter: FilterFn<RowShape> = (row, columnId, filterValue) => {
  * When `enableColumnControls` is true (default), each header is clickable
  * to cycle sort (none → asc → desc → none) and a per-column filter row is
  * shown beneath the headers.
+ *
+ * `changedCells`/`changedColumns` are indexed by the ORIGINAL row position
+ * (i.e. `rows[i]`) and applied after sort/filter via `row.index`, so the
+ * highlight tracks the row even when the user re-sorts the preview pane.
  */
 export function DataGrid({
   columns,
   rows,
   enableColumnControls = true,
+  changedCells,
+  changedColumns,
 }: {
   columns: Column[];
   rows: CellValue[][];
   enableColumnControls?: boolean;
+  changedCells?: boolean[][];
+  changedColumns?: boolean[];
 }) {
   const t = useT();
 
@@ -323,10 +331,11 @@ export function DataGrid({
                     : sortDir === "desc"
                       ? t("gridSortClear")
                       : t("gridSortAsc");
+                const isChangedCol = changedColumns?.[idx] ?? false;
                 return (
                   <th
                     key={h.id}
-                    className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""}`}
+                    className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""}`}
                     aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
                   >
                     {canSort ? (
@@ -397,10 +406,11 @@ export function DataGrid({
                   const v = cell.getValue() as CellValue;
                   const kind = columnKinds[idx] ?? "string";
                   const isNull = v === null || v === undefined;
+                  const isChanged = changedCells?.[row.index]?.[idx] ?? false;
                   return (
                     <td
                       key={cell.id}
-                      className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull ? "is-null" : ""}`}
+                      className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull ? "is-null" : ""} ${isChanged ? "is-changed" : ""}`}
                       title={isNull ? t("resultNull") : String(v)}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}

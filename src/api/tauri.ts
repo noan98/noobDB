@@ -74,6 +74,7 @@ export interface QueryResult {
 export interface PreviewResult {
   target_table: string | null;
   columns: Column[];
+  primary_key: string[];
   before_rows: CellValue[][];
   after_rows: CellValue[][];
   rows_affected: number;
