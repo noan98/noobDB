@@ -1,81 +1,163 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+このファイルは、本リポジトリのコードを扱う際に Claude Code (claude.ai/code) に
+向けたガイダンスを提供します。
 
-## Commands
+## 言語ポリシー
 
-Frontend (run from repo root):
+- **プルリクエスト (PR) の作成は必ず日本語で行ってください。** PR のタイトル・
+  本文・サマリー・テスト計画など、PR に含まれるすべての記述を日本語で記述します。
+  これは Claude Code が本リポジトリで PR を作成するすべての状況に適用される、
+  例外のないルールです。
+
+## コマンド
+
+フロントエンド (リポジトリのルートから実行):
 
 ```sh
 npm install
-npm run dev            # vite dev server on http://localhost:1420
-npm run build          # tsc type-check + vite build → dist/
-npm run tauri dev      # full app (Tauri spawns vite via beforeDevCommand)
-npm run tauri build    # production bundle (NSIS installer on Windows)
+npm run dev            # vite 開発サーバを http://localhost:1420 で起動
+npm run build          # tsc による型チェック + vite ビルド → dist/
+npm run tauri dev      # アプリ全体 (Tauri が beforeDevCommand 経由で vite を起動)
+npm run tauri build    # 本番バンドル (Windows では NSIS インストーラ)
 ```
 
-Rust backend (run from `src-tauri/`):
+Rust バックエンド (`src-tauri/` から実行):
 
 ```sh
 cargo check --all-targets
-cargo test                                   # unit tests
-cargo test --test mysql_integration          # single integration test file
-cargo test mysql_roundtrip_when_env_set      # single test by name
+cargo test                                   # ユニットテスト
+cargo test --test mysql_integration          # 統合テストファイルを単体で実行
+cargo test mysql_roundtrip_when_env_set      # テスト名を指定して単体で実行
 ```
 
-The integration test is a no-op unless `TABLEX_TEST_MYSQL_URL` is set:
+統合テストは `TABLEX_TEST_MYSQL_URL` が設定されていない限り何もしません:
 
 ```sh
 TABLEX_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/testdb cargo test --test mysql_integration
 ```
 
-CI (`.github/workflows/release.yml`) runs `cargo check --all-targets` and `cargo test` against a MySQL 8 service container on Linux, and produces the Windows NSIS bundle via `tauri-action` on tags `v*` or manual dispatch. Linux CI requires Tauri 2 system packages (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`, `libxdo-dev`, `libayatana-appindicator3-dev`).
+CI (`.github/workflows/release.yml`) は Linux 上で MySQL 8 のサービスコンテナに
+対して `cargo check --all-targets` と `cargo test` を実行し、`v*` タグもしくは
+手動ディスパッチをトリガーに `tauri-action` 経由で Windows 用 NSIS バンドルを
+生成します。Linux CI では Tauri 2 のシステムパッケージ
+(`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`,
+`libxdo-dev`, `libayatana-appindicator3-dev`) が必要です。
 
-There is no JS linter or test runner configured; only `tsc` (via `npm run build`) type-checks the frontend. `tsconfig.json` enables `strict`, `noUnusedLocals`, and `noUnusedParameters`, so unused imports/parameters break the build.
+JS のリンタやテストランナーは設定されていません。フロントエンドは `tsc`
+(`npm run build` 経由) でのみ型チェックされます。`tsconfig.json` では `strict`、
+`noUnusedLocals`、`noUnusedParameters` が有効になっているため、未使用の import や
+パラメータがあるとビルドが失敗します。
 
-## Architecture
+## アーキテクチャ
 
-### Two-process split
+### 2 プロセス構成
 
-- **Frontend** (`src/`): React 18 + TypeScript + Vite. All UI state lives here; backend state is the source of truth for sessions and profiles. UI talks to Rust only via `invoke(...)` — see `src/api/tauri.ts`, the single typed wrapper around every Tauri command. The argument naming convention is camelCase on the JS side (e.g. `sessionId`); Tauri auto-translates to Rust `snake_case`.
-- **Backend** (`src-tauri/src/`): Tauri 2 + Tokio. `lib.rs::run()` registers the IPC handlers and installs `AppState` as Tauri-managed state. `main.rs` is a thin shim that calls `tablex_lib::run()`.
+- **フロントエンド** (`src/`): React 18 + TypeScript + Vite。UI の状態はすべて
+  ここで保持しますが、セッションやプロファイルに関してはバックエンドの状態が
+  正となります。UI から Rust への通信は `invoke(...)` のみ — `src/api/tauri.ts`
+  が Tauri コマンド全体への型付けされた単一のラッパーです。JS 側の引数名は
+  camelCase の規約 (例: `sessionId`) で、Tauri が自動的に Rust 側の `snake_case`
+  に変換します。
+- **バックエンド** (`src-tauri/src/`): Tauri 2 + Tokio。`lib.rs::run()` で IPC
+  ハンドラを登録し、`AppState` を Tauri 管理ステートとしてインストールします。
+  `main.rs` は薄いシムで、`tablex_lib::run()` を呼ぶだけです。
 
-### Driver dispatch: `enum Connection`
+### ドライバのディスパッチ: `enum Connection`
 
-The DB layer is intentionally a hand-rolled enum, not a trait object. `db::Connection` in `src-tauri/src/db/mod.rs` matches on its variant for every operation (`execute`, `databases`, `tables`, `columns`, `close`). **Adding a new database (Postgres, SQLite) means: add a `DriverKind` variant, add a `db/<name>.rs` module exposing the same method surface, and extend each `match` arm in `db/mod.rs`.** Do not touch the SSH or session layers — they are driver-agnostic.
+DB レイヤは意図的に手書きの enum で実装されており、トレイトオブジェクトではありません。
+`src-tauri/src/db/mod.rs` の `db::Connection` は、各操作 (`execute`, `databases`,
+`tables`, `columns`, `close`) でバリアントに対してマッチします。**新しいデータベース
+(Postgres, SQLite) を追加する場合は、`DriverKind` にバリアントを追加し、同じメソッド
+表面を公開する `db/<name>.rs` モジュールを追加し、`db/mod.rs` の各 `match` アームを
+拡張します。** SSH やセッション層には触らないでください — それらはドライバに依存しません。
 
-`db::types::{Value, Column, QueryResult, TableColumnInfo}` is the cross-driver wire format. `Value` is `#[serde(untagged)]`, so JSON sees primitives directly; BLOBs are hex-encoded strings (`Value::Bytes`) to keep JSON safe. The MySQL implementation does explicit type-driven decoding in `mysql::decode_cell` — when adding column types, follow that try-typed-then-fall-back-to-String pattern.
+`db::types::{Value, Column, QueryResult, TableColumnInfo}` がドライバ横断のワイヤ
+フォーマットです。`Value` は `#[serde(untagged)]` なので、JSON では直接プリミティブ
+として見えます。BLOB は JSON で安全に扱えるよう 16 進エンコードした文字列
+(`Value::Bytes`) になります。MySQL 実装の `mysql::decode_cell` では型に応じた明示的な
+デコードを行っています — カラム型を追加する際は「型付きで試して失敗したら String に
+フォールバック」というパターンに従ってください。
 
-`MySqlConn::execute` decides query-vs-exec by sniffing the SQL prefix (`select`/`show`/`describe`/`desc`/`explain`/`with`); non-matching statements use `.execute()` and return `rows_affected` with empty columns/rows.
+`MySqlConn::execute` は SQL の先頭
+(`select`/`show`/`describe`/`desc`/`explain`/`with`) を見てクエリかエグゼキュートかを
+判断します。マッチしないステートメントは `.execute()` を使い、`rows_affected` を返して
+カラム / 行は空にします。
 
-### SSH tunnel + session lifetime
+### SSH トンネルとセッションのライフタイム
 
-`SshTunnel` (`ssh/tunnel.rs`) opens a local TCP listener on an OS-assigned port, dials the SSH server with `russh`, authenticates with a public key, and spawns an accept loop that opens a `direct-tcpip` channel per inbound connection and pipes bytes bidirectionally. The session and the accept-task `JoinHandle` are owned by the struct; **`impl Drop` aborts the task, dropping the `Arc<russh::client::Handle>` closes the SSH session**.
+`SshTunnel` (`ssh/tunnel.rs`) は OS が割り当てるポートでローカル TCP リスナを開き、
+`russh` で SSH サーバへ接続し、公開鍵で認証し、インバウンド接続ごとに
+`direct-tcpip` チャネルを開いて双方向にバイト列をパイプする accept ループを spawn
+します。セッションと accept タスクの `JoinHandle` は構造体が所有しています。
+**`impl Drop` がタスクを abort し、`Arc<russh::client::Handle>` の drop によって
+SSH セッションがクローズします。**
 
-When a connection uses SSH, `commands::connection::build_options` opens the tunnel first, then constructs `DbConnectOptions` pointing at `127.0.0.1:<tunnel.local_port>`. The `SshTunnel` is stored as `Session._tunnel: Option<SshTunnel>` so it lives exactly as long as the DB connection. **Never drop the tunnel before the connection — sqlx will reconnect through nothing.** `disconnect` removes the `Arc<Session>` from the map; the last reference dropping triggers both `conn.close()` and the tunnel's `Drop`.
+接続が SSH を使う場合、`commands::connection::build_options` はまずトンネルを開き、
+その後 `127.0.0.1:<tunnel.local_port>` を指す `DbConnectOptions` を構築します。
+`SshTunnel` は `Session._tunnel: Option<SshTunnel>` として保持され、DB 接続と
+ぴったり同じ期間生存します。**接続より先にトンネルを drop してはいけません —
+そうしないと sqlx は存在しない経路に再接続してしまいます。** `disconnect` は
+マップから `Arc<Session>` を取り除き、最後の参照が drop されたタイミングで
+`conn.close()` とトンネルの `Drop` の両方がトリガーされます。
 
-Host-key verification is **trust-on-first-use** in `ssh/handler.rs::ClientHandler::check_server_key`. The known_hosts file is `<data_dir>/known_hosts` with one `host:port fingerprint` line per entry. A mismatch returns `russh::Error::UnknownKey` and aborts the connection; recovery requires manually deleting the line.
+ホスト鍵検証は `ssh/handler.rs::ClientHandler::check_server_key` における
+**初回信頼方式 (TOFU)** です。known_hosts ファイルは `<data_dir>/known_hosts` で、
+1 行 1 エントリの `host:port fingerprint` 形式です。不一致の場合は
+`russh::Error::UnknownKey` を返して接続を中断します。復旧するには該当行を手動で
+削除します。
 
-### Sessions
+### セッション
 
-`AppState` (`state.rs`) holds `RwLock<HashMap<SessionId, Arc<Session>>>`. Session IDs are 8-char base32-ish slugs from a custom alphabet (no ambiguous chars like `0`/`o`/`l`/`1`). They're used as keyring target prefixes, so the alphabet matters for cross-platform safety. Always look up sessions via `state.get(&id).await.ok_or(AppError::SessionNotFound(id))` — see `commands::query::run_query` for the pattern; replicate it in any new command that touches a session.
+`AppState` (`state.rs`) は `RwLock<HashMap<SessionId, Arc<Session>>>` を保持します。
+セッション ID は独自アルファベット (`0`/`o`/`l`/`1` のような紛らわしい文字を含まない)
+から生成される、8 文字程度の base32 風スラッグです。これらは keyring のターゲット
+プレフィックスとしても使われるため、クロスプラットフォーム上で安全であるよう
+アルファベットの選定が重要です。セッションは常に
+`state.get(&id).await.ok_or(AppError::SessionNotFound(id))` で参照してください。
+パターンは `commands::query::run_query` を参照し、セッションを扱う新しいコマンドでも
+同じ方式を踏襲してください。
 
-### Profiles vs. secrets — strict split
+### プロファイルと秘密情報 — 厳密な分離
 
-- `profiles.json` (in `directories::ProjectDirs` data_dir — `%APPDATA%/tableX` on Windows) stores everything **non-secret**: name, host, port, user, database, ssh host/port/user/key path. `profiles/store.rs` is a load/save-all + upsert/delete API.
-- The OS keyring (`keyring` crate) stores **secrets only**: DB password and SSH key passphrase, keyed by `<profile_id>/db_password` and `<profile_id>/ssh_passphrase` under service `tableX`. See `profiles/secrets.rs`.
-- `save_profile` accepts `db_password`/`ssh_passphrase` as `Option<String>` with empty-string semantics: `None` = no change, `Some("")` = delete from keyring, `Some(v)` = set.
-- `delete_profile` calls `secrets::delete_all` first to avoid orphaned credentials.
-- **Do not put secrets in `profiles.json`** and do not log them. Connection requests with empty `password`/`passphrase` fall back to the keyring lookup keyed by `profile_id` (see `resolve_password` / `resolve_passphrase` in `commands/connection.rs`).
+- `profiles.json` (`directories::ProjectDirs` の data_dir — Windows では
+  `%APPDATA%/tableX`) には**秘密でない情報**をすべて保存します: 名前、ホスト、
+  ポート、ユーザ、データベース、SSH ホスト / ポート / ユーザ / 鍵パスなど。
+  `profiles/store.rs` は load/save-all と upsert/delete の API を提供します。
+- OS の keyring (`keyring` クレート) には**秘密情報のみ**を保存します: DB の
+  パスワードと SSH 鍵のパスフレーズで、`<profile_id>/db_password` および
+  `<profile_id>/ssh_passphrase` をキーに、サービス名 `tableX` のもとに格納します。
+  詳細は `profiles/secrets.rs` を参照してください。
+- `save_profile` は `db_password` / `ssh_passphrase` を `Option<String>` として
+  受け取り、空文字列に意味を持たせます: `None` は変更なし、`Some("")` は keyring
+  から削除、`Some(v)` は値を設定。
+- `delete_profile` は孤立した資格情報を残さないよう、最初に `secrets::delete_all`
+  を呼びます。
+- **秘密情報を `profiles.json` に入れてはいけません**。また、ログにも出力しないで
+  ください。`password` / `passphrase` が空の接続要求は、`profile_id` をキーにした
+  keyring の参照にフォールバックします (`commands/connection.rs` の
+  `resolve_password` / `resolve_passphrase` を参照)。
 
-### IPC surface
+### IPC 表面
 
-Every `#[tauri::command]` is registered in the `invoke_handler!` macro in `lib.rs::run()`. The full list is mirrored in `src/api/tauri.ts` as the `api` object. **When adding a command: add the Rust handler, register it in `lib.rs`, and add the typed wrapper in `tauri.ts` — drift between these will silently break the frontend.** Errors bubble up as `AppError`, which serializes as its `Display` string (see `error.rs::Serialize`); the frontend receives them as `string` in the rejected promise.
+すべての `#[tauri::command]` は `lib.rs::run()` 内の `invoke_handler!` マクロで
+登録されます。完全なリストは `src/api/tauri.ts` の `api` オブジェクトにミラーされて
+います。**コマンドを追加するときは: Rust ハンドラを追加し、`lib.rs` で登録し、
+`tauri.ts` に型付けされたラッパーを追加します — これらの間でズレが発生すると
+フロントエンドが暗黙のうちに壊れます。** エラーは `AppError` として上に伝搬し、
+その `Display` 文字列としてシリアライズされます (`error.rs::Serialize` を参照)。
+フロントエンドは reject された Promise の中で `string` として受け取ります。
 
-### Test-only API
+### テスト専用 API
 
-`lib.rs` exposes `pub mod __test_api` (`#[doc(hidden)]`) so integration tests under `src-tauri/tests/` can drive the `db::Connection` path without going through Tauri. If you need a new test entry point, add it there rather than making internal modules public.
+`lib.rs` は `pub mod __test_api` (`#[doc(hidden)]`) を公開しており、
+`src-tauri/tests/` 配下の統合テストが Tauri を経由せずに `db::Connection` の
+経路を駆動できるようにしています。新しいテスト用エントリポイントが必要な場合は、
+内部モジュールを公開するのではなく、ここに追加してください。
 
 ### Tauri capabilities
 
-`src-tauri/capabilities/default.json` is intentionally minimal: window/app/event defaults plus `dialog:allow-open`/`dialog:allow-save`. Don't add permissions without a concrete need — the frontend should call backend commands, not direct shell/fs APIs.
+`src-tauri/capabilities/default.json` は意図的に最小限です: ウィンドウ / app /
+イベントのデフォルトに加え、`dialog:allow-open` / `dialog:allow-save` のみ。
+具体的な必要性がない限り、権限を追加しないでください — フロントエンドはバックエンドの
+コマンドを呼び出すべきで、シェルや fs の API を直接叩くべきではありません。
