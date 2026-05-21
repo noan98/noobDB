@@ -7,6 +7,7 @@ import {
   Theme,
   resetStreamingDefaults,
   resetSyntaxColors,
+  setConfirmProductionConnect,
   setDefaultDisplayCount,
   setStreamPrefetchSize,
   setSyntaxColor,
@@ -117,6 +118,26 @@ export function SettingsView({ theme, onClose }: Props) {
           />
           <span className="settings-help-inline">
             {t("settingsStreamPrefetchSizeHelp")}
+          </span>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <h3>{t("settingsSafety")}</h3>
+        </div>
+        <div className="settings-toggle-row">
+          <label htmlFor="settings-confirm-prod" className="settings-toggle-label">
+            <input
+              id="settings-confirm-prod"
+              type="checkbox"
+              checked={settings.confirmProductionConnect}
+              onChange={(e) => setConfirmProductionConnect(e.target.checked)}
+            />
+            {t("settingsConfirmProductionConnect")}
+          </label>
+          <span className="settings-help-inline">
+            {t("settingsConfirmProductionConnectHelp")}
           </span>
         </div>
       </section>

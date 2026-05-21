@@ -17,6 +17,16 @@ pub struct ConnectionProfile {
     pub user: String,
     pub database: Option<String>,
     pub ssh: Option<SshProfile>,
+    /// Optional group name used to organize connections in the sidebar.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Optional accent color (e.g. `#dc2626`) shown on the profile row.
+    #[serde(default)]
+    pub color: Option<String>,
+    /// When true and the corresponding setting is enabled, the UI shows a
+    /// confirmation dialog before connecting.
+    #[serde(default)]
+    pub is_production: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,6 +9,16 @@ interface Props {
   onCancel: () => void;
 }
 
+const DEFAULT_PROD_COLOR = "#dc2626";
+const COLOR_PRESETS = [
+  "#dc2626", // red — production
+  "#ea580c", // orange — staging
+  "#ca8a04", // yellow — sandbox
+  "#16a34a", // green — development
+  "#2563eb", // blue — read replica
+  "#7c3aed", // purple — misc
+];
+
 export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
   const t = useT();
   const [name, setName] = useState(initial?.name ?? "");
@@ -17,6 +27,9 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
   const [user, setUser] = useState(initial?.user ?? "root");
   const [database, setDatabase] = useState(initial?.database ?? "");
   const [password, setPassword] = useState("");
+  const [group, setGroup] = useState(initial?.group ?? "");
+  const [color, setColor] = useState<string | null>(initial?.color ?? null);
+  const [isProduction, setIsProduction] = useState<boolean>(initial?.is_production ?? false);
 
   const [useSsh, setUseSsh] = useState(!!initial?.ssh);
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
@@ -57,6 +70,11 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
       : null,
   });
 
+  const toggleProduction = (checked: boolean) => {
+    setIsProduction(checked);
+    if (checked && !color) setColor(DEFAULT_PROD_COLOR);
+  };
+
   const handleTest = async () => {
     setError(null); setMessage(null); setTesting(true);
     try {
@@ -85,6 +103,9 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
           : null,
         db_password: password === "" ? undefined : password,
         ssh_passphrase: useSsh && sshPassphrase !== "" ? sshPassphrase : undefined,
+        group: group.trim() || null,
+        color: color || null,
+        is_production: isProduction,
       });
       onSaved();
     } catch (e) {
@@ -126,6 +147,62 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
         <div style={{ marginTop: 8 }}>
           <label>{t("formDbPassword")}</label>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>{t("formGroup")}</legend>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+          <div>
+            <label>{t("formGroup")}</label>
+            <input
+              value={group}
+              onChange={(e) => setGroup(e.target.value)}
+              placeholder={t("formGroupPlaceholder")}
+              list="form-group-suggestions"
+            />
+          </div>
+          <div>
+            <label>{t("formColor")}</label>
+            <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {COLOR_PRESETS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`color-swatch ${color === c ? "selected" : ""}`}
+                  style={{ background: c }}
+                  onClick={() => setColor(c)}
+                  aria-label={c}
+                  title={c}
+                />
+              ))}
+              <input
+                type="color"
+                value={color ?? "#888888"}
+                onChange={(e) => setColor(e.target.value)}
+                style={{ width: 42, padding: 0, height: 28 }}
+              />
+              {color && (
+                <button type="button" onClick={() => setColor(null)}>
+                  {t("formColorClear")}
+                </button>
+              )}
+            </div>
+          </div>
+          <div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto" }}
+                checked={isProduction}
+                onChange={(e) => toggleProduction(e.target.checked)}
+              />
+              {t("formIsProduction")}
+            </label>
+            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+              {t("formIsProductionHelp")}
+            </p>
+          </div>
         </div>
       </fieldset>
 

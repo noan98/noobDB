@@ -23,6 +23,12 @@ pub struct SaveProfileRequest {
     /// Same semantics for the SSH passphrase.
     #[serde(default)]
     pub ssh_passphrase: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub is_production: bool,
 }
 
 #[tauri::command]
@@ -45,6 +51,9 @@ pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> 
         user: req.user,
         database: req.database,
         ssh: req.ssh,
+        group: req.group.filter(|s| !s.is_empty()),
+        color: req.color.filter(|s| !s.is_empty()),
+        is_production: req.is_production,
     };
     store::upsert(profile.clone())?;
 

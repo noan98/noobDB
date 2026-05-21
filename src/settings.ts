@@ -20,6 +20,8 @@ export interface Settings {
   defaultDisplayCount: number;
   /** Chunk size used to fetch additional rows once the initial batch has been shown. */
   streamPrefetchSize: number;
+  /** Show a confirmation dialog when connecting to a profile flagged as production. */
+  confirmProductionConnect: boolean;
 }
 
 export const DEFAULT_SYNTAX_COLORS: Record<Theme, SyntaxColors> = {
@@ -46,6 +48,8 @@ export const DEFAULT_STREAM_PREFETCH_SIZE = 200;
 const MIN_BATCH = 1;
 const MAX_BATCH = 100_000;
 
+export const DEFAULT_CONFIRM_PRODUCTION_CONNECT = true;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -53,6 +57,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   defaultDisplayCount: DEFAULT_DISPLAY_COUNT,
   streamPrefetchSize: DEFAULT_STREAM_PREFETCH_SIZE,
+  confirmProductionConnect: DEFAULT_CONFIRM_PRODUCTION_CONNECT,
 };
 
 const STORAGE_KEY = "tablex.settings";
@@ -88,6 +93,7 @@ function loadInitial(): Settings {
       syntaxColors?: { light?: unknown; dark?: unknown };
       defaultDisplayCount?: unknown;
       streamPrefetchSize?: unknown;
+      confirmProductionConnect?: unknown;
     };
     return {
       syntaxColors: {
@@ -96,6 +102,10 @@ function loadInitial(): Settings {
       },
       defaultDisplayCount: sanitizeCount(parsed.defaultDisplayCount, DEFAULT_DISPLAY_COUNT),
       streamPrefetchSize: sanitizeCount(parsed.streamPrefetchSize, DEFAULT_STREAM_PREFETCH_SIZE),
+      confirmProductionConnect:
+        typeof parsed.confirmProductionConnect === "boolean"
+          ? parsed.confirmProductionConnect
+          : DEFAULT_CONFIRM_PRODUCTION_CONNECT,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -152,6 +162,13 @@ export function setStreamPrefetchSize(value: number): void {
   const next = sanitizeCount(value, current.streamPrefetchSize);
   if (next === current.streamPrefetchSize) return;
   current = { ...current, streamPrefetchSize: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setConfirmProductionConnect(value: boolean): void {
+  if (current.confirmProductionConnect === value) return;
+  current = { ...current, confirmProductionConnect: value };
   persist();
   listeners.forEach((cb) => cb());
 }
