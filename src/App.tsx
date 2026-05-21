@@ -7,7 +7,9 @@ import { ResultGrid } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
 import { TabBar } from "./components/TabBar";
 import { LanguageSwitcher } from "./components/LanguageSwitcher";
+import { SettingsView } from "./components/SettingsView";
 import { t as translate, useT } from "./i18n";
+import { useSettings } from "./settings";
 
 const PREVIEW_ROW_LIMIT = 100;
 
@@ -63,11 +65,21 @@ function makeQueryTab(): Tab {
 export default function App() {
   const t = useT();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
+  const settings = useSettings();
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    const colors = settings.syntaxColors[theme];
+    const root = document.documentElement;
+    for (const [key, val] of Object.entries(colors)) {
+      root.style.setProperty(`--syntax-${key}`, val);
+    }
+  }, [settings, theme]);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
@@ -295,7 +307,15 @@ export default function App() {
             </button>
             <button
               className="icon"
-              onClick={() => { setEditing(null); setShowForm(true); }}
+              onClick={() => { setShowForm(false); setShowSettings(true); }}
+              title={t("appSettings")}
+              aria-label={t("appSettings")}
+            >
+              ⚙
+            </button>
+            <button
+              className="icon"
+              onClick={() => { setEditing(null); setShowSettings(false); setShowForm(true); }}
               title={t("appNew")}
               aria-label={t("appNew")}
             >
@@ -323,7 +343,9 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {showForm ? (
+        {showSettings ? (
+          <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
+        ) : showForm ? (
           <ConnectionForm
             initial={editing}
             onSaved={async () => {
