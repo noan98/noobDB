@@ -410,6 +410,8 @@ export default function App() {
                         ? { database: activeTab.database, name: activeTab.table }
                         : null
                     }
+                    sessionId={sessionId}
+                    defaultDatabase={activeTab.database ?? selectedProfile?.database ?? null}
                   />
                   {activeTab.preview ? (
                     <PreviewGrid result={activeTab.preview} rowLimit={PREVIEW_ROW_LIMIT} />
