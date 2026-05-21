@@ -206,9 +206,6 @@ export function QueryEditor({
             {t("editorBuilder")}
           </button>
         )}
-        <span className="muted" style={{ fontSize: 12 }}>
-          {disabled ? t("editorHintDisabled") : t("editorHint")}
-        </span>
       </div>
       <div className="cm" ref={hostRef} />
       {showBuilder && sessionId && (

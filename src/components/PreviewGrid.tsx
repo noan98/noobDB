@@ -1,8 +1,30 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CellValue, PreviewResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { DataGrid } from "./ResultGrid";
 import { Splitter } from "./Splitter";
+
+const SYNC_SCROLL_STORAGE_KEY = "tablex.preview.syncScroll";
+
+function readSyncScrollPref(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const v = window.localStorage.getItem(SYNC_SCROLL_STORAGE_KEY);
+    if (v === null) return true;
+    return v === "1";
+  } catch {
+    return true;
+  }
+}
+
+function writeSyncScrollPref(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SYNC_SCROLL_STORAGE_KEY, enabled ? "1" : "0");
+  } catch {
+    // ignore (private mode, quota, etc.)
+  }
+}
 
 interface Props {
   result: PreviewResult;
@@ -122,6 +144,45 @@ export function PreviewGrid({ result, rowLimit, streaming }: Props) {
   const t = useT();
   const hasSnapshots = result.columns.length > 0;
 
+  const beforeBodyRef = useRef<HTMLDivElement | null>(null);
+  const afterBodyRef = useRef<HTMLDivElement | null>(null);
+  const [syncScroll, setSyncScroll] = useState<boolean>(() => readSyncScrollPref());
+
+  useEffect(() => {
+    if (!syncScroll) return;
+    const before = beforeBodyRef.current;
+    const after = afterBodyRef.current;
+    if (!before || !after) return;
+
+    // Re-entrancy guard: programmatic scrollTop/Left writes fire 'scroll'
+    // again on the target. Without this both panes ping-pong forever.
+    let syncing = false;
+    const mirror = (src: HTMLDivElement, dst: HTMLDivElement) => {
+      if (syncing) return;
+      syncing = true;
+      dst.scrollTop = src.scrollTop;
+      dst.scrollLeft = src.scrollLeft;
+      // The scroll event from the assignment above is queued, not synchronous,
+      // so release the guard after it has a chance to fire.
+      requestAnimationFrame(() => {
+        syncing = false;
+      });
+    };
+    const onBefore = () => mirror(before, after);
+    const onAfter = () => mirror(after, before);
+    before.addEventListener("scroll", onBefore, { passive: true });
+    after.addEventListener("scroll", onAfter, { passive: true });
+
+    // Align once on enable so the two panes start in sync.
+    after.scrollTop = before.scrollTop;
+    after.scrollLeft = before.scrollLeft;
+
+    return () => {
+      before.removeEventListener("scroll", onBefore);
+      after.removeEventListener("scroll", onAfter);
+    };
+  }, [syncScroll, hasSnapshots]);
+
   const diff = useMemo<Diff>(() => {
     const pkIndices = result.primary_key
       .map((name) => result.columns.findIndex((c) => c.name === name))
@@ -196,6 +257,20 @@ export function PreviewGrid({ result, rowLimit, streaming }: Props) {
             {t("previewAffectedOutsideSnapshot", { limit: rowLimit })}
           </span>
         )}
+        {hasSnapshots && (
+          <label className="preview-sync-scroll" title={t("previewSyncScrollTitle")}>
+            <input
+              type="checkbox"
+              checked={syncScroll}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setSyncScroll(v);
+                writeSyncScrollPref(v);
+              }}
+            />
+            <span>{t("previewSyncScroll")}</span>
+          </label>
+        )}
       </div>
 
       {hasSnapshots && (
@@ -209,7 +284,7 @@ export function PreviewGrid({ result, rowLimit, streaming }: Props) {
           first={
             <section className="preview-pane preview-before">
               <header className="preview-pane-header">{t("previewBefore")}</header>
-              <div className="preview-pane-body">
+              <div className="preview-pane-body" ref={beforeBodyRef}>
                 {filteredBeforeRows.length === 0 ? (
                   <div className="preview-empty">
                     {result.before_rows.length === 0
@@ -230,7 +305,7 @@ export function PreviewGrid({ result, rowLimit, streaming }: Props) {
           second={
             <section className="preview-pane preview-after">
               <header className="preview-pane-header">{t("previewAfter")}</header>
-              <div className="preview-pane-body">
+              <div className="preview-pane-body" ref={afterBodyRef}>
                 {filteredAfterRows.length === 0 ? (
                   <div className="preview-empty">
                     {result.after_rows.length === 0
