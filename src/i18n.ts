@@ -363,7 +363,7 @@ const ja: Dict = {
   resultExecuted: "ステートメントを実行しました。影響行数 {rows} 件 ({ms} ms)。",
   resultNull: "NULL",
 
-  previewBanner: "Preview — 変更はロールバックされました。データベースは変更されていません。",
+  previewBanner: "Preview",
   previewTargetTable: "対象テーブル: {table}",
   previewNoTarget: "対象テーブルを自動検出できませんでした — 影響行数のみ表示しています。",
   previewRowsAffected: "影響行数 {rows} 件 ({ms} ms)",
