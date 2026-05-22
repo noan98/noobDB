@@ -121,7 +121,7 @@ const en = {
   formSave: "Save",
 
   editorRun: "Run",
-  editorRunOnTable: "Run ({table})",
+  editorRunOnTable: "Run",
   editorRunOnTableTitle: "Runs against `{database}` — selection or whole editor",
   editorPreview: "Dry Run",
   editorPreviewTitle: "Dry-run the statement in a transaction and show before/after — changes are rolled back.",
@@ -321,7 +321,7 @@ const ja: Dict = {
   formSave: "保存",
 
   editorRun: "Run",
-  editorRunOnTable: "Run ({table})",
+  editorRunOnTable: "Run",
   editorRunOnTableTitle: "`{database}` を使用して実行（選択範囲またはエディタ全体）",
   editorPreview: "Dry Run",
   editorPreviewTitle: "トランザクション内で試し実行し、Before/After を表示します（変更はロールバック）。",
