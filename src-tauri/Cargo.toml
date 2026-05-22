@@ -23,7 +23,7 @@ tokio-util = { version = "0.7", features = ["io", "compat"] }
 futures-util = "0.3"
 
 # DB
-sqlx = { version = "0.8", default-features = false, features = [
+sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",
     "mysql",
@@ -33,7 +33,7 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 
 # SSH
-russh = "0.45"
+russh = "0.60"
 
 # Secrets / config
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
@@ -54,7 +54,6 @@ data-encoding = "2"
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.8"
-async-trait = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }

@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
-use async_trait::async_trait;
 use russh::client::{Handler, Session};
-use russh::keys::key::PublicKey;
+use russh::keys::{HashAlg, PublicKey};
 use russh::ChannelId;
 
 use crate::profiles::store::data_dir;
@@ -61,7 +60,6 @@ impl ClientHandler {
     }
 }
 
-#[async_trait]
 impl Handler for ClientHandler {
     type Error = russh::Error;
 
@@ -69,7 +67,7 @@ impl Handler for ClientHandler {
         &mut self,
         server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
-        let fingerprint = server_public_key.fingerprint();
+        let fingerprint = server_public_key.fingerprint(HashAlg::Sha256).to_string();
         match self.lookup() {
             Ok(Some(known)) => {
                 if known == fingerprint {

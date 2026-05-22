@@ -56,7 +56,9 @@ impl MySqlConn {
         apply_use_database(&mut conn, database).await?;
 
         if is_query {
-            let rows: Vec<MySqlRow> = sqlx::query(sql).fetch_all(&mut *conn).await?;
+            let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+                .fetch_all(&mut *conn)
+                .await?;
             let columns = columns_of(&rows);
             let rows_out = rows.iter().map(row_to_values).collect();
             Ok(QueryResult {
@@ -66,7 +68,9 @@ impl MySqlConn {
                 elapsed_ms: started.elapsed().as_millis() as u64,
             })
         } else {
-            let result = sqlx::query(sql).execute(&mut *conn).await?;
+            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&mut *conn)
+                .await?;
             Ok(QueryResult::empty(
                 result.rows_affected(),
                 started.elapsed().as_millis() as u64,
@@ -130,7 +134,9 @@ impl MySqlConn {
         apply_use_database(&mut conn, database).await?;
 
         if !is_query {
-            let result = sqlx::query(sql).execute(&mut *conn).await?;
+            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&mut *conn)
+                .await?;
             return Ok(QueryResult::empty(
                 result.rows_affected(),
                 started.elapsed().as_millis() as u64,
@@ -139,7 +145,7 @@ impl MySqlConn {
 
         let initial = initial_batch.max(1);
         let chunk = chunk_size.max(1);
-        let mut stream = sqlx::query(sql).fetch(&mut *conn);
+        let mut stream = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch(&mut *conn);
         let mut columns: Vec<Column> = Vec::new();
         let mut columns_emitted = false;
         let mut buffer: Vec<Vec<Value>> = Vec::new();
@@ -281,7 +287,9 @@ impl MySqlConn {
                 Vec::new()
             };
 
-        let result = sqlx::query(sql).execute(&mut *tx).await?;
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *tx)
+            .await?;
         let rows_affected = result.rows_affected();
 
         // PK-anchored refetch keeps the same rows visible after UPDATE/DELETE,
@@ -300,7 +308,11 @@ impl MySqlConn {
             .await?
         } else {
             match &before_sql {
-                Some(q) => sqlx::query(q).fetch_all(&mut *tx).await?,
+                Some(q) => {
+                    sqlx::query(sqlx::AssertSqlSafe(q.as_str()))
+                        .fetch_all(&mut *tx)
+                        .await?
+                }
                 None => Vec::new(),
             }
         };
@@ -350,7 +362,9 @@ impl MySqlConn {
             return Err(AppError::InvalidInput("invalid database name".into()));
         }
         let sql = format!("SHOW TABLES IN `{}`", db);
-        let rows: Vec<MySqlRow> = sqlx::query(&sql).fetch_all(&self.pool).await?;
+        let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&self.pool)
+            .await?;
         rows.iter().map(|r| decode_text_col(r, 0)).collect()
     }
 
@@ -401,7 +415,7 @@ async fn apply_use_database(
     // directly because `RawSql::execute` is an `async fn` whose lifetime bounds
     // produce a non-`Send` future when bubbled up through `#[tauri::command]`.
     let sql = format!("USE `{}`", db);
-    sqlx::Executor::execute(&mut **conn, sqlx::raw_sql(&sql)).await?;
+    sqlx::Executor::execute(&mut **conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql))).await?;
     Ok(())
 }
 
@@ -712,7 +726,9 @@ async fn fetch_primary_key(conn: &mut PoolConnection<MySql>, target: &str) -> Re
     // `target` is taken verbatim from the user's SQL (already quoted as
     // needed). `SHOW KEYS FROM ...` accepts both `tbl` and `` `db`.`tbl` ``.
     let sql = format!("SHOW KEYS FROM {} WHERE Key_name = 'PRIMARY'", target);
-    let rows: Vec<MySqlRow> = sqlx::query(&sql).fetch_all(&mut **conn).await?;
+    let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .fetch_all(&mut **conn)
+        .await?;
     let mut entries: Vec<(u64, String)> = rows
         .iter()
         .filter_map(|r| {
@@ -761,7 +777,7 @@ async fn fetch_capped(
     query: &str,
     cap: usize,
 ) -> Result<Vec<MySqlRow>> {
-    let mut stream = sqlx::query(query).fetch(&mut **tx);
+    let mut stream = sqlx::query(sqlx::AssertSqlSafe(query)).fetch(&mut **tx);
     let mut rows = Vec::with_capacity(cap.min(1024));
     while let Some(row) = stream.next().await {
         rows.push(row?);
@@ -828,7 +844,7 @@ async fn fetch_after_by_pk(
         "SELECT * FROM {} WHERE {} IN ({}){}",
         target, lhs, placeholders, order_clause
     );
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     for row_pks in captured_pks {
         for v in row_pks {
             q = bind_value(q, v);

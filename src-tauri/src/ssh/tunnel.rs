@@ -57,10 +57,13 @@ impl SshTunnel {
             .map_err(|e| AppError::Ssh(format!("ssh connect failed: {e}")))?;
 
         let authed = session
-            .authenticate_publickey(&cfg.user, key)
+            .authenticate_publickey(
+                &cfg.user,
+                russh::keys::PrivateKeyWithHashAlg::new(key, None),
+            )
             .await
             .map_err(|e| AppError::Ssh(format!("ssh auth error: {e}")))?;
-        if !authed {
+        if !authed.success() {
             return Err(AppError::Ssh("ssh authentication failed".into()));
         }
 
