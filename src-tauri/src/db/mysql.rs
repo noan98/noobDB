@@ -715,16 +715,41 @@ async fn fetch_primary_key(conn: &mut PoolConnection<MySql>, target: &str) -> Re
     // needed). `SHOW KEYS FROM ...` accepts both `tbl` and `` `db`.`tbl` ``.
     let sql = format!("SHOW KEYS FROM {} WHERE Key_name = 'PRIMARY'", target);
     let rows: Vec<MySqlRow> = sqlx::query(&sql).fetch_all(&mut **conn).await?;
-    let mut entries: Vec<(i64, String)> = rows
+    let mut entries: Vec<(u64, String)> = rows
         .iter()
         .filter_map(|r| {
-            let seq = r.try_get::<i64, _>("Seq_in_index").ok()?;
+            // SHOW KEYS reports Seq_in_index as INT UNSIGNED on MariaDB and
+            // BIGINT UNSIGNED on MySQL 8 — sqlx's strict type check rejects
+            // `i64` for either, so the previous decoder silently dropped
+            // every row and PK detection always returned empty. Fall back
+            // through signed shapes too so future server versions don't
+            // re-break this without warning.
+            let seq = decode_seq_in_index(r)?;
             let col = r.try_get::<String, _>("Column_name").ok()?;
             Some((seq, col))
         })
         .collect();
     entries.sort_by_key(|(s, _)| *s);
     Ok(entries.into_iter().map(|(_, c)| c).collect())
+}
+
+/// Returns `Seq_in_index` as a `u64`, tolerating either signed or unsigned
+/// integer column types. Both branches of the index sequence are >= 1, so
+/// negative values aren't expected from any server.
+fn decode_seq_in_index(r: &MySqlRow) -> Option<u64> {
+    if let Ok(v) = r.try_get::<u64, _>("Seq_in_index") {
+        return Some(v);
+    }
+    if let Ok(v) = r.try_get::<u32, _>("Seq_in_index") {
+        return Some(v as u64);
+    }
+    if let Ok(v) = r.try_get::<i64, _>("Seq_in_index") {
+        return Some(v.max(0) as u64);
+    }
+    if let Ok(v) = r.try_get::<i32, _>("Seq_in_index") {
+        return Some(v.max(0) as u64);
+    }
+    None
 }
 
 /// Streams `query` and collects up to `cap` rows, then drops the stream
