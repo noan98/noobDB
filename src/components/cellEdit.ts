@@ -73,8 +73,18 @@ export function resolvePkIndices(
   return indices;
 }
 
-function quoteIdent(name: string): string {
+function quoteIdent(driver: string, name: string): string {
+  if (driver === "postgres" || driver === "sqlite") {
+    return '"' + name.replace(/"/g, '""') + '"';
+  }
   return "`" + name.replace(/`/g, "``") + "`";
+}
+
+function qualifiedTableRef(driver: string, database: string, table: string): string {
+  // SQLite has a single namespace per connection — the synthetic "main"
+  // database label is for the UI tree, not the SQL itself.
+  if (driver === "sqlite") return quoteIdent(driver, table);
+  return `${quoteIdent(driver, database)}.${quoteIdent(driver, table)}`;
 }
 
 function quoteString(s: string): string {
@@ -120,6 +130,7 @@ function literalFromInput(raw: string, col: Column): string {
 }
 
 export interface BuildUpdateInput {
+  driver: string;
   database: string;
   table: string;
   columns: Column[];
@@ -139,7 +150,7 @@ export interface BuildUpdateInput {
  */
 export function buildUpdateStatements(input: BuildUpdateInput): string[] {
   if (input.pkIndices.length === 0) return [];
-  const ref = `${quoteIdent(input.database)}.${quoteIdent(input.table)}`;
+  const ref = qualifiedTableRef(input.driver, input.database, input.table);
   const stmts: string[] = [];
   // Iterate the edits map in row-index order so the order of generated
   // statements is stable and matches the visual top-to-bottom flow.
@@ -158,13 +169,13 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
       const col = input.columns[colIdx];
       if (!col) continue;
       setParts.push(
-        `${quoteIdent(col.name)} = ${literalFromInput(rowEdits[colIdx], col)}`,
+        `${quoteIdent(input.driver, col.name)} = ${literalFromInput(rowEdits[colIdx], col)}`,
       );
     }
     if (setParts.length === 0) continue;
     const whereParts = input.pkIndices.map((i) => {
       const col = input.columns[i];
-      return `${quoteIdent(col.name)} = ${literalFromCellValue(row[i])}`;
+      return `${quoteIdent(input.driver, col.name)} = ${literalFromCellValue(row[i])}`;
     });
     stmts.push(
       `UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`,

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type DriverKind = "mysql";
+export type DriverKind = "mysql" | "postgres" | "sqlite";
 
 export interface SshProfile {
   host: string;
@@ -22,6 +22,8 @@ export interface ConnectionProfile {
   group: string | null;
   color: string | null;
   is_production: boolean;
+  /** Database file path for file-backed drivers (SQLite). */
+  file_path: string | null;
 }
 
 export interface SshRequest extends SshProfile {
@@ -37,6 +39,8 @@ export interface ConnectRequest {
   password: string;
   database: string | null;
   ssh: SshRequest | null;
+  /** Required for sqlite; ignored otherwise. */
+  file_path?: string | null;
 }
 
 export interface SaveProfileRequest {
@@ -53,6 +57,8 @@ export interface SaveProfileRequest {
   group: string | null;
   color: string | null;
   is_production: boolean;
+  /** Required for sqlite; ignored otherwise. */
+  file_path?: string | null;
 }
 
 export interface SessionInfo {

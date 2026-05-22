@@ -5,6 +5,7 @@ import {
   CellValue,
   Column,
   ConnectionProfile,
+  DriverKind,
   PreviewResult,
   QueryResult,
   TableColumnInfo,
@@ -95,6 +96,20 @@ function newTabId(): string {
 
 function newStreamId(tabId: string): string {
   return `${tabId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function quoteIdent(driver: string, ident: string): string {
+  if (driver === "postgres" || driver === "sqlite") {
+    return `"${ident.replace(/"/g, '""')}"`;
+  }
+  return `\`${ident.replace(/`/g, "``")}\``;
+}
+
+function qualifiedTableSql(driver: string, database: string, table: string): string {
+  // SQLite has a single attached namespace ("main"); leaving the
+  // db.table qualification off keeps the generated SELECT portable.
+  if (driver === "sqlite") return `SELECT * FROM ${quoteIdent(driver, table)}`;
+  return `SELECT * FROM ${quoteIdent(driver, database)}.${quoteIdent(driver, table)}`;
 }
 
 function makeQueryTab(): Tab {
@@ -252,15 +267,20 @@ export default function App() {
       await closeAllTabs();
     }
     try {
+      const driver: DriverKind =
+        profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
+          ? profile.driver
+          : "mysql";
       const res = await api.connect({
         profile_id: profile.id,
-        driver: "mysql",
+        driver,
         host: profile.host,
         port: profile.port,
         user: profile.user,
         password: "",
         database: profile.database,
         ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
+        file_path: profile.file_path,
       });
       setSessionId(res.session_id);
       setSelectedProfile(profile);
@@ -687,6 +707,7 @@ export default function App() {
     if (!result || !tableColumns || !database || !table) return;
     const pkIndices = resolvePkIndices(result.columns, tableColumns);
     const stmts = buildUpdateStatements({
+      driver: selectedProfile?.driver ?? "mysql",
       database,
       table,
       columns: result.columns,
@@ -699,7 +720,7 @@ export default function App() {
     // edited row so the user can sanity-check shape. Multi-row callers gate
     // the button so this branch is single-row in practice.
     previewQueryInTab(activeTab.id, stmts[0]);
-  }, [activeTab, sessionId, previewQueryInTab]);
+  }, [activeTab, sessionId, previewQueryInTab, selectedProfile?.driver]);
 
   const handleApplyEdits = useCallback(async () => {
     if (!activeTab || !sessionId) return;
@@ -708,6 +729,7 @@ export default function App() {
     if (!result || !tableColumns || !database || !table) return;
     const pkIndices = resolvePkIndices(result.columns, tableColumns);
     const stmts = buildUpdateStatements({
+      driver: selectedProfile?.driver ?? "mysql",
       database,
       table,
       columns: result.columns,
@@ -764,6 +786,7 @@ export default function App() {
     patchTab,
     runQueryInTab,
     settings.defaultDisplayCount,
+    selectedProfile?.driver,
   ]);
 
   const handleOpenTable = useCallback((database: string, table: string) => {
@@ -775,7 +798,7 @@ export default function App() {
       return;
     }
     const limit = Math.max(1, settings.defaultDisplayCount);
-    const base = `SELECT * FROM \`${database}\`.\`${table}\``;
+    const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
     const sql = `${base} LIMIT ${limit}`;
     const tab: Tab = {
       id: newTabId(),
@@ -798,7 +821,7 @@ export default function App() {
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(tab.id);
     runQueryInTab(tab.id, sql, base);
-  }, [tabs, runQueryInTab, settings.defaultDisplayCount]);
+  }, [tabs, runQueryInTab, settings.defaultDisplayCount, selectedProfile?.driver]);
 
   const handleNewTab = useCallback(() => {
     const tab = makeQueryTab();
@@ -908,8 +931,9 @@ export default function App() {
                     <span className="status-dot status-connected" aria-hidden />
                     <span className="topbar-name">{selectedProfile.name}</span>
                     <span className="topbar-meta">
-                      {selectedProfile.user}@{selectedProfile.host}:{selectedProfile.port}
-                      {selectedProfile.database ? `/${selectedProfile.database}` : ""}
+                      {selectedProfile.driver === "sqlite"
+                        ? selectedProfile.file_path ?? ""
+                        : `${selectedProfile.user}@${selectedProfile.host}:${selectedProfile.port}${selectedProfile.database ? `/${selectedProfile.database}` : ""}`}
                     </span>
                   </>
                 ) : (

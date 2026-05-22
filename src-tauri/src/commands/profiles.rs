@@ -11,10 +11,15 @@ pub struct SaveProfileRequest {
     pub id: Option<String>,
     pub name: String,
     pub driver: String,
+    #[serde(default)]
     pub host: String,
+    #[serde(default)]
     pub port: u16,
+    #[serde(default)]
     pub user: String,
+    #[serde(default)]
     pub database: Option<String>,
+    #[serde(default)]
     pub ssh: Option<SshProfile>,
     /// If Some, password is stored in the OS keyring; if None, no change.
     /// Empty string clears the stored password.
@@ -29,6 +34,9 @@ pub struct SaveProfileRequest {
     pub color: Option<String>,
     #[serde(default)]
     pub is_production: bool,
+    /// Required for file-backed drivers (SQLite); ignored otherwise.
+    #[serde(default)]
+    pub file_path: Option<String>,
 }
 
 #[tauri::command]
@@ -54,6 +62,7 @@ pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> 
         group: req.group.filter(|s| !s.is_empty()),
         color: req.color.filter(|s| !s.is_empty()),
         is_production: req.is_production,
+        file_path: req.file_path.filter(|s| !s.is_empty()),
     };
     store::upsert(profile.clone())?;
 

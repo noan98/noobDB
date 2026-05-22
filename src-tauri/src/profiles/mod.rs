@@ -27,6 +27,10 @@ pub struct ConnectionProfile {
     /// confirmation dialog before connecting.
     #[serde(default)]
     pub is_production: bool,
+    /// Database file path for file-backed drivers (SQLite). `None` for
+    /// network-backed drivers (MySQL, PostgreSQL).
+    #[serde(default)]
+    pub file_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
