@@ -166,7 +166,6 @@ const en = {
   previewNoAffectedBefore: "(no affected rows on this side)",
   previewNoAffectedAfter: "(no affected rows on this side)",
   previewAffectedOutsideSnapshot: "Affected rows are outside the first {limit}-row snapshot.",
-  previewTruncated: "Snapshots truncated to {limit} rows.",
   previewSyncScroll: "Sync scroll",
   previewSyncScrollTitle: "Sync vertical and horizontal scroll between the before and after panes.",
 
@@ -363,7 +362,6 @@ const ja: Dict = {
   previewNoAffectedBefore: "(影響のあるレコードはありません)",
   previewNoAffectedAfter: "(影響のあるレコードはありません)",
   previewAffectedOutsideSnapshot: "影響のあるレコードは先頭 {limit} 件のスナップショット範囲外です。",
-  previewTruncated: "スナップショットは {limit} 行に制限されています。",
   previewSyncScroll: "スクロールを同期",
   previewSyncScrollTitle: "実行前後のペインで縦・横のスクロールを同期します。",
 
