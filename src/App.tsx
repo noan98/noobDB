@@ -793,6 +793,14 @@ export default function App() {
                       onRun={handleRunQuery}
                       onPreview={handlePreviewQuery}
                       onChange={handleEditorChange}
+                      onFormatError={(error) =>
+                        setStatus({
+                          kind: "key",
+                          key: "statusFormatError",
+                          vars: { error },
+                          error: true,
+                        })
+                      }
                       disabled={!sessionId}
                       schemaTable={activeTab.schemaTable}
                       activeTable={

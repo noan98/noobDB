@@ -129,7 +129,10 @@ const en = {
   editorPreviewTitle: "Dry-run the statement in a transaction and show before/after — changes are rolled back.",
   editorBuilder: "Query Builder",
   editorBuilderTitle: "Build a SELECT/INSERT/UPDATE/DELETE statement from a guided form.",
+  editorFormat: "Format",
+  editorFormatTitle: "Format the selection (or whole editor) as SQL — Cmd/Ctrl+Shift+F",
   editorHintDisabled: "Connect a session to run queries.",
+  statusFormatError: "Format failed: {error}",
 
   qbTitle: "Query Builder",
   qbClose: "Close",
@@ -351,7 +354,10 @@ const ja: Dict = {
   editorPreviewTitle: "トランザクション内で試し実行し、Before/After を表示します（変更はロールバック）。",
   editorBuilder: "Query Builder",
   editorBuilderTitle: "フォームから SELECT/INSERT/UPDATE/DELETE 文を組み立てます。",
+  editorFormat: "整形",
+  editorFormatTitle: "選択範囲（または全体）の SQL を整形します — Cmd/Ctrl+Shift+F",
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
+  statusFormatError: "整形に失敗しました: {error}",
 
   qbTitle: "Query Builder",
   qbClose: "閉じる",
