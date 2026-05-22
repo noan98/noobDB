@@ -69,7 +69,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -89,6 +89,10 @@ jobs:
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --all-targets --locked
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: cargo test
         working-directory: src-tauri
