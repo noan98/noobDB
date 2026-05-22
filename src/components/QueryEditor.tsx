@@ -17,6 +17,7 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
+import { format as formatSql } from "sql-formatter";
 import { useT } from "../i18n";
 import { QueryBuilder } from "./QueryBuilder";
 
@@ -51,12 +52,45 @@ interface Props {
   onRun: (sql: string) => void;
   onPreview?: (sql: string) => void;
   onChange?: (sql: string) => void;
+  onFormatError?: (error: string) => void;
   disabled?: boolean;
   schemaTable?: SchemaTable | null;
   activeTable?: ActiveTable | null;
   initialSql?: string;
   sessionId?: string | null;
   defaultDatabase?: string | null;
+}
+
+function formatEditorContent(
+  view: EditorView,
+  onError?: (message: string) => void,
+): boolean {
+  const sel = view.state.selection.main;
+  const isSelection = !sel.empty;
+  const text = isSelection
+    ? view.state.sliceDoc(sel.from, sel.to)
+    : view.state.doc.toString();
+  if (text.trim().length === 0) return false;
+  let formatted: string;
+  try {
+    formatted = formatSql(text, { language: "mysql" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    onError?.(message);
+    return true;
+  }
+  if (formatted === text) return true;
+  if (isSelection) {
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: formatted },
+      selection: { anchor: sel.from, head: sel.from + formatted.length },
+    });
+  } else {
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: formatted },
+    });
+  }
+  return true;
 }
 
 function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
@@ -84,6 +118,7 @@ export function QueryEditor({
   onRun,
   onPreview,
   onChange,
+  onFormatError,
   disabled,
   schemaTable,
   activeTable,
@@ -99,6 +134,8 @@ export function QueryEditor({
   const [showBuilder, setShowBuilder] = useState(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onFormatErrorRef = useRef(onFormatError);
+  onFormatErrorRef.current = onFormatError;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -119,6 +156,11 @@ export function QueryEditor({
           sqlCompartment.of(buildSqlExtension(schemaTable)),
           keymap.of([
             { key: "Tab", run: acceptCompletion },
+            {
+              key: "Mod-Shift-f",
+              preventDefault: true,
+              run: (v) => formatEditorContent(v, onFormatErrorRef.current),
+            },
             ...defaultKeymap,
             ...historyKeymap,
             ...completionKeymap,
@@ -162,6 +204,12 @@ export function QueryEditor({
   const runSelectionOrAll = () => {
     const text = currentText();
     if (text !== null) onRun(text);
+  };
+
+  const formatSelectionOrAll = () => {
+    const view = viewRef.current;
+    if (!view) return;
+    formatEditorContent(view, onFormatErrorRef.current);
   };
 
   const previewSelectionOrAll = () => {
@@ -209,6 +257,22 @@ export function QueryEditor({
             {t("editorPreview")}
           </button>
         )}
+        <button
+          className="with-icon"
+          onClick={formatSelectionOrAll}
+          disabled={disabled || !hasContent}
+          title={t("editorFormatTitle")}
+        >
+          <span className="btn-icon" aria-hidden>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 3h12" />
+              <path d="M2 7h8" />
+              <path d="M2 11h10" />
+              <path d="M2 15h6" />
+            </svg>
+          </span>
+          {t("editorFormat")}
+        </button>
         {sessionId && (
           <button
             className="with-icon"
