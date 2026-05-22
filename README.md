@@ -1,11 +1,11 @@
 # tableX
 
-Rust で書かれた軽量なデスクトップ MySQL クライアントで、SSH トンネルをファーストクラスでサポートしています。[Tauri 2](https://tauri.app/) と React で構築されており、Windows をターゲットにしています。
+Rust で書かれた軽量なデスクトップ DB クライアントで、SSH トンネルをファーストクラスでサポートしています。[Tauri 2](https://tauri.app/) と React で構築されており、Windows をターゲットにしています。
 
 ## 機能 (初期版)
 
-- MySQL 接続 (`sqlx` + `rustls`)
-- ローカルポートフォワーディングによる **SSH トンネル** (`russh`)
+- MySQL / PostgreSQL / SQLite 接続 (`sqlx` + `rustls`)
+- ローカルポートフォワーディングによる **SSH トンネル** (`russh`) — MySQL / PostgreSQL
   - 秘密鍵認証 (パスフレーズ対応)
   - 初回信頼方式 (TOFU) の known_hosts ファイル (`%APPDATA%/tableX/known_hosts`)
 - 接続プロファイルは `%APPDATA%/tableX/profiles.json` に保存
@@ -13,10 +13,12 @@ Rust で書かれた軽量なデスクトップ MySQL クライアントで、SS
   (`keyring` クレート経由で Windows 資格情報マネージャーを利用)
 - SQL エディタ (CodeMirror 6) と結果グリッド (TanStack Table)
 - スキーマブラウザ: データベース / テーブル / カラム
+  - PostgreSQL では UI 上の「データベース」階層にスキーマ (例: `public`) が表示されます
+  - SQLite では「データベース」階層は `main` 固定で、ファイル 1 つ = 1 DB として扱われます
 
 内部のドライバ層は `enum Connection` で構成されており、ディスパッチは
-`src-tauri/src/db/mod.rs` で行われます。後から PostgreSQL や SQLite を追加する場合は、
-バリアントと新しいモジュールを追加するだけでよく、SSH やセッション層に手を入れる必要はありません。
+`src-tauri/src/db/mod.rs` で行われます。新しいドライバを追加する場合は、バリアントと
+新しいモジュールを追加するだけでよく、SSH やセッション層に手を入れる必要はありません。
 
 ## プロジェクト構成
 
@@ -24,7 +26,7 @@ Rust で書かれた軽量なデスクトップ MySQL クライアントで、SS
 src/                   React + TypeScript のフロントエンド
 src-tauri/             Tauri 2 の Rust バックエンド
   src/
-    db/                ドライバ enum と MySQL 実装
+    db/                ドライバ enum と各 DB 実装 (mysql / postgres / sqlite)
     ssh/               russh ベースのトンネル (TOFU ホスト鍵)
     profiles/          profiles.json と keyring 用ヘルパー
     commands/          #[tauri::command] による IPC エントリポイント
@@ -64,12 +66,18 @@ cd src-tauri
 cargo test
 ```
 
-実際の MySQL 経路を検証するには `TABLEX_TEST_MYSQL_URL` を設定します:
+実際の MySQL / PostgreSQL 経路を検証するには対応する環境変数を設定します:
 
 ```sh
 TABLEX_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/testdb \
   cargo test --test mysql_integration
+
+TABLEX_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/testdb \
+  cargo test --test postgres_integration
 ```
+
+SQLite の統合テスト (`tests/sqlite_integration.rs`) は外部サーバを必要とせず、
+一時ファイルに対して常に実行されます。
 
 ## セキュリティに関する注意
 
@@ -82,7 +90,6 @@ TABLEX_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/testdb \
 
 ## ロードマップ
 
-- PostgreSQL / SQLite ドライバ
 - SSH パスワード認証 + ssh-agent
 - クエリ履歴、複数の結果タブ
 - CSV / JSON エクスポート

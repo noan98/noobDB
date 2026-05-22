@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, ConnectionProfile } from "../api/tauri";
+import { api, ConnectionProfile, DriverKind } from "../api/tauri";
 import { useT } from "../i18n";
 
 interface Props {
@@ -20,6 +20,27 @@ const COLOR_PRESETS = [
   "#7c3aed", // purple — misc
 ];
 
+function defaultPortFor(driver: DriverKind): number {
+  switch (driver) {
+    case "mysql": return 3306;
+    case "postgres": return 5432;
+    case "sqlite": return 0;
+  }
+}
+
+function defaultUserFor(driver: DriverKind): string {
+  switch (driver) {
+    case "mysql": return "root";
+    case "postgres": return "postgres";
+    case "sqlite": return "";
+  }
+}
+
+function normalizeDriver(driver: string | undefined): DriverKind {
+  if (driver === "postgres" || driver === "sqlite" || driver === "mysql") return driver;
+  return "mysql";
+}
+
 export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) {
   const t = useT();
   const groupSuggestions = useMemo(() => {
@@ -29,12 +50,16 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [profiles]);
+
+  const initialDriver = normalizeDriver(initial?.driver);
+  const [driver, setDriver] = useState<DriverKind>(initialDriver);
   const [name, setName] = useState(initial?.name ?? "");
   const [host, setHost] = useState(initial?.host ?? "127.0.0.1");
-  const [port, setPort] = useState(initial?.port ?? 3306);
-  const [user, setUser] = useState(initial?.user ?? "root");
+  const [port, setPort] = useState(initial?.port ?? defaultPortFor(initialDriver));
+  const [user, setUser] = useState(initial?.user ?? defaultUserFor(initialDriver));
   const [database, setDatabase] = useState(initial?.database ?? "");
   const [password, setPassword] = useState("");
+  const [filePath, setFilePath] = useState(initial?.file_path ?? "");
   const [group, setGroup] = useState(initial?.group ?? "");
   const [color, setColor] = useState<string | null>(initial?.color ?? null);
   const [isProduction, setIsProduction] = useState<boolean>(initial?.is_production ?? false);
@@ -50,6 +75,18 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const isFileBacked = driver === "sqlite";
+
+  const handleDriverChange = (next: DriverKind) => {
+    if (next === driver) return;
+    // Reset port/user defaults when the user has not customised them; this
+    // keeps freshly opened forms sensible without overwriting deliberate
+    // overrides on an in-progress edit.
+    if (port === defaultPortFor(driver)) setPort(defaultPortFor(next));
+    if (user === defaultUserFor(driver)) setUser(defaultUserFor(next));
+    setDriver(next);
+  };
+
   const pickKeyFile = async () => {
     const selected = await open({
       multiple: false,
@@ -59,24 +96,53 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     if (typeof selected === "string") setSshKeyPath(selected);
   };
 
-  const buildRequest = () => ({
-    profile_id: initial?.id,
-    driver: "mysql" as const,
-    host,
-    port: Number(port),
-    user,
-    password,
-    database: database || null,
-    ssh: useSsh
-      ? {
-          host: sshHost,
-          port: Number(sshPort),
-          user: sshUser,
-          private_key_path: sshKeyPath,
-          passphrase: sshPassphrase,
-        }
-      : null,
-  });
+  const pickDbFile = async () => {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: t("formPickDbFileTitle"),
+      filters: [
+        { name: t("formSqliteFileFilter"), extensions: ["db", "sqlite", "sqlite3"] },
+        { name: t("formAnyFileFilter"), extensions: ["*"] },
+      ],
+    });
+    if (typeof selected === "string") setFilePath(selected);
+  };
+
+  const buildRequest = () => {
+    if (isFileBacked) {
+      return {
+        profile_id: initial?.id,
+        driver,
+        host: "",
+        port: 0,
+        user: "",
+        password: "",
+        database: null,
+        ssh: null,
+        file_path: filePath || null,
+      };
+    }
+    return {
+      profile_id: initial?.id,
+      driver,
+      host,
+      port: Number(port),
+      user,
+      password,
+      database: database || null,
+      ssh: useSsh
+        ? {
+            host: sshHost,
+            port: Number(sshPort),
+            user: sshUser,
+            private_key_path: sshKeyPath,
+            passphrase: sshPassphrase,
+          }
+        : null,
+      file_path: null,
+    };
+  };
 
   const toggleProduction = (checked: boolean) => {
     setIsProduction(checked);
@@ -101,19 +167,20 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       await api.saveProfile({
         id: initial?.id,
         name,
-        driver: "mysql",
-        host,
-        port: Number(port),
-        user,
-        database: database || null,
-        ssh: useSsh
+        driver,
+        host: isFileBacked ? "" : host,
+        port: isFileBacked ? 0 : Number(port),
+        user: isFileBacked ? "" : user,
+        database: isFileBacked ? null : (database || null),
+        ssh: !isFileBacked && useSsh
           ? { host: sshHost, port: Number(sshPort), user: sshUser, private_key_path: sshKeyPath }
           : null,
-        db_password: password === "" ? undefined : password,
-        ssh_passphrase: useSsh && sshPassphrase !== "" ? sshPassphrase : undefined,
+        db_password: isFileBacked || password === "" ? undefined : password,
+        ssh_passphrase: !isFileBacked && useSsh && sshPassphrase !== "" ? sshPassphrase : undefined,
         group: group.trim() || null,
         color: color || null,
         is_production: isProduction,
+        file_path: isFileBacked ? (filePath || null) : null,
       });
       onSaved();
     } catch (e) {
@@ -130,33 +197,65 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("formNamePlaceholder")} />
       </div>
 
-      <fieldset>
-        <legend>{t("formMysqlLegend")}</legend>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 12 }}>
+      <div className="full">
+        <label>{t("formDriver")}</label>
+        <select
+          value={driver}
+          onChange={(e) => handleDriverChange(e.target.value as DriverKind)}
+        >
+          <option value="mysql">{t("formDriverMysql")}</option>
+          <option value="postgres">{t("formDriverPostgres")}</option>
+          <option value="sqlite">{t("formDriverSqlite")}</option>
+        </select>
+      </div>
+
+      {isFileBacked ? (
+        <fieldset>
+          <legend>{t("formSqliteLegend")}</legend>
           <div>
-            <label>{t("formHost")}</label>
-            <input value={host} onChange={(e) => setHost(e.target.value)} />
+            <label>{t("formSqliteFilePath")}</label>
+            <div className="row">
+              <input
+                value={filePath}
+                onChange={(e) => setFilePath(e.target.value)}
+                placeholder={t("formSqliteFilePathPlaceholder")}
+              />
+              <button onClick={pickDbFile}>{t("formBrowse")}</button>
+            </div>
+            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+              {t("formSqliteFilePathHelp")}
+            </p>
           </div>
-          <div>
-            <label>{t("formPort")}</label>
-            <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+        </fieldset>
+      ) : (
+        <fieldset>
+          <legend>{driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}</legend>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 12 }}>
+            <div>
+              <label>{t("formHost")}</label>
+              <input value={host} onChange={(e) => setHost(e.target.value)} />
+            </div>
+            <div>
+              <label>{t("formPort")}</label>
+              <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+            </div>
           </div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 8 }}>
-          <div>
-            <label>{t("formUser")}</label>
-            <input value={user} onChange={(e) => setUser(e.target.value)} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 8 }}>
+            <div>
+              <label>{t("formUser")}</label>
+              <input value={user} onChange={(e) => setUser(e.target.value)} />
+            </div>
+            <div>
+              <label>{t("formDatabase")}</label>
+              <input value={database} onChange={(e) => setDatabase(e.target.value)} />
+            </div>
           </div>
-          <div>
-            <label>{t("formDatabase")}</label>
-            <input value={database} onChange={(e) => setDatabase(e.target.value)} />
+          <div style={{ marginTop: 8 }}>
+            <label>{t("formDbPassword")}</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <label>{t("formDbPassword")}</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </div>
-      </fieldset>
+        </fieldset>
+      )}
 
       <fieldset>
         <legend>{t("formGroup")}</legend>
@@ -225,43 +324,45 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         </div>
       </fieldset>
 
-      <fieldset>
-        <legend>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-            <input type="checkbox" style={{ width: "auto" }} checked={useSsh} onChange={(e) => setUseSsh(e.target.checked)} />
-            {t("formUseSsh")}
-          </label>
-        </legend>
-        {useSsh && (
-          <>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 12 }}>
-              <div>
-                <label>{t("formSshHost")}</label>
-                <input value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+      {!isFileBacked && (
+        <fieldset>
+          <legend>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <input type="checkbox" style={{ width: "auto" }} checked={useSsh} onChange={(e) => setUseSsh(e.target.checked)} />
+              {t("formUseSsh")}
+            </label>
+          </legend>
+          {useSsh && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 12 }}>
+                <div>
+                  <label>{t("formSshHost")}</label>
+                  <input value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                </div>
+                <div>
+                  <label>{t("formPort")}</label>
+                  <input type="number" value={sshPort} onChange={(e) => setSshPort(Number(e.target.value))} />
+                </div>
               </div>
-              <div>
-                <label>{t("formPort")}</label>
-                <input type="number" value={sshPort} onChange={(e) => setSshPort(Number(e.target.value))} />
+              <div style={{ marginTop: 8 }}>
+                <label>{t("formSshUser")}</label>
+                <input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
               </div>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <label>{t("formSshUser")}</label>
-              <input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <label>{t("formPrivateKeyPath")}</label>
-              <div className="row">
-                <input value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
-                <button onClick={pickKeyFile}>{t("formBrowse")}</button>
+              <div style={{ marginTop: 8 }}>
+                <label>{t("formPrivateKeyPath")}</label>
+                <div className="row">
+                  <input value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
+                  <button onClick={pickKeyFile}>{t("formBrowse")}</button>
+                </div>
               </div>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <label>{t("formSshPassphrase")}</label>
-              <input type="password" value={sshPassphrase} onChange={(e) => setSshPassphrase(e.target.value)} />
-            </div>
-          </>
-        )}
-      </fieldset>
+              <div style={{ marginTop: 8 }}>
+                <label>{t("formSshPassphrase")}</label>
+                <input type="password" value={sshPassphrase} onChange={(e) => setSshPassphrase(e.target.value)} />
+              </div>
+            </>
+          )}
+        </fieldset>
+      )}
 
       {message && <div className="full text-success">{message}</div>}
       {error && <div className="full text-error">{error}</div>}

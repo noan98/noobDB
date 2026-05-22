@@ -219,7 +219,11 @@ export function ConnectionList({
           onContextMenu={(e) => handleProfileContextMenu(e, p)}
           role="treeitem"
           aria-expanded={isOpen}
-          title={`${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`}
+          title={
+            p.driver === "sqlite"
+              ? p.file_path ?? p.name
+              : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`
+          }
         >
           <span className="tree-chevron" aria-hidden>{isOpen ? "▾" : "▸"}</span>
           {accent ? (

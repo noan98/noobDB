@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::{Connection, DbConnectOptions, DriverKind};
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::profiles::secrets;
 use crate::ssh::{SshConfig, SshTunnel};
 use crate::state::{new_session_id, AppState, Session, SessionId};
@@ -12,13 +12,22 @@ pub struct ConnectRequest {
     /// Optional: if present, secrets will be looked up from keyring for this profile.
     pub profile_id: Option<String>,
     pub driver: DriverKind,
+    #[serde(default)]
     pub host: String,
+    #[serde(default)]
     pub port: u16,
+    #[serde(default)]
     pub user: String,
     /// If empty and profile_id is set, the password is loaded from keyring.
+    #[serde(default)]
     pub password: String,
+    #[serde(default)]
     pub database: Option<String>,
+    #[serde(default)]
     pub ssh: Option<SshRequest>,
+    /// Required for file-backed drivers (SQLite); ignored otherwise.
+    #[serde(default)]
+    pub file_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +101,27 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo
 /// Build DB options and (if requested) open an SSH tunnel.
 /// Returns the optional tunnel guard that must outlive the DB connection.
 async fn build_options(req: &ConnectRequest) -> Result<(Option<SshTunnel>, DbConnectOptions)> {
+    // File-backed drivers don't have a host/port/user/password and can't
+    // be tunneled, so short-circuit before touching credentials or SSH.
+    if matches!(req.driver, DriverKind::Sqlite) {
+        let file_path = req
+            .file_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| AppError::InvalidInput("SQLite file path is required".into()))?;
+        let opts = DbConnectOptions {
+            host: String::new(),
+            port: 0,
+            user: String::new(),
+            password: String::new(),
+            database: None,
+            driver: req.driver,
+            file_path: Some(file_path.to_string()),
+        };
+        return Ok((None, opts));
+    }
+
     let password = resolve_password(req)?;
 
     let (tunnel, host, port) = if let Some(ssh) = &req.ssh {
@@ -119,6 +149,7 @@ async fn build_options(req: &ConnectRequest) -> Result<(Option<SshTunnel>, DbCon
         password,
         database: req.database.clone(),
         driver: req.driver,
+        file_path: None,
     };
     Ok((tunnel, opts))
 }
