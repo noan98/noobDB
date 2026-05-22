@@ -207,7 +207,7 @@ type Dict = Record<Key, string>;
 const ja: Dict = {
   appConnections: "接続",
   appNew: "新規接続",
-  appDisconnect: "切断",
+  appDisconnect: "Disconnect",
   appDisconnected: "未接続",
   appLanguage: "言語",
   appThemeToLight: "ライトテーマに切替",
@@ -363,7 +363,7 @@ const ja: Dict = {
   resultExecuted: "ステートメントを実行しました。影響行数 {rows} 件 ({ms} ms)。",
   resultNull: "NULL",
 
-  previewBanner: "プレビュー — 変更はロールバックされました。データベースは変更されていません。",
+  previewBanner: "Preview",
   previewTargetTable: "対象テーブル: {table}",
   previewNoTarget: "対象テーブルを自動検出できませんでした — 影響行数のみ表示しています。",
   previewRowsAffected: "影響行数 {rows} 件 ({ms} ms)",
