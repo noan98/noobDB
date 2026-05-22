@@ -78,6 +78,7 @@ pub fn run() {
             commands::profiles::list_profiles,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,
+            commands::export::export_query_result,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tableX");

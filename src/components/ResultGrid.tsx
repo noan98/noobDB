@@ -13,11 +13,16 @@ import {
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
+import { ExportModal } from "./ExportModal";
 
 interface Props {
   result: QueryResult | null;
   /** True while batches are still arriving from a streaming query. */
   streaming?: boolean;
+  /** Schema (database) name of the active tab, used for the export default filename. */
+  database?: string | null;
+  /** Table name of the active tab, used for the export default filename. */
+  table?: string | null;
 }
 
 interface RowShape {
@@ -435,8 +440,9 @@ export function DataGrid({
   );
 }
 
-export function ResultGrid({ result, streaming }: Props) {
+export function ResultGrid({ result, streaming, database, table }: Props) {
   const t = useT();
+  const [showExport, setShowExport] = useState(false);
 
   if (!result) {
     return <div className="results empty">{t("resultEmpty")}</div>;
@@ -451,6 +457,7 @@ export function ResultGrid({ result, streaming }: Props) {
       </div>
     );
   }
+  const canExport = !streaming && result.rows.length > 0;
   return (
     <div className={`results ${streaming ? "is-streaming" : ""}`}>
       {streaming && (
@@ -459,7 +466,27 @@ export function ResultGrid({ result, streaming }: Props) {
           {t("statusStreaming", { rows: result.rows.length, ms: result.elapsed_ms })}
         </div>
       )}
+      <div className="results-toolbar">
+        <button
+          type="button"
+          className="results-toolbar-btn"
+          onClick={() => setShowExport(true)}
+          disabled={!canExport}
+          title={t("exportButtonTitle")}
+        >
+          {t("exportButton")}
+        </button>
+      </div>
       <DataGrid columns={result.columns} rows={result.rows} />
+      {showExport && (
+        <ExportModal
+          columns={result.columns}
+          rows={result.rows}
+          database={database ?? null}
+          table={table ?? null}
+          onClose={() => setShowExport(false)}
+        />
+      )}
     </div>
   );
 }

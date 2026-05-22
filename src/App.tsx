@@ -715,7 +715,12 @@ export default function App() {
                         streaming={activeTab.streaming}
                       />
                     ) : (
-                      <ResultGrid result={activeTab.result} streaming={activeTab.streaming} />
+                      <ResultGrid
+                        result={activeTab.result}
+                        streaming={activeTab.streaming}
+                        database={activeTab.database ?? selectedProfile?.database ?? null}
+                        table={activeTab.table ?? null}
+                      />
                     )
                   }
                 />
