@@ -181,28 +181,46 @@ export function QueryEditor({
     <div className="editor">
       <div className="toolbar">
         <button
-          className="primary"
+          className="success with-icon"
           onClick={runSelectionOrAll}
           disabled={disabled || !hasContent}
           title={runTitle}
         >
+          <span className="btn-icon" aria-hidden>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
+            </svg>
+          </span>
           {runLabel}
         </button>
         {onPreview && (
           <button
+            className="warning with-icon"
             onClick={previewSelectionOrAll}
             disabled={disabled || !hasContent}
             title={t("editorPreviewTitle")}
           >
+            <span className="btn-icon" aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
+                <circle cx="8" cy="8" r="2" />
+              </svg>
+            </span>
             {t("editorPreview")}
           </button>
         )}
         {sessionId && (
           <button
+            className="with-icon"
             onClick={() => setShowBuilder(true)}
             disabled={disabled}
             title={t("editorBuilderTitle")}
           >
+            <span className="btn-icon" aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11.5 2.5a3 3 0 0 0-3.9 3.6L2.5 11.2a1.5 1.5 0 1 0 2.1 2.1l5.1-5.1a3 3 0 0 0 3.6-3.9l-1.7 1.7-1.5-.4-.4-1.5z" />
+              </svg>
+            </span>
             {t("editorBuilder")}
           </button>
         )}

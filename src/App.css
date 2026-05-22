@@ -145,6 +145,16 @@ button {
 button:hover { background: var(--bg-hover); }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button.success { background: #16a34a; color: #ffffff; border-color: #16a34a; }
+button.success:hover { background: #15803d; border-color: #15803d; }
+button.warning { background: #d97706; color: #ffffff; border-color: #d97706; }
+button.warning:hover { background: #b45309; border-color: #b45309; }
+[data-theme="dark"] button.success { background: #22c55e; border-color: #22c55e; color: #052e16; }
+[data-theme="dark"] button.success:hover { background: #4ade80; border-color: #4ade80; }
+[data-theme="dark"] button.warning { background: #f59e0b; border-color: #f59e0b; color: #2a1707; }
+[data-theme="dark"] button.warning:hover { background: #fbbf24; border-color: #fbbf24; }
+button.with-icon { display: inline-flex; align-items: center; gap: 6px; }
+button.with-icon .btn-icon { display: inline-flex; flex-shrink: 0; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 button.icon {

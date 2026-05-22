@@ -325,7 +325,7 @@ const ja: Dict = {
   editorRunOnTableTitle: "`{database}` を使用して実行（選択範囲またはエディタ全体）",
   editorPreview: "プレビュー",
   editorPreviewTitle: "トランザクション内で試し実行し、Before/After を表示します（変更はロールバック）。",
-  editorBuilder: "クエリ組み立て",
+  editorBuilder: "Query Builder",
   editorBuilderTitle: "フォームから SELECT/INSERT/UPDATE/DELETE 文を組み立てます。",
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
 
