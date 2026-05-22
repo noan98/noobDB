@@ -63,7 +63,9 @@ const en = {
 
   statusStreaming: "Streaming... {rows} rows loaded ({ms} ms)",
   statusStreamingDone: "{rows} rows in {ms} ms",
+  statusLoadingMore: "Loading more rows... ({rows} loaded)",
   statusPreviewStreaming: "Streaming preview... ({ms} ms)",
+  gridLoadingMore: "Loading more rows...",
 
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
   statusConnecting: "Connecting to {name}...",
@@ -265,7 +267,9 @@ const ja: Dict = {
 
   statusStreaming: "ストリーミング中... {rows} 件取得 ({ms} ms)",
   statusStreamingDone: "{rows} 件取得 ({ms} ms)",
+  statusLoadingMore: "追加レコードを読み込み中... ({rows} 件取得済み)",
   statusPreviewStreaming: "プレビューをストリーミング中... ({ms} ms)",
+  gridLoadingMore: "追加レコードを読み込み中...",
 
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
   statusConnecting: "{name} に接続中...",
