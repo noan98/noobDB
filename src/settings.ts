@@ -48,6 +48,95 @@ export const DEFAULT_SYNTAX_COLORS: Record<Theme, SyntaxColors> = {
   },
 };
 
+export type SyntaxPresetKey =
+  | "defaultLight"
+  | "defaultDark"
+  | "solarizedLight"
+  | "solarizedDark"
+  | "dracula"
+  | "githubLight"
+  | "githubDark"
+  | "monokai";
+
+export const SYNTAX_PRESET_ORDER: SyntaxPresetKey[] = [
+  "defaultLight",
+  "defaultDark",
+  "solarizedLight",
+  "solarizedDark",
+  "dracula",
+  "githubLight",
+  "githubDark",
+  "monokai",
+];
+
+export const SYNTAX_PRESETS: Record<SyntaxPresetKey, SyntaxColors> = {
+  defaultLight: DEFAULT_SYNTAX_COLORS.light,
+  defaultDark: DEFAULT_SYNTAX_COLORS.dark,
+  solarizedLight: {
+    keyword: "#859900",
+    string: "#2aa198",
+    number: "#d33682",
+    comment: "#93a1a1",
+    function: "#268bd2",
+    operator: "#586e75",
+  },
+  solarizedDark: {
+    keyword: "#859900",
+    string: "#2aa198",
+    number: "#d33682",
+    comment: "#586e75",
+    function: "#268bd2",
+    operator: "#93a1a1",
+  },
+  dracula: {
+    keyword: "#ff79c6",
+    string: "#f1fa8c",
+    number: "#bd93f9",
+    comment: "#6272a4",
+    function: "#50fa7b",
+    operator: "#ff79c6",
+  },
+  githubLight: {
+    keyword: "#cf222e",
+    string: "#0a3069",
+    number: "#0550ae",
+    comment: "#6e7781",
+    function: "#8250df",
+    operator: "#24292f",
+  },
+  githubDark: {
+    keyword: "#ff7b72",
+    string: "#a5d6ff",
+    number: "#79c0ff",
+    comment: "#8b949e",
+    function: "#d2a8ff",
+    operator: "#c9d1d9",
+  },
+  monokai: {
+    keyword: "#f92672",
+    string: "#e6db74",
+    number: "#ae81ff",
+    comment: "#75715e",
+    function: "#66d9ef",
+    operator: "#f8f8f2",
+  },
+};
+
+/**
+ * Returns the preset key whose palette exactly matches `colors`, or null
+ * when the colors have been edited beyond any preset (i.e. "Custom").
+ */
+export function detectSyntaxPreset(colors: SyntaxColors): SyntaxPresetKey | null {
+  const keys = Object.keys(colors) as (keyof SyntaxColors)[];
+  for (const name of SYNTAX_PRESET_ORDER) {
+    const palette = SYNTAX_PRESETS[name];
+    if (keys.every((k) => palette[k].toLowerCase() === colors[k].toLowerCase())) {
+      return name;
+    }
+  }
+  return null;
+}
+
 export const DEFAULT_PREVIEW_HIGHLIGHT: Record<Theme, string> = {
   light: "#2563eb",
   dark: "#3b82f6",
@@ -188,6 +277,20 @@ export function resetSyntaxColors(theme: Theme): void {
     syntaxColors: {
       ...current.syntaxColors,
       [theme]: { ...DEFAULT_SYNTAX_COLORS[theme] },
+    },
+  };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function applySyntaxPreset(name: SyntaxPresetKey, theme: Theme): void {
+  const palette = SYNTAX_PRESETS[name];
+  if (!palette) return;
+  current = {
+    ...current,
+    syntaxColors: {
+      ...current.syntaxColors,
+      [theme]: { ...palette },
     },
   };
   persist();

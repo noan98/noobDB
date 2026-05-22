@@ -4,8 +4,12 @@ import { LanguageSwitcher } from "./LanguageSwitcher";
 import {
   DEFAULT_DISPLAY_COUNT,
   DEFAULT_STREAM_PREFETCH_SIZE,
+  SYNTAX_PRESET_ORDER,
   SyntaxColors,
+  SyntaxPresetKey,
   Theme,
+  applySyntaxPreset,
+  detectSyntaxPreset,
   resetPreviewHighlight,
   resetStreamingDefaults,
   resetSyntaxColors,
@@ -36,6 +40,17 @@ const FIELDS: Field[] = [
   { key: "function", labelKey: "settingsColorFunction", sampleKey: "settingsColorFunctionSample" },
   { key: "operator", labelKey: "settingsColorOperator", sampleKey: "settingsColorOperatorSample" },
 ];
+
+const PRESET_LABEL_KEYS: Record<SyntaxPresetKey, Parameters<ReturnType<typeof useT>>[0]> = {
+  defaultLight: "settingsSyntaxPresetDefaultLight",
+  defaultDark: "settingsSyntaxPresetDefaultDark",
+  solarizedLight: "settingsSyntaxPresetSolarizedLight",
+  solarizedDark: "settingsSyntaxPresetSolarizedDark",
+  dracula: "settingsSyntaxPresetDracula",
+  githubLight: "settingsSyntaxPresetGithubLight",
+  githubDark: "settingsSyntaxPresetGithubDark",
+  monokai: "settingsSyntaxPresetMonokai",
+};
 
 export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
@@ -169,6 +184,33 @@ export function SettingsView({ theme, onClose }: Props) {
           </button>
         </div>
         <p className="settings-help">{t("settingsSyntaxHelp", { theme: themeLabel })}</p>
+
+        <div className="settings-preset-row">
+          <label htmlFor="settings-syntax-preset">
+            {t("settingsSyntaxPresetLabel")}
+          </label>
+          <select
+            id="settings-syntax-preset"
+            className="settings-preset-select"
+            value={detectSyntaxPreset(colors) ?? ""}
+            onChange={(e) => {
+              const v = e.target.value as SyntaxPresetKey | "";
+              if (v) applySyntaxPreset(v, theme);
+            }}
+          >
+            {detectSyntaxPreset(colors) === null && (
+              <option value="">{t("settingsSyntaxPresetCustom")}</option>
+            )}
+            {SYNTAX_PRESET_ORDER.map((p) => (
+              <option key={p} value={p}>
+                {t(PRESET_LABEL_KEYS[p])}
+              </option>
+            ))}
+          </select>
+          <span className="settings-help-inline">
+            {t("settingsSyntaxPresetHelp", { theme: themeLabel })}
+          </span>
+        </div>
 
         <div className="settings-color-grid">
           {FIELDS.map((f) => (
