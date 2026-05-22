@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, ConnectionProfile } from "../api/tauri";
 import { useT } from "../i18n";
 
 interface Props {
   initial: ConnectionProfile | null;
+  profiles: ConnectionProfile[];
   onSaved: () => void;
   onCancel: () => void;
 }
@@ -19,8 +20,15 @@ const COLOR_PRESETS = [
   "#7c3aed", // purple — misc
 ];
 
-export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
+export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) {
   const t = useT();
+  const groupSuggestions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of profiles) {
+      if (p.group && p.group.trim()) set.add(p.group);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [profiles]);
   const [name, setName] = useState(initial?.name ?? "");
   const [host, setHost] = useState(initial?.host ?? "127.0.0.1");
   const [port, setPort] = useState(initial?.port ?? 3306);
@@ -152,16 +160,27 @@ export function ConnectionForm({ initial, onSaved, onCancel }: Props) {
 
       <fieldset>
         <legend>{t("formGroup")}</legend>
+        <div>
+          <input
+            value={group}
+            onChange={(e) => setGroup(e.target.value)}
+            placeholder={t("formGroupPlaceholder")}
+            list="form-group-suggestions"
+          />
+          <datalist id="form-group-suggestions">
+            {groupSuggestions.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
+          <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+            {t("formGroupHelp")}
+          </p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>{t("formDisplay")}</legend>
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-          <div>
-            <label>{t("formGroup")}</label>
-            <input
-              value={group}
-              onChange={(e) => setGroup(e.target.value)}
-              placeholder={t("formGroupPlaceholder")}
-              list="form-group-suggestions"
-            />
-          </div>
           <div>
             <label>{t("formColor")}</label>
             <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
