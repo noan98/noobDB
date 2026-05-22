@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { sql as sqlLang, MySQL } from "@codemirror/lang-sql";
@@ -26,12 +26,20 @@ const qbHighlightStyle = HighlightStyle.define([
 export type QueryKind = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
 
 const WHERE_OPERATORS = ["=", "!=", "<", "<=", ">", ">=", "LIKE", "IN", "IS NULL", "IS NOT NULL"] as const;
-type WhereOperator = (typeof WHERE_OPERATORS)[number];
 
 interface WhereCondition {
   column: string;
-  operator: WhereOperator;
+  operator: string;
   value: string;
+}
+
+function normalizeOperator(op: string): string {
+  return op.trim().toUpperCase();
+}
+
+function isNullOperator(op: string): boolean {
+  const n = normalizeOperator(op);
+  return n === "IS NULL" || n === "IS NOT NULL";
 }
 
 interface ColumnValuePair {
@@ -73,10 +81,11 @@ function renderWhereClause(conditions: WhereCondition[]): string {
     .filter((c) => c.column)
     .map((c) => {
       const col = quoteIdent(c.column);
-      if (c.operator === "IS NULL" || c.operator === "IS NOT NULL") {
-        return `${col} ${c.operator}`;
+      const opNorm = normalizeOperator(c.operator);
+      if (opNorm === "IS NULL" || opNorm === "IS NOT NULL") {
+        return `${col} ${opNorm}`;
       }
-      if (c.operator === "IN") {
+      if (opNorm === "IN") {
         const items = c.value
           .split(",")
           .map((s) => s.trim())
@@ -85,7 +94,8 @@ function renderWhereClause(conditions: WhereCondition[]): string {
         const inner = items.length > 0 ? items.join(", ") : "<values>";
         return `${col} IN (${inner})`;
       }
-      return `${col} ${c.operator} ${quoteValue(c.value)}`;
+      const opOut = c.operator.trim() || "=";
+      return `${col} ${opOut} ${quoteValue(c.value)}`;
     });
   if (rendered.length === 0) return " WHERE <column> = <value>";
   return " WHERE " + rendered.join(" AND ");
@@ -154,6 +164,7 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
 
   const [selectAll, setSelectAll] = useState(true);
   const [selectColumns, setSelectColumns] = useState<string[]>([]);
+  const [newSelectCol, setNewSelectCol] = useState("");
   const [whereConditions, setWhereConditions] = useState<WhereCondition[]>([
     { column: "", operator: "=", value: "" },
   ]);
@@ -240,10 +251,14 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
     return () => document.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  const toggleSelectColumn = (col: string) => {
-    setSelectColumns((prev) =>
-      prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col],
-    );
+  const addSelectColumn = (col: string) => {
+    const v = col.trim();
+    if (!v) return;
+    setSelectColumns((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    setNewSelectCol("");
+  };
+  const removeSelectColumn = (col: string) => {
+    setSelectColumns((prev) => prev.filter((c) => c !== col));
   };
 
   const updateCondition = (idx: number, patch: Partial<WhereCondition>) => {
@@ -308,26 +323,27 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
           <section className="qb-section qb-grid-2">
             <div>
               <label htmlFor="qb-db">{t("qbDatabase")}</label>
-              <select
+              <ComboBox
                 id="qb-db"
                 value={database}
-                onChange={(e) => { setDatabase(e.target.value); setTable(""); }}
-              >
-                <option value="">—</option>
-                {databases.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
+                options={databases}
+                placeholder="—"
+                onChange={(v) => {
+                  if (v !== database) setTable("");
+                  setDatabase(v);
+                }}
+              />
             </div>
             <div>
               <label htmlFor="qb-tbl">{t("qbTable")}</label>
-              <select
+              <ComboBox
                 id="qb-tbl"
                 value={table}
-                onChange={(e) => setTable(e.target.value)}
+                options={tables}
+                placeholder={loadingTables ? t("qbLoading") : "—"}
                 disabled={!database || loadingTables}
-              >
-                <option value="">{loadingTables ? t("qbLoading") : "—"}</option>
-                {tables.map((tname) => <option key={tname} value={tname}>{tname}</option>)}
-              </select>
+                onChange={setTable}
+              />
             </div>
           </section>
 
@@ -343,22 +359,56 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
                 <span>{t("qbAllColumns")}</span>
               </label>
               {!selectAll && (
-                <div className="qb-pill-list">
-                  {columnOptions.length === 0 ? (
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      {loadingColumns ? t("qbLoading") : t("qbPickTableFirst")}
-                    </span>
-                  ) : columnOptions.map((c) => (
+                <>
+                  <div className="qb-row">
+                    <ComboBox
+                      className="qb-col-input"
+                      value={newSelectCol}
+                      options={columnOptions.filter((c) => !selectColumns.includes(c))}
+                      placeholder={loadingColumns ? t("qbLoading") : t("qbColumn")}
+                      onChange={setNewSelectCol}
+                      onEnter={() => addSelectColumn(newSelectCol)}
+                    />
                     <button
-                      key={c}
                       type="button"
-                      className={`qb-pill ${selectColumns.includes(c) ? "active" : ""}`}
-                      onClick={() => toggleSelectColumn(c)}
+                      className="qb-small"
+                      onClick={() => addSelectColumn(newSelectCol)}
+                      disabled={!newSelectCol.trim()}
                     >
-                      {c}
+                      + {t("qbAddColumn")}
                     </button>
-                  ))}
-                </div>
+                  </div>
+                  {selectColumns.length > 0 ? (
+                    <div className="qb-selected-cols-wrap">
+                      <table className="qb-selected-cols">
+                        <tbody>
+                          <tr>
+                            {selectColumns.map((c) => (
+                              <td key={c}>
+                                <span className="qb-selected-col-name">{c}</span>
+                                <button
+                                  type="button"
+                                  className="qb-chip-remove"
+                                  onClick={() => removeSelectColumn(c)}
+                                  aria-label={t("qbRemove")}
+                                  title={t("qbRemove")}
+                                >
+                                  ✕
+                                </button>
+                              </td>
+                            ))}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      {columnOptions.length === 0 && !loadingColumns
+                        ? t("qbPickTableFirst")
+                        : t("qbNoSelectedColumns")}
+                    </span>
+                  )}
+                </>
               )}
             </section>
           )}
@@ -455,26 +505,23 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
                     onChange={(v) => updateCondition(i, { column: v })}
                     placeholder={t("qbColumn")}
                   />
-                  <select
+                  <ComboBox
                     className="qb-op"
                     value={c.operator}
-                    onChange={(e) => updateCondition(i, { operator: e.target.value as WhereOperator })}
-                  >
-                    {WHERE_OPERATORS.map((op) => (
-                      <option key={op} value={op}>{op}</option>
-                    ))}
-                  </select>
+                    options={[...WHERE_OPERATORS]}
+                    onChange={(v) => updateCondition(i, { operator: v })}
+                  />
                   <input
                     className="qb-row-input"
                     value={c.value}
                     placeholder={
-                      c.operator === "IS NULL" || c.operator === "IS NOT NULL"
+                      isNullOperator(c.operator)
                         ? "—"
-                        : c.operator === "IN"
+                        : normalizeOperator(c.operator) === "IN"
                           ? t("qbValuesPlaceholder")
                           : t("qbValue")
                     }
-                    disabled={c.operator === "IS NULL" || c.operator === "IS NOT NULL"}
+                    disabled={isNullOperator(c.operator)}
                     onChange={(e) => updateCondition(i, { value: e.target.value })}
                   />
                   <button
@@ -508,14 +555,52 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
 
           <section className="qb-section">
             <div className="qb-section-title">{t("qbPreview")}</div>
-            <SqlPreview sql={sql} />
+            <div className="qb-preview-wrap">
+              <button
+                type="button"
+                className="qb-preview-copy"
+                onClick={handleCopy}
+                aria-label={copied ? t("qbCopied") : t("qbCopy")}
+                title={copied ? t("qbCopied") : t("qbCopy")}
+              >
+                {copied ? (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M3 8.5l3 3 7-7" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <rect x="5" y="5" width="9" height="9" rx="1.5" />
+                    <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-5A1.5 1.5 0 0 0 3 3.5v5A1.5 1.5 0 0 0 4.5 10H6" />
+                  </svg>
+                )}
+              </button>
+              <SqlPreview sql={sql} />
+            </div>
           </section>
         </div>
 
         <footer className="modal-footer">
-          <button onClick={onClose}>{t("qbClose")}</button>
           <div style={{ flex: 1 }} />
-          <button onClick={handleCopy}>{copied ? t("qbCopied") : t("qbCopy")}</button>
           {onPreview && kind !== "SELECT" && (
             <button onClick={handlePreview} title={t("editorPreviewTitle")}>
               {t("qbPreviewRun")}
@@ -536,24 +621,63 @@ interface ColumnPickerProps {
 }
 
 function ColumnPicker({ value, options, onChange, placeholder }: ColumnPickerProps) {
-  // Native <select> so the design matches the database / table / operator
-  // dropdowns. If `value` is set but the columns haven't loaded yet (or no
-  // longer contain it), include it as an extra option so the selection is
-  // preserved when re-rendering across loads.
-  const hasValue = value !== "";
-  const valueMissing = hasValue && !options.includes(value);
   return (
-    <select
+    <ComboBox
       className="qb-col-input"
       value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">{placeholder ?? "—"}</option>
-      {valueMissing && <option value={value}>{value}</option>}
-      {options.map((c) => (
-        <option key={c} value={c}>{c}</option>
-      ))}
-    </select>
+      options={options}
+      placeholder={placeholder}
+      onChange={onChange}
+    />
+  );
+}
+
+interface ComboBoxProps {
+  value: string;
+  options: readonly string[];
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+  disabled?: boolean;
+  id?: string;
+  onEnter?: () => void;
+}
+
+function ComboBox({
+  value,
+  options,
+  onChange,
+  placeholder,
+  className,
+  disabled,
+  id,
+  onEnter,
+}: ComboBoxProps) {
+  const listId = useId();
+  return (
+    <>
+      <input
+        id={id}
+        className={className}
+        list={listId}
+        value={value}
+        placeholder={placeholder}
+        disabled={disabled}
+        autoComplete="off"
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && onEnter) {
+            e.preventDefault();
+            onEnter();
+          }
+        }}
+      />
+      <datalist id={listId}>
+        {options.map((o) => (
+          <option key={o} value={o} />
+        ))}
+      </datalist>
+    </>
   );
 }
 
