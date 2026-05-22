@@ -33,7 +33,7 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 
 # SSH
-russh = "0.45"
+russh = "0.60"
 
 # Secrets / config
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
