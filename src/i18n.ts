@@ -152,8 +152,8 @@ const en = {
   qbPreview: "Query preview",
   qbCopy: "Copy",
   qbCopied: "Copied",
-  qbExecute: "Execute",
-  qbPreviewRun: "Preview run",
+  qbExecute: "Run",
+  qbPreviewRun: "Dry Run",
   qbRemove: "Remove",
   qbLoading: "Loading...",
 
@@ -331,7 +331,7 @@ const ja: Dict = {
   editorBuilderTitle: "フォームから SELECT/INSERT/UPDATE/DELETE 文を組み立てます。",
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
 
-  qbTitle: "クエリ組み立て",
+  qbTitle: "Query Builder",
   qbClose: "閉じる",
   qbQueryType: "クエリの種類",
   qbDatabase: "データベース",
@@ -354,8 +354,8 @@ const ja: Dict = {
   qbPreview: "クエリプレビュー",
   qbCopy: "コピー",
   qbCopied: "コピー済み",
-  qbExecute: "実行",
-  qbPreviewRun: "プレビュー実行",
+  qbExecute: "Run",
+  qbPreviewRun: "Dry Run",
   qbRemove: "削除",
   qbLoading: "読み込み中...",
 

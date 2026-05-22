@@ -56,6 +56,18 @@ interface Props {
   onClose: () => void;
 }
 
+const SYSTEM_DATABASES = new Set([
+  "information_schema",
+  "performance_schema",
+  "mysql",
+  "sys",
+]);
+
+function pickDefaultDatabase(list: string[]): string | null {
+  const user = list.find((d) => !SYSTEM_DATABASES.has(d.toLowerCase()));
+  return user ?? list[0] ?? null;
+}
+
 function quoteIdent(name: string): string {
   if (!name) return "";
   return "`" + name.replace(/`/g, "``") + "`";
@@ -177,9 +189,17 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
   useEffect(() => {
     let cancelled = false;
     api.listDatabases(sessionId)
-      .then((list) => { if (!cancelled) setDatabases(list); })
+      .then((list) => {
+        if (cancelled) return;
+        setDatabases(list);
+        if (!database) {
+          const pick = pickDefaultDatabase(list);
+          if (pick) setDatabase(pick);
+        }
+      })
       .catch((e) => { if (!cancelled) setLoadError(String(e)); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   useEffect(() => {
@@ -190,10 +210,15 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
     let cancelled = false;
     setLoadingTables(true);
     api.listTables(sessionId, database)
-      .then((list) => { if (!cancelled) setTables(list); })
+      .then((list) => {
+        if (cancelled) return;
+        setTables(list);
+        if (!table && list.length > 0) setTable(list[0]);
+      })
       .catch((e) => { if (!cancelled) setLoadError(String(e)); })
       .finally(() => { if (!cancelled) setLoadingTables(false); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, database]);
 
   useEffect(() => {
@@ -323,27 +348,34 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
           <section className="qb-section qb-grid-2">
             <div>
               <label htmlFor="qb-db">{t("qbDatabase")}</label>
-              <ComboBox
+              <select
                 id="qb-db"
                 value={database}
-                options={databases}
-                placeholder="—"
-                onChange={(v) => {
+                onChange={(e) => {
+                  const v = e.target.value;
                   if (v !== database) setTable("");
                   setDatabase(v);
                 }}
-              />
+              >
+                <option value="">—</option>
+                {databases.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label htmlFor="qb-tbl">{t("qbTable")}</label>
-              <ComboBox
+              <select
                 id="qb-tbl"
                 value={table}
-                options={tables}
-                placeholder={loadingTables ? t("qbLoading") : "—"}
                 disabled={!database || loadingTables}
-                onChange={setTable}
-              />
+                onChange={(e) => setTable(e.target.value)}
+              >
+                <option value="">{loadingTables ? t("qbLoading") : "—"}</option>
+                {tables.map((tname) => (
+                  <option key={tname} value={tname}>{tname}</option>
+                ))}
+              </select>
             </div>
           </section>
 
