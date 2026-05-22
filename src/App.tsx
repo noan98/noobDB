@@ -114,6 +114,7 @@ export default function App() {
     for (const [key, val] of Object.entries(colors)) {
       root.style.setProperty(`--syntax-${key}`, val);
     }
+    root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
   }, [settings, theme]);
 
   const toggleTheme = useCallback(() => {

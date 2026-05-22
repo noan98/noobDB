@@ -16,6 +16,11 @@ export interface Settings {
     light: SyntaxColors;
     dark: SyntaxColors;
   };
+  /** Color used to highlight cells changed by a preview, per theme. */
+  previewHighlight: {
+    light: string;
+    dark: string;
+  };
   /** Initial number of rows displayed before streaming continues. */
   defaultDisplayCount: number;
   /** Chunk size used to fetch additional rows once the initial batch has been shown. */
@@ -43,6 +48,11 @@ export const DEFAULT_SYNTAX_COLORS: Record<Theme, SyntaxColors> = {
   },
 };
 
+export const DEFAULT_PREVIEW_HIGHLIGHT: Record<Theme, string> = {
+  light: "#2563eb",
+  dark: "#3b82f6",
+};
+
 export const DEFAULT_DISPLAY_COUNT = 100;
 export const DEFAULT_STREAM_PREFETCH_SIZE = 200;
 const MIN_BATCH = 1;
@@ -55,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
     dark: { ...DEFAULT_SYNTAX_COLORS.dark },
   },
+  previewHighlight: { ...DEFAULT_PREVIEW_HIGHLIGHT },
   defaultDisplayCount: DEFAULT_DISPLAY_COUNT,
   streamPrefetchSize: DEFAULT_STREAM_PREFETCH_SIZE,
   confirmProductionConnect: DEFAULT_CONFIRM_PRODUCTION_CONNECT,
@@ -85,12 +96,17 @@ function sanitizeCount(input: unknown, fallback: number): number {
   return n;
 }
 
+function sanitizeHighlight(input: unknown, fallback: string): string {
+  return isHexColor(input) ? input : fallback;
+}
+
 function loadInitial(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw) as {
       syntaxColors?: { light?: unknown; dark?: unknown };
+      previewHighlight?: { light?: unknown; dark?: unknown };
       defaultDisplayCount?: unknown;
       streamPrefetchSize?: unknown;
       confirmProductionConnect?: unknown;
@@ -99,6 +115,10 @@ function loadInitial(): Settings {
       syntaxColors: {
         light: sanitizeColors(parsed.syntaxColors?.light, DEFAULT_SYNTAX_COLORS.light),
         dark: sanitizeColors(parsed.syntaxColors?.dark, DEFAULT_SYNTAX_COLORS.dark),
+      },
+      previewHighlight: {
+        light: sanitizeHighlight(parsed.previewHighlight?.light, DEFAULT_PREVIEW_HIGHLIGHT.light),
+        dark: sanitizeHighlight(parsed.previewHighlight?.dark, DEFAULT_PREVIEW_HIGHLIGHT.dark),
       },
       defaultDisplayCount: sanitizeCount(parsed.defaultDisplayCount, DEFAULT_DISPLAY_COUNT),
       streamPrefetchSize: sanitizeCount(parsed.streamPrefetchSize, DEFAULT_STREAM_PREFETCH_SIZE),
@@ -133,6 +153,30 @@ export function setSyntaxColor(theme: Theme, key: keyof SyntaxColors, value: str
   current = {
     ...current,
     syntaxColors: { ...current.syntaxColors, [theme]: themeColors },
+  };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setPreviewHighlight(theme: Theme, value: string): void {
+  if (!isHexColor(value)) return;
+  if (current.previewHighlight[theme] === value) return;
+  current = {
+    ...current,
+    previewHighlight: { ...current.previewHighlight, [theme]: value },
+  };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function resetPreviewHighlight(theme: Theme): void {
+  if (current.previewHighlight[theme] === DEFAULT_PREVIEW_HIGHLIGHT[theme]) return;
+  current = {
+    ...current,
+    previewHighlight: {
+      ...current.previewHighlight,
+      [theme]: DEFAULT_PREVIEW_HIGHLIGHT[theme],
+    },
   };
   persist();
   listeners.forEach((cb) => cb());
