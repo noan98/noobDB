@@ -633,6 +633,7 @@ export default function App() {
         ) : showForm ? (
           <ConnectionForm
             initial={editing}
+            profiles={profiles}
             onSaved={async () => {
               setShowForm(false);
               await refreshProfiles();
