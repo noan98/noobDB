@@ -662,7 +662,7 @@ export default function App() {
                 )}
               </div>
               <div style={{ flex: 1 }} />
-              {sessionId && <button onClick={handleDisconnect}>{t("appDisconnect")}</button>}
+              {sessionId && <button className="danger" onClick={handleDisconnect}>{t("appDisconnect")}</button>}
             </div>
 
             {sessionId && (
