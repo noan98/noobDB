@@ -5020,7 +5020,7 @@ dependencies = [
  "directories",
  "futures-util",
  "keyring",
- "rand 0.8.6",
+ "rand 0.10.1",
  "russh",
  "rust_decimal",
  "serde",
