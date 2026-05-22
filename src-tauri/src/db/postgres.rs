@@ -720,9 +720,6 @@ mod tests {
             (Some("public".into()), "users".into())
         );
         assert_eq!(split_schema_table("users"), (None, "users".into()));
-        assert_eq!(
-            split_schema_table("\"users\""),
-            (None, "users".into())
-        );
+        assert_eq!(split_schema_table("\"users\""), (None, "users".into()));
     }
 }

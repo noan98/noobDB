@@ -112,15 +112,9 @@ async fn sqlite_roundtrip_against_tempfile() {
         .await
         .expect("preview");
     assert_eq!(preview.rows_affected, 1);
-    assert_eq!(
-        preview.target_table.as_deref(),
-        Some("tablex_sqlite_smoke")
-    );
+    assert_eq!(preview.target_table.as_deref(), Some("tablex_sqlite_smoke"));
     let after_preview = conn
-        .execute(
-            "SELECT label FROM tablex_sqlite_smoke WHERE id = 1",
-            None,
-        )
+        .execute("SELECT label FROM tablex_sqlite_smoke WHERE id = 1", None)
         .await
         .expect("post-preview select");
     assert!(
