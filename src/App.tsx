@@ -7,9 +7,17 @@ import {
   ConnectionProfile,
   PreviewResult,
   QueryResult,
+  TableColumnInfo,
   listenPreviewStream,
   listenQueryStream,
 } from "./api/tauri";
+import {
+  buildUpdateStatements,
+  countEditedCells,
+  countEditedRows,
+  resolvePkIndices,
+  type PendingEdits,
+} from "./components/cellEdit";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { QueryEditor, type SchemaTable } from "./components/QueryEditor";
@@ -65,6 +73,18 @@ interface Tab {
   loadingMore: boolean;
   /** True when another scroll-triggered page may yield more rows. */
   canLoadMore: boolean;
+  /**
+   * Column metadata for the underlying table (only table tabs). Used to
+   * detect the primary key for inline cell edits and to decide which
+   * columns can be edited (e.g. BLOB columns are excluded).
+   */
+  tableColumns: TableColumnInfo[] | null;
+  /**
+   * Inline cell edits awaiting Preview/Apply. Keyed by the row index in
+   * `result.rows` (the canonical "original" position) then by the column
+   * index in `result.columns`. Cleared on Apply success or Cancel.
+   */
+  pendingEdits: PendingEdits;
 }
 
 let tabSeq = 0;
@@ -91,6 +111,8 @@ function makeQueryTab(): Tab {
     paginatable: null,
     loadingMore: false,
     canLoadMore: false,
+    tableColumns: null,
+    pendingEdits: {},
   };
 }
 
@@ -279,6 +301,7 @@ export default function App() {
         if (cancelled) return;
         updateTab(id, {
           schemaTable: { database, name: table, columns: cols.map((c) => c.name) },
+          tableColumns: cols,
         });
       })
       .catch(() => { /* ignore */ });
@@ -319,6 +342,9 @@ export default function App() {
       paginatable: paginatableBase,
       loadingMore: false,
       canLoadMore: false,
+      // Drop any in-flight cell edits: their row indices reference the
+      // previous result set and would no longer line up with the new rows.
+      pendingEdits: {},
     });
 
     const finalize = () => {
@@ -437,8 +463,12 @@ export default function App() {
     const startedAt = Date.now();
     setStatus({ kind: "key", key: "statusRunningPreview" });
     const rowLimit = settings.defaultDisplayCount;
+    // Preview is non-destructive — keep the previous `result` and any
+    // pending cell edits intact so the user can come back and Apply
+    // them after sanity-checking the diff. (Earlier versions cleared
+    // `result` here, which made the post-preview Apply path unable to
+    // locate the row to update.)
     updateTab(tabId, {
-      result: null,
       preview: emptyPreview(),
       streaming: true,
       previewRowLimit: rowLimit,
@@ -612,6 +642,130 @@ export default function App() {
     updateTab(activeTab.id, { sql });
   }, [activeTab, updateTab]);
 
+  const handleSetCellEdit = useCallback(
+    (rowIdx: number, colIdx: number, value: string | null) => {
+      if (!activeTab) return;
+      patchTab(activeTab.id, (tt) => {
+        const next = { ...tt.pendingEdits };
+        const row = { ...(next[rowIdx] ?? {}) };
+        if (value === null) {
+          delete row[colIdx];
+        } else {
+          row[colIdx] = value;
+        }
+        if (Object.keys(row).length === 0) {
+          delete next[rowIdx];
+        } else {
+          next[rowIdx] = row;
+        }
+        return { ...tt, pendingEdits: next };
+      });
+    },
+    [activeTab, patchTab],
+  );
+
+  const handleClearEdits = useCallback(() => {
+    if (!activeTab) return;
+    patchTab(activeTab.id, (tt) => ({ ...tt, pendingEdits: {} }));
+  }, [activeTab, patchTab]);
+
+  // Discard from inside the preview pane: clear the edits AND dismiss the
+  // preview view (otherwise the user is stuck on a preview of edits that
+  // no longer exist). Also cancels any in-flight preview stream so a
+  // late-arriving onMeta event doesn't re-populate `preview` after we've
+  // cleared it.
+  const handleDiscardEditsAndPreview = useCallback(() => {
+    if (!activeTab) return;
+    const tabId = activeTab.id;
+    void cancelStreamForTab(tabId);
+    patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null }));
+  }, [activeTab, patchTab, cancelStreamForTab]);
+
+  const handlePreviewEdits = useCallback(() => {
+    if (!activeTab || !sessionId) return;
+    const { result, tableColumns, database, table, pendingEdits } = activeTab;
+    if (!result || !tableColumns || !database || !table) return;
+    const pkIndices = resolvePkIndices(result.columns, tableColumns);
+    const stmts = buildUpdateStatements({
+      database,
+      table,
+      columns: result.columns,
+      rows: result.rows,
+      pkIndices,
+      edits: pendingEdits,
+    });
+    if (stmts.length === 0) return;
+    // Preview only handles one statement at a time; we surface the first
+    // edited row so the user can sanity-check shape. Multi-row callers gate
+    // the button so this branch is single-row in practice.
+    previewQueryInTab(activeTab.id, stmts[0]);
+  }, [activeTab, sessionId, previewQueryInTab]);
+
+  const handleApplyEdits = useCallback(async () => {
+    if (!activeTab || !sessionId) return;
+    const { result, tableColumns, database, table, pendingEdits, paginatable } =
+      activeTab;
+    if (!result || !tableColumns || !database || !table) return;
+    const pkIndices = resolvePkIndices(result.columns, tableColumns);
+    const stmts = buildUpdateStatements({
+      database,
+      table,
+      columns: result.columns,
+      rows: result.rows,
+      pkIndices,
+      edits: pendingEdits,
+    });
+    if (stmts.length === 0) return;
+    const tabId = activeTab.id;
+    setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: stmts.length } });
+    // We can't wrap multiple statements in a server-side transaction
+    // through the prepared-statement path, so a mid-batch failure leaves
+    // earlier statements committed. Track applied/failed counts so the
+    // status line can tell the user what stuck.
+    let totalAffected = 0;
+    let applied = 0;
+    let failure: string | null = null;
+    for (const sql of stmts) {
+      try {
+        const res = await api.runQuery(sessionId, sql, database);
+        totalAffected += Number(res.rows_affected ?? 0);
+        applied += 1;
+      } catch (e) {
+        failure = String(e);
+        break;
+      }
+    }
+    // Always refresh & drop edits afterwards: the result indices no
+    // longer line up with whatever the user had buffered.
+    if (paginatable) {
+      const limit = Math.max(1, settings.defaultDisplayCount);
+      const refresh = `${paginatable} LIMIT ${limit}`;
+      runQueryInTab(tabId, refresh, paginatable);
+    } else {
+      patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null }));
+    }
+    if (failure) {
+      setStatus({
+        kind: "key",
+        key: "statusApplyEditsPartial",
+        vars: { applied, total: stmts.length, error: failure },
+        error: true,
+      });
+    } else {
+      setStatus({
+        kind: "key",
+        key: "statusAppliedEdits",
+        vars: { rows: totalAffected, count: stmts.length },
+      });
+    }
+  }, [
+    activeTab,
+    sessionId,
+    patchTab,
+    runQueryInTab,
+    settings.defaultDisplayCount,
+  ]);
+
   const handleOpenTable = useCallback((database: string, table: string) => {
     const existing = tabs.find(
       (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
@@ -638,6 +792,8 @@ export default function App() {
       paginatable: base,
       loadingMore: false,
       canLoadMore: false,
+      tableColumns: null,
+      pendingEdits: {},
     };
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(tab.id);
@@ -676,6 +832,11 @@ export default function App() {
   }, []);
 
   const statusText = status.kind === "literal" ? status.text : t(status.key, status.vars);
+
+  const pendingEditsSummary = useMemo(() => {
+    const edits = activeTab?.pendingEdits ?? {};
+    return { cells: countEditedCells(edits), rows: countEditedRows(edits) };
+  }, [activeTab?.pendingEdits]);
 
   return (
     <div className="app">
@@ -818,6 +979,21 @@ export default function App() {
                         result={activeTab.preview}
                         rowLimit={activeTab.previewRowLimit}
                         streaming={activeTab.streaming}
+                        pendingEditsSummary={
+                          activeTab.kind === "table" && pendingEditsSummary.cells > 0
+                            ? pendingEditsSummary
+                            : undefined
+                        }
+                        onApplyEdits={
+                          activeTab.kind === "table" && pendingEditsSummary.cells > 0
+                            ? handleApplyEdits
+                            : undefined
+                        }
+                        onDiscardEdits={
+                          activeTab.kind === "table" && pendingEditsSummary.cells > 0
+                            ? handleDiscardEditsAndPreview
+                            : undefined
+                        }
                       />
                     ) : (
                       <ResultGrid
@@ -828,6 +1004,13 @@ export default function App() {
                         onLoadMore={handleLoadMore}
                         database={activeTab.database ?? selectedProfile?.database ?? null}
                         table={activeTab.table ?? null}
+                        editable={activeTab.kind === "table"}
+                        tableColumns={activeTab.tableColumns}
+                        pendingEdits={activeTab.pendingEdits}
+                        onSetCellEdit={handleSetCellEdit}
+                        onClearEdits={handleClearEdits}
+                        onPreviewEdits={handlePreviewEdits}
+                        onApplyEdits={handleApplyEdits}
                       />
                     )
                   }

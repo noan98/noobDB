@@ -31,6 +31,15 @@ interface Props {
   rowLimit: number;
   /** True while preview snapshot rows are still arriving via the stream. */
   streaming?: boolean;
+  /**
+   * When set, the preview pane surfaces an "Apply / Discard" pill so the
+   * user can commit the inline cell edits that triggered the preview
+   * without having to find their way back to the result grid. Provided by
+   * App for table tabs whose `pendingEdits` map is non-empty.
+   */
+  pendingEditsSummary?: { cells: number; rows: number };
+  onApplyEdits?: () => void;
+  onDiscardEdits?: () => void;
 }
 
 interface Diff {
@@ -140,7 +149,14 @@ function pickRows<T>(rows: T[], indices: number[]): T[] {
   return indices.map((i) => rows[i]);
 }
 
-export function PreviewGrid({ result, rowLimit, streaming }: Props) {
+export function PreviewGrid({
+  result,
+  rowLimit,
+  streaming,
+  pendingEditsSummary,
+  onApplyEdits,
+  onDiscardEdits,
+}: Props) {
   const t = useT();
   const hasSnapshots = result.columns.length > 0;
 
@@ -228,6 +244,37 @@ export function PreviewGrid({ result, rowLimit, streaming }: Props) {
       <div className="preview-banner">
         <span className="preview-banner-dot" aria-hidden />
         <span className="preview-banner-text">{t("previewBanner")}</span>
+        {pendingEditsSummary && (onApplyEdits || onDiscardEdits) && (
+          <div className="preview-edit-actions" role="group">
+            <span className="preview-edit-summary">
+              {t("editPendingCount", {
+                cells: pendingEditsSummary.cells,
+                rows: pendingEditsSummary.rows,
+              })}
+            </span>
+            {onApplyEdits && (
+              <button
+                type="button"
+                className="success preview-edit-btn"
+                onClick={onApplyEdits}
+                disabled={streaming}
+                title={t("editApplyButtonTitle")}
+              >
+                {t("editApplyButton")}
+              </button>
+            )}
+            {onDiscardEdits && (
+              <button
+                type="button"
+                className="preview-edit-btn"
+                onClick={onDiscardEdits}
+                title={t("editCancelButtonTitle")}
+              >
+                {t("editCancelButton")}
+              </button>
+            )}
+          </div>
+        )}
         {streaming && (
           <span className="preview-banner-streaming">
             {t("statusPreviewStreaming", { ms: result.elapsed_ms })}
