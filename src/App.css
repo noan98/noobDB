@@ -1100,6 +1100,7 @@ label {
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
+  white-space: nowrap;
 }
 .preview-sync-scroll input[type="checkbox"] {
   margin: 0;
