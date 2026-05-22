@@ -634,11 +634,24 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
         <footer className="modal-footer">
           <div style={{ flex: 1 }} />
           {onPreview && kind !== "SELECT" && (
-            <button onClick={handlePreview} title={t("editorPreviewTitle")}>
+            <button className="warning with-icon" onClick={handlePreview} title={t("editorPreviewTitle")}>
+              <span className="btn-icon" aria-hidden>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
+                  <circle cx="8" cy="8" r="2" />
+                </svg>
+              </span>
               {t("qbPreviewRun")}
             </button>
           )}
-          <button className="primary" onClick={handleExecute}>{t("qbExecute")}</button>
+          <button className="success with-icon" onClick={handleExecute}>
+            <span className="btn-icon" aria-hidden>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
+              </svg>
+            </span>
+            {t("qbExecute")}
+          </button>
         </footer>
       </div>
     </div>
