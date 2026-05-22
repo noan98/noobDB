@@ -98,14 +98,21 @@ mod tests {
     use super::*;
 
     fn col(name: &str) -> Column {
-        Column { name: name.into(), type_name: "VARCHAR".into() }
+        Column {
+            name: name.into(),
+            type_name: "VARCHAR".into(),
+        }
     }
 
     #[test]
     fn csv_escapes_special_chars() {
         let columns = vec![col("id"), col("name"), col("note")];
         let rows = vec![
-            vec![Value::Int(1), Value::String("Alice".into()), Value::String("ok".into())],
+            vec![
+                Value::Int(1),
+                Value::String("Alice".into()),
+                Value::String("ok".into()),
+            ],
             vec![
                 Value::Int(2),
                 Value::String("Bob, the \"Builder\"".into()),
