@@ -98,6 +98,8 @@ export interface TableColumnInfo {
   extra: string;
 }
 
+export type ExportFormat = "csv" | "json";
+
 export const api = {
   testConnection: (req: ConnectRequest) =>
     invoke<string>("test_connection", { req }),
@@ -158,6 +160,19 @@ export const api = {
   saveProfile: (req: SaveProfileRequest) =>
     invoke<ConnectionProfile>("save_profile", { req }),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
+
+  exportQueryResult: (params: {
+    path: string;
+    format: ExportFormat;
+    columns: Column[];
+    rows: CellValue[][];
+  }) =>
+    invoke<number>("export_query_result", {
+      path: params.path,
+      format: params.format,
+      columns: params.columns,
+      rows: params.rows,
+    }),
 };
 
 export interface QueryStreamColumnsEvent {
