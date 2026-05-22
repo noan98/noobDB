@@ -211,20 +211,46 @@ impl MySqlConn {
         };
         let order_clause = build_pk_order_clause(&primary_key);
 
-        let before_sql = target.as_ref().map(|t| {
-            format!(
+        // For UPDATE / DELETE we lift the user's WHERE clause out of the
+        // statement and use it to filter the BEFORE snapshot. Without this
+        // the snapshot is the first `row_limit` rows of the table by PK
+        // order, which silently misses any affected rows past that window —
+        // and the diff comes back as "(no affected rows)" even though the
+        // statement did change something.
+        //
+        // We gate this on the target having a PK: the AFTER snapshot is
+        // refetched by the BEFORE PKs (`fetch_after_by_pk`), which lines
+        // the panes up row-for-row. Without a PK the fallback re-runs the
+        // BEFORE query, and a WHERE-filtered re-run would return a
+        // different row set after the UPDATE (e.g. `... SET flag=0 WHERE
+        // flag=1` matches nothing once committed), breaking the pairing.
+        let where_clause = if !primary_key.is_empty()
+            && (trimmed.starts_with("update") || trimmed.starts_with("delete"))
+        {
+            extract_where_and_after(sql)
+        } else {
+            None
+        };
+
+        let before_sql = target.as_ref().map(|t| match &where_clause {
+            // The user's clause is appended verbatim — it already includes
+            // any ORDER BY / LIMIT they wrote. We don't add our own LIMIT
+            // here (their LIMIT would clash); the fetch below caps the
+            // collected rows at `row_limit + 1` instead.
+            Some(w) => format!("SELECT * FROM {} {}", t, w),
+            None => format!(
                 "SELECT * FROM {}{} LIMIT {}",
                 t,
                 order_clause,
                 row_limit + 1
-            )
+            ),
         });
 
         let mut tx = conn.begin().await?;
         let started = Instant::now();
 
         let before_raw: Vec<MySqlRow> = match &before_sql {
-            Some(q) => sqlx::query(q).fetch_all(&mut *tx).await?,
+            Some(q) => fetch_capped(&mut tx, q, row_limit + 1).await?,
             None => Vec::new(),
         };
 
@@ -545,6 +571,96 @@ fn extract_target_table(sql: &str) -> Option<String> {
     }
 }
 
+/// Returns the substring of `sql` starting at the outermost `WHERE`
+/// keyword (inclusive), or `None` if the statement has no top-level
+/// `WHERE`. Comments are stripped first; string and identifier quoting
+/// (`'...'`, `"..."`, `` `...` ``) plus parenthesis depth are tracked so
+/// a `WHERE` nested in a subquery — e.g. inside the `SET` expression of
+/// an `UPDATE` — is not mistaken for the outer clause.
+///
+/// Any trailing statement terminator (`;`) is stripped from the result so
+/// the value can be concatenated directly into a wrapper SELECT. ORDER BY
+/// and LIMIT clauses that the user wrote after WHERE are preserved
+/// verbatim, so the BEFORE snapshot honours them too.
+fn extract_where_and_after(sql: &str) -> Option<String> {
+    let cleaned = strip_sql_comments(sql);
+    let bytes = cleaned.as_bytes();
+    let n = bytes.len();
+    let mut depth: i32 = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut i: usize = 0;
+    while i < n {
+        let c = bytes[i];
+        if in_single {
+            if c == b'\\' && i + 1 < n {
+                i += 2;
+                continue;
+            }
+            if c == b'\'' {
+                // Doubled '' inside '...' is an escaped quote, not the end.
+                if i + 1 < n && bytes[i + 1] == b'\'' {
+                    i += 2;
+                    continue;
+                }
+                in_single = false;
+            }
+        } else if in_double {
+            if c == b'\\' && i + 1 < n {
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                if i + 1 < n && bytes[i + 1] == b'"' {
+                    i += 2;
+                    continue;
+                }
+                in_double = false;
+            }
+        } else if in_backtick {
+            if c == b'`' {
+                in_backtick = false;
+            }
+        } else {
+            match c {
+                b'\'' => in_single = true,
+                b'"' => in_double = true,
+                b'`' => in_backtick = true,
+                b'(' => depth += 1,
+                b')' => {
+                    if depth > 0 {
+                        depth -= 1;
+                    }
+                }
+                _ if depth == 0
+                    && i + 5 <= n
+                    && bytes[i..i + 5].eq_ignore_ascii_case(b"where")
+                    && (i == 0 || !is_ident_byte(bytes[i - 1]))
+                    && (i + 5 == n || !is_ident_byte(bytes[i + 5])) =>
+                {
+                    let mut tail = cleaned[i..].trim();
+                    if let Some(stripped) = tail.strip_suffix(';') {
+                        tail = stripped.trim_end();
+                    }
+                    return if tail.is_empty() {
+                        None
+                    } else {
+                        Some(tail.to_string())
+                    };
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
 fn skip_modifiers<I: Iterator<Item = String>>(
     iter: &mut std::iter::Peekable<I>,
     modifiers: &[&str],
@@ -599,16 +715,63 @@ async fn fetch_primary_key(conn: &mut PoolConnection<MySql>, target: &str) -> Re
     // needed). `SHOW KEYS FROM ...` accepts both `tbl` and `` `db`.`tbl` ``.
     let sql = format!("SHOW KEYS FROM {} WHERE Key_name = 'PRIMARY'", target);
     let rows: Vec<MySqlRow> = sqlx::query(&sql).fetch_all(&mut **conn).await?;
-    let mut entries: Vec<(i64, String)> = rows
+    let mut entries: Vec<(u64, String)> = rows
         .iter()
         .filter_map(|r| {
-            let seq = r.try_get::<i64, _>("Seq_in_index").ok()?;
+            // SHOW KEYS reports Seq_in_index as INT UNSIGNED on MariaDB and
+            // BIGINT UNSIGNED on MySQL 8 — sqlx's strict type check rejects
+            // `i64` for either, so the previous decoder silently dropped
+            // every row and PK detection always returned empty. Fall back
+            // through signed shapes too so future server versions don't
+            // re-break this without warning.
+            let seq = decode_seq_in_index(r)?;
             let col = r.try_get::<String, _>("Column_name").ok()?;
             Some((seq, col))
         })
         .collect();
     entries.sort_by_key(|(s, _)| *s);
     Ok(entries.into_iter().map(|(_, c)| c).collect())
+}
+
+/// Returns `Seq_in_index` as a `u64`, tolerating either signed or unsigned
+/// integer column types. Both branches of the index sequence are >= 1, so
+/// negative values aren't expected from any server.
+fn decode_seq_in_index(r: &MySqlRow) -> Option<u64> {
+    if let Ok(v) = r.try_get::<u64, _>("Seq_in_index") {
+        return Some(v);
+    }
+    if let Ok(v) = r.try_get::<u32, _>("Seq_in_index") {
+        return Some(v as u64);
+    }
+    if let Ok(v) = r.try_get::<i64, _>("Seq_in_index") {
+        return Some(v.max(0) as u64);
+    }
+    if let Ok(v) = r.try_get::<i32, _>("Seq_in_index") {
+        return Some(v.max(0) as u64);
+    }
+    None
+}
+
+/// Streams `query` and collects up to `cap` rows, then drops the stream
+/// so MySQL closes the cursor without sending the rest. Used for the
+/// preview BEFORE snapshot when the query is filtered by the user's WHERE
+/// clause and could otherwise match an unbounded number of rows — the cap
+/// keeps memory bounded while still letting us detect overshoot (caller
+/// passes `row_limit + 1`).
+async fn fetch_capped(
+    tx: &mut sqlx::Transaction<'_, MySql>,
+    query: &str,
+    cap: usize,
+) -> Result<Vec<MySqlRow>> {
+    let mut stream = sqlx::query(query).fetch(&mut **tx);
+    let mut rows = Vec::with_capacity(cap.min(1024));
+    while let Some(row) = stream.next().await {
+        rows.push(row?);
+        if rows.len() >= cap {
+            break;
+        }
+    }
+    Ok(rows)
 }
 
 fn build_pk_order_clause(pk_cols: &[String]) -> String {
@@ -801,5 +964,93 @@ mod tests {
     fn strips_comments_before_parsing() {
         let sql = "/* comment */ -- line\n# hash\nUPDATE users SET x = 1";
         assert_eq!(extract_target_table(sql), Some("users".into()));
+    }
+
+    #[test]
+    fn extracts_outer_where_from_update() {
+        assert_eq!(
+            extract_where_and_after("UPDATE users SET name = 'a' WHERE id = 1"),
+            Some("WHERE id = 1".into())
+        );
+    }
+
+    #[test]
+    fn extracts_outer_where_from_delete() {
+        assert_eq!(
+            extract_where_and_after("DELETE FROM orders WHERE total > 100"),
+            Some("WHERE total > 100".into())
+        );
+    }
+
+    #[test]
+    fn extract_where_returns_none_when_absent() {
+        assert!(extract_where_and_after("UPDATE t SET x = 1").is_none());
+        assert!(extract_where_and_after("DELETE FROM t").is_none());
+    }
+
+    #[test]
+    fn extract_where_ignores_inner_where_in_subquery() {
+        // The WHERE inside the SET subquery is at paren depth > 0 and must
+        // be skipped — otherwise we'd build the BEFORE snapshot from the
+        // subquery's filter instead of the outer one.
+        assert_eq!(
+            extract_where_and_after("UPDATE t SET x = (SELECT y FROM s WHERE z = 1) WHERE id = 5"),
+            Some("WHERE id = 5".into())
+        );
+        assert!(
+            extract_where_and_after("UPDATE t SET x = (SELECT y FROM s WHERE z = 1)").is_none()
+        );
+    }
+
+    #[test]
+    fn extract_where_ignores_keyword_in_string_literal() {
+        // 'WHERE' inside a single-quoted literal must not be picked up as
+        // the outer keyword.
+        assert_eq!(
+            extract_where_and_after("UPDATE t SET x = 'WHERE' WHERE id = 1"),
+            Some("WHERE id = 1".into())
+        );
+        // Doubled-quote escape '' inside the string must not prematurely
+        // close it.
+        assert_eq!(
+            extract_where_and_after("UPDATE t SET x = 'a''b WHERE c' WHERE id = 1"),
+            Some("WHERE id = 1".into())
+        );
+    }
+
+    #[test]
+    fn extract_where_ignores_keyword_in_backtick_identifier() {
+        // A column literally named `where` must not be picked up as the
+        // keyword. We then expect the real keyword that follows.
+        assert_eq!(
+            extract_where_and_after("UPDATE t SET `where` = 1 WHERE id = 2"),
+            Some("WHERE id = 2".into())
+        );
+    }
+
+    #[test]
+    fn extract_where_preserves_trailing_clauses() {
+        // ORDER BY / LIMIT after WHERE belong to the user's mutation and
+        // should be reused verbatim by the BEFORE-snapshot SELECT.
+        assert_eq!(
+            extract_where_and_after("DELETE FROM t WHERE y = 2 ORDER BY id DESC LIMIT 10"),
+            Some("WHERE y = 2 ORDER BY id DESC LIMIT 10".into())
+        );
+    }
+
+    #[test]
+    fn extract_where_strips_trailing_semicolon() {
+        // A trailing `;` would break the wrapper SELECT it gets spliced
+        // into, so the extractor drops it.
+        assert_eq!(
+            extract_where_and_after("UPDATE t SET x=1 WHERE id=1;"),
+            Some("WHERE id=1".into())
+        );
+    }
+
+    #[test]
+    fn extract_where_ignores_identifier_prefixed_with_where() {
+        // `whereabouts` starts with "where" but is not the keyword.
+        assert!(extract_where_and_after("UPDATE t SET whereabouts = 'home'").is_none());
     }
 }

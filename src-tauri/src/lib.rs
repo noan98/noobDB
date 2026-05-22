@@ -8,6 +8,7 @@ mod state;
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
 pub mod __test_api {
+    pub use crate::db::types::Value;
     pub use crate::db::{Connection, DbConnectOptions, DriverKind};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
