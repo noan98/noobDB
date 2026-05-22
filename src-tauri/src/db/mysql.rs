@@ -628,10 +628,8 @@ fn extract_where_and_after(sql: &str) -> Option<String> {
                 b'"' => in_double = true,
                 b'`' => in_backtick = true,
                 b'(' => depth += 1,
-                b')' => {
-                    if depth > 0 {
-                        depth -= 1;
-                    }
+                b')' if depth > 0 => {
+                    depth -= 1;
                 }
                 _ if depth == 0
                     && i + 5 <= n
