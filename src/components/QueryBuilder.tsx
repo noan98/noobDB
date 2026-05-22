@@ -600,7 +600,6 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
         </div>
 
         <footer className="modal-footer">
-          <button onClick={onClose}>{t("qbClose")}</button>
           <div style={{ flex: 1 }} />
           {onPreview && kind !== "SELECT" && (
             <button onClick={handlePreview} title={t("editorPreviewTitle")}>
