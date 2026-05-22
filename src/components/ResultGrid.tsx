@@ -13,6 +13,7 @@ import {
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
+import { ExportModal } from "./ExportModal";
 
 interface Props {
   result: QueryResult | null;
@@ -24,6 +25,10 @@ interface Props {
   canLoadMore?: boolean;
   /** Called when the viewport approaches the bottom of the results. */
   onLoadMore?: () => void;
+  /** Schema (database) name of the active tab, used for the export default filename. */
+  database?: string | null;
+  /** Table name of the active tab, used for the export default filename. */
+  table?: string | null;
 }
 
 /** Pixels-from-bottom that count as "near the end" for triggering a load. */
@@ -450,8 +455,11 @@ export function ResultGrid({
   loadingMore,
   canLoadMore,
   onLoadMore,
+  database,
+  table,
 }: Props) {
   const t = useT();
+  const [showExport, setShowExport] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   // Latest callback in a ref so we don't have to re-attach the scroll
   // listener every time `onLoadMore` is rebuilt (it changes on every
@@ -492,6 +500,7 @@ export function ResultGrid({
       </div>
     );
   }
+  const canExport = !streaming && result.rows.length > 0;
   return (
     <div ref={containerRef} className={`results ${streaming ? "is-streaming" : ""}`}>
       {streaming && (
@@ -500,12 +509,32 @@ export function ResultGrid({
           {t("statusStreaming", { rows: result.rows.length, ms: result.elapsed_ms })}
         </div>
       )}
+      <div className="results-toolbar">
+        <button
+          type="button"
+          className="results-toolbar-btn"
+          onClick={() => setShowExport(true)}
+          disabled={!canExport}
+          title={t("exportButtonTitle")}
+        >
+          {t("exportButton")}
+        </button>
+      </div>
       <DataGrid columns={result.columns} rows={result.rows} />
       {loadingMore && (
         <div className="results-loading-more" role="status" aria-live="polite">
           <span className="results-streaming-dot" aria-hidden />
           {t("gridLoadingMore")}
         </div>
+      )}
+      {showExport && (
+        <ExportModal
+          columns={result.columns}
+          rows={result.rows}
+          database={database ?? null}
+          table={table ?? null}
+          onClose={() => setShowExport(false)}
+        />
       )}
     </div>
   );

@@ -818,6 +818,8 @@ export default function App() {
                         loadingMore={activeTab.loadingMore}
                         canLoadMore={activeTab.canLoadMore}
                         onLoadMore={handleLoadMore}
+                        database={activeTab.database ?? selectedProfile?.database ?? null}
+                        table={activeTab.table ?? null}
                       />
                     )
                   }

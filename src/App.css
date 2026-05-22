@@ -1349,6 +1349,23 @@ label {
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-muted);
 }
+
+.results-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border-subtle);
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+.results-toolbar-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+}
 .results-streaming-dot {
   width: 8px;
   height: 8px;
@@ -1483,6 +1500,89 @@ label {
   padding: 10px 16px;
   border-top: 1px solid var(--border);
   background: var(--bg-toolbar);
+}
+
+/* ---------- Export Modal ---------- */
+
+.export-modal {
+  width: min(560px, 100%);
+}
+
+.export-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.export-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.export-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.export-format-row {
+  display: flex;
+  gap: 8px;
+}
+
+.export-format-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--bg-elevated);
+  user-select: none;
+}
+
+.export-format-option input {
+  margin: 0;
+}
+
+.export-format-option.active {
+  border-color: var(--accent);
+  background: var(--bg-row-hover);
+}
+
+.export-path-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.export-path-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.export-error {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-error);
+  color: var(--text-error);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.export-success {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-muted);
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 12px;
+  word-break: break-all;
 }
 
 /* ---------- Query Builder ---------- */
