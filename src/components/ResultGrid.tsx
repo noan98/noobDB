@@ -502,7 +502,7 @@ export function ResultGrid({
   }
   const canExport = !streaming && result.rows.length > 0;
   return (
-    <div ref={containerRef} className={`results ${streaming ? "is-streaming" : ""}`}>
+    <div className={`results has-toolbar ${streaming ? "is-streaming" : ""}`}>
       {streaming && (
         <div className="results-streaming-banner" role="status" aria-live="polite">
           <span className="results-streaming-dot" aria-hidden />
@@ -520,13 +520,15 @@ export function ResultGrid({
           {t("exportButton")}
         </button>
       </div>
-      <DataGrid columns={result.columns} rows={result.rows} />
-      {loadingMore && (
-        <div className="results-loading-more" role="status" aria-live="polite">
-          <span className="results-streaming-dot" aria-hidden />
-          {t("gridLoadingMore")}
-        </div>
-      )}
+      <div ref={containerRef} className="results-scroll">
+        <DataGrid columns={result.columns} rows={result.rows} />
+        {loadingMore && (
+          <div className="results-loading-more" role="status" aria-live="polite">
+            <span className="results-streaming-dot" aria-hidden />
+            {t("gridLoadingMore")}
+          </div>
+        )}
+      </div>
       {showExport && (
         <ExportModal
           columns={result.columns}

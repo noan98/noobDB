@@ -828,6 +828,16 @@ label {
   overflow: auto;
   background: var(--bg-elevated);
 }
+.results.has-toolbar {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.results-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
 :where(.results, .preview-pane-body) table {
   border-collapse: separate;
   border-spacing: 0;
@@ -1357,9 +1367,7 @@ label {
   padding: 4px 8px;
   background: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-subtle);
-  position: sticky;
-  top: 0;
-  z-index: 3;
+  flex-shrink: 0;
 }
 
 .results-toolbar-btn {
