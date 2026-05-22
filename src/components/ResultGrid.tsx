@@ -10,6 +10,7 @@ import {
   type FilterFn,
   type SortingFn,
   type SortingState,
+  type Row,
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
@@ -185,6 +186,20 @@ const includesFilter: FilterFn<RowShape> = (row, columnId, filterValue) => {
   return String(v).toLowerCase().includes(fv.toLowerCase());
 };
 
+const globalIncludesFilter: FilterFn<RowShape> = (row, _columnId, filterValue) => {
+  const fv = (filterValue ?? "") as string;
+  if (fv === "") return true;
+  const needle = fv.toLowerCase();
+  const r = row as Row<RowShape>;
+  for (const cell of r.getAllCells()) {
+    if (!cell.column.getCanGlobalFilter()) continue;
+    const v = cell.getValue() as CellValue;
+    const s = v === null || v === undefined ? "null" : String(v);
+    if (s.toLowerCase().includes(needle)) return true;
+  }
+  return false;
+};
+
 /**
  * Render a column/row pair as a TanStack-backed HTML table. Used by both
  * `ResultGrid` (single result) and the preview view (before/after).
@@ -203,12 +218,15 @@ export function DataGrid({
   enableColumnControls = true,
   changedCells,
   changedColumns,
+  globalFilter,
 }: {
   columns: Column[];
   rows: CellValue[][];
   enableColumnControls?: boolean;
   changedCells?: boolean[][];
   changedColumns?: boolean[];
+  /** Optional global filter string applied across all visible columns. */
+  globalFilter?: string;
 }) {
   const t = useT();
 
@@ -286,9 +304,10 @@ export function DataGrid({
   const table = useReactTable({
     data,
     columns: tableColumns,
-    state: { sorting, columnFilters },
+    state: { sorting, columnFilters, globalFilter: globalFilter ?? "" },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
+    globalFilterFn: globalIncludesFilter,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -301,23 +320,27 @@ export function DataGrid({
 
   const visibleRows = table.getRowModel().rows;
   const totalRows = rows.length;
-  const isFiltered = enableColumnControls && columnFilters.length > 0;
+  const hasColumnFilter = columnFilters.length > 0;
+  const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
+  const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter);
 
   return (
     <>
       {isFiltered && (
         <div className="grid-filter-summary">
           {t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
-          <button
-            type="button"
-            className="grid-filter-clear"
-            onClick={() => {
-              setColumnFilters([]);
-              setSorting([]);
-            }}
-          >
-            {t("gridClearFilters")}
-          </button>
+          {hasColumnFilter && (
+            <button
+              type="button"
+              className="grid-filter-clear"
+              onClick={() => {
+                setColumnFilters([]);
+                setSorting([]);
+              }}
+            >
+              {t("gridClearFilters")}
+            </button>
+          )}
         </div>
       )}
       <table
@@ -460,6 +483,7 @@ export function ResultGrid({
 }: Props) {
   const t = useT();
   const [showExport, setShowExport] = useState(false);
+  const [search, setSearch] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   // Latest callback in a ref so we don't have to re-attach the scroll
   // listener every time `onLoadMore` is rebuilt (it changes on every
@@ -519,9 +543,17 @@ export function ResultGrid({
         >
           {t("exportButton")}
         </button>
+        <input
+          type="search"
+          className="results-search-input"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t("gridSearchPlaceholder")}
+          aria-label={t("gridSearchAria")}
+        />
       </div>
       <div ref={containerRef} className="results-scroll">
-        <DataGrid columns={result.columns} rows={result.rows} />
+        <DataGrid columns={result.columns} rows={result.rows} globalFilter={search} />
         {loadingMore && (
           <div className="results-loading-more" role="status" aria-live="polite">
             <span className="results-streaming-dot" aria-hidden />
