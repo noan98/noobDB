@@ -49,6 +49,12 @@
   --syntax-function: #2563eb;
   --syntax-operator: #4b5563;
 
+  --preview-highlight: #2563eb;
+  --preview-banner-bg: #fef3c7;
+  --preview-banner-border: #fcd34d;
+  --preview-banner-text: #78350f;
+  --preview-banner-dot: #d97706;
+
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
     "Noto Sans CJK JP", sans-serif;
@@ -108,6 +114,12 @@
   --syntax-function: #93c5fd;
   --syntax-operator: #cbd5e1;
 
+  --preview-highlight: #3b82f6;
+  --preview-banner-bg: #3a2e10;
+  --preview-banner-border: #92670c;
+  --preview-banner-text: #fde68a;
+  --preview-banner-dot: #fbbf24;
+
   color-scheme: dark;
 }
 
@@ -133,6 +145,16 @@ button {
 button:hover { background: var(--bg-hover); }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button.success { background: #16a34a; color: #ffffff; border-color: #16a34a; }
+button.success:hover { background: #15803d; border-color: #15803d; }
+button.warning { background: #d97706; color: #ffffff; border-color: #d97706; }
+button.warning:hover { background: #b45309; border-color: #b45309; }
+[data-theme="dark"] button.success { background: #22c55e; border-color: #22c55e; color: #052e16; }
+[data-theme="dark"] button.success:hover { background: #4ade80; border-color: #4ade80; }
+[data-theme="dark"] button.warning { background: #f59e0b; border-color: #f59e0b; color: #2a1707; }
+[data-theme="dark"] button.warning:hover { background: #fbbf24; border-color: #fbbf24; }
+button.with-icon { display: inline-flex; align-items: center; gap: 6px; }
+button.with-icon .btn-icon { display: inline-flex; flex-shrink: 0; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 button.icon {
@@ -1051,17 +1073,17 @@ label {
   gap: 8px;
   padding: 6px 12px;
   font-size: 12px;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
-  border-bottom: 1px solid var(--border);
+  color: var(--preview-banner-text);
+  background: var(--preview-banner-bg);
+  border-bottom: 1px solid var(--preview-banner-border);
 }
 .preview-banner-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  background: var(--preview-banner-dot);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--preview-banner-dot) 25%, transparent);
 }
 .preview-banner-text { font-weight: 500; }
 
@@ -1088,6 +1110,7 @@ label {
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
+  white-space: nowrap;
 }
 .preview-sync-scroll input[type="checkbox"] {
   margin: 0;
@@ -1122,20 +1145,20 @@ label {
    headers of any column that contains at least one such cell. Painted on
    both panes so the user can scan either side and see the same diff. */
 .preview-pane-body td.is-changed {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--preview-highlight) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--preview-highlight);
 }
 .preview-pane-body tbody tr:nth-child(even) td.is-changed {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--preview-highlight) 22%, transparent);
 }
 .preview-pane-body tbody tr:hover td.is-changed {
-  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  background: color-mix(in srgb, var(--preview-highlight) 28%, transparent);
 }
 .preview-pane-body th.is-changed-col {
-  background: color-mix(in srgb, var(--accent) 22%, var(--bg-header));
-  box-shadow: inset 0 -2px 0 var(--accent);
+  background: color-mix(in srgb, var(--preview-highlight) 22%, var(--bg-header));
+  box-shadow: inset 0 -2px 0 var(--preview-highlight);
 }
-.preview-pane-body th.is-changed-col .th-name { color: var(--accent); }
+.preview-pane-body th.is-changed-col .th-name { color: var(--preview-highlight); }
 
 .preview-pane-body {
   flex: 1;
@@ -1271,6 +1294,12 @@ label {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
+}
+
+.preview-highlight-sample {
+  padding: 4px 10px;
+  border-radius: 3px;
+  color: var(--text);
 }
 
 .settings-number-row {

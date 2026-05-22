@@ -247,11 +247,6 @@ export function PreviewGrid({ result, rowLimit, streaming }: Props) {
         <span className="preview-affected">
           {t("previewRowsAffected", { rows: result.rows_affected, ms: result.elapsed_ms })}
         </span>
-        {result.truncated && (
-          <span className="preview-truncated">
-            {t("previewTruncated", { limit: rowLimit })}
-          </span>
-        )}
         {noAffectedInSnapshot && (
           <span className="preview-truncated">
             {t("previewAffectedOutsideSnapshot", { limit: rowLimit })}

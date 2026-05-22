@@ -6,10 +6,12 @@ import {
   DEFAULT_STREAM_PREFETCH_SIZE,
   SyntaxColors,
   Theme,
+  resetPreviewHighlight,
   resetStreamingDefaults,
   resetSyntaxColors,
   setConfirmProductionConnect,
   setDefaultDisplayCount,
+  setPreviewHighlight,
   setStreamPrefetchSize,
   setSyntaxColor,
   useSettings,
@@ -39,6 +41,7 @@ export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
   const settings = useSettings();
   const colors = settings.syntaxColors[theme];
+  const previewHighlight = settings.previewHighlight[theme];
   const themeLabel = t(theme === "dark" ? "settingsThemeDark" : "settingsThemeLight");
 
   // Local input state so users can clear the field while typing without
@@ -189,6 +192,44 @@ export function SettingsView({ theme, onClose }: Props) {
               </div>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <h3>{t("settingsPreviewHighlight")}</h3>
+          <button
+            className="settings-reset"
+            onClick={() => resetPreviewHighlight(theme)}
+          >
+            {t("settingsReset")}
+          </button>
+        </div>
+        <p className="settings-help">{t("settingsPreviewHighlightHelp", { theme: themeLabel })}</p>
+
+        <div className="settings-color-grid">
+          <div className="settings-color-row">
+            <label htmlFor="preview-highlight">{t("settingsPreviewHighlightLabel")}</label>
+            <div className="settings-color-controls">
+              <input
+                id="preview-highlight"
+                type="color"
+                className="settings-color-input"
+                value={previewHighlight}
+                onChange={(e) => setPreviewHighlight(theme, e.target.value)}
+              />
+              <span className="settings-color-hex">{previewHighlight}</span>
+              <span
+                className="settings-color-sample preview-highlight-sample"
+                style={{
+                  background: `color-mix(in srgb, ${previewHighlight} 22%, transparent)`,
+                  boxShadow: `inset 2px 0 0 ${previewHighlight}`,
+                }}
+              >
+                {t("settingsPreviewHighlightSample")}
+              </span>
+            </div>
+          </div>
         </div>
       </section>
     </div>
