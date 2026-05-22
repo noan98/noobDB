@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -19,11 +19,20 @@ interface Props {
   result: QueryResult | null;
   /** True while batches are still arriving from a streaming query. */
   streaming?: boolean;
+  /** True while a scroll-triggered "load more" page is in flight. */
+  loadingMore?: boolean;
+  /** When true, scrolling near the bottom fetches another page. */
+  canLoadMore?: boolean;
+  /** Called when the viewport approaches the bottom of the results. */
+  onLoadMore?: () => void;
   /** Schema (database) name of the active tab, used for the export default filename. */
   database?: string | null;
   /** Table name of the active tab, used for the export default filename. */
   table?: string | null;
 }
+
+/** Pixels-from-bottom that count as "near the end" for triggering a load. */
+const LOAD_MORE_THRESHOLD_PX = 240;
 
 interface RowShape {
   [key: string]: CellValue;
@@ -440,9 +449,43 @@ export function DataGrid({
   );
 }
 
-export function ResultGrid({ result, streaming, database, table }: Props) {
+export function ResultGrid({
+  result,
+  streaming,
+  loadingMore,
+  canLoadMore,
+  onLoadMore,
+  database,
+  table,
+}: Props) {
   const t = useT();
   const [showExport, setShowExport] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  // Latest callback in a ref so we don't have to re-attach the scroll
+  // listener every time `onLoadMore` is rebuilt (it changes on every
+  // App.tsx render because of useCallback deps).
+  const onLoadMoreRef = useRef(onLoadMore);
+  useEffect(() => { onLoadMoreRef.current = onLoadMore; }, [onLoadMore]);
+
+  // Trigger another page when scrolled near the bottom. Re-runs each time
+  // `canLoadMore` or `loadingMore` flips, so a completed load can be
+  // immediately followed by another if the user is still pinned to the
+  // end (e.g. the table fits in the viewport and natural scroll never
+  // happens).
+  useEffect(() => {
+    if (!canLoadMore || loadingMore) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const trigger = () => {
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (remaining < LOAD_MORE_THRESHOLD_PX) {
+        onLoadMoreRef.current?.();
+      }
+    };
+    trigger();
+    el.addEventListener("scroll", trigger, { passive: true });
+    return () => el.removeEventListener("scroll", trigger);
+  }, [canLoadMore, loadingMore, result?.rows.length]);
 
   if (!result) {
     return <div className="results empty">{t("resultEmpty")}</div>;
@@ -459,7 +502,7 @@ export function ResultGrid({ result, streaming, database, table }: Props) {
   }
   const canExport = !streaming && result.rows.length > 0;
   return (
-    <div className={`results ${streaming ? "is-streaming" : ""}`}>
+    <div ref={containerRef} className={`results ${streaming ? "is-streaming" : ""}`}>
       {streaming && (
         <div className="results-streaming-banner" role="status" aria-live="polite">
           <span className="results-streaming-dot" aria-hidden />
@@ -478,6 +521,12 @@ export function ResultGrid({ result, streaming, database, table }: Props) {
         </button>
       </div>
       <DataGrid columns={result.columns} rows={result.rows} />
+      {loadingMore && (
+        <div className="results-loading-more" role="status" aria-live="polite">
+          <span className="results-streaming-dot" aria-hidden />
+          {t("gridLoadingMore")}
+        </div>
+      )}
       {showExport && (
         <ExportModal
           columns={result.columns}

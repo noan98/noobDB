@@ -54,6 +54,17 @@ interface Tab {
   streaming: boolean;
   /** Snapshot row cap used for the active preview stream. */
   previewRowLimit: number;
+  /**
+   * Base SQL (no LIMIT/OFFSET) used to fetch additional pages when the user
+   * scrolls past the bottom of `result.rows`. Set only when the current
+   * result was produced by an auto-generated "open table" query — custom
+   * user SQL is not paginatable because we don't know its row identity.
+   */
+  paginatable: string | null;
+  /** True while a load-more request for this tab is in flight. */
+  loadingMore: boolean;
+  /** True when another scroll-triggered page may yield more rows. */
+  canLoadMore: boolean;
 }
 
 let tabSeq = 0;
@@ -77,6 +88,9 @@ function makeQueryTab(): Tab {
     schemaTable: null,
     streaming: false,
     previewRowLimit: 100,
+    paginatable: null,
+    loadingMore: false,
+    canLoadMore: false,
   };
 }
 
@@ -282,7 +296,11 @@ export default function App() {
     return justAdded;
   }, []);
 
-  const runQueryInTab = useCallback(async (tabId: string, sql: string) => {
+  const runQueryInTab = useCallback(async (
+    tabId: string,
+    sql: string,
+    paginatableBase: string | null = null,
+  ) => {
     if (!sessionId) {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
@@ -294,7 +312,14 @@ export default function App() {
     streamIdRef.current.set(tabId, streamId);
     const startedAt = Date.now();
     setStatus({ kind: "key", key: "statusRunningQuery" });
-    updateTab(tabId, { result: emptyResult([]), preview: null, streaming: true });
+    updateTab(tabId, {
+      result: emptyResult([]),
+      preview: null,
+      streaming: true,
+      paginatable: paginatableBase,
+      loadingMore: false,
+      canLoadMore: false,
+    });
 
     const finalize = () => {
       const un = streamUnlistenRef.current.get(tabId);
@@ -344,14 +369,20 @@ export default function App() {
               ...tt,
               result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs },
               streaming: false,
+              canLoadMore: false,
             };
           }
+          // Optimistically enable scroll-triggered pagination for table-shaped
+          // tabs. The first `loadMore` request will turn this off when it sees
+          // a short page, so we don't need to compare totalRows against the
+          // exact LIMIT here.
           return {
             ...tt,
             result: tt.result
               ? { ...tt.result, elapsed_ms: elapsedMs, rows_affected: totalRows }
               : tt.result,
             streaming: false,
+            canLoadMore: tt.paginatable !== null,
           };
         });
         if (hasColumns) {
@@ -411,6 +442,9 @@ export default function App() {
       preview: emptyPreview(),
       streaming: true,
       previewRowLimit: rowLimit,
+      paginatable: null,
+      loadingMore: false,
+      canLoadMore: false,
     });
 
     const finalize = () => {
@@ -504,10 +538,69 @@ export default function App() {
     settings.streamPrefetchSize,
   ]);
 
+  const loadMoreInTab = useCallback(async (tabId: string) => {
+    if (!sessionId) return;
+    const tab = tabsRef.current.find((tt) => tt.id === tabId);
+    if (
+      !tab ||
+      !tab.paginatable ||
+      !tab.canLoadMore ||
+      tab.loadingMore ||
+      tab.streaming ||
+      !tab.result
+    ) {
+      return;
+    }
+    const offset = tab.result.rows.length;
+    const chunkSize = Math.max(1, settings.streamPrefetchSize);
+    const sql = `${tab.paginatable} LIMIT ${chunkSize} OFFSET ${offset}`;
+    patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
+    setStatus({
+      kind: "key",
+      key: "statusLoadingMore",
+      vars: { rows: offset },
+    });
+    try {
+      const more = await api.runQuery(sessionId, sql, tab.database ?? null);
+      patchTab(tabId, (tt) => {
+        if (!tt.result) return { ...tt, loadingMore: false };
+        const nextRows = [...tt.result.rows, ...more.rows];
+        return {
+          ...tt,
+          result: {
+            ...tt.result,
+            rows: nextRows,
+            rows_affected: nextRows.length,
+          },
+          loadingMore: false,
+          canLoadMore: more.rows.length >= chunkSize,
+        };
+      });
+      setStatus({
+        kind: "key",
+        key: "statusStreamingDone",
+        vars: { rows: offset + more.rows.length, ms: tab.result.elapsed_ms },
+      });
+    } catch (e) {
+      patchTab(tabId, (tt) => ({ ...tt, loadingMore: false }));
+      setStatus({
+        kind: "key",
+        key: "statusQueryError",
+        vars: { error: String(e) },
+        error: true,
+      });
+    }
+  }, [sessionId, settings.streamPrefetchSize, patchTab]);
+
   const handleRunQuery = useCallback((sql: string) => {
     if (!activeTab) return;
     runQueryInTab(activeTab.id, sql);
   }, [activeTab, runQueryInTab]);
+
+  const handleLoadMore = useCallback(() => {
+    if (!activeTab) return;
+    loadMoreInTab(activeTab.id);
+  }, [activeTab, loadMoreInTab]);
 
   const handlePreviewQuery = useCallback((sql: string) => {
     if (!activeTab) return;
@@ -528,7 +621,8 @@ export default function App() {
       return;
     }
     const limit = Math.max(1, settings.defaultDisplayCount);
-    const sql = `SELECT * FROM \`${database}\`.\`${table}\` LIMIT ${limit}`;
+    const base = `SELECT * FROM \`${database}\`.\`${table}\``;
+    const sql = `${base} LIMIT ${limit}`;
     const tab: Tab = {
       id: newTabId(),
       kind: "table",
@@ -541,10 +635,13 @@ export default function App() {
       schemaTable: null,
       streaming: false,
       previewRowLimit: limit,
+      paginatable: base,
+      loadingMore: false,
+      canLoadMore: false,
     };
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(tab.id);
-    runQueryInTab(tab.id, sql);
+    runQueryInTab(tab.id, sql, base);
   }, [tabs, runQueryInTab, settings.defaultDisplayCount]);
 
   const handleNewTab = useCallback(() => {
@@ -718,6 +815,9 @@ export default function App() {
                       <ResultGrid
                         result={activeTab.result}
                         streaming={activeTab.streaming}
+                        loadingMore={activeTab.loadingMore}
+                        canLoadMore={activeTab.canLoadMore}
+                        onLoadMore={handleLoadMore}
                         database={activeTab.database ?? selectedProfile?.database ?? null}
                         table={activeTab.table ?? null}
                       />
