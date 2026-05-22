@@ -37,7 +37,7 @@ russh = "0.45"
 
 # Secrets / config
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
-directories = "5"
+directories = "6"
 
 # Serialization & errors
 serde = { version = "1", features = ["derive"] }
