@@ -1098,6 +1098,23 @@ label {
 }
 .preview-banner-text { font-weight: 500; }
 
+.preview-edit-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 16px;
+  padding-left: 12px;
+  border-left: 1px solid var(--preview-banner-border);
+}
+.preview-edit-summary {
+  font-size: 12px;
+  color: var(--preview-banner-text);
+}
+.preview-edit-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
 .preview-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1446,6 +1463,69 @@ label {
   color: var(--text-muted);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-muted);
+}
+
+/* ---------- Inline cell edit ---------- */
+
+.results-edit-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-left: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--preview-highlight) 8%, transparent);
+}
+.results-edit-count {
+  font-size: 11px;
+  color: var(--preview-highlight);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.results-edit-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+.results-edit-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding-left: 4px;
+}
+
+/* Cell with a pending (uncommitted) edit. Painted with the same accent
+   colour the preview diff uses, so an edit that's been previewed and one
+   that's still buffered share a visual language. */
+.results .data-grid-table td.is-pending-edit {
+  background: color-mix(in srgb, var(--preview-highlight) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--preview-highlight);
+}
+.results .data-grid-table tbody tr:nth-child(even) td.is-pending-edit {
+  background: color-mix(in srgb, var(--preview-highlight) 18%, transparent);
+}
+.results .data-grid-table tbody tr:hover td.is-pending-edit {
+  background: color-mix(in srgb, var(--preview-highlight) 24%, transparent);
+}
+.cell-pending-value {
+  color: var(--preview-highlight);
+  font-weight: 500;
+}
+.results .data-grid-table td.is-editable-cell {
+  cursor: text;
+}
+.cell-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: -3px -6px;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 @keyframes streaming-pulse {

@@ -12,9 +12,16 @@ import {
   type SortingState,
   type Row,
 } from "@tanstack/react-table";
-import { CellValue, Column, QueryResult } from "../api/tauri";
+import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { ExportModal } from "./ExportModal";
+import {
+  countEditedCells,
+  countEditedRows,
+  isEditableColumnType,
+  resolvePkIndices,
+  type PendingEdits,
+} from "./cellEdit";
 
 interface Props {
   result: QueryResult | null;
@@ -30,6 +37,24 @@ interface Props {
   database?: string | null;
   /** Table name of the active tab, used for the export default filename. */
   table?: string | null;
+  /**
+   * When true (and the underlying table has a primary key) cells become
+   * double-clickable for inline edit. Currently set by App for tabs whose
+   * `kind === "table"`.
+   */
+  editable?: boolean;
+  /** Column metadata from `describeTable` — used to detect PK + types. */
+  tableColumns?: TableColumnInfo[] | null;
+  /** Edits awaiting Preview/Apply. Keyed by [rowIdx][colIdx]. */
+  pendingEdits?: PendingEdits;
+  /** Called when a cell's pending value is set (or cleared via `null`). */
+  onSetCellEdit?: (rowIdx: number, colIdx: number, value: string | null) => void;
+  /** Discard all pending edits for the active tab. */
+  onClearEdits?: () => void;
+  /** Build & preview the UPDATE for the pending edits (single-row only). */
+  onPreviewEdits?: () => void;
+  /** Build & execute the UPDATE(s) for the pending edits, then refresh. */
+  onApplyEdits?: () => void;
 }
 
 /** Pixels-from-bottom that count as "near the end" for triggering a load. */
@@ -219,6 +244,10 @@ export function DataGrid({
   changedCells,
   changedColumns,
   globalFilter,
+  editable = false,
+  editableColumns,
+  pendingEdits,
+  onSetCellEdit,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -227,6 +256,15 @@ export function DataGrid({
   changedColumns?: boolean[];
   /** Optional global filter string applied across all visible columns. */
   globalFilter?: string;
+  /**
+   * When true, double-clicking an editable cell opens an inline `<input>`.
+   * `editableColumns[i]` gates per-column (false for PK and BLOB columns).
+   * `pendingEdits` / `onSetCellEdit` route the buffered change up to App.
+   */
+  editable?: boolean;
+  editableColumns?: boolean[];
+  pendingEdits?: PendingEdits;
+  onSetCellEdit?: (rowIdx: number, colIdx: number, value: string | null) => void;
 }) {
   const t = useT();
 
@@ -317,6 +355,29 @@ export function DataGrid({
   });
 
   const isNumericKind = (k: CellKind) => k === "number" || k === "decimal";
+
+  // Inline-edit state: the cell currently being typed into (if any) plus
+  // the buffered text. Lives in DataGrid so navigation between cells is
+  // local — committed values are lifted via `onSetCellEdit`.
+  const [editing, setEditing] = useState<
+    { rowIdx: number; colIdx: number; value: string } | null
+  >(null);
+
+  const commitEdit = (
+    rowIdx: number,
+    colIdx: number,
+    value: string,
+    originalDisplay: string,
+  ) => {
+    if (!onSetCellEdit) return;
+    // Re-typing the original value clears the pending edit so the user
+    // can "undo" without hitting Cancel.
+    if (value === originalDisplay) {
+      onSetCellEdit(rowIdx, colIdx, null);
+    } else {
+      onSetCellEdit(rowIdx, colIdx, value);
+    }
+  };
 
   const visibleRows = table.getRowModel().rows;
   const totalRows = rows.length;
@@ -452,13 +513,92 @@ export function DataGrid({
                   const kind = columnKinds[idx] ?? "string";
                   const isNull = v === null || v === undefined;
                   const isChanged = changedCells?.[row.index]?.[idx] ?? false;
+                  const colEditable = editable && (editableColumns?.[idx] ?? false);
+                  const pendingForRow = pendingEdits?.[row.index];
+                  const pendingValue = pendingForRow?.[idx];
+                  const hasPending = pendingValue !== undefined;
+                  const isEditingHere =
+                    editing !== null &&
+                    editing.rowIdx === row.index &&
+                    editing.colIdx === idx;
+                  // Original display string — used both for the input's
+                  // default contents and to detect "user typed it back to
+                  // the original" (which clears the pending edit).
+                  const originalDisplay = isNull ? "" : String(v);
+                  const handleDoubleClick = () => {
+                    if (!colEditable || !onSetCellEdit) return;
+                    setEditing({
+                      rowIdx: row.index,
+                      colIdx: idx,
+                      value: hasPending ? pendingValue : originalDisplay,
+                    });
+                  };
                   return (
                     <td
                       key={cell.id}
-                      className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull ? "is-null" : ""} ${isChanged ? "is-changed" : ""}`}
-                      title={isNull ? t("resultNull") : String(v)}
+                      className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""}`}
+                      title={
+                        isEditingHere
+                          ? undefined
+                          : hasPending
+                            ? t("editPendingTitle", {
+                                original: isNull ? t("resultNull") : String(v),
+                                next: pendingValue,
+                              })
+                            : isNull
+                              ? t("resultNull")
+                              : String(v)
+                      }
+                      onDoubleClick={handleDoubleClick}
                     >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      {isEditingHere ? (
+                        <input
+                          autoFocus
+                          className="cell-edit-input"
+                          value={editing!.value}
+                          onChange={(e) =>
+                            setEditing({
+                              rowIdx: editing!.rowIdx,
+                              colIdx: editing!.colIdx,
+                              value: e.target.value,
+                            })
+                          }
+                          onBlur={() => {
+                            commitEdit(
+                              editing!.rowIdx,
+                              editing!.colIdx,
+                              editing!.value,
+                              originalDisplay,
+                            );
+                            setEditing(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitEdit(
+                                editing!.rowIdx,
+                                editing!.colIdx,
+                                editing!.value,
+                                originalDisplay,
+                              );
+                              setEditing(null);
+                            } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              setEditing(null);
+                            }
+                          }}
+                        />
+                      ) : hasPending ? (
+                        /^null$/i.test(pendingValue.trim()) ? (
+                          <span className="cell-null cell-pending-value">
+                            {t("resultNull")}
+                          </span>
+                        ) : (
+                          <span className="cell-pending-value">{pendingValue}</span>
+                        )
+                      ) : (
+                        flexRender(cell.column.columnDef.cell, cell.getContext())
+                      )}
                     </td>
                   );
                 })}
@@ -480,6 +620,13 @@ export function ResultGrid({
   onLoadMore,
   database,
   table,
+  editable,
+  tableColumns,
+  pendingEdits,
+  onSetCellEdit,
+  onClearEdits,
+  onPreviewEdits,
+  onApplyEdits,
 }: Props) {
   const t = useT();
   const [showExport, setShowExport] = useState(false);
@@ -525,6 +672,36 @@ export function ResultGrid({
     );
   }
   const canExport = !streaming && result.rows.length > 0;
+
+  // PK indices and per-column editability are computed once per render so
+  // both the toolbar (gating Preview/Apply) and the grid agree on which
+  // cells are interactive.
+  const pkIndices = useMemo(
+    () => (editable ? resolvePkIndices(result.columns, tableColumns ?? null) : []),
+    [editable, result.columns, tableColumns],
+  );
+  const editableCols = useMemo<boolean[]>(() => {
+    if (!editable) return result.columns.map(() => false);
+    const hasPk = pkIndices.length > 0;
+    if (!hasPk) return result.columns.map(() => false);
+    const pkSet = new Set(pkIndices);
+    return result.columns.map((c, i) =>
+      // Disallow editing PK columns themselves: changing a PK in-place
+      // would invalidate the WHERE clause used to identify the row.
+      !pkSet.has(i) && isEditableColumnType(c.type_name),
+    );
+  }, [editable, result.columns, pkIndices]);
+
+  const editsCount = pendingEdits ? countEditedCells(pendingEdits) : 0;
+  const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
+  const hasPendingEdits = editsCount > 0;
+  const editableActive = !!editable && pkIndices.length > 0;
+  // Preview wraps a single statement; multi-row edits would need a
+  // multi-statement preview path that doesn't exist yet, so the button is
+  // disabled (with a tooltip) until the user trims their edits to one row.
+  const canPreview = hasPendingEdits && editedRowCount === 1 && !streaming;
+  const canApply = hasPendingEdits && !streaming;
+
   return (
     <div className={`results has-toolbar ${streaming ? "is-streaming" : ""}`}>
       {streaming && (
@@ -543,6 +720,51 @@ export function ResultGrid({
         >
           {t("exportButton")}
         </button>
+        {editable && tableColumns && pkIndices.length === 0 && (
+          <span
+            className="results-edit-hint"
+            title={t("editNoPkHintTitle")}
+          >
+            {t("editNoPkHint")}
+          </span>
+        )}
+        {editableActive && hasPendingEdits && (
+          <div className="results-edit-bar" role="group" aria-label={t("editToolbarAria")}>
+            <span className="results-edit-count">
+              {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
+            </span>
+            <button
+              type="button"
+              className="warning results-edit-btn"
+              onClick={onPreviewEdits}
+              disabled={!canPreview}
+              title={
+                editedRowCount > 1
+                  ? t("editPreviewMultiRowTitle")
+                  : t("editorPreviewTitle")
+              }
+            >
+              {t("editPreviewButton")}
+            </button>
+            <button
+              type="button"
+              className="success results-edit-btn"
+              onClick={onApplyEdits}
+              disabled={!canApply}
+              title={t("editApplyButtonTitle")}
+            >
+              {t("editApplyButton")}
+            </button>
+            <button
+              type="button"
+              className="results-edit-btn"
+              onClick={onClearEdits}
+              title={t("editCancelButtonTitle")}
+            >
+              {t("editCancelButton")}
+            </button>
+          </div>
+        )}
         <input
           type="search"
           className="results-search-input"
@@ -553,7 +775,15 @@ export function ResultGrid({
         />
       </div>
       <div ref={containerRef} className="results-scroll">
-        <DataGrid columns={result.columns} rows={result.rows} globalFilter={search} />
+        <DataGrid
+          columns={result.columns}
+          rows={result.rows}
+          globalFilter={search}
+          editable={editableActive}
+          editableColumns={editableCols}
+          pendingEdits={pendingEdits}
+          onSetCellEdit={onSetCellEdit}
+        />
         {loadingMore && (
           <div className="results-loading-more" role="status" aria-live="polite">
             <span className="results-streaming-dot" aria-hidden />
