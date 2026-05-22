@@ -340,7 +340,7 @@ export function DataGrid({
                 return (
                   <th
                     key={h.id}
-                    className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""}`}
+                    className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""}`}
                     aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
                   >
                     {canSort ? (

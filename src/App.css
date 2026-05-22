@@ -942,9 +942,6 @@ label {
   text-align: inherit;
   user-select: none;
 }
-:where(.results, .preview-pane-body) th.is-sortable.align-right .th-sort-button {
-  justify-content: flex-end;
-}
 :where(.results, .preview-pane-body) th.is-sortable .th-sort-button:hover {
   background: var(--bg-hover);
 }
