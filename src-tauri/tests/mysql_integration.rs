@@ -53,7 +53,10 @@ async fn preview_captures_affected_rows_past_row_limit() {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
-    let db = opts.database.clone().expect("test url must include a database");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
     let conn = t::connect(&opts).await.expect("connect");
 
     // Fresh table per run — the preview rolls back so leftover rows here

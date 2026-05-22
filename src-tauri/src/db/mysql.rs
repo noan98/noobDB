@@ -969,15 +969,12 @@ mod tests {
         // be skipped — otherwise we'd build the BEFORE snapshot from the
         // subquery's filter instead of the outer one.
         assert_eq!(
-            extract_where_and_after(
-                "UPDATE t SET x = (SELECT y FROM s WHERE z = 1) WHERE id = 5"
-            ),
+            extract_where_and_after("UPDATE t SET x = (SELECT y FROM s WHERE z = 1) WHERE id = 5"),
             Some("WHERE id = 5".into())
         );
-        assert!(extract_where_and_after(
-            "UPDATE t SET x = (SELECT y FROM s WHERE z = 1)"
-        )
-        .is_none());
+        assert!(
+            extract_where_and_after("UPDATE t SET x = (SELECT y FROM s WHERE z = 1)").is_none()
+        );
     }
 
     #[test]
@@ -1029,8 +1026,6 @@ mod tests {
     #[test]
     fn extract_where_ignores_identifier_prefixed_with_where() {
         // `whereabouts` starts with "where" but is not the keyword.
-        assert!(
-            extract_where_and_after("UPDATE t SET whereabouts = 'home'").is_none()
-        );
+        assert!(extract_where_and_after("UPDATE t SET whereabouts = 'home'").is_none());
     }
 }
