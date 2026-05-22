@@ -555,14 +555,53 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
 
           <section className="qb-section">
             <div className="qb-section-title">{t("qbPreview")}</div>
-            <SqlPreview sql={sql} />
+            <div className="qb-preview-wrap">
+              <button
+                type="button"
+                className="qb-preview-copy"
+                onClick={handleCopy}
+                aria-label={copied ? t("qbCopied") : t("qbCopy")}
+                title={copied ? t("qbCopied") : t("qbCopy")}
+              >
+                {copied ? (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M3 8.5l3 3 7-7" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <rect x="5" y="5" width="9" height="9" rx="1.5" />
+                    <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-5A1.5 1.5 0 0 0 3 3.5v5A1.5 1.5 0 0 0 4.5 10H6" />
+                  </svg>
+                )}
+              </button>
+              <SqlPreview sql={sql} />
+            </div>
           </section>
         </div>
 
         <footer className="modal-footer">
           <button onClick={onClose}>{t("qbClose")}</button>
           <div style={{ flex: 1 }} />
-          <button onClick={handleCopy}>{copied ? t("qbCopied") : t("qbCopy")}</button>
           {onPreview && kind !== "SELECT" && (
             <button onClick={handlePreview} title={t("editorPreviewTitle")}>
               {t("qbPreviewRun")}

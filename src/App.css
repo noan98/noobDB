@@ -1644,6 +1644,37 @@ label {
 .qb-limit-section label { margin: 0; }
 .qb-limit-input { max-width: 120px; }
 
+.qb-preview-wrap {
+  position: relative;
+}
+.qb-preview-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  z-index: 1;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.qb-preview-copy:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.qb-preview-copy:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
 .qb-preview {
   margin: 0;
   background: var(--bg-muted);
@@ -1670,7 +1701,7 @@ label {
   overflow: auto;
 }
 .qb-preview .cm-content {
-  padding: 10px 12px;
+  padding: 10px 40px 10px 12px;
 }
 .qb-preview .cm-line {
   padding: 0;
