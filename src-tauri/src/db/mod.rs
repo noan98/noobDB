@@ -234,9 +234,305 @@ pub fn is_read_only_sql(sql: &str) -> bool {
     true
 }
 
+/// Appends an automatic `LIMIT <limit>` to an ad-hoc `SELECT` / `WITH ... SELECT`
+/// that does not already constrain its own row window, returning the rewritten
+/// SQL. Returns `None` when the statement should run untouched.
+///
+/// The check is deliberately conservative: when in doubt it returns `None` (run
+/// the user's SQL verbatim) so we never break a working statement or silently
+/// truncate something we misread.
+///
+/// * Comments (`-- …`, `# …`, `/* … */`) and the contents of string / quoted
+///   identifier literals are masked before analysis, so a `limit` living inside
+///   a comment or a `'literal'` never trips detection — and a `` `limit` ``
+///   column name is not mistaken for the clause.
+/// * Only statements beginning with `select` or `with` are eligible. Anything
+///   that already carries a `limit` / `offset` keyword, a write keyword
+///   (`insert` / `update` / `delete` / `into` — guarding data-modifying CTEs and
+///   `SELECT … INTO`), a locking clause, or that reads as a single-row aggregate
+///   is left alone.
+/// * *Any* `limit` token anywhere — even one inside a sub-query — makes us bail.
+///   That can skip a query we could have safely capped, but it can never append
+///   a second `LIMIT` after an existing top-level one (a syntax error). Skipping
+///   is the safe direction.
+///
+/// The `LIMIT` is spliced in just after the last meaningful character — ahead of
+/// any trailing `;` or comment — so it is never swallowed by a line comment.
+pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
+    if limit == 0 {
+        return None;
+    }
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_analysis(&orig);
+    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+
+    let body = masked_lower
+        .trim()
+        .trim_end_matches(|c: char| c == ';' || c.is_whitespace())
+        .trim_start();
+    if body.is_empty() {
+        return None;
+    }
+    if !(starts_with_word(body, "select") || starts_with_word(body, "with")) {
+        return None;
+    }
+    if contains_word(body, "limit") || contains_word(body, "offset") {
+        return None;
+    }
+    // Data-modifying CTEs (`WITH … DELETE`) and `SELECT … INTO` must not get a
+    // trailing LIMIT spliced onto them. `replace`/`merge` are intentionally not
+    // listed here: `REPLACE()` is a common string function, not a write.
+    for kw in ["insert", "update", "delete", "into"] {
+        if contains_word(body, kw) {
+            return None;
+        }
+    }
+    // Locking reads put the LIMIT in the wrong place if appended at the very end
+    // (`… LOCK IN SHARE MODE LIMIT n` is invalid), so leave them untouched.
+    if body.ends_with("for update")
+        || body.ends_with("for share")
+        || body.ends_with("lock in share mode")
+    {
+        return None;
+    }
+    if is_aggregate_only(body) {
+        return None;
+    }
+
+    // Splice ` LIMIT n` after the last meaningful character. Trailing `;`,
+    // whitespace and comments were turned into spaces by the mask, so stripping
+    // them here lands the insertion ahead of any trailing comment/semicolon.
+    let mut end = masked.len();
+    while end > 0 {
+        let c = masked[end - 1];
+        if c.is_whitespace() || c == ';' {
+            end -= 1;
+        } else {
+            break;
+        }
+    }
+    let mut out: String = orig[..end].iter().collect();
+    out.push_str(&format!(" LIMIT {limit}"));
+    out.extend(orig[end..].iter());
+    Some(out)
+}
+
+/// Replaces every comment and the interior of every string / quoted-identifier
+/// literal with spaces, preserving the original char count so positions still
+/// line up with the source. Newlines inside comments are kept so line-comment
+/// boundaries survive.
+fn mask_for_analysis(src: &[char]) -> Vec<char> {
+    let mut out: Vec<char> = Vec::with_capacity(src.len());
+    let n = src.len();
+    let mut i = 0;
+    while i < n {
+        let c = src[i];
+        // Line comment: `-- …` or `# …`, terminated by newline.
+        if (c == '-' && i + 1 < n && src[i + 1] == '-') || c == '#' {
+            while i < n && src[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+            continue;
+        }
+        // Block comment: `/* … */`.
+        if c == '/' && i + 1 < n && src[i + 1] == '*' {
+            out.push(' ');
+            out.push(' ');
+            i += 2;
+            while i < n {
+                if src[i] == '*' && i + 1 < n && src[i + 1] == '/' {
+                    out.push(' ');
+                    out.push(' ');
+                    i += 2;
+                    break;
+                }
+                out.push(if src[i] == '\n' { '\n' } else { ' ' });
+                i += 1;
+            }
+            continue;
+        }
+        // Quoted literal / identifier: '…' "…" `…`.
+        if c == '\'' || c == '"' || c == '`' {
+            let quote = c;
+            out.push(c);
+            i += 1;
+            while i < n {
+                let d = src[i];
+                // Backslash escape (MySQL string literals only).
+                if d == '\\' && quote != '`' && i + 1 < n {
+                    out.push(' ');
+                    out.push(' ');
+                    i += 2;
+                    continue;
+                }
+                if d == quote {
+                    // Doubled quote is an escaped quote, not a terminator.
+                    if i + 1 < n && src[i + 1] == quote {
+                        out.push(' ');
+                        out.push(' ');
+                        i += 2;
+                        continue;
+                    }
+                    out.push(quote);
+                    i += 1;
+                    break;
+                }
+                out.push(if d == '\n' { '\n' } else { ' ' });
+                i += 1;
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// True when `s` begins with `word` followed by a non-word boundary.
+fn starts_with_word(s: &str, word: &str) -> bool {
+    let sb = s.as_bytes();
+    let wb = word.as_bytes();
+    if sb.len() < wb.len() || &sb[..wb.len()] != wb {
+        return false;
+    }
+    wb.len() >= sb.len() || !is_word_byte(sb[wb.len()])
+}
+
+/// True when `word` appears in `haystack` bounded by non-word characters.
+/// `haystack` is expected to be lowercase ASCII keywords; matching by bytes is
+/// safe because ASCII bytes never occur inside a multi-byte UTF-8 sequence.
+fn contains_word(haystack: &str, word: &str) -> bool {
+    let hb = haystack.as_bytes();
+    let wb = word.as_bytes();
+    if wb.is_empty() || hb.len() < wb.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + wb.len() <= hb.len() {
+        if &hb[i..i + wb.len()] == wb {
+            let before_ok = i == 0 || !is_word_byte(hb[i - 1]);
+            let after = i + wb.len();
+            let after_ok = after >= hb.len() || !is_word_byte(hb[after]);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// True when a plain `SELECT` returns a single aggregate row (no GROUP BY,
+/// window functions or DISTINCT) so an automatic LIMIT would be pointless.
+/// Errs toward `false`: when unsure we let the LIMIT through, which is the safe
+/// direction (capping a result we misjudged is harmless; failing to cap a huge
+/// one is the bug we are guarding against).
+fn is_aggregate_only(body: &str) -> bool {
+    if !starts_with_word(body, "select") {
+        return false;
+    }
+    // GROUP BY, window functions (`OVER`) and DISTINCT can each yield many rows.
+    if contains_word(body, "group") || contains_word(body, "over") || contains_word(body, "distinct")
+    {
+        return false;
+    }
+    let Some(list) = top_level_select_list(&body["select".len()..]) else {
+        return false;
+    };
+    let items = split_top_level_commas(list);
+    !items.is_empty() && items.iter().all(|item| is_aggregate_expr(item.trim()))
+}
+
+/// Returns the select list (text before the first depth-0 `from`), or `None`
+/// when there is no top-level FROM.
+fn top_level_select_list(s: &str) -> Option<&str> {
+    let b = s.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'(' => depth += 1,
+            b')' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            b'f' if depth == 0 && i + 4 <= b.len() && &b[i..i + 4] == b"from" => {
+                let before_ok = i == 0 || !is_word_byte(b[i - 1]);
+                let after_ok = i + 4 >= b.len() || !is_word_byte(b[i + 4]);
+                if before_ok && after_ok {
+                    return Some(&s[..i]);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let b = s.as_bytes();
+    let mut depth = 0i32;
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'(' => depth += 1,
+            b')' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            b',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
+/// True when `item` is wholly an aggregate function call, e.g. `count(*)` or
+/// `sum(x) as total`. The `(` requirement enforces a word boundary so column
+/// names like `counter` or `mineral` do not match.
+fn is_aggregate_expr(item: &str) -> bool {
+    const AGGS: [&str; 16] = [
+        "count",
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "group_concat",
+        "std",
+        "stddev",
+        "stddev_pop",
+        "stddev_samp",
+        "var_pop",
+        "var_samp",
+        "variance",
+        "bit_and",
+        "bit_or",
+        "bit_xor",
+    ];
+    AGGS.iter().any(|name| {
+        item.strip_prefix(name)
+            .is_some_and(|rest| rest.trim_start().starts_with('('))
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_read_only_sql;
+    use super::{apply_auto_limit, is_read_only_sql};
 
     #[test]
     fn allows_basic_selects_and_metadata_queries() {
@@ -277,5 +573,111 @@ mod tests {
         assert!(!is_read_only_sql("SELECT * FROM t for update;"));
         assert!(!is_read_only_sql("SELECT * FROM t FOR SHARE"));
         assert!(!is_read_only_sql("SELECT * FROM t LOCK IN SHARE MODE"));
+    }
+
+    #[test]
+    fn auto_limit_appends_to_bare_select() {
+        assert_eq!(
+            apply_auto_limit("SELECT * FROM t", 1000).as_deref(),
+            Some("SELECT * FROM t LIMIT 1000"),
+        );
+        assert_eq!(
+            apply_auto_limit("select id, name from users where age > 18", 50).as_deref(),
+            Some("select id, name from users where age > 18 LIMIT 50"),
+        );
+    }
+
+    #[test]
+    fn auto_limit_uses_the_requested_value() {
+        let out = apply_auto_limit("SELECT * FROM t", 250).unwrap();
+        assert!(out.ends_with("LIMIT 250"), "got: {out}");
+    }
+
+    #[test]
+    fn auto_limit_splices_before_trailing_semicolon_and_comment() {
+        assert_eq!(
+            apply_auto_limit("SELECT * FROM t;", 1000).as_deref(),
+            Some("SELECT * FROM t LIMIT 1000;"),
+        );
+        assert_eq!(
+            apply_auto_limit("SELECT * FROM t; -- bye", 1000).as_deref(),
+            Some("SELECT * FROM t LIMIT 1000; -- bye"),
+        );
+        assert_eq!(
+            apply_auto_limit("SELECT * FROM t -- trailing\n", 1000).as_deref(),
+            Some("SELECT * FROM t LIMIT 1000 -- trailing\n"),
+        );
+    }
+
+    #[test]
+    fn auto_limit_handles_with_select() {
+        let out = apply_auto_limit("WITH c AS (SELECT 1 AS n) SELECT * FROM c", 1000).unwrap();
+        assert!(out.ends_with("LIMIT 1000"), "got: {out}");
+    }
+
+    #[test]
+    fn auto_limit_skips_when_limit_or_offset_present() {
+        assert!(apply_auto_limit("SELECT * FROM t LIMIT 10", 1000).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t limit 10 offset 5", 1000).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t ORDER BY id OFFSET 5 ROWS", 1000).is_none());
+    }
+
+    #[test]
+    fn auto_limit_ignores_limit_in_subquery() {
+        // A LIMIT anywhere (even a sub-query) makes us bail rather than risk a
+        // double-LIMIT — the safe direction.
+        assert!(apply_auto_limit("SELECT * FROM (SELECT id FROM big LIMIT 10) x", 1000).is_none());
+    }
+
+    #[test]
+    fn auto_limit_ignores_limit_in_literals_and_comments() {
+        let a = apply_auto_limit("SELECT * FROM t WHERE note = 'limit 5'", 1000).unwrap();
+        assert_eq!(a, "SELECT * FROM t WHERE note = 'limit 5' LIMIT 1000");
+
+        let b = apply_auto_limit("SELECT * FROM t /* LIMIT 5 */", 1000).unwrap();
+        assert_eq!(b, "SELECT * FROM t LIMIT 1000 /* LIMIT 5 */");
+
+        let c = apply_auto_limit("SELECT `limit` FROM t", 1000).unwrap();
+        assert_eq!(c, "SELECT `limit` FROM t LIMIT 1000");
+    }
+
+    #[test]
+    fn auto_limit_skips_writes_and_metadata() {
+        assert!(apply_auto_limit("DELETE FROM t", 1000).is_none());
+        assert!(apply_auto_limit("UPDATE t SET a = 1", 1000).is_none());
+        assert!(apply_auto_limit("INSERT INTO t VALUES (1)", 1000).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t INTO OUTFILE '/tmp/x'", 1000).is_none());
+        assert!(apply_auto_limit("WITH c AS (SELECT 1) DELETE FROM t", 1000).is_none());
+        assert!(apply_auto_limit("EXPLAIN SELECT * FROM t", 1000).is_none());
+        assert!(apply_auto_limit("SHOW TABLES", 1000).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR UPDATE", 1000).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t LOCK IN SHARE MODE", 1000).is_none());
+        assert!(apply_auto_limit("", 1000).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t", 0).is_none());
+    }
+
+    #[test]
+    fn auto_limit_does_not_misread_identifiers_as_writes() {
+        // Column names that merely contain a write keyword must still be capped.
+        assert!(apply_auto_limit("SELECT deleted_at FROM t", 1000).is_some());
+        assert!(apply_auto_limit("SELECT update_time FROM t", 1000).is_some());
+        // REPLACE() is a string function, not a write statement.
+        assert!(apply_auto_limit("SELECT REPLACE(name, 'a', 'b') FROM t", 1000).is_some());
+    }
+
+    #[test]
+    fn auto_limit_skips_single_row_aggregates() {
+        assert!(apply_auto_limit("SELECT COUNT(*) FROM t", 1000).is_none());
+        assert!(apply_auto_limit("select sum(x), avg(y) from t", 1000).is_none());
+        assert!(apply_auto_limit("SELECT group_concat(name) FROM t", 1000).is_none());
+        assert!(apply_auto_limit("SELECT max(a) FROM t WHERE b IN (SELECT b FROM s)", 1000).is_none());
+    }
+
+    #[test]
+    fn auto_limit_applies_to_grouped_and_windowed_aggregates() {
+        // GROUP BY and window functions return many rows, so they should be capped.
+        assert!(apply_auto_limit("SELECT a, COUNT(*) FROM t GROUP BY a", 1000).is_some());
+        assert!(apply_auto_limit("SELECT COUNT(*) OVER () FROM t", 1000).is_some());
+        assert!(apply_auto_limit("SELECT DISTINCT count_col FROM t", 1000).is_some());
     }
 }

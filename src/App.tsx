@@ -84,6 +84,17 @@ interface Tab {
    * user SQL is not paginatable because we don't know its row identity.
    */
   paginatable: string | null;
+  /**
+   * Row cap that was auto-injected into the last run (from the stream's done
+   * event), or null when no auto LIMIT was applied. Drives the "auto LIMIT N
+   * applied" badge near the result grid.
+   */
+  autoLimitApplied: number | null;
+  /**
+   * The exact SQL that was run with an auto LIMIT, so the badge's "fetch all"
+   * action can re-run it uncapped even after the editor text has changed.
+   */
+  autoLimitSql: string | null;
   /** True while a load-more request for this tab is in flight. */
   loadingMore: boolean;
   /** True when another scroll-triggered page may yield more rows. */
@@ -138,6 +149,8 @@ function makeQueryTab(): Tab {
     streaming: false,
     previewRowLimit: 100,
     paginatable: null,
+    autoLimitApplied: null,
+    autoLimitSql: null,
     loadingMore: false,
     canLoadMore: false,
     tableColumns: null,
@@ -165,6 +178,8 @@ function makeExplainTab(sql: string): Tab {
     streaming: false,
     previewRowLimit: 100,
     paginatable: null,
+    autoLimitApplied: null,
+    autoLimitSql: null,
     loadingMore: false,
     canLoadMore: false,
     tableColumns: null,
@@ -456,6 +471,7 @@ export default function App() {
     tabId: string,
     sql: string,
     paginatableBase: string | null = null,
+    autoLimit: number | null = null,
   ) => {
     if (!sessionId) {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
@@ -473,6 +489,8 @@ export default function App() {
       preview: null,
       streaming: true,
       paginatable: paginatableBase,
+      autoLimitApplied: null,
+      autoLimitSql: autoLimit !== null ? sql : null,
       loadingMore: false,
       canLoadMore: false,
       // Drop any in-flight cell edits: their row indices reference the
@@ -521,7 +539,7 @@ export default function App() {
           };
         });
       },
-      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns }) => {
+      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit }) => {
         patchTab(tabId, (tt) => {
           if (!hasColumns) {
             return {
@@ -529,6 +547,7 @@ export default function App() {
               result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs },
               streaming: false,
               canLoadMore: false,
+              autoLimitApplied: null,
             };
           }
           // Optimistically enable scroll-triggered pagination for table-shaped
@@ -542,6 +561,7 @@ export default function App() {
               : tt.result,
             streaming: false,
             canLoadMore: tt.paginatable !== null,
+            autoLimitApplied: appliedAutoLimit,
           };
         });
         if (hasColumns) {
@@ -570,6 +590,7 @@ export default function App() {
         database: tab?.database ?? null,
         initialBatch: settings.defaultDisplayCount,
         chunkSize: settings.streamPrefetchSize,
+        autoLimit,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
@@ -612,6 +633,8 @@ export default function App() {
                 streaming: false,
                 previewRowLimit: limit,
                 paginatable: base,
+                autoLimitApplied: null,
+                autoLimitSql: null,
                 loadingMore: false,
                 canLoadMore: false,
                 tableColumns: null,
@@ -636,6 +659,8 @@ export default function App() {
             streaming: false,
             previewRowLimit: limit,
             paginatable: null,
+            autoLimitApplied: null,
+            autoLimitSql: null,
             loadingMore: false,
             canLoadMore: false,
             tableColumns: null,
@@ -844,7 +869,20 @@ export default function App() {
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
     // getting plan JSON instead of a raw result set.
     const toRun = activeTab.kind === "explain" ? `${EXPLAIN_PREFIX}${sql}` : sql;
-    runQueryInTab(activeTab.id, toRun);
+    // Auto LIMIT only guards free-form editor queries; table tabs carry their
+    // own LIMIT and EXPLAIN is skipped by the backend parser anyway.
+    const autoLimit =
+      activeTab.kind === "query" && settings.autoLimitEnabled
+        ? settings.autoLimitCount
+        : null;
+    runQueryInTab(activeTab.id, toRun, null, autoLimit);
+  }, [activeTab, runQueryInTab, settings.autoLimitEnabled, settings.autoLimitCount]);
+
+  // Badge action: re-run the auto-limited query without the cap so the user
+  // sees the full result set.
+  const handleFetchAllRows = useCallback(() => {
+    if (!activeTab || activeTab.autoLimitSql === null) return;
+    runQueryInTab(activeTab.id, activeTab.autoLimitSql, null, null);
   }, [activeTab, runQueryInTab]);
 
   const handleExplainQuery = useCallback((sql: string) => {
@@ -1072,6 +1110,8 @@ export default function App() {
       streaming: false,
       previewRowLimit: limit,
       paginatable: base,
+      autoLimitApplied: null,
+      autoLimitSql: null,
       loadingMore: false,
       canLoadMore: false,
       tableColumns: null,
@@ -1399,6 +1439,8 @@ export default function App() {
                         loadingMore={activeTab.loadingMore}
                         canLoadMore={activeTab.canLoadMore}
                         onLoadMore={handleLoadMore}
+                        autoLimitApplied={activeTab.autoLimitApplied}
+                        onFetchAllRows={handleFetchAllRows}
                         database={activeTab.database ?? selectedProfile?.database ?? null}
                         table={activeTab.table ?? null}
                         editable={activeTab.kind === "table"}

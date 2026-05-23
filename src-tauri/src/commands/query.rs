@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::db::is_read_only_sql;
+use crate::db::{apply_auto_limit, is_read_only_sql};
 use crate::db::types::{Column, PreviewResult, QueryResult, StreamBatch, Value};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
@@ -82,6 +82,10 @@ struct StreamDoneEvent {
     /// for INSERT/UPDATE/etc. so the UI can show "rows affected" instead.
     #[serde(rename = "hasColumns")]
     has_columns: bool,
+    /// The row cap that was auto-injected for this run, or `null` when none was
+    /// applied. Lets the UI show a "auto LIMIT N applied" badge.
+    #[serde(rename = "appliedAutoLimit")]
+    applied_auto_limit: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -106,6 +110,7 @@ pub async fn run_query_stream(
     database: Option<String>,
     initial_batch: usize,
     chunk_size: usize,
+    auto_limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -121,6 +126,7 @@ pub async fn run_query_stream(
         database,
         initial_batch,
         chunk_size,
+        auto_limit,
     ));
     state
         .register_stream(stream_id, handle.abort_handle())
@@ -128,6 +134,7 @@ pub async fn run_query_stream(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn spawn_query_stream(
     app: AppHandle,
     session: Arc<Session>,
@@ -136,13 +143,24 @@ async fn spawn_query_stream(
     database: Option<String>,
     initial_batch: usize,
     chunk_size: usize,
+    auto_limit: Option<usize>,
 ) {
+    // Rewrite the statement with an automatic LIMIT when requested and the SQL
+    // is eligible. `sql` stays the original so history records what the user
+    // actually typed; only `effective_sql` carries the injected cap.
+    let (effective_sql, applied_auto_limit) = match auto_limit {
+        Some(n) => match apply_auto_limit(&sql, n) {
+            Some(rewritten) => (rewritten, Some(n as u64)),
+            None => (sql.clone(), None),
+        },
+        None => (sql.clone(), None),
+    };
     let emit_app = app.clone();
     let emit_id = stream_id.clone();
     let result = session
         .conn
         .execute_stream(
-            &sql,
+            &effective_sql,
             database.as_deref(),
             initial_batch,
             chunk_size,
@@ -185,6 +203,11 @@ async fn spawn_query_stream(
                     rows_affected: res.rows_affected,
                     elapsed_ms: res.elapsed_ms,
                     has_columns: !res.columns.is_empty(),
+                    applied_auto_limit: if res.columns.is_empty() {
+                        None
+                    } else {
+                        applied_auto_limit
+                    },
                 },
             );
         }

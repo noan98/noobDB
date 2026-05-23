@@ -25,6 +25,10 @@ export interface Settings {
   defaultDisplayCount: number;
   /** Chunk size used to fetch additional rows once the initial batch has been shown. */
   streamPrefetchSize: number;
+  /** Auto-append a LIMIT to ad-hoc SELECT queries that lack one. */
+  autoLimitEnabled: boolean;
+  /** Row cap applied when auto LIMIT kicks in. */
+  autoLimitCount: number;
   /** Show a confirmation dialog when connecting to a profile flagged as production. */
   confirmProductionConnect: boolean;
   /** Behavior when previously open tabs exist for a profile being reconnected. */
@@ -148,6 +152,8 @@ export const DEFAULT_PREVIEW_HIGHLIGHT: Record<Theme, string> = {
 
 export const DEFAULT_DISPLAY_COUNT = 100;
 export const DEFAULT_STREAM_PREFETCH_SIZE = 200;
+export const DEFAULT_AUTO_LIMIT_ENABLED = true;
+export const DEFAULT_AUTO_LIMIT_COUNT = 1000;
 const MIN_BATCH = 1;
 const MAX_BATCH = 100_000;
 
@@ -163,6 +169,8 @@ export const DEFAULT_SETTINGS: Settings = {
   previewHighlight: { ...DEFAULT_PREVIEW_HIGHLIGHT },
   defaultDisplayCount: DEFAULT_DISPLAY_COUNT,
   streamPrefetchSize: DEFAULT_STREAM_PREFETCH_SIZE,
+  autoLimitEnabled: DEFAULT_AUTO_LIMIT_ENABLED,
+  autoLimitCount: DEFAULT_AUTO_LIMIT_COUNT,
   confirmProductionConnect: DEFAULT_CONFIRM_PRODUCTION_CONNECT,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
 };
@@ -209,6 +217,8 @@ function loadInitial(): Settings {
       previewHighlight?: { light?: unknown; dark?: unknown };
       defaultDisplayCount?: unknown;
       streamPrefetchSize?: unknown;
+      autoLimitEnabled?: unknown;
+      autoLimitCount?: unknown;
       confirmProductionConnect?: unknown;
       tabRestoreMode?: unknown;
     };
@@ -223,6 +233,11 @@ function loadInitial(): Settings {
       },
       defaultDisplayCount: sanitizeCount(parsed.defaultDisplayCount, DEFAULT_DISPLAY_COUNT),
       streamPrefetchSize: sanitizeCount(parsed.streamPrefetchSize, DEFAULT_STREAM_PREFETCH_SIZE),
+      autoLimitEnabled:
+        typeof parsed.autoLimitEnabled === "boolean"
+          ? parsed.autoLimitEnabled
+          : DEFAULT_AUTO_LIMIT_ENABLED,
+      autoLimitCount: sanitizeCount(parsed.autoLimitCount, DEFAULT_AUTO_LIMIT_COUNT),
       confirmProductionConnect:
         typeof parsed.confirmProductionConnect === "boolean"
           ? parsed.confirmProductionConnect
@@ -322,6 +337,21 @@ export function setStreamPrefetchSize(value: number): void {
   const next = sanitizeCount(value, current.streamPrefetchSize);
   if (next === current.streamPrefetchSize) return;
   current = { ...current, streamPrefetchSize: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setAutoLimitEnabled(value: boolean): void {
+  if (current.autoLimitEnabled === value) return;
+  current = { ...current, autoLimitEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setAutoLimitCount(value: number): void {
+  const next = sanitizeCount(value, current.autoLimitCount);
+  if (next === current.autoLimitCount) return;
+  current = { ...current, autoLimitCount: next };
   persist();
   listeners.forEach((cb) => cb());
 }

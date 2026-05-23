@@ -223,6 +223,7 @@ export const api = {
     database?: string | null;
     initialBatch: number;
     chunkSize: number;
+    autoLimit?: number | null;
   }) =>
     invoke<void>("run_query_stream", {
       sessionId: params.sessionId,
@@ -231,6 +232,7 @@ export const api = {
       database: params.database ?? null,
       initialBatch: params.initialBatch,
       chunkSize: params.chunkSize,
+      autoLimit: params.autoLimit ?? null,
     }),
   previewQueryStream: (params: {
     sessionId: string;
@@ -334,6 +336,8 @@ export interface QueryStreamDoneEvent {
   rowsAffected: number;
   elapsedMs: number;
   hasColumns: boolean;
+  /** Row cap auto-injected for this run, or null when none was applied. */
+  appliedAutoLimit: number | null;
 }
 
 export interface QueryStreamErrorEvent {
