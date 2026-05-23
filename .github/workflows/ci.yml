@@ -98,10 +98,9 @@ jobs:
       - name: Build frontend (needed for tauri::generate_context!)
         run: npm run build
 
-      - name: cargo check
-        working-directory: src-tauri
-        run: cargo check --all-targets --locked
-
+      # clippy は rustc ドライバなので型チェック (cargo check 相当) を内包する。
+      # 別途 cargo check を走らせると、共有されないコンパイルがほぼ二重に走るため
+      # clippy のみに集約している。
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
