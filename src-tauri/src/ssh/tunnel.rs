@@ -7,19 +7,27 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
-use super::auth::load_private_key;
 use super::handler::ClientHandler;
 use crate::error::{AppError, Result};
+use crate::profiles::SshAuthMethod;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SshConfig {
     pub host: String,
     pub port: u16,
     pub user: String,
+    /// Selects which credential path `auth` uses below.
+    #[serde(default)]
+    pub auth_method: SshAuthMethod,
+    /// Private key path. Used only when `auth_method == Key`.
+    #[serde(default)]
     pub private_key_path: PathBuf,
     /// Passphrase for the private key. Empty string == no passphrase.
     #[serde(default)]
     pub passphrase: String,
+    /// Password for `auth_method == Password`. Empty string == none.
+    #[serde(default)]
+    pub password: String,
     /// Final endpoint we want to reach through the tunnel.
     pub remote_host: String,
     pub remote_port: u16,
@@ -37,13 +45,6 @@ pub struct SshTunnel {
 
 impl SshTunnel {
     pub async fn open(cfg: &SshConfig) -> Result<Self> {
-        let passphrase = if cfg.passphrase.is_empty() {
-            None
-        } else {
-            Some(cfg.passphrase.as_str())
-        };
-        let key = load_private_key(&cfg.private_key_path, passphrase)?;
-
         let config = russh::client::Config {
             inactivity_timeout: Some(Duration::from_secs(600)),
             keepalive_interval: Some(Duration::from_secs(30)),
@@ -56,16 +57,7 @@ impl SshTunnel {
             .await
             .map_err(|e| AppError::Ssh(format!("ssh connect failed: {e}")))?;
 
-        let authed = session
-            .authenticate_publickey(
-                &cfg.user,
-                russh::keys::PrivateKeyWithHashAlg::new(key, None),
-            )
-            .await
-            .map_err(|e| AppError::Ssh(format!("ssh auth error: {e}")))?;
-        if !authed.success() {
-            return Err(AppError::Ssh("ssh authentication failed".into()));
-        }
+        super::auth::authenticate(&mut session, cfg).await?;
 
         let session = Arc::new(session);
 
