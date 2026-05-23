@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, ConnectionProfile, DriverKind } from "../api/tauri";
+import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri";
 import { useT } from "../i18n";
 
 interface Props {
@@ -69,8 +69,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
   const [sshPort, setSshPort] = useState(initial?.ssh?.port ?? 22);
   const [sshUser, setSshUser] = useState(initial?.ssh?.user ?? "");
+  const [sshAuthMethod, setSshAuthMethod] = useState<SshAuthMethod>(initial?.ssh?.auth_method ?? "key");
   const [sshKeyPath, setSshKeyPath] = useState(initial?.ssh?.private_key_path ?? "");
   const [sshPassphrase, setSshPassphrase] = useState("");
+  const [sshPassword, setSshPassword] = useState("");
 
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -138,8 +140,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             host: sshHost,
             port: Number(sshPort),
             user: sshUser,
-            private_key_path: sshKeyPath,
-            passphrase: sshPassphrase,
+            auth_method: sshAuthMethod,
+            private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
+            passphrase: sshAuthMethod === "key" ? sshPassphrase : "",
+            password: sshAuthMethod === "password" ? sshPassword : "",
           }
         : null,
       file_path: null,
@@ -176,10 +180,23 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         user: isFileBacked ? "" : user,
         database: isFileBacked ? null : (database || null),
         ssh: !isFileBacked && useSsh
-          ? { host: sshHost, port: Number(sshPort), user: sshUser, private_key_path: sshKeyPath }
+          ? {
+              host: sshHost,
+              port: Number(sshPort),
+              user: sshUser,
+              auth_method: sshAuthMethod,
+              private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
+            }
           : null,
         db_password: isFileBacked || password === "" ? undefined : password,
-        ssh_passphrase: !isFileBacked && useSsh && sshPassphrase !== "" ? sshPassphrase : undefined,
+        ssh_passphrase:
+          !isFileBacked && useSsh && sshAuthMethod === "key" && sshPassphrase !== ""
+            ? sshPassphrase
+            : undefined,
+        ssh_password:
+          !isFileBacked && useSsh && sshAuthMethod === "password" && sshPassword !== ""
+            ? sshPassword
+            : undefined,
         group: group.trim() || null,
         color: color || null,
         is_production: isProduction,
@@ -367,16 +384,42 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 <input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
               </div>
               <div style={{ marginTop: 8 }}>
-                <label>{t("formPrivateKeyPath")}</label>
-                <div className="row">
-                  <input value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
-                  <button onClick={pickKeyFile}>{t("formBrowse")}</button>
+                <label>{t("formSshAuthMethod")}</label>
+                <select
+                  value={sshAuthMethod}
+                  onChange={(e) => setSshAuthMethod(e.target.value as SshAuthMethod)}
+                >
+                  <option value="key">{t("formSshAuthKey")}</option>
+                  <option value="agent">{t("formSshAuthAgent")}</option>
+                  <option value="password">{t("formSshAuthPassword")}</option>
+                </select>
+              </div>
+              {sshAuthMethod === "key" && (
+                <>
+                  <div style={{ marginTop: 8 }}>
+                    <label>{t("formPrivateKeyPath")}</label>
+                    <div className="row">
+                      <input value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
+                      <button onClick={pickKeyFile}>{t("formBrowse")}</button>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <label>{t("formSshPassphrase")}</label>
+                    <input type="password" value={sshPassphrase} onChange={(e) => setSshPassphrase(e.target.value)} />
+                  </div>
+                </>
+              )}
+              {sshAuthMethod === "password" && (
+                <div style={{ marginTop: 8 }}>
+                  <label>{t("formSshPassword")}</label>
+                  <input type="password" value={sshPassword} onChange={(e) => setSshPassword(e.target.value)} />
                 </div>
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <label>{t("formSshPassphrase")}</label>
-                <input type="password" value={sshPassphrase} onChange={(e) => setSshPassphrase(e.target.value)} />
-              </div>
+              )}
+              {sshAuthMethod === "agent" && (
+                <p className="muted" style={{ fontSize: 11, margin: "8px 0 0" }}>
+                  {t("formSshAgentHelp")}
+                </p>
+              )}
             </>
           )}
         </fieldset>

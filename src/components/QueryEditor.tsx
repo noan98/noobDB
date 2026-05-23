@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { sql, MySQL, type SQLNamespace } from "@codemirror/lang-sql";
+import { sql, type SQLNamespace } from "@codemirror/lang-sql";
 import {
   acceptCompletion,
   autocompletion,
@@ -20,6 +20,7 @@ import { tags } from "@lezer/highlight";
 import { format as formatSql } from "sql-formatter";
 import { useT } from "../i18n";
 import { QueryBuilder } from "./QueryBuilder";
+import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 
 const tableXHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -60,6 +61,7 @@ interface Props {
   initialSql?: string;
   sessionId?: string | null;
   defaultDatabase?: string | null;
+  driver?: string;
 }
 
 export interface QueryEditorHandle {
@@ -69,6 +71,7 @@ export interface QueryEditorHandle {
 
 function formatEditorContent(
   view: EditorView,
+  driver: string,
   onError?: (message: string) => void,
 ): boolean {
   const sel = view.state.selection.main;
@@ -79,7 +82,7 @@ function formatEditorContent(
   if (text.trim().length === 0) return false;
   let formatted: string;
   try {
-    formatted = formatSql(text, { language: "mysql" });
+    formatted = formatSql(text, { language: sqlFormatterLanguageFor(driver) });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     onError?.(message);
@@ -99,7 +102,7 @@ function formatEditorContent(
   return true;
 }
 
-function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
+function buildSqlExtension(driver: string, schemaTable: SchemaTable | null | undefined) {
   let schema: SQLNamespace | undefined;
   let defaultTable: string | undefined;
   let defaultSchema: string | undefined;
@@ -112,7 +115,7 @@ function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
     defaultSchema = schemaTable.database;
   }
   return sql({
-    dialect: MySQL,
+    dialect: codeMirrorSqlDialectFor(driver),
     schema,
     defaultTable,
     defaultSchema,
@@ -132,6 +135,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   initialSql,
   sessionId,
   defaultDatabase,
+  driver = "mysql",
 }: Props, ref) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -143,6 +147,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onChangeRef.current = onChange;
   const onFormatErrorRef = useRef(onFormatError);
   onFormatErrorRef.current = onFormatError;
+  const driverRef = useRef(driver);
+  driverRef.current = driver;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -160,13 +166,13 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           closeBrackets(),
           syntaxHighlighting(tableXHighlightStyle, { fallback: true }),
           autocompletion(),
-          sqlCompartment.of(buildSqlExtension(schemaTable)),
+          sqlCompartment.of(buildSqlExtension(driver, schemaTable)),
           keymap.of([
             { key: "Tab", run: acceptCompletion },
             {
               key: "Mod-Shift-f",
               preventDefault: true,
-              run: (v) => formatEditorContent(v, onFormatErrorRef.current),
+              run: (v) => formatEditorContent(v, driverRef.current, onFormatErrorRef.current),
             },
             ...defaultKeymap,
             ...historyKeymap,
@@ -195,9 +201,9 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: sqlCompartment.reconfigure(buildSqlExtension(schemaTable)) });
+    view.dispatch({ effects: sqlCompartment.reconfigure(buildSqlExtension(driver, schemaTable)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schemaKey]);
+  }, [schemaKey, driver]);
 
   useImperativeHandle(ref, () => ({
     insertText: (text: string) => {
@@ -235,7 +241,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const formatSelectionOrAll = () => {
     const view = viewRef.current;
     if (!view) return;
-    formatEditorContent(view, onFormatErrorRef.current);
+    formatEditorContent(view, driver, onFormatErrorRef.current);
   };
 
   const previewSelectionOrAll = () => {
@@ -336,6 +342,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       {showBuilder && sessionId && (
         <QueryBuilder
           sessionId={sessionId}
+          driver={driver}
           defaultDatabase={defaultDatabase ?? activeTable?.database ?? null}
           defaultTable={activeTable?.name ?? null}
           onExecute={(builtSql) => onRun(builtSql)}

@@ -56,8 +56,33 @@ pub fn delete_ssh_passphrase(profile_id: &str) -> Result<()> {
     }
 }
 
+pub fn set_ssh_password(profile_id: &str, password: &str) -> Result<()> {
+    let entry = Entry::new(SERVICE, &target(profile_id, "ssh_password"))?;
+    entry.set_password(password)?;
+    Ok(())
+}
+
+pub fn get_ssh_password(profile_id: &str) -> Result<Option<String>> {
+    let entry = Entry::new(SERVICE, &target(profile_id, "ssh_password"))?;
+    match entry.get_password() {
+        Ok(p) => Ok(Some(p)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn delete_ssh_password(profile_id: &str) -> Result<()> {
+    let entry = Entry::new(SERVICE, &target(profile_id, "ssh_password"))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 pub fn delete_all(profile_id: &str) -> Result<()> {
     delete_db_password(profile_id)?;
     delete_ssh_passphrase(profile_id)?;
+    delete_ssh_password(profile_id)?;
     Ok(())
 }
