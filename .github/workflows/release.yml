@@ -75,7 +75,7 @@ jobs:
             toml = toml.replace(/^version = "[^"]*"/m, "version = \"" + v + "\"");
             fs.writeFileSync("src-tauri/Cargo.toml", toml);
             let lock = fs.readFileSync("src-tauri/Cargo.lock", "utf8");
-            lock = lock.replace(/(name = "tablex"\nversion = ")[^"]*"/, "$1" + v + "\"");
+            lock = lock.replace(/(name = "noobdb"\nversion = ")[^"]*"/, "$1" + v + "\"");
             fs.writeFileSync("src-tauri/Cargo.lock", lock);
           '
 
@@ -95,7 +95,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "tableX ${{ github.ref_name }}"
+          releaseName: "noobDB ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

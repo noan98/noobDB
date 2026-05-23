@@ -1,17 +1,17 @@
 //! Integration test against a live MySQL server.
 //!
-//! Skipped unless `TABLEX_TEST_MYSQL_URL` is set, e.g.:
+//! Skipped unless `NOOBDB_TEST_MYSQL_URL` is set, e.g.:
 //!     mysql://root:rootpw@127.0.0.1:3306/testdb
 //!
 //! Parses the URL and exercises the `Connection::MySql` path end-to-end:
 //! connect, run a query, list databases.
 
-use tablex_lib::__test_api as t;
+use noobdb_lib::__test_api as t;
 
 #[tokio::test]
 async fn mysql_roundtrip_when_env_set() {
-    let Ok(url) = std::env::var("TABLEX_TEST_MYSQL_URL") else {
-        eprintln!("skip: TABLEX_TEST_MYSQL_URL not set");
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -48,8 +48,8 @@ async fn mysql_roundtrip_when_env_set() {
 /// affected rows regardless of where they sit in the table.
 #[tokio::test]
 async fn preview_captures_affected_rows_past_row_limit() {
-    let Ok(url) = std::env::var("TABLEX_TEST_MYSQL_URL") else {
-        eprintln!("skip: TABLEX_TEST_MYSQL_URL not set");
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");

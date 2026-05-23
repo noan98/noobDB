@@ -120,5 +120,5 @@ pub fn run() {
             commands::import::import_csv,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tableX");
+        .expect("error while running noobDB");
 }

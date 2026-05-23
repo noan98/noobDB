@@ -2882,6 +2882,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "noobdb"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "csv",
+ "data-encoding",
+ "directories",
+ "encoding_rs",
+ "futures-util",
+ "keyring",
+ "rand 0.10.1",
+ "russh",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5046,34 +5074,6 @@ dependencies = [
  "pkg-config",
  "toml 0.8.2",
  "version-compare",
-]
-
-[[package]]
-name = "tablex"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "csv",
- "data-encoding",
- "directories",
- "encoding_rs",
- "futures-util",
- "keyring",
- "rand 0.10.1",
- "russh",
- "rust_decimal",
- "serde",
- "serde_json",
- "sqlx",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

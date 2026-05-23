@@ -4,7 +4,7 @@ import { useT } from "../i18n";
 import { DataGrid } from "./ResultGrid";
 import { Splitter } from "./Splitter";
 
-const SYNC_SCROLL_STORAGE_KEY = "tablex.preview.syncScroll";
+const SYNC_SCROLL_STORAGE_KEY = "noobdb.preview.syncScroll";
 
 function readSyncScrollPref(): boolean {
   if (typeof window === "undefined") return true;
@@ -319,7 +319,7 @@ export function PreviewGrid({
         <Splitter
           direction="row"
           className="preview-grids"
-          storageKey="tablex.split.preview"
+          storageKey="noobdb.split.preview"
           defaultFraction={0.5}
           minSize={140}
           ariaLabel={t("splitterPreviewAria")}

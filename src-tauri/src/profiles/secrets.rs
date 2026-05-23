@@ -2,7 +2,7 @@ use keyring::Entry;
 
 use crate::error::Result;
 
-const SERVICE: &str = "tableX";
+const SERVICE: &str = "noobDB";
 
 fn target(profile_id: &str, kind: &str) -> String {
     format!("{profile_id}/{kind}")

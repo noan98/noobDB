@@ -1,4 +1,4 @@
-const STORAGE_PREFIX = "tablex.tabs.";
+const STORAGE_PREFIX = "noobdb.tabs.";
 
 export interface PersistedTab {
   kind: "table" | "query" | "explain";

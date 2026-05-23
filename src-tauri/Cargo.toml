@@ -1,13 +1,13 @@
 [package]
-name = "tablex"
+name = "noobdb"
 version = "0.1.0"
-description = "tableX - Rust DB client (MySQL / PostgreSQL / SQLite) with SSH tunnel"
-authors = ["tableX contributors"]
+description = "noobDB - Rust DB client (MySQL / PostgreSQL / SQLite) with SSH tunnel"
+authors = ["noobDB contributors"]
 edition = "2021"
 rust-version = "1.77"
 
 [lib]
-name = "tablex_lib"
+name = "noobdb_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

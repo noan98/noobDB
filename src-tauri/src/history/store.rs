@@ -10,7 +10,7 @@ use crate::error::{AppError, Result};
 
 const QUALIFIER: &str = "";
 const ORG: &str = "";
-const APP: &str = "tableX";
+const APP: &str = "noobDB";
 
 /// Lazily-opened connection pool to the local history database. The file lives
 /// alongside `profiles.json` in the project data dir and is created on first

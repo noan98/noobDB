@@ -1,6 +1,6 @@
 //! Integration test against a live PostgreSQL server.
 //!
-//! Skipped unless `TABLEX_TEST_POSTGRES_URL` is set, e.g.:
+//! Skipped unless `NOOBDB_TEST_POSTGRES_URL` is set, e.g.:
 //!     postgres://postgres:postgres@127.0.0.1:5432/testdb
 //!
 //! Exercises the `Connection::Postgres` path end-to-end: connect, run
@@ -8,12 +8,12 @@
 //! and round-trip CRUD against an isolated temporary table. Preview must
 //! leave the live table untouched.
 
-use tablex_lib::__test_api as t;
+use noobdb_lib::__test_api as t;
 
 #[tokio::test]
 async fn postgres_roundtrip_when_env_set() {
-    let Ok(url) = std::env::var("TABLEX_TEST_POSTGRES_URL") else {
-        eprintln!("skip: TABLEX_TEST_POSTGRES_URL not set");
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -39,17 +39,17 @@ async fn postgres_roundtrip_when_env_set() {
     );
 
     // CRUD round-trip in an isolated temp table.
-    conn.execute("DROP TABLE IF EXISTS public.tablex_pg_smoke", None)
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_smoke", None)
         .await
         .expect("drop");
     conn.execute(
-        "CREATE TABLE public.tablex_pg_smoke (id INT PRIMARY KEY, label TEXT NOT NULL)",
+        "CREATE TABLE public.noobdb_pg_smoke (id INT PRIMARY KEY, label TEXT NOT NULL)",
         None,
     )
     .await
     .expect("create");
     conn.execute(
-        "INSERT INTO public.tablex_pg_smoke (id, label) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+        "INSERT INTO public.noobdb_pg_smoke (id, label) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
         None,
     )
     .await
@@ -58,12 +58,12 @@ async fn postgres_roundtrip_when_env_set() {
     // The freshly-created table must appear in the schema browser.
     let tables = conn.tables("public").await.expect("list tables");
     assert!(
-        tables.iter().any(|t| t == "tablex_pg_smoke"),
-        "expected tablex_pg_smoke in {:?}",
+        tables.iter().any(|t| t == "noobdb_pg_smoke"),
+        "expected noobdb_pg_smoke in {:?}",
         tables
     );
     let cols = conn
-        .columns("public", "tablex_pg_smoke")
+        .columns("public", "noobdb_pg_smoke")
         .await
         .expect("describe");
     assert_eq!(cols.len(), 2);
@@ -72,7 +72,7 @@ async fn postgres_roundtrip_when_env_set() {
 
     let after_insert = conn
         .execute(
-            "SELECT id, label FROM public.tablex_pg_smoke ORDER BY id",
+            "SELECT id, label FROM public.noobdb_pg_smoke ORDER BY id",
             None,
         )
         .await
@@ -81,7 +81,7 @@ async fn postgres_roundtrip_when_env_set() {
 
     let upd = conn
         .execute(
-            "UPDATE public.tablex_pg_smoke SET label = 'B' WHERE id = 2",
+            "UPDATE public.noobdb_pg_smoke SET label = 'B' WHERE id = 2",
             None,
         )
         .await
@@ -89,14 +89,14 @@ async fn postgres_roundtrip_when_env_set() {
     assert_eq!(upd.rows_affected, 1);
 
     let del = conn
-        .execute("DELETE FROM public.tablex_pg_smoke WHERE id = 3", None)
+        .execute("DELETE FROM public.noobdb_pg_smoke WHERE id = 3", None)
         .await
         .expect("delete");
     assert_eq!(del.rows_affected, 1);
 
     let final_rows = conn
         .execute(
-            "SELECT id, label FROM public.tablex_pg_smoke ORDER BY id",
+            "SELECT id, label FROM public.noobdb_pg_smoke ORDER BY id",
             None,
         )
         .await
@@ -108,7 +108,7 @@ async fn postgres_roundtrip_when_env_set() {
     // table must be unchanged afterwards.
     let preview = conn
         .preview_execute_with_limit(
-            "UPDATE public.tablex_pg_smoke SET label = 'rollback' WHERE id = 1",
+            "UPDATE public.noobdb_pg_smoke SET label = 'rollback' WHERE id = 1",
             None,
             10,
         )
@@ -117,11 +117,11 @@ async fn postgres_roundtrip_when_env_set() {
     assert_eq!(preview.rows_affected, 1);
     assert_eq!(
         preview.target_table.as_deref(),
-        Some("public.tablex_pg_smoke")
+        Some("public.noobdb_pg_smoke")
     );
     let after_preview = conn
         .execute(
-            "SELECT label FROM public.tablex_pg_smoke WHERE id = 1",
+            "SELECT label FROM public.noobdb_pg_smoke WHERE id = 1",
             None,
         )
         .await
@@ -131,7 +131,7 @@ async fn postgres_roundtrip_when_env_set() {
         "preview must roll back; row 1 should still hold its original label"
     );
 
-    conn.execute("DROP TABLE public.tablex_pg_smoke", None)
+    conn.execute("DROP TABLE public.noobdb_pg_smoke", None)
         .await
         .expect("cleanup");
     conn.close().await;
