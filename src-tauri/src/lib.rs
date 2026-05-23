@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod error;
+mod history;
 mod profiles;
 mod snippets;
 mod ssh;
@@ -111,6 +112,8 @@ pub fn run() {
             commands::snippets::list_snippets,
             commands::snippets::save_snippet,
             commands::snippets::delete_snippet,
+            commands::history::list_history,
+            commands::history::clear_history,
             commands::export::export_query_result,
             commands::import::parse_csv_preview,
             commands::import::import_csv,

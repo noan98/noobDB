@@ -31,6 +31,10 @@ pub struct ConnectRequest {
     /// When true the resulting session refuses to execute non-read-only SQL.
     #[serde(default)]
     pub read_only: bool,
+    /// When true, statements run on the resulting session are not recorded
+    /// in the query history.
+    #[serde(default)]
+    pub skip_history: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,6 +87,7 @@ pub async fn connect(req: ConnectRequest, state: State<'_, AppState>) -> Result<
         profile_id,
         conn,
         read_only: req.read_only,
+        skip_history: req.skip_history,
         _tunnel: tunnel,
     };
     let id = state.insert(session).await;

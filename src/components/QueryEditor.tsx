@@ -73,6 +73,8 @@ interface Props {
 export interface QueryEditorHandle {
   /** Inserts text at the current cursor (replacing any selection). */
   insertText: (text: string) => void;
+  /** Replaces the entire editor contents (used to restore a history entry). */
+  setText: (text: string) => void;
 }
 
 function formatEditorContent(
@@ -221,6 +223,15 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       view.dispatch({
         changes: { from: sel.from, to: sel.to, insert: text },
         selection: { anchor: sel.from + text.length },
+      });
+      view.focus();
+    },
+    setText: (text: string) => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: text },
+        selection: { anchor: text.length },
       });
       view.focus();
     },

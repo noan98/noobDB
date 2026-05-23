@@ -30,6 +30,11 @@ export interface ConnectionProfile {
    * not strictly read-only (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH).
    */
   read_only: boolean;
+  /**
+   * When true, statements run on sessions from this profile are not recorded
+   * in the query history.
+   */
+  skip_history: boolean;
   /** Database file path for file-backed drivers (SQLite). */
   file_path: string | null;
 }
@@ -55,6 +60,8 @@ export interface ConnectRequest {
    * Defaults to false on the backend if omitted.
    */
   read_only?: boolean;
+  /** When true, statements on this session are not recorded in history. */
+  skip_history?: boolean;
 }
 
 export interface SaveProfileRequest {
@@ -73,6 +80,7 @@ export interface SaveProfileRequest {
   color: string | null;
   is_production: boolean;
   read_only: boolean;
+  skip_history: boolean;
   /** Required for sqlite; ignored otherwise. */
   file_path?: string | null;
 }
@@ -100,6 +108,24 @@ export interface SaveSnippetRequest {
   sql: string;
   driver: string | null;
   scope: SnippetScope;
+}
+
+export interface HistoryEntry {
+  id: number;
+  profile_id: string | null;
+  driver: string;
+  database: string | null;
+  sql: string;
+  /** Rows returned by a SELECT-shaped statement. `null` for writes. */
+  rows: number | null;
+  /** Rows affected by a write statement. `null` for SELECTs. */
+  rows_affected: number | null;
+  elapsed_ms: number | null;
+  /** "ok" or "error". */
+  status: string;
+  error: string | null;
+  /** ISO8601 (RFC3339, UTC) timestamp. */
+  executed_at: string;
 }
 
 export interface SessionInfo {
@@ -241,6 +267,19 @@ export const api = {
   saveSnippet: (req: SaveSnippetRequest) =>
     invoke<Snippet>("save_snippet", { req }),
   deleteSnippet: (id: string) => invoke<void>("delete_snippet", { id }),
+
+  listHistory: (params: {
+    profileId?: string | null;
+    limit?: number | null;
+    search?: string | null;
+  } = {}) =>
+    invoke<HistoryEntry[]>("list_history", {
+      profileId: params.profileId ?? null,
+      limit: params.limit ?? null,
+      search: params.search ?? null,
+    }),
+  clearHistory: (profileId?: string | null) =>
+    invoke<number>("clear_history", { profileId: profileId ?? null }),
 
   exportQueryResult: (params: {
     path: string;

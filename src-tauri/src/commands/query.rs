@@ -6,6 +6,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::db::is_read_only_sql;
 use crate::db::types::{Column, PreviewResult, QueryResult, StreamBatch, Value};
 use crate::error::{AppError, Result};
+use crate::history::store as history_store;
+use crate::history::NewHistoryEntry;
 use crate::state::{AppState, Session};
 
 /// Returns `Err(AppError::ReadOnly)` when the session is RO and `sql` is not
@@ -169,7 +171,7 @@ async fn spawn_query_stream(
         )
         .await;
 
-    match result {
+    match &result {
         Ok(res) => {
             let _ = app.emit(
                 EV_QUERY_DONE,
@@ -197,8 +199,60 @@ async fn spawn_query_stream(
         }
     }
 
+    record_history(&session, &sql, database.as_deref(), &result).await;
+
     if let Some(state) = app.try_state::<AppState>() {
         state.forget_stream(&stream_id).await;
+    }
+}
+
+/// Persists one executed statement to the query history. Best-effort: failures
+/// are logged but never surfaced to the caller, and sessions flagged
+/// `skip_history` are skipped entirely. Only the streaming run path records
+/// history, so internal pagination/edit queries don't pollute it.
+async fn record_history(
+    session: &Session,
+    sql: &str,
+    database: Option<&str>,
+    result: &Result<QueryResult>,
+) {
+    if session.skip_history {
+        return;
+    }
+    let driver = session.conn.driver_kind().as_str().to_string();
+    let database = database.map(str::to_string);
+    let executed_at = chrono::Utc::now().to_rfc3339();
+    let entry = match result {
+        Ok(res) => {
+            let has_columns = !res.columns.is_empty();
+            NewHistoryEntry {
+                profile_id: session.profile_id.clone(),
+                driver,
+                database,
+                sql: sql.to_string(),
+                rows: has_columns.then_some(res.rows_affected as i64),
+                rows_affected: (!has_columns).then_some(res.rows_affected as i64),
+                elapsed_ms: Some(res.elapsed_ms as i64),
+                status: "ok".to_string(),
+                error: None,
+                executed_at,
+            }
+        }
+        Err(e) => NewHistoryEntry {
+            profile_id: session.profile_id.clone(),
+            driver,
+            database,
+            sql: sql.to_string(),
+            rows: None,
+            rows_affected: None,
+            elapsed_ms: None,
+            status: "error".to_string(),
+            error: Some(e.to_string()),
+            executed_at,
+        },
+    };
+    if let Err(e) = history_store::record(entry).await {
+        tracing::warn!("failed to record query history: {e}");
     }
 }
 

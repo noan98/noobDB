@@ -16,6 +16,9 @@ pub struct Session {
     /// When true, the query commands reject any non-read-only SQL before
     /// it reaches the driver. Set at connect time from the profile flag.
     pub read_only: bool,
+    /// When true, statements run on this session are NOT written to the
+    /// query history. Set at connect time from the profile flag.
+    pub skip_history: bool,
     /// Held to keep the tunnel alive for the lifetime of this session.
     /// Dropping the Session drops this and cleans the tunnel up.
     pub _tunnel: Option<SshTunnel>,

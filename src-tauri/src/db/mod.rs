@@ -32,6 +32,18 @@ pub enum DriverKind {
     Sqlite,
 }
 
+impl DriverKind {
+    /// Lowercase wire name, matching the serde representation. Used when
+    /// persisting the driver alongside query history.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DriverKind::Mysql => "mysql",
+            DriverKind::Postgres => "postgres",
+            DriverKind::Sqlite => "sqlite",
+        }
+    }
+}
+
 /// Dispatch enum. Adding a new DB is a new variant + a new module.
 pub enum Connection {
     MySql(mysql::MySqlConn),
@@ -40,6 +52,15 @@ pub enum Connection {
 }
 
 impl Connection {
+    /// The driver backing this connection.
+    pub fn driver_kind(&self) -> DriverKind {
+        match self {
+            Connection::MySql(_) => DriverKind::Mysql,
+            Connection::Postgres(_) => DriverKind::Postgres,
+            Connection::Sqlite(_) => DriverKind::Sqlite,
+        }
+    }
+
     pub async fn connect(opts: &DbConnectOptions) -> Result<Self> {
         match opts.driver {
             DriverKind::Mysql => Ok(Connection::MySql(mysql::MySqlConn::connect(opts).await?)),

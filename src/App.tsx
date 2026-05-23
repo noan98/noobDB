@@ -24,6 +24,7 @@ import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { SnippetList } from "./components/SnippetList";
 import { SnippetForm } from "./components/SnippetForm";
+import { HistoryList } from "./components/HistoryList";
 import { QueryEditor, type QueryEditorHandle, type SchemaTable } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
@@ -230,8 +231,9 @@ export default function App() {
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
   const [showForm, setShowForm] = useState(false);
 
-  const [sidebarTab, setSidebarTab] = useState<"connections" | "snippets">("connections");
+  const [sidebarTab, setSidebarTab] = useState<"connections" | "snippets" | "history">("connections");
   const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
   const [snippetFormSql, setSnippetFormSql] = useState<string>("");
   const [showSnippetForm, setShowSnippetForm] = useState(false);
@@ -372,6 +374,7 @@ export default function App() {
         ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
         file_path: profile.file_path,
         read_only: profile.read_only,
+        skip_history: profile.skip_history,
       });
       setSessionId(res.session_id);
       setSelectedProfile(profile);
@@ -546,11 +549,14 @@ export default function App() {
         } else {
           setStatus({ kind: "key", key: "statusRowsAffected", vars: { rows: rowsAffected, ms: elapsedMs } });
         }
+        // A new entry was just written to history; refresh the panel.
+        setHistoryReloadKey((k) => k + 1);
         finalize();
       },
       onError: ({ error }) => {
         patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
         setStatus({ kind: "key", key: "statusQueryError", vars: { error }, error: true });
+        setHistoryReloadKey((k) => k + 1);
         finalize();
       },
     });
@@ -881,6 +887,19 @@ export default function App() {
     }
   }, [activeTab, sessionId]);
 
+  // Restore a history entry's SQL. Into the active query/explain editor when
+  // there is one, otherwise into a fresh query tab so we don't clobber a
+  // table tab's auto-generated SELECT.
+  const handleRestoreHistory = useCallback((sql: string) => {
+    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+      editorRef.current?.setText(sql);
+    } else if (sessionId) {
+      const tab = { ...makeQueryTab(), sql };
+      setTabs((prev) => [...prev, tab]);
+      setActiveTabId(tab.id);
+    }
+  }, [activeTab, sessionId]);
+
   const handleSaveSnippetFromEditor = useCallback((sql: string) => {
     setEditingSnippet(null);
     setSnippetFormSql(sql);
@@ -1122,7 +1141,11 @@ export default function App() {
       <aside className="sidebar">
         <header>
           <span className="sidebar-title">
-            {sidebarTab === "snippets" ? t("appSnippets") : t("appConnections")}
+            {sidebarTab === "snippets"
+              ? t("appSnippets")
+              : sidebarTab === "history"
+                ? t("appHistory")
+                : t("appConnections")}
           </span>
           <div className="header-actions">
             <button
@@ -1156,7 +1179,7 @@ export default function App() {
               >
                 +
               </button>
-            ) : (
+            ) : sidebarTab === "connections" ? (
               <button
                 className="icon"
                 onClick={() => { setEditing(null); setShowSettings(false); setShowSnippetForm(false); setShowForm(true); }}
@@ -1165,7 +1188,7 @@ export default function App() {
               >
                 +
               </button>
-            )}
+            ) : null}
           </div>
         </header>
         <div className="sidebar-tabs" role="tablist">
@@ -1185,6 +1208,14 @@ export default function App() {
           >
             {t("sidebarTabSnippets")}
           </button>
+          <button
+            role="tab"
+            aria-selected={sidebarTab === "history"}
+            className={`sidebar-tab ${sidebarTab === "history" ? "active" : ""}`}
+            onClick={() => setSidebarTab("history")}
+          >
+            {t("sidebarTabHistory")}
+          </button>
         </div>
         {sidebarTab === "connections" ? (
           <ConnectionList
@@ -1202,13 +1233,19 @@ export default function App() {
             onPickTable={handleOpenTable}
             onImportTable={handleImportTable}
           />
-        ) : (
+        ) : sidebarTab === "snippets" ? (
           <SnippetList
             snippets={snippets}
             activeProfile={selectedProfile}
             onInsert={handleInsertSnippet}
             onEdit={handleEditSnippet}
             onDelete={handleDeleteSnippet}
+          />
+        ) : (
+          <HistoryList
+            activeProfile={selectedProfile}
+            reloadKey={historyReloadKey}
+            onRestore={handleRestoreHistory}
           />
         )}
       </aside>
