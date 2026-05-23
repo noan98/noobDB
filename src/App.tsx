@@ -8,6 +8,7 @@ import {
   DriverKind,
   PreviewResult,
   QueryResult,
+  Snippet,
   TableColumnInfo,
   listenPreviewStream,
   listenQueryStream,
@@ -21,9 +22,12 @@ import {
 } from "./components/cellEdit";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
-import { QueryEditor, type SchemaTable } from "./components/QueryEditor";
+import { SnippetList } from "./components/SnippetList";
+import { SnippetForm } from "./components/SnippetForm";
+import { QueryEditor, type QueryEditorHandle, type SchemaTable } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
+import { ExplainViewer } from "./components/ExplainViewer";
 import { TabBar } from "./components/TabBar";
 import { ImportModal } from "./components/ImportModal";
 import { SettingsView } from "./components/SettingsView";
@@ -54,7 +58,9 @@ type Status =
   | { kind: "literal"; text: string; error?: boolean }
   | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
 
-type TabKind = "table" | "query";
+type TabKind = "table" | "query" | "explain";
+
+const EXPLAIN_PREFIX = "EXPLAIN FORMAT=JSON ";
 
 interface Tab {
   id: string;
@@ -138,6 +144,33 @@ function makeQueryTab(): Tab {
   };
 }
 
+function explainTabTitle(sql: string): string {
+  const oneLine = sql.replace(/\s+/g, " ").trim();
+  const base = translate("tabExplainTitle");
+  if (!oneLine) return base;
+  const snippet = oneLine.length > 28 ? `${oneLine.slice(0, 28)}…` : oneLine;
+  return `${base}: ${snippet}`;
+}
+
+function makeExplainTab(sql: string): Tab {
+  return {
+    id: newTabId(),
+    kind: "explain",
+    title: explainTabTitle(sql),
+    sql,
+    result: null,
+    preview: null,
+    schemaTable: null,
+    streaming: false,
+    previewRowLimit: 100,
+    paginatable: null,
+    loadingMore: false,
+    canLoadMore: false,
+    tableColumns: null,
+    pendingEdits: {},
+  };
+}
+
 function toPersistedTab(tab: Tab): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
   if (tab.database) out.database = tab.database;
@@ -196,6 +229,13 @@ export default function App() {
   const [selectedProfile, setSelectedProfile] = useState<ConnectionProfile | null>(null);
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
   const [showForm, setShowForm] = useState(false);
+
+  const [sidebarTab, setSidebarTab] = useState<"connections" | "snippets">("connections");
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
+  const [snippetFormSql, setSnippetFormSql] = useState<string>("");
+  const [showSnippetForm, setShowSnippetForm] = useState(false);
+  const editorRef = useRef<QueryEditorHandle>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
@@ -264,6 +304,19 @@ export default function App() {
   useEffect(() => {
     refreshProfiles();
   }, [refreshProfiles]);
+
+  const refreshSnippets = useCallback(async () => {
+    try {
+      const list = await api.listSnippets();
+      setSnippets(list);
+    } catch (e) {
+      setStatus({ kind: "key", key: "statusFailedLoadSnippets", vars: { error: String(e) }, error: true });
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshSnippets();
+  }, [refreshSnippets]);
 
   // Keep the active profile pointer in sync when the profile is edited or
   // when the saved list is refreshed for any other reason.
@@ -562,6 +615,10 @@ export default function App() {
               // Table is gone — fall through to a query tab using the saved SQL.
             }
           }
+          if (s.kind === "explain") {
+            const tab = makeExplainTab(s.sql);
+            return { ...tab, title: s.title || tab.title, previewRowLimit: limit };
+          }
           return {
             id: newTabId(),
             kind: "query",
@@ -778,7 +835,23 @@ export default function App() {
 
   const handleRunQuery = useCallback((sql: string) => {
     if (!activeTab) return;
-    runQueryInTab(activeTab.id, sql);
+    // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
+    // getting plan JSON instead of a raw result set.
+    const toRun = activeTab.kind === "explain" ? `${EXPLAIN_PREFIX}${sql}` : sql;
+    runQueryInTab(activeTab.id, toRun);
+  }, [activeTab, runQueryInTab]);
+
+  const handleExplainQuery = useCallback((sql: string) => {
+    // Re-explain in place when already on an explain tab; otherwise open a
+    // dedicated explain tab so the source query/result is left untouched.
+    if (activeTab?.kind === "explain") {
+      runQueryInTab(activeTab.id, `${EXPLAIN_PREFIX}${sql}`);
+      return;
+    }
+    const tab = makeExplainTab(sql);
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+    runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
   }, [activeTab, runQueryInTab]);
 
   const handleLoadMore = useCallback(() => {
@@ -795,6 +868,39 @@ export default function App() {
     if (!activeTab) return;
     updateTab(activeTab.id, { sql });
   }, [activeTab, updateTab]);
+
+  // Insert a snippet into the active editor, or open a fresh query tab
+  // holding the snippet when there is no active tab yet.
+  const handleInsertSnippet = useCallback((snippet: Snippet) => {
+    if (activeTab) {
+      editorRef.current?.insertText(snippet.sql);
+    } else if (sessionId) {
+      const tab = { ...makeQueryTab(), sql: snippet.sql };
+      setTabs((prev) => [...prev, tab]);
+      setActiveTabId(tab.id);
+    }
+  }, [activeTab, sessionId]);
+
+  const handleSaveSnippetFromEditor = useCallback((sql: string) => {
+    setEditingSnippet(null);
+    setSnippetFormSql(sql);
+    setShowForm(false);
+    setShowSettings(false);
+    setShowSnippetForm(true);
+  }, []);
+
+  const handleEditSnippet = useCallback((snippet: Snippet) => {
+    setEditingSnippet(snippet);
+    setSnippetFormSql("");
+    setShowForm(false);
+    setShowSettings(false);
+    setShowSnippetForm(true);
+  }, []);
+
+  const handleDeleteSnippet = useCallback(async (id: string) => {
+    await api.deleteSnippet(id);
+    await refreshSnippets();
+  }, [refreshSnippets]);
 
   const handleSetCellEdit = useCallback(
     (rowIdx: number, colIdx: number, value: string | null) => {
@@ -1015,7 +1121,9 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <header>
-          <span className="sidebar-title">{t("appConnections")}</span>
+          <span className="sidebar-title">
+            {sidebarTab === "snippets" ? t("appSnippets") : t("appConnections")}
+          </span>
           <div className="header-actions">
             <button
               className="icon"
@@ -1027,37 +1135,82 @@ export default function App() {
             </button>
             <button
               className="icon"
-              onClick={() => { setShowForm(false); setShowSettings(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowSettings(true); }}
               title={t("appSettings")}
               aria-label={t("appSettings")}
             >
               ⚙
             </button>
-            <button
-              className="icon"
-              onClick={() => { setEditing(null); setShowSettings(false); setShowForm(true); }}
-              title={t("appNew")}
-              aria-label={t("appNew")}
-            >
-              +
-            </button>
+            {sidebarTab === "snippets" ? (
+              <button
+                className="icon"
+                onClick={() => {
+                  setEditingSnippet(null);
+                  setSnippetFormSql("");
+                  setShowSettings(false);
+                  setShowForm(false);
+                  setShowSnippetForm(true);
+                }}
+                title={t("appNewSnippet")}
+                aria-label={t("appNewSnippet")}
+              >
+                +
+              </button>
+            ) : (
+              <button
+                className="icon"
+                onClick={() => { setEditing(null); setShowSettings(false); setShowSnippetForm(false); setShowForm(true); }}
+                title={t("appNew")}
+                aria-label={t("appNew")}
+              >
+                +
+              </button>
+            )}
           </div>
         </header>
-        <ConnectionList
-          profiles={profiles}
-          activeProfileId={selectedProfile?.id ?? null}
-          sessionId={sessionId}
-          connectingId={connectingId}
-          errorProfileId={errorProfileId}
-          onConnect={handleConnect}
-          onEdit={(p) => { setEditing(p); setShowForm(true); }}
-          onDelete={async (id) => {
-            await api.deleteProfile(id);
-            await refreshProfiles();
-          }}
-          onPickTable={handleOpenTable}
-          onImportTable={handleImportTable}
-        />
+        <div className="sidebar-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={sidebarTab === "connections"}
+            className={`sidebar-tab ${sidebarTab === "connections" ? "active" : ""}`}
+            onClick={() => setSidebarTab("connections")}
+          >
+            {t("sidebarTabConnections")}
+          </button>
+          <button
+            role="tab"
+            aria-selected={sidebarTab === "snippets"}
+            className={`sidebar-tab ${sidebarTab === "snippets" ? "active" : ""}`}
+            onClick={() => setSidebarTab("snippets")}
+          >
+            {t("sidebarTabSnippets")}
+          </button>
+        </div>
+        {sidebarTab === "connections" ? (
+          <ConnectionList
+            profiles={profiles}
+            activeProfileId={selectedProfile?.id ?? null}
+            sessionId={sessionId}
+            connectingId={connectingId}
+            errorProfileId={errorProfileId}
+            onConnect={handleConnect}
+            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowForm(true); }}
+            onDelete={async (id) => {
+              await api.deleteProfile(id);
+              await refreshProfiles();
+            }}
+            onPickTable={handleOpenTable}
+            onImportTable={handleImportTable}
+          />
+        ) : (
+          <SnippetList
+            snippets={snippets}
+            activeProfile={selectedProfile}
+            onInsert={handleInsertSnippet}
+            onEdit={handleEditSnippet}
+            onDelete={handleDeleteSnippet}
+          />
+        )}
       </aside>
 
       <main className="main">
@@ -1072,6 +1225,20 @@ export default function App() {
               await refreshProfiles();
             }}
             onCancel={() => setShowForm(false)}
+          />
+        ) : showSnippetForm ? (
+          <SnippetForm
+            initial={editingSnippet}
+            snippets={snippets}
+            profiles={profiles}
+            activeProfile={selectedProfile}
+            initialSql={snippetFormSql}
+            onSaved={async () => {
+              setShowSnippetForm(false);
+              setSidebarTab("snippets");
+              await refreshSnippets();
+            }}
+            onCancel={() => setShowSnippetForm(false)}
           />
         ) : (
           <>
@@ -1133,10 +1300,14 @@ export default function App() {
                   first={
                     <QueryEditor
                       key={activeTab.id}
+                      ref={editorRef}
                       initialSql={activeTab.sql}
                       onRun={handleRunQuery}
-                      onPreview={handlePreviewQuery}
+                      onPreview={activeTab.kind === "explain" ? undefined : handlePreviewQuery}
+                      onExplain={activeTab.kind === "explain" ? undefined : handleExplainQuery}
+                      explainMode={activeTab.kind === "explain"}
                       onChange={handleEditorChange}
+                      onSaveSnippet={handleSaveSnippetFromEditor}
                       onFormatError={(error) =>
                         setStatus({
                           kind: "key",
@@ -1154,10 +1325,16 @@ export default function App() {
                       }
                       sessionId={sessionId}
                       defaultDatabase={activeTab.database ?? selectedProfile?.database ?? null}
+                      driver={selectedProfile?.driver ?? "mysql"}
                     />
                   }
                   second={
-                    activeTab.preview ? (
+                    activeTab.kind === "explain" ? (
+                      <ExplainViewer
+                        result={activeTab.result}
+                        streaming={activeTab.streaming}
+                      />
+                    ) : activeTab.preview ? (
                       <PreviewGrid
                         result={activeTab.preview}
                         rowLimit={activeTab.previewRowLimit}

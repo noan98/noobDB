@@ -2,7 +2,7 @@ import { useT } from "../i18n";
 
 export interface TabInfo {
   id: string;
-  kind: "table" | "query";
+  kind: "table" | "query" | "explain";
   title: string;
   database?: string;
   table?: string;
@@ -46,7 +46,7 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onNew, disabled }
               }}
             >
               <span className="tab-icon" aria-hidden>
-                {tab.kind === "table" ? "▤" : "✎"}
+                {tab.kind === "table" ? "▤" : tab.kind === "explain" ? "❖" : "✎"}
               </span>
               <span className="tab-label">{tab.title}</span>
               <button

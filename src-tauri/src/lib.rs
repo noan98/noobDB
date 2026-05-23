@@ -2,6 +2,7 @@ mod commands;
 mod db;
 mod error;
 mod profiles;
+mod snippets;
 mod ssh;
 mod state;
 
@@ -107,6 +108,9 @@ pub fn run() {
             commands::profiles::list_profiles,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,
+            commands::snippets::list_snippets,
+            commands::snippets::save_snippet,
+            commands::snippets::delete_snippet,
             commands::export::export_query_result,
             commands::import::parse_csv_preview,
             commands::import::import_csv,

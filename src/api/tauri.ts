@@ -3,10 +3,13 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type DriverKind = "mysql" | "postgres" | "sqlite";
 
+export type SshAuthMethod = "key" | "agent" | "password";
+
 export interface SshProfile {
   host: string;
   port: number;
   user: string;
+  auth_method: SshAuthMethod;
   private_key_path: string;
 }
 
@@ -33,6 +36,7 @@ export interface ConnectionProfile {
 
 export interface SshRequest extends SshProfile {
   passphrase?: string;
+  password?: string;
 }
 
 export interface ConnectRequest {
@@ -64,12 +68,38 @@ export interface SaveProfileRequest {
   ssh: SshProfile | null;
   db_password?: string;
   ssh_passphrase?: string;
+  ssh_password?: string;
   group: string | null;
   color: string | null;
   is_production: boolean;
   read_only: boolean;
   /** Required for sqlite; ignored otherwise. */
   file_path?: string | null;
+}
+
+export type SnippetScope =
+  | { kind: "any" }
+  | { kind: "profile"; profile_id: string }
+  | { kind: "group"; group: string };
+
+export interface Snippet {
+  id: string;
+  name: string;
+  folder: string | null;
+  tags: string[];
+  sql: string;
+  driver: string | null;
+  scope: SnippetScope;
+}
+
+export interface SaveSnippetRequest {
+  id?: string;
+  name: string;
+  folder: string | null;
+  tags: string[];
+  sql: string;
+  driver: string | null;
+  scope: SnippetScope;
 }
 
 export interface SessionInfo {
@@ -206,6 +236,11 @@ export const api = {
   saveProfile: (req: SaveProfileRequest) =>
     invoke<ConnectionProfile>("save_profile", { req }),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
+
+  listSnippets: () => invoke<Snippet[]>("list_snippets"),
+  saveSnippet: (req: SaveSnippetRequest) =>
+    invoke<Snippet>("save_snippet", { req }),
+  deleteSnippet: (id: string) => invoke<void>("delete_snippet", { id }),
 
   exportQueryResult: (params: {
     path: string;

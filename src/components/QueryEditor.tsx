@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { sql, MySQL, type SQLNamespace } from "@codemirror/lang-sql";
+import { sql, type SQLNamespace } from "@codemirror/lang-sql";
 import {
   acceptCompletion,
   autocompletion,
@@ -20,6 +20,7 @@ import { tags } from "@lezer/highlight";
 import { format as formatSql } from "sql-formatter";
 import { useT } from "../i18n";
 import { QueryBuilder } from "./QueryBuilder";
+import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 
 const tableXHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -51,18 +52,32 @@ export interface ActiveTable {
 interface Props {
   onRun: (sql: string) => void;
   onPreview?: (sql: string) => void;
+  onExplain?: (sql: string) => void;
   onChange?: (sql: string) => void;
   onFormatError?: (error: string) => void;
+  onSaveSnippet?: (sql: string) => void;
   disabled?: boolean;
   schemaTable?: SchemaTable | null;
   activeTable?: ActiveTable | null;
   initialSql?: string;
   sessionId?: string | null;
   defaultDatabase?: string | null;
+  /**
+   * When true the primary action runs EXPLAIN instead of the statement, so
+   * the Run button is relabelled accordingly. Set for `explain` tabs.
+   */
+  explainMode?: boolean;
+  driver?: string;
+}
+
+export interface QueryEditorHandle {
+  /** Inserts text at the current cursor (replacing any selection). */
+  insertText: (text: string) => void;
 }
 
 function formatEditorContent(
   view: EditorView,
+  driver: string,
   onError?: (message: string) => void,
 ): boolean {
   const sel = view.state.selection.main;
@@ -73,7 +88,7 @@ function formatEditorContent(
   if (text.trim().length === 0) return false;
   let formatted: string;
   try {
-    formatted = formatSql(text, { language: "mysql" });
+    formatted = formatSql(text, { language: sqlFormatterLanguageFor(driver) });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     onError?.(message);
@@ -93,7 +108,7 @@ function formatEditorContent(
   return true;
 }
 
-function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
+function buildSqlExtension(driver: string, schemaTable: SchemaTable | null | undefined) {
   let schema: SQLNamespace | undefined;
   let defaultTable: string | undefined;
   let defaultSchema: string | undefined;
@@ -106,7 +121,7 @@ function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
     defaultSchema = schemaTable.database;
   }
   return sql({
-    dialect: MySQL,
+    dialect: codeMirrorSqlDialectFor(driver),
     schema,
     defaultTable,
     defaultSchema,
@@ -114,18 +129,22 @@ function buildSqlExtension(schemaTable: SchemaTable | null | undefined) {
   });
 }
 
-export function QueryEditor({
+export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEditor({
   onRun,
   onPreview,
+  onExplain,
   onChange,
   onFormatError,
+  onSaveSnippet,
   disabled,
   schemaTable,
   activeTable,
   initialSql,
   sessionId,
   defaultDatabase,
-}: Props) {
+  explainMode,
+  driver = "mysql",
+}: Props, ref) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -136,6 +155,8 @@ export function QueryEditor({
   onChangeRef.current = onChange;
   const onFormatErrorRef = useRef(onFormatError);
   onFormatErrorRef.current = onFormatError;
+  const driverRef = useRef(driver);
+  driverRef.current = driver;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -153,13 +174,13 @@ export function QueryEditor({
           closeBrackets(),
           syntaxHighlighting(tableXHighlightStyle, { fallback: true }),
           autocompletion(),
-          sqlCompartment.of(buildSqlExtension(schemaTable)),
+          sqlCompartment.of(buildSqlExtension(driver, schemaTable)),
           keymap.of([
             { key: "Tab", run: acceptCompletion },
             {
               key: "Mod-Shift-f",
               preventDefault: true,
-              run: (v) => formatEditorContent(v, onFormatErrorRef.current),
+              run: (v) => formatEditorContent(v, driverRef.current, onFormatErrorRef.current),
             },
             ...defaultKeymap,
             ...historyKeymap,
@@ -188,9 +209,22 @@ export function QueryEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: sqlCompartment.reconfigure(buildSqlExtension(schemaTable)) });
+    view.dispatch({ effects: sqlCompartment.reconfigure(buildSqlExtension(driver, schemaTable)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schemaKey]);
+  }, [schemaKey, driver]);
+
+  useImperativeHandle(ref, () => ({
+    insertText: (text: string) => {
+      const view = viewRef.current;
+      if (!view) return;
+      const sel = view.state.selection.main;
+      view.dispatch({
+        changes: { from: sel.from, to: sel.to, insert: text },
+        selection: { anchor: sel.from + text.length },
+      });
+      view.focus();
+    },
+  }), []);
 
   const currentText = (): string | null => {
     const view = viewRef.current;
@@ -201,6 +235,12 @@ export function QueryEditor({
     return text;
   };
 
+  const saveSelectionOrAll = () => {
+    if (!onSaveSnippet) return;
+    const text = currentText();
+    if (text !== null) onSaveSnippet(text);
+  };
+
   const runSelectionOrAll = () => {
     const text = currentText();
     if (text !== null) onRun(text);
@@ -209,7 +249,7 @@ export function QueryEditor({
   const formatSelectionOrAll = () => {
     const view = viewRef.current;
     if (!view) return;
-    formatEditorContent(view, onFormatErrorRef.current);
+    formatEditorContent(view, driver, onFormatErrorRef.current);
   };
 
   const previewSelectionOrAll = () => {
@@ -218,12 +258,22 @@ export function QueryEditor({
     if (text !== null) onPreview(text);
   };
 
-  const runLabel = activeTable
-    ? t("editorRunOnTable", { table: activeTable.name })
-    : t("editorRun");
-  const runTitle = activeTable
-    ? t("editorRunOnTableTitle", { database: activeTable.database, table: activeTable.name })
-    : undefined;
+  const explainSelectionOrAll = () => {
+    if (!onExplain) return;
+    const text = currentText();
+    if (text !== null) onExplain(text);
+  };
+
+  const runLabel = explainMode
+    ? t("editorExplain")
+    : activeTable
+      ? t("editorRunOnTable", { table: activeTable.name })
+      : t("editorRun");
+  const runTitle = explainMode
+    ? t("editorExplainTitle")
+    : activeTable
+      ? t("editorRunOnTableTitle", { database: activeTable.database, table: activeTable.name })
+      : undefined;
 
   return (
     <div className="editor">
@@ -273,6 +323,41 @@ export function QueryEditor({
           </span>
           {t("editorFormat")}
         </button>
+        {onExplain && (
+          <button
+            className="with-icon"
+            onClick={explainSelectionOrAll}
+            disabled={disabled || !hasContent}
+            title={t("editorExplainTitle")}
+          >
+            <span className="btn-icon" aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="6" y="1.5" width="4" height="3" rx="0.5" />
+                <rect x="1.5" y="11.5" width="4" height="3" rx="0.5" />
+                <rect x="10.5" y="11.5" width="4" height="3" rx="0.5" />
+                <path d="M8 4.5v2.5M3.5 11.5V9h9v2.5" />
+              </svg>
+            </span>
+            {t("editorExplain")}
+          </button>
+        )}
+        {onSaveSnippet && (
+          <button
+            className="with-icon"
+            onClick={saveSelectionOrAll}
+            disabled={disabled || !hasContent}
+            title={t("editorSaveSnippetTitle")}
+          >
+            <span className="btn-icon" aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
+                <path d="M5 2v4h5V2" />
+                <path d="M5 10h6" />
+              </svg>
+            </span>
+            {t("editorSaveSnippet")}
+          </button>
+        )}
         {sessionId && (
           <button
             className="with-icon"
@@ -293,6 +378,7 @@ export function QueryEditor({
       {showBuilder && sessionId && (
         <QueryBuilder
           sessionId={sessionId}
+          driver={driver}
           defaultDatabase={defaultDatabase ?? activeTable?.database ?? null}
           defaultTable={activeTable?.name ?? null}
           onExecute={(builtSql) => onRun(builtSql)}
@@ -302,4 +388,4 @@ export function QueryEditor({
       )}
     </div>
   );
-}
+});
