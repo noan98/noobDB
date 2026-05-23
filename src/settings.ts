@@ -180,7 +180,7 @@ function sanitizeTabRestoreMode(input: unknown, fallback: TabRestoreMode): TabRe
   return input === "always" || input === "ask" || input === "never" ? input : fallback;
 }
 
-const STORAGE_KEY = "tablex.settings";
+const STORAGE_KEY = "noobdb.settings";
 
 function isHexColor(v: unknown): v is string {
   return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);

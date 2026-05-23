@@ -47,7 +47,7 @@ import {
 
 type Theme = "light" | "dark";
 
-const THEME_STORAGE_KEY = "tablex.theme";
+const THEME_STORAGE_KEY = "noobdb.theme";
 
 function readInitialTheme(): Theme {
   const saved = localStorage.getItem(THEME_STORAGE_KEY);
@@ -1370,7 +1370,7 @@ export default function App() {
               {activeTab ? (
                 <Splitter
                   direction="column"
-                  storageKey="tablex.split.editor"
+                  storageKey="noobdb.split.editor"
                   defaultFraction={0.4}
                   minSize={120}
                   ariaLabel={t("splitterEditorAria")}

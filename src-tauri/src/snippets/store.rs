@@ -8,7 +8,7 @@ use crate::error::{AppError, Result};
 
 const QUALIFIER: &str = "";
 const ORG: &str = "";
-const APP: &str = "tableX";
+const APP: &str = "noobDB";
 
 /// On-disk shape: `{ "snippets": [...] }`. Wrapping the array keeps room for
 /// future top-level metadata without a format migration.

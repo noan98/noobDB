@@ -973,7 +973,7 @@ const ja: Dict = {
 
 const dicts: Record<Locale, Dict> = { en, ja };
 
-const STORAGE_KEY = "tablex.locale";
+const STORAGE_KEY = "noobdb.locale";
 
 function detectInitial(): Locale {
   try {

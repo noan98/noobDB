@@ -7,12 +7,12 @@
 
 use std::path::PathBuf;
 
-use tablex_lib::__test_api as t;
+use noobdb_lib::__test_api as t;
 
 fn temp_db_path() -> PathBuf {
     let mut p = std::env::temp_dir();
     // Mix in the test PID so parallel test runs don't stomp on each other.
-    p.push(format!("tablex_sqlite_smoke_{}.db", std::process::id()));
+    p.push(format!("noobdb_sqlite_smoke_{}.db", std::process::id()));
     p
 }
 
@@ -39,17 +39,17 @@ async fn sqlite_roundtrip_against_tempfile() {
     assert!(matches!(&res.rows[0][1], t::Value::String(s) if s == "hello"));
 
     // CRUD round-trip in a real persisted table.
-    conn.execute("DROP TABLE IF EXISTS tablex_sqlite_smoke", None)
+    conn.execute("DROP TABLE IF EXISTS noobdb_sqlite_smoke", None)
         .await
         .expect("drop");
     conn.execute(
-        "CREATE TABLE tablex_sqlite_smoke (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+        "CREATE TABLE noobdb_sqlite_smoke (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
         None,
     )
     .await
     .expect("create");
     conn.execute(
-        "INSERT INTO tablex_sqlite_smoke (id, label) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+        "INSERT INTO noobdb_sqlite_smoke (id, label) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
         None,
     )
     .await
@@ -59,9 +59,9 @@ async fn sqlite_roundtrip_against_tempfile() {
     let dbs = conn.databases().await.expect("databases");
     assert_eq!(dbs, vec!["main".to_string()]);
     let tables = conn.tables("main").await.expect("tables");
-    assert!(tables.iter().any(|t| t == "tablex_sqlite_smoke"));
+    assert!(tables.iter().any(|t| t == "noobdb_sqlite_smoke"));
     let cols = conn
-        .columns("main", "tablex_sqlite_smoke")
+        .columns("main", "noobdb_sqlite_smoke")
         .await
         .expect("columns");
     assert_eq!(cols.len(), 2);
@@ -70,7 +70,7 @@ async fn sqlite_roundtrip_against_tempfile() {
 
     let after_insert = conn
         .execute(
-            "SELECT id, label FROM tablex_sqlite_smoke ORDER BY id",
+            "SELECT id, label FROM noobdb_sqlite_smoke ORDER BY id",
             None,
         )
         .await
@@ -79,7 +79,7 @@ async fn sqlite_roundtrip_against_tempfile() {
 
     let upd = conn
         .execute(
-            "UPDATE tablex_sqlite_smoke SET label = 'B' WHERE id = 2",
+            "UPDATE noobdb_sqlite_smoke SET label = 'B' WHERE id = 2",
             None,
         )
         .await
@@ -87,14 +87,14 @@ async fn sqlite_roundtrip_against_tempfile() {
     assert_eq!(upd.rows_affected, 1);
 
     let del = conn
-        .execute("DELETE FROM tablex_sqlite_smoke WHERE id = 3", None)
+        .execute("DELETE FROM noobdb_sqlite_smoke WHERE id = 3", None)
         .await
         .expect("delete");
     assert_eq!(del.rows_affected, 1);
 
     let final_rows = conn
         .execute(
-            "SELECT id, label FROM tablex_sqlite_smoke ORDER BY id",
+            "SELECT id, label FROM noobdb_sqlite_smoke ORDER BY id",
             None,
         )
         .await
@@ -105,16 +105,16 @@ async fn sqlite_roundtrip_against_tempfile() {
     // Preview must roll back.
     let preview = conn
         .preview_execute_with_limit(
-            "UPDATE tablex_sqlite_smoke SET label = 'rollback' WHERE id = 1",
+            "UPDATE noobdb_sqlite_smoke SET label = 'rollback' WHERE id = 1",
             None,
             10,
         )
         .await
         .expect("preview");
     assert_eq!(preview.rows_affected, 1);
-    assert_eq!(preview.target_table.as_deref(), Some("tablex_sqlite_smoke"));
+    assert_eq!(preview.target_table.as_deref(), Some("noobdb_sqlite_smoke"));
     let after_preview = conn
-        .execute("SELECT label FROM tablex_sqlite_smoke WHERE id = 1", None)
+        .execute("SELECT label FROM noobdb_sqlite_smoke WHERE id = 1", None)
         .await
         .expect("post-preview select");
     assert!(
@@ -122,7 +122,7 @@ async fn sqlite_roundtrip_against_tempfile() {
         "preview must roll back; row 1 should still hold its original label"
     );
 
-    conn.execute("DROP TABLE tablex_sqlite_smoke", None)
+    conn.execute("DROP TABLE noobdb_sqlite_smoke", None)
         .await
         .expect("cleanup");
     conn.close().await;
@@ -133,7 +133,7 @@ async fn sqlite_roundtrip_against_tempfile() {
 #[tokio::test]
 async fn sqlite_execute_transaction_is_all_or_nothing() {
     let mut path = std::env::temp_dir();
-    path.push(format!("tablex_sqlite_tx_{}.db", std::process::id()));
+    path.push(format!("noobdb_sqlite_tx_{}.db", std::process::id()));
     let _ = std::fs::remove_file(&path);
     std::fs::File::create(&path).expect("create temp sqlite file");
 
@@ -141,13 +141,13 @@ async fn sqlite_execute_transaction_is_all_or_nothing() {
     let conn = t::connect(&opts).await.expect("connect");
 
     conn.execute(
-        "CREATE TABLE tablex_tx (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+        "CREATE TABLE noobdb_tx (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
         None,
     )
     .await
     .expect("create");
     conn.execute(
-        "INSERT INTO tablex_tx (id, label) VALUES (1, 'a'), (2, 'b')",
+        "INSERT INTO noobdb_tx (id, label) VALUES (1, 'a'), (2, 'b')",
         None,
     )
     .await
@@ -157,8 +157,8 @@ async fn sqlite_execute_transaction_is_all_or_nothing() {
     let affected = conn
         .execute_transaction(
             &[
-                "UPDATE tablex_tx SET label = 'A' WHERE id = 1".to_string(),
-                "UPDATE tablex_tx SET label = 'B' WHERE id = 2".to_string(),
+                "UPDATE noobdb_tx SET label = 'A' WHERE id = 1".to_string(),
+                "UPDATE noobdb_tx SET label = 'B' WHERE id = 2".to_string(),
             ],
             None,
         )
@@ -172,8 +172,8 @@ async fn sqlite_execute_transaction_is_all_or_nothing() {
     let err = conn
         .execute_transaction(
             &[
-                "UPDATE tablex_tx SET label = 'X' WHERE id = 1".to_string(),
-                "UPDATE tablex_tx SET nonexistent = 'Y' WHERE id = 2".to_string(),
+                "UPDATE noobdb_tx SET label = 'X' WHERE id = 1".to_string(),
+                "UPDATE noobdb_tx SET nonexistent = 'Y' WHERE id = 2".to_string(),
             ],
             None,
         )
@@ -185,7 +185,7 @@ async fn sqlite_execute_transaction_is_all_or_nothing() {
     );
 
     let rows = conn
-        .execute("SELECT id, label FROM tablex_tx ORDER BY id", None)
+        .execute("SELECT id, label FROM noobdb_tx ORDER BY id", None)
         .await
         .expect("select after rollback");
     assert!(
@@ -194,7 +194,7 @@ async fn sqlite_execute_transaction_is_all_or_nothing() {
     );
     assert!(matches!(&rows.rows[1][1], t::Value::String(s) if s == "B"));
 
-    conn.execute("DROP TABLE tablex_tx", None)
+    conn.execute("DROP TABLE noobdb_tx", None)
         .await
         .expect("cleanup");
     conn.close().await;
@@ -205,16 +205,16 @@ async fn sqlite_execute_transaction_is_all_or_nothing() {
 async fn sqlite_missing_path_reports_invalid_input() {
     // file_path = None should surface a clean error instead of panicking
     // somewhere inside sqlx.
-    let opts = tablex_lib::__test_api::DbConnectOptions {
+    let opts = noobdb_lib::__test_api::DbConnectOptions {
         host: String::new(),
         port: 0,
         user: String::new(),
         password: String::new(),
         database: None,
-        driver: tablex_lib::__test_api::DriverKind::Sqlite,
+        driver: noobdb_lib::__test_api::DriverKind::Sqlite,
         file_path: None,
     };
-    let err = tablex_lib::__test_api::connect(&opts)
+    let err = noobdb_lib::__test_api::connect(&opts)
         .await
         .err()
         .expect("missing file_path must error");

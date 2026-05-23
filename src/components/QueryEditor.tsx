@@ -22,7 +22,7 @@ import { useT } from "../i18n";
 import { QueryBuilder } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 
-const tableXHighlightStyle = HighlightStyle.define([
+const noobDBHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
   { tag: [tags.string, tags.special(tags.string)], color: "var(--syntax-string)" },
   { tag: [tags.number, tags.bool, tags.null], color: "var(--syntax-number)" },
@@ -174,7 +174,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           indentOnInput(),
           bracketMatching(),
           closeBrackets(),
-          syntaxHighlighting(tableXHighlightStyle, { fallback: true }),
+          syntaxHighlighting(noobDBHighlightStyle, { fallback: true }),
           autocompletion(),
           sqlCompartment.of(buildSqlExtension(driver, schemaTable)),
           keymap.of([

@@ -7,7 +7,7 @@ use crate::error::{AppError, Result};
 
 const QUALIFIER: &str = "";
 const ORG: &str = "";
-const APP: &str = "tableX";
+const APP: &str = "noobDB";
 
 pub fn data_dir() -> Option<PathBuf> {
     ProjectDirs::from(QUALIFIER, ORG, APP).map(|p| p.data_dir().to_path_buf())
