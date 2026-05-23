@@ -1,4 +1,4 @@
-# tableX
+# noobDB
 
 Rust で書かれた軽量なデスクトップ DB クライアントで、SSH トンネルをファーストクラスでサポートしています。[Tauri 2](https://tauri.app/) と React で構築されており、Windows をターゲットにしています。
 
