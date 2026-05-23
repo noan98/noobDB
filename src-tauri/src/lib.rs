@@ -112,6 +112,8 @@ pub fn run() {
             commands::snippets::save_snippet,
             commands::snippets::delete_snippet,
             commands::export::export_query_result,
+            commands::import::parse_csv_preview,
+            commands::import::import_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tableX");

@@ -14,10 +14,18 @@ interface Props {
   onEdit: (profile: ConnectionProfile) => void;
   onDelete: (id: string) => void;
   onPickTable: (database: string, table: string) => void;
+  onImportTable: (database: string, table: string) => void;
 }
 
 interface ContextMenuState {
   profile: ConnectionProfile;
+  x: number;
+  y: number;
+}
+
+interface TableMenuState {
+  database: string;
+  table: string;
   x: number;
   y: number;
 }
@@ -32,6 +40,7 @@ export function ConnectionList({
   onEdit,
   onDelete,
   onPickTable,
+  onImportTable,
 }: Props) {
   const t = useT();
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
@@ -44,6 +53,7 @@ export function ConnectionList({
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [tableMenu, setTableMenu] = useState<TableMenuState | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const loadDatabases = useCallback(async () => {
@@ -81,8 +91,11 @@ export function ConnectionList({
 
   // Dismiss context menu on outside click / Escape / scroll.
   useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
+    if (!contextMenu && !tableMenu) return;
+    const close = () => {
+      setContextMenu(null);
+      setTableMenu(null);
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
     };
@@ -100,7 +113,7 @@ export function ConnectionList({
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
     };
-  }, [contextMenu]);
+  }, [contextMenu, tableMenu]);
 
   const handleProfileClick = (p: ConnectionProfile) => {
     if (p.id === activeProfileId) {
@@ -114,7 +127,15 @@ export function ConnectionList({
   const handleProfileContextMenu = (e: React.MouseEvent, p: ConnectionProfile) => {
     e.preventDefault();
     e.stopPropagation();
+    setTableMenu(null);
     setContextMenu({ profile: p, x: e.clientX, y: e.clientY });
+  };
+
+  const handleTableContextMenu = (e: React.MouseEvent, db: string, tbl: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu(null);
+    setTableMenu({ database: db, table: tbl, x: e.clientX, y: e.clientY });
   };
 
   const toggleDb = async (db: string) => {
@@ -299,6 +320,7 @@ export function ConnectionList({
                                   aria-expanded={tOpen}
                                   onClick={() => toggleTable(db, tbl)}
                                   onDoubleClick={() => onPickTable(db, tbl)}
+                                  onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
                                   title={t("treeTableTitle")}
                                 >
                                   <span className="tree-chevron" aria-hidden>{tOpen ? "▾" : "▸"}</span>
@@ -428,6 +450,28 @@ export function ConnectionList({
             }}
           >
             {t("contextMenuDelete")}
+          </button>
+        </div>
+      )}
+
+      {tableMenu && (
+        <div
+          ref={menuRef}
+          className="context-menu"
+          style={{ top: tableMenu.y, left: tableMenu.x }}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="context-menu-item"
+            onClick={() => {
+              const { database, table } = tableMenu;
+              setTableMenu(null);
+              onImportTable(database, table);
+            }}
+          >
+            {t("contextMenuImportCsv")}
           </button>
         </div>
       )}

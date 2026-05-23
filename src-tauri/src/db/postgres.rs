@@ -226,6 +226,74 @@ impl PostgresConn {
         })
     }
 
+    /// Bulk INSERT wrapped in one transaction. Unlike MySQL/SQLite we splice
+    /// values in as string literals rather than binding them: a bound text
+    /// parameter against e.g. an `int4` column is rejected by Postgres' strict
+    /// type checking, whereas an untyped string literal (`'42'`) is coerced to
+    /// the column type. `standard_conforming_strings` is forced on so doubling
+    /// single quotes is the only escaping needed.
+    pub async fn import_rows<F>(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        batch_size: usize,
+        mut on_progress: F,
+    ) -> Result<u64>
+    where
+        F: FnMut(u64) -> Result<()>,
+    {
+        if columns.is_empty() {
+            return Err(AppError::InvalidInput("no columns to import".into()));
+        }
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| pg_quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = pg_quote_ident(table);
+        let batch = batch_size.clamp(1, 1000);
+
+        let mut conn = self.pool.acquire().await?;
+        apply_search_path(&mut conn, database).await?;
+        sqlx::Executor::execute(
+            &mut *conn,
+            sqlx::raw_sql("SET standard_conforming_strings = on"),
+        )
+        .await?;
+        let mut tx = conn.begin().await?;
+        let mut inserted: u64 = 0;
+        for chunk in rows.chunks(batch) {
+            let mut sql = format!("INSERT INTO {} ({}) VALUES ", table_ident, cols_sql);
+            for (r, row) in chunk.iter().enumerate() {
+                if r > 0 {
+                    sql.push(',');
+                }
+                sql.push('(');
+                for ci in 0..ncols {
+                    if ci > 0 {
+                        sql.push(',');
+                    }
+                    let cell = row.get(ci).and_then(|c| c.as_deref());
+                    sql.push_str(&pg_literal(cell));
+                }
+                sql.push(')');
+            }
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&mut *tx)
+                .await?;
+            inserted += chunk.len() as u64;
+            on_progress(inserted)?;
+        }
+        tx.commit().await?;
+        Ok(inserted)
+    }
+
     /// In the tree UI, the "database" level surfaces PostgreSQL schemas
     /// (a connection is fixed to one actual database, so listing schemas
     /// is the useful next-level browsing axis). System schemas are hidden.
@@ -618,6 +686,21 @@ fn split_outside_quotes(s: &str, sep: char) -> Option<(String, String)> {
     None
 }
 
+/// Double-quotes a single identifier, doubling any embedded double quotes.
+fn pg_quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Renders a cell as a Postgres string literal (`'...'`) or `NULL`. Relies on
+/// `standard_conforming_strings = on` so only single quotes need doubling;
+/// backslashes are literal.
+fn pg_literal(cell: Option<&str>) -> String {
+    match cell {
+        None => "NULL".to_string(),
+        Some(s) => format!("'{}'", s.replace('\'', "''")),
+    }
+}
+
 fn order_by_pk(pk_cols: &[String]) -> String {
     if pk_cols.is_empty() {
         return String::new();
@@ -721,5 +804,20 @@ mod tests {
         );
         assert_eq!(split_schema_table("users"), (None, "users".into()));
         assert_eq!(split_schema_table("\"users\""), (None, "users".into()));
+    }
+
+    #[test]
+    fn quotes_identifiers_with_double_quotes() {
+        assert_eq!(pg_quote_ident("name"), "\"name\"");
+        assert_eq!(pg_quote_ident("we\"ird"), "\"we\"\"ird\"");
+    }
+
+    #[test]
+    fn renders_literals_and_nulls() {
+        assert_eq!(pg_literal(None), "NULL");
+        assert_eq!(pg_literal(Some("abc")), "'abc'");
+        assert_eq!(pg_literal(Some("O'Brien")), "'O''Brien'");
+        // Backslash is literal under standard_conforming_strings.
+        assert_eq!(pg_literal(Some("a\\b")), "'a\\b'");
     }
 }

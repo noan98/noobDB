@@ -147,6 +147,35 @@ export interface TableColumnInfo {
 
 export type ExportFormat = "csv" | "json";
 
+export interface ImportOptions {
+  /** Field delimiter — a single character (e.g. ",", "\t", ";"). */
+  delimiter: string;
+  /** Quote character — a single character. */
+  quote: string;
+  /** Whether the first record is a header row. */
+  hasHeader: boolean;
+  /**
+   * When set, any field whose raw text equals this token is imported as SQL
+   * NULL ("" → empty cells become NULL). `null`/omitted disables NULL mapping.
+   */
+  nullToken?: string | null;
+  /** Encoding label (e.g. "utf-8", "shift_jis", "euc-jp"). */
+  encoding: string;
+}
+
+export interface ColumnMapping {
+  /** Destination table column name. */
+  column: string;
+  /** Zero-based index of the source field within each CSV record. */
+  csvIndex: number;
+}
+
+export interface CsvPreview {
+  headers: string[];
+  rows: string[][];
+  truncated: boolean;
+}
+
 export const api = {
   testConnection: (req: ConnectRequest) =>
     invoke<string>("test_connection", { req }),
@@ -225,6 +254,29 @@ export const api = {
       columns: params.columns,
       rows: params.rows,
     }),
+
+  parseCsvPreview: (path: string, options: ImportOptions) =>
+    invoke<CsvPreview>("parse_csv_preview", { path, options }),
+  importCsv: (params: {
+    sessionId: string;
+    streamId: string;
+    database?: string | null;
+    table: string;
+    path: string;
+    options: ImportOptions;
+    mapping: ColumnMapping[];
+    batchSize?: number;
+  }) =>
+    invoke<void>("import_csv", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      database: params.database ?? null,
+      table: params.table,
+      path: params.path,
+      options: params.options,
+      mapping: params.mapping,
+      batchSize: params.batchSize ?? null,
+    }),
 };
 
 export interface QueryStreamColumnsEvent {
@@ -274,6 +326,35 @@ export interface PreviewStreamDoneEvent {
 export interface PreviewStreamErrorEvent {
   streamId: string;
   error: string;
+}
+
+export interface ImportStartedEvent {
+  streamId: string;
+  total: number;
+}
+
+export interface ImportProgressEvent {
+  streamId: string;
+  inserted: number;
+  total: number;
+}
+
+export interface ImportDoneEvent {
+  streamId: string;
+  inserted: number;
+  elapsedMs: number;
+}
+
+export interface ImportErrorEvent {
+  streamId: string;
+  error: string;
+}
+
+export interface ImportStreamHandlers {
+  onStarted?: (event: ImportStartedEvent) => void;
+  onProgress?: (event: ImportProgressEvent) => void;
+  onDone?: (event: ImportDoneEvent) => void;
+  onError?: (event: ImportErrorEvent) => void;
 }
 
 export interface QueryStreamHandlers {
@@ -328,6 +409,28 @@ export async function listenPreviewStream(
     listen<PreviewStreamRowsEvent>("preview-stream:after-rows", filter(handlers.onAfterRows)),
     listen<PreviewStreamDoneEvent>("preview-stream:done", filter(handlers.onDone)),
     listen<PreviewStreamErrorEvent>("preview-stream:error", filter(handlers.onError)),
+  ]);
+  return () => unlisteners.forEach((un) => un());
+}
+
+/**
+ * Subscribes to all csv-import events for `streamId`. Returns a function that
+ * detaches every listener.
+ */
+export async function listenImportStream(
+  streamId: string,
+  handlers: ImportStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(cb?: (e: T) => void) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) cb(e.payload);
+    };
+  const unlisteners = await Promise.all([
+    listen<ImportStartedEvent>("csv-import:started", filter(handlers.onStarted)),
+    listen<ImportProgressEvent>("csv-import:progress", filter(handlers.onProgress)),
+    listen<ImportDoneEvent>("csv-import:done", filter(handlers.onDone)),
+    listen<ImportErrorEvent>("csv-import:error", filter(handlers.onError)),
   ]);
   return () => unlisteners.forEach((un) => un());
 }

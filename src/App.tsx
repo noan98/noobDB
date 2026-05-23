@@ -29,6 +29,7 @@ import { ResultGrid } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
 import { ExplainViewer } from "./components/ExplainViewer";
 import { TabBar } from "./components/TabBar";
+import { ImportModal } from "./components/ImportModal";
 import { SettingsView } from "./components/SettingsView";
 import { Splitter } from "./components/Splitter";
 import { t as translate, useT } from "./i18n";
@@ -243,6 +244,7 @@ export default function App() {
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
 
   const activeTab = useMemo(
     () => tabs.find((tt) => tt.id === activeTabId) ?? null,
@@ -413,6 +415,7 @@ export default function App() {
     }
     setSessionId(null);
     setSelectedProfile(null);
+    setImportTarget(null);
     setStatus({ kind: "key", key: "appDisconnected" });
   }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile]);
 
@@ -1060,6 +1063,22 @@ export default function App() {
     runQueryInTab(tab.id, sql, base);
   }, [tabs, runQueryInTab, settings.defaultDisplayCount, selectedProfile?.driver]);
 
+  const handleImportTable = useCallback((database: string, table: string) => {
+    setImportTarget({ database, table });
+  }, []);
+
+  // After a CSV import, refresh the matching open table tab so the new rows
+  // show up without the user reopening the table.
+  const handleImported = useCallback((database: string, table: string) => {
+    const tab = tabsRef.current.find(
+      (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
+    );
+    if (tab && tab.paginatable) {
+      const limit = Math.max(1, tab.previewRowLimit || settings.defaultDisplayCount);
+      runQueryInTab(tab.id, `${tab.paginatable} LIMIT ${limit}`, tab.paginatable);
+    }
+  }, [runQueryInTab, settings.defaultDisplayCount]);
+
   const handleNewTab = useCallback(() => {
     const tab = makeQueryTab();
     setTabs((prev) => [...prev, tab]);
@@ -1181,6 +1200,7 @@ export default function App() {
               await refreshProfiles();
             }}
             onPickTable={handleOpenTable}
+            onImportTable={handleImportTable}
           />
         ) : (
           <SnippetList
@@ -1368,6 +1388,16 @@ export default function App() {
 
         <div className={`status ${status.error ? "error" : ""}`}>{statusText}</div>
       </main>
+
+      {importTarget && sessionId && (
+        <ImportModal
+          sessionId={sessionId}
+          database={importTarget.database}
+          table={importTarget.table}
+          onClose={() => setImportTarget(null)}
+          onImported={() => handleImported(importTarget.database, importTarget.table)}
+        />
+      )}
     </div>
   );
 }
