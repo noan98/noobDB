@@ -28,7 +28,13 @@ import { TabBar } from "./components/TabBar";
 import { SettingsView } from "./components/SettingsView";
 import { Splitter } from "./components/Splitter";
 import { t as translate, useT } from "./i18n";
-import { useSettings } from "./settings";
+import { useSettings, type TabRestoreMode } from "./settings";
+import {
+  clearPersistedTabs,
+  loadPersistedTabs,
+  savePersistedTabs,
+  type PersistedTab,
+} from "./tabPersistence";
 
 type Theme = "light" | "dark";
 
@@ -131,6 +137,19 @@ function makeQueryTab(): Tab {
   };
 }
 
+function toPersistedTab(tab: Tab): PersistedTab {
+  const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
+  if (tab.database) out.database = tab.database;
+  if (tab.table) out.table = tab.table;
+  return out;
+}
+
+function shouldRestoreSavedTabs(mode: TabRestoreMode, count: number): boolean {
+  if (mode === "always") return true;
+  if (mode === "never") return false;
+  return window.confirm(translate("tabRestoreConfirm", { count }));
+}
+
 function emptyResult(columns: Column[]): QueryResult {
   return { columns, rows: [], rows_affected: 0, elapsed_ms: 0 };
 }
@@ -196,6 +215,13 @@ export default function App() {
   const streamUnlistenRef = useRef<Map<string, UnlistenFn>>(new Map());
   const streamIdRef = useRef<Map<string, string>>(new Map());
 
+  // restoreSavedTabs is declared after runQueryInTab; the ref breaks the
+  // ordering cycle so handleConnect (declared above) can still call it.
+  const restoreSavedTabsRef = useRef<
+    | ((sid: string, profile: ConnectionProfile, saved: PersistedTab[]) => Promise<void>)
+    | null
+  >(null);
+
   const updateTab = useCallback((id: string, patch: Partial<Tab>) => {
     setTabs((prev) => prev.map((tt) => (tt.id === id ? { ...tt, ...patch } : tt)));
   }, []);
@@ -245,6 +271,13 @@ export default function App() {
     if (fresh && fresh !== selectedProfile) setSelectedProfile(fresh);
   }, [profiles, selectedProfile]);
 
+  // Snapshot the current tab list (from a ref so we don't depend on the
+  // stale closure copy) into localStorage under the given profile id.
+  const persistTabsForProfile = useCallback((profileId: string) => {
+    const snapshot = tabsRef.current.map(toPersistedTab);
+    savePersistedTabs(profileId, snapshot);
+  }, []);
+
   const closeAllTabs = useCallback(async () => {
     // Cancel any in-flight streams before tearing down tabs.
     const ids = Array.from(streamIdRef.current.keys());
@@ -262,6 +295,8 @@ export default function App() {
     setErrorProfileId(null);
     setStatus({ kind: "key", key: "statusConnecting", vars: { name: profile.name } });
     if (sessionId) {
+      // Persist the outgoing profile's tabs before we tear them down.
+      if (selectedProfile) persistTabsForProfile(selectedProfile.id);
       try { await api.disconnect(sessionId); } catch (e) { console.warn(e); }
       setSessionId(null);
       await closeAllTabs();
@@ -284,9 +319,18 @@ export default function App() {
       });
       setSessionId(res.session_id);
       setSelectedProfile(profile);
-      const tab = makeQueryTab();
-      setTabs([tab]);
-      setActiveTabId(tab.id);
+
+      const saved = loadPersistedTabs(profile.id);
+      const restore =
+        saved.length > 0 && shouldRestoreSavedTabs(settings.tabRestoreMode, saved.length);
+      if (restore && restoreSavedTabsRef.current) {
+        await restoreSavedTabsRef.current(res.session_id, profile, saved);
+      } else {
+        if (saved.length > 0 && !restore) clearPersistedTabs(profile.id);
+        const tab = makeQueryTab();
+        setTabs([tab]);
+        setActiveTabId(tab.id);
+      }
       setStatus({ kind: "key", key: "statusConnected", vars: { name: profile.name, id: res.session_id } });
     } catch (e) {
       setErrorProfileId(profile.id);
@@ -294,10 +338,19 @@ export default function App() {
     } finally {
       setConnectingId(null);
     }
-  }, [sessionId, closeAllTabs, settings.confirmProductionConnect]);
+  }, [
+    sessionId,
+    selectedProfile,
+    closeAllTabs,
+    persistTabsForProfile,
+    settings.confirmProductionConnect,
+    settings.tabRestoreMode,
+  ]);
 
   const handleDisconnect = useCallback(async () => {
     if (!sessionId) return;
+    // Persist before tearing down — closeAllTabs clears the in-memory list.
+    if (selectedProfile) persistTabsForProfile(selectedProfile.id);
     await closeAllTabs();
     try {
       await api.disconnect(sessionId);
@@ -307,7 +360,7 @@ export default function App() {
     setSessionId(null);
     setSelectedProfile(null);
     setStatus({ kind: "key", key: "appDisconnected" });
-  }, [sessionId, closeAllTabs]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile]);
 
   // Fetch schema for the active table tab so the editor can autocomplete columns.
   useEffect(() => {
@@ -469,6 +522,83 @@ export default function App() {
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
   ]);
+
+  // Build fresh Tab objects from a snapshot and replace the live tab list.
+  // Table tabs are verified via describeTable; entries pointing at tables
+  // that no longer exist are demoted to query tabs holding the saved SQL.
+  const restoreSavedTabs = useCallback(
+    async (sid: string, profile: ConnectionProfile, saved: PersistedTab[]) => {
+      const limit = Math.max(1, settings.defaultDisplayCount);
+      const built = await Promise.all(
+        saved.map(async (s): Promise<Tab> => {
+          if (s.kind === "table" && s.database && s.table) {
+            try {
+              await api.describeTable(sid, s.database, s.table);
+              const base = qualifiedTableSql(profile.driver, s.database, s.table);
+              const sql = `${base} LIMIT ${limit}`;
+              return {
+                id: newTabId(),
+                kind: "table",
+                title: s.title || s.table,
+                database: s.database,
+                table: s.table,
+                sql,
+                result: null,
+                preview: null,
+                schemaTable: null,
+                streaming: false,
+                previewRowLimit: limit,
+                paginatable: base,
+                loadingMore: false,
+                canLoadMore: false,
+                tableColumns: null,
+                pendingEdits: {},
+              };
+            } catch {
+              // Table is gone — fall through to a query tab using the saved SQL.
+            }
+          }
+          return {
+            id: newTabId(),
+            kind: "query",
+            title: s.kind === "query" ? s.title : translate("tabUntitledQuery"),
+            sql: s.sql,
+            result: null,
+            preview: null,
+            schemaTable: null,
+            streaming: false,
+            previewRowLimit: limit,
+            paginatable: null,
+            loadingMore: false,
+            canLoadMore: false,
+            tableColumns: null,
+            pendingEdits: {},
+          };
+        }),
+      );
+
+      if (built.length === 0) {
+        const tab = makeQueryTab();
+        setTabs([tab]);
+        setActiveTabId(tab.id);
+        return;
+      }
+      setTabs(built);
+      setActiveTabId(built[0].id);
+      // Re-run the initial table query for restored table tabs so the user
+      // immediately sees data instead of an empty grid.
+      for (const tab of built) {
+        if (tab.kind === "table" && tab.paginatable) {
+          runQueryInTab(tab.id, tab.sql, tab.paginatable);
+        }
+      }
+    },
+    [runQueryInTab, settings.defaultDisplayCount],
+  );
+
+  useEffect(() => {
+    restoreSavedTabsRef.current = restoreSavedTabs;
+  }, [restoreSavedTabs]);
 
   const previewQueryInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) {
