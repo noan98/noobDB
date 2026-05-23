@@ -33,6 +33,14 @@ interface Props {
   canLoadMore?: boolean;
   /** Called when the viewport approaches the bottom of the results. */
   onLoadMore?: () => void;
+  /**
+   * Row cap auto-injected into the query, or null when none was applied. The
+   * "auto LIMIT" badge shows only when the cap was actually binding (the result
+   * filled it), so small results and aggregates stay quiet.
+   */
+  autoLimitApplied?: number | null;
+  /** Called from the badge to re-run the query without the auto LIMIT. */
+  onFetchAllRows?: () => void;
   /** Schema (database) name of the active tab, used for the export default filename. */
   database?: string | null;
   /** Table name of the active tab, used for the export default filename. */
@@ -618,6 +626,8 @@ export function ResultGrid({
   loadingMore,
   canLoadMore,
   onLoadMore,
+  autoLimitApplied,
+  onFetchAllRows,
   database,
   table,
   editable,
@@ -694,6 +704,13 @@ export function ResultGrid({
     );
   }
   const canExport = !streaming && result.rows.length > 0;
+  // Only surface the badge when the cap was actually binding: a result that
+  // came back shorter than the limit wasn't truncated, so there's nothing to
+  // "fetch all" and an aggregate's single row stays quiet.
+  const showAutoLimitBadge =
+    !streaming &&
+    autoLimitApplied != null &&
+    result.rows.length >= autoLimitApplied;
 
   const editsCount = pendingEdits ? countEditedCells(pendingEdits) : 0;
   const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
@@ -711,6 +728,21 @@ export function ResultGrid({
         <div className="results-streaming-banner" role="status" aria-live="polite">
           <span className="results-streaming-dot" aria-hidden />
           {t("statusStreaming", { rows: result.rows.length, ms: result.elapsed_ms })}
+        </div>
+      )}
+      {showAutoLimitBadge && (
+        <div className="results-auto-limit-banner" role="status" aria-live="polite">
+          <span className="results-auto-limit-text">
+            {t("autoLimitApplied", { limit: autoLimitApplied! })}
+          </span>
+          <button
+            type="button"
+            className="results-auto-limit-btn"
+            onClick={onFetchAllRows}
+            title={t("autoLimitFetchAllTitle")}
+          >
+            {t("autoLimitFetchAll")}
+          </button>
         </div>
       )}
       <div className="results-toolbar">

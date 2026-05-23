@@ -1,13 +1,17 @@
 name: pr-conflict
 
 # ベースブランチ (main) とコンフリクトしている open PR を検知し、
-# `merge-conflict` ラベルの付与/除去と、PR への通知コメントの
-# 作成 / 更新 / 解消時の削除を自動で行う。
+# `merge-conflict` ラベルの付与/除去と、PR への通知コメントの作成 / 更新を
+# 行う。検知は第三者 action の出力に依存せず、PR の mergeable を自前で
+# ポーリングして判定する (GitHub の mergeable は非同期計算で、ベースの
+# force-push 直後などは null=unknown になりやすいため、確定するまで待つ)。
 #
 # 検知の仕組み:
 #   - PR が更新されたとき (pull_request) はその PR を判定する。
 #   - main が進んだとき (push) は全 open PR を再判定する
 #     (他 PR のマージで後追いコンフリクトが発生するケースを拾うため)。
+#
+# コメントは解消時も削除せず「解消済み」に編集して記録を残す。
 
 on:
   push:
@@ -15,10 +19,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-# 同一 PR / 同一 push に対する重複実行を抑止する。
+# 同一 PR / 同一 push に対する重複実行を抑止する。PR の更新 (synchronize)
+# では最新コミットだけが意味を持つので途中 run はキャンセルしてよいが、
+# main への push では各前進を確実に再評価したいのでキャンセルしない。
 concurrency:
   group: pr-conflict-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -30,35 +36,22 @@ jobs:
     name: detect merge conflicts
     runs-on: ubuntu-latest
     steps:
-      # コンフリクトの有無に応じて merge-conflict ラベルを付与/除去する。
-      # GitHub のマージ可能性は非同期計算のため、未確定時はリトライして待つ。
-      # 出力 prDirtyStatuses は { "<PR番号>": <dirtyか否か(bool)> } のマップ。
-      - name: Label conflicting PRs
-        id: detect
-        uses: eps1lon/actions-label-merge-conflict@1df065ebe6e3310545d4f4c4e862e43bdca146f0 # v3.0.3
-        with:
-          dirtyLabel: merge-conflict
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          retryAfter: 20
-          retryMax: 10
-
-      # ラベル判定の結果をもとに、通知コメントを冪等に管理する。
-      #   dirty  -> マーカー付きコメントが無ければ作成、あれば本文を更新
-      #   clean  -> マーカー付きコメントがあれば削除 (解消時のクリーンアップ)
-      - name: Sync conflict comments
-        if: steps.detect.outputs.prDirtyStatuses != ''
+      - name: Detect conflicts and sync label + comment
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
-        env:
-          PR_DIRTY_STATUSES: ${{ steps.detect.outputs.prDirtyStatuses }}
         with:
           script: |
-            const dirtyStatuses = JSON.parse(process.env.PR_DIRTY_STATUSES || '{}');
             const { owner, repo } = context.repo;
-
+            const labelName = 'merge-conflict';
             // レンダリングされない隠しマーカー。Bot コメントの一意な目印に使う。
             const marker = '<!-- merge-conflict-bot -->';
 
-            const body = [
+            // GitHub の mergeable は非同期計算。null (unknown) の間は
+            // 確定するまでポーリングする (eps1lon action の retryAfter/retryMax 相当)。
+            const retryAfterMs = 20000;
+            const retryMax = 10;
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+            const conflictBody = [
               marker,
               '## ⚠️ コンフリクトを検知しました',
               '',
@@ -76,26 +69,73 @@ jobs:
               '```',
               '',
               '</details>',
-              '',
-              '_コンフリクトが解消されると、このコメントは自動で削除されます。_',
             ].join('\n');
 
-            for (const [numStr, isDirty] of Object.entries(dirtyStatuses)) {
-              const issue_number = Number(numStr);
+            const resolvedBody = [
+              marker,
+              '## ✅ コンフリクトは解消されました',
+              '',
+              'この PR は現在ベースブランチ (`main`) とコンフリクトしていません。',
+              '',
+              `_最終確認: ${new Date().toISOString()}_`,
+            ].join('\n');
+
+            // 判定対象の PR 番号を集める。
+            let prNumbers = [];
+            if (context.eventName === 'pull_request') {
+              prNumbers = [context.payload.pull_request.number];
+            } else {
+              const prs = await github.paginate(github.rest.pulls.list, {
+                owner, repo, state: 'open', base: 'main', per_page: 100,
+              });
+              prNumbers = prs.map((p) => p.number);
+            }
+
+            // mergeable が確定するまで PR を取り直す。確定しなければ null を返す。
+            async function resolvePr(number) {
+              for (let attempt = 0; attempt <= retryMax; attempt++) {
+                const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                if (pr.state !== 'open') return null;
+                if (pr.mergeable !== null) return pr;
+                if (attempt < retryMax) await sleep(retryAfterMs);
+              }
+              return null;
+            }
+
+            for (const number of prNumbers) {
+              const pr = await resolvePr(number);
+              if (!pr) {
+                core.warning(`PR #${number}: mergeable still unknown after retries; skipping`);
+                continue;
+              }
+              const isDirty = pr.mergeable === false;
+
+              // ラベルの付与 / 除去。
+              const hasLabel = (pr.labels || []).some((l) => (l.name || l) === labelName);
+              if (isDirty && !hasLabel) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [labelName] });
+              } else if (!isDirty && hasLabel) {
+                try {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: labelName });
+                } catch (e) {
+                  if (e.status !== 404) throw e;
+                }
+              }
+
+              // 通知コメントを冪等に管理する。
+              //   dirty -> マーカー付きコメントが無ければ作成、あれば本文を更新
+              //   clean -> マーカー付きコメントがあれば「解消済み」に編集 (削除はしない)
               const comments = await github.paginate(github.rest.issues.listComments, {
-                owner, repo, issue_number, per_page: 100,
+                owner, repo, issue_number: number, per_page: 100,
               });
               const existing = comments.find((c) => c.body && c.body.includes(marker));
-
-              if (isDirty) {
-                if (existing) {
-                  if (existing.body !== body) {
-                    await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-                  }
-                } else {
-                  await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              const desired = isDirty ? conflictBody : (existing ? resolvedBody : null);
+              if (desired === null) continue;
+              if (existing) {
+                if (existing.body !== desired) {
+                  await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: desired });
                 }
-              } else if (existing) {
-                await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: number, body: desired });
               }
             }

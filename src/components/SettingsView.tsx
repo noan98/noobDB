@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useT } from "../i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import {
+  DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_DISPLAY_COUNT,
   DEFAULT_STREAM_PREFETCH_SIZE,
   SYNTAX_PRESET_ORDER,
@@ -14,6 +15,8 @@ import {
   resetPreviewHighlight,
   resetStreamingDefaults,
   resetSyntaxColors,
+  setAutoLimitCount,
+  setAutoLimitEnabled,
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
   setDefaultDisplayCount,
@@ -66,8 +69,10 @@ export function SettingsView({ theme, onClose }: Props) {
   // snapping back to the persisted value on each keystroke.
   const [displayInput, setDisplayInput] = useState(String(settings.defaultDisplayCount));
   const [prefetchInput, setPrefetchInput] = useState(String(settings.streamPrefetchSize));
+  const [autoLimitInput, setAutoLimitInput] = useState(String(settings.autoLimitCount));
   useEffect(() => setDisplayInput(String(settings.defaultDisplayCount)), [settings.defaultDisplayCount]);
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
+  useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
 
   const commitDisplay = () => {
     const n = Number.parseInt(displayInput, 10);
@@ -78,6 +83,11 @@ export function SettingsView({ theme, onClose }: Props) {
     const n = Number.parseInt(prefetchInput, 10);
     if (Number.isFinite(n) && n > 0) setStreamPrefetchSize(n);
     else setPrefetchInput(String(settings.streamPrefetchSize));
+  };
+  const commitAutoLimit = () => {
+    const n = Number.parseInt(autoLimitInput, 10);
+    if (Number.isFinite(n) && n > 0) setAutoLimitCount(n);
+    else setAutoLimitInput(String(settings.autoLimitCount));
   };
 
   return (
@@ -152,6 +162,49 @@ export function SettingsView({ theme, onClose }: Props) {
           />
           <span className="settings-help-inline">
             {t("settingsStreamPrefetchSizeHelp")}
+          </span>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <h3>{t("settingsAutoLimit")}</h3>
+        </div>
+        <p className="settings-help">{t("settingsAutoLimitHelp")}</p>
+        <div className="settings-toggle-row">
+          <label htmlFor="settings-auto-limit" className="settings-toggle-label">
+            <input
+              id="settings-auto-limit"
+              type="checkbox"
+              checked={settings.autoLimitEnabled}
+              onChange={(e) => setAutoLimitEnabled(e.target.checked)}
+            />
+            {t("settingsAutoLimitEnabled")}
+          </label>
+          <span className="settings-help-inline">
+            {t("settingsAutoLimitEnabledHelp")}
+          </span>
+        </div>
+        <div className="settings-number-row">
+          <label htmlFor="settings-auto-limit-count">
+            {t("settingsAutoLimitCount")}
+          </label>
+          <input
+            id="settings-auto-limit-count"
+            type="number"
+            min={1}
+            step={100}
+            value={autoLimitInput}
+            placeholder={String(DEFAULT_AUTO_LIMIT_COUNT)}
+            disabled={!settings.autoLimitEnabled}
+            onChange={(e) => setAutoLimitInput(e.target.value)}
+            onBlur={commitAutoLimit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <span className="settings-help-inline">
+            {t("settingsAutoLimitCountHelp")}
           </span>
         </div>
       </section>
