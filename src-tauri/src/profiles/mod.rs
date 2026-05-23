@@ -38,10 +38,29 @@ pub struct ConnectionProfile {
     pub file_path: Option<String>,
 }
 
+/// How an SSH tunnel authenticates with the jump host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SshAuthMethod {
+    /// Private key file plus optional passphrase (the original behavior).
+    #[default]
+    Key,
+    /// Delegate signing to the running ssh-agent.
+    Agent,
+    /// Plain password authentication.
+    Password,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SshProfile {
     pub host: String,
     pub port: u16,
     pub user: String,
+    /// Defaults to `Key` so profiles written before this field existed keep
+    /// their original private-key behavior.
+    #[serde(default)]
+    pub auth_method: SshAuthMethod,
+    /// Path to the private key. Empty/unused for `agent` and `password`.
+    #[serde(default)]
     pub private_key_path: PathBuf,
 }
