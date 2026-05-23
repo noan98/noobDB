@@ -1,0 +1,101 @@
+name: pr-conflict
+
+# ベースブランチ (main) とコンフリクトしている open PR を検知し、
+# `merge-conflict` ラベルの付与/除去と、PR への通知コメントの
+# 作成 / 更新 / 解消時の削除を自動で行う。
+#
+# 検知の仕組み:
+#   - PR が更新されたとき (pull_request) はその PR を判定する。
+#   - main が進んだとき (push) は全 open PR を再判定する
+#     (他 PR のマージで後追いコンフリクトが発生するケースを拾うため)。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# 同一 PR / 同一 push に対する重複実行を抑止する。
+concurrency:
+  group: pr-conflict-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  detect:
+    name: detect merge conflicts
+    runs-on: ubuntu-latest
+    steps:
+      # コンフリクトの有無に応じて merge-conflict ラベルを付与/除去する。
+      # GitHub のマージ可能性は非同期計算のため、未確定時はリトライして待つ。
+      # 出力 prDirtyStatuses は { "<PR番号>": <dirtyか否か(bool)> } のマップ。
+      - name: Label conflicting PRs
+        id: detect
+        uses: eps1lon/actions-label-merge-conflict@1df065ebe6e3310545d4f4c4e862e43bdca146f0 # v3.0.3
+        with:
+          dirtyLabel: merge-conflict
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          retryAfter: 20
+          retryMax: 10
+
+      # ラベル判定の結果をもとに、通知コメントを冪等に管理する。
+      #   dirty  -> マーカー付きコメントが無ければ作成、あれば本文を更新
+      #   clean  -> マーカー付きコメントがあれば削除 (解消時のクリーンアップ)
+      - name: Sync conflict comments
+        if: steps.detect.outputs.prDirtyStatuses != ''
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          PR_DIRTY_STATUSES: ${{ steps.detect.outputs.prDirtyStatuses }}
+        with:
+          script: |
+            const dirtyStatuses = JSON.parse(process.env.PR_DIRTY_STATUSES || '{}');
+            const { owner, repo } = context.repo;
+
+            // レンダリングされない隠しマーカー。Bot コメントの一意な目印に使う。
+            const marker = '<!-- merge-conflict-bot -->';
+
+            const body = [
+              marker,
+              '## ⚠️ コンフリクトを検知しました',
+              '',
+              'この PR はベースブランチ (`main`) とコンフリクトしています。マージ前に解消してください。',
+              '',
+              '<details><summary>解消手順</summary>',
+              '',
+              '```sh',
+              'git fetch origin',
+              'git switch <この PR のブランチ>',
+              'git merge origin/main   # もしくは git rebase origin/main',
+              '# コンフリクトを解消したら',
+              'git add -A && git commit   # rebase の場合は git rebase --continue',
+              'git push',
+              '```',
+              '',
+              '</details>',
+              '',
+              '_コンフリクトが解消されると、このコメントは自動で削除されます。_',
+            ].join('\n');
+
+            for (const [numStr, isDirty] of Object.entries(dirtyStatuses)) {
+              const issue_number = Number(numStr);
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number, per_page: 100,
+              });
+              const existing = comments.find((c) => c.body && c.body.includes(marker));
+
+              if (isDirty) {
+                if (existing) {
+                  if (existing.body !== body) {
+                    await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+                  }
+                } else {
+                  await github.rest.issues.createComment({ owner, repo, issue_number, body });
+                }
+              } else if (existing) {
+                await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
+              }
+            }
