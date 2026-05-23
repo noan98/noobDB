@@ -3,8 +3,8 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::db::types::{Column, PreviewResult, QueryResult, StreamBatch, Value};
 use crate::db::is_read_only_sql;
+use crate::db::types::{Column, PreviewResult, QueryResult, StreamBatch, Value};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session};
 
@@ -13,8 +13,7 @@ use crate::state::{AppState, Session};
 fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
     if session.read_only && !is_read_only_sql(sql) {
         return Err(AppError::ReadOnly(
-            "read-only profile: only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed"
-                .into(),
+            "read-only profile: only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed".into(),
         ));
     }
     Ok(())
