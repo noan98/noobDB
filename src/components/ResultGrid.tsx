@@ -658,6 +658,28 @@ export function ResultGrid({
     return () => el.removeEventListener("scroll", trigger);
   }, [canLoadMore, loadingMore, result?.rows.length]);
 
+  // PK indices and per-column editability are computed once per render so
+  // both the toolbar (gating Preview/Apply) and the grid agree on which
+  // cells are interactive. These hooks must run before any early return so
+  // the hook order stays stable as `result` transitions null → columns
+  // (otherwise React aborts the whole tree on the next render).
+  const columns = result?.columns;
+  const pkIndices = useMemo(
+    () => (editable && columns ? resolvePkIndices(columns, tableColumns ?? null) : []),
+    [editable, columns, tableColumns],
+  );
+  const editableCols = useMemo<boolean[]>(() => {
+    if (!editable || !columns) return columns ? columns.map(() => false) : [];
+    const hasPk = pkIndices.length > 0;
+    if (!hasPk) return columns.map(() => false);
+    const pkSet = new Set(pkIndices);
+    return columns.map((c, i) =>
+      // Disallow editing PK columns themselves: changing a PK in-place
+      // would invalidate the WHERE clause used to identify the row.
+      !pkSet.has(i) && isEditableColumnType(c.type_name),
+    );
+  }, [editable, columns, pkIndices]);
+
   if (!result) {
     return <div className="results empty">{t("resultEmpty")}</div>;
   }
@@ -672,25 +694,6 @@ export function ResultGrid({
     );
   }
   const canExport = !streaming && result.rows.length > 0;
-
-  // PK indices and per-column editability are computed once per render so
-  // both the toolbar (gating Preview/Apply) and the grid agree on which
-  // cells are interactive.
-  const pkIndices = useMemo(
-    () => (editable ? resolvePkIndices(result.columns, tableColumns ?? null) : []),
-    [editable, result.columns, tableColumns],
-  );
-  const editableCols = useMemo<boolean[]>(() => {
-    if (!editable) return result.columns.map(() => false);
-    const hasPk = pkIndices.length > 0;
-    if (!hasPk) return result.columns.map(() => false);
-    const pkSet = new Set(pkIndices);
-    return result.columns.map((c, i) =>
-      // Disallow editing PK columns themselves: changing a PK in-place
-      // would invalidate the WHERE clause used to identify the row.
-      !pkSet.has(i) && isEditableColumnType(c.type_name),
-    );
-  }, [editable, result.columns, pkIndices]);
 
   const editsCount = pendingEdits ? countEditedCells(pendingEdits) : 0;
   const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
