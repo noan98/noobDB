@@ -142,3 +142,84 @@ impl Connection {
         }
     }
 }
+
+/// Returns true when `sql` is shaped like a read-only statement that the
+/// read-only profile gate is willing to let through.
+///
+/// Allow list: `SELECT` / `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `WITH`.
+/// Trailing semicolons and whitespace are tolerated. `SELECT ... FOR UPDATE`,
+/// `FOR SHARE` and the MySQL `LOCK IN SHARE MODE` form are rejected because
+/// they acquire row locks even though they syntactically begin with `SELECT`.
+///
+/// This is intentionally a coarse prefix check — pathological cases such as
+/// `WITH ... INSERT` (a writable CTE) will still slip past. The gate is a
+/// best-effort safety net, not a parser.
+pub fn is_read_only_sql(sql: &str) -> bool {
+    let lower = sql.to_ascii_lowercase();
+    let body = lower
+        .trim()
+        .trim_end_matches(|c: char| c == ';' || c.is_whitespace())
+        .trim_start();
+    let allowed_prefix = body.starts_with("select")
+        || body.starts_with("show")
+        || body.starts_with("describe")
+        || body.starts_with("desc ")
+        || body.starts_with("explain")
+        || body.starts_with("with");
+    if !allowed_prefix {
+        return false;
+    }
+    if body.ends_with("for update")
+        || body.ends_with("for share")
+        || body.ends_with("lock in share mode")
+    {
+        return false;
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_read_only_sql;
+
+    #[test]
+    fn allows_basic_selects_and_metadata_queries() {
+        assert!(is_read_only_sql("SELECT 1"));
+        assert!(is_read_only_sql("  select * from t"));
+        assert!(is_read_only_sql("SHOW TABLES"));
+        assert!(is_read_only_sql("DESCRIBE users"));
+        assert!(is_read_only_sql("DESC users"));
+        assert!(is_read_only_sql("EXPLAIN SELECT 1"));
+        assert!(is_read_only_sql("WITH t AS (SELECT 1) SELECT * FROM t"));
+    }
+
+    #[test]
+    fn tolerates_trailing_semicolons_and_whitespace() {
+        assert!(is_read_only_sql("SELECT 1;"));
+        assert!(is_read_only_sql("SELECT 1 ;  \n"));
+        assert!(is_read_only_sql("SELECT 1;;\n;"));
+    }
+
+    #[test]
+    fn rejects_mutations_and_ddl() {
+        assert!(!is_read_only_sql("INSERT INTO t VALUES (1)"));
+        assert!(!is_read_only_sql("UPDATE t SET a=1"));
+        assert!(!is_read_only_sql("DELETE FROM t"));
+        assert!(!is_read_only_sql("REPLACE INTO t VALUES (1)"));
+        assert!(!is_read_only_sql("DROP TABLE t"));
+        assert!(!is_read_only_sql("ALTER TABLE t ADD COLUMN c INT"));
+        assert!(!is_read_only_sql("TRUNCATE t"));
+        assert!(!is_read_only_sql("CREATE TABLE t (a INT)"));
+        assert!(!is_read_only_sql("CALL my_proc()"));
+        assert!(!is_read_only_sql(""));
+        assert!(!is_read_only_sql("   "));
+    }
+
+    #[test]
+    fn rejects_locking_selects() {
+        assert!(!is_read_only_sql("SELECT * FROM t FOR UPDATE"));
+        assert!(!is_read_only_sql("SELECT * FROM t for update;"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR SHARE"));
+        assert!(!is_read_only_sql("SELECT * FROM t LOCK IN SHARE MODE"));
+    }
+}

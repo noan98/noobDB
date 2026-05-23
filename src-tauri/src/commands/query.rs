@@ -4,8 +4,21 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::types::{Column, PreviewResult, QueryResult, StreamBatch, Value};
+use crate::db::is_read_only_sql;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session};
+
+/// Returns `Err(AppError::ReadOnly)` when the session is RO and `sql` is not
+/// strictly read-only. Used at every query entry point.
+fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
+    if session.read_only && !is_read_only_sql(sql) {
+        return Err(AppError::ReadOnly(
+            "read-only profile: only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed"
+                .into(),
+        ));
+    }
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn run_query(
@@ -18,6 +31,7 @@ pub async fn run_query(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    ensure_allowed_for_session(&session, &sql)?;
     session.conn.execute(&sql, database.as_deref()).await
 }
 
@@ -32,6 +46,7 @@ pub async fn preview_query(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    ensure_allowed_for_session(&session, &sql)?;
     session
         .conn
         .preview_execute(&sql, database.as_deref())
@@ -96,6 +111,7 @@ pub async fn run_query_stream(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    ensure_allowed_for_session(&session, &sql)?;
     let handle = tokio::spawn(spawn_query_stream(
         app,
         session,
@@ -242,6 +258,7 @@ pub async fn preview_query_stream(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    ensure_allowed_for_session(&session, &sql)?;
     let handle = tokio::spawn(spawn_preview_stream(
         app,
         session,

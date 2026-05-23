@@ -22,6 +22,11 @@ export interface ConnectionProfile {
   group: string | null;
   color: string | null;
   is_production: boolean;
+  /**
+   * When true, sessions opened from this profile reject any SQL that is
+   * not strictly read-only (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH).
+   */
+  read_only: boolean;
   /** Database file path for file-backed drivers (SQLite). */
   file_path: string | null;
 }
@@ -41,6 +46,11 @@ export interface ConnectRequest {
   ssh: SshRequest | null;
   /** Required for sqlite; ignored otherwise. */
   file_path?: string | null;
+  /**
+   * When true the resulting session refuses to execute non-read-only SQL.
+   * Defaults to false on the backend if omitted.
+   */
+  read_only?: boolean;
 }
 
 export interface SaveProfileRequest {
@@ -57,6 +67,7 @@ export interface SaveProfileRequest {
   group: string | null;
   color: string | null;
   is_production: boolean;
+  read_only: boolean;
   /** Required for sqlite; ignored otherwise. */
   file_path?: string | null;
 }

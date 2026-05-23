@@ -245,6 +245,14 @@ export function ConnectionList({
               {t("listProduction")}
             </span>
           )}
+          {p.read_only && (
+            <span
+              className="tree-badge read-only-badge"
+              title={t("listReadOnlyTitle")}
+            >
+              {t("listReadOnly")}
+            </span>
+          )}
           <span className={`status-dot status-${status}`} aria-label={statusLabel(status)} title={statusLabel(status)} />
           <span className="tree-badge driver">{p.driver}</span>
         </div>

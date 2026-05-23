@@ -12,6 +12,9 @@ pub enum AppError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    #[error("read-only session: {0}")]
+    ReadOnly(String),
+
     #[error("ssh error: {0}")]
     Ssh(String),
 

@@ -28,6 +28,9 @@ pub struct ConnectRequest {
     /// Required for file-backed drivers (SQLite); ignored otherwise.
     #[serde(default)]
     pub file_path: Option<String>,
+    /// When true the resulting session refuses to execute non-read-only SQL.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +53,7 @@ pub struct ConnectResponse {
 pub struct SessionInfo {
     pub id: SessionId,
     pub profile_id: Option<String>,
+    pub read_only: bool,
 }
 
 #[tauri::command]
@@ -71,6 +75,7 @@ pub async fn connect(req: ConnectRequest, state: State<'_, AppState>) -> Result<
         id: new_session_id(),
         profile_id,
         conn,
+        read_only: req.read_only,
         _tunnel: tunnel,
     };
     let id = state.insert(session).await;
@@ -94,6 +99,7 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo
         .map(|s| SessionInfo {
             id: s.id.clone(),
             profile_id: s.profile_id.clone(),
+            read_only: s.read_only,
         })
         .collect())
 }

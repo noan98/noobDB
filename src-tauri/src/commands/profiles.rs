@@ -34,6 +34,8 @@ pub struct SaveProfileRequest {
     pub color: Option<String>,
     #[serde(default)]
     pub is_production: bool,
+    #[serde(default)]
+    pub read_only: bool,
     /// Required for file-backed drivers (SQLite); ignored otherwise.
     #[serde(default)]
     pub file_path: Option<String>,
@@ -62,6 +64,7 @@ pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> 
         group: req.group.filter(|s| !s.is_empty()),
         color: req.color.filter(|s| !s.is_empty()),
         is_production: req.is_production,
+        read_only: req.read_only,
         file_path: req.file_path.filter(|s| !s.is_empty()),
     };
     store::upsert(profile.clone())?;

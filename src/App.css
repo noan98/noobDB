@@ -483,6 +483,14 @@ label {
   letter-spacing: 0.05em;
 }
 
+.tree-badge.read-only-badge {
+  background: var(--status-info, var(--bg-muted));
+  color: var(--text);
+  border-color: var(--border-strong);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
 /* ---------- Context menu (right-click on profile) ---------- */
 
 .context-menu {
