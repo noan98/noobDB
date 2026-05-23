@@ -284,6 +284,32 @@ impl SqliteConn {
         Ok(inserted)
     }
 
+    /// Runs `statements` sequentially inside a single transaction. If any
+    /// statement fails the transaction is rolled back (the `Transaction` is
+    /// dropped without committing) so the batch is all-or-nothing — no
+    /// statement is left committed when a later one errors. Returns the total
+    /// `rows_affected` across all statements on success.
+    pub async fn execute_transaction(
+        &self,
+        statements: &[String],
+        _database: Option<&str>,
+    ) -> Result<u64> {
+        if statements.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+        let mut affected: u64 = 0;
+        for sql in statements {
+            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .execute(&mut *tx)
+                .await?;
+            affected += result.rows_affected();
+        }
+        tx.commit().await?;
+        Ok(affected)
+    }
+
     pub async fn databases(&self) -> Result<Vec<String>> {
         // SQLite uses one database per connection (ATTACH not supported here).
         // Surface the conventional "main" alias so the tree UI has a node.

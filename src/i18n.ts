@@ -309,7 +309,7 @@ const en = {
   statusApplyingEdits: "Applying {count} update(s)...",
   statusAppliedEdits: "Applied {count} update(s); {rows} rows affected.",
   statusApplyEditsError: "Apply failed: {error}",
-  statusApplyEditsPartial: "Applied {applied} of {total}; remaining stopped: {error}",
+  statusApplyEditsPartial: "Apply failed; all {total} update(s) rolled back, nothing was applied: {error}",
 
   exportButton: "Export",
   exportButtonTitle: "Export the current result set as CSV or JSON",
@@ -795,7 +795,7 @@ const ja: Dict = {
   statusApplyingEdits: "{count} 件の UPDATE を適用中...",
   statusAppliedEdits: "{count} 件の UPDATE を適用しました ({rows} 行に影響)。",
   statusApplyEditsError: "適用に失敗しました: {error}",
-  statusApplyEditsPartial: "{total} 件中 {applied} 件を適用後に停止しました: {error}",
+  statusApplyEditsPartial: "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",
 
   exportButton: "Export",
   exportButtonTitle: "現在の結果セットを CSV または JSON でエクスポートします",

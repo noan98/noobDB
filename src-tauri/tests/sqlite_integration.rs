@@ -131,6 +131,77 @@ async fn sqlite_roundtrip_against_tempfile() {
 }
 
 #[tokio::test]
+async fn sqlite_execute_transaction_is_all_or_nothing() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("tablex_sqlite_tx_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute(
+        "CREATE TABLE tablex_tx (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO tablex_tx (id, label) VALUES (1, 'a'), (2, 'b')",
+        None,
+    )
+    .await
+    .expect("seed");
+
+    // Happy path: two UPDATEs commit together and the affected counts add up.
+    let affected = conn
+        .execute_transaction(
+            &[
+                "UPDATE tablex_tx SET label = 'A' WHERE id = 1".to_string(),
+                "UPDATE tablex_tx SET label = 'B' WHERE id = 2".to_string(),
+            ],
+            None,
+        )
+        .await
+        .expect("transaction commits");
+    assert_eq!(affected, 2, "both UPDATEs should report one affected row");
+
+    // Failure path: the first UPDATE succeeds but the second references a
+    // missing column, so the whole batch must roll back — row 1 keeps its
+    // pre-transaction value rather than the half-applied 'X'.
+    let err = conn
+        .execute_transaction(
+            &[
+                "UPDATE tablex_tx SET label = 'X' WHERE id = 1".to_string(),
+                "UPDATE tablex_tx SET nonexistent = 'Y' WHERE id = 2".to_string(),
+            ],
+            None,
+        )
+        .await
+        .expect_err("transaction must fail on the bad statement");
+    assert!(
+        !err.to_string().is_empty(),
+        "error should describe the failed statement"
+    );
+
+    let rows = conn
+        .execute("SELECT id, label FROM tablex_tx ORDER BY id", None)
+        .await
+        .expect("select after rollback");
+    assert!(
+        matches!(&rows.rows[0][1], t::Value::String(s) if s == "A"),
+        "row 1 must keep the committed 'A' — the failed batch's 'X' must have rolled back"
+    );
+    assert!(matches!(&rows.rows[1][1], t::Value::String(s) if s == "B"));
+
+    conn.execute("DROP TABLE tablex_tx", None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_missing_path_reports_invalid_input() {
     // file_path = None should surface a clean error instead of panicking
     // somewhere inside sqlx.

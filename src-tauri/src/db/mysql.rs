@@ -406,6 +406,33 @@ impl MySqlConn {
         Ok(inserted)
     }
 
+    /// Runs `statements` sequentially inside a single transaction. If any
+    /// statement fails the transaction is rolled back (the `Transaction` is
+    /// dropped without committing) so the batch is all-or-nothing — no
+    /// statement is left committed when a later one errors. Returns the total
+    /// `rows_affected` across all statements on success.
+    pub async fn execute_transaction(
+        &self,
+        statements: &[String],
+        database: Option<&str>,
+    ) -> Result<u64> {
+        if statements.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        let mut tx = conn.begin().await?;
+        let mut affected: u64 = 0;
+        for sql in statements {
+            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .execute(&mut *tx)
+                .await?;
+            affected += result.rows_affected();
+        }
+        tx.commit().await?;
+        Ok(affected)
+    }
+
     pub async fn databases(&self) -> Result<Vec<String>> {
         let rows: Vec<MySqlRow> = sqlx::query("SHOW DATABASES").fetch_all(&self.pool).await?;
         rows.iter().map(|r| decode_text_col(r, 0)).collect()
