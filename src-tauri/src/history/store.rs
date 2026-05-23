@@ -155,13 +155,11 @@ pub async fn clear(profile_id: Option<&str>) -> Result<u64> {
 
 async fn clear_in(pool: &SqlitePool, profile_id: Option<&str>) -> Result<u64> {
     let affected = match profile_id {
-        Some(pid) => {
-            sqlx::query("DELETE FROM query_history WHERE profile_id = ?")
-                .bind(pid.to_string())
-                .execute(pool)
-                .await?
-                .rows_affected()
-        }
+        Some(pid) => sqlx::query("DELETE FROM query_history WHERE profile_id = ?")
+            .bind(pid.to_string())
+            .execute(pool)
+            .await?
+            .rows_affected(),
         None => sqlx::query("DELETE FROM query_history")
             .execute(pool)
             .await?
@@ -264,15 +262,24 @@ mod tests {
     #[tokio::test]
     async fn searches_sql_text_literally() {
         let pool = temp_pool().await;
-        record_in(&pool, entry("p1", "SELECT * FROM users", "2026-01-01T00:00:00Z"))
-            .await
-            .unwrap();
-        record_in(&pool, entry("p1", "SELECT * FROM orders", "2026-01-02T00:00:00Z"))
-            .await
-            .unwrap();
-        record_in(&pool, entry("p1", "SELECT a_b FROM t", "2026-01-03T00:00:00Z"))
-            .await
-            .unwrap();
+        record_in(
+            &pool,
+            entry("p1", "SELECT * FROM users", "2026-01-01T00:00:00Z"),
+        )
+        .await
+        .unwrap();
+        record_in(
+            &pool,
+            entry("p1", "SELECT * FROM orders", "2026-01-02T00:00:00Z"),
+        )
+        .await
+        .unwrap();
+        record_in(
+            &pool,
+            entry("p1", "SELECT a_b FROM t", "2026-01-03T00:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         let hits = list_in(&pool, None, 100, Some("users")).await.unwrap();
         assert_eq!(hits.len(), 1);
