@@ -72,6 +72,31 @@ export interface SaveProfileRequest {
   file_path?: string | null;
 }
 
+export type SnippetScope =
+  | { kind: "any" }
+  | { kind: "profile"; profile_id: string }
+  | { kind: "group"; group: string };
+
+export interface Snippet {
+  id: string;
+  name: string;
+  folder: string | null;
+  tags: string[];
+  sql: string;
+  driver: string | null;
+  scope: SnippetScope;
+}
+
+export interface SaveSnippetRequest {
+  id?: string;
+  name: string;
+  folder: string | null;
+  tags: string[];
+  sql: string;
+  driver: string | null;
+  scope: SnippetScope;
+}
+
 export interface SessionInfo {
   id: string;
   profile_id: string | null;
@@ -177,6 +202,11 @@ export const api = {
   saveProfile: (req: SaveProfileRequest) =>
     invoke<ConnectionProfile>("save_profile", { req }),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
+
+  listSnippets: () => invoke<Snippet[]>("list_snippets"),
+  saveSnippet: (req: SaveSnippetRequest) =>
+    invoke<Snippet>("save_snippet", { req }),
+  deleteSnippet: (id: string) => invoke<void>("delete_snippet", { id }),
 
   exportQueryResult: (params: {
     path: string;
