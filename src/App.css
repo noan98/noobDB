@@ -1920,6 +1920,70 @@ label {
   background: var(--bg-toolbar);
 }
 
+/* ---------- Dangerous Query Dialog ---------- */
+
+.dangerous-modal {
+  width: min(520px, 100%);
+}
+
+.dangerous-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dangerous-production-note {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #dc2626;
+}
+
+[data-theme="dark"] .dangerous-production-note {
+  background: #ef4444;
+}
+
+.dangerous-intro {
+  margin: 0;
+  color: var(--text);
+}
+
+.dangerous-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dangerous-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #dc2626;
+  border-radius: 6px;
+  background: var(--bg-toolbar);
+}
+
+[data-theme="dark"] .dangerous-item {
+  border-left-color: #ef4444;
+}
+
+.dangerous-kind {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dangerous-target {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+}
+
 /* ---------- Export Modal ---------- */
 
 .export-modal {

@@ -27,6 +27,12 @@ export interface Settings {
   streamPrefetchSize: number;
   /** Show a confirmation dialog when connecting to a profile flagged as production. */
   confirmProductionConnect: boolean;
+  /**
+   * Show a confirmation dialog before running destructive write statements
+   * (WHERE-less UPDATE/DELETE, DROP, TRUNCATE). Production profiles always
+   * confirm regardless of this flag.
+   */
+  confirmDangerousQueries: boolean;
   /** Behavior when previously open tabs exist for a profile being reconnected. */
   tabRestoreMode: TabRestoreMode;
 }
@@ -153,6 +159,8 @@ const MAX_BATCH = 100_000;
 
 export const DEFAULT_CONFIRM_PRODUCTION_CONNECT = true;
 
+export const DEFAULT_CONFIRM_DANGEROUS_QUERIES = true;
+
 export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -164,6 +172,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultDisplayCount: DEFAULT_DISPLAY_COUNT,
   streamPrefetchSize: DEFAULT_STREAM_PREFETCH_SIZE,
   confirmProductionConnect: DEFAULT_CONFIRM_PRODUCTION_CONNECT,
+  confirmDangerousQueries: DEFAULT_CONFIRM_DANGEROUS_QUERIES,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
 };
 
@@ -210,6 +219,7 @@ function loadInitial(): Settings {
       defaultDisplayCount?: unknown;
       streamPrefetchSize?: unknown;
       confirmProductionConnect?: unknown;
+      confirmDangerousQueries?: unknown;
       tabRestoreMode?: unknown;
     };
     return {
@@ -227,6 +237,10 @@ function loadInitial(): Settings {
         typeof parsed.confirmProductionConnect === "boolean"
           ? parsed.confirmProductionConnect
           : DEFAULT_CONFIRM_PRODUCTION_CONNECT,
+      confirmDangerousQueries:
+        typeof parsed.confirmDangerousQueries === "boolean"
+          ? parsed.confirmDangerousQueries
+          : DEFAULT_CONFIRM_DANGEROUS_QUERIES,
       tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
     };
   } catch {
@@ -329,6 +343,13 @@ export function setStreamPrefetchSize(value: number): void {
 export function setConfirmProductionConnect(value: boolean): void {
   if (current.confirmProductionConnect === value) return;
   current = { ...current, confirmProductionConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setConfirmDangerousQueries(value: boolean): void {
+  if (current.confirmDangerousQueries === value) return;
+  current = { ...current, confirmDangerousQueries: value };
   persist();
   listeners.forEach((cb) => cb());
 }
