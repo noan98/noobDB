@@ -213,6 +213,16 @@ export const api = {
 
   runQuery: (sessionId: string, sql: string, database?: string | null) =>
     invoke<QueryResult>("run_query", { sessionId, sql, database: database ?? null }),
+  runQueryTransaction: (
+    sessionId: string,
+    statements: string[],
+    database?: string | null,
+  ) =>
+    invoke<QueryResult>("run_query_transaction", {
+      sessionId,
+      statements,
+      database: database ?? null,
+    }),
   previewQuery: (sessionId: string, sql: string, database?: string | null) =>
     invoke<PreviewResult>("preview_query", { sessionId, sql, database: database ?? null }),
 

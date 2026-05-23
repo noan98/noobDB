@@ -36,6 +36,36 @@ pub async fn run_query(
     session.conn.execute(&sql, database.as_deref()).await
 }
 
+/// Applies `statements` as a single all-or-nothing transaction. Every
+/// statement is checked against the read-only gate first, then the whole
+/// batch is committed together; if any statement fails the backend rolls the
+/// transaction back so no partial edit is left behind. Returns an empty
+/// `QueryResult` carrying the total `rows_affected`.
+#[tauri::command]
+pub async fn run_query_transaction(
+    session_id: String,
+    statements: Vec<String>,
+    database: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<QueryResult> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    for sql in &statements {
+        ensure_allowed_for_session(&session, sql)?;
+    }
+    let started = std::time::Instant::now();
+    let affected = session
+        .conn
+        .execute_transaction(&statements, database.as_deref())
+        .await?;
+    Ok(QueryResult::empty(
+        affected,
+        started.elapsed().as_millis() as u64,
+    ))
+}
+
 #[tauri::command]
 pub async fn preview_query(
     session_id: String,

@@ -99,6 +99,7 @@ pub fn run() {
             commands::connection::disconnect,
             commands::connection::list_sessions,
             commands::query::run_query,
+            commands::query::run_query_transaction,
             commands::query::preview_query,
             commands::query::run_query_stream,
             commands::query::preview_query_stream,

@@ -124,6 +124,8 @@ const en = {
   settingsSafety: "Safety",
   settingsConfirmProductionConnect: "Confirm before connecting to production",
   settingsConfirmProductionConnectHelp: "Show a confirmation dialog when connecting to a profile marked as production.",
+  settingsConfirmDangerousQueries: "Confirm before dangerous write queries",
+  settingsConfirmDangerousQueriesHelp: "Show a confirmation dialog before running WHERE-less UPDATE/DELETE, DROP or TRUNCATE. Production profiles always confirm.",
   settingsTabPersistence: "Tab persistence",
   settingsTabPersistenceHelp: "Choose what to do with the tabs that were open when you last disconnected from a profile.",
   settingsTabRestoreMode: "Restore behavior",
@@ -132,6 +134,17 @@ const en = {
   settingsTabRestoreModeNever: "Never restore",
   tabRestoreConfirm: "Restore {count} tabs from your last session?",
   productionConfirm: "「{name}」は本番環境としてマークされています。本当に接続しますか？",
+  dangerousTitle: "Confirm dangerous query",
+  dangerousIntro: "This query may modify or destroy data:",
+  dangerousProductionNote: "This connection is marked as production.",
+  dangerousKindDeleteNoWhere: "DELETE without WHERE (deletes all rows)",
+  dangerousKindUpdateNoWhere: "UPDATE without WHERE (updates all rows)",
+  dangerousKindDrop: "DROP (removes the object)",
+  dangerousKindTruncate: "TRUNCATE (removes all rows)",
+  dangerousTargetTable: "Target: {target}",
+  dangerousTargetUnknown: "Target: (could not determine)",
+  dangerousCancel: "Cancel",
+  dangerousConfirm: "Run anyway",
   contextMenuEdit: "Edit connection",
   contextMenuDelete: "Delete connection",
   listProduction: "PROD",
@@ -305,7 +318,7 @@ const en = {
   statusApplyingEdits: "Applying {count} update(s)...",
   statusAppliedEdits: "Applied {count} update(s); {rows} rows affected.",
   statusApplyEditsError: "Apply failed: {error}",
-  statusApplyEditsPartial: "Applied {applied} of {total}; remaining stopped: {error}",
+  statusApplyEditsPartial: "Apply failed; all {total} update(s) rolled back, nothing was applied: {error}",
 
   exportButton: "Export",
   exportButtonTitle: "Export the current result set as CSV or JSON",
@@ -397,6 +410,88 @@ const en = {
   importExecute: "Import",
   importStop: "Stop",
   importCancelled: "Import cancelled.",
+
+  appHelp: "Help",
+  helpTitle: "Feature guide",
+  helpClose: "Close",
+  helpIntro:
+    "What each feature does and—most importantly—whether running it changes the database. Check the badge on every entry before you click.",
+  helpImpactLabel: "Effect on the DB when run",
+  helpImpactYes: "Writes to the DB",
+  helpImpactNo: "No DB changes",
+  helpUsageTitle: "How to use",
+  helpNoteLabel: "Note",
+
+  helpSectionSafe: "Read-only / preview — no DB changes",
+  helpSectionSafeDesc: "Safe to explore. These never modify your data.",
+  helpSectionWrite: "Writes to the DB — use with care",
+  helpSectionWriteDesc: "These commit changes to the connected database.",
+  helpSectionGuards: "Modes & safety guards",
+  helpSectionGuardsDesc: "Settings that help prevent accidental writes.",
+
+  helpDryRunTitle: "Dry Run",
+  helpDryRunDesc:
+    "Runs your query inside a transaction and rolls it back, then shows the before/after state of the affected rows. Nothing is committed.",
+  helpDryRunStep1: "Type your query in the editor.",
+  helpDryRunStep2: 'Press the "Dry Run" button.',
+  helpDryRunStep3:
+    "A preview panel opens at the bottom showing the table before and after.",
+  helpDryRunNote:
+    "Only INSERT/UPDATE/DELETE/REPLACE are supported. DDL such as CREATE/DROP/ALTER commits implicitly and cannot be dry-run.",
+
+  helpExplainTitle: "Explain",
+  helpExplainDesc:
+    "Runs EXPLAIN FORMAT=JSON and shows the query plan. It inspects the optimizer only and never changes data.",
+
+  helpFormatTitle: "Format",
+  helpFormatDesc:
+    "Reformats the SQL in the editor for readability. Touches the editor text only.",
+
+  helpQueryBuilderTitle: "Query Builder",
+  helpQueryBuilderDesc:
+    "Assembles SQL from a form. It only writes text into the editor—you still need to press Run to execute it.",
+
+  helpSnippetTitle: "Save snippet",
+  helpSnippetDesc:
+    "Saves a query locally for reuse. Stored on your machine, not in the database.",
+
+  helpExportTitle: "Export results (CSV/JSON)",
+  helpExportDesc:
+    "Writes the already-fetched result set to a file. A read-only export.",
+
+  helpCellEditTitle: "Cell edit (double-click)",
+  helpCellEditDesc:
+    "Double-clicking a cell stages an unsaved edit. Nothing reaches the database until you press Apply.",
+
+  helpDiscardTitle: "Discard",
+  helpDiscardDesc: "Throws away unsaved cell edits. No database access.",
+
+  helpHistoryTitle: "Query history",
+  helpHistoryDesc: "Browses previously run queries. Read-only reference.",
+
+  helpPaginationTitle: "Pagination / scroll fetch",
+  helpPaginationDesc:
+    "Fetches more rows with additional SELECTs as you scroll. Read-only.",
+
+  helpRunTitle: "Run",
+  helpRunDesc:
+    "Executes the query as-is. Anything other than SELECT (UPDATE/DELETE/INSERT/DDL) is applied directly to the database.",
+
+  helpApplyTitle: "Apply",
+  helpApplyDesc:
+    "Commits your unsaved cell edits as UPDATE statements against the database.",
+  helpApplyNote: "Currently runs outside a transaction (related: #102).",
+
+  helpImportTitle: "CSV import",
+  helpImportDesc: "Inserts the rows from a CSV file into the target table.",
+
+  helpReadOnlyTitle: "Read-only (read_only)",
+  helpReadOnlyDesc:
+    "Allows only SELECT/SHOW/DESCRIBE/EXPLAIN/WITH. Every write is rejected at the connection.",
+
+  helpProductionTitle: "Production mark (is_production)",
+  helpProductionDesc:
+    "Shows a confirmation dialog before connecting to a profile marked as production. Toggle it in Settings.",
 };
 
 type Key = keyof typeof en;
@@ -524,6 +619,8 @@ const ja: Dict = {
   settingsSafety: "セーフティ",
   settingsConfirmProductionConnect: "本番環境接続時に確認ダイアログを表示",
   settingsConfirmProductionConnectHelp: "本番環境としてマークされた接続先に接続する前に確認ダイアログを表示します。",
+  settingsConfirmDangerousQueries: "危険な書き込みクエリの実行前に確認",
+  settingsConfirmDangerousQueriesHelp: "WHERE 句のない UPDATE/DELETE、DROP、TRUNCATE を実行する前に確認ダイアログを表示します。本番環境では設定に関わらず必ず確認します。",
   settingsTabPersistence: "タブの永続化",
   settingsTabPersistenceHelp: "切断時に開いていたタブを、次回同じ接続先につないだときにどう扱うかを選択します。",
   settingsTabRestoreMode: "復元方法",
@@ -532,6 +629,17 @@ const ja: Dict = {
   settingsTabRestoreModeNever: "復元しない",
   tabRestoreConfirm: "前回開いていた {count} 個のタブを復元しますか？",
   productionConfirm: "「{name}」は本番環境としてマークされています。本当に接続しますか？",
+  dangerousTitle: "危険なクエリの確認",
+  dangerousIntro: "このクエリはデータを破壊・変更する可能性があります:",
+  dangerousProductionNote: "この接続は本番環境としてマークされています。",
+  dangerousKindDeleteNoWhere: "WHERE 句のない DELETE（全行を削除します）",
+  dangerousKindUpdateNoWhere: "WHERE 句のない UPDATE（全行を更新します）",
+  dangerousKindDrop: "DROP（オブジェクトを削除します）",
+  dangerousKindTruncate: "TRUNCATE（全行を削除します）",
+  dangerousTargetTable: "対象: {target}",
+  dangerousTargetUnknown: "対象: (特定できませんでした)",
+  dangerousCancel: "キャンセル",
+  dangerousConfirm: "実行する",
   contextMenuEdit: "接続情報を編集",
   contextMenuDelete: "接続先を削除",
   listProduction: "本番",
@@ -705,7 +813,7 @@ const ja: Dict = {
   statusApplyingEdits: "{count} 件の UPDATE を適用中...",
   statusAppliedEdits: "{count} 件の UPDATE を適用しました ({rows} 行に影響)。",
   statusApplyEditsError: "適用に失敗しました: {error}",
-  statusApplyEditsPartial: "{total} 件中 {applied} 件を適用後に停止しました: {error}",
+  statusApplyEditsPartial: "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",
 
   exportButton: "Export",
   exportButtonTitle: "現在の結果セットを CSV または JSON でエクスポートします",
@@ -797,6 +905,88 @@ const ja: Dict = {
   importExecute: "インポート",
   importStop: "中止",
   importCancelled: "インポートを中止しました。",
+
+  appHelp: "ヘルプ",
+  helpTitle: "機能ガイド",
+  helpClose: "閉じる",
+  helpIntro:
+    "各機能が何をするか、そして最も重要な「実行すると DB に変更が反映されるのか」を一覧できます。クリックする前に各項目のバッジを確認してください。",
+  helpImpactLabel: "実行による DB への影響",
+  helpImpactYes: "DB に反映される",
+  helpImpactNo: "DB に反映されない",
+  helpUsageTitle: "使用方法",
+  helpNoteLabel: "注意",
+
+  helpSectionSafe: "確認・読み取りのみ — DB に反映されない",
+  helpSectionSafeDesc: "気軽に試せます。これらの機能はデータを変更しません。",
+  helpSectionWrite: "DB に反映される — 要注意",
+  helpSectionWriteDesc: "接続中のデータベースに変更がコミットされます。",
+  helpSectionGuards: "モード / 安全装置",
+  helpSectionGuardsDesc: "誤った書き込みを防ぐための設定です。",
+
+  helpDryRunTitle: "Dry Run",
+  helpDryRunDesc:
+    "クエリをトランザクション内で試し実行し、ロールバックします。影響を受ける行の実行前後 (Before/After) を表示します。DB には何もコミットされません。",
+  helpDryRunStep1: "エディタにクエリを入力します。",
+  helpDryRunStep2: "「Dry Run」ボタンを実行します。",
+  helpDryRunStep3:
+    "画面下部に Preview パネルが表示され、テーブルの実行前後の状態を確認できます。",
+  helpDryRunNote:
+    "対象は INSERT/UPDATE/DELETE/REPLACE のみです。CREATE/DROP/ALTER などの DDL は暗黙コミットのため Dry Run できません。",
+
+  helpExplainTitle: "Explain",
+  helpExplainDesc:
+    "EXPLAIN FORMAT=JSON を実行し、実行計画を表示します。オプティマイザを確認するだけで、データは変更しません。",
+
+  helpFormatTitle: "整形 (Format)",
+  helpFormatDesc:
+    "エディタ内の SQL を読みやすく整形します。エディタのテキストを変更するだけです。",
+
+  helpQueryBuilderTitle: "Query Builder",
+  helpQueryBuilderDesc:
+    "フォームから SQL を組み立てます。エディタにテキストを書き込むだけで、実行するには別途 Run が必要です。",
+
+  helpSnippetTitle: "スニペット保存",
+  helpSnippetDesc:
+    "クエリをローカルに保存して再利用できます。データベースではなく端末上に保存されます。",
+
+  helpExportTitle: "結果のエクスポート (CSV/JSON)",
+  helpExportDesc:
+    "取得済みの結果セットをファイルに書き出します。読み取りのみのエクスポートです。",
+
+  helpCellEditTitle: "セルのダブルクリック編集",
+  helpCellEditDesc:
+    "セルをダブルクリックすると未保存の編集として保留されます。「適用」を押すまで DB には反映されません。",
+
+  helpDiscardTitle: "破棄",
+  helpDiscardDesc: "未保存のセル編集を捨てます。データベースにはアクセスしません。",
+
+  helpHistoryTitle: "クエリ履歴の閲覧",
+  helpHistoryDesc: "過去に実行したクエリを参照します。読み取りのみです。",
+
+  helpPaginationTitle: "ページネーション / スクロール取得",
+  helpPaginationDesc:
+    "スクロールに応じて追加の SELECT で行を取得します。読み取りのみです。",
+
+  helpRunTitle: "Run",
+  helpRunDesc:
+    "クエリをそのまま実行します。SELECT 以外 (UPDATE/DELETE/INSERT/DDL) はそのまま DB に反映されます。",
+
+  helpApplyTitle: "適用 (Apply)",
+  helpApplyDesc:
+    "未保存のセル編集を UPDATE 文としてデータベースに実行・反映します。",
+  helpApplyNote: "現状はトランザクション外で実行されます (関連: #102)。",
+
+  helpImportTitle: "CSV インポート",
+  helpImportDesc: "CSV ファイルの行を対象テーブルに実際に追加します。",
+
+  helpReadOnlyTitle: "読み取り専用 (read_only)",
+  helpReadOnlyDesc:
+    "SELECT/SHOW/DESCRIBE/EXPLAIN/WITH のみ許可します。書き込み系は接続時に一律で拒否されます。",
+
+  helpProductionTitle: "本番環境マーク (is_production)",
+  helpProductionDesc:
+    "本番としてマークしたプロファイルへの接続前に確認ダイアログを表示します。設定で ON/OFF を切り替えられます。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

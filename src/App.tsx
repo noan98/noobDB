@@ -31,8 +31,11 @@ import { PreviewGrid } from "./components/PreviewGrid";
 import { ExplainViewer } from "./components/ExplainViewer";
 import { TabBar } from "./components/TabBar";
 import { ImportModal } from "./components/ImportModal";
+import { HelpView } from "./components/HelpView";
 import { SettingsView } from "./components/SettingsView";
+import { DangerousQueryDialog } from "./components/DangerousQueryDialog";
 import { Splitter } from "./components/Splitter";
+import { analyzeDangerousSql, type DangerFinding } from "./dangerousSql";
 import { t as translate, useT } from "./i18n";
 import { useSettings, type TabRestoreMode } from "./settings";
 import {
@@ -222,6 +225,7 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -262,6 +266,15 @@ export default function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
+  // Set while a destructive query awaits confirmation; holds everything needed
+  // to run it once the user accepts the warning dialog.
+  const [pendingDangerous, setPendingDangerous] = useState<{
+    tabId: string;
+    sql: string;
+    findings: DangerFinding[];
+    isProduction: boolean;
+    autoLimit: number | null;
+  } | null>(null);
 
   const activeTab = useMemo(
     () => tabs.find((tt) => tt.id === activeTabId) ?? null,
@@ -867,16 +880,45 @@ export default function App() {
   const handleRunQuery = useCallback((sql: string) => {
     if (!activeTab) return;
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
-    // getting plan JSON instead of a raw result set.
-    const toRun = activeTab.kind === "explain" ? `${EXPLAIN_PREFIX}${sql}` : sql;
+    // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
+    // it never trips the destructive-query gate or auto LIMIT.
+    if (activeTab.kind === "explain") {
+      runQueryInTab(activeTab.id, `${EXPLAIN_PREFIX}${sql}`);
+      return;
+    }
     // Auto LIMIT only guards free-form editor queries; table tabs carry their
-    // own LIMIT and EXPLAIN is skipped by the backend parser anyway.
+    // own LIMIT. Writes pass through here too but the backend parser leaves
+    // them untouched.
     const autoLimit =
       activeTab.kind === "query" && settings.autoLimitEnabled
         ? settings.autoLimitCount
         : null;
-    runQueryInTab(activeTab.id, toRun, null, autoLimit);
-  }, [activeTab, runQueryInTab, settings.autoLimitEnabled, settings.autoLimitCount]);
+    const isProduction = selectedProfile?.is_production ?? false;
+    if (isProduction || settings.confirmDangerousQueries) {
+      const findings = analyzeDangerousSql(sql);
+      if (findings.length > 0) {
+        setPendingDangerous({ tabId: activeTab.id, sql, findings, isProduction, autoLimit });
+        return;
+      }
+    }
+    runQueryInTab(activeTab.id, sql, null, autoLimit);
+  }, [
+    activeTab,
+    runQueryInTab,
+    selectedProfile?.is_production,
+    settings.confirmDangerousQueries,
+    settings.autoLimitEnabled,
+    settings.autoLimitCount,
+  ]);
+
+  const handleConfirmDangerous = useCallback(() => {
+    if (!pendingDangerous) return;
+    const { tabId, sql, autoLimit } = pendingDangerous;
+    setPendingDangerous(null);
+    runQueryInTab(tabId, sql, null, autoLimit);
+  }, [pendingDangerous, runQueryInTab]);
+
+  const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
 
   // Badge action: re-run the auto-limited query without the cap so the user
   // sees the full result set.
@@ -943,6 +985,7 @@ export default function App() {
     setSnippetFormSql(sql);
     setShowForm(false);
     setShowSettings(false);
+    setShowHelp(false);
     setShowSnippetForm(true);
   }, []);
 
@@ -951,6 +994,7 @@ export default function App() {
     setSnippetFormSql("");
     setShowForm(false);
     setShowSettings(false);
+    setShowHelp(false);
     setShowSnippetForm(true);
   }, []);
 
@@ -1037,22 +1081,16 @@ export default function App() {
     if (stmts.length === 0) return;
     const tabId = activeTab.id;
     setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: stmts.length } });
-    // We can't wrap multiple statements in a server-side transaction
-    // through the prepared-statement path, so a mid-batch failure leaves
-    // earlier statements committed. Track applied/failed counts so the
-    // status line can tell the user what stuck.
+    // All statements run in a single backend transaction: either every
+    // UPDATE commits or, on any failure, the whole batch rolls back so the
+    // table is never left in a half-applied state.
     let totalAffected = 0;
-    let applied = 0;
     let failure: string | null = null;
-    for (const sql of stmts) {
-      try {
-        const res = await api.runQuery(sessionId, sql, database);
-        totalAffected += Number(res.rows_affected ?? 0);
-        applied += 1;
-      } catch (e) {
-        failure = String(e);
-        break;
-      }
+    try {
+      const res = await api.runQueryTransaction(sessionId, stmts, database);
+      totalAffected = Number(res.rows_affected ?? 0);
+    } catch (e) {
+      failure = String(e);
     }
     // Always refresh & drop edits afterwards: the result indices no
     // longer line up with whatever the user had buffered.
@@ -1067,7 +1105,7 @@ export default function App() {
       setStatus({
         kind: "key",
         key: "statusApplyEditsPartial",
-        vars: { applied, total: stmts.length, error: failure },
+        vars: { total: stmts.length, error: failure },
         error: true,
       });
     } else {
@@ -1198,7 +1236,15 @@ export default function App() {
             </button>
             <button
               className="icon"
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowSettings(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowSettings(false); setShowHelp(true); }}
+              title={t("appHelp")}
+              aria-label={t("appHelp")}
+            >
+              ?
+            </button>
+            <button
+              className="icon"
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(true); }}
               title={t("appSettings")}
               aria-label={t("appSettings")}
             >
@@ -1211,6 +1257,7 @@ export default function App() {
                   setEditingSnippet(null);
                   setSnippetFormSql("");
                   setShowSettings(false);
+                  setShowHelp(false);
                   setShowForm(false);
                   setShowSnippetForm(true);
                 }}
@@ -1222,7 +1269,7 @@ export default function App() {
             ) : sidebarTab === "connections" ? (
               <button
                 className="icon"
-                onClick={() => { setEditing(null); setShowSettings(false); setShowSnippetForm(false); setShowForm(true); }}
+                onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowSnippetForm(false); setShowForm(true); }}
                 title={t("appNew")}
                 aria-label={t("appNew")}
               >
@@ -1265,7 +1312,7 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             onConnect={handleConnect}
-            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowForm(true); }}
+            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowHelp(false); setShowForm(true); }}
             onDelete={async (id) => {
               await api.deleteProfile(id);
               await refreshProfiles();
@@ -1291,7 +1338,9 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {showSettings ? (
+        {showHelp ? (
+          <HelpView onClose={() => setShowHelp(false)} />
+        ) : showSettings ? (
           <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
         ) : showForm ? (
           <ConnectionForm
@@ -1475,6 +1524,15 @@ export default function App() {
           table={importTarget.table}
           onClose={() => setImportTarget(null)}
           onImported={() => handleImported(importTarget.database, importTarget.table)}
+        />
+      )}
+
+      {pendingDangerous && (
+        <DangerousQueryDialog
+          findings={pendingDangerous.findings}
+          isProduction={pendingDangerous.isProduction}
+          onConfirm={handleConfirmDangerous}
+          onCancel={handleCancelDangerous}
         />
       )}
     </div>
