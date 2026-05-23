@@ -476,11 +476,7 @@ fn top_level_select_list(s: &str) -> Option<&str> {
     while i < b.len() {
         match b[i] {
             b'(' => depth += 1,
-            b')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
+            b')' if depth > 0 => depth -= 1,
             b'f' if depth == 0 && i + 4 <= b.len() && &b[i..i + 4] == b"from" => {
                 let before_ok = i == 0 || !is_word_byte(b[i - 1]);
                 let after_ok = i + 4 >= b.len() || !is_word_byte(b[i + 4]);
@@ -504,11 +500,7 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
     while i < b.len() {
         match b[i] {
             b'(' => depth += 1,
-            b')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
+            b')' if depth > 0 => depth -= 1,
             b',' if depth == 0 => {
                 parts.push(&s[start..i]);
                 start = i + 1;
