@@ -13,6 +13,9 @@ pub struct Session {
     pub id: SessionId,
     pub profile_id: Option<String>,
     pub conn: Connection,
+    /// When true, the query commands reject any non-read-only SQL before
+    /// it reaches the driver. Set at connect time from the profile flag.
+    pub read_only: bool,
     /// Held to keep the tunnel alive for the lifetime of this session.
     /// Dropping the Session drops this and cleans the tunnel up.
     pub _tunnel: Option<SshTunnel>,

@@ -316,6 +316,7 @@ export default function App() {
         database: profile.database,
         ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
         file_path: profile.file_path,
+        read_only: profile.read_only,
       });
       setSessionId(res.session_id);
       setSelectedProfile(profile);
@@ -1060,6 +1061,14 @@ export default function App() {
                   <>
                     <span className="status-dot status-connected" aria-hidden />
                     <span className="topbar-name">{selectedProfile.name}</span>
+                    {selectedProfile.read_only && (
+                      <span
+                        className="tree-badge read-only-badge"
+                        title={t("listReadOnlyTitle")}
+                      >
+                        {t("listReadOnly")}
+                      </span>
+                    )}
                     <span className="topbar-meta">
                       {selectedProfile.driver === "sqlite"
                         ? selectedProfile.file_path ?? ""

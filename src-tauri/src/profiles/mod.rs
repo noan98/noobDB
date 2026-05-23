@@ -27,6 +27,11 @@ pub struct ConnectionProfile {
     /// confirmation dialog before connecting.
     #[serde(default)]
     pub is_production: bool,
+    /// When true, sessions opened from this profile reject any SQL that is
+    /// not strictly read-only. Acts as a last-line safety net independent
+    /// of DB-side privileges.
+    #[serde(default)]
+    pub read_only: bool,
     /// Database file path for file-backed drivers (SQLite). `None` for
     /// network-backed drivers (MySQL, PostgreSQL).
     #[serde(default)]

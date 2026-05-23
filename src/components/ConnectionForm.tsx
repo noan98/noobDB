@@ -63,6 +63,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [group, setGroup] = useState(initial?.group ?? "");
   const [color, setColor] = useState<string | null>(initial?.color ?? null);
   const [isProduction, setIsProduction] = useState<boolean>(initial?.is_production ?? false);
+  const [readOnly, setReadOnly] = useState<boolean>(initial?.read_only ?? false);
 
   const [useSsh, setUseSsh] = useState(!!initial?.ssh);
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
@@ -121,6 +122,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         database: null,
         ssh: null,
         file_path: filePath || null,
+        read_only: readOnly,
       };
     }
     return {
@@ -141,6 +143,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           }
         : null,
       file_path: null,
+      read_only: readOnly,
     };
   };
 
@@ -180,6 +183,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         group: group.trim() || null,
         color: color || null,
         is_production: isProduction,
+        read_only: readOnly,
         file_path: isFileBacked ? (filePath || null) : null,
       });
       onSaved();
@@ -319,6 +323,20 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </label>
             <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
               {t("formIsProductionHelp")}
+            </p>
+          </div>
+          <div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto" }}
+                checked={readOnly}
+                onChange={(e) => setReadOnly(e.target.checked)}
+              />
+              {t("formReadOnly")}
+            </label>
+            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+              {t("formReadOnlyHelp")}
             </p>
           </div>
         </div>
