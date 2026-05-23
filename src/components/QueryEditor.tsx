@@ -52,6 +52,7 @@ export interface ActiveTable {
 interface Props {
   onRun: (sql: string) => void;
   onPreview?: (sql: string) => void;
+  onExplain?: (sql: string) => void;
   onChange?: (sql: string) => void;
   onFormatError?: (error: string) => void;
   onSaveSnippet?: (sql: string) => void;
@@ -61,6 +62,11 @@ interface Props {
   initialSql?: string;
   sessionId?: string | null;
   defaultDatabase?: string | null;
+  /**
+   * When true the primary action runs EXPLAIN instead of the statement, so
+   * the Run button is relabelled accordingly. Set for `explain` tabs.
+   */
+  explainMode?: boolean;
   driver?: string;
 }
 
@@ -126,6 +132,7 @@ function buildSqlExtension(driver: string, schemaTable: SchemaTable | null | und
 export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEditor({
   onRun,
   onPreview,
+  onExplain,
   onChange,
   onFormatError,
   onSaveSnippet,
@@ -135,6 +142,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   initialSql,
   sessionId,
   defaultDatabase,
+  explainMode,
   driver = "mysql",
 }: Props, ref) {
   const t = useT();
@@ -250,12 +258,22 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     if (text !== null) onPreview(text);
   };
 
-  const runLabel = activeTable
-    ? t("editorRunOnTable", { table: activeTable.name })
-    : t("editorRun");
-  const runTitle = activeTable
-    ? t("editorRunOnTableTitle", { database: activeTable.database, table: activeTable.name })
-    : undefined;
+  const explainSelectionOrAll = () => {
+    if (!onExplain) return;
+    const text = currentText();
+    if (text !== null) onExplain(text);
+  };
+
+  const runLabel = explainMode
+    ? t("editorExplain")
+    : activeTable
+      ? t("editorRunOnTable", { table: activeTable.name })
+      : t("editorRun");
+  const runTitle = explainMode
+    ? t("editorExplainTitle")
+    : activeTable
+      ? t("editorRunOnTableTitle", { database: activeTable.database, table: activeTable.name })
+      : undefined;
 
   return (
     <div className="editor">
@@ -305,6 +323,24 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           </span>
           {t("editorFormat")}
         </button>
+        {onExplain && (
+          <button
+            className="with-icon"
+            onClick={explainSelectionOrAll}
+            disabled={disabled || !hasContent}
+            title={t("editorExplainTitle")}
+          >
+            <span className="btn-icon" aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="6" y="1.5" width="4" height="3" rx="0.5" />
+                <rect x="1.5" y="11.5" width="4" height="3" rx="0.5" />
+                <rect x="10.5" y="11.5" width="4" height="3" rx="0.5" />
+                <path d="M8 4.5v2.5M3.5 11.5V9h9v2.5" />
+              </svg>
+            </span>
+            {t("editorExplain")}
+          </button>
+        )}
         {onSaveSnippet && (
           <button
             className="with-icon"

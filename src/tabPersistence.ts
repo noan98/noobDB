@@ -1,15 +1,15 @@
 const STORAGE_PREFIX = "tablex.tabs.";
 
 export interface PersistedTab {
-  kind: "table" | "query";
+  kind: "table" | "query" | "explain";
   title: string;
   database?: string;
   table?: string;
   sql: string;
 }
 
-function isValidKind(k: unknown): k is "table" | "query" {
-  return k === "table" || k === "query";
+function isValidKind(k: unknown): k is "table" | "query" | "explain" {
+  return k === "table" || k === "query" || k === "explain";
 }
 
 function isValidTab(v: unknown): v is PersistedTab {
