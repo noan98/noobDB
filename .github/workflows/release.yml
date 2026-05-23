@@ -3,6 +3,8 @@ name: release
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -76,7 +78,17 @@ jobs:
             fs.writeFileSync("src-tauri/Cargo.lock", lock);
           '
 
-      - name: Build Tauri app
+      # タグ以外 (main への push / 手動実行) では、リリースを作らずに
+      # ビルドだけ走らせて sccache / rust-cache を main スコープに温める。
+      # タグビルドはここで作られた main スコープのキャッシュにフォールバックして
+      # ヒットするようになる。
+      - name: Build Tauri app (cache warm, no release)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: npm run tauri build -- ${{ matrix.args }}
+
+      # タグ push のときだけ実際のリリース (ドラフト) を作成する。
+      - name: Build Tauri app (release)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
