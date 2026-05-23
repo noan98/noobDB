@@ -8,6 +8,7 @@ import {
   DriverKind,
   PreviewResult,
   QueryResult,
+  Snippet,
   TableColumnInfo,
   listenPreviewStream,
   listenQueryStream,
@@ -21,7 +22,9 @@ import {
 } from "./components/cellEdit";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
-import { QueryEditor, type SchemaTable } from "./components/QueryEditor";
+import { SnippetList } from "./components/SnippetList";
+import { SnippetForm } from "./components/SnippetForm";
+import { QueryEditor, type QueryEditorHandle, type SchemaTable } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
 import { ExplainViewer } from "./components/ExplainViewer";
@@ -226,6 +229,13 @@ export default function App() {
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
   const [showForm, setShowForm] = useState(false);
 
+  const [sidebarTab, setSidebarTab] = useState<"connections" | "snippets">("connections");
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
+  const [snippetFormSql, setSnippetFormSql] = useState<string>("");
+  const [showSnippetForm, setShowSnippetForm] = useState(false);
+  const editorRef = useRef<QueryEditorHandle>(null);
+
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
@@ -292,6 +302,19 @@ export default function App() {
   useEffect(() => {
     refreshProfiles();
   }, [refreshProfiles]);
+
+  const refreshSnippets = useCallback(async () => {
+    try {
+      const list = await api.listSnippets();
+      setSnippets(list);
+    } catch (e) {
+      setStatus({ kind: "key", key: "statusFailedLoadSnippets", vars: { error: String(e) }, error: true });
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshSnippets();
+  }, [refreshSnippets]);
 
   // Keep the active profile pointer in sync when the profile is edited or
   // when the saved list is refreshed for any other reason.
@@ -843,6 +866,39 @@ export default function App() {
     updateTab(activeTab.id, { sql });
   }, [activeTab, updateTab]);
 
+  // Insert a snippet into the active editor, or open a fresh query tab
+  // holding the snippet when there is no active tab yet.
+  const handleInsertSnippet = useCallback((snippet: Snippet) => {
+    if (activeTab) {
+      editorRef.current?.insertText(snippet.sql);
+    } else if (sessionId) {
+      const tab = { ...makeQueryTab(), sql: snippet.sql };
+      setTabs((prev) => [...prev, tab]);
+      setActiveTabId(tab.id);
+    }
+  }, [activeTab, sessionId]);
+
+  const handleSaveSnippetFromEditor = useCallback((sql: string) => {
+    setEditingSnippet(null);
+    setSnippetFormSql(sql);
+    setShowForm(false);
+    setShowSettings(false);
+    setShowSnippetForm(true);
+  }, []);
+
+  const handleEditSnippet = useCallback((snippet: Snippet) => {
+    setEditingSnippet(snippet);
+    setSnippetFormSql("");
+    setShowForm(false);
+    setShowSettings(false);
+    setShowSnippetForm(true);
+  }, []);
+
+  const handleDeleteSnippet = useCallback(async (id: string) => {
+    await api.deleteSnippet(id);
+    await refreshSnippets();
+  }, [refreshSnippets]);
+
   const handleSetCellEdit = useCallback(
     (rowIdx: number, colIdx: number, value: string | null) => {
       if (!activeTab) return;
@@ -1046,7 +1102,9 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <header>
-          <span className="sidebar-title">{t("appConnections")}</span>
+          <span className="sidebar-title">
+            {sidebarTab === "snippets" ? t("appSnippets") : t("appConnections")}
+          </span>
           <div className="header-actions">
             <button
               className="icon"
@@ -1058,36 +1116,81 @@ export default function App() {
             </button>
             <button
               className="icon"
-              onClick={() => { setShowForm(false); setShowSettings(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowSettings(true); }}
               title={t("appSettings")}
               aria-label={t("appSettings")}
             >
               ⚙
             </button>
-            <button
-              className="icon"
-              onClick={() => { setEditing(null); setShowSettings(false); setShowForm(true); }}
-              title={t("appNew")}
-              aria-label={t("appNew")}
-            >
-              +
-            </button>
+            {sidebarTab === "snippets" ? (
+              <button
+                className="icon"
+                onClick={() => {
+                  setEditingSnippet(null);
+                  setSnippetFormSql("");
+                  setShowSettings(false);
+                  setShowForm(false);
+                  setShowSnippetForm(true);
+                }}
+                title={t("appNewSnippet")}
+                aria-label={t("appNewSnippet")}
+              >
+                +
+              </button>
+            ) : (
+              <button
+                className="icon"
+                onClick={() => { setEditing(null); setShowSettings(false); setShowSnippetForm(false); setShowForm(true); }}
+                title={t("appNew")}
+                aria-label={t("appNew")}
+              >
+                +
+              </button>
+            )}
           </div>
         </header>
-        <ConnectionList
-          profiles={profiles}
-          activeProfileId={selectedProfile?.id ?? null}
-          sessionId={sessionId}
-          connectingId={connectingId}
-          errorProfileId={errorProfileId}
-          onConnect={handleConnect}
-          onEdit={(p) => { setEditing(p); setShowForm(true); }}
-          onDelete={async (id) => {
-            await api.deleteProfile(id);
-            await refreshProfiles();
-          }}
-          onPickTable={handleOpenTable}
-        />
+        <div className="sidebar-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={sidebarTab === "connections"}
+            className={`sidebar-tab ${sidebarTab === "connections" ? "active" : ""}`}
+            onClick={() => setSidebarTab("connections")}
+          >
+            {t("sidebarTabConnections")}
+          </button>
+          <button
+            role="tab"
+            aria-selected={sidebarTab === "snippets"}
+            className={`sidebar-tab ${sidebarTab === "snippets" ? "active" : ""}`}
+            onClick={() => setSidebarTab("snippets")}
+          >
+            {t("sidebarTabSnippets")}
+          </button>
+        </div>
+        {sidebarTab === "connections" ? (
+          <ConnectionList
+            profiles={profiles}
+            activeProfileId={selectedProfile?.id ?? null}
+            sessionId={sessionId}
+            connectingId={connectingId}
+            errorProfileId={errorProfileId}
+            onConnect={handleConnect}
+            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowForm(true); }}
+            onDelete={async (id) => {
+              await api.deleteProfile(id);
+              await refreshProfiles();
+            }}
+            onPickTable={handleOpenTable}
+          />
+        ) : (
+          <SnippetList
+            snippets={snippets}
+            activeProfile={selectedProfile}
+            onInsert={handleInsertSnippet}
+            onEdit={handleEditSnippet}
+            onDelete={handleDeleteSnippet}
+          />
+        )}
       </aside>
 
       <main className="main">
@@ -1102,6 +1205,20 @@ export default function App() {
               await refreshProfiles();
             }}
             onCancel={() => setShowForm(false)}
+          />
+        ) : showSnippetForm ? (
+          <SnippetForm
+            initial={editingSnippet}
+            snippets={snippets}
+            profiles={profiles}
+            activeProfile={selectedProfile}
+            initialSql={snippetFormSql}
+            onSaved={async () => {
+              setShowSnippetForm(false);
+              setSidebarTab("snippets");
+              await refreshSnippets();
+            }}
+            onCancel={() => setShowSnippetForm(false)}
           />
         ) : (
           <>
@@ -1163,12 +1280,14 @@ export default function App() {
                   first={
                     <QueryEditor
                       key={activeTab.id}
+                      ref={editorRef}
                       initialSql={activeTab.sql}
                       onRun={handleRunQuery}
                       onPreview={activeTab.kind === "explain" ? undefined : handlePreviewQuery}
                       onExplain={activeTab.kind === "explain" ? undefined : handleExplainQuery}
                       explainMode={activeTab.kind === "explain"}
                       onChange={handleEditorChange}
+                      onSaveSnippet={handleSaveSnippetFromEditor}
                       onFormatError={(error) =>
                         setStatus({
                           kind: "key",

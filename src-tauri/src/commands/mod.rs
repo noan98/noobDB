@@ -3,3 +3,4 @@ pub mod export;
 pub mod profiles;
 pub mod query;
 pub mod schema;
+pub mod snippets;
