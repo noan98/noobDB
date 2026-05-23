@@ -33,7 +33,9 @@ import { TabBar } from "./components/TabBar";
 import { ImportModal } from "./components/ImportModal";
 import { HelpView } from "./components/HelpView";
 import { SettingsView } from "./components/SettingsView";
+import { DangerousQueryDialog } from "./components/DangerousQueryDialog";
 import { Splitter } from "./components/Splitter";
+import { analyzeDangerousSql, type DangerFinding } from "./dangerousSql";
 import { t as translate, useT } from "./i18n";
 import { useSettings, type TabRestoreMode } from "./settings";
 import {
@@ -249,6 +251,14 @@ export default function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
+  // Set while a destructive query awaits confirmation; holds everything needed
+  // to run it once the user accepts the warning dialog.
+  const [pendingDangerous, setPendingDangerous] = useState<{
+    tabId: string;
+    sql: string;
+    findings: DangerFinding[];
+    isProduction: boolean;
+  } | null>(null);
 
   const activeTab = useMemo(
     () => tabs.find((tt) => tt.id === activeTabId) ?? null,
@@ -844,10 +854,31 @@ export default function App() {
   const handleRunQuery = useCallback((sql: string) => {
     if (!activeTab) return;
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
-    // getting plan JSON instead of a raw result set.
-    const toRun = activeTab.kind === "explain" ? `${EXPLAIN_PREFIX}${sql}` : sql;
-    runQueryInTab(activeTab.id, toRun);
-  }, [activeTab, runQueryInTab]);
+    // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
+    // it never trips the destructive-query gate.
+    if (activeTab.kind === "explain") {
+      runQueryInTab(activeTab.id, `${EXPLAIN_PREFIX}${sql}`);
+      return;
+    }
+    const isProduction = selectedProfile?.is_production ?? false;
+    if (isProduction || settings.confirmDangerousQueries) {
+      const findings = analyzeDangerousSql(sql);
+      if (findings.length > 0) {
+        setPendingDangerous({ tabId: activeTab.id, sql, findings, isProduction });
+        return;
+      }
+    }
+    runQueryInTab(activeTab.id, sql);
+  }, [activeTab, runQueryInTab, selectedProfile?.is_production, settings.confirmDangerousQueries]);
+
+  const handleConfirmDangerous = useCallback(() => {
+    if (!pendingDangerous) return;
+    const { tabId, sql } = pendingDangerous;
+    setPendingDangerous(null);
+    runQueryInTab(tabId, sql);
+  }, [pendingDangerous, runQueryInTab]);
+
+  const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
 
   const handleExplainQuery = useCallback((sql: string) => {
     // Re-explain in place when already on an explain tab; otherwise open a
@@ -1448,6 +1479,15 @@ export default function App() {
           table={importTarget.table}
           onClose={() => setImportTarget(null)}
           onImported={() => handleImported(importTarget.database, importTarget.table)}
+        />
+      )}
+
+      {pendingDangerous && (
+        <DangerousQueryDialog
+          findings={pendingDangerous.findings}
+          isProduction={pendingDangerous.isProduction}
+          onConfirm={handleConfirmDangerous}
+          onCancel={handleCancelDangerous}
         />
       )}
     </div>

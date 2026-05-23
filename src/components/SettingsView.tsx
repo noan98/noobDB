@@ -14,6 +14,7 @@ import {
   resetPreviewHighlight,
   resetStreamingDefaults,
   resetSyntaxColors,
+  setConfirmDangerousQueries,
   setConfirmProductionConnect,
   setDefaultDisplayCount,
   setPreviewHighlight,
@@ -171,6 +172,20 @@ export function SettingsView({ theme, onClose }: Props) {
           </label>
           <span className="settings-help-inline">
             {t("settingsConfirmProductionConnectHelp")}
+          </span>
+        </div>
+        <div className="settings-toggle-row">
+          <label htmlFor="settings-confirm-dangerous" className="settings-toggle-label">
+            <input
+              id="settings-confirm-dangerous"
+              type="checkbox"
+              checked={settings.confirmDangerousQueries}
+              onChange={(e) => setConfirmDangerousQueries(e.target.checked)}
+            />
+            {t("settingsConfirmDangerousQueries")}
+          </label>
+          <span className="settings-help-inline">
+            {t("settingsConfirmDangerousQueriesHelp")}
           </span>
         </div>
       </section>
