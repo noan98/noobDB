@@ -24,6 +24,7 @@ import { ConnectionForm } from "./components/ConnectionForm";
 import { QueryEditor, type SchemaTable } from "./components/QueryEditor";
 import { ResultGrid } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
+import { ExplainViewer } from "./components/ExplainViewer";
 import { TabBar } from "./components/TabBar";
 import { SettingsView } from "./components/SettingsView";
 import { Splitter } from "./components/Splitter";
@@ -53,7 +54,9 @@ type Status =
   | { kind: "literal"; text: string; error?: boolean }
   | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
 
-type TabKind = "table" | "query";
+type TabKind = "table" | "query" | "explain";
+
+const EXPLAIN_PREFIX = "EXPLAIN FORMAT=JSON ";
 
 interface Tab {
   id: string;
@@ -124,6 +127,33 @@ function makeQueryTab(): Tab {
     kind: "query",
     title: translate("tabUntitledQuery"),
     sql: "SELECT 1;",
+    result: null,
+    preview: null,
+    schemaTable: null,
+    streaming: false,
+    previewRowLimit: 100,
+    paginatable: null,
+    loadingMore: false,
+    canLoadMore: false,
+    tableColumns: null,
+    pendingEdits: {},
+  };
+}
+
+function explainTabTitle(sql: string): string {
+  const oneLine = sql.replace(/\s+/g, " ").trim();
+  const base = translate("tabExplainTitle");
+  if (!oneLine) return base;
+  const snippet = oneLine.length > 28 ? `${oneLine.slice(0, 28)}…` : oneLine;
+  return `${base}: ${snippet}`;
+}
+
+function makeExplainTab(sql: string): Tab {
+  return {
+    id: newTabId(),
+    kind: "explain",
+    title: explainTabTitle(sql),
+    sql,
     result: null,
     preview: null,
     schemaTable: null,
@@ -559,6 +589,10 @@ export default function App() {
               // Table is gone — fall through to a query tab using the saved SQL.
             }
           }
+          if (s.kind === "explain") {
+            const tab = makeExplainTab(s.sql);
+            return { ...tab, title: s.title || tab.title, previewRowLimit: limit };
+          }
           return {
             id: newTabId(),
             kind: "query",
@@ -775,7 +809,23 @@ export default function App() {
 
   const handleRunQuery = useCallback((sql: string) => {
     if (!activeTab) return;
-    runQueryInTab(activeTab.id, sql);
+    // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
+    // getting plan JSON instead of a raw result set.
+    const toRun = activeTab.kind === "explain" ? `${EXPLAIN_PREFIX}${sql}` : sql;
+    runQueryInTab(activeTab.id, toRun);
+  }, [activeTab, runQueryInTab]);
+
+  const handleExplainQuery = useCallback((sql: string) => {
+    // Re-explain in place when already on an explain tab; otherwise open a
+    // dedicated explain tab so the source query/result is left untouched.
+    if (activeTab?.kind === "explain") {
+      runQueryInTab(activeTab.id, `${EXPLAIN_PREFIX}${sql}`);
+      return;
+    }
+    const tab = makeExplainTab(sql);
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+    runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
   }, [activeTab, runQueryInTab]);
 
   const handleLoadMore = useCallback(() => {
@@ -1115,7 +1165,9 @@ export default function App() {
                       key={activeTab.id}
                       initialSql={activeTab.sql}
                       onRun={handleRunQuery}
-                      onPreview={handlePreviewQuery}
+                      onPreview={activeTab.kind === "explain" ? undefined : handlePreviewQuery}
+                      onExplain={activeTab.kind === "explain" ? undefined : handleExplainQuery}
+                      explainMode={activeTab.kind === "explain"}
                       onChange={handleEditorChange}
                       onFormatError={(error) =>
                         setStatus({
@@ -1137,7 +1189,12 @@ export default function App() {
                     />
                   }
                   second={
-                    activeTab.preview ? (
+                    activeTab.kind === "explain" ? (
+                      <ExplainViewer
+                        result={activeTab.result}
+                        streaming={activeTab.streaming}
+                      />
+                    ) : activeTab.preview ? (
                       <PreviewGrid
                         result={activeTab.preview}
                         rowLimit={activeTab.previewRowLimit}
