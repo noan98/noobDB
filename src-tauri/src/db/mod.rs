@@ -454,7 +454,9 @@ fn is_aggregate_only(body: &str) -> bool {
         return false;
     }
     // GROUP BY, window functions (`OVER`) and DISTINCT can each yield many rows.
-    if contains_word(body, "group") || contains_word(body, "over") || contains_word(body, "distinct")
+    if contains_word(body, "group")
+        || contains_word(body, "over")
+        || contains_word(body, "distinct")
     {
         return false;
     }
@@ -687,7 +689,9 @@ mod tests {
         assert!(apply_auto_limit("SELECT COUNT(*) FROM t", 1000).is_none());
         assert!(apply_auto_limit("select sum(x), avg(y) from t", 1000).is_none());
         assert!(apply_auto_limit("SELECT group_concat(name) FROM t", 1000).is_none());
-        assert!(apply_auto_limit("SELECT max(a) FROM t WHERE b IN (SELECT b FROM s)", 1000).is_none());
+        assert!(
+            apply_auto_limit("SELECT max(a) FROM t WHERE b IN (SELECT b FROM s)", 1000).is_none()
+        );
     }
 
     #[test]

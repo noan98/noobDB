@@ -3,8 +3,8 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::db::{apply_auto_limit, is_read_only_sql};
 use crate::db::types::{Column, PreviewResult, QueryResult, StreamBatch, Value};
+use crate::db::{apply_auto_limit, is_read_only_sql};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
