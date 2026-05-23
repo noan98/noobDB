@@ -1,4 +1,5 @@
 import { CellValue, Column, TableColumnInfo } from "../api/tauri";
+import { quoteIdentFor } from "./sqlDialect";
 
 /**
  * Inline cell edits awaiting Preview/Apply.
@@ -73,18 +74,11 @@ export function resolvePkIndices(
   return indices;
 }
 
-function quoteIdent(driver: string, name: string): string {
-  if (driver === "postgres" || driver === "sqlite") {
-    return '"' + name.replace(/"/g, '""') + '"';
-  }
-  return "`" + name.replace(/`/g, "``") + "`";
-}
-
 function qualifiedTableRef(driver: string, database: string, table: string): string {
   // SQLite has a single namespace per connection — the synthetic "main"
   // database label is for the UI tree, not the SQL itself.
-  if (driver === "sqlite") return quoteIdent(driver, table);
-  return `${quoteIdent(driver, database)}.${quoteIdent(driver, table)}`;
+  if (driver === "sqlite") return quoteIdentFor(driver, table);
+  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 
 function quoteString(s: string): string {
@@ -169,13 +163,13 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
       const col = input.columns[colIdx];
       if (!col) continue;
       setParts.push(
-        `${quoteIdent(input.driver, col.name)} = ${literalFromInput(rowEdits[colIdx], col)}`,
+        `${quoteIdentFor(input.driver, col.name)} = ${literalFromInput(rowEdits[colIdx], col)}`,
       );
     }
     if (setParts.length === 0) continue;
     const whereParts = input.pkIndices.map((i) => {
       const col = input.columns[i];
-      return `${quoteIdent(input.driver, col.name)} = ${literalFromCellValue(row[i])}`;
+      return `${quoteIdentFor(input.driver, col.name)} = ${literalFromCellValue(row[i])}`;
     });
     stmts.push(
       `UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`,
