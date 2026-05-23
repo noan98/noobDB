@@ -522,6 +522,68 @@ label {
   background: color-mix(in srgb, var(--status-error) 12%, transparent);
 }
 
+/* ---------- Sidebar tabs (Connections / Snippets) ---------- */
+
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 7px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.sidebar-tab:hover { background: var(--bg-hover); color: var(--text); }
+.sidebar-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- Snippets ---------- */
+
+.snippet-icon { color: var(--accent); }
+.tree-node.snippet > .tree-row.snippet-row { padding-left: 6px; }
+.tree-badge.snippet-tag {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+}
+.snippet-scope-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.snippet-scope-toggle input[type="checkbox"] { width: auto; }
+.form textarea.snippet-sql {
+  font: inherit;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 13px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  border-radius: 6px;
+  width: 100%;
+  resize: vertical;
+}
+.form textarea.snippet-sql:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
 /* ---------- Color swatch picker (connection form) ---------- */
 
 .color-swatch {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -54,6 +54,7 @@ interface Props {
   onPreview?: (sql: string) => void;
   onChange?: (sql: string) => void;
   onFormatError?: (error: string) => void;
+  onSaveSnippet?: (sql: string) => void;
   disabled?: boolean;
   schemaTable?: SchemaTable | null;
   activeTable?: ActiveTable | null;
@@ -61,6 +62,11 @@ interface Props {
   sessionId?: string | null;
   defaultDatabase?: string | null;
   driver?: string;
+}
+
+export interface QueryEditorHandle {
+  /** Inserts text at the current cursor (replacing any selection). */
+  insertText: (text: string) => void;
 }
 
 function formatEditorContent(
@@ -117,11 +123,12 @@ function buildSqlExtension(driver: string, schemaTable: SchemaTable | null | und
   });
 }
 
-export function QueryEditor({
+export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEditor({
   onRun,
   onPreview,
   onChange,
   onFormatError,
+  onSaveSnippet,
   disabled,
   schemaTable,
   activeTable,
@@ -129,7 +136,7 @@ export function QueryEditor({
   sessionId,
   defaultDatabase,
   driver = "mysql",
-}: Props) {
+}: Props, ref) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -198,6 +205,19 @@ export function QueryEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schemaKey, driver]);
 
+  useImperativeHandle(ref, () => ({
+    insertText: (text: string) => {
+      const view = viewRef.current;
+      if (!view) return;
+      const sel = view.state.selection.main;
+      view.dispatch({
+        changes: { from: sel.from, to: sel.to, insert: text },
+        selection: { anchor: sel.from + text.length },
+      });
+      view.focus();
+    },
+  }), []);
+
   const currentText = (): string | null => {
     const view = viewRef.current;
     if (!view) return null;
@@ -205,6 +225,12 @@ export function QueryEditor({
     const text = sel.empty ? view.state.doc.toString() : view.state.sliceDoc(sel.from, sel.to);
     if (text.trim().length === 0) return null;
     return text;
+  };
+
+  const saveSelectionOrAll = () => {
+    if (!onSaveSnippet) return;
+    const text = currentText();
+    if (text !== null) onSaveSnippet(text);
   };
 
   const runSelectionOrAll = () => {
@@ -279,6 +305,23 @@ export function QueryEditor({
           </span>
           {t("editorFormat")}
         </button>
+        {onSaveSnippet && (
+          <button
+            className="with-icon"
+            onClick={saveSelectionOrAll}
+            disabled={disabled || !hasContent}
+            title={t("editorSaveSnippetTitle")}
+          >
+            <span className="btn-icon" aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
+                <path d="M5 2v4h5V2" />
+                <path d="M5 10h6" />
+              </svg>
+            </span>
+            {t("editorSaveSnippet")}
+          </button>
+        )}
         {sessionId && (
           <button
             className="with-icon"
@@ -309,4 +352,4 @@ export function QueryEditor({
       )}
     </div>
   );
-}
+});
