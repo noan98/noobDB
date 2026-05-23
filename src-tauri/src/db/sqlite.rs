@@ -230,6 +230,60 @@ impl SqliteConn {
         })
     }
 
+    /// Bulk INSERT via batched multi-row statements bound as parameters and
+    /// wrapped in one transaction. Cells bind as text (`NULL` for `None`) and
+    /// SQLite applies column affinity, so numeric-looking text lands in
+    /// INTEGER/REAL columns as numbers.
+    pub async fn import_rows<F>(
+        &self,
+        _database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        batch_size: usize,
+        mut on_progress: F,
+    ) -> Result<u64>
+    where
+        F: FnMut(u64) -> Result<()>,
+    {
+        if columns.is_empty() {
+            return Err(AppError::InvalidInput("no columns to import".into()));
+        }
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = quote_ident(table);
+        // SQLite's default bound-variable limit is conservative (historically
+        // 999); keep each statement under it regardless of the requested size.
+        let max_rows = (900 / ncols).max(1);
+        let batch = batch_size.clamp(1, max_rows);
+
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+        let mut inserted: u64 = 0;
+        for chunk in rows.chunks(batch) {
+            let sql = build_insert_sql(&table_ident, &cols_sql, ncols, chunk.len());
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+            for row in chunk {
+                for ci in 0..ncols {
+                    let cell = row.get(ci).cloned().unwrap_or(None);
+                    q = q.bind(cell);
+                }
+            }
+            q.execute(&mut *tx).await?;
+            inserted += chunk.len() as u64;
+            on_progress(inserted)?;
+        }
+        tx.commit().await?;
+        Ok(inserted)
+    }
+
     pub async fn databases(&self) -> Result<Vec<String>> {
         // SQLite uses one database per connection (ATTACH not supported here).
         // Surface the conventional "main" alias so the tree UI has a node.
@@ -497,6 +551,33 @@ async fn fetch_primary_key(pool: &SqlitePool, target: &str) -> Result<Vec<String
         .collect();
     entries.sort_by_key(|(p, _)| *p);
     Ok(entries.into_iter().map(|(_, n)| n).collect())
+}
+
+/// Double-quotes a single identifier, doubling any embedded double quotes.
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Builds `INSERT INTO "tbl" ("c1", "c2") VALUES (?,?),(?,?)...` with `nrows`
+/// placeholder tuples of `ncols` each.
+fn build_insert_sql(table_ident: &str, cols_sql: &str, ncols: usize, nrows: usize) -> String {
+    let mut tuple = String::with_capacity(ncols * 2 + 2);
+    tuple.push('(');
+    for c in 0..ncols {
+        if c > 0 {
+            tuple.push(',');
+        }
+        tuple.push('?');
+    }
+    tuple.push(')');
+    let values = std::iter::repeat(tuple.as_str())
+        .take(nrows)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "INSERT INTO {} ({}) VALUES {}",
+        table_ident, cols_sql, values
+    )
 }
 
 fn strip_identifier_quotes(s: &str) -> String {

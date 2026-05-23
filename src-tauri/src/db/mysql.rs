@@ -352,6 +352,60 @@ impl MySqlConn {
         })
     }
 
+    /// Bulk INSERT via batched multi-row statements bound as parameters and
+    /// wrapped in one transaction. Cells are bound as text (`NULL` for `None`)
+    /// and MySQL coerces them to the destination column type, so a CSV column
+    /// of `"42"` lands in an INT column without us having to know the schema.
+    pub async fn import_rows<F>(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        batch_size: usize,
+        mut on_progress: F,
+    ) -> Result<u64>
+    where
+        F: FnMut(u64) -> Result<()>,
+    {
+        if columns.is_empty() {
+            return Err(AppError::InvalidInput("no columns to import".into()));
+        }
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = quote_ident(table);
+        // MySQL caps a statement at 65,535 placeholders; stay well under.
+        let max_rows = (65000 / ncols).max(1);
+        let batch = batch_size.clamp(1, max_rows);
+
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        let mut tx = conn.begin().await?;
+        let mut inserted: u64 = 0;
+        for chunk in rows.chunks(batch) {
+            let sql = build_insert_sql(&table_ident, &cols_sql, ncols, chunk.len());
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+            for row in chunk {
+                for ci in 0..ncols {
+                    let cell = row.get(ci).cloned().unwrap_or(None);
+                    q = q.bind(cell);
+                }
+            }
+            q.execute(&mut *tx).await?;
+            inserted += chunk.len() as u64;
+            on_progress(inserted)?;
+        }
+        tx.commit().await?;
+        Ok(inserted)
+    }
+
     pub async fn databases(&self) -> Result<Vec<String>> {
         let rows: Vec<MySqlRow> = sqlx::query("SHOW DATABASES").fetch_all(&self.pool).await?;
         rows.iter().map(|r| decode_text_col(r, 0)).collect()
@@ -671,6 +725,35 @@ fn extract_where_and_after(sql: &str) -> Option<String> {
 
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+/// Backtick-quotes a single identifier, doubling any embedded backticks.
+fn quote_ident(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
+}
+
+/// Builds `INSERT INTO tbl (c1, c2) VALUES (?,?),(?,?)...` with `nrows`
+/// placeholder tuples of `ncols` each. Identifiers are pre-quoted by the
+/// caller; only positional `?` placeholders are emitted here so values bind
+/// as parameters rather than being spliced into the SQL text.
+fn build_insert_sql(table_ident: &str, cols_sql: &str, ncols: usize, nrows: usize) -> String {
+    let mut tuple = String::with_capacity(ncols * 2 + 2);
+    tuple.push('(');
+    for c in 0..ncols {
+        if c > 0 {
+            tuple.push(',');
+        }
+        tuple.push('?');
+    }
+    tuple.push(')');
+    let values = std::iter::repeat(tuple.as_str())
+        .take(nrows)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "INSERT INTO {} ({}) VALUES {}",
+        table_ident, cols_sql, values
+    )
 }
 
 fn skip_modifiers<I: Iterator<Item = String>>(
@@ -1066,5 +1149,23 @@ mod tests {
     fn extract_where_ignores_identifier_prefixed_with_where() {
         // `whereabouts` starts with "where" but is not the keyword.
         assert!(extract_where_and_after("UPDATE t SET whereabouts = 'home'").is_none());
+    }
+
+    #[test]
+    fn quotes_identifiers_with_backticks() {
+        assert_eq!(quote_ident("name"), "`name`");
+        assert_eq!(quote_ident("we`ird"), "`we``ird`");
+    }
+
+    #[test]
+    fn builds_multi_row_insert() {
+        assert_eq!(
+            build_insert_sql("`t`", "`a`, `b`", 2, 3),
+            "INSERT INTO `t` (`a`, `b`) VALUES (?,?),(?,?),(?,?)"
+        );
+        assert_eq!(
+            build_insert_sql("`t`", "`a`", 1, 1),
+            "INSERT INTO `t` (`a`) VALUES (?)"
+        );
     }
 }

@@ -108,6 +108,8 @@ pub fn run() {
             commands::profiles::save_profile,
             commands::profiles::delete_profile,
             commands::export::export_query_result,
+            commands::import::parse_csv_preview,
+            commands::import::import_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tableX");

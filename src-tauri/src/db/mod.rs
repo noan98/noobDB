@@ -110,6 +110,41 @@ impl Connection {
         }
     }
 
+    /// Bulk-inserts `rows` into `table` using batched multi-row INSERT
+    /// statements wrapped in a single transaction (all-or-nothing). Each cell
+    /// is `Some(text)` for a value or `None` for SQL NULL; the driver coerces
+    /// the text to the destination column type. `on_progress` is invoked with
+    /// the cumulative inserted-row count after each batch so callers can emit
+    /// streaming progress; returning `Err` from it aborts the import and rolls
+    /// back. Returns the total number of rows inserted.
+    pub async fn import_rows<F>(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        batch_size: usize,
+        on_progress: F,
+    ) -> Result<u64>
+    where
+        F: FnMut(u64) -> Result<()>,
+    {
+        match self {
+            Connection::MySql(c) => {
+                c.import_rows(database, table, columns, rows, batch_size, on_progress)
+                    .await
+            }
+            Connection::Postgres(c) => {
+                c.import_rows(database, table, columns, rows, batch_size, on_progress)
+                    .await
+            }
+            Connection::Sqlite(c) => {
+                c.import_rows(database, table, columns, rows, batch_size, on_progress)
+                    .await
+            }
+        }
+    }
+
     pub async fn databases(&self) -> Result<Vec<String>> {
         match self {
             Connection::MySql(c) => c.databases().await,

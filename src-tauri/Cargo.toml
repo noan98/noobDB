@@ -53,6 +53,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Utility
 uuid = { version = "1", features = ["v4"] }
 data-encoding = "2"
+csv = "1"
+encoding_rs = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.10"
