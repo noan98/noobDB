@@ -32,6 +32,11 @@ pub struct ConnectionProfile {
     /// of DB-side privileges.
     #[serde(default)]
     pub read_only: bool,
+    /// When true, statements run on sessions opened from this profile are not
+    /// recorded in the query history. Useful for connections whose SQL may
+    /// embed passwords or other sensitive literals.
+    #[serde(default)]
+    pub skip_history: bool,
     /// Database file path for file-backed drivers (SQLite). `None` for
     /// network-backed drivers (MySQL, PostgreSQL).
     #[serde(default)]

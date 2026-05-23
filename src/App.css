@@ -565,6 +565,16 @@ label {
   color: var(--text-muted);
   cursor: pointer;
 }
+
+/* ---------- History ---------- */
+
+.history-time {
+  padding: 0 6px 4px 28px;
+  font-size: 10px;
+}
+.tree-node.history .tree-label {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+}
 .snippet-scope-toggle input[type="checkbox"] { width: auto; }
 .form textarea.snippet-sql {
   font: inherit;

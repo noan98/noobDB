@@ -64,6 +64,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [color, setColor] = useState<string | null>(initial?.color ?? null);
   const [isProduction, setIsProduction] = useState<boolean>(initial?.is_production ?? false);
   const [readOnly, setReadOnly] = useState<boolean>(initial?.read_only ?? false);
+  const [skipHistory, setSkipHistory] = useState<boolean>(initial?.skip_history ?? false);
 
   const [useSsh, setUseSsh] = useState(!!initial?.ssh);
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
@@ -125,6 +126,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         ssh: null,
         file_path: filePath || null,
         read_only: readOnly,
+        skip_history: skipHistory,
       };
     }
     return {
@@ -148,6 +150,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         : null,
       file_path: null,
       read_only: readOnly,
+      skip_history: skipHistory,
     };
   };
 
@@ -201,6 +204,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         color: color || null,
         is_production: isProduction,
         read_only: readOnly,
+        skip_history: skipHistory,
         file_path: isFileBacked ? (filePath || null) : null,
       });
       onSaved();
@@ -354,6 +358,20 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </label>
             <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
               {t("formReadOnlyHelp")}
+            </p>
+          </div>
+          <div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto" }}
+                checked={skipHistory}
+                onChange={(e) => setSkipHistory(e.target.checked)}
+              />
+              {t("formSkipHistory")}
+            </label>
+            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+              {t("formSkipHistoryHelp")}
             </p>
           </div>
         </div>
