@@ -166,6 +166,23 @@ impl Connection {
         }
     }
 
+    /// Runs `statements` sequentially inside a single transaction, rolling
+    /// back the whole batch if any one fails (all-or-nothing). Returns the
+    /// total `rows_affected` across all statements. Used by the inline
+    /// cell-edit Apply path so a mid-batch failure can't leave earlier
+    /// UPDATEs committed.
+    pub async fn execute_transaction(
+        &self,
+        statements: &[String],
+        database: Option<&str>,
+    ) -> Result<u64> {
+        match self {
+            Connection::MySql(c) => c.execute_transaction(statements, database).await,
+            Connection::Postgres(c) => c.execute_transaction(statements, database).await,
+            Connection::Sqlite(c) => c.execute_transaction(statements, database).await,
+        }
+    }
+
     pub async fn databases(&self) -> Result<Vec<String>> {
         match self {
             Connection::MySql(c) => c.databases().await,

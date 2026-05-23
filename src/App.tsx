@@ -999,22 +999,16 @@ export default function App() {
     if (stmts.length === 0) return;
     const tabId = activeTab.id;
     setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: stmts.length } });
-    // We can't wrap multiple statements in a server-side transaction
-    // through the prepared-statement path, so a mid-batch failure leaves
-    // earlier statements committed. Track applied/failed counts so the
-    // status line can tell the user what stuck.
+    // All statements run in a single backend transaction: either every
+    // UPDATE commits or, on any failure, the whole batch rolls back so the
+    // table is never left in a half-applied state.
     let totalAffected = 0;
-    let applied = 0;
     let failure: string | null = null;
-    for (const sql of stmts) {
-      try {
-        const res = await api.runQuery(sessionId, sql, database);
-        totalAffected += Number(res.rows_affected ?? 0);
-        applied += 1;
-      } catch (e) {
-        failure = String(e);
-        break;
-      }
+    try {
+      const res = await api.runQueryTransaction(sessionId, stmts, database);
+      totalAffected = Number(res.rows_affected ?? 0);
+    } catch (e) {
+      failure = String(e);
     }
     // Always refresh & drop edits afterwards: the result indices no
     // longer line up with whatever the user had buffered.
@@ -1029,7 +1023,7 @@ export default function App() {
       setStatus({
         kind: "key",
         key: "statusApplyEditsPartial",
-        vars: { applied, total: stmts.length, error: failure },
+        vars: { total: stmts.length, error: failure },
         error: true,
       });
     } else {
