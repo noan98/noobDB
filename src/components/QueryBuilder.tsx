@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { sql as sqlLang, MySQL } from "@codemirror/lang-sql";
+import { sql as sqlLang } from "@codemirror/lang-sql";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
+import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
 
 const qbHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -49,6 +50,7 @@ interface ColumnValuePair {
 
 interface Props {
   sessionId: string;
+  driver: string;
   defaultDatabase?: string | null;
   defaultTable?: string | null;
   onExecute: (sql: string) => void;
@@ -56,43 +58,37 @@ interface Props {
   onClose: () => void;
 }
 
-const SYSTEM_DATABASES = new Set([
-  "information_schema",
-  "performance_schema",
-  "mysql",
-  "sys",
-]);
-
-function pickDefaultDatabase(list: string[]): string | null {
-  const user = list.find((d) => !SYSTEM_DATABASES.has(d.toLowerCase()));
+function pickDefaultDatabase(driver: string, list: string[]): string | null {
+  const user = list.find((d) => !isSystemDatabase(driver, d));
   return user ?? list[0] ?? null;
 }
 
-function quoteIdent(name: string): string {
-  if (!name) return "";
-  return "`" + name.replace(/`/g, "``") + "`";
-}
-
-function quoteValue(raw: string): string {
+function quoteValue(driver: string, raw: string): string {
   const v = raw.trim();
   if (v === "") return "''";
   if (/^null$/i.test(v)) return "NULL";
   if (/^-?\d+(\.\d+)?$/.test(v)) return v;
-  if (/^(true|false)$/i.test(v)) return v.toUpperCase();
+  if (/^(true|false)$/i.test(v)) {
+    // SQLite has no native boolean literal — emit 1/0 instead of TRUE/FALSE.
+    if (driver === "sqlite") return v.toLowerCase() === "true" ? "1" : "0";
+    return v.toUpperCase();
+  }
   return "'" + v.replace(/\\/g, "\\\\").replace(/'/g, "''") + "'";
 }
 
-function tableRef(database: string, table: string): string {
-  const tbl = table ? quoteIdent(table) : "<table>";
-  if (database) return `${quoteIdent(database)}.${tbl}`;
+function tableRef(driver: string, database: string, table: string): string {
+  const tbl = table ? quoteIdentFor(driver, table) : "<table>";
+  // SQLite has a single namespace per connection — no database qualifier.
+  if (driver === "sqlite") return tbl;
+  if (database) return `${quoteIdentFor(driver, database)}.${tbl}`;
   return tbl;
 }
 
-function renderWhereClause(conditions: WhereCondition[]): string {
+function renderWhereClause(driver: string, conditions: WhereCondition[]): string {
   const rendered = conditions
     .filter((c) => c.column)
     .map((c) => {
-      const col = quoteIdent(c.column);
+      const col = quoteIdentFor(driver, c.column);
       const opNorm = normalizeOperator(c.operator);
       if (opNorm === "IS NULL" || opNorm === "IS NOT NULL") {
         return `${col} ${opNorm}`;
@@ -102,18 +98,19 @@ function renderWhereClause(conditions: WhereCondition[]): string {
           .split(",")
           .map((s) => s.trim())
           .filter((s) => s.length > 0)
-          .map(quoteValue);
+          .map((s) => quoteValue(driver, s));
         const inner = items.length > 0 ? items.join(", ") : "<values>";
         return `${col} IN (${inner})`;
       }
       const opOut = c.operator.trim() || "=";
-      return `${col} ${opOut} ${quoteValue(c.value)}`;
+      return `${col} ${opOut} ${quoteValue(driver, c.value)}`;
     });
   if (rendered.length === 0) return " WHERE <column> = <value>";
   return " WHERE " + rendered.join(" AND ");
 }
 
 function buildSql(
+  driver: string,
   kind: QueryKind,
   database: string,
   table: string,
@@ -124,13 +121,13 @@ function buildSql(
   setPairs: ColumnValuePair[],
   insertPairs: ColumnValuePair[],
 ): string {
-  const ref = tableRef(database, table);
+  const ref = tableRef(driver, database, table);
   switch (kind) {
     case "SELECT": {
       const cols = selectAll || selectColumns.length === 0
         ? "*"
-        : selectColumns.map(quoteIdent).join(", ");
-      const where = renderWhereClause(whereConditions);
+        : selectColumns.map((c) => quoteIdentFor(driver, c)).join(", ");
+      const where = renderWhereClause(driver, whereConditions);
       const trimmedLimit = limit.trim();
       const limitClause = trimmedLimit && /^\d+$/.test(trimmedLimit) ? ` LIMIT ${trimmedLimit}` : "";
       return `SELECT ${cols} FROM ${ref}${where}${limitClause};`;
@@ -138,30 +135,30 @@ function buildSql(
     case "UPDATE": {
       const set = setPairs
         .filter((p) => p.column)
-        .map((p) => `${quoteIdent(p.column)} = ${quoteValue(p.value)}`)
+        .map((p) => `${quoteIdentFor(driver, p.column)} = ${quoteValue(driver, p.value)}`)
         .join(", ");
-      const where = renderWhereClause(whereConditions);
+      const where = renderWhereClause(driver, whereConditions);
       const setClause = set || "<column> = <value>";
       return `UPDATE ${ref} SET ${setClause}${where};`;
     }
     case "DELETE": {
-      const where = renderWhereClause(whereConditions);
+      const where = renderWhereClause(driver, whereConditions);
       return `DELETE FROM ${ref}${where};`;
     }
     case "INSERT": {
       const active = insertPairs.filter((p) => p.column);
       const cols = active.length > 0
-        ? active.map((p) => quoteIdent(p.column)).join(", ")
+        ? active.map((p) => quoteIdentFor(driver, p.column)).join(", ")
         : "<column>";
       const vals = active.length > 0
-        ? active.map((p) => quoteValue(p.value)).join(", ")
+        ? active.map((p) => quoteValue(driver, p.value)).join(", ")
         : "<value>";
       return `INSERT INTO ${ref} (${cols}) VALUES (${vals});`;
     }
   }
 }
 
-export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecute, onPreview, onClose }: Props) {
+export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable, onExecute, onPreview, onClose }: Props) {
   const t = useT();
 
   const [kind, setKind] = useState<QueryKind>("SELECT");
@@ -193,7 +190,7 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
         if (cancelled) return;
         setDatabases(list);
         if (!database) {
-          const pick = pickDefaultDatabase(list);
+          const pick = pickDefaultDatabase(driver, list);
           if (pick) setDatabase(pick);
         }
       })
@@ -236,8 +233,8 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
   }, [sessionId, database, table]);
 
   const sql = useMemo(
-    () => buildSql(kind, database, table, selectColumns, selectAll, whereConditions, limit, setPairs, insertPairs),
-    [kind, database, table, selectColumns, selectAll, whereConditions, limit, setPairs, insertPairs],
+    () => buildSql(driver, kind, database, table, selectColumns, selectAll, whereConditions, limit, setPairs, insertPairs),
+    [driver, kind, database, table, selectColumns, selectAll, whereConditions, limit, setPairs, insertPairs],
   );
 
   const handleCopy = useCallback(async () => {
@@ -626,7 +623,7 @@ export function QueryBuilder({ sessionId, defaultDatabase, defaultTable, onExecu
                   </svg>
                 )}
               </button>
-              <SqlPreview sql={sql} />
+              <SqlPreview sql={sql} driver={driver} />
             </div>
           </section>
         </div>
@@ -728,9 +725,10 @@ function ComboBox({
 
 interface SqlPreviewProps {
   sql: string;
+  driver: string;
 }
 
-function SqlPreview({ sql }: SqlPreviewProps) {
+function SqlPreview({ sql, driver }: SqlPreviewProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
 
@@ -744,7 +742,7 @@ function SqlPreview({ sql }: SqlPreviewProps) {
           EditorView.editable.of(false),
           EditorState.readOnly.of(true),
           syntaxHighlighting(qbHighlightStyle, { fallback: true }),
-          sqlLang({ dialect: MySQL, upperCaseKeywords: true }),
+          sqlLang({ dialect: codeMirrorSqlDialectFor(driver), upperCaseKeywords: true }),
           EditorView.lineWrapping,
         ],
       }),
@@ -755,7 +753,7 @@ function SqlPreview({ sql }: SqlPreviewProps) {
       viewRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [driver]);
 
   useEffect(() => {
     const view = viewRef.current;

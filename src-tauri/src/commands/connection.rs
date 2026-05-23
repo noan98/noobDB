@@ -3,7 +3,7 @@ use tauri::State;
 
 use crate::db::{Connection, DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
-use crate::profiles::secrets;
+use crate::profiles::{secrets, SshAuthMethod};
 use crate::ssh::{SshConfig, SshTunnel};
 use crate::state::{new_session_id, AppState, Session, SessionId};
 
@@ -38,10 +38,17 @@ pub struct SshRequest {
     pub host: String,
     pub port: u16,
     pub user: String,
+    #[serde(default)]
+    pub auth_method: SshAuthMethod,
+    #[serde(default)]
     pub private_key_path: std::path::PathBuf,
     /// If empty and profile_id is set, the passphrase is loaded from keyring.
     #[serde(default)]
     pub passphrase: String,
+    /// Password for `auth_method == Password`. If empty and profile_id is set,
+    /// it is loaded from the keyring.
+    #[serde(default)]
+    pub password: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -132,12 +139,15 @@ async fn build_options(req: &ConnectRequest) -> Result<(Option<SshTunnel>, DbCon
 
     let (tunnel, host, port) = if let Some(ssh) = &req.ssh {
         let passphrase = resolve_passphrase(req, ssh)?;
+        let ssh_password = resolve_ssh_password(req, ssh)?;
         let cfg = SshConfig {
             host: ssh.host.clone(),
             port: ssh.port,
             user: ssh.user.clone(),
+            auth_method: ssh.auth_method,
             private_key_path: ssh.private_key_path.clone(),
             passphrase,
+            password: ssh_password,
             remote_host: req.host.clone(),
             remote_port: req.port,
         };
@@ -178,6 +188,18 @@ fn resolve_passphrase(req: &ConnectRequest, ssh: &SshRequest) -> Result<String> 
     }
     if let Some(id) = &req.profile_id {
         if let Some(p) = secrets::get_ssh_passphrase(id)? {
+            return Ok(p);
+        }
+    }
+    Ok(String::new())
+}
+
+fn resolve_ssh_password(req: &ConnectRequest, ssh: &SshRequest) -> Result<String> {
+    if !ssh.password.is_empty() {
+        return Ok(ssh.password.clone());
+    }
+    if let Some(id) = &req.profile_id {
+        if let Some(p) = secrets::get_ssh_password(id)? {
             return Ok(p);
         }
     }

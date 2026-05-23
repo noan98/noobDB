@@ -28,6 +28,9 @@ pub struct SaveProfileRequest {
     /// Same semantics for the SSH passphrase.
     #[serde(default)]
     pub ssh_passphrase: Option<String>,
+    /// Same semantics for the SSH password (password auth method).
+    #[serde(default)]
+    pub ssh_password: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
     #[serde(default)]
@@ -81,6 +84,13 @@ pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> 
             secrets::delete_ssh_passphrase(&id)?;
         } else {
             secrets::set_ssh_passphrase(&id, &pp)?;
+        }
+    }
+    if let Some(pw) = req.ssh_password {
+        if pw.is_empty() {
+            secrets::delete_ssh_password(&id)?;
+        } else {
+            secrets::set_ssh_password(&id, &pw)?;
         }
     }
     Ok(profile)

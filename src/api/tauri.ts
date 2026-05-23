@@ -3,10 +3,13 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type DriverKind = "mysql" | "postgres" | "sqlite";
 
+export type SshAuthMethod = "key" | "agent" | "password";
+
 export interface SshProfile {
   host: string;
   port: number;
   user: string;
+  auth_method: SshAuthMethod;
   private_key_path: string;
 }
 
@@ -33,6 +36,7 @@ export interface ConnectionProfile {
 
 export interface SshRequest extends SshProfile {
   passphrase?: string;
+  password?: string;
 }
 
 export interface ConnectRequest {
@@ -64,6 +68,7 @@ export interface SaveProfileRequest {
   ssh: SshProfile | null;
   db_password?: string;
   ssh_passphrase?: string;
+  ssh_password?: string;
   group: string | null;
   color: string | null;
   is_production: boolean;
