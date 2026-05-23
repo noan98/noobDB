@@ -7,6 +7,7 @@ import {
   SYNTAX_PRESET_ORDER,
   SyntaxColors,
   SyntaxPresetKey,
+  TabRestoreMode,
   Theme,
   applySyntaxPreset,
   detectSyntaxPreset,
@@ -18,6 +19,7 @@ import {
   setPreviewHighlight,
   setStreamPrefetchSize,
   setSyntaxColor,
+  setTabRestoreMode,
   useSettings,
 } from "../settings";
 
@@ -170,6 +172,27 @@ export function SettingsView({ theme, onClose }: Props) {
           <span className="settings-help-inline">
             {t("settingsConfirmProductionConnectHelp")}
           </span>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <h3>{t("settingsTabPersistence")}</h3>
+        </div>
+        <p className="settings-help">{t("settingsTabPersistenceHelp")}</p>
+        <div className="settings-toggle-row">
+          <label htmlFor="settings-tab-restore-mode">
+            {t("settingsTabRestoreMode")}
+          </label>
+          <select
+            id="settings-tab-restore-mode"
+            value={settings.tabRestoreMode}
+            onChange={(e) => setTabRestoreMode(e.target.value as TabRestoreMode)}
+          >
+            <option value="always">{t("settingsTabRestoreModeAlways")}</option>
+            <option value="ask">{t("settingsTabRestoreModeAsk")}</option>
+            <option value="never">{t("settingsTabRestoreModeNever")}</option>
+          </select>
         </div>
       </section>
 

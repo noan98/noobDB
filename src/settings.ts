@@ -27,7 +27,11 @@ export interface Settings {
   streamPrefetchSize: number;
   /** Show a confirmation dialog when connecting to a profile flagged as production. */
   confirmProductionConnect: boolean;
+  /** Behavior when previously open tabs exist for a profile being reconnected. */
+  tabRestoreMode: TabRestoreMode;
 }
+
+export type TabRestoreMode = "always" | "ask" | "never";
 
 export const DEFAULT_SYNTAX_COLORS: Record<Theme, SyntaxColors> = {
   light: {
@@ -149,6 +153,8 @@ const MAX_BATCH = 100_000;
 
 export const DEFAULT_CONFIRM_PRODUCTION_CONNECT = true;
 
+export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -158,7 +164,12 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultDisplayCount: DEFAULT_DISPLAY_COUNT,
   streamPrefetchSize: DEFAULT_STREAM_PREFETCH_SIZE,
   confirmProductionConnect: DEFAULT_CONFIRM_PRODUCTION_CONNECT,
+  tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
 };
+
+function sanitizeTabRestoreMode(input: unknown, fallback: TabRestoreMode): TabRestoreMode {
+  return input === "always" || input === "ask" || input === "never" ? input : fallback;
+}
 
 const STORAGE_KEY = "tablex.settings";
 
@@ -199,6 +210,7 @@ function loadInitial(): Settings {
       defaultDisplayCount?: unknown;
       streamPrefetchSize?: unknown;
       confirmProductionConnect?: unknown;
+      tabRestoreMode?: unknown;
     };
     return {
       syntaxColors: {
@@ -215,6 +227,7 @@ function loadInitial(): Settings {
         typeof parsed.confirmProductionConnect === "boolean"
           ? parsed.confirmProductionConnect
           : DEFAULT_CONFIRM_PRODUCTION_CONNECT,
+      tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -316,6 +329,14 @@ export function setStreamPrefetchSize(value: number): void {
 export function setConfirmProductionConnect(value: boolean): void {
   if (current.confirmProductionConnect === value) return;
   current = { ...current, confirmProductionConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setTabRestoreMode(value: TabRestoreMode): void {
+  const next = sanitizeTabRestoreMode(value, current.tabRestoreMode);
+  if (current.tabRestoreMode === next) return;
+  current = { ...current, tabRestoreMode: next };
   persist();
   listeners.forEach((cb) => cb());
 }
