@@ -31,6 +31,7 @@ import { PreviewGrid } from "./components/PreviewGrid";
 import { ExplainViewer } from "./components/ExplainViewer";
 import { TabBar } from "./components/TabBar";
 import { ImportModal } from "./components/ImportModal";
+import { HelpView } from "./components/HelpView";
 import { SettingsView } from "./components/SettingsView";
 import { Splitter } from "./components/Splitter";
 import { t as translate, useT } from "./i18n";
@@ -207,6 +208,7 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -905,6 +907,7 @@ export default function App() {
     setSnippetFormSql(sql);
     setShowForm(false);
     setShowSettings(false);
+    setShowHelp(false);
     setShowSnippetForm(true);
   }, []);
 
@@ -913,6 +916,7 @@ export default function App() {
     setSnippetFormSql("");
     setShowForm(false);
     setShowSettings(false);
+    setShowHelp(false);
     setShowSnippetForm(true);
   }, []);
 
@@ -1158,7 +1162,15 @@ export default function App() {
             </button>
             <button
               className="icon"
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowSettings(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowSettings(false); setShowHelp(true); }}
+              title={t("appHelp")}
+              aria-label={t("appHelp")}
+            >
+              ?
+            </button>
+            <button
+              className="icon"
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(true); }}
               title={t("appSettings")}
               aria-label={t("appSettings")}
             >
@@ -1171,6 +1183,7 @@ export default function App() {
                   setEditingSnippet(null);
                   setSnippetFormSql("");
                   setShowSettings(false);
+                  setShowHelp(false);
                   setShowForm(false);
                   setShowSnippetForm(true);
                 }}
@@ -1182,7 +1195,7 @@ export default function App() {
             ) : sidebarTab === "connections" ? (
               <button
                 className="icon"
-                onClick={() => { setEditing(null); setShowSettings(false); setShowSnippetForm(false); setShowForm(true); }}
+                onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowSnippetForm(false); setShowForm(true); }}
                 title={t("appNew")}
                 aria-label={t("appNew")}
               >
@@ -1225,7 +1238,7 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             onConnect={handleConnect}
-            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowForm(true); }}
+            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowHelp(false); setShowForm(true); }}
             onDelete={async (id) => {
               await api.deleteProfile(id);
               await refreshProfiles();
@@ -1251,7 +1264,9 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {showSettings ? (
+        {showHelp ? (
+          <HelpView onClose={() => setShowHelp(false)} />
+        ) : showSettings ? (
           <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
         ) : showForm ? (
           <ConnectionForm
