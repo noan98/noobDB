@@ -1134,6 +1134,7 @@ export default function App() {
                       }
                       sessionId={sessionId}
                       defaultDatabase={activeTab.database ?? selectedProfile?.database ?? null}
+                      driver={selectedProfile?.driver ?? "mysql"}
                     />
                   }
                   second={
