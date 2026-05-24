@@ -4,6 +4,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::commands::query::record_write_history;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session};
 
@@ -268,10 +269,40 @@ async fn spawn_import(
     mapping: Vec<ColumnMapping>,
     batch_size: usize,
 ) {
+    // Kept for the history summary after `run_import` consumes the originals.
+    let summary_db = database.clone();
+    let summary = format!("-- CSV import into {} ({} columns)", table, mapping.len());
     let result = run_import(
         &app, &session, &stream_id, database, table, path, options, mapping, batch_size,
     )
     .await;
+
+    // A CSV import is a bulk write; record it to history like the edit-Apply
+    // path so destructive imports are auditable (skip_history honoured).
+    match &result {
+        Ok((inserted, elapsed_ms)) => {
+            record_write_history(
+                &session,
+                summary,
+                summary_db.as_deref(),
+                Some(*inserted as i64),
+                Some(*elapsed_ms as i64),
+                None,
+            )
+            .await
+        }
+        Err(e) => {
+            record_write_history(
+                &session,
+                summary,
+                summary_db.as_deref(),
+                None,
+                None,
+                Some(e.to_string()),
+            )
+            .await
+        }
+    }
 
     match result {
         Ok((inserted, elapsed_ms)) => {

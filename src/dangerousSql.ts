@@ -2,10 +2,11 @@
  * Lightweight, best-effort detection of destructive write statements so the UI
  * can ask for confirmation before running them. Mirrors the leading-keyword
  * philosophy of the backend `is_read_only_sql` gate (`src-tauri/src/db/mod.rs`):
- * this is a safety net, not a SQL parser. Pathological inputs (writable CTEs,
- * a `WHERE` buried only inside a sub-select) can still slip past — the goal is
- * to catch the common foot-guns (`DELETE`/`UPDATE` with no `WHERE`, `DROP`,
- * `TRUNCATE`), not to be exhaustive.
+ * this is a safety net, not a SQL parser. Pathological inputs (writable CTEs)
+ * can still slip past — the goal is to catch the common foot-guns
+ * (`DELETE`/`UPDATE` with no top-level `WHERE`, `DROP`, `TRUNCATE`), not to be
+ * exhaustive. A `WHERE` that exists only inside a sub-select is not mistaken
+ * for the statement's own guard (see `hasTopLevelWhere`).
  */
 
 export type DangerKind =
@@ -94,8 +95,34 @@ function startsWithKeyword(body: string, keyword: string): boolean {
   return new RegExp(`^${keyword}\\b`).test(body);
 }
 
-function hasWhereClause(maskedLower: string): boolean {
-  return /\bwhere\b/.test(maskedLower);
+function isWordChar(ch: string): boolean {
+  return /[A-Za-z0-9_]/.test(ch);
+}
+
+/**
+ * Detects a `WHERE` clause that belongs to the statement itself — i.e. at
+ * parenthesis depth 0 — rather than one buried in a sub-select. Without the
+ * depth check, `UPDATE t SET c = (SELECT ... WHERE ...)` would look "guarded"
+ * even though it rewrites every row. Mirrors the depth tracking used by the
+ * backend's `top_level_select_list`. `maskedLower` must already have comments
+ * and quoted literals masked so a `where` inside a string can't trip it.
+ */
+function hasTopLevelWhere(maskedLower: string): boolean {
+  let depth = 0;
+  const n = maskedLower.length;
+  for (let i = 0; i < n; i++) {
+    const c = maskedLower[i];
+    if (c === "(") {
+      depth++;
+    } else if (c === ")") {
+      if (depth > 0) depth--;
+    } else if (depth === 0 && c === "w" && maskedLower.startsWith("where", i)) {
+      const before = i === 0 ? "" : maskedLower[i - 1];
+      const after = maskedLower[i + 5] ?? "";
+      if (!isWordChar(before) && !isWordChar(after)) return true;
+    }
+  }
+  return false;
 }
 
 /** Strips surrounding quoting (`` ` ``, `"`, `[]`) from a parsed identifier. */
@@ -132,11 +159,11 @@ function classifyStatement(masked: string, raw: string): DangerFinding | null {
   if (!body) return null;
 
   if (startsWithKeyword(body, "delete")) {
-    if (hasWhereClause(maskedLower)) return null;
+    if (hasTopLevelWhere(maskedLower)) return null;
     return { kind: "deleteNoWhere", target: extractTarget(raw, /delete\s+from\s+/i) };
   }
   if (startsWithKeyword(body, "update")) {
-    if (hasWhereClause(maskedLower)) return null;
+    if (hasTopLevelWhere(maskedLower)) return null;
     return { kind: "updateNoWhere", target: extractTarget(raw, /update\s+/i) };
   }
   if (startsWithKeyword(body, "truncate")) {
