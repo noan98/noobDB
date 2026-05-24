@@ -9,10 +9,6 @@ use super::types::{Column, PreviewResult, QueryResult, StreamBatch, TableColumnI
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
 
-/// Default snapshot row cap for preview before/after captures when the
-/// caller does not override it via the streaming path.
-const PREVIEW_ROW_LIMIT: usize = 100;
-
 pub struct MySqlConn {
     pool: MySqlPool,
 }
@@ -82,24 +78,6 @@ impl MySqlConn {
     /// the before/after state of the mutation's target table so the caller
     /// can see what the statement would do without persisting it.
     ///
-    /// Only INSERT / UPDATE / DELETE / REPLACE are accepted — DDL like
-    /// CREATE/DROP/ALTER/TRUNCATE causes an implicit commit on MySQL and so
-    /// cannot be safely previewed via rollback.
-    ///
-    /// When the target table has a primary key, both snapshots are ORDERed by
-    /// it and the AFTER snapshot is fetched by the exact PKs captured in
-    /// BEFORE — so the same rows are shown in both panels even if the
-    /// statement's WHERE clause stops matching after the change (e.g. an
-    /// UPDATE that flips the very column the WHERE filters on).
-    pub async fn preview_execute(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-    ) -> Result<PreviewResult> {
-        self.preview_execute_with_limit(sql, database, PREVIEW_ROW_LIMIT)
-            .await
-    }
-
     /// Streams SELECT-shaped queries by yielding row batches through `on_batch`.
     /// `initial_batch` controls the size of the first batch (so the UI can
     /// show something immediately); subsequent batches use `chunk_size`.
@@ -185,6 +163,15 @@ impl MySqlConn {
         })
     }
 
+    /// Only INSERT / UPDATE / DELETE / REPLACE are accepted — DDL like
+    /// CREATE/DROP/ALTER/TRUNCATE causes an implicit commit on MySQL and so
+    /// cannot be safely previewed via rollback.
+    ///
+    /// When the target table has a primary key, both snapshots are ORDERed by
+    /// it and the AFTER snapshot is fetched by the exact PKs captured in
+    /// BEFORE — so the same rows are shown in both panels even if the
+    /// statement's WHERE clause stops matching after the change (e.g. an
+    /// UPDATE that flips the very column the WHERE filters on).
     pub async fn preview_execute_with_limit(
         &self,
         sql: &str,

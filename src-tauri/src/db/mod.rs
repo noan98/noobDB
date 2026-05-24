@@ -79,18 +79,6 @@ impl Connection {
         }
     }
 
-    pub async fn preview_execute(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-    ) -> Result<PreviewResult> {
-        match self {
-            Connection::MySql(c) => c.preview_execute(sql, database).await,
-            Connection::Postgres(c) => c.preview_execute(sql, database).await,
-            Connection::Sqlite(c) => c.preview_execute(sql, database).await,
-        }
-    }
-
     pub async fn preview_execute_with_limit(
         &self,
         sql: &str,
@@ -224,23 +212,51 @@ impl Connection {
 /// `FOR SHARE` and the MySQL `LOCK IN SHARE MODE` form are rejected because
 /// they acquire row locks even though they syntactically begin with `SELECT`.
 ///
-/// This is intentionally a coarse prefix check — pathological cases such as
-/// `WITH ... INSERT` (a writable CTE) will still slip past. The gate is a
-/// best-effort safety net, not a parser.
+/// Beyond the leading keyword the body is masked (comments / string literals /
+/// quoted identifiers blanked, reusing `mask_for_analysis`) and then:
+///
+/// * any leftover `;` after trimming trailing separators means a second
+///   statement is hiding behind the first (`SELECT 1; DELETE …`), so it is
+///   rejected;
+/// * a write / DDL keyword found anywhere in the body rejects the statement,
+///   which catches data-modifying CTEs (`WITH … DELETE …`) and `SELECT … INTO`.
+///
+/// `replace` is intentionally absent from the keyword list: a `REPLACE INTO`
+/// write already fails the leading-keyword check, and listing it would reject
+/// the perfectly read-only `REPLACE()` string function. This remains a
+/// best-effort safety net, not a parser; when in doubt it errs toward rejection.
 pub fn is_read_only_sql(sql: &str) -> bool {
-    let lower = sql.to_ascii_lowercase();
-    let body = lower
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_analysis(&orig);
+    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+    let body = masked_lower
         .trim()
         .trim_end_matches(|c: char| c == ';' || c.is_whitespace())
         .trim_start();
-    let allowed_prefix = body.starts_with("select")
-        || body.starts_with("show")
-        || body.starts_with("describe")
-        || body.starts_with("desc ")
-        || body.starts_with("explain")
-        || body.starts_with("with");
+    if body.is_empty() {
+        return false;
+    }
+    let allowed_prefix = starts_with_word(body, "select")
+        || starts_with_word(body, "show")
+        || starts_with_word(body, "describe")
+        || starts_with_word(body, "desc")
+        || starts_with_word(body, "explain")
+        || starts_with_word(body, "with");
     if !allowed_prefix {
         return false;
+    }
+    // Trailing separators were stripped above, so a remaining `;` can only be a
+    // statement boundary with more SQL behind it.
+    if body.contains(';') {
+        return false;
+    }
+    for kw in [
+        "insert", "update", "delete", "into", "create", "alter", "drop", "truncate", "call",
+        "merge", "grant", "revoke",
+    ] {
+        if contains_word(body, kw) {
+            return false;
+        }
     }
     if body.ends_with("for update")
         || body.ends_with("for share")
@@ -584,6 +600,47 @@ mod tests {
         assert!(!is_read_only_sql("SELECT * FROM t for update;"));
         assert!(!is_read_only_sql("SELECT * FROM t FOR SHARE"));
         assert!(!is_read_only_sql("SELECT * FROM t LOCK IN SHARE MODE"));
+    }
+
+    #[test]
+    fn rejects_multi_statement_even_with_read_only_lead() {
+        assert!(!is_read_only_sql("SELECT 1; DELETE FROM t"));
+        assert!(!is_read_only_sql("SELECT 1; SELECT 2"));
+        assert!(!is_read_only_sql("SHOW TABLES; DROP TABLE t"));
+        // A statement separator hidden after a real one is still a second
+        // statement, even when the trailing one is itself read-only.
+        assert!(!is_read_only_sql("select * from t ; select * from u ;"));
+    }
+
+    #[test]
+    fn rejects_data_modifying_ctes() {
+        assert!(!is_read_only_sql("WITH c AS (SELECT 1) DELETE FROM t"));
+        assert!(!is_read_only_sql(
+            "WITH c AS (DELETE FROM t RETURNING *) SELECT * FROM c"
+        ));
+        assert!(!is_read_only_sql(
+            "WITH c AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM c"
+        ));
+        assert!(!is_read_only_sql("SELECT * FROM t INTO OUTFILE '/tmp/x'"));
+    }
+
+    #[test]
+    fn ignores_keywords_hidden_in_comments_and_literals() {
+        // A write keyword living only inside a comment or string must not
+        // reject an otherwise read-only statement.
+        assert!(is_read_only_sql("SELECT * FROM t -- delete everything"));
+        assert!(is_read_only_sql("SELECT * FROM t /* drop table */"));
+        assert!(is_read_only_sql("SELECT 'delete from t' AS note"));
+        // A semicolon inside a literal is not a statement separator.
+        assert!(is_read_only_sql("SELECT 'a; b' AS s"));
+    }
+
+    #[test]
+    fn does_not_misread_identifiers_containing_write_words() {
+        assert!(is_read_only_sql("SELECT deleted_at, update_time FROM t"));
+        assert!(is_read_only_sql("SELECT * FROM updates WHERE created_at > 0"));
+        // REPLACE() is a string function, not a write statement.
+        assert!(is_read_only_sql("SELECT REPLACE(name, 'a', 'b') FROM t"));
     }
 
     #[test]

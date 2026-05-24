@@ -128,11 +128,6 @@ export interface HistoryEntry {
   executed_at: string;
 }
 
-export interface SessionInfo {
-  id: string;
-  profile_id: string | null;
-}
-
 export interface Column {
   name: string;
   type_name: string;
@@ -209,7 +204,6 @@ export const api = {
     invoke<{ session_id: string }>("connect", { req }),
   disconnect: (sessionId: string) =>
     invoke<void>("disconnect", { sessionId }),
-  listSessions: () => invoke<SessionInfo[]>("list_sessions"),
 
   runQuery: (sessionId: string, sql: string, database?: string | null) =>
     invoke<QueryResult>("run_query", { sessionId, sql, database: database ?? null }),
@@ -223,9 +217,6 @@ export const api = {
       statements,
       database: database ?? null,
     }),
-  previewQuery: (sessionId: string, sql: string, database?: string | null) =>
-    invoke<PreviewResult>("preview_query", { sessionId, sql, database: database ?? null }),
-
   runQueryStream: (params: {
     sessionId: string;
     streamId: string;
@@ -363,8 +354,6 @@ export interface PreviewStreamMetaEvent {
   rowsAffected: number;
   elapsedMs: number;
   truncated: boolean;
-  beforeTotal: number;
-  afterTotal: number;
 }
 
 export interface PreviewStreamRowsEvent {

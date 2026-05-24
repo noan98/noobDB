@@ -81,8 +81,18 @@ function qualifiedTableRef(driver: string, database: string, table: string): str
   return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 
-function quoteString(s: string): string {
-  return "'" + s.replace(/\\/g, "\\\\").replace(/'/g, "''") + "'";
+function quoteString(driver: string, s: string): string {
+  // Single quotes are doubled in every dialect. Backslash is only special
+  // inside MySQL string literals; Postgres (with the default
+  // `standard_conforming_strings = on`) and SQLite treat it as an ordinary
+  // character, so doubling it there would corrupt the stored value (and break
+  // PK matching when a key contains a backslash). Mirror `quoteIdentFor`'s
+  // convention of treating unknown drivers as MySQL.
+  const escaped =
+    driver === "postgres" || driver === "sqlite"
+      ? s.replace(/'/g, "''")
+      : s.replace(/\\/g, "\\\\").replace(/'/g, "''");
+  return "'" + escaped + "'";
 }
 
 /**
@@ -90,11 +100,11 @@ function quoteString(s: string): string {
  * suitable for a WHERE clause. Used for the PK columns identifying the
  * row to update — these come from the original row, not user input.
  */
-function literalFromCellValue(v: CellValue): string {
+function literalFromCellValue(driver: string, v: CellValue): string {
   if (v === null || v === undefined) return "NULL";
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : "NULL";
-  return quoteString(String(v));
+  return quoteString(driver, String(v));
 }
 
 /**
@@ -108,7 +118,7 @@ function literalFromCellValue(v: CellValue): string {
  * Empty input is left as an empty string (use the explicit "NULL"
  * keyword to clear a column).
  */
-function literalFromInput(raw: string, col: Column): string {
+function literalFromInput(driver: string, raw: string, col: Column): string {
   const trimmed = raw.trim();
   if (/^null$/i.test(trimmed)) return "NULL";
   const t = col.type_name.toUpperCase();
@@ -120,7 +130,7 @@ function literalFromInput(raw: string, col: Column): string {
     if (lc === "true" || lc === "1") return "TRUE";
     if (lc === "false" || lc === "0") return "FALSE";
   }
-  return quoteString(raw);
+  return quoteString(driver, raw);
 }
 
 export interface BuildUpdateInput {
@@ -163,13 +173,13 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
       const col = input.columns[colIdx];
       if (!col) continue;
       setParts.push(
-        `${quoteIdentFor(input.driver, col.name)} = ${literalFromInput(rowEdits[colIdx], col)}`,
+        `${quoteIdentFor(input.driver, col.name)} = ${literalFromInput(input.driver, rowEdits[colIdx], col)}`,
       );
     }
     if (setParts.length === 0) continue;
     const whereParts = input.pkIndices.map((i) => {
       const col = input.columns[i];
-      return `${quoteIdentFor(input.driver, col.name)} = ${literalFromCellValue(row[i])}`;
+      return `${quoteIdentFor(input.driver, col.name)} = ${literalFromCellValue(input.driver, row[i])}`;
     });
     stmts.push(
       `UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`,

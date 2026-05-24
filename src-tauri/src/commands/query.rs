@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::db::types::{Column, PreviewResult, QueryResult, StreamBatch, Value};
+use crate::db::types::{Column, QueryResult, StreamBatch, Value};
 use crate::db::{apply_auto_limit, is_read_only_sql};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
@@ -56,32 +56,40 @@ pub async fn run_query_transaction(
         ensure_allowed_for_session(&session, sql)?;
     }
     let started = std::time::Instant::now();
-    let affected = session
+    let result = session
         .conn
         .execute_transaction(&statements, database.as_deref())
-        .await?;
-    Ok(QueryResult::empty(
-        affected,
-        started.elapsed().as_millis() as u64,
-    ))
-}
-
-#[tauri::command]
-pub async fn preview_query(
-    session_id: String,
-    sql: String,
-    database: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<PreviewResult> {
-    let session = state
-        .get(&session_id)
-        .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    ensure_allowed_for_session(&session, &sql)?;
-    session
-        .conn
-        .preview_execute(&sql, database.as_deref())
-        .await
+        .await;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    // The cell-edit Apply path is a primary write entry point, so record the
+    // generated statements to history for auditability (skip_history honoured).
+    let sql_text = statements.join("\n");
+    match &result {
+        Ok(affected) => {
+            record_write_history(
+                &session,
+                sql_text,
+                database.as_deref(),
+                Some(*affected as i64),
+                Some(elapsed_ms as i64),
+                None,
+            )
+            .await
+        }
+        Err(e) => {
+            record_write_history(
+                &session,
+                sql_text,
+                database.as_deref(),
+                None,
+                None,
+                Some(e.to_string()),
+            )
+            .await
+        }
+    }
+    let affected = result?;
+    Ok(QueryResult::empty(affected, elapsed_ms))
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -309,6 +317,40 @@ async fn record_history(
     }
 }
 
+/// Records a single write to history for the non-streaming write paths (inline
+/// cell-edit Apply and CSV import). These never return columns, so the count is
+/// always carried in `rows_affected`. Best-effort and `skip_history`-aware,
+/// mirroring [`record_history`]. Pass `rows_affected`/`elapsed_ms` on success
+/// and `error` on failure (the unused side stays `None`).
+pub(crate) async fn record_write_history(
+    session: &Session,
+    sql: String,
+    database: Option<&str>,
+    rows_affected: Option<i64>,
+    elapsed_ms: Option<i64>,
+    error: Option<String>,
+) {
+    if session.skip_history {
+        return;
+    }
+    let status = if error.is_some() { "error" } else { "ok" };
+    let entry = NewHistoryEntry {
+        profile_id: session.profile_id.clone(),
+        driver: session.conn.driver_kind().as_str().to_string(),
+        database: database.map(str::to_string),
+        sql,
+        rows: None,
+        rows_affected,
+        elapsed_ms,
+        status: status.to_string(),
+        error,
+        executed_at: chrono::Utc::now().to_rfc3339(),
+    };
+    if let Err(e) = history_store::record(entry).await {
+        tracing::warn!("failed to record query history: {e}");
+    }
+}
+
 #[derive(Debug, Serialize, Clone)]
 struct PreviewMetaEvent {
     #[serde(rename = "streamId")]
@@ -323,10 +365,6 @@ struct PreviewMetaEvent {
     #[serde(rename = "elapsedMs")]
     elapsed_ms: u64,
     truncated: bool,
-    #[serde(rename = "beforeTotal")]
-    before_total: usize,
-    #[serde(rename = "afterTotal")]
-    after_total: usize,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -405,8 +443,6 @@ async fn spawn_preview_stream(
                     rows_affected: p.rows_affected,
                     elapsed_ms: p.elapsed_ms,
                     truncated: p.truncated,
-                    before_total: p.before_rows.len(),
-                    after_total: p.after_rows.len(),
                 },
             );
             emit_chunks(

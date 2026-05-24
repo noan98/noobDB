@@ -8,7 +8,6 @@ use super::types::{Column, PreviewResult, QueryResult, StreamBatch, TableColumnI
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
 
-const PREVIEW_ROW_LIMIT: usize = 100;
 /// Default "database" name reported to the UI tree. SQLite uses `main` for
 /// the primary database attached to a connection. ATTACH is out of scope.
 pub const DEFAULT_DB_NAME: &str = "main";
@@ -72,15 +71,6 @@ impl SqliteConn {
                 started.elapsed().as_millis() as u64,
             ))
         }
-    }
-
-    pub async fn preview_execute(
-        &self,
-        sql: &str,
-        database: Option<&str>,
-    ) -> Result<PreviewResult> {
-        self.preview_execute_with_limit(sql, database, PREVIEW_ROW_LIMIT)
-            .await
     }
 
     pub async fn execute_stream<F>(

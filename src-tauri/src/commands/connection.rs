@@ -60,13 +60,6 @@ pub struct ConnectResponse {
     pub session_id: SessionId,
 }
 
-#[derive(Debug, Serialize)]
-pub struct SessionInfo {
-    pub id: SessionId,
-    pub profile_id: Option<String>,
-    pub read_only: bool,
-}
-
 #[tauri::command]
 pub async fn test_connection(req: ConnectRequest) -> Result<String> {
     let (tunnel, opts) = build_options(&req).await?;
@@ -101,19 +94,6 @@ pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Resul
         // Session (and its tunnel) drops with the last Arc reference.
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>> {
-    let map = state.sessions.read().await;
-    Ok(map
-        .values()
-        .map(|s| SessionInfo {
-            id: s.id.clone(),
-            profile_id: s.profile_id.clone(),
-            read_only: s.read_only,
-        })
-        .collect())
 }
 
 /// Build DB options and (if requested) open an SSH tunnel.
