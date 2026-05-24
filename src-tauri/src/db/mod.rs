@@ -638,7 +638,9 @@ mod tests {
     #[test]
     fn does_not_misread_identifiers_containing_write_words() {
         assert!(is_read_only_sql("SELECT deleted_at, update_time FROM t"));
-        assert!(is_read_only_sql("SELECT * FROM updates WHERE created_at > 0"));
+        assert!(is_read_only_sql(
+            "SELECT * FROM updates WHERE created_at > 0"
+        ));
         // REPLACE() is a string function, not a write statement.
         assert!(is_read_only_sql("SELECT REPLACE(name, 'a', 'b') FROM t"));
     }
