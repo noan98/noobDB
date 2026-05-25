@@ -105,6 +105,7 @@ pub fn run() {
             commands::schema::list_databases,
             commands::schema::list_tables,
             commands::schema::describe_table,
+            commands::schema::schema_overview,
             commands::profiles::list_profiles,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,

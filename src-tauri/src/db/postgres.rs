@@ -4,7 +4,9 @@ use futures_util::StreamExt;
 use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
-use super::types::{Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, Value};
+use super::types::{
+    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value,
+};
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
 
@@ -410,6 +412,31 @@ impl PostgresConn {
                 referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
             })
             .collect())
+    }
+
+    pub async fn schema_overview(&self, schema: &str) -> Result<Vec<TableSchema>> {
+        // information_schema.columns covers ordinary tables and views; that is
+        // the common autocomplete surface. Materialised views (listed by
+        // `tables`) live only in pg_catalog and are intentionally omitted here.
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT table_name, column_name
+               FROM information_schema.columns
+               WHERE table_schema = $1
+               ORDER BY table_name, ordinal_position"#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let pairs = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    r.try_get::<String, _>(1).unwrap_or_default(),
+                )
+            })
+            .collect();
+        Ok(super::group_columns_by_table(pairs))
     }
 }
 

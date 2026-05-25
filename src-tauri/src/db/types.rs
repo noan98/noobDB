@@ -54,6 +54,16 @@ pub struct TableColumnInfo {
     pub referenced_column: Option<String>,
 }
 
+/// One table (or view) and its column names, used to feed whole-schema SQL
+/// autocomplete. Only names are carried — type/key metadata lives in the
+/// per-table `TableColumnInfo` path, which the editor does not need for
+/// completion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableSchema {
+    pub name: String,
+    pub columns: Vec<String>,
+}
+
 /// One unit produced by streaming SELECT execution. Columns are reported
 /// once (before any rows) so the UI can render headers immediately, then
 /// row batches arrive as they are read off the wire.

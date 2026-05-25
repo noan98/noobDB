@@ -4,7 +4,9 @@ use futures_util::StreamExt;
 use sqlx::sqlite::{SqliteColumn, SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
-use super::types::{Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, Value};
+use super::types::{
+    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value,
+};
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
 
@@ -374,6 +376,26 @@ impl SqliteConn {
                 }
             })
             .collect())
+    }
+
+    pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {
+        // SQLite has no single information_schema query for every column, but
+        // the database is a local file so per-table PRAGMA lookups are cheap.
+        let tables = self.tables(db).await?;
+        let mut out = Vec::with_capacity(tables.len());
+        for table in tables {
+            let columns = self
+                .columns(db, &table)
+                .await?
+                .into_iter()
+                .map(|c| c.name)
+                .collect();
+            out.push(TableSchema {
+                name: table,
+                columns,
+            });
+        }
+        Ok(out)
     }
 }
 

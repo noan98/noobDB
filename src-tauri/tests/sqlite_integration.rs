@@ -68,6 +68,15 @@ async fn sqlite_roundtrip_against_tempfile() {
     let id_col = cols.iter().find(|c| c.name == "id").expect("id column");
     assert_eq!(id_col.key, "PRI", "PK detection must mark id as PRI");
 
+    // Whole-schema overview drives editor autocomplete: it must surface the
+    // table with its column names in declaration order, in a single call.
+    let overview = conn.schema_overview("main").await.expect("schema overview");
+    let smoke = overview
+        .iter()
+        .find(|t| t.name == "noobdb_sqlite_smoke")
+        .expect("overview must list the smoke table");
+    assert_eq!(smoke.columns, vec!["id".to_string(), "label".to_string()]);
+
     let after_insert = conn
         .execute(
             "SELECT id, label FROM noobdb_sqlite_smoke ORDER BY id",

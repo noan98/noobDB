@@ -18,6 +18,7 @@ import {
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { format as formatSql } from "sql-formatter";
+import type { TableSchema } from "../api/tauri";
 import { useT } from "../i18n";
 import { QueryBuilder } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
@@ -58,6 +59,14 @@ interface Props {
   onSaveSnippet?: (sql: string) => void;
   disabled?: boolean;
   schemaTable?: SchemaTable | null;
+  /**
+   * Every table/column in the editor's database, for whole-schema completion
+   * (table names anywhere, and `table.column` / `alias.column` in JOINs). When
+   * present it supersedes `schemaTable`, which only ever covers the one active
+   * table; `schemaTable` still seeds the active table's columns while this is
+   * loading and sets the default (unqualified) table.
+   */
+  databaseSchema?: TableSchema[] | null;
   activeTable?: ActiveTable | null;
   initialSql?: string;
   sessionId?: string | null;
@@ -119,17 +128,46 @@ function selectionOrAllText(view: EditorView): string | null {
   return text;
 }
 
-function buildSqlExtension(driver: string, schemaTable: SchemaTable | null | undefined) {
+function buildSqlExtension(
+  driver: string,
+  schemaTable: SchemaTable | null | undefined,
+  databaseSchema: TableSchema[] | null | undefined,
+  defaultDatabase: string | null | undefined,
+) {
+  // Collect every known table → columns mapping. The full-database overview is
+  // the bulk of it; the active table is folded in too so its columns are
+  // available immediately, before the (async) overview fetch resolves.
+  const tableColumns: Record<string, string[]> = {};
+  if (databaseSchema) {
+    for (const tbl of databaseSchema) {
+      if (tbl.columns.length > 0) tableColumns[tbl.name] = tbl.columns;
+    }
+  }
+  if (
+    schemaTable &&
+    schemaTable.columns.length > 0 &&
+    !tableColumns[schemaTable.name]
+  ) {
+    tableColumns[schemaTable.name] = schemaTable.columns;
+  }
+
   let schema: SQLNamespace | undefined;
   let defaultTable: string | undefined;
   let defaultSchema: string | undefined;
-  if (schemaTable && schemaTable.columns.length > 0) {
-    schema = {
-      [schemaTable.database]: { [schemaTable.name]: schemaTable.columns },
-      [schemaTable.name]: schemaTable.columns,
-    };
-    defaultTable = schemaTable.name;
-    defaultSchema = schemaTable.database;
+  if (Object.keys(tableColumns).length > 0) {
+    // Expose each table both bare (`table` / `table.column`) and namespaced
+    // under its database (`db.table.column`), mirroring CodeMirror's expected
+    // SQLNamespace shape. SQLite has no real database qualifier, so the bare
+    // form alone is enough there.
+    const namespaceDb = schemaTable?.database ?? defaultDatabase ?? undefined;
+    schema =
+      namespaceDb && driver !== "sqlite"
+        ? { ...tableColumns, [namespaceDb]: { ...tableColumns } }
+        : { ...tableColumns };
+    // Prefer the active table for unqualified column completion; otherwise the
+    // dialect still completes once the user qualifies with a table name.
+    defaultTable = schemaTable?.name;
+    defaultSchema = namespaceDb;
   }
   return sql({
     dialect: codeMirrorSqlDialectFor(driver),
@@ -149,6 +187,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onSaveSnippet,
   disabled,
   schemaTable,
+  databaseSchema,
   activeTable,
   initialSql,
   sessionId,
@@ -189,7 +228,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           closeBrackets(),
           syntaxHighlighting(noobDBHighlightStyle, { fallback: true }),
           autocompletion(),
-          sqlCompartment.of(buildSqlExtension(driver, schemaTable)),
+          sqlCompartment.of(buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase)),
           keymap.of([
             { key: "Tab", run: acceptCompletion },
             {
@@ -242,9 +281,16 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: sqlCompartment.reconfigure(buildSqlExtension(driver, schemaTable)) });
+    view.dispatch({
+      effects: sqlCompartment.reconfigure(
+        buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase),
+      ),
+    });
+    // `databaseSchema` is a stable reference from the parent's cache: it only
+    // changes identity on (re)fetch or when the editor's database changes, so
+    // depending on it directly is both correct and cheap.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schemaKey, driver]);
+  }, [schemaKey, driver, databaseSchema, defaultDatabase]);
 
   useImperativeHandle(ref, () => ({
     insertText: (text: string) => {

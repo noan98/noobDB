@@ -170,6 +170,12 @@ export interface TableColumnInfo {
   referenced_column: string | null;
 }
 
+/** One table (or view) and its column names, for whole-schema autocomplete. */
+export interface TableSchema {
+  name: string;
+  columns: string[];
+}
+
 export type ExportFormat = "csv" | "json";
 
 export interface ImportOptions {
@@ -266,6 +272,8 @@ export const api = {
     invoke<string[]>("list_tables", { sessionId, database }),
   describeTable: (sessionId: string, database: string, table: string) =>
     invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }),
+  schemaOverview: (sessionId: string, database: string) =>
+    invoke<TableSchema[]>("schema_overview", { sessionId, database }),
 
   listProfiles: () => invoke<ConnectionProfile[]>("list_profiles"),
   saveProfile: (req: SaveProfileRequest) =>
