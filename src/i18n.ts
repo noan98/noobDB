@@ -148,6 +148,7 @@ const en = {
   dangerousCancel: "Cancel",
   dangerousConfirm: "Run anyway",
   contextMenuEdit: "Edit connection",
+  contextMenuDuplicate: "Duplicate connection",
   contextMenuDelete: "Delete connection",
   listProduction: "PROD",
   listReadOnly: "RO",
@@ -221,6 +222,7 @@ const en = {
   listEditTitle: "Edit connection settings (host, port, credentials, SSH)",
   listDelete: "Delete",
   listDeleteConfirm: 'Delete "{name}"?',
+  listDuplicateSuffix: " (copy)",
   listVia: "via SSH {host}",
 
   statusBadge_connected: "Connected",
@@ -737,6 +739,7 @@ const ja: Dict = {
   dangerousCancel: "キャンセル",
   dangerousConfirm: "実行する",
   contextMenuEdit: "接続情報を編集",
+  contextMenuDuplicate: "接続情報を複製",
   contextMenuDelete: "接続先を削除",
   listProduction: "本番",
   listReadOnly: "RO",
@@ -810,6 +813,7 @@ const ja: Dict = {
   listEditTitle: "接続情報を編集 (ホスト・ポート・認証情報・SSH)",
   listDelete: "削除",
   listDeleteConfirm: "「{name}」を削除しますか？",
+  listDuplicateSuffix: "（コピー）",
   listVia: "SSH {host} 経由",
 
   statusBadge_connected: "接続中",
