@@ -1309,6 +1309,44 @@ label {
 }
 .status.error { color: var(--text-error); background: var(--bg-error); }
 
+.status-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.status-hint-body {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.status-hint-label {
+  flex: none;
+  font-weight: 600;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--text-error);
+  color: var(--bg-error);
+}
+.status-hint-text {
+  line-height: 1.45;
+}
+.status-hint-details summary {
+  cursor: pointer;
+  opacity: 0.85;
+  font-size: 11px;
+  width: fit-content;
+}
+.status-hint-raw {
+  display: block;
+  margin-top: 3px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  opacity: 0.9;
+}
+
 /* ---------- Settings ---------- */
 
 .settings {
