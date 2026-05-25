@@ -26,7 +26,7 @@ import { SnippetList } from "./components/SnippetList";
 import { SnippetForm } from "./components/SnippetForm";
 import { HistoryList } from "./components/HistoryList";
 import { QueryEditor, type QueryEditorHandle, type SchemaTable } from "./components/QueryEditor";
-import { ResultGrid } from "./components/ResultGrid";
+import { ResultGrid, type ResultGridHandle } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
 import { ExplainViewer } from "./components/ExplainViewer";
 import { TabBar } from "./components/TabBar";
@@ -257,6 +257,7 @@ export default function App() {
   const [snippetFormSql, setSnippetFormSql] = useState<string>("");
   const [showSnippetForm, setShowSnippetForm] = useState(false);
   const editorRef = useRef<QueryEditorHandle>(null);
+  const resultGridRef = useRef<ResultGridHandle>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
@@ -473,6 +474,8 @@ export default function App() {
   // committed tab state without re-creating themselves on every batch.
   const tabsRef = useRef<Tab[]>(tabs);
   useEffect(() => { tabsRef.current = tabs; }, [tabs]);
+  const activeTabIdRef = useRef<string | null>(activeTabId);
+  useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
 
   const nextRowCount = useCallback((tabId: string, justAdded: number) => {
     const tt = tabsRef.current.find((x) => x.id === tabId);
@@ -1206,6 +1209,70 @@ export default function App() {
     });
   }, [activeTabId, cancelStreamForTab]);
 
+  // Latest handlers held in a ref so the global keydown listener below can
+  // call them without re-attaching on every tab change.
+  const handleCloseTabRef = useRef(handleCloseTab);
+  handleCloseTabRef.current = handleCloseTab;
+
+  // App-wide keyboard shortcuts for the tabbed workspace: tab management
+  // (#121) and focusing the result search (#120). Editor-scoped shortcuts
+  // (run/preview/format) live in QueryEditor's CodeMirror keymap so they only
+  // fire while the editor has focus. These are gated to the tabbed view so
+  // they never fire over the Help/Settings/Form panels.
+  useEffect(() => {
+    if (!sessionId || showForm || showSettings || showHelp || showSnippetForm) return;
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      // Cmd/Ctrl+F → focus the cross-column result search (no Shift so the
+      // editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
+      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        const grid = resultGridRef.current;
+        if (grid) {
+          e.preventDefault();
+          grid.focusSearch();
+        }
+        return;
+      }
+      // Ctrl+Tab / Ctrl+Shift+Tab → next / previous tab (wraps around). Uses
+      // Ctrl on every platform; Cmd+Tab is the macOS app switcher.
+      if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Tab") {
+        const list = tabsRef.current;
+        if (list.length === 0) return;
+        e.preventDefault();
+        const cur = list.findIndex((tt) => tt.id === activeTabIdRef.current);
+        const delta = e.shiftKey ? -1 : 1;
+        const nextIdx = (cur + delta + list.length) % list.length;
+        setActiveTabId(list[nextIdx].id);
+        return;
+      }
+      if (!mod || e.altKey || e.shiftKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "t") {
+        e.preventDefault();
+        handleNewTab();
+        return;
+      }
+      if (key === "w") {
+        // Always suppress the webview's default "close window" on Ctrl/Cmd+W
+        // while in the tabbed workspace.
+        e.preventDefault();
+        const active = activeTabIdRef.current;
+        if (active) handleCloseTabRef.current(active);
+        return;
+      }
+      if (e.key >= "1" && e.key <= "9") {
+        const list = tabsRef.current;
+        const idx = Number(e.key) - 1;
+        if (idx < list.length) {
+          e.preventDefault();
+          setActiveTabId(list[idx].id);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [sessionId, showForm, showSettings, showHelp, showSnippetForm, handleNewTab]);
+
   // Clean up any active listeners when the app unmounts.
   useEffect(() => {
     return () => {
@@ -1494,6 +1561,7 @@ export default function App() {
                       />
                     ) : (
                       <ResultGrid
+                        ref={resultGridRef}
                         result={activeTab.result}
                         streaming={activeTab.streaming}
                         onStopStreaming={handleStopStreaming}
