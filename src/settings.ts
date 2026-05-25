@@ -39,6 +39,11 @@ export interface Settings {
   confirmDangerousQueries: boolean;
   /** Behavior when previously open tabs exist for a profile being reconnected. */
   tabRestoreMode: TabRestoreMode;
+  /**
+   * Automatically abort an editor query that runs longer than this many
+   * seconds. `0` disables the timeout (queries run unbounded as before).
+   */
+  queryTimeoutSecs: number;
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
@@ -169,6 +174,9 @@ export const DEFAULT_CONFIRM_DANGEROUS_QUERIES = true;
 
 export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 
+export const DEFAULT_QUERY_TIMEOUT_SECS = 30;
+const MAX_QUERY_TIMEOUT_SECS = 86_400;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -182,7 +190,17 @@ export const DEFAULT_SETTINGS: Settings = {
   confirmProductionConnect: DEFAULT_CONFIRM_PRODUCTION_CONNECT,
   confirmDangerousQueries: DEFAULT_CONFIRM_DANGEROUS_QUERIES,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
+  queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
 };
+
+/** Clamps a timeout (seconds) to a non-negative integer; `0` means disabled. */
+function sanitizeTimeout(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.floor(input);
+  if (n < 0) return 0;
+  if (n > MAX_QUERY_TIMEOUT_SECS) return MAX_QUERY_TIMEOUT_SECS;
+  return n;
+}
 
 function sanitizeTabRestoreMode(input: unknown, fallback: TabRestoreMode): TabRestoreMode {
   return input === "always" || input === "ask" || input === "never" ? input : fallback;
@@ -231,6 +249,7 @@ function loadInitial(): Settings {
       confirmProductionConnect?: unknown;
       confirmDangerousQueries?: unknown;
       tabRestoreMode?: unknown;
+      queryTimeoutSecs?: unknown;
     };
     return {
       syntaxColors: {
@@ -257,6 +276,7 @@ function loadInitial(): Settings {
           ? parsed.confirmDangerousQueries
           : DEFAULT_CONFIRM_DANGEROUS_QUERIES,
       tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
+      queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -380,6 +400,14 @@ export function setConfirmProductionConnect(value: boolean): void {
 export function setConfirmDangerousQueries(value: boolean): void {
   if (current.confirmDangerousQueries === value) return;
   current = { ...current, confirmDangerousQueries: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setQueryTimeoutSecs(value: number): void {
+  const next = sanitizeTimeout(value, current.queryTimeoutSecs);
+  if (current.queryTimeoutSecs === next) return;
+  current = { ...current, queryTimeoutSecs: next };
   persist();
   listeners.forEach((cb) => cb());
 }

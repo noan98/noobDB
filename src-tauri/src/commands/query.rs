@@ -131,6 +131,10 @@ struct StreamErrorEvent {
     #[serde(rename = "streamId")]
     stream_id: String,
     error: String,
+    /// True when the run was aborted by the execution-timeout guard rather than
+    /// failing in the database, so the UI can show a dedicated timeout message.
+    #[serde(rename = "timedOut")]
+    timed_out: bool,
 }
 
 const EV_QUERY_COLS: &str = "query-stream:columns";
@@ -149,6 +153,7 @@ pub async fn run_query_stream(
     initial_batch: usize,
     chunk_size: usize,
     auto_limit: Option<usize>,
+    query_timeout_secs: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -165,6 +170,7 @@ pub async fn run_query_stream(
         initial_batch,
         chunk_size,
         auto_limit,
+        query_timeout_secs,
     ));
     state
         .register_stream(stream_id, handle.abort_handle())
@@ -182,6 +188,7 @@ async fn spawn_query_stream(
     initial_batch: usize,
     chunk_size: usize,
     auto_limit: Option<usize>,
+    query_timeout_secs: Option<u64>,
 ) {
     // Rewrite the statement with an automatic LIMIT when requested and the SQL
     // is eligible. `sql` stays the original so history records what the user
@@ -195,37 +202,46 @@ async fn spawn_query_stream(
     };
     let emit_app = app.clone();
     let emit_id = stream_id.clone();
-    let result = session
-        .conn
-        .execute_stream(
-            &effective_sql,
-            database.as_deref(),
-            initial_batch,
-            chunk_size,
-            |batch| match batch {
-                StreamBatch::Columns(columns) => {
-                    let _ = emit_app.emit(
-                        EV_QUERY_COLS,
-                        StreamColumnsEvent {
-                            stream_id: emit_id.clone(),
-                            columns,
-                        },
-                    );
-                    Ok(())
-                }
-                StreamBatch::Rows(rows) => {
-                    let _ = emit_app.emit(
-                        EV_QUERY_ROWS,
-                        StreamRowsEvent {
-                            stream_id: emit_id.clone(),
-                            rows,
-                        },
-                    );
-                    Ok(())
-                }
-            },
-        )
-        .await;
+    let exec = session.conn.execute_stream(
+        &effective_sql,
+        database.as_deref(),
+        initial_batch,
+        chunk_size,
+        |batch| match batch {
+            StreamBatch::Columns(columns) => {
+                let _ = emit_app.emit(
+                    EV_QUERY_COLS,
+                    StreamColumnsEvent {
+                        stream_id: emit_id.clone(),
+                        columns,
+                    },
+                );
+                Ok(())
+            }
+            StreamBatch::Rows(rows) => {
+                let _ = emit_app.emit(
+                    EV_QUERY_ROWS,
+                    StreamRowsEvent {
+                        stream_id: emit_id.clone(),
+                        rows,
+                    },
+                );
+                Ok(())
+            }
+        },
+    );
+    // When a positive timeout is configured, race the whole run against it.
+    // Elapsing drops the streaming future, which returns the pooled connection
+    // (mirroring the manual stop button), so the session stays usable.
+    let result = match query_timeout_secs {
+        Some(secs) if secs > 0 => {
+            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                Ok(res) => res,
+                Err(_) => Err(AppError::Timeout(secs)),
+            }
+        }
+        _ => exec.await,
+    };
 
     match &result {
         Ok(res) => {
@@ -255,6 +271,7 @@ async fn spawn_query_stream(
                 StreamErrorEvent {
                     stream_id: stream_id.clone(),
                     error: e.to_string(),
+                    timed_out: matches!(e, AppError::Timeout(_)),
                 },
             );
         }
@@ -472,6 +489,7 @@ async fn spawn_preview_stream(
                 StreamErrorEvent {
                     stream_id: stream_id.clone(),
                     error: e.to_string(),
+                    timed_out: false,
                 },
             );
         }

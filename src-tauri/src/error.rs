@@ -15,6 +15,9 @@ pub enum AppError {
     #[error("read-only session: {0}")]
     ReadOnly(String),
 
+    #[error("query timed out after {0}s")]
+    Timeout(u64),
+
     #[error("ssh error: {0}")]
     Ssh(String),
 

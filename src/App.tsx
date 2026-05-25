@@ -496,6 +496,7 @@ export default function App() {
     const tab = tabs.find((tt) => tt.id === tabId);
     await cancelStreamForTab(tabId);
 
+    const timeoutSecs = settings.queryTimeoutSecs;
     const streamId = newStreamId(tabId);
     streamIdRef.current.set(tabId, streamId);
     const startedAt = Date.now();
@@ -589,9 +590,18 @@ export default function App() {
         setHistoryReloadKey((k) => k + 1);
         finalize();
       },
-      onError: ({ error }) => {
+      onError: ({ error, timedOut }) => {
         patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
-        setStatus({ kind: "key", key: "statusQueryError", vars: { error }, error: true });
+        if (timedOut) {
+          setStatus({
+            kind: "key",
+            key: "statusQueryTimeout",
+            vars: { secs: timeoutSecs },
+            error: true,
+          });
+        } else {
+          setStatus({ kind: "key", key: "statusQueryError", vars: { error }, error: true });
+        }
         setHistoryReloadKey((k) => k + 1);
         finalize();
       },
@@ -607,6 +617,7 @@ export default function App() {
         initialBatch: settings.defaultDisplayCount,
         chunkSize: settings.streamPrefetchSize,
         autoLimit,
+        queryTimeoutSecs: timeoutSecs,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
@@ -621,6 +632,7 @@ export default function App() {
     cancelStreamForTab,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
+    settings.queryTimeoutSecs,
   ]);
 
   // Build fresh Tab objects from a snapshot and replace the live tab list.
