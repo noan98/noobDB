@@ -55,8 +55,20 @@ pub async fn list_profiles() -> Result<Vec<ConnectionProfile>> {
 pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> {
     let id = req
         .id
+        .clone()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(new_profile_id);
+    let result = save_profile_inner(id.clone(), req);
+    match &result {
+        Ok(_) => tracing::info!(profile_id = %id, "profile saved"),
+        Err(e) => tracing::error!(profile_id = %id, error = %e, "failed to save profile"),
+    }
+    result
+}
+
+/// Persists the profile row and any changed secrets. The secret *values* are
+/// never logged — only which secret kind was set or cleared, at debug level.
+fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionProfile> {
     let profile = ConnectionProfile {
         id: id.clone(),
         name: req.name,
@@ -77,22 +89,28 @@ pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> 
 
     if let Some(pw) = req.db_password {
         if pw.is_empty() {
+            tracing::debug!(profile_id = %id, secret = "db_password", "clearing secret");
             secrets::delete_db_password(&id)?;
         } else {
+            tracing::debug!(profile_id = %id, secret = "db_password", "setting secret");
             secrets::set_db_password(&id, &pw)?;
         }
     }
     if let Some(pp) = req.ssh_passphrase {
         if pp.is_empty() {
+            tracing::debug!(profile_id = %id, secret = "ssh_passphrase", "clearing secret");
             secrets::delete_ssh_passphrase(&id)?;
         } else {
+            tracing::debug!(profile_id = %id, secret = "ssh_passphrase", "setting secret");
             secrets::set_ssh_passphrase(&id, &pp)?;
         }
     }
     if let Some(pw) = req.ssh_password {
         if pw.is_empty() {
+            tracing::debug!(profile_id = %id, secret = "ssh_password", "clearing secret");
             secrets::delete_ssh_password(&id)?;
         } else {
+            tracing::debug!(profile_id = %id, secret = "ssh_password", "setting secret");
             secrets::set_ssh_password(&id, &pw)?;
         }
     }
@@ -101,7 +119,14 @@ pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> 
 
 #[tauri::command]
 pub async fn delete_profile(id: String) -> Result<()> {
-    secrets::delete_all(&id)?;
-    store::delete(&id)?;
-    Ok(())
+    let result = (|| -> Result<()> {
+        secrets::delete_all(&id)?;
+        store::delete(&id)?;
+        Ok(())
+    })();
+    match &result {
+        Ok(()) => tracing::info!(profile_id = %id, "profile deleted"),
+        Err(e) => tracing::error!(profile_id = %id, error = %e, "failed to delete profile"),
+    }
+    result
 }

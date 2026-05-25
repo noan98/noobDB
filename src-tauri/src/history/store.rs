@@ -37,8 +37,15 @@ async fn pool() -> Result<&'static SqlitePool> {
             .max_connections(2)
             .acquire_timeout(std::time::Duration::from_secs(10))
             .connect_with(connect)
-            .await?;
-        init_schema(&pool).await?;
+            .await
+            .map_err(|e| {
+                tracing::error!(path = %path.display(), error = %e, "history: failed to open database");
+                e
+            })?;
+        init_schema(&pool).await.map_err(|e| {
+            tracing::error!(error = %e, "history: failed to initialize schema");
+            e
+        })?;
         Ok(pool)
     })
     .await

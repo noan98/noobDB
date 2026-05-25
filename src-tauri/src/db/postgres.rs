@@ -31,7 +31,17 @@ impl PostgresConn {
             .max_connections(5)
             .acquire_timeout(std::time::Duration::from_secs(15))
             .connect_with(connect)
-            .await?;
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    host = %opts.host,
+                    port = opts.port,
+                    user = %opts.user,
+                    error = %e,
+                    "postgres: failed to create connection pool"
+                );
+                e
+            })?;
         Ok(Self { pool })
     }
 

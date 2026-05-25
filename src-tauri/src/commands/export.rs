@@ -23,12 +23,31 @@ pub async fn export_query_result(
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("save path is empty".into()));
     }
+    let row_count = rows.len();
+    let result = write_export(&path, format, &columns, &rows).await;
+    match &result {
+        Ok(bytes) => tracing::info!(
+            format = ?format,
+            rows = row_count,
+            bytes = *bytes,
+            "query result exported"
+        ),
+        Err(e) => tracing::error!(format = ?format, error = %e, "failed to export query result"),
+    }
+    result
+}
+
+async fn write_export(
+    path: &str,
+    format: ExportFormat,
+    columns: &[Column],
+    rows: &[Vec<Value>],
+) -> Result<u64> {
     let buf = match format {
-        ExportFormat::Csv => render_csv(&columns, &rows),
-        ExportFormat::Json => render_json(&columns, &rows)?,
+        ExportFormat::Csv => render_csv(columns, rows),
+        ExportFormat::Json => render_json(columns, rows)?,
     };
-    let p = PathBuf::from(&path);
-    fs::write(&p, &buf).await?;
+    fs::write(PathBuf::from(path), &buf).await?;
     Ok(buf.len() as u64)
 }
 

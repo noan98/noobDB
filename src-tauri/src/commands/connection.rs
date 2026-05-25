@@ -62,19 +62,35 @@ pub struct ConnectResponse {
 
 #[tauri::command]
 pub async fn test_connection(req: ConnectRequest) -> Result<String> {
-    let (tunnel, opts) = build_options(&req).await?;
-    let conn = Connection::connect(&opts).await?;
-    let _ = conn.execute("SELECT 1", None).await?;
-    conn.close().await;
-    drop(tunnel);
-    Ok("ok".into())
+    log_attempt(&req, "test_connection");
+    let result = async {
+        let (tunnel, _opts, conn) = open_connection(&req).await?;
+        conn.execute("SELECT 1", None).await?;
+        conn.close().await;
+        drop(tunnel);
+        Ok::<(), AppError>(())
+    }
+    .await;
+    match &result {
+        Ok(()) => tracing::info!(driver = req.driver.as_str(), "test_connection succeeded"),
+        Err(e) => {
+            tracing::error!(driver = req.driver.as_str(), error = %e, "test_connection failed")
+        }
+    }
+    result.map(|()| "ok".into())
 }
 
 #[tauri::command]
 pub async fn connect(req: ConnectRequest, state: State<'_, AppState>) -> Result<ConnectResponse> {
+    log_attempt(&req, "connect");
     let profile_id = req.profile_id.clone();
-    let (tunnel, opts) = build_options(&req).await?;
-    let conn = Connection::connect(&opts).await?;
+    let (tunnel, opts, conn) = match open_connection(&req).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(driver = req.driver.as_str(), error = %e, "connect failed");
+            return Err(e);
+        }
+    };
     let session = Session {
         id: new_session_id(),
         profile_id,
@@ -85,6 +101,12 @@ pub async fn connect(req: ConnectRequest, state: State<'_, AppState>) -> Result<
         _tunnel: tunnel,
     };
     let id = state.insert(session).await;
+    tracing::info!(
+        session_id = %id,
+        driver = req.driver.as_str(),
+        read_only = req.read_only,
+        "connection established"
+    );
     Ok(ConnectResponse { session_id: id })
 }
 
@@ -93,8 +115,36 @@ pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Resul
     if let Some(sess) = state.remove(&session_id).await {
         sess.conn.close().await;
         // Session (and its tunnel) drops with the last Arc reference.
+        tracing::info!(session_id = %session_id, "disconnected");
+    } else {
+        tracing::debug!(session_id = %session_id, "disconnect: no such session");
     }
     Ok(())
+}
+
+/// Emits a single structured line describing a connection attempt. Logs only
+/// the non-secret endpoint metadata (never the password or passphrase).
+fn log_attempt(req: &ConnectRequest, op: &str) {
+    tracing::info!(
+        op,
+        driver = req.driver.as_str(),
+        host = %req.host,
+        port = req.port,
+        user = %req.user,
+        via_ssh = req.ssh.is_some(),
+        ssh_auth = ?req.ssh.as_ref().map(|s| s.auth_method),
+        "attempting connection"
+    );
+}
+
+/// Opens the SSH tunnel (when requested) and the DB connection, returning the
+/// tunnel guard, the resolved options, and the live connection.
+async fn open_connection(
+    req: &ConnectRequest,
+) -> Result<(Option<SshTunnel>, DbConnectOptions, Connection)> {
+    let (tunnel, opts) = build_options(req).await?;
+    let conn = Connection::connect(&opts).await?;
+    Ok((tunnel, opts, conn))
 }
 
 /// Build DB options and (if requested) open an SSH tunnel.

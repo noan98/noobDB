@@ -13,15 +13,20 @@ type Session = russh::client::Handle<ClientHandler>;
 
 /// Load a private key from a file path, optionally decrypting with a passphrase.
 pub fn load_private_key(path: &Path, passphrase: Option<&str>) -> Result<Arc<PrivateKey>> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| AppError::SshKey(format!("failed to read key file: {e}")))?;
-    let key = decode_secret_key(&content, passphrase)
-        .map_err(|e| AppError::SshKey(format!("failed to decode private key: {e}")))?;
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "ssh: failed to read private key file");
+        AppError::SshKey(format!("failed to read key file: {e}"))
+    })?;
+    let key = decode_secret_key(&content, passphrase).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "ssh: failed to decode private key");
+        AppError::SshKey(format!("failed to decode private key: {e}"))
+    })?;
     Ok(Arc::new(key))
 }
 
 /// Authenticate an already-connected SSH session using the method in `cfg`.
 pub async fn authenticate(session: &mut Session, cfg: &SshConfig) -> Result<()> {
+    tracing::debug!(method = ?cfg.auth_method, user = %cfg.user, "ssh: authenticating");
     match cfg.auth_method {
         SshAuthMethod::Key => authenticate_key(session, cfg).await,
         SshAuthMethod::Agent => authenticate_agent(session, cfg).await,
@@ -43,8 +48,12 @@ async fn authenticate_key(session: &mut Session, cfg: &SshConfig) -> Result<()> 
             russh::keys::PrivateKeyWithHashAlg::new(key, None),
         )
         .await
-        .map_err(|e| AppError::Ssh(format!("ssh auth error: {e}")))?;
+        .map_err(|e| {
+            tracing::error!(user = %cfg.user, error = %e, "ssh: public-key auth error");
+            AppError::Ssh(format!("ssh auth error: {e}"))
+        })?;
     if !authed.success() {
+        tracing::warn!(user = %cfg.user, "ssh: public-key authentication rejected");
         return Err(AppError::Ssh("ssh authentication failed".into()));
     }
     Ok(())
@@ -54,8 +63,12 @@ async fn authenticate_password(session: &mut Session, cfg: &SshConfig) -> Result
     let authed = session
         .authenticate_password(&cfg.user, cfg.password.clone())
         .await
-        .map_err(|e| AppError::Ssh(format!("ssh auth error: {e}")))?;
+        .map_err(|e| {
+            tracing::error!(user = %cfg.user, error = %e, "ssh: password auth error");
+            AppError::Ssh(format!("ssh auth error: {e}"))
+        })?;
     if !authed.success() {
+        tracing::warn!(user = %cfg.user, "ssh: password authentication rejected");
         return Err(AppError::Ssh("ssh password authentication failed".into()));
     }
     Ok(())
@@ -122,12 +135,16 @@ where
         let result = session
             .authenticate_publickey_with(&cfg.user, public_key, None, &mut agent)
             .await
-            .map_err(|e| AppError::Ssh(format!("ssh-agent auth error: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(user = %cfg.user, error = %e, "ssh: agent auth error");
+                AppError::Ssh(format!("ssh-agent auth error: {e}"))
+            })?;
         if result.success() {
             return Ok(());
         }
     }
 
+    tracing::warn!(user = %cfg.user, "ssh: agent authentication rejected for all identities");
     Err(AppError::Ssh(
         "ssh-agent authentication failed for all identities".into(),
     ))

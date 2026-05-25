@@ -14,11 +14,30 @@ use crate::state::{AppState, Session};
 /// strictly read-only. Used at every query entry point.
 fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
     if session.read_only && !is_read_only_sql(sql) {
+        tracing::warn!(
+            session_id = %session.id,
+            sql = %sql_summary(sql),
+            "read-only guard rejected a non-read-only statement"
+        );
         return Err(AppError::ReadOnly(
             "read-only profile: only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed".into(),
         ));
     }
     Ok(())
+}
+
+/// Collapses `sql` to a short, single-line summary for logging. Never used at
+/// `info` level — the full statement (which may carry sensitive literals) is
+/// only ever surfaced at `debug` and is truncated here regardless.
+fn sql_summary(sql: &str) -> String {
+    const MAX: usize = 80;
+    let one_line = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() > MAX {
+        let head: String = one_line.chars().take(MAX).collect();
+        format!("{head}…")
+    } else {
+        one_line
+    }
 }
 
 #[tauri::command]
@@ -55,12 +74,31 @@ pub async fn run_query_transaction(
     for sql in &statements {
         ensure_allowed_for_session(&session, sql)?;
     }
+    tracing::debug!(
+        session_id = %session.id,
+        statements = statements.len(),
+        database = ?database,
+        "transaction starting"
+    );
     let started = std::time::Instant::now();
     let result = session
         .conn
         .execute_transaction(&statements, database.as_deref())
         .await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
+    match &result {
+        Ok(affected) => tracing::debug!(
+            session_id = %session.id,
+            elapsed_ms,
+            rows_affected = *affected,
+            "transaction committed"
+        ),
+        Err(e) => tracing::warn!(
+            session_id = %session.id,
+            error = %e,
+            "transaction failed and was rolled back"
+        ),
+    }
     // The cell-edit Apply path is a primary write entry point, so record the
     // generated statements to history for auditability (skip_history honoured).
     let sql_text = statements.join("\n");
@@ -190,6 +228,13 @@ async fn spawn_query_stream(
     auto_limit: Option<usize>,
     query_timeout_secs: Option<u64>,
 ) {
+    tracing::debug!(
+        session_id = %session.id,
+        stream_id = %stream_id,
+        database = ?database,
+        sql = %sql_summary(&sql),
+        "query stream starting"
+    );
     // Rewrite the statement with an automatic LIMIT when requested and the SQL
     // is eligible. `sql` stays the original so history records what the user
     // actually typed; only `effective_sql` carries the injected cap.
@@ -245,6 +290,14 @@ async fn spawn_query_stream(
 
     match &result {
         Ok(res) => {
+            tracing::debug!(
+                session_id = %session.id,
+                stream_id = %stream_id,
+                elapsed_ms = res.elapsed_ms,
+                rows = res.rows_affected,
+                has_columns = !res.columns.is_empty(),
+                "query stream completed"
+            );
             let _ = app.emit(
                 EV_QUERY_DONE,
                 StreamDoneEvent {
@@ -266,6 +319,21 @@ async fn spawn_query_stream(
             );
         }
         Err(e) => {
+            if matches!(e, AppError::Timeout(_)) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %e,
+                    "query stream timed out"
+                );
+            } else {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %e,
+                    "query stream failed"
+                );
+            }
             let _ = app.emit(
                 EV_QUERY_ERROR,
                 StreamErrorEvent {
@@ -484,6 +552,12 @@ async fn spawn_preview_stream(
             );
         }
         Err(e) => {
+            tracing::warn!(
+                session_id = %session.id,
+                stream_id = %stream_id,
+                error = %e,
+                "preview stream failed"
+            );
             let _ = app.emit(
                 EV_PREVIEW_ERROR,
                 StreamErrorEvent {
