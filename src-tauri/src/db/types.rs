@@ -48,6 +48,10 @@ pub struct TableColumnInfo {
     pub key: String,
     pub default: Option<String>,
     pub extra: String,
+    /// When this column is a foreign key, the table it references; `None` otherwise.
+    pub referenced_table: Option<String>,
+    /// The referenced column for the foreign key, when the driver can resolve it.
+    pub referenced_column: Option<String>,
 }
 
 /// One unit produced by streaming SELECT execution. Columns are reported

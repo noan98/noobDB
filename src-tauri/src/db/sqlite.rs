@@ -326,6 +326,25 @@ impl SqliteConn {
         if table.contains('"') || table.contains('\0') {
             return Err(AppError::InvalidInput("invalid table name".into()));
         }
+        // PRAGMA foreign_key_list: id, seq, table, from, to, on_update, on_delete, match.
+        // Map each local column ("from") to its referenced table and column ("to",
+        // which is NULL when the FK targets the parent's primary key implicitly).
+        let fk_sql = format!("PRAGMA foreign_key_list(\"{}\")", table);
+        let fk_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(fk_sql))
+            .fetch_all(&self.pool)
+            .await?;
+        let mut fks: std::collections::HashMap<String, (String, Option<String>)> =
+            std::collections::HashMap::new();
+        for r in &fk_rows {
+            let from = r.try_get::<String, _>("from").unwrap_or_default();
+            if from.is_empty() {
+                continue;
+            }
+            let ref_table = r.try_get::<String, _>("table").unwrap_or_default();
+            let ref_column = r.try_get::<Option<String>, _>("to").ok().flatten();
+            fks.entry(from).or_insert((ref_table, ref_column));
+        }
+
         let sql = format!("PRAGMA table_info(\"{}\")", table);
         let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&self.pool)
@@ -339,6 +358,10 @@ impl SqliteConn {
                 let notnull = r.try_get::<i64, _>("notnull").unwrap_or(0);
                 let dflt = r.try_get::<Option<String>, _>("dflt_value").ok().flatten();
                 let pk = r.try_get::<i64, _>("pk").unwrap_or(0);
+                let (referenced_table, referenced_column) = match fks.get(&name) {
+                    Some((t, c)) => (Some(t.clone()), c.clone()),
+                    None => (None, None),
+                };
                 TableColumnInfo {
                     name,
                     data_type,
@@ -346,6 +369,8 @@ impl SqliteConn {
                     key: if pk > 0 { "PRI".into() } else { String::new() },
                     default: dflt,
                     extra: String::new(),
+                    referenced_table,
+                    referenced_column,
                 }
             })
             .collect())

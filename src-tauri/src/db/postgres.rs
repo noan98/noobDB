@@ -353,7 +353,9 @@ impl PostgresConn {
                 c.is_nullable,
                 CASE WHEN pk.column_name IS NOT NULL THEN 'PRI' ELSE '' END AS column_key,
                 c.column_default,
-                ''::text AS extra
+                ''::text AS extra,
+                fk.ref_table,
+                fk.ref_column
               FROM information_schema.columns c
               LEFT JOIN (
                 SELECT kcu.column_name
@@ -366,6 +368,24 @@ impl PostgresConn {
                   AND tc.table_schema = $1
                   AND tc.table_name   = $2
               ) pk ON pk.column_name = c.column_name
+              LEFT JOIN (
+                SELECT DISTINCT ON (kcu.column_name)
+                  kcu.column_name,
+                  ccu.table_name  AS ref_table,
+                  ccu.column_name AS ref_column
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name
+                 AND tc.table_schema    = kcu.table_schema
+                 AND tc.table_name      = kcu.table_name
+                JOIN information_schema.constraint_column_usage ccu
+                  ON ccu.constraint_name = tc.constraint_name
+                 AND ccu.table_schema    = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                  AND tc.table_schema = $1
+                  AND tc.table_name   = $2
+                ORDER BY kcu.column_name
+              ) fk ON fk.column_name = c.column_name
               WHERE c.table_schema = $1 AND c.table_name = $2
               ORDER BY c.ordinal_position"#,
         )
@@ -386,6 +406,8 @@ impl PostgresConn {
                 key: r.try_get::<String, _>(3).unwrap_or_default(),
                 default: r.try_get::<Option<String>, _>(4).ok().flatten(),
                 extra: r.try_get::<String, _>(5).unwrap_or_default(),
+                referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
+                referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
             })
             .collect())
     }
