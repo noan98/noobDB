@@ -1084,7 +1084,10 @@ fn strip_sql_comments(sql: &str) -> String {
 ///   routing it through `fetch` lets the first result set reach the grid
 ///   instead of collapsing to `rows_affected`.
 fn is_query_shape(sql: &str) -> bool {
-    let trimmed = sql.trim_start().to_ascii_lowercase();
+    // Leading comments/whitespace must be skipped before the keyword check, or
+    // a perfectly normal `/* hint */ SELECT ...` / `-- note\nWITH ...` would
+    // miss the prefix match and get misrouted to the execute path.
+    let trimmed = skip_leading_comments_and_ws(sql).to_ascii_lowercase();
     if trimmed.starts_with("with") {
         return !with_cte_is_mutation(sql);
     }
@@ -1094,6 +1097,47 @@ fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("desc ")
         || trimmed.starts_with("explain")
         || trimmed.starts_with("call")
+}
+
+/// Returns the slice of `sql` starting at the first byte that is not leading
+/// whitespace or a leading SQL comment (`-- ...`, `# ...`, `/* ... */`),
+/// skipping any run of them. Leading comments precede any string literal, so a
+/// quote-unaware scan is safe here. Comment bodies may contain multi-byte
+/// UTF-8, but the scan only ever stops on the ASCII bytes `\n` and `*/`, which
+/// never occur inside a UTF-8 continuation byte, so the returned index always
+/// lands on a char boundary.
+fn skip_leading_comments_and_ws(sql: &str) -> &str {
+    let bytes = sql.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+    loop {
+        while i < n && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        if bytes[i] == b'-' && i + 1 < n && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < n && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else if bytes[i] == b'#' {
+            i += 1;
+            while i < n && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else if bytes[i] == b'/' && i + 1 < n && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < n && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(n);
+        } else {
+            break;
+        }
+    }
+    &sql[i.min(n)..]
 }
 
 /// For a statement beginning with `WITH`, returns true when the *main*
@@ -1109,14 +1153,13 @@ fn is_query_shape(sql: &str) -> bool {
 /// the statement is treated as query-shaped, preserving the historical
 /// default.
 fn with_cte_is_mutation(sql: &str) -> bool {
-    let cleaned = strip_sql_comments(sql);
     let mut depth: i32 = 0;
     let mut in_single = false;
     let mut in_double = false;
     let mut in_backtick = false;
     let mut word = String::new();
 
-    let mut chars = cleaned.chars().peekable();
+    let mut chars = sql.chars().peekable();
     loop {
         let next = chars.next();
         if in_single {
@@ -1186,6 +1229,34 @@ fn with_cte_is_mutation(sql: &str) -> bool {
             Some('\'') => in_single = true,
             Some('"') => in_double = true,
             Some('`') => in_backtick = true,
+            // Comments are handled inline (rather than pre-stripping) so the
+            // quote state above protects comment markers that appear inside
+            // string/identifier literals, e.g. `SELECT '-- keep'`.
+            Some('-') if chars.peek() == Some(&'-') => {
+                chars.next();
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            }
+            Some('#') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            }
+            Some('/') if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut prev = '\0';
+                for c in chars.by_ref() {
+                    if prev == '*' && c == '/' {
+                        break;
+                    }
+                    prev = c;
+                }
+            }
             Some('(') => depth += 1,
             Some(')') => {
                 if depth > 0 {
@@ -1258,6 +1329,36 @@ mod tests {
         // not be read as the main statement.
         assert!(is_query_shape(
             "WITH c AS (SELECT 'delete me' AS note) SELECT * FROM c"
+        ));
+    }
+
+    #[test]
+    fn query_shape_skips_leading_comments() {
+        // Leading block/line/hash comments must not hide the real keyword.
+        assert!(is_query_shape("/* hint */ SELECT 1"));
+        assert!(is_query_shape("-- note\nSELECT 1"));
+        assert!(is_query_shape("# note\nSELECT 1"));
+        assert!(is_query_shape("  /* a */ -- b\n  CALL p()"));
+        // Leading comment before a CTE-prefixed mutation still routes to execute.
+        assert!(!is_query_shape(
+            "-- delete dups\nWITH c AS (SELECT 1) DELETE FROM t"
+        ));
+        assert!(!is_query_shape("/* c */ INSERT INTO t VALUES (1)"));
+    }
+
+    #[test]
+    fn with_cte_comment_marker_in_literal_is_preserved() {
+        // The `--` lives inside a string literal, so it must not be treated as
+        // a comment that would swallow the trailing DELETE. Regression: a
+        // quote-unaware comment strip truncated the statement and misrouted
+        // the mutation to the fetch path.
+        assert!(!is_query_shape(
+            "WITH c AS (SELECT '-- keep' AS note) DELETE FROM t WHERE id IN (SELECT 1)"
+        ));
+        // A genuine line comment between the CTE and the main keyword is
+        // skipped so the DELETE is still detected.
+        assert!(!is_query_shape(
+            "WITH c AS (SELECT 1) -- pick\n DELETE FROM t WHERE id = 1"
         ));
     }
 
