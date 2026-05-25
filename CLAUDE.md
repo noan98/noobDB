@@ -126,6 +126,32 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`, `libxdo-dev`,
 `libayatana-appindicator3-dev`) が必要です。
 
+### ビルド高速化
+
+ローカルと CI の Rust ビルドを速くするための設定をいくつか入れています。
+
+- `src-tauri/Cargo.toml` の `[profile.dev]` で `debug = "line-tables-only"` を
+  指定し、dev ビルドの debuginfo を行テーブルのみに削減しています。リンク時間と
+  生成物サイズが減り、バックトレースのファイル:行情報は維持されます。ツール導入
+  不要で全環境に効きます。
+- `src-tauri/.cargo/config.toml` が **Linux x86_64 ターゲットのリンカに
+  `clang` + `mold`** を指定しています。インクリメンタルビルドではリンクが所要
+  時間の大半を占めるため、効果が大きいです。**Linux で開発・テストする場合は
+  `clang` と `mold` のインストールが必須**です (`sudo apt install clang mold`
+  など)。未導入だと `cargo build` / `clippy` / `test` がリンカを見つけられず
+  失敗します。用意できない場合は同ファイルの `-fuse-ld=mold` を `-fuse-ld=lld`
+  に変えるか、`[target.*]` ブロックをコメントアウトしてください。この設定は
+  Linux x86_64 ターゲット限定で、Windows のリリースビルドや macOS には影響
+  しません。
+- 同ファイルに **sccache** (`[build] rustc-wrapper`) の設定をコメントアウト
+  状態で同梱しています。プロジェクト/ブランチを跨いでコンパイル成果物を再利用
+  したい場合は `cargo install sccache` してから該当行を有効化してください。
+  クリーンビルドや `Cargo.lock` 変更時のビルドに効きます (リンク時間は短縮
+  されないので mold と併用すると効果的)。
+- CI (`ci.yml` の rust ジョブ) では上記 config に合わせて `clang` と `mold` を
+  apt で導入済みで、`cargo nextest` のテストバイナリ群のリンクが mold で高速化
+  されます。
+
 JS のリンタやテストランナーは設定されていません。フロントエンドは `tsc`
 (`npm run build` 経由) でのみ型チェックされます。`tsconfig.json` では `strict`、
 `noUnusedLocals`、`noUnusedParameters` が有効になっているため、未使用の import や

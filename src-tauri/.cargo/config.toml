@@ -1,0 +1,25 @@
+# ローカル (Linux x86_64) のビルド高速化設定。
+#
+# 高速リンカ mold を使い、インクリメンタルビルドのリンク時間を短縮する。
+# Tauri のような巨大な依存ツリーでは、1 ファイル編集 → 再ビルド時の所要時間の
+# 大半がリンクなので、効果が大きい。
+#
+# 事前準備 (Linux で開発・テストする場合は必須):
+#   Ubuntu/Debian: sudo apt install clang mold
+#   Fedora:        sudo dnf install clang mold
+#   Arch:          sudo pacman -S clang mold
+#
+# mold を用意できない場合は -fuse-ld=mold を -fuse-ld=lld (LLVM の lld) に変えるか、
+# 下の [target.*] ブロックごとコメントアウトしてください (既定のリンカに戻る)。
+# このブロックは Linux x86_64 ターゲットにのみ適用され、Windows のリリースビルドや
+# macOS 開発には影響しません。
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# (任意) sccache によるコンパイルキャッシュ。プロジェクトやブランチを跨いで
+# rustc の成果物を再利用でき、クリーンビルドや Cargo.lock 変更時のビルドに効く。
+# 使う場合は `cargo install sccache` でインストールしてから次の 2 行を有効化する。
+# 未インストールのまま有効化すると、cargo がラッパーを見つけられずビルドに失敗します。
+# [build]
+# rustc-wrapper = "sccache"
