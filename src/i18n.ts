@@ -186,6 +186,7 @@ const en = {
   statusRowsIn: "{rows} rows in {ms} ms",
   statusRowsAffected: "{rows} rows affected ({ms} ms)",
   statusQueryError: "Query error: {error}",
+  statusConnectionLost: "The connection may have been lost (idle timeout, network or VPN drop). The session was closed — please reconnect.",
   statusQueryTimeout: "Query timed out after {secs}s and was cancelled. The connection is still open — raise or disable the timeout in Settings.",
   statusRunningPreview: "Running preview (will roll back)...",
   statusPreviewDone: "Preview: {rows} rows affected ({ms} ms) — rolled back, DB unchanged",
@@ -209,6 +210,8 @@ const en = {
     "Authentication or permission was denied. Check the user name and password, and that the user is allowed to reach this database from this host.",
   errorHintConnection:
     "Couldn't reach the database server. Check the host and port, that the server is running, and any SSH tunnel or firewall settings.",
+  errorHintConnectionLost:
+    "The connection seems to have dropped — the server may have closed an idle session (wait_timeout), or the network / VPN went down. Reconnect and run the query again.",
 
   listEmpty: "No saved connections yet.",
   listNoMatches: "No connections match the filter.",
@@ -811,6 +814,7 @@ const ja: Dict = {
   statusRowsIn: "{rows} 件取得 ({ms} ms)",
   statusRowsAffected: "影響行数 {rows} 件 ({ms} ms)",
   statusQueryError: "クエリエラー: {error}",
+  statusConnectionLost: "接続が切れた可能性があります（アイドルタイムアウト、ネットワークや VPN の切断など）。セッションを閉じました。再接続してください。",
   statusQueryTimeout: "クエリが {secs} 秒でタイムアウトし、中断されました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
   statusRunningPreview: "プレビュー実行中 (ロールバックされます)...",
   statusPreviewDone: "プレビュー: 影響行数 {rows} 件 ({ms} ms) — ロールバック済み、DBは変更されていません",
@@ -834,6 +838,8 @@ const ja: Dict = {
     "認証または権限が拒否されました。ユーザー名とパスワード、そのユーザーがこのホストから対象のデータベースへアクセスできるかを確認してください。",
   errorHintConnection:
     "データベースサーバーに到達できませんでした。ホストとポート、サーバーが起動しているか、SSH トンネルやファイアウォールの設定を確認してください。",
+  errorHintConnectionLost:
+    "接続が切れたようです。サーバーがアイドル状態のセッションを閉じた (wait_timeout)、またはネットワークや VPN が切断された可能性があります。再接続してから、もう一度クエリを実行してください。",
 
   listEmpty: "保存された接続はまだありません。",
   listNoMatches: "条件に一致する接続がありません。",

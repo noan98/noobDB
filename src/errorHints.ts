@@ -24,6 +24,16 @@ const PATTERNS: { test: RegExp; key: I18nKey }[] = [
     test: /access denied|authentication failed|password authentication failed/i,
     key: "errorHintAccessDenied",
   },
+  // Connection dropped mid-session (server closed an idle connection, socket
+  // broke, network/VPN drop). Must precede the generic "can't connect" pattern
+  // so a lost connection gets the reconnect-oriented hint, not the "check host"
+  // one. Covers MySQL ("gone away" / "lost connection" / "broken pipe"),
+  // PostgreSQL ("terminating connection" / "server closed the connection") and
+  // sqlx's transport wording ("error communicating with database").
+  {
+    test: /server has gone away|lost connection|broken pipe|connection was killed|server closed the connection|terminating connection|error communicating with database/i,
+    key: "errorHintConnectionLost",
+  },
   {
     test: /connection refused|(?:can't|cannot|couldn't|could not) connect|connection reset|connection timed out/i,
     key: "errorHintConnection",
