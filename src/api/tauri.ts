@@ -395,6 +395,11 @@ export interface QueryStreamErrorEvent {
   error: string;
   /** True when the run was aborted by the execution-timeout guard. */
   timedOut: boolean;
+  /**
+   * True when the failure means the DB connection was lost (server closed it,
+   * socket broke, network dropped). The session is no longer usable.
+   */
+  connectionLost: boolean;
 }
 
 export interface PreviewStreamMetaEvent {
@@ -419,6 +424,11 @@ export interface PreviewStreamDoneEvent {
 export interface PreviewStreamErrorEvent {
   streamId: string;
   error: string;
+  /**
+   * True when the failure means the DB connection was lost (server closed it,
+   * socket broke, network dropped). The session is no longer usable.
+   */
+  connectionLost: boolean;
 }
 
 export interface ImportStartedEvent {

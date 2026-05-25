@@ -173,6 +173,11 @@ struct StreamErrorEvent {
     /// failing in the database, so the UI can show a dedicated timeout message.
     #[serde(rename = "timedOut")]
     timed_out: bool,
+    /// True when the failure means the DB connection was lost (server closed it,
+    /// socket broke, network dropped). Lets the UI drop the now-dead session and
+    /// prompt a reconnect instead of leaving it stuck on "connected".
+    #[serde(rename = "connectionLost")]
+    connection_lost: bool,
 }
 
 const EV_QUERY_COLS: &str = "query-stream:columns";
@@ -340,6 +345,7 @@ async fn spawn_query_stream(
                     stream_id: stream_id.clone(),
                     error: e.to_string(),
                     timed_out: matches!(e, AppError::Timeout(_)),
+                    connection_lost: e.is_connection_lost(),
                 },
             );
         }
@@ -564,6 +570,7 @@ async fn spawn_preview_stream(
                     stream_id: stream_id.clone(),
                     error: e.to_string(),
                     timed_out: false,
+                    connection_lost: e.is_connection_lost(),
                 },
             );
         }
