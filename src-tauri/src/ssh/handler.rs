@@ -58,6 +58,39 @@ impl ClientHandler {
             .open(path)?;
         writeln!(f, "{}:{} {}", self.host, self.port, fingerprint)
     }
+
+    /// Rewrite this endpoint's known_hosts entry with `fingerprint`, leaving
+    /// every other line untouched.
+    fn replace_entry(&self, fingerprint: &str) -> std::io::Result<()> {
+        let path = Self::known_hosts_path()?;
+        let target = format!("{}:{}", self.host, self.port);
+        let content = std::fs::read_to_string(&path)?;
+        let mut out = String::with_capacity(content.len() + fingerprint.len());
+        for line in content.lines() {
+            let is_target = line
+                .trim()
+                .split_once(' ')
+                .is_some_and(|(endpoint, _)| endpoint == target);
+            if is_target {
+                out.push_str(&format!("{target} {fingerprint}\n"));
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        std::fs::write(&path, out)
+    }
+}
+
+/// Pre-0.60 builds stored the bare base64 SHA-256 digest, while russh 0.60
+/// renders fingerprints as `SHA256:<digest>`. When the stored value is the
+/// legacy form of the *same* digest it denotes the same key, so we can migrate
+/// it instead of treating a previously trusted host as a key mismatch.
+fn is_legacy_fingerprint_of(stored: &str, current: &str) -> bool {
+    match current.strip_prefix("SHA256:") {
+        Some(digest) => !stored.contains(':') && stored == digest,
+        None => false,
+    }
 }
 
 impl Handler for ClientHandler {
@@ -72,6 +105,15 @@ impl Handler for ClientHandler {
             Ok(Some(known)) => {
                 if known == fingerprint {
                     tracing::info!(host = %self.host, "ssh host key matches known_hosts");
+                    Ok(true)
+                } else if is_legacy_fingerprint_of(&known, &fingerprint) {
+                    tracing::info!(
+                        host = %self.host,
+                        "migrating legacy known_hosts fingerprint to SHA256 format"
+                    );
+                    if let Err(e) = self.replace_entry(&fingerprint) {
+                        tracing::warn!("failed to migrate known_hosts entry: {e}");
+                    }
                     Ok(true)
                 } else {
                     tracing::warn!(
@@ -105,5 +147,33 @@ impl Handler for ClientHandler {
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_legacy_fingerprint_of;
+
+    #[test]
+    fn legacy_digest_matches_current_sha256() {
+        assert!(is_legacy_fingerprint_of("abc123DEF", "SHA256:abc123DEF"));
+    }
+
+    #[test]
+    fn legacy_digest_for_different_key_is_rejected() {
+        assert!(!is_legacy_fingerprint_of("abc123DEF", "SHA256:zzz999"));
+    }
+
+    #[test]
+    fn modern_stored_entry_is_not_treated_as_legacy() {
+        assert!(!is_legacy_fingerprint_of(
+            "SHA256:abc123DEF",
+            "SHA256:abc123DEF"
+        ));
+    }
+
+    #[test]
+    fn non_sha256_current_fingerprint_never_migrates() {
+        assert!(!is_legacy_fingerprint_of("abc123DEF", "MD5:ab:cd:ef"));
     }
 }
