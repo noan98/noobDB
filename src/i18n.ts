@@ -455,6 +455,7 @@ const en = {
 
   tabNew: "New query tab",
   tabClose: "Close tab",
+  tabDirty: "Unsaved changes (not yet run)",
   tabUntitledQuery: "Query",
   tabExplainTitle: "Explain",
   tabsEmpty: "No tabs open. Double-click a table or click + to start a query.",
@@ -1079,6 +1080,7 @@ const ja: Dict = {
 
   tabNew: "新しいクエリタブ",
   tabClose: "タブを閉じる",
+  tabDirty: "未実行の変更があります",
   tabUntitledQuery: "クエリ",
   tabExplainTitle: "実行計画",
   tabsEmpty: "開いているタブがありません。テーブルをダブルクリックするか、+ を押してクエリを始めてください。",

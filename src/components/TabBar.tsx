@@ -49,6 +49,11 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onNew, disabled }
                 {tab.kind === "table" ? "▤" : tab.kind === "explain" ? "❖" : "✎"}
               </span>
               <span className="tab-label">{tab.title}</span>
+              {tab.dirty && (
+                <span className="tab-dirty" title={t("tabDirty")} aria-label={t("tabDirty")}>
+                  ●
+                </span>
+              )}
               <button
                 className="tab-close"
                 aria-label={t("tabClose")}
