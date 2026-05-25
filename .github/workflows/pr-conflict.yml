@@ -85,57 +85,77 @@ jobs:
             if (context.eventName === 'pull_request') {
               prNumbers = [context.payload.pull_request.number];
             } else {
-              const prs = await github.paginate(github.rest.pulls.list, {
-                owner, repo, state: 'open', base: 'main', per_page: 100,
-              });
-              prNumbers = prs.map((p) => p.number);
+              try {
+                const prs = await github.paginate(github.rest.pulls.list, {
+                  owner, repo, state: 'open', base: 'main', per_page: 100,
+                });
+                prNumbers = prs.map((p) => p.number);
+              } catch (e) {
+                // PR 一覧の取得が一時的に失敗してもジョブは落とさない。
+                // 次の main への push で再評価される。
+                core.warning(`pulls.list に失敗: ${e.status || ''} ${e.message}`);
+              }
             }
 
             // mergeable が確定するまで PR を取り直す。確定しなければ null を返す。
+            // pulls.get が一時的に失敗 (5xx / レート制限 / マージ直後のレース) しても
+            // ジョブを落とさず、404 (PR 消失) は即時 null、それ以外はリトライする。
             async function resolvePr(number) {
               for (let attempt = 0; attempt <= retryMax; attempt++) {
-                const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
-                if (pr.state !== 'open') return null;
-                if (pr.mergeable !== null) return pr;
+                try {
+                  const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                  if (pr.state !== 'open') return null;
+                  if (pr.mergeable !== null) return pr;
+                } catch (e) {
+                  if (e.status === 404) return null;
+                  core.warning(`PR #${number}: pulls.get に失敗 (attempt ${attempt}): ${e.status || ''} ${e.message}`);
+                }
                 if (attempt < retryMax) await sleep(retryAfterMs);
               }
               return null;
             }
 
             for (const number of prNumbers) {
-              const pr = await resolvePr(number);
-              if (!pr) {
-                core.warning(`PR #${number}: mergeable still unknown after retries; skipping`);
-                continue;
-              }
-              const isDirty = pr.mergeable === false;
-
-              // ラベルの付与 / 除去。
-              const hasLabel = (pr.labels || []).some((l) => (l.name || l) === labelName);
-              if (isDirty && !hasLabel) {
-                await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [labelName] });
-              } else if (!isDirty && hasLabel) {
-                try {
-                  await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: labelName });
-                } catch (e) {
-                  if (e.status !== 404) throw e;
+              // 1 件の PR 処理で API エラーが起きてもジョブ全体は落とさず次へ進む。
+              // (マージ直後のレースや一時的な 5xx / レート制限で個別に失敗しても、
+              //  他 PR の処理とジョブの成否を巻き込まないようにする)
+              try {
+                const pr = await resolvePr(number);
+                if (!pr) {
+                  core.warning(`PR #${number}: mergeable still unknown after retries; skipping`);
+                  continue;
                 }
-              }
+                const isDirty = pr.mergeable === false;
 
-              // 通知コメントを冪等に管理する。
-              //   dirty -> マーカー付きコメントが無ければ作成、あれば本文を更新
-              //   clean -> マーカー付きコメントがあれば「解消済み」に編集 (削除はしない)
-              const comments = await github.paginate(github.rest.issues.listComments, {
-                owner, repo, issue_number: number, per_page: 100,
-              });
-              const existing = comments.find((c) => c.body && c.body.includes(marker));
-              const desired = isDirty ? conflictBody : (existing ? resolvedBody : null);
-              if (desired === null) continue;
-              if (existing) {
-                if (existing.body !== desired) {
-                  await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: desired });
+                // ラベルの付与 / 除去。
+                const hasLabel = (pr.labels || []).some((l) => (l.name || l) === labelName);
+                if (isDirty && !hasLabel) {
+                  await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [labelName] });
+                } else if (!isDirty && hasLabel) {
+                  try {
+                    await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: labelName });
+                  } catch (e) {
+                    if (e.status !== 404) throw e;
+                  }
                 }
-              } else {
-                await github.rest.issues.createComment({ owner, repo, issue_number: number, body: desired });
+
+                // 通知コメントを冪等に管理する。
+                //   dirty -> マーカー付きコメントが無ければ作成、あれば本文を更新
+                //   clean -> マーカー付きコメントがあれば「解消済み」に編集 (削除はしない)
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner, repo, issue_number: number, per_page: 100,
+                });
+                const existing = comments.find((c) => c.body && c.body.includes(marker));
+                const desired = isDirty ? conflictBody : (existing ? resolvedBody : null);
+                if (desired === null) continue;
+                if (existing) {
+                  if (existing.body !== desired) {
+                    await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: desired });
+                  }
+                } else {
+                  await github.rest.issues.createComment({ owner, repo, issue_number: number, body: desired });
+                }
+              } catch (e) {
+                core.warning(`PR #${number}: 処理中にエラー: ${e.status || ''} ${e.message}`);
               }
             }
