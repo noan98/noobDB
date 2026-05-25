@@ -945,6 +945,16 @@ export default function App() {
     loadMoreInTab(activeTab.id);
   }, [activeTab, loadMoreInTab]);
 
+  // User-driven stop: cancel the active tab's in-flight stream, drop the
+  // streaming flag, and keep whatever rows have already arrived. The backend
+  // `cancelStream` tears down the cursor while leaving the connection open.
+  const handleStopStreaming = useCallback(async () => {
+    if (!activeTab || !activeTab.streaming) return;
+    await cancelStreamForTab(activeTab.id);
+    patchTab(activeTab.id, (tt) => ({ ...tt, streaming: false }));
+    setStatus({ kind: "key", key: "statusQueryCancelled" });
+  }, [activeTab, cancelStreamForTab, patchTab]);
+
   const handlePreviewQuery = useCallback((sql: string) => {
     if (!activeTab) return;
     previewQueryInTab(activeTab.id, sql);
@@ -1465,6 +1475,7 @@ export default function App() {
                         result={activeTab.preview}
                         rowLimit={activeTab.previewRowLimit}
                         streaming={activeTab.streaming}
+                        onStop={handleStopStreaming}
                         pendingEditsSummary={
                           activeTab.kind === "table" && pendingEditsSummary.cells > 0
                             ? pendingEditsSummary
@@ -1485,6 +1496,7 @@ export default function App() {
                       <ResultGrid
                         result={activeTab.result}
                         streaming={activeTab.streaming}
+                        onStopStreaming={handleStopStreaming}
                         loadingMore={activeTab.loadingMore}
                         canLoadMore={activeTab.canLoadMore}
                         onLoadMore={handleLoadMore}

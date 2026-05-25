@@ -1579,6 +1579,36 @@ label {
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-muted);
 }
+.results-streaming-text {
+  flex: 1;
+}
+.results-streaming-stop {
+  font-size: 12px;
+  padding: 2px 12px;
+  white-space: nowrap;
+}
+.preview-stop-btn {
+  margin-left: 8px;
+  font-size: 12px;
+  padding: 2px 12px;
+  white-space: nowrap;
+}
+
+/* Brief confirmation toast after a cell/row copy from the result grid. */
+.grid-copied-toast {
+  position: fixed;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: #ffffff;
+  background: color-mix(in srgb, #16a34a 92%, #000000);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
+}
 
 .results-auto-limit-banner {
   display: flex;
@@ -2179,6 +2209,21 @@ label {
   border-radius: 6px;
   font-size: 12px;
   word-break: break-all;
+}
+
+.export-rowcount {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.export-warning {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, #f59e0b 50%, var(--border));
+  background: color-mix(in srgb, #f59e0b 14%, var(--bg-muted));
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* ---------- Import Modal ---------- */

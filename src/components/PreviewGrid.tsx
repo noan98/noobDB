@@ -31,6 +31,8 @@ interface Props {
   rowLimit: number;
   /** True while preview snapshot rows are still arriving via the stream. */
   streaming?: boolean;
+  /** Cancel the in-flight preview stream for the active tab. */
+  onStop?: () => void;
   /**
    * When set, the preview pane surfaces an "Apply / Discard" pill so the
    * user can commit the inline cell edits that triggered the preview
@@ -153,6 +155,7 @@ export function PreviewGrid({
   result,
   rowLimit,
   streaming,
+  onStop,
   pendingEditsSummary,
   onApplyEdits,
   onDiscardEdits,
@@ -279,6 +282,16 @@ export function PreviewGrid({
           <span className="preview-banner-streaming">
             {t("statusPreviewStreaming", { ms: result.elapsed_ms })}
           </span>
+        )}
+        {streaming && onStop && (
+          <button
+            type="button"
+            className="warning preview-stop-btn"
+            onClick={onStop}
+            title={t("gridStopButtonTitle")}
+          >
+            {t("gridStopButton")}
+          </button>
         )}
       </div>
       <div className="preview-meta">

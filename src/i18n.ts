@@ -166,6 +166,7 @@ const en = {
 
   statusStreaming: "Streaming... {rows} rows loaded ({ms} ms)",
   statusStreamingDone: "{rows} rows in {ms} ms",
+  statusQueryCancelled: "Query cancelled — the rows already loaded are kept.",
   statusLoadingMore: "Loading more rows... ({rows} loaded)",
   statusPreviewStreaming: "Streaming preview... ({ms} ms)",
   gridLoadingMore: "Loading more rows...",
@@ -337,6 +338,8 @@ const en = {
   exportError: "Export failed: {error}",
   exportNoData: "No rows to export.",
   exportPickFileTitle: "Choose export destination",
+  exportRowCount: "{rows} rows will be exported.",
+  exportPartialWarning: "Only the rows currently loaded are exported. To export the full result set, run \"Fetch all rows\" first.",
 
   previewBanner: "Preview — changes were rolled back. The database is unchanged.",
   previewTargetTable: "Target table: {table}",
@@ -376,6 +379,12 @@ const en = {
   gridClearFilters: "Clear filters",
   gridNoMatches: "No rows match the current filters.",
   gridResizeColumn: "Drag to resize; double-click to reset",
+  gridStopButton: "Stop",
+  gridStopButtonTitle: "Stop the running query. Rows already received stay visible and the connection is kept.",
+  gridCopyCell: "Copy value",
+  gridCopyRow: "Copy row (TSV)",
+  gridCopyRowWithHeaders: "Copy row with column names",
+  gridCopied: "Copied",
 
   splitterEditorAria: "Drag to resize editor and result area; double-click to reset",
   splitterPreviewAria: "Drag to resize before and after panes; double-click to reset",
@@ -661,6 +670,7 @@ const ja: Dict = {
 
   statusStreaming: "ストリーミング中... {rows} 件取得 ({ms} ms)",
   statusStreamingDone: "{rows} 件取得 ({ms} ms)",
+  statusQueryCancelled: "クエリをキャンセルしました — 取得済みの行はそのまま保持されます。",
   statusLoadingMore: "追加レコードを読み込み中... ({rows} 件取得済み)",
   statusPreviewStreaming: "プレビューをストリーミング中... ({ms} ms)",
   gridLoadingMore: "追加レコードを読み込み中...",
@@ -832,6 +842,8 @@ const ja: Dict = {
   exportError: "エクスポートに失敗しました: {error}",
   exportNoData: "出力できる行がありません。",
   exportPickFileTitle: "エクスポート先を選択",
+  exportRowCount: "{rows} 行をエクスポートします。",
+  exportPartialWarning: "現在読み込み済みの行のみが対象です。全件をエクスポートするには、先に「全件取得」を実行してください。",
 
   previewBanner: "Preview",
   previewTargetTable: "対象テーブル: {table}",
@@ -871,6 +883,12 @@ const ja: Dict = {
   gridClearFilters: "フィルターをクリア",
   gridNoMatches: "条件に一致する行がありません。",
   gridResizeColumn: "ドラッグでサイズ変更、ダブルクリックでリセット",
+  gridStopButton: "停止",
+  gridStopButtonTitle: "実行中のクエリを停止します。取得済みの行は表示されたまま残り、接続は維持されます。",
+  gridCopyCell: "値をコピー",
+  gridCopyRow: "行をコピー (TSV)",
+  gridCopyRowWithHeaders: "列名付きで行をコピー",
+  gridCopied: "コピーしました",
 
   splitterEditorAria: "ドラッグでエディタと結果領域のサイズを変更、ダブルクリックでリセット",
   splitterPreviewAria: "ドラッグで実行前・実行後ペインの幅を変更、ダブルクリックでリセット",
