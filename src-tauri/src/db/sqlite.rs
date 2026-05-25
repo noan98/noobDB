@@ -38,7 +38,11 @@ impl SqliteConn {
             .max_connections(4)
             .acquire_timeout(std::time::Duration::from_secs(15))
             .connect_with(connect)
-            .await?;
+            .await
+            .map_err(|e| {
+                tracing::error!(path, error = %e, "sqlite: failed to create connection pool");
+                e
+            })?;
         Ok(Self { pool })
     }
 

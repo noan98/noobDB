@@ -229,6 +229,10 @@ pub async fn import_csv(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     if session.read_only {
+        tracing::warn!(
+            session_id = %session_id,
+            "read-only guard rejected a CSV import"
+        );
         return Err(AppError::ReadOnly(
             "read-only profile: CSV import is not allowed".into(),
         ));
@@ -306,6 +310,12 @@ async fn spawn_import(
 
     match result {
         Ok((inserted, elapsed_ms)) => {
+            tracing::info!(
+                stream_id = %stream_id,
+                inserted,
+                elapsed_ms,
+                "csv import completed"
+            );
             let _ = app.emit(
                 EV_IMPORT_DONE,
                 ImportDoneEvent {
@@ -316,6 +326,7 @@ async fn spawn_import(
             );
         }
         Err(e) => {
+            tracing::error!(stream_id = %stream_id, error = %e, "csv import failed");
             let _ = app.emit(
                 EV_IMPORT_ERROR,
                 ImportErrorEvent {
@@ -348,6 +359,14 @@ async fn run_import(
     let columns: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
     let rows = parse_rows(text.as_bytes(), &options, &mapping)?;
     let total = rows.len() as u64;
+
+    tracing::info!(
+        session_id = %session.id,
+        stream_id = %stream_id,
+        table = %table,
+        total,
+        "csv import starting"
+    );
 
     let _ = app.emit(
         EV_IMPORT_STARTED,

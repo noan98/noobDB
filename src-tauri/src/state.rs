@@ -45,22 +45,33 @@ impl AppState {
             .write()
             .await
             .insert(id.clone(), Arc::new(session));
+        tracing::debug!(session_id = %id, "session created");
         id
     }
 
     pub async fn get(&self, id: &str) -> Option<Arc<Session>> {
-        self.sessions.read().await.get(id).cloned()
+        let session = self.sessions.read().await.get(id).cloned();
+        if session.is_none() {
+            tracing::debug!(session_id = %id, "session lookup missed (not found)");
+        }
+        session
     }
 
     pub async fn remove(&self, id: &str) -> Option<Arc<Session>> {
-        self.sessions.write().await.remove(id)
+        let removed = self.sessions.write().await.remove(id);
+        if removed.is_some() {
+            tracing::debug!(session_id = %id, "session destroyed");
+        }
+        removed
     }
 
     pub async fn register_stream(&self, stream_id: StreamId, handle: AbortHandle) {
         let mut map = self.streams.write().await;
+        tracing::debug!(stream_id = %stream_id, "stream registered");
         if let Some(prev) = map.insert(stream_id, handle) {
             // Cancel any previous task that reused this id — caller side
             // should not normally collide, but never let two run concurrently.
+            tracing::warn!("stream id reused; aborting previous task");
             prev.abort();
         }
     }
@@ -72,8 +83,10 @@ impl AppState {
     pub async fn cancel_stream(&self, stream_id: &str) -> bool {
         if let Some(h) = self.streams.write().await.remove(stream_id) {
             h.abort();
+            tracing::debug!(stream_id = %stream_id, "stream cancelled");
             true
         } else {
+            tracing::debug!(stream_id = %stream_id, "cancel: no such stream");
             false
         }
     }

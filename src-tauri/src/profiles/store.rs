@@ -24,18 +24,30 @@ pub fn load_all() -> Result<Vec<ConnectionProfile>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(&path)?;
+    let content = std::fs::read_to_string(&path).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "profiles: failed to read profiles.json");
+        e
+    })?;
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let profiles: Vec<ConnectionProfile> = serde_json::from_str(&content)?;
+    let profiles: Vec<ConnectionProfile> = serde_json::from_str(&content).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "profiles: failed to parse profiles.json");
+        e
+    })?;
     Ok(profiles)
 }
 
 pub fn save_all(profiles: &[ConnectionProfile]) -> Result<()> {
     let path = profiles_path()?;
-    let content = serde_json::to_string_pretty(profiles)?;
-    std::fs::write(&path, content)?;
+    let content = serde_json::to_string_pretty(profiles).map_err(|e| {
+        tracing::error!(error = %e, "profiles: failed to serialize profiles");
+        e
+    })?;
+    std::fs::write(&path, content).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "profiles: failed to write profiles.json");
+        e
+    })?;
     Ok(())
 }
 

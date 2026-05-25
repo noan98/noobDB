@@ -90,7 +90,9 @@ pub fn run() {
         )
         .init();
 
-    tauri::Builder::default()
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "noobDB starting");
+
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
@@ -119,6 +121,10 @@ pub fn run() {
             commands::import::parse_csv_preview,
             commands::import::import_csv,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running noobDB");
+        .run(tauri::generate_context!());
+
+    if let Err(e) = result {
+        tracing::error!(error = %e, "fatal error while running noobDB");
+        panic!("error while running noobDB: {e}");
+    }
 }
