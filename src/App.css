@@ -577,6 +577,11 @@ label {
   cursor: pointer;
 }
 .context-menu-item:hover { background: var(--bg-hover); }
+.context-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-subtle);
+}
 .context-menu-item.danger { color: var(--text-error); }
 .context-menu-item.danger:hover {
   background: color-mix(in srgb, var(--status-error) 12%, transparent);

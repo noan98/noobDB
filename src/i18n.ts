@@ -215,7 +215,7 @@ const en = {
 
   listEmpty: "No saved connections yet.",
   listNoMatches: "No connections match the filter.",
-  listSearchPlaceholder: "Filter connections...",
+  listSearchPlaceholder: "Filter connections, tables, columns...",
   listDbPasswordPlaceholder: "DB password (blank = use saved)",
   listSshPassphrasePlaceholder: "SSH passphrase (blank = use saved)",
   listConnect: "Connect",
@@ -489,6 +489,9 @@ const en = {
   splitterEditorAria: "Drag to resize editor and result area; double-click to reset",
   splitterPreviewAria: "Drag to resize before and after panes; double-click to reset",
 
+  contextMenuRunSelect: "Run SELECT * (LIMIT {limit})",
+  contextMenuInsertSelect: "Insert SELECT * into editor",
+  contextMenuShowCreate: "Show table definition",
   contextMenuImportCsv: "Import CSV...",
   contextMenuDump: "Dump database...",
   importTitle: "Import CSV into {table}",
@@ -843,7 +846,7 @@ const ja: Dict = {
 
   listEmpty: "保存された接続はまだありません。",
   listNoMatches: "条件に一致する接続がありません。",
-  listSearchPlaceholder: "接続またはデータベースを検索",
+  listSearchPlaceholder: "接続・テーブル・カラムを検索",
   listDbPasswordPlaceholder: "DBパスワード (空欄で保存済みを使用)",
   listSshPassphrasePlaceholder: "SSHパスフレーズ (空欄で保存済みを使用)",
   listConnect: "接続",
@@ -1117,6 +1120,9 @@ const ja: Dict = {
   splitterEditorAria: "ドラッグでエディタと結果領域のサイズを変更、ダブルクリックでリセット",
   splitterPreviewAria: "ドラッグで実行前・実行後ペインの幅を変更、ダブルクリックでリセット",
 
+  contextMenuRunSelect: "SELECT * を実行 (LIMIT {limit})",
+  contextMenuInsertSelect: "SELECT * をエディタへ挿入",
+  contextMenuShowCreate: "テーブル定義を表示",
   contextMenuImportCsv: "CSV をインポート...",
   contextMenuDump: "ダンプを取得...",
   importTitle: "{table} に CSV をインポート",

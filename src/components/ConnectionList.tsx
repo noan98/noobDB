@@ -17,6 +17,12 @@ interface Props {
   onPickTable: (database: string, table: string) => void;
   onImportTable: (database: string, table: string) => void;
   onDumpDatabase: (database: string) => void;
+  onRunTableSelect: (database: string, table: string) => void;
+  onInsertTableSelect: (database: string, table: string) => void;
+  /** Provided only for drivers with a single-statement definition (MySQL/SQLite). */
+  onShowCreateTable?: (database: string, table: string) => void;
+  /** Row cap shown in the "Run SELECT *" menu label. */
+  selectLimit: number;
 }
 
 interface ContextMenuState {
@@ -51,6 +57,10 @@ export function ConnectionList({
   onPickTable,
   onImportTable,
   onDumpDatabase,
+  onRunTableSelect,
+  onInsertTableSelect,
+  onShowCreateTable,
+  selectLimit,
 }: Props) {
   const t = useT();
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
@@ -69,6 +79,9 @@ export function ConnectionList({
     null,
   );
   const menuRef = useRef<HTMLDivElement | null>(null);
+  // Databases whose table list is being eagerly loaded for schema search, so
+  // the loader effect doesn't fire duplicate requests for the same database.
+  const tablesInFlightRef = useRef<Set<string>>(new Set());
 
   const loadDatabases = useCallback(async () => {
     if (!sessionId) {
@@ -88,6 +101,7 @@ export function ConnectionList({
     setExpandedDbs({});
     setExpandedTables({});
     setTableColumns({});
+    tablesInFlightRef.current.clear();
     if (sessionId) {
       setDatabases(null);
       loadDatabases();
@@ -211,13 +225,68 @@ export function ConnectionList({
     }
   };
 
+  const q = filter.trim().toLowerCase();
+  const searching = q.length > 0;
+  const activeExpanded = activeProfileId ? !!expandedProfiles[activeProfileId] : false;
+
+  const profileMetaMatches = useCallback(
+    (p: ConnectionProfile) =>
+      p.name.toLowerCase().includes(q) ||
+      p.host.toLowerCase().includes(q) ||
+      !!p.database?.toLowerCase().includes(q) ||
+      !!p.group?.toLowerCase().includes(q),
+    [q],
+  );
+
+  // Schema-match helpers operate purely on the already-cached tree data
+  // (`tables` / `tableColumns`); column matching only sees columns whose table
+  // has been expanded at least once.
+  const columnNameMatches = useCallback(
+    (db: string, tbl: string) => {
+      const cols = tableColumns[tableKey(db, tbl)];
+      return !!cols && cols.some((c) => c.name.toLowerCase().includes(q));
+    },
+    [tableColumns, q],
+  );
+  const tableNodeMatches = useCallback(
+    (db: string, tbl: string) => tbl.toLowerCase().includes(q) || columnNameMatches(db, tbl),
+    [q, columnNameMatches],
+  );
+  const dbNodeMatches = useCallback(
+    (db: string) => {
+      if (db.toLowerCase().includes(q)) return true;
+      const tbls = tables[db];
+      return !!tbls && tbls.some((tbl) => tableNodeMatches(db, tbl));
+    },
+    [q, tables, tableNodeMatches],
+  );
+
+  // The active connection's schema has a hit, so keep its profile visible even
+  // when the query doesn't match the profile's own metadata.
+  const activeSchemaMatches =
+    searching && !!sessionId && databases !== null && databases.some(dbNodeMatches);
+
+  // Eagerly load every database's table list while a schema search is active so
+  // table-name matches surface without the user expanding each database first.
+  // Gated on the active connection being expanded to avoid loading on a plain
+  // profile-name filter. Columns stay lazy (loaded on table expand).
+  useEffect(() => {
+    if (!searching || !sessionId || databases === null || !activeExpanded) return;
+    for (const db of databases) {
+      if (tables[db] !== undefined || tablesInFlightRef.current.has(db)) continue;
+      tablesInFlightRef.current.add(db);
+      api
+        .listTables(sessionId, db)
+        .then((list) => setTables((prev) => ({ ...prev, [db]: list })))
+        .catch(() => {})
+        .finally(() => tablesInFlightRef.current.delete(db));
+    }
+  }, [searching, sessionId, databases, activeExpanded, tables]);
+
   const visibleProfiles = profiles.filter((p) => {
-    if (!filter.trim()) return true;
-    const q = filter.trim().toLowerCase();
-    if (p.name.toLowerCase().includes(q)) return true;
-    if (p.host.toLowerCase().includes(q)) return true;
-    if (p.database?.toLowerCase().includes(q)) return true;
-    if (p.group?.toLowerCase().includes(q)) return true;
+    if (!searching) return true;
+    if (profileMetaMatches(p)) return true;
+    if (p.id === activeProfileId && activeSchemaMatches) return true;
     return false;
   });
 
@@ -260,6 +329,10 @@ export function ConnectionList({
   const renderProfile = (p: ConnectionProfile) => {
     const isActive = p.id === activeProfileId;
     const isOpen = !!expandedProfiles[p.id];
+    // When the query matches the connection's own metadata, show its full tree;
+    // otherwise treat the query as a schema search and filter the tree to
+    // matching databases / tables / columns.
+    const schemaFiltered = searching && !profileMetaMatches(p);
     const status = profileStatus(p);
     const accent = p.color ?? undefined;
     const rowStyle = accent
@@ -323,8 +396,11 @@ export function ConnectionList({
             ) : databases.length === 0 ? (
               <div className="tree-empty">{t("treeNoDatabases")}</div>
             ) : (
-              databases.map((db) => {
-                const dbOpen = !!expandedDbs[db];
+              databases
+                .filter((db) => !schemaFiltered || dbNodeMatches(db))
+                .map((db) => {
+                const dbNameHit = searching && db.toLowerCase().includes(q);
+                const dbOpen = !!expandedDbs[db] || (schemaFiltered && dbNodeMatches(db));
                 const dbTables = tables[db];
                 return (
                   <div key={db} className="tree-node db">
@@ -347,9 +423,14 @@ export function ConnectionList({
                         ) : dbTables.length === 0 ? (
                           <div className="tree-empty">{t("treeNoTables")}</div>
                         ) : (
-                          dbTables.map((tbl) => {
+                          dbTables
+                            .filter((tbl) => !schemaFiltered || dbNameHit || tableNodeMatches(db, tbl))
+                            .map((tbl) => {
                             const tKey = tableKey(db, tbl);
-                            const tOpen = !!expandedTables[tKey];
+                            const tableNameHit = searching && tbl.toLowerCase().includes(q);
+                            const showAllCols = !schemaFiltered || dbNameHit || tableNameHit;
+                            const tOpen =
+                              !!expandedTables[tKey] || (schemaFiltered && columnNameMatches(db, tbl));
                             const cols = tableColumns[tKey];
                             return (
                               <div key={tbl} className="tree-node table">
@@ -373,7 +454,9 @@ export function ConnectionList({
                                     ) : cols.length === 0 ? (
                                       <div className="tree-empty">{t("treeNoColumns")}</div>
                                     ) : (
-                                      cols.map((col) => {
+                                      cols
+                                        .filter((col) => showAllCols || col.name.toLowerCase().includes(q))
+                                        .map((col) => {
                                         const isPk = col.key === "PRI";
                                         const isFk = col.referenced_table !== null;
                                         return (
@@ -525,6 +608,42 @@ export function ConnectionList({
           role="menu"
           onClick={(e) => e.stopPropagation()}
         >
+          <button
+            type="button"
+            className="context-menu-item"
+            onClick={() => {
+              const { database, table } = tableMenu;
+              setTableMenu(null);
+              onRunTableSelect(database, table);
+            }}
+          >
+            {t("contextMenuRunSelect", { limit: selectLimit })}
+          </button>
+          <button
+            type="button"
+            className="context-menu-item"
+            onClick={() => {
+              const { database, table } = tableMenu;
+              setTableMenu(null);
+              onInsertTableSelect(database, table);
+            }}
+          >
+            {t("contextMenuInsertSelect")}
+          </button>
+          {onShowCreateTable && (
+            <button
+              type="button"
+              className="context-menu-item"
+              onClick={() => {
+                const { database, table } = tableMenu;
+                setTableMenu(null);
+                onShowCreateTable(database, table);
+              }}
+            >
+              {t("contextMenuShowCreate")}
+            </button>
+          )}
+          <div className="context-menu-sep" role="separator" />
           <button
             type="button"
             className="context-menu-item"
