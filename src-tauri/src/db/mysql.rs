@@ -3,7 +3,7 @@ use std::time::Instant;
 use futures_util::StreamExt;
 use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::pool::PoolConnection;
-use sqlx::{Column as _, Connection as _, MySql, Row, TypeInfo, ValueRef};
+use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::types::{
     Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value,
@@ -52,11 +52,18 @@ impl MySqlConn {
 
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
         let started = Instant::now();
-        let is_query = is_query_shape(sql);
 
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
 
+        // CALL is decided at runtime: a stored procedure may or may not return
+        // a result set, so neither the fetch nor the execute path fits it
+        // unconditionally (see `collect_call`).
+        if is_call_shape(sql) {
+            return collect_call(&mut conn, sql, started).await;
+        }
+
+        let is_query = is_query_shape(sql);
         if is_query {
             let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .fetch_all(&mut *conn)
@@ -106,11 +113,76 @@ impl MySqlConn {
         F: FnMut(StreamBatch) -> Result<()>,
     {
         let started = Instant::now();
-        let is_query = is_query_shape(sql);
 
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
 
+        let initial = initial_batch.max(1);
+        let chunk = chunk_size.max(1);
+
+        // CALL: like `execute`, detect the result set at runtime. Stream the
+        // first result set's rows so the grid fills incrementally; if the
+        // procedure only ran DML, report the summed affected-row count instead.
+        // `fetch_many` yields `Either::Right(row)` for result-set rows and
+        // `Either::Left(_)` for the OK/status packets between (and after)
+        // statements; later result sets are drained and ignored.
+        if is_call_shape(sql) {
+            let mut stream = sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).fetch_many(&mut *conn);
+            let mut columns: Vec<Column> = Vec::new();
+            let mut columns_emitted = false;
+            let mut buffer: Vec<Vec<Value>> = Vec::new();
+            let mut total: usize = 0;
+            let mut target = initial;
+            let mut saw_result_set = false;
+            let mut first_set_done = false;
+            let mut rows_affected: u64 = 0;
+            while let Some(item) = stream.next().await {
+                match item? {
+                    Either::Right(row) => {
+                        if first_set_done {
+                            continue;
+                        }
+                        saw_result_set = true;
+                        if !columns_emitted {
+                            columns = columns_of(std::slice::from_ref(&row));
+                            on_batch(StreamBatch::Columns(columns.clone()))?;
+                            columns_emitted = true;
+                        }
+                        buffer.push(row_to_values(&row));
+                        if buffer.len() >= target {
+                            total += buffer.len();
+                            let batch = std::mem::take(&mut buffer);
+                            on_batch(StreamBatch::Rows(batch))?;
+                            target = chunk;
+                        }
+                    }
+                    Either::Left(result) => {
+                        if saw_result_set {
+                            first_set_done = true;
+                        } else if !first_set_done {
+                            rows_affected = rows_affected.saturating_add(result.rows_affected());
+                        }
+                    }
+                }
+            }
+            drop(stream);
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            if saw_result_set {
+                if !buffer.is_empty() {
+                    total += buffer.len();
+                    on_batch(StreamBatch::Rows(std::mem::take(&mut buffer)))?;
+                }
+                return Ok(QueryResult {
+                    columns,
+                    rows: Vec::new(),
+                    rows_affected: total as u64,
+                    elapsed_ms,
+                });
+            }
+            return Ok(QueryResult::empty(rows_affected, elapsed_ms));
+        }
+
+        let is_query = is_query_shape(sql);
         if !is_query {
             let result = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut *conn)
@@ -121,8 +193,6 @@ impl MySqlConn {
             ));
         }
 
-        let initial = initial_batch.max(1);
-        let chunk = chunk_size.max(1);
         let mut stream = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch(&mut *conn);
         let mut columns: Vec<Column> = Vec::new();
         let mut columns_emitted = false;
@@ -1073,16 +1143,18 @@ fn strip_sql_comments(sql: &str) -> String {
 
 /// Decides whether `sql` should run through the result-set path
 /// (`fetch`/`fetch_all`) or the `execute` path that only reports
-/// `rows_affected`. The leading keyword is the main signal, with two shapes
-/// that need more than a prefix check:
+/// `rows_affected`. The leading keyword is the main signal, with one shape
+/// that needs more than a prefix check:
 ///
 /// - `WITH` (CTE) is not SELECT-only: a CTE can prefix an INSERT/UPDATE/DELETE
 ///   that mutates rows. Treating every `WITH` as a query hides those mutations
 ///   behind an empty "0 rows" grid, so we inspect the statement that follows
 ///   the CTE definitions (see `with_cte_is_mutation`).
-/// - `CALL` invokes a stored procedure that may itself return a result set;
-///   routing it through `fetch` lets the first result set reach the grid
-///   instead of collapsing to `rows_affected`.
+///
+/// `CALL` is intentionally absent: a stored procedure decides at runtime
+/// whether it returns a result set, so it gets its own path keyed off
+/// [`is_call_shape`] and `fetch_many` rather than being forced down either
+/// branch here.
 fn is_query_shape(sql: &str) -> bool {
     // Leading comments/whitespace must be skipped before the keyword check, or
     // a perfectly normal `/* hint */ SELECT ...` / `-- note\nWITH ...` would
@@ -1096,7 +1168,68 @@ fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("describe")
         || trimmed.starts_with("desc ")
         || trimmed.starts_with("explain")
-        || trimmed.starts_with("call")
+}
+
+/// True when `sql`'s first keyword is `CALL` (a stored-procedure invocation),
+/// ignoring leading whitespace and comments. CALL is routed separately from
+/// [`is_query_shape`] because the procedure decides at runtime whether it
+/// returns a result set: the caller drives it through `fetch_many` so a
+/// result-returning proc fills the grid while a DML-only proc still reports
+/// `rows_affected` (see `collect_call`).
+fn is_call_shape(sql: &str) -> bool {
+    skip_leading_comments_and_ws(sql)
+        .to_ascii_lowercase()
+        .starts_with("call")
+}
+
+/// Runs a `CALL` and decides at runtime whether it produced a result set.
+/// `fetch_many` yields `Either::Right(row)` for result-set rows and
+/// `Either::Left(_)` for the OK/status packets MySQL sends between (and after)
+/// the procedure's statements. If any rows arrive we surface the first result
+/// set as a grid (later sets are drained and ignored — multi-result-set
+/// support is out of scope); otherwise we sum the affected-row counts so a
+/// DML-only procedure reports `rows_affected` instead of a silent zero.
+async fn collect_call(
+    conn: &mut PoolConnection<MySql>,
+    sql: &str,
+    started: Instant,
+) -> Result<QueryResult> {
+    let mut stream = sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).fetch_many(&mut **conn);
+    let mut rows: Vec<MySqlRow> = Vec::new();
+    let mut saw_result_set = false;
+    let mut first_set_done = false;
+    let mut rows_affected: u64 = 0;
+    while let Some(item) = stream.next().await {
+        match item? {
+            Either::Right(row) => {
+                if !first_set_done {
+                    saw_result_set = true;
+                    rows.push(row);
+                }
+            }
+            Either::Left(result) => {
+                if saw_result_set {
+                    first_set_done = true;
+                } else if !first_set_done {
+                    rows_affected = rows_affected.saturating_add(result.rows_affected());
+                }
+            }
+        }
+    }
+    drop(stream);
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    if saw_result_set {
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms,
+        })
+    } else {
+        Ok(QueryResult::empty(rows_affected, elapsed_ms))
+    }
 }
 
 /// Returns the slice of `sql` starting at the first byte that is not leading
@@ -1284,10 +1417,16 @@ mod tests {
     }
 
     #[test]
-    fn query_shape_routes_call_to_result_set() {
-        // CALL may return a result set, so it must take the fetch path.
-        assert!(is_query_shape("CALL sp_report(2024)"));
-        assert!(is_query_shape("  call myproc()"));
+    fn call_shape_detects_stored_procedure_calls() {
+        // CALL gets its own runtime-detection path (fetch_many), so it must be
+        // recognised by `is_call_shape` and must NOT be claimed by the plain
+        // result-set path in `is_query_shape`.
+        assert!(is_call_shape("CALL sp_report(2024)"));
+        assert!(is_call_shape("  call myproc()"));
+        assert!(is_call_shape("/* go */ -- run\n CALL p()"));
+        assert!(!is_call_shape("SELECT 1"));
+        assert!(!is_call_shape("INSERT INTO t VALUES (1)"));
+        assert!(!is_query_shape("CALL sp_report(2024)"));
     }
 
     #[test]
@@ -1338,7 +1477,7 @@ mod tests {
         assert!(is_query_shape("/* hint */ SELECT 1"));
         assert!(is_query_shape("-- note\nSELECT 1"));
         assert!(is_query_shape("# note\nSELECT 1"));
-        assert!(is_query_shape("  /* a */ -- b\n  CALL p()"));
+        assert!(is_query_shape("  /* a */ -- b\n  SHOW TABLES"));
         // Leading comment before a CTE-prefixed mutation still routes to execute.
         assert!(!is_query_shape(
             "-- delete dups\nWITH c AS (SELECT 1) DELETE FROM t"

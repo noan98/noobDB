@@ -268,3 +268,74 @@ async fn call_stored_procedure_returns_result_set() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// Regression for #196: a `CALL` whose body only runs DML (no SELECT) returns
+/// no result set. Routing every CALL through the result-set path used to report
+/// `rows_affected = 0`; runtime detection via `fetch_many` must now sum the
+/// procedure's affected-row counts and surface them instead.
+#[tokio::test]
+async fn call_dml_only_procedure_reports_rows_affected() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS call_dml_test", Some(&db))
+        .await
+        .expect("drop table");
+    conn.execute(
+        "CREATE TABLE call_dml_test (id INT PRIMARY KEY, label VARCHAR(32) NOT NULL)",
+        Some(&db),
+    )
+    .await
+    .expect("create table");
+
+    // CREATE/DROP PROCEDURE are rejected by the prepared-statement protocol
+    // (error 1295), so set the procedure up via the text protocol.
+    t::mysql_exec_text(&opts, "DROP PROCEDURE IF EXISTS noobdb_call_dml")
+        .await
+        .expect("drop proc");
+    // Single-statement body needs no DELIMITER/BEGIN..END. Inserts 3 rows and
+    // returns no result set.
+    t::mysql_exec_text(
+        &opts,
+        "CREATE PROCEDURE noobdb_call_dml() \
+         INSERT INTO call_dml_test (id, label) VALUES (1,'a'),(2,'b'),(3,'c')",
+    )
+    .await
+    .expect("create proc");
+
+    let res = conn
+        .execute("CALL noobdb_call_dml()", Some(&db))
+        .await
+        .expect("call proc");
+    assert!(
+        res.columns.is_empty() && res.rows.is_empty(),
+        "a DML-only CALL must not return a result grid"
+    );
+    assert_eq!(
+        res.rows_affected, 3,
+        "CALL should report the procedure's affected-row count"
+    );
+
+    // The CALL was not rolled back: the rows are really there.
+    let check = conn
+        .execute("SELECT COUNT(*) AS n FROM call_dml_test", Some(&db))
+        .await
+        .expect("count");
+    assert_eq!(check.rows.len(), 1);
+
+    t::mysql_exec_text(&opts, "DROP PROCEDURE noobdb_call_dml")
+        .await
+        .expect("drop proc cleanup");
+    conn.execute("DROP TABLE call_dml_test", Some(&db))
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
