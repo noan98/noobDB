@@ -4,7 +4,9 @@ use futures_util::StreamExt;
 use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
-use super::types::{Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value};
+use super::types::{
+    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value,
+};
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
 

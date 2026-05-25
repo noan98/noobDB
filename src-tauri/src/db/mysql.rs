@@ -5,7 +5,9 @@ use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions,
 use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, MySql, Row, TypeInfo, ValueRef};
 
-use super::types::{Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value};
+use super::types::{
+    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value,
+};
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
 
