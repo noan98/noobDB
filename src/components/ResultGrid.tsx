@@ -16,6 +16,8 @@ import {
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
+import { CellValueViewer } from "./CellValueViewer";
+import { copyToClipboard } from "./clipboard";
 import { ExportModal } from "./ExportModal";
 import {
   countEditedCells,
@@ -217,26 +219,6 @@ const ROW_INDEX_WIDTH = 44;
 function cellToText(v: CellValue): string {
   if (v === null || v === undefined) return "";
   return String(v);
-}
-
-/** Copy text to the clipboard, falling back to execCommand on older webviews. */
-async function copyToClipboard(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      document.execCommand("copy");
-    } catch {
-      // ignore
-    }
-    document.body.removeChild(ta);
-  }
 }
 
 function readStoredColumnSizing(storageKey: string | undefined): ColumnSizingState {
@@ -468,6 +450,9 @@ export function DataGrid({
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | null>(null);
 
+  // Full-value viewer target (original row index + display column index).
+  const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
+
   useEffect(() => {
     if (!copyMenu) return;
     const close = () => setCopyMenu(null);
@@ -678,12 +663,18 @@ export function DataGrid({
                   // the original" (which clears the pending edit).
                   const originalDisplay = isNull ? "" : String(v);
                   const handleDoubleClick = () => {
-                    if (!colEditable || !onSetCellEdit) return;
-                    setEditing({
-                      rowIdx: row.index,
-                      colIdx: idx,
-                      value: hasPending ? pendingValue : originalDisplay,
-                    });
+                    // Editable cells edit on double-click; everything else
+                    // (read-only grids, PK/BLOB columns, preview panes) opens
+                    // the full-value viewer instead, so the two never collide.
+                    if (colEditable && onSetCellEdit) {
+                      setEditing({
+                        rowIdx: row.index,
+                        colIdx: idx,
+                        value: hasPending ? pendingValue : originalDisplay,
+                      });
+                      return;
+                    }
+                    setViewer({ rowIdx: row.index, colIdx: idx });
                   };
                   return (
                     <td
@@ -800,12 +791,31 @@ export function DataGrid({
           >
             {t("gridCopyRowWithHeaders")}
           </button>
+          <button
+            type="button"
+            className="context-menu-item"
+            role="menuitem"
+            onClick={() => {
+              setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx });
+              setCopyMenu(null);
+            }}
+          >
+            {t("gridViewFull")}
+          </button>
         </div>
       )}
       {copied && (
         <div className="grid-copied-toast" role="status" aria-live="polite">
           {t("gridCopied")}
         </div>
+      )}
+      {viewer && (
+        <CellValueViewer
+          columnName={columns[viewer.colIdx]?.name ?? ""}
+          value={rows[viewer.rowIdx]?.[viewer.colIdx] ?? null}
+          isBinary={columnKinds[viewer.colIdx] === "binary"}
+          onClose={() => setViewer(null)}
+        />
       )}
     </>
   );

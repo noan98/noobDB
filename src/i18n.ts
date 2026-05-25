@@ -385,6 +385,11 @@ const en = {
   gridCopyRow: "Copy row (TSV)",
   gridCopyRowWithHeaders: "Copy row with column names",
   gridCopied: "Copied",
+  gridViewFull: "View full value",
+  cellViewerCopy: "Copy",
+  cellViewerClose: "Close",
+  cellViewerFormatJson: "Format as JSON",
+  cellViewerEmpty: "(empty)",
 
   splitterEditorAria: "Drag to resize editor and result area; double-click to reset",
   splitterPreviewAria: "Drag to resize before and after panes; double-click to reset",
@@ -889,6 +894,11 @@ const ja: Dict = {
   gridCopyRow: "行をコピー (TSV)",
   gridCopyRowWithHeaders: "列名付きで行をコピー",
   gridCopied: "コピーしました",
+  gridViewFull: "全文を表示",
+  cellViewerCopy: "コピー",
+  cellViewerClose: "閉じる",
+  cellViewerFormatJson: "JSON を整形",
+  cellViewerEmpty: "(空)",
 
   splitterEditorAria: "ドラッグでエディタと結果領域のサイズを変更、ダブルクリックでリセット",
   splitterPreviewAria: "ドラッグで実行前・実行後ペインの幅を変更、ダブルクリックでリセット",
