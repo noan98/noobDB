@@ -190,6 +190,25 @@ const en = {
   statusPreviewDone: "Preview: {rows} rows affected ({ms} ms) — rolled back, DB unchanged",
   statusPreviewError: "Preview error: {error}",
 
+  errorHintLabel: "Hint",
+  errorHintShowOriginal: "Show original error",
+  errorHintSyntax:
+    "SQL syntax error. Look just before the quoted spot for a typo, a missing comma or parenthesis, or a reserved word used as a name (wrap such names in backticks).",
+  errorHintUnknownColumn:
+    "That column name wasn't found. Check the spelling, or whether it belongs to a different table. Autocomplete and the schema browser show the available column names.",
+  errorHintUnknownDatabase:
+    "That database doesn't exist. Check the name, or select a database first (e.g. run USE db, or set the database on the connection).",
+  errorHintTableNotExist:
+    "That table doesn't exist. Check the table name and which database is selected — you may need USE db, or to qualify it as db.table.",
+  errorHintForeignKey:
+    "A foreign key constraint failed. You're referencing a value with no matching row in the parent table, or deleting a row that others still reference. Insert the parent row first, or fix the referenced value.",
+  errorHintDuplicate:
+    "A unique / primary key constraint was violated — that value already exists. Use a different value, or UPDATE the existing row instead of inserting a new one.",
+  errorHintAccessDenied:
+    "Authentication or permission was denied. Check the user name and password, and that the user is allowed to reach this database from this host.",
+  errorHintConnection:
+    "Couldn't reach the database server. Check the host and port, that the server is running, and any SSH tunnel or firewall settings.",
+
   listEmpty: "No saved connections yet.",
   listNoMatches: "No connections match the filter.",
   listSearchPlaceholder: "Filter connections...",
@@ -536,7 +555,8 @@ const en = {
   helpShortcutNthTabDesc: "Jump to the nth tab.",
 };
 
-type Key = keyof typeof en;
+export type I18nKey = keyof typeof en;
+type Key = I18nKey;
 type Dict = Record<Key, string>;
 
 const ja: Dict = {
@@ -726,6 +746,25 @@ const ja: Dict = {
   statusRunningPreview: "プレビュー実行中 (ロールバックされます)...",
   statusPreviewDone: "プレビュー: 影響行数 {rows} 件 ({ms} ms) — ロールバック済み、DBは変更されていません",
   statusPreviewError: "プレビューエラー: {error}",
+
+  errorHintLabel: "ヒント",
+  errorHintShowOriginal: "元のエラーを表示",
+  errorHintSyntax:
+    "SQL の構文エラーです。引用された箇所の直前に、スペルミス・カンマや括弧の不足・名前に使った予約語 (使う場合はバッククォートで囲む) がないか確認してください。",
+  errorHintUnknownColumn:
+    "指定した列名が見つかりません。スペルミスや、別テーブルの列を参照していないかを確認してください。補完機能やスキーマブラウザで利用できる列名を確認できます。",
+  errorHintUnknownDatabase:
+    "そのデータベースは存在しません。名前を確認するか、先にデータベースを選択してください (例: USE db を実行する、または接続でデータベースを指定する)。",
+  errorHintTableNotExist:
+    "そのテーブルは存在しません。テーブル名と、どのデータベースを選択しているかを確認してください。USE db で選択するか、db.table の形で指定する必要があるかもしれません。",
+  errorHintForeignKey:
+    "外部キー制約に違反しました。親テーブルに対応する行がない値を参照しているか、まだ他から参照されている行を削除しようとしています。先に親側の行を作成するか、参照する値を修正してください。",
+  errorHintDuplicate:
+    "一意制約 (主キー / ユニークキー) に違反しています。その値は既に存在します。別の値を使うか、新規 INSERT ではなく既存行の UPDATE を検討してください。",
+  errorHintAccessDenied:
+    "認証または権限が拒否されました。ユーザー名とパスワード、そのユーザーがこのホストから対象のデータベースへアクセスできるかを確認してください。",
+  errorHintConnection:
+    "データベースサーバーに到達できませんでした。ホストとポート、サーバーが起動しているか、SSH トンネルやファイアウォールの設定を確認してください。",
 
   listEmpty: "保存された接続はまだありません。",
   listNoMatches: "条件に一致する接続がありません。",

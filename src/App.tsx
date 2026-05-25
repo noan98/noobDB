@@ -36,6 +36,7 @@ import { SettingsView } from "./components/SettingsView";
 import { DangerousQueryDialog } from "./components/DangerousQueryDialog";
 import { Splitter } from "./components/Splitter";
 import { analyzeDangerousSql, type DangerFinding } from "./dangerousSql";
+import { matchErrorHint } from "./errorHints";
 import { t as translate, useT } from "./i18n";
 import { useSettings, type TabRestoreMode } from "./settings";
 import {
@@ -1298,6 +1299,12 @@ export default function App() {
 
   const statusText = status.kind === "literal" ? status.text : t(status.key, status.vars);
 
+  const statusHintKey = useMemo(() => {
+    if (!status.error) return null;
+    const raw = status.kind === "literal" ? status.text : status.vars?.error;
+    return raw != null ? matchErrorHint(String(raw)) : null;
+  }, [status]);
+
   const pendingEditsSummary = useMemo(() => {
     const edits = activeTab?.pendingEdits ?? {};
     return { cells: countEditedCells(edits), rows: countEditedRows(edits) };
@@ -1606,7 +1613,22 @@ export default function App() {
           </>
         )}
 
-        <div className={`status ${status.error ? "error" : ""}`}>{statusText}</div>
+        <div className={`status ${status.error ? "error" : ""}`}>
+          {statusHintKey ? (
+            <div className="status-hint">
+              <div className="status-hint-body">
+                <span className="status-hint-label">{t("errorHintLabel")}</span>
+                <span className="status-hint-text">{t(statusHintKey)}</span>
+              </div>
+              <details className="status-hint-details">
+                <summary>{t("errorHintShowOriginal")}</summary>
+                <span className="status-hint-raw">{statusText}</span>
+              </details>
+            </div>
+          ) : (
+            statusText
+          )}
+        </div>
       </main>
 
       {importTarget && sessionId && (
