@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { QueryResult } from "../api/tauri";
-import { useT } from "../i18n";
+import { useT, type I18nKey } from "../i18n";
 
 interface Props {
   /** EXPLAIN FORMAT=JSON result — a single row / single column JSON string. */
@@ -202,6 +202,74 @@ function formatValue(v: unknown): string {
   return String(v);
 }
 
+type HintSeverity = "info" | "caution" | "warning";
+
+interface PlanHint {
+  severity: HintSeverity;
+  key: I18nKey;
+}
+
+// `rows_examined_per_scan` above these thresholds is flagged so juniors notice
+// scans that won't scale. Tuned conservatively to avoid false alarms on the
+// small tables that dominate development databases.
+const ROWS_CAUTION_THRESHOLD = 100_000;
+const ROWS_WARNING_THRESHOLD = 1_000_000;
+
+const SEVERITY_RANK: Record<HintSeverity, number> = { info: 0, caution: 1, warning: 2 };
+
+// Reads a node's raw MySQL EXPLAIN attributes and derives plain-language
+// performance hints. Each hint maps to an i18n key explaining the cause and a
+// concrete fix. Returns an empty array when nothing notable is found.
+function computeHints(node: PlanNode): PlanHint[] {
+  const hints: PlanHint[] = [];
+
+  if (node.kind === "table") {
+    const access = attrVal(node, "access_type");
+    if (access === "ALL") {
+      hints.push({ severity: "warning", key: "explainHintFullScan" });
+    } else if (access === "index") {
+      hints.push({ severity: "caution", key: "explainHintFullIndexScan" });
+    }
+    if (typeof attrVal(node, "using_join_buffer") === "string") {
+      hints.push({ severity: "caution", key: "explainHintJoinBuffer" });
+    }
+    const rows = parseNum(attrVal(node, "rows_examined_per_scan"));
+    if (rows !== null && rows >= ROWS_WARNING_THRESHOLD) {
+      hints.push({ severity: "warning", key: "explainHintManyRows" });
+    } else if (rows !== null && rows >= ROWS_CAUTION_THRESHOLD) {
+      hints.push({ severity: "caution", key: "explainHintManyRows" });
+    }
+    if (attrVal(node, "using_index") === true) {
+      hints.push({ severity: "info", key: "explainHintCoveringIndex" });
+    }
+  }
+
+  // Sort/group bookkeeping flags can appear on operation nodes regardless of
+  // kind, so they are checked on every node.
+  if (attrVal(node, "using_temporary_table") === true) {
+    hints.push({ severity: "caution", key: "explainHintTempTable" });
+  }
+  if (attrVal(node, "using_filesort") === true) {
+    hints.push({ severity: "caution", key: "explainHintFilesort" });
+  }
+
+  return hints;
+}
+
+function worstSeverity(hints: PlanHint[]): HintSeverity | null {
+  let worst: HintSeverity | null = null;
+  for (const h of hints) {
+    if (worst === null || SEVERITY_RANK[h.severity] > SEVERITY_RANK[worst]) worst = h.severity;
+  }
+  return worst;
+}
+
+function severityLabelKey(s: HintSeverity): I18nKey {
+  if (s === "warning") return "explainSeverityWarning";
+  if (s === "caution") return "explainSeverityCaution";
+  return "explainSeverityInfo";
+}
+
 interface NodeRowProps {
   node: PlanNode;
   depth: number;
@@ -212,6 +280,7 @@ interface NodeRowProps {
   onSelect: (id: string) => void;
   expandLabel: string;
   collapseLabel: string;
+  hintsLabel: string;
 }
 
 function NodeRow({
@@ -224,6 +293,7 @@ function NodeRow({
   onSelect,
   expandLabel,
   collapseLabel,
+  hintsLabel,
 }: NodeRowProps) {
   const isCollapsed = collapsed.has(node.id);
   const hasChildren = node.children.length > 0;
@@ -232,6 +302,10 @@ function NodeRow({
   const rows = attrVal(node, "rows_produced_per_join") ?? attrVal(node, "rows_examined_per_scan");
   const usingIndex = attrVal(node, "using_index") === true;
   const selected = selectedId === node.id;
+  // Only surface a marker for actionable hints (caution / warning); the
+  // positive "info" hints are still shown in the detail panel on selection.
+  const worstHint = worstSeverity(computeHints(node));
+  const showHintMarker = worstHint === "caution" || worstHint === "warning";
   return (
     <>
       <div
@@ -259,6 +333,15 @@ function NodeRow({
         )}
         <span className="explain-node-label">{node.label}</span>
         <span className="explain-node-badges">
+          {showHintMarker && (
+            <span
+              className={`explain-badge hint ${worstHint}`}
+              title={hintsLabel}
+              aria-label={hintsLabel}
+            >
+              !
+            </span>
+          )}
           {typeof access === "string" && (
             <span className={`explain-badge access ${access === "ALL" ? "bad" : ""}`}>{access}</span>
           )}
@@ -285,6 +368,7 @@ function NodeRow({
             onSelect={onSelect}
             expandLabel={expandLabel}
             collapseLabel={collapseLabel}
+            hintsLabel={hintsLabel}
           />
         ))}
     </>
@@ -324,6 +408,7 @@ export function ExplainViewer({ result, streaming }: Props) {
     () => (root && selectedId ? findNode(root, selectedId) : null),
     [root, selectedId],
   );
+  const selectedHints = useMemo(() => (selected ? computeHints(selected) : []), [selected]);
 
   const toggle = (id: string) =>
     setCollapsed((prev) => {
@@ -384,6 +469,7 @@ export function ExplainViewer({ result, streaming }: Props) {
             onSelect={setSelectedId}
             expandLabel={t("explainExpandNode")}
             collapseLabel={t("explainCollapseNode")}
+            hintsLabel={t("explainHintsTitle")}
           />
         </div>
       </div>
@@ -392,6 +478,16 @@ export function ExplainViewer({ result, streaming }: Props) {
         {selected ? (
           <div className="explain-detail-body">
             <div className="explain-detail-label">{selected.label}</div>
+            {selectedHints.length > 0 && (
+              <ul className="explain-hints">
+                {selectedHints.map((h, i) => (
+                  <li key={i} className={`explain-hint ${h.severity}`}>
+                    <span className="explain-hint-sev">{t(severityLabelKey(h.severity))}</span>
+                    <span className="explain-hint-text">{t(h.key)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
             {selected.attrs.length === 0 ? (
               <p className="explain-detail-hint">{t("explainNoAttrs")}</p>
             ) : (

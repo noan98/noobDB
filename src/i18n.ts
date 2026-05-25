@@ -298,6 +298,25 @@ const en = {
   explainSelectHint: "Select a node to see its details.",
   explainNoAttrs: "This node has no extra attributes.",
 
+  explainHintsTitle: "Performance hints",
+  explainSeverityInfo: "Info",
+  explainSeverityCaution: "Caution",
+  explainSeverityWarning: "Warning",
+  explainHintFullScan:
+    "Full table scan (access_type = ALL): no index is used, so every row is read. Add an index on the columns used in WHERE / JOIN / ORDER BY to avoid scanning the whole table.",
+  explainHintFullIndexScan:
+    "Full index scan (access_type = index): the entire index is read. It avoids touching the table, but a more selective index or WHERE condition can scan fewer entries.",
+  explainHintJoinBuffer:
+    "This join falls back to a join buffer (Block Nested Loop / hash join) because no index covers the join condition. Add an index on the joined column to speed it up.",
+  explainHintManyRows:
+    "A large number of rows are scanned here. Narrow it down with a more selective WHERE clause or a suitable index to reduce the rows examined.",
+  explainHintCoveringIndex:
+    "Covering index: the query is answered from the index alone, without reading table rows. This is efficient.",
+  explainHintTempTable:
+    "A temporary table is created (typically for GROUP BY / DISTINCT / UNION). On large inputs this can be slow; an index matching the grouping or ordering may remove it.",
+  explainHintFilesort:
+    "A filesort runs to satisfy ORDER BY / GROUP BY. An index already in the sort order lets the database skip this extra sorting step.",
+
   qbTitle: "Query Builder",
   qbClose: "Close",
   qbQueryType: "Query type",
@@ -854,6 +873,25 @@ const ja: Dict = {
   explainDetailTitle: "ノードの詳細",
   explainSelectHint: "ノードを選択すると詳細が表示されます。",
   explainNoAttrs: "このノードに追加の属性はありません。",
+
+  explainHintsTitle: "パフォーマンスのヒント",
+  explainSeverityInfo: "情報",
+  explainSeverityCaution: "注意",
+  explainSeverityWarning: "警告",
+  explainHintFullScan:
+    "フルテーブルスキャン (access_type = ALL): インデックスが使われず、全行を読み込んでいます。WHERE / JOIN / ORDER BY で使う列にインデックスを追加すると、テーブル全体の走査を避けられます。",
+  explainHintFullIndexScan:
+    "フルインデックススキャン (access_type = index): インデックス全体を読んでいます。テーブル本体は読みませんが、より絞り込めるインデックスや WHERE 条件で走査範囲を減らせる場合があります。",
+  explainHintJoinBuffer:
+    "結合条件に合うインデックスがなく、結合バッファ (ブロックネステッドループ / ハッシュ結合) にフォールバックしています。結合キーの列にインデックスを張ると高速化できます。",
+  explainHintManyRows:
+    "ここで大量の行を走査しています。より絞り込める WHERE 条件や適切なインデックスで、走査する行数を減らすことを検討してください。",
+  explainHintCoveringIndex:
+    "カバリングインデックス: テーブル本体を読まずにインデックスだけでクエリを処理できています。効率的な状態です。",
+  explainHintTempTable:
+    "一時テーブルが作成されています (GROUP BY / DISTINCT / UNION などで発生)。入力が大きいと遅くなることがあり、グループ化・並び替えに合うインデックスで解消できる場合があります。",
+  explainHintFilesort:
+    "ORDER BY / GROUP BY のためにファイルソートが行われています。並び順に合ったインデックスがあれば、この追加のソートを省ける場合があります。",
 
   qbTitle: "Query Builder",
   qbClose: "閉じる",
