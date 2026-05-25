@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::db::types::TableColumnInfo;
+use crate::db::types::{TableColumnInfo, TableSchema};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -38,4 +38,17 @@ pub async fn describe_table(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session.conn.columns(&database, &table).await
+}
+
+#[tauri::command]
+pub async fn schema_overview(
+    session_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TableSchema>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.schema_overview(&database).await
 }

@@ -5,7 +5,7 @@ use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions,
 use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, MySql, Row, TypeInfo, ValueRef};
 
-use super::types::{Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, Value};
+use super::types::{Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value};
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
 
@@ -462,6 +462,28 @@ impl MySqlConn {
                 extra: r.try_get::<String, _>(5).unwrap_or_default(),
             })
             .collect())
+    }
+
+    pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT TABLE_NAME, COLUMN_NAME
+               FROM information_schema.COLUMNS
+               WHERE TABLE_SCHEMA = ?
+               ORDER BY TABLE_NAME, ORDINAL_POSITION"#,
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        let pairs = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    r.try_get::<String, _>(1).unwrap_or_default(),
+                )
+            })
+            .collect();
+        Ok(super::group_columns_by_table(pairs))
     }
 }
 

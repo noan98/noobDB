@@ -6,7 +6,7 @@ pub mod types;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use types::{PreviewResult, QueryResult, StreamBatch, TableColumnInfo};
+use types::{PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema};
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
 /// `host`/`port` will already point to the local end of the tunnel.
@@ -195,6 +195,18 @@ impl Connection {
         }
     }
 
+    /// Every table (and view) in `db` paired with its column names, fetched in
+    /// one round trip where the driver allows it. Feeds whole-schema editor
+    /// autocomplete; prefer this over looping `tables` + `columns` from the
+    /// frontend, which is N+1 and slow on large schemas.
+    pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {
+        match self {
+            Connection::MySql(c) => c.schema_overview(db).await,
+            Connection::Postgres(c) => c.schema_overview(db).await,
+            Connection::Sqlite(c) => c.schema_overview(db).await,
+        }
+    }
+
     pub async fn close(&self) {
         match self {
             Connection::MySql(c) => c.close().await,
@@ -202,6 +214,24 @@ impl Connection {
             Connection::Sqlite(c) => c.close().await,
         }
     }
+}
+
+/// Folds `(table, column)` pairs into one `TableSchema` per table. The input
+/// must be grouped by table (consecutive rows of the same table), which the
+/// driver queries guarantee via `ORDER BY <table>, <ordinal>`; column order
+/// within each table is preserved.
+pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableSchema> {
+    let mut out: Vec<TableSchema> = Vec::new();
+    for (table, column) in pairs {
+        match out.last_mut() {
+            Some(last) if last.name == table => last.columns.push(column),
+            _ => out.push(TableSchema {
+                name: table,
+                columns: vec![column],
+            }),
+        }
+    }
+    out
 }
 
 /// Returns true when `sql` is shaped like a read-only statement that the
