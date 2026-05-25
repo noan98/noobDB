@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 
@@ -54,6 +54,9 @@ export function ConnectionList({
   const [error, setError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [tableMenu, setTableMenu] = useState<TableMenuState | null>(null);
+  const [hoveredColumn, setHoveredColumn] = useState<{ col: TableColumnInfo; rect: DOMRect } | null>(
+    null,
+  );
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const loadDatabases = useCallback(async () => {
@@ -114,6 +117,19 @@ export function ConnectionList({
       window.removeEventListener("resize", close);
     };
   }, [contextMenu, tableMenu]);
+
+  // The column tooltip is anchored to a snapshot of the row's position, so it
+  // would detach if the tree scrolls or the window resizes under the pointer.
+  useEffect(() => {
+    if (!hoveredColumn) return;
+    const clear = () => setHoveredColumn(null);
+    window.addEventListener("scroll", clear, true);
+    window.addEventListener("resize", clear);
+    return () => {
+      window.removeEventListener("scroll", clear, true);
+      window.removeEventListener("resize", clear);
+    };
+  }, [hoveredColumn]);
 
   const handleProfileClick = (p: ConnectionProfile) => {
     if (p.id === activeProfileId) {
@@ -336,16 +352,29 @@ export function ConnectionList({
                                     ) : (
                                       cols.map((col) => {
                                         const isPk = col.key === "PRI";
+                                        const isFk = col.referenced_table !== null;
                                         return (
                                           <div
                                             key={col.name}
                                             className="tree-row column-row"
                                             role="treeitem"
-                                            title={`${col.name}: ${col.data_type}${col.nullable ? "" : " NOT NULL"}${col.key ? " " + col.key : ""}${col.default !== null ? " DEFAULT " + col.default : ""}${col.extra ? " " + col.extra : ""}`}
+                                            onMouseEnter={(e) =>
+                                              setHoveredColumn({
+                                                col,
+                                                rect: e.currentTarget.getBoundingClientRect(),
+                                              })
+                                            }
+                                            onMouseLeave={() =>
+                                              setHoveredColumn((cur) => (cur?.col === col ? null : cur))
+                                            }
                                           >
                                             <span className="tree-chevron empty" aria-hidden />
-                                            <span className={`tree-icon column-icon ${isPk ? "is-pk" : ""}`} aria-hidden>
-                                              {isPk ? "🔑" : "·"}
+                                            <span
+                                              className={`tree-icon column-icon ${isPk ? "is-pk" : ""} ${isFk ? "is-fk" : ""}`}
+                                              title={isPk ? t("colPkTitle") : isFk ? t("colFkTitle") : undefined}
+                                              aria-hidden
+                                            >
+                                              {isPk ? "🔑" : isFk ? "🔗" : "·"}
                                             </span>
                                             <span className="tree-label column-name">{col.name}</span>
                                             <span className="tree-badge column-type" title={col.data_type}>{col.data_type}</span>
@@ -475,6 +504,100 @@ export function ConnectionList({
           </button>
         </div>
       )}
+
+      {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
+    </div>
+  );
+}
+
+/**
+ * Hover card for a schema-browser column. Shows type, NULL-ability, default,
+ * key kind and (for foreign keys) the referenced table/column. Positioned with
+ * `position: fixed` against a snapshot of the row's rectangle, flipping to the
+ * left / clamping to the viewport when it would overflow. Rendered invisibly on
+ * the first frame so it can measure itself before committing a position.
+ */
+function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect }) {
+  const t = useT();
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const margin = 8;
+    let left = anchor.right + margin;
+    if (left + width + margin > window.innerWidth) {
+      left = anchor.left - margin - width;
+    }
+    left = Math.max(margin, left);
+    let top = anchor.top;
+    if (top + height + margin > window.innerHeight) {
+      top = window.innerHeight - margin - height;
+    }
+    top = Math.max(margin, top);
+    setPos({ left, top });
+  }, [col, anchor]);
+
+  const keyLabel =
+    col.key === "PRI"
+      ? t("colTipKeyPrimary")
+      : col.key === "UNI"
+        ? t("colTipKeyUnique")
+        : col.key === "MUL"
+          ? t("colTipKeyIndex")
+          : col.key;
+
+  const reference =
+    col.referenced_table === null
+      ? null
+      : col.referenced_column
+        ? `${col.referenced_table}.${col.referenced_column}`
+        : col.referenced_table;
+
+  return (
+    <div
+      ref={ref}
+      className="column-tooltip"
+      role="tooltip"
+      style={{
+        left: pos ? pos.left : anchor.right + 8,
+        top: pos ? pos.top : anchor.top,
+        visibility: pos ? "visible" : "hidden",
+      }}
+    >
+      <div className="column-tooltip-name">{col.name}</div>
+      <dl className="column-tooltip-rows">
+        <dt>{t("colTipType")}</dt>
+        <dd>{col.data_type}</dd>
+        <dt>{t("colTipNullable")}</dt>
+        <dd>{col.nullable ? t("colTipYes") : t("colTipNo")}</dd>
+        {col.default !== null && (
+          <>
+            <dt>{t("colTipDefault")}</dt>
+            <dd>{col.default}</dd>
+          </>
+        )}
+        {col.key && (
+          <>
+            <dt>{t("colTipKey")}</dt>
+            <dd>{keyLabel}</dd>
+          </>
+        )}
+        {reference && (
+          <>
+            <dt>{t("colTipReferences")}</dt>
+            <dd>{reference}</dd>
+          </>
+        )}
+        {col.extra && (
+          <>
+            <dt>{t("colTipExtra")}</dt>
+            <dd>{col.extra}</dd>
+          </>
+        )}
+      </dl>
     </div>
   );
 }

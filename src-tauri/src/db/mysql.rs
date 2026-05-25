@@ -437,11 +437,32 @@ impl MySqlConn {
     }
 
     pub async fn columns(&self, db: &str, table: &str) -> Result<Vec<TableColumnInfo>> {
+        // The referenced table/column live in KEY_COLUMN_USAGE. Pulling them via
+        // correlated subqueries (rather than a JOIN) keeps exactly one row per
+        // column even when a column participates in several key constraints.
         let rows: Vec<MySqlRow> = sqlx::query(
-            r#"SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA
-               FROM information_schema.COLUMNS
-               WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-               ORDER BY ORDINAL_POSITION"#,
+            r#"SELECT
+                 c.COLUMN_NAME, c.COLUMN_TYPE, c.IS_NULLABLE, c.COLUMN_KEY,
+                 c.COLUMN_DEFAULT, c.EXTRA,
+                 (SELECT k.REFERENCED_TABLE_NAME
+                    FROM information_schema.KEY_COLUMN_USAGE k
+                   WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA
+                     AND k.TABLE_NAME = c.TABLE_NAME
+                     AND k.COLUMN_NAME = c.COLUMN_NAME
+                     AND k.REFERENCED_TABLE_NAME IS NOT NULL
+                   ORDER BY k.ORDINAL_POSITION
+                   LIMIT 1) AS REFERENCED_TABLE_NAME,
+                 (SELECT k.REFERENCED_COLUMN_NAME
+                    FROM information_schema.KEY_COLUMN_USAGE k
+                   WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA
+                     AND k.TABLE_NAME = c.TABLE_NAME
+                     AND k.COLUMN_NAME = c.COLUMN_NAME
+                     AND k.REFERENCED_TABLE_NAME IS NOT NULL
+                   ORDER BY k.ORDINAL_POSITION
+                   LIMIT 1) AS REFERENCED_COLUMN_NAME
+               FROM information_schema.COLUMNS c
+               WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
+               ORDER BY c.ORDINAL_POSITION"#,
         )
         .bind(db)
         .bind(table)
@@ -460,6 +481,8 @@ impl MySqlConn {
                 key: r.try_get::<String, _>(3).unwrap_or_default(),
                 default: r.try_get::<Option<String>, _>(4).ok().flatten(),
                 extra: r.try_get::<String, _>(5).unwrap_or_default(),
+                referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
+                referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
             })
             .collect())
     }

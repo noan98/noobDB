@@ -164,6 +164,10 @@ export interface TableColumnInfo {
   key: string;
   default: string | null;
   extra: string;
+  /** Referenced table when this column is a foreign key, else `null`. */
+  referenced_table: string | null;
+  /** Referenced column for the foreign key, when known. */
+  referenced_column: string | null;
 }
 
 export type ExportFormat = "csv" | "json";
