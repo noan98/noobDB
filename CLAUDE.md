@@ -113,11 +113,19 @@ CI は 2 つのワークフローに分かれています:
 - `.github/workflows/ci.yml` — `main` への PR で起動。`dorny/paths-filter` で
   変更領域 (frontend / rust / workflow) を判定し、ジョブ単位の `if:` で出し分け
   します (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
-  ジョブを skip させる方式)。frontend ジョブは `npm run build`、rust ジョブは
-  Linux 上で MySQL 8 サービスコンテナに対し `cargo clippy --all-targets --locked
-  -- -D warnings` と `cargo nextest run` を実行します (clippy が rustc ドライバ
-  として型チェックを内包するので別途 `cargo check` は走らせません)。別ジョブで
-  `cargo fmt --all -- --check` も走ります。
+  ジョブを skip させる方式)。frontend ジョブは `npm run build`、Rust 系は 3 つの
+  ジョブに分かれます: `rust (clippy)` が `cargo clippy --all-targets --locked
+  -- -D warnings` (clippy が rustc ドライバとして型チェックを内包するので別途
+  `cargo check` は走らせません)、`rust (test)` が MySQL 8 サービスコンテナに対し
+  `cargo nextest run`、`rust (fmt)` が `cargo fmt --all -- --check` を実行します。
+  clippy (cargo check 相当) と nextest (実バイナリ生成) は cargo が成果物を共有
+  しないため、同一ジョブで直列にすると依存ツリーが二重コンパイルされて積み上がり
+  ます。これを別ジョブで**並列**に走らせて壁時計時間を縮めています (rust-cache の
+  `key` を `clippy` / `test` に分けてキャッシュを分離)。両 Rust ジョブとも CI では
+  無益な incremental コンパイルを `CARGO_INCREMENTAL=0` で無効化しています。
+  **必須チェックを設定する場合は `rust (check + clippy + test)` ではなく
+  `rust (clippy)` と `rust (test)` を指定してください** (ジョブ分割でチェック名が
+  変わったため)。
 - `.github/workflows/release.yml` — `v*` タグまたは `workflow_dispatch` を
   トリガに、`windows-latest` 上で `tauri-action` 経由の NSIS バンドルを生成します。
   `main` への push でもキャッシュ温め目的でビルドが走ります。
