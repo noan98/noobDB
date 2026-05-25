@@ -52,13 +52,7 @@ impl MySqlConn {
 
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
         let started = Instant::now();
-        let trimmed = sql.trim_start().to_ascii_lowercase();
-        let is_query = trimmed.starts_with("select")
-            || trimmed.starts_with("show")
-            || trimmed.starts_with("describe")
-            || trimmed.starts_with("desc ")
-            || trimmed.starts_with("explain")
-            || trimmed.starts_with("with");
+        let is_query = is_query_shape(sql);
 
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
@@ -112,13 +106,7 @@ impl MySqlConn {
         F: FnMut(StreamBatch) -> Result<()>,
     {
         let started = Instant::now();
-        let trimmed = sql.trim_start().to_ascii_lowercase();
-        let is_query = trimmed.starts_with("select")
-            || trimmed.starts_with("show")
-            || trimmed.starts_with("describe")
-            || trimmed.starts_with("desc ")
-            || trimmed.starts_with("explain")
-            || trimmed.starts_with("with");
+        let is_query = is_query_shape(sql);
 
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
@@ -520,6 +508,21 @@ impl MySqlConn {
             .collect();
         Ok(super::group_columns_by_table(pairs))
     }
+}
+
+/// Test-only: runs `sql` through MySQL's text protocol (via `raw_sql`) on a
+/// throwaway connection. Integration tests need this for statements MySQL
+/// rejects under the prepared-statement protocol (error 1295) — e.g.
+/// CREATE/DROP PROCEDURE — the same limitation `apply_use_database` documents
+/// for `USE`.
+#[doc(hidden)]
+pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()> {
+    let conn = MySqlConn::connect(opts).await?;
+    let mut c = conn.pool.acquire().await?;
+    sqlx::Executor::execute(&mut *c, sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string()))).await?;
+    drop(c);
+    conn.close().await;
+    Ok(())
 }
 
 async fn apply_use_database(
@@ -1068,9 +1071,296 @@ fn strip_sql_comments(sql: &str) -> String {
     out
 }
 
+/// Decides whether `sql` should run through the result-set path
+/// (`fetch`/`fetch_all`) or the `execute` path that only reports
+/// `rows_affected`. The leading keyword is the main signal, with two shapes
+/// that need more than a prefix check:
+///
+/// - `WITH` (CTE) is not SELECT-only: a CTE can prefix an INSERT/UPDATE/DELETE
+///   that mutates rows. Treating every `WITH` as a query hides those mutations
+///   behind an empty "0 rows" grid, so we inspect the statement that follows
+///   the CTE definitions (see `with_cte_is_mutation`).
+/// - `CALL` invokes a stored procedure that may itself return a result set;
+///   routing it through `fetch` lets the first result set reach the grid
+///   instead of collapsing to `rows_affected`.
+fn is_query_shape(sql: &str) -> bool {
+    // Leading comments/whitespace must be skipped before the keyword check, or
+    // a perfectly normal `/* hint */ SELECT ...` / `-- note\nWITH ...` would
+    // miss the prefix match and get misrouted to the execute path.
+    let trimmed = skip_leading_comments_and_ws(sql).to_ascii_lowercase();
+    if trimmed.starts_with("with") {
+        return !with_cte_is_mutation(sql);
+    }
+    trimmed.starts_with("select")
+        || trimmed.starts_with("show")
+        || trimmed.starts_with("describe")
+        || trimmed.starts_with("desc ")
+        || trimmed.starts_with("explain")
+        || trimmed.starts_with("call")
+}
+
+/// Returns the slice of `sql` starting at the first byte that is not leading
+/// whitespace or a leading SQL comment (`-- ...`, `# ...`, `/* ... */`),
+/// skipping any run of them. Leading comments precede any string literal, so a
+/// quote-unaware scan is safe here. Comment bodies may contain multi-byte
+/// UTF-8, but the scan only ever stops on the ASCII bytes `\n` and `*/`, which
+/// never occur inside a UTF-8 continuation byte, so the returned index always
+/// lands on a char boundary.
+fn skip_leading_comments_and_ws(sql: &str) -> &str {
+    let bytes = sql.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+    loop {
+        while i < n && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        if bytes[i] == b'-' && i + 1 < n && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < n && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else if bytes[i] == b'#' {
+            i += 1;
+            while i < n && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else if bytes[i] == b'/' && i + 1 < n && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < n && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(n);
+        } else {
+            break;
+        }
+    }
+    &sql[i.min(n)..]
+}
+
+/// For a statement beginning with `WITH`, returns true when the *main*
+/// statement that follows the CTE definitions mutates rows
+/// (INSERT/UPDATE/DELETE/REPLACE/MERGE), so it must take the `execute` path.
+///
+/// CTE bodies and column lists are always parenthesised, so the main
+/// statement's leading keyword is the first statement keyword we encounter at
+/// parenthesis depth 0 — any SELECT inside a CTE body sits at depth > 0 and is
+/// skipped. Comments and quoted text (`'...'`, `"..."`, `` `...` ``) are
+/// ignored so a keyword inside a literal or identifier isn't mistaken for the
+/// main statement. If no decisive keyword is found (e.g. `WITH ... TABLE t`),
+/// the statement is treated as query-shaped, preserving the historical
+/// default.
+fn with_cte_is_mutation(sql: &str) -> bool {
+    let mut depth: i32 = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut word = String::new();
+
+    let mut chars = sql.chars().peekable();
+    loop {
+        let next = chars.next();
+        if in_single {
+            match next {
+                Some('\\') => {
+                    chars.next();
+                }
+                Some('\'') => {
+                    if chars.peek() == Some(&'\'') {
+                        chars.next();
+                    } else {
+                        in_single = false;
+                    }
+                }
+                Some(_) => {}
+                None => break,
+            }
+            continue;
+        }
+        if in_double {
+            match next {
+                Some('\\') => {
+                    chars.next();
+                }
+                Some('"') => {
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                    } else {
+                        in_double = false;
+                    }
+                }
+                Some(_) => {}
+                None => break,
+            }
+            continue;
+        }
+        if in_backtick {
+            match next {
+                Some('`') => in_backtick = false,
+                Some(_) => {}
+                None => break,
+            }
+            continue;
+        }
+
+        let is_word_char = matches!(next, Some(c) if c.is_alphanumeric() || c == '_' || c == '$');
+        if is_word_char {
+            word.push(next.unwrap());
+            continue;
+        }
+
+        // A non-word character ends the current word, which lived at the
+        // current paren depth (the structural char below hasn't been applied
+        // yet). Only depth-0 words are candidates for the main keyword.
+        if !word.is_empty() {
+            if depth == 0 {
+                match word.to_ascii_lowercase().as_str() {
+                    "select" => return false,
+                    "insert" | "update" | "delete" | "replace" | "merge" => return true,
+                    _ => {}
+                }
+            }
+            word.clear();
+        }
+
+        match next {
+            Some('\'') => in_single = true,
+            Some('"') => in_double = true,
+            Some('`') => in_backtick = true,
+            // Comments are handled inline (rather than pre-stripping) so the
+            // quote state above protects comment markers that appear inside
+            // string/identifier literals, e.g. `SELECT '-- keep'`.
+            Some('-') if chars.peek() == Some(&'-') => {
+                chars.next();
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            }
+            Some('#') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            }
+            Some('/') if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut prev = '\0';
+                for c in chars.by_ref() {
+                    if prev == '*' && c == '/' {
+                        break;
+                    }
+                    prev = c;
+                }
+            }
+            Some('(') => depth += 1,
+            Some(')') => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            Some(_) => {}
+            None => break,
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_shape_recognises_plain_selects() {
+        assert!(is_query_shape("SELECT * FROM users"));
+        assert!(is_query_shape("  show tables"));
+        assert!(is_query_shape("DESCRIBE users"));
+        assert!(is_query_shape("desc users"));
+        assert!(is_query_shape("EXPLAIN SELECT 1"));
+    }
+
+    #[test]
+    fn query_shape_routes_call_to_result_set() {
+        // CALL may return a result set, so it must take the fetch path.
+        assert!(is_query_shape("CALL sp_report(2024)"));
+        assert!(is_query_shape("  call myproc()"));
+    }
+
+    #[test]
+    fn query_shape_treats_plain_dml_as_execute() {
+        assert!(!is_query_shape("INSERT INTO t VALUES (1)"));
+        assert!(!is_query_shape("UPDATE t SET x = 1"));
+        assert!(!is_query_shape("DELETE FROM t WHERE id = 1"));
+    }
+
+    #[test]
+    fn query_shape_keeps_with_select_as_query() {
+        assert!(is_query_shape(
+            "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte"
+        ));
+        assert!(is_query_shape(
+            "with recursive nums as (select 1 union select n + 1 from nums where n < 5) select * from nums"
+        ));
+    }
+
+    #[test]
+    fn query_shape_routes_with_dml_to_execute() {
+        // CTE-prefixed DML must report rows_affected, not silently show an
+        // empty result grid.
+        assert!(!is_query_shape(
+            "WITH ranked AS (SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM orders) \
+             DELETE FROM orders WHERE id IN (SELECT id FROM ranked WHERE rn > 1)"
+        ));
+        assert!(!is_query_shape(
+            "WITH src AS (SELECT 1 AS id) INSERT INTO t SELECT * FROM src"
+        ));
+        assert!(!is_query_shape(
+            "WITH c AS (SELECT 1) UPDATE t SET x = 1 WHERE id IN (SELECT * FROM c)"
+        ));
+    }
+
+    #[test]
+    fn with_cte_keyword_in_literal_is_ignored() {
+        // 'delete' here lives inside a string literal in the CTE body and must
+        // not be read as the main statement.
+        assert!(is_query_shape(
+            "WITH c AS (SELECT 'delete me' AS note) SELECT * FROM c"
+        ));
+    }
+
+    #[test]
+    fn query_shape_skips_leading_comments() {
+        // Leading block/line/hash comments must not hide the real keyword.
+        assert!(is_query_shape("/* hint */ SELECT 1"));
+        assert!(is_query_shape("-- note\nSELECT 1"));
+        assert!(is_query_shape("# note\nSELECT 1"));
+        assert!(is_query_shape("  /* a */ -- b\n  CALL p()"));
+        // Leading comment before a CTE-prefixed mutation still routes to execute.
+        assert!(!is_query_shape(
+            "-- delete dups\nWITH c AS (SELECT 1) DELETE FROM t"
+        ));
+        assert!(!is_query_shape("/* c */ INSERT INTO t VALUES (1)"));
+    }
+
+    #[test]
+    fn with_cte_comment_marker_in_literal_is_preserved() {
+        // The `--` lives inside a string literal, so it must not be treated as
+        // a comment that would swallow the trailing DELETE. Regression: a
+        // quote-unaware comment strip truncated the statement and misrouted
+        // the mutation to the fetch path.
+        assert!(!is_query_shape(
+            "WITH c AS (SELECT '-- keep' AS note) DELETE FROM t WHERE id IN (SELECT 1)"
+        ));
+        // A genuine line comment between the CTE and the main keyword is
+        // skipped so the DELETE is still detected.
+        assert!(!is_query_shape(
+            "WITH c AS (SELECT 1) -- pick\n DELETE FROM t WHERE id = 1"
+        ));
+    }
 
     #[test]
     fn parses_basic_update() {

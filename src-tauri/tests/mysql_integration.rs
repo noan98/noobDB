@@ -134,3 +134,137 @@ async fn preview_captures_affected_rows_past_row_limit() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// Regression for #188: a CTE-prefixed DELETE/UPDATE/INSERT starts with `WITH`
+/// but mutates rows. It used to take the result-set path and report an empty
+/// "0 rows" grid, hiding the fact that data changed. It must now take the
+/// execute path and return `rows_affected`.
+#[tokio::test]
+async fn with_cte_dml_reports_rows_affected() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS cte_dml_test", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE cte_dml_test (id INT PRIMARY KEY, keep TINYINT NOT NULL)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO cte_dml_test (id, keep) VALUES (1,1),(2,0),(3,0),(4,1)",
+        Some(&db),
+    )
+    .await
+    .expect("seed");
+
+    // WITH ... DELETE: deletes the two rows with keep = 0.
+    let deleted = conn
+        .execute(
+            "WITH doomed AS (SELECT id FROM cte_dml_test WHERE keep = 0) \
+             DELETE FROM cte_dml_test WHERE id IN (SELECT id FROM doomed)",
+            Some(&db),
+        )
+        .await
+        .expect("cte delete");
+    assert_eq!(
+        deleted.rows_affected, 2,
+        "WITH ... DELETE should affect 2 rows"
+    );
+    assert!(
+        deleted.columns.is_empty() && deleted.rows.is_empty(),
+        "a mutation must not return a result grid"
+    );
+
+    // WITH ... UPDATE: flips the remaining rows.
+    let updated = conn
+        .execute(
+            "WITH live AS (SELECT id FROM cte_dml_test) \
+             UPDATE cte_dml_test SET keep = 0 WHERE id IN (SELECT id FROM live)",
+            Some(&db),
+        )
+        .await
+        .expect("cte update");
+    assert_eq!(
+        updated.rows_affected, 2,
+        "WITH ... UPDATE should affect 2 rows"
+    );
+
+    // WITH ... SELECT must still return a result set.
+    let selected = conn
+        .execute(
+            "WITH live AS (SELECT id FROM cte_dml_test) SELECT * FROM live ORDER BY id",
+            Some(&db),
+        )
+        .await
+        .expect("cte select");
+    assert_eq!(selected.rows.len(), 2, "WITH ... SELECT should return rows");
+    assert_eq!(selected.rows_affected, 0);
+
+    conn.execute("DROP TABLE cte_dml_test", Some(&db))
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
+
+/// Regression for #189: `CALL proc()` used to take the execute path and only
+/// report `rows_affected`, so a stored procedure that returns a result set
+/// never surfaced its rows in the grid. It must now take the result-set path.
+#[tokio::test]
+async fn call_stored_procedure_returns_result_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // CREATE/DROP PROCEDURE are rejected by the prepared-statement protocol
+    // (error 1295), so set the procedure up via the text protocol.
+    t::mysql_exec_text(&opts, "DROP PROCEDURE IF EXISTS noobdb_call_test")
+        .await
+        .expect("drop proc");
+    // Single-statement body needs no DELIMITER/BEGIN..END.
+    t::mysql_exec_text(
+        &opts,
+        "CREATE PROCEDURE noobdb_call_test() SELECT 7 AS answer, 'ok' AS label",
+    )
+    .await
+    .expect("create proc");
+
+    let res = conn
+        .execute("CALL noobdb_call_test()", Some(&db))
+        .await
+        .expect("call proc");
+    assert_eq!(
+        res.columns.len(),
+        2,
+        "CALL should surface the result set columns"
+    );
+    assert_eq!(res.rows.len(), 1, "CALL should surface the result set rows");
+    let answer_col = res
+        .columns
+        .iter()
+        .position(|c| c.name == "answer")
+        .expect("answer column");
+    assert!(matches!(&res.rows[0][answer_col], t::Value::Int(7)));
+
+    t::mysql_exec_text(&opts, "DROP PROCEDURE noobdb_call_test")
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
