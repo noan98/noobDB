@@ -2857,3 +2857,18 @@ label {
   color: var(--accent-text);
   border-color: var(--accent);
 }
+
+/* ---------- Reduced motion ---------- */
+/* OS の「視差効果/アニメーションを減らす」設定時は、無限アニメーション
+   (点滅ドット等) を静止させ、トランジションを実質無効化する。
+   将来追加するモーダル/スピナーのアニメーションにも自動で効く。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
