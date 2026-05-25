@@ -177,7 +177,10 @@ async fn with_cte_dml_reports_rows_affected() {
         )
         .await
         .expect("cte delete");
-    assert_eq!(deleted.rows_affected, 2, "WITH ... DELETE should affect 2 rows");
+    assert_eq!(
+        deleted.rows_affected, 2,
+        "WITH ... DELETE should affect 2 rows"
+    );
     assert!(
         deleted.columns.is_empty() && deleted.rows.is_empty(),
         "a mutation must not return a result grid"
@@ -192,7 +195,10 @@ async fn with_cte_dml_reports_rows_affected() {
         )
         .await
         .expect("cte update");
-    assert_eq!(updated.rows_affected, 2, "WITH ... UPDATE should affect 2 rows");
+    assert_eq!(
+        updated.rows_affected, 2,
+        "WITH ... UPDATE should affect 2 rows"
+    );
 
     // WITH ... SELECT must still return a result set.
     let selected = conn
@@ -227,13 +233,15 @@ async fn call_stored_procedure_returns_result_set() {
         .expect("test url must include a database");
     let conn = t::connect(&opts).await.expect("connect");
 
-    conn.execute("DROP PROCEDURE IF EXISTS noobdb_call_test", Some(&db))
+    // CREATE/DROP PROCEDURE are rejected by the prepared-statement protocol
+    // (error 1295), so set the procedure up via the text protocol.
+    t::mysql_exec_text(&opts, "DROP PROCEDURE IF EXISTS noobdb_call_test")
         .await
         .expect("drop proc");
     // Single-statement body needs no DELIMITER/BEGIN..END.
-    conn.execute(
+    t::mysql_exec_text(
+        &opts,
         "CREATE PROCEDURE noobdb_call_test() SELECT 7 AS answer, 'ok' AS label",
-        Some(&db),
     )
     .await
     .expect("create proc");
@@ -242,7 +250,11 @@ async fn call_stored_procedure_returns_result_set() {
         .execute("CALL noobdb_call_test()", Some(&db))
         .await
         .expect("call proc");
-    assert_eq!(res.columns.len(), 2, "CALL should surface the result set columns");
+    assert_eq!(
+        res.columns.len(),
+        2,
+        "CALL should surface the result set columns"
+    );
     assert_eq!(res.rows.len(), 1, "CALL should surface the result set rows");
     let answer_col = res
         .columns
@@ -251,7 +263,7 @@ async fn call_stored_procedure_returns_result_set() {
         .expect("answer column");
     assert!(matches!(&res.rows[0][answer_col], t::Value::Int(7)));
 
-    conn.execute("DROP PROCEDURE noobdb_call_test", Some(&db))
+    t::mysql_exec_text(&opts, "DROP PROCEDURE noobdb_call_test")
         .await
         .expect("cleanup");
     conn.close().await;

@@ -510,6 +510,21 @@ impl MySqlConn {
     }
 }
 
+/// Test-only: runs `sql` through MySQL's text protocol (via `raw_sql`) on a
+/// throwaway connection. Integration tests need this for statements MySQL
+/// rejects under the prepared-statement protocol (error 1295) — e.g.
+/// CREATE/DROP PROCEDURE — the same limitation `apply_use_database` documents
+/// for `USE`.
+#[doc(hidden)]
+pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()> {
+    let conn = MySqlConn::connect(opts).await?;
+    let mut c = conn.pool.acquire().await?;
+    sqlx::Executor::execute(&mut *c, sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string()))).await?;
+    drop(c);
+    conn.close().await;
+    Ok(())
+}
+
 async fn apply_use_database(
     conn: &mut PoolConnection<MySql>,
     database: Option<&str>,
@@ -1147,8 +1162,7 @@ fn with_cte_is_mutation(sql: &str) -> bool {
             continue;
         }
 
-        let is_word_char =
-            matches!(next, Some(c) if c.is_alphanumeric() || c == '_' || c == '$');
+        let is_word_char = matches!(next, Some(c) if c.is_alphanumeric() || c == '_' || c == '$');
         if is_word_char {
             word.push(next.unwrap());
             continue;

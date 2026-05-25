@@ -17,6 +17,12 @@ pub mod __test_api {
         Connection::connect(opts).await
     }
 
+    /// Runs `sql` against MySQL via the text protocol, for statements the
+    /// prepared-statement protocol rejects (e.g. CREATE/DROP PROCEDURE).
+    pub async fn mysql_exec_text(opts: &DbConnectOptions, sql: &str) -> crate::error::Result<()> {
+        crate::db::mysql::exec_text_protocol(opts, sql).await
+    }
+
     /// Naive parser for `mysql://user:password@host:port/database` used in tests.
     pub fn parse_mysql_url(url: &str) -> Option<DbConnectOptions> {
         parse_tcp_url(url, "mysql://", 3306, DriverKind::Mysql)
