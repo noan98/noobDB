@@ -178,6 +178,28 @@ export interface TableSchema {
 
 export type ExportFormat = "csv" | "json";
 
+/** Checkbox-selected `mysqldump` flags for a database dump. */
+export interface DumpOptions {
+  /** `--single-transaction`: consistent InnoDB snapshot without locking. */
+  singleTransaction: boolean;
+  /** `--routines`: include stored procedures and functions. */
+  routines: boolean;
+  /** `--events`: include scheduled events. */
+  events: boolean;
+  /** Include triggers (off → `--skip-triggers`). */
+  triggers: boolean;
+  /** Emit `DROP TABLE` before each `CREATE TABLE` (off → `--skip-add-drop-table`). */
+  addDropTable: boolean;
+  /** Multi-row `INSERT` statements (off → `--skip-extended-insert`). */
+  extendedInsert: boolean;
+  /** `--complete-insert`: write column names in every `INSERT`. */
+  completeInsert: boolean;
+  /** `--no-data`: schema only, no row data. */
+  noData: boolean;
+  /** `--no-create-info`: data only, no `CREATE TABLE`. */
+  noCreateInfo: boolean;
+}
+
 export interface ImportOptions {
   /** Field delimiter — a single character (e.g. ",", "\t", ";"). */
   delimiter: string;
@@ -309,6 +331,19 @@ export const api = {
       format: params.format,
       columns: params.columns,
       rows: params.rows,
+    }),
+
+  dumpDatabase: (params: {
+    sessionId: string;
+    database: string;
+    path: string;
+    options: DumpOptions;
+  }) =>
+    invoke<number>("dump_database", {
+      sessionId: params.sessionId,
+      database: params.database,
+      path: params.path,
+      options: params.options,
     }),
 
   parseCsvPreview: (path: string, options: ImportOptions) =>

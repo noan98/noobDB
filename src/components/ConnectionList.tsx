@@ -16,6 +16,7 @@ interface Props {
   onDelete: (id: string) => void;
   onPickTable: (database: string, table: string) => void;
   onImportTable: (database: string, table: string) => void;
+  onDumpDatabase: (database: string) => void;
 }
 
 interface ContextMenuState {
@@ -27,6 +28,12 @@ interface ContextMenuState {
 interface TableMenuState {
   database: string;
   table: string;
+  x: number;
+  y: number;
+}
+
+interface DbMenuState {
+  database: string;
   x: number;
   y: number;
 }
@@ -43,6 +50,7 @@ export function ConnectionList({
   onDelete,
   onPickTable,
   onImportTable,
+  onDumpDatabase,
 }: Props) {
   const t = useT();
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
@@ -56,6 +64,7 @@ export function ConnectionList({
   const [error, setError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [tableMenu, setTableMenu] = useState<TableMenuState | null>(null);
+  const [dbMenu, setDbMenu] = useState<DbMenuState | null>(null);
   const [hoveredColumn, setHoveredColumn] = useState<{ col: TableColumnInfo; rect: DOMRect } | null>(
     null,
   );
@@ -96,10 +105,11 @@ export function ConnectionList({
 
   // Dismiss context menu on outside click / Escape / scroll.
   useEffect(() => {
-    if (!contextMenu && !tableMenu) return;
+    if (!contextMenu && !tableMenu && !dbMenu) return;
     const close = () => {
       setContextMenu(null);
       setTableMenu(null);
+      setDbMenu(null);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
@@ -118,7 +128,7 @@ export function ConnectionList({
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
     };
-  }, [contextMenu, tableMenu]);
+  }, [contextMenu, tableMenu, dbMenu]);
 
   // The column tooltip is anchored to a snapshot of the row's position, so it
   // would detach if the tree scrolls or the window resizes under the pointer.
@@ -146,6 +156,7 @@ export function ConnectionList({
     e.preventDefault();
     e.stopPropagation();
     setTableMenu(null);
+    setDbMenu(null);
     setContextMenu({ profile: p, x: e.clientX, y: e.clientY });
   };
 
@@ -153,7 +164,16 @@ export function ConnectionList({
     e.preventDefault();
     e.stopPropagation();
     setContextMenu(null);
+    setDbMenu(null);
     setTableMenu({ database: db, table: tbl, x: e.clientX, y: e.clientY });
+  };
+
+  const handleDbContextMenu = (e: React.MouseEvent, db: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu(null);
+    setTableMenu(null);
+    setDbMenu({ database: db, x: e.clientX, y: e.clientY });
   };
 
   const toggleDb = async (db: string) => {
@@ -311,6 +331,7 @@ export function ConnectionList({
                     <div
                       className="tree-row db-row"
                       onClick={() => toggleDb(db)}
+                      onContextMenu={(e) => handleDbContextMenu(e, db)}
                       role="treeitem"
                       aria-expanded={dbOpen}
                       title={db}
@@ -514,6 +535,28 @@ export function ConnectionList({
             }}
           >
             {t("contextMenuImportCsv")}
+          </button>
+        </div>
+      )}
+
+      {dbMenu && (
+        <div
+          ref={menuRef}
+          className="context-menu"
+          style={{ top: dbMenu.y, left: dbMenu.x }}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="context-menu-item"
+            onClick={() => {
+              const { database } = dbMenu;
+              setDbMenu(null);
+              onDumpDatabase(database);
+            }}
+          >
+            {t("contextMenuDump")}
           </button>
         </div>
       )}

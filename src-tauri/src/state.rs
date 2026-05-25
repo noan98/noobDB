@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
 
-use crate::db::Connection;
+use crate::db::{Connection, DbConnectOptions};
 use crate::ssh::SshTunnel;
 
 pub type SessionId = String;
@@ -13,6 +13,12 @@ pub struct Session {
     pub id: SessionId,
     pub profile_id: Option<String>,
     pub conn: Connection,
+    /// The resolved options used to open `conn`. Kept so commands that must
+    /// shell out to an external client (e.g. `mysqldump`) can reconstruct the
+    /// endpoint and credentials. For tunneled sessions `host`/`port` already
+    /// point to the local end of the tunnel, so external tools reach the DB
+    /// through the same tunnel.
+    pub connect_options: DbConnectOptions,
     /// When true, the query commands reject any non-read-only SQL before
     /// it reaches the driver. Set at connect time from the profile flag.
     pub read_only: bool,
