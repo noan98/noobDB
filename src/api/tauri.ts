@@ -225,6 +225,7 @@ export const api = {
     initialBatch: number;
     chunkSize: number;
     autoLimit?: number | null;
+    queryTimeoutSecs?: number | null;
   }) =>
     invoke<void>("run_query_stream", {
       sessionId: params.sessionId,
@@ -234,6 +235,7 @@ export const api = {
       initialBatch: params.initialBatch,
       chunkSize: params.chunkSize,
       autoLimit: params.autoLimit ?? null,
+      queryTimeoutSecs: params.queryTimeoutSecs ?? null,
     }),
   previewQueryStream: (params: {
     sessionId: string;
@@ -344,6 +346,8 @@ export interface QueryStreamDoneEvent {
 export interface QueryStreamErrorEvent {
   streamId: string;
   error: string;
+  /** True when the run was aborted by the execution-timeout guard. */
+  timedOut: boolean;
 }
 
 export interface PreviewStreamMetaEvent {

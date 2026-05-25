@@ -4,6 +4,7 @@ import { LanguageSwitcher } from "./LanguageSwitcher";
 import {
   DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_DISPLAY_COUNT,
+  DEFAULT_QUERY_TIMEOUT_SECS,
   DEFAULT_STREAM_PREFETCH_SIZE,
   SYNTAX_PRESET_ORDER,
   SyntaxColors,
@@ -20,6 +21,7 @@ import {
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
   setDefaultDisplayCount,
+  setQueryTimeoutSecs,
   setPreviewHighlight,
   setStreamPrefetchSize,
   setSyntaxColor,
@@ -70,9 +72,11 @@ export function SettingsView({ theme, onClose }: Props) {
   const [displayInput, setDisplayInput] = useState(String(settings.defaultDisplayCount));
   const [prefetchInput, setPrefetchInput] = useState(String(settings.streamPrefetchSize));
   const [autoLimitInput, setAutoLimitInput] = useState(String(settings.autoLimitCount));
+  const [timeoutInput, setTimeoutInput] = useState(String(settings.queryTimeoutSecs));
   useEffect(() => setDisplayInput(String(settings.defaultDisplayCount)), [settings.defaultDisplayCount]);
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
+  useEffect(() => setTimeoutInput(String(settings.queryTimeoutSecs)), [settings.queryTimeoutSecs]);
 
   const commitDisplay = () => {
     const n = Number.parseInt(displayInput, 10);
@@ -88,6 +92,11 @@ export function SettingsView({ theme, onClose }: Props) {
     const n = Number.parseInt(autoLimitInput, 10);
     if (Number.isFinite(n) && n > 0) setAutoLimitCount(n);
     else setAutoLimitInput(String(settings.autoLimitCount));
+  };
+  const commitTimeout = () => {
+    const n = Number.parseInt(timeoutInput, 10);
+    if (Number.isFinite(n) && n >= 0) setQueryTimeoutSecs(n);
+    else setTimeoutInput(String(settings.queryTimeoutSecs));
   };
 
   return (
@@ -239,6 +248,27 @@ export function SettingsView({ theme, onClose }: Props) {
           </label>
           <span className="settings-help-inline">
             {t("settingsConfirmDangerousQueriesHelp")}
+          </span>
+        </div>
+        <div className="settings-number-row">
+          <label htmlFor="settings-query-timeout">
+            {t("settingsQueryTimeout")}
+          </label>
+          <input
+            id="settings-query-timeout"
+            type="number"
+            min={0}
+            step={5}
+            value={timeoutInput}
+            placeholder={String(DEFAULT_QUERY_TIMEOUT_SECS)}
+            onChange={(e) => setTimeoutInput(e.target.value)}
+            onBlur={commitTimeout}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <span className="settings-help-inline">
+            {t("settingsQueryTimeoutHelp")}
           </span>
         </div>
       </section>
