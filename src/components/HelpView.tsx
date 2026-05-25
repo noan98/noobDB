@@ -62,6 +62,21 @@ const SECTIONS: Section[] = [
       { titleKey: "helpProductionTitle", descKey: "helpProductionDesc" },
     ],
   },
+  {
+    headerKey: "helpSectionShortcuts",
+    descKey: "helpSectionShortcutsDesc",
+    features: [
+      { titleKey: "helpShortcutRunTitle", descKey: "helpShortcutRunDesc" },
+      { titleKey: "helpShortcutPreviewTitle", descKey: "helpShortcutPreviewDesc" },
+      { titleKey: "helpShortcutFormatTitle", descKey: "helpShortcutFormatDesc" },
+      { titleKey: "helpShortcutCompleteTitle", descKey: "helpShortcutCompleteDesc" },
+      { titleKey: "helpShortcutSearchTitle", descKey: "helpShortcutSearchDesc" },
+      { titleKey: "helpShortcutNewTabTitle", descKey: "helpShortcutNewTabDesc" },
+      { titleKey: "helpShortcutCloseTabTitle", descKey: "helpShortcutCloseTabDesc" },
+      { titleKey: "helpShortcutCycleTabTitle", descKey: "helpShortcutCycleTabDesc" },
+      { titleKey: "helpShortcutNthTabTitle", descKey: "helpShortcutNthTabDesc" },
+    ],
+  },
 ];
 
 function DbImpactBadge({ impact }: { impact: Impact }) {

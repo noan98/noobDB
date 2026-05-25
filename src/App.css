@@ -184,6 +184,23 @@ input:focus, select:focus {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
+/* Keyboard focus ring for interactive controls. Uses :focus-visible so the
+   ring shows up during keyboard navigation but not on mouse clicks. */
+button:focus-visible,
+.tab:focus-visible,
+.tree-row:focus-visible,
+.sidebar-tab:focus-visible,
+.context-menu-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* The result scroll area is focused programmatically (e.g. Esc out of the
+   search box); it should not show a focus ring of its own. */
+.results-scroll:focus {
+  outline: none;
+}
+
 label {
   display: block;
   font-size: 12px;

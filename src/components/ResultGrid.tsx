@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -69,6 +69,11 @@ interface Props {
   onPreviewEdits?: () => void;
   /** Build & execute the UPDATE(s) for the pending edits, then refresh. */
   onApplyEdits?: () => void;
+}
+
+export interface ResultGridHandle {
+  /** Move focus to the cross-column search box (Cmd/Ctrl+F entry point). */
+  focusSearch: () => void;
 }
 
 /** Pixels-from-bottom that count as "near the end" for triggering a load. */
@@ -821,7 +826,7 @@ export function DataGrid({
   );
 }
 
-export function ResultGrid({
+export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGrid({
   result,
   streaming,
   onStopStreaming,
@@ -839,11 +844,21 @@ export function ResultGrid({
   onClearEdits,
   onPreviewEdits,
   onApplyEdits,
-}: Props) {
+}: Props, ref) {
   const t = useT();
   const [showExport, setShowExport] = useState(false);
   const [search, setSearch] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focusSearch: () => {
+      const el = searchInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+    },
+  }), []);
   // Latest callback in a ref so we don't have to re-attach the scroll
   // listener every time `onLoadMore` is rebuilt (it changes on every
   // App.tsx render because of useCallback deps).
@@ -1024,15 +1039,23 @@ export function ResultGrid({
           </div>
         )}
         <input
+          ref={searchInputRef}
           type="search"
           className="results-search-input"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setSearch("");
+              containerRef.current?.focus();
+            }
+          }}
           placeholder={t("gridSearchPlaceholder")}
           aria-label={t("gridSearchAria")}
         />
       </div>
-      <div ref={containerRef} className="results-scroll">
+      <div ref={containerRef} className="results-scroll" tabIndex={-1}>
         <DataGrid
           columns={result.columns}
           rows={result.rows}
@@ -1062,4 +1085,4 @@ export function ResultGrid({
       )}
     </div>
   );
-}
+});

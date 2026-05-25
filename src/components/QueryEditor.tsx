@@ -110,6 +110,15 @@ function formatEditorContent(
   return true;
 }
 
+function selectionOrAllText(view: EditorView): string | null {
+  const sel = view.state.selection.main;
+  const text = sel.empty
+    ? view.state.doc.toString()
+    : view.state.sliceDoc(sel.from, sel.to);
+  if (text.trim().length === 0) return null;
+  return text;
+}
+
 function buildSqlExtension(driver: string, schemaTable: SchemaTable | null | undefined) {
   let schema: SQLNamespace | undefined;
   let defaultTable: string | undefined;
@@ -157,6 +166,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onChangeRef.current = onChange;
   const onFormatErrorRef = useRef(onFormatError);
   onFormatErrorRef.current = onFormatError;
+  const onRunRef = useRef(onRun);
+  onRunRef.current = onRun;
+  const onPreviewRef = useRef(onPreview);
+  onPreviewRef.current = onPreview;
   const driverRef = useRef(driver);
   driverRef.current = driver;
 
@@ -179,6 +192,24 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           sqlCompartment.of(buildSqlExtension(driver, schemaTable)),
           keymap.of([
             { key: "Tab", run: acceptCompletion },
+            {
+              key: "Mod-Enter",
+              run: (v) => {
+                const text = selectionOrAllText(v);
+                if (text !== null) onRunRef.current(text);
+                return true;
+              },
+            },
+            {
+              key: "Shift-Mod-Enter",
+              run: (v) => {
+                const preview = onPreviewRef.current;
+                if (!preview) return false;
+                const text = selectionOrAllText(v);
+                if (text !== null) preview(text);
+                return true;
+              },
+            },
             {
               key: "Mod-Shift-f",
               preventDefault: true,
@@ -240,10 +271,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const currentText = (): string | null => {
     const view = viewRef.current;
     if (!view) return null;
-    const sel = view.state.selection.main;
-    const text = sel.empty ? view.state.doc.toString() : view.state.sliceDoc(sel.from, sel.to);
-    if (text.trim().length === 0) return null;
-    return text;
+    return selectionOrAllText(view);
   };
 
   const saveSelectionOrAll = () => {
@@ -280,11 +308,12 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     : activeTable
       ? t("editorRunOnTable", { table: activeTable.name })
       : t("editorRun");
-  const runTitle = explainMode
+  const runTitleBase = explainMode
     ? t("editorExplainTitle")
     : activeTable
       ? t("editorRunOnTableTitle", { database: activeTable.database, table: activeTable.name })
-      : undefined;
+      : t("editorRunTitle");
+  const runTitle = `${runTitleBase} (${t("editorRunShortcut")})`;
 
   return (
     <div className="editor">
@@ -307,7 +336,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             className="warning with-icon"
             onClick={previewSelectionOrAll}
             disabled={disabled || !hasContent}
-            title={t("editorPreviewTitle")}
+            title={`${t("editorPreviewTitle")} (${t("editorPreviewShortcut")})`}
           >
             <span className="btn-icon" aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

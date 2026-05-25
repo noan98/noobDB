@@ -249,9 +249,12 @@ const en = {
 
   editorRun: "Run",
   editorRunOnTable: "Run",
+  editorRunTitle: "Run the selection (or the whole editor)",
   editorRunOnTableTitle: "Runs against `{database}` — selection or whole editor",
+  editorRunShortcut: "Cmd/Ctrl+Enter",
   editorPreview: "Dry Run",
   editorPreviewTitle: "Dry-run the statement in a transaction and show before/after — changes are rolled back.",
+  editorPreviewShortcut: "Shift+Cmd/Ctrl+Enter",
   editorBuilder: "Query Builder",
   editorBuilderTitle: "Build a SELECT/INSERT/UPDATE/DELETE statement from a guided form.",
   editorFormat: "Format",
@@ -506,6 +509,28 @@ const en = {
   helpProductionTitle: "Production mark (is_production)",
   helpProductionDesc:
     "Shows a confirmation dialog before connecting to a profile marked as production. Toggle it in Settings.",
+
+  helpSectionShortcuts: "Keyboard shortcuts",
+  helpSectionShortcutsDesc:
+    "Speed up the operations you repeat most. Editor shortcuts work while the SQL editor has focus.",
+  helpShortcutRunTitle: "Cmd/Ctrl+Enter",
+  helpShortcutRunDesc: "Run the selection, or the whole editor when nothing is selected.",
+  helpShortcutPreviewTitle: "Shift+Cmd/Ctrl+Enter",
+  helpShortcutPreviewDesc: "Dry-run a preview on tabs that support it.",
+  helpShortcutFormatTitle: "Cmd/Ctrl+Shift+F",
+  helpShortcutFormatDesc: "Format the SQL in the editor.",
+  helpShortcutCompleteTitle: "Tab",
+  helpShortcutCompleteDesc: "Accept the highlighted autocompletion.",
+  helpShortcutSearchTitle: "Cmd/Ctrl+F",
+  helpShortcutSearchDesc: "Focus the result search box. Esc clears it and returns to the grid.",
+  helpShortcutNewTabTitle: "Cmd/Ctrl+T",
+  helpShortcutNewTabDesc: "Open a new query tab.",
+  helpShortcutCloseTabTitle: "Cmd/Ctrl+W",
+  helpShortcutCloseTabDesc: "Close the active tab.",
+  helpShortcutCycleTabTitle: "Ctrl+Tab / Ctrl+Shift+Tab",
+  helpShortcutCycleTabDesc: "Switch to the next / previous tab.",
+  helpShortcutNthTabTitle: "Cmd/Ctrl+1–9",
+  helpShortcutNthTabDesc: "Jump to the nth tab.",
 };
 
 type Key = keyof typeof en;
@@ -758,9 +783,12 @@ const ja: Dict = {
 
   editorRun: "Run",
   editorRunOnTable: "Run",
+  editorRunTitle: "選択範囲（選択がなければ全体）を実行します",
   editorRunOnTableTitle: "`{database}` を使用して実行（選択範囲またはエディタ全体）",
+  editorRunShortcut: "Cmd/Ctrl+Enter",
   editorPreview: "Dry Run",
   editorPreviewTitle: "トランザクション内で試し実行し、Before/After を表示します（変更はロールバック）。",
+  editorPreviewShortcut: "Shift+Cmd/Ctrl+Enter",
   editorBuilder: "Query Builder",
   editorBuilderTitle: "フォームから SELECT/INSERT/UPDATE/DELETE 文を組み立てます。",
   editorFormat: "整形",
@@ -1015,6 +1043,28 @@ const ja: Dict = {
   helpProductionTitle: "本番環境マーク (is_production)",
   helpProductionDesc:
     "本番としてマークしたプロファイルへの接続前に確認ダイアログを表示します。設定で ON/OFF を切り替えられます。",
+
+  helpSectionShortcuts: "キーボードショートカット",
+  helpSectionShortcutsDesc:
+    "よく使う操作を素早く行えます。エディタ向けのショートカットは SQL エディタにフォーカスがあるときに有効です。",
+  helpShortcutRunTitle: "Cmd/Ctrl+Enter",
+  helpShortcutRunDesc: "選択範囲を実行します。選択がなければエディタ全体を実行します。",
+  helpShortcutPreviewTitle: "Shift+Cmd/Ctrl+Enter",
+  helpShortcutPreviewDesc: "対応しているタブで Dry Run（プレビュー）を起動します。",
+  helpShortcutFormatTitle: "Cmd/Ctrl+Shift+F",
+  helpShortcutFormatDesc: "エディタ内の SQL を整形します。",
+  helpShortcutCompleteTitle: "Tab",
+  helpShortcutCompleteDesc: "ハイライト中の補完候補を確定します。",
+  helpShortcutSearchTitle: "Cmd/Ctrl+F",
+  helpShortcutSearchDesc: "結果の検索ボックスにフォーカスします。Esc でクリアしてグリッドへ戻ります。",
+  helpShortcutNewTabTitle: "Cmd/Ctrl+T",
+  helpShortcutNewTabDesc: "新しいクエリタブを開きます。",
+  helpShortcutCloseTabTitle: "Cmd/Ctrl+W",
+  helpShortcutCloseTabDesc: "アクティブなタブを閉じます。",
+  helpShortcutCycleTabTitle: "Ctrl+Tab / Ctrl+Shift+Tab",
+  helpShortcutCycleTabDesc: "次 / 前のタブへ切り替えます。",
+  helpShortcutNthTabTitle: "Cmd/Ctrl+1〜9",
+  helpShortcutNthTabDesc: "n 番目のタブへ移動します。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
