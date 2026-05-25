@@ -80,11 +80,69 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --all -- --check
 
-  rust:
-    name: rust (check + clippy + test)
+  # clippy と nextest は別ジョブに分割して並列実行する。clippy は cargo check
+  # 相当 (メタデータ emit のみ)、nextest は実バイナリ生成 (codegen + link) で、
+  # cargo はこの 2 モードの成果物を共有しない。同一ジョブで直列に走らせると依存
+  # ツリーが実質二重コンパイルされて積み上がるため、並列ジョブにして壁時計時間を
+  # max(clippy, test) に縮める。各ジョブは rust-cache のキーが分かれるので
+  # キャッシュは互いに干渉しない。CI では incremental コンパイルは無益で
+  # オーバーヘッド・キャッシュ肥大を招くだけなので CARGO_INCREMENTAL=0 にする。
+  rust-clippy:
+    name: rust (clippy)
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # clippy は check モードでリンクしないが、build.rs (tauri-build 等) の
+      # 生成・実行で linker を使うため clang + mold は必要
+      # (src-tauri/.cargo/config.toml が Linux ターゲットのリンカに指定)。
+      - name: System deps (Tauri 2 prerequisites)
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.5.4
+        with:
+          packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
+          version: tauri-2
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: clippy
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend (needed for tauri::generate_context!)
+        run: npm run build
+
+      # clippy は rustc ドライバなので型チェック (cargo check 相当) を内包する。
+      # 別途 cargo check を走らせると、共有されないコンパイルがほぼ二重に走るため
+      # clippy のみに集約している。
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  rust-test:
+    name: rust (test)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
     services:
       mysql:
         image: mysql:8.0
@@ -118,13 +176,12 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          components: clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: "./src-tauri -> target"
+          key: test
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@e0eafa9a0d485c37f97c0f7beb930a58a2facbac # v2.79.4
@@ -136,13 +193,6 @@ jobs:
 
       - name: Build frontend (needed for tauri::generate_context!)
         run: npm run build
-
-      # clippy は rustc ドライバなので型チェック (cargo check 相当) を内包する。
-      # 別途 cargo check を走らせると、共有されないコンパイルがほぼ二重に走るため
-      # clippy のみに集約している。
-      - name: cargo clippy
-        working-directory: src-tauri
-        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: cargo nextest run
         working-directory: src-tauri
