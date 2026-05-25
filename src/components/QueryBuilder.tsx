@@ -7,6 +7,7 @@ import { tags } from "@lezer/highlight";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
+import { Icon } from "./Icon";
 
 const qbHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -356,7 +357,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
         <header className="modal-header">
           <h2>{t("qbTitle")}</h2>
           <button className="icon" onClick={onClose} aria-label={t("qbClose")} title={t("qbClose")}>
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </header>
 
@@ -459,7 +460,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                                   aria-label={t("qbRemove")}
                                   title={t("qbRemove")}
                                 >
-                                  ✕
+                                  <Icon name="close" size={12} />
                                 </button>
                               </td>
                             ))}
@@ -510,7 +511,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     title={t("qbRemove")}
                     disabled={setPairs.length <= 1}
                   >
-                    ✕
+                    <Icon name="close" size={12} />
                   </button>
                 </div>
               ))}
@@ -548,7 +549,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     title={t("qbRemove")}
                     disabled={insertPairs.length <= 1}
                   >
-                    ✕
+                    <Icon name="close" size={12} />
                   </button>
                 </div>
               ))}
@@ -598,7 +599,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     title={t("qbRemove")}
                     disabled={whereConditions.length <= 1}
                   >
-                    ✕
+                    <Icon name="close" size={12} />
                   </button>
                 </div>
               ))}

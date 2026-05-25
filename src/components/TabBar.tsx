@@ -1,4 +1,5 @@
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
 
 export interface TabInfo {
   id: string;
@@ -46,7 +47,7 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onNew, disabled }
               }}
             >
               <span className="tab-icon" aria-hidden>
-                {tab.kind === "table" ? "▤" : tab.kind === "explain" ? "❖" : "✎"}
+                <Icon name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"} />
               </span>
               <span className="tab-label">{tab.title}</span>
               {tab.dirty && (
@@ -63,7 +64,7 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onNew, disabled }
                   onClose(tab.id);
                 }}
               >
-                ✕
+                <Icon name="close" size={13} />
               </button>
             </div>
           );
@@ -76,7 +77,7 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onNew, disabled }
         title={t("tabNew")}
         aria-label={t("tabNew")}
       >
-        +
+        <Icon name="plus" size={16} />
       </button>
     </div>
   );

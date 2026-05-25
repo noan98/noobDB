@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
 import { copyToClipboard } from "./clipboard";
+import { Icon } from "./Icon";
 
 interface Props {
   /** Column name, shown in the modal header. */
@@ -75,7 +76,7 @@ export function CellValueViewer({ columnName, value, isBinary, onClose }: Props)
             aria-label={t("cellViewerClose")}
             title={t("cellViewerClose")}
           >
-            ✕
+            <Icon name="close" size={13} />
           </button>
         </header>
 

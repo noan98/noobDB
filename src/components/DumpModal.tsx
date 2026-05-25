@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, DumpOptions } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
+import { Icon } from "./Icon";
 
 interface Props {
   sessionId: string;
@@ -113,7 +114,7 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
             aria-label={t("dumpClose")}
             title={t("dumpClose")}
           >
-            ✕
+            <Icon name="close" size={13} />
           </button>
         </header>
 

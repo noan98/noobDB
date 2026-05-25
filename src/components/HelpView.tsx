@@ -1,4 +1,5 @@
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
 
 type Key = Parameters<ReturnType<typeof useT>>[0];
 type Impact = "yes" | "no";
@@ -85,7 +86,7 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
   return (
     <span className={`help-impact-badge ${writes ? "impact-yes" : "impact-no"}`}>
       <span className="help-impact-mark" aria-hidden>
-        {writes ? "✅" : "❌"}
+        <Icon name={writes ? "check" : "close"} />
       </span>
       {`${t("helpImpactLabel")}: ${t(writes ? "helpImpactYes" : "helpImpactNo")}`}
     </span>

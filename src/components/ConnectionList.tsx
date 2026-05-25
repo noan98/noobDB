@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
@@ -365,7 +366,7 @@ export function ConnectionList({
               aria-hidden
             />
           ) : (
-            <span className="tree-icon profile-icon" aria-hidden>⛁</span>
+            <span className="tree-icon profile-icon" aria-hidden><Icon name="server" /></span>
           )}
           <span className="tree-label">{p.name}</span>
           {p.is_production && (
@@ -413,7 +414,7 @@ export function ConnectionList({
                       title={db}
                     >
                       <span className="tree-chevron" aria-hidden>{dbOpen ? "▾" : "▸"}</span>
-                      <span className="tree-icon db-icon" aria-hidden>▣</span>
+                      <span className="tree-icon db-icon" aria-hidden><Icon name="database" /></span>
                       <span className="tree-label">{db}</span>
                     </div>
                     {dbOpen && (
@@ -444,7 +445,7 @@ export function ConnectionList({
                                   title={t("treeTableTitle")}
                                 >
                                   <span className="tree-chevron" aria-hidden>{tOpen ? "▾" : "▸"}</span>
-                                  <span className="tree-icon table-icon" aria-hidden>▤</span>
+                                  <span className="tree-icon table-icon" aria-hidden><Icon name="table" /></span>
                                   <span className="tree-label">{tbl}</span>
                                 </div>
                                 {tOpen && (
@@ -480,7 +481,7 @@ export function ConnectionList({
                                               title={isPk ? t("colPkTitle") : isFk ? t("colFkTitle") : undefined}
                                               aria-hidden
                                             >
-                                              {isPk ? "🔑" : isFk ? "🔗" : "·"}
+                                              {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
                                             </span>
                                             <span className="tree-label column-name">{col.name}</span>
                                             <span className="tree-badge column-type" title={col.data_type}>{col.data_type}</span>

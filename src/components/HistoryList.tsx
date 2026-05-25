@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
 
 interface Props {
   activeProfile: ConnectionProfile | null;
@@ -125,7 +126,7 @@ export function HistoryList({ activeProfile, reloadKey, onRestore }: Props) {
                 >
                   <span className="tree-chevron empty" aria-hidden />
                   <span className="tree-icon snippet-icon" aria-hidden>
-                    {failed ? "✕" : "↻"}
+                    <Icon name={failed ? "close" : "refresh"} />
                   </span>
                   <span className="tree-label">{oneLine(h.sql)}</span>
                   {failed && (

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ConnectionProfile, Snippet } from "../api/tauri";
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
 
 interface Props {
   snippets: Snippet[];
@@ -110,7 +111,7 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
         title={`${t("snippetInsertHint")}\n\n${s.sql}`}
       >
         <span className="tree-chevron empty" aria-hidden />
-        <span className="tree-icon snippet-icon" aria-hidden>≡</span>
+        <span className="tree-icon snippet-icon" aria-hidden><Icon name="snippet" /></span>
         <span className="tree-label">{s.name}</span>
         {s.tags.map((tag) => (
           <span key={tag} className="tree-badge snippet-tag">{tag}</span>

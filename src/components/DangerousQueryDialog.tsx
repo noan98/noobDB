@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useT } from "../i18n";
 import type { DangerFinding, DangerKind } from "../dangerousSql";
+import { Icon } from "./Icon";
 
 interface Props {
   findings: DangerFinding[];
@@ -38,7 +39,7 @@ export function DangerousQueryDialog({ findings, isProduction, onConfirm, onCanc
         <header className="modal-header">
           <h2>{t("dangerousTitle")}</h2>
           <button className="icon" onClick={onCancel} aria-label={t("dangerousCancel")} title={t("dangerousCancel")}>
-            ✕
+            <Icon name="close" size={13} />
           </button>
         </header>
 
