@@ -30,6 +30,18 @@
   --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.18);
   --shadow-xl: 0 24px 60px rgba(15, 23, 42, 0.28);
 
+  /* Motion: shared easing/durations for micro-interactions.
+     The reduced-motion media query at the bottom neutralizes these. */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur-med: 200ms;
+
+  /* Workspace accent: defaults to the brand accent; the active connection's
+     color overrides this inline (see #138) so the topbar/active tab tint to
+     the environment color. */
+  --ws-accent: var(--accent);
+
   --bg: #f5f7fa;
   --bg-elevated: #ffffff;
   --bg-muted: #eef1f5;
@@ -53,6 +65,9 @@
   --border: #e3e8ef;
   --border-strong: #cdd4df;
   --border-subtle: #eef1f5;
+
+  --scrollbar-thumb: #c2cad6;
+  --scrollbar-thumb-hover: #a8b2c0;
 
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
@@ -124,6 +139,9 @@
   --border-strong: #3c4553;
   --border-subtle: #222b37;
 
+  --scrollbar-thumb: #3a4453;
+  --scrollbar-thumb-hover: #515d6e;
+
   --accent: #4c93f7;
   --accent-hover: #6cb0fb;
   --accent-text: #ffffff;
@@ -161,6 +179,34 @@
 
 * { box-sizing: border-box; }
 
+/* Theme-aware scrollbars so every scroll region (tree, result grid, editor,
+   modals) matches the palette instead of falling back to the OS default,
+   which looks especially out of place on the dark theme (#129). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 html, body, #root {
   margin: 0;
   height: 100%;
@@ -176,9 +222,14 @@ button {
   color: var(--text);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 button:hover { background: var(--bg-hover); }
+button:active:not(:disabled) { transform: translateY(1px); }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button.success { background: #16a34a; color: #ffffff; border-color: #16a34a; }
@@ -200,6 +251,22 @@ button.info:hover { background: #075985; border-color: #075985; }
 [data-theme="dark"] button.danger:hover { background: #f87171; border-color: #f87171; }
 [data-theme="dark"] button.info { background: #38bdf8; border-color: #38bdf8; color: #082f49; }
 [data-theme="dark"] button.info:hover { background: #7dd3fc; border-color: #7dd3fc; color: #082f49; }
+/* Emphasis levels below the colored variants: a screen should read as one
+   primary action plus lower-weight secondary (outline) / ghost (text) ones. */
+button.secondary {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+button.secondary:hover { background: var(--bg-hover); }
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+button.ghost:hover { background: var(--bg-hover); color: var(--text); }
+/* Compact size for dense toolbars / modal footers. */
+button.btn-sm { padding: 3px 8px; font-size: var(--text-sm); }
 button.with-icon { display: inline-flex; align-items: center; gap: 6px; }
 button.with-icon .btn-icon { display: inline-flex; flex-shrink: 0; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -209,6 +276,27 @@ button.icon {
   font-size: var(--text-base);
   line-height: 1;
   min-width: 28px;
+}
+
+/* Micro-interactions: a short, consistent transition on the main interactive
+   surfaces (tree rows, tabs, menu items, etc.). Durations/easing come from the
+   --dur-* / --ease tokens and are neutralized by the reduced-motion query. */
+.tree-row,
+.group-row,
+.context-menu-item,
+.sidebar-tab,
+.tab,
+.tab-close,
+.tab-new,
+.color-swatch,
+.snippet-scope-toggle,
+.th-sort-button,
+.grid-filter-clear,
+.cm-tooltip-autocomplete > ul > li {
+  transition: background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 input, select {
@@ -255,6 +343,14 @@ label {
 .muted { color: var(--text-muted); }
 .text-error { color: var(--text-error); }
 .text-success { color: var(--text-success); }
+
+/* Shared inline SVG icon (see components/Icon.tsx): inherits text color via
+   currentColor and aligns with adjacent text. */
+.icon-svg {
+  display: inline-block;
+  vertical-align: -0.125em;
+  flex-shrink: 0;
+}
 
 .app {
   display: grid;
@@ -772,8 +868,19 @@ label {
   gap: var(--space-3);
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
+  background: color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated));
   min-height: 42px;
+  /* Thin top bar tinted to the active connection's color (#138). Drawn with an
+     inset shadow so it doesn't shift layout. Falls back to the brand accent. */
+  box-shadow: inset 0 2px 0 var(--ws-accent);
+  transition: background var(--dur-med) var(--ease),
+    box-shadow var(--dur-med) var(--ease);
+}
+/* Production environments get a more assertive bar + tint so the operator can
+   tell at a glance they are connected somewhere dangerous. */
+.topbar.is-production {
+  background: color-mix(in srgb, var(--ws-accent) 9%, var(--bg-elevated));
+  box-shadow: inset 0 3px 0 var(--ws-accent);
 }
 .topbar-info {
   display: flex;
@@ -853,7 +960,7 @@ label {
 .tab.active {
   background: var(--bg-elevated);
   color: var(--text);
-  border-top-color: var(--accent);
+  border-top-color: var(--ws-accent);
 }
 
 .tab-icon {
@@ -864,7 +971,7 @@ label {
   color: var(--text-muted);
   flex-shrink: 0;
 }
-.tab.active .tab-icon { color: var(--accent); }
+.tab.active .tab-icon { color: var(--ws-accent); }
 
 .tab-label {
   overflow: hidden;
@@ -971,23 +1078,40 @@ label {
 .cm-editor {
   height: 100%;
   font-family: var(--font-mono);
+  font-size: var(--text-md);
   background: var(--bg-elevated);
   color: var(--text);
 }
 
-[data-theme="dark"] .cm-editor .cm-content { caret-color: var(--text); }
-[data-theme="dark"] .cm-editor .cm-cursor,
-[data-theme="dark"] .cm-editor .cm-dropCursor { border-left-color: var(--text); }
-[data-theme="dark"] .cm-editor .cm-gutters {
+/* Roomier typesetting so the editor (the screen users stare at longest) reads
+   comfortably in both themes: looser line-height, gutter breathing room, and
+   accent-tinted active line / caret (#145). */
+.cm-editor .cm-scroller {
+  line-height: 1.6;
+  font-family: var(--font-mono);
+}
+.cm-editor .cm-content {
+  padding: var(--space-2) 0;
+  caret-color: var(--accent);
+}
+.cm-editor .cm-line { padding: 0 var(--space-3) 0 var(--space-2); }
+.cm-editor .cm-gutters {
   background: var(--bg-muted);
   color: var(--text-muted);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-subtle);
 }
-[data-theme="dark"] .cm-editor .cm-activeLine,
-[data-theme="dark"] .cm-editor .cm-activeLineGutter { background: var(--bg-hover); }
-[data-theme="dark"] .cm-editor .cm-selectionBackground,
-[data-theme="dark"] .cm-editor.cm-focused .cm-selectionBackground,
-[data-theme="dark"] .cm-editor ::selection { background: var(--cm-selection) !important; }
+.cm-editor .cm-gutterElement { padding: 0 var(--space-2) 0 var(--space-3); }
+.cm-editor .cm-lineNumbers .cm-gutterElement { color: var(--text-muted); }
+.cm-editor .cm-activeLine { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.cm-editor .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground,
+.cm-editor ::selection { background: var(--cm-selection) !important; }
+.cm-editor .cm-cursor,
+.cm-editor .cm-dropCursor { border-left-color: var(--accent); }
 
 .cm-tooltip.cm-tooltip-autocomplete {
   background: var(--bg-elevated);
@@ -1001,12 +1125,14 @@ label {
 .cm-tooltip.cm-tooltip-autocomplete > ul {
   font-family: inherit;
   max-height: 220px;
+  padding: var(--space-1);
 }
 .cm-tooltip.cm-tooltip-autocomplete > ul > li {
-  padding: 2px 8px;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
 }
 .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated));
   color: var(--text);
 }
 .cm-completionLabel { color: var(--text); }
@@ -1067,13 +1193,19 @@ label {
   line-height: 1.2;
   gap: 1px;
 }
-:where(.results, .preview-pane-body) th .th-name { font-weight: 600; color: var(--text); }
+:where(.results, .preview-pane-body) th .th-name {
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
 :where(.results, .preview-pane-body) th .th-type {
   font-size: var(--text-2xs);
   font-weight: 400;
+  font-family: var(--font-mono);
   color: var(--text-muted);
   text-transform: lowercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
+  opacity: 0.85;
 }
 
 :where(.results, .preview-pane-body) tbody tr:nth-child(even) td { background: var(--bg-stripe); }
@@ -2604,6 +2736,8 @@ label {
 
 .import-pk {
   font-size: var(--text-xs);
+  margin-left: var(--space-1);
+  color: var(--cell-date);
 }
 
 .import-preview-scroll {

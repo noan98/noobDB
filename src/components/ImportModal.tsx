@@ -10,6 +10,7 @@ import {
   type TableColumnInfo,
 } from "../api/tauri";
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
 
 interface Props {
   sessionId: string;
@@ -378,7 +379,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
                   <div className="import-mapping-row" key={col.name}>
                     <span className="import-mapping-col" title={col.data_type}>
                       {col.name}
-                      {col.key === "PRI" && <span className="import-pk"> 🔑</span>}
+                      {col.key === "PRI" && <span className="import-pk" title={t("colPkTitle")}><Icon name="key" /></span>}
                     </span>
                     <select
                       value={mapping[col.name] ?? ""}
