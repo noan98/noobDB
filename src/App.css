@@ -151,12 +151,19 @@ button.warning { background: #d97706; color: #ffffff; border-color: #d97706; }
 button.warning:hover { background: #b45309; border-color: #b45309; }
 button.danger { background: #dc2626; color: #ffffff; border-color: #dc2626; }
 button.danger:hover { background: #b91c1c; border-color: #b91c1c; }
+/* Cyan-leaning "info" tone for secondary launch actions (e.g. Query Builder).
+   Kept distinct from the indigo primary accent (--accent #2563eb). White text
+   on #0369a1 is ~5.9:1 (WCAG AA for normal text). */
+button.info { background: #0369a1; color: #ffffff; border-color: #0369a1; }
+button.info:hover { background: #075985; border-color: #075985; }
 [data-theme="dark"] button.success { background: #22c55e; border-color: #22c55e; color: #052e16; }
 [data-theme="dark"] button.success:hover { background: #4ade80; border-color: #4ade80; }
 [data-theme="dark"] button.warning { background: #f59e0b; border-color: #f59e0b; color: #2a1707; }
 [data-theme="dark"] button.warning:hover { background: #fbbf24; border-color: #fbbf24; }
 [data-theme="dark"] button.danger { background: #ef4444; border-color: #ef4444; color: #ffffff; }
 [data-theme="dark"] button.danger:hover { background: #f87171; border-color: #f87171; }
+[data-theme="dark"] button.info { background: #38bdf8; border-color: #38bdf8; color: #082f49; }
+[data-theme="dark"] button.info:hover { background: #7dd3fc; border-color: #7dd3fc; color: #082f49; }
 button.with-icon { display: inline-flex; align-items: center; gap: 6px; }
 button.with-icon .btn-icon { display: inline-flex; flex-shrink: 0; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
