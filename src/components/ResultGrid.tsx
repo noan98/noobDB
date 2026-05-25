@@ -7,13 +7,17 @@ import {
   useReactTable,
   type ColumnDef,
   type ColumnFiltersState,
+  type ColumnSizingState,
   type FilterFn,
+  type OnChangeFn,
   type SortingFn,
   type SortingState,
   type Row,
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
+import { CellValueViewer } from "./CellValueViewer";
+import { copyToClipboard } from "./clipboard";
 import { ExportModal } from "./ExportModal";
 import {
   countEditedCells,
@@ -27,6 +31,8 @@ interface Props {
   result: QueryResult | null;
   /** True while batches are still arriving from a streaming query. */
   streaming?: boolean;
+  /** Cancel the in-flight stream for the active tab (keeps rows received so far). */
+  onStopStreaming?: () => void;
   /** True while a scroll-triggered "load more" page is in flight. */
   loadingMore?: boolean;
   /** When true, scrolling near the bottom fetches another page. */
@@ -209,6 +215,38 @@ function defaultColumnSize(kind: CellKind): number {
 
 const ROW_INDEX_WIDTH = 44;
 
+/** Render a cell value as plain text for clipboard copy. NULL → empty string. */
+function cellToText(v: CellValue): string {
+  if (v === null || v === undefined) return "";
+  return String(v);
+}
+
+function readStoredColumnSizing(storageKey: string | undefined): ColumnSizingState {
+  if (!storageKey) return {};
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored !== null) {
+      const parsed = JSON.parse(stored);
+      if (parsed && typeof parsed === "object") return parsed as ColumnSizingState;
+    }
+  } catch {
+    // ignore (corrupt entry, private mode, quota)
+  }
+  return {};
+}
+
+function writeStoredColumnSizing(
+  storageKey: string | undefined,
+  sizing: ColumnSizingState,
+): void {
+  if (!storageKey) return;
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(sizing));
+  } catch {
+    // ignore
+  }
+}
+
 const includesFilter: FilterFn<RowShape> = (row, columnId, filterValue) => {
   const fv = (filterValue ?? "") as string;
   if (fv === "") return true;
@@ -256,6 +294,7 @@ export function DataGrid({
   editableColumns,
   pendingEdits,
   onSetCellEdit,
+  columnSizingStorageKey,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -273,6 +312,12 @@ export function DataGrid({
   editableColumns?: boolean[];
   pendingEdits?: PendingEdits;
   onSetCellEdit?: (rowIdx: number, colIdx: number, value: string | null) => void;
+  /**
+   * When set, user-adjusted column widths persist to `localStorage` under
+   * this key and are restored for matching result shapes. Omit (preview
+   * panes) to keep sizing ephemeral.
+   */
+  columnSizingStorageKey?: string;
 }) {
   const t = useT();
 
@@ -280,6 +325,29 @@ export function DataGrid({
 
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+
+  // Column widths persist per result shape. The ref mirrors the live state so
+  // functional updates from TanStack resolve against the latest value without
+  // re-creating the change handler on every render.
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
+    readStoredColumnSizing(columnSizingStorageKey),
+  );
+  const columnSizingRef = useRef(columnSizing);
+  columnSizingRef.current = columnSizing;
+  // Reload (or clear) sizing when the storage key changes — i.e. a different
+  // table/result shape. Persisting happens only on user resize (below), so
+  // this load never races a stale write back to the new key.
+  useEffect(() => {
+    setColumnSizing(readStoredColumnSizing(columnSizingStorageKey));
+  }, [columnSizingStorageKey]);
+  // Persist on resize. Inlined into table options so the latest storage key
+  // is captured each render (TanStack re-reads options every render).
+  const handleColumnSizingChange: OnChangeFn<ColumnSizingState> = (updater) => {
+    const next =
+      typeof updater === "function" ? updater(columnSizingRef.current) : updater;
+    setColumnSizing(next);
+    writeStoredColumnSizing(columnSizingStorageKey, next);
+  };
 
   const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
     return columns.map((c, i) => {
@@ -350,9 +418,10 @@ export function DataGrid({
   const table = useReactTable({
     data,
     columns: tableColumns,
-    state: { sorting, columnFilters, globalFilter: globalFilter ?? "" },
+    state: { sorting, columnFilters, globalFilter: globalFilter ?? "", columnSizing },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
+    onColumnSizingChange: handleColumnSizingChange,
     globalFilterFn: globalIncludesFilter,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -370,6 +439,66 @@ export function DataGrid({
   const [editing, setEditing] = useState<
     { rowIdx: number; colIdx: number; value: string } | null
   >(null);
+
+  // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
+  // values match `rows` regardless of sort/filter) and `colIdx` the display
+  // column position. `copied` drives a brief confirmation toast.
+  const [copyMenu, setCopyMenu] = useState<
+    { x: number; y: number; rowIdx: number; colIdx: number } | null
+  >(null);
+  const copyMenuRef = useRef<HTMLDivElement | null>(null);
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
+
+  // Full-value viewer target (original row index + display column index).
+  const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
+
+  useEffect(() => {
+    if (!copyMenu) return;
+    const close = () => setCopyMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      if (copyMenuRef.current?.contains(e.target as Node)) return;
+      close();
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [copyMenu]);
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
+
+  const runCopy = async (text: string) => {
+    setCopyMenu(null);
+    await copyToClipboard(text);
+    setCopied(true);
+    if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+  };
+  const copyCell = (rowIdx: number, colIdx: number) =>
+    void runCopy(cellToText(rows[rowIdx]?.[colIdx] ?? null));
+  const copyRow = (rowIdx: number) =>
+    void runCopy((rows[rowIdx] ?? []).map(cellToText).join("\t"));
+  const copyRowWithHeaders = (rowIdx: number) =>
+    void runCopy(
+      `${columns.map((c) => c.name).join("\t")}\n${(rows[rowIdx] ?? [])
+        .map(cellToText)
+        .join("\t")}`,
+    );
 
   const commitEdit = (
     rowIdx: number,
@@ -534,12 +663,18 @@ export function DataGrid({
                   // the original" (which clears the pending edit).
                   const originalDisplay = isNull ? "" : String(v);
                   const handleDoubleClick = () => {
-                    if (!colEditable || !onSetCellEdit) return;
-                    setEditing({
-                      rowIdx: row.index,
-                      colIdx: idx,
-                      value: hasPending ? pendingValue : originalDisplay,
-                    });
+                    // Editable cells edit on double-click; everything else
+                    // (read-only grids, PK/BLOB columns, preview panes) opens
+                    // the full-value viewer instead, so the two never collide.
+                    if (colEditable && onSetCellEdit) {
+                      setEditing({
+                        rowIdx: row.index,
+                        colIdx: idx,
+                        value: hasPending ? pendingValue : originalDisplay,
+                      });
+                      return;
+                    }
+                    setViewer({ rowIdx: row.index, colIdx: idx });
                   };
                   return (
                     <td
@@ -558,6 +693,15 @@ export function DataGrid({
                               : String(v)
                       }
                       onDoubleClick={handleDoubleClick}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setCopyMenu({
+                          x: e.clientX,
+                          y: e.clientY,
+                          rowIdx: row.index,
+                          colIdx: idx,
+                        });
+                      }}
                     >
                       {isEditingHere ? (
                         <input
@@ -616,6 +760,63 @@ export function DataGrid({
           )}
         </tbody>
       </table>
+      {copyMenu && (
+        <div
+          ref={copyMenuRef}
+          className="context-menu"
+          style={{ left: copyMenu.x, top: copyMenu.y }}
+          role="menu"
+        >
+          <button
+            type="button"
+            className="context-menu-item"
+            role="menuitem"
+            onClick={() => copyCell(copyMenu.rowIdx, copyMenu.colIdx)}
+          >
+            {t("gridCopyCell")}
+          </button>
+          <button
+            type="button"
+            className="context-menu-item"
+            role="menuitem"
+            onClick={() => copyRow(copyMenu.rowIdx)}
+          >
+            {t("gridCopyRow")}
+          </button>
+          <button
+            type="button"
+            className="context-menu-item"
+            role="menuitem"
+            onClick={() => copyRowWithHeaders(copyMenu.rowIdx)}
+          >
+            {t("gridCopyRowWithHeaders")}
+          </button>
+          <button
+            type="button"
+            className="context-menu-item"
+            role="menuitem"
+            onClick={() => {
+              setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx });
+              setCopyMenu(null);
+            }}
+          >
+            {t("gridViewFull")}
+          </button>
+        </div>
+      )}
+      {copied && (
+        <div className="grid-copied-toast" role="status" aria-live="polite">
+          {t("gridCopied")}
+        </div>
+      )}
+      {viewer && (
+        <CellValueViewer
+          columnName={columns[viewer.colIdx]?.name ?? ""}
+          value={rows[viewer.rowIdx]?.[viewer.colIdx] ?? null}
+          isBinary={columnKinds[viewer.colIdx] === "binary"}
+          onClose={() => setViewer(null)}
+        />
+      )}
     </>
   );
 }
@@ -623,6 +824,7 @@ export function DataGrid({
 export function ResultGrid({
   result,
   streaming,
+  onStopStreaming,
   loadingMore,
   canLoadMore,
   onLoadMore,
@@ -690,6 +892,15 @@ export function ResultGrid({
     );
   }, [editable, columns, pkIndices]);
 
+  // Persist column widths per result shape: same database+table+column set
+  // restores saved widths, a different shape falls back to defaults. The
+  // column signature keeps free-form queries with distinct columns separate.
+  const columnSizingStorageKey = useMemo(() => {
+    if (!columns || columns.length === 0) return undefined;
+    const signature = JSON.stringify(columns.map((c) => c.name));
+    return `noobdb.colsizing.v1::${database ?? ""}::${table ?? ""}::${signature}`;
+  }, [columns, database, table]);
+
   if (!result) {
     return <div className="results empty">{t("resultEmpty")}</div>;
   }
@@ -727,7 +938,19 @@ export function ResultGrid({
       {streaming && (
         <div className="results-streaming-banner" role="status" aria-live="polite">
           <span className="results-streaming-dot" aria-hidden />
-          {t("statusStreaming", { rows: result.rows.length, ms: result.elapsed_ms })}
+          <span className="results-streaming-text">
+            {t("statusStreaming", { rows: result.rows.length, ms: result.elapsed_ms })}
+          </span>
+          {onStopStreaming && (
+            <button
+              type="button"
+              className="warning results-streaming-stop"
+              onClick={onStopStreaming}
+              title={t("gridStopButtonTitle")}
+            >
+              {t("gridStopButton")}
+            </button>
+          )}
         </div>
       )}
       {showAutoLimitBadge && (
@@ -818,6 +1041,7 @@ export function ResultGrid({
           editableColumns={editableCols}
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
+          columnSizingStorageKey={columnSizingStorageKey}
         />
         {loadingMore && (
           <div className="results-loading-more" role="status" aria-live="polite">
@@ -832,6 +1056,7 @@ export function ResultGrid({
           rows={result.rows}
           database={database ?? null}
           table={table ?? null}
+          partial={showAutoLimitBadge || !!canLoadMore}
           onClose={() => setShowExport(false)}
         />
       )}
