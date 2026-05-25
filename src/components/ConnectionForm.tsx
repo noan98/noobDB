@@ -215,7 +215,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
   return (
     <div className="form">
-      <h2 className="full" style={{ margin: 0 }}>{initial ? t("formEditTitle", { name: initial.name }) : t("formNewTitle")}</h2>
+      <h2 className="full" style={{ margin: 0 }}>{initial?.id ? t("formEditTitle", { name: initial.name }) : t("formNewTitle")}</h2>
 
       <div className="full">
         <label>{t("formName")}</label>

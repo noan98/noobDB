@@ -12,6 +12,7 @@ interface Props {
   errorProfileId: string | null;
   onConnect: (profile: ConnectionProfile) => void;
   onEdit: (profile: ConnectionProfile) => void;
+  onDuplicate: (profile: ConnectionProfile) => void;
   onDelete: (id: string) => void;
   onPickTable: (database: string, table: string) => void;
   onImportTable: (database: string, table: string) => void;
@@ -38,6 +39,7 @@ export function ConnectionList({
   errorProfileId,
   onConnect,
   onEdit,
+  onDuplicate,
   onDelete,
   onPickTable,
   onImportTable,
@@ -468,6 +470,17 @@ export function ConnectionList({
             }}
           >
             {t("contextMenuEdit")}
+          </button>
+          <button
+            type="button"
+            className="context-menu-item"
+            onClick={() => {
+              const p = contextMenu.profile;
+              setContextMenu(null);
+              onDuplicate(p);
+            }}
+          >
+            {t("contextMenuDuplicate")}
           </button>
           <button
             type="button"
