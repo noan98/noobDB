@@ -28,7 +28,7 @@ export type QueryKind = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
 
 const WHERE_OPERATORS = ["=", "!=", "<", "<=", ">", ">=", "LIKE", "IN", "IS NULL", "IS NOT NULL"] as const;
 
-interface WhereCondition {
+export interface WhereCondition {
   column: string;
   operator: string;
   value: string;
@@ -43,9 +43,26 @@ function isNullOperator(op: string): boolean {
   return n === "IS NULL" || n === "IS NOT NULL";
 }
 
-interface ColumnValuePair {
+export interface ColumnValuePair {
   column: string;
   value: string;
+}
+
+/**
+ * Full snapshot of the builder's inputs. Lifted into the owning tab's state so
+ * the most recent Run / Dry Run can be restored when the builder is reopened
+ * in the same tab. Held in memory only — never persisted to disk.
+ */
+export interface QueryBuilderSnapshot {
+  kind: QueryKind;
+  database: string;
+  table: string;
+  selectAll: boolean;
+  selectColumns: string[];
+  whereConditions: WhereCondition[];
+  limit: string;
+  setPairs: ColumnValuePair[];
+  insertPairs: ColumnValuePair[];
 }
 
 interface Props {
@@ -53,8 +70,10 @@ interface Props {
   driver: string;
   defaultDatabase?: string | null;
   defaultTable?: string | null;
+  initialSnapshot?: QueryBuilderSnapshot | null;
   onExecute: (sql: string) => void;
   onPreview?: (sql: string) => void;
+  onPersist?: (snapshot: QueryBuilderSnapshot) => void;
   onClose: () => void;
 }
 
@@ -158,28 +177,32 @@ function buildSql(
   }
 }
 
-export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable, onExecute, onPreview, onClose }: Props) {
+export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable, initialSnapshot, onExecute, onPreview, onPersist, onClose }: Props) {
   const t = useT();
 
-  const [kind, setKind] = useState<QueryKind>("SELECT");
+  const [kind, setKind] = useState<QueryKind>(initialSnapshot?.kind ?? "SELECT");
   const [databases, setDatabases] = useState<string[]>([]);
-  const [database, setDatabase] = useState<string>(defaultDatabase ?? "");
+  const [database, setDatabase] = useState<string>(initialSnapshot?.database ?? defaultDatabase ?? "");
   const [tables, setTables] = useState<string[]>([]);
-  const [table, setTable] = useState<string>(defaultTable ?? "");
+  const [table, setTable] = useState<string>(initialSnapshot?.table ?? defaultTable ?? "");
   const [columns, setColumns] = useState<string[]>([]);
   const [loadingTables, setLoadingTables] = useState(false);
   const [loadingColumns, setLoadingColumns] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [selectAll, setSelectAll] = useState(true);
-  const [selectColumns, setSelectColumns] = useState<string[]>([]);
+  const [selectAll, setSelectAll] = useState(initialSnapshot?.selectAll ?? true);
+  const [selectColumns, setSelectColumns] = useState<string[]>(initialSnapshot?.selectColumns ?? []);
   const [newSelectCol, setNewSelectCol] = useState("");
-  const [whereConditions, setWhereConditions] = useState<WhereCondition[]>([
-    { column: "", operator: "=", value: "" },
-  ]);
-  const [limit, setLimit] = useState("100");
-  const [setPairs, setSetPairs] = useState<ColumnValuePair[]>([{ column: "", value: "" }]);
-  const [insertPairs, setInsertPairs] = useState<ColumnValuePair[]>([{ column: "", value: "" }]);
+  const [whereConditions, setWhereConditions] = useState<WhereCondition[]>(
+    initialSnapshot?.whereConditions ?? [{ column: "", operator: "=", value: "" }],
+  );
+  const [limit, setLimit] = useState(initialSnapshot?.limit ?? "100");
+  const [setPairs, setSetPairs] = useState<ColumnValuePair[]>(
+    initialSnapshot?.setPairs ?? [{ column: "", value: "" }],
+  );
+  const [insertPairs, setInsertPairs] = useState<ColumnValuePair[]>(
+    initialSnapshot?.insertPairs ?? [{ column: "", value: "" }],
+  );
 
   const [copied, setCopied] = useState(false);
 
@@ -254,16 +277,30 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
     }
   }, [sql]);
 
+  const captureSnapshot = useCallback((): QueryBuilderSnapshot => ({
+    kind,
+    database,
+    table,
+    selectAll,
+    selectColumns: [...selectColumns],
+    whereConditions: whereConditions.map((c) => ({ ...c })),
+    limit,
+    setPairs: setPairs.map((p) => ({ ...p })),
+    insertPairs: insertPairs.map((p) => ({ ...p })),
+  }), [kind, database, table, selectAll, selectColumns, whereConditions, limit, setPairs, insertPairs]);
+
   const handleExecute = useCallback(() => {
+    onPersist?.(captureSnapshot());
     onExecute(sql);
     onClose();
-  }, [sql, onExecute, onClose]);
+  }, [sql, onExecute, onClose, onPersist, captureSnapshot]);
 
   const handlePreview = useCallback(() => {
     if (!onPreview) return;
+    onPersist?.(captureSnapshot());
     onPreview(sql);
     onClose();
-  }, [sql, onPreview, onClose]);
+  }, [sql, onPreview, onClose, onPersist, captureSnapshot]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

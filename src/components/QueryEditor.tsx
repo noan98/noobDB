@@ -20,7 +20,7 @@ import { tags } from "@lezer/highlight";
 import { format as formatSql } from "sql-formatter";
 import type { TableSchema } from "../api/tauri";
 import { useT } from "../i18n";
-import { QueryBuilder } from "./QueryBuilder";
+import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 
 const noobDBHighlightStyle = HighlightStyle.define([
@@ -77,6 +77,13 @@ interface Props {
    */
   explainMode?: boolean;
   driver?: string;
+  /**
+   * Most recent Query Builder inputs for this tab (or null). Restored when the
+   * builder is reopened so iterative Dry Run / Run keeps the previous setup.
+   */
+  builderSnapshot?: QueryBuilderSnapshot | null;
+  /** Persists the builder inputs captured on its Run / Dry Run. */
+  onBuilderPersist?: (snapshot: QueryBuilderSnapshot) => void;
 }
 
 export interface QueryEditorHandle {
@@ -194,6 +201,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   defaultDatabase,
   explainMode,
   driver = "mysql",
+  builderSnapshot,
+  onBuilderPersist,
 }: Props, ref) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -446,7 +455,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         )}
         {sessionId && (
           <button
-            className="with-icon"
+            className="info with-icon"
             onClick={() => setShowBuilder(true)}
             disabled={disabled}
             title={t("editorBuilderTitle")}
@@ -467,8 +476,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           driver={driver}
           defaultDatabase={defaultDatabase ?? activeTable?.database ?? null}
           defaultTable={activeTable?.name ?? null}
+          initialSnapshot={builderSnapshot}
           onExecute={(builtSql) => onRun(builtSql)}
           onPreview={onPreview ? (builtSql) => onPreview(builtSql) : undefined}
+          onPersist={onBuilderPersist}
           onClose={() => setShowBuilder(false)}
         />
       )}
