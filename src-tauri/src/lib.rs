@@ -115,6 +115,7 @@ pub fn run() {
             commands::history::list_history,
             commands::history::clear_history,
             commands::export::export_query_result,
+            commands::dump::dump_database,
             commands::import::parse_csv_preview,
             commands::import::import_csv,
         ])

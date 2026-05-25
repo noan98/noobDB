@@ -2369,6 +2369,56 @@ label {
   line-height: 1.5;
 }
 
+/* ---------- Dump modal ---------- */
+
+.dump-modal {
+  width: min(620px, 100%);
+}
+
+.dump-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.dump-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 6px 16px;
+}
+
+.dump-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dump-option input {
+  margin: 3px 0 0;
+  flex: none;
+}
+
+.dump-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dump-option-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.dump-option-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 /* ---------- Cell value viewer ---------- */
 
 .cell-viewer-modal {

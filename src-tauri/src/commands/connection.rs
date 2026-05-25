@@ -81,6 +81,7 @@ pub async fn connect(req: ConnectRequest, state: State<'_, AppState>) -> Result<
         conn,
         read_only: req.read_only,
         skip_history: req.skip_history,
+        connect_options: opts,
         _tunnel: tunnel,
     };
     let id = state.insert(session).await;

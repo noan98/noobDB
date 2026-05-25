@@ -1,4 +1,5 @@
 pub mod connection;
+pub mod dump;
 pub mod export;
 pub mod history;
 pub mod import;
