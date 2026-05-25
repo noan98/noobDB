@@ -17,6 +17,17 @@
 linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
+# Windows (MSVC) のリンカに LLVM の lld-link を使い、リリースビルドの最終リンクを
+# 高速化する。既定の link.exe は巨大バイナリのリンクが遅いため、Tauri アプリの
+# リリースビルドで効果が大きい。GitHub Actions の windows-latest ランナーには
+# LLVM がプリインストール済みで lld-link が PATH 上にある。
+#
+# 注意: ローカルで Windows ビルドする場合は LLVM (lld-link) が必要。用意できない
+# 場合はこの [target.x86_64-pc-windows-msvc] ブロックをコメントアウトすると既定の
+# link.exe に戻る。Linux / macOS のビルドには影響しない。
+[target.x86_64-pc-windows-msvc]
+linker = "lld-link"
+
 # (任意) sccache によるコンパイルキャッシュ。プロジェクトやブランチを跨いで
 # rustc の成果物を再利用でき、クリーンビルドや Cargo.lock 変更時のビルドに効く。
 # 使う場合は `cargo install sccache` でインストールしてから次の 2 行を有効化する。

@@ -6,9 +6,14 @@ authors = ["noobDB contributors"]
 edition = "2021"
 rust-version = "1.77"
 
+# staticlib / cdylib はモバイル (iOS/Android) 専用の生成物。本プロジェクトは
+# デスクトップ専用 (tauri.conf.json の targets は nsis のみ) で、バイナリ
+# (main.rs) は rlib をリンクするだけなので rlib に限定する。これにより
+# リリースビルドで依存ツリー全体を含む cdylib(.dll) の最適化リンクが省ける。
+# モバイル対応する場合は ["staticlib", "cdylib", "rlib"] に戻すこと。
 [lib]
 name = "noobdb_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

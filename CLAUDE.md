@@ -134,6 +134,11 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
   指定し、dev ビルドの debuginfo を行テーブルのみに削減しています。リンク時間と
   生成物サイズが減り、バックトレースのファイル:行情報は維持されます。ツール導入
   不要で全環境に効きます。
+- `src-tauri/Cargo.toml` の `[lib] crate-type` は **`["rlib"]` のみ**にしています。
+  `staticlib` / `cdylib` はモバイル (iOS/Android) 専用の生成物で、デスクトップ
+  専用の本プロジェクトでは不要です。これらを残すとリリースビルドで依存ツリー全体を
+  含む cdylib(.dll) の最適化リンクが余計に走るため、`rlib` 限定でその分を削減して
+  います。**モバイル対応する場合は `["staticlib", "cdylib", "rlib"]` に戻す**こと。
 - `src-tauri/.cargo/config.toml` が **Linux x86_64 ターゲットのリンカに
   `clang` + `mold`** を指定しています。インクリメンタルビルドではリンクが所要
   時間の大半を占めるため、効果が大きいです。**Linux で開発・テストする場合は
@@ -143,6 +148,13 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
   に変えるか、`[target.*]` ブロックをコメントアウトしてください。この設定は
   Linux x86_64 ターゲット限定で、Windows のリリースビルドや macOS には影響
   しません。
+- 同ファイルが **Windows (MSVC) ターゲットのリンカに LLVM の `lld-link`** を
+  指定しています。既定の `link.exe` は巨大バイナリのリンクが遅く、リリースビルド
+  (`release.yml`) の最終リンクを縮められます。GitHub Actions の `windows-latest`
+  ランナーには LLVM がプリインストール済みで `lld-link` が PATH 上にあります。
+  **ローカルで Windows ビルドする場合は LLVM (lld-link) が必須**で、未導入なら
+  `[target.x86_64-pc-windows-msvc]` ブロックをコメントアウトすれば既定の `link.exe`
+  に戻ります。Linux / macOS のビルドには影響しません。
 - 同ファイルに **sccache** (`[build] rustc-wrapper`) の設定をコメントアウト
   状態で同梱しています。プロジェクト/ブランチを跨いでコンパイル成果物を再利用
   したい場合は `cargo install sccache` してから該当行を有効化してください。
