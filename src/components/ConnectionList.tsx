@@ -332,9 +332,18 @@ export function ConnectionList({
     const schemaFiltered = searching && !profileMetaMatches(p);
     const status = profileStatus(p);
     const accent = p.color ?? undefined;
-    const rowStyle = accent
-      ? ({ borderLeftColor: accent } as React.CSSProperties)
-      : undefined;
+    // Production rows always show a red left stripe (CSS); don't let a custom
+    // color override it — the color chip still conveys the accent.
+    const rowStyle =
+      accent && !p.is_production
+        ? ({ borderLeftColor: accent } as React.CSSProperties)
+        : undefined;
+    const subtitle =
+      p.driver === "sqlite"
+        ? p.file_path
+          ? p.file_path.split(/[/\\]/).pop() || p.file_path
+          : "SQLite"
+        : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
     return (
       <div
@@ -364,13 +373,13 @@ export function ConnectionList({
           ) : (
             <span className="tree-icon profile-icon" aria-hidden><Icon name="server" /></span>
           )}
-          <span className="tree-label">{p.name}</span>
+          <span className="tree-label profile-label">
+            <span className="profile-name">{p.name}</span>
+            <span className="profile-sub" title={subtitle}>{subtitle}</span>
+          </span>
           {p.is_production && (
-            <span
-              className="tree-badge production-badge"
-              style={accent ? { background: accent, color: "#fff", borderColor: accent } : undefined}
-              title={t("listProduction")}
-            >
+            <span className="tree-badge production-badge" title={t("listProduction")}>
+              <Icon name="warning" />
               {t("listProduction")}
             </span>
           )}
