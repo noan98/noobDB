@@ -45,7 +45,7 @@ import { Icon } from "./components/Icon";
 import { analyzeDangerousSql, type DangerFinding } from "./dangerousSql";
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT } from "./i18n";
-import { useSettings, getSettings, type TabRestoreMode } from "./settings";
+import { useSettings, getSettings, BASE_FONT_SIZE_PX, type TabRestoreMode } from "./settings";
 import {
   clearPersistedTabs,
   loadPersistedTabs,
@@ -333,6 +333,7 @@ export default function App() {
       root.style.setProperty(`--syntax-${key}`, val);
     }
     root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
+    root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
   }, [settings, theme]);
 
   const toggleTheme = useCallback(() => {

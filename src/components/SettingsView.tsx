@@ -6,8 +6,11 @@ import { copyToClipboard } from "./clipboard";
 import {
   DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_DISPLAY_COUNT,
+  DEFAULT_FONT_SIZE_PX,
   DEFAULT_QUERY_TIMEOUT_SECS,
   DEFAULT_STREAM_PREFETCH_SIZE,
+  MAX_FONT_SIZE_PX,
+  MIN_FONT_SIZE_PX,
   SYNTAX_PRESET_ORDER,
   SyntaxColors,
   SyntaxPresetKey,
@@ -23,6 +26,7 @@ import {
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
   setDefaultDisplayCount,
+  setFontSizePx,
   setQueryTimeoutSecs,
   setPreviewHighlight,
   setStreamPrefetchSize,
@@ -75,10 +79,12 @@ export function SettingsView({ theme, onClose }: Props) {
   const [prefetchInput, setPrefetchInput] = useState(String(settings.streamPrefetchSize));
   const [autoLimitInput, setAutoLimitInput] = useState(String(settings.autoLimitCount));
   const [timeoutInput, setTimeoutInput] = useState(String(settings.queryTimeoutSecs));
+  const [fontSizeInput, setFontSizeInput] = useState(String(settings.fontSizePx));
   useEffect(() => setDisplayInput(String(settings.defaultDisplayCount)), [settings.defaultDisplayCount]);
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
   useEffect(() => setTimeoutInput(String(settings.queryTimeoutSecs)), [settings.queryTimeoutSecs]);
+  useEffect(() => setFontSizeInput(String(settings.fontSizePx)), [settings.fontSizePx]);
 
   const commitDisplay = () => {
     const n = Number.parseInt(displayInput, 10);
@@ -99,6 +105,11 @@ export function SettingsView({ theme, onClose }: Props) {
     const n = Number.parseInt(timeoutInput, 10);
     if (Number.isFinite(n) && n >= 0) setQueryTimeoutSecs(n);
     else setTimeoutInput(String(settings.queryTimeoutSecs));
+  };
+  const commitFontSize = () => {
+    const n = Number.parseInt(fontSizeInput, 10);
+    if (Number.isFinite(n)) setFontSizePx(n);
+    else setFontSizeInput(String(settings.fontSizePx));
   };
 
   const [logText, setLogText] = useState("");
@@ -147,6 +158,36 @@ export function SettingsView({ theme, onClose }: Props) {
           <LanguageSwitcher />
           <span className="settings-help-inline">
             {t("settingsLanguageHelp")}
+          </span>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <h3>{t("settingsAppearance")}</h3>
+        </div>
+        <div className="settings-number-row">
+          <label htmlFor="settings-font-size">{t("settingsFontSize")}</label>
+          <input
+            id="settings-font-size"
+            type="number"
+            min={MIN_FONT_SIZE_PX}
+            max={MAX_FONT_SIZE_PX}
+            step={1}
+            value={fontSizeInput}
+            placeholder={String(DEFAULT_FONT_SIZE_PX)}
+            onChange={(e) => setFontSizeInput(e.target.value)}
+            onBlur={commitFontSize}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <span className="settings-help-inline">
+            {t("settingsFontSizeHelp", {
+              min: MIN_FONT_SIZE_PX,
+              max: MAX_FONT_SIZE_PX,
+              default: DEFAULT_FONT_SIZE_PX,
+            })}
           </span>
         </div>
       </section>
