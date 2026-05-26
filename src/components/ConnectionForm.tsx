@@ -159,8 +159,30 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     if (checked && !color) setColor(DEFAULT_PROD_COLOR);
   };
 
+  const parsePort = (value: string): number | null => {
+    if (!/^\d+$/.test(value)) return null;
+    const n = Number(value);
+    return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
+  };
+
+  // Network-backed drivers need a valid port; SQLite is file-backed and skips it.
+  const validatePorts = (): boolean => {
+    if (isFileBacked) return true;
+    if (parsePort(port) === null) {
+      setError(t("formInvalidPort"));
+      return false;
+    }
+    if (useSsh && parsePort(sshPort) === null) {
+      setError(t("formInvalidSshPort"));
+      return false;
+    }
+    return true;
+  };
+
   const handleTest = async () => {
-    setError(null); setMessage(null); setTesting(true);
+    setError(null); setMessage(null);
+    if (!validatePorts()) return;
+    setTesting(true);
     try {
       await api.testConnection(buildRequest());
       setMessage(t("formConnectionOk"));
@@ -173,6 +195,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
   const handleSave = async () => {
     setError(null); setMessage(null);
+    if (!validatePorts()) return;
     try {
       await api.saveProfile({
         id: initial?.id,
