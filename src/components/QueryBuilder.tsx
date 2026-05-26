@@ -72,6 +72,12 @@ interface Props {
   defaultDatabase?: string | null;
   defaultTable?: string | null;
   initialSnapshot?: QueryBuilderSnapshot | null;
+  /**
+   * When true the session rejects writes, so Run is disabled for write query
+   * kinds (INSERT/UPDATE/DELETE). The kind pills and Dry Run stay enabled — the
+   * user can still build/copy a statement or preview it (a dry run rolls back).
+   */
+  readOnly?: boolean;
   onExecute: (sql: string) => void;
   onPreview?: (sql: string) => void;
   onPersist?: (snapshot: QueryBuilderSnapshot) => void;
@@ -178,7 +184,7 @@ function buildSql(
   }
 }
 
-export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable, initialSnapshot, onExecute, onPreview, onPersist, onClose }: Props) {
+export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable, initialSnapshot, readOnly, onExecute, onPreview, onPersist, onClose }: Props) {
   const t = useT();
 
   const [kind, setKind] = useState<QueryKind>(initialSnapshot?.kind ?? "SELECT");
@@ -342,6 +348,10 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
     if (which === "set") setSetPairs((p) => p.filter((_, i) => i !== idx));
     else setInsertPairs((p) => p.filter((_, i) => i !== idx));
   };
+
+  // A read-only session rejects writes, so Run is disabled for write kinds.
+  // SELECT still runs, and Dry Run stays available (it rolls back).
+  const runBlockedByReadOnly = !!readOnly && kind !== "SELECT";
 
   const showWhere = kind === "SELECT" || kind === "UPDATE" || kind === "DELETE";
   const showSelectColumns = kind === "SELECT";
@@ -679,7 +689,12 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
               {t("qbPreviewRun")}
             </button>
           )}
-          <button className="success with-icon" onClick={handleExecute}>
+          <button
+            className="success with-icon"
+            onClick={handleExecute}
+            disabled={runBlockedByReadOnly}
+            title={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
+          >
             <span className="btn-icon" aria-hidden>
               <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
