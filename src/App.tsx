@@ -24,6 +24,7 @@ import {
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { EmptyState } from "./components/EmptyState";
+import { Spinner } from "./components/Spinner";
 import { SnippetList } from "./components/SnippetList";
 import { SnippetForm } from "./components/SnippetForm";
 import { HistoryList } from "./components/HistoryList";
@@ -84,6 +85,29 @@ function readInitialSidebarWidth(): number {
 type Status =
   | { kind: "literal"; text: string; error?: boolean }
   | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
+
+type StatusTone = "running" | "success" | "error" | "info";
+
+// Status keys that represent an in-progress operation (spinner + accent border).
+const RUNNING_STATUS_KEYS = new Set([
+  "statusConnecting",
+  "statusRunningQuery",
+  "statusRunningPreview",
+  "statusApplyingEdits",
+]);
+
+// Maps a status to a tone for the footer's icon + colored left border (#131).
+// Derived from the existing `error` flag and known keys, so call sites don't
+// each have to declare a severity.
+function statusTone(s: Status): StatusTone {
+  if (s.error) return "error";
+  if (s.kind === "key") {
+    if (RUNNING_STATUS_KEYS.has(s.key)) return "running";
+    if (s.key === "appDisconnected") return "info";
+    return "success";
+  }
+  return "info";
+}
 
 type TabKind = "table" | "query" | "explain";
 
@@ -1996,21 +2020,32 @@ export default function App() {
           </>
         )}
 
-        <div className={`status ${status.error ? "error" : ""}`}>
-          {statusHintKey ? (
-            <div className="status-hint">
-              <div className="status-hint-body">
-                <span className="status-hint-label">{t("errorHintLabel")}</span>
-                <span className="status-hint-text">{t(statusHintKey)}</span>
+        <div className={`status status-${statusTone(status)}`}>
+          <span className="status-icon" aria-hidden>
+            {statusTone(status) === "running" ? (
+              <Spinner size={13} />
+            ) : statusTone(status) === "success" ? (
+              <Icon name="check" />
+            ) : statusTone(status) === "error" ? (
+              <Icon name="warning" />
+            ) : null}
+          </span>
+          <div className="status-content">
+            {statusHintKey ? (
+              <div className="status-hint">
+                <div className="status-hint-body">
+                  <span className="status-hint-label">{t("errorHintLabel")}</span>
+                  <span className="status-hint-text">{t(statusHintKey)}</span>
+                </div>
+                <details className="status-hint-details">
+                  <summary>{t("errorHintShowOriginal")}</summary>
+                  <span className="status-hint-raw">{statusText}</span>
+                </details>
               </div>
-              <details className="status-hint-details">
-                <summary>{t("errorHintShowOriginal")}</summary>
-                <span className="status-hint-raw">{statusText}</span>
-              </details>
-            </div>
-          ) : (
-            statusText
-          )}
+            ) : (
+              statusText
+            )}
+          </div>
         </div>
       </main>
 

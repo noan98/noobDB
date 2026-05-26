@@ -4,6 +4,7 @@ import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { Spinner } from "./Spinner";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
@@ -401,7 +402,10 @@ export function ConnectionList({
         {isOpen && isActive && sessionId && (
           <div className="tree-children">
             {databases === null ? (
-              <div className="tree-empty">{t("treeLoading")}</div>
+              <div className="tree-empty tree-loading">
+                <Spinner size={13} />
+                <span>{t("treeLoading")}</span>
+              </div>
             ) : databases.length === 0 ? (
               <div className="tree-empty">{t("treeNoDatabases")}</div>
             ) : (
@@ -428,7 +432,10 @@ export function ConnectionList({
                     {dbOpen && (
                       <div className="tree-children">
                         {dbTables === undefined ? (
-                          <div className="tree-empty">{t("treeLoading")}</div>
+                          <div className="tree-empty tree-loading">
+                            <Spinner size={13} />
+                            <span>{t("treeLoading")}</span>
+                          </div>
                         ) : dbTables.length === 0 ? (
                           <div className="tree-empty">{t("treeNoTables")}</div>
                         ) : (
@@ -459,7 +466,10 @@ export function ConnectionList({
                                 {tOpen && (
                                   <div className="tree-children">
                                     {cols === undefined ? (
-                                      <div className="tree-empty">{t("treeLoading")}</div>
+                                      <div className="tree-empty tree-loading">
+                                        <Spinner size={13} />
+                                        <span>{t("treeLoading")}</span>
+                                      </div>
                                     ) : cols.length === 0 ? (
                                       <div className="tree-empty">{t("treeNoColumns")}</div>
                                     ) : (
