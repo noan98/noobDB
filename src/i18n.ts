@@ -213,6 +213,7 @@ const en = {
 
   errorHintLabel: "Hint",
   errorHintShowOriginal: "Show original error",
+  errorHintDismiss: "Dismiss hint",
   errorHintSyntax:
     "SQL syntax error. Look just before the quoted spot for a typo, a missing comma or parenthesis, or a reserved word used as a name (wrap such names in backticks).",
   errorHintUnknownColumn:
@@ -874,6 +875,7 @@ const ja: Dict = {
 
   errorHintLabel: "ヒント",
   errorHintShowOriginal: "元のエラーを表示",
+  errorHintDismiss: "ヒントを閉じる",
   errorHintSyntax:
     "SQL の構文エラーです。引用された箇所の直前に、スペルミス・カンマや括弧の不足・名前に使った予約語 (使う場合はバッククォートで囲む) がないか確認してください。",
   errorHintUnknownColumn:

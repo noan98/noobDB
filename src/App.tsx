@@ -439,6 +439,10 @@ export default function App() {
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "key", key: "appDisconnected" });
+  // Lets the user dismiss the error-hint banner. Reset whenever the status
+  // changes (a new query result, connect/disconnect, connection switch, etc.)
+  // so a fresh error still shows its hint.
+  const [hintDismissed, setHintDismissed] = useState(false);
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -1628,6 +1632,12 @@ export default function App() {
     return raw != null ? matchErrorHint(String(raw)) : null;
   }, [status]);
 
+  // Any new status (new query, connect/disconnect, connection switch) re-enables
+  // the hint banner so it is never permanently suppressed by a prior dismissal.
+  useEffect(() => {
+    setHintDismissed(false);
+  }, [status]);
+
   const pendingEditsSummary = useMemo(() => {
     const edits = activeTab?.pendingEdits ?? {};
     return { cells: countEditedCells(edits), rows: countEditedRows(edits) };
@@ -2042,11 +2052,20 @@ export default function App() {
             ) : null}
           </span>
           <div className="status-content">
-            {statusHintKey ? (
+            {statusHintKey && !hintDismissed ? (
               <div className="status-hint">
                 <div className="status-hint-body">
                   <span className="status-hint-label">{t("errorHintLabel")}</span>
                   <span className="status-hint-text">{t(statusHintKey)}</span>
+                  <button
+                    type="button"
+                    className="status-hint-dismiss"
+                    onClick={() => setHintDismissed(true)}
+                    title={t("errorHintDismiss")}
+                    aria-label={t("errorHintDismiss")}
+                  >
+                    <Icon name="close" />
+                  </button>
                 </div>
                 <details className="status-hint-details">
                   <summary>{t("errorHintShowOriginal")}</summary>
