@@ -2,6 +2,7 @@ mod commands;
 mod db;
 mod error;
 mod history;
+mod logs;
 mod profiles;
 mod snippets;
 mod ssh;
@@ -86,14 +87,21 @@ pub mod __test_api {
     }
 }
 
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,sqlx=warn")),
-        )
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,sqlx=warn"));
+
+    // Tee events to stdout (terminal during `tauri dev`) and to a size-capped
+    // file under the data dir that the Settings log viewer reads. The file layer
+    // is dropped when no data dir is available, leaving stdout-only logging.
+    let file_layer = logs::init().map(|writer| fmt::layer().with_ansi(false).with_writer(writer));
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer().with_writer(std::io::stdout))
+        .with(file_layer)
         .init();
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "noobDB starting");
@@ -122,6 +130,8 @@ pub fn run() {
             commands::snippets::delete_snippet,
             commands::history::list_history,
             commands::history::clear_history,
+            commands::logs::read_logs,
+            commands::logs::clear_logs,
             commands::export::export_query_result,
             commands::dump::dump_database,
             commands::import::parse_csv_preview,

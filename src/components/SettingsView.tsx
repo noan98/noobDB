@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { copyToClipboard } from "./clipboard";
 import {
   DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_DISPLAY_COUNT,
@@ -97,6 +99,37 @@ export function SettingsView({ theme, onClose }: Props) {
     const n = Number.parseInt(timeoutInput, 10);
     if (Number.isFinite(n) && n >= 0) setQueryTimeoutSecs(n);
     else setTimeoutInput(String(settings.queryTimeoutSecs));
+  };
+
+  const [logText, setLogText] = useState("");
+  const [logPath, setLogPath] = useState<string | null>(null);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logCopied, setLogCopied] = useState(false);
+
+  const loadLogs = async () => {
+    setLogLoading(true);
+    try {
+      const res = await api.readLogs();
+      setLogText(res.text);
+      setLogPath(res.path);
+    } finally {
+      setLogLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadLogs();
+  }, []);
+
+  const copyLogs = async () => {
+    if (!logText) return;
+    await copyToClipboard(logText);
+    setLogCopied(true);
+    setTimeout(() => setLogCopied(false), 1500);
+  };
+  const clearLogs = async () => {
+    if (!window.confirm(t("settingsLogsClearConfirm"))) return;
+    await api.clearLogs();
+    await loadLogs();
   };
 
   return (
@@ -394,6 +427,36 @@ export function SettingsView({ theme, onClose }: Props) {
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-header">
+          <h3>{t("settingsLogs")}</h3>
+          <div className="settings-logs-actions">
+            <button className="settings-reset" onClick={loadLogs} disabled={logLoading}>
+              {t("settingsLogsRefresh")}
+            </button>
+            <button className="settings-reset" onClick={copyLogs} disabled={!logText}>
+              {logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
+            </button>
+            <button className="settings-reset" onClick={clearLogs} disabled={!logText}>
+              {t("settingsLogsClear")}
+            </button>
+          </div>
+        </div>
+        <p className="settings-help">{t("settingsLogsHelp")}</p>
+        <textarea
+          className="settings-logs-view"
+          readOnly
+          wrap="off"
+          value={logText}
+          placeholder={t("settingsLogsEmpty")}
+        />
+        {logPath && (
+          <span className="settings-help-inline settings-logs-path">
+            {t("settingsLogsPath", { path: logPath })}
+          </span>
+        )}
       </section>
     </div>
   );
