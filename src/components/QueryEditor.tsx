@@ -462,7 +462,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             {t("editorSaveSnippet")}
           </button>
         )}
-        {sessionId && (
+        {sessionId && !explainMode && (
           <button
             className="info with-icon"
             onClick={() => setShowBuilder(true)}
@@ -479,7 +479,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         )}
       </div>
       <div className="cm" ref={hostRef} />
-      {showBuilder && sessionId && (
+      {showBuilder && sessionId && !explainMode && (
         <QueryBuilder
           sessionId={sessionId}
           driver={driver}
