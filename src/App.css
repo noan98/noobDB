@@ -1930,7 +1930,7 @@ button.icon.history-action:hover {
   padding: 0;
   border: none;
   background: transparent;
-  color: currentColor;
+  color: currentcolor;
   border-radius: var(--radius-sm);
   line-height: 1;
   cursor: pointer;
