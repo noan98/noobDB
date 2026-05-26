@@ -3,6 +3,7 @@ pub mod dump;
 pub mod export;
 pub mod history;
 pub mod import;
+pub mod logs;
 pub mod profiles;
 pub mod query;
 pub mod schema;
