@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
@@ -13,6 +14,7 @@ interface Props {
   connectingId: string | null;
   errorProfileId: string | null;
   onConnect: (profile: ConnectionProfile) => void;
+  onCreate: () => void;
   onEdit: (profile: ConnectionProfile) => void;
   onDuplicate: (profile: ConnectionProfile) => void;
   onDelete: (id: string) => void;
@@ -53,6 +55,7 @@ export function ConnectionList({
   connectingId,
   errorProfileId,
   onConnect,
+  onCreate,
   onEdit,
   onDuplicate,
   onDelete,
@@ -526,7 +529,12 @@ export function ConnectionList({
       {error && <div className="tree-error">{error}</div>}
 
       {profiles.length === 0 ? (
-        <p className="muted" style={{ padding: 12 }}>{t("listEmpty")}</p>
+        <EmptyState
+          icon="server"
+          title={t("listEmptyTitle")}
+          description={t("listEmptyDesc")}
+          action={{ label: t("listCreateFirst"), onClick: onCreate }}
+        />
       ) : visibleProfiles.length === 0 ? (
         <p className="muted" style={{ padding: 12 }}>{t("listNoMatches")}</p>
       ) : (

@@ -23,6 +23,7 @@ import {
 } from "./components/cellEdit";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
+import { EmptyState } from "./components/EmptyState";
 import { SnippetList } from "./components/SnippetList";
 import { SnippetForm } from "./components/SnippetForm";
 import { HistoryList } from "./components/HistoryList";
@@ -1710,6 +1711,7 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             onConnect={handleConnect}
+            onCreate={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
             onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowHelp(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
             onDuplicate={(p) => {
               // Open the form pre-filled with the source profile's non-secret
@@ -1974,7 +1976,20 @@ export default function App() {
 
               ) : (
                 <div className="pane-empty">
-                  {sessionId ? t("tabsEmpty") : t("editorHintDisabled")}
+                  {sessionId ? (
+                    <EmptyState
+                      icon="query"
+                      title={t("tabsEmptyTitle")}
+                      description={t("tabsEmpty")}
+                      action={{ label: t("tabsNewQuery"), onClick: handleNewTab }}
+                    />
+                  ) : (
+                    <EmptyState
+                      icon="database"
+                      title={t("notConnectedTitle")}
+                      description={t("editorHintDisabled")}
+                    />
+                  )}
                 </div>
               )}
             </div>

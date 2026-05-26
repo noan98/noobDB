@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -18,6 +18,7 @@ import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
+import { EmptyState } from "./EmptyState";
 import { ExportModal } from "./ExportModal";
 import {
   countEditedCells,
@@ -300,6 +301,7 @@ export function DataGrid({
   pendingEdits,
   onSetCellEdit,
   columnSizingStorageKey,
+  emptyMessage,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -323,6 +325,11 @@ export function DataGrid({
    * panes) to keep sizing ephemeral.
    */
   columnSizingStorageKey?: string;
+  /**
+   * Shown in the body when the result genuinely has 0 rows (not filtered out).
+   * Omitted (e.g. mid-stream) leaves the body empty under the header.
+   */
+  emptyMessage?: ReactNode;
 }) {
   const t = useT();
 
@@ -638,11 +645,11 @@ export function DataGrid({
           )}
         </thead>
         <tbody>
-          {visibleRows.length === 0 && isFiltered ? (
+          {visibleRows.length === 0 && (isFiltered || emptyMessage) ? (
             <tr>
               <td className="row-index" aria-hidden />
               <td className="grid-empty-cell" colSpan={columns.length}>
-                {t("gridNoMatches")}
+                {isFiltered ? t("gridNoMatches") : emptyMessage}
               </td>
               <td className="col-filler" aria-hidden />
             </tr>
@@ -1065,6 +1072,16 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
           columnSizingStorageKey={columnSizingStorageKey}
+          emptyMessage={
+            streaming ? undefined : (
+              <EmptyState
+                compact
+                icon="table"
+                title={t("gridZeroRows")}
+                description={t("gridZeroRowsHint", { ms: result.elapsed_ms })}
+              />
+            )
+          }
         />
         {loadingMore && (
           <div className="results-loading-more" role="status" aria-live="polite">
