@@ -11,6 +11,10 @@ concurrency:
 permissions:
   contents: read
 
+# corepack が pnpm を取得する際の対話プロンプトを無効化 (CI は非対話)。
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
 jobs:
   # 変更されたパスを見て後続ジョブを出し分ける。ワークフロー単位の paths で
   # 丸ごとスキップすると必須チェックが「待機中」のまま固まるため、ここでは
@@ -36,7 +40,7 @@ jobs:
               - 'src/**'
               - 'index.html'
               - 'package.json'
-              - 'package-lock.json'
+              - 'pnpm-lock.yaml'
               - 'tsconfig.json'
               - 'tsconfig.node.json'
               - 'vite.config.ts'
@@ -57,16 +61,30 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 20
-          cache: npm
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - name: Install frontend deps
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Type-check and build
-        run: npm run build
+        run: pnpm run build
 
       - name: Unit tests (Vitest)
-        run: npm test
+        run: pnpm test
 
   rust-fmt:
     name: rust (fmt)
@@ -119,7 +137,21 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 20
-          cache: npm
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -133,10 +165,10 @@ jobs:
           key: clippy
 
       - name: Install frontend deps
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build frontend (needed for tauri::generate_context!)
-        run: npm run build
+        run: pnpm run build
 
       # clippy は rustc ドライバなので型チェック (cargo check 相当) を内包する。
       # 別途 cargo check を走らせると、共有されないコンパイルがほぼ二重に走るため
@@ -196,7 +228,21 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 20
-          cache: npm
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       # llvm-tools-preview は cargo-llvm-cov の計装ビルドに必要なコンポーネント。
       - name: Setup Rust
@@ -221,10 +267,10 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Install frontend deps
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build frontend (needed for tauri::generate_context!)
-        run: npm run build
+        run: pnpm run build
 
       # nextest を llvm-cov 計装下で実行し、カバレッジ生データのみ収集する
       # (--no-report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、

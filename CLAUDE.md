@@ -82,13 +82,17 @@
 
 フロントエンド (リポジトリのルートから実行):
 
+パッケージマネージャは **pnpm** (>= 10) を使います。Node 同梱の `corepack enable`
+で有効化でき、バージョンは `package.json` の `packageManager` フィールドで固定して
+います。
+
 ```sh
-npm install
-npm run dev            # vite 開発サーバを http://localhost:1420 で起動
-npm run build          # tsc による型チェック + vite ビルド → dist/
-npm test               # Vitest によるフロントエンドロジックのユニットテスト
-npm run tauri dev      # アプリ全体 (Tauri が beforeDevCommand 経由で vite を起動)
-npm run tauri build    # 本番バンドル (Windows では NSIS インストーラ)
+pnpm install
+pnpm dev               # vite 開発サーバを http://localhost:1420 で起動
+pnpm run build         # tsc による型チェック + vite ビルド → dist/
+pnpm test              # Vitest によるフロントエンドロジックのユニットテスト
+pnpm tauri dev         # アプリ全体 (Tauri が beforeDevCommand 経由で vite を起動)
+pnpm tauri build       # 本番バンドル (Windows では NSIS インストーラ)
 ```
 
 Rust バックエンド (`src-tauri/` から実行):
@@ -119,8 +123,11 @@ CI は 2 つのワークフローに分かれています:
 - `.github/workflows/ci.yml` — `main` への PR で起動。`dorny/paths-filter` で
   変更領域 (frontend / rust / workflow) を判定し、ジョブ単位の `if:` で出し分け
   します (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
-  ジョブを skip させる方式)。frontend ジョブは `npm run build` に続けて `npm test`
-  (Vitest) を実行します。Rust 系は 3 つのジョブに分かれます: `rust (clippy)` が
+  ジョブを skip させる方式)。frontend ジョブは `pnpm run build` に続けて `pnpm test`
+  (Vitest) を実行します。pnpm は各ジョブで `corepack enable` により用意し、`pnpm`
+  ストアを `actions/cache` でキャッシュします (`actions/setup-node` の `cache: npm`
+  は使いません)。`paths-filter` は `package-lock.json` ではなく `pnpm-lock.yaml` を
+  監視します。Rust 系は 3 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL 8 と PostgreSQL 16 のサービスコンテナに対し `cargo llvm-cov nextest`
@@ -186,15 +193,15 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
   apt で導入済みで、`cargo nextest` のテストバイナリ群のリンクが mold で高速化
   されます。
 
-JS のリンタは設定されていません。フロントエンドは `tsc` (`npm run build` 経由) で
+JS のリンタは設定されていません。フロントエンドは `tsc` (`pnpm run build` 経由) で
 型チェックされます。`tsconfig.json` では `strict`、`noUnusedLocals`、
 `noUnusedParameters` が有効になっているため、未使用の import やパラメータがあると
-ビルドが失敗します。テストランナーには **Vitest** を採用しており、`npm test`
+ビルドが失敗します。テストランナーには **Vitest** を採用しており、`pnpm test`
 (`vitest run`) で `src/__tests__/` 配下のユニットテストを実行します。テスト対象は
 SQL の安全網・リテラル生成・方言判定など安全性に直結する純粋ロジック
 (`dangerousSql.ts`・`components/cellEdit.ts`・`components/sqlDialect.ts` など) です。
 テストファイルは `src/` 配下にあるため `tsc` の型チェック対象にも含まれます。CI
-(`ci.yml`) の frontend ジョブが `npm run build` に続けて `npm test` を実行します。
+(`ci.yml`) の frontend ジョブが `pnpm run build` に続けて `pnpm test` を実行します。
 
 ## アーキテクチャ
 
