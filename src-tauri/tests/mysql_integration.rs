@@ -339,3 +339,121 @@ async fn call_dml_only_procedure_reports_rows_affected() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// Regression: MySQL `TIMESTAMP` and `TIME` columns used to decode to
+/// `Value::Null`. `decode_cell` only tried `NaiveDateTime`/`NaiveDate`, but in
+/// sqlx-mysql `NaiveDateTime` is compatible *only* with the DATETIME column
+/// type — TIMESTAMP needs `DateTime<Utc>` and TIME needs `NaiveTime`. The
+/// mismatched `try_get` errored on the compatibility check and the value fell
+/// through to NULL. In the dry-run preview this made columns set to `NOW()`
+/// read NULL in both panes, so they never highlighted as changed.
+#[tokio::test]
+async fn temporal_columns_decode_to_strings() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS temporal_decode", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE temporal_decode (\
+            id INT PRIMARY KEY, \
+            d DATE NOT NULL, \
+            t TIME NOT NULL, \
+            dt DATETIME NOT NULL, \
+            ts TIMESTAMP NOT NULL)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO temporal_decode (id, d, t, dt, ts) VALUES \
+         (1, '2026-05-26', '13:45:30', '2026-05-26 13:45:30', '2026-05-26 13:45:30')",
+        Some(&db),
+    )
+    .await
+    .expect("seed");
+
+    let res = conn
+        .execute(
+            "SELECT id, d, t, dt, ts FROM temporal_decode WHERE id = 1",
+            Some(&db),
+        )
+        .await
+        .expect("select");
+    assert_eq!(res.rows.len(), 1);
+    let col = |name: &str| {
+        res.columns
+            .iter()
+            .position(|c| c.name == name)
+            .unwrap_or_else(|| panic!("{name} column"))
+    };
+    let row = &res.rows[0];
+    // The whole point: none of these are NULL, and TIME / TIMESTAMP in
+    // particular now carry a string value rather than dropping to NULL.
+    assert!(
+        matches!(&row[col("d")], t::Value::String(s) if s == "2026-05-26"),
+        "DATE decoded as {:?}",
+        row[col("d")]
+    );
+    assert!(
+        matches!(&row[col("t")], t::Value::String(s) if s == "13:45:30"),
+        "TIME decoded as {:?}",
+        row[col("t")]
+    );
+    assert!(
+        matches!(&row[col("dt")], t::Value::String(s) if s == "2026-05-26 13:45:30"),
+        "DATETIME decoded as {:?}",
+        row[col("dt")]
+    );
+    assert!(
+        matches!(&row[col("ts")], t::Value::String(s) if s == "2026-05-26 13:45:30"),
+        "TIMESTAMP decoded as {:?}",
+        row[col("ts")]
+    );
+
+    // And through the preview path, a column set to NOW() must differ between
+    // BEFORE (NULL/old) and AFTER so the frontend diff highlights it.
+    let preview = conn
+        .preview_execute_with_limit(
+            "UPDATE temporal_decode SET ts = NOW() + INTERVAL 1 DAY WHERE id = 1",
+            Some(&db),
+            100,
+        )
+        .await
+        .expect("preview");
+    let ts_col = preview
+        .columns
+        .iter()
+        .position(|c| c.name == "ts")
+        .expect("ts column");
+    let as_str = |v: &t::Value| match v {
+        t::Value::String(s) => Some(s.clone()),
+        t::Value::Null => None,
+        other => panic!("ts decoded to an unexpected variant: {other:?}"),
+    };
+    let before_ts = as_str(&preview.before_rows[0][ts_col]);
+    let after_ts = as_str(&preview.after_rows[0][ts_col]);
+    assert!(
+        after_ts.is_some(),
+        "AFTER ts must be a non-null timestamp, got {:?}",
+        preview.after_rows[0][ts_col]
+    );
+    assert_ne!(
+        before_ts, after_ts,
+        "NOW()-updated TIMESTAMP must differ between BEFORE and AFTER"
+    );
+
+    conn.execute("DROP TABLE temporal_decode", Some(&db))
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}

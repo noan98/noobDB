@@ -698,12 +698,30 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
         type_name.as_str(),
         "DATE" | "TIME" | "DATETIME" | "TIMESTAMP"
     ) {
+        // Each chrono type is `compatible` with exactly one MySQL column type
+        // (see sqlx-mysql `types::chrono`): DATETIME→NaiveDateTime,
+        // TIMESTAMP→DateTime<Utc>, DATE→NaiveDate, TIME→NaiveTime. A mismatched
+        // `try_get` errors on the compatibility check, so we must try the right
+        // one for each — notably TIMESTAMP and TIME are NOT decodable as
+        // NaiveDateTime and silently fell through to NULL before this.
         if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
             return v
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
         }
+        // TIMESTAMP: decode as UTC then render the wall-clock value without the
+        // timezone suffix so it lines up with DATETIME formatting.
+        if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) {
+            return v
+                .map(|d| Value::String(d.naive_utc().to_string()))
+                .unwrap_or(Value::Null);
+        }
         if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
+            return v
+                .map(|d| Value::String(d.to_string()))
+                .unwrap_or(Value::Null);
+        }
+        if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(i) {
             return v
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
