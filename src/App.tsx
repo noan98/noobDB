@@ -45,7 +45,7 @@ import { Icon } from "./components/Icon";
 import { analyzeDangerousSql, type DangerFinding } from "./dangerousSql";
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT } from "./i18n";
-import { useSettings, type TabRestoreMode } from "./settings";
+import { useSettings, getSettings, type TabRestoreMode } from "./settings";
 import {
   clearPersistedTabs,
   loadPersistedTabs,
@@ -241,7 +241,7 @@ function makeQueryTab(): Tab {
     preview: null,
     schemaTable: null,
     streaming: false,
-    previewRowLimit: 100,
+    previewRowLimit: getSettings().defaultDisplayCount,
     paginatable: null,
     autoLimitApplied: null,
     autoLimitSql: null,
@@ -272,7 +272,7 @@ function makeExplainTab(sql: string): Tab {
     preview: null,
     schemaTable: null,
     streaming: false,
-    previewRowLimit: 100,
+    previewRowLimit: getSettings().defaultDisplayCount,
     paginatable: null,
     autoLimitApplied: null,
     autoLimitSql: null,

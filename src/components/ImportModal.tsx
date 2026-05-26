@@ -40,6 +40,13 @@ function norm(s: string): string {
   return s.trim().toLowerCase();
 }
 
+// The backend CSV parser operates on single bytes, so the quote character must
+// be exactly one ASCII character. Reject empty, multi-character, and multi-byte
+// (e.g. `「` or emoji) input before it reaches the server.
+function isValidSingleByteChar(s: string): boolean {
+  return s.length === 1 && s.charCodeAt(0) < 128;
+}
+
 /**
  * Auto-pairs destination columns with CSV fields: by header name when a header
  * row is present and at least one name matches, otherwise positionally. Columns
@@ -86,6 +93,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
   const streamIdRef = useRef<string | null>(null);
 
   const importing = status.kind === "importing";
+  const quoteValid = isValidSingleByteChar(quote);
 
   const buildOptions = useCallback((): ImportOptions => {
     const nullToken = nullMode === "none" ? null : nullMode === "empty" ? "" : nullCustom;
@@ -114,6 +122,9 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
       setPreview(null);
       return;
     }
+    // An invalid quote would make the backend parser misbehave; skip the
+    // preview fetch until it is corrected (the field shows its own error).
+    if (!quoteValid) return;
     let cancelled = false;
     setLoadingPreview(true);
     setPreviewError(null);
@@ -137,7 +148,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
       cancelled = true;
     };
     // buildOptions captures every parsing option; tableColumns drives auto-map.
-  }, [path, buildOptions, tableColumns, hasHeader]);
+  }, [path, buildOptions, tableColumns, hasHeader, quoteValid]);
 
   // Detach the event listener on unmount.
   useEffect(() => {
@@ -175,7 +186,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
   }, [mapping]);
 
   const handleImport = async () => {
-    if (!path || mappingEntries.length === 0) return;
+    if (!path || mappingEntries.length === 0 || !quoteValid) return;
     const streamId = newStreamId();
     streamIdRef.current = streamId;
     setStatus({ kind: "importing", inserted: 0, total: 0 });
@@ -322,10 +333,11 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
                 id="import-quote"
                 className="import-quote-input"
                 type="text"
-                maxLength={1}
                 value={quote}
-                onChange={(e) => setQuote(e.target.value || '"')}
+                onChange={(e) => setQuote(e.target.value)}
                 disabled={importing}
+                aria-invalid={!quoteValid}
+                aria-describedby={quoteValid ? undefined : "import-quote-error"}
               />
             </div>
 
@@ -368,6 +380,11 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
             </div>
           </section>
 
+          {!quoteValid && (
+            <div id="import-quote-error" className="export-error">
+              {t("importQuote")}: {t("importQuoteInvalid")}
+            </div>
+          )}
           {previewError && <div className="export-error">{previewError}</div>}
           {loadingPreview && <div className="muted">{t("importLoadingPreview")}</div>}
 
@@ -461,7 +478,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
           <button
             className="primary"
             onClick={handleImport}
-            disabled={importing || !path || mappingEntries.length === 0}
+            disabled={importing || !path || mappingEntries.length === 0 || !quoteValid}
           >
             {importing ? t("importImporting") : t("importExecute")}
           </button>
