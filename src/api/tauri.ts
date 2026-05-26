@@ -176,6 +176,12 @@ export interface TableSchema {
   columns: string[];
 }
 
+/** Application log contents plus the on-disk file path, for the Settings viewer. */
+export interface LogView {
+  text: string;
+  path: string | null;
+}
+
 export type ExportFormat = "csv" | "json";
 
 /** Checkbox-selected `mysqldump` flags for a database dump. */
@@ -319,6 +325,9 @@ export const api = {
     }),
   clearHistory: (profileId?: string | null) =>
     invoke<number>("clear_history", { profileId: profileId ?? null }),
+
+  readLogs: () => invoke<LogView>("read_logs"),
+  clearLogs: () => invoke<void>("clear_logs"),
 
   exportQueryResult: (params: {
     path: string;
