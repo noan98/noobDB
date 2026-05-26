@@ -447,9 +447,48 @@ label {
 }
 .tree-row:hover { background: var(--bg-hover); }
 
+/* Profile rows carry a 2-line label (name + endpoint) and a thicker left stripe
+   so the active / production accent reads clearly. The 3px border is reserved on
+   every profile row (transparent by default) to avoid a layout shift when a row
+   becomes active. */
+.tree-row.profile-row {
+  border-left-width: 3px;
+  padding: 5px 10px 5px 5px;
+}
+.profile-label {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.25;
+}
+.profile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: var(--text-md);
+}
+.profile-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
 .tree-node.profile.active > .tree-row.profile-row {
   background: var(--bg-active);
   border-left-color: var(--accent);
+}
+.tree-node.profile.active > .tree-row.profile-row .profile-name {
+  font-weight: 700;
+  color: var(--text);
+}
+.tree-node.profile.active > .tree-row.profile-row .profile-sub {
+  color: var(--text-secondary);
 }
 
 .tree-chevron {
@@ -660,19 +699,31 @@ label {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18) inset;
 }
 
+/* Production connections get an always-on red left stripe + tint (visible even
+   before connecting) so a risky target is unmistakable. The red wins over both
+   the active accent and any custom color. */
 .tree-node.profile.is-production > .tree-row.profile-row {
+  border-left-color: var(--status-error);
   background: color-mix(in srgb, var(--status-error) 6%, transparent);
 }
 .tree-node.profile.is-production.active > .tree-row.profile-row {
+  border-left-color: var(--status-error);
   background: color-mix(in srgb, var(--status-error) 12%, var(--bg-active));
 }
 
 .tree-badge.production-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   background: var(--status-error);
   color: #fff;
   border-color: var(--status-error);
   font-weight: 700;
   letter-spacing: 0.05em;
+}
+.tree-badge.production-badge .icon-svg {
+  width: 11px;
+  height: 11px;
 }
 
 .tree-badge.read-only-badge {
