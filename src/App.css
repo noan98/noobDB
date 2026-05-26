@@ -354,8 +354,28 @@ label {
 
 .app {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: var(--sidebar-width, 300px) 1fr;
   height: 100vh;
+  position: relative;
+}
+/* Collapsed: the sidebar track shrinks to 0 (the aside has overflow:hidden) and
+   a floating button is the only affordance to bring it back. */
+.app.sidebar-collapsed {
+  grid-template-columns: 0 1fr;
+}
+/* Narrow screens open the sidebar as an overlay so it never squeezes the editor;
+   the track stays 0 and the aside floats above the main area with a backdrop. */
+.app.sidebar-overlay {
+  grid-template-columns: 0 1fr;
+}
+.app.sidebar-overlay > .sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--sidebar-width, 300px);
+  z-index: 40;
+  box-shadow: var(--shadow-md);
 }
 
 .sidebar {
@@ -364,6 +384,76 @@ label {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Vertical drag handle on the sidebar/main border. Sits on top of the seam and
+   widens its hairline on hover/drag. */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--sidebar-width, 300px);
+  width: 9px;
+  transform: translateX(-5px);
+  cursor: ew-resize;
+  z-index: 45;
+  touch-action: none;
+}
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background: transparent;
+  transition: background var(--dur-fast, 0.12s) var(--ease, ease),
+    width var(--dur-fast, 0.12s) var(--ease, ease);
+}
+.sidebar-resizer:hover::after,
+.sidebar-resizer.is-dragging::after {
+  background: var(--accent);
+  width: 2px;
+}
+
+.sidebar-collapse-btn {
+  flex-shrink: 0;
+}
+
+/* Floating affordance to reopen a collapsed sidebar; pinned to the top-left over
+   the main area. */
+.sidebar-expand-btn {
+  position: absolute;
+  top: 9px;
+  left: 8px;
+  z-index: 46;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.sidebar-expand-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+/* Clear the topbar's left content so the floating expand button doesn't cover it. */
+.app.sidebar-collapsed .topbar {
+  padding-left: 46px;
+}
+
+.sidebar-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.3);
 }
 
 .sidebar header {
@@ -377,9 +467,13 @@ label {
 }
 
 .sidebar-title {
+  flex: 1;
   font-size: var(--text-md);
   letter-spacing: 0.02em;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar header .header-actions {
@@ -393,6 +487,9 @@ label {
   flex-direction: column;
   overflow: hidden;
   background: var(--bg);
+  /* Grid items default to min-width:auto, which would let wide content (tables,
+     toolbars) push the track past 1fr and break the layout; 0 lets it shrink. */
+  min-width: 0;
 }
 
 /* ---------- Tree (connection + schema) ---------- */
@@ -3116,6 +3213,20 @@ label {
 /* OS の「視差効果/アニメーションを減らす」設定時は、無限アニメーション
    (点滅ドット等) を静止させ、トランジションを実質無効化する。
    将来追加するモーダル/スピナーのアニメーションにも自動で効く。 */
+/* Narrow windows: let the busiest button rows wrap instead of overflowing, so
+   every control stays reachable down to the supported minimum width. The sidebar
+   itself auto-collapses in JS at this breakpoint (see NARROW_BREAKPOINT). */
+@media (max-width: 760px) {
+  .editor .toolbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
