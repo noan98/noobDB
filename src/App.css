@@ -1919,6 +1919,31 @@ button.icon.history-action:hover {
   align-items: baseline;
   gap: 6px;
 }
+.status-hint-dismiss {
+  flex-shrink: 0;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: currentColor;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.status-hint-dismiss:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
+.status-hint-dismiss .icon-svg {
+  width: 13px;
+  height: 13px;
+}
 .status-hint-label {
   flex: none;
   font-weight: 600;
@@ -1929,6 +1954,8 @@ button.icon.history-action:hover {
   color: var(--bg-error);
 }
 .status-hint-text {
+  flex: 1;
+  min-width: 0;
   line-height: 1.45;
 }
 .status-hint-details summary {
