@@ -65,6 +65,9 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
+      - name: Unit tests (Vitest)
+        run: npm test
+
   rust-fmt:
     name: rust (fmt)
     needs: changes
@@ -162,6 +165,19 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -182,8 +198,11 @@ jobs:
           node-version: 20
           cache: npm
 
+      # llvm-tools-preview は cargo-llvm-cov の計装ビルドに必要なコンポーネント。
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: llvm-tools-preview
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -196,14 +215,37 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@e0eafa9a0d485c37f97c0f7beb930a58a2facbac # v2.79.4
+        with:
+          tool: cargo-llvm-cov
+
       - name: Install frontend deps
         run: npm ci
 
       - name: Build frontend (needed for tauri::generate_context!)
         run: npm run build
 
-      - name: cargo nextest run
+      # nextest を llvm-cov 計装下で実行し、カバレッジ生データのみ収集する
+      # (--no-report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
+      # 両ドライバの統合テストを CI で実走させる。SQLite は環境変数不要で常に走る。
+      - name: cargo llvm-cov nextest
         working-directory: src-tauri
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
-        run: cargo nextest run --locked --all-targets
+          NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
+        run: cargo llvm-cov nextest --no-report --locked --all-targets
+
+      # 収集済みデータから lcov レポートを生成し、サマリ表を Job Summary に出して
+      # PR ごとのカバレッジを可視化する (閾値による fail は初期導入では設けない)。
+      - name: Coverage report
+        working-directory: src-tauri
+        run: |
+          cargo llvm-cov report --lcov --output-path lcov.info
+          {
+            echo '### Rust coverage'
+            echo ''
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
