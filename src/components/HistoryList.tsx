@@ -1,14 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { copyToClipboard } from "./clipboard";
 
 interface Props {
   activeProfile: ConnectionProfile | null;
   /** Bumped by the parent to force a reload (e.g. after a query runs). */
   reloadKey: number;
   onRestore: (sql: string) => void;
+  /** Open the entry's SQL in a brand-new query tab (never overwrites the editor). */
+  onOpenInNewTab: (sql: string) => void;
 }
 
 function oneLine(sql: string): string {
@@ -21,13 +24,26 @@ function formatTime(iso: string): string {
   return d.toLocaleString();
 }
 
-export function HistoryList({ activeProfile, reloadKey, onRestore }: Props) {
+export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTab }: Props) {
   const t = useT();
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const copiedTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
+  }, []);
+
+  const handleCopy = (id: number, sql: string) => {
+    void copyToClipboard(sql);
+    setCopiedId(id);
+    if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
+  };
 
   // Debounce the search box so each keystroke doesn't hit the backend.
   useEffect(() => {
@@ -141,6 +157,32 @@ export function HistoryList({ activeProfile, reloadKey, onRestore }: Props) {
                   {h.elapsed_ms != null && (
                     <span className="tree-badge driver">{h.elapsed_ms} ms</span>
                   )}
+                  <span className="history-row-actions">
+                    <button
+                      type="button"
+                      className="icon history-action"
+                      title={copiedId === h.id ? t("historyCopied") : t("historyCopySql")}
+                      aria-label={t("historyCopySql")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCopy(h.id, h.sql);
+                      }}
+                    >
+                      <Icon name={copiedId === h.id ? "check" : "copy"} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon history-action"
+                      title={t("historyOpenInNewTab")}
+                      aria-label={t("historyOpenInNewTab")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenInNewTab(h.sql);
+                      }}
+                    >
+                      <Icon name="query" />
+                    </button>
+                  </span>
                 </div>
                 <div className="history-time muted">{formatTime(h.executed_at)}</div>
               </div>
