@@ -300,9 +300,16 @@ export function SettingsView({ theme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <span className="settings-help-inline">
-            {t("settingsQueryTimeoutHelp")}
-          </span>
+          <div className="settings-timeout-aux">
+            {Number.parseInt(timeoutInput, 10) === 0 && (
+              <span className="settings-unlimited-badge">
+                {t("settingsQueryTimeoutUnlimited")}
+              </span>
+            )}
+            <span className="settings-help-inline">
+              {t("settingsQueryTimeoutHelp")}
+            </span>
+          </div>
         </div>
       </section>
 
