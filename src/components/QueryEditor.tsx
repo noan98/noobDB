@@ -84,6 +84,11 @@ interface Props {
   builderSnapshot?: QueryBuilderSnapshot | null;
   /** Persists the builder inputs captured on its Run / Dry Run. */
   onBuilderPersist?: (snapshot: QueryBuilderSnapshot) => void;
+  /**
+   * True when the active session is read-only. Passed to the Query Builder so
+   * its Run button is disabled for write query kinds.
+   */
+  readOnly?: boolean;
 }
 
 export interface QueryEditorHandle {
@@ -203,6 +208,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   driver = "mysql",
   builderSnapshot,
   onBuilderPersist,
+  readOnly,
 }: Props, ref) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -486,6 +492,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           defaultDatabase={defaultDatabase ?? activeTable?.database ?? null}
           defaultTable={activeTable?.name ?? null}
           initialSnapshot={builderSnapshot}
+          readOnly={readOnly}
           onExecute={(builtSql) => onRun(builtSql)}
           onPreview={onPreview ? (builtSql) => onPreview(builtSql) : undefined}
           onPersist={onBuilderPersist}

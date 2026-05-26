@@ -504,6 +504,9 @@ export default function App() {
   // default. Drives both which schema snapshot to fetch and which to feed the
   // editor for autocomplete.
   const editorDatabase = activeTab?.database ?? selectedProfile?.database ?? null;
+  // The active session rejects writes when read-only: drives both the Query
+  // Builder's disabled Run button and whether inline cell editing is offered.
+  const readOnly = selectedProfile?.read_only ?? false;
   const editorSchema = useMemo<TableSchema[] | null>(() => {
     if (!sessionId || !editorDatabase) return null;
     return schemaCache[schemaCacheKey(sessionId, editorDatabase)] ?? null;
@@ -2007,6 +2010,7 @@ export default function App() {
                       driver={selectedProfile?.driver ?? "mysql"}
                       builderSnapshot={activeTab.builderSnapshot}
                       onBuilderPersist={(snapshot) => updateTab(activeTab.id, { builderSnapshot: snapshot })}
+                      readOnly={readOnly}
                     />
                     </Suspense>
                   }
@@ -2052,7 +2056,7 @@ export default function App() {
                         onFetchAllRows={handleFetchAllRows}
                         database={activeTab.database ?? selectedProfile?.database ?? null}
                         table={activeTab.table ?? null}
-                        editable={activeTab.kind === "table"}
+                        editable={activeTab.kind === "table" && !readOnly}
                         tableColumns={activeTab.tableColumns}
                         pendingEdits={activeTab.pendingEdits}
                         onSetCellEdit={handleSetCellEdit}

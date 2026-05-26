@@ -493,7 +493,12 @@ pub async fn preview_query_stream(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    ensure_allowed_for_session(&session, &sql)?;
+    // The read-only guard is intentionally skipped here: a preview runs the
+    // statement inside a transaction that is always rolled back, so it never
+    // persists a change. `preview_execute_with_limit` only accepts
+    // INSERT/UPDATE/DELETE/REPLACE and rejects DDL (which would implicit-commit
+    // and so can't be rolled back), keeping the read-only guarantee intact while
+    // letting a read-only session dry-run a write to inspect its effect.
     let handle = tokio::spawn(spawn_preview_stream(
         app,
         session,
