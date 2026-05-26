@@ -95,6 +95,10 @@ function startsWithKeyword(body: string, keyword: string): boolean {
   return new RegExp(`^${keyword}\\b`).test(body);
 }
 
+function containsWord(body: string, keyword: string): boolean {
+  return new RegExp(`\\b${keyword}\\b`).test(body);
+}
+
 function isWordChar(ch: string): boolean {
   return /[A-Za-z0-9_]/.test(ch);
 }
@@ -193,4 +197,53 @@ export function analyzeDangerousSql(sql: string): DangerFinding[] {
     }
   }
   return findings;
+}
+
+const READ_ONLY_PREFIXES = ["select", "show", "describe", "desc", "explain", "with"];
+
+const WRITE_KEYWORDS = [
+  "insert",
+  "update",
+  "delete",
+  "into",
+  "create",
+  "alter",
+  "drop",
+  "truncate",
+  "call",
+  "merge",
+  "grant",
+  "revoke",
+];
+
+/**
+ * Best-effort mirror of the backend `is_read_only_sql` gate
+ * (`src-tauri/src/db/mod.rs`): true only when `sql` is a single statement that
+ * begins with an allowed read-only keyword and carries no write/DDL keyword,
+ * hidden second statement, or row-locking clause. Comments and quoted literals
+ * are masked first. Used to decide whether a production connection that opts
+ * into write approval needs to confirm before running a statement; keeping the
+ * logic aligned with the backend means the approval prompt fires for exactly
+ * the statements a read-only session would reject. When in doubt it returns
+ * false (treats the statement as a write), erring toward asking.
+ */
+export function isReadOnlySql(sql: string): boolean {
+  const masked = maskLiterals(sql);
+  const body = masked
+    .toLowerCase()
+    .replace(/[;\s]+$/, "")
+    .replace(/^\s+/, "");
+  if (!body) return false;
+  if (!READ_ONLY_PREFIXES.some((kw) => startsWithKeyword(body, kw))) return false;
+  // Trailing separators were stripped, so a remaining `;` hides a 2nd statement.
+  if (body.includes(";")) return false;
+  if (WRITE_KEYWORDS.some((kw) => containsWord(body, kw))) return false;
+  if (
+    body.endsWith("for update") ||
+    body.endsWith("for share") ||
+    body.endsWith("lock in share mode")
+  ) {
+    return false;
+  }
+  return true;
 }
