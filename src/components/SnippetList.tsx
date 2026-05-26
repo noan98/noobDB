@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { ConnectionProfile, Snippet } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 
 interface Props {
   snippets: Snippet[];
@@ -12,10 +13,10 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
-interface ContextMenuState {
-  snippet: Snippet;
+interface MenuState {
   x: number;
   y: number;
+  items: ContextMenuEntry[];
 }
 
 /** True when `snippet` should be offered while connected to `profile`. */
@@ -33,31 +34,7 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
   const [filter, setFilter] = useState("");
   const [showAllScopes, setShowAllScopes] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  // Dismiss context menu on outside click / Escape / scroll.
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    const onClick = (e: MouseEvent) => {
-      if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
-      close();
-    };
-    window.addEventListener("mousedown", onClick);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("mousedown", onClick);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-    };
-  }, [contextMenu]);
+  const [menu, setMenu] = useState<MenuState | null>(null);
 
   const scopeFiltered = useMemo(() => {
     if (!activeProfile || showAllScopes) return snippets;
@@ -99,7 +76,21 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
   const handleContextMenu = (e: React.MouseEvent, s: Snippet) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ snippet: s, x: e.clientX, y: e.clientY });
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: t("snippetMenuInsert"), onSelect: () => onInsert(s) },
+        { label: t("snippetMenuEdit"), onSelect: () => onEdit(s) },
+        {
+          label: t("snippetMenuDelete"),
+          danger: true,
+          onSelect: () => {
+            if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s.id);
+          },
+        },
+      ],
+    });
   };
 
   const renderSnippet = (s: Snippet) => (
@@ -180,48 +171,8 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
         </div>
       )}
 
-      {contextMenu && (
-        <div
-          ref={menuRef}
-          className="context-menu"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          role="menu"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            className="context-menu-item"
-            onClick={() => {
-              const s = contextMenu.snippet;
-              setContextMenu(null);
-              onInsert(s);
-            }}
-          >
-            {t("snippetMenuInsert")}
-          </button>
-          <button
-            type="button"
-            className="context-menu-item"
-            onClick={() => {
-              const s = contextMenu.snippet;
-              setContextMenu(null);
-              onEdit(s);
-            }}
-          >
-            {t("snippetMenuEdit")}
-          </button>
-          <button
-            type="button"
-            className="context-menu-item danger"
-            onClick={() => {
-              const s = contextMenu.snippet;
-              setContextMenu(null);
-              if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s.id);
-            }}
-          >
-            {t("snippetMenuDelete")}
-          </button>
-        </div>
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
     </div>
   );

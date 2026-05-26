@@ -870,14 +870,22 @@ label {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.context-menu-item:hover { background: var(--bg-hover); }
+.context-menu-item:hover:not(:disabled),
+.context-menu-item:focus-visible { background: var(--bg-hover); }
+.context-menu-item:focus-visible { outline: none; }
+.context-menu-item:disabled {
+  color: var(--text-muted);
+  opacity: 0.6;
+  cursor: default;
+}
 .context-menu-sep {
   height: 1px;
   margin: 4px 6px;
   background: var(--border-subtle);
 }
 .context-menu-item.danger { color: var(--text-error); }
-.context-menu-item.danger:hover {
+.context-menu-item.danger:hover:not(:disabled),
+.context-menu-item.danger:focus-visible {
   background: color-mix(in srgb, var(--status-error) 12%, transparent);
 }
 

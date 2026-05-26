@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Spinner } from "./Spinner";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
@@ -30,23 +30,10 @@ interface Props {
   selectLimit: number;
 }
 
-interface ContextMenuState {
-  profile: ConnectionProfile;
+interface MenuState {
   x: number;
   y: number;
-}
-
-interface TableMenuState {
-  database: string;
-  table: string;
-  x: number;
-  y: number;
-}
-
-interface DbMenuState {
-  database: string;
-  x: number;
-  y: number;
+  items: ContextMenuEntry[];
 }
 
 export function ConnectionList({
@@ -78,9 +65,7 @@ export function ConnectionList({
   const [tables, setTables] = useState<Record<string, string[]>>({});
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [tableMenu, setTableMenu] = useState<TableMenuState | null>(null);
-  const [dbMenu, setDbMenu] = useState<DbMenuState | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [hoveredColumn, setHoveredColumn] = useState<{ col: TableColumnInfo; rect: DOMRect } | null>(
     null,
   );
@@ -122,29 +107,6 @@ export function ConnectionList({
     }
   }, [activeProfileId]);
 
-  const closeAllMenus = useCallback(() => {
-    setContextMenu(null);
-    setTableMenu(null);
-    setDbMenu(null);
-  }, []);
-
-  // Dismiss menus on Escape / scroll / resize. Outside clicks are caught by the
-  // portal backdrop rendered with the menu (see the createPortal block below).
-  useEffect(() => {
-    if (!contextMenu && !tableMenu && !dbMenu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeAllMenus();
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", closeAllMenus, true);
-    window.addEventListener("resize", closeAllMenus);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", closeAllMenus, true);
-      window.removeEventListener("resize", closeAllMenus);
-    };
-  }, [contextMenu, tableMenu, dbMenu, closeAllMenus]);
-
   // The column tooltip is anchored to a snapshot of the row's position, so it
   // would detach if the tree scrolls or the window resizes under the pointer.
   useEffect(() => {
@@ -170,25 +132,53 @@ export function ConnectionList({
   const handleProfileContextMenu = (e: React.MouseEvent, p: ConnectionProfile) => {
     e.preventDefault();
     e.stopPropagation();
-    setTableMenu(null);
-    setDbMenu(null);
-    setContextMenu({ profile: p, x: e.clientX, y: e.clientY });
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: t("contextMenuEdit"), onSelect: () => onEdit(p) },
+        { label: t("contextMenuDuplicate"), onSelect: () => onDuplicate(p) },
+        {
+          label: t("contextMenuDelete"),
+          danger: true,
+          onSelect: () => {
+            if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id);
+          },
+        },
+      ],
+    });
   };
 
   const handleTableContextMenu = (e: React.MouseEvent, db: string, tbl: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu(null);
-    setDbMenu(null);
-    setTableMenu({ database: db, table: tbl, x: e.clientX, y: e.clientY });
+    const items: ContextMenuEntry[] = [
+      { label: t("contextMenuRunSelect", { limit: selectLimit }), onSelect: () => onRunTableSelect(db, tbl) },
+      { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, tbl) },
+    ];
+    if (onShowCreateTable) {
+      items.push({ label: t("contextMenuShowCreate"), onSelect: () => onShowCreateTable(db, tbl) });
+    }
+    items.push({ separator: true });
+    // Import writes to the table, so it's rejected on a read-only session;
+    // disable it up front rather than letting the backend fail later.
+    items.push({
+      label: t("contextMenuImportCsv"),
+      onSelect: () => onImportTable(db, tbl),
+      disabled: activeReadOnly,
+      title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+    });
+    setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
   const handleDbContextMenu = (e: React.MouseEvent, db: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu(null);
-    setTableMenu(null);
-    setDbMenu({ database: db, x: e.clientX, y: e.clientY });
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [{ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) }],
+    });
   };
 
   const toggleDb = async (db: string) => {
@@ -229,6 +219,9 @@ export function ConnectionList({
   const q = filter.trim().toLowerCase();
   const searching = q.length > 0;
   const activeExpanded = activeProfileId ? !!expandedProfiles[activeProfileId] : false;
+  // The schema tree only shows the active connection, so its read-only flag
+  // governs whether write-y table actions (Import CSV) are offered.
+  const activeReadOnly = !!profiles.find((p) => p.id === activeProfileId)?.read_only;
 
   const profileMetaMatches = useCallback(
     (p: ConnectionProfile) =>
@@ -580,145 +573,9 @@ export function ConnectionList({
         </div>
       )}
 
-      {(contextMenu || tableMenu || dbMenu) &&
-        createPortal(
-          // Full-viewport backdrop portaled to <body>. Rendering outside the
-          // sidebar's overflow/scroll containers avoids a WebKitGTK quirk where
-          // a position:fixed menu nested in such a container is painted on top
-          // but doesn't capture clicks, letting the press fall through to the
-          // row behind it. The backdrop also absorbs any outside click so it
-          // can never reach a connection row underneath the menu.
-          <div
-            className="context-menu-backdrop"
-            onMouseDown={closeAllMenus}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              closeAllMenus();
-            }}
-          >
-            {contextMenu && (
-              <div
-                className="context-menu"
-                style={{ top: contextMenu.y, left: contextMenu.x }}
-                role="menu"
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  className="context-menu-item"
-                  onClick={() => {
-                    const p = contextMenu.profile;
-                    setContextMenu(null);
-                    onEdit(p);
-                  }}
-                >
-                  {t("contextMenuEdit")}
-                </button>
-                <button
-                  type="button"
-                  className="context-menu-item"
-                  onClick={() => {
-                    const p = contextMenu.profile;
-                    setContextMenu(null);
-                    onDuplicate(p);
-                  }}
-                >
-                  {t("contextMenuDuplicate")}
-                </button>
-                <button
-                  type="button"
-                  className="context-menu-item danger"
-                  onClick={() => {
-                    const p = contextMenu.profile;
-                    setContextMenu(null);
-                    if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id);
-                  }}
-                >
-                  {t("contextMenuDelete")}
-                </button>
-              </div>
-            )}
-
-            {tableMenu && (
-              <div
-                className="context-menu"
-                style={{ top: tableMenu.y, left: tableMenu.x }}
-                role="menu"
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  className="context-menu-item"
-                  onClick={() => {
-                    const { database, table } = tableMenu;
-                    setTableMenu(null);
-                    onRunTableSelect(database, table);
-                  }}
-                >
-                  {t("contextMenuRunSelect", { limit: selectLimit })}
-                </button>
-                <button
-                  type="button"
-                  className="context-menu-item"
-                  onClick={() => {
-                    const { database, table } = tableMenu;
-                    setTableMenu(null);
-                    onInsertTableSelect(database, table);
-                  }}
-                >
-                  {t("contextMenuInsertSelect")}
-                </button>
-                {onShowCreateTable && (
-                  <button
-                    type="button"
-                    className="context-menu-item"
-                    onClick={() => {
-                      const { database, table } = tableMenu;
-                      setTableMenu(null);
-                      onShowCreateTable(database, table);
-                    }}
-                  >
-                    {t("contextMenuShowCreate")}
-                  </button>
-                )}
-                <div className="context-menu-sep" role="separator" />
-                <button
-                  type="button"
-                  className="context-menu-item"
-                  onClick={() => {
-                    const { database, table } = tableMenu;
-                    setTableMenu(null);
-                    onImportTable(database, table);
-                  }}
-                >
-                  {t("contextMenuImportCsv")}
-                </button>
-              </div>
-            )}
-
-            {dbMenu && (
-              <div
-                className="context-menu"
-                style={{ top: dbMenu.y, left: dbMenu.x }}
-                role="menu"
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  className="context-menu-item"
-                  onClick={() => {
-                    const { database } = dbMenu;
-                    setDbMenu(null);
-                    onDumpDatabase(database);
-                  }}
-                >
-                  {t("contextMenuDump")}
-                </button>
-              </div>
-            )}
-          </div>,
-          document.body,
-        )}
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
 
       {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
     </div>
