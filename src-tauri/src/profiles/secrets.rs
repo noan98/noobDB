@@ -49,12 +49,24 @@ fn delete_secret(profile_id: &str, kind: &str) -> Result<()> {
     }
 }
 
+/// Returns whether a secret of `kind` exists for the profile, without exposing
+/// the value. A read failure (other than a missing entry) degrades to `false`
+/// since callers use this only as a display hint; `get_secret` already logged
+/// the underlying error.
+fn has_secret(profile_id: &str, kind: &str) -> bool {
+    matches!(get_secret(profile_id, kind), Ok(Some(_)))
+}
+
 pub fn set_db_password(profile_id: &str, password: &str) -> Result<()> {
     set_secret(profile_id, "db_password", password)
 }
 
 pub fn get_db_password(profile_id: &str) -> Result<Option<String>> {
     get_secret(profile_id, "db_password")
+}
+
+pub fn has_db_password(profile_id: &str) -> bool {
+    has_secret(profile_id, "db_password")
 }
 
 pub fn delete_db_password(profile_id: &str) -> Result<()> {
@@ -69,6 +81,10 @@ pub fn get_ssh_passphrase(profile_id: &str) -> Result<Option<String>> {
     get_secret(profile_id, "ssh_passphrase")
 }
 
+pub fn has_ssh_passphrase(profile_id: &str) -> bool {
+    has_secret(profile_id, "ssh_passphrase")
+}
+
 pub fn delete_ssh_passphrase(profile_id: &str) -> Result<()> {
     delete_secret(profile_id, "ssh_passphrase")
 }
@@ -79,6 +95,10 @@ pub fn set_ssh_password(profile_id: &str, password: &str) -> Result<()> {
 
 pub fn get_ssh_password(profile_id: &str) -> Result<Option<String>> {
     get_secret(profile_id, "ssh_password")
+}
+
+pub fn has_ssh_password(profile_id: &str) -> bool {
+    has_secret(profile_id, "ssh_password")
 }
 
 pub fn delete_ssh_password(profile_id: &str) -> Result<()> {
