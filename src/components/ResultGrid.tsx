@@ -15,7 +15,7 @@ import {
   type Row,
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
-import { useT } from "../i18n";
+import { useT, type I18nKey } from "../i18n";
 import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
 import { ContextMenu } from "./ContextMenu";
@@ -27,6 +27,7 @@ import {
   countEditedRows,
   isEditableColumnType,
   resolvePkIndices,
+  validateCellInput,
   type PendingEdits,
 } from "./cellEdit";
 
@@ -302,6 +303,7 @@ export function DataGrid({
   editableColumns,
   pendingEdits,
   onSetCellEdit,
+  validateEdit,
   columnSizingStorageKey,
   emptyMessage,
 }: {
@@ -321,6 +323,12 @@ export function DataGrid({
   editableColumns?: boolean[];
   pendingEdits?: PendingEdits;
   onSetCellEdit?: (rowIdx: number, colIdx: number, value: string | null) => void;
+  /**
+   * Validates a pending edit by result-column index, returning an i18n key
+   * describing the problem or `null` when the value is acceptable. Drives the
+   * inline error shown under the edit box and the invalid-cell highlight.
+   */
+  validateEdit?: (colIdx: number, value: string) => I18nKey | null;
   /**
    * When set, user-adjusted column widths persist to `localStorage` under
    * this key and are restored for matching result shapes. Omit (preview
@@ -649,6 +657,16 @@ export function DataGrid({
                     editing !== null &&
                     editing.rowIdx === row.index &&
                     editing.colIdx === idx;
+                  // Live validation of the value being typed, and of an
+                  // already-buffered value that's sitting invalid in the grid.
+                  const editError =
+                    isEditingHere && validateEdit
+                      ? validateEdit(idx, editing!.value)
+                      : null;
+                  const pendingError =
+                    hasPending && !isEditingHere && validateEdit
+                      ? validateEdit(idx, pendingValue)
+                      : null;
                   // Original display string — used both for the input's
                   // default contents and to detect "user typed it back to
                   // the original" (which clears the pending edit).
@@ -670,7 +688,7 @@ export function DataGrid({
                   return (
                     <td
                       key={cell.id}
-                      className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""}`}
+                      className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""}`}
                       title={
                         isEditingHere
                           ? undefined
@@ -695,29 +713,20 @@ export function DataGrid({
                       }}
                     >
                       {isEditingHere ? (
-                        <input
-                          autoFocus
-                          className="cell-edit-input"
-                          value={editing!.value}
-                          onChange={(e) =>
-                            setEditing({
-                              rowIdx: editing!.rowIdx,
-                              colIdx: editing!.colIdx,
-                              value: e.target.value,
-                            })
-                          }
-                          onBlur={() => {
-                            commitEdit(
-                              editing!.rowIdx,
-                              editing!.colIdx,
-                              editing!.value,
-                              originalDisplay,
-                            );
-                            setEditing(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
+                        <div className="cell-edit-wrap">
+                          <input
+                            autoFocus
+                            className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
+                            aria-invalid={editError ? true : undefined}
+                            value={editing!.value}
+                            onChange={(e) =>
+                              setEditing({
+                                rowIdx: editing!.rowIdx,
+                                colIdx: editing!.colIdx,
+                                value: e.target.value,
+                              })
+                            }
+                            onBlur={() => {
                               commitEdit(
                                 editing!.rowIdx,
                                 editing!.colIdx,
@@ -725,12 +734,29 @@ export function DataGrid({
                                 originalDisplay,
                               );
                               setEditing(null);
-                            } else if (e.key === "Escape") {
-                              e.preventDefault();
-                              setEditing(null);
-                            }
-                          }}
-                        />
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitEdit(
+                                  editing!.rowIdx,
+                                  editing!.colIdx,
+                                  editing!.value,
+                                  originalDisplay,
+                                );
+                                setEditing(null);
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                setEditing(null);
+                              }
+                            }}
+                          />
+                          {editError && (
+                            <div className="cell-edit-error" role="alert">
+                              {t(editError)}
+                            </div>
+                          )}
+                        </div>
                       ) : hasPending ? (
                         /^null$/i.test(pendingValue.trim()) ? (
                           <span className="cell-null cell-pending-value">
@@ -908,11 +934,38 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
   const hasPendingEdits = editsCount > 0;
   const editableActive = !!editable && pkIndices.length > 0;
+
+  // Client-side type/NOT NULL validation of a pending edit, by result-column
+  // index. Mirrors the literal-building rules in cellEdit so invalid input is
+  // caught before a (wasted) Preview/Apply round-trip. `nullable` defaults to
+  // true when no column metadata is available, keeping validation permissive.
+  const validateEdit = (colIdx: number, value: string): I18nKey | null => {
+    const col = result.columns[colIdx];
+    if (!col) return null;
+    const info = tableColumns?.find((c) => c.name === col.name) ?? null;
+    return validateCellInput(value, col.type_name, info?.nullable ?? true);
+  };
+  let hasInvalidEdit = false;
+  if (pendingEdits) {
+    for (const rowKey of Object.keys(pendingEdits)) {
+      const rowEdits = pendingEdits[Number(rowKey)];
+      if (!rowEdits) continue;
+      for (const colKey of Object.keys(rowEdits)) {
+        if (validateEdit(Number(colKey), rowEdits[Number(colKey)])) {
+          hasInvalidEdit = true;
+          break;
+        }
+      }
+      if (hasInvalidEdit) break;
+    }
+  }
+
   // Preview wraps a single statement; multi-row edits would need a
   // multi-statement preview path that doesn't exist yet, so the button is
   // disabled (with a tooltip) until the user trims their edits to one row.
-  const canPreview = hasPendingEdits && editedRowCount === 1 && !streaming;
-  const canApply = hasPendingEdits && !streaming;
+  const canPreview =
+    hasPendingEdits && editedRowCount === 1 && !streaming && !hasInvalidEdit;
+  const canApply = hasPendingEdits && !streaming && !hasInvalidEdit;
 
   return (
     <div className={`results has-toolbar ${streaming ? "is-streaming" : ""}`}>
@@ -955,7 +1008,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           className="results-toolbar-btn"
           onClick={() => setShowExport(true)}
           disabled={!canExport}
-          title={t("exportButtonTitle")}
+          title={
+            canExport
+              ? t("exportButtonTitle")
+              : streaming
+                ? t("exportDisabledStreaming")
+                : t("exportDisabledNoRows")
+          }
         >
           {t("exportButton")}
         </button>
@@ -978,9 +1037,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               onClick={onPreviewEdits}
               disabled={!canPreview}
               title={
-                editedRowCount > 1
-                  ? t("editPreviewMultiRowTitle")
-                  : t("editorPreviewTitle")
+                hasInvalidEdit
+                  ? t("editApplyDisabledInvalid")
+                  : editedRowCount > 1
+                    ? t("editPreviewMultiRowTitle")
+                    : streaming
+                      ? t("editDisabledStreaming")
+                      : t("editorPreviewTitle")
               }
             >
               {t("editPreviewButton")}
@@ -990,7 +1053,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               className="success results-edit-btn"
               onClick={onApplyEdits}
               disabled={!canApply}
-              title={t("editApplyButtonTitle")}
+              title={
+                hasInvalidEdit
+                  ? t("editApplyDisabledInvalid")
+                  : streaming
+                    ? t("editDisabledStreaming")
+                    : t("editApplyButtonTitle")
+              }
             >
               {t("editApplyButton")}
             </button>
@@ -1030,6 +1099,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           editableColumns={editableCols}
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
+          validateEdit={validateEdit}
           columnSizingStorageKey={columnSizingStorageKey}
           emptyMessage={
             streaming ? undefined : (

@@ -1632,6 +1632,18 @@ export default function App() {
     return raw != null ? matchErrorHint(String(raw)) : null;
   }, [status]);
 
+  // The profile to offer a one-click reconnect for: set whenever a connect
+  // failed or a live connection dropped (`errorProfileId`), while no session
+  // is active. Lets the footer surface a "Reconnect" button so recovery
+  // doesn't require hunting for the profile in the sidebar again.
+  const reconnectProfile = useMemo(
+    () =>
+      !sessionId && errorProfileId
+        ? profiles.find((p) => p.id === errorProfileId) ?? null
+        : null,
+    [sessionId, errorProfileId, profiles],
+  );
+
   // Any new status (new query, connect/disconnect, connection switch) re-enables
   // the hint banner so it is never permanently suppressed by a prior dismissal.
   useEffect(() => {
@@ -2076,6 +2088,22 @@ export default function App() {
               statusText
             )}
           </div>
+          {reconnectProfile && statusTone(status) === "error" && (
+            <button
+              type="button"
+              className="status-reconnect-btn"
+              onClick={() => handleConnect(reconnectProfile)}
+              disabled={connectingId === reconnectProfile.id}
+              title={t("statusReconnectTitle", { name: reconnectProfile.name })}
+            >
+              {connectingId === reconnectProfile.id ? (
+                <Spinner size={12} />
+              ) : (
+                <Icon name="refresh" />
+              )}
+              {t("statusReconnect")}
+            </button>
+          )}
         </div>
       </main>
 

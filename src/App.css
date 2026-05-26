@@ -1908,6 +1908,33 @@ button.icon.history-action:hover {
 .status.status-error .status-icon {
   color: var(--status-error);
 }
+/* One-click recovery button shown in the footer after a connection drop or a
+   failed connect. Sits at the right edge (status-content takes the slack). */
+.status-reconnect-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: #fff;
+  background: var(--status-error);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.status-reconnect-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-error) 85%, #000);
+}
+.status-reconnect-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+.status-reconnect-btn .icon-svg {
+  width: 13px;
+  height: 13px;
+}
 
 .status-hint {
   display: flex;
@@ -2121,6 +2148,25 @@ button.icon.history-action:hover {
 .settings-help-inline {
   font-size: var(--text-sm);
   color: var(--text-muted);
+}
+.settings-timeout-aux {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  min-width: 0;
+}
+/* Makes the special meaning of "0" explicit right next to the field, so the
+   timeout input doesn't read as "0 seconds → times out instantly". */
+.settings-unlimited-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--accent-text);
+  background: var(--accent);
+  border-radius: 999px;
 }
 
 .settings-preset-row {
@@ -2462,6 +2508,38 @@ button.icon.history-action:hover {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
+.cell-edit-wrap {
+  position: relative;
+}
+/* Invalid pending edit: red box on the input being typed and on a cell that
+   already holds a value failing client-side validation, so the user sees
+   exactly which cells block Apply. */
+.cell-edit-input.is-invalid {
+  border-color: var(--status-error);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-error) 30%, transparent);
+}
+.results .data-grid-table td.is-invalid-edit {
+  box-shadow: inset 2px 0 0 var(--status-error);
+}
+.results .data-grid-table td.is-invalid-edit.is-pending-edit {
+  background: color-mix(in srgb, var(--status-error) 12%, transparent);
+}
+.cell-edit-error {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: -6px;
+  z-index: 5;
+  max-width: 280px;
+  padding: 3px 7px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: #fff;
+  background: var(--status-error);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md, 0 2px 6px rgb(0 0 0 / 0.3));
+  white-space: normal;
+  pointer-events: none;
+}
 
 @keyframes streaming-pulse {
   0%, 100% { opacity: 1; }
@@ -2481,6 +2559,35 @@ button.icon.history-action:hover {
 }
 @keyframes spinner-rotate {
   to { transform: rotate(360deg); }
+}
+
+/* Manual schema-tree refresh on the active connection row. Stays subtle until
+   hovered so it doesn't compete with the connection name. */
+.schema-refresh-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.schema-refresh-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-hover, var(--bg-muted));
+}
+.schema-refresh-btn:disabled {
+  cursor: default;
+}
+.schema-refresh-btn .icon-svg {
+  width: 13px;
+  height: 13px;
+}
+.schema-refresh-btn.spinning .icon-svg {
+  animation: spinner-rotate 0.7s linear infinite;
 }
 
 /* Loading variant of a schema-tree placeholder row: spinner beside the label. */

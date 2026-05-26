@@ -370,6 +370,15 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       : t("editorRunTitle");
   const runTitle = `${runTitleBase} (${t("editorRunShortcut")})`;
 
+  // When a button is disabled, its tooltip explains why instead of describing
+  // the (currently unavailable) action — so a greyed-out button never looks
+  // like a bug to a first-time user.
+  const disabledReason = disabled
+    ? t("editorHintDisabled")
+    : !hasContent
+      ? t("editorHintEmpty")
+      : null;
+
   return (
     <div className="editor">
       <div className="toolbar">
@@ -377,7 +386,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           className="success with-icon"
           onClick={runSelectionOrAll}
           disabled={disabled || !hasContent}
-          title={runTitle}
+          title={disabledReason ?? runTitle}
         >
           <span className="btn-icon" aria-hidden>
             <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
@@ -391,7 +400,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             className="warning with-icon"
             onClick={previewSelectionOrAll}
             disabled={disabled || !hasContent}
-            title={`${t("editorPreviewTitle")} (${t("editorPreviewShortcut")})`}
+            title={disabledReason ?? `${t("editorPreviewTitle")} (${t("editorPreviewShortcut")})`}
           >
             <span className="btn-icon" aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -406,7 +415,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           className="with-icon"
           onClick={formatSelectionOrAll}
           disabled={disabled || !hasContent}
-          title={t("editorFormatTitle")}
+          title={disabledReason ?? t("editorFormatTitle")}
         >
           <span className="btn-icon" aria-hidden>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -423,7 +432,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             className="with-icon"
             onClick={explainSelectionOrAll}
             disabled={disabled || !hasContent}
-            title={t("editorExplainTitle")}
+            title={disabledReason ?? t("editorExplainTitle")}
           >
             <span className="btn-icon" aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -441,7 +450,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             className="with-icon"
             onClick={saveSelectionOrAll}
             disabled={disabled || !hasContent}
-            title={t("editorSaveSnippetTitle")}
+            title={disabledReason ?? t("editorSaveSnippetTitle")}
           >
             <span className="btn-icon" aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -458,7 +467,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             className="info with-icon"
             onClick={() => setShowBuilder(true)}
             disabled={disabled}
-            title={t("editorBuilderTitle")}
+            title={disabled ? t("editorHintDisabled") : t("editorBuilderTitle")}
           >
             <span className="btn-icon" aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

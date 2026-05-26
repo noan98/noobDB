@@ -1,4 +1,5 @@
 import { CellValue, Column, TableColumnInfo } from "../api/tauri";
+import type { I18nKey } from "../i18n";
 import { quoteIdentFor } from "./sqlDialect";
 
 /**
@@ -48,6 +49,99 @@ const BINARY_TYPES = new Set([
  */
 export function isEditableColumnType(typeName: string): boolean {
   return !BINARY_TYPES.has(typeName.toUpperCase());
+}
+
+type EditTypeKind = "number" | "date" | "datetime" | "time" | "boolean" | "other";
+
+/**
+ * Buckets a column's reported type name into the broad kinds we validate
+ * client-side. Normalizes away `(...)` length/precision and trailing
+ * `UNSIGNED` / `ZEROFILL` modifiers, then matches conservatively across the
+ * MySQL / PostgreSQL / SQLite spellings. Anything unrecognised falls back to
+ * `"other"`, which is never rejected — a false reject (blocking a valid edit)
+ * is worse than letting the server have the final say.
+ */
+function classifyEditType(typeName: string): EditTypeKind {
+  const base = typeName
+    .toUpperCase()
+    .replace(/\(.*$/, "")
+    .replace(/\s+(UNSIGNED|ZEROFILL)\b/g, "")
+    .trim();
+  if (NUMERIC_TYPES.has(base)) return "number";
+  if (/^(INT|SERIAL|BIGSERIAL|SMALLSERIAL|FLOAT4|FLOAT8|INT2|INT4|INT8)$/.test(base)) {
+    return "number";
+  }
+  if (base === "DATE") return "date";
+  if (base === "TIME") return "time";
+  if (base === "DATETIME" || base.startsWith("TIMESTAMP")) return "datetime";
+  if (base === "BOOLEAN" || base === "BOOL") return "boolean";
+  return "other";
+}
+
+const NUMERIC_INPUT_RE = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
+const DATE_RE = /^\d{4}-\d{1,2}-\d{1,2}$/;
+const DATETIME_RE = /^\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?$/;
+const TIME_RE = /^-?\d{1,3}:\d{2}(:\d{2})?(\.\d+)?$/;
+
+function errorKeyForKind(kind: EditTypeKind): I18nKey | null {
+  switch (kind) {
+    case "number":
+      return "editInvalidNumber";
+    case "date":
+      return "editInvalidDate";
+    case "datetime":
+      return "editInvalidDateTime";
+    case "time":
+      return "editInvalidTime";
+    case "boolean":
+      return "editInvalidBoolean";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Best-effort client-side validation of a pending inline edit. Returns an
+ * i18n key describing the problem, or `null` when the value looks acceptable
+ * for the destination column. Mirrors `literalFromInput`'s conventions: the
+ * literal `NULL` keyword clears a column, and numeric/temporal/boolean
+ * columns require a well-formed value (or `NULL` when the column allows it).
+ * String-like columns are never rejected here.
+ */
+export function validateCellInput(
+  raw: string,
+  typeName: string,
+  nullable: boolean,
+): I18nKey | null {
+  const trimmed = raw.trim();
+  const kind = classifyEditType(typeName);
+  if (/^null$/i.test(trimmed)) {
+    return nullable ? null : "editInvalidNotNull";
+  }
+  if (trimmed === "") {
+    if (!nullable) return "editInvalidNotNull";
+    // On a nullable column an empty value only makes sense for string-like
+    // types; numeric/temporal/boolean columns need a real value or NULL.
+    return kind === "other" ? null : errorKeyForKind(kind);
+  }
+  switch (kind) {
+    case "number":
+      return NUMERIC_INPUT_RE.test(trimmed) ? null : "editInvalidNumber";
+    case "date":
+      return DATE_RE.test(trimmed) ? null : "editInvalidDate";
+    case "datetime":
+      return DATETIME_RE.test(trimmed) ? null : "editInvalidDateTime";
+    case "time":
+      return TIME_RE.test(trimmed) ? null : "editInvalidTime";
+    case "boolean": {
+      const lc = trimmed.toLowerCase();
+      return lc === "true" || lc === "false" || lc === "0" || lc === "1"
+        ? null
+        : "editInvalidBoolean";
+    }
+    default:
+      return null;
+  }
 }
 
 /**

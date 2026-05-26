@@ -73,6 +73,8 @@ export function ConnectionList({
   // the loader effect doesn't fire duplicate requests for the same database.
   const tablesInFlightRef = useRef<Set<string>>(new Set());
 
+  const [refreshing, setRefreshing] = useState(false);
+
   const loadDatabases = useCallback(async () => {
     if (!sessionId) {
       setDatabases(null);
@@ -85,6 +87,56 @@ export function ConnectionList({
       setError(String(e));
     }
   }, [sessionId]);
+
+  // Re-query the schema for the active session without disconnecting, so
+  // server-side changes (new/dropped tables or columns) show up. Currently
+  // expanded databases/tables are re-fetched in place to preserve the tree's
+  // open state; collapsed nodes reload lazily on next expand as usual.
+  const refreshSchema = useCallback(async () => {
+    if (!sessionId || refreshing) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      const dbs = await api.listDatabases(sessionId);
+      const openDbs = Object.keys(expandedDbs).filter(
+        (db) => expandedDbs[db] && dbs.includes(db),
+      );
+      const nextTables: Record<string, string[]> = {};
+      await Promise.all(
+        openDbs.map(async (db) => {
+          try {
+            nextTables[db] = await api.listTables(sessionId, db);
+          } catch {
+            // Skip a database that failed to list; re-expanding retries it.
+          }
+        }),
+      );
+      const nextCols: Record<string, TableColumnInfo[]> = {};
+      await Promise.all(
+        Object.keys(expandedTables)
+          .filter((key) => expandedTables[key])
+          .map(async (key) => {
+            const sep = key.indexOf("::");
+            const db = key.slice(0, sep);
+            const tbl = key.slice(sep + 2);
+            if (!nextTables[db]?.includes(tbl)) return;
+            try {
+              nextCols[key] = await api.describeTable(sessionId, db, tbl);
+            } catch {
+              // Skip a table that failed; re-expanding retries it.
+            }
+          }),
+      );
+      tablesInFlightRef.current.clear();
+      setDatabases(dbs);
+      setTables(nextTables);
+      setTableColumns(nextCols);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [sessionId, refreshing, expandedDbs, expandedTables]);
 
   useEffect(() => {
     setTables({});
@@ -387,6 +439,21 @@ export function ConnectionList({
             >
               {t("listReadOnly")}
             </span>
+          )}
+          {status === "connected" && (
+            <button
+              type="button"
+              className={`schema-refresh-btn ${refreshing ? "spinning" : ""}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void refreshSchema();
+              }}
+              disabled={refreshing}
+              title={t("treeRefreshTitle")}
+              aria-label={t("treeRefresh")}
+            >
+              <Icon name="refresh" />
+            </button>
           )}
           <span className={`status-dot status-${status}`} aria-label={statusLabel(status)} title={statusLabel(status)} />
           <span className="tree-badge driver">{p.driver}</span>
