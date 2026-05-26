@@ -75,6 +75,14 @@ export function ConnectionList({
 
   const [refreshing, setRefreshing] = useState(false);
 
+  // Latest session id, read after awaits to drop stale schema results when the
+  // user switches connections mid-refresh (otherwise the old session's tree
+  // could overwrite the new one).
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
   const loadDatabases = useCallback(async () => {
     if (!sessionId) {
       setDatabases(null);
@@ -94,10 +102,11 @@ export function ConnectionList({
   // open state; collapsed nodes reload lazily on next expand as usual.
   const refreshSchema = useCallback(async () => {
     if (!sessionId || refreshing) return;
+    const targetSessionId = sessionId;
     setRefreshing(true);
     setError(null);
     try {
-      const dbs = await api.listDatabases(sessionId);
+      const dbs = await api.listDatabases(targetSessionId);
       const openDbs = Object.keys(expandedDbs).filter(
         (db) => expandedDbs[db] && dbs.includes(db),
       );
@@ -105,7 +114,7 @@ export function ConnectionList({
       await Promise.all(
         openDbs.map(async (db) => {
           try {
-            nextTables[db] = await api.listTables(sessionId, db);
+            nextTables[db] = await api.listTables(targetSessionId, db);
           } catch {
             // Skip a database that failed to list; re-expanding retries it.
           }
@@ -121,19 +130,25 @@ export function ConnectionList({
             const tbl = key.slice(sep + 2);
             if (!nextTables[db]?.includes(tbl)) return;
             try {
-              nextCols[key] = await api.describeTable(sessionId, db, tbl);
+              nextCols[key] = await api.describeTable(targetSessionId, db, tbl);
             } catch {
               // Skip a table that failed; re-expanding retries it.
             }
           }),
       );
+      // The session may have changed while we awaited — don't clobber the new
+      // connection's tree with results fetched for the old one.
+      if (sessionIdRef.current !== targetSessionId) return;
       tablesInFlightRef.current.clear();
       setDatabases(dbs);
       setTables(nextTables);
       setTableColumns(nextCols);
     } catch (e) {
-      setError(String(e));
+      // Suppress a stale session's error so it can't surface on the new one.
+      if (sessionIdRef.current === targetSessionId) setError(String(e));
     } finally {
+      // Always clear the spinner: `refreshing` is shared component state, so
+      // leaving it set would lock out the next connection's refresh button.
       setRefreshing(false);
     }
   }, [sessionId, refreshing, expandedDbs, expandedTables]);
