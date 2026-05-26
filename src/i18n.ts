@@ -19,6 +19,8 @@ const en = {
   sidebarTabConnections: "Connections",
   sidebarTabSnippets: "Snippets",
   sidebarTabHistory: "History",
+  sidebarCollapse: "Collapse sidebar",
+  sidebarExpand: "Expand sidebar",
   statusFailedLoadSnippets: "Failed to load snippets: {error}",
 
   historySearchPlaceholder: "Search history...",
@@ -650,6 +652,8 @@ const ja: Dict = {
   sidebarTabConnections: "接続",
   sidebarTabSnippets: "スニペット",
   sidebarTabHistory: "履歴",
+  sidebarCollapse: "サイドバーを折りたたむ",
+  sidebarExpand: "サイドバーを開く",
   statusFailedLoadSnippets: "スニペットの読み込みに失敗しました: {error}",
 
   historySearchPlaceholder: "履歴を検索...",
