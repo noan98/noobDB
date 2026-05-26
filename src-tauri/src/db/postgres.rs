@@ -162,6 +162,14 @@ impl PostgresConn {
                 "preview only supports INSERT/UPDATE/DELETE statements".into(),
             ));
         }
+        // Reject stacked statements outright so the preview can only ever run
+        // the single mutation it shows a diff for (the rollback below assumes
+        // exactly one statement executed).
+        if super::has_stacked_statements(sql) {
+            return Err(AppError::InvalidInput(
+                "preview does not support multiple statements".into(),
+            ));
+        }
 
         let target = extract_target_table(sql);
         let primary_key = match target.as_deref() {

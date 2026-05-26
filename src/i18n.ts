@@ -188,7 +188,7 @@ const en = {
   formIsProduction: "Mark as production",
   formIsProductionHelp: "Production-flagged profiles can show a confirmation dialog before connect (controlled in Settings).",
   formConfirmWrites: "Require approval for data-modifying queries",
-  formConfirmWritesHelp: "On this production connection, show an approval dialog before running any statement that isn't strictly read-only. If read only is enabled, read only takes precedence.",
+  formConfirmWritesHelp: "On this production connection, show an approval dialog before running any statement that isn't strictly read-only. If read only is enabled, read only takes precedence. This is a UI confirmation to prevent accidents, not a backend-enforced restriction — for hard enforcement use read only or database-side privileges.",
   formReadOnly: "Read only",
   formReadOnlyHelp: "Reject any non-read-only SQL on this profile. Only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed; SELECT ... FOR UPDATE is also blocked.",
   formSkipHistory: "Don't record query history",
@@ -666,6 +666,10 @@ const en = {
   helpProductionDesc:
     "Shows a confirmation dialog before connecting to a profile marked as production. Toggle it in Settings.",
 
+  helpConfirmWritesTitle: "Write approval on production (confirm_writes)",
+  helpConfirmWritesDesc:
+    "On a production connection, shows an approval dialog before running a non-read-only statement. This is a UI safety net to prevent accidents — unlike read-only it is NOT enforced in the backend, so calling the backend directly bypasses it. For hard enforcement, use read-only or database-side privileges.",
+
   helpSectionShortcuts: "Keyboard shortcuts",
   helpSectionShortcutsDesc:
     "Speed up the operations you repeat most. Editor shortcuts work while the SQL editor has focus.",
@@ -879,7 +883,7 @@ const ja: Dict = {
   formIsProduction: "本番環境としてマーク",
   formIsProductionHelp: "本番マークされた接続先は、接続前に確認ダイアログを表示できます（設定で制御）。",
   formConfirmWrites: "データの変更を伴うクエリ実行はユーザーに承認を求める",
-  formConfirmWritesHelp: "この本番接続では、読み取り専用でない文を実行する前に承認ダイアログを表示します。読み取り専用が有効な場合は読み取り専用が優先されます。",
+  formConfirmWritesHelp: "この本番接続では、読み取り専用でない文を実行する前に承認ダイアログを表示します。読み取り専用が有効な場合は読み取り専用が優先されます。これは誤操作防止のための UI 上の確認であり、バックエンドで強制される制限ではありません。確実に書き込みを禁止するには読み取り専用や DB 側の権限設定を併用してください。",
   formReadOnly: "読み取り専用",
   formReadOnlyHelp: "このプロファイルでは書き込み系の SQL を一律で拒否します。許可されるのは SELECT / SHOW / DESCRIBE / EXPLAIN / WITH のみで、SELECT ... FOR UPDATE もブロックされます。",
   formSkipHistory: "クエリ履歴を記録しない",
@@ -1356,6 +1360,10 @@ const ja: Dict = {
   helpProductionTitle: "本番環境マーク (is_production)",
   helpProductionDesc:
     "本番としてマークしたプロファイルへの接続前に確認ダイアログを表示します。設定で ON/OFF を切り替えられます。",
+
+  helpConfirmWritesTitle: "本番接続の書き込み承認 (confirm_writes)",
+  helpConfirmWritesDesc:
+    "本番としてマークした接続で、読み取り専用でない文を実行する前に承認ダイアログを表示します。これは誤操作を防ぐための UI 上の安全網であり、読み取り専用 (read_only) のようにバックエンドで強制されるものではありません (バックエンドを直接呼べば回避できます)。確実に書き込みを禁止したい場合は、読み取り専用や DB 側の権限設定を使ってください。",
 
   helpSectionShortcuts: "キーボードショートカット",
   helpSectionShortcutsDesc:

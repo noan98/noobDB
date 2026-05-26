@@ -61,6 +61,7 @@ const SECTIONS: Section[] = [
     features: [
       { titleKey: "helpReadOnlyTitle", descKey: "helpReadOnlyDesc" },
       { titleKey: "helpProductionTitle", descKey: "helpProductionDesc" },
+      { titleKey: "helpConfirmWritesTitle", descKey: "helpConfirmWritesDesc" },
     ],
   },
   {

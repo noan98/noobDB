@@ -73,7 +73,10 @@ export function ConnectionList({
   // the loader effect doesn't fire duplicate requests for the same database.
   const tablesInFlightRef = useRef<Set<string>>(new Set());
 
-  const [refreshing, setRefreshing] = useState(false);
+  // Id of the session whose schema is currently being re-fetched, or null.
+  // Keyed by session (not a shared boolean) so a refresh only disables/​spins
+  // the button on its own connection row, leaving other connections usable.
+  const [refreshingSession, setRefreshingSession] = useState<string | null>(null);
 
   // Latest session id, read after awaits to drop stale schema results when the
   // user switches connections mid-refresh (otherwise the old session's tree
@@ -101,9 +104,9 @@ export function ConnectionList({
   // expanded databases/tables are re-fetched in place to preserve the tree's
   // open state; collapsed nodes reload lazily on next expand as usual.
   const refreshSchema = useCallback(async () => {
-    if (!sessionId || refreshing) return;
+    if (!sessionId || refreshingSession === sessionId) return;
     const targetSessionId = sessionId;
-    setRefreshing(true);
+    setRefreshingSession(targetSessionId);
     setError(null);
     try {
       const dbs = await api.listDatabases(targetSessionId);
@@ -147,11 +150,11 @@ export function ConnectionList({
       // Suppress a stale session's error so it can't surface on the new one.
       if (sessionIdRef.current === targetSessionId) setError(String(e));
     } finally {
-      // Always clear the spinner: `refreshing` is shared component state, so
-      // leaving it set would lock out the next connection's refresh button.
-      setRefreshing(false);
+      // Clear only if it's still this session being tracked, so a connection
+      // switch mid-refresh can't wipe a newer session's in-flight flag.
+      setRefreshingSession((cur) => (cur === targetSessionId ? null : cur));
     }
-  }, [sessionId, refreshing, expandedDbs, expandedTables]);
+  }, [sessionId, refreshingSession, expandedDbs, expandedTables]);
 
   useEffect(() => {
     setTables({});
@@ -458,12 +461,12 @@ export function ConnectionList({
           {status === "connected" && (
             <button
               type="button"
-              className={`schema-refresh-btn ${refreshing ? "spinning" : ""}`}
+              className={`schema-refresh-btn ${refreshingSession === sessionId ? "spinning" : ""}`}
               onClick={(e) => {
                 e.stopPropagation();
                 void refreshSchema();
               }}
-              disabled={refreshing}
+              disabled={refreshingSession === sessionId}
               title={t("treeRefreshTitle")}
               aria-label={t("treeRefresh")}
             >
