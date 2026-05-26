@@ -27,6 +27,12 @@ pub struct ConnectionProfile {
     /// confirmation dialog before connecting.
     #[serde(default)]
     pub is_production: bool,
+    /// When true (and `is_production` is set), the UI requires explicit
+    /// approval before running any statement that is not strictly read-only.
+    /// `read_only` takes precedence: a read-only session rejects writes
+    /// outright, so there is nothing left to approve.
+    #[serde(default)]
+    pub confirm_writes: bool,
     /// When true, sessions opened from this profile reject any SQL that is
     /// not strictly read-only. Acts as a last-line safety net independent
     /// of DB-side privileges.

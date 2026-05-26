@@ -71,7 +71,7 @@ const SettingsView = lazy(() =>
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
-import { analyzeDangerousSql, type DangerFinding } from "./dangerousSql";
+import { analyzeDangerousSql, isReadOnlySql, type DangerFinding } from "./dangerousSql";
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT } from "./i18n";
 import { useSettings, getSettings, BASE_FONT_SIZE_PX, type TabRestoreMode } from "./settings";
@@ -492,6 +492,9 @@ export default function App() {
     sql: string;
     findings: DangerFinding[];
     isProduction: boolean;
+    // True when the gate fired only because the production connection requires
+    // approval for any write (no specific destructive pattern was detected).
+    writeApproval: boolean;
     autoLimit: number | null;
   } | null>(null);
 
@@ -1217,18 +1220,33 @@ export default function App() {
         ? settings.autoLimitCount
         : null;
     const isProduction = selectedProfile?.is_production ?? false;
-    if (isProduction || settings.confirmDangerousQueries) {
-      const findings = analyzeDangerousSql(sql);
-      if (findings.length > 0) {
-        setPendingDangerous({ tabId: activeTab.id, sql, findings, isProduction, autoLimit });
-        return;
-      }
+    const readOnly = selectedProfile?.read_only ?? false;
+    // Production connections may opt into approving every data-modifying
+    // statement. Read-only takes precedence: those sessions reject writes
+    // outright on the backend, so there is nothing to approve here.
+    const requireWriteApproval =
+      isProduction && (selectedProfile?.confirm_writes ?? false) && !readOnly;
+    const findings =
+      isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
+    const needsWriteApproval = requireWriteApproval && !isReadOnlySql(sql);
+    if (findings.length > 0 || needsWriteApproval) {
+      setPendingDangerous({
+        tabId: activeTab.id,
+        sql,
+        findings,
+        isProduction,
+        writeApproval: needsWriteApproval,
+        autoLimit,
+      });
+      return;
     }
     runQueryInTab(activeTab.id, sql, null, autoLimit);
   }, [
     activeTab,
     runQueryInTab,
     selectedProfile?.is_production,
+    selectedProfile?.confirm_writes,
+    selectedProfile?.read_only,
     settings.confirmDangerousQueries,
     settings.autoLimitEnabled,
     settings.autoLimitCount,
@@ -2166,6 +2184,7 @@ export default function App() {
         <DangerousQueryDialog
           findings={pendingDangerous.findings}
           isProduction={pendingDangerous.isProduction}
+          writeApproval={pendingDangerous.writeApproval}
           onConfirm={handleConfirmDangerous}
           onCancel={handleCancelDangerous}
         />

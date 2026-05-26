@@ -26,6 +26,11 @@ export interface ConnectionProfile {
   color: string | null;
   is_production: boolean;
   /**
+   * When true (and `is_production` is set), the UI asks for explicit approval
+   * before running any non-read-only statement. `read_only` takes precedence.
+   */
+  confirm_writes: boolean;
+  /**
    * When true, sessions opened from this profile reject any SQL that is
    * not strictly read-only (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH).
    */
@@ -79,6 +84,7 @@ export interface SaveProfileRequest {
   group: string | null;
   color: string | null;
   is_production: boolean;
+  confirm_writes: boolean;
   read_only: boolean;
   skip_history: boolean;
   /** Required for sqlite; ignored otherwise. */

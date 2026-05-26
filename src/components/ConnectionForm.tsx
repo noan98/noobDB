@@ -64,6 +64,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [group, setGroup] = useState(initial?.group ?? "");
   const [color, setColor] = useState<string | null>(initial?.color ?? null);
   const [isProduction, setIsProduction] = useState<boolean>(initial?.is_production ?? false);
+  const [confirmWrites, setConfirmWrites] = useState<boolean>(initial?.confirm_writes ?? false);
   const [readOnly, setReadOnly] = useState<boolean>(initial?.read_only ?? false);
   const [skipHistory, setSkipHistory] = useState<boolean>(initial?.skip_history ?? false);
 
@@ -172,6 +173,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const toggleProduction = (checked: boolean) => {
     setIsProduction(checked);
     if (checked && !color) setColor(DEFAULT_PROD_COLOR);
+    // The write-approval option is a child of "production"; clear it when the
+    // parent is unchecked so a hidden, stale value can't be persisted.
+    if (!checked) setConfirmWrites(false);
   };
 
   const parsePort = (value: string): number | null => {
@@ -241,6 +245,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         group: group.trim() || null,
         color: color || null,
         is_production: isProduction,
+        confirm_writes: confirmWrites,
         read_only: readOnly,
         skip_history: skipHistory,
         file_path: isFileBacked ? (filePath || null) : null,
@@ -388,6 +393,22 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
               {t("formIsProductionHelp")}
             </p>
+            {isProduction && (
+              <div style={{ marginLeft: 22, marginTop: 8 }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: "auto" }}
+                    checked={confirmWrites}
+                    onChange={(e) => setConfirmWrites(e.target.checked)}
+                  />
+                  {t("formConfirmWrites")}
+                </label>
+                <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+                  {t("formConfirmWritesHelp")}
+                </p>
+              </div>
+            )}
           </div>
           <div>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>

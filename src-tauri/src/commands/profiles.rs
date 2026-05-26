@@ -38,6 +38,8 @@ pub struct SaveProfileRequest {
     #[serde(default)]
     pub is_production: bool,
     #[serde(default)]
+    pub confirm_writes: bool,
+    #[serde(default)]
     pub read_only: bool,
     #[serde(default)]
     pub skip_history: bool,
@@ -81,6 +83,7 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
         group: req.group.filter(|s| !s.is_empty()),
         color: req.color.filter(|s| !s.is_empty()),
         is_production: req.is_production,
+        confirm_writes: req.confirm_writes,
         read_only: req.read_only,
         skip_history: req.skip_history,
         file_path: req.file_path.filter(|s| !s.is_empty()),

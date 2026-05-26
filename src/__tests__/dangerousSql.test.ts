@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { analyzeDangerousSql } from "../dangerousSql";
+import { analyzeDangerousSql, isReadOnlySql } from "../dangerousSql";
 
 describe("analyzeDangerousSql", () => {
   it("flags DELETE without a top-level WHERE", () => {
@@ -99,5 +99,62 @@ describe("analyzeDangerousSql", () => {
     expect(
       analyzeDangerousSql("/* cleanup */ DELETE FROM sessions"),
     ).toEqual([{ kind: "deleteNoWhere", target: "sessions" }]);
+  });
+});
+
+describe("isReadOnlySql", () => {
+  it("accepts statements that begin with an allowed read-only keyword", () => {
+    expect(isReadOnlySql("SELECT * FROM users")).toBe(true);
+    expect(isReadOnlySql("  select 1")).toBe(true);
+    expect(isReadOnlySql("SHOW TABLES")).toBe(true);
+    expect(isReadOnlySql("DESCRIBE users")).toBe(true);
+    expect(isReadOnlySql("DESC users")).toBe(true);
+    expect(isReadOnlySql("EXPLAIN SELECT 1")).toBe(true);
+    expect(isReadOnlySql("WITH t AS (SELECT 1) SELECT * FROM t")).toBe(true);
+  });
+
+  it("tolerates trailing semicolons, whitespace, and comments", () => {
+    expect(isReadOnlySql("SELECT 1;")).toBe(true);
+    expect(isReadOnlySql("SELECT 1;   ")).toBe(true);
+    expect(isReadOnlySql("SELECT 1 -- trailing")).toBe(true);
+  });
+
+  it("rejects write and DDL statements", () => {
+    expect(isReadOnlySql("INSERT INTO t (x) VALUES (1)")).toBe(false);
+    expect(isReadOnlySql("UPDATE t SET x = 1 WHERE id = 2")).toBe(false);
+    expect(isReadOnlySql("DELETE FROM t WHERE id = 1")).toBe(false);
+    expect(isReadOnlySql("DROP TABLE t")).toBe(false);
+    expect(isReadOnlySql("TRUNCATE t")).toBe(false);
+    expect(isReadOnlySql("CREATE TABLE t (id int)")).toBe(false);
+    expect(isReadOnlySql("CALL do_thing()")).toBe(false);
+  });
+
+  it("rejects a write/DDL keyword hiding inside a SELECT-prefixed body", () => {
+    // Data-modifying CTE and SELECT ... INTO both begin with allowed keywords.
+    expect(
+      isReadOnlySql("WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d"),
+    ).toBe(false);
+    expect(isReadOnlySql("SELECT * INTO backup FROM t")).toBe(false);
+  });
+
+  it("rejects a hidden second statement", () => {
+    expect(isReadOnlySql("SELECT 1; DELETE FROM t")).toBe(false);
+  });
+
+  it("rejects row-locking SELECTs", () => {
+    expect(isReadOnlySql("SELECT * FROM t FOR UPDATE")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t FOR SHARE")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t LOCK IN SHARE MODE")).toBe(false);
+  });
+
+  it("is not fooled by keywords inside strings or comments", () => {
+    expect(isReadOnlySql("SELECT 'delete from t' AS note")).toBe(true);
+    expect(isReadOnlySql("SELECT 1 /* drop table t */")).toBe(true);
+  });
+
+  it("treats empty or unrecognized input as not read-only", () => {
+    expect(isReadOnlySql("")).toBe(false);
+    expect(isReadOnlySql("   ")).toBe(false);
+    expect(isReadOnlySql("(SELECT 1)")).toBe(false);
   });
 });
