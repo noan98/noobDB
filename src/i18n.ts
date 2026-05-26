@@ -16,6 +16,11 @@ const en = {
   appNewSnippet: "New snippet",
   appHistory: "History",
 
+  titleBarMinimize: "Minimize",
+  titleBarMaximize: "Maximize",
+  titleBarRestore: "Restore down",
+  titleBarClose: "Close",
+
   sidebarTabConnections: "Connections",
   sidebarTabSnippets: "Snippets",
   sidebarTabHistory: "History",
@@ -662,6 +667,11 @@ const ja: Dict = {
   appSnippets: "スニペット",
   appNewSnippet: "新規スニペット",
   appHistory: "履歴",
+
+  titleBarMinimize: "最小化",
+  titleBarMaximize: "最大化",
+  titleBarRestore: "元のサイズに戻す",
+  titleBarClose: "閉じる",
 
   sidebarTabConnections: "接続",
   sidebarTabSnippets: "スニペット",
