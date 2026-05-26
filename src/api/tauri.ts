@@ -37,6 +37,17 @@ export interface ConnectionProfile {
   skip_history: boolean;
   /** Database file path for file-backed drivers (SQLite). */
   file_path: string | null;
+  /**
+   * Whether a DB password is stored in the OS keyring for this profile. The
+   * value itself never reaches the frontend; this flag only drives the masked
+   * "password is set" indicator in the connection form. Present only on
+   * profiles returned by `list_profiles`.
+   */
+  has_db_password?: boolean;
+  /** Whether an SSH key passphrase is stored in the keyring. See `has_db_password`. */
+  has_ssh_passphrase?: boolean;
+  /** Whether an SSH password is stored in the keyring. See `has_db_password`. */
+  has_ssh_password?: boolean;
 }
 
 export interface SshRequest extends SshProfile {

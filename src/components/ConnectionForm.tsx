@@ -3,6 +3,60 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri";
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
+
+// Bullet glyphs shown (read-only) to stand in for a secret that is already
+// saved in the OS keyring. The real value never reaches the frontend, so this
+// is a fixed-length placeholder whose only job is to make "a password is set"
+// visible instead of an empty field.
+const STORED_MASK = "•".repeat(10);
+
+interface PasswordInputProps {
+  value: string;
+  onChange: (value: string) => void;
+  /** True when a secret for this field already exists in the keyring. */
+  hasStored: boolean;
+}
+
+/**
+ * Password input with an always-visible show/hide toggle. When a secret is
+ * already stored and the user has not typed a replacement, it displays a masked
+ * placeholder (read-only) so the saved state is obvious; focusing clears it for
+ * editing and leaving it untouched keeps the stored value (empty `value`).
+ */
+function PasswordInput({ value, onChange, hasStored }: PasswordInputProps) {
+  const t = useT();
+  const [show, setShow] = useState(false);
+  const [focused, setFocused] = useState(false);
+
+  const showingMask = hasStored && value === "" && !focused;
+
+  return (
+    <div className="password-field">
+      <input
+        type={show ? "text" : "password"}
+        value={showingMask ? STORED_MASK : value}
+        readOnly={showingMask}
+        autoComplete="off"
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      />
+      <button
+        type="button"
+        className="password-toggle"
+        // Keep the input focused so the toggle works while typing.
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setShow((s) => !s)}
+        aria-pressed={show}
+        aria-label={show ? t("formPasswordHide") : t("formPasswordShow")}
+        title={show ? t("formPasswordHide") : t("formPasswordShow")}
+      >
+        <Icon name={show ? "eye-off" : "eye"} size={16} />
+      </button>
+    </div>
+  );
+}
 
 interface Props {
   initial: ConnectionProfile | null;
@@ -320,7 +374,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           </div>
           <div style={{ marginTop: 8 }}>
             <label>{t("formDbPassword")}</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <PasswordInput
+              value={password}
+              onChange={setPassword}
+              hasStored={!!initial?.has_db_password}
+            />
           </div>
         </fieldset>
       )}
@@ -471,14 +529,22 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   </div>
                   <div style={{ marginTop: 8 }}>
                     <label>{t("formSshPassphrase")}</label>
-                    <input type="password" value={sshPassphrase} onChange={(e) => setSshPassphrase(e.target.value)} />
+                    <PasswordInput
+                      value={sshPassphrase}
+                      onChange={setSshPassphrase}
+                      hasStored={!!initial?.has_ssh_passphrase}
+                    />
                   </div>
                 </>
               )}
               {sshAuthMethod === "password" && (
                 <div style={{ marginTop: 8 }}>
                   <label>{t("formSshPassword")}</label>
-                  <input type="password" value={sshPassword} onChange={(e) => setSshPassword(e.target.value)} />
+                  <PasswordInput
+                    value={sshPassword}
+                    onChange={setSshPassword}
+                    hasStored={!!initial?.has_ssh_password}
+                  />
                 </div>
               )}
               {sshAuthMethod === "agent" && (

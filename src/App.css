@@ -1395,6 +1395,24 @@ button.icon.history-action:hover {
 .form legend { font-weight: 600; font-size: var(--text-sm); padding: 0 6px; }
 .form .actions { grid-column: span 2; display: flex; gap: var(--space-2); justify-content: flex-end; }
 
+/* Password input with an always-visible show/hide toggle pinned inside the
+   field. The input reserves right padding so text never slides under the icon. */
+.password-field { position: relative; display: flex; align-items: center; }
+.password-field input { padding-right: 34px; }
+.password-toggle {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+}
+.password-toggle:hover { background: var(--bg-hover); color: var(--text); }
+
 /* ---------- Editor ---------- */
 
 .editor {

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::profiles::store::{self, new_profile_id};
@@ -46,9 +46,37 @@ pub struct SaveProfileRequest {
     pub file_path: Option<String>,
 }
 
+/// A stored profile plus flags telling the UI which secrets already exist in the
+/// keyring. The secret *values* never leave the backend; only their presence is
+/// reported so the form can show a masked indicator instead of an empty field.
+/// `ConnectionProfile` is flattened so the wire shape stays a superset of the
+/// plain profile (the extra `has_*` fields are not persisted to profiles.json).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileWithSecretFlags {
+    #[serde(flatten)]
+    pub profile: ConnectionProfile,
+    pub has_db_password: bool,
+    pub has_ssh_passphrase: bool,
+    pub has_ssh_password: bool,
+}
+
 #[tauri::command]
-pub async fn list_profiles() -> Result<Vec<ConnectionProfile>> {
-    store::load_all()
+pub async fn list_profiles() -> Result<Vec<ProfileWithSecretFlags>> {
+    let profiles = store::load_all()?;
+    Ok(profiles
+        .into_iter()
+        .map(|profile| {
+            let has_db_password = secrets::has_db_password(&profile.id);
+            let has_ssh_passphrase = secrets::has_ssh_passphrase(&profile.id);
+            let has_ssh_password = secrets::has_ssh_password(&profile.id);
+            ProfileWithSecretFlags {
+                profile,
+                has_db_password,
+                has_ssh_passphrase,
+                has_ssh_password,
+            }
+        })
+        .collect())
 }
 
 #[tauri::command]
