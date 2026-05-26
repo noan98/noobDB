@@ -22,8 +22,22 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 
-# Async runtime
-tokio = { version = "1", features = ["full"] }
+# Async runtime. このクレートが実際に使う機能だけを列挙する (旧 "full" は未使用の
+# signal / io-std / parking_lot なども含んでいた)。内訳: rt-multi-thread=spawn と
+# Tauri ランタイム、sync=RwLock/OnceCell、time=timeout、net=SSH トンネルの
+# TcpListener、io-util=copy_bidirectional/AsyncWriteExt、fs=エクスポートの async
+# 読み書き、process=mysqldump 起動。`#[tokio::test]` 用の macros は dev-dependencies
+# 側で有効化している。なお最終的な tokio の feature は依存グラフ全体の和になるため、
+# Tauri/sqlx が要求する機能は引き続き有効になる。
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "net",
+    "io-util",
+    "fs",
+    "process",
+] }
 tokio-util = { version = "0.7", features = ["io", "compat"] }
 futures-util = "0.3"
 

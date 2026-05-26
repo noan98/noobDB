@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   api,
@@ -22,26 +22,55 @@ import {
   type PendingEdits,
 } from "./components/cellEdit";
 import { ConnectionList } from "./components/ConnectionList";
-import { ConnectionForm } from "./components/ConnectionForm";
 import { EmptyState } from "./components/EmptyState";
 import { Spinner } from "./components/Spinner";
 import { SnippetList } from "./components/SnippetList";
-import { SnippetForm } from "./components/SnippetForm";
 import { HistoryList } from "./components/HistoryList";
-import { QueryEditor, type QueryEditorHandle, type SchemaTable } from "./components/QueryEditor";
+import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
-import { ResultGrid, type ResultGridHandle } from "./components/ResultGrid";
-import { PreviewGrid } from "./components/PreviewGrid";
-import { ExplainViewer } from "./components/ExplainViewer";
+import type { ResultGridHandle } from "./components/ResultGrid";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
-import { ImportModal } from "./components/ImportModal";
-import { DumpModal } from "./components/DumpModal";
-import { HelpView } from "./components/HelpView";
-import { SettingsView } from "./components/SettingsView";
-import { DangerousQueryDialog } from "./components/DangerousQueryDialog";
 import { Splitter } from "./components/Splitter";
 import { Icon } from "./components/Icon";
+
+// Heavy or rarely-immediately-needed views are code-split so the initial
+// bundle the WebView parses and mounts on launch stays small. CodeMirror
+// (QueryEditor), TanStack Table (ResultGrid / PreviewGrid), the formatter and
+// the modal/full-screen views only load when first rendered.
+const QueryEditor = lazy(() =>
+  import("./components/QueryEditor").then((m) => ({ default: m.QueryEditor })),
+);
+const ResultGrid = lazy(() =>
+  import("./components/ResultGrid").then((m) => ({ default: m.ResultGrid })),
+);
+const PreviewGrid = lazy(() =>
+  import("./components/PreviewGrid").then((m) => ({ default: m.PreviewGrid })),
+);
+const ExplainViewer = lazy(() =>
+  import("./components/ExplainViewer").then((m) => ({ default: m.ExplainViewer })),
+);
+const ConnectionForm = lazy(() =>
+  import("./components/ConnectionForm").then((m) => ({ default: m.ConnectionForm })),
+);
+const SnippetForm = lazy(() =>
+  import("./components/SnippetForm").then((m) => ({ default: m.SnippetForm })),
+);
+const ImportModal = lazy(() =>
+  import("./components/ImportModal").then((m) => ({ default: m.ImportModal })),
+);
+const DumpModal = lazy(() =>
+  import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
+);
+const HelpView = lazy(() =>
+  import("./components/HelpView").then((m) => ({ default: m.HelpView })),
+);
+const SettingsView = lazy(() =>
+  import("./components/SettingsView").then((m) => ({ default: m.SettingsView })),
+);
+const DangerousQueryDialog = lazy(() =>
+  import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
+);
 import { analyzeDangerousSql, type DangerFinding } from "./dangerousSql";
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT } from "./i18n";
@@ -1853,6 +1882,7 @@ export default function App() {
             : undefined
         }
       >
+        <Suspense fallback={<div className="pane-empty"><Spinner size={20} /></div>}>
         {showHelp ? (
           <HelpView onClose={() => setShowHelp(false)} />
         ) : showSettings ? (
@@ -1945,6 +1975,7 @@ export default function App() {
                   minSize={120}
                   ariaLabel={t("splitterEditorAria")}
                   first={
+                    <Suspense fallback={<div className="pane-empty"><Spinner size={20} /></div>}>
                     <QueryEditor
                       key={activeTab.id}
                       ref={editorRef}
@@ -1977,9 +2008,11 @@ export default function App() {
                       builderSnapshot={activeTab.builderSnapshot}
                       onBuilderPersist={(snapshot) => updateTab(activeTab.id, { builderSnapshot: snapshot })}
                     />
+                    </Suspense>
                   }
                   second={
-                    activeTab.kind === "explain" ? (
+                    <Suspense fallback={<div className="pane-empty"><Spinner size={20} /></div>}>
+                    {activeTab.kind === "explain" ? (
                       <ExplainViewer
                         result={activeTab.result}
                         streaming={activeTab.streaming}
@@ -2027,7 +2060,8 @@ export default function App() {
                         onPreviewEdits={handlePreviewEdits}
                         onApplyEdits={handleApplyEdits}
                       />
-                    )
+                    )}
+                    </Suspense>
                   }
                 />
 
@@ -2053,6 +2087,7 @@ export default function App() {
             </div>
           </>
         )}
+        </Suspense>
 
         <div className={`status status-${statusTone(status)}`}>
           <span className="status-icon" aria-hidden>
@@ -2108,6 +2143,7 @@ export default function App() {
         </div>
       </main>
 
+      <Suspense fallback={null}>
       {importTarget && sessionId && (
         <ImportModal
           sessionId={sessionId}
@@ -2134,6 +2170,7 @@ export default function App() {
           onCancel={handleCancelDangerous}
         />
       )}
+      </Suspense>
       </div>
     </div>
   );
