@@ -18,6 +18,7 @@ import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
+import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { ExportModal } from "./ExportModal";
 import { Spinner } from "./Spinner";
@@ -459,34 +460,11 @@ export function DataGrid({
   const [copyMenu, setCopyMenu] = useState<
     { x: number; y: number; rowIdx: number; colIdx: number } | null
   >(null);
-  const copyMenuRef = useRef<HTMLDivElement | null>(null);
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | null>(null);
 
   // Full-value viewer target (original row index + display column index).
   const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
-
-  useEffect(() => {
-    if (!copyMenu) return;
-    const close = () => setCopyMenu(null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    const onMouseDown = (e: MouseEvent) => {
-      if (copyMenuRef.current?.contains(e.target as Node)) return;
-      close();
-    };
-    window.addEventListener("mousedown", onMouseDown);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("mousedown", onMouseDown);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-    };
-  }, [copyMenu]);
 
   useEffect(
     () => () => {
@@ -774,48 +752,23 @@ export function DataGrid({
         </tbody>
       </table>
       {copyMenu && (
-        <div
-          ref={copyMenuRef}
-          className="context-menu"
-          style={{ left: copyMenu.x, top: copyMenu.y }}
-          role="menu"
-        >
-          <button
-            type="button"
-            className="context-menu-item"
-            role="menuitem"
-            onClick={() => copyCell(copyMenu.rowIdx, copyMenu.colIdx)}
-          >
-            {t("gridCopyCell")}
-          </button>
-          <button
-            type="button"
-            className="context-menu-item"
-            role="menuitem"
-            onClick={() => copyRow(copyMenu.rowIdx)}
-          >
-            {t("gridCopyRow")}
-          </button>
-          <button
-            type="button"
-            className="context-menu-item"
-            role="menuitem"
-            onClick={() => copyRowWithHeaders(copyMenu.rowIdx)}
-          >
-            {t("gridCopyRowWithHeaders")}
-          </button>
-          <button
-            type="button"
-            className="context-menu-item"
-            role="menuitem"
-            onClick={() => {
-              setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx });
-              setCopyMenu(null);
-            }}
-          >
-            {t("gridViewFull")}
-          </button>
-        </div>
+        <ContextMenu
+          x={copyMenu.x}
+          y={copyMenu.y}
+          onClose={() => setCopyMenu(null)}
+          items={[
+            { label: t("gridCopyCell"), onSelect: () => copyCell(copyMenu.rowIdx, copyMenu.colIdx) },
+            { label: t("gridCopyRow"), onSelect: () => copyRow(copyMenu.rowIdx) },
+            {
+              label: t("gridCopyRowWithHeaders"),
+              onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
+            },
+            {
+              label: t("gridViewFull"),
+              onSelect: () => setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx }),
+            },
+          ]}
+        />
       )}
       {copied && (
         <div className="grid-copied-toast" role="status" aria-live="polite">
