@@ -86,6 +86,8 @@
   --status-connected: #16a34a;
   --status-connecting: #f59e0b;
   --status-error: #dc2626;
+  --status-success: #16a34a;
+  --status-info: #2563eb;
   --status-idle: #9ca3af;
 
   --syntax-keyword: #7c3aed;
@@ -159,6 +161,8 @@
   --status-connected: #22c55e;
   --status-connecting: #fbbf24;
   --status-error: #ef4444;
+  --status-success: #22c55e;
+  --status-info: #3b82f6;
   --status-idle: #6b7280;
 
   --syntax-keyword: #c4b5fd;
@@ -1741,13 +1745,54 @@ label {
 /* ---------- Status bar ---------- */
 
 .status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: 5px 14px;
   background: var(--bg-muted);
   border-top: 1px solid var(--border);
+  border-left: 3px solid transparent;
   font-size: var(--text-sm);
   color: var(--text-secondary);
 }
-.status.error { color: var(--text-error); background: var(--bg-error); }
+.status-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.status-icon:empty {
+  display: none;
+}
+.status-icon .icon-svg {
+  width: 14px;
+  height: 14px;
+}
+.status-content {
+  flex: 1;
+  min-width: 0;
+}
+/* Tone: colored left border + icon tint so running / success / error read at a
+   glance (#131). Info is neutral. */
+.status.status-running {
+  border-left-color: var(--accent);
+}
+.status.status-running .status-icon {
+  color: var(--accent);
+}
+.status.status-success {
+  border-left-color: var(--status-success);
+}
+.status.status-success .status-icon {
+  color: var(--status-success);
+}
+.status.status-error {
+  color: var(--text-error);
+  background: var(--bg-error);
+  border-left-color: var(--status-error);
+}
+.status.status-error .status-icon {
+  color: var(--status-error);
+}
 
 .status-hint {
   display: flex;
@@ -2252,6 +2297,37 @@ label {
   50% { opacity: 0.35; }
 }
 
+/* ---------- Shared spinner + loading rows ---------- */
+
+.spinner {
+  display: inline-block;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  animation: spinner-rotate 0.7s linear infinite;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+@keyframes spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+/* Loading variant of a schema-tree placeholder row: spinner beside the label. */
+.tree-empty.tree-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-style: normal;
+}
+
+/* Result pane "running query" placeholder. */
+.results.empty.results-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
 /* ---------- EXPLAIN plan visualizer ---------- */
 
 .explain-viewer {
@@ -2561,11 +2637,15 @@ label {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
   padding: var(--space-5);
+  /* Soft fade so the backdrop eases the surrounding context back (#135). */
+  animation: modal-overlay-in var(--dur-med) var(--ease);
 }
 
 .modal {
@@ -2578,6 +2658,23 @@ label {
   flex-direction: column;
   overflow: hidden;
   box-shadow: var(--shadow-xl);
+  /* Light scale + lift entrance; neutralized under prefers-reduced-motion. */
+  animation: modal-in var(--dur-med) var(--ease);
+}
+
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .modal-header {

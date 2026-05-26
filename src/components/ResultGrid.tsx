@@ -20,6 +20,7 @@ import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
 import { EmptyState } from "./EmptyState";
 import { ExportModal } from "./ExportModal";
+import { Spinner } from "./Spinner";
 import {
   countEditedCells,
   countEditedRows,
@@ -928,7 +929,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }
   if (result.columns.length === 0) {
     if (streaming) {
-      return <div className="results empty">{t("statusRunningQuery")}</div>;
+      return (
+        <div className="results empty results-loading">
+          <Spinner />
+          <span>{t("statusRunningQuery")}</span>
+        </div>
+      );
     }
     return (
       <div className="results empty">
@@ -1085,7 +1091,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         />
         {loadingMore && (
           <div className="results-loading-more" role="status" aria-live="polite">
-            <span className="results-streaming-dot" aria-hidden />
+            <Spinner size={14} />
             {t("gridLoadingMore")}
           </div>
         )}
