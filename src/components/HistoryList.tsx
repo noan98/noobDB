@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
 
 interface Props {
   activeProfile: ConnectionProfile | null;
@@ -103,9 +104,11 @@ export function HistoryList({ activeProfile, reloadKey, onRestore }: Props) {
       {error ? (
         <p className="muted text-error" style={{ padding: 12 }}>{error}</p>
       ) : entries.length === 0 ? (
-        <p className="muted" style={{ padding: 12 }}>
-          {debounced ? t("historyNoMatches") : t("historyEmpty")}
-        </p>
+        debounced ? (
+          <p className="muted" style={{ padding: 12 }}>{t("historyNoMatches")}</p>
+        ) : (
+          <EmptyState icon="clock" title={t("historyEmptyTitle")} description={t("historyEmpty")} />
+        )
       ) : (
         <div className="tree" role="tree">
           {entries.map((h) => {

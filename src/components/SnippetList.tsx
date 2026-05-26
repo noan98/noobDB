@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ConnectionProfile, Snippet } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
 
 interface Props {
   snippets: Snippet[];
@@ -143,7 +144,7 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
       </div>
 
       {snippets.length === 0 ? (
-        <p className="muted" style={{ padding: 12 }}>{t("snippetEmpty")}</p>
+        <EmptyState icon="snippet" title={t("snippetEmptyTitle")} description={t("snippetEmpty")} />
       ) : visibleSnippets.length === 0 ? (
         <p className="muted" style={{ padding: 12 }}>{t("snippetNoMatches")}</p>
       ) : (

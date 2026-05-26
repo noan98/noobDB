@@ -26,7 +26,8 @@ export type IconName =
   | "snippet"
   | "warning"
   | "chevron-left"
-  | "chevron-right";
+  | "chevron-right"
+  | "clock";
 
 const PATHS: Record<IconName, ReactNode> = {
   sun: (
@@ -142,6 +143,12 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   "chevron-left": <path d="m15 18-6-6 6-6" />,
   "chevron-right": <path d="m9 18 6-6-6-6" />,
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </>
+  ),
 };
 
 interface IconProps {
