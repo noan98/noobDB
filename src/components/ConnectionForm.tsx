@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri";
 import { useT } from "../i18n";
 
@@ -92,10 +93,24 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   };
 
   const pickKeyFile = async () => {
+    // Open the picker in a small, relevant directory. Without a defaultPath the
+    // native Windows dialog lands on "This PC"/Quick Access and enumerates every
+    // drive (including disconnected network mounts), making it slow to appear and
+    // briefly spiking CPU/disk. SSH keys live under ~/.ssh, so start there (or in
+    // the directory of an already-entered path).
+    let defaultPath: string | undefined;
+    try {
+      defaultPath = sshKeyPath.trim()
+        ? await dirname(sshKeyPath)
+        : await join(await homeDir(), ".ssh");
+    } catch {
+      defaultPath = undefined;
+    }
     const selected = await open({
       multiple: false,
       directory: false,
       title: t("formPickKeyTitle"),
+      defaultPath,
     });
     if (typeof selected === "string") setSshKeyPath(selected);
   };
