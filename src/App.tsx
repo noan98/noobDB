@@ -1278,6 +1278,13 @@ export default function App() {
     }
   }, [activeTab, sessionId]);
 
+  // Always open history SQL in a fresh query tab, never overwriting the editor.
+  const handleOpenHistoryInNewTab = useCallback((sql: string) => {
+    const tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+  }, []);
+
   const handleSaveSnippetFromEditor = useCallback((sql: string) => {
     setEditingSnippet(null);
     setSnippetFormSql(sql);
@@ -1778,6 +1785,7 @@ export default function App() {
             activeProfile={selectedProfile}
             reloadKey={historyReloadKey}
             onRestore={handleRestoreHistory}
+            onOpenInNewTab={handleOpenHistoryInNewTab}
           />
         )}
       </aside>
