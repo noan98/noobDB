@@ -44,9 +44,20 @@ export interface Settings {
    * seconds. `0` disables the timeout (queries run unbounded as before).
    */
   queryTimeoutSecs: number;
+  /**
+   * Base UI font size in pixels. Scales the whole interface uniformly via the
+   * --font-scale CSS variable (scale = fontSizePx / BASE_FONT_SIZE_PX).
+   */
+  fontSizePx: number;
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
+
+/** Pixel size that maps to a 1.0 font scale (the unscaled default). */
+export const BASE_FONT_SIZE_PX = 14;
+export const DEFAULT_FONT_SIZE_PX = BASE_FONT_SIZE_PX;
+export const MIN_FONT_SIZE_PX = 10;
+export const MAX_FONT_SIZE_PX = 24;
 
 export const DEFAULT_SYNTAX_COLORS: Record<Theme, SyntaxColors> = {
   light: {
@@ -191,6 +202,7 @@ export const DEFAULT_SETTINGS: Settings = {
   confirmDangerousQueries: DEFAULT_CONFIRM_DANGEROUS_QUERIES,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
+  fontSizePx: DEFAULT_FONT_SIZE_PX,
 };
 
 /** Clamps a timeout (seconds) to a non-negative integer; `0` means disabled. */
@@ -204,6 +216,14 @@ function sanitizeTimeout(input: unknown, fallback: number): number {
 
 function sanitizeTabRestoreMode(input: unknown, fallback: TabRestoreMode): TabRestoreMode {
   return input === "always" || input === "ask" || input === "never" ? input : fallback;
+}
+
+function sanitizeFontSizePx(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.round(input);
+  if (n < MIN_FONT_SIZE_PX) return MIN_FONT_SIZE_PX;
+  if (n > MAX_FONT_SIZE_PX) return MAX_FONT_SIZE_PX;
+  return n;
 }
 
 const STORAGE_KEY = "noobdb.settings";
@@ -250,6 +270,7 @@ function loadInitial(): Settings {
       confirmDangerousQueries?: unknown;
       tabRestoreMode?: unknown;
       queryTimeoutSecs?: unknown;
+      fontSizePx?: unknown;
     };
     return {
       syntaxColors: {
@@ -277,6 +298,7 @@ function loadInitial(): Settings {
           : DEFAULT_CONFIRM_DANGEROUS_QUERIES,
       tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
       queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
+      fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -416,6 +438,14 @@ export function setTabRestoreMode(value: TabRestoreMode): void {
   const next = sanitizeTabRestoreMode(value, current.tabRestoreMode);
   if (current.tabRestoreMode === next) return;
   current = { ...current, tabRestoreMode: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setFontSizePx(value: number): void {
+  const next = sanitizeFontSizePx(value, current.fontSizePx);
+  if (current.fontSizePx === next) return;
+  current = { ...current, fontSizePx: next };
   persist();
   listeners.forEach((cb) => cb());
 }

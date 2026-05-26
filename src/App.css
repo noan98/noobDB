@@ -3,12 +3,16 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
     "Noto Sans CJK JP", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
-  --text-2xs: 10px;
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-md: 13px;
-  --text-base: 14px;
-  --text-lg: 16px;
+  /* Global UI font scale (1 = default). App.tsx overrides this inline from the
+     "font size" setting; every --text-* below multiplies through it so the
+     whole interface scales uniformly. */
+  --font-scale: 1;
+  --text-2xs: calc(10px * var(--font-scale));
+  --text-xs: calc(11px * var(--font-scale));
+  --text-sm: calc(12px * var(--font-scale));
+  --text-md: calc(13px * var(--font-scale));
+  --text-base: calc(14px * var(--font-scale));
+  --text-lg: calc(16px * var(--font-scale));
 
   /* Spacing scale (4px rhythm) */
   --space-1: 4px;
