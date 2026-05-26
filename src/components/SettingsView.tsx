@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { copyToClipboard } from "./clipboard";
 import {
@@ -147,7 +148,14 @@ export function SettingsView({ theme, onClose }: Props) {
     <div className="settings">
       <header className="settings-header">
         <h2>{t("settingsTitle")}</h2>
-        <button onClick={onClose}>{t("settingsClose")}</button>
+        <button
+          className="icon"
+          onClick={onClose}
+          aria-label={t("settingsClose")}
+          title={t("settingsClose")}
+        >
+          <Icon name="close" size={13} />
+        </button>
       </header>
 
       <section className="settings-section">

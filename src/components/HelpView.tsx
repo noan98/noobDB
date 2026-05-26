@@ -99,7 +99,14 @@ export function HelpView({ onClose }: { onClose: () => void }) {
     <div className="settings help">
       <header className="settings-header">
         <h2>{t("helpTitle")}</h2>
-        <button onClick={onClose}>{t("helpClose")}</button>
+        <button
+          className="icon"
+          onClick={onClose}
+          aria-label={t("helpClose")}
+          title={t("helpClose")}
+        >
+          <Icon name="close" size={13} />
+        </button>
       </header>
 
       <p className="settings-help help-intro">{t("helpIntro")}</p>
