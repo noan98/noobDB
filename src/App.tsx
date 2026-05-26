@@ -34,6 +34,7 @@ import { ResultGrid, type ResultGridHandle } from "./components/ResultGrid";
 import { PreviewGrid } from "./components/PreviewGrid";
 import { ExplainViewer } from "./components/ExplainViewer";
 import { TabBar } from "./components/TabBar";
+import { TitleBar } from "./components/TitleBar";
 import { ImportModal } from "./components/ImportModal";
 import { DumpModal } from "./components/DumpModal";
 import { HelpView } from "./components/HelpView";
@@ -1633,10 +1634,12 @@ export default function App() {
   }, [activeTab?.pendingEdits]);
 
   return (
-    <div
-      className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}${narrow && narrowSidebarOpen ? " sidebar-overlay" : ""}`}
-      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
-    >
+    <div className="app-shell">
+      <TitleBar />
+      <div
+        className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}${narrow && narrowSidebarOpen ? " sidebar-overlay" : ""}`}
+        style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+      >
       <aside className="sidebar">
         <header>
           <button
@@ -2083,6 +2086,7 @@ export default function App() {
           onCancel={handleCancelDangerous}
         />
       )}
+      </div>
     </div>
   );
 }
