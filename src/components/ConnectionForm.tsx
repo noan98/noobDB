@@ -55,7 +55,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [driver, setDriver] = useState<DriverKind>(initialDriver);
   const [name, setName] = useState(initial?.name ?? "");
   const [host, setHost] = useState(initial?.host ?? "127.0.0.1");
-  const [port, setPort] = useState(initial?.port ?? defaultPortFor(initialDriver));
+  const [port, setPort] = useState(String(initial?.port ?? defaultPortFor(initialDriver)));
   const [user, setUser] = useState(initial?.user ?? defaultUserFor(initialDriver));
   const [database, setDatabase] = useState(initial?.database ?? "");
   const [password, setPassword] = useState("");
@@ -68,7 +68,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
   const [useSsh, setUseSsh] = useState(!!initial?.ssh);
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
-  const [sshPort, setSshPort] = useState(initial?.ssh?.port ?? 22);
+  const [sshPort, setSshPort] = useState(String(initial?.ssh?.port ?? 22));
   const [sshUser, setSshUser] = useState(initial?.ssh?.user ?? "");
   const [sshAuthMethod, setSshAuthMethod] = useState<SshAuthMethod>(initial?.ssh?.auth_method ?? "key");
   const [sshKeyPath, setSshKeyPath] = useState(initial?.ssh?.private_key_path ?? "");
@@ -86,7 +86,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     // Reset port/user defaults when the user has not customised them; this
     // keeps freshly opened forms sensible without overwriting deliberate
     // overrides on an in-progress edit.
-    if (port === defaultPortFor(driver)) setPort(defaultPortFor(next));
+    if (port === String(defaultPortFor(driver))) setPort(String(defaultPortFor(next)));
     if (user === defaultUserFor(driver)) setUser(defaultUserFor(next));
     setDriver(next);
   };
@@ -262,7 +262,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </div>
             <div>
               <label>{t("formPort")}</label>
-              <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+              <input
+                type="text"
+                inputMode="numeric"
+                value={port}
+                onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ""))}
+              />
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 8 }}>
@@ -394,7 +399,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 </div>
                 <div>
                   <label>{t("formPort")}</label>
-                  <input type="number" value={sshPort} onChange={(e) => setSshPort(Number(e.target.value))} />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={sshPort}
+                    onChange={(e) => setSshPort(e.target.value.replace(/[^0-9]/g, ""))}
+                  />
                 </div>
               </div>
               <div style={{ marginTop: 8 }}>
