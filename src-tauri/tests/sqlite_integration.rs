@@ -211,6 +211,105 @@ async fn sqlite_execute_transaction_is_all_or_nothing() {
 }
 
 #[tokio::test]
+async fn sqlite_schema_compare_classifies_real_introspection() {
+    // Two separate SQLite files standing in for "source" and "target" schemas.
+    // Exercises the real `tables` + `columns` introspection feeding the diff,
+    // not just the pure compute function: a shared identical table, a
+    // source-only table, a target-only table, and a shared table whose column
+    // set and a column type differ.
+    let mk = |tag: &str| {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "noobdb_sqlite_diff_{tag}_{}.db",
+            std::process::id()
+        ));
+        p
+    };
+    let src_path = mk("src");
+    let tgt_path = mk("tgt");
+    for p in [&src_path, &tgt_path] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create temp sqlite file");
+    }
+
+    let src = t::connect(&t::sqlite_options(src_path.to_str().unwrap()))
+        .await
+        .expect("connect source");
+    let tgt = t::connect(&t::sqlite_options(tgt_path.to_str().unwrap()))
+        .await
+        .expect("connect target");
+
+    // Identical on both sides.
+    for c in [&src, &tgt] {
+        c.execute(
+            "CREATE TABLE shared (id INTEGER PRIMARY KEY, name TEXT)",
+            None,
+        )
+        .await
+        .expect("create shared");
+    }
+    // Source-only table.
+    src.execute("CREATE TABLE only_src (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create only_src");
+    // Target-only table.
+    tgt.execute("CREATE TABLE only_tgt (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create only_tgt");
+    // Same table name, differing definitions: an added column on the source
+    // and a differing type for `amount`.
+    src.execute(
+        "CREATE TABLE diffed (id INTEGER PRIMARY KEY, amount INTEGER, extra TEXT)",
+        None,
+    )
+    .await
+    .expect("create diffed source");
+    tgt.execute(
+        "CREATE TABLE diffed (id INTEGER PRIMARY KEY, amount TEXT)",
+        None,
+    )
+    .await
+    .expect("create diffed target");
+
+    let diff = t::compare_schemas(&src, "main", &tgt, "main")
+        .await
+        .expect("compare");
+
+    let by_name = |name: &str| {
+        diff.tables
+            .iter()
+            .find(|tbl| tbl.name == name)
+            .unwrap_or_else(|| panic!("missing table {name}"))
+    };
+
+    assert_eq!(by_name("shared").status, t::DiffStatus::Same);
+    assert!(by_name("shared").columns.is_empty());
+    assert_eq!(by_name("only_src").status, t::DiffStatus::SourceOnly);
+    assert_eq!(by_name("only_tgt").status, t::DiffStatus::TargetOnly);
+
+    let diffed = by_name("diffed");
+    assert_eq!(diffed.status, t::DiffStatus::Different);
+    let amount = diffed
+        .columns
+        .iter()
+        .find(|c| c.name == "amount")
+        .expect("amount column diff");
+    assert_eq!(amount.status, t::DiffStatus::Different);
+    assert!(amount.changed_fields.iter().any(|f| f == "data_type"));
+    let extra = diffed
+        .columns
+        .iter()
+        .find(|c| c.name == "extra")
+        .expect("extra column diff");
+    assert_eq!(extra.status, t::DiffStatus::SourceOnly);
+
+    src.close().await;
+    tgt.close().await;
+    let _ = std::fs::remove_file(&src_path);
+    let _ = std::fs::remove_file(&tgt_path);
+}
+
+#[tokio::test]
 async fn sqlite_missing_path_reports_invalid_input() {
     // file_path = None should surface a clean error instead of panicking
     // somewhere inside sqlx.

@@ -11,11 +11,32 @@ mod state;
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
 pub mod __test_api {
+    pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
     pub use crate::db::types::Value;
     pub use crate::db::{Connection, DbConnectOptions, DriverKind};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
+    }
+
+    /// Drives the full schema-comparison path (`commands::diff`) without Tauri:
+    /// collects both sides' table / column metadata from live connections and
+    /// runs the pure diff. Lets integration tests verify real introspection
+    /// feeds the diff correctly, not just the pure function in isolation.
+    pub async fn compare_schemas(
+        source: &Connection,
+        source_db: &str,
+        target: &Connection,
+        target_db: &str,
+    ) -> crate::error::Result<SchemaDiff> {
+        let s = crate::commands::diff::collect_table_columns(source, source_db).await?;
+        let t = crate::commands::diff::collect_table_columns(target, target_db).await?;
+        Ok(compute_schema_diff(
+            source.driver_kind(),
+            target.driver_kind(),
+            &s,
+            &t,
+        ))
     }
 
     /// Runs `sql` against MySQL via the text protocol, for statements the
@@ -122,6 +143,7 @@ pub fn run() {
             commands::schema::list_tables,
             commands::schema::describe_table,
             commands::schema::schema_overview,
+            commands::diff::compare_schema,
             commands::profiles::list_profiles,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,
