@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -52,6 +53,16 @@ let nextId = 1;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Clear any pending auto-dismiss timers if the provider unmounts so they
+  // can't fire setState on a torn-down instance.
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      pending.forEach(clearTimeout);
+      pending.clear();
+    };
+  }, []);
 
   const dismiss = useCallback((id: number) => {
     setToasts((cur) => cur.filter((tt) => tt.id !== id));
