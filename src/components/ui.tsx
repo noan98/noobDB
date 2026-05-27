@@ -23,7 +23,8 @@ export const Textarea = chakra("textarea", textareaRecipe);
 
 const CheckboxRoot = chakra("input", checkboxRecipe);
 
-/** ネイティブチェックボックス。`type="checkbox"` を既定で付与する。 */
-export function Checkbox(props: ComponentProps<typeof CheckboxRoot>) {
-  return <CheckboxRoot type="checkbox" {...props} />;
+/** ネイティブチェックボックス。`type="checkbox"` を常に強制する
+ *  (`type` は受け取らず、spread の後ろに固定で付与する)。 */
+export function Checkbox(props: Omit<ComponentProps<typeof CheckboxRoot>, "type">) {
+  return <CheckboxRoot {...props} type="checkbox" />;
 }
