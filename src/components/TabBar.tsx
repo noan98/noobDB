@@ -17,9 +17,28 @@ interface Props {
   onClose: (id: string) => void;
   onNew: () => void;
   disabled?: boolean;
+  /** Right-click on a tab (viewport coords) — opens the move/close menu. */
+  onTabContextMenu?: (id: string, x: number, y: number) => void;
+  /**
+   * Split control. With `splitMode === "split"` the button opens a second pane;
+   * with `"close"` it closes this pane (merging its tabs into the other one).
+   * Omitted entirely when splitting isn't available.
+   */
+  onSplit?: () => void;
+  splitMode?: "split" | "close";
 }
 
-export function TabBar({ tabs, activeTabId, onSelect, onClose, onNew, disabled }: Props) {
+export function TabBar({
+  tabs,
+  activeTabId,
+  onSelect,
+  onClose,
+  onNew,
+  disabled,
+  onTabContextMenu,
+  onSplit,
+  splitMode = "split",
+}: Props) {
   const t = useT();
 
   return (
@@ -45,6 +64,14 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onNew, disabled }
                   onClose(tab.id);
                 }
               }}
+              onContextMenu={
+                onTabContextMenu
+                  ? (e) => {
+                      e.preventDefault();
+                      onTabContextMenu(tab.id, e.clientX, e.clientY);
+                    }
+                  : undefined
+              }
             >
               <span className="tab-icon" aria-hidden>
                 <Icon name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"} />
@@ -79,6 +106,16 @@ export function TabBar({ tabs, activeTabId, onSelect, onClose, onNew, disabled }
       >
         <Icon name="plus" size={16} />
       </button>
+      {onSplit && (
+        <button
+          className={`tab-split${splitMode === "close" ? " is-close" : ""}`}
+          onClick={onSplit}
+          title={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}
+          aria-label={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}
+        >
+          <Icon name={splitMode === "close" ? "close" : "columns"} size={15} />
+        </button>
+      )}
     </div>
   );
 }

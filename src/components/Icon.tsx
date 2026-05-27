@@ -31,7 +31,8 @@ export type IconName =
   | "copy"
   | "eye"
   | "eye-off"
-  | "diff";
+  | "diff"
+  | "columns";
 
 const PATHS: Record<IconName, ReactNode> = {
   sun: (
@@ -179,6 +180,12 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="18" cy="18" r="3" />
       <path d="M13 6h3a2 2 0 0 1 2 2v7" />
       <path d="M11 18H8a2 2 0 0 1-2-2V9" />
+    </>
+  ),
+  columns: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <line x1="12" x2="12" y1="3" y2="21" />
     </>
   ),
 };
