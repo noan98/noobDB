@@ -38,18 +38,26 @@ pub enum SyncKind {
     AlterColumn,
     DropColumn,
     DropTable,
+    // Data-level statements (phase 3).
+    InsertRow,
+    UpdateRow,
+    DeleteRow,
 }
 
 impl SyncKind {
     /// Apply-order priority: create first, drop last, so a single batch never
-    /// drops something another statement still needs.
-    fn order(self) -> u8 {
+    /// drops something another statement still needs. Data statements
+    /// (insert → update → delete) sort after schema statements.
+    pub(crate) fn order(self) -> u8 {
         match self {
             SyncKind::CreateTable => 0,
             SyncKind::AddColumn => 1,
             SyncKind::AlterColumn => 2,
             SyncKind::DropColumn => 3,
             SyncKind::DropTable => 4,
+            SyncKind::InsertRow => 5,
+            SyncKind::UpdateRow => 6,
+            SyncKind::DeleteRow => 7,
         }
     }
 }
@@ -331,8 +339,9 @@ fn column_def(driver: DriverKind, col: &TableColumnInfo) -> String {
     def
 }
 
-/// Quotes an identifier for `driver`, doubling the embedded quote char.
-fn quote_ident(driver: DriverKind, name: &str) -> String {
+/// Quotes an identifier for `driver`, doubling the embedded quote char. Shared
+/// with the data-sync generator (`db::data_diff`).
+pub(crate) fn quote_ident(driver: DriverKind, name: &str) -> String {
     match driver {
         DriverKind::Mysql => format!("`{}`", name.replace('`', "``")),
         DriverKind::Postgres | DriverKind::Sqlite => format!("\"{}\"", name.replace('"', "\"\"")),

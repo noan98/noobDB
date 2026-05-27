@@ -7,6 +7,7 @@
 
 use tauri::State;
 
+use crate::db::data_diff::{generate_data_sync_sql as generate_data, DataDiff};
 use crate::db::diff::SchemaDiff;
 use crate::db::sync::{generate_sync_sql as generate, SyncPlan};
 use crate::error::{AppError, Result};
@@ -19,6 +20,14 @@ use crate::state::AppState;
 #[tauri::command]
 pub fn generate_sync_sql(diff: SchemaDiff, allow_destructive: bool) -> SyncPlan {
     generate(&diff, allow_destructive)
+}
+
+/// Renders the INSERT / UPDATE / DELETE that make the target table's rows match
+/// the source's (Issue #245 phase 3). Pure; `DELETE`s appear only when
+/// `allow_delete` is set.
+#[tauri::command]
+pub fn generate_data_sync_sql(diff: DataDiff, allow_delete: bool) -> SyncPlan {
+    generate_data(&diff, allow_delete)
 }
 
 /// Applies `statements` to `database` on the target session in one transaction

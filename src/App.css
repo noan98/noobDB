@@ -4006,3 +4006,27 @@ button.icon.history-action:hover {
   font-size: var(--text-sm);
   color: var(--text-muted);
 }
+
+/* ── Data sync kinds + limit control (Issue #245, phase 3) ───────────── */
+.schema-compare-kind.kind-insert_row {
+  color: var(--status-success);
+  border-color: var(--status-success);
+}
+.schema-compare-kind.kind-update_row {
+  color: var(--status-connecting);
+  border-color: var(--status-connecting);
+}
+.schema-compare-kind.kind-delete_row {
+  color: var(--status-error);
+  border-color: var(--status-error);
+}
+.schema-compare-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.schema-compare-limit input {
+  width: 80px;
+}

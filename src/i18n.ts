@@ -753,6 +753,23 @@ const en = {
   schemaCompareKindAlterColumn: "ALTER COLUMN",
   schemaCompareKindDropColumn: "DROP COLUMN",
   schemaCompareKindDropTable: "DROP TABLE",
+  schemaCompareKindInsertRow: "INSERT",
+  schemaCompareKindUpdateRow: "UPDATE",
+  schemaCompareKindDeleteRow: "DELETE",
+
+  schemaCompareDataTitle: "Sync row data (master / config)",
+  schemaCompareDataDesc:
+    "Pick a table present on both sides and compare its rows (paired by primary key), then generate INSERT / UPDATE / DELETE to make the target match the source. Aimed at master / config tables — large tables are capped by the row limit.",
+  schemaCompareDataSelectTable: "Select a table...",
+  schemaCompareDataLimit: "Row limit",
+  schemaCompareDataCompare: "Compare data",
+  schemaCompareDataInserts: "Insert",
+  schemaCompareDataUpdates: "Update",
+  schemaCompareDataDeletes: "Delete",
+  schemaCompareDataTruncated:
+    "Comparison capped at {limit} rows per side — the result is partial. Raise the limit or narrow the table.",
+  schemaCompareAllowDelete: "Allow deletes (DELETE rows missing from the source)",
+  schemaCompareDataGenerate: "Generate data DML",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1510,6 +1527,23 @@ const ja: Dict = {
   schemaCompareKindAlterColumn: "ALTER COLUMN",
   schemaCompareKindDropColumn: "DROP COLUMN",
   schemaCompareKindDropTable: "DROP TABLE",
+  schemaCompareKindInsertRow: "INSERT",
+  schemaCompareKindUpdateRow: "UPDATE",
+  schemaCompareKindDeleteRow: "DELETE",
+
+  schemaCompareDataTitle: "行データを同期 (マスタ / 設定)",
+  schemaCompareDataDesc:
+    "両側に存在するテーブルを選び、行を主キーでペアリングして比較し、ターゲットをソースに合わせる INSERT / UPDATE / DELETE を生成します。マスタ / 設定データ向けで、大きなテーブルは件数上限で制限されます。",
+  schemaCompareDataSelectTable: "テーブルを選択...",
+  schemaCompareDataLimit: "件数上限",
+  schemaCompareDataCompare: "データを比較",
+  schemaCompareDataInserts: "追加",
+  schemaCompareDataUpdates: "変更",
+  schemaCompareDataDeletes: "削除",
+  schemaCompareDataTruncated:
+    "片側あたり {limit} 行で打ち切ったため、結果は部分的です。上限を上げるか対象を絞ってください。",
+  schemaCompareAllowDelete: "削除を許可する (ソースに無い行を DELETE)",
+  schemaCompareDataGenerate: "データ DML を生成",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

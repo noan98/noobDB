@@ -11,6 +11,9 @@ mod state;
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
 pub mod __test_api {
+    pub use crate::db::data_diff::{
+        compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
+    };
     pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::Value;
@@ -145,7 +148,9 @@ pub fn run() {
             commands::schema::describe_table,
             commands::schema::schema_overview,
             commands::diff::compare_schema,
+            commands::diff::compare_table_data,
             commands::sync::generate_sync_sql,
+            commands::sync::generate_data_sync_sql,
             commands::sync::apply_sync_sql,
             commands::profiles::list_profiles,
             commands::profiles::save_profile,

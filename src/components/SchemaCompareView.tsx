@@ -4,6 +4,7 @@ import {
   api,
   type ColumnDiff,
   type ConnectionProfile,
+  type DataDiff,
   type DiffStatus,
   type DriverKind,
   type SchemaDiff,
@@ -21,6 +22,19 @@ type Side = "source" | "target";
 
 function coerceDriver(driver: string): DriverKind {
   return driver === "postgres" || driver === "sqlite" ? driver : "mysql";
+}
+
+/**
+ * Default checklist selection for a generated plan: every non-destructive
+ * statement is checked, destructive ones (DROP / DELETE) stay opt-in so an
+ * "apply" can never silently destroy data even when they were generated.
+ */
+function defaultSelection(plan: SyncPlan): Set<number> {
+  const next = new Set<number>();
+  plan.statements.forEach((s, i) => {
+    if (!s.destructive) next.add(i);
+  });
+  return next;
 }
 
 interface SideState {
@@ -68,21 +82,35 @@ export function SchemaCompareView({
   const [diff, setDiff] = useState<SchemaDiff | null>(null);
   const [hideSame, setHideSame] = useState(true);
 
-  // Sync (phase 2) state.
+  // Sync (phases 2–3) state. A single plan / selection / apply path is shared
+  // by the schema (DDL) and data (DML) generators; `planKind` records which one
+  // produced the current plan so apply can refresh the right view afterwards.
   const [allowDestructive, setAllowDestructive] = useState(false);
   const [plan, setPlan] = useState<SyncPlan | null>(null);
+  const [planKind, setPlanKind] = useState<"schema" | "data" | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [generating, setGenerating] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<string | null>(null);
 
-  // Any change to the diff invalidates a previously generated plan.
+  // Data sync (phase 3) state.
+  const [dataTable, setDataTable] = useState<string>("");
+  const [dataLimit, setDataLimit] = useState(1000);
+  const [dataDiff, setDataDiff] = useState<DataDiff | null>(null);
+  const [dataComparing, setDataComparing] = useState(false);
+  const [allowDelete, setAllowDelete] = useState(false);
+
+  // Any change to the schema diff invalidates a previously generated plan and
+  // any in-flight data comparison (the connections / databases changed).
   useEffect(() => {
     setPlan(null);
+    setPlanKind(null);
     setSelected(new Set());
     setSyncError(null);
     setApplyResult(null);
+    setDataDiff(null);
+    setDataTable("");
   }, [diff]);
 
   // Sessions this view opened, keyed by profile id so the same profile chosen
@@ -243,19 +271,83 @@ export function SchemaCompareView({
     try {
       const result = await api.generateSyncSql(diff, allowDestructive);
       setPlan(result);
-      // Default-select non-destructive statements only; drops stay opt-in even
-      // when present so "apply" never quietly drops data.
-      const next = new Set<number>();
-      result.statements.forEach((s, i) => {
-        if (!s.destructive) next.add(i);
-      });
-      setSelected(next);
+      setPlanKind("schema");
+      setSelected(defaultSelection(result));
     } catch (e) {
       setSyncError(String(e));
     } finally {
       setGenerating(false);
     }
   }, [diff, allowDestructive]);
+
+  // Tables present on both sides — the only ones whose rows can be compared and
+  // synced (a one-sided table would need its schema created/dropped first).
+  const comparableTables = useMemo(
+    () =>
+      diff
+        ? diff.tables
+            .filter((tbl) => tbl.status === "same" || tbl.status === "different")
+            .map((tbl) => tbl.name)
+        : [],
+    [diff],
+  );
+
+  const compareData = useCallback(async () => {
+    if (
+      !source.sessionId ||
+      !source.database ||
+      !target.sessionId ||
+      !target.database ||
+      !dataTable
+    ) {
+      return;
+    }
+    setDataComparing(true);
+    setSyncError(null);
+    setApplyResult(null);
+    setPlan(null);
+    setPlanKind(null);
+    setSelected(new Set());
+    try {
+      const result = await api.compareTableData({
+        sourceSessionId: source.sessionId,
+        sourceDatabase: source.database,
+        targetSessionId: target.sessionId,
+        targetDatabase: target.database,
+        table: dataTable,
+        limit: dataLimit,
+      });
+      setDataDiff(result);
+    } catch (e) {
+      setSyncError(String(e));
+      setDataDiff(null);
+    } finally {
+      setDataComparing(false);
+    }
+  }, [source, target, dataTable, dataLimit]);
+
+  const generateDataPlan = useCallback(async () => {
+    if (!dataDiff) return;
+    setGenerating(true);
+    setSyncError(null);
+    setApplyResult(null);
+    try {
+      const result = await api.generateDataSyncSql(dataDiff, allowDelete);
+      setPlan(result);
+      setPlanKind("data");
+      setSelected(defaultSelection(result));
+    } catch (e) {
+      setSyncError(String(e));
+    } finally {
+      setGenerating(false);
+    }
+  }, [dataDiff, allowDelete]);
+
+  const dataCounts = useMemo(() => {
+    const c = { source_only: 0, target_only: 0, different: 0 };
+    if (dataDiff) for (const r of dataDiff.rows) c[r.status] += 1;
+    return c;
+  }, [dataDiff]);
 
   const toggleStatement = useCallback((index: number) => {
     setSelected((prev) => {
@@ -323,8 +415,13 @@ export function SchemaCompareView({
         statements,
       });
       setApplyResult(t("schemaCompareApplyDone", { count: statements.length }));
-      // Refresh the diff so the view reflects the post-apply state.
-      await runCompare();
+      // Refresh whichever comparison produced this plan so the view reflects
+      // the post-apply state.
+      if (planKind === "data") {
+        await compareData();
+      } else {
+        await runCompare();
+      }
     } catch (e) {
       setSyncError(String(e));
     } finally {
@@ -333,7 +430,17 @@ export function SchemaCompareView({
       }
       setApplying(false);
     }
-  }, [plan, selected, targetProfile, target.database, settings.confirmProductionConnect, t, runCompare]);
+  }, [
+    plan,
+    planKind,
+    selected,
+    targetProfile,
+    target.database,
+    settings.confirmProductionConnect,
+    t,
+    runCompare,
+    compareData,
+  ]);
 
   const selectedCount = selected.size;
 
@@ -447,49 +554,115 @@ export function SchemaCompareView({
                       {generating ? t("schemaCompareGenerating") : t("schemaCompareGenerate")}
                     </button>
                   </div>
+                </div>
+              )}
 
-                  {syncError && <p className="schema-compare-warning">{syncError}</p>}
-                  {applyResult && <p className="schema-compare-success">{applyResult}</p>}
+              {comparableTables.length > 0 && (
+                <div className="schema-compare-sync">
+                  <h3 className="schema-compare-sync-title">{t("schemaCompareDataTitle")}</h3>
+                  <p className="settings-help">{t("schemaCompareDataDesc")}</p>
+                  <div className="schema-compare-sync-controls">
+                    <select value={dataTable} onChange={(e) => setDataTable(e.target.value)}>
+                      <option value="">{t("schemaCompareDataSelectTable")}</option>
+                      {comparableTables.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="schema-compare-limit">
+                      {t("schemaCompareDataLimit")}
+                      <input
+                        type="number"
+                        min={1}
+                        max={5000}
+                        value={dataLimit}
+                        onChange={(e) =>
+                          setDataLimit(Math.max(1, Math.min(5000, Number(e.target.value) || 1)))
+                        }
+                      />
+                    </label>
+                    <button onClick={compareData} disabled={!dataTable || dataComparing}>
+                      {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
+                    </button>
+                  </div>
 
-                  {plan && (
-                    <div className="schema-compare-plan">
-                      {plan.statements.length === 0 ? (
-                        <p className="schema-compare-empty">{t("schemaCompareNoStatements")}</p>
-                      ) : (
-                        <>
-                          <ul className="schema-compare-statements">
-                            {plan.statements.map((stmt, i) => (
-                              <SyncStatementRow
-                                key={`${stmt.table}-${i}`}
-                                statement={stmt}
-                                checked={selected.has(i)}
-                                onToggle={() => toggleStatement(i)}
-                                t={t}
-                              />
-                            ))}
-                          </ul>
-                          <p className="schema-compare-backup">{t("schemaCompareBackupNote")}</p>
-                          <div className="schema-compare-actions">
-                            <button
-                              className="primary"
-                              onClick={applyPlan}
-                              disabled={applying || selectedCount === 0}
-                            >
-                              {applying
-                                ? t("schemaCompareApplying")
-                                : t("schemaCompareApply", { count: selectedCount })}
-                            </button>
-                          </div>
-                        </>
+                  {dataDiff && (
+                    <>
+                      <div className="schema-compare-summary">
+                        <span className="schema-compare-chip status-source_only">
+                          {t("schemaCompareDataInserts")}: {dataCounts.source_only}
+                        </span>
+                        <span className="schema-compare-chip status-different">
+                          {t("schemaCompareDataUpdates")}: {dataCounts.different}
+                        </span>
+                        <span className="schema-compare-chip status-target_only">
+                          {t("schemaCompareDataDeletes")}: {dataCounts.target_only}
+                        </span>
+                      </div>
+                      {dataDiff.truncated && (
+                        <p className="schema-compare-backup">
+                          {t("schemaCompareDataTruncated", { limit: dataLimit })}
+                        </p>
                       )}
-                      {plan.warnings.length > 0 && (
-                        <ul className="schema-compare-plan-warnings">
-                          {plan.warnings.map((w, i) => (
-                            <li key={i}>{w}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
+                      <div className="schema-compare-sync-controls">
+                        <label className="schema-compare-destructive">
+                          <input
+                            type="checkbox"
+                            checked={allowDelete}
+                            onChange={(e) => setAllowDelete(e.target.checked)}
+                          />
+                          {t("schemaCompareAllowDelete")}
+                        </label>
+                        <button onClick={generateDataPlan} disabled={generating}>
+                          {generating ? t("schemaCompareGenerating") : t("schemaCompareDataGenerate")}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {syncError && <p className="schema-compare-warning">{syncError}</p>}
+              {applyResult && <p className="schema-compare-success">{applyResult}</p>}
+
+              {plan && (
+                <div className="schema-compare-plan">
+                  {plan.statements.length === 0 ? (
+                    <p className="schema-compare-empty">{t("schemaCompareNoStatements")}</p>
+                  ) : (
+                    <>
+                      <ul className="schema-compare-statements">
+                        {plan.statements.map((stmt, i) => (
+                          <SyncStatementRow
+                            key={`${stmt.table}-${i}`}
+                            statement={stmt}
+                            checked={selected.has(i)}
+                            onToggle={() => toggleStatement(i)}
+                            t={t}
+                          />
+                        ))}
+                      </ul>
+                      <p className="schema-compare-backup">{t("schemaCompareBackupNote")}</p>
+                      <div className="schema-compare-actions">
+                        <button
+                          className="primary"
+                          onClick={applyPlan}
+                          disabled={applying || selectedCount === 0}
+                        >
+                          {applying
+                            ? t("schemaCompareApplying")
+                            : t("schemaCompareApply", { count: selectedCount })}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {plan.warnings.length > 0 && (
+                    <ul className="schema-compare-plan-warnings">
+                      {plan.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
                   )}
                 </div>
               )}
@@ -513,6 +686,12 @@ function syncKindLabel(kind: SyncKind, t: ReturnType<typeof useT>): string {
       return t("schemaCompareKindDropColumn");
     case "drop_table":
       return t("schemaCompareKindDropTable");
+    case "insert_row":
+      return t("schemaCompareKindInsertRow");
+    case "update_row":
+      return t("schemaCompareKindUpdateRow");
+    case "delete_row":
+      return t("schemaCompareKindDeleteRow");
   }
 }
 
