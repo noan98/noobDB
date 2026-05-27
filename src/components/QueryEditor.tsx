@@ -22,6 +22,7 @@ import type { TableSchema } from "../api/tauri";
 import { useT } from "../i18n";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
+import { Spinner } from "./Spinner";
 
 const noobDBHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -52,6 +53,8 @@ export interface ActiveTable {
 
 interface Props {
   onRun: (sql: string) => void;
+  /** True while this tab's query is streaming — swaps the Run icon for a spinner. */
+  running?: boolean;
   onPreview?: (sql: string) => void;
   onExplain?: (sql: string) => void;
   onChange?: (sql: string) => void;
@@ -192,6 +195,7 @@ function buildSqlExtension(
 
 export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEditor({
   onRun,
+  running,
   onPreview,
   onExplain,
   onChange,
@@ -395,9 +399,13 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           title={disabledReason ?? runTitle}
         >
           <span className="btn-icon" aria-hidden>
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
-            </svg>
+            {running ? (
+              <Spinner size={12} className="btn-spinner" />
+            ) : (
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
+              </svg>
+            )}
           </span>
           {runLabel}
         </button>

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   api,
@@ -24,6 +25,7 @@ import {
 import { ConnectionList } from "./components/ConnectionList";
 import { EmptyState } from "./components/EmptyState";
 import { Spinner } from "./components/Spinner";
+import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
 import { HistoryList } from "./components/HistoryList";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
@@ -368,6 +370,7 @@ function emptyPreview(): PreviewResult {
 
 export default function App() {
   const t = useT();
+  const toast = useToast();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
   const [showSettings, setShowSettings] = useState(false);
@@ -893,6 +896,7 @@ export default function App() {
         setActivePaneId(paneId);
       }
       setStatus({ kind: "key", key: "statusConnected", vars: { name: profile.name, id: res.session_id } });
+      toast.success(translate("toastConnected", { name: profile.name }));
     } catch (e) {
       setErrorProfileId(profile.id);
       setStatus({ kind: "key", key: "statusConnectionFailed", vars: { error: String(e) }, error: true });
@@ -906,6 +910,7 @@ export default function App() {
     persistTabsForProfile,
     settings.confirmProductionConnect,
     settings.tabRestoreMode,
+    toast,
   ]);
 
   const handleDisconnect = useCallback(async () => {
@@ -1990,6 +1995,18 @@ export default function App() {
           onSplit={split ? () => closePane(pane.id) : splitPane}
           splitMode={split ? "close" : "split"}
         />
+        <AnimatePresence>
+          {tab?.streaming && (
+            <motion.div
+              className="query-progress"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 2 }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.18 }}
+              aria-hidden
+            />
+          )}
+        </AnimatePresence>
         <div className="pane">
           {tab ? (
             <Splitter
@@ -2004,6 +2021,7 @@ export default function App() {
                     key={tab.id}
                     ref={getEditorRefSetter(pane.id)}
                     initialSql={tab.sql}
+                    running={tab.streaming}
                     onRun={(sql) => runInTabWithGate(tab, sql)}
                     onPreview={tab.kind === "explain" ? undefined : (sql) => previewQueryInTab(tab.id, sql)}
                     onExplain={tab.kind === "explain" ? undefined : (sql) => explainForTab(tab, sql)}

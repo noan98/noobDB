@@ -430,7 +430,7 @@ export function ConnectionList({
               : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`
           }
         >
-          <span className="tree-chevron" aria-hidden>{isOpen ? "▾" : "▸"}</span>
+          <span className={`tree-chevron${isOpen ? " is-open" : ""}`} aria-hidden>▸</span>
           {accent ? (
             <span
               className="profile-color-chip"
@@ -503,7 +503,7 @@ export function ConnectionList({
                       aria-expanded={dbOpen}
                       title={db}
                     >
-                      <span className="tree-chevron" aria-hidden>{dbOpen ? "▾" : "▸"}</span>
+                      <span className={`tree-chevron${dbOpen ? " is-open" : ""}`} aria-hidden>▸</span>
                       <span className="tree-icon db-icon" aria-hidden><Icon name="database" /></span>
                       <span className="tree-label">{db}</span>
                     </div>
@@ -537,7 +537,7 @@ export function ConnectionList({
                                   onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
                                   title={t("treeTableTitle")}
                                 >
-                                  <span className="tree-chevron" aria-hidden>{tOpen ? "▾" : "▸"}</span>
+                                  <span className={`tree-chevron${tOpen ? " is-open" : ""}`} aria-hidden>▸</span>
                                   <span className="tree-icon table-icon" aria-hidden><Icon name="table" /></span>
                                   <span className="tree-label">{tbl}</span>
                                 </div>
@@ -643,7 +643,7 @@ export function ConnectionList({
                       role="treeitem"
                       aria-expanded={groupOpen}
                     >
-                      <span className="tree-chevron" aria-hidden>{groupOpen ? "▾" : "▸"}</span>
+                      <span className={`tree-chevron${groupOpen ? " is-open" : ""}`} aria-hidden>▸</span>
                       <span className="group-label">{label}</span>
                       <span className="tree-badge group-count">{g.profiles.length}</span>
                     </div>
