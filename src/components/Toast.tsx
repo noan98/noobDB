@@ -9,9 +9,17 @@ import {
   type ReactNode,
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { Box, chakra } from "@chakra-ui/react";
 import { Icon } from "./Icon";
 
 export type ToastTone = "success" | "error" | "info";
+
+/** Left accent rail + icon tint per tone, bridged to the status color tokens. */
+const TONE_COLOR: Record<ToastTone, string> = {
+  success: "app.status.success",
+  error: "app.status.error",
+  info: "app.status.info",
+};
 
 export interface ToastOptions {
   message: string;
@@ -103,37 +111,88 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div className="toast-viewport" role="region" aria-live="polite" aria-label="notifications">
+      <Box
+        position="fixed"
+        bottom="var(--space-4)"
+        right="var(--space-4)"
+        zIndex={2000}
+        display="flex"
+        flexDirection="column"
+        gap="var(--space-2)"
+        maxW="min(380px, calc(100vw - 2 * var(--space-4)))"
+        pointerEvents="none"
+        role="region"
+        aria-live="polite"
+        aria-label="notifications"
+      >
         <AnimatePresence initial={false}>
           {toasts.map((toast) => (
+            // motion drives the enter/exit; styling lives on the inner Chakra
+            // Box so motion's `transition` object isn't swallowed by Chakra's
+            // `transition` style prop.
             <motion.div
               key={toast.id}
-              className={`toast toast-${toast.tone}`}
-              role="status"
               layout
               initial={{ opacity: 0, y: 14, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, x: 28, scale: 0.96 }}
               transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
             >
-              {toast.tone !== "info" && (
-                <span className="toast-icon" aria-hidden>
-                  <Icon name={toast.tone === "success" ? "check" : "warning"} size={16} />
-                </span>
-              )}
-              <span className="toast-message">{toast.message}</span>
-              <button
-                type="button"
-                className="toast-dismiss"
-                onClick={() => dismiss(toast.id)}
-                aria-label="dismiss"
+              <Box
+                role="status"
+                pointerEvents="auto"
+                display="flex"
+                alignItems="center"
+                gap="var(--space-2)"
+                px="12px"
+                py="10px"
+                borderRadius="md"
+                bg="app.surface"
+                border="1px solid"
+                borderColor="app.border"
+                borderLeftWidth="3px"
+                borderLeftColor={TONE_COLOR[toast.tone]}
+                boxShadow="lg"
+                fontSize="sm"
+                color="app.text"
               >
-                <Icon name="close" size={13} />
-              </button>
+                {toast.tone !== "info" && (
+                  <chakra.span
+                    display="inline-flex"
+                    flexShrink={0}
+                    color={TONE_COLOR[toast.tone]}
+                    aria-hidden
+                  >
+                    <Icon name={toast.tone === "success" ? "check" : "warning"} size={16} />
+                  </chakra.span>
+                )}
+                <chakra.span flex="1" minW={0} lineHeight="1.4" wordBreak="break-word">
+                  {toast.message}
+                </chakra.span>
+                <chakra.button
+                  type="button"
+                  onClick={() => dismiss(toast.id)}
+                  aria-label="dismiss"
+                  flexShrink={0}
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  p="2px"
+                  minW={0}
+                  color="app.textMuted"
+                  bg="transparent"
+                  border="none"
+                  borderRadius="sm"
+                  cursor="pointer"
+                  _hover={{ color: "app.text", bg: "app.hover" }}
+                >
+                  <Icon name="close" size={13} />
+                </chakra.button>
+              </Box>
             </motion.div>
           ))}
         </AnimatePresence>
-      </div>
+      </Box>
     </ToastContext.Provider>
   );
 }

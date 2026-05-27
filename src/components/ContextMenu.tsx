@@ -1,5 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Box, chakra } from "@chakra-ui/react";
+
+/** Enabled items carry `role="menuitem"`; disabled ones get the `disabled`
+ *  attribute. Keyboard navigation (focus-first + arrow roving) selects against
+ *  this, decoupled from styling/classNames. */
+const ENABLED_ITEM = "[role=menuitem]:not([disabled])";
 
 export interface ContextMenuItem {
   label: string;
@@ -71,9 +77,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
 
   // Focus the first enabled item so keyboard users can navigate immediately.
   useEffect(() => {
-    menuRef.current
-      ?.querySelector<HTMLButtonElement>("button.context-menu-item:not([disabled])")
-      ?.focus();
+    menuRef.current?.querySelector<HTMLButtonElement>(ENABLED_ITEM)?.focus();
   }, [items]);
 
   const activate = (item: ContextMenuItem) => {
@@ -88,9 +92,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     e.preventDefault();
     const el = menuRef.current;
     if (!el) return;
-    const buttons = Array.from(
-      el.querySelectorAll<HTMLButtonElement>("button.context-menu-item:not([disabled])"),
-    );
+    const buttons = Array.from(el.querySelectorAll<HTMLButtonElement>(ENABLED_ITEM));
     if (buttons.length === 0) return;
     const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
     const next =
@@ -101,17 +103,29 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
   };
 
   return createPortal(
-    <div
-      className="context-menu-backdrop"
+    <Box
+      position="fixed"
+      inset={0}
+      zIndex={1000}
       onMouseDown={onClose}
       onContextMenu={(e) => {
         e.preventDefault();
         onClose();
       }}
     >
-      <div
+      <Box
         ref={menuRef}
-        className="context-menu"
+        position="fixed"
+        zIndex={1000}
+        minW="180px"
+        bg="app.surface"
+        border="1px solid"
+        borderColor="app.borderStrong"
+        borderRadius="md"
+        boxShadow="md"
+        p="var(--space-1)"
+        display="flex"
+        flexDirection="column"
         style={{
           left: pos?.left ?? x,
           top: pos?.top ?? y,
@@ -123,23 +137,51 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       >
         {items.map((entry, i) =>
           isSeparator(entry) ? (
-            <div key={`sep-${i}`} className="context-menu-sep" role="separator" />
+            <Box
+              key={`sep-${i}`}
+              role="separator"
+              h="1px"
+              my="4px"
+              mx="6px"
+              bg="app.borderSubtle"
+            />
           ) : (
-            <button
+            <chakra.button
               key={`${entry.label}-${i}`}
               type="button"
               role="menuitem"
-              className={`context-menu-item${entry.danger ? " danger" : ""}`}
+              display="block"
+              textAlign="left"
+              bg="transparent"
+              border="none"
+              px="10px"
+              py="6px"
+              fontSize="var(--text-md)"
+              color={entry.danger ? "app.textError" : "app.text"}
+              borderRadius="sm"
+              cursor="pointer"
               disabled={entry.disabled}
               title={entry.title}
+              transitionProperty="background, color"
+              transitionDuration="var(--dur-fast)"
+              transitionTimingFunction="var(--ease)"
+              _focusVisible={{ outline: "none" }}
+              _disabled={{ color: "app.textMuted", opacity: 0.6, cursor: "default" }}
+              css={{
+                "&:hover:not(:disabled), &:focus-visible": {
+                  background: entry.danger
+                    ? "color-mix(in srgb, var(--status-error) 12%, transparent)"
+                    : "var(--bg-hover)",
+                },
+              }}
               onClick={() => activate(entry)}
             >
               {entry.label}
-            </button>
+            </chakra.button>
           ),
         )}
-      </div>
-    </div>,
+      </Box>
+    </Box>,
     document.body,
   );
 }

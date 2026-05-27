@@ -1,8 +1,34 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { chakra, Flex, type HTMLChakraProps } from "@chakra-ui/react";
 import { useT } from "../i18n";
 
 const appWindow = getCurrentWindow();
+
+/** A window control button (minimize / maximize / close). Mirrors the platform
+ *  window buttons; the close button overrides `_hover` with the destructive red. */
+function TitleControl(props: HTMLChakraProps<"button">) {
+  return (
+    <chakra.button
+      type="button"
+      width="46px"
+      display="inline-flex"
+      alignItems="center"
+      justifyContent="center"
+      p={0}
+      border="none"
+      borderRadius={0}
+      bg="transparent"
+      color="app.textSecondary"
+      cursor="pointer"
+      transitionProperty="background, color"
+      transitionDuration="var(--dur-fast)"
+      transitionTimingFunction="var(--ease)"
+      _hover={{ bg: "app.hover", color: "app.text" }}
+      {...props}
+    />
+  );
+}
 
 /**
  * Custom window chrome shown in place of the native title bar
@@ -29,20 +55,28 @@ export function TitleBar() {
   }, []);
 
   return (
-    <div className="titlebar" data-tauri-drag-region>
-      <div className="titlebar-brand" data-tauri-drag-region>
-        <svg
-          className="titlebar-logo"
+    <Flex
+      data-tauri-drag-region
+      align="stretch"
+      flexShrink={0}
+      h="38px"
+      bg="app.surface"
+      borderBottom="1px solid"
+      borderColor="app.border"
+      css={{ userSelect: "none", WebkitUserSelect: "none" }}
+    >
+      <Flex data-tauri-drag-region align="center" gap="8px" flex="1" minW={0} px="12px">
+        <chakra.svg
+          display="block"
+          flexShrink={0}
+          borderRadius="4px"
           viewBox="0 0 1024 1024"
           width="16"
           height="16"
           aria-hidden
         >
           <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#2f7df6" />
-          <path
-            d="M282 300 L282 724 A230 84 0 0 0 742 724 L742 300 Z"
-            fill="#ffffff"
-          />
+          <path d="M282 300 L282 724 A230 84 0 0 0 742 724 L742 300 Z" fill="#ffffff" />
           <ellipse cx="512" cy="300" rx="230" ry="84" fill="#ffffff" />
           <g fill="#1e3a8a">
             <circle cx="438" cy="556" r="30" />
@@ -55,14 +89,19 @@ export function TitleBar() {
             strokeWidth="26"
             strokeLinecap="round"
           />
-        </svg>
-        <span className="titlebar-title">noobDB</span>
-      </div>
+        </chakra.svg>
+        <chakra.span
+          fontSize="var(--text-sm)"
+          fontWeight="600"
+          letterSpacing="0.02em"
+          color="app.textSecondary"
+        >
+          noobDB
+        </chakra.span>
+      </Flex>
 
-      <div className="titlebar-controls">
-        <button
-          type="button"
-          className="titlebar-btn"
+      <Flex align="stretch">
+        <TitleControl
           onClick={() => appWindow.minimize()}
           title={t("titleBarMinimize")}
           aria-label={t("titleBarMinimize")}
@@ -70,10 +109,8 @@ export function TitleBar() {
           <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden>
             <path d="M0 5h10" stroke="currentColor" strokeWidth="1" />
           </svg>
-        </button>
-        <button
-          type="button"
-          className="titlebar-btn"
+        </TitleControl>
+        <TitleControl
           onClick={() => appWindow.toggleMaximize()}
           title={maximized ? t("titleBarRestore") : t("titleBarMaximize")}
           aria-label={maximized ? t("titleBarRestore") : t("titleBarMaximize")}
@@ -100,19 +137,18 @@ export function TitleBar() {
               />
             </svg>
           )}
-        </button>
-        <button
-          type="button"
-          className="titlebar-btn titlebar-close"
+        </TitleControl>
+        <TitleControl
           onClick={() => appWindow.close()}
           title={t("titleBarClose")}
           aria-label={t("titleBarClose")}
+          _hover={{ bg: "#e81123", color: "#ffffff" }}
         >
           <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden>
             <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" strokeWidth="1" />
           </svg>
-        </button>
-      </div>
-    </div>
+        </TitleControl>
+      </Flex>
+    </Flex>
   );
 }
