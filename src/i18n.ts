@@ -521,6 +521,11 @@ const en = {
   tabUntitledQuery: "Query",
   tabExplainTitle: "Explain",
   tabsEmpty: "No tabs open. Double-click a table or click + to start a query.",
+  tabSplit: "Split right",
+  tabClosePane: "Close this pane",
+  tabMoveOtherPane: "Move to other pane",
+  tabMoveOtherPaneDisabled: "Can't move the only tab of a single pane",
+  splitterPanesAria: "Drag to resize the left and right panes; double-click to reset",
 
   gridFilterPlaceholder: "Filter...",
   gridFilterAria: "Filter {column}",
@@ -1216,6 +1221,11 @@ const ja: Dict = {
   tabUntitledQuery: "クエリ",
   tabExplainTitle: "実行計画",
   tabsEmpty: "開いているタブがありません。テーブルをダブルクリックするか、+ を押してクエリを始めてください。",
+  tabSplit: "右に分割",
+  tabClosePane: "このペインを閉じる",
+  tabMoveOtherPane: "別ペインへ移動",
+  tabMoveOtherPaneDisabled: "単一ペインで唯一のタブは移動できません",
+  splitterPanesAria: "ドラッグで左右ペインの幅を変更、ダブルクリックでリセット",
 
   gridFilterPlaceholder: "絞り込み...",
   gridFilterAria: "{column} を絞り込む",
