@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Box, chakra } from "@chakra-ui/react";
+import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 
 import {
   api,
@@ -19,6 +19,277 @@ import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { Icon } from "./Icon";
 import { Button, Checkbox, Input, Select } from "./ui";
+
+/**
+ * スキーマ比較ビューの本体スタイル。`App.css` の `.schema-compare-*` ルール群を
+ * コンポーネント側へ移設し、ルート (`.settings` 相当の枠) に `css` で適用する。
+ * 共有クラス (`.settings` / `.settings-header` / `.settings-help` / `button.icon`)
+ * は `SettingsView` 等が参照するため `App.css` に残し、ここでは style props で再現する。
+ */
+const SCHEMA_CSS: SystemStyleObject = {
+  "& .schema-compare-sides": {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: "12px",
+    margin: "16px 0",
+    flexWrap: "wrap",
+  },
+  "& .schema-compare-side": {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    flex: "1 1 240px",
+    minWidth: "200px",
+  },
+  "& .schema-compare-side-label": {
+    fontSize: "var(--text-sm)",
+    fontWeight: 600,
+    color: "var(--text-secondary)",
+  },
+  "& .schema-compare-side select": { width: "100%" },
+  "& .schema-compare-side-error": {
+    fontSize: "var(--text-xs)",
+    color: "var(--status-error)",
+  },
+  "& .schema-compare-actions": { margin: "12px 0" },
+  "& .schema-compare-warning": {
+    color: "var(--status-error)",
+    fontSize: "var(--text-sm)",
+    margin: "8px 0",
+  },
+  "& .schema-compare-empty": {
+    color: "var(--text-muted)",
+    fontSize: "var(--text-sm)",
+    margin: "16px 0",
+  },
+  "& .schema-compare-summary": {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap",
+    margin: "16px 0 10px",
+  },
+  "& .schema-compare-chip": {
+    fontSize: "var(--text-xs)",
+    fontWeight: 600,
+    padding: "3px 10px",
+    borderRadius: "var(--radius-pill)",
+    border: "1px solid var(--border)",
+    color: "var(--text-secondary)",
+    background: "var(--bg-muted)",
+  },
+  "& .schema-compare-hidesame": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    fontSize: "var(--text-sm)",
+    color: "var(--text-secondary)",
+    marginLeft: "auto",
+    cursor: "pointer",
+  },
+  "& .schema-compare-tables": {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  "& .schema-compare-table": {
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-md)",
+    background: "var(--bg-elevated)",
+    overflow: "hidden",
+  },
+  "& .schema-compare-table > summary": {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "8px 12px",
+    cursor: "pointer",
+    listStyle: "none",
+    userSelect: "none",
+  },
+  "& .schema-compare-table > summary::-webkit-details-marker": { display: "none" },
+  "& .schema-compare-table-name": {
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-sm)",
+    color: "var(--text)",
+  },
+  "& .schema-compare-colcount": {
+    fontSize: "var(--text-xs)",
+    color: "var(--text-muted)",
+    marginLeft: "auto",
+  },
+  "& .schema-compare-columns": {
+    listStyle: "none",
+    margin: 0,
+    padding: "0 12px 10px 12px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  "& .schema-compare-column": {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "8px",
+    fontSize: "var(--text-sm)",
+    padding: "3px 0",
+    borderTop: "1px solid var(--border-subtle)",
+  },
+  "& .schema-compare-column-name": {
+    fontFamily: "var(--font-mono)",
+    color: "var(--text)",
+  },
+  "& .schema-compare-coltype": {
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-xs)",
+    color: "var(--text-muted)",
+  },
+  "& .schema-compare-changes": {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "4px 12px",
+  },
+  "& .schema-compare-change": {
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-xs)",
+    color: "var(--text-secondary)",
+  },
+  "& .schema-compare-badge": {
+    fontSize: "var(--text-xs)",
+    fontWeight: 600,
+    padding: "1px 8px",
+    borderRadius: "var(--radius-pill)",
+    whiteSpace: "nowrap",
+    border: "1px solid transparent",
+  },
+  "& .schema-compare-badge.status-source_only, & .schema-compare-chip.status-source_only": {
+    color: "var(--status-success)",
+    borderColor: "var(--status-success)",
+  },
+  "& .schema-compare-badge.status-target_only, & .schema-compare-chip.status-target_only": {
+    color: "var(--status-error)",
+    borderColor: "var(--status-error)",
+  },
+  "& .schema-compare-badge.status-different, & .schema-compare-chip.status-different": {
+    color: "var(--status-connecting)",
+    borderColor: "var(--status-connecting)",
+  },
+  "& .schema-compare-badge.status-same, & .schema-compare-chip.status-same": {
+    color: "var(--text-muted)",
+    borderColor: "var(--border)",
+  },
+  "& .schema-compare-sync": {
+    marginTop: "24px",
+    paddingTop: "16px",
+    borderTop: "1px solid var(--border)",
+  },
+  "& .schema-compare-sync-title": { margin: "0 0 4px", fontSize: "var(--text-md)" },
+  "& .schema-compare-sync-controls": {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    flexWrap: "wrap",
+    margin: "10px 0",
+  },
+  "& .schema-compare-destructive": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    fontSize: "var(--text-sm)",
+    color: "var(--status-error)",
+    cursor: "pointer",
+  },
+  "& .schema-compare-success": {
+    color: "var(--status-success)",
+    fontSize: "var(--text-sm)",
+    margin: "8px 0",
+  },
+  "& .schema-compare-statements": {
+    listStyle: "none",
+    margin: "8px 0",
+    padding: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+  },
+  "& .schema-compare-statement": {
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-md)",
+    background: "var(--bg-elevated)",
+    padding: "8px 10px",
+  },
+  "& .schema-compare-statement.destructive": { borderColor: "var(--status-error)" },
+  "& .schema-compare-statement-head": {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    cursor: "pointer",
+    marginBottom: "6px",
+  },
+  "& .schema-compare-kind": {
+    fontSize: "var(--text-xs)",
+    fontWeight: 600,
+    padding: "1px 8px",
+    borderRadius: "var(--radius-pill)",
+    border: "1px solid var(--border)",
+    color: "var(--text-secondary)",
+  },
+  "& .schema-compare-kind.kind-create_table, & .schema-compare-kind.kind-add_column": {
+    color: "var(--status-success)",
+    borderColor: "var(--status-success)",
+  },
+  "& .schema-compare-kind.kind-alter_column": {
+    color: "var(--status-connecting)",
+    borderColor: "var(--status-connecting)",
+  },
+  "& .schema-compare-kind.kind-drop_column, & .schema-compare-kind.kind-drop_table": {
+    color: "var(--status-error)",
+    borderColor: "var(--status-error)",
+  },
+  "& .schema-compare-kind.kind-insert_row": {
+    color: "var(--status-success)",
+    borderColor: "var(--status-success)",
+  },
+  "& .schema-compare-kind.kind-update_row": {
+    color: "var(--status-connecting)",
+    borderColor: "var(--status-connecting)",
+  },
+  "& .schema-compare-kind.kind-delete_row": {
+    color: "var(--status-error)",
+    borderColor: "var(--status-error)",
+  },
+  "& .schema-compare-destructive-flag": {
+    fontSize: "var(--text-xs)",
+    fontWeight: 600,
+    color: "var(--status-error)",
+  },
+  "& .schema-compare-sql": {
+    display: "block",
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-xs)",
+    color: "var(--text)",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  "& .schema-compare-backup": {
+    fontSize: "var(--text-sm)",
+    color: "var(--status-connecting)",
+    margin: "10px 0",
+  },
+  "& .schema-compare-plan-warnings": {
+    margin: "10px 0 0",
+    paddingLeft: "18px",
+    fontSize: "var(--text-sm)",
+    color: "var(--text-muted)",
+  },
+  "& .schema-compare-limit": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    fontSize: "var(--text-sm)",
+    color: "var(--text-secondary)",
+  },
+  "& .schema-compare-limit input": { width: "80px" },
+};
 
 type Side = "source" | "target";
 
@@ -447,20 +718,42 @@ export function SchemaCompareView({
   const selectedCount = selected.size;
 
   return (
-    <Box className="settings schema-compare">
-      <chakra.header className="settings-header">
-        <chakra.h2>{t("schemaCompareTitle")}</chakra.h2>
-        <chakra.button
-          className="icon"
+    <Box
+      flex="1"
+      overflowY="auto"
+      padding="20px 24px"
+      display="flex"
+      flexDirection="column"
+      gap="18px"
+      css={SCHEMA_CSS}
+    >
+      <chakra.header
+        display="flex"
+        alignItems="center"
+        justifyContent="space-between"
+        gap="3"
+        borderBottom="1px solid"
+        borderColor="app.border"
+        paddingBottom="10px"
+      >
+        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
+          {t("schemaCompareTitle")}
+        </chakra.h2>
+        <Button
+          minWidth="28px"
+          px="8px"
+          py="4px"
+          fontSize="base"
+          lineHeight={1}
           onClick={onClose}
           aria-label={t("schemaCompareClose")}
           title={t("schemaCompareClose")}
         >
           <Icon name="close" size={13} />
-        </chakra.button>
+        </Button>
       </chakra.header>
 
-      <chakra.p className="settings-help">{t("schemaCompareDesc")}</chakra.p>
+      <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareDesc")}</chakra.p>
 
       {profiles.length === 0 ? (
         <chakra.p className="schema-compare-empty">{t("schemaCompareNoProfiles")}</chakra.p>
@@ -476,15 +769,20 @@ export function SchemaCompareView({
               onSelectDatabase={setDatabase}
               t={t}
             />
-            <chakra.button
+            <Button
               type="button"
-              className="icon schema-compare-swap"
+              minWidth="28px"
+              px="8px"
+              py="4px"
+              fontSize="base"
+              lineHeight={1}
+              marginBottom="4px"
               onClick={swap}
               title={t("schemaCompareSwap")}
               aria-label={t("schemaCompareSwap")}
             >
               <Icon name="refresh" size={14} />
-            </chakra.button>
+            </Button>
             <SidePicker
               label={t("schemaCompareTarget")}
               side="target"
@@ -509,7 +807,7 @@ export function SchemaCompareView({
           {compareError && <chakra.p className="schema-compare-warning">{compareError}</chakra.p>}
 
           {diff && (
-            <Box className="schema-compare-results">
+            <Box>
               <Box className="schema-compare-summary">
                 <StatusChip status="different" count={counts.different} t={t} />
                 <StatusChip status="source_only" count={counts.source_only} t={t} />
@@ -541,7 +839,7 @@ export function SchemaCompareView({
               {hasDifferences && (
                 <Box className="schema-compare-sync">
                   <chakra.h3 className="schema-compare-sync-title">{t("schemaCompareSyncTitle")}</chakra.h3>
-                  <chakra.p className="settings-help">{t("schemaCompareSyncDesc")}</chakra.p>
+                  <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareSyncDesc")}</chakra.p>
                   <Box className="schema-compare-sync-controls">
                     <chakra.label className="schema-compare-destructive">
                       <Checkbox
@@ -560,7 +858,7 @@ export function SchemaCompareView({
               {comparableTables.length > 0 && (
                 <Box className="schema-compare-sync">
                   <chakra.h3 className="schema-compare-sync-title">{t("schemaCompareDataTitle")}</chakra.h3>
-                  <chakra.p className="settings-help">{t("schemaCompareDataDesc")}</chakra.p>
+                  <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareDataDesc")}</chakra.p>
                   <Box className="schema-compare-sync-controls">
                     <Select value={dataTable} onChange={(e) => setDataTable(e.target.value)}>
                       <option value="">{t("schemaCompareDataSelectTable")}</option>
@@ -626,7 +924,7 @@ export function SchemaCompareView({
               {applyResult && <chakra.p className="schema-compare-success">{applyResult}</chakra.p>}
 
               {plan && (
-                <Box className="schema-compare-plan">
+                <Box>
                   {plan.statements.length === 0 ? (
                     <chakra.p className="schema-compare-empty">{t("schemaCompareNoStatements")}</chakra.p>
                   ) : (

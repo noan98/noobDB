@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
-import { Box, chakra } from "@chakra-ui/react";
+import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   flexRender,
   getCoreRowModel,
@@ -23,6 +23,7 @@ import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { ExportModal } from "./ExportModal";
 import { Spinner } from "./Spinner";
+import { Button } from "./ui";
 import {
   countEditedCells,
   countEditedRows,
@@ -31,6 +32,286 @@ import {
   validateCellInput,
   type PendingEdits,
 } from "./cellEdit";
+
+/**
+ * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。`App.css` の
+ * `:where(.results, .preview-pane-body) …` ルール群をコンポーネント側へ移設したもの。
+ * `ResultGrid` のスクロール枠と `PreviewGrid` の各ペイン本体に `css` で適用する
+ * (両者が `DataGrid` を共有するため定義を 1 箇所に集約する)。
+ *
+ * 性能上、セル/行は素の `th` / `td` / `span` のまま (重い Chakra コンポーネントを
+ * セル単位で使わない) で、ここで子孫セレクタとして一括スタイルする。色はテーマの
+ * CSS 変数を直接参照する (`--cell-*` などのトークン定義は `App.css` に残す方針)。
+ */
+export const GRID_CSS: SystemStyleObject = {
+  "& table": {
+    borderCollapse: "separate",
+    borderSpacing: 0,
+    fontSize: "var(--text-sm)",
+    fontFamily: "var(--font-mono)",
+    color: "var(--text)",
+    tableLayout: "fixed",
+    minWidth: "100%",
+  },
+  "& th, & td": {
+    borderRight: "1px solid var(--border)",
+    borderBottom: "1px solid var(--border)",
+    padding: "5px 10px",
+    textAlign: "left",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    verticalAlign: "middle",
+    position: "relative",
+  },
+  "& th": {
+    background: "var(--bg-header)",
+    position: "sticky",
+    top: 0,
+    zIndex: 2,
+    fontWeight: 600,
+    borderBottom: "1px solid var(--border-strong)",
+  },
+  "& th.align-right, & td.align-right": { textAlign: "right" },
+  "& th .th-content": {
+    display: "inline-flex",
+    flexDirection: "column",
+    lineHeight: 1.2,
+    gap: "1px",
+  },
+  "& th .th-name": {
+    fontWeight: 600,
+    color: "var(--text)",
+    letterSpacing: "0.01em",
+  },
+  "& th .th-type": {
+    fontSize: "var(--text-2xs)",
+    fontWeight: 400,
+    fontFamily: "var(--font-mono)",
+    color: "var(--text-muted)",
+    textTransform: "lowercase",
+    letterSpacing: "0.01em",
+    opacity: 0.85,
+  },
+  "& tbody tr:nth-of-type(even) td": { background: "var(--bg-stripe)" },
+  "& tbody tr:hover td": { background: "var(--bg-row-hover)" },
+  "& td.row-index, & th.row-index": {
+    position: "sticky",
+    left: 0,
+    textAlign: "right",
+    color: "var(--text-muted)",
+    background: "var(--bg-header)",
+    fontSize: "var(--text-xs)",
+    minWidth: "36px",
+    zIndex: 1,
+    borderRight: "1px solid var(--border-strong)",
+  },
+  "& thead th.row-index": { top: 0, zIndex: 3 },
+  "& tbody tr:nth-of-type(even) td.row-index": { background: "var(--bg-stripe)" },
+  "& tbody tr:hover td.row-index": { background: "var(--bg-row-hover)" },
+  "& th.col-filler, & td.col-filler": {
+    padding: 0,
+    borderRight: "none",
+    background: "var(--bg-elevated)",
+  },
+  "& tbody tr:nth-of-type(even) td.col-filler": { background: "var(--bg-elevated)" },
+  "& tbody tr:hover td.col-filler": { background: "var(--bg-elevated)" },
+  "& .cell-null": { color: "var(--text-null)", fontStyle: "italic" },
+  "& td.is-null": { backgroundImage: "linear-gradient(transparent, transparent)" },
+  "& .cell-number, & .cell-decimal": {
+    color: "var(--cell-number)",
+    fontVariantNumeric: "tabular-nums",
+  },
+  "& .cell-bool": { fontWeight: 600 },
+  "& .cell-bool.is-true": { color: "var(--cell-bool-true)" },
+  "& .cell-bool.is-false": { color: "var(--cell-bool-false)" },
+  "& .cell-date": { color: "var(--cell-date)" },
+  "& .cell-json": { color: "var(--cell-json)" },
+  "& .cell-binary": { color: "var(--cell-binary)", fontStyle: "italic" },
+  "& .cell-string": { color: "var(--text)" },
+  // 列ヘッダのソート/フィルタ
+  "& th.is-sortable": { padding: 0 },
+  "& th.is-sortable .th-sort-button": {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    width: "100%",
+    padding: "5px 10px",
+    background: "transparent",
+    border: "none",
+    borderRadius: 0,
+    color: "inherit",
+    font: "inherit",
+    cursor: "pointer",
+    textAlign: "inherit",
+    userSelect: "none",
+    transition:
+      "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease)",
+  },
+  "& th.is-sortable .th-sort-button:hover": { background: "var(--bg-hover)" },
+  "& th.is-sorted-asc .th-sort-button, & th.is-sorted-desc .th-sort-button": {
+    background: "var(--bg-active)",
+  },
+  "& th .th-sort-indicator": {
+    fontSize: "var(--text-2xs)",
+    color: "var(--accent)",
+    width: "10px",
+    flexShrink: 0,
+    lineHeight: 1,
+  },
+  "& th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc) .th-sort-indicator::before": {
+    content: '"↕"',
+    color: "var(--text-muted)",
+    opacity: 0.4,
+  },
+  "& th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc):hover .th-sort-indicator::before": {
+    opacity: 0.85,
+  },
+  "& tr.filter-row th": {
+    position: "sticky",
+    top: "38px",
+    background: "var(--bg-muted)",
+    padding: "3px 6px",
+    fontWeight: 400,
+    borderBottom: "1px solid var(--border-strong)",
+    zIndex: 2,
+  },
+  "& tr.filter-row th.row-index": { top: "38px", zIndex: 3, background: "var(--bg-muted)" },
+  "& .grid-filter-input": {
+    width: "100%",
+    padding: "3px 6px",
+    fontSize: "var(--text-xs)",
+    fontFamily: "inherit",
+    border: "1px solid var(--border)",
+    background: "var(--bg-input)",
+    color: "var(--text)",
+    borderRadius: "var(--radius-sm)",
+  },
+  "& .grid-filter-input::placeholder": { color: "var(--text-muted)" },
+  "& .grid-filter-input:focus": {
+    outline: "none",
+    borderColor: "var(--accent)",
+    boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+  },
+  "& td.grid-empty-cell": {
+    padding: "14px",
+    color: "var(--text-muted)",
+    fontStyle: "italic",
+    textAlign: "center",
+    whiteSpace: "normal",
+  },
+  "& .grid-filter-summary": {
+    position: "sticky",
+    top: 0,
+    zIndex: 4,
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "4px 10px",
+    fontSize: "var(--text-xs)",
+    color: "var(--text-secondary)",
+    background: "color-mix(in srgb, var(--accent) 10%, var(--bg-muted))",
+    borderBottom: "1px solid var(--border)",
+  },
+  "& .grid-filter-clear": {
+    padding: "2px 8px",
+    fontSize: "var(--text-xs)",
+    border: "1px solid var(--border-strong)",
+    background: "var(--bg-elevated)",
+    color: "var(--text)",
+    borderRadius: "var(--radius-sm)",
+    cursor: "pointer",
+    transition:
+      "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease)",
+  },
+  "& .grid-filter-clear:hover": { background: "var(--bg-hover)" },
+  // 列リサイズハンドル
+  "& thead th .th-resize-handle": {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    height: "100%",
+    width: "6px",
+    cursor: "col-resize",
+    userSelect: "none",
+    touchAction: "none",
+    background: "transparent",
+    zIndex: 3,
+  },
+  "& thead th .th-resize-handle:hover, & thead th .th-resize-handle.is-resizing": {
+    background: "var(--accent)",
+    opacity: 0.65,
+  },
+  "& thead th.is-resizing": { userSelect: "none" },
+  // プレビュー差分ハイライト (PreviewGrid のみ出現)
+  "& td.is-changed": {
+    background: "color-mix(in srgb, var(--preview-highlight) 18%, transparent)",
+    boxShadow: "inset 2px 0 0 var(--preview-highlight)",
+  },
+  "& tbody tr:nth-of-type(even) td.is-changed": {
+    background: "color-mix(in srgb, var(--preview-highlight) 22%, transparent)",
+  },
+  "& tbody tr:hover td.is-changed": {
+    background: "color-mix(in srgb, var(--preview-highlight) 28%, transparent)",
+  },
+  "& th.is-changed-col": {
+    background: "color-mix(in srgb, var(--preview-highlight) 22%, var(--bg-header))",
+    boxShadow: "inset 0 -2px 0 var(--preview-highlight)",
+  },
+  "& th.is-changed-col .th-name": { color: "var(--preview-highlight)" },
+  // インラインセル編集 (ResultGrid のみ出現)
+  "& td.is-pending-edit": {
+    background: "color-mix(in srgb, var(--preview-highlight) 14%, transparent)",
+    boxShadow: "inset 2px 0 0 var(--preview-highlight)",
+  },
+  "& tbody tr:nth-of-type(even) td.is-pending-edit": {
+    background: "color-mix(in srgb, var(--preview-highlight) 18%, transparent)",
+  },
+  "& tbody tr:hover td.is-pending-edit": {
+    background: "color-mix(in srgb, var(--preview-highlight) 24%, transparent)",
+  },
+  "& .cell-pending-value": { color: "var(--preview-highlight)", fontWeight: 500 },
+  "& td.is-editable-cell": { cursor: "text" },
+  "& td.is-invalid-edit": { boxShadow: "inset 2px 0 0 var(--status-error)" },
+  "& td.is-invalid-edit.is-pending-edit": {
+    background: "color-mix(in srgb, var(--status-error) 12%, transparent)",
+  },
+  "& .cell-edit-wrap": { position: "relative" },
+  "& .cell-edit-input": {
+    width: "100%",
+    boxSizing: "border-box",
+    margin: "-3px -6px",
+    padding: "3px 6px",
+    fontFamily: "inherit",
+    fontSize: "inherit",
+    color: "var(--text)",
+    background: "var(--bg-input)",
+    border: "1px solid var(--accent)",
+    borderRadius: "var(--radius-sm)",
+    outline: "none",
+    boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent)",
+  },
+  "& .cell-edit-input.is-invalid": {
+    borderColor: "var(--status-error)",
+    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-error) 30%, transparent)",
+  },
+  "& .cell-edit-error": {
+    position: "absolute",
+    top: "calc(100% + 2px)",
+    left: "-6px",
+    zIndex: 5,
+    maxWidth: "280px",
+    padding: "3px 7px",
+    fontSize: "var(--text-xs)",
+    fontWeight: 500,
+    color: "#fff",
+    background: "var(--status-error)",
+    borderRadius: "var(--radius-sm)",
+    boxShadow: "var(--shadow-md, 0 2px 6px rgb(0 0 0 / 0.3))",
+    whiteSpace: "normal",
+    pointerEvents: "none",
+  },
+};
 
 interface Props {
   result: QueryResult | null;
@@ -541,10 +822,7 @@ export function DataGrid({
           )}
         </Box>
       )}
-      <table
-        className="data-grid-table"
-        style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }}
-      >
+      <table style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }}>
         <colgroup>
           <col style={{ width: ROW_INDEX_WIDTH }} />
           {table.getHeaderGroups()[0]?.headers.map((h) => (
@@ -798,7 +1076,22 @@ export function DataGrid({
         />
       )}
       {copied && (
-        <Box className="grid-copied-toast" role="status" aria-live="polite">
+        <Box
+          role="status"
+          aria-live="polite"
+          position="fixed"
+          bottom="48px"
+          left="50%"
+          transform="translateX(-50%)"
+          zIndex={1100}
+          padding="6px 14px"
+          fontSize="sm"
+          color="#ffffff"
+          background="color-mix(in srgb, #16a34a 92%, #000000)"
+          borderRadius="md"
+          boxShadow="lg"
+          pointerEvents="none"
+        >
           {t("gridCopied")}
         </Box>
       )}
@@ -936,19 +1229,33 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }, [pendingEdits, validateEdit]);
 
   if (!result) {
-    return <Box className="results empty">{t("resultEmpty")}</Box>;
+    return (
+      <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
+        {t("resultEmpty")}
+      </Box>
+    );
   }
   if (result.columns.length === 0) {
     if (streaming) {
       return (
-        <Box className="results empty results-loading">
+        <Box
+          flex="1 1 auto"
+          minHeight={0}
+          minWidth={0}
+          overflow="auto"
+          bg="app.surface"
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          gap="8px"
+        >
           <Spinner />
           <chakra.span>{t("statusRunningQuery")}</chakra.span>
         </Box>
       );
     }
     return (
-      <Box className="results empty">
+      <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
         {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
       </Box>
     );
@@ -975,44 +1282,97 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const canApply = hasPendingEdits && !streaming && !hasInvalidEdit;
 
   return (
-    <Box className={`results has-toolbar ${streaming ? "is-streaming" : ""}`}>
+    <Box
+      display="flex"
+      flexDirection="column"
+      flex="1 1 auto"
+      minHeight={0}
+      minWidth={0}
+      overflow="hidden"
+      bg="app.surface"
+      position={streaming ? "relative" : undefined}
+    >
       {streaming && (
-        <Box className="results-streaming-banner" role="status" aria-live="polite">
-          <chakra.span className="results-streaming-dot" aria-hidden />
-          <chakra.span className="results-streaming-text">
+        <Box
+          role="status"
+          aria-live="polite"
+          display="flex"
+          alignItems="center"
+          gap="6px"
+          padding="4px 10px"
+          fontSize="sm"
+          color="app.textMuted"
+          borderBottom="1px solid"
+          borderColor="app.borderSubtle"
+          bg="app.surfaceMuted"
+        >
+          <chakra.span
+            aria-hidden
+            width="8px"
+            height="8px"
+            borderRadius="50%"
+            background="#f59e0b"
+            animation="streaming-pulse 1s ease-in-out infinite"
+          />
+          <chakra.span flex="1">
             {t("statusStreaming", { rows: result.rows.length, ms: result.elapsed_ms })}
           </chakra.span>
           {onStopStreaming && (
-            <chakra.button
-              type="button"
-              className="warning results-streaming-stop"
+            <Button
+              variant="warning"
+              size="sm"
+              px="12px"
+              py="2px"
+              whiteSpace="nowrap"
               onClick={onStopStreaming}
               title={t("gridStopButtonTitle")}
             >
               {t("gridStopButton")}
-            </chakra.button>
+            </Button>
           )}
         </Box>
       )}
       {showAutoLimitBadge && (
-        <Box className="results-auto-limit-banner" role="status" aria-live="polite">
-          <chakra.span className="results-auto-limit-text">
+        <Box
+          role="status"
+          aria-live="polite"
+          display="flex"
+          alignItems="center"
+          gap="10px"
+          padding="5px 10px"
+          fontSize="sm"
+          color="app.text"
+          borderBottom="1px solid"
+          borderColor="app.borderSubtle"
+          background="color-mix(in srgb, #f59e0b 14%, var(--bg-muted))"
+        >
+          <chakra.span flex="1">
             {t("autoLimitApplied", { limit: autoLimitApplied! })}
           </chakra.span>
-          <chakra.button
-            type="button"
-            className="results-auto-limit-btn"
+          <Button
+            size="sm"
+            px="10px"
+            whiteSpace="nowrap"
             onClick={onFetchAllRows}
             title={t("autoLimitFetchAllTitle")}
           >
             {t("autoLimitFetchAll")}
-          </chakra.button>
+          </Button>
         </Box>
       )}
-      <Box className="results-toolbar">
-        <chakra.button
-          type="button"
-          className="results-toolbar-btn"
+      <Box
+        display="flex"
+        alignItems="center"
+        gap="6px"
+        padding="4px 8px"
+        bg="app.toolbar"
+        borderBottom="1px solid"
+        borderColor="app.borderSubtle"
+        flexShrink={0}
+      >
+        <Button
+          size="sm"
+          px="10px"
           onClick={() => setShowExport(true)}
           disabled={!canExport}
           title={
@@ -1024,23 +1384,42 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           }
         >
           {t("exportButton")}
-        </chakra.button>
+        </Button>
         {editable && tableColumns && pkIndices.length === 0 && (
           <chakra.span
-            className="results-edit-hint"
+            fontSize="xs"
+            color="app.textMuted"
+            fontStyle="italic"
+            paddingLeft="4px"
             title={t("editNoPkHintTitle")}
           >
             {t("editNoPkHint")}
           </chakra.span>
         )}
         {editableActive && hasPendingEdits && (
-          <Box className="results-edit-bar" role="group" aria-label={t("editToolbarAria")}>
-            <chakra.span className="results-edit-count">
+          <Box
+            role="group"
+            aria-label={t("editToolbarAria")}
+            display="inline-flex"
+            alignItems="center"
+            gap="6px"
+            padding="2px 8px"
+            borderLeft="1px solid var(--border-subtle)"
+            borderRight="1px solid var(--border-subtle)"
+            background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
+          >
+            <chakra.span
+              fontSize="xs"
+              color="var(--preview-highlight)"
+              fontWeight={500}
+              whiteSpace="nowrap"
+            >
               {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
             </chakra.span>
-            <chakra.button
-              type="button"
-              className="warning results-edit-btn"
+            <Button
+              variant="warning"
+              size="sm"
+              px="10px"
               onClick={onPreviewEdits}
               disabled={!canPreview}
               title={
@@ -1054,10 +1433,11 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               }
             >
               {t("editPreviewButton")}
-            </chakra.button>
-            <chakra.button
-              type="button"
-              className="success results-edit-btn"
+            </Button>
+            <Button
+              variant="success"
+              size="sm"
+              px="10px"
               onClick={onApplyEdits}
               disabled={!canApply}
               title={
@@ -1069,21 +1449,35 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               }
             >
               {t("editApplyButton")}
-            </chakra.button>
-            <chakra.button
-              type="button"
-              className="results-edit-btn"
+            </Button>
+            <Button
+              size="sm"
+              px="10px"
               onClick={onClearEdits}
               title={t("editCancelButtonTitle")}
             >
               {t("editCancelButton")}
-            </chakra.button>
+            </Button>
           </Box>
         )}
         <chakra.input
           ref={searchInputRef}
           type="search"
-          className="results-search-input"
+          marginLeft="auto"
+          width="220px"
+          padding="3px 8px"
+          fontSize="sm"
+          fontFamily="inherit"
+          border="1px solid var(--border)"
+          background="var(--bg-input)"
+          color="var(--text)"
+          borderRadius="var(--radius-sm)"
+          _placeholder={{ color: "var(--text-muted)" }}
+          _focus={{
+            outline: "none",
+            borderColor: "var(--accent)",
+            boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+          }}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => {
@@ -1097,7 +1491,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           aria-label={t("gridSearchAria")}
         />
       </Box>
-      <Box ref={containerRef} className="results-scroll" tabIndex={-1}>
+      <Box
+        ref={containerRef}
+        tabIndex={-1}
+        flex="1"
+        overflow="auto"
+        minHeight={0}
+        _focus={{ outline: "none" }}
+        css={GRID_CSS}
+      >
         <DataGrid
           columns={result.columns}
           rows={result.rows}
@@ -1120,7 +1522,22 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           }
         />
         {loadingMore && (
-          <Box className="results-loading-more" role="status" aria-live="polite">
+          <Box
+            role="status"
+            aria-live="polite"
+            position="sticky"
+            bottom={0}
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+            gap="6px"
+            padding="6px 10px"
+            fontSize="sm"
+            color="app.textMuted"
+            borderTop="1px solid"
+            borderColor="app.borderSubtle"
+            bg="app.surfaceMuted"
+          >
             <Spinner size={14} />
             {t("gridLoadingMore")}
           </Box>

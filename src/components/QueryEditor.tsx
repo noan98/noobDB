@@ -392,16 +392,36 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       : null;
 
   return (
-    <Box className="editor">
-      <Box className="toolbar">
+    <Box
+      display="flex"
+      flexDirection="column"
+      flex="1 1 auto"
+      minHeight={0}
+      minWidth={0}
+    >
+      <Box
+        display="flex"
+        gap="2"
+        alignItems="center"
+        padding="6px 10px"
+        borderBottom="1px solid"
+        borderColor="app.border"
+        bg="app.toolbar"
+        css={{
+          "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "6px" },
+          "& .btn-spinner": {
+            borderColor: "color-mix(in srgb, currentColor 35%, transparent)",
+            borderTopColor: "currentColor",
+          },
+        }}
+      >
         <Button
           variant="success"
-          className="with-icon"
           onClick={runSelectionOrAll}
           disabled={disabled || !hasContent}
           title={disabledReason ?? runTitle}
         >
-          <chakra.span className="btn-icon" aria-hidden>
+          <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
             {running ? (
               <Spinner size={12} className="btn-spinner" />
             ) : (
@@ -415,12 +435,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         {onPreview && (
           <Button
             variant="warning"
-            className="with-icon"
-            onClick={previewSelectionOrAll}
+              onClick={previewSelectionOrAll}
             disabled={disabled || !hasContent}
             title={disabledReason ?? `${t("editorPreviewTitle")} (${t("editorPreviewShortcut")})`}
           >
-            <chakra.span className="btn-icon" aria-hidden>
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
                 <circle cx="8" cy="8" r="2" />
@@ -430,12 +449,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           </Button>
         )}
         <Button
-          className="with-icon"
           onClick={formatSelectionOrAll}
           disabled={disabled || !hasContent}
           title={disabledReason ?? t("editorFormatTitle")}
         >
-          <chakra.span className="btn-icon" aria-hidden>
+          <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M2 3h12" />
               <path d="M2 7h8" />
@@ -447,12 +465,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         </Button>
         {onExplain && (
           <Button
-            className="with-icon"
-            onClick={explainSelectionOrAll}
+              onClick={explainSelectionOrAll}
             disabled={disabled || !hasContent}
             title={disabledReason ?? t("editorExplainTitle")}
           >
-            <chakra.span className="btn-icon" aria-hidden>
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="6" y="1.5" width="4" height="3" rx="0.5" />
                 <rect x="1.5" y="11.5" width="4" height="3" rx="0.5" />
@@ -465,12 +482,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         )}
         {onSaveSnippet && (
           <Button
-            className="with-icon"
-            onClick={saveSelectionOrAll}
+              onClick={saveSelectionOrAll}
             disabled={disabled || !hasContent}
             title={disabledReason ?? t("editorSaveSnippetTitle")}
           >
-            <chakra.span className="btn-icon" aria-hidden>
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
                 <path d="M5 2v4h5V2" />
@@ -483,12 +499,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         {sessionId && !explainMode && (
           <Button
             variant="info"
-            className="with-icon"
-            onClick={() => setShowBuilder(true)}
+              onClick={() => setShowBuilder(true)}
             disabled={disabled}
             title={disabled ? t("editorHintDisabled") : t("editorBuilderTitle")}
           >
-            <chakra.span className="btn-icon" aria-hidden>
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M11.5 2.5a3 3 0 0 0-3.9 3.6L2.5 11.2a1.5 1.5 0 1 0 2.1 2.1l5.1-5.1a3 3 0 0 0 3.6-3.9l-1.7 1.7-1.5-.4-.4-1.5z" />
               </svg>
@@ -497,7 +512,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           </Button>
         )}
       </Box>
-      <Box className="cm" ref={hostRef} />
+      <Box ref={hostRef} flex="1" overflow="auto" bg="app.surface" />
       {showBuilder && sessionId && !explainMode && (
         <QueryBuilder
           sessionId={sessionId}
