@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, DumpOptions } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
-import { Icon } from "./Icon";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Button, Checkbox, Input } from "./ui";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -107,82 +108,77 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
   };
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal export-modal dump-modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-header">
-          <h2>{t("dumpTitle", { database })}</h2>
-          <button
-            className="icon"
-            onClick={onClose}
-            aria-label={t("dumpClose")}
-            title={t("dumpClose")}
-          >
-            <Icon name="close" size={13} />
-          </button>
-        </header>
+    <Modal
+      width="620px"
+      onClose={onClose}
+      closeOnInteractOutside={!isRunning}
+      closeOnEscape={!isRunning}
+    >
+      <ModalHeader onClose={onClose} closeLabel={t("dumpClose")} closeDisabled={isRunning}>
+        {t("dumpTitle", { database })}
+      </ModalHeader>
 
-        <div className="modal-body export-body">
-          <div className="dump-note">{t("dumpNote")}</div>
+      <ModalBody className="export-body">
+        <div className="dump-note">{t("dumpNote")}</div>
 
-          <section className="export-section">
-            <div className="export-label">{t("dumpOptionsLabel")}</div>
-            <div className="dump-options">
-              {OPTION_ROWS.map((row) => (
-                <label key={row.key} className="dump-option" title={t(row.hint)}>
-                  <input
-                    type="checkbox"
-                    checked={options[row.key]}
-                    onChange={() => toggle(row.key)}
-                    disabled={isRunning}
-                  />
-                  <span className="dump-option-text">
-                    <span className="dump-option-label">{t(row.label)}</span>
-                    <span className="dump-option-hint">{t(row.hint)}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </section>
+        <section className="export-section">
+          <div className="export-label">{t("dumpOptionsLabel")}</div>
+          <div className="dump-options">
+            {OPTION_ROWS.map((row) => (
+              <label key={row.key} className="dump-option" title={t(row.hint)}>
+                <Checkbox
+                  checked={options[row.key]}
+                  onChange={() => toggle(row.key)}
+                  disabled={isRunning}
+                />
+                <span className="dump-option-text">
+                  <span className="dump-option-label">{t(row.label)}</span>
+                  <span className="dump-option-hint">{t(row.hint)}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </section>
 
-          <section className="export-section">
-            <label className="export-label" htmlFor="dump-path">
-              {t("dumpSavePath")}
-            </label>
-            <div className="export-path-row">
-              <input
-                id="dump-path"
-                className="export-path-input"
-                type="text"
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                placeholder={t("dumpSavePathPlaceholder")}
-                disabled={isRunning}
-              />
-              <button type="button" onClick={handleBrowse} disabled={isRunning}>
-                {t("dumpBrowse")}
-              </button>
-            </div>
-          </section>
+        <section className="export-section">
+          <label className="export-label" htmlFor="dump-path">
+            {t("dumpSavePath")}
+          </label>
+          <div className="export-path-row">
+            <Input
+              id="dump-path"
+              className="export-path-input"
+              type="text"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder={t("dumpSavePathPlaceholder")}
+              disabled={isRunning}
+            />
+            <Button type="button" onClick={handleBrowse} disabled={isRunning}>
+              {t("dumpBrowse")}
+            </Button>
+          </div>
+        </section>
 
-          {status.kind === "error" && (
-            <div className="export-error">{t("dumpError", { error: status.message })}</div>
-          )}
-        </div>
+        {status.kind === "error" && (
+          <div className="export-error">{t("dumpError", { error: status.message })}</div>
+        )}
+      </ModalBody>
 
-        <div className="modal-footer">
-          <div style={{ flex: 1 }} />
-          <button onClick={onClose} disabled={isRunning}>
-            {t("dumpCancel")}
-          </button>
-          <button
-            className="primary"
-            onClick={handleDump}
-            disabled={isRunning || !path.trim()}
-          >
-            {isRunning ? t("dumpRunning") : t("dumpExecute")}
-          </button>
-        </div>
-      </div>
-    </div>
+      <ModalFooter>
+        <div style={{ flex: 1 }} />
+        <Button type="button" onClick={onClose} disabled={isRunning}>
+          {t("dumpCancel")}
+        </Button>
+        <Button
+          type="button"
+          variant="primary"
+          onClick={handleDump}
+          disabled={isRunning || !path.trim()}
+        >
+          {isRunning ? t("dumpRunning") : t("dumpExecute")}
+        </Button>
+      </ModalFooter>
+    </Modal>
   );
 }

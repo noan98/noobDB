@@ -12,6 +12,8 @@ import {
 import { motion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Button, Checkbox, Input, Select } from "./ui";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -258,235 +260,229 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
       : 0;
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" onClick={importing ? undefined : onClose}>
-      <div className="modal import-modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-header">
-          <h2>{t("importTitle", { table })}</h2>
-          <button
-            className="icon"
-            onClick={onClose}
-            disabled={importing}
-            aria-label={t("importClose")}
-            title={t("importClose")}
-          >
-            ✕
-          </button>
-        </header>
+    <Modal
+      width="680px"
+      onClose={onClose}
+      closeOnInteractOutside={!importing}
+      closeOnEscape={!importing}
+    >
+      <ModalHeader onClose={onClose} closeLabel={t("importClose")} closeDisabled={importing}>
+        {t("importTitle", { table })}
+      </ModalHeader>
 
-        <div className="modal-body import-body">
-          <section className="export-section">
-            <label className="export-label" htmlFor="import-path">
-              {t("importFile")}
+      <ModalBody className="import-body">
+        <section className="export-section">
+          <label className="export-label" htmlFor="import-path">
+            {t("importFile")}
+          </label>
+          <div className="export-path-row">
+            <Input
+              id="import-path"
+              className="export-path-input"
+              type="text"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder={t("importFilePlaceholder")}
+              disabled={importing}
+            />
+            <Button type="button" onClick={handleBrowse} disabled={importing}>
+              {t("importBrowse")}
+            </Button>
+          </div>
+        </section>
+
+        <section className="export-section import-options">
+          <div className="import-option">
+            <label className="export-label" htmlFor="import-encoding">
+              {t("importEncoding")}
             </label>
-            <div className="export-path-row">
-              <input
-                id="import-path"
-                className="export-path-input"
+            <Select
+              id="import-encoding"
+              value={encoding}
+              onChange={(e) => setEncoding(e.target.value)}
+              disabled={importing}
+            >
+              {ENCODINGS.map((enc) => (
+                <option key={enc} value={enc}>
+                  {enc}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="import-option">
+            <label className="export-label" htmlFor="import-delimiter">
+              {t("importDelimiter")}
+            </label>
+            <Select
+              id="import-delimiter"
+              value={delimiter}
+              onChange={(e) => setDelimiter(e.target.value as DelimiterChoice)}
+              disabled={importing}
+            >
+              <option value=",">{t("importDelimiterComma")}</option>
+              <option value={"\t"}>{t("importDelimiterTab")}</option>
+              <option value=";">{t("importDelimiterSemicolon")}</option>
+            </Select>
+          </div>
+
+          <div className="import-option">
+            <label className="export-label" htmlFor="import-quote">
+              {t("importQuote")}
+            </label>
+            <Input
+              id="import-quote"
+              css={{ width: "64px" }}
+              type="text"
+              value={quote}
+              onChange={(e) => setQuote(e.target.value)}
+              disabled={importing}
+              aria-invalid={!quoteValid}
+              aria-describedby={quoteValid ? undefined : "import-quote-error"}
+            />
+          </div>
+
+          <div className="import-option">
+            <label className="export-label" htmlFor="import-null">
+              {t("importNull")}
+            </label>
+            <Select
+              id="import-null"
+              value={nullMode}
+              onChange={(e) => setNullMode(e.target.value as NullMode)}
+              disabled={importing}
+            >
+              <option value="empty">{t("importNullEmpty")}</option>
+              <option value="custom">{t("importNullCustom")}</option>
+              <option value="none">{t("importNullNone")}</option>
+            </Select>
+            {nullMode === "custom" && (
+              <Input
+                css={{ width: "64px" }}
                 type="text"
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                placeholder={t("importFilePlaceholder")}
+                value={nullCustom}
+                onChange={(e) => setNullCustom(e.target.value)}
+                disabled={importing}
+                aria-label={t("importNullCustom")}
+              />
+            )}
+          </div>
+
+          <div className="import-option import-header-toggle">
+            <label>
+              <Checkbox
+                checked={hasHeader}
+                onChange={(e) => setHasHeader(e.target.checked)}
                 disabled={importing}
               />
-              <button type="button" onClick={handleBrowse} disabled={importing}>
-                {t("importBrowse")}
-              </button>
+              <span>{t("importHasHeader")}</span>
+            </label>
+          </div>
+        </section>
+
+        {!quoteValid && (
+          <div id="import-quote-error" className="export-error">
+            {t("importQuote")}: {t("importQuoteInvalid")}
+          </div>
+        )}
+        {previewError && <div className="export-error">{previewError}</div>}
+        {loadingPreview && <div className="muted">{t("importLoadingPreview")}</div>}
+
+        {preview && tableColumns && (
+          <section className="export-section">
+            <div className="export-label">{t("importMappingTitle")}</div>
+            <div className="import-mapping">
+              {tableColumns.map((col) => (
+                <div className="import-mapping-row" key={col.name}>
+                  <span className="import-mapping-col" title={col.data_type}>
+                    {col.name}
+                    {col.key === "PRI" && <span className="import-pk" title={t("colPkTitle")}><Icon name="key" /></span>}
+                  </span>
+                  <Select
+                    value={mapping[col.name] ?? ""}
+                    onChange={(e) =>
+                      setMapping((prev) => ({
+                        ...prev,
+                        [col.name]: e.target.value === "" ? null : Number(e.target.value),
+                      }))
+                    }
+                    disabled={importing}
+                  >
+                    <option value="">{t("importSkipColumn")}</option>
+                    {preview.headers.map((_, idx) => (
+                      <option key={idx} value={idx}>
+                        {csvColumnLabel(idx)}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              ))}
             </div>
           </section>
+        )}
 
-          <section className="export-section import-options">
-            <div className="import-option">
-              <label className="export-label" htmlFor="import-encoding">
-                {t("importEncoding")}
-              </label>
-              <select
-                id="import-encoding"
-                value={encoding}
-                onChange={(e) => setEncoding(e.target.value)}
-                disabled={importing}
-              >
-                {ENCODINGS.map((enc) => (
-                  <option key={enc} value={enc}>
-                    {enc}
-                  </option>
-                ))}
-              </select>
+        {preview && preview.rows.length > 0 && (
+          <section className="export-section">
+            <div className="export-label">
+              {t("importPreviewTitle")}
+              {preview.truncated && <span className="muted"> {t("importPreviewTruncated")}</span>}
             </div>
-
-            <div className="import-option">
-              <label className="export-label" htmlFor="import-delimiter">
-                {t("importDelimiter")}
-              </label>
-              <select
-                id="import-delimiter"
-                value={delimiter}
-                onChange={(e) => setDelimiter(e.target.value as DelimiterChoice)}
-                disabled={importing}
-              >
-                <option value=",">{t("importDelimiterComma")}</option>
-                <option value={"\t"}>{t("importDelimiterTab")}</option>
-                <option value=";">{t("importDelimiterSemicolon")}</option>
-              </select>
-            </div>
-
-            <div className="import-option">
-              <label className="export-label" htmlFor="import-quote">
-                {t("importQuote")}
-              </label>
-              <input
-                id="import-quote"
-                className="import-quote-input"
-                type="text"
-                value={quote}
-                onChange={(e) => setQuote(e.target.value)}
-                disabled={importing}
-                aria-invalid={!quoteValid}
-                aria-describedby={quoteValid ? undefined : "import-quote-error"}
-              />
-            </div>
-
-            <div className="import-option">
-              <label className="export-label" htmlFor="import-null">
-                {t("importNull")}
-              </label>
-              <select
-                id="import-null"
-                value={nullMode}
-                onChange={(e) => setNullMode(e.target.value as NullMode)}
-                disabled={importing}
-              >
-                <option value="empty">{t("importNullEmpty")}</option>
-                <option value="custom">{t("importNullCustom")}</option>
-                <option value="none">{t("importNullNone")}</option>
-              </select>
-              {nullMode === "custom" && (
-                <input
-                  className="import-quote-input"
-                  type="text"
-                  value={nullCustom}
-                  onChange={(e) => setNullCustom(e.target.value)}
-                  disabled={importing}
-                  aria-label={t("importNullCustom")}
-                />
-              )}
-            </div>
-
-            <div className="import-option import-header-toggle">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={hasHeader}
-                  onChange={(e) => setHasHeader(e.target.checked)}
-                  disabled={importing}
-                />
-                <span>{t("importHasHeader")}</span>
-              </label>
-            </div>
-          </section>
-
-          {!quoteValid && (
-            <div id="import-quote-error" className="export-error">
-              {t("importQuote")}: {t("importQuoteInvalid")}
-            </div>
-          )}
-          {previewError && <div className="export-error">{previewError}</div>}
-          {loadingPreview && <div className="muted">{t("importLoadingPreview")}</div>}
-
-          {preview && tableColumns && (
-            <section className="export-section">
-              <div className="export-label">{t("importMappingTitle")}</div>
-              <div className="import-mapping">
-                {tableColumns.map((col) => (
-                  <div className="import-mapping-row" key={col.name}>
-                    <span className="import-mapping-col" title={col.data_type}>
-                      {col.name}
-                      {col.key === "PRI" && <span className="import-pk" title={t("colPkTitle")}><Icon name="key" /></span>}
-                    </span>
-                    <select
-                      value={mapping[col.name] ?? ""}
-                      onChange={(e) =>
-                        setMapping((prev) => ({
-                          ...prev,
-                          [col.name]: e.target.value === "" ? null : Number(e.target.value),
-                        }))
-                      }
-                      disabled={importing}
-                    >
-                      <option value="">{t("importSkipColumn")}</option>
-                      {preview.headers.map((_, idx) => (
-                        <option key={idx} value={idx}>
-                          {csvColumnLabel(idx)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {preview && preview.rows.length > 0 && (
-            <section className="export-section">
-              <div className="export-label">
-                {t("importPreviewTitle")}
-                {preview.truncated && <span className="muted"> {t("importPreviewTruncated")}</span>}
-              </div>
-              <div className="import-preview-scroll">
-                <table className="import-preview-table">
-                  <thead>
-                    <tr>
-                      {preview.headers.map((h, idx) => (
-                        <th key={idx}>{hasHeader ? h : csvColumnLabel(idx)}</th>
+            <div className="import-preview-scroll">
+              <table className="import-preview-table">
+                <thead>
+                  <tr>
+                    {preview.headers.map((h, idx) => (
+                      <th key={idx}>{hasHeader ? h : csvColumnLabel(idx)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.rows.slice(0, 10).map((row, ri) => (
+                    <tr key={ri}>
+                      {preview.headers.map((_, ci) => (
+                        <td key={ci}>{row[ci] ?? ""}</td>
                       ))}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {preview.rows.slice(0, 10).map((row, ri) => (
-                      <tr key={ri}>
-                        {preview.headers.map((_, ci) => (
-                          <td key={ci}>{row[ci] ?? ""}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {status.kind === "importing" && (
-            <div className="import-progress" role="status" aria-live="polite">
-              <div className="import-progress-bar">
-                <motion.div
-                  className="import-progress-fill"
-                  animate={{ width: `${percent}%` }}
-                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                />
-              </div>
-              <div className="import-progress-text">
-                {t("importProgress", { inserted: status.inserted, total: status.total })}
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          )}
-          {status.kind === "error" && <div className="export-error">{status.message}</div>}
-        </div>
+          </section>
+        )}
 
-        <div className="modal-footer">
-          <div style={{ flex: 1 }} />
-          {importing ? (
-            <button onClick={handleCancelImport}>{t("importStop")}</button>
-          ) : (
-            <button onClick={onClose}>{t("importClose")}</button>
-          )}
-          <button
-            className="primary"
-            onClick={handleImport}
-            disabled={importing || !path || mappingEntries.length === 0 || !quoteValid}
-          >
-            {importing ? t("importImporting") : t("importExecute")}
-          </button>
-        </div>
-      </div>
-    </div>
+        {status.kind === "importing" && (
+          <div className="import-progress" role="status" aria-live="polite">
+            <div className="import-progress-bar">
+              <motion.div
+                className="import-progress-fill"
+                animate={{ width: `${percent}%` }}
+                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              />
+            </div>
+            <div className="import-progress-text">
+              {t("importProgress", { inserted: status.inserted, total: status.total })}
+            </div>
+          </div>
+        )}
+        {status.kind === "error" && <div className="export-error">{status.message}</div>}
+      </ModalBody>
+
+      <ModalFooter>
+        <div style={{ flex: 1 }} />
+        {importing ? (
+          <Button type="button" onClick={handleCancelImport}>{t("importStop")}</Button>
+        ) : (
+          <Button type="button" onClick={onClose}>{t("importClose")}</Button>
+        )}
+        <Button
+          type="button"
+          variant="primary"
+          onClick={handleImport}
+          disabled={importing || !path || mappingEntries.length === 0 || !quoteValid}
+        >
+          {importing ? t("importImporting") : t("importExecute")}
+        </Button>
+      </ModalFooter>
+    </Modal>
   );
 }

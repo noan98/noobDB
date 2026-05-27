@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, CellValue, Column, ExportFormat } from "../api/tauri";
 import { useT } from "../i18n";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Button, Input } from "./ui";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -128,94 +130,90 @@ export function ExportModal({ columns, rows, database, table, partial, onClose }
   };
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal export-modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-header">
-          <h2>{t("exportTitle")}</h2>
-          <button
-            className="icon"
-            onClick={onClose}
-            aria-label={t("exportClose")}
-            title={t("exportClose")}
-          >
-            ✕
-          </button>
-        </header>
+    <Modal
+      width="560px"
+      onClose={onClose}
+      closeOnInteractOutside={!isSaving}
+      closeOnEscape={!isSaving}
+    >
+      <ModalHeader onClose={onClose} closeLabel={t("exportClose")} closeDisabled={isSaving}>
+        {t("exportTitle")}
+      </ModalHeader>
 
-        <div className="modal-body export-body">
-          <div className="export-rowcount">{t("exportRowCount", { rows: rows.length })}</div>
-          {partial && (
-            <div className="export-warning" role="status">
-              {t("exportPartialWarning")}
-            </div>
-          )}
-          <section className="export-section">
-            <div className="export-label">{t("exportFormat")}</div>
-            <div className="export-format-row" role="radiogroup" aria-label={t("exportFormat")}>
-              <label className={`export-format-option ${format === "csv" ? "active" : ""}`}>
-                <input
-                  type="radio"
-                  name="export-format"
-                  value="csv"
-                  checked={format === "csv"}
-                  onChange={() => setFormat("csv")}
-                  disabled={isSaving}
-                />
-                <span>{t("exportFormatCsv")}</span>
-              </label>
-              <label className={`export-format-option ${format === "json" ? "active" : ""}`}>
-                <input
-                  type="radio"
-                  name="export-format"
-                  value="json"
-                  checked={format === "json"}
-                  onChange={() => setFormat("json")}
-                  disabled={isSaving}
-                />
-                <span>{t("exportFormatJson")}</span>
-              </label>
-            </div>
-          </section>
-
-          <section className="export-section">
-            <label className="export-label" htmlFor="export-path">
-              {t("exportSavePath")}
-            </label>
-            <div className="export-path-row">
+      <ModalBody className="export-body">
+        <div className="export-rowcount">{t("exportRowCount", { rows: rows.length })}</div>
+        {partial && (
+          <div className="export-warning" role="status">
+            {t("exportPartialWarning")}
+          </div>
+        )}
+        <section className="export-section">
+          <div className="export-label">{t("exportFormat")}</div>
+          <div className="export-format-row" role="radiogroup" aria-label={t("exportFormat")}>
+            <label className={`export-format-option ${format === "csv" ? "active" : ""}`}>
               <input
-                id="export-path"
-                className="export-path-input"
-                type="text"
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                placeholder={t("exportSavePathPlaceholder")}
+                type="radio"
+                name="export-format"
+                value="csv"
+                checked={format === "csv"}
+                onChange={() => setFormat("csv")}
                 disabled={isSaving}
               />
-              <button type="button" onClick={handleBrowse} disabled={isSaving}>
-                {t("exportBrowse")}
-              </button>
-            </div>
-          </section>
+              <span>{t("exportFormatCsv")}</span>
+            </label>
+            <label className={`export-format-option ${format === "json" ? "active" : ""}`}>
+              <input
+                type="radio"
+                name="export-format"
+                value="json"
+                checked={format === "json"}
+                onChange={() => setFormat("json")}
+                disabled={isSaving}
+              />
+              <span>{t("exportFormatJson")}</span>
+            </label>
+          </div>
+        </section>
 
-          {status.kind === "error" && (
-            <div className="export-error">{t("exportError", { error: status.message })}</div>
-          )}
-        </div>
+        <section className="export-section">
+          <label className="export-label" htmlFor="export-path">
+            {t("exportSavePath")}
+          </label>
+          <div className="export-path-row">
+            <Input
+              id="export-path"
+              className="export-path-input"
+              type="text"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder={t("exportSavePathPlaceholder")}
+              disabled={isSaving}
+            />
+            <Button type="button" onClick={handleBrowse} disabled={isSaving}>
+              {t("exportBrowse")}
+            </Button>
+          </div>
+        </section>
 
-        <div className="modal-footer">
-          <div style={{ flex: 1 }} />
-          <button onClick={onClose} disabled={isSaving}>
-            {t("exportCancel")}
-          </button>
-          <button
-            className="primary"
-            onClick={handleExport}
-            disabled={isSaving || !path.trim()}
-          >
-            {isSaving ? t("exportSaving") : t("exportExecute")}
-          </button>
-        </div>
-      </div>
-    </div>
+        {status.kind === "error" && (
+          <div className="export-error">{t("exportError", { error: status.message })}</div>
+        )}
+      </ModalBody>
+
+      <ModalFooter>
+        <div style={{ flex: 1 }} />
+        <Button type="button" onClick={onClose} disabled={isSaving}>
+          {t("exportCancel")}
+        </Button>
+        <Button
+          type="button"
+          variant="primary"
+          onClick={handleExport}
+          disabled={isSaving || !path.trim()}
+        >
+          {isSaving ? t("exportSaving") : t("exportExecute")}
+        </Button>
+      </ModalFooter>
+    </Modal>
   );
 }
