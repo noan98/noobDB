@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// DB-agnostic value type returned to the frontend as JSON.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Value {
     Null,

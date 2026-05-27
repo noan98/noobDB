@@ -1,7 +1,9 @@
+pub mod data_diff;
 pub mod diff;
 pub mod mysql;
 pub mod postgres;
 pub mod sqlite;
+pub mod sync;
 pub mod types;
 
 use serde::{Deserialize, Serialize};

@@ -236,6 +236,59 @@ export interface SchemaDiff {
   tables: TableDiff[];
 }
 
+/** What a generated sync statement does (Issue #245 phase 2). */
+export type SyncKind =
+  | "create_table"
+  | "add_column"
+  | "alter_column"
+  | "drop_column"
+  | "drop_table"
+  | "insert_row"
+  | "update_row"
+  | "delete_row";
+
+/** One reconciling DDL statement that makes the target match the source. */
+export interface SyncStatement {
+  sql: string;
+  table: string;
+  kind: SyncKind;
+  /** True for `DROP` statements; gated behind the destructive toggle. */
+  destructive: boolean;
+}
+
+/** Generated reconciliation plan: executable statements plus skipped-case notes. */
+export interface SyncPlan {
+  statements: SyncStatement[];
+  warnings: string[];
+}
+
+/** Where a row sits relative to the two tables (Issue #245 phase 3). */
+export type RowStatus = "source_only" | "target_only" | "different";
+
+/** One row-level difference paired by primary key. */
+export interface RowDiff {
+  status: RowStatus;
+  /** Primary-key values pairing the two sides. */
+  key: CellValue[];
+  source: CellValue[] | null;
+  target: CellValue[] | null;
+  /** For `different`, the non-key columns whose values differ. */
+  changed_columns: string[];
+}
+
+/** Result of comparing one table's rows across two connections. */
+export interface DataDiff {
+  target_driver: DriverKind;
+  table: string;
+  columns: string[];
+  primary_key: string[];
+  rows: RowDiff[];
+  /** True if either side hit the row cap, so the diff is partial. */
+  truncated: boolean;
+  source_count: number;
+  target_count: number;
+}
+
 /** Application log contents plus the on-disk file path, for the Settings viewer. */
 export interface LogView {
   text: string;
@@ -373,6 +426,36 @@ export const api = {
       sourceDatabase: params.sourceDatabase,
       targetSessionId: params.targetSessionId,
       targetDatabase: params.targetDatabase,
+    }),
+  generateSyncSql: (diff: SchemaDiff, allowDestructive: boolean) =>
+    invoke<SyncPlan>("generate_sync_sql", { diff, allowDestructive }),
+  compareTableData: (params: {
+    sourceSessionId: string;
+    sourceDatabase: string;
+    targetSessionId: string;
+    targetDatabase: string;
+    table: string;
+    limit?: number | null;
+  }) =>
+    invoke<DataDiff>("compare_table_data", {
+      sourceSessionId: params.sourceSessionId,
+      sourceDatabase: params.sourceDatabase,
+      targetSessionId: params.targetSessionId,
+      targetDatabase: params.targetDatabase,
+      table: params.table,
+      limit: params.limit ?? null,
+    }),
+  generateDataSyncSql: (diff: DataDiff, allowDelete: boolean) =>
+    invoke<SyncPlan>("generate_data_sync_sql", { diff, allowDelete }),
+  applySyncSql: (params: {
+    sessionId: string;
+    database?: string | null;
+    statements: string[];
+  }) =>
+    invoke<number>("apply_sync_sql", {
+      sessionId: params.sessionId,
+      database: params.database ?? null,
+      statements: params.statements,
     }),
 
   listProfiles: () => invoke<ConnectionProfile[]>("list_profiles"),

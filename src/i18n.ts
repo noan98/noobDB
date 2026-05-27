@@ -730,6 +730,47 @@ const en = {
   schemaCompareFieldForeignKey: "foreign key",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
+
+  schemaCompareSyncTitle: "Sync the target to the source",
+  schemaCompareSyncDesc:
+    "Generate the DDL that would make the target match the source, review it, then apply the statements you select to the target. Applying opens a separate writable session to the target; a read-only target is rejected. This is best-effort SQL — review it before applying.",
+  schemaCompareAllowDestructive: "Allow destructive changes (DROP TABLE / DROP COLUMN)",
+  schemaCompareGenerate: "Generate sync SQL",
+  schemaCompareGenerating: "Generating...",
+  schemaCompareNoStatements:
+    "No statements to apply. Enable destructive changes to generate DROP statements.",
+  schemaCompareBackupNote:
+    "Back up the target before applying. DDL is not always reversible, and on MySQL each statement implicitly commits (no rollback).",
+  schemaCompareApply: "Apply {count} statement(s) to target",
+  schemaCompareApplying: "Applying...",
+  schemaCompareApplyConfirm:
+    'Apply {count} statement(s) to "{name}"? This modifies the target schema ({destructive} destructive).',
+  schemaCompareApplyProductionConfirm:
+    '"{name}" is a production connection. Apply schema changes anyway?',
+  schemaCompareApplyDone: "Applied {count} statement(s) to the target.",
+  schemaCompareDestructiveFlag: "destructive",
+  schemaCompareKindCreateTable: "CREATE TABLE",
+  schemaCompareKindAddColumn: "ADD COLUMN",
+  schemaCompareKindAlterColumn: "ALTER COLUMN",
+  schemaCompareKindDropColumn: "DROP COLUMN",
+  schemaCompareKindDropTable: "DROP TABLE",
+  schemaCompareKindInsertRow: "INSERT",
+  schemaCompareKindUpdateRow: "UPDATE",
+  schemaCompareKindDeleteRow: "DELETE",
+
+  schemaCompareDataTitle: "Sync row data (master / config)",
+  schemaCompareDataDesc:
+    "Pick a table present on both sides and compare its rows (paired by primary key), then generate INSERT / UPDATE / DELETE to make the target match the source. Aimed at master / config tables — large tables are capped by the row limit.",
+  schemaCompareDataSelectTable: "Select a table...",
+  schemaCompareDataLimit: "Row limit",
+  schemaCompareDataCompare: "Compare data",
+  schemaCompareDataInserts: "Insert",
+  schemaCompareDataUpdates: "Update",
+  schemaCompareDataDeletes: "Delete",
+  schemaCompareDataTruncated:
+    "Comparison capped at {limit} rows per side — the result is partial. Raise the limit or narrow the table.",
+  schemaCompareAllowDelete: "Allow deletes (DELETE rows missing from the source)",
+  schemaCompareDataGenerate: "Generate data DML",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1464,6 +1505,47 @@ const ja: Dict = {
   schemaCompareFieldForeignKey: "外部キー",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
+
+  schemaCompareSyncTitle: "ターゲットをソースに合わせる",
+  schemaCompareSyncDesc:
+    "ターゲットをソースに合わせる DDL を生成し、内容を確認してから、選択した文をターゲットへ適用します。適用時はターゲットへ書き込み可能なセッションを別途開きます (読み取り専用ターゲットは拒否されます)。生成結果はベストエフォートのため、適用前に必ず確認してください。",
+  schemaCompareAllowDestructive: "破壊的変更を許可する (DROP TABLE / DROP COLUMN)",
+  schemaCompareGenerate: "反映 SQL を生成",
+  schemaCompareGenerating: "生成中...",
+  schemaCompareNoStatements:
+    "適用する文がありません。DROP を生成するには破壊的変更を許可してください。",
+  schemaCompareBackupNote:
+    "適用前にターゲットのバックアップを取得してください。DDL は常に元に戻せるとは限らず、MySQL では各文が暗黙にコミットされ (ロールバック不可) です。",
+  schemaCompareApply: "{count} 文をターゲットへ適用",
+  schemaCompareApplying: "適用中...",
+  schemaCompareApplyConfirm:
+    "{count} 文を「{name}」へ適用しますか? ターゲットのスキーマを変更します (うち破壊的: {destructive})。",
+  schemaCompareApplyProductionConfirm:
+    "「{name}」は本番接続です。スキーマ変更を適用しますか?",
+  schemaCompareApplyDone: "{count} 文をターゲットへ適用しました。",
+  schemaCompareDestructiveFlag: "破壊的",
+  schemaCompareKindCreateTable: "CREATE TABLE",
+  schemaCompareKindAddColumn: "ADD COLUMN",
+  schemaCompareKindAlterColumn: "ALTER COLUMN",
+  schemaCompareKindDropColumn: "DROP COLUMN",
+  schemaCompareKindDropTable: "DROP TABLE",
+  schemaCompareKindInsertRow: "INSERT",
+  schemaCompareKindUpdateRow: "UPDATE",
+  schemaCompareKindDeleteRow: "DELETE",
+
+  schemaCompareDataTitle: "行データを同期 (マスタ / 設定)",
+  schemaCompareDataDesc:
+    "両側に存在するテーブルを選び、行を主キーでペアリングして比較し、ターゲットをソースに合わせる INSERT / UPDATE / DELETE を生成します。マスタ / 設定データ向けで、大きなテーブルは件数上限で制限されます。",
+  schemaCompareDataSelectTable: "テーブルを選択...",
+  schemaCompareDataLimit: "件数上限",
+  schemaCompareDataCompare: "データを比較",
+  schemaCompareDataInserts: "追加",
+  schemaCompareDataUpdates: "変更",
+  schemaCompareDataDeletes: "削除",
+  schemaCompareDataTruncated:
+    "片側あたり {limit} 行で打ち切ったため、結果は部分的です。上限を上げるか対象を絞ってください。",
+  schemaCompareAllowDelete: "削除を許可する (ソースに無い行を DELETE)",
+  schemaCompareDataGenerate: "データ DML を生成",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

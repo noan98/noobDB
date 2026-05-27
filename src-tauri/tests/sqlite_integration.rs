@@ -310,6 +310,193 @@ async fn sqlite_schema_compare_classifies_real_introspection() {
 }
 
 #[tokio::test]
+async fn sqlite_sync_plan_applied_makes_target_match_source() {
+    // End-to-end phase-2 path on real SQLite: diff two schemas, generate the
+    // reconciling DDL, apply it to the target in one transaction, then re-diff
+    // and assert the schemas have converged.
+    let mk = |tag: &str| {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "noobdb_sqlite_sync_{tag}_{}.db",
+            std::process::id()
+        ));
+        p
+    };
+    let src_path = mk("src");
+    let tgt_path = mk("tgt");
+    for p in [&src_path, &tgt_path] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create temp sqlite file");
+    }
+
+    let src = t::connect(&t::sqlite_options(src_path.to_str().unwrap()))
+        .await
+        .expect("connect source");
+    let tgt = t::connect(&t::sqlite_options(tgt_path.to_str().unwrap()))
+        .await
+        .expect("connect target");
+
+    // Source: a richer `users` table plus an extra table the target lacks.
+    src.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
+        None,
+    )
+    .await
+    .expect("create users source");
+    src.execute("CREATE TABLE only_src (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create only_src");
+    // Target: `users` missing the `name` column and no `only_src` table.
+    tgt.execute("CREATE TABLE users (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create users target");
+
+    let plan = {
+        let diff = t::compare_schemas(&src, "main", &tgt, "main")
+            .await
+            .expect("compare");
+        t::generate_sync_sql(&diff, false)
+    };
+    // Expect: ADD COLUMN name (users) and CREATE TABLE only_src — no warnings.
+    assert!(plan.warnings.is_empty(), "warnings: {:?}", plan.warnings);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|s| s.kind == t::SyncKind::CreateTable && s.table == "only_src"));
+    assert!(plan
+        .statements
+        .iter()
+        .any(|s| s.kind == t::SyncKind::AddColumn && s.table == "users"));
+
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    tgt.execute_transaction(&sqls, None)
+        .await
+        .expect("apply sync plan");
+
+    // Re-diff: every table should now be identical.
+    let after = t::compare_schemas(&src, "main", &tgt, "main")
+        .await
+        .expect("re-compare");
+    assert!(
+        after
+            .tables
+            .iter()
+            .all(|tbl| tbl.status == t::DiffStatus::Same),
+        "schemas should have converged, got: {:?}",
+        after
+            .tables
+            .iter()
+            .map(|tbl| (&tbl.name, tbl.status))
+            .collect::<Vec<_>>()
+    );
+
+    src.close().await;
+    tgt.close().await;
+    let _ = std::fs::remove_file(&src_path);
+    let _ = std::fs::remove_file(&tgt_path);
+}
+
+#[tokio::test]
+async fn sqlite_data_sync_plan_applied_makes_rows_converge() {
+    // End-to-end phase-3 path on real SQLite: pair rows by PK, generate the
+    // reconciling DML (insert / update / delete), apply it, then re-diff and
+    // assert the rows have converged.
+    let mk = |tag: &str| {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "noobdb_sqlite_data_{tag}_{}.db",
+            std::process::id()
+        ));
+        p
+    };
+    let src_path = mk("src");
+    let tgt_path = mk("tgt");
+    for p in [&src_path, &tgt_path] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create temp sqlite file");
+    }
+
+    let src = t::connect(&t::sqlite_options(src_path.to_str().unwrap()))
+        .await
+        .expect("connect source");
+    let tgt = t::connect(&t::sqlite_options(tgt_path.to_str().unwrap()))
+        .await
+        .expect("connect target");
+
+    for c in [&src, &tgt] {
+        c.execute(
+            "CREATE TABLE scores (id INTEGER PRIMARY KEY, name TEXT, score INTEGER)",
+            None,
+        )
+        .await
+        .expect("create scores");
+    }
+    src.execute(
+        "INSERT INTO scores (id, name, score) VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)",
+        None,
+    )
+    .await
+    .expect("seed source");
+    // Target: id=1 score differs, id=3 missing, id=4 extra.
+    tgt.execute(
+        "INSERT INTO scores (id, name, score) VALUES (1, 'a', 99), (2, 'b', 20), (4, 'd', 40)",
+        None,
+    )
+    .await
+    .expect("seed target");
+
+    let columns = vec!["id".to_string(), "name".to_string(), "score".to_string()];
+    let pk_idx = [0usize];
+    let select = "SELECT id, name, score FROM scores ORDER BY id";
+
+    let src_rows = src.execute(select, None).await.expect("read source").rows;
+    let tgt_rows = tgt.execute(select, None).await.expect("read target").rows;
+    let row_diffs = t::compute_data_diff(&columns, &pk_idx, &src_rows, &tgt_rows);
+    // insert id=3, update id=1, delete id=4.
+    assert_eq!(row_diffs.len(), 3);
+
+    let diff = t::DataDiff {
+        target_driver: t::DriverKind::Sqlite,
+        table: "scores".to_string(),
+        columns: columns.clone(),
+        primary_key: vec!["id".to_string()],
+        rows: row_diffs,
+        truncated: false,
+        source_count: src_rows.len(),
+        target_count: tgt_rows.len(),
+    };
+
+    let plan = t::generate_data_sync_sql(&diff, true);
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    assert_eq!(sqls.len(), 3, "insert + update + delete");
+    tgt.execute_transaction(&sqls, None)
+        .await
+        .expect("apply data sync plan");
+
+    // Re-diff: no differences should remain.
+    let src_after = src
+        .execute(select, None)
+        .await
+        .expect("re-read source")
+        .rows;
+    let tgt_after = tgt
+        .execute(select, None)
+        .await
+        .expect("re-read target")
+        .rows;
+    let after = t::compute_data_diff(&columns, &pk_idx, &src_after, &tgt_after);
+    assert!(
+        after.is_empty(),
+        "rows should have converged, got: {after:?}"
+    );
+
+    src.close().await;
+    tgt.close().await;
+    let _ = std::fs::remove_file(&src_path);
+    let _ = std::fs::remove_file(&tgt_path);
+}
+
+#[tokio::test]
 async fn sqlite_missing_path_reports_invalid_input() {
     // file_path = None should surface a clean error instead of panicking
     // somewhere inside sqlx.
