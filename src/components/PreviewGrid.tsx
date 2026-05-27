@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Box, chakra } from "@chakra-ui/react";
 import { CellValue, PreviewResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { DataGrid } from "./ResultGrid";
 import { Splitter } from "./Splitter";
+import { Checkbox } from "./ui";
 
 const SYNC_SCROLL_STORAGE_KEY = "noobdb.preview.syncScroll";
 
@@ -243,20 +245,20 @@ export function PreviewGrid({
     filteredAfterRows.length === 0;
 
   return (
-    <div className={`preview ${streaming ? "is-streaming" : ""}`}>
-      <div className="preview-banner">
-        <span className="preview-banner-dot" aria-hidden />
-        <span className="preview-banner-text">{t("previewBanner")}</span>
+    <Box className={`preview ${streaming ? "is-streaming" : ""}`}>
+      <Box className="preview-banner">
+        <chakra.span className="preview-banner-dot" aria-hidden />
+        <chakra.span className="preview-banner-text">{t("previewBanner")}</chakra.span>
         {pendingEditsSummary && (onApplyEdits || onDiscardEdits) && (
-          <div className="preview-edit-actions" role="group">
-            <span className="preview-edit-summary">
+          <Box className="preview-edit-actions" role="group">
+            <chakra.span className="preview-edit-summary">
               {t("editPendingCount", {
                 cells: pendingEditsSummary.cells,
                 rows: pendingEditsSummary.rows,
               })}
-            </span>
+            </chakra.span>
             {onApplyEdits && (
-              <button
+              <chakra.button
                 type="button"
                 className="success preview-edit-btn"
                 onClick={onApplyEdits}
@@ -264,58 +266,57 @@ export function PreviewGrid({
                 title={t("editApplyButtonTitle")}
               >
                 {t("editApplyButton")}
-              </button>
+              </chakra.button>
             )}
             {onDiscardEdits && (
-              <button
+              <chakra.button
                 type="button"
                 className="preview-edit-btn"
                 onClick={onDiscardEdits}
                 title={t("editCancelButtonTitle")}
               >
                 {t("editCancelButton")}
-              </button>
+              </chakra.button>
             )}
-          </div>
+          </Box>
         )}
         {streaming && (
-          <span className="preview-banner-streaming">
+          <chakra.span className="preview-banner-streaming">
             {t("statusPreviewStreaming", { ms: result.elapsed_ms })}
-          </span>
+          </chakra.span>
         )}
         {streaming && onStop && (
-          <button
+          <chakra.button
             type="button"
             className="warning preview-stop-btn"
             onClick={onStop}
             title={t("gridStopButtonTitle")}
           >
             {t("gridStopButton")}
-          </button>
+          </chakra.button>
         )}
-      </div>
-      <div className="preview-meta">
+      </Box>
+      <Box className="preview-meta">
         {result.target_table ? (
-          <span className="preview-target">
+          <chakra.span className="preview-target">
             {t("previewTargetTable", { table: result.target_table })}
-          </span>
+          </chakra.span>
         ) : (
-          <span className="preview-target preview-target-missing">
+          <chakra.span className="preview-target preview-target-missing">
             {t("previewNoTarget")}
-          </span>
+          </chakra.span>
         )}
-        <span className="preview-affected">
+        <chakra.span className="preview-affected">
           {t("previewRowsAffected", { rows: result.rows_affected, ms: result.elapsed_ms })}
-        </span>
+        </chakra.span>
         {noAffectedInSnapshot && (
-          <span className="preview-truncated">
+          <chakra.span className="preview-truncated">
             {t("previewAffectedOutsideSnapshot", { limit: rowLimit })}
-          </span>
+          </chakra.span>
         )}
         {hasSnapshots && (
-          <label className="preview-sync-scroll" title={t("previewSyncScrollTitle")}>
-            <input
-              type="checkbox"
+          <chakra.label className="preview-sync-scroll" title={t("previewSyncScrollTitle")}>
+            <Checkbox
               checked={syncScroll}
               onChange={(e) => {
                 const v = e.target.checked;
@@ -323,10 +324,10 @@ export function PreviewGrid({
                 writeSyncScrollPref(v);
               }}
             />
-            <span>{t("previewSyncScroll")}</span>
-          </label>
+            <chakra.span>{t("previewSyncScroll")}</chakra.span>
+          </chakra.label>
         )}
-      </div>
+      </Box>
 
       {hasSnapshots && (
         <Splitter
@@ -337,15 +338,15 @@ export function PreviewGrid({
           minSize={140}
           ariaLabel={t("splitterPreviewAria")}
           first={
-            <section className="preview-pane preview-before">
-              <header className="preview-pane-header">{t("previewBefore")}</header>
-              <div className="preview-pane-body" ref={beforeBodyRef}>
+            <chakra.section className="preview-pane preview-before">
+              <chakra.header className="preview-pane-header">{t("previewBefore")}</chakra.header>
+              <Box className="preview-pane-body" ref={beforeBodyRef}>
                 {filteredBeforeRows.length === 0 ? (
-                  <div className="preview-empty">
+                  <Box className="preview-empty">
                     {result.before_rows.length === 0
                       ? t("previewEmptyBefore")
                       : t("previewNoAffectedBefore")}
-                  </div>
+                  </Box>
                 ) : (
                   <DataGrid
                     columns={result.columns}
@@ -354,19 +355,19 @@ export function PreviewGrid({
                     changedColumns={diff.changedColumns}
                   />
                 )}
-              </div>
-            </section>
+              </Box>
+            </chakra.section>
           }
           second={
-            <section className="preview-pane preview-after">
-              <header className="preview-pane-header">{t("previewAfter")}</header>
-              <div className="preview-pane-body" ref={afterBodyRef}>
+            <chakra.section className="preview-pane preview-after">
+              <chakra.header className="preview-pane-header">{t("previewAfter")}</chakra.header>
+              <Box className="preview-pane-body" ref={afterBodyRef}>
                 {filteredAfterRows.length === 0 ? (
-                  <div className="preview-empty">
+                  <Box className="preview-empty">
                     {result.after_rows.length === 0
                       ? t("previewEmptyAfter")
                       : t("previewNoAffectedAfter")}
-                  </div>
+                  </Box>
                 ) : (
                   <DataGrid
                     columns={result.columns}
@@ -375,11 +376,11 @@ export function PreviewGrid({
                     changedColumns={diff.changedColumns}
                   />
                 )}
-              </div>
-            </section>
+              </Box>
+            </chakra.section>
           }
         />
       )}
-    </div>
+    </Box>
   );
 }

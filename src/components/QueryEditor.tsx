@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { Box, chakra } from "@chakra-ui/react";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -23,6 +24,7 @@ import { useT } from "../i18n";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
+import { Button } from "./ui";
 
 const noobDBHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -390,15 +392,16 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       : null;
 
   return (
-    <div className="editor">
-      <div className="toolbar">
-        <button
-          className="success with-icon"
+    <Box className="editor">
+      <Box className="toolbar">
+        <Button
+          variant="success"
+          className="with-icon"
           onClick={runSelectionOrAll}
           disabled={disabled || !hasContent}
           title={disabledReason ?? runTitle}
         >
-          <span className="btn-icon" aria-hidden>
+          <chakra.span className="btn-icon" aria-hidden>
             {running ? (
               <Spinner size={12} className="btn-spinner" />
             ) : (
@@ -406,93 +409,95 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
                 <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
               </svg>
             )}
-          </span>
+          </chakra.span>
           {runLabel}
-        </button>
+        </Button>
         {onPreview && (
-          <button
-            className="warning with-icon"
+          <Button
+            variant="warning"
+            className="with-icon"
             onClick={previewSelectionOrAll}
             disabled={disabled || !hasContent}
             title={disabledReason ?? `${t("editorPreviewTitle")} (${t("editorPreviewShortcut")})`}
           >
-            <span className="btn-icon" aria-hidden>
+            <chakra.span className="btn-icon" aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
                 <circle cx="8" cy="8" r="2" />
               </svg>
-            </span>
+            </chakra.span>
             {t("editorPreview")}
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           className="with-icon"
           onClick={formatSelectionOrAll}
           disabled={disabled || !hasContent}
           title={disabledReason ?? t("editorFormatTitle")}
         >
-          <span className="btn-icon" aria-hidden>
+          <chakra.span className="btn-icon" aria-hidden>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M2 3h12" />
               <path d="M2 7h8" />
               <path d="M2 11h10" />
               <path d="M2 15h6" />
             </svg>
-          </span>
+          </chakra.span>
           {t("editorFormat")}
-        </button>
+        </Button>
         {onExplain && (
-          <button
+          <Button
             className="with-icon"
             onClick={explainSelectionOrAll}
             disabled={disabled || !hasContent}
             title={disabledReason ?? t("editorExplainTitle")}
           >
-            <span className="btn-icon" aria-hidden>
+            <chakra.span className="btn-icon" aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="6" y="1.5" width="4" height="3" rx="0.5" />
                 <rect x="1.5" y="11.5" width="4" height="3" rx="0.5" />
                 <rect x="10.5" y="11.5" width="4" height="3" rx="0.5" />
                 <path d="M8 4.5v2.5M3.5 11.5V9h9v2.5" />
               </svg>
-            </span>
+            </chakra.span>
             {t("editorExplain")}
-          </button>
+          </Button>
         )}
         {onSaveSnippet && (
-          <button
+          <Button
             className="with-icon"
             onClick={saveSelectionOrAll}
             disabled={disabled || !hasContent}
             title={disabledReason ?? t("editorSaveSnippetTitle")}
           >
-            <span className="btn-icon" aria-hidden>
+            <chakra.span className="btn-icon" aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
                 <path d="M5 2v4h5V2" />
                 <path d="M5 10h6" />
               </svg>
-            </span>
+            </chakra.span>
             {t("editorSaveSnippet")}
-          </button>
+          </Button>
         )}
         {sessionId && !explainMode && (
-          <button
-            className="info with-icon"
+          <Button
+            variant="info"
+            className="with-icon"
             onClick={() => setShowBuilder(true)}
             disabled={disabled}
             title={disabled ? t("editorHintDisabled") : t("editorBuilderTitle")}
           >
-            <span className="btn-icon" aria-hidden>
+            <chakra.span className="btn-icon" aria-hidden>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M11.5 2.5a3 3 0 0 0-3.9 3.6L2.5 11.2a1.5 1.5 0 1 0 2.1 2.1l5.1-5.1a3 3 0 0 0 3.6-3.9l-1.7 1.7-1.5-.4-.4-1.5z" />
               </svg>
-            </span>
+            </chakra.span>
             {t("editorBuilder")}
-          </button>
+          </Button>
         )}
-      </div>
-      <div className="cm" ref={hostRef} />
+      </Box>
+      <Box className="cm" ref={hostRef} />
       {showBuilder && sessionId && !explainMode && (
         <QueryBuilder
           sessionId={sessionId}
@@ -507,6 +512,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           onClose={() => setShowBuilder(false)}
         />
       )}
-    </div>
+    </Box>
   );
 });
