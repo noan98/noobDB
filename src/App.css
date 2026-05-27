@@ -2008,6 +2008,32 @@ button.icon.history-action:hover {
   width: 13px;
   height: 13px;
 }
+/* Close button to dismiss the whole error status bar. Always available while an
+   error is shown so the red footer can be cleared even without a matching hint. */
+.status-dismiss {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: currentcolor;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.status-dismiss:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
+.status-dismiss .icon-svg {
+  width: 14px;
+  height: 14px;
+}
 
 .status-hint {
   display: flex;
