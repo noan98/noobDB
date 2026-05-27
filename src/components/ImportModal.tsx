@@ -13,7 +13,6 @@ import { motion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { useToast } from "./Toast";
-import { SuccessCheck } from "./SuccessCheck";
 
 interface Props {
   sessionId: string;
@@ -30,7 +29,6 @@ type NullMode = "none" | "empty" | "custom";
 type Status =
   | { kind: "idle" }
   | { kind: "importing"; inserted: number; total: number }
-  | { kind: "success"; inserted: number; ms: number }
   | { kind: "error"; message: string };
 
 const ENCODINGS = ["utf-8", "shift_jis", "euc-jp", "utf-16le", "windows-1252"];
@@ -201,8 +199,8 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
       onProgress: (e) =>
         setStatus({ kind: "importing", inserted: e.inserted, total: e.total }),
       onDone: (e) => {
-        setStatus({ kind: "success", inserted: e.inserted, ms: e.elapsedMs });
         toast.success(t("importSuccess", { inserted: e.inserted, ms: e.elapsedMs }));
+        setStatus({ kind: "idle" });
         if (unlistenRef.current) {
           unlistenRef.current();
           unlistenRef.current = null;
@@ -468,12 +466,6 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
               <div className="import-progress-text">
                 {t("importProgress", { inserted: status.inserted, total: status.total })}
               </div>
-            </div>
-          )}
-          {status.kind === "success" && (
-            <div className="export-success modal-success-mark">
-              <SuccessCheck size={22} />
-              <span>{t("importSuccess", { inserted: status.inserted, ms: status.ms })}</span>
             </div>
           )}
           {status.kind === "error" && <div className="export-error">{status.message}</div>}

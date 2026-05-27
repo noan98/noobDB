@@ -206,7 +206,6 @@ const en = {
 
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
   statusConnecting: "Connecting to {name}...",
-  statusConnected: "Connected to {name} (session {id})",
   toastConnected: "Connected to {name}",
   statusConnectionFailed: "Connection failed: {error}",
   statusNotConnected: "Not connected",
@@ -982,7 +981,6 @@ const ja: Dict = {
 
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
   statusConnecting: "{name} に接続中...",
-  statusConnected: "{name} に接続しました (セッション {id})",
   toastConnected: "{name} に接続しました",
   statusConnectionFailed: "接続に失敗しました: {error}",
   statusNotConnected: "接続されていません",

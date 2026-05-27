@@ -4,7 +4,6 @@ import { api, DumpOptions } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Icon } from "./Icon";
 import { useToast } from "./Toast";
-import { SuccessCheck } from "./SuccessCheck";
 
 interface Props {
   sessionId: string;
@@ -68,7 +67,6 @@ const OPTION_ROWS: { key: keyof DumpOptions; label: I18nKey; hint: I18nKey }[] =
 type Status =
   | { kind: "idle" }
   | { kind: "running" }
-  | { kind: "success"; bytes: number; path: string }
   | { kind: "error"; message: string };
 
 export function DumpModal({ sessionId, database, onClose }: Props) {
@@ -100,8 +98,8 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
     setStatus({ kind: "running" });
     try {
       const bytes = await api.dumpDatabase({ sessionId, database, path, options });
-      setStatus({ kind: "success", bytes, path });
       toast.success(t("dumpSuccess", { bytes, path }));
+      setStatus({ kind: "idle" });
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
       toast.error(t("dumpError", { error: String(e) }));
@@ -168,12 +166,6 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
 
           {status.kind === "error" && (
             <div className="export-error">{t("dumpError", { error: status.message })}</div>
-          )}
-          {status.kind === "success" && (
-            <div className="export-success modal-success-mark">
-              <SuccessCheck size={22} />
-              <span>{t("dumpSuccess", { bytes: status.bytes, path: status.path })}</span>
-            </div>
           )}
         </div>
 

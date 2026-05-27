@@ -120,6 +120,10 @@ function readInitialSidebarWidth(): number {
 }
 
 type Status =
+  // No status to surface (e.g. freshly connected, no query run yet). The
+  // footer bar is hidden entirely; one-shot confirmations like "connected"
+  // live in the toast notifications instead.
+  | { kind: "idle" }
   | { kind: "literal"; text: string; error?: boolean }
   | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
 
@@ -137,6 +141,7 @@ const RUNNING_STATUS_KEYS = new Set([
 // Derived from the existing `error` flag and known keys, so call sites don't
 // each have to declare a severity.
 function statusTone(s: Status): StatusTone {
+  if (s.kind === "idle") return "info";
   if (s.error) return "error";
   if (s.kind === "key") {
     if (RUNNING_STATUS_KEYS.has(s.key)) return "running";
@@ -895,7 +900,7 @@ export default function App() {
         setPanes([{ id: paneId, tabIds: [tab.id], activeTabId: tab.id }]);
         setActivePaneId(paneId);
       }
-      setStatus({ kind: "key", key: "statusConnected", vars: { name: profile.name, id: res.session_id } });
+      setStatus({ kind: "idle" });
       toast.success(translate("toastConnected", { name: profile.name }));
     } catch (e) {
       setErrorProfileId(profile.id);
@@ -1927,10 +1932,11 @@ export default function App() {
     };
   }, []);
 
-  const statusText = status.kind === "literal" ? status.text : t(status.key, status.vars);
+  const statusText =
+    status.kind === "idle" ? "" : status.kind === "literal" ? status.text : t(status.key, status.vars);
 
   const statusHintKey = useMemo(() => {
-    if (!status.error) return null;
+    if (status.kind === "idle" || !status.error) return null;
     const raw = status.kind === "literal" ? status.text : status.vars?.error;
     return raw != null ? matchErrorHint(String(raw)) : null;
   }, [status]);
@@ -2434,7 +2440,7 @@ export default function App() {
         )}
         </Suspense>
 
-        {!statusDismissed && (
+        {!statusDismissed && status.kind !== "idle" && (
         <div className={`status status-${statusTone(status)}`}>
           <span className="status-icon" aria-hidden>
             {statusTone(status) === "running" ? (
