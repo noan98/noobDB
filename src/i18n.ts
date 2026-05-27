@@ -729,6 +729,30 @@ const en = {
   schemaCompareFieldForeignKey: "foreign key",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
+
+  schemaCompareSyncTitle: "Sync the target to the source",
+  schemaCompareSyncDesc:
+    "Generate the DDL that would make the target match the source, review it, then apply the statements you select to the target. Applying opens a separate writable session to the target; a read-only target is rejected. This is best-effort SQL — review it before applying.",
+  schemaCompareAllowDestructive: "Allow destructive changes (DROP TABLE / DROP COLUMN)",
+  schemaCompareGenerate: "Generate sync SQL",
+  schemaCompareGenerating: "Generating...",
+  schemaCompareNoStatements:
+    "No statements to apply. Enable destructive changes to generate DROP statements.",
+  schemaCompareBackupNote:
+    "Back up the target before applying. DDL is not always reversible, and on MySQL each statement implicitly commits (no rollback).",
+  schemaCompareApply: "Apply {count} statement(s) to target",
+  schemaCompareApplying: "Applying...",
+  schemaCompareApplyConfirm:
+    'Apply {count} statement(s) to "{name}"? This modifies the target schema ({destructive} destructive).',
+  schemaCompareApplyProductionConfirm:
+    '"{name}" is a production connection. Apply schema changes anyway?',
+  schemaCompareApplyDone: "Applied {count} statement(s) to the target.",
+  schemaCompareDestructiveFlag: "destructive",
+  schemaCompareKindCreateTable: "CREATE TABLE",
+  schemaCompareKindAddColumn: "ADD COLUMN",
+  schemaCompareKindAlterColumn: "ALTER COLUMN",
+  schemaCompareKindDropColumn: "DROP COLUMN",
+  schemaCompareKindDropTable: "DROP TABLE",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1462,6 +1486,30 @@ const ja: Dict = {
   schemaCompareFieldForeignKey: "外部キー",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
+
+  schemaCompareSyncTitle: "ターゲットをソースに合わせる",
+  schemaCompareSyncDesc:
+    "ターゲットをソースに合わせる DDL を生成し、内容を確認してから、選択した文をターゲットへ適用します。適用時はターゲットへ書き込み可能なセッションを別途開きます (読み取り専用ターゲットは拒否されます)。生成結果はベストエフォートのため、適用前に必ず確認してください。",
+  schemaCompareAllowDestructive: "破壊的変更を許可する (DROP TABLE / DROP COLUMN)",
+  schemaCompareGenerate: "反映 SQL を生成",
+  schemaCompareGenerating: "生成中...",
+  schemaCompareNoStatements:
+    "適用する文がありません。DROP を生成するには破壊的変更を許可してください。",
+  schemaCompareBackupNote:
+    "適用前にターゲットのバックアップを取得してください。DDL は常に元に戻せるとは限らず、MySQL では各文が暗黙にコミットされ (ロールバック不可) です。",
+  schemaCompareApply: "{count} 文をターゲットへ適用",
+  schemaCompareApplying: "適用中...",
+  schemaCompareApplyConfirm:
+    "{count} 文を「{name}」へ適用しますか? ターゲットのスキーマを変更します (うち破壊的: {destructive})。",
+  schemaCompareApplyProductionConfirm:
+    "「{name}」は本番接続です。スキーマ変更を適用しますか?",
+  schemaCompareApplyDone: "{count} 文をターゲットへ適用しました。",
+  schemaCompareDestructiveFlag: "破壊的",
+  schemaCompareKindCreateTable: "CREATE TABLE",
+  schemaCompareKindAddColumn: "ADD COLUMN",
+  schemaCompareKindAlterColumn: "ALTER COLUMN",
+  schemaCompareKindDropColumn: "DROP COLUMN",
+  schemaCompareKindDropTable: "DROP TABLE",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

@@ -7,10 +7,14 @@ import {
   type DiffStatus,
   type DriverKind,
   type SchemaDiff,
+  type SyncKind,
+  type SyncPlan,
+  type SyncStatement,
   type TableColumnInfo,
   type TableDiff,
 } from "../api/tauri";
 import { useT } from "../i18n";
+import { useSettings } from "../settings";
 import { Icon } from "./Icon";
 
 type Side = "source" | "target";
@@ -38,11 +42,14 @@ const EMPTY_SIDE: SideState = {
 };
 
 /**
- * Phase-1 schema comparison (Issue #245): pick a source and a target
- * connection + database, then view how their schemas differ. This view opens
- * its own short-lived, read-only sessions on demand (one per distinct profile)
- * and tears them down on close, so it never disturbs the main workspace
- * connection. Generating the reconciling DDL is a later phase.
+ * Schema comparison + sync (Issue #245, phases 1–2): pick a source and a
+ * target connection + database, view how their schemas differ, then optionally
+ * generate the reconciling DDL and apply it to the target. Comparison runs over
+ * short-lived read-only sessions this view opens on demand (one per distinct
+ * profile) and tears down on close, so it never disturbs the main workspace
+ * connection. Applying a sync plan opens a separate, writable session to the
+ * target profile just for the transaction (rejected if that profile is
+ * read-only) and disconnects it immediately after.
  */
 export function SchemaCompareView({
   profiles,
@@ -52,6 +59,7 @@ export function SchemaCompareView({
   onClose: () => void;
 }) {
   const t = useT();
+  const settings = useSettings();
 
   const [source, setSource] = useState<SideState>(EMPTY_SIDE);
   const [target, setTarget] = useState<SideState>(EMPTY_SIDE);
@@ -59,6 +67,23 @@ export function SchemaCompareView({
   const [compareError, setCompareError] = useState<string | null>(null);
   const [diff, setDiff] = useState<SchemaDiff | null>(null);
   const [hideSame, setHideSame] = useState(true);
+
+  // Sync (phase 2) state.
+  const [allowDestructive, setAllowDestructive] = useState(false);
+  const [plan, setPlan] = useState<SyncPlan | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [generating, setGenerating] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyResult, setApplyResult] = useState<string | null>(null);
+
+  // Any change to the diff invalidates a previously generated plan.
+  useEffect(() => {
+    setPlan(null);
+    setSelected(new Set());
+    setSyncError(null);
+    setApplyResult(null);
+  }, [diff]);
 
   // Sessions this view opened, keyed by profile id so the same profile chosen
   // on both sides reuses one connection. Disconnected on unmount.
@@ -207,6 +232,111 @@ export function SchemaCompareView({
     [diff, hideSame],
   );
 
+  const hasDifferences =
+    counts.different + counts.source_only + counts.target_only > 0;
+
+  const generatePlan = useCallback(async () => {
+    if (!diff) return;
+    setGenerating(true);
+    setSyncError(null);
+    setApplyResult(null);
+    try {
+      const result = await api.generateSyncSql(diff, allowDestructive);
+      setPlan(result);
+      // Default-select non-destructive statements only; drops stay opt-in even
+      // when present so "apply" never quietly drops data.
+      const next = new Set<number>();
+      result.statements.forEach((s, i) => {
+        if (!s.destructive) next.add(i);
+      });
+      setSelected(next);
+    } catch (e) {
+      setSyncError(String(e));
+    } finally {
+      setGenerating(false);
+    }
+  }, [diff, allowDestructive]);
+
+  const toggleStatement = useCallback((index: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
+
+  const targetProfile = useMemo(
+    () => profiles.find((p) => p.id === target.profileId) ?? null,
+    [profiles, target.profileId],
+  );
+
+  const applyPlan = useCallback(async () => {
+    if (!plan || !targetProfile || !target.database) return;
+    const statements = plan.statements
+      .filter((_, i) => selected.has(i))
+      .map((s) => s.sql);
+    if (statements.length === 0) return;
+
+    const destructiveCount = plan.statements.filter(
+      (s, i) => selected.has(i) && s.destructive,
+    ).length;
+    const confirmMsg = t("schemaCompareApplyConfirm", {
+      count: statements.length,
+      name: targetProfile.name,
+      destructive: destructiveCount,
+    });
+    if (!window.confirm(confirmMsg)) return;
+    if (
+      targetProfile.is_production &&
+      settings.confirmProductionConnect &&
+      !window.confirm(t("schemaCompareApplyProductionConfirm", { name: targetProfile.name }))
+    ) {
+      return;
+    }
+
+    setApplying(true);
+    setSyncError(null);
+    setApplyResult(null);
+    let writableSession: string | null = null;
+    try {
+      // Open a dedicated writable session to the target profile. read_only is
+      // taken from the profile, so a read-only profile makes the backend reject
+      // the apply (acceptance criterion).
+      const res = await api.connect({
+        profile_id: targetProfile.id,
+        driver: coerceDriver(targetProfile.driver),
+        host: targetProfile.host,
+        port: targetProfile.port,
+        user: targetProfile.user,
+        password: "",
+        database: targetProfile.database,
+        ssh: targetProfile.ssh ? { ...targetProfile.ssh, passphrase: "" } : null,
+        file_path: targetProfile.file_path,
+        read_only: targetProfile.read_only,
+        skip_history: false,
+      });
+      writableSession = res.session_id;
+      await api.applySyncSql({
+        sessionId: res.session_id,
+        database: target.database,
+        statements,
+      });
+      setApplyResult(t("schemaCompareApplyDone", { count: statements.length }));
+      // Refresh the diff so the view reflects the post-apply state.
+      await runCompare();
+    } catch (e) {
+      setSyncError(String(e));
+    } finally {
+      if (writableSession) {
+        api.disconnect(writableSession).catch(() => {});
+      }
+      setApplying(false);
+    }
+  }, [plan, selected, targetProfile, target.database, settings.confirmProductionConnect, t, runCompare]);
+
+  const selectedCount = selected.size;
+
   return (
     <div className="settings schema-compare">
       <header className="settings-header">
@@ -299,11 +429,117 @@ export function SchemaCompareView({
                   ))}
                 </div>
               )}
+
+              {hasDifferences && (
+                <div className="schema-compare-sync">
+                  <h3 className="schema-compare-sync-title">{t("schemaCompareSyncTitle")}</h3>
+                  <p className="settings-help">{t("schemaCompareSyncDesc")}</p>
+                  <div className="schema-compare-sync-controls">
+                    <label className="schema-compare-destructive">
+                      <input
+                        type="checkbox"
+                        checked={allowDestructive}
+                        onChange={(e) => setAllowDestructive(e.target.checked)}
+                      />
+                      {t("schemaCompareAllowDestructive")}
+                    </label>
+                    <button onClick={generatePlan} disabled={generating}>
+                      {generating ? t("schemaCompareGenerating") : t("schemaCompareGenerate")}
+                    </button>
+                  </div>
+
+                  {syncError && <p className="schema-compare-warning">{syncError}</p>}
+                  {applyResult && <p className="schema-compare-success">{applyResult}</p>}
+
+                  {plan && (
+                    <div className="schema-compare-plan">
+                      {plan.statements.length === 0 ? (
+                        <p className="schema-compare-empty">{t("schemaCompareNoStatements")}</p>
+                      ) : (
+                        <>
+                          <ul className="schema-compare-statements">
+                            {plan.statements.map((stmt, i) => (
+                              <SyncStatementRow
+                                key={`${stmt.table}-${i}`}
+                                statement={stmt}
+                                checked={selected.has(i)}
+                                onToggle={() => toggleStatement(i)}
+                                t={t}
+                              />
+                            ))}
+                          </ul>
+                          <p className="schema-compare-backup">{t("schemaCompareBackupNote")}</p>
+                          <div className="schema-compare-actions">
+                            <button
+                              className="primary"
+                              onClick={applyPlan}
+                              disabled={applying || selectedCount === 0}
+                            >
+                              {applying
+                                ? t("schemaCompareApplying")
+                                : t("schemaCompareApply", { count: selectedCount })}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                      {plan.warnings.length > 0 && (
+                        <ul className="schema-compare-plan-warnings">
+                          {plan.warnings.map((w, i) => (
+                            <li key={i}>{w}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </>
       )}
     </div>
+  );
+}
+
+function syncKindLabel(kind: SyncKind, t: ReturnType<typeof useT>): string {
+  switch (kind) {
+    case "create_table":
+      return t("schemaCompareKindCreateTable");
+    case "add_column":
+      return t("schemaCompareKindAddColumn");
+    case "alter_column":
+      return t("schemaCompareKindAlterColumn");
+    case "drop_column":
+      return t("schemaCompareKindDropColumn");
+    case "drop_table":
+      return t("schemaCompareKindDropTable");
+  }
+}
+
+function SyncStatementRow({
+  statement,
+  checked,
+  onToggle,
+  t,
+}: {
+  statement: SyncStatement;
+  checked: boolean;
+  onToggle: () => void;
+  t: ReturnType<typeof useT>;
+}) {
+  return (
+    <li className={`schema-compare-statement ${statement.destructive ? "destructive" : ""}`}>
+      <label className="schema-compare-statement-head">
+        <input type="checkbox" checked={checked} onChange={onToggle} />
+        <span className={`schema-compare-kind kind-${statement.kind}`}>
+          {syncKindLabel(statement.kind, t)}
+        </span>
+        {statement.destructive && (
+          <span className="schema-compare-destructive-flag">{t("schemaCompareDestructiveFlag")}</span>
+        )}
+      </label>
+      <code className="schema-compare-sql">{statement.sql}</code>
+    </li>
   );
 }
 

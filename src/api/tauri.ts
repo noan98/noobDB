@@ -236,6 +236,29 @@ export interface SchemaDiff {
   tables: TableDiff[];
 }
 
+/** What a generated sync statement does (Issue #245 phase 2). */
+export type SyncKind =
+  | "create_table"
+  | "add_column"
+  | "alter_column"
+  | "drop_column"
+  | "drop_table";
+
+/** One reconciling DDL statement that makes the target match the source. */
+export interface SyncStatement {
+  sql: string;
+  table: string;
+  kind: SyncKind;
+  /** True for `DROP` statements; gated behind the destructive toggle. */
+  destructive: boolean;
+}
+
+/** Generated reconciliation plan: executable statements plus skipped-case notes. */
+export interface SyncPlan {
+  statements: SyncStatement[];
+  warnings: string[];
+}
+
 /** Application log contents plus the on-disk file path, for the Settings viewer. */
 export interface LogView {
   text: string;
@@ -373,6 +396,18 @@ export const api = {
       sourceDatabase: params.sourceDatabase,
       targetSessionId: params.targetSessionId,
       targetDatabase: params.targetDatabase,
+    }),
+  generateSyncSql: (diff: SchemaDiff, allowDestructive: boolean) =>
+    invoke<SyncPlan>("generate_sync_sql", { diff, allowDestructive }),
+  applySyncSql: (params: {
+    sessionId: string;
+    database?: string | null;
+    statements: string[];
+  }) =>
+    invoke<number>("apply_sync_sql", {
+      sessionId: params.sessionId,
+      database: params.database ?? null,
+      statements: params.statements,
     }),
 
   listProfiles: () => invoke<ConnectionProfile[]>("list_profiles"),

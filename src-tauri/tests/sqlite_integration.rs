@@ -310,6 +310,93 @@ async fn sqlite_schema_compare_classifies_real_introspection() {
 }
 
 #[tokio::test]
+async fn sqlite_sync_plan_applied_makes_target_match_source() {
+    // End-to-end phase-2 path on real SQLite: diff two schemas, generate the
+    // reconciling DDL, apply it to the target in one transaction, then re-diff
+    // and assert the schemas have converged.
+    let mk = |tag: &str| {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "noobdb_sqlite_sync_{tag}_{}.db",
+            std::process::id()
+        ));
+        p
+    };
+    let src_path = mk("src");
+    let tgt_path = mk("tgt");
+    for p in [&src_path, &tgt_path] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create temp sqlite file");
+    }
+
+    let src = t::connect(&t::sqlite_options(src_path.to_str().unwrap()))
+        .await
+        .expect("connect source");
+    let tgt = t::connect(&t::sqlite_options(tgt_path.to_str().unwrap()))
+        .await
+        .expect("connect target");
+
+    // Source: a richer `users` table plus an extra table the target lacks.
+    src.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
+        None,
+    )
+    .await
+    .expect("create users source");
+    src.execute("CREATE TABLE only_src (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create only_src");
+    // Target: `users` missing the `name` column and no `only_src` table.
+    tgt.execute("CREATE TABLE users (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create users target");
+
+    let plan = {
+        let diff = t::compare_schemas(&src, "main", &tgt, "main")
+            .await
+            .expect("compare");
+        t::generate_sync_sql(&diff, false)
+    };
+    // Expect: ADD COLUMN name (users) and CREATE TABLE only_src — no warnings.
+    assert!(plan.warnings.is_empty(), "warnings: {:?}", plan.warnings);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|s| s.kind == t::SyncKind::CreateTable && s.table == "only_src"));
+    assert!(plan
+        .statements
+        .iter()
+        .any(|s| s.kind == t::SyncKind::AddColumn && s.table == "users"));
+
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    tgt.execute_transaction(&sqls, None)
+        .await
+        .expect("apply sync plan");
+
+    // Re-diff: every table should now be identical.
+    let after = t::compare_schemas(&src, "main", &tgt, "main")
+        .await
+        .expect("re-compare");
+    assert!(
+        after
+            .tables
+            .iter()
+            .all(|tbl| tbl.status == t::DiffStatus::Same),
+        "schemas should have converged, got: {:?}",
+        after
+            .tables
+            .iter()
+            .map(|tbl| (&tbl.name, tbl.status))
+            .collect::<Vec<_>>()
+    );
+
+    src.close().await;
+    tgt.close().await;
+    let _ = std::fs::remove_file(&src_path);
+    let _ = std::fs::remove_file(&tgt_path);
+}
+
+#[tokio::test]
 async fn sqlite_missing_path_reports_invalid_input() {
     // file_path = None should surface a clean error instead of panicking
     // somewhere inside sqlx.

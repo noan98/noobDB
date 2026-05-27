@@ -12,6 +12,7 @@ mod state;
 #[doc(hidden)]
 pub mod __test_api {
     pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
+    pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::Value;
     pub use crate::db::{Connection, DbConnectOptions, DriverKind};
 
@@ -144,6 +145,8 @@ pub fn run() {
             commands::schema::describe_table,
             commands::schema::schema_overview,
             commands::diff::compare_schema,
+            commands::sync::generate_sync_sql,
+            commands::sync::apply_sync_sql,
             commands::profiles::list_profiles,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,
