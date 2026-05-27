@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
+import { Box, chakra } from "@chakra-ui/react";
 import { ConnectionProfile, Snippet } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { Checkbox, Input } from "./ui";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 
 interface Props {
@@ -94,52 +96,51 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
   };
 
   const renderSnippet = (s: Snippet) => (
-    <div key={s.id} className="tree-node snippet">
-      <div
+    <Box key={s.id} className="tree-node snippet">
+      <Box
         className="tree-row snippet-row"
         role="treeitem"
         onDoubleClick={() => onInsert(s)}
         onContextMenu={(e) => handleContextMenu(e, s)}
         title={`${t("snippetInsertHint")}\n\n${s.sql}`}
       >
-        <span className="tree-chevron empty" aria-hidden />
-        <span className="tree-icon snippet-icon" aria-hidden><Icon name="snippet" /></span>
-        <span className="tree-label">{s.name}</span>
+        <chakra.span className="tree-chevron empty" aria-hidden />
+        <chakra.span className="tree-icon snippet-icon" aria-hidden><Icon name="snippet" /></chakra.span>
+        <chakra.span className="tree-label">{s.name}</chakra.span>
         {s.tags.map((tag) => (
-          <span key={tag} className="tree-badge snippet-tag">{tag}</span>
+          <chakra.span key={tag} className="tree-badge snippet-tag">{tag}</chakra.span>
         ))}
-        {s.driver && <span className="tree-badge driver">{s.driver}</span>}
-      </div>
-    </div>
+        {s.driver && <chakra.span className="tree-badge driver">{s.driver}</chakra.span>}
+      </Box>
+    </Box>
   );
 
   return (
-    <div className="tree-pane">
-      <div className="tree-search">
-        <input
+    <Box className="tree-pane">
+      <Box className="tree-search">
+        <Input
           type="search"
           placeholder={t("snippetSearchPlaceholder")}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
         {activeProfile && (
-          <label className="snippet-scope-toggle">
-            <input
-              type="checkbox"
+          <chakra.label className="snippet-scope-toggle">
+            <Checkbox
               checked={showAllScopes}
               onChange={(e) => setShowAllScopes(e.target.checked)}
             />
             {t("snippetShowAllScopes")}
-          </label>
+          </chakra.label>
         )}
-      </div>
+      </Box>
 
       {snippets.length === 0 ? (
         <EmptyState icon="snippet" title={t("snippetEmptyTitle")} description={t("snippetEmpty")} />
       ) : visibleSnippets.length === 0 ? (
-        <p className="muted" style={{ padding: 12 }}>{t("snippetNoMatches")}</p>
+        <chakra.p className="muted" p="12px">{t("snippetNoMatches")}</chakra.p>
       ) : (
-        <div className="tree" role="tree">
+        <Box className="tree" role="tree">
           {grouped === null
             ? visibleSnippets.map(renderSnippet)
             : grouped.map((g) => {
@@ -147,8 +148,8 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
                 const folderOpen = expandedFolders[key] !== false;
                 const label = g.name ?? t("snippetFolderNone");
                 return (
-                  <div key={key} className="tree-node profile-group">
-                    <div
+                  <Box key={key} className="tree-node profile-group">
+                    <Box
                       className="tree-row group-row"
                       onClick={() =>
                         setExpandedFolders((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
@@ -156,24 +157,24 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
                       role="treeitem"
                       aria-expanded={folderOpen}
                     >
-                      <span className="tree-chevron" aria-hidden>{folderOpen ? "▾" : "▸"}</span>
-                      <span className="group-label">{label}</span>
-                      <span className="tree-badge group-count">{g.snippets.length}</span>
-                    </div>
+                      <chakra.span className="tree-chevron" aria-hidden>{folderOpen ? "▾" : "▸"}</chakra.span>
+                      <chakra.span className="group-label">{label}</chakra.span>
+                      <chakra.span className="tree-badge group-count">{g.snippets.length}</chakra.span>
+                    </Box>
                     {folderOpen && (
-                      <div className="tree-children">
+                      <Box className="tree-children">
                         {g.snippets.map(renderSnippet)}
-                      </div>
+                      </Box>
                     )}
-                  </div>
+                  </Box>
                 );
               })}
-        </div>
+        </Box>
       )}
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
-    </div>
+    </Box>
   );
 }

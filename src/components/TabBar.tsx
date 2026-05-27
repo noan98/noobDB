@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
@@ -47,8 +48,8 @@ export function TabBar({
   const indicatorId = `tab-active-indicator-${useId()}`;
 
   return (
-    <div className="tabbar" role="tablist">
-      <div className="tabbar-tabs">
+    <Box className="tabbar" role="tablist">
+      <Box className="tabbar-tabs">
         <AnimatePresence initial={false}>
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
@@ -84,16 +85,16 @@ export function TabBar({
                     : undefined
                 }
               >
-                <span className="tab-icon" aria-hidden>
+                <chakra.span className="tab-icon" aria-hidden>
                   <Icon name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"} />
-                </span>
-                <span className="tab-label">{tab.title}</span>
+                </chakra.span>
+                <chakra.span className="tab-label">{tab.title}</chakra.span>
                 {tab.dirty && (
-                  <span className="tab-dirty" title={t("tabDirty")} aria-label={t("tabDirty")}>
+                  <chakra.span className="tab-dirty" title={t("tabDirty")} aria-label={t("tabDirty")}>
                     ●
-                  </span>
+                  </chakra.span>
                 )}
-                <button
+                <chakra.button
                   className="tab-close"
                   aria-label={t("tabClose")}
                   title={t("tabClose")}
@@ -103,7 +104,7 @@ export function TabBar({
                   }}
                 >
                   <Icon name="close" size={13} />
-                </button>
+                </chakra.button>
                 {isActive && (
                   <motion.span
                     className="tab-active-indicator"
@@ -116,8 +117,8 @@ export function TabBar({
             );
           })}
         </AnimatePresence>
-      </div>
-      <button
+      </Box>
+      <chakra.button
         className="tab-new"
         onClick={onNew}
         disabled={disabled}
@@ -125,17 +126,17 @@ export function TabBar({
         aria-label={t("tabNew")}
       >
         <Icon name="plus" size={16} />
-      </button>
+      </chakra.button>
       {onSplit && (
-        <button
+        <chakra.button
           className={`tab-split${splitMode === "close" ? " is-close" : ""}`}
           onClick={onSplit}
           title={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}
           aria-label={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}
         >
           <Icon name={splitMode === "close" ? "close" : "columns"} size={15} />
-        </button>
+        </chakra.button>
       )}
-    </div>
+    </Box>
   );
 }
