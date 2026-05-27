@@ -1,3 +1,4 @@
+import { Box, chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 
@@ -85,70 +86,70 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
   const t = useT();
   const writes = impact === "yes";
   return (
-    <span className={`help-impact-badge ${writes ? "impact-yes" : "impact-no"}`}>
-      <span className="help-impact-mark" aria-hidden>
+    <chakra.span className={`help-impact-badge ${writes ? "impact-yes" : "impact-no"}`}>
+      <chakra.span className="help-impact-mark" aria-hidden>
         <Icon name={writes ? "check" : "close"} />
-      </span>
+      </chakra.span>
       {`${t("helpImpactLabel")}: ${t(writes ? "helpImpactYes" : "helpImpactNo")}`}
-    </span>
+    </chakra.span>
   );
 }
 
 export function HelpView({ onClose }: { onClose: () => void }) {
   const t = useT();
   return (
-    <div className="settings help">
-      <header className="settings-header">
-        <h2>{t("helpTitle")}</h2>
-        <button
+    <Box className="settings help">
+      <chakra.header className="settings-header">
+        <chakra.h2>{t("helpTitle")}</chakra.h2>
+        <chakra.button
           className="icon"
           onClick={onClose}
           aria-label={t("helpClose")}
           title={t("helpClose")}
         >
           <Icon name="close" size={13} />
-        </button>
-      </header>
+        </chakra.button>
+      </chakra.header>
 
-      <p className="settings-help help-intro">{t("helpIntro")}</p>
+      <chakra.p className="settings-help help-intro">{t("helpIntro")}</chakra.p>
 
       {SECTIONS.map((section) => (
-        <section className="settings-section" key={section.headerKey}>
-          <div className="settings-section-header">
-            <h3>{t(section.headerKey)}</h3>
-          </div>
-          <p className="settings-help">{t(section.descKey)}</p>
+        <chakra.section className="settings-section" key={section.headerKey}>
+          <Box className="settings-section-header">
+            <chakra.h3>{t(section.headerKey)}</chakra.h3>
+          </Box>
+          <chakra.p className="settings-help">{t(section.descKey)}</chakra.p>
 
-          <div className="help-feature-grid">
+          <Box className="help-feature-grid">
             {section.features.map((f) => (
-              <article className="help-feature" key={f.titleKey}>
-                <div className="help-feature-head">
-                  <h4>{t(f.titleKey)}</h4>
+              <chakra.article className="help-feature" key={f.titleKey}>
+                <Box className="help-feature-head">
+                  <chakra.h4>{t(f.titleKey)}</chakra.h4>
                   {f.impact && <DbImpactBadge impact={f.impact} />}
-                </div>
-                <p className="help-feature-desc">{t(f.descKey)}</p>
+                </Box>
+                <chakra.p className="help-feature-desc">{t(f.descKey)}</chakra.p>
 
                 {f.stepKeys && (
                   <>
-                    <p className="help-usage-title">{t("helpUsageTitle")}</p>
-                    <ol className="help-steps">
+                    <chakra.p className="help-usage-title">{t("helpUsageTitle")}</chakra.p>
+                    <chakra.ol className="help-steps">
                       {f.stepKeys.map((s) => (
-                        <li key={s}>{t(s)}</li>
+                        <chakra.li key={s}>{t(s)}</chakra.li>
                       ))}
-                    </ol>
+                    </chakra.ol>
                   </>
                 )}
 
                 {f.noteKey && (
-                  <p className="help-note">
-                    <strong>{t("helpNoteLabel")}:</strong> {t(f.noteKey)}
-                  </p>
+                  <chakra.p className="help-note">
+                    <chakra.strong>{t("helpNoteLabel")}:</chakra.strong> {t(f.noteKey)}
+                  </chakra.p>
                 )}
-              </article>
+              </chakra.article>
             ))}
-          </div>
-        </section>
+          </Box>
+        </chakra.section>
       ))}
-    </div>
+    </Box>
   );
 }

@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
+import { Button, Input, Select, Textarea } from "./ui";
 
 interface Props {
   initial: Snippet | null;
@@ -106,23 +108,23 @@ export function SnippetForm({
   };
 
   return (
-    <div className="form">
-      <h2 className="full" style={{ margin: 0 }}>
+    <Box className="form">
+      <chakra.h2 className="full" m={0}>
         {initial ? t("snippetEditTitle", { name: initial.name }) : t("snippetNewTitle")}
-      </h2>
+      </chakra.h2>
 
-      <div className="full">
-        <label>{t("snippetName")}</label>
-        <input
+      <Box className="full">
+        <chakra.label>{t("snippetName")}</chakra.label>
+        <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={t("snippetNamePlaceholder")}
         />
-      </div>
+      </Box>
 
-      <div>
-        <label>{t("snippetFolder")}</label>
-        <input
+      <Box>
+        <chakra.label>{t("snippetFolder")}</chakra.label>
+        <Input
           value={folder}
           onChange={(e) => setFolder(e.target.value)}
           placeholder={t("snippetFolderPlaceholder")}
@@ -133,56 +135,56 @@ export function SnippetForm({
             <option key={f} value={f} />
           ))}
         </datalist>
-      </div>
+      </Box>
 
-      <div>
-        <label>{t("snippetDriver")}</label>
-        <select value={driver} onChange={(e) => setDriver(e.target.value)}>
+      <Box>
+        <chakra.label>{t("snippetDriver")}</chakra.label>
+        <Select value={driver} onChange={(e) => setDriver(e.target.value)}>
           <option value="">{t("snippetDriverAny")}</option>
           <option value="mysql">{t("formDriverMysql")}</option>
           <option value="postgres">{t("formDriverPostgres")}</option>
           <option value="sqlite">{t("formDriverSqlite")}</option>
-        </select>
-      </div>
+        </Select>
+      </Box>
 
-      <div className="full">
-        <label>{t("snippetTags")}</label>
-        <input
+      <Box className="full">
+        <chakra.label>{t("snippetTags")}</chakra.label>
+        <Input
           value={tags}
           onChange={(e) => setTags(e.target.value)}
           placeholder={t("snippetTagsPlaceholder")}
         />
-        <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+        <chakra.p className="muted" fontSize="11px" m="4px 0 0">
           {t("snippetTagsHelp")}
-        </p>
-      </div>
+        </chakra.p>
+      </Box>
 
-      <fieldset className="full">
-        <legend>{t("snippetScope")}</legend>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div>
-            <label>{t("snippetScopeKind")}</label>
-            <select value={scopeKind} onChange={(e) => setScopeKind(e.target.value as ScopeKind)}>
+      <chakra.fieldset className="full">
+        <chakra.legend>{t("snippetScope")}</chakra.legend>
+        <Box display="grid" gridTemplateColumns="1fr 1fr" gap="12px">
+          <Box>
+            <chakra.label>{t("snippetScopeKind")}</chakra.label>
+            <Select value={scopeKind} onChange={(e) => setScopeKind(e.target.value as ScopeKind)}>
               <option value="any">{t("snippetScopeAny")}</option>
               <option value="profile">{t("snippetScopeProfile")}</option>
               <option value="group">{t("snippetScopeGroup")}</option>
-            </select>
-          </div>
+            </Select>
+          </Box>
           {scopeKind === "profile" && (
-            <div>
-              <label>{t("snippetScopeProfileLabel")}</label>
-              <select value={scopeProfileId} onChange={(e) => setScopeProfileId(e.target.value)}>
+            <Box>
+              <chakra.label>{t("snippetScopeProfileLabel")}</chakra.label>
+              <Select value={scopeProfileId} onChange={(e) => setScopeProfileId(e.target.value)}>
                 {profiles.length === 0 && <option value="">—</option>}
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
-              </select>
-            </div>
+              </Select>
+            </Box>
           )}
           {scopeKind === "group" && (
-            <div>
-              <label>{t("snippetScopeGroupLabel")}</label>
-              <input
+            <Box>
+              <chakra.label>{t("snippetScopeGroupLabel")}</chakra.label>
+              <Input
                 value={scopeGroup}
                 onChange={(e) => setScopeGroup(e.target.value)}
                 placeholder={t("formGroupPlaceholder")}
@@ -193,17 +195,17 @@ export function SnippetForm({
                   <option key={g} value={g} />
                 ))}
               </datalist>
-            </div>
+            </Box>
           )}
-        </div>
-        <p className="muted" style={{ fontSize: 11, margin: "8px 0 0" }}>
+        </Box>
+        <chakra.p className="muted" fontSize="11px" m="8px 0 0">
           {t("snippetScopeHelp")}
-        </p>
-      </fieldset>
+        </chakra.p>
+      </chakra.fieldset>
 
-      <div className="full">
-        <label>{t("snippetSql")}</label>
-        <textarea
+      <Box className="full">
+        <chakra.label>{t("snippetSql")}</chakra.label>
+        <Textarea
           className="snippet-sql"
           value={sql}
           onChange={(e) => setSql(e.target.value)}
@@ -211,14 +213,14 @@ export function SnippetForm({
           spellCheck={false}
           rows={10}
         />
-      </div>
+      </Box>
 
-      {error && <div className="full text-error">{error}</div>}
+      {error && <Box className="full text-error">{error}</Box>}
 
-      <div className="actions">
-        <button onClick={onCancel}>{t("formCancel")}</button>
-        <button className="primary" onClick={handleSave}>{t("formSave")}</button>
-      </div>
-    </div>
+      <Box className="actions">
+        <Button type="button" onClick={onCancel}>{t("formCancel")}</Button>
+        <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
+      </Box>
+    </Box>
   );
 }
