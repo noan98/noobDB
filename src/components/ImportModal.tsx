@@ -9,8 +9,11 @@ import {
   type ImportOptions,
   type TableColumnInfo,
 } from "../api/tauri";
+import { motion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { useToast } from "./Toast";
+import { SuccessCheck } from "./SuccessCheck";
 
 interface Props {
   sessionId: string;
@@ -74,6 +77,7 @@ function autoMap(
 
 export function ImportModal({ sessionId, database, table, onClose, onImported }: Props) {
   const t = useT();
+  const toast = useToast();
   const [path, setPath] = useState("");
   const [encoding, setEncoding] = useState("utf-8");
   const [delimiter, setDelimiter] = useState<DelimiterChoice>(",");
@@ -198,6 +202,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
         setStatus({ kind: "importing", inserted: e.inserted, total: e.total }),
       onDone: (e) => {
         setStatus({ kind: "success", inserted: e.inserted, ms: e.elapsedMs });
+        toast.success(t("importSuccess", { inserted: e.inserted, ms: e.elapsedMs }));
         if (unlistenRef.current) {
           unlistenRef.current();
           unlistenRef.current = null;
@@ -206,6 +211,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
       },
       onError: (e) => {
         setStatus({ kind: "error", message: e.error });
+        toast.error(e.error);
         if (unlistenRef.current) {
           unlistenRef.current();
           unlistenRef.current = null;
@@ -453,7 +459,11 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
           {status.kind === "importing" && (
             <div className="import-progress" role="status" aria-live="polite">
               <div className="import-progress-bar">
-                <div className="import-progress-fill" style={{ width: `${percent}%` }} />
+                <motion.div
+                  className="import-progress-fill"
+                  animate={{ width: `${percent}%` }}
+                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                />
               </div>
               <div className="import-progress-text">
                 {t("importProgress", { inserted: status.inserted, total: status.total })}
@@ -461,8 +471,9 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
             </div>
           )}
           {status.kind === "success" && (
-            <div className="export-success">
-              {t("importSuccess", { inserted: status.inserted, ms: status.ms })}
+            <div className="export-success modal-success-mark">
+              <SuccessCheck size={22} />
+              <span>{t("importSuccess", { inserted: status.inserted, ms: status.ms })}</span>
             </div>
           )}
           {status.kind === "error" && <div className="export-error">{status.message}</div>}

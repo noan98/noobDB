@@ -668,7 +668,9 @@ label {
   color: var(--text-muted);
   font-size: var(--text-2xs);
   flex-shrink: 0;
+  transition: transform var(--dur-fast) var(--ease);
 }
+.tree-chevron.is-open { transform: rotate(90deg); }
 .tree-chevron.empty { visibility: hidden; }
 
 .tree-icon {
@@ -1122,6 +1124,8 @@ button.icon.history-action:hover {
   flex-shrink: 0;
   background: var(--status-idle);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-idle) 18%, transparent);
+  transition: background var(--dur-med) var(--ease),
+    box-shadow var(--dur-med) var(--ease);
 }
 .status-dot.status-connected {
   background: var(--status-connected);
@@ -1325,6 +1329,7 @@ button.icon.history-action:hover {
 }
 
 .tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1347,7 +1352,6 @@ button.icon.history-action:hover {
 .tab.active {
   background: var(--bg-elevated);
   color: var(--text);
-  border-top-color: var(--ws-accent);
 }
 
 .tab-icon {
@@ -3474,7 +3478,6 @@ button.icon.history-action:hover {
 .import-progress-fill {
   height: 100%;
   background: var(--accent);
-  transition: width 0.2s ease;
 }
 
 .import-progress-text {
@@ -4055,4 +4058,109 @@ button.icon.history-action:hover {
 }
 .schema-compare-limit input {
   width: 80px;
+}
+
+/* ── Toast notifications (Motion-animated, app-wide) ─────────────────── */
+.toast-viewport {
+  position: fixed;
+  bottom: var(--space-4);
+  right: var(--space-4);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: min(380px, calc(100vw - 2 * var(--space-4)));
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--status-info);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.toast-success { border-left-color: var(--status-success); }
+.toast-error { border-left-color: var(--status-error); }
+.toast-info { border-left-color: var(--status-info); }
+.toast-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.toast-success .toast-icon { color: var(--status-success); }
+.toast-error .toast-icon { color: var(--status-error); }
+.toast-message {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.toast-dismiss {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  min-width: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.toast-dismiss:hover { color: var(--text); background: var(--bg-hover, var(--bg-muted)); }
+
+/* ── Query streaming: indeterminate top progress bar ─────────────────── */
+.query-progress {
+  position: relative;
+  height: 2px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.query-progress::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  animation: query-progress-slide 1.05s var(--ease) infinite;
+}
+@keyframes query-progress-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(360%); }
+}
+
+/* ── Run button while a query is in flight ───────────────────────────── */
+.toolbar button .btn-spinner {
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
+  border-top-color: currentColor;
+}
+
+/* ── Animated success checkmark (export / dump / import done) ─────────── */
+.success-check {
+  color: var(--status-success);
+  flex-shrink: 0;
+}
+.modal-success-mark {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── Tab bar: sliding active-tab indicator (Motion layoutId) ─────────── */
+.tab-active-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2px;
+  height: 2px;
+  background: var(--ws-accent, var(--accent));
 }

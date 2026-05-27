@@ -3,6 +3,8 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api, DumpOptions } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Icon } from "./Icon";
+import { useToast } from "./Toast";
+import { SuccessCheck } from "./SuccessCheck";
 
 interface Props {
   sessionId: string;
@@ -71,6 +73,7 @@ type Status =
 
 export function DumpModal({ sessionId, database, onClose }: Props) {
   const t = useT();
+  const toast = useToast();
   const initialBasename = useMemo(() => defaultBasename(database), [database]);
   const [path, setPath] = useState<string>(`${initialBasename}.sql`);
   const [options, setOptions] = useState<DumpOptions>(DEFAULT_OPTIONS);
@@ -98,8 +101,10 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
     try {
       const bytes = await api.dumpDatabase({ sessionId, database, path, options });
       setStatus({ kind: "success", bytes, path });
+      toast.success(t("dumpSuccess", { bytes, path }));
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
+      toast.error(t("dumpError", { error: String(e) }));
     }
   };
 
@@ -165,8 +170,9 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
             <div className="export-error">{t("dumpError", { error: status.message })}</div>
           )}
           {status.kind === "success" && (
-            <div className="export-success">
-              {t("dumpSuccess", { bytes: status.bytes, path: status.path })}
+            <div className="export-success modal-success-mark">
+              <SuccessCheck size={22} />
+              <span>{t("dumpSuccess", { bytes: status.bytes, path: status.path })}</span>
             </div>
           )}
         </div>
