@@ -22,14 +22,22 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 
-# Async runtime. このクレートが実際に使う機能だけを列挙する (旧 "full" は未使用の
-# signal / io-std / parking_lot なども含んでいた)。内訳: rt-multi-thread=spawn と
-# Tauri ランタイム、sync=RwLock/OnceCell、time=timeout、net=SSH トンネルの
-# TcpListener、io-util=copy_bidirectional/AsyncWriteExt、fs=エクスポートの async
-# 読み書き、process=mysqldump 起動。`#[tokio::test]` 用の macros は dev-dependencies
-# 側で有効化している。なお最終的な tokio の feature は依存グラフ全体の和になるため、
-# Tauri/sqlx が要求する機能は引き続き有効になる。
+# Async runtime. 本体コードが実際に使う tokio API を監査し、そこから必要な feature を
+# すべて明示する (旧 "full" は未使用の signal / io-std / parking_lot なども含んでいた)。
+# 内訳: rt=tokio::spawn/tokio::task、rt-multi-thread=マルチスレッドランタイム、
+# sync=RwLock/OnceCell、time=timeout、net=SSH トンネルの TcpListener、
+# io-util=copy_bidirectional/AsyncWriteExt、fs=エクスポートの async 読み書き、
+# process=mysqldump 起動。rt は rt-multi-thread が必ず内包するが、tokio::spawn /
+# tokio::task の依存先を自明にするため明示的に併記している。`#[tokio::test]` 用の
+# macros は本体では未使用で、dev-dependencies 側でのみ有効化する。
+#
+# このリストは本体ビルドに必要な feature を自己充足的に満たしており、Tauri/sqlx が
+# 推移的に有効化する feature には依存していない (最終的な feature は依存グラフ全体の
+# 和になるため、Tauri/sqlx が要求する機能も結果的に有効になるが、本体はそれを当てに
+# しない)。本体で新しい tokio API を使い始めたときは、対応する feature をここへ追加
+# すること。
 tokio = { version = "1", features = [
+    "rt",
     "rt-multi-thread",
     "sync",
     "time",

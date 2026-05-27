@@ -380,6 +380,25 @@ pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
     Some(out)
 }
 
+/// True when `sql` packs more than one statement — i.e. a `;` separates
+/// statements rather than merely trailing the final one. Comments and the
+/// interior of string / quoted-identifier literals are masked first (reusing
+/// `mask_for_analysis`), so a `;` inside `'a;b'` or `-- drop; this` is not
+/// mistaken for a separator. Trailing `;` and whitespace are tolerated.
+///
+/// Used to fail-closed on stacked queries in the dry-run preview path: a DDL
+/// stacked after a DML (`UPDATE …; DROP TABLE …`) would implicitly commit on
+/// MySQL and so escape the rollback that makes the preview safe. sqlx's
+/// prepared-statement execution already rejects multi-statement strings, but
+/// this makes that guarantee explicit instead of leaning on a library detail.
+pub(crate) fn has_stacked_statements(sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_analysis(&orig);
+    let masked_str: String = masked.iter().collect();
+    let body = masked_str.trim_end_matches(|c: char| c == ';' || c.is_whitespace());
+    body.contains(';')
+}
+
 /// Replaces every comment and the interior of every string / quoted-identifier
 /// literal with spaces, preserving the original char count so positions still
 /// line up with the source. Newlines inside comments are kept so line-comment
@@ -589,7 +608,7 @@ fn is_aggregate_expr(item: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_auto_limit, is_read_only_sql};
+    use super::{apply_auto_limit, has_stacked_statements, is_read_only_sql};
 
     #[test]
     fn allows_basic_selects_and_metadata_queries() {
@@ -673,6 +692,39 @@ mod tests {
         ));
         // REPLACE() is a string function, not a write statement.
         assert!(is_read_only_sql("SELECT REPLACE(name, 'a', 'b') FROM t"));
+    }
+
+    #[test]
+    fn detects_stacked_statements() {
+        assert!(has_stacked_statements(
+            "INSERT INTO t VALUES (1); DROP TABLE t"
+        ));
+        assert!(has_stacked_statements("UPDATE t SET a = 1; DELETE FROM u"));
+        assert!(has_stacked_statements("DELETE FROM t;\n DROP TABLE t;"));
+        // A separator anywhere before the final statement counts, even when the
+        // trailing statement is itself harmless.
+        assert!(has_stacked_statements("UPDATE t SET a = 1; SELECT 1"));
+    }
+
+    #[test]
+    fn single_statement_is_not_stacked() {
+        assert!(!has_stacked_statements("INSERT INTO t VALUES (1)"));
+        assert!(!has_stacked_statements("UPDATE t SET a = 1"));
+        // Trailing separators / whitespace are tolerated.
+        assert!(!has_stacked_statements("DELETE FROM t;"));
+        assert!(!has_stacked_statements("DELETE FROM t ;  \n"));
+        assert!(!has_stacked_statements("DELETE FROM t;;\n;"));
+    }
+
+    #[test]
+    fn stacked_check_ignores_semicolons_in_literals_and_comments() {
+        // A `;` inside a string literal or comment is not a statement boundary.
+        assert!(!has_stacked_statements("INSERT INTO t VALUES ('a; b')"));
+        assert!(!has_stacked_statements(
+            "UPDATE t SET note = 'x;y' WHERE id = 1"
+        ));
+        assert!(!has_stacked_statements("DELETE FROM t -- drop; this\n"));
+        assert!(!has_stacked_statements("UPDATE t SET a = 1 /* ; */"));
     }
 
     #[test]

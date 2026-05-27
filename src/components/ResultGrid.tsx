@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -903,6 +903,37 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     return `noobdb.colsizing.v1::${database ?? ""}::${table ?? ""}::${signature}`;
   }, [columns, database, table]);
 
+  // Client-side type/NOT NULL validation of a pending edit, by result-column
+  // index. Mirrors the literal-building rules in cellEdit so invalid input is
+  // caught before a (wasted) Preview/Apply round-trip. `nullable` defaults to
+  // true when no column metadata is available, keeping validation permissive.
+  // Memoized so the per-cell checks in the grid and the `hasInvalidEdit` scan
+  // below reuse one stable function instead of rebuilding it every render.
+  const validateEdit = useCallback(
+    (colIdx: number, value: string): I18nKey | null => {
+      const col = columns?.[colIdx];
+      if (!col) return null;
+      const info = tableColumns?.find((c) => c.name === col.name) ?? null;
+      return validateCellInput(value, col.type_name, info?.nullable ?? true);
+    },
+    [columns, tableColumns],
+  );
+
+  // True when any pending edit fails validation. Memoized over the edits and
+  // the validator so it isn't recomputed (looping every edited cell) on each
+  // render — only when the edits or validation inputs actually change.
+  const hasInvalidEdit = useMemo(() => {
+    if (!pendingEdits) return false;
+    for (const rowKey of Object.keys(pendingEdits)) {
+      const rowEdits = pendingEdits[Number(rowKey)];
+      if (!rowEdits) continue;
+      for (const colKey of Object.keys(rowEdits)) {
+        if (validateEdit(Number(colKey), rowEdits[Number(colKey)])) return true;
+      }
+    }
+    return false;
+  }, [pendingEdits, validateEdit]);
+
   if (!result) {
     return <div className="results empty">{t("resultEmpty")}</div>;
   }
@@ -934,31 +965,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
   const hasPendingEdits = editsCount > 0;
   const editableActive = !!editable && pkIndices.length > 0;
-
-  // Client-side type/NOT NULL validation of a pending edit, by result-column
-  // index. Mirrors the literal-building rules in cellEdit so invalid input is
-  // caught before a (wasted) Preview/Apply round-trip. `nullable` defaults to
-  // true when no column metadata is available, keeping validation permissive.
-  const validateEdit = (colIdx: number, value: string): I18nKey | null => {
-    const col = result.columns[colIdx];
-    if (!col) return null;
-    const info = tableColumns?.find((c) => c.name === col.name) ?? null;
-    return validateCellInput(value, col.type_name, info?.nullable ?? true);
-  };
-  let hasInvalidEdit = false;
-  if (pendingEdits) {
-    for (const rowKey of Object.keys(pendingEdits)) {
-      const rowEdits = pendingEdits[Number(rowKey)];
-      if (!rowEdits) continue;
-      for (const colKey of Object.keys(rowEdits)) {
-        if (validateEdit(Number(colKey), rowEdits[Number(colKey)])) {
-          hasInvalidEdit = true;
-          break;
-        }
-      }
-      if (hasInvalidEdit) break;
-    }
-  }
 
   // Preview wraps a single statement; multi-row edits would need a
   // multi-statement preview path that doesn't exist yet, so the button is

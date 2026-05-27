@@ -270,6 +270,30 @@ build_options` が SQLite を最初に短絡処理します)。
 実行) を返します。単一行集計 (`COUNT(*)` 等) や既存の `LIMIT`/`OFFSET`、ロック句がある
 場合は付与しません。`db/mod.rs` の単体テストがこれら 2 関数の挙動を広くカバーしています。
 
+**安全網には「強制レベル」の違いがある点に注意してください。** 同じ「安全網」でも、
+バックエンドで強制されるものと、UI 上の確認に留まるものがあります。
+
+- `read_only` (プロファイル) は**バックエンド強制**です。`commands::query` の各
+  エントリポイントが `ensure_allowed_for_session` 経由で `is_read_only_sql` を通し、
+  `import_csv` も `session.read_only` を拒否します。IPC を直接呼んでも書き込みは
+  通りません。
+- `is_production` の接続確認と `confirm_writes` (本番接続での書き込み承認) は
+  **UI レベルの安全網 (UX ガード)** です。`confirm_writes` の判定はフロントの実行
+  ゲート (`App.tsx` の `analyzeDangerousSql` / `isReadOnlySql`) でのみ行われ、
+  バックエンドの `ensure_allowed_for_session` は `read_only` のみを強制し
+  `confirm_writes` は参照しません。プロファイルには保持されますが (`profiles/mod.rs`)、
+  IPC を直接呼べば承認なしに書き込めます。**誤操作防止が目的であり、権限強制では
+  ありません。** 確実に書き込みを禁止したい場合は `read_only` か DB 側の権限設定を
+  併用してください。この限界はアプリ内ヘルプ (`HelpView` の `helpConfirmWrites*`)
+  と接続フォームのヘルプ文言 (`formConfirmWritesHelp`) にも明記しています。
+
+なお、読み取り専用セッションでもドライランプレビュー (`preview_query_stream`) は
+許可されます。これは「先頭 DML キーワード判定 + トランザクション内実行 + 必ず
+ロールバック」で安全を担保しますが、加えて各ドライバの `preview_execute_with_limit`
+は `db::has_stacked_statements` で**末尾以外にセミコロンを含む複数文を拒否**します
+(MySQL の DDL 暗黙コミットでロールバックを逃れる積み重ねを防ぐため、sqlx の単一文
+実行に依存せず明示的に弾く)。
+
 ### ストリーミングクエリ実行とキャンセル
 
 エディタからのクエリは `run_query_stream` (`commands/query.rs`) で実行され、結果は

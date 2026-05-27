@@ -259,6 +259,14 @@ impl MySqlConn {
                 "preview only supports INSERT/UPDATE/DELETE/REPLACE statements".into(),
             ));
         }
+        // Reject stacked statements outright: on MySQL a DDL stacked behind the
+        // DML (`UPDATE …; DROP TABLE …`) would implicitly commit and escape the
+        // rollback that keeps the preview side-effect-free.
+        if super::has_stacked_statements(sql) {
+            return Err(AppError::InvalidInput(
+                "preview does not support multiple statements".into(),
+            ));
+        }
 
         let target = extract_target_table(sql);
 
