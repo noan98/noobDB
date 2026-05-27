@@ -1,0 +1,182 @@
+name: automerge
+
+# CI が成功し、未解決のレビュースレッドが無い open PR を自動で main へマージする。
+# noobGit リポジトリの automerge ワークフローを参考に、noobDB 向けに移植したもの。
+#
+# 設計方針:
+#   - PR のコードはチェックアウトせず `gh` CLI / GitHub API のみで完結させる
+#     (フォークからの PR でも PR 由来のコードを実行しないため安全)。
+#   - ブランチ保護に依存しない。CI の成功 (ci.yml の最新 run が success) を
+#     自前で再確認し、mergeable / mergeStateStatus を見てからマージする。
+#   - レビュー承認は要求しない。未解決のレビュースレッド (CodeRabbit 等の指摘) が
+#     0 件であることだけを条件にする。レビューが無い PR はそのまま通過する。
+#
+# トリガ:
+#   - ci ワークフローが完了したとき (workflow_run) — CI 成功を起点に再評価する。
+#   - レビューが提出されたとき (pull_request_review) — スレッド解消を起点に再評価。
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+# 同一コミット (head SHA) に対する重複マージ試行を直列化する。イベント種別が
+# 違っても同じ SHA を指す run はまとめ、レースを避ける (途中 run はキャンセルしない)。
+concurrency:
+  group: automerge-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+# GITHUB_TOKEN に必要な書き込み権限。リポジトリの Actions 設定で
+# 「Read and write permissions」が有効でないとマージできない点に注意。
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  automerge:
+    name: auto-merge eligible PRs
+    runs-on: ubuntu-latest
+    # CI 成功 (pull_request 由来) かレビュー提出のときだけ走らせる。
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'pull_request_review')
+    steps:
+      - name: Check conditions and auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REVIEW_PR: ${{ github.event.pull_request.number }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          owner="${GH_REPO%/*}"
+          repo="${GH_REPO#*/}"
+
+          # 1. 対象 PR 番号を解決する。
+          if [ "$EVENT_NAME" = "pull_request_review" ]; then
+            PR="$REVIEW_PR"
+          else
+            # workflow_run: head_sha からその commit に紐づく open PR を引く。
+            PR="$(gh api "repos/$GH_REPO/commits/$RUN_SHA/pulls" \
+              --jq '[.[] | select(.state == "open")][0].number // empty')"
+          fi
+
+          if [ -z "${PR:-}" ]; then
+            echo "対象の open PR が見つかりませんでした。スキップします。"
+            exit 0
+          fi
+          echo "対象 PR: #$PR"
+
+          # 2. PR メタデータを取得。mergeable は非同期計算で UNKNOWN になりうるので
+          #    確定するまで最大 5 回 (3 秒間隔) リトライする。
+          state=""; isDraft=""; baseRef=""; headSha=""; mergeable=""
+          for i in 1 2 3 4 5; do
+            meta="$(gh pr view "$PR" --json state,isDraft,baseRefName,headRefOid,mergeable)"
+            state="$(echo "$meta" | jq -r '.state')"
+            isDraft="$(echo "$meta" | jq -r '.isDraft')"
+            baseRef="$(echo "$meta" | jq -r '.baseRefName')"
+            headSha="$(echo "$meta" | jq -r '.headRefOid')"
+            mergeable="$(echo "$meta" | jq -r '.mergeable')"
+            if [ "$mergeable" != "UNKNOWN" ]; then
+              break
+            fi
+            echo "mergeable が UNKNOWN。3 秒後に再取得 ($i/5)..."
+            sleep 3
+          done
+
+          # 3. 状態の検証。
+          if [ "$state" != "OPEN" ];        then echo "PR が OPEN ではありません ($state)。スキップ。"; exit 0; fi
+          if [ "$isDraft" = "true" ];       then echo "ドラフト PR です。スキップ。"; exit 0; fi
+          if [ "$baseRef" != "main" ];      then echo "ベースが main ではありません ($baseRef)。スキップ。"; exit 0; fi
+          if [ "$mergeable" != "MERGEABLE" ]; then echo "マージ不可 ($mergeable)。スキップ。"; exit 0; fi
+
+          # 4. CI の成功を再確認する。head SHA に対する ci.yml の最新 run が
+          #    success であることを要求する (ブランチ保護に依存しないため)。
+          ci_conclusion="$(gh api \
+            "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$headSha&event=pull_request" \
+            --jq '.workflow_runs[0].conclusion // empty')"
+          if [ "$ci_conclusion" != "success" ]; then
+            echo "最新の CI run が success ではありません ($ci_conclusion)。スキップ。"
+            exit 0
+          fi
+
+          # 5. 未解決のレビュースレッドが無いことを確認する。スレッドが多すぎる
+          #    (>100) 場合は取りこぼしを避けるため安全側でスキップする。
+          threads_json="$(gh api graphql -f query='
+            query($owner:String!, $repo:String!, $pr:Int!) {
+              repository(owner:$owner, name:$repo) {
+                pullRequest(number:$pr) {
+                  reviewThreads(first:100) {
+                    totalCount
+                    nodes { isResolved }
+                  }
+                }
+              }
+            }' -f owner="$owner" -f repo="$repo" -F pr="$PR")"
+          total="$(echo "$threads_json" | jq -r '.data.repository.pullRequest.reviewThreads.totalCount')"
+          if [ "$total" -gt 100 ]; then
+            echo "レビュースレッドが 100 を超えています。安全のためスキップ。"
+            exit 0
+          fi
+          unresolved="$(echo "$threads_json" | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')"
+          if [ "$unresolved" -gt 0 ]; then
+            echo "未解決のレビュースレッドが $unresolved 件あります。スキップ。"
+            exit 0
+          fi
+
+          # 6. mergeStateStatus を見ながらマージする。GitHub の再計算待ちは
+          #    指数バックオフ (5,10,20,40,80 秒) で最大 5 回リトライする。
+          delay=5
+          merged="false"
+          for i in 1 2 3 4 5; do
+            mss="$(gh pr view "$PR" --json mergeStateStatus --jq '.mergeStateStatus')"
+            echo "mergeStateStatus=$mss (試行 $i/5)"
+            case "$mss" in
+              CLEAN|UNSTABLE|HAS_HOOKS)
+                if gh pr merge "$PR" --merge; then
+                  merged="true"
+                  break
+                fi
+                echo "マージ試行が失敗。$delay 秒後に再試行..."
+                sleep "$delay"; delay=$((delay * 2)) ;;
+              DIRTY)
+                echo "コンフリクトあり (DIRTY)。スキップ。"; exit 0 ;;
+              BEHIND)
+                echo "ベースに遅れています (BEHIND)。スキップ。"; exit 0 ;;
+              *)
+                # BLOCKED / UNKNOWN など: 再計算待ち。待機して再評価。
+                echo "状態が未確定 ($mss)。$delay 秒待機して再評価..."
+                sleep "$delay"; delay=$((delay * 2)) ;;
+            esac
+          done
+
+          if [ "$merged" != "true" ]; then
+            echo "マージできませんでした。"
+            exit 0
+          fi
+          echo "PR #$PR をマージしました。"
+
+          # 7. (ベストエフォート) PR 本文のクローズキーワードから Issue を閉じる。
+          #    main は既定ブランチなので通常は GitHub が自動クローズするが、
+          #    取りこぼし対策の保険として明示的に閉じてコメントを残す。失敗しても
+          #    ワークフローは落とさない。
+          body="$(gh pr view "$PR" --json body --jq '.body // ""')"
+          nums="$(printf '%s' "$body" \
+            | grep -oiE '(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved) #[0-9]+' \
+            | grep -oE '[0-9]+' | sort -u || true)"
+          for n in $nums; do
+            is_pr="$(gh api "repos/$GH_REPO/issues/$n" --jq 'has("pull_request")' 2>/dev/null || echo "error")"
+            [ "$is_pr" = "error" ] && continue
+            [ "$is_pr" = "true" ] && continue   # PR は対象外
+            istate="$(gh api "repos/$GH_REPO/issues/$n" --jq '.state' 2>/dev/null || echo "")"
+            [ "$istate" != "open" ] && continue
+            gh issue close "$n" --reason completed \
+              --comment "PR #$PR のマージに伴いクローズしました。" || true
+          done
