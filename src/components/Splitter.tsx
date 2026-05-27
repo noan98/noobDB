@@ -6,8 +6,10 @@ type Direction = "row" | "column";
 // Children dropped straight into a pane should fill it even when their own CSS
 // sets a fixed min-size (e.g. `.editor`'s 200px min). Previously keyed on the
 // `.splitter-pane` class in App.css; carried here so the pane owns the rule.
+// The workspace pane sets its own flex/min-size (Chakra Flex in App.tsx), so it
+// no longer needs to be targeted here.
 const PANE_FILL = {
-  "& > .editor, & > .results, & > .preview, & > .preview-pane, & > .explain-viewer, & > .explain-viewer-empty, & > .explain-viewer-error, & > .workspace-pane":
+  "& > .editor, & > .results, & > .preview, & > .preview-pane, & > .explain-viewer, & > .explain-viewer-empty, & > .explain-viewer-error":
     {
       flex: "1 1 auto",
       minHeight: 0,

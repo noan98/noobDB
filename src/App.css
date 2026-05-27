@@ -292,7 +292,6 @@ button.icon {
 .tree-row,
 .group-row,
 .context-menu-item,
-.sidebar-tab,
 .tab,
 .tab-close,
 .tab-new,
@@ -328,7 +327,6 @@ input:focus, select:focus {
 button:focus-visible,
 .tab:focus-visible,
 .tree-row:focus-visible,
-.sidebar-tab:focus-visible,
 .context-menu-item:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
@@ -360,14 +358,9 @@ label {
   flex-shrink: 0;
 }
 
-/* Vertical shell: custom title bar on top, the main app grid fills the rest.
-   The native title bar is disabled via `decorations: false` in tauri.conf.json. */
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-}
-
+/* Custom title bar (the native one is disabled via `decorations: false` in
+   tauri.conf.json). The app shell layout (grid / sidebar / topbar / status bar)
+   itself now lives in App.tsx as Chakra primitives. */
 .titlebar {
   display: flex;
   align-items: stretch;
@@ -424,146 +417,6 @@ label {
   color: #ffffff;
 }
 
-.app {
-  display: grid;
-  grid-template-columns: var(--sidebar-width, 300px) 1fr;
-  flex: 1;
-  min-height: 0;
-  position: relative;
-}
-/* Collapsed: the sidebar track shrinks to 0 (the aside has overflow:hidden) and
-   a floating button is the only affordance to bring it back. */
-.app.sidebar-collapsed {
-  grid-template-columns: 0 1fr;
-}
-/* Narrow screens open the sidebar as an overlay so it never squeezes the editor;
-   the track stays 0 and the aside floats above the main area with a backdrop. */
-.app.sidebar-overlay {
-  grid-template-columns: 0 1fr;
-}
-.app.sidebar-overlay > .sidebar {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: var(--sidebar-width, 300px);
-  z-index: 40;
-  box-shadow: var(--shadow-md);
-}
-
-.sidebar {
-  border-right: 1px solid var(--border);
-  background: var(--bg-elevated);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* Vertical drag handle on the sidebar/main border. Sits on top of the seam and
-   widens its hairline on hover/drag. */
-.sidebar-resizer {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--sidebar-width, 300px);
-  width: 9px;
-  transform: translateX(-5px);
-  cursor: ew-resize;
-  z-index: 45;
-  touch-action: none;
-}
-.sidebar-resizer::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 5px;
-  width: 1px;
-  background: transparent;
-  transition: background var(--dur-fast, 0.12s) var(--ease, ease),
-    width var(--dur-fast, 0.12s) var(--ease, ease);
-}
-.sidebar-resizer:hover::after,
-.sidebar-resizer.is-dragging::after {
-  background: var(--accent);
-  width: 2px;
-}
-
-.sidebar-collapse-btn {
-  flex-shrink: 0;
-}
-
-/* Floating affordance to reopen a collapsed sidebar; pinned to the top-left over
-   the main area. */
-.sidebar-expand-btn {
-  position: absolute;
-  top: 9px;
-  left: 8px;
-  z-index: 46;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-}
-.sidebar-expand-btn:hover {
-  color: var(--text);
-  background: var(--bg-hover);
-}
-/* Clear the topbar's left content so the floating expand button doesn't cover it. */
-.app.sidebar-collapsed .topbar {
-  padding-left: 46px;
-}
-
-.sidebar-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 30;
-  background: rgba(0, 0, 0, 0.3);
-}
-
-.sidebar header {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  font-weight: 600;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.sidebar-title {
-  flex: 1;
-  font-size: var(--text-md);
-  letter-spacing: 0.02em;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar header .header-actions {
-  display: flex;
-  gap: var(--space-1);
-  align-items: center;
-}
-
-.main {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg);
-  /* Grid items default to min-width:auto, which would let wide content (tables,
-     toolbars) push the track past 1fr and break the layout; 0 lets it shrink. */
-  min-width: 0;
-}
 
 /* ---------- Tree (connection + schema) ---------- */
 
@@ -960,30 +813,6 @@ label {
   background: color-mix(in srgb, var(--status-error) 12%, transparent);
 }
 
-/* ---------- Sidebar tabs (Connections / Snippets) ---------- */
-
-.sidebar-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--border);
-}
-.sidebar-tab {
-  flex: 1;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  padding: 7px 8px;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.sidebar-tab:hover { background: var(--bg-hover); color: var(--text); }
-.sidebar-tab.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
 /* ---------- Snippets ---------- */
 
 .snippet-icon { color: var(--accent); }
@@ -1145,84 +974,7 @@ button.icon.history-action:hover {
   50% { opacity: 0.45; }
 }
 
-/* ---------- Top bar (replaces tabs) ---------- */
-
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated));
-  min-height: 42px;
-  /* Thin top bar tinted to the active connection's color (#138). Drawn with an
-     inset shadow so it doesn't shift layout. Falls back to the brand accent. */
-  box-shadow: inset 0 2px 0 var(--ws-accent);
-  transition: background var(--dur-med) var(--ease),
-    box-shadow var(--dur-med) var(--ease);
-}
-/* Production environments get a more assertive bar + tint so the operator can
-   tell at a glance they are connected somewhere dangerous. */
-.topbar.is-production {
-  background: color-mix(in srgb, var(--ws-accent) 9%, var(--bg-elevated));
-  box-shadow: inset 0 3px 0 var(--ws-accent);
-}
-.topbar-info {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  overflow: hidden;
-}
-.topbar-name {
-  font-weight: 600;
-  font-size: var(--text-md);
-}
-.topbar-meta {
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pane {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 /* ---------- Split workspace (side-by-side panes, #244) ---------- */
-
-/* A single pane fills the main area; two panes each fill their splitter half. */
-.workspace-pane {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-width: 0;
-  min-height: 0;
-}
-.splitter-pane > .workspace-pane {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* When split, the focused pane gets a subtle accent rail so it's clear which
-   pane sidebar inserts and keyboard shortcuts will act on. */
-.workspace-pane.is-split {
-  border-top: 2px solid transparent;
-}
-.workspace-pane.is-split.is-focused {
-  border-top-color: var(--ws-accent);
-}
-
-/* The outer row splitter fills the main area below the topbar. */
-.splitter.workspace-panes {
-  flex: 1 1 auto;
-  min-height: 0;
-}
 
 .tab-split {
   display: inline-flex;
@@ -1241,17 +993,6 @@ button.icon.history-action:hover {
 .tab-split:hover {
   background: var(--bg-hover);
   color: var(--text);
-}
-
-.pane-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  font-size: var(--text-md);
-  padding: 24px;
-  text-align: center;
 }
 
 /* ---------- Empty / onboarding states (shared EmptyState) ---------- */
@@ -1937,176 +1678,6 @@ button.icon.history-action:hover {
   font-style: italic;
 }
 
-
-/* ---------- Status bar ---------- */
-
-.status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 5px 14px;
-  background: var(--bg-muted);
-  border-top: 1px solid var(--border);
-  border-left: 3px solid transparent;
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-}
-.status-icon {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-.status-icon:empty {
-  display: none;
-}
-.status-icon .icon-svg {
-  width: 14px;
-  height: 14px;
-}
-.status-content {
-  flex: 1;
-  min-width: 0;
-}
-/* Tone: colored left border + icon tint so running / success / error read at a
-   glance (#131). Info is neutral. */
-.status.status-running {
-  border-left-color: var(--accent);
-}
-.status.status-running .status-icon {
-  color: var(--accent);
-}
-.status.status-success {
-  border-left-color: var(--status-success);
-}
-.status.status-success .status-icon {
-  color: var(--status-success);
-}
-.status.status-error {
-  color: var(--text-error);
-  background: var(--bg-error);
-  border-left-color: var(--status-error);
-}
-.status.status-error .status-icon {
-  color: var(--status-error);
-}
-/* One-click recovery button shown in the footer after a connection drop or a
-   failed connect. Sits at the right edge (status-content takes the slack). */
-.status-reconnect-btn {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: #fff;
-  background: var(--status-error);
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.status-reconnect-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--status-error) 85%, #000);
-}
-.status-reconnect-btn:disabled {
-  opacity: 0.7;
-  cursor: default;
-}
-.status-reconnect-btn .icon-svg {
-  width: 13px;
-  height: 13px;
-}
-/* Close button to dismiss the whole error status bar. Always available while an
-   error is shown so the red footer can be cleared even without a matching hint. */
-.status-dismiss {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: currentcolor;
-  border-radius: var(--radius-sm);
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0.7;
-}
-.status-dismiss:hover {
-  opacity: 1;
-  background: var(--bg-hover);
-}
-.status-dismiss .icon-svg {
-  width: 14px;
-  height: 14px;
-}
-
-.status-hint {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.status-hint-body {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-.status-hint-dismiss {
-  flex-shrink: 0;
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: currentcolor;
-  border-radius: var(--radius-sm);
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0.7;
-}
-.status-hint-dismiss:hover {
-  opacity: 1;
-  background: var(--bg-hover);
-}
-.status-hint-dismiss .icon-svg {
-  width: 13px;
-  height: 13px;
-}
-.status-hint-label {
-  flex: none;
-  font-weight: 600;
-  font-size: var(--text-xs);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--text-error);
-  color: var(--bg-error);
-}
-.status-hint-text {
-  flex: 1;
-  min-width: 0;
-  line-height: 1.45;
-}
-.status-hint-details summary {
-  cursor: pointer;
-  opacity: 0.85;
-  font-size: var(--text-xs);
-  width: fit-content;
-}
-.status-hint-raw {
-  display: block;
-  margin-top: 3px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  opacity: 0.9;
-}
 
 /* ---------- Settings ---------- */
 
@@ -3746,10 +3317,6 @@ button.icon.history-action:hover {
   .editor .toolbar {
     flex-wrap: wrap;
     row-gap: 6px;
-  }
-  .topbar {
-    flex-wrap: wrap;
-    row-gap: 4px;
   }
 }
 

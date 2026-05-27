@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -149,6 +150,62 @@ function statusTone(s: Status): StatusTone {
     return "success";
   }
   return "info";
+}
+
+/** 中央寄せの空状態プレースホルダ。ペインに何もない時 / 遅延読み込み中に使う。 */
+function PaneEmpty({ children }: { children: ReactNode }) {
+  return (
+    <Flex
+      flex="1"
+      align="center"
+      justify="center"
+      color="app.textMuted"
+      fontSize="md"
+      p="24px"
+      textAlign="center"
+    >
+      {children}
+    </Flex>
+  );
+}
+
+/** サイドバー上部の Connections / Snippets / History 切替タブ。 */
+function SidebarTabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <chakra.button
+      role="tab"
+      aria-selected={active}
+      flex="1"
+      bg="transparent"
+      border="none"
+      borderBottom="2px solid"
+      borderBottomColor={active ? "app.accent" : "transparent"}
+      borderRadius="0"
+      px="8px"
+      py="7px"
+      fontSize="sm"
+      fontWeight={600}
+      color={active ? "app.text" : "app.textMuted"}
+      cursor="pointer"
+      transition="background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease)"
+      _hover={{ bg: "app.hover", color: "app.text" }}
+      _focusVisible={{
+        outline: "none",
+        boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)",
+      }}
+      onClick={onClick}
+    >
+      {children}
+    </chakra.button>
+  );
 }
 
 type TabKind = "table" | "query" | "explain";
@@ -1979,9 +2036,16 @@ export default function App() {
       ? { cells: countEditedCells(tab.pendingEdits), rows: countEditedRows(tab.pendingEdits) }
       : { cells: 0, rows: 0 };
     return (
-      <div
+      <Flex
         key={pane.id}
-        className={`workspace-pane${split ? " is-split" : ""}${split && isFocused ? " is-focused" : ""}`}
+        direction="column"
+        flex="1 1 auto"
+        minW={0}
+        minH={0}
+        overflow="hidden"
+        borderTopWidth={split ? "2px" : undefined}
+        borderTopStyle={split ? "solid" : undefined}
+        borderTopColor={split ? (isFocused ? "var(--ws-accent)" : "transparent") : undefined}
         onMouseDownCapture={() => focusPane(pane.id)}
       >
         <TabBar
@@ -2013,7 +2077,7 @@ export default function App() {
             />
           )}
         </AnimatePresence>
-        <div className="pane">
+        <Flex direction="column" flex="1" overflow="hidden">
           {tab ? (
             <Splitter
               direction="column"
@@ -2022,7 +2086,7 @@ export default function App() {
               minSize={120}
               ariaLabel={t("splitterEditorAria")}
               first={
-                <Suspense fallback={<div className="pane-empty"><Spinner size={20} /></div>}>
+                <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   <QueryEditor
                     key={tab.id}
                     ref={getEditorRefSetter(pane.id)}
@@ -2060,7 +2124,7 @@ export default function App() {
                 </Suspense>
               }
               second={
-                <Suspense fallback={<div className="pane-empty"><Spinner size={20} /></div>}>
+                <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   {tab.kind === "explain" ? (
                     <ExplainViewer result={tab.result} streaming={tab.streaming} />
                   ) : tab.preview ? (
@@ -2109,45 +2173,89 @@ export default function App() {
               }
             />
           ) : (
-            <div className="pane-empty">
+            <PaneEmpty>
               <EmptyState
                 icon="query"
                 title={t("tabsEmptyTitle")}
                 description={t("tabsEmpty")}
                 action={{ label: t("tabsNewQuery"), onClick: () => handleNewTab(pane.id) }}
               />
-            </div>
+            </PaneEmpty>
           )}
-        </div>
-      </div>
+        </Flex>
+      </Flex>
     );
   };
 
   return (
-    <div className="app-shell">
+    <Flex direction="column" h="100vh">
       <TitleBar />
-      <div
-        className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}${narrow && narrowSidebarOpen ? " sidebar-overlay" : ""}`}
+      <Grid
+        templateColumns={
+          sidebarCollapsed || (narrow && narrowSidebarOpen)
+            ? "0 1fr"
+            : "var(--sidebar-width, 300px) 1fr"
+        }
+        flex="1"
+        minH={0}
+        position="relative"
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
-      <aside className="sidebar">
-        <header>
-          <button
-            className="icon sidebar-collapse-btn"
+      <Flex
+        as="aside"
+        direction="column"
+        overflow="hidden"
+        borderRightWidth="1px"
+        borderRightColor="app.border"
+        bg="app.surface"
+        {...(narrow && narrowSidebarOpen
+          ? {
+              position: "absolute" as const,
+              top: 0,
+              bottom: 0,
+              left: 0,
+              width: "var(--sidebar-width, 300px)",
+              zIndex: 40,
+              boxShadow: "md",
+            }
+          : {})}
+      >
+        <Flex
+          as="header"
+          px="12px"
+          py="10px"
+          borderBottomWidth="1px"
+          borderBottomColor="app.border"
+          fontWeight={600}
+          justify="space-between"
+          align="center"
+          gap="var(--space-2)"
+        >
+          <chakra.button
+            className="icon"
+            flexShrink="0"
             onClick={toggleSidebar}
             title={t("sidebarCollapse")}
             aria-label={t("sidebarCollapse")}
           >
             <Icon name="chevron-left" />
-          </button>
-          <span className="sidebar-title">
+          </chakra.button>
+          <chakra.span
+            flex="1"
+            fontSize="md"
+            letterSpacing="0.02em"
+            color="app.text"
+            overflow="hidden"
+            textOverflow="ellipsis"
+            whiteSpace="nowrap"
+          >
             {sidebarTab === "snippets"
               ? t("appSnippets")
               : sidebarTab === "history"
                 ? t("appHistory")
                 : t("appConnections")}
-          </span>
-          <div className="header-actions">
+          </chakra.span>
+          <Flex gap="var(--space-1)" align="center">
             <button
               className="icon"
               onClick={toggleTheme}
@@ -2208,34 +2316,28 @@ export default function App() {
                 <Icon name="plus" />
               </button>
             ) : null}
-          </div>
-        </header>
-        <div className="sidebar-tabs" role="tablist">
-          <button
-            role="tab"
-            aria-selected={sidebarTab === "connections"}
-            className={`sidebar-tab ${sidebarTab === "connections" ? "active" : ""}`}
+          </Flex>
+        </Flex>
+        <Flex borderBottomWidth="1px" borderBottomColor="app.border" role="tablist">
+          <SidebarTabButton
+            active={sidebarTab === "connections"}
             onClick={() => setSidebarTab("connections")}
           >
             {t("sidebarTabConnections")}
-          </button>
-          <button
-            role="tab"
-            aria-selected={sidebarTab === "snippets"}
-            className={`sidebar-tab ${sidebarTab === "snippets" ? "active" : ""}`}
+          </SidebarTabButton>
+          <SidebarTabButton
+            active={sidebarTab === "snippets"}
             onClick={() => setSidebarTab("snippets")}
           >
             {t("sidebarTabSnippets")}
-          </button>
-          <button
-            role="tab"
-            aria-selected={sidebarTab === "history"}
-            className={`sidebar-tab ${sidebarTab === "history" ? "active" : ""}`}
+          </SidebarTabButton>
+          <SidebarTabButton
+            active={sidebarTab === "history"}
             onClick={() => setSidebarTab("history")}
           >
             {t("sidebarTabHistory")}
-          </button>
-        </div>
+          </SidebarTabButton>
+        </Flex>
         {sidebarTab === "connections" ? (
           <ConnectionList
             profiles={profiles}
@@ -2291,11 +2393,37 @@ export default function App() {
             onOpenInNewTab={handleOpenHistoryInNewTab}
           />
         )}
-      </aside>
+      </Flex>
 
       {!sidebarCollapsed && (
-        <div
-          className={`sidebar-resizer${sidebarResizing ? " is-dragging" : ""}`}
+        <Box
+          position="absolute"
+          top={0}
+          bottom={0}
+          left="var(--sidebar-width, 300px)"
+          width="9px"
+          transform="translateX(-5px)"
+          cursor="ew-resize"
+          zIndex={45}
+          touchAction="none"
+          data-dragging={sidebarResizing ? "true" : undefined}
+          css={{
+            "&::after": {
+              content: '""',
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: "5px",
+              width: "1px",
+              background: "transparent",
+              transition:
+                "background var(--dur-fast, 0.12s) var(--ease, ease), width var(--dur-fast, 0.12s) var(--ease, ease)",
+            },
+            "&:hover::after, &[data-dragging='true']::after": {
+              background: "var(--accent)",
+              width: "2px",
+            },
+          }}
           role="separator"
           aria-orientation="vertical"
           aria-label={t("sidebarCollapse")}
@@ -2308,29 +2436,58 @@ export default function App() {
       )}
 
       {sidebarCollapsed && (
-        <button
-          className="sidebar-expand-btn"
+        <chakra.button
+          position="absolute"
+          top="9px"
+          left="8px"
+          zIndex={46}
+          display="inline-flex"
+          alignItems="center"
+          justifyContent="center"
+          width="28px"
+          height="28px"
+          p="0"
+          borderWidth="1px"
+          borderStyle="solid"
+          borderColor="app.border"
+          borderRadius="md"
+          bg="app.surface"
+          color="app.textSecondary"
+          cursor="pointer"
+          boxShadow="sm"
+          _hover={{ color: "app.text", bg: "app.hover" }}
           onClick={toggleSidebar}
           title={t("sidebarExpand")}
           aria-label={t("sidebarExpand")}
         >
           <Icon name="chevron-right" />
-        </button>
+        </chakra.button>
       )}
 
       {narrow && narrowSidebarOpen && (
-        <div className="sidebar-backdrop" onClick={() => setNarrowSidebarOpen(false)} aria-hidden />
+        <Box
+          position="absolute"
+          inset={0}
+          zIndex={30}
+          bg="rgba(0, 0, 0, 0.3)"
+          onClick={() => setNarrowSidebarOpen(false)}
+          aria-hidden
+        />
       )}
 
-      <main
-        className="main"
+      <Flex
+        as="main"
+        direction="column"
+        overflow="hidden"
+        bg="app.bg"
+        minW={0}
         style={
           selectedProfile?.color
             ? ({ "--ws-accent": selectedProfile.color } as CSSProperties)
             : undefined
         }
       >
-        <Suspense fallback={<div className="pane-empty"><Spinner size={20} /></div>}>
+        <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
         {showHelp ? (
           <HelpView onClose={() => setShowHelp(false)} />
         ) : showSettings ? (
@@ -2368,12 +2525,25 @@ export default function App() {
           />
         ) : (
           <>
-            <div className={`topbar ${selectedProfile?.is_production ? "is-production" : ""}`}>
-              <div className="topbar-info">
+            <Flex
+              align="center"
+              gap="var(--space-3)"
+              pl={sidebarCollapsed ? "46px" : "14px"}
+              pr="14px"
+              py="8px"
+              borderBottomWidth="1px"
+              borderBottomColor="app.border"
+              minH="42px"
+              bg={`color-mix(in srgb, var(--ws-accent) ${selectedProfile?.is_production ? "9%" : "4%"}, var(--bg-elevated))`}
+              boxShadow={`inset 0 ${selectedProfile?.is_production ? "3px" : "2px"} 0 var(--ws-accent)`}
+              transition="background var(--dur-med) var(--ease), box-shadow var(--dur-med) var(--ease)"
+              css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "4px" } }}
+            >
+              <Flex align="center" gap="var(--space-2)" overflow="hidden">
                 {selectedProfile ? (
                   <>
                     <span className="status-dot status-connected" aria-hidden />
-                    <span className="topbar-name">{selectedProfile.name}</span>
+                    <chakra.span fontWeight={600} fontSize="md">{selectedProfile.name}</chakra.span>
                     {selectedProfile.read_only && (
                       <span
                         className="tree-badge read-only-badge"
@@ -2382,41 +2552,46 @@ export default function App() {
                         {t("listReadOnly")}
                       </span>
                     )}
-                    <span className="topbar-meta">
+                    <chakra.span
+                      color="app.textMuted"
+                      fontSize="sm"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                    >
                       {selectedProfile.driver === "sqlite"
                         ? selectedProfile.file_path ?? ""
                         : `${selectedProfile.user}@${selectedProfile.host}:${selectedProfile.port}${selectedProfile.database ? `/${selectedProfile.database}` : ""}`}
-                    </span>
+                    </chakra.span>
                   </>
                 ) : (
                   <>
                     <span className="status-dot status-idle" aria-hidden />
-                    <span className="topbar-meta">{t("appDisconnected")}</span>
+                    <chakra.span color="app.textMuted" fontSize="sm">{t("appDisconnected")}</chakra.span>
                   </>
                 )}
-              </div>
-              <div style={{ flex: 1 }} />
+              </Flex>
+              <Box flex="1" />
               {sessionId && <button className="danger" onClick={handleDisconnect}>{t("appDisconnect")}</button>}
-            </div>
+            </Flex>
 
             {sessionId ? (
               panes.length === 0 ? (
-                <div className="pane">
-                  <div className="pane-empty">
+                <Flex direction="column" flex="1" overflow="hidden">
+                  <PaneEmpty>
                     <EmptyState
                       icon="query"
                       title={t("tabsEmptyTitle")}
                       description={t("tabsEmpty")}
                       action={{ label: t("tabsNewQuery"), onClick: () => handleNewTab() }}
                     />
-                  </div>
-                </div>
+                  </PaneEmpty>
+                </Flex>
               ) : panes.length === 1 ? (
                 renderPane(panes[0])
               ) : (
                 <Splitter
                   direction="row"
-                  className="workspace-panes"
                   storageKey="noobdb.split.panes"
                   defaultFraction={0.5}
                   minSize={220}
@@ -2426,86 +2601,188 @@ export default function App() {
                 />
               )
             ) : (
-              <div className="pane">
-                <div className="pane-empty">
+              <Flex direction="column" flex="1" overflow="hidden">
+                <PaneEmpty>
                   <EmptyState
                     icon="database"
                     title={t("notConnectedTitle")}
                     description={t("editorHintDisabled")}
                   />
-                </div>
-              </div>
+                </PaneEmpty>
+              </Flex>
             )}
           </>
         )}
         </Suspense>
 
-        {!statusDismissed && status.kind !== "idle" && (
-        <div className={`status status-${statusTone(status)}`}>
-          <span className="status-icon" aria-hidden>
-            {statusTone(status) === "running" ? (
-              <Spinner size={13} />
-            ) : statusTone(status) === "success" ? (
-              <Icon name="check" />
-            ) : statusTone(status) === "error" ? (
-              <Icon name="warning" />
-            ) : null}
-          </span>
-          <div className="status-content">
-            {statusHintKey && !hintDismissed ? (
-              <div className="status-hint">
-                <div className="status-hint-body">
-                  <span className="status-hint-label">{t("errorHintLabel")}</span>
-                  <span className="status-hint-text">{t(statusHintKey)}</span>
-                  <button
-                    type="button"
-                    className="status-hint-dismiss"
-                    onClick={() => setHintDismissed(true)}
-                    title={t("errorHintDismiss")}
-                    aria-label={t("errorHintDismiss")}
-                  >
-                    <Icon name="close" />
-                  </button>
-                </div>
-                <details className="status-hint-details">
-                  <summary>{t("errorHintShowOriginal")}</summary>
-                  <span className="status-hint-raw">{statusText}</span>
-                </details>
-              </div>
-            ) : (
-              statusText
-            )}
-          </div>
-          {reconnectProfile && statusTone(status) === "error" && (
-            <button
-              type="button"
-              className="status-reconnect-btn"
-              onClick={() => handleConnect(reconnectProfile)}
-              disabled={connectingId === reconnectProfile.id}
-              title={t("statusReconnectTitle", { name: reconnectProfile.name })}
+        {!statusDismissed && status.kind !== "idle" && (() => {
+          const tone = statusTone(status);
+          const toneColor =
+            tone === "running"
+              ? "app.accent"
+              : tone === "success"
+                ? "app.status.success"
+                : tone === "error"
+                  ? "app.status.error"
+                  : undefined;
+          return (
+            <Flex
+              align="center"
+              gap="var(--space-2)"
+              px="14px"
+              py="5px"
+              bg={tone === "error" ? "app.bgError" : "app.surfaceMuted"}
+              borderTopWidth="1px"
+              borderTopColor="app.border"
+              borderLeftWidth="3px"
+              borderLeftStyle="solid"
+              borderLeftColor={toneColor ?? "transparent"}
+              fontSize="sm"
+              color={tone === "error" ? "app.textError" : "app.textSecondary"}
             >
-              {connectingId === reconnectProfile.id ? (
-                <Spinner size={12} />
-              ) : (
-                <Icon name="refresh" />
+              <chakra.span
+                aria-hidden
+                display="inline-flex"
+                alignItems="center"
+                flexShrink="0"
+                color={toneColor}
+                css={{ "&:empty": { display: "none" }, "& .icon-svg": { width: "14px", height: "14px" } }}
+              >
+                {tone === "running" ? (
+                  <Spinner size={13} />
+                ) : tone === "success" ? (
+                  <Icon name="check" />
+                ) : tone === "error" ? (
+                  <Icon name="warning" />
+                ) : null}
+              </chakra.span>
+              <Box flex="1" minW="0">
+                {statusHintKey && !hintDismissed ? (
+                  <Flex direction="column" gap="3px">
+                    <Flex align="baseline" gap="6px">
+                      <chakra.span
+                        flex="none"
+                        fontWeight={600}
+                        fontSize="xs"
+                        px="6px"
+                        py="1px"
+                        borderRadius="sm"
+                        bg="app.textError"
+                        color="app.bgError"
+                      >
+                        {t("errorHintLabel")}
+                      </chakra.span>
+                      <chakra.span flex="1" minW="0" lineHeight="1.45">{t(statusHintKey)}</chakra.span>
+                      <chakra.button
+                        type="button"
+                        flexShrink="0"
+                        alignSelf="flex-start"
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        w="18px"
+                        h="18px"
+                        p="0"
+                        border="none"
+                        bg="transparent"
+                        color="currentColor"
+                        borderRadius="sm"
+                        lineHeight="1"
+                        cursor="pointer"
+                        opacity={0.7}
+                        _hover={{ opacity: 1, bg: "app.hover" }}
+                        css={{ "& .icon-svg": { width: "13px", height: "13px" } }}
+                        onClick={() => setHintDismissed(true)}
+                        title={t("errorHintDismiss")}
+                        aria-label={t("errorHintDismiss")}
+                      >
+                        <Icon name="close" />
+                      </chakra.button>
+                    </Flex>
+                    <chakra.details
+                      css={{ "& summary": { cursor: "pointer", opacity: 0.85, fontSize: "var(--text-xs)", width: "fit-content" } }}
+                    >
+                      <summary>{t("errorHintShowOriginal")}</summary>
+                      <chakra.span
+                        display="block"
+                        mt="3px"
+                        whiteSpace="pre-wrap"
+                        wordBreak="break-word"
+                        fontFamily="var(--font-mono)"
+                        fontSize="xs"
+                        opacity={0.9}
+                      >
+                        {statusText}
+                      </chakra.span>
+                    </chakra.details>
+                  </Flex>
+                ) : (
+                  statusText
+                )}
+              </Box>
+              {reconnectProfile && tone === "error" && (
+                <chakra.button
+                  type="button"
+                  flexShrink="0"
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="5px"
+                  px="10px"
+                  py="3px"
+                  fontSize="xs"
+                  fontWeight={500}
+                  color="#fff"
+                  bg="app.status.error"
+                  border="none"
+                  borderRadius="sm"
+                  cursor="pointer"
+                  css={{
+                    "&:hover:not(:disabled)": { background: "color-mix(in srgb, var(--status-error) 85%, #000)" },
+                    "&:disabled": { opacity: 0.7, cursor: "default" },
+                    "& .icon-svg": { width: "13px", height: "13px" },
+                  }}
+                  onClick={() => handleConnect(reconnectProfile)}
+                  disabled={connectingId === reconnectProfile.id}
+                  title={t("statusReconnectTitle", { name: reconnectProfile.name })}
+                >
+                  {connectingId === reconnectProfile.id ? (
+                    <Spinner size={12} />
+                  ) : (
+                    <Icon name="refresh" />
+                  )}
+                  {t("statusReconnect")}
+                </chakra.button>
               )}
-              {t("statusReconnect")}
-            </button>
-          )}
-          {statusTone(status) === "error" && (
-            <button
-              type="button"
-              className="status-dismiss"
-              onClick={() => setStatusDismissed(true)}
-              title={t("statusDismiss")}
-              aria-label={t("statusDismiss")}
-            >
-              <Icon name="close" />
-            </button>
-          )}
-        </div>
-        )}
-      </main>
+              {tone === "error" && (
+                <chakra.button
+                  type="button"
+                  flexShrink="0"
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  w="20px"
+                  h="20px"
+                  p="0"
+                  border="none"
+                  bg="transparent"
+                  color="currentColor"
+                  borderRadius="sm"
+                  lineHeight="1"
+                  cursor="pointer"
+                  opacity={0.7}
+                  _hover={{ opacity: 1, bg: "app.hover" }}
+                  css={{ "& .icon-svg": { width: "14px", height: "14px" } }}
+                  onClick={() => setStatusDismissed(true)}
+                  title={t("statusDismiss")}
+                  aria-label={t("statusDismiss")}
+                >
+                  <Icon name="close" />
+                </chakra.button>
+              )}
+            </Flex>
+          );
+        })()}
+      </Flex>
 
       <Suspense fallback={null}>
       {importTarget && sessionId && (
@@ -2555,7 +2832,7 @@ export default function App() {
           <ContextMenu x={tabMenu.x} y={tabMenu.y} items={items} onClose={() => setTabMenu(null)} />
         );
       })()}
-      </div>
-    </div>
+      </Grid>
+    </Flex>
   );
 }
