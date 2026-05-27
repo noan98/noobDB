@@ -1,9 +1,71 @@
-import { Box, chakra } from "@chakra-ui/react";
+import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import {
+  SettingsHelp,
+  SettingsPane,
+  SettingsHeader,
+  SettingsSection,
+  SettingsSectionHeader,
+} from "./settingsLayout";
 
 type Key = Parameters<ReturnType<typeof useT>>[0];
 type Impact = "yes" | "no";
+
+const HelpFeatureGrid = chakra("div", {
+  base: { display: "flex", flexDirection: "column", gap: "var(--space-2)", mt: "6px" },
+});
+
+const HelpFeature = chakra("article", {
+  base: {
+    border: "1px solid",
+    borderColor: "app.borderSubtle",
+    borderRadius: "md",
+    bg: "app.surfaceMuted",
+    px: "12px",
+    py: "10px",
+  },
+});
+
+const HelpFeatureHead = chakra("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "var(--space-3)",
+    flexWrap: "wrap",
+    "& h4": { margin: 0, fontSize: "md", fontWeight: 600, color: "app.text" },
+  },
+});
+
+const HelpFeatureDesc = chakra("p", {
+  base: { margin: "8px 0 0", fontSize: "sm", lineHeight: "1.55", color: "app.text" },
+});
+
+const HelpUsageTitle = chakra("p", {
+  base: { margin: "10px 0 2px", fontSize: "sm", fontWeight: 600, color: "app.text" },
+});
+
+const HelpSteps = chakra("ol", {
+  base: {
+    margin: 0,
+    pl: "20px",
+    fontSize: "sm",
+    lineHeight: "1.55",
+    color: "app.text",
+    "& li": { margin: "2px 0" },
+  },
+});
+
+const HelpNote = chakra("p", {
+  base: {
+    margin: "10px 0 0",
+    fontSize: "sm",
+    lineHeight: "1.5",
+    color: "app.textMuted",
+    "& strong": { color: "app.text" },
+  },
+});
 
 interface Feature {
   titleKey: Key;
@@ -85,9 +147,24 @@ const SECTIONS: Section[] = [
 function DbImpactBadge({ impact }: { impact: Impact }) {
   const t = useT();
   const writes = impact === "yes";
+  const tone = writes ? "var(--status-error)" : "var(--status-connected)";
   return (
-    <chakra.span className={`help-impact-badge ${writes ? "impact-yes" : "impact-no"}`}>
-      <chakra.span className="help-impact-mark" aria-hidden>
+    <chakra.span
+      display="inline-flex"
+      alignItems="center"
+      gap="5px"
+      px="8px"
+      py="2px"
+      borderRadius="pill"
+      fontSize="xs"
+      fontWeight={600}
+      whiteSpace="nowrap"
+      border="1px solid transparent"
+      color={tone}
+      background={`color-mix(in srgb, ${tone} 12%, transparent)`}
+      borderColor={`color-mix(in srgb, ${tone} 35%, transparent)`}
+    >
+      <chakra.span fontSize="xs" lineHeight="1" aria-hidden>
         <Icon name={writes ? "check" : "close"} />
       </chakra.span>
       {`${t("helpImpactLabel")}: ${t(writes ? "helpImpactYes" : "helpImpactNo")}`}
@@ -98,58 +175,62 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
 export function HelpView({ onClose }: { onClose: () => void }) {
   const t = useT();
   return (
-    <Box className="settings help">
-      <chakra.header className="settings-header">
+    <SettingsPane>
+      <SettingsHeader>
         <chakra.h2>{t("helpTitle")}</chakra.h2>
         <chakra.button
-          className="icon"
+          px="8px"
+          py="4px"
+          minW="28px"
+          fontSize="base"
+          lineHeight="1"
           onClick={onClose}
           aria-label={t("helpClose")}
           title={t("helpClose")}
         >
           <Icon name="close" size={13} />
         </chakra.button>
-      </chakra.header>
+      </SettingsHeader>
 
-      <chakra.p className="settings-help help-intro">{t("helpIntro")}</chakra.p>
+      <SettingsHelp fontSize="md" lineHeight="1.5">{t("helpIntro")}</SettingsHelp>
 
       {SECTIONS.map((section) => (
-        <chakra.section className="settings-section" key={section.headerKey}>
-          <Box className="settings-section-header">
+        <SettingsSection key={section.headerKey}>
+          <SettingsSectionHeader>
             <chakra.h3>{t(section.headerKey)}</chakra.h3>
-          </Box>
-          <chakra.p className="settings-help">{t(section.descKey)}</chakra.p>
+          </SettingsSectionHeader>
+          <SettingsHelp>{t(section.descKey)}</SettingsHelp>
 
-          <Box className="help-feature-grid">
+          <HelpFeatureGrid>
             {section.features.map((f) => (
-              <chakra.article className="help-feature" key={f.titleKey}>
-                <Box className="help-feature-head">
+              <HelpFeature key={f.titleKey}>
+                <HelpFeatureHead>
                   <chakra.h4>{t(f.titleKey)}</chakra.h4>
                   {f.impact && <DbImpactBadge impact={f.impact} />}
-                </Box>
-                <chakra.p className="help-feature-desc">{t(f.descKey)}</chakra.p>
+                </HelpFeatureHead>
+                <HelpFeatureDesc>{t(f.descKey)}</HelpFeatureDesc>
 
                 {f.stepKeys && (
                   <>
-                    <chakra.p className="help-usage-title">{t("helpUsageTitle")}</chakra.p>
-                    <chakra.ol className="help-steps">
+                    <HelpUsageTitle>{t("helpUsageTitle")}</HelpUsageTitle>
+                    <HelpSteps>
                       {f.stepKeys.map((s) => (
                         <chakra.li key={s}>{t(s)}</chakra.li>
                       ))}
-                    </chakra.ol>
+                    </HelpSteps>
                   </>
                 )}
 
                 {f.noteKey && (
-                  <chakra.p className="help-note">
+                  <HelpNote>
                     <chakra.strong>{t("helpNoteLabel")}:</chakra.strong> {t(f.noteKey)}
-                  </chakra.p>
+                  </HelpNote>
                 )}
-              </chakra.article>
+              </HelpFeature>
             ))}
-          </Box>
-        </chakra.section>
+          </HelpFeatureGrid>
+        </SettingsSection>
       ))}
-    </Box>
+    </SettingsPane>
   );
 }

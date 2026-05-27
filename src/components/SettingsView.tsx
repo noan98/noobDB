@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
-import { Box, chakra } from "@chakra-ui/react";
+import { chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Checkbox, Input, Select } from "./ui";
+import {
+  SettingsHelp,
+  SettingsPane,
+  SettingsHeader,
+  SettingsSection,
+  SettingsSectionHeader,
+} from "./settingsLayout";
 import { copyToClipboard } from "./clipboard";
 import {
   DEFAULT_AUTO_LIMIT_COUNT,
@@ -42,6 +49,181 @@ interface Props {
   theme: Theme;
   onClose: () => void;
 }
+
+// 各セクション内のレイアウト要素 (元々は App.css の `.settings-*` クラス)。
+const SettingsReset = chakra("button", {
+  base: { px: "10px", py: "4px", fontSize: "sm" },
+});
+
+const SettingsToggleRow = chakra("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "10px",
+    p: "8px",
+    border: "1px solid",
+    borderColor: "app.borderSubtle",
+    borderRadius: "md",
+    bg: "app.surfaceMuted",
+  },
+});
+
+const SettingsToggleLabel = chakra("label", {
+  base: {
+    margin: 0,
+    fontSize: "md",
+    fontWeight: 500,
+    color: "app.text",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "var(--space-2)",
+  },
+});
+
+const SettingsHelpInline = chakra("span", {
+  base: { fontSize: "sm", color: "app.textMuted" },
+});
+
+const SettingsNumberRow = chakra("div", {
+  base: {
+    display: "grid",
+    gridTemplateColumns: "200px 120px 1fr",
+    alignItems: "center",
+    gap: "var(--space-3)",
+    px: "8px",
+    py: "6px",
+    border: "1px solid",
+    borderColor: "app.borderSubtle",
+    borderRadius: "md",
+    bg: "app.surfaceMuted",
+    "& label": { margin: 0, fontSize: "md", fontWeight: 500, color: "app.text" },
+    "& input": { fontSize: "md", borderRadius: "sm" },
+  },
+});
+
+const SettingsTimeoutAux = chakra("div", {
+  base: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "3px",
+    alignItems: "flex-start",
+    minWidth: 0,
+  },
+});
+
+const SettingsUnlimitedBadge = chakra("span", {
+  base: {
+    display: "inline-flex",
+    alignItems: "center",
+    px: "8px",
+    py: "1px",
+    fontSize: "xs",
+    fontWeight: 600,
+    color: "app.accentText",
+    bg: "app.accent",
+    borderRadius: "999px",
+  },
+});
+
+const SettingsPresetRow = chakra("div", {
+  base: {
+    display: "grid",
+    gridTemplateColumns: "120px minmax(200px, 280px) 1fr",
+    alignItems: "center",
+    gap: "var(--space-3)",
+    px: "8px",
+    py: "6px",
+    mb: "8px",
+    border: "1px solid",
+    borderColor: "app.borderSubtle",
+    borderRadius: "md",
+    bg: "app.surfaceMuted",
+    "& label": { margin: 0, fontSize: "md", fontWeight: 500, color: "app.text" },
+  },
+});
+
+const SettingsColorGrid = chakra("div", {
+  base: { display: "grid", gridTemplateColumns: "1fr", gap: "6px", mt: "6px" },
+});
+
+const SettingsColorRow = chakra("div", {
+  base: {
+    display: "grid",
+    gridTemplateColumns: "140px 1fr",
+    alignItems: "center",
+    gap: "var(--space-3)",
+    px: "8px",
+    py: "6px",
+    border: "1px solid",
+    borderColor: "app.borderSubtle",
+    borderRadius: "md",
+    bg: "app.surfaceMuted",
+    "& label": { margin: 0, fontSize: "md", fontWeight: 500, color: "app.text" },
+  },
+});
+
+const SettingsColorControls = chakra("div", {
+  base: { display: "flex", alignItems: "center", gap: "10px" },
+});
+
+const SettingsColorInput = chakra("input", {
+  base: {
+    width: "36px",
+    height: "28px",
+    p: "0",
+    border: "1px solid",
+    borderColor: "app.borderStrong",
+    borderRadius: "sm",
+    bg: "app.bgInput",
+    cursor: "pointer",
+    flexShrink: 0,
+    "&::-webkit-color-swatch-wrapper": { padding: "2px" },
+    "&::-webkit-color-swatch": { border: "none", borderRadius: "var(--radius-sm)" },
+  },
+});
+
+const SettingsColorHex = chakra("span", {
+  base: { fontFamily: "mono", fontSize: "sm", color: "app.textMuted", minWidth: "70px" },
+});
+
+const SettingsColorSample = chakra("span", {
+  base: { fontFamily: "mono", fontSize: "md", fontWeight: 600 },
+});
+
+const SettingsLogsActions = chakra("div", {
+  base: { display: "flex", alignItems: "center", gap: "var(--space-2)" },
+});
+
+const SettingsLogsView = chakra("textarea", {
+  base: {
+    mt: "6px",
+    width: "100%",
+    height: "260px",
+    resize: "vertical",
+    px: "10px",
+    py: "8px",
+    fontFamily: "mono",
+    fontSize: "sm",
+    lineHeight: "1.5",
+    whiteSpace: "pre",
+    overflow: "auto",
+    border: "1px solid",
+    borderColor: "app.borderStrong",
+    borderRadius: "md",
+    bg: "app.surfaceMuted",
+    color: "app.text",
+  },
+});
+
+const SettingsLogsPath = chakra("span", {
+  base: {
+    fontSize: "sm",
+    color: "app.textMuted",
+    fontFamily: "mono",
+    wordBreak: "break-all",
+  },
+});
 
 interface Field {
   key: keyof SyntaxColors;
@@ -147,36 +329,38 @@ export function SettingsView({ theme, onClose }: Props) {
   };
 
   return (
-    <Box className="settings">
-      <chakra.header className="settings-header">
+    <SettingsPane>
+      <SettingsHeader>
         <chakra.h2>{t("settingsTitle")}</chakra.h2>
         <chakra.button
-          className="icon"
+          px="8px"
+          py="4px"
+          minW="28px"
+          fontSize="base"
+          lineHeight="1"
           onClick={onClose}
           aria-label={t("settingsClose")}
           title={t("settingsClose")}
         >
           <Icon name="close" size={13} />
         </chakra.button>
-      </chakra.header>
+      </SettingsHeader>
 
-      <chakra.section className="settings-section">
-        <Box className="settings-section-header">
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsLanguage")}</chakra.h3>
-        </Box>
-        <Box className="settings-toggle-row">
+        </SettingsSectionHeader>
+        <SettingsToggleRow>
           <LanguageSwitcher />
-          <chakra.span className="settings-help-inline">
-            {t("settingsLanguageHelp")}
-          </chakra.span>
-        </Box>
-      </chakra.section>
+          <SettingsHelpInline>{t("settingsLanguageHelp")}</SettingsHelpInline>
+        </SettingsToggleRow>
+      </SettingsSection>
 
-      <chakra.section className="settings-section">
-        <Box className="settings-section-header">
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsAppearance")}</chakra.h3>
-        </Box>
-        <Box className="settings-number-row">
+        </SettingsSectionHeader>
+        <SettingsNumberRow>
           <chakra.label htmlFor="settings-font-size">{t("settingsFontSize")}</chakra.label>
           <Input
             id="settings-font-size"
@@ -192,29 +376,26 @@ export function SettingsView({ theme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <chakra.span className="settings-help-inline">
+          <SettingsHelpInline>
             {t("settingsFontSizeHelp", {
               min: MIN_FONT_SIZE_PX,
               max: MAX_FONT_SIZE_PX,
               default: DEFAULT_FONT_SIZE_PX,
             })}
-          </chakra.span>
-        </Box>
-      </chakra.section>
+          </SettingsHelpInline>
+        </SettingsNumberRow>
+      </SettingsSection>
 
-      <chakra.section className="settings-section">
-        <Box className="settings-section-header">
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsStreaming")}</chakra.h3>
-          <chakra.button
-            className="settings-reset"
-            onClick={resetStreamingDefaults}
-          >
+          <SettingsReset onClick={resetStreamingDefaults}>
             {t("settingsReset")}
-          </chakra.button>
-        </Box>
-        <chakra.p className="settings-help">{t("settingsStreamingHelp")}</chakra.p>
+          </SettingsReset>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsStreamingHelp")}</SettingsHelp>
 
-        <Box className="settings-number-row">
+        <SettingsNumberRow>
           <chakra.label htmlFor="settings-default-display">
             {t("settingsDefaultDisplayCount")}
           </chakra.label>
@@ -231,12 +412,12 @@ export function SettingsView({ theme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <chakra.span className="settings-help-inline">
+          <SettingsHelpInline>
             {t("settingsDefaultDisplayCountHelp")}
-          </chakra.span>
-        </Box>
+          </SettingsHelpInline>
+        </SettingsNumberRow>
 
-        <Box className="settings-number-row">
+        <SettingsNumberRow>
           <chakra.label htmlFor="settings-stream-prefetch">
             {t("settingsStreamPrefetchSize")}
           </chakra.label>
@@ -253,31 +434,31 @@ export function SettingsView({ theme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <chakra.span className="settings-help-inline">
+          <SettingsHelpInline>
             {t("settingsStreamPrefetchSizeHelp")}
-          </chakra.span>
-        </Box>
-      </chakra.section>
+          </SettingsHelpInline>
+        </SettingsNumberRow>
+      </SettingsSection>
 
-      <chakra.section className="settings-section">
-        <Box className="settings-section-header">
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsAutoLimit")}</chakra.h3>
-        </Box>
-        <chakra.p className="settings-help">{t("settingsAutoLimitHelp")}</chakra.p>
-        <Box className="settings-toggle-row">
-          <chakra.label htmlFor="settings-auto-limit" className="settings-toggle-label">
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsAutoLimitHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-auto-limit">
             <Checkbox
               id="settings-auto-limit"
               checked={settings.autoLimitEnabled}
               onChange={(e) => setAutoLimitEnabled(e.target.checked)}
             />
             {t("settingsAutoLimitEnabled")}
-          </chakra.label>
-          <chakra.span className="settings-help-inline">
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
             {t("settingsAutoLimitEnabledHelp")}
-          </chakra.span>
-        </Box>
-        <Box className="settings-number-row">
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsNumberRow>
           <chakra.label htmlFor="settings-auto-limit-count">
             {t("settingsAutoLimitCount")}
           </chakra.label>
@@ -295,43 +476,43 @@ export function SettingsView({ theme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <chakra.span className="settings-help-inline">
+          <SettingsHelpInline>
             {t("settingsAutoLimitCountHelp")}
-          </chakra.span>
-        </Box>
-      </chakra.section>
+          </SettingsHelpInline>
+        </SettingsNumberRow>
+      </SettingsSection>
 
-      <chakra.section className="settings-section">
-        <Box className="settings-section-header">
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsSafety")}</chakra.h3>
-        </Box>
-        <Box className="settings-toggle-row">
-          <chakra.label htmlFor="settings-confirm-prod" className="settings-toggle-label">
+        </SettingsSectionHeader>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-confirm-prod">
             <Checkbox
               id="settings-confirm-prod"
               checked={settings.confirmProductionConnect}
               onChange={(e) => setConfirmProductionConnect(e.target.checked)}
             />
             {t("settingsConfirmProductionConnect")}
-          </chakra.label>
-          <chakra.span className="settings-help-inline">
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
             {t("settingsConfirmProductionConnectHelp")}
-          </chakra.span>
-        </Box>
-        <Box className="settings-toggle-row">
-          <chakra.label htmlFor="settings-confirm-dangerous" className="settings-toggle-label">
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-confirm-dangerous">
             <Checkbox
               id="settings-confirm-dangerous"
               checked={settings.confirmDangerousQueries}
               onChange={(e) => setConfirmDangerousQueries(e.target.checked)}
             />
             {t("settingsConfirmDangerousQueries")}
-          </chakra.label>
-          <chakra.span className="settings-help-inline">
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
             {t("settingsConfirmDangerousQueriesHelp")}
-          </chakra.span>
-        </Box>
-        <Box className="settings-number-row">
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsNumberRow>
           <chakra.label htmlFor="settings-query-timeout">
             {t("settingsQueryTimeout")}
           </chakra.label>
@@ -348,25 +529,25 @@ export function SettingsView({ theme, onClose }: Props) {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
           />
-          <Box className="settings-timeout-aux">
+          <SettingsTimeoutAux>
             {Number.parseInt(timeoutInput, 10) === 0 && (
-              <chakra.span className="settings-unlimited-badge">
+              <SettingsUnlimitedBadge>
                 {t("settingsQueryTimeoutUnlimited")}
-              </chakra.span>
+              </SettingsUnlimitedBadge>
             )}
-            <chakra.span className="settings-help-inline">
+            <SettingsHelpInline>
               {t("settingsQueryTimeoutHelp")}
-            </chakra.span>
-          </Box>
-        </Box>
-      </chakra.section>
+            </SettingsHelpInline>
+          </SettingsTimeoutAux>
+        </SettingsNumberRow>
+      </SettingsSection>
 
-      <chakra.section className="settings-section">
-        <Box className="settings-section-header">
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsTabPersistence")}</chakra.h3>
-        </Box>
-        <chakra.p className="settings-help">{t("settingsTabPersistenceHelp")}</chakra.p>
-        <Box className="settings-toggle-row">
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsTabPersistenceHelp")}</SettingsHelp>
+        <SettingsToggleRow>
           <chakra.label htmlFor="settings-tab-restore-mode">
             {t("settingsTabRestoreMode")}
           </chakra.label>
@@ -379,28 +560,26 @@ export function SettingsView({ theme, onClose }: Props) {
             <option value="ask">{t("settingsTabRestoreModeAsk")}</option>
             <option value="never">{t("settingsTabRestoreModeNever")}</option>
           </Select>
-        </Box>
-      </chakra.section>
+        </SettingsToggleRow>
+      </SettingsSection>
 
-      <chakra.section className="settings-section">
-        <Box className="settings-section-header">
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsSyntaxHighlighting")}</chakra.h3>
-          <chakra.button
-            className="settings-reset"
-            onClick={() => resetSyntaxColors(theme)}
-          >
+          <SettingsReset onClick={() => resetSyntaxColors(theme)}>
             {t("settingsReset")}
-          </chakra.button>
-        </Box>
-        <chakra.p className="settings-help">{t("settingsSyntaxHelp", { theme: themeLabel })}</chakra.p>
+          </SettingsReset>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsSyntaxHelp", { theme: themeLabel })}</SettingsHelp>
 
-        <Box className="settings-preset-row">
+        <SettingsPresetRow>
           <chakra.label htmlFor="settings-syntax-preset">
             {t("settingsSyntaxPresetLabel")}
           </chakra.label>
           <chakra.select
             id="settings-syntax-preset"
-            className="settings-preset-select"
+            fontSize="md"
+            borderRadius="sm"
             value={detectSyntaxPreset(colors) ?? ""}
             onChange={(e) => {
               const v = e.target.value as SyntaxPresetKey | "";
@@ -416,103 +595,97 @@ export function SettingsView({ theme, onClose }: Props) {
               </option>
             ))}
           </chakra.select>
-          <chakra.span className="settings-help-inline">
+          <SettingsHelpInline>
             {t("settingsSyntaxPresetHelp", { theme: themeLabel })}
-          </chakra.span>
-        </Box>
+          </SettingsHelpInline>
+        </SettingsPresetRow>
 
-        <Box className="settings-color-grid">
+        <SettingsColorGrid>
           {FIELDS.map((f) => (
-            <Box className="settings-color-row" key={f.key}>
+            <SettingsColorRow key={f.key}>
               <chakra.label htmlFor={`syntax-${f.key}`}>{t(f.labelKey)}</chakra.label>
-              <Box className="settings-color-controls">
-                <chakra.input
+              <SettingsColorControls>
+                <SettingsColorInput
                   id={`syntax-${f.key}`}
                   type="color"
-                  className="settings-color-input"
                   value={colors[f.key]}
                   onChange={(e) => setSyntaxColor(theme, f.key, e.target.value)}
                 />
-                <chakra.span className="settings-color-hex">{colors[f.key]}</chakra.span>
-                <chakra.span
-                  className="settings-color-sample"
-                  style={{ color: colors[f.key] }}
-                >
+                <SettingsColorHex>{colors[f.key]}</SettingsColorHex>
+                <SettingsColorSample style={{ color: colors[f.key] }}>
                   {t(f.sampleKey)}
-                </chakra.span>
-              </Box>
-            </Box>
+                </SettingsColorSample>
+              </SettingsColorControls>
+            </SettingsColorRow>
           ))}
-        </Box>
-      </chakra.section>
+        </SettingsColorGrid>
+      </SettingsSection>
 
-      <chakra.section className="settings-section">
-        <Box className="settings-section-header">
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsPreviewHighlight")}</chakra.h3>
-          <chakra.button
-            className="settings-reset"
-            onClick={() => resetPreviewHighlight(theme)}
-          >
+          <SettingsReset onClick={() => resetPreviewHighlight(theme)}>
             {t("settingsReset")}
-          </chakra.button>
-        </Box>
-        <chakra.p className="settings-help">{t("settingsPreviewHighlightHelp", { theme: themeLabel })}</chakra.p>
+          </SettingsReset>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsPreviewHighlightHelp", { theme: themeLabel })}</SettingsHelp>
 
-        <Box className="settings-color-grid">
-          <Box className="settings-color-row">
+        <SettingsColorGrid>
+          <SettingsColorRow>
             <chakra.label htmlFor="preview-highlight">{t("settingsPreviewHighlightLabel")}</chakra.label>
-            <Box className="settings-color-controls">
-              <chakra.input
+            <SettingsColorControls>
+              <SettingsColorInput
                 id="preview-highlight"
                 type="color"
-                className="settings-color-input"
                 value={previewHighlight}
                 onChange={(e) => setPreviewHighlight(theme, e.target.value)}
               />
-              <chakra.span className="settings-color-hex">{previewHighlight}</chakra.span>
-              <chakra.span
-                className="settings-color-sample preview-highlight-sample"
+              <SettingsColorHex>{previewHighlight}</SettingsColorHex>
+              <SettingsColorSample
+                px="10px"
+                py="4px"
+                borderRadius="sm"
+                color="app.text"
                 style={{
                   background: `color-mix(in srgb, ${previewHighlight} 22%, transparent)`,
                   boxShadow: `inset 2px 0 0 ${previewHighlight}`,
                 }}
               >
                 {t("settingsPreviewHighlightSample")}
-              </chakra.span>
-            </Box>
-          </Box>
-        </Box>
-      </chakra.section>
+              </SettingsColorSample>
+            </SettingsColorControls>
+          </SettingsColorRow>
+        </SettingsColorGrid>
+      </SettingsSection>
 
-      <chakra.section className="settings-section">
-        <Box className="settings-section-header">
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsLogs")}</chakra.h3>
-          <Box className="settings-logs-actions">
-            <chakra.button className="settings-reset" onClick={loadLogs} disabled={logLoading}>
+          <SettingsLogsActions>
+            <SettingsReset onClick={loadLogs} disabled={logLoading}>
               {t("settingsLogsRefresh")}
-            </chakra.button>
-            <chakra.button className="settings-reset" onClick={copyLogs} disabled={!logText}>
+            </SettingsReset>
+            <SettingsReset onClick={copyLogs} disabled={!logText}>
               {logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
-            </chakra.button>
-            <chakra.button className="settings-reset" onClick={clearLogs} disabled={!logText}>
+            </SettingsReset>
+            <SettingsReset onClick={clearLogs} disabled={!logText}>
               {t("settingsLogsClear")}
-            </chakra.button>
-          </Box>
-        </Box>
-        <chakra.p className="settings-help">{t("settingsLogsHelp")}</chakra.p>
-        <chakra.textarea
-          className="settings-logs-view"
+            </SettingsReset>
+          </SettingsLogsActions>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsLogsHelp")}</SettingsHelp>
+        <SettingsLogsView
           readOnly
           wrap="off"
           value={logText}
           placeholder={t("settingsLogsEmpty")}
         />
         {logPath && (
-          <chakra.span className="settings-help-inline settings-logs-path">
+          <SettingsLogsPath>
             {t("settingsLogsPath", { path: logPath })}
-          </chakra.span>
+          </SettingsLogsPath>
         )}
-      </chakra.section>
-    </Box>
+      </SettingsSection>
+    </SettingsPane>
   );
 }

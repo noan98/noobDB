@@ -5,6 +5,18 @@ import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Button, Checkbox, Input } from "./ui";
+import {
+  ScopeToggle,
+  Tree,
+  TreeBadge,
+  TreeChevron,
+  TreeIcon,
+  TreeLabel,
+  TreeNode,
+  TreePane,
+  TreeRow,
+  TreeSearch,
+} from "./tree";
 import { copyToClipboard } from "./clipboard";
 
 interface Props {
@@ -91,8 +103,8 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
   };
 
   return (
-    <Box className="tree-pane">
-      <Box className="tree-search">
+    <TreePane>
+      <TreeSearch>
         <Input
           type="search"
           placeholder={t("historySearchPlaceholder")}
@@ -100,34 +112,34 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
           onChange={(e) => setSearch(e.target.value)}
         />
         {activeProfile && (
-          <chakra.label className="snippet-scope-toggle">
+          <ScopeToggle>
             <Checkbox
               checked={showAll}
               onChange={(e) => setShowAll(e.target.checked)}
             />
             {t("historyShowAll")}
-          </chakra.label>
+          </ScopeToggle>
         )}
-      </Box>
+      </TreeSearch>
 
       {entries.length > 0 && (
-        <Box className="tree-search" borderTop="none" pt={0}>
+        <TreeSearch borderTop="none" pt={0}>
           <Button type="button" variant="danger" onClick={handleClear}>
             {t("historyClear")}
           </Button>
-        </Box>
+        </TreeSearch>
       )}
 
       {error ? (
-        <chakra.p className="muted text-error" p="12px">{error}</chakra.p>
+        <chakra.p color="app.textError" p="12px">{error}</chakra.p>
       ) : entries.length === 0 ? (
         debounced ? (
-          <chakra.p className="muted" p="12px">{t("historyNoMatches")}</chakra.p>
+          <chakra.p color="app.textMuted" p="12px">{t("historyNoMatches")}</chakra.p>
         ) : (
           <EmptyState icon="clock" title={t("historyEmptyTitle")} description={t("historyEmpty")} />
         )
       ) : (
-        <Box className="tree" role="tree">
+        <Tree role="tree">
           {entries.map((h) => {
             const failed = h.status === "error";
             const meta =
@@ -137,31 +149,66 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
                   ? t("historyAffectedMeta", { rows: h.rows_affected })
                   : "";
             return (
-              <Box key={h.id} className="tree-node snippet history">
-                <Box
-                  className="tree-row snippet-row"
+              <TreeNode key={h.id}>
+                <TreeRow
+                  position="relative"
                   role="treeitem"
                   onClick={() => onRestore(h.sql)}
                   title={`${t("historyRestoreHint")}\n\n${h.sql}`}
+                  css={{
+                    "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
+                      opacity: 1,
+                      pointerEvents: "auto",
+                    },
+                  }}
                 >
-                  <chakra.span className="tree-chevron empty" aria-hidden />
-                  <chakra.span className="tree-icon snippet-icon" aria-hidden>
+                  <TreeChevron visibility="hidden" aria-hidden />
+                  <TreeIcon color="app.accent" aria-hidden>
                     <Icon name={failed ? "close" : "refresh"} />
-                  </chakra.span>
-                  <chakra.span className="tree-label">{oneLine(h.sql)}</chakra.span>
+                  </TreeIcon>
+                  <TreeLabel fontFamily="mono">{oneLine(h.sql)}</TreeLabel>
                   {failed && (
-                    <chakra.span className="tree-badge read-only-badge">
+                    <TreeBadge
+                      bg="var(--status-info, var(--bg-muted))"
+                      color="app.text"
+                      borderColor="app.borderStrong"
+                      fontWeight={700}
+                      letterSpacing="0.05em"
+                    >
                       {t("historyStatusError")}
-                    </chakra.span>
+                    </TreeBadge>
                   )}
-                  {!failed && meta && <chakra.span className="tree-badge">{meta}</chakra.span>}
-                  {h.elapsed_ms != null && (
-                    <chakra.span className="tree-badge driver">{h.elapsed_ms} ms</chakra.span>
-                  )}
-                  <chakra.span className="history-row-actions">
+                  {!failed && meta && <TreeBadge>{meta}</TreeBadge>}
+                  {h.elapsed_ms != null && <TreeBadge>{h.elapsed_ms} ms</TreeBadge>}
+                  <chakra.span
+                    data-row-actions=""
+                    position="absolute"
+                    top="0"
+                    right="0"
+                    bottom="0"
+                    display="flex"
+                    alignItems="center"
+                    gap="2px"
+                    pl="16px"
+                    pr="6px"
+                    background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
+                    opacity={0}
+                    pointerEvents="none"
+                    transitionProperty="opacity"
+                    transitionDuration="var(--dur-fast)"
+                    transitionTimingFunction="var(--ease)"
+                  >
                     <chakra.button
                       type="button"
-                      className="icon history-action"
+                      minW="0"
+                      w="24px"
+                      h="24px"
+                      p="0"
+                      display="inline-flex"
+                      alignItems="center"
+                      justifyContent="center"
+                      color="app.textSecondary"
+                      _hover={{ color: "app.text" }}
                       title={copiedId === h.id ? t("historyCopied") : t("historyCopySql")}
                       aria-label={t("historyCopySql")}
                       onClick={(e) => {
@@ -169,11 +216,19 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
                         handleCopy(h.id, h.sql);
                       }}
                     >
-                      <Icon name={copiedId === h.id ? "check" : "copy"} />
+                      <Icon name={copiedId === h.id ? "check" : "copy"} size={15} />
                     </chakra.button>
                     <chakra.button
                       type="button"
-                      className="icon history-action"
+                      minW="0"
+                      w="24px"
+                      h="24px"
+                      p="0"
+                      display="inline-flex"
+                      alignItems="center"
+                      justifyContent="center"
+                      color="app.textSecondary"
+                      _hover={{ color: "app.text" }}
                       title={t("historyOpenInNewTab")}
                       aria-label={t("historyOpenInNewTab")}
                       onClick={(e) => {
@@ -181,16 +236,18 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
                         onOpenInNewTab(h.sql);
                       }}
                     >
-                      <Icon name="query" />
+                      <Icon name="query" size={15} />
                     </chakra.button>
                   </chakra.span>
+                </TreeRow>
+                <Box pt="0" pr="6px" pb="4px" pl="28px" fontSize="2xs" color="app.textMuted">
+                  {formatTime(h.executed_at)}
                 </Box>
-                <Box className="history-time muted">{formatTime(h.executed_at)}</Box>
-              </Box>
+              </TreeNode>
             );
           })}
-        </Box>
+        </Tree>
       )}
-    </Box>
+    </TreePane>
   );
 }

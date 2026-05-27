@@ -108,12 +108,18 @@ export function SnippetForm({
   };
 
   return (
-    <Box className="form">
-      <chakra.h2 className="full" m={0}>
+    <Box
+      p="var(--space-4)"
+      display="grid"
+      gridTemplateColumns="1fr 1fr"
+      gap="var(--space-3)"
+      overflowY="auto"
+    >
+      <chakra.h2 gridColumn="span 2" m={0}>
         {initial ? t("snippetEditTitle", { name: initial.name }) : t("snippetNewTitle")}
       </chakra.h2>
 
-      <Box className="full">
+      <Box gridColumn="span 2">
         <chakra.label>{t("snippetName")}</chakra.label>
         <Input
           value={name}
@@ -147,20 +153,26 @@ export function SnippetForm({
         </Select>
       </Box>
 
-      <Box className="full">
+      <Box gridColumn="span 2">
         <chakra.label>{t("snippetTags")}</chakra.label>
         <Input
           value={tags}
           onChange={(e) => setTags(e.target.value)}
           placeholder={t("snippetTagsPlaceholder")}
         />
-        <chakra.p className="muted" fontSize="11px" m="4px 0 0">
+        <chakra.p color="app.textMuted" fontSize="11px" m="4px 0 0">
           {t("snippetTagsHelp")}
         </chakra.p>
       </Box>
 
-      <chakra.fieldset className="full">
-        <chakra.legend>{t("snippetScope")}</chakra.legend>
+      <chakra.fieldset
+        gridColumn="span 2"
+        border="1px solid"
+        borderColor="app.border"
+        p="var(--space-3)"
+        borderRadius="md"
+      >
+        <chakra.legend fontWeight={600} fontSize="sm" px="6px">{t("snippetScope")}</chakra.legend>
         <Box display="grid" gridTemplateColumns="1fr 1fr" gap="12px">
           <Box>
             <chakra.label>{t("snippetScopeKind")}</chakra.label>
@@ -198,15 +210,16 @@ export function SnippetForm({
             </Box>
           )}
         </Box>
-        <chakra.p className="muted" fontSize="11px" m="8px 0 0">
+        <chakra.p color="app.textMuted" fontSize="11px" m="8px 0 0">
           {t("snippetScopeHelp")}
         </chakra.p>
       </chakra.fieldset>
 
-      <Box className="full">
+      <Box gridColumn="span 2">
         <chakra.label>{t("snippetSql")}</chakra.label>
         <Textarea
-          className="snippet-sql"
+          fontFamily="mono"
+          fontSize="md"
           value={sql}
           onChange={(e) => setSql(e.target.value)}
           placeholder={t("snippetSqlPlaceholder")}
@@ -215,9 +228,9 @@ export function SnippetForm({
         />
       </Box>
 
-      {error && <Box className="full text-error">{error}</Box>}
+      {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
 
-      <Box className="actions">
+      <Box gridColumn="span 2" display="flex" gap="var(--space-2)" justifyContent="flex-end">
         <Button type="button" onClick={onCancel}>{t("formCancel")}</Button>
         <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
       </Box>
