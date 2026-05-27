@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Box, Flex, Text } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { Button, Checkbox, Input, Select } from "./ui";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value never reaches the frontend, so this
@@ -33,7 +35,7 @@ function PasswordInput({ value, onChange, hasStored }: PasswordInputProps) {
 
   return (
     <div className="password-field">
-      <input
+      <Input
         type={show ? "text" : "password"}
         value={showingMask ? STORED_MASK : value}
         readOnly={showingMask}
@@ -94,6 +96,55 @@ function defaultUserFor(driver: DriverKind): string {
 function normalizeDriver(driver: string | undefined): DriverKind {
   if (driver === "postgres" || driver === "sqlite" || driver === "mysql") return driver;
   return "mysql";
+}
+
+/** Bordered field group, spanning both columns of the form grid. */
+function Fieldset({ children }: { children: ReactNode }) {
+  return (
+    <Box
+      as="fieldset"
+      gridColumn="span 2"
+      border="1px solid"
+      borderColor="app.border"
+      borderRadius="md"
+      p="var(--space-3)"
+    >
+      {children}
+    </Box>
+  );
+}
+
+function Legend({ children }: { children: ReactNode }) {
+  return (
+    <Box as="legend" fontWeight="600" fontSize="sm" px="6px">
+      {children}
+    </Box>
+  );
+}
+
+/** Inline checkbox toggle with a muted help line underneath. */
+function CheckboxRow({
+  checked,
+  onChange,
+  label,
+  help,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  help: string;
+}) {
+  return (
+    <Box>
+      <Flex as="label" display="inline-flex" align="center" gap="6px" fontSize="12px">
+        <Checkbox checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        {label}
+      </Flex>
+      <Text color="app.textMuted" fontSize="11px" mt="4px" mb="0">
+        {help}
+      </Text>
+    </Box>
+  );
 }
 
 export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) {
@@ -311,87 +362,95 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   };
 
   return (
-    <div className="form">
-      <h2 className="full" style={{ margin: 0 }}>{initial?.id ? t("formEditTitle", { name: initial.name }) : t("formNewTitle")}</h2>
+    <Box
+      display="grid"
+      gridTemplateColumns="1fr 1fr"
+      gap="var(--space-3)"
+      p="var(--space-4)"
+      overflowY="auto"
+    >
+      <Box as="h2" gridColumn="span 2" m="0">
+        {initial?.id ? t("formEditTitle", { name: initial.name }) : t("formNewTitle")}
+      </Box>
 
-      <div className="full">
+      <Box gridColumn="span 2">
         <label>{t("formName")}</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("formNamePlaceholder")} />
-      </div>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("formNamePlaceholder")} />
+      </Box>
 
-      <div className="full">
+      <Box gridColumn="span 2">
         <label>{t("formDriver")}</label>
-        <select
+        <Select
           value={driver}
           onChange={(e) => handleDriverChange(e.target.value as DriverKind)}
         >
           <option value="mysql">{t("formDriverMysql")}</option>
           <option value="postgres">{t("formDriverPostgres")}</option>
           <option value="sqlite">{t("formDriverSqlite")}</option>
-        </select>
-      </div>
+        </Select>
+      </Box>
 
       {isFileBacked ? (
-        <fieldset>
-          <legend>{t("formSqliteLegend")}</legend>
-          <div>
+        <Fieldset>
+          <Legend>{t("formSqliteLegend")}</Legend>
+          <Box>
             <label>{t("formSqliteFilePath")}</label>
-            <div className="row">
-              <input
+            <Flex gap="var(--space-2)" align="end">
+              <Input
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
                 placeholder={t("formSqliteFilePathPlaceholder")}
               />
-              <button onClick={pickDbFile}>{t("formBrowse")}</button>
-            </div>
-            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+              <Button type="button" onClick={pickDbFile}>{t("formBrowse")}</Button>
+            </Flex>
+            <Text color="app.textMuted" fontSize="11px" mt="4px" mb="0">
               {t("formSqliteFilePathHelp")}
-            </p>
-          </div>
-        </fieldset>
+            </Text>
+          </Box>
+        </Fieldset>
       ) : (
-        <fieldset>
-          <legend>{driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}</legend>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 12 }}>
-            <div>
+        <Fieldset>
+          <Legend>{driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}</Legend>
+          <Box display="grid" gridTemplateColumns="1fr 120px" gap="12px">
+            <Box>
               <label>{t("formHost")}</label>
-              <input value={host} onChange={(e) => setHost(e.target.value)} />
-            </div>
-            <div>
+              <Input value={host} onChange={(e) => setHost(e.target.value)} />
+            </Box>
+            <Box>
               <label>{t("formPort")}</label>
-              <input
+              <Input
                 type="text"
                 inputMode="numeric"
                 value={port}
                 onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ""))}
               />
-            </div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 8 }}>
-            <div>
+            </Box>
+          </Box>
+          <Box display="grid" gridTemplateColumns="1fr 1fr" gap="12px" mt="8px">
+            <Box>
               <label>{t("formUser")}</label>
-              <input value={user} onChange={(e) => setUser(e.target.value)} />
-            </div>
-            <div>
+              <Input value={user} onChange={(e) => setUser(e.target.value)} />
+            </Box>
+            <Box>
               <label>{t("formDatabase")}</label>
-              <input value={database} onChange={(e) => setDatabase(e.target.value)} />
-            </div>
-          </div>
-          <div style={{ marginTop: 8 }}>
+              <Input value={database} onChange={(e) => setDatabase(e.target.value)} />
+            </Box>
+          </Box>
+          <Box mt="8px">
             <label>{t("formDbPassword")}</label>
             <PasswordInput
               value={password}
               onChange={setPassword}
               hasStored={!!initial?.has_db_password}
             />
-          </div>
-        </fieldset>
+          </Box>
+        </Fieldset>
       )}
 
-      <fieldset>
-        <legend>{t("formGroup")}</legend>
-        <div>
-          <input
+      <Fieldset>
+        <Legend>{t("formGroup")}</Legend>
+        <Box>
+          <Input
             value={group}
             onChange={(e) => setGroup(e.target.value)}
             placeholder={t("formGroupPlaceholder")}
@@ -402,18 +461,18 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <option key={g} value={g} />
             ))}
           </datalist>
-          <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+          <Text color="app.textMuted" fontSize="11px" mt="4px" mb="0">
             {t("formGroupHelp")}
-          </p>
-        </div>
-      </fieldset>
+          </Text>
+        </Box>
+      </Fieldset>
 
-      <fieldset>
-        <legend>{t("formDisplay")}</legend>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-          <div>
+      <Fieldset>
+        <Legend>{t("formDisplay")}</Legend>
+        <Flex direction="column" gap="12px">
+          <Box>
             <label>{t("formColor")}</label>
-            <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Flex align="center" gap="8px" flexWrap="wrap">
               {COLOR_PRESETS.map((c) => (
                 <button
                   key={c}
@@ -432,160 +491,132 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 style={{ width: 42, padding: 0, height: 28 }}
               />
               {color && (
-                <button type="button" onClick={() => setColor(null)}>
+                <Button type="button" onClick={() => setColor(null)}>
                   {t("formColorClear")}
-                </button>
+                </Button>
               )}
-            </div>
-          </div>
-          <div>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-              <input
-                type="checkbox"
-                style={{ width: "auto" }}
-                checked={isProduction}
-                onChange={(e) => toggleProduction(e.target.checked)}
-              />
-              {t("formIsProduction")}
-            </label>
-            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
-              {t("formIsProductionHelp")}
-            </p>
+            </Flex>
+          </Box>
+          <Box>
+            <CheckboxRow
+              checked={isProduction}
+              onChange={toggleProduction}
+              label={t("formIsProduction")}
+              help={t("formIsProductionHelp")}
+            />
             {isProduction && (
-              <div style={{ marginLeft: 22, marginTop: 8 }}>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: "auto" }}
-                    checked={confirmWrites}
-                    onChange={(e) => setConfirmWrites(e.target.checked)}
-                  />
-                  {t("formConfirmWrites")}
-                </label>
-                <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
-                  {t("formConfirmWritesHelp")}
-                </p>
-              </div>
+              <Box ml="22px" mt="8px">
+                <CheckboxRow
+                  checked={confirmWrites}
+                  onChange={setConfirmWrites}
+                  label={t("formConfirmWrites")}
+                  help={t("formConfirmWritesHelp")}
+                />
+              </Box>
             )}
-          </div>
-          <div>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-              <input
-                type="checkbox"
-                style={{ width: "auto" }}
-                checked={readOnly}
-                onChange={(e) => setReadOnly(e.target.checked)}
-              />
-              {t("formReadOnly")}
-            </label>
-            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
-              {t("formReadOnlyHelp")}
-            </p>
-          </div>
-          <div>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-              <input
-                type="checkbox"
-                style={{ width: "auto" }}
-                checked={skipHistory}
-                onChange={(e) => setSkipHistory(e.target.checked)}
-              />
-              {t("formSkipHistory")}
-            </label>
-            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
-              {t("formSkipHistoryHelp")}
-            </p>
-          </div>
-        </div>
-      </fieldset>
+          </Box>
+          <CheckboxRow
+            checked={readOnly}
+            onChange={setReadOnly}
+            label={t("formReadOnly")}
+            help={t("formReadOnlyHelp")}
+          />
+          <CheckboxRow
+            checked={skipHistory}
+            onChange={setSkipHistory}
+            label={t("formSkipHistory")}
+            help={t("formSkipHistoryHelp")}
+          />
+        </Flex>
+      </Fieldset>
 
       {!isFileBacked && (
-        <fieldset>
-          <legend>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-              <input type="checkbox" style={{ width: "auto" }} checked={useSsh} onChange={(e) => setUseSsh(e.target.checked)} />
+        <Fieldset>
+          <Legend>
+            <Flex as="label" display="inline-flex" align="center" gap="6px" fontSize="12px">
+              <Checkbox checked={useSsh} onChange={(e) => setUseSsh(e.target.checked)} />
               {t("formUseSsh")}
-            </label>
-          </legend>
+            </Flex>
+          </Legend>
           {useSsh && (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 12 }}>
-                <div>
+              <Box display="grid" gridTemplateColumns="1fr 120px" gap="12px">
+                <Box>
                   <label>{t("formSshHost")}</label>
-                  <input value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
-                </div>
-                <div>
+                  <Input value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                </Box>
+                <Box>
                   <label>{t("formPort")}</label>
-                  <input
+                  <Input
                     type="text"
                     inputMode="numeric"
                     value={sshPort}
                     onChange={(e) => setSshPort(e.target.value.replace(/[^0-9]/g, ""))}
                   />
-                </div>
-              </div>
-              <div style={{ marginTop: 8 }}>
+                </Box>
+              </Box>
+              <Box mt="8px">
                 <label>{t("formSshUser")}</label>
-                <input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
-              </div>
-              <div style={{ marginTop: 8 }}>
+                <Input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
+              </Box>
+              <Box mt="8px">
                 <label>{t("formSshAuthMethod")}</label>
-                <select
+                <Select
                   value={sshAuthMethod}
                   onChange={(e) => setSshAuthMethod(e.target.value as SshAuthMethod)}
                 >
                   <option value="key">{t("formSshAuthKey")}</option>
                   <option value="agent">{t("formSshAuthAgent")}</option>
                   <option value="password">{t("formSshAuthPassword")}</option>
-                </select>
-              </div>
+                </Select>
+              </Box>
               {sshAuthMethod === "key" && (
                 <>
-                  <div style={{ marginTop: 8 }}>
+                  <Box mt="8px">
                     <label>{t("formPrivateKeyPath")}</label>
-                    <div className="row">
-                      <input value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
-                      <button onClick={pickKeyFile}>{t("formBrowse")}</button>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: 8 }}>
+                    <Flex gap="var(--space-2)" align="end">
+                      <Input value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
+                      <Button type="button" onClick={pickKeyFile}>{t("formBrowse")}</Button>
+                    </Flex>
+                  </Box>
+                  <Box mt="8px">
                     <label>{t("formSshPassphrase")}</label>
                     <PasswordInput
                       value={sshPassphrase}
                       onChange={setSshPassphrase}
                       hasStored={!!initial?.has_ssh_passphrase}
                     />
-                  </div>
+                  </Box>
                 </>
               )}
               {sshAuthMethod === "password" && (
-                <div style={{ marginTop: 8 }}>
+                <Box mt="8px">
                   <label>{t("formSshPassword")}</label>
                   <PasswordInput
                     value={sshPassword}
                     onChange={setSshPassword}
                     hasStored={!!initial?.has_ssh_password}
                   />
-                </div>
+                </Box>
               )}
               {sshAuthMethod === "agent" && (
-                <p className="muted" style={{ fontSize: 11, margin: "8px 0 0" }}>
+                <Text color="app.textMuted" fontSize="11px" mt="8px" mb="0">
                   {t("formSshAgentHelp")}
-                </p>
+                </Text>
               )}
             </>
           )}
-        </fieldset>
+        </Fieldset>
       )}
 
-      {message && <div className="full text-success">{message}</div>}
-      {error && <div className="full text-error">{error}</div>}
+      {message && <Box gridColumn="span 2" color="app.textSuccess">{message}</Box>}
+      {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
 
-      <div className="actions">
-        <button onClick={onCancel}>{t("formCancel")}</button>
-        <button onClick={handleTest} disabled={testing}>{testing ? t("formTesting") : t("formTest")}</button>
-        <button className="primary" onClick={handleSave}>{t("formSave")}</button>
-      </div>
-    </div>
+      <Flex gridColumn="span 2" gap="var(--space-2)" justify="flex-end">
+        <Button type="button" onClick={onCancel}>{t("formCancel")}</Button>
+        <Button type="button" onClick={handleTest} disabled={testing}>{testing ? t("formTesting") : t("formTest")}</Button>
+        <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
+      </Flex>
+    </Box>
   );
 }

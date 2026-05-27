@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Box, Flex, Text } from "@chakra-ui/react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Spinner } from "./Spinner";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { Input } from "./ui";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
@@ -604,17 +606,31 @@ export function ConnectionList({
   };
 
   return (
-    <div className="tree-pane">
-      <div className="tree-search">
-        <input
+    <Flex direction="column" overflow="hidden" flex="1">
+      <Box px="10px" py="8px" borderBottom="1px solid" borderColor="app.borderSubtle">
+        <Input
           type="search"
+          py="5px"
+          fontSize="sm"
           placeholder={t("listSearchPlaceholder")}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-      </div>
+      </Box>
 
-      {error && <div className="tree-error">{error}</div>}
+      {error && (
+        <Box
+          px="12px"
+          py="6px"
+          fontSize="xs"
+          color="app.textError"
+          bg="app.bgError"
+          borderBottom="1px solid"
+          borderColor="app.borderSubtle"
+        >
+          {error}
+        </Box>
+      )}
 
       {profiles.length === 0 ? (
         <EmptyState
@@ -624,9 +640,9 @@ export function ConnectionList({
           action={{ label: t("listCreateFirst"), onClick: onCreate }}
         />
       ) : visibleProfiles.length === 0 ? (
-        <p className="muted" style={{ padding: 12 }}>{t("listNoMatches")}</p>
+        <Text color="app.textMuted" p="12px">{t("listNoMatches")}</Text>
       ) : (
-        <div className="tree" role="tree">
+        <Box flex="1" overflowY="auto" py="4px" fontSize="md" color="app.text" role="tree">
           {grouped === null
             ? visibleProfiles.map(renderProfile)
             : grouped.map((g) => {
@@ -655,7 +671,7 @@ export function ConnectionList({
                   </div>
                 );
               })}
-        </div>
+        </Box>
       )}
 
       {menu && (
@@ -663,7 +679,7 @@ export function ConnectionList({
       )}
 
       {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
-    </div>
+    </Flex>
   );
 }
 
