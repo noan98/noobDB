@@ -12,12 +12,14 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@chakra-ui/react": "^3.35.0",
     "@codemirror/autocomplete": "^6.20.2",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-sql": "^6.8.0",
     "@codemirror/language": "^6.12.3",
     "@codemirror/state": "^6.4.1",
     "@codemirror/view": "^6.34.1",
+    "@emotion/react": "^11.14.0",
     "@lezer/highlight": "^1.2.3",
     "@tanstack/react-table": "^8.20.5",
     "@tauri-apps/api": "^2.1.1",
