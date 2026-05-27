@@ -15,6 +15,7 @@ export function LanguageSwitcher() {
         return (
           <chakra.button
             key={o.value}
+            type="button"
             px="8px"
             py="2px"
             fontSize="var(--text-xs)"
