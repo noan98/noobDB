@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import { Box, chakra } from "@chakra-ui/react";
 import {
   flexRender,
   getCoreRowModel,
@@ -524,10 +525,10 @@ export function DataGrid({
   return (
     <>
       {isFiltered && (
-        <div className="grid-filter-summary">
+        <Box className="grid-filter-summary">
           {t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
           {hasColumnFilter && (
-            <button
+            <chakra.button
               type="button"
               className="grid-filter-clear"
               onClick={() => {
@@ -536,9 +537,9 @@ export function DataGrid({
               }}
             >
               {t("gridClearFilters")}
-            </button>
+            </chakra.button>
           )}
-        </div>
+        </Box>
       )}
       <table
         className="data-grid-table"
@@ -797,9 +798,9 @@ export function DataGrid({
         />
       )}
       {copied && (
-        <div className="grid-copied-toast" role="status" aria-live="polite">
+        <Box className="grid-copied-toast" role="status" aria-live="polite">
           {t("gridCopied")}
-        </div>
+        </Box>
       )}
       {viewer && (
         <CellValueViewer
@@ -935,21 +936,21 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }, [pendingEdits, validateEdit]);
 
   if (!result) {
-    return <div className="results empty">{t("resultEmpty")}</div>;
+    return <Box className="results empty">{t("resultEmpty")}</Box>;
   }
   if (result.columns.length === 0) {
     if (streaming) {
       return (
-        <div className="results empty results-loading">
+        <Box className="results empty results-loading">
           <Spinner />
-          <span>{t("statusRunningQuery")}</span>
-        </div>
+          <chakra.span>{t("statusRunningQuery")}</chakra.span>
+        </Box>
       );
     }
     return (
-      <div className="results empty">
+      <Box className="results empty">
         {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
-      </div>
+      </Box>
     );
   }
   const canExport = !streaming && result.rows.length > 0;
@@ -974,42 +975,42 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const canApply = hasPendingEdits && !streaming && !hasInvalidEdit;
 
   return (
-    <div className={`results has-toolbar ${streaming ? "is-streaming" : ""}`}>
+    <Box className={`results has-toolbar ${streaming ? "is-streaming" : ""}`}>
       {streaming && (
-        <div className="results-streaming-banner" role="status" aria-live="polite">
-          <span className="results-streaming-dot" aria-hidden />
-          <span className="results-streaming-text">
+        <Box className="results-streaming-banner" role="status" aria-live="polite">
+          <chakra.span className="results-streaming-dot" aria-hidden />
+          <chakra.span className="results-streaming-text">
             {t("statusStreaming", { rows: result.rows.length, ms: result.elapsed_ms })}
-          </span>
+          </chakra.span>
           {onStopStreaming && (
-            <button
+            <chakra.button
               type="button"
               className="warning results-streaming-stop"
               onClick={onStopStreaming}
               title={t("gridStopButtonTitle")}
             >
               {t("gridStopButton")}
-            </button>
+            </chakra.button>
           )}
-        </div>
+        </Box>
       )}
       {showAutoLimitBadge && (
-        <div className="results-auto-limit-banner" role="status" aria-live="polite">
-          <span className="results-auto-limit-text">
+        <Box className="results-auto-limit-banner" role="status" aria-live="polite">
+          <chakra.span className="results-auto-limit-text">
             {t("autoLimitApplied", { limit: autoLimitApplied! })}
-          </span>
-          <button
+          </chakra.span>
+          <chakra.button
             type="button"
             className="results-auto-limit-btn"
             onClick={onFetchAllRows}
             title={t("autoLimitFetchAllTitle")}
           >
             {t("autoLimitFetchAll")}
-          </button>
-        </div>
+          </chakra.button>
+        </Box>
       )}
-      <div className="results-toolbar">
-        <button
+      <Box className="results-toolbar">
+        <chakra.button
           type="button"
           className="results-toolbar-btn"
           onClick={() => setShowExport(true)}
@@ -1023,21 +1024,21 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           }
         >
           {t("exportButton")}
-        </button>
+        </chakra.button>
         {editable && tableColumns && pkIndices.length === 0 && (
-          <span
+          <chakra.span
             className="results-edit-hint"
             title={t("editNoPkHintTitle")}
           >
             {t("editNoPkHint")}
-          </span>
+          </chakra.span>
         )}
         {editableActive && hasPendingEdits && (
-          <div className="results-edit-bar" role="group" aria-label={t("editToolbarAria")}>
-            <span className="results-edit-count">
+          <Box className="results-edit-bar" role="group" aria-label={t("editToolbarAria")}>
+            <chakra.span className="results-edit-count">
               {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
-            </span>
-            <button
+            </chakra.span>
+            <chakra.button
               type="button"
               className="warning results-edit-btn"
               onClick={onPreviewEdits}
@@ -1053,8 +1054,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               }
             >
               {t("editPreviewButton")}
-            </button>
-            <button
+            </chakra.button>
+            <chakra.button
               type="button"
               className="success results-edit-btn"
               onClick={onApplyEdits}
@@ -1068,18 +1069,18 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               }
             >
               {t("editApplyButton")}
-            </button>
-            <button
+            </chakra.button>
+            <chakra.button
               type="button"
               className="results-edit-btn"
               onClick={onClearEdits}
               title={t("editCancelButtonTitle")}
             >
               {t("editCancelButton")}
-            </button>
-          </div>
+            </chakra.button>
+          </Box>
         )}
-        <input
+        <chakra.input
           ref={searchInputRef}
           type="search"
           className="results-search-input"
@@ -1095,8 +1096,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           placeholder={t("gridSearchPlaceholder")}
           aria-label={t("gridSearchAria")}
         />
-      </div>
-      <div ref={containerRef} className="results-scroll" tabIndex={-1}>
+      </Box>
+      <Box ref={containerRef} className="results-scroll" tabIndex={-1}>
         <DataGrid
           columns={result.columns}
           rows={result.rows}
@@ -1119,12 +1120,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           }
         />
         {loadingMore && (
-          <div className="results-loading-more" role="status" aria-live="polite">
+          <Box className="results-loading-more" role="status" aria-live="polite">
             <Spinner size={14} />
             {t("gridLoadingMore")}
-          </div>
+          </Box>
         )}
-      </div>
+      </Box>
       {showExport && (
         <ExportModal
           columns={result.columns}
@@ -1135,6 +1136,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           onClose={() => setShowExport(false)}
         />
       )}
-    </div>
+    </Box>
   );
 });

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Box, chakra } from "@chakra-ui/react";
 
 import {
   api,
@@ -17,6 +18,7 @@ import {
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { Icon } from "./Icon";
+import { Button, Checkbox, Input, Select } from "./ui";
 
 type Side = "source" | "target";
 
@@ -445,26 +447,26 @@ export function SchemaCompareView({
   const selectedCount = selected.size;
 
   return (
-    <div className="settings schema-compare">
-      <header className="settings-header">
-        <h2>{t("schemaCompareTitle")}</h2>
-        <button
+    <Box className="settings schema-compare">
+      <chakra.header className="settings-header">
+        <chakra.h2>{t("schemaCompareTitle")}</chakra.h2>
+        <chakra.button
           className="icon"
           onClick={onClose}
           aria-label={t("schemaCompareClose")}
           title={t("schemaCompareClose")}
         >
           <Icon name="close" size={13} />
-        </button>
-      </header>
+        </chakra.button>
+      </chakra.header>
 
-      <p className="settings-help">{t("schemaCompareDesc")}</p>
+      <chakra.p className="settings-help">{t("schemaCompareDesc")}</chakra.p>
 
       {profiles.length === 0 ? (
-        <p className="schema-compare-empty">{t("schemaCompareNoProfiles")}</p>
+        <chakra.p className="schema-compare-empty">{t("schemaCompareNoProfiles")}</chakra.p>
       ) : (
         <>
-          <div className="schema-compare-sides">
+          <Box className="schema-compare-sides">
             <SidePicker
               label={t("schemaCompareSource")}
               side="source"
@@ -474,7 +476,7 @@ export function SchemaCompareView({
               onSelectDatabase={setDatabase}
               t={t}
             />
-            <button
+            <chakra.button
               type="button"
               className="icon schema-compare-swap"
               onClick={swap}
@@ -482,7 +484,7 @@ export function SchemaCompareView({
               aria-label={t("schemaCompareSwap")}
             >
               <Icon name="refresh" size={14} />
-            </button>
+            </chakra.button>
             <SidePicker
               label={t("schemaCompareTarget")}
               side="target"
@@ -492,87 +494,85 @@ export function SchemaCompareView({
               onSelectDatabase={setDatabase}
               t={t}
             />
-          </div>
+          </Box>
 
           {driverMismatch && (
-            <p className="schema-compare-warning">{t("schemaCompareDriverMismatch")}</p>
+            <chakra.p className="schema-compare-warning">{t("schemaCompareDriverMismatch")}</chakra.p>
           )}
 
-          <div className="schema-compare-actions">
-            <button className="primary" onClick={runCompare} disabled={!canCompare}>
+          <Box className="schema-compare-actions">
+            <Button variant="primary" onClick={runCompare} disabled={!canCompare}>
               {comparing ? t("schemaCompareComparing") : t("schemaCompareCompare")}
-            </button>
-          </div>
+            </Button>
+          </Box>
 
-          {compareError && <p className="schema-compare-warning">{compareError}</p>}
+          {compareError && <chakra.p className="schema-compare-warning">{compareError}</chakra.p>}
 
           {diff && (
-            <div className="schema-compare-results">
-              <div className="schema-compare-summary">
+            <Box className="schema-compare-results">
+              <Box className="schema-compare-summary">
                 <StatusChip status="different" count={counts.different} t={t} />
                 <StatusChip status="source_only" count={counts.source_only} t={t} />
                 <StatusChip status="target_only" count={counts.target_only} t={t} />
                 <StatusChip status="same" count={counts.same} t={t} />
-                <label className="schema-compare-hidesame">
-                  <input
-                    type="checkbox"
+                <chakra.label className="schema-compare-hidesame">
+                  <Checkbox
                     checked={hideSame}
                     onChange={(e) => setHideSame(e.target.checked)}
                   />
                   {t("schemaCompareHideSame")}
-                </label>
-              </div>
+                </chakra.label>
+              </Box>
 
               {visibleTables.length === 0 ? (
-                <p className="schema-compare-empty">
+                <chakra.p className="schema-compare-empty">
                   {counts.different + counts.source_only + counts.target_only === 0
                     ? t("schemaCompareIdentical")
                     : t("schemaCompareAllHidden")}
-                </p>
+                </chakra.p>
               ) : (
-                <div className="schema-compare-tables">
+                <Box className="schema-compare-tables">
                   {visibleTables.map((tbl) => (
                     <TableDiffRow key={tbl.name} table={tbl} t={t} />
                   ))}
-                </div>
+                </Box>
               )}
 
               {hasDifferences && (
-                <div className="schema-compare-sync">
-                  <h3 className="schema-compare-sync-title">{t("schemaCompareSyncTitle")}</h3>
-                  <p className="settings-help">{t("schemaCompareSyncDesc")}</p>
-                  <div className="schema-compare-sync-controls">
-                    <label className="schema-compare-destructive">
-                      <input
-                        type="checkbox"
+                <Box className="schema-compare-sync">
+                  <chakra.h3 className="schema-compare-sync-title">{t("schemaCompareSyncTitle")}</chakra.h3>
+                  <chakra.p className="settings-help">{t("schemaCompareSyncDesc")}</chakra.p>
+                  <Box className="schema-compare-sync-controls">
+                    <chakra.label className="schema-compare-destructive">
+                      <Checkbox
                         checked={allowDestructive}
                         onChange={(e) => setAllowDestructive(e.target.checked)}
                       />
                       {t("schemaCompareAllowDestructive")}
-                    </label>
-                    <button onClick={generatePlan} disabled={generating}>
+                    </chakra.label>
+                    <Button onClick={generatePlan} disabled={generating}>
                       {generating ? t("schemaCompareGenerating") : t("schemaCompareGenerate")}
-                    </button>
-                  </div>
-                </div>
+                    </Button>
+                  </Box>
+                </Box>
               )}
 
               {comparableTables.length > 0 && (
-                <div className="schema-compare-sync">
-                  <h3 className="schema-compare-sync-title">{t("schemaCompareDataTitle")}</h3>
-                  <p className="settings-help">{t("schemaCompareDataDesc")}</p>
-                  <div className="schema-compare-sync-controls">
-                    <select value={dataTable} onChange={(e) => setDataTable(e.target.value)}>
+                <Box className="schema-compare-sync">
+                  <chakra.h3 className="schema-compare-sync-title">{t("schemaCompareDataTitle")}</chakra.h3>
+                  <chakra.p className="settings-help">{t("schemaCompareDataDesc")}</chakra.p>
+                  <Box className="schema-compare-sync-controls">
+                    <Select value={dataTable} onChange={(e) => setDataTable(e.target.value)}>
                       <option value="">{t("schemaCompareDataSelectTable")}</option>
                       {comparableTables.map((name) => (
                         <option key={name} value={name}>
                           {name}
                         </option>
                       ))}
-                    </select>
-                    <label className="schema-compare-limit">
+                    </Select>
+                    <chakra.label className="schema-compare-limit">
                       {t("schemaCompareDataLimit")}
-                      <input
+                      <Input
                         type="number"
                         min={1}
                         max={5000}
@@ -581,58 +581,57 @@ export function SchemaCompareView({
                           setDataLimit(Math.max(1, Math.min(5000, Number(e.target.value) || 1)))
                         }
                       />
-                    </label>
-                    <button onClick={compareData} disabled={!dataTable || dataComparing}>
+                    </chakra.label>
+                    <Button onClick={compareData} disabled={!dataTable || dataComparing}>
                       {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
-                    </button>
-                  </div>
+                    </Button>
+                  </Box>
 
                   {dataDiff && (
                     <>
-                      <div className="schema-compare-summary">
-                        <span className="schema-compare-chip status-source_only">
+                      <Box className="schema-compare-summary">
+                        <chakra.span className="schema-compare-chip status-source_only">
                           {t("schemaCompareDataInserts")}: {dataCounts.source_only}
-                        </span>
-                        <span className="schema-compare-chip status-different">
+                        </chakra.span>
+                        <chakra.span className="schema-compare-chip status-different">
                           {t("schemaCompareDataUpdates")}: {dataCounts.different}
-                        </span>
-                        <span className="schema-compare-chip status-target_only">
+                        </chakra.span>
+                        <chakra.span className="schema-compare-chip status-target_only">
                           {t("schemaCompareDataDeletes")}: {dataCounts.target_only}
-                        </span>
-                      </div>
+                        </chakra.span>
+                      </Box>
                       {dataDiff.truncated && (
-                        <p className="schema-compare-backup">
+                        <chakra.p className="schema-compare-backup">
                           {t("schemaCompareDataTruncated", { limit: dataLimit })}
-                        </p>
+                        </chakra.p>
                       )}
-                      <div className="schema-compare-sync-controls">
-                        <label className="schema-compare-destructive">
-                          <input
-                            type="checkbox"
+                      <Box className="schema-compare-sync-controls">
+                        <chakra.label className="schema-compare-destructive">
+                          <Checkbox
                             checked={allowDelete}
                             onChange={(e) => setAllowDelete(e.target.checked)}
                           />
                           {t("schemaCompareAllowDelete")}
-                        </label>
-                        <button onClick={generateDataPlan} disabled={generating}>
+                        </chakra.label>
+                        <Button onClick={generateDataPlan} disabled={generating}>
                           {generating ? t("schemaCompareGenerating") : t("schemaCompareDataGenerate")}
-                        </button>
-                      </div>
+                        </Button>
+                      </Box>
                     </>
                   )}
-                </div>
+                </Box>
               )}
 
-              {syncError && <p className="schema-compare-warning">{syncError}</p>}
-              {applyResult && <p className="schema-compare-success">{applyResult}</p>}
+              {syncError && <chakra.p className="schema-compare-warning">{syncError}</chakra.p>}
+              {applyResult && <chakra.p className="schema-compare-success">{applyResult}</chakra.p>}
 
               {plan && (
-                <div className="schema-compare-plan">
+                <Box className="schema-compare-plan">
                   {plan.statements.length === 0 ? (
-                    <p className="schema-compare-empty">{t("schemaCompareNoStatements")}</p>
+                    <chakra.p className="schema-compare-empty">{t("schemaCompareNoStatements")}</chakra.p>
                   ) : (
                     <>
-                      <ul className="schema-compare-statements">
+                      <chakra.ul className="schema-compare-statements">
                         {plan.statements.map((stmt, i) => (
                           <SyncStatementRow
                             key={`${stmt.table}-${i}`}
@@ -642,35 +641,35 @@ export function SchemaCompareView({
                             t={t}
                           />
                         ))}
-                      </ul>
-                      <p className="schema-compare-backup">{t("schemaCompareBackupNote")}</p>
-                      <div className="schema-compare-actions">
-                        <button
-                          className="primary"
+                      </chakra.ul>
+                      <chakra.p className="schema-compare-backup">{t("schemaCompareBackupNote")}</chakra.p>
+                      <Box className="schema-compare-actions">
+                        <Button
+                          variant="primary"
                           onClick={applyPlan}
                           disabled={applying || selectedCount === 0}
                         >
                           {applying
                             ? t("schemaCompareApplying")
                             : t("schemaCompareApply", { count: selectedCount })}
-                        </button>
-                      </div>
+                        </Button>
+                      </Box>
                     </>
                   )}
                   {plan.warnings.length > 0 && (
-                    <ul className="schema-compare-plan-warnings">
+                    <chakra.ul className="schema-compare-plan-warnings">
                       {plan.warnings.map((w, i) => (
-                        <li key={i}>{w}</li>
+                        <chakra.li key={i}>{w}</chakra.li>
                       ))}
-                    </ul>
+                    </chakra.ul>
                   )}
-                </div>
+                </Box>
               )}
-            </div>
+            </Box>
           )}
         </>
       )}
-    </div>
+    </Box>
   );
 }
 
@@ -707,18 +706,18 @@ function SyncStatementRow({
   t: ReturnType<typeof useT>;
 }) {
   return (
-    <li className={`schema-compare-statement ${statement.destructive ? "destructive" : ""}`}>
-      <label className="schema-compare-statement-head">
-        <input type="checkbox" checked={checked} onChange={onToggle} />
-        <span className={`schema-compare-kind kind-${statement.kind}`}>
+    <chakra.li className={`schema-compare-statement ${statement.destructive ? "destructive" : ""}`}>
+      <chakra.label className="schema-compare-statement-head">
+        <Checkbox checked={checked} onChange={onToggle} />
+        <chakra.span className={`schema-compare-kind kind-${statement.kind}`}>
           {syncKindLabel(statement.kind, t)}
-        </span>
+        </chakra.span>
         {statement.destructive && (
-          <span className="schema-compare-destructive-flag">{t("schemaCompareDestructiveFlag")}</span>
+          <chakra.span className="schema-compare-destructive-flag">{t("schemaCompareDestructiveFlag")}</chakra.span>
         )}
-      </label>
-      <code className="schema-compare-sql">{statement.sql}</code>
-    </li>
+      </chakra.label>
+      <chakra.code className="schema-compare-sql">{statement.sql}</chakra.code>
+    </chakra.li>
   );
 }
 
@@ -740,9 +739,9 @@ function SidePicker({
   t: ReturnType<typeof useT>;
 }) {
   return (
-    <div className="schema-compare-side">
-      <span className="schema-compare-side-label">{label}</span>
-      <select
+    <Box className="schema-compare-side">
+      <chakra.span className="schema-compare-side-label">{label}</chakra.span>
+      <Select
         value={state.profileId ?? ""}
         onChange={(e) => onSelectProfile(side, e.target.value)}
       >
@@ -752,8 +751,8 @@ function SidePicker({
             {p.name}
           </option>
         ))}
-      </select>
-      <select
+      </Select>
+      <Select
         value={state.database ?? ""}
         onChange={(e) => onSelectDatabase(side, e.target.value)}
         disabled={!state.databases || state.connecting}
@@ -766,9 +765,9 @@ function SidePicker({
             {db}
           </option>
         ))}
-      </select>
-      {state.error && <span className="schema-compare-side-error">{state.error}</span>}
-    </div>
+      </Select>
+      {state.error && <chakra.span className="schema-compare-side-error">{state.error}</chakra.span>}
+    </Box>
   );
 }
 
@@ -782,9 +781,9 @@ function StatusChip({
   t: ReturnType<typeof useT>;
 }) {
   return (
-    <span className={`schema-compare-chip status-${status}`}>
+    <chakra.span className={`schema-compare-chip status-${status}`}>
       {statusLabel(status, t)}: {count}
-    </span>
+    </chakra.span>
   );
 }
 
@@ -804,26 +803,26 @@ function statusLabel(status: DiffStatus, t: ReturnType<typeof useT>): string {
 function TableDiffRow({ table, t }: { table: TableDiff; t: ReturnType<typeof useT> }) {
   const expandable = table.columns.length > 0;
   return (
-    <details className="schema-compare-table" open={table.status === "different"}>
-      <summary>
-        <span className={`schema-compare-badge status-${table.status}`}>
+    <chakra.details className="schema-compare-table" open={table.status === "different"}>
+      <chakra.summary>
+        <chakra.span className={`schema-compare-badge status-${table.status}`}>
           {statusLabel(table.status, t)}
-        </span>
-        <span className="schema-compare-table-name">{table.name}</span>
+        </chakra.span>
+        <chakra.span className="schema-compare-table-name">{table.name}</chakra.span>
         {expandable && (
-          <span className="schema-compare-colcount">
+          <chakra.span className="schema-compare-colcount">
             {t("schemaCompareColumnCount", { count: table.columns.length })}
-          </span>
+          </chakra.span>
         )}
-      </summary>
+      </chakra.summary>
       {expandable && (
-        <ul className="schema-compare-columns">
+        <chakra.ul className="schema-compare-columns">
           {table.columns.map((col) => (
             <ColumnDiffRow key={col.name} column={col} t={t} />
           ))}
-        </ul>
+        </chakra.ul>
       )}
-    </details>
+    </chakra.details>
   );
 }
 
@@ -875,23 +874,23 @@ function fieldValue(
 function ColumnDiffRow({ column, t }: { column: ColumnDiff; t: ReturnType<typeof useT> }) {
   const def = column.source ?? column.target;
   return (
-    <li className={`schema-compare-column status-${column.status}`}>
-      <span className={`schema-compare-badge status-${column.status}`}>
+    <chakra.li className={`schema-compare-column status-${column.status}`}>
+      <chakra.span className={`schema-compare-badge status-${column.status}`}>
         {statusLabel(column.status, t)}
-      </span>
-      <span className="schema-compare-column-name">{column.name}</span>
+      </chakra.span>
+      <chakra.span className="schema-compare-column-name">{column.name}</chakra.span>
       {column.status === "different" ? (
-        <span className="schema-compare-changes">
+        <chakra.span className="schema-compare-changes">
           {column.changed_fields.map((field) => (
-            <span key={field} className="schema-compare-change">
+            <chakra.span key={field} className="schema-compare-change">
               {fieldLabel(field, t)}: {fieldValue(column.source, field, t)} →{" "}
               {fieldValue(column.target, field, t)}
-            </span>
+            </chakra.span>
           ))}
-        </span>
+        </chakra.span>
       ) : (
-        <span className="schema-compare-coltype">{def?.data_type ?? ""}</span>
+        <chakra.span className="schema-compare-coltype">{def?.data_type ?? ""}</chakra.span>
       )}
-    </li>
+    </chakra.li>
   );
 }

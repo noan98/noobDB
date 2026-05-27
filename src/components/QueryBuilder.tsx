@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Box, chakra } from "@chakra-ui/react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { sql as sqlLang } from "@codemirror/lang-sql";
@@ -8,6 +9,7 @@ import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
 import { Icon } from "./Icon";
+import { Button, Checkbox, Select } from "./ui";
 
 const qbHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -362,38 +364,38 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   const columnOptions = columns;
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal qb-modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-header">
-          <h2>{t("qbTitle")}</h2>
-          <button className="icon" onClick={onClose} aria-label={t("qbClose")} title={t("qbClose")}>
+    <Box className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
+      <Box className="modal qb-modal" onClick={(e) => e.stopPropagation()}>
+        <chakra.header className="modal-header">
+          <chakra.h2>{t("qbTitle")}</chakra.h2>
+          <chakra.button className="icon" onClick={onClose} aria-label={t("qbClose")} title={t("qbClose")}>
             <Icon name="close" size={12} />
-          </button>
-        </header>
+          </chakra.button>
+        </chakra.header>
 
-        <div className="modal-body qb-body">
-          {loadError && <div className="qb-error">{loadError}</div>}
+        <Box className="modal-body qb-body">
+          {loadError && <Box className="qb-error">{loadError}</Box>}
 
-          <section className="qb-section">
-            <div className="qb-section-title">{t("qbQueryType")}</div>
-            <div className="qb-pill-list">
+          <chakra.section className="qb-section">
+            <Box className="qb-section-title">{t("qbQueryType")}</Box>
+            <Box className="qb-pill-list">
               {(["SELECT", "INSERT", "UPDATE", "DELETE"] as QueryKind[]).map((k) => (
-                <button
+                <chakra.button
                   key={k}
                   type="button"
                   className={`qb-pill ${kind === k ? "active" : ""}`}
                   onClick={() => setKind(k)}
                 >
                   {k}
-                </button>
+                </chakra.button>
               ))}
-            </div>
-          </section>
+            </Box>
+          </chakra.section>
 
-          <section className="qb-section qb-grid-2">
-            <div>
-              <label htmlFor="qb-db">{t("qbDatabase")}</label>
-              <select
+          <chakra.section className="qb-section qb-grid-2">
+            <Box>
+              <chakra.label htmlFor="qb-db">{t("qbDatabase")}</chakra.label>
+              <Select
                 id="qb-db"
                 value={database}
                 onChange={(e) => {
@@ -406,11 +408,11 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                 {databases.map((d) => (
                   <option key={d} value={d}>{d}</option>
                 ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="qb-tbl">{t("qbTable")}</label>
-              <select
+              </Select>
+            </Box>
+            <Box>
+              <chakra.label htmlFor="qb-tbl">{t("qbTable")}</chakra.label>
+              <Select
                 id="qb-tbl"
                 value={table}
                 disabled={!database || loadingTables}
@@ -420,24 +422,23 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                 {tables.map((tname) => (
                   <option key={tname} value={tname}>{tname}</option>
                 ))}
-              </select>
-            </div>
-          </section>
+              </Select>
+            </Box>
+          </chakra.section>
 
           {showSelectColumns && (
-            <section className="qb-section">
-              <div className="qb-section-title">{t("qbColumns")}</div>
-              <label className="qb-checkbox">
-                <input
-                  type="checkbox"
+            <chakra.section className="qb-section">
+              <Box className="qb-section-title">{t("qbColumns")}</Box>
+              <chakra.label className="qb-checkbox">
+                <Checkbox
                   checked={selectAll}
                   onChange={(e) => setSelectAll(e.target.checked)}
                 />
-                <span>{t("qbAllColumns")}</span>
-              </label>
+                <chakra.span>{t("qbAllColumns")}</chakra.span>
+              </chakra.label>
               {!selectAll && (
                 <>
-                  <div className="qb-row">
+                  <Box className="qb-row">
                     <ComboBox
                       className="qb-col-input"
                       value={newSelectCol}
@@ -446,24 +447,24 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                       onChange={setNewSelectCol}
                       onEnter={() => addSelectColumn(newSelectCol)}
                     />
-                    <button
+                    <chakra.button
                       type="button"
                       className="qb-small"
                       onClick={() => addSelectColumn(newSelectCol)}
                       disabled={!newSelectCol.trim()}
                     >
                       + {t("qbAddColumn")}
-                    </button>
-                  </div>
+                    </chakra.button>
+                  </Box>
                   {selectColumns.length > 0 ? (
-                    <div className="qb-selected-cols-wrap">
-                      <table className="qb-selected-cols">
+                    <Box className="qb-selected-cols-wrap">
+                      <chakra.table className="qb-selected-cols">
                         <tbody>
                           <tr>
                             {selectColumns.map((c) => (
-                              <td key={c}>
-                                <span className="qb-selected-col-name">{c}</span>
-                                <button
+                              <chakra.td key={c}>
+                                <chakra.span className="qb-selected-col-name">{c}</chakra.span>
+                                <chakra.button
                                   type="button"
                                   className="qb-chip-remove"
                                   onClick={() => removeSelectColumn(c)}
@@ -471,49 +472,49 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                                   title={t("qbRemove")}
                                 >
                                   <Icon name="close" size={12} />
-                                </button>
-                              </td>
+                                </chakra.button>
+                              </chakra.td>
                             ))}
                           </tr>
                         </tbody>
-                      </table>
-                    </div>
+                      </chakra.table>
+                    </Box>
                   ) : (
-                    <span className="muted" style={{ fontSize: 12 }}>
+                    <chakra.span className="muted" fontSize="12px">
                       {columnOptions.length === 0 && !loadingColumns
                         ? t("qbPickTableFirst")
                         : t("qbNoSelectedColumns")}
-                    </span>
+                    </chakra.span>
                   )}
                 </>
               )}
-            </section>
+            </chakra.section>
           )}
 
           {showSet && (
-            <section className="qb-section">
-              <div className="qb-section-row">
-                <div className="qb-section-title">{t("qbSet")}</div>
-                <button type="button" className="qb-small" onClick={() => addPair("set")}>
+            <chakra.section className="qb-section">
+              <Box className="qb-section-row">
+                <Box className="qb-section-title">{t("qbSet")}</Box>
+                <chakra.button type="button" className="qb-small" onClick={() => addPair("set")}>
                   + {t("qbAddSet")}
-                </button>
-              </div>
+                </chakra.button>
+              </Box>
               {setPairs.map((p, i) => (
-                <div className="qb-row" key={`set-${i}`}>
+                <Box className="qb-row" key={`set-${i}`}>
                   <ColumnPicker
                     value={p.column}
                     options={columnOptions}
                     onChange={(v) => updatePair("set", i, { column: v })}
                     placeholder={t("qbColumn")}
                   />
-                  <span className="qb-eq">=</span>
-                  <input
+                  <chakra.span className="qb-eq">=</chakra.span>
+                  <chakra.input
                     className="qb-row-input"
                     value={p.value}
                     placeholder={t("qbValue")}
                     onChange={(e) => updatePair("set", i, { value: e.target.value })}
                   />
-                  <button
+                  <chakra.button
                     type="button"
                     className="qb-icon-btn"
                     onClick={() => removePair("set", i)}
@@ -522,36 +523,36 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     disabled={setPairs.length <= 1}
                   >
                     <Icon name="close" size={12} />
-                  </button>
-                </div>
+                  </chakra.button>
+                </Box>
               ))}
-            </section>
+            </chakra.section>
           )}
 
           {showInsertValues && (
-            <section className="qb-section">
-              <div className="qb-section-row">
-                <div className="qb-section-title">{t("qbInsertValues")}</div>
-                <button type="button" className="qb-small" onClick={() => addPair("insert")}>
+            <chakra.section className="qb-section">
+              <Box className="qb-section-row">
+                <Box className="qb-section-title">{t("qbInsertValues")}</Box>
+                <chakra.button type="button" className="qb-small" onClick={() => addPair("insert")}>
                   + {t("qbAddValue")}
-                </button>
-              </div>
+                </chakra.button>
+              </Box>
               {insertPairs.map((p, i) => (
-                <div className="qb-row" key={`ins-${i}`}>
+                <Box className="qb-row" key={`ins-${i}`}>
                   <ColumnPicker
                     value={p.column}
                     options={columnOptions}
                     onChange={(v) => updatePair("insert", i, { column: v })}
                     placeholder={t("qbColumn")}
                   />
-                  <span className="qb-eq">=</span>
-                  <input
+                  <chakra.span className="qb-eq">=</chakra.span>
+                  <chakra.input
                     className="qb-row-input"
                     value={p.value}
                     placeholder={t("qbValue")}
                     onChange={(e) => updatePair("insert", i, { value: e.target.value })}
                   />
-                  <button
+                  <chakra.button
                     type="button"
                     className="qb-icon-btn"
                     onClick={() => removePair("insert", i)}
@@ -560,22 +561,22 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     disabled={insertPairs.length <= 1}
                   >
                     <Icon name="close" size={12} />
-                  </button>
-                </div>
+                  </chakra.button>
+                </Box>
               ))}
-            </section>
+            </chakra.section>
           )}
 
           {showWhere && (
-            <section className="qb-section">
-              <div className="qb-section-row">
-                <div className="qb-section-title">{t("qbWhere")}</div>
-                <button type="button" className="qb-small" onClick={addCondition}>
+            <chakra.section className="qb-section">
+              <Box className="qb-section-row">
+                <Box className="qb-section-title">{t("qbWhere")}</Box>
+                <chakra.button type="button" className="qb-small" onClick={addCondition}>
                   + {t("qbAddCondition")}
-                </button>
-              </div>
+                </chakra.button>
+              </Box>
               {whereConditions.map((c, i) => (
-                <div className="qb-row" key={`w-${i}`}>
+                <Box className="qb-row" key={`w-${i}`}>
                   <ColumnPicker
                     value={c.column}
                     options={columnOptions}
@@ -588,7 +589,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     options={[...WHERE_OPERATORS]}
                     onChange={(v) => updateCondition(i, { operator: v })}
                   />
-                  <input
+                  <chakra.input
                     className="qb-row-input"
                     value={c.value}
                     placeholder={
@@ -601,7 +602,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     disabled={isNullOperator(c.operator)}
                     onChange={(e) => updateCondition(i, { value: e.target.value })}
                   />
-                  <button
+                  <chakra.button
                     type="button"
                     className="qb-icon-btn"
                     onClick={() => removeCondition(i)}
@@ -610,16 +611,16 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     disabled={whereConditions.length <= 1}
                   >
                     <Icon name="close" size={12} />
-                  </button>
-                </div>
+                  </chakra.button>
+                </Box>
               ))}
-            </section>
+            </chakra.section>
           )}
 
           {showLimit && (
-            <section className="qb-section qb-limit-section">
-              <label htmlFor="qb-limit">{t("qbLimit")}</label>
-              <input
+            <chakra.section className="qb-section qb-limit-section">
+              <chakra.label htmlFor="qb-limit">{t("qbLimit")}</chakra.label>
+              <chakra.input
                 id="qb-limit"
                 className="qb-limit-input"
                 value={limit}
@@ -627,13 +628,13 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                 onChange={(e) => setLimit(e.target.value)}
                 inputMode="numeric"
               />
-            </section>
+            </chakra.section>
           )}
 
-          <section className="qb-section">
-            <div className="qb-section-title">{t("qbPreview")}</div>
-            <div className="qb-preview-wrap">
-              <button
+          <chakra.section className="qb-section">
+            <Box className="qb-section-title">{t("qbPreview")}</Box>
+            <Box className="qb-preview-wrap">
+              <chakra.button
                 type="button"
                 className="qb-preview-copy"
                 onClick={handleCopy}
@@ -670,41 +671,42 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-5A1.5 1.5 0 0 0 3 3.5v5A1.5 1.5 0 0 0 4.5 10H6" />
                   </svg>
                 )}
-              </button>
+              </chakra.button>
               <SqlPreview sql={sql} driver={driver} />
-            </div>
-          </section>
-        </div>
+            </Box>
+          </chakra.section>
+        </Box>
 
-        <footer className="modal-footer">
-          <div style={{ flex: 1 }} />
+        <chakra.footer className="modal-footer">
+          <Box flex={1} />
           {onPreview && kind !== "SELECT" && (
-            <button className="warning with-icon" onClick={handlePreview} title={t("editorPreviewTitle")}>
-              <span className="btn-icon" aria-hidden>
+            <Button variant="warning" className="with-icon" onClick={handlePreview} title={t("editorPreviewTitle")}>
+              <chakra.span className="btn-icon" aria-hidden>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
                   <circle cx="8" cy="8" r="2" />
                 </svg>
-              </span>
+              </chakra.span>
               {t("qbPreviewRun")}
-            </button>
+            </Button>
           )}
-          <button
-            className="success with-icon"
+          <Button
+            variant="success"
+            className="with-icon"
             onClick={handleExecute}
             disabled={runBlockedByReadOnly}
             title={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
           >
-            <span className="btn-icon" aria-hidden>
+            <chakra.span className="btn-icon" aria-hidden>
               <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
               </svg>
-            </span>
+            </chakra.span>
             {t("qbExecute")}
-          </button>
-        </footer>
-      </div>
-    </div>
+          </Button>
+        </chakra.footer>
+      </Box>
+    </Box>
   );
 }
 
@@ -751,7 +753,7 @@ function ComboBox({
   const listId = useId();
   return (
     <>
-      <input
+      <chakra.input
         id={id}
         className={className}
         list={listId}
@@ -816,5 +818,5 @@ function SqlPreview({ sql, driver }: SqlPreviewProps) {
     view.dispatch({ changes: { from: 0, to: current.length, insert: sql } });
   }, [sql]);
 
-  return <div className="qb-preview" ref={hostRef} />;
+  return <Box className="qb-preview" ref={hostRef} />;
 }

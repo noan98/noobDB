@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Box, chakra } from "@chakra-ui/react";
 import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 
@@ -308,7 +309,7 @@ function NodeRow({
   const showHintMarker = worstHint === "caution" || worstHint === "warning";
   return (
     <>
-      <div
+      <Box
         className={`explain-node ${heat} ${selected ? "selected" : ""}`}
         style={{ paddingLeft: 6 + depth * 16 }}
         role="treeitem"
@@ -317,7 +318,7 @@ function NodeRow({
         onClick={() => onSelect(node.id)}
       >
         {hasChildren ? (
-          <button
+          <chakra.button
             className="explain-caret"
             title={isCollapsed ? expandLabel : collapseLabel}
             aria-label={isCollapsed ? expandLabel : collapseLabel}
@@ -327,33 +328,33 @@ function NodeRow({
             }}
           >
             {isCollapsed ? "▸" : "▾"}
-          </button>
+          </chakra.button>
         ) : (
-          <span className="explain-caret-spacer" aria-hidden />
+          <chakra.span className="explain-caret-spacer" aria-hidden />
         )}
-        <span className="explain-node-label">{node.label}</span>
-        <span className="explain-node-badges">
+        <chakra.span className="explain-node-label">{node.label}</chakra.span>
+        <chakra.span className="explain-node-badges">
           {showHintMarker && (
-            <span
+            <chakra.span
               className={`explain-badge hint ${worstHint}`}
               title={hintsLabel}
               aria-label={hintsLabel}
             >
               !
-            </span>
+            </chakra.span>
           )}
           {typeof access === "string" && (
-            <span className={`explain-badge access ${access === "ALL" ? "bad" : ""}`}>{access}</span>
+            <chakra.span className={`explain-badge access ${access === "ALL" ? "bad" : ""}`}>{access}</chakra.span>
           )}
-          {usingIndex && <span className="explain-badge index">index</span>}
+          {usingIndex && <chakra.span className="explain-badge index">index</chakra.span>}
           {node.cost !== null && (
-            <span className={`explain-badge cost ${heat}`}>{formatNumber(node.cost)}</span>
+            <chakra.span className={`explain-badge cost ${heat}`}>{formatNumber(node.cost)}</chakra.span>
           )}
           {parseNum(rows) !== null && (
-            <span className="explain-badge rows">{formatNumber(parseNum(rows) as number)} rows</span>
+            <chakra.span className="explain-badge rows">{formatNumber(parseNum(rows) as number)} rows</chakra.span>
           )}
-        </span>
-      </div>
+        </chakra.span>
+      </Box>
       {hasChildren &&
         !isCollapsed &&
         node.children.map((c) => (
@@ -419,46 +420,46 @@ export function ExplainViewer({ result, streaming }: Props) {
     });
 
   if (streaming && !root) {
-    return <div className="explain-viewer-empty">{t("explainLoading")}</div>;
+    return <Box className="explain-viewer-empty">{t("explainLoading")}</Box>;
   }
   if (!raw) {
-    return <div className="explain-viewer-empty">{t("explainEmpty")}</div>;
+    return <Box className="explain-viewer-empty">{t("explainEmpty")}</Box>;
   }
   if (error || !root) {
     return (
-      <div className="explain-viewer-error">
-        <p>{t("explainParseError", { error: error ?? "unknown" })}</p>
-        <pre>{raw}</pre>
-      </div>
+      <Box className="explain-viewer-error">
+        <chakra.p>{t("explainParseError", { error: error ?? "unknown" })}</chakra.p>
+        <chakra.pre>{raw}</chakra.pre>
+      </Box>
     );
   }
 
   return (
-    <div className="explain-viewer">
-      <div className="explain-tree-pane">
-        <div className="explain-toolbar">
+    <Box className="explain-viewer">
+      <Box className="explain-tree-pane">
+        <Box className="explain-toolbar">
           {root.cost !== null && (
-            <span className="explain-total-cost">
+            <chakra.span className="explain-total-cost">
               {t("explainTotalCost", { cost: formatNumber(root.cost) })}
-            </span>
+            </chakra.span>
           )}
-          <span className="explain-toolbar-spacer" />
-          <button
+          <chakra.span className="explain-toolbar-spacer" />
+          <chakra.button
             className="results-toolbar-btn"
             onClick={() => setCollapsed(new Set())}
             title={t("explainExpandAll")}
           >
             {t("explainExpandAll")}
-          </button>
-          <button
+          </chakra.button>
+          <chakra.button
             className="results-toolbar-btn"
             onClick={() => setCollapsed(new Set(allIds))}
             title={t("explainCollapseAll")}
           >
             {t("explainCollapseAll")}
-          </button>
-        </div>
-        <div className="explain-tree" role="tree">
+          </chakra.button>
+        </Box>
+        <Box className="explain-tree" role="tree">
           <NodeRow
             node={root}
             depth={0}
@@ -471,27 +472,27 @@ export function ExplainViewer({ result, streaming }: Props) {
             collapseLabel={t("explainCollapseNode")}
             hintsLabel={t("explainHintsTitle")}
           />
-        </div>
-      </div>
-      <div className="explain-detail">
-        <div className="explain-detail-header">{t("explainDetailTitle")}</div>
+        </Box>
+      </Box>
+      <Box className="explain-detail">
+        <Box className="explain-detail-header">{t("explainDetailTitle")}</Box>
         {selected ? (
-          <div className="explain-detail-body">
-            <div className="explain-detail-label">{selected.label}</div>
+          <Box className="explain-detail-body">
+            <Box className="explain-detail-label">{selected.label}</Box>
             {selectedHints.length > 0 && (
-              <ul className="explain-hints">
+              <chakra.ul className="explain-hints">
                 {selectedHints.map((h, i) => (
-                  <li key={i} className={`explain-hint ${h.severity}`}>
-                    <span className="explain-hint-sev">{t(severityLabelKey(h.severity))}</span>
-                    <span className="explain-hint-text">{t(h.key)}</span>
-                  </li>
+                  <chakra.li key={i} className={`explain-hint ${h.severity}`}>
+                    <chakra.span className="explain-hint-sev">{t(severityLabelKey(h.severity))}</chakra.span>
+                    <chakra.span className="explain-hint-text">{t(h.key)}</chakra.span>
+                  </chakra.li>
                 ))}
-              </ul>
+              </chakra.ul>
             )}
             {selected.attrs.length === 0 ? (
-              <p className="explain-detail-hint">{t("explainNoAttrs")}</p>
+              <chakra.p className="explain-detail-hint">{t("explainNoAttrs")}</chakra.p>
             ) : (
-              <table className="explain-detail-table">
+              <chakra.table className="explain-detail-table">
                 <tbody>
                   {selected.attrs.map(([k, v]) => (
                     <tr key={k}>
@@ -500,13 +501,13 @@ export function ExplainViewer({ result, streaming }: Props) {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </chakra.table>
             )}
-          </div>
+          </Box>
         ) : (
-          <p className="explain-detail-hint">{t("explainSelectHint")}</p>
+          <chakra.p className="explain-detail-hint">{t("explainSelectHint")}</chakra.p>
         )}
-      </div>
-    </div>
+      </Box>
+    </Box>
   );
 }
