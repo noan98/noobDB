@@ -13,7 +13,10 @@ name: automerge
 #   - ただし CodeRabbit のレビューが進行中の場合はマージしない (レビューを待たずに
 #     マージしてしまう事故を防ぐ)。レートリミットでスキップされている場合は、待っても
 #     進まないためマージを許可する。判定は coderabbitai[bot] の自動生成コメントの
-#     状態マーカー (review in progress / rate limited) で行う。
+#     状態マーカー (review in progress / rate limited) に加え、現在の head SHA に対する
+#     CodeRabbit の "レビュー提出" の有無で行う。サマリコメントの進行中マーカーは
+#     実レビュー提出より早く消えるため、マーカーだけだと指摘が届く前にマージできて
+#     しまう (PR #277 の取りこぼし)。レビュー提出をもう一段の確定信号として待つ。
 #
 # トリガ:
 #   - ci ワークフローが完了したとき (workflow_run) — CI 成功を起点に再評価する。
@@ -135,12 +138,45 @@ jobs:
           #    CodeRabbit のコメントが 1 件も無い PR (CodeRabbit 未適用等) はそのまま通過。
           cr_comments="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
             --jq '.[] | select(.user.login == "coderabbitai[bot]") | .body' || true)"
+
+          # CodeRabbit が当該 PR で稼働しているか (= サマリ等のコメントを 1 件以上
+          # 投稿済みか)。未稼働なら以降の CodeRabbit 待ちはスキップして通過する。
+          cr_active="false"
+          if printf '%s' "$cr_comments" | grep -q .; then
+            cr_active="true"
+          fi
+
           if printf '%s' "$cr_comments" | grep -qi "review in progress by coderabbit"; then
             echo "CodeRabbit のレビューが進行中です。完了を待つためスキップ。"
             exit 0
           fi
+
+          cr_rate_limited="false"
           if printf '%s' "$cr_comments" | grep -qi "rate limited by coderabbit"; then
             echo "CodeRabbit がレートリミットでレビューをスキップ中です。マージを継続します。"
+            cr_rate_limited="true"
+          fi
+
+          # 5b. サマリコメントの "進行中" マーカーだけでは不十分。CodeRabbit はサマリ
+          #     コメントを完了形 (summarize) へ in-place 編集してから、レビュー本体
+          #     (インラインのレビュースレッドを含む) を提出するまでに十数〜数十秒の差が
+          #     ある。この窓ではマーカーが既に消えており、かつ未解決スレッドもまだ 0 件
+          #     なので、Step 5/6 だけだとレビュー指摘が届く前にマージできてしまう
+          #     (PR #277 の取りこぼしの原因)。レビューとそのスレッドは "レビュー提出"
+          #     時にアトミックに作られるため、CodeRabbit が稼働している PR では現在の
+          #     head SHA に対する coderabbitai[bot] のレビュー提出を完了の確定信号として
+          #     待つ。レートリミット時はレビューが提出されないので待たない。
+          #     (トレードオフ: CodeRabbit がインクリメンタルレビューを提出しない構成だと
+          #      新コミットで待ち続けるが、その場合の失敗側は "自動マージしない" で安全。)
+          if [ "$cr_active" = "true" ] && [ "$cr_rate_limited" = "false" ]; then
+            cr_reviews_for_head="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
+              --jq '.[] | select(.user.login == "coderabbitai[bot]") | .commit_id' \
+              | grep -Fxc "$headSha" || true)"
+            if [ "${cr_reviews_for_head:-0}" -eq 0 ]; then
+              echo "CodeRabbit はコメント済みですが、head ($headSha) に対するレビュー提出がまだありません。完了を待つためスキップ。"
+              exit 0
+            fi
+            echo "CodeRabbit のレビュー (head=$headSha) を確認しました。"
           fi
 
           # 6. 未解決のレビュースレッドが無いことを確認する。スレッドが多すぎる
