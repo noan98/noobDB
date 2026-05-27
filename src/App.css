@@ -1454,6 +1454,10 @@ button.icon.history-action:hover {
    field. The input reserves right padding so text never slides under the icon. */
 .password-field { position: relative; display: flex; align-items: center; }
 .password-field input { padding-right: 34px; }
+/* Hide the WebView2/Edge native password reveal & clear controls so they don't
+   render a second eye icon alongside our own .password-toggle button. */
+.password-field input::-ms-reveal,
+.password-field input::-ms-clear { display: none; }
 .password-toggle {
   position: absolute;
   right: 4px;
