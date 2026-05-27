@@ -3,7 +3,6 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api, CellValue, Column, ExportFormat } from "../api/tauri";
 import { useT } from "../i18n";
 import { useToast } from "./Toast";
-import { SuccessCheck } from "./SuccessCheck";
 
 interface Props {
   columns: Column[];
@@ -71,7 +70,6 @@ function replaceExtension(path: string, newExt: string): string {
 type Status =
   | { kind: "idle" }
   | { kind: "saving" }
-  | { kind: "success"; bytes: number; path: string }
   | { kind: "error"; message: string };
 
 export function ExportModal({ columns, rows, database, table, partial, onClose }: Props) {
@@ -121,8 +119,8 @@ export function ExportModal({ columns, rows, database, table, partial, onClose }
     setStatus({ kind: "saving" });
     try {
       const bytes = await api.exportQueryResult({ path, format, columns, rows });
-      setStatus({ kind: "success", bytes, path });
       toast.success(t("exportSuccess", { bytes, path }));
+      setStatus({ kind: "idle" });
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
       toast.error(t("exportError", { error: String(e) }));
@@ -201,12 +199,6 @@ export function ExportModal({ columns, rows, database, table, partial, onClose }
 
           {status.kind === "error" && (
             <div className="export-error">{t("exportError", { error: status.message })}</div>
-          )}
-          {status.kind === "success" && (
-            <div className="export-success modal-success-mark">
-              <SuccessCheck size={22} />
-              <span>{t("exportSuccess", { bytes: status.bytes, path: status.path })}</span>
-            </div>
           )}
         </div>
 

@@ -3226,16 +3226,6 @@ button.icon.history-action:hover {
   font-size: var(--text-sm);
 }
 
-.export-success {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-muted);
-  color: var(--text);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  word-break: break-all;
-}
-
 .export-rowcount {
   font-size: var(--text-md);
   color: var(--text);
@@ -4142,17 +4132,6 @@ button.icon.history-action:hover {
 .toolbar button .btn-spinner {
   border-color: color-mix(in srgb, currentColor 35%, transparent);
   border-top-color: currentColor;
-}
-
-/* ── Animated success checkmark (export / dump / import done) ─────────── */
-.success-check {
-  color: var(--status-success);
-  flex-shrink: 0;
-}
-.modal-success-mark {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 /* ── Tab bar: sliding active-tab indicator (Motion layoutId) ─────────── */
