@@ -10,22 +10,31 @@ name: automerge
 #     自前で再確認し、mergeable / mergeStateStatus を見てからマージする。
 #   - レビュー承認は要求しない。未解決のレビュースレッド (CodeRabbit 等の指摘) が
 #     0 件であることだけを条件にする。レビューが無い PR はそのまま通過する。
+#   - ただし CodeRabbit のレビューが進行中の場合はマージしない (レビューを待たずに
+#     マージしてしまう事故を防ぐ)。レートリミットでスキップされている場合は、待っても
+#     進まないためマージを許可する。判定は coderabbitai[bot] の自動生成コメントの
+#     状態マーカー (review in progress / rate limited) で行う。
 #
 # トリガ:
 #   - ci ワークフローが完了したとき (workflow_run) — CI 成功を起点に再評価する。
 #   - レビューが提出されたとき (pull_request_review) — スレッド解消を起点に再評価。
+#   - CodeRabbit のコメントが更新されたとき (issue_comment) — レビュー進行中→完了の
+#     遷移を起点に再評価する (完了時に承認レビューを出さないケースを取りこぼさない)。
 
 on:
   pull_request_review:
     types: [submitted]
+  issue_comment:
+    types: [created, edited]
   workflow_run:
     workflows: [ci]
     types: [completed]
 
 # 同一コミット (head SHA) に対する重複マージ試行を直列化する。イベント種別が
 # 違っても同じ SHA を指す run はまとめ、レースを避ける (途中 run はキャンセルしない)。
+# issue_comment には head SHA が無いため PR (issue) 番号でグルーピングする。
 concurrency:
-  group: automerge-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+  group: automerge-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.event.issue.number }}
   cancel-in-progress: false
 
 # GITHUB_TOKEN に必要な書き込み権限。リポジトリの Actions 設定で
@@ -39,12 +48,16 @@ jobs:
   automerge:
     name: auto-merge eligible PRs
     runs-on: ubuntu-latest
-    # CI 成功 (pull_request 由来) かレビュー提出のときだけ走らせる。
+    # CI 成功 (pull_request 由来) / レビュー提出 / CodeRabbit の PR コメント更新の
+    # ときだけ走らせる。issue_comment は PR への coderabbitai[bot] コメントに限定する。
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event == 'pull_request' &&
        github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'pull_request_review')
+      (github.event_name == 'pull_request_review') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       github.event.comment.user.login == 'coderabbitai[bot]')
     steps:
       - name: Check conditions and auto-merge
         env:
@@ -52,6 +65,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           REVIEW_PR: ${{ github.event.pull_request.number }}
+          ISSUE_PR: ${{ github.event.issue.number }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
@@ -62,6 +76,8 @@ jobs:
           # 1. 対象 PR 番号を解決する。
           if [ "$EVENT_NAME" = "pull_request_review" ]; then
             PR="$REVIEW_PR"
+          elif [ "$EVENT_NAME" = "issue_comment" ]; then
+            PR="$ISSUE_PR"
           else
             # workflow_run: head_sha からその commit に紐づく open PR を引く。
             PR="$(gh api "repos/$GH_REPO/commits/$RUN_SHA/pulls" \
@@ -107,7 +123,27 @@ jobs:
             exit 0
           fi
 
-          # 5. 未解決のレビュースレッドが無いことを確認する。スレッドが多すぎる
+          # 5. CodeRabbit のレビュー状態を確認する。レビューが進行中の場合は、完了を
+          #    待つためマージしない (レビューを待たずにマージしてしまう事故を防ぐ)。
+          #    レートリミットでスキップされている場合は、待っても進まないためマージを
+          #    許可する。判定は coderabbitai[bot] が投稿/編集する自動生成コメントに
+          #    埋め込まれた状態マーカーで行う:
+          #      "... review in progress by coderabbit.ai" → 進行中なのでスキップ
+          #      "... rate limited by coderabbit.ai"       → レートリミットなので継続
+          #    CodeRabbit はメインの状態コメントを進行中→完了 (summarize) と in-place で
+          #    編集するため、現在のコメント本文にマーカーが残っていれば進行中とみなせる。
+          #    CodeRabbit のコメントが 1 件も無い PR (CodeRabbit 未適用等) はそのまま通過。
+          cr_comments="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.user.login == "coderabbitai[bot]") | .body' || true)"
+          if printf '%s' "$cr_comments" | grep -qi "review in progress by coderabbit"; then
+            echo "CodeRabbit のレビューが進行中です。完了を待つためスキップ。"
+            exit 0
+          fi
+          if printf '%s' "$cr_comments" | grep -qi "rate limited by coderabbit"; then
+            echo "CodeRabbit がレートリミットでレビューをスキップ中です。マージを継続します。"
+          fi
+
+          # 6. 未解決のレビュースレッドが無いことを確認する。スレッドが多すぎる
           #    (>100) 場合は取りこぼしを避けるため安全側でスキップする。
           threads_json="$(gh api graphql -f query='
             query($owner:String!, $repo:String!, $pr:Int!) {
@@ -131,7 +167,7 @@ jobs:
             exit 0
           fi
 
-          # 6. mergeStateStatus を見ながらマージする。GitHub の再計算待ちは
+          # 7. mergeStateStatus を見ながらマージする。GitHub の再計算待ちは
           #    指数バックオフ (5,10,20,40,80 秒) で最大 5 回リトライする。
           delay=5
           merged="false"
@@ -163,7 +199,7 @@ jobs:
           fi
           echo "PR #$PR をマージしました。"
 
-          # 7. (ベストエフォート) PR 本文のクローズキーワードから Issue を閉じる。
+          # 8. (ベストエフォート) PR 本文のクローズキーワードから Issue を閉じる。
           #    main は既定ブランチなので通常は GitHub が自動クローズするが、
           #    取りこぼし対策の保険として明示的に閉じてコメントを残す。失敗しても
           #    ワークフローは落とさない。
