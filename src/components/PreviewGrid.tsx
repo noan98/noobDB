@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { CellValue, PreviewResult } from "../api/tauri";
 import { useT } from "../i18n";
-import { DataGrid } from "./ResultGrid";
+import { DataGrid, GRID_CSS } from "./ResultGrid";
 import { Splitter } from "./Splitter";
-import { Checkbox } from "./ui";
+import { Button, Checkbox } from "./ui";
 
 const SYNC_SCROLL_STORAGE_KEY = "noobdb.preview.syncScroll";
 
@@ -245,78 +245,138 @@ export function PreviewGrid({
     filteredAfterRows.length === 0;
 
   return (
-    <Box className={`preview ${streaming ? "is-streaming" : ""}`}>
-      <Box className="preview-banner">
-        <chakra.span className="preview-banner-dot" aria-hidden />
-        <chakra.span className="preview-banner-text">{t("previewBanner")}</chakra.span>
+    <Box
+      flex="1 1 auto"
+      minWidth={0}
+      minHeight={0}
+      display="flex"
+      flexDirection="column"
+      overflow="hidden"
+      bg="app.surface"
+      position={streaming ? "relative" : undefined}
+    >
+      <Box
+        display="flex"
+        alignItems="center"
+        gap="2"
+        padding="6px 12px"
+        fontSize="sm"
+        color="var(--preview-banner-text)"
+        background="var(--preview-banner-bg)"
+        borderBottom="1px solid var(--preview-banner-border)"
+      >
+        <chakra.span
+          aria-hidden
+          display="inline-block"
+          width="8px"
+          height="8px"
+          borderRadius="50%"
+          background="var(--preview-banner-dot)"
+          boxShadow="0 0 0 3px color-mix(in srgb, var(--preview-banner-dot) 25%, transparent)"
+        />
+        <chakra.span fontWeight={500}>{t("previewBanner")}</chakra.span>
         {pendingEditsSummary && (onApplyEdits || onDiscardEdits) && (
-          <Box className="preview-edit-actions" role="group">
-            <chakra.span className="preview-edit-summary">
+          <Box
+            role="group"
+            display="inline-flex"
+            alignItems="center"
+            gap="2"
+            marginLeft="16px"
+            paddingLeft="12px"
+            borderLeft="1px solid var(--preview-banner-border)"
+          >
+            <chakra.span fontSize="sm" color="var(--preview-banner-text)">
               {t("editPendingCount", {
                 cells: pendingEditsSummary.cells,
                 rows: pendingEditsSummary.rows,
               })}
             </chakra.span>
             {onApplyEdits && (
-              <chakra.button
-                type="button"
-                className="success preview-edit-btn"
+              <Button
+                variant="success"
+                size="sm"
+                px="10px"
                 onClick={onApplyEdits}
                 disabled={streaming}
                 title={t("editApplyButtonTitle")}
               >
                 {t("editApplyButton")}
-              </chakra.button>
+              </Button>
             )}
             {onDiscardEdits && (
-              <chakra.button
-                type="button"
-                className="preview-edit-btn"
+              <Button
+                size="sm"
+                px="10px"
                 onClick={onDiscardEdits}
                 title={t("editCancelButtonTitle")}
               >
                 {t("editCancelButton")}
-              </chakra.button>
+              </Button>
             )}
           </Box>
         )}
         {streaming && (
-          <chakra.span className="preview-banner-streaming">
+          <chakra.span marginLeft="auto" fontSize="sm" color="app.textMuted">
             {t("statusPreviewStreaming", { ms: result.elapsed_ms })}
           </chakra.span>
         )}
         {streaming && onStop && (
-          <chakra.button
-            type="button"
-            className="warning preview-stop-btn"
+          <Button
+            variant="warning"
+            size="sm"
+            marginLeft="8px"
+            px="12px"
+            py="2px"
+            whiteSpace="nowrap"
             onClick={onStop}
             title={t("gridStopButtonTitle")}
           >
             {t("gridStopButton")}
-          </chakra.button>
+          </Button>
         )}
       </Box>
-      <Box className="preview-meta">
+      <Box
+        display="flex"
+        flexWrap="wrap"
+        gap="14px"
+        padding="6px 12px"
+        fontSize="sm"
+        color="app.textMuted"
+        borderBottom="1px solid"
+        borderColor="app.borderSubtle"
+        bg="app.surfaceMuted"
+      >
         {result.target_table ? (
-          <chakra.span className="preview-target">
+          <chakra.span color="app.textSecondary">
             {t("previewTargetTable", { table: result.target_table })}
           </chakra.span>
         ) : (
-          <chakra.span className="preview-target preview-target-missing">
+          <chakra.span color="app.textMuted" fontStyle="italic">
             {t("previewNoTarget")}
           </chakra.span>
         )}
-        <chakra.span className="preview-affected">
+        <chakra.span color="app.text">
           {t("previewRowsAffected", { rows: result.rows_affected, ms: result.elapsed_ms })}
         </chakra.span>
         {noAffectedInSnapshot && (
-          <chakra.span className="preview-truncated">
+          <chakra.span color="var(--cell-date)">
             {t("previewAffectedOutsideSnapshot", { limit: rowLimit })}
           </chakra.span>
         )}
         {hasSnapshots && (
-          <chakra.label className="preview-sync-scroll" title={t("previewSyncScrollTitle")}>
+          <chakra.label
+            display="inline-flex"
+            alignItems="center"
+            gap="6px"
+            marginLeft="auto"
+            color="app.textSecondary"
+            cursor="pointer"
+            userSelect="none"
+            whiteSpace="nowrap"
+            title={t("previewSyncScrollTitle")}
+          >
             <Checkbox
+              margin="0"
               checked={syncScroll}
               onChange={(e) => {
                 const v = e.target.checked;
@@ -332,17 +392,35 @@ export function PreviewGrid({
       {hasSnapshots && (
         <Splitter
           direction="row"
-          className="preview-grids"
           storageKey="noobdb.split.preview"
           defaultFraction={0.5}
           minSize={140}
           ariaLabel={t("splitterPreviewAria")}
           first={
-            <chakra.section className="preview-pane preview-before">
-              <chakra.header className="preview-pane-header">{t("previewBefore")}</chakra.header>
-              <Box className="preview-pane-body" ref={beforeBodyRef}>
+            <chakra.section
+              flex="1 1 auto"
+              minWidth={0}
+              minHeight={0}
+              display="flex"
+              flexDirection="column"
+              overflow="hidden"
+            >
+              <chakra.header
+                padding="5px 10px"
+                fontSize="xs"
+                fontWeight={600}
+                letterSpacing="0.04em"
+                textTransform="uppercase"
+                color="app.textMuted"
+                bg="app.header"
+                borderBottom="1px solid"
+                borderColor="app.border"
+              >
+                {t("previewBefore")}
+              </chakra.header>
+              <Box ref={beforeBodyRef} flex="1" overflow="auto" bg="app.surface" css={GRID_CSS}>
                 {filteredBeforeRows.length === 0 ? (
-                  <Box className="preview-empty">
+                  <Box padding="14px" color="app.textMuted" fontStyle="italic">
                     {result.before_rows.length === 0
                       ? t("previewEmptyBefore")
                       : t("previewNoAffectedBefore")}
@@ -359,11 +437,30 @@ export function PreviewGrid({
             </chakra.section>
           }
           second={
-            <chakra.section className="preview-pane preview-after">
-              <chakra.header className="preview-pane-header">{t("previewAfter")}</chakra.header>
-              <Box className="preview-pane-body" ref={afterBodyRef}>
+            <chakra.section
+              flex="1 1 auto"
+              minWidth={0}
+              minHeight={0}
+              display="flex"
+              flexDirection="column"
+              overflow="hidden"
+            >
+              <chakra.header
+                padding="5px 10px"
+                fontSize="xs"
+                fontWeight={600}
+                letterSpacing="0.04em"
+                textTransform="uppercase"
+                color="app.textSuccess"
+                bg="app.header"
+                borderBottom="1px solid"
+                borderColor="app.border"
+              >
+                {t("previewAfter")}
+              </chakra.header>
+              <Box ref={afterBodyRef} flex="1" overflow="auto" bg="app.surface" css={GRID_CSS}>
                 {filteredAfterRows.length === 0 ? (
-                  <Box className="preview-empty">
+                  <Box padding="14px" color="app.textMuted" fontStyle="italic">
                     {result.after_rows.length === 0
                       ? t("previewEmptyAfter")
                       : t("previewNoAffectedAfter")}

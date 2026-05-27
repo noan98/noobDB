@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Box, chakra } from "@chakra-ui/react";
+import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { sql as sqlLang } from "@codemirror/lang-sql";
@@ -9,7 +9,203 @@ import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
 import { Icon } from "./Icon";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
+
+/**
+ * Query Builder のフォーム部のスタイル。`App.css` の `.qb-*` ルール群を
+ * コンポーネント側へ移設し、本体 (`ModalBody` 内のラッパ) に `css` で適用する。
+ * SQL プレビューの CodeMirror 周りのレイアウト (`.qb-preview .cm-*`) もここに含む
+ * (CodeMirror 本体のテーマは対象外で `App.css` に残す)。
+ */
+const QB_CSS: SystemStyleObject = {
+  "& .qb-error": {
+    padding: "8px 10px",
+    border: "1px solid var(--border)",
+    background: "var(--bg-error)",
+    color: "var(--text-error)",
+    borderRadius: "var(--radius-md)",
+    fontSize: "var(--text-sm)",
+    marginBottom: "10px",
+  },
+  "& .qb-section": {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    marginBottom: "10px",
+  },
+  "& .qb-section-title": {
+    fontSize: "var(--text-xs)",
+    fontWeight: 600,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: "var(--text-muted)",
+  },
+  "& .qb-section-row": {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "var(--space-2)",
+  },
+  "& .qb-grid-2": {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "var(--space-3)",
+  },
+  "& .qb-grid-2 > div": {
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--space-1)",
+  },
+  "& .qb-pill-list": { display: "flex", flexWrap: "wrap", gap: "var(--space-1)" },
+  "& .qb-pill": {
+    padding: "4px 10px",
+    border: "1px solid var(--border-strong)",
+    background: "var(--bg-elevated)",
+    color: "var(--text)",
+    borderRadius: "var(--radius-pill)",
+    fontSize: "var(--text-sm)",
+    cursor: "pointer",
+    transition: "background 0.12s, border-color 0.12s",
+  },
+  "& .qb-pill:hover": { background: "var(--bg-hover)" },
+  "& .qb-pill.active": {
+    background: "var(--accent)",
+    color: "var(--accent-text)",
+    borderColor: "var(--accent)",
+  },
+  "& .qb-checkbox": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    fontSize: "var(--text-md)",
+    fontWeight: 500,
+    color: "var(--text)",
+    margin: 0,
+  },
+  "& .qb-checkbox input": { width: "auto", margin: 0 },
+  "& .qb-row": { display: "flex", gap: "6px", alignItems: "center" },
+  "& .qb-row > .qb-row-input": { flex: 1, minWidth: 0 },
+  "& .qb-col-input": { flex: 1, minWidth: 0 },
+  "& .qb-op": { width: "110px", flexShrink: 0 },
+  "& .qb-eq": {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "var(--text-muted)",
+    fontWeight: 600,
+    minWidth: "16px",
+  },
+  "& .qb-icon-btn": {
+    padding: "2px 8px",
+    fontSize: "var(--text-sm)",
+    border: "1px solid var(--border-strong)",
+    background: "var(--bg-elevated)",
+    color: "var(--text-muted)",
+    borderRadius: "var(--radius-sm)",
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  "& .qb-icon-btn:hover:not(:disabled)": {
+    color: "var(--text-error)",
+    borderColor: "var(--text-error)",
+  },
+  "& .qb-selected-cols-wrap": {
+    overflowX: "auto",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-md)",
+    background: "var(--bg-muted)",
+  },
+  "& .qb-selected-cols": {
+    borderCollapse: "collapse",
+    width: "max-content",
+    minWidth: "100%",
+  },
+  "& .qb-selected-cols td": {
+    padding: "4px 6px 4px 10px",
+    borderRight: "1px solid var(--border)",
+    fontSize: "var(--text-sm)",
+    color: "var(--text)",
+    whiteSpace: "nowrap",
+    verticalAlign: "middle",
+  },
+  "& .qb-selected-cols td:last-child": { borderRight: "none" },
+  "& .qb-selected-col-name": { marginRight: "6px" },
+  "& .qb-chip-remove": {
+    padding: "0 6px",
+    fontSize: "var(--text-xs)",
+    lineHeight: 1.4,
+    border: "1px solid transparent",
+    background: "transparent",
+    color: "var(--text-muted)",
+    borderRadius: "var(--radius-sm)",
+    cursor: "pointer",
+  },
+  "& .qb-chip-remove:hover": {
+    color: "var(--text-error)",
+    borderColor: "var(--text-error)",
+  },
+  "& .qb-small": {
+    padding: "3px 10px",
+    fontSize: "var(--text-xs)",
+    borderRadius: "var(--radius-sm)",
+  },
+  "& .qb-limit-section": {
+    display: "grid",
+    gridTemplateColumns: "80px 1fr",
+    alignItems: "center",
+    gap: "var(--space-3)",
+  },
+  "& .qb-limit-section label": { margin: 0 },
+  "& .qb-limit-input": { maxWidth: "120px" },
+  "& .qb-preview-wrap": { position: "relative" },
+  "& .qb-preview-copy": {
+    position: "absolute",
+    top: "6px",
+    right: "6px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "26px",
+    height: "26px",
+    padding: 0,
+    border: "1px solid var(--border-strong)",
+    background: "var(--bg-elevated)",
+    color: "var(--text-muted)",
+    borderRadius: "var(--radius-sm)",
+    cursor: "pointer",
+    zIndex: 1,
+    transition: "color 0.12s, border-color 0.12s, background 0.12s",
+  },
+  "& .qb-preview-copy:hover": { color: "var(--text)", background: "var(--bg-hover)" },
+  "& .qb-preview-copy:focus-visible": {
+    outline: "none",
+    borderColor: "var(--accent)",
+    boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)",
+  },
+  "& .qb-preview": {
+    margin: 0,
+    background: "var(--bg-muted)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-md)",
+    overflow: "hidden",
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-sm)",
+    color: "var(--text)",
+    lineHeight: 1.5,
+  },
+  "& .qb-preview .cm-editor": {
+    background: "transparent",
+    fontFamily: "inherit",
+    fontSize: "inherit",
+    color: "inherit",
+    lineHeight: "inherit",
+  },
+  "& .qb-preview .cm-editor.cm-focused": { outline: "none" },
+  "& .qb-preview .cm-scroller": { fontFamily: "inherit", overflow: "auto" },
+  "& .qb-preview .cm-content": { padding: "10px 40px 10px 12px" },
+  "& .qb-preview .cm-line": { padding: 0 },
+};
 
 const qbHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -311,14 +507,6 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
     onClose();
   }, [sql, onPreview, onClose, onPersist, captureSnapshot]);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
-
   const addSelectColumn = (col: string) => {
     const v = col.trim();
     if (!v) return;
@@ -364,16 +552,12 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   const columnOptions = columns;
 
   return (
-    <Box className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
-      <Box className="modal qb-modal" onClick={(e) => e.stopPropagation()}>
-        <chakra.header className="modal-header">
-          <chakra.h2>{t("qbTitle")}</chakra.h2>
-          <chakra.button className="icon" onClick={onClose} aria-label={t("qbClose")} title={t("qbClose")}>
-            <Icon name="close" size={12} />
-          </chakra.button>
-        </chakra.header>
-
-        <Box className="modal-body qb-body">
+    <Modal onClose={onClose}>
+      <ModalHeader onClose={onClose} closeLabel={t("qbClose")}>
+        {t("qbTitle")}
+      </ModalHeader>
+      <ModalBody>
+        <Box css={QB_CSS} display="flex" flexDirection="column" gap="6px">
           {loadError && <Box className="qb-error">{loadError}</Box>}
 
           <chakra.section className="qb-section">
@@ -480,7 +664,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                       </chakra.table>
                     </Box>
                   ) : (
-                    <chakra.span className="muted" fontSize="12px">
+                    <chakra.span color="app.textMuted" fontSize="12px">
                       {columnOptions.length === 0 && !loadingColumns
                         ? t("qbPickTableFirst")
                         : t("qbNoSelectedColumns")}
@@ -676,37 +860,36 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
             </Box>
           </chakra.section>
         </Box>
+      </ModalBody>
 
-        <chakra.footer className="modal-footer">
-          <Box flex={1} />
-          {onPreview && kind !== "SELECT" && (
-            <Button variant="warning" className="with-icon" onClick={handlePreview} title={t("editorPreviewTitle")}>
-              <chakra.span className="btn-icon" aria-hidden>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
-                  <circle cx="8" cy="8" r="2" />
-                </svg>
-              </chakra.span>
-              {t("qbPreviewRun")}
-            </Button>
-          )}
-          <Button
-            variant="success"
-            className="with-icon"
-            onClick={handleExecute}
-            disabled={runBlockedByReadOnly}
-            title={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
-          >
-            <chakra.span className="btn-icon" aria-hidden>
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
+      <ModalFooter>
+        <Box flex={1} />
+        {onPreview && kind !== "SELECT" && (
+          <Button variant="warning" onClick={handlePreview} title={t("editorPreviewTitle")}>
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
+                <circle cx="8" cy="8" r="2" />
               </svg>
             </chakra.span>
-            {t("qbExecute")}
+            {t("qbPreviewRun")}
           </Button>
-        </chakra.footer>
-      </Box>
-    </Box>
+        )}
+        <Button
+          variant="success"
+          onClick={handleExecute}
+          disabled={runBlockedByReadOnly}
+          title={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
+        >
+          <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
+            </svg>
+          </chakra.span>
+          {t("qbExecute")}
+        </Button>
+      </ModalFooter>
+    </Modal>
   );
 }
 
