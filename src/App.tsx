@@ -68,6 +68,9 @@ const HelpView = lazy(() =>
 const SettingsView = lazy(() =>
   import("./components/SettingsView").then((m) => ({ default: m.SettingsView })),
 );
+const SchemaCompareView = lazy(() =>
+  import("./components/SchemaCompareView").then((m) => ({ default: m.SchemaCompareView })),
+);
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
@@ -349,6 +352,7 @@ export default function App() {
   const settings = useSettings();
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -1347,6 +1351,7 @@ export default function App() {
     setShowForm(false);
     setShowSettings(false);
     setShowHelp(false);
+    setShowCompare(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -1357,6 +1362,7 @@ export default function App() {
     setShowForm(false);
     setShowSettings(false);
     setShowHelp(false);
+    setShowCompare(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -1611,7 +1617,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showSnippetForm) return;
+    if (!sessionId || showForm || showSettings || showHelp || showCompare || showSnippetForm) return;
     const handler = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       // Cmd/Ctrl+F → focus the cross-column result search (no Shift so the
@@ -1662,7 +1668,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showSnippetForm, handleNewTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showSnippetForm, handleNewTab]);
 
   // Clean up any active listeners when the app unmounts.
   useEffect(() => {
@@ -1741,7 +1747,7 @@ export default function App() {
             </button>
             <button
               className="icon"
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowSettings(false); setShowHelp(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowSettings(false); setShowHelp(true); }}
               title={t("appHelp")}
               aria-label={t("appHelp")}
             >
@@ -1749,11 +1755,19 @@ export default function App() {
             </button>
             <button
               className="icon"
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowHelp(false); setShowSettings(true); }}
               title={t("appSettings")}
               aria-label={t("appSettings")}
             >
               <Icon name="settings" />
+            </button>
+            <button
+              className="icon"
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowCompare(true); }}
+              title={t("appSchemaCompare")}
+              aria-label={t("appSchemaCompare")}
+            >
+              <Icon name="diff" />
             </button>
             {sidebarTab === "snippets" ? (
               <button
@@ -1763,6 +1777,7 @@ export default function App() {
                   setSnippetFormSql("");
                   setShowSettings(false);
                   setShowHelp(false);
+                  setShowCompare(false);
                   setShowForm(false);
                   setShowSnippetForm(true);
                   setFormInstanceId((n) => n + 1);
@@ -1775,7 +1790,7 @@ export default function App() {
             ) : sidebarTab === "connections" ? (
               <button
                 className="icon"
-                onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                 title={t("appNew")}
                 aria-label={t("appNew")}
               >
@@ -1818,8 +1833,8 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             onConnect={handleConnect}
-            onCreate={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
-            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowHelp(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+            onCreate={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
             onDuplicate={(p) => {
               // Open the form pre-filled with the source profile's non-secret
               // settings as a brand-new entry: blank id forces save_profile to
@@ -1829,6 +1844,7 @@ export default function App() {
               setShowSnippetForm(false);
               setShowSettings(false);
               setShowHelp(false);
+              setShowCompare(false);
               setShowForm(true);
               setFormInstanceId((n) => n + 1);
             }}
@@ -1908,6 +1924,8 @@ export default function App() {
           <HelpView onClose={() => setShowHelp(false)} />
         ) : showSettings ? (
           <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
+        ) : showCompare ? (
+          <SchemaCompareView profiles={profiles} onClose={() => setShowCompare(false)} />
         ) : showForm ? (
           <ConnectionForm
             key={formInstanceId}

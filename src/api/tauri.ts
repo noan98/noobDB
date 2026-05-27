@@ -193,6 +193,49 @@ export interface TableSchema {
   columns: string[];
 }
 
+/**
+ * Where a table or column sits relative to the two schemas in a comparison.
+ * `source_only` would be added to the target, `target_only` would be removed,
+ * `different` exists on both sides with differing definitions, `same` is
+ * identical.
+ */
+export type DiffStatus = "source_only" | "target_only" | "different" | "same";
+
+/** Difference of a single column between the source and target schemas. */
+export interface ColumnDiff {
+  name: string;
+  status: DiffStatus;
+  /** Source-side definition, when the column exists there. */
+  source: TableColumnInfo | null;
+  /** Target-side definition, when the column exists there. */
+  target: TableColumnInfo | null;
+  /**
+   * For `different`, the attribute names that differ
+   * (`data_type` / `nullable` / `default` / `key` / `extra` / `foreign_key`).
+   * Empty for every other status.
+   */
+  changed_fields: string[];
+}
+
+/** Difference of a single table between the source and target schemas. */
+export interface TableDiff {
+  name: string;
+  status: DiffStatus;
+  /**
+   * Column-level diffs. For a one-sided table every column is listed with that
+   * same status; for a table present on both sides only the differing columns
+   * are listed; for an identical (`same`) table this is empty.
+   */
+  columns: ColumnDiff[];
+}
+
+/** Result of comparing a source schema against a target schema (Issue #245). */
+export interface SchemaDiff {
+  source_driver: DriverKind;
+  target_driver: DriverKind;
+  tables: TableDiff[];
+}
+
 /** Application log contents plus the on-disk file path, for the Settings viewer. */
 export interface LogView {
   text: string;
@@ -319,6 +362,18 @@ export const api = {
     invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }),
   schemaOverview: (sessionId: string, database: string) =>
     invoke<TableSchema[]>("schema_overview", { sessionId, database }),
+  compareSchema: (params: {
+    sourceSessionId: string;
+    sourceDatabase: string;
+    targetSessionId: string;
+    targetDatabase: string;
+  }) =>
+    invoke<SchemaDiff>("compare_schema", {
+      sourceSessionId: params.sourceSessionId,
+      sourceDatabase: params.sourceDatabase,
+      targetSessionId: params.targetSessionId,
+      targetDatabase: params.targetDatabase,
+    }),
 
   listProfiles: () => invoke<ConnectionProfile[]>("list_profiles"),
   saveProfile: (req: SaveProfileRequest) =>

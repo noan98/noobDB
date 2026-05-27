@@ -30,7 +30,8 @@ export type IconName =
   | "clock"
   | "copy"
   | "eye"
-  | "eye-off";
+  | "eye-off"
+  | "diff";
 
 const PATHS: Record<IconName, ReactNode> = {
   sun: (
@@ -170,6 +171,14 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c6.5 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
       <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3.5 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
       <line x1="2" x2="22" y1="2" y2="22" />
+    </>
+  ),
+  diff: (
+    <>
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="18" cy="18" r="3" />
+      <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+      <path d="M11 18H8a2 2 0 0 1-2-2V9" />
     </>
   ),
 };
