@@ -1,7 +1,245 @@
 import { useEffect, useMemo, useState } from "react";
-import { Box, chakra } from "@chakra-ui/react";
+import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
+import { Button } from "./ui";
+
+/**
+ * EXPLAIN プラン可視化のツリー/詳細パネルのスタイル。`App.css` の `.explain-*`
+ * ルール群をコンポーネント側へ移設し、ルート (`.explain-viewer`) に `css` で適用する。
+ * ヒート (warm/hot) のハードコード色とダークテーマ上書きはそのまま維持する。
+ */
+const EXPLAIN_CSS: SystemStyleObject = {
+  "& .explain-tree-pane": {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+    overflow: "hidden",
+  },
+  "& .explain-toolbar": {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "4px 8px",
+    background: "var(--bg-toolbar)",
+    borderBottom: "1px solid var(--border-subtle)",
+    flexShrink: 0,
+  },
+  "& .explain-toolbar-spacer": { flex: 1 },
+  "& .explain-total-cost": {
+    fontSize: "var(--text-sm)",
+    color: "var(--text-secondary)",
+    fontWeight: 500,
+  },
+  "& .explain-tree": {
+    flex: 1,
+    overflow: "auto",
+    minHeight: 0,
+    padding: "4px 0",
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-sm)",
+  },
+  "& .explain-node": {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "3px 10px 3px 0",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    borderLeft: "2px solid transparent",
+  },
+  "& .explain-node:hover": { background: "var(--bg-row-hover)" },
+  "& .explain-node.warm": { background: "color-mix(in srgb, #f59e0b 14%, transparent)" },
+  "& .explain-node.hot": { background: "color-mix(in srgb, #dc2626 16%, transparent)" },
+  "& .explain-node.warm:hover": { background: "color-mix(in srgb, #f59e0b 22%, transparent)" },
+  "& .explain-node.hot:hover": { background: "color-mix(in srgb, #dc2626 24%, transparent)" },
+  "& .explain-node.selected": {
+    background: "var(--bg-active)",
+    borderLeftColor: "var(--accent)",
+  },
+  "& .explain-node.selected.warm": { background: "color-mix(in srgb, #f59e0b 22%, var(--bg-active))" },
+  "& .explain-node.selected.hot": { background: "color-mix(in srgb, #dc2626 24%, var(--bg-active))" },
+  "& .explain-caret, & .explain-caret-spacer": {
+    flexShrink: 0,
+    width: "16px",
+    height: "16px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  "& .explain-caret": {
+    padding: 0,
+    border: "none",
+    background: "none",
+    color: "var(--text-muted)",
+    fontSize: "var(--text-2xs)",
+    lineHeight: 1,
+    borderRadius: "var(--radius-sm)",
+  },
+  "& .explain-caret:hover": { background: "var(--bg-hover)", color: "var(--text)" },
+  "& .explain-node-label": {
+    color: "var(--text)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  "& .explain-node-badges": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "var(--space-1)",
+    flexShrink: 0,
+  },
+  "& .explain-badge": {
+    fontSize: "var(--text-2xs)",
+    lineHeight: 1,
+    padding: "2px 5px",
+    borderRadius: "var(--radius-sm)",
+    background: "var(--bg-muted)",
+    border: "1px solid var(--border)",
+    color: "var(--text-secondary)",
+    whiteSpace: "nowrap",
+  },
+  "& .explain-badge.access": { fontWeight: 600 },
+  "& .explain-badge.access.bad": {
+    background: "color-mix(in srgb, #dc2626 16%, transparent)",
+    borderColor: "color-mix(in srgb, #dc2626 40%, transparent)",
+    color: "var(--text-error)",
+  },
+  "& .explain-badge.index": {
+    background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+    borderColor: "color-mix(in srgb, var(--accent) 35%, transparent)",
+    color: "var(--accent)",
+  },
+  "& .explain-badge.cost.warm": {
+    color: "#b45309",
+    borderColor: "color-mix(in srgb, #f59e0b 40%, transparent)",
+    _dark: { color: "#fbbf24" },
+  },
+  "& .explain-badge.cost.hot": {
+    color: "var(--text-error)",
+    borderColor: "color-mix(in srgb, #dc2626 40%, transparent)",
+  },
+  "& .explain-badge.hint": {
+    fontWeight: 700,
+    minWidth: "14px",
+    textAlign: "center",
+    padding: "2px 4px",
+  },
+  "& .explain-badge.hint.caution": {
+    background: "color-mix(in srgb, #f59e0b 16%, transparent)",
+    borderColor: "color-mix(in srgb, #f59e0b 45%, transparent)",
+    color: "#b45309",
+    _dark: { color: "#fbbf24" },
+  },
+  "& .explain-badge.hint.warning": {
+    background: "color-mix(in srgb, #dc2626 16%, transparent)",
+    borderColor: "color-mix(in srgb, #dc2626 45%, transparent)",
+    color: "var(--text-error)",
+  },
+  "& .explain-hints": {
+    listStyle: "none",
+    margin: "0 0 10px",
+    padding: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+  },
+  "& .explain-hint": {
+    display: "flex",
+    flexDirection: "column",
+    gap: "3px",
+    padding: "7px 9px",
+    borderRadius: "var(--radius-sm)",
+    border: "1px solid var(--border)",
+    borderLeftWidth: "3px",
+    background: "var(--bg-subtle, var(--bg-muted))",
+    fontSize: "var(--text-sm)",
+    lineHeight: 1.45,
+  },
+  "& .explain-hint.info": { borderLeftColor: "var(--accent)" },
+  "& .explain-hint.caution": { borderLeftColor: "#f59e0b" },
+  "& .explain-hint.warning": { borderLeftColor: "#dc2626" },
+  "& .explain-hint-sev": {
+    fontWeight: 600,
+    fontSize: "var(--text-2xs)",
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+  },
+  "& .explain-hint.info .explain-hint-sev": { color: "var(--accent)" },
+  "& .explain-hint.caution .explain-hint-sev": { color: "#b45309", _dark: { color: "#fbbf24" } },
+  "& .explain-hint.warning .explain-hint-sev": { color: "var(--text-error)" },
+  "& .explain-hint-text": { color: "var(--text)" },
+  "& .explain-detail": {
+    width: "320px",
+    flexShrink: 0,
+    display: "flex",
+    flexDirection: "column",
+    borderLeft: "1px solid var(--border)",
+    background: "var(--bg-muted)",
+    overflow: "hidden",
+  },
+  "& .explain-detail-header": {
+    padding: "6px 12px",
+    fontSize: "var(--text-sm)",
+    fontWeight: 600,
+    color: "var(--text-secondary)",
+    borderBottom: "1px solid var(--border-subtle)",
+    background: "var(--bg-toolbar)",
+    flexShrink: 0,
+  },
+  "& .explain-detail-body": { overflow: "auto", padding: "10px 12px" },
+  "& .explain-detail-hint": {
+    padding: "var(--space-3)",
+    color: "var(--text-muted)",
+    fontSize: "var(--text-sm)",
+  },
+  "& .explain-detail-label": {
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-md)",
+    fontWeight: 600,
+    color: "var(--text)",
+    marginBottom: "8px",
+    wordBreak: "break-word",
+  },
+  "& .explain-detail-table": {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: "var(--text-xs)",
+    fontFamily: "var(--font-mono)",
+  },
+  "& .explain-detail-table th, & .explain-detail-table td": {
+    textAlign: "left",
+    verticalAlign: "top",
+    padding: "3px 6px",
+    borderBottom: "1px solid var(--border-subtle)",
+    wordBreak: "break-word",
+  },
+  "& .explain-detail-table th": {
+    color: "var(--text-muted)",
+    fontWeight: 500,
+    whiteSpace: "nowrap",
+    width: "45%",
+  },
+  "& .explain-detail-table td": { color: "var(--text)" },
+};
+
+/** 空 / ローディング時のプレースホルダ枠 (`.explain-viewer-empty` 相当)。 */
+const EXPLAIN_EMPTY_PROPS = {
+  flex: "1 1 auto",
+  minHeight: 0,
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  gap: "10px",
+  padding: "var(--space-5)",
+  color: "app.textMuted",
+  fontSize: "md",
+  bg: "app.surface",
+  overflow: "auto",
+  alignItems: "center",
+  justifyContent: "center",
+  textAlign: "center",
+} as const;
 
 interface Props {
   /** EXPLAIN FORMAT=JSON result — a single row / single column JSON string. */
@@ -420,22 +658,63 @@ export function ExplainViewer({ result, streaming }: Props) {
     });
 
   if (streaming && !root) {
-    return <Box className="explain-viewer-empty">{t("explainLoading")}</Box>;
+    return (
+      <Box {...EXPLAIN_EMPTY_PROPS}>{t("explainLoading")}</Box>
+    );
   }
   if (!raw) {
-    return <Box className="explain-viewer-empty">{t("explainEmpty")}</Box>;
+    return (
+      <Box {...EXPLAIN_EMPTY_PROPS}>{t("explainEmpty")}</Box>
+    );
   }
   if (error || !root) {
     return (
-      <Box className="explain-viewer-error">
-        <chakra.p>{t("explainParseError", { error: error ?? "unknown" })}</chakra.p>
-        <chakra.pre>{raw}</chakra.pre>
+      <Box
+        flex="1 1 auto"
+        minHeight={0}
+        minWidth={0}
+        display="flex"
+        flexDirection="column"
+        gap="10px"
+        padding="var(--space-5)"
+        color="app.textMuted"
+        fontSize="md"
+        bg="app.surface"
+        overflow="auto"
+      >
+        <chakra.p color="app.textError" margin={0}>
+          {t("explainParseError", { error: error ?? "unknown" })}
+        </chakra.p>
+        <chakra.pre
+          margin={0}
+          padding="10px"
+          fontFamily="var(--font-mono)"
+          fontSize="xs"
+          whiteSpace="pre-wrap"
+          wordBreak="break-all"
+          bg="app.surfaceMuted"
+          border="1px solid"
+          borderColor="app.border"
+          borderRadius="md"
+          color="app.textSecondary"
+        >
+          {raw}
+        </chakra.pre>
       </Box>
     );
   }
 
   return (
-    <Box className="explain-viewer">
+    <Box
+      flex="1 1 auto"
+      minHeight={0}
+      minWidth={0}
+      display="flex"
+      flexDirection="row"
+      bg="app.surface"
+      overflow="hidden"
+      css={EXPLAIN_CSS}
+    >
       <Box className="explain-tree-pane">
         <Box className="explain-toolbar">
           {root.cost !== null && (
@@ -444,20 +723,22 @@ export function ExplainViewer({ result, streaming }: Props) {
             </chakra.span>
           )}
           <chakra.span className="explain-toolbar-spacer" />
-          <chakra.button
-            className="results-toolbar-btn"
+          <Button
+            size="sm"
+            px="10px"
             onClick={() => setCollapsed(new Set())}
             title={t("explainExpandAll")}
           >
             {t("explainExpandAll")}
-          </chakra.button>
-          <chakra.button
-            className="results-toolbar-btn"
+          </Button>
+          <Button
+            size="sm"
+            px="10px"
             onClick={() => setCollapsed(new Set(allIds))}
             title={t("explainCollapseAll")}
           >
             {t("explainCollapseAll")}
-          </chakra.button>
+          </Button>
         </Box>
         <Box className="explain-tree" role="tree">
           <NodeRow
