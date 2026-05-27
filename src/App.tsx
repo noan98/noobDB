@@ -2203,6 +2203,7 @@ export default function App() {
       >
       <Flex
         as="aside"
+        gridColumn="1"
         direction="column"
         overflow="hidden"
         borderRightWidth="1px"
@@ -2477,6 +2478,7 @@ export default function App() {
 
       <Flex
         as="main"
+        gridColumn="2"
         direction="column"
         overflow="hidden"
         bg="app.bg"
