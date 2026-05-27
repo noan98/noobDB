@@ -1,4 +1,5 @@
-import { Button, Flex, Text } from "@chakra-ui/react";
+import { Flex, Text } from "@chakra-ui/react";
+import { Button } from "./ui";
 import { Icon, type IconName } from "./Icon";
 
 interface Props {
@@ -65,21 +66,7 @@ export function EmptyState({ icon, title, description, action, compact = false }
         </Text>
       )}
       {action && (
-        <Button
-          type="button"
-          onClick={action.onClick}
-          mt="var(--space-1)"
-          font="inherit"
-          px="12px"
-          py="6px"
-          h="auto"
-          rounded="md"
-          border="1px solid"
-          borderColor="app.accent"
-          bg="app.accent"
-          color="app.accentText"
-          _hover={{ bg: "app.accentHover", borderColor: "app.accentHover" }}
-        >
+        <Button type="button" variant="primary" onClick={action.onClick} mt="var(--space-1)">
           {action.label}
         </Button>
       )}
