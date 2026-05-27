@@ -5,6 +5,18 @@ import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Checkbox, Input } from "./ui";
+import {
+  ScopeToggle,
+  Tree,
+  TreeBadge,
+  TreeChevron,
+  TreeIcon,
+  TreeLabel,
+  TreeNode,
+  TreePane,
+  TreeRow,
+  TreeSearch,
+} from "./tree";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 
 interface Props {
@@ -96,28 +108,27 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
   };
 
   const renderSnippet = (s: Snippet) => (
-    <Box key={s.id} className="tree-node snippet">
-      <Box
-        className="tree-row snippet-row"
+    <TreeNode key={s.id}>
+      <TreeRow
         role="treeitem"
         onDoubleClick={() => onInsert(s)}
         onContextMenu={(e) => handleContextMenu(e, s)}
         title={`${t("snippetInsertHint")}\n\n${s.sql}`}
       >
-        <chakra.span className="tree-chevron empty" aria-hidden />
-        <chakra.span className="tree-icon snippet-icon" aria-hidden><Icon name="snippet" /></chakra.span>
-        <chakra.span className="tree-label">{s.name}</chakra.span>
+        <TreeChevron visibility="hidden" aria-hidden />
+        <TreeIcon color="app.accent" aria-hidden><Icon name="snippet" /></TreeIcon>
+        <TreeLabel>{s.name}</TreeLabel>
         {s.tags.map((tag) => (
-          <chakra.span key={tag} className="tree-badge snippet-tag">{tag}</chakra.span>
+          <TreeBadge key={tag} textTransform="none" letterSpacing="0" fontFamily="mono">{tag}</TreeBadge>
         ))}
-        {s.driver && <chakra.span className="tree-badge driver">{s.driver}</chakra.span>}
-      </Box>
-    </Box>
+        {s.driver && <TreeBadge>{s.driver}</TreeBadge>}
+      </TreeRow>
+    </TreeNode>
   );
 
   return (
-    <Box className="tree-pane">
-      <Box className="tree-search">
+    <TreePane>
+      <TreeSearch>
         <Input
           type="search"
           placeholder={t("snippetSearchPlaceholder")}
@@ -125,22 +136,22 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
           onChange={(e) => setFilter(e.target.value)}
         />
         {activeProfile && (
-          <chakra.label className="snippet-scope-toggle">
+          <ScopeToggle>
             <Checkbox
               checked={showAllScopes}
               onChange={(e) => setShowAllScopes(e.target.checked)}
             />
             {t("snippetShowAllScopes")}
-          </chakra.label>
+          </ScopeToggle>
         )}
-      </Box>
+      </TreeSearch>
 
       {snippets.length === 0 ? (
         <EmptyState icon="snippet" title={t("snippetEmptyTitle")} description={t("snippetEmpty")} />
       ) : visibleSnippets.length === 0 ? (
-        <chakra.p className="muted" p="12px">{t("snippetNoMatches")}</chakra.p>
+        <chakra.p color="app.textMuted" p="12px">{t("snippetNoMatches")}</chakra.p>
       ) : (
-        <Box className="tree" role="tree">
+        <Tree role="tree">
           {grouped === null
             ? visibleSnippets.map(renderSnippet)
             : grouped.map((g) => {
@@ -148,33 +159,59 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
                 const folderOpen = expandedFolders[key] !== false;
                 const label = g.name ?? t("snippetFolderNone");
                 return (
-                  <Box key={key} className="tree-node profile-group">
+                  <TreeNode key={key}>
                     <Box
-                      className="tree-row group-row"
+                      display="flex"
+                      alignItems="center"
+                      gap="var(--space-1)"
+                      whiteSpace="nowrap"
+                      overflow="hidden"
+                      userSelect="none"
+                      cursor="pointer"
+                      pt="6px"
+                      pr="10px"
+                      pb="6px"
+                      pl="6px"
+                      fontSize="xs"
+                      textTransform="uppercase"
+                      letterSpacing="0.06em"
+                      color="app.textMuted"
+                      bg="app.surfaceMuted"
+                      borderTop="1px solid"
+                      borderTopColor="app.borderSubtle"
+                      borderBottom="1px solid"
+                      borderBottomColor="app.borderSubtle"
+                      borderLeft="2px solid transparent"
+                      transitionProperty="background, color, border-color, box-shadow"
+                      transitionDuration="var(--dur-fast)"
+                      transitionTimingFunction="var(--ease)"
+                      _hover={{ bg: "app.hover", color: "app.text" }}
                       onClick={() =>
                         setExpandedFolders((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
                       }
                       role="treeitem"
                       aria-expanded={folderOpen}
                     >
-                      <chakra.span className="tree-chevron" aria-hidden>{folderOpen ? "▾" : "▸"}</chakra.span>
-                      <chakra.span className="group-label">{label}</chakra.span>
-                      <chakra.span className="tree-badge group-count">{g.snippets.length}</chakra.span>
+                      <TreeChevron aria-hidden>{folderOpen ? "▾" : "▸"}</TreeChevron>
+                      <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
+                        {label}
+                      </chakra.span>
+                      <TreeBadge textTransform="none" letterSpacing="0">{g.snippets.length}</TreeBadge>
                     </Box>
                     {folderOpen && (
-                      <Box className="tree-children">
+                      <Box display="flex" flexDirection="column">
                         {g.snippets.map(renderSnippet)}
                       </Box>
                     )}
-                  </Box>
+                  </TreeNode>
                 );
               })}
-        </Box>
+        </Tree>
       )}
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
-    </Box>
+    </TreePane>
   );
 }
