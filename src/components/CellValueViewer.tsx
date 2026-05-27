@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
 import { copyToClipboard } from "./clipboard";
-import { Icon } from "./Icon";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Button, Checkbox } from "./ui";
 
 interface Props {
   /** Column name, shown in the modal header. */
@@ -55,61 +56,41 @@ export function CellValueViewer({ columnName, value, isBinary, onClose }: Props)
     copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal cell-viewer-modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-header">
-          <h2 className="cell-viewer-title" title={columnName}>
-            {columnName}
-          </h2>
-          <button
-            className="icon"
-            onClick={onClose}
-            aria-label={t("cellViewerClose")}
-            title={t("cellViewerClose")}
-          >
-            <Icon name="close" size={13} />
-          </button>
-        </header>
+    <Modal width="820px" onClose={onClose}>
+      <ModalHeader
+        onClose={onClose}
+        closeLabel={t("cellViewerClose")}
+        titleProps={{ className: "cell-viewer-title", title: columnName }}
+      >
+        {columnName}
+      </ModalHeader>
 
-        <div className="modal-body cell-viewer-body">
-          {isNull ? (
-            <div className="cell-viewer-null">{t("resultNull")}</div>
-          ) : display === "" ? (
-            <div className="cell-viewer-null">{t("cellViewerEmpty")}</div>
-          ) : (
-            <pre className="cell-viewer-content">{display}</pre>
-          )}
-        </div>
+      <ModalBody className="cell-viewer-body">
+        {isNull ? (
+          <div className="cell-viewer-null">{t("resultNull")}</div>
+        ) : display === "" ? (
+          <div className="cell-viewer-null">{t("cellViewerEmpty")}</div>
+        ) : (
+          <pre className="cell-viewer-content">{display}</pre>
+        )}
+      </ModalBody>
 
-        <div className="modal-footer cell-viewer-footer">
-          {canFormat && (
-            <label className="cell-viewer-format-toggle">
-              <input
-                type="checkbox"
-                checked={pretty}
-                onChange={(e) => setPretty(e.target.checked)}
-              />
-              <span>{t("cellViewerFormatJson")}</span>
-            </label>
-          )}
-          <div className="cell-viewer-footer-spacer" />
-          <button onClick={handleCopy} disabled={isNull}>
-            {copied ? t("gridCopied") : t("cellViewerCopy")}
-          </button>
-          <button className="primary" onClick={onClose}>
-            {t("cellViewerClose")}
-          </button>
-        </div>
-      </div>
-    </div>
+      <ModalFooter>
+        {canFormat && (
+          <label className="cell-viewer-format-toggle">
+            <Checkbox checked={pretty} onChange={(e) => setPretty(e.target.checked)} />
+            <span>{t("cellViewerFormatJson")}</span>
+          </label>
+        )}
+        <div className="cell-viewer-footer-spacer" />
+        <Button type="button" onClick={handleCopy} disabled={isNull}>
+          {copied ? t("gridCopied") : t("cellViewerCopy")}
+        </Button>
+        <Button type="button" variant="primary" onClick={onClose}>
+          {t("cellViewerClose")}
+        </Button>
+      </ModalFooter>
+    </Modal>
   );
 }
