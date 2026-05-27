@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Box } from "@chakra-ui/react";
 
 type Direction = "row" | "column";
+
+// Children dropped straight into a pane should fill it even when their own CSS
+// sets a fixed min-size (e.g. `.editor`'s 200px min). Previously keyed on the
+// `.splitter-pane` class in App.css; carried here so the pane owns the rule.
+const PANE_FILL = {
+  "& > .editor, & > .results, & > .preview, & > .preview-pane, & > .explain-viewer, & > .explain-viewer-empty, & > .explain-viewer-error, & > .workspace-pane":
+    {
+      flex: "1 1 auto",
+      minHeight: 0,
+      minWidth: 0,
+    },
+} as const;
 
 interface Props {
   // "row" = side-by-side panes, drag the divider left/right.
@@ -118,26 +131,44 @@ export function Splitter({
     setFraction(defaultFraction);
   }, [defaultFraction]);
 
-  const handleClass =
-    direction === "row"
-      ? "splitter-handle splitter-handle-v"
-      : "splitter-handle splitter-handle-h";
+  const isRow = direction === "row";
 
   return (
-    <div
+    <Box
       ref={containerRef}
-      className={`splitter splitter-${direction}${className ? " " + className : ""}`}
+      className={className}
+      display="flex"
+      flexDirection={isRow ? "row" : "column"}
+      flex="1 1 auto"
+      minW={0}
+      minH={0}
+      overflow="hidden"
     >
-      <div
-        className="splitter-pane"
+      <Box
+        display="flex"
+        flexDirection="column"
+        overflow="hidden"
+        minW={0}
+        minH={0}
+        css={PANE_FILL}
         style={{ flexGrow: fraction, flexShrink: 1, flexBasis: 0 }}
       >
         {first}
-      </div>
-      <div
-        className={`${handleClass}${dragging ? " is-dragging" : ""}`}
+      </Box>
+      <Box
+        flex="0 0 auto"
+        position="relative"
+        zIndex={4}
+        bg={dragging ? "app.accent" : "app.border"}
+        _hover={{ bg: "app.accent" }}
+        userSelect="none"
+        touchAction="none"
+        transition="background 0.12s"
+        width={isRow ? "5px" : undefined}
+        height={isRow ? undefined : "5px"}
+        cursor={isRow ? "ew-resize" : "ns-resize"}
         role="separator"
-        aria-orientation={direction === "row" ? "vertical" : "horizontal"}
+        aria-orientation={isRow ? "vertical" : "horizontal"}
         aria-label={ariaLabel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -145,12 +176,17 @@ export function Splitter({
         onPointerCancel={onPointerUp}
         onDoubleClick={onDoubleClick}
       />
-      <div
-        className="splitter-pane"
+      <Box
+        display="flex"
+        flexDirection="column"
+        overflow="hidden"
+        minW={0}
+        minH={0}
+        css={PANE_FILL}
         style={{ flexGrow: 1 - fraction, flexShrink: 1, flexBasis: 0 }}
       >
         {second}
-      </div>
-    </div>
+      </Box>
+    </Box>
   );
 }

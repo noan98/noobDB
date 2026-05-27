@@ -1,3 +1,4 @@
+import { chakra } from "@chakra-ui/react";
 import { Locale, setLocale, useLocale } from "../i18n";
 
 const OPTIONS: { value: Locale; label: string }[] = [
@@ -8,17 +9,28 @@ const OPTIONS: { value: Locale; label: string }[] = [
 export function LanguageSwitcher() {
   const locale = useLocale();
   return (
-    <div className="lang-switch" role="group" aria-label="Language">
-      {OPTIONS.map((o) => (
-        <button
-          key={o.value}
-          className={`lang-btn ${locale === o.value ? "active" : ""}`}
-          onClick={() => setLocale(o.value)}
-          aria-pressed={locale === o.value}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
+    <chakra.div display="inline-flex" gap="var(--space-1)" role="group" aria-label="Language">
+      {OPTIONS.map((o) => {
+        const active = locale === o.value;
+        return (
+          <chakra.button
+            key={o.value}
+            px="8px"
+            py="2px"
+            fontSize="var(--text-xs)"
+            border="1px solid"
+            borderColor={active ? "app.accent" : "app.borderStrong"}
+            bg={active ? "app.accent" : "app.surface"}
+            color={active ? "app.accentText" : "app.text"}
+            borderRadius="sm"
+            cursor="pointer"
+            onClick={() => setLocale(o.value)}
+            aria-pressed={active}
+          >
+            {o.label}
+          </chakra.button>
+        );
+      })}
+    </chakra.div>
   );
 }
