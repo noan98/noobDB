@@ -528,6 +528,10 @@ export default function App() {
   // changes (a new query result, connect/disconnect, connection switch, etc.)
   // so a fresh error still shows its hint.
   const [hintDismissed, setHintDismissed] = useState(false);
+  // Lets the user close the whole error status bar (the red footer shown on a
+  // failed connect, query error, etc.). Reset on every status change so a new
+  // error is never silently hidden by a prior dismissal.
+  const [statusDismissed, setStatusDismissed] = useState(false);
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [panes, setPanes] = useState<PaneState[]>([]);
@@ -1939,9 +1943,11 @@ export default function App() {
   );
 
   // Any new status (new query, connect/disconnect, connection switch) re-enables
-  // the hint banner so it is never permanently suppressed by a prior dismissal.
+  // the hint banner and the status bar itself so neither is permanently
+  // suppressed by a prior dismissal.
   useEffect(() => {
     setHintDismissed(false);
+    setStatusDismissed(false);
   }, [status]);
 
   // Build a single pane's content: its own TabBar plus the editor/result
@@ -2410,6 +2416,7 @@ export default function App() {
         )}
         </Suspense>
 
+        {!statusDismissed && (
         <div className={`status status-${statusTone(status)}`}>
           <span className="status-icon" aria-hidden>
             {statusTone(status) === "running" ? (
@@ -2461,7 +2468,19 @@ export default function App() {
               {t("statusReconnect")}
             </button>
           )}
+          {statusTone(status) === "error" && (
+            <button
+              type="button"
+              className="status-dismiss"
+              onClick={() => setStatusDismissed(true)}
+              title={t("statusDismiss")}
+              aria-label={t("statusDismiss")}
+            >
+              <Icon name="close" />
+            </button>
+          )}
         </div>
+        )}
       </main>
 
       <Suspense fallback={null}>
