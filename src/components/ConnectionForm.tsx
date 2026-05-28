@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Box, Flex, Text } from "@chakra-ui/react";
+import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri";
@@ -34,19 +34,33 @@ function PasswordInput({ value, onChange, hasStored }: PasswordInputProps) {
   const showingMask = hasStored && value === "" && !focused;
 
   return (
-    <div className="password-field">
+    <Box position="relative" display="flex" alignItems="center">
       <Input
         type={show ? "text" : "password"}
         value={showingMask ? STORED_MASK : value}
         readOnly={showingMask}
         autoComplete="off"
+        pr="34px"
+        // Hide the WebView2/Edge native password reveal & clear controls so they
+        // don't render a second eye icon alongside our own toggle button.
+        css={{ "&::-ms-reveal": { display: "none" }, "&::-ms-clear": { display: "none" } }}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
       />
-      <button
+      <chakra.button
         type="button"
-        className="password-toggle"
+        position="absolute"
+        right="4px"
+        display="inline-flex"
+        alignItems="center"
+        justifyContent="center"
+        p="4px"
+        border="none"
+        bg="transparent"
+        color="app.textMuted"
+        borderRadius="sm"
+        _hover={{ bg: "app.hover", color: "app.text" }}
         // Keep the input focused so the toggle works while typing.
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setShow((s) => !s)}
@@ -55,8 +69,8 @@ function PasswordInput({ value, onChange, hasStored }: PasswordInputProps) {
         title={show ? t("formPasswordHide") : t("formPasswordShow")}
       >
         <Icon name={show ? "eye-off" : "eye"} size={16} />
-      </button>
-    </div>
+      </chakra.button>
+    </Box>
   );
 }
 
@@ -474,11 +488,21 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             <label>{t("formColor")}</label>
             <Flex align="center" gap="8px" flexWrap="wrap">
               {COLOR_PRESETS.map((c) => (
-                <button
+                <chakra.button
                   key={c}
                   type="button"
-                  className={`color-swatch ${color === c ? "selected" : ""}`}
-                  style={{ background: c }}
+                  width="24px"
+                  height="24px"
+                  borderRadius="sm"
+                  border="2px solid"
+                  borderColor={color === c ? "app.text" : "transparent"}
+                  p={0}
+                  cursor="pointer"
+                  boxShadow="0 0 0 1px var(--border-strong)"
+                  bg={c}
+                  transitionProperty="background, color, border-color, box-shadow"
+                  transitionDuration="var(--dur-fast)"
+                  transitionTimingFunction="var(--ease)"
                   onClick={() => setColor(c)}
                   aria-label={c}
                   title={c}

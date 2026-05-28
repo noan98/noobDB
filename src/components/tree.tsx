@@ -7,10 +7,20 @@ import { chakra } from "@chakra-ui/react";
  * Chakra コンポーネントへ移植したもの。`HistoryList` / `SnippetList` のように
  * 接続ツリーと同じ見た目を再利用する複数のパネルで共通利用する。
  *
- * 接続ツリー本体 (`ConnectionList`) はまだ `App.css` の `.tree-*` クラスを使って
- * いるため、対応する CSS ルールは当面残している。`ConnectionList` の移行フェーズで
- * これらのコンポーネントへ寄せたうえで `App.css` 側を撤去する想定。
+ * 接続ツリー本体 (`ConnectionList`) もこれらのプリミティブへ移行済みで、profile /
+ * db / table / column 行は `TreeRow` などに style props を重ねて描画している。
+ * 対応する `App.css` の `.tree-*` ルールは撤去済み。
  */
+
+/** ツリー行・メニュー項目などで共有する微トランジション (旧 App.css の共通ルール)。 */
+const TREE_ROW_TRANSITION = {
+  transitionProperty: "background, color, border-color, box-shadow",
+  transitionDuration: "var(--dur-fast)",
+  transitionTimingFunction: "var(--ease)",
+} as const;
+
+/** キーボードフォーカスリング。動的アクセントへ追従させるため CSS 変数を直接参照。 */
+const FOCUS_RING = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
 
 export const TreePane = chakra("div", {
   base: { display: "flex", flexDirection: "column", overflow: "hidden", flex: 1 },
@@ -49,7 +59,9 @@ export const TreeRow = chakra("div", {
     whiteSpace: "nowrap",
     overflow: "hidden",
     borderLeft: "2px solid transparent",
+    ...TREE_ROW_TRANSITION,
     _hover: { bg: "app.hover" },
+    _focusVisible: { outline: "none", boxShadow: FOCUS_RING },
   },
 });
 
