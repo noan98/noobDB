@@ -857,17 +857,17 @@ export function DataGrid({
                     aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
                   >
                     {canSort ? (
-                      <button
+                      <chakra.button
                         type="button"
                         className="th-sort-button"
                         onClick={h.column.getToggleSortingHandler()}
                         title={sortTitle}
                       >
                         {flexRender(h.column.columnDef.header, h.getContext())}
-                        <span className="th-sort-indicator" aria-hidden>
+                        <chakra.span className="th-sort-indicator" aria-hidden>
                           {sortGlyph}
-                        </span>
-                      </button>
+                        </chakra.span>
+                      </chakra.button>
                     ) : (
                       flexRender(h.column.columnDef.header, h.getContext())
                     )}

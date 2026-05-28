@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -36,6 +36,7 @@ import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { Splitter } from "./components/Splitter";
 import { Icon } from "./components/Icon";
+import { Button } from "./components/ui";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
@@ -166,6 +167,32 @@ function PaneEmpty({ children }: { children: ReactNode }) {
     >
       {children}
     </Flex>
+  );
+}
+
+/** トップバーの密なアイコン専用ボタン。`Button` の既定 padding を詰めて
+ *  正方形に近い当たり判定にし、アイコン文字のみを中央配置する。 */
+function IconButton(props: ComponentProps<typeof Button>) {
+  return <Button px="8px" py="4px" minW="28px" lineHeight="1" fontSize="base" {...props} />;
+}
+
+/** ステータスバー脇の小さな状態ドット。色付きの円 + ハロー (box-shadow) で
+ *  接続状態を即時に示す。色は CSS 変数経由でテーマ切替へ追従する。 */
+function StatusDot({ variant }: { variant: "connected" | "idle" }) {
+  const color = variant === "connected" ? "var(--status-connected)" : "var(--status-idle)";
+  const ringAlpha = variant === "connected" ? "25%" : "18%";
+  return (
+    <chakra.span
+      aria-hidden
+      display="inline-block"
+      w="8px"
+      h="8px"
+      borderRadius="full"
+      flexShrink={0}
+      bg={color}
+      boxShadow={`0 0 0 2px color-mix(in srgb, ${color} ${ringAlpha}, transparent)`}
+      transition="background var(--dur-med) var(--ease), box-shadow var(--dur-med) var(--ease)"
+    />
   );
 }
 
@@ -2068,13 +2095,29 @@ export default function App() {
         <AnimatePresence>
           {tab?.streaming && (
             <motion.div
-              className="query-progress"
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 2 }}
               exit={{ opacity: 0, height: 0 }}
               transition={{ duration: 0.18 }}
               aria-hidden
-            />
+              style={{
+                position: "relative",
+                flexShrink: 0,
+                overflow: "hidden",
+                background: "color-mix(in srgb, var(--accent) 16%, transparent)",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "35%",
+                  borderRadius: "var(--radius-pill)",
+                  background: "var(--accent)",
+                  animation: "query-progress-slide 1.05s var(--ease) infinite",
+                }}
+              />
+            </motion.div>
           )}
         </AnimatePresence>
         <Flex direction="column" flex="1" overflow="hidden">
@@ -2232,15 +2275,14 @@ export default function App() {
           align="center"
           gap="var(--space-2)"
         >
-          <chakra.button
-            className="icon"
+          <IconButton
             flexShrink="0"
             onClick={toggleSidebar}
             title={t("sidebarCollapse")}
             aria-label={t("sidebarCollapse")}
           >
             <Icon name="chevron-left" />
-          </chakra.button>
+          </IconButton>
           <chakra.span
             flex="1"
             fontSize="md"
@@ -2257,41 +2299,36 @@ export default function App() {
                 : t("appConnections")}
           </chakra.span>
           <Flex gap="var(--space-1)" align="center">
-            <button
-              className="icon"
+            <IconButton
               onClick={toggleTheme}
               title={theme === "dark" ? t("appThemeToLight") : t("appThemeToDark")}
               aria-label={t("appThemeToggle")}
             >
               <Icon name={theme === "dark" ? "sun" : "moon"} />
-            </button>
-            <button
-              className="icon"
+            </IconButton>
+            <IconButton
               onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowSettings(false); setShowHelp(true); }}
               title={t("appHelp")}
               aria-label={t("appHelp")}
             >
               <Icon name="help" />
-            </button>
-            <button
-              className="icon"
+            </IconButton>
+            <IconButton
               onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowHelp(false); setShowSettings(true); }}
               title={t("appSettings")}
               aria-label={t("appSettings")}
             >
               <Icon name="settings" />
-            </button>
-            <button
-              className="icon"
+            </IconButton>
+            <IconButton
               onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowCompare(true); }}
               title={t("appSchemaCompare")}
               aria-label={t("appSchemaCompare")}
             >
               <Icon name="diff" />
-            </button>
+            </IconButton>
             {sidebarTab === "snippets" ? (
-              <button
-                className="icon"
+              <IconButton
                 onClick={() => {
                   setEditingSnippet(null);
                   setSnippetFormSql("");
@@ -2306,16 +2343,15 @@ export default function App() {
                 aria-label={t("appNewSnippet")}
               >
                 <Icon name="plus" />
-              </button>
+              </IconButton>
             ) : sidebarTab === "connections" ? (
-              <button
-                className="icon"
+              <IconButton
                 onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                 title={t("appNew")}
                 aria-label={t("appNew")}
               >
                 <Icon name="plus" />
-              </button>
+              </IconButton>
             ) : null}
           </Flex>
         </Flex>
@@ -2544,15 +2580,28 @@ export default function App() {
               <Flex align="center" gap="var(--space-2)" overflow="hidden">
                 {selectedProfile ? (
                   <>
-                    <span className="status-dot status-connected" aria-hidden />
+                    <StatusDot variant="connected" />
                     <chakra.span fontWeight={600} fontSize="md">{selectedProfile.name}</chakra.span>
                     {selectedProfile.read_only && (
-                      <span
-                        className="tree-badge read-only-badge"
+                      <chakra.span
                         title={t("listReadOnlyTitle")}
+                        display="inline-block"
+                        fontSize="2xs"
+                        textTransform="uppercase"
+                        letterSpacing="0.05em"
+                        fontWeight={700}
+                        px="6px"
+                        py="1px"
+                        borderRadius="pill"
+                        bg="var(--status-info, var(--bg-muted))"
+                        color="app.text"
+                        borderWidth="1px"
+                        borderStyle="solid"
+                        borderColor="app.borderStrong"
+                        flexShrink={0}
                       >
                         {t("listReadOnly")}
-                      </span>
+                      </chakra.span>
                     )}
                     <chakra.span
                       color="app.textMuted"
@@ -2568,13 +2617,17 @@ export default function App() {
                   </>
                 ) : (
                   <>
-                    <span className="status-dot status-idle" aria-hidden />
+                    <StatusDot variant="idle" />
                     <chakra.span color="app.textMuted" fontSize="sm">{t("appDisconnected")}</chakra.span>
                   </>
                 )}
               </Flex>
               <Box flex="1" />
-              {sessionId && <button className="danger" onClick={handleDisconnect}>{t("appDisconnect")}</button>}
+              {sessionId && (
+                <Button variant="danger" onClick={handleDisconnect}>
+                  {t("appDisconnect")}
+                </Button>
+              )}
             </Flex>
 
             {sessionId ? (

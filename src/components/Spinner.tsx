@@ -3,7 +3,6 @@ import { chakra } from "@chakra-ui/react";
 interface Props {
   /** Diameter in px. */
   size?: number;
-  className?: string;
 }
 
 /**
@@ -11,13 +10,11 @@ interface Props {
  * waiting, load-more, status bar). The `spinner-rotate` keyframe lives in
  * `App.css`; the global `prefers-reduced-motion` rule freezes it into a static
  * ring. Styling is expressed via Chakra `app.*` tokens so it follows the active
- * theme/accent. `className` is preserved so callers can layer overrides (e.g.
- * `.btn-spinner`, which retints the ring to the button's `currentColor`).
+ * theme/accent.
  */
-export function Spinner({ size = 16, className }: Props) {
+export function Spinner({ size = 16 }: Props) {
   return (
     <chakra.span
-      className={className}
       display="inline-block"
       borderRadius="full"
       borderWidth="2px"

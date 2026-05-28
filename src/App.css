@@ -1,3 +1,27 @@
+/* ========================================================================
+ * App.css — 最終形 (Chakra 移行完了後の最小グローバル)
+ *
+ * Chakra 全面移行 (Epic #271 / フェーズ7 #270) 完了後に残った CSS は次の 3 種:
+ *
+ * 1. **デザイントークン** (`:root` の CSS 変数 + `[data-theme="dark"]` 上書き)
+ *    `theme.ts` の Chakra トークン (`app.*`) が `var(--*)` ブリッジでこれらを
+ *    参照しているため、Chakra コンポーネントはここを正としてダーク切替・
+ *    動的アクセント (`--accent` / `--ws-accent`) ・フォントスケール
+ *    (`--font-scale`) に自動追従する。
+ *
+ * 2. **グローバル基盤** (`*` / `html` / スクロールバー / `button` / `input` /
+ *    `select` / `label` 要素の見た目)
+ *    Chakra `preflight: false` 下で素の HTML 要素 (主にフォーム部品) が崩れない
+ *    ようにする最小限のグローバル。className ベースの個別ルールはすべて撤去済み
+ *    で、Chakra recipe (`buttonRecipe` 等) と style props で表現する。
+ *
+ * 3. **CodeMirror / `@keyframes` / reduced-motion**
+ *    CM6 が内部的に生成する DOM (`.cm-editor *` / `.cm-tooltip*`) を既存テーマに
+ *    馴染ませる selector 群と、Chakra `animation` prop から参照される 4 つの
+ *    keyframe (`pulse` / `streaming-pulse` / `spinner-rotate` /
+ *    `query-progress-slide`)、および OS のモーション低減設定への配慮。
+ * ====================================================================== */
+
 :root {
   /* Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
@@ -222,6 +246,12 @@ html, body, #root {
   color: var(--text);
 }
 
+/* ---------- Plain HTML form elements (minimum globals) ----------
+   コンポーネント固有の見た目はすべて Chakra recipe (`buttonRecipe` /
+   `inputRecipe` / `selectRecipe` / `textareaRecipe`) で表現するが、コンポーネント
+   化されていない素の `<button>` / `<input>` / `<select>` / `<label>` がフォームや
+   モーダル内に残っているため、最小限のベースラインだけここで提供する。 */
+
 button {
   font: inherit;
   padding: 6px 12px;
@@ -238,63 +268,10 @@ button {
 }
 button:hover { background: var(--bg-hover); }
 button:active:not(:disabled) { transform: translateY(1px); }
-button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
-button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-button.success { background: #16a34a; color: #ffffff; border-color: #16a34a; }
-button.success:hover { background: #15803d; border-color: #15803d; }
-button.warning { background: #d97706; color: #ffffff; border-color: #d97706; }
-button.warning:hover { background: #b45309; border-color: #b45309; }
-button.danger { background: #dc2626; color: #ffffff; border-color: #dc2626; }
-button.danger:hover { background: #b91c1c; border-color: #b91c1c; }
-/* Cyan-leaning "info" tone for secondary launch actions (e.g. Query Builder).
-   Kept distinct from the indigo primary accent (--accent #2563eb). White text
-   on #0369a1 is ~5.9:1 (WCAG AA for normal text). */
-button.info { background: #0369a1; color: #ffffff; border-color: #0369a1; }
-button.info:hover { background: #075985; border-color: #075985; }
-[data-theme="dark"] button.success { background: #22c55e; border-color: #22c55e; color: #052e16; }
-[data-theme="dark"] button.success:hover { background: #4ade80; border-color: #4ade80; }
-[data-theme="dark"] button.warning { background: #f59e0b; border-color: #f59e0b; color: #2a1707; }
-[data-theme="dark"] button.warning:hover { background: #fbbf24; border-color: #fbbf24; }
-[data-theme="dark"] button.danger { background: #ef4444; border-color: #ef4444; color: #ffffff; }
-[data-theme="dark"] button.danger:hover { background: #f87171; border-color: #f87171; }
-[data-theme="dark"] button.info { background: #38bdf8; border-color: #38bdf8; color: #082f49; }
-[data-theme="dark"] button.info:hover { background: #7dd3fc; border-color: #7dd3fc; color: #082f49; }
-/* Emphasis levels below the colored variants: a screen should read as one
-   primary action plus lower-weight secondary (outline) / ghost (text) ones. */
-button.secondary {
-  background: transparent;
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-button.secondary:hover { background: var(--bg-hover); }
-button.ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--text-secondary);
-}
-button.ghost:hover { background: var(--bg-hover); color: var(--text); }
-/* Compact size for dense toolbars / modal footers. */
-button.btn-sm { padding: 3px 8px; font-size: var(--text-sm); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-button.icon {
-  padding: 4px 8px;
-  font-size: var(--text-base);
-  line-height: 1;
-  min-width: 28px;
-}
-
-/* Micro-interactions: a short, consistent transition on the main interactive
-   surfaces (menu items, autocomplete entries, etc.). Durations/easing come from
-   the --dur-* / --ease tokens and are neutralized by the reduced-motion query.
-   Tree rows / groups / color swatches carry this transition via Chakra style
-   props now (see components/tree.tsx, ConnectionList, ConnectionForm). */
-.context-menu-item,
-.cm-tooltip-autocomplete > ul > li {
-  transition: background var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease),
-    box-shadow var(--dur-fast) var(--ease);
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 input, select {
@@ -313,15 +290,6 @@ input:focus, select:focus {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
-/* Keyboard focus ring for interactive controls. Uses :focus-visible so the
-   ring shows up during keyboard navigation but not on mouse clicks. */
-button:focus-visible,
-.context-menu-item:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
-}
-
-
 label {
   display: block;
   font-size: var(--text-sm);
@@ -330,331 +298,9 @@ label {
   margin-bottom: 2px;
 }
 
-.muted { color: var(--text-muted); }
-.text-error { color: var(--text-error); }
-.text-success { color: var(--text-success); }
-
-/* Shared inline SVG icon (see components/Icon.tsx): inherits text color via
-   currentColor and aligns with adjacent text. */
-.icon-svg {
-  display: inline-block;
-  vertical-align: -0.125em;
-  flex-shrink: 0;
-}
-
-/* Custom title bar (the native one is disabled via `decorations: false` in
-   tauri.conf.json). The app shell layout (grid / sidebar / topbar / status bar)
-   itself now lives in App.tsx as Chakra primitives. */
-.titlebar {
-  display: flex;
-  align-items: stretch;
-  flex-shrink: 0;
-  height: 38px;
-  background: var(--bg-elevated);
-  border-bottom: 1px solid var(--border);
-  user-select: none;
-  -webkit-user-select: none;
-}
-.titlebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-  padding: 0 12px;
-}
-.titlebar-logo {
-  display: block;
-  flex-shrink: 0;
-  border-radius: 4px;
-}
-.titlebar-title {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-secondary);
-}
-.titlebar-controls {
-  display: flex;
-  align-items: stretch;
-}
-.titlebar-btn {
-  width: 46px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--dur-fast, 0.12s) var(--ease, ease),
-    color var(--dur-fast, 0.12s) var(--ease, ease);
-}
-.titlebar-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-.titlebar-close:hover {
-  background: #e81123;
-  color: #ffffff;
-}
-
-
-/* ---------- Tree (connection + schema) ---------- */
-
-.tree-pane {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  flex: 1;
-}
-
-.tree-search {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.tree-search input {
-  padding: 5px 8px;
-  font-size: var(--text-sm);
-}
-
-.tree-error {
-  padding: 6px 12px;
-  font-size: var(--text-xs);
-  color: var(--text-error);
-  background: var(--bg-error);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.tree {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px 0;
-  font-size: var(--text-md);
-  color: var(--text);
-}
-
-/* The connection tree's node / row / chevron / icon / label primitives now live
-   as Chakra components in components/tree.tsx (shared) and ConnectionList.tsx
-   (profile / db / table / column rows, status dot, color chip, badges). Only
-   `.tree-badge` (base) below is still referenced from App.tsx's status bar. */
-
-.tree-badge {
-  font-size: var(--text-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-muted);
-  color: var(--text-muted);
-  border: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-}
-
-/* .tree-children / .table-row / .column-row / .column-tooltip* / .tree-empty
-   moved to Chakra (ConnectionList.tsx). */
-
-.tree-form {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px 8px 22px;
-  background: var(--bg-muted);
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
-}
-.tree-form input { font-size: var(--text-sm); padding: 4px 8px; }
-.tree-form-actions {
-  display: flex;
-  gap: var(--space-1);
-  flex-wrap: wrap;
-}
-.tree-form-actions button {
-  padding: 4px 10px;
-  font-size: var(--text-sm);
-}
-
-.tree-row-actions {
-  display: flex;
-  gap: var(--space-1);
-  padding: 6px 10px 6px 22px;
-  border-top: 1px dashed var(--border-subtle);
-}
-.tree-row-actions button {
-  padding: 3px 8px;
-  font-size: var(--text-xs);
-}
-
-.tree-row-actions.tree-row-actions-top {
-  padding: 6px 10px 6px 22px;
-  border-top: none;
-  border-bottom: 1px dashed var(--border-subtle);
-  background: var(--bg-muted);
-}
-
-/* ---------- Read-only badge (still used by App.tsx status bar) ---------- */
-
-/* Profile groups, color accent and the production badge / stripe moved to
-   Chakra (ConnectionList.tsx). `.tree-badge.read-only-badge` stays because the
-   topbar in App.tsx still renders it with `className`. */
-.tree-badge.read-only-badge {
-  background: var(--status-info, var(--bg-muted));
-  color: var(--text);
-  border-color: var(--border-strong);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-}
-
-/* ---------- Context menu (right-click on profile) ---------- */
-
-/* Transparent full-viewport layer rendered (via a portal to <body>) beneath the
-   menu. It catches any click that isn't on the menu so the press can't reach a
-   connection row behind the menu, and gives the menu a hit-testable stacking
-   context outside the sidebar's overflow containers. */
-.context-menu-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-}
-
-.context-menu {
-  position: fixed;
-  z-index: 1000;
-  min-width: 180px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  padding: var(--space-1);
-  display: flex;
-  flex-direction: column;
-}
-.context-menu-item {
-  display: block;
-  text-align: left;
-  background: transparent;
-  border: none;
-  padding: 6px 10px;
-  font-size: var(--text-md);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.context-menu-item:hover:not(:disabled),
-.context-menu-item:focus-visible { background: var(--bg-hover); }
-.context-menu-item:focus-visible { outline: none; }
-.context-menu-item:disabled {
-  color: var(--text-muted);
-  opacity: 0.6;
-  cursor: default;
-}
-.context-menu-sep {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border-subtle);
-}
-.context-menu-item.danger { color: var(--text-error); }
-.context-menu-item.danger:hover:not(:disabled),
-.context-menu-item.danger:focus-visible {
-  background: color-mix(in srgb, var(--status-error) 12%, transparent);
-}
-
-
-/* Color swatch picker (connection form) moved to Chakra (ConnectionForm.tsx). */
-
-
-/* ---------- Status dot ---------- */
-
-.status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--status-idle);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-idle) 18%, transparent);
-  transition: background var(--dur-med) var(--ease),
-    box-shadow var(--dur-med) var(--ease);
-}
-.status-dot.status-connected {
-  background: var(--status-connected);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-connected) 25%, transparent);
-}
-.status-dot.status-connecting {
-  background: var(--status-connecting);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-connecting) 25%, transparent);
-  animation: pulse 1.2s ease-in-out infinite;
-}
-.status-dot.status-error {
-  background: var(--status-error);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-error) 25%, transparent);
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
-
-
-/* ---------- Empty / onboarding states (shared EmptyState) ---------- */
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: 32px 20px;
-  text-align: center;
-  font-style: normal;
-}
-.empty-state-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-lg);
-  background: var(--bg-muted);
-  color: var(--text-secondary);
-}
-.empty-state-title {
-  font-size: var(--text-md);
-  font-weight: 600;
-  color: var(--text);
-}
-.empty-state-desc {
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  max-width: 34ch;
-  line-height: 1.5;
-}
-.empty-state-action {
-  margin-top: var(--space-1);
-}
-
-/* Inline variant for the result grid body: smaller, left-aligned. */
-.empty-state-compact {
-  align-items: flex-start;
-  gap: 6px;
-  padding: 20px 16px;
-  text-align: left;
-}
-.empty-state-compact .empty-state-icon {
-  width: 34px;
-  height: 34px;
-}
-.empty-state-compact .empty-state-title {
-  font-size: var(--text-sm);
-}
-.empty-state-compact .empty-state-desc {
-  max-width: none;
-}
-
-/* Password input with show/hide toggle moved to Chakra (ConnectionForm.tsx). */
-
-/* ---------- Editor ---------- */
+/* ---------- CodeMirror 6 ----------
+   CM6 が内部的に生成する DOM (className ベース) をテーマトークンへ寄せる。
+   CM6 自身の機能なので Chakra 化できず、ここに残し続ける必要がある。 */
 
 .cm-editor {
   height: 100%;
@@ -711,6 +357,10 @@ label {
 .cm-tooltip.cm-tooltip-autocomplete > ul > li {
   padding: 3px 10px;
   border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
   background: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated));
@@ -720,125 +370,36 @@ label {
 .cm-completionDetail { color: var(--text-muted); font-style: normal; }
 .cm-completionMatchedText { color: var(--accent); text-decoration: none; font-weight: 600; }
 
+/* ---------- Keyframes ----------
+   Chakra コンポーネントが `animation` prop から名前参照しているため、コンポーネント
+   側にスコープした記述ができず、ここでグローバルに提供する。
+   - `pulse`: ConnectionList の接続中ノード / StatusDot (connecting) の脈動
+   - `streaming-pulse`: ResultGrid のストリーミングインジケータの脈動
+   - `spinner-rotate`: 共通 Spinner コンポーネントのリング回転
+   - `query-progress-slide`: クエリ実行中バーのスライド
+   いずれも下の reduced-motion メディアクエリで静止化される。 */
 
-
-/* ---------- Settings ---------- */
-
-.settings {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
-
-.settings-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 10px;
-}
-.settings-header h2 {
-  margin: 0;
-  font-size: var(--text-lg);
-  font-weight: 600;
-  color: var(--text);
-}
-
-.settings-help {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-}
-
-
 
 @keyframes streaming-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
 
-/* ---------- Shared spinner + loading rows ---------- */
-
-.spinner {
-  display: inline-block;
-  border-radius: 50%;
-  border: 2px solid var(--border-strong);
-  border-top-color: var(--accent);
-  animation: spinner-rotate 0.7s linear infinite;
-  flex-shrink: 0;
-  vertical-align: middle;
-}
 @keyframes spinner-rotate {
   to { transform: rotate(360deg); }
 }
 
-/* Manual schema-tree refresh button and the loading placeholder row moved to
-   Chakra (ConnectionList.tsx). The spinner-rotate keyframe above is still used
-   there (and by the shared Spinner component). */
-
-
-/* ---------- Splitter (drag-to-resize panes) ---------- */
-
-.splitter {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-}
-.splitter.splitter-row { flex-direction: row; }
-.splitter.splitter-column { flex-direction: column; }
-
-.splitter-pane {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-width: 0;
-  min-height: 0;
+@keyframes query-progress-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(360%); }
 }
 
-.splitter-handle {
-  flex: 0 0 auto;
-  background: var(--border);
-  user-select: none;
-  touch-action: none;
-  transition: background 0.12s;
-  position: relative;
-  z-index: 4;
-}
-.splitter-handle-h { height: 5px; cursor: ns-resize; }
-.splitter-handle-v { width: 5px; cursor: ew-resize; }
-.splitter-handle:hover,
-.splitter-handle.is-dragging {
-  background: var(--accent);
-}
-
-/* ---------- Language switcher ---------- */
-.lang-switch {
-  display: inline-flex;
-  gap: var(--space-1);
-}
-.lang-btn {
-  padding: 2px 8px;
-  font-size: var(--text-xs);
-  border: 1px solid var(--border-strong);
-  background: var(--bg-elevated);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.lang-btn.active {
-  background: var(--accent);
-  color: var(--accent-text);
-  border-color: var(--accent);
-}
-
-/* ---------- Reduced motion ---------- */
-/* OS の「視差効果/アニメーションを減らす」設定時は、無限アニメーション
+/* ---------- Reduced motion ----------
+   OS の「視差効果/アニメーションを減らす」設定時は、無限アニメーション
    (点滅ドット等) を静止させ、トランジションを実質無効化する。
    将来追加するモーダル/スピナーのアニメーションにも自動で効く。 */
 
@@ -852,89 +413,3 @@ label {
     scroll-behavior: auto !important;
   }
 }
-
-
-/* ── Toast notifications (Motion-animated, app-wide) ─────────────────── */
-.toast-viewport {
-  position: fixed;
-  bottom: var(--space-4);
-  right: var(--space-4);
-  z-index: 2000;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  max-width: min(380px, calc(100vw - 2 * var(--space-4)));
-  pointer-events: none;
-}
-.toast {
-  pointer-events: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--status-info);
-  box-shadow: var(--shadow-lg);
-  font-size: var(--text-sm);
-  color: var(--text);
-}
-.toast-success { border-left-color: var(--status-success); }
-.toast-error { border-left-color: var(--status-error); }
-.toast-info { border-left-color: var(--status-info); }
-.toast-icon {
-  display: inline-flex;
-  flex-shrink: 0;
-}
-.toast-success .toast-icon { color: var(--status-success); }
-.toast-error .toast-icon { color: var(--status-error); }
-.toast-message {
-  flex: 1;
-  min-width: 0;
-  line-height: 1.4;
-  word-break: break-word;
-}
-.toast-dismiss {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  min-width: 0;
-  color: var(--text-muted);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.toast-dismiss:hover { color: var(--text); background: var(--bg-hover, var(--bg-muted)); }
-
-/* ── Query streaming: indeterminate top progress bar ─────────────────── */
-.query-progress {
-  position: relative;
-  height: 2px;
-  flex-shrink: 0;
-  overflow: hidden;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-}
-.query-progress::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  width: 35%;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  animation: query-progress-slide 1.05s var(--ease) infinite;
-}
-@keyframes query-progress-slide {
-  0% { transform: translateX(-120%); }
-  100% { transform: translateX(360%); }
-}
-
-/* ── Run button while a query is in flight ───────────────────────────── */
-.toolbar button .btn-spinner {
-  border-color: color-mix(in srgb, currentColor 35%, transparent);
-  border-top-color: currentColor;
-}
-
