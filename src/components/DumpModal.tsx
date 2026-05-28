@@ -4,7 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api, DumpOptions } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Checkbox, Input } from "./ui";
+import { Button, Input, Switch } from "./ui";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
@@ -133,23 +133,33 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
             gap="6px 16px"
           >
             {OPTION_ROWS.map((row) => (
-              <chakra.label
+              <chakra.div
                 key={row.key}
                 display="flex"
                 alignItems="flex-start"
                 gap="var(--space-2)"
                 py="4px"
-                cursor="pointer"
+                cursor={isRunning ? "not-allowed" : "pointer"}
                 userSelect="none"
                 title={t(row.hint)}
+                onClick={(e) => {
+                  if (isRunning) return;
+                  // Switch 自身のクリックはコンポーネント側で処理されるので、
+                  // ラッパーは text 部分のクリックだけを引き受ける。
+                  if (e.target instanceof HTMLElement && e.target.closest("button[role=switch]")) {
+                    return;
+                  }
+                  toggle(row.key);
+                }}
               >
-                <Checkbox
-                  m="3px 0 0"
-                  flex="none"
-                  checked={options[row.key]}
-                  onChange={() => toggle(row.key)}
-                  disabled={isRunning}
-                />
+                <chakra.span mt="2px" flex="none">
+                  <Switch
+                    checked={options[row.key]}
+                    onChange={() => toggle(row.key)}
+                    disabled={isRunning}
+                    size="sm"
+                  />
+                </chakra.span>
                 <chakra.span display="flex" flexDirection="column" gap="2px" minW={0}>
                   <chakra.span fontSize="md" color="app.text">
                     {t(row.label)}
@@ -158,7 +168,7 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
                     {t(row.hint)}
                   </chakra.span>
                 </chakra.span>
-              </chakra.label>
+              </chakra.div>
             ))}
           </chakra.div>
         </FormSection>
