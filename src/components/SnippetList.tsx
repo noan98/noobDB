@@ -111,7 +111,17 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
     <TreeNode key={s.id}>
       <TreeRow
         role="treeitem"
+        tabIndex={0}
         onDoubleClick={() => onInsert(s)}
+        onKeyDown={(e) => {
+          // Enter/Space は double-click と同じ「挿入」を実行。ダブルクリック
+          // 必須にすると誤発火を避けたい意図だが、キーボードでは明示的な押下
+          // なので 1 アクションで挿入する方が ARIA tree の慣習にも合う。
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onInsert(s);
+          }
+        }}
         onContextMenu={(e) => handleContextMenu(e, s)}
         title={`${t("snippetInsertHint")}\n\n${s.sql}`}
       >
@@ -189,7 +199,17 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
                       onClick={() =>
                         setExpandedFolders((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
                       }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setExpandedFolders((prev) => ({
+                            ...prev,
+                            [key]: prev[key] === false ? true : false,
+                          }));
+                        }
+                      }}
                       role="treeitem"
+                      tabIndex={0}
                       aria-expanded={folderOpen}
                     >
                       <TreeChevron aria-hidden>{folderOpen ? "▾" : "▸"}</TreeChevron>

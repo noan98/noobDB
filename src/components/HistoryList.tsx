@@ -153,7 +153,14 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
                 <TreeRow
                   position="relative"
                   role="treeitem"
+                  tabIndex={0}
                   onClick={() => onRestore(h.sql)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onRestore(h.sql);
+                    }
+                  }}
                   title={`${t("historyRestoreHint")}\n\n${h.sql}`}
                   css={{
                     "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
