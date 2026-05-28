@@ -1,0 +1,203 @@
+name: coderabbit-fallback-approve
+
+# CodeRabbit にレビュー指摘があり、ユーザーが全スレッドを解決しても CodeRabbit が
+# 自発的に Approved レビューを出さないことがある。その状態だとブランチ保護で
+# 「CodeRabbit の Approval 必須」を要求している環境ではマージが進まない。
+# 本ワークフローはフォールバックとして、以下のすべての条件を満たすときに
+# `@coderabbitai approve` コメントを自動投稿し、CodeRabbit に承認を促す。
+#
+# 条件 (すべて満たすときだけ投稿):
+#   1. PR が OPEN かつドラフトでない
+#   2. CodeRabbit のコミットステータス (status または check-run) が SUCCESS
+#   3. 未解決のレビュースレッドが 0 件
+#   4. CodeRabbit の最新レビュー state が APPROVED ではない
+#   5. 同じ head SHA に対して本ワークフローが既に @coderabbitai approve を
+#      投稿済みでないこと (重複と無限ループの抑止)
+#
+# 設計方針:
+#   - PR のコードはチェックアウトしない (`gh` CLI / GitHub API のみで完結) ため、
+#     フォークからの PR でも安全に走らせられる。
+#   - `automerge.yml` と同じく `gh pr view` / GraphQL でスレッド状態を取得する。
+#   - CodeRabbit が稼働していない PR では Step 2 で抜けるため、純正の挙動を壊さない。
+#
+# トリガ:
+#   - pull_request_review_thread (resolved/unresolved): スレッド解消を契機に再評価
+#   - pull_request_review (submitted/edited/dismissed): レビュー状態の更新を契機に
+#   - issue_comment (created/edited): CodeRabbit のサマリ更新等を契機に
+#   - check_run (completed): CodeRabbit の check 完了を契機に
+#   - status: CodeRabbit のコミットステータス更新を契機に
+
+on:
+  pull_request_review_thread:
+    types: [resolved, unresolved]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  issue_comment:
+    types: [created, edited]
+  check_run:
+    types: [completed]
+  status:
+
+# 同一 PR に対する重複投稿を直列化する。SHA だけだと issue_comment では取れないので
+# PR 番号 (= issue.number) もフォールバックに含める (cancel-in-progress は false で
+# 途中 run はキャンセルしない)。
+concurrency:
+  group: coderabbit-fallback-approve-${{ github.event.pull_request.number || github.event.issue.number || github.event.sha || github.event.check_run.head_sha }}
+  cancel-in-progress: false
+
+# `@coderabbitai approve` は PR への issue コメントとして投稿するため、
+# pull-requests / issues の write が必要。statuses / checks は read のみ。
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  statuses: read
+  checks: read
+
+jobs:
+  fallback-approve:
+    name: post @coderabbitai approve when criteria met
+    runs-on: ubuntu-latest
+    # issue_comment は PR への CodeRabbit / ユーザーのコメントに絞る (人間のコメント
+    # でも条件が満たされていれば走らせて構わない)。check_run / status はコンテキスト
+    # 名を見てから絞り込むため、ここでは早期に弾かない。
+    if: >-
+      github.event_name != 'issue_comment' ||
+      github.event.issue.pull_request != null
+    steps:
+      - name: Resolve PR and check conditions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REVIEW_PR: ${{ github.event.pull_request.number }}
+          ISSUE_PR: ${{ github.event.issue.number }}
+          STATUS_SHA: ${{ github.event.sha }}
+          CHECK_SHA: ${{ github.event.check_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          owner="${GH_REPO%/*}"
+          repo="${GH_REPO#*/}"
+
+          # 1. 対象 PR 番号を解決する。イベントごとに参照先が異なる。
+          if [ "$EVENT_NAME" = "pull_request_review_thread" ] || [ "$EVENT_NAME" = "pull_request_review" ]; then
+            PR="$REVIEW_PR"
+          elif [ "$EVENT_NAME" = "issue_comment" ]; then
+            PR="$ISSUE_PR"
+          elif [ "$EVENT_NAME" = "status" ]; then
+            PR="$(gh api "repos/$GH_REPO/commits/$STATUS_SHA/pulls" \
+              --jq '[.[] | select(.state == "open")][0].number // empty')"
+          elif [ "$EVENT_NAME" = "check_run" ]; then
+            PR="$(gh api "repos/$GH_REPO/commits/$CHECK_SHA/pulls" \
+              --jq '[.[] | select(.state == "open")][0].number // empty')"
+          else
+            echo "未知のイベント ($EVENT_NAME)。スキップ。"
+            exit 0
+          fi
+
+          if [ -z "${PR:-}" ]; then
+            echo "対象の open PR が見つかりませんでした。スキップ。"
+            exit 0
+          fi
+          echo "対象 PR: #$PR"
+
+          # 2. PR メタデータを取得して PR が承認可能な状態か確認する。
+          meta="$(gh pr view "$PR" --json state,isDraft,headRefOid)"
+          state="$(echo "$meta" | jq -r '.state')"
+          isDraft="$(echo "$meta" | jq -r '.isDraft')"
+          headSha="$(echo "$meta" | jq -r '.headRefOid')"
+
+          if [ "$state" != "OPEN" ];  then echo "PR が OPEN ではありません ($state)。スキップ。"; exit 0; fi
+          if [ "$isDraft" = "true" ]; then echo "ドラフト PR です。スキップ。"; exit 0; fi
+          echo "head SHA: $headSha"
+
+          # 3. CodeRabbit のコミットステータスが SUCCESS であることを確認する。
+          #    CodeRabbit は環境によって commit status (legacy) か check-run の
+          #    どちらか (または両方) を投稿する。両方を見て、いずれかが success/passed
+          #    なら通過とする。両方とも CodeRabbit のエントリが存在しないなら、
+          #    CodeRabbit が稼働していない PR とみなしてスキップする。
+          cr_status="$(gh api "repos/$GH_REPO/commits/$headSha/statuses" --paginate \
+            --jq '[.[] | select(.context | ascii_downcase | contains("coderabbit"))]
+                  | sort_by(.updated_at) | reverse | .[0].state // empty')"
+          cr_check="$(gh api "repos/$GH_REPO/commits/$headSha/check-runs" --paginate \
+            --jq '[.check_runs[] | select(.name | ascii_downcase | contains("coderabbit"))]
+                  | sort_by(.completed_at // .started_at) | reverse | .[0]
+                  | (.conclusion // .status // empty)')"
+
+          ok="false"
+          case "$cr_status" in
+            success) ok="true" ;;
+          esac
+          case "$cr_check" in
+            success|neutral) ok="true" ;;
+          esac
+
+          if [ -z "$cr_status" ] && [ -z "$cr_check" ]; then
+            echo "CodeRabbit の status / check-run が見つかりません。CodeRabbit が稼働していないとみなしてスキップ。"
+            exit 0
+          fi
+          if [ "$ok" != "true" ]; then
+            echo "CodeRabbit のステータスが success ではありません (status=$cr_status, check=$cr_check)。スキップ。"
+            exit 0
+          fi
+          echo "CodeRabbit ステータス OK (status=$cr_status, check=$cr_check)"
+
+          # 4. 未解決のレビュースレッドが 0 件であることを確認する。スレッドが
+          #    多すぎる (>100) 場合は取りこぼしを避けるため安全側でスキップする。
+          threads_json="$(gh api graphql -f query='
+            query($owner:String!, $repo:String!, $pr:Int!) {
+              repository(owner:$owner, name:$repo) {
+                pullRequest(number:$pr) {
+                  reviewThreads(first:100) {
+                    totalCount
+                    nodes { isResolved }
+                  }
+                }
+              }
+            }' -f owner="$owner" -f repo="$repo" -F pr="$PR")"
+          total="$(echo "$threads_json" | jq -r '.data.repository.pullRequest.reviewThreads.totalCount')"
+          if [ "$total" -gt 100 ]; then
+            echo "レビュースレッドが 100 を超えています。安全のためスキップ。"
+            exit 0
+          fi
+          unresolved="$(echo "$threads_json" \
+            | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')"
+          if [ "$unresolved" -gt 0 ]; then
+            echo "未解決のレビュースレッドが $unresolved 件あります。スキップ。"
+            exit 0
+          fi
+          echo "未解決スレッド: 0 件"
+
+          # 5. CodeRabbit の最新レビュー state が APPROVED でないことを確認する。
+          #    既に承認済みなら投稿は不要 (このワークフローが投稿した結果として
+          #    CodeRabbit が承認した直後など、再評価で抜けるための条件)。
+          cr_review_state="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
+            --jq '[.[] | select(.user.login == "coderabbitai[bot]")]
+                  | sort_by(.submitted_at) | reverse | .[0].state // empty')"
+          if [ "$cr_review_state" = "APPROVED" ]; then
+            echo "CodeRabbit は既に APPROVED です。投稿不要。"
+            exit 0
+          fi
+          echo "CodeRabbit の現在レビュー state: ${cr_review_state:-(レビュー無し)}"
+
+          # 6. 同じ head SHA に対して既に @coderabbitai approve を本ワークフロー
+          #    から投稿していないかを確認する。識別タグ (HTML コメント) を
+          #    投稿本文に埋めておくことで一意に検出できる。
+          marker="<!-- coderabbit-fallback-approve: ${headSha} -->"
+          existing="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
+            --jq --arg marker "$marker" \
+            '[.[] | select(.user.login == "github-actions[bot]")
+                  | select(.body | contains($marker))] | length')"
+          if [ "${existing:-0}" -gt 0 ]; then
+            echo "head SHA $headSha に対する @coderabbitai approve 投稿は既存。スキップ。"
+            exit 0
+          fi
+
+          # 7. すべての条件を満たした。@coderabbitai approve を投稿する。
+          #    本文末尾に識別タグを埋めて、次回起動時の重複検出に使う。
+          body="$(printf '%s\n\n%s\n' \
+            '@coderabbitai approve' \
+            "$marker")"
+          gh pr comment "$PR" --body "$body"
+          echo "@coderabbitai approve を PR #$PR (head=$headSha) に投稿しました。"
