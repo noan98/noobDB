@@ -283,6 +283,12 @@ interface Tab {
   schemaTable: SchemaTable | null;
   /** True while a streaming command is feeding rows into `result`/`preview`. */
   streaming: boolean;
+  /**
+   * True while the active stream is a Dry Run preview (a subset of `streaming`).
+   * Lets the QueryEditor flip the Preview badge into its `running` state without
+   * also flipping the Run badge.
+   */
+  previewStreaming: boolean;
   /** Snapshot row cap used for the active preview stream. */
   previewRowLimit: number;
   /**
@@ -410,6 +416,7 @@ function makeQueryTab(): Tab {
     preview: null,
     schemaTable: null,
     streaming: false,
+    previewStreaming: false,
     previewRowLimit: getSettings().defaultDisplayCount,
     paginatable: null,
     autoLimitApplied: null,
@@ -441,6 +448,7 @@ function makeExplainTab(sql: string): Tab {
     preview: null,
     schemaTable: null,
     streaming: false,
+    previewStreaming: false,
     previewRowLimit: getSettings().defaultDisplayCount,
     paginatable: null,
     autoLimitApplied: null,
@@ -1446,6 +1454,7 @@ export default function App() {
               preview: null,
               schemaTable: null,
               streaming: false,
+              previewStreaming: false,
               previewRowLimit: limit,
               paginatable: base,
               autoLimitApplied: null,
@@ -1479,6 +1488,7 @@ export default function App() {
           preview: null,
           schemaTable: null,
           streaming: false,
+          previewStreaming: false,
           previewRowLimit: limit,
           paginatable: null,
           autoLimitApplied: null,
@@ -1553,6 +1563,7 @@ export default function App() {
     updateTab(tabId, {
       preview: emptyPreview(),
       streaming: true,
+      previewStreaming: true,
       previewRowLimit: rowLimit,
       paginatable: null,
       loadingMore: false,
@@ -1607,7 +1618,7 @@ export default function App() {
         });
       },
       onDone: () => {
-        patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false, previewStreaming: false }));
         const tt = tabsRef.current.find((x) => x.id === tabId);
         const rowsAffected = tt?.preview?.rows_affected ?? 0;
         const elapsedMs = tt?.preview?.elapsed_ms ?? Date.now() - startedAt;
@@ -1619,7 +1630,7 @@ export default function App() {
         finalize();
       },
       onError: ({ error, connectionLost }) => {
-        patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false, previewStreaming: false }));
         finalize();
         if (connectionLost) {
           void handleConnectionLostRef.current();
@@ -1640,7 +1651,7 @@ export default function App() {
         chunkSize: settings.streamPrefetchSize,
       });
     } catch (e) {
-      patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+      patchTab(tabId, (tt) => ({ ...tt, streaming: false, previewStreaming: false }));
       setStatus({ kind: "key", key: "statusPreviewError", vars: { error: String(e) }, error: true });
       finalize();
     }
@@ -1791,7 +1802,7 @@ export default function App() {
   const stopTab = useCallback(async (tab: Tab) => {
     if (!tab.streaming) return;
     await cancelStreamForTab(tab.id);
-    patchTab(tab.id, (tt) => ({ ...tt, streaming: false }));
+    patchTab(tab.id, (tt) => ({ ...tt, streaming: false, previewStreaming: false }));
     setStatus({ kind: "key", key: "statusQueryCancelled" });
   }, [cancelStreamForTab, patchTab]);
 
@@ -1986,6 +1997,7 @@ export default function App() {
       preview: null,
       schemaTable: null,
       streaming: false,
+      previewStreaming: false,
       previewRowLimit: limit,
       paginatable: base,
       autoLimitApplied: null,
@@ -2283,7 +2295,8 @@ export default function App() {
                     key={tab.id}
                     ref={getEditorRefSetter(pane.id)}
                     initialSql={tab.sql}
-                    running={tab.streaming}
+                    running={tab.streaming && !tab.previewStreaming}
+                    previewRunning={tab.previewStreaming}
                     onRun={(sql) => runInTabWithGate(tab, sql)}
                     onPreview={tab.kind === "explain" ? undefined : (sql) => previewQueryInTab(tab.id, sql)}
                     onExplain={tab.kind === "explain" ? undefined : (sql) => explainForTab(tab, sql)}

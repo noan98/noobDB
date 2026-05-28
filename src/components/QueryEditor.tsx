@@ -83,8 +83,10 @@ export interface ActiveTable {
 
 interface Props {
   onRun: (sql: string) => void;
-  /** True while this tab's query is streaming — swaps the Run icon for a spinner. */
+  /** True while this tab's Run is streaming — flips the Run badge to its `running` state. */
   running?: boolean;
+  /** True while this tab's Dry Run preview is streaming — flips the Preview badge to `running`. */
+  previewRunning?: boolean;
   onPreview?: (sql: string) => void;
   onExplain?: (sql: string) => void;
   onChange?: (sql: string) => void;
@@ -226,6 +228,7 @@ function buildSqlExtension(
 export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEditor({
   onRun,
   running,
+  previewRunning,
   onPreview,
   onExplain,
   onChange,
@@ -436,12 +439,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     disabled: { label: runLabel, tone: "neutral", icon: runIconPlay },
   };
 
-  // 既存 props では Run と Preview の `running` を区別できないため、Preview は
-  // `idle` / `disabled` の 2 状態に絞る (Issue #319 留意点: `done` / `error`
-  // はトースト/ステータスバー側で表現する)。Run / Preview を区別した
-  // `running` 表示は別 Issue で取り扱う。
+  // Preview Badge も `idle` / `running` / `disabled` の 3 状態を持つ。`running` は
+  // 親 (App.tsx) が `previewRunning` を真にしたタイミングで遷移する。`done` / `error`
+  // はトースト/ステータスバー側で表現し、Badge 自体は短時間で `idle` に戻る。
   const previewState: "idle" | "running" | "disabled" =
-    disabled || !hasContent ? "disabled" : "idle";
+    disabled || !hasContent ? "disabled" : previewRunning ? "running" : "idle";
   const previewIconEye = (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />

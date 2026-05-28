@@ -1,6 +1,6 @@
 import { chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
-import { type KeyboardEvent, type ReactNode } from "react";
+import { useId, type KeyboardEvent, type ReactNode } from "react";
 
 /**
  * `motion` の `layout` を使って thumb をスプリングアニメーションで動かす
@@ -55,6 +55,13 @@ export function Switch({
   title,
 }: Props) {
   const dims = SIZES[size];
+  // 内蔵 label を表示するときは、その span に id を振って button の
+  // `aria-labelledby` に連結する。これがないと SR からは無名コントロールに見える。
+  const generatedId = useId();
+  const buttonId = id ?? generatedId;
+  const internalLabelId = label !== undefined ? `${buttonId}-label` : undefined;
+  const labelledBy =
+    [ariaLabelledBy, internalLabelId].filter(Boolean).join(" ") || undefined;
 
   const handleKey = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (disabled) return;
@@ -70,11 +77,11 @@ export function Switch({
     <chakra.button
       type="button"
       role="switch"
-      id={id}
+      id={buttonId}
       name={name}
       aria-checked={checked}
       aria-disabled={disabled || undefined}
-      aria-labelledby={ariaLabelledBy}
+      aria-labelledby={labelledBy}
       aria-describedby={ariaDescribedBy}
       aria-label={ariaLabel}
       title={title}
@@ -137,7 +144,7 @@ export function Switch({
       }}
     >
       {button}
-      <chakra.span fontSize="inherit" color="inherit">
+      <chakra.span id={internalLabelId} fontSize="inherit" color="inherit">
         {label}
       </chakra.span>
     </chakra.span>
