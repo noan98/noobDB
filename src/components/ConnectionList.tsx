@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Box, Flex, Text } from "@chakra-ui/react";
+import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
@@ -7,8 +7,56 @@ import { EmptyState } from "./EmptyState";
 import { Spinner } from "./Spinner";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { Input } from "./ui";
+import { TreeBadge, TreeChevron, TreeIcon, TreeLabel, TreeNode, TreeRow } from "./tree";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
+
+/** ネストした子ノードを包む破線インデント (旧 .tree-children)。 */
+const TreeChildren = chakra("div", {
+  base: {
+    display: "flex",
+    flexDirection: "column",
+    pl: "12px",
+    ml: "14px",
+    borderLeft: "1px dashed",
+    borderColor: "app.border",
+  },
+});
+
+/** ローディング / 空表示のプレースホルダ行 (旧 .tree-empty)。 */
+const TreeEmpty = chakra("div", {
+  base: {
+    pt: "4px",
+    pb: "4px",
+    pr: "10px",
+    pl: "22px",
+    fontSize: "xs",
+    color: "app.textMuted",
+    fontStyle: "italic",
+  },
+});
+
+/** 接続状態ドットの状態別 style (旧 .status-dot.status-*)。色は動的トークンの
+ *  ため CSS 変数を直接参照する。`connecting` の脈動は App.css の @keyframes pulse。 */
+const STATUS_DOT_STYLE = {
+  idle: {
+    bg: "var(--status-idle)",
+    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-idle) 18%, transparent)",
+  },
+  connected: {
+    bg: "var(--status-connected)",
+    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-connected) 25%, transparent)",
+  },
+  connecting: {
+    bg: "var(--status-connecting)",
+    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-connecting) 25%, transparent)",
+    animation: "pulse 1.2s ease-in-out infinite",
+  },
+  error: {
+    bg: "var(--status-error)",
+    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-error) 25%, transparent)",
+  },
+} as const;
 
 interface Props {
   profiles: ConnectionProfile[];
@@ -392,6 +440,13 @@ export function ConnectionList({
     }
   };
 
+  const renderLoadingRow = () => (
+    <TreeEmpty display="flex" alignItems="center" gap="6px" fontStyle="normal">
+      <Spinner size={13} />
+      <span>{t("treeLoading")}</span>
+    </TreeEmpty>
+  );
+
   const renderProfile = (p: ConnectionProfile) => {
     const isActive = p.id === activeProfileId;
     const isOpen = !!expandedProfiles[p.id];
@@ -401,12 +456,27 @@ export function ConnectionList({
     const schemaFiltered = searching && !profileMetaMatches(p);
     const status = profileStatus(p);
     const accent = p.color ?? undefined;
-    // Production rows always show a red left stripe (CSS); don't let a custom
-    // color override it — the color chip still conveys the accent.
-    const rowStyle =
-      accent && !p.is_production
-        ? ({ borderLeftColor: accent } as React.CSSProperties)
-        : undefined;
+    const refreshing = refreshingSession === sessionId;
+    // Left stripe + tint priority: production (red, always wins) > custom color >
+    // active accent > none. A custom color also overrides the active accent
+    // stripe, matching the previous inline-style behaviour.
+    let borderLeftColor: string;
+    let rowBg: string | undefined;
+    if (p.is_production) {
+      borderLeftColor = "var(--status-error)";
+      rowBg = isActive
+        ? "color-mix(in srgb, var(--status-error) 12%, var(--bg-active))"
+        : "color-mix(in srgb, var(--status-error) 6%, transparent)";
+    } else if (accent) {
+      borderLeftColor = accent;
+      rowBg = isActive ? "var(--bg-active)" : undefined;
+    } else if (isActive) {
+      borderLeftColor = "var(--accent)";
+      rowBg = "var(--bg-active)";
+    } else {
+      borderLeftColor = "transparent";
+      rowBg = undefined;
+    }
     const subtitle =
       p.driver === "sqlite"
         ? p.file_path
@@ -415,13 +485,16 @@ export function ConnectionList({
         : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
     return (
-      <div
-        key={p.id}
-        className={`tree-node profile ${isActive ? "active" : ""} ${p.is_production ? "is-production" : ""}`}
-      >
-        <div
-          className="tree-row profile-row"
-          style={rowStyle}
+      <TreeNode key={p.id}>
+        <TreeRow
+          pt="5px"
+          pb="5px"
+          pr="10px"
+          pl="5px"
+          borderLeftWidth="3px"
+          borderLeftColor={borderLeftColor}
+          bg={rowBg}
+          _hover={{ bg: rowBg ?? "app.hover" }}
           onClick={() => handleProfileClick(p)}
           onContextMenu={(e) => handleProfileContextMenu(e, p)}
           role="treeitem"
@@ -432,62 +505,133 @@ export function ConnectionList({
               : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`
           }
         >
-          <span className={`tree-chevron${isOpen ? " is-open" : ""}`} aria-hidden>▸</span>
+          <TreeChevron transform={isOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
           {accent ? (
-            <span
-              className="profile-color-chip"
-              style={{ background: accent }}
+            <chakra.span
+              display="inline-block"
+              width="10px"
+              height="10px"
+              borderRadius="sm"
+              m="0 2px 0 0"
+              flexShrink={0}
+              boxShadow="0 0 0 1px rgba(0, 0, 0, 0.18) inset"
+              bg={accent}
               aria-hidden
             />
           ) : (
-            <span className="tree-icon profile-icon" aria-hidden><Icon name="server" /></span>
+            <TreeIcon color="app.accent" aria-hidden><Icon name="server" /></TreeIcon>
           )}
-          <span className="tree-label profile-label">
-            <span className="profile-name">{p.name}</span>
-            <span className="profile-sub" title={subtitle}>{subtitle}</span>
-          </span>
+          <chakra.span
+            display="flex"
+            flexDirection="column"
+            justifyContent="center"
+            gap="1px"
+            minWidth={0}
+            lineHeight="1.25"
+          >
+            <chakra.span
+              overflow="hidden"
+              textOverflow="ellipsis"
+              whiteSpace="nowrap"
+              fontWeight={isActive ? 700 : 600}
+              fontSize="md"
+              color={isActive ? "app.text" : undefined}
+            >
+              {p.name}
+            </chakra.span>
+            <chakra.span
+              overflow="hidden"
+              textOverflow="ellipsis"
+              whiteSpace="nowrap"
+              fontSize="2xs"
+              fontFamily="mono"
+              color={isActive ? "app.textSecondary" : "app.textMuted"}
+              title={subtitle}
+            >
+              {subtitle}
+            </chakra.span>
+          </chakra.span>
           {p.is_production && (
-            <span className="tree-badge production-badge" title={t("listProduction")}>
-              <Icon name="warning" />
+            <TreeBadge
+              display="inline-flex"
+              alignItems="center"
+              gap="3px"
+              bg="app.status.error"
+              color="#fff"
+              borderColor="app.status.error"
+              fontWeight={700}
+              letterSpacing="0.05em"
+              title={t("listProduction")}
+            >
+              <Icon name="warning" size={11} />
               {t("listProduction")}
-            </span>
+            </TreeBadge>
           )}
           {p.read_only && (
-            <span
-              className="tree-badge read-only-badge"
+            <TreeBadge
+              bg="var(--status-info, var(--bg-muted))"
+              color="app.text"
+              borderColor="app.borderStrong"
+              fontWeight={700}
+              letterSpacing="0.05em"
               title={t("listReadOnlyTitle")}
             >
               {t("listReadOnly")}
-            </span>
+            </TreeBadge>
           )}
           {status === "connected" && (
-            <button
+            <chakra.button
               type="button"
-              className={`schema-refresh-btn ${refreshingSession === sessionId ? "spinning" : ""}`}
+              flexShrink={0}
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              p="2px"
+              color="app.textMuted"
+              bg="transparent"
+              border="none"
+              borderRadius="sm"
+              cursor="pointer"
+              _hover={refreshing ? undefined : { color: "app.text", bg: "var(--bg-hover, var(--bg-muted))" }}
+              _disabled={{ cursor: "default" }}
               onClick={(e) => {
                 e.stopPropagation();
                 void refreshSchema();
               }}
-              disabled={refreshingSession === sessionId}
+              disabled={refreshing}
               title={t("treeRefreshTitle")}
               aria-label={t("treeRefresh")}
             >
-              <Icon name="refresh" />
-            </button>
+              <chakra.span
+                display="inline-flex"
+                animation={refreshing ? "spinner-rotate 0.7s linear infinite" : undefined}
+              >
+                <Icon name="refresh" size={13} />
+              </chakra.span>
+            </chakra.button>
           )}
-          <span className={`status-dot status-${status}`} aria-label={statusLabel(status)} title={statusLabel(status)} />
-          <span className="tree-badge driver">{p.driver}</span>
-        </div>
+          <chakra.span
+            display="inline-block"
+            width="8px"
+            height="8px"
+            borderRadius="50%"
+            flexShrink={0}
+            transitionProperty="background, box-shadow"
+            transitionDuration="var(--dur-med)"
+            transitionTimingFunction="var(--ease)"
+            {...STATUS_DOT_STYLE[status]}
+            aria-label={statusLabel(status)}
+            title={statusLabel(status)}
+          />
+          <TreeBadge>{p.driver}</TreeBadge>
+        </TreeRow>
 
         {isOpen && isActive && sessionId && (
-          <div className="tree-children">
+          <TreeChildren>
             {databases === null ? (
-              <div className="tree-empty tree-loading">
-                <Spinner size={13} />
-                <span>{t("treeLoading")}</span>
-              </div>
+              renderLoadingRow()
             ) : databases.length === 0 ? (
-              <div className="tree-empty">{t("treeNoDatabases")}</div>
+              <TreeEmpty>{t("treeNoDatabases")}</TreeEmpty>
             ) : (
               databases
                 .filter((db) => !schemaFiltered || dbNodeMatches(db))
@@ -496,28 +640,25 @@ export function ConnectionList({
                 const dbOpen = !!expandedDbs[db] || (schemaFiltered && dbNodeMatches(db));
                 const dbTables = tables[db];
                 return (
-                  <div key={db} className="tree-node db">
-                    <div
-                      className="tree-row db-row"
+                  <TreeNode key={db}>
+                    <TreeRow
+                      pl="4px"
                       onClick={() => toggleDb(db)}
                       onContextMenu={(e) => handleDbContextMenu(e, db)}
                       role="treeitem"
                       aria-expanded={dbOpen}
                       title={db}
                     >
-                      <span className={`tree-chevron${dbOpen ? " is-open" : ""}`} aria-hidden>▸</span>
-                      <span className="tree-icon db-icon" aria-hidden><Icon name="database" /></span>
-                      <span className="tree-label">{db}</span>
-                    </div>
+                      <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                      <TreeIcon color="#0ea5e9" aria-hidden><Icon name="database" /></TreeIcon>
+                      <TreeLabel fontWeight={400}>{db}</TreeLabel>
+                    </TreeRow>
                     {dbOpen && (
-                      <div className="tree-children">
+                      <TreeChildren>
                         {dbTables === undefined ? (
-                          <div className="tree-empty tree-loading">
-                            <Spinner size={13} />
-                            <span>{t("treeLoading")}</span>
-                          </div>
+                          renderLoadingRow()
                         ) : dbTables.length === 0 ? (
-                          <div className="tree-empty">{t("treeNoTables")}</div>
+                          <TreeEmpty>{t("treeNoTables")}</TreeEmpty>
                         ) : (
                           dbTables
                             .filter((tbl) => !schemaFiltered || dbNameHit || tableNodeMatches(db, tbl))
@@ -529,29 +670,27 @@ export function ConnectionList({
                               !!expandedTables[tKey] || (schemaFiltered && columnNameMatches(db, tbl));
                             const cols = tableColumns[tKey];
                             return (
-                              <div key={tbl} className="tree-node table">
-                                <div
-                                  className="tree-row table-row"
+                              <TreeNode key={tbl}>
+                                <TreeRow
+                                  pl="4px"
                                   role="treeitem"
                                   aria-expanded={tOpen}
                                   onClick={() => toggleTable(db, tbl)}
                                   onDoubleClick={() => onPickTable(db, tbl)}
                                   onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
                                   title={t("treeTableTitle")}
+                                  _hover={{ bg: "app.rowHover" }}
                                 >
-                                  <span className={`tree-chevron${tOpen ? " is-open" : ""}`} aria-hidden>▸</span>
-                                  <span className="tree-icon table-icon" aria-hidden><Icon name="table" /></span>
-                                  <span className="tree-label">{tbl}</span>
-                                </div>
+                                  <TreeChevron transform={tOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                                  <TreeIcon color="app.textSecondary" aria-hidden><Icon name="table" /></TreeIcon>
+                                  <TreeLabel fontWeight={400}>{tbl}</TreeLabel>
+                                </TreeRow>
                                 {tOpen && (
-                                  <div className="tree-children">
+                                  <TreeChildren>
                                     {cols === undefined ? (
-                                      <div className="tree-empty tree-loading">
-                                        <Spinner size={13} />
-                                        <span>{t("treeLoading")}</span>
-                                      </div>
+                                      renderLoadingRow()
                                     ) : cols.length === 0 ? (
-                                      <div className="tree-empty">{t("treeNoColumns")}</div>
+                                      <TreeEmpty>{t("treeNoColumns")}</TreeEmpty>
                                     ) : (
                                       cols
                                         .filter((col) => showAllCols || col.name.toLowerCase().includes(q))
@@ -559,9 +698,12 @@ export function ConnectionList({
                                         const isPk = col.key === "PRI";
                                         const isFk = col.referenced_table !== null;
                                         return (
-                                          <div
+                                          <TreeRow
                                             key={col.name}
-                                            className="tree-row column-row"
+                                            pt="3px"
+                                            pb="3px"
+                                            cursor="default"
+                                            fontSize="sm"
                                             role="treeitem"
                                             onMouseEnter={(e) =>
                                               setHoveredColumn({
@@ -573,35 +715,43 @@ export function ConnectionList({
                                               setHoveredColumn((cur) => (cur?.col === col ? null : cur))
                                             }
                                           >
-                                            <span className="tree-chevron empty" aria-hidden />
-                                            <span
-                                              className={`tree-icon column-icon ${isPk ? "is-pk" : ""} ${isFk ? "is-fk" : ""}`}
+                                            <TreeChevron visibility="hidden" aria-hidden />
+                                            <TreeIcon
+                                              fontSize="xs"
+                                              color={isPk ? "app.cell.date" : isFk ? "#f59e0b" : "app.textMuted"}
                                               title={isPk ? t("colPkTitle") : isFk ? t("colFkTitle") : undefined}
                                               aria-hidden
                                             >
                                               {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
-                                            </span>
-                                            <span className="tree-label column-name">{col.name}</span>
-                                            <span className="tree-badge column-type" title={col.data_type}>{col.data_type}</span>
-                                          </div>
+                                            </TreeIcon>
+                                            <TreeLabel fontFamily="mono" color="app.text">{col.name}</TreeLabel>
+                                            <TreeBadge
+                                              fontFamily="mono"
+                                              textTransform="lowercase"
+                                              fontSize="2xs"
+                                              title={col.data_type}
+                                            >
+                                              {col.data_type}
+                                            </TreeBadge>
+                                          </TreeRow>
                                         );
                                       })
                                     )}
-                                  </div>
+                                  </TreeChildren>
                                 )}
-                              </div>
+                              </TreeNode>
                             );
                           })
                         )}
-                      </div>
+                      </TreeChildren>
                     )}
-                  </div>
+                  </TreeNode>
                 );
               })
             )}
-          </div>
+          </TreeChildren>
         )}
-      </div>
+      </TreeNode>
     );
   };
 
@@ -650,25 +800,51 @@ export function ConnectionList({
                 const groupOpen = expandedGroups[key] !== false;
                 const label = g.name ?? t("listGroupUngrouped");
                 return (
-                  <div key={key} className="tree-node profile-group">
-                    <div
-                      className="tree-row group-row"
+                  <TreeNode key={key}>
+                    <Box
+                      display="flex"
+                      alignItems="center"
+                      gap="var(--space-1)"
+                      whiteSpace="nowrap"
+                      overflow="hidden"
+                      userSelect="none"
+                      cursor="pointer"
+                      pt="6px"
+                      pr="10px"
+                      pb="6px"
+                      pl="6px"
+                      fontSize="xs"
+                      textTransform="uppercase"
+                      letterSpacing="0.06em"
+                      color="app.textMuted"
+                      bg="app.surfaceMuted"
+                      borderTop="1px solid"
+                      borderTopColor="app.borderSubtle"
+                      borderBottom="1px solid"
+                      borderBottomColor="app.borderSubtle"
+                      borderLeft="2px solid transparent"
+                      transitionProperty="background, color, border-color, box-shadow"
+                      transitionDuration="var(--dur-fast)"
+                      transitionTimingFunction="var(--ease)"
+                      _hover={{ bg: "app.hover", color: "app.text" }}
                       onClick={() =>
                         setExpandedGroups((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
                       }
                       role="treeitem"
                       aria-expanded={groupOpen}
                     >
-                      <span className={`tree-chevron${groupOpen ? " is-open" : ""}`} aria-hidden>▸</span>
-                      <span className="group-label">{label}</span>
-                      <span className="tree-badge group-count">{g.profiles.length}</span>
-                    </div>
+                      <TreeChevron transform={groupOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                      <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
+                        {label}
+                      </chakra.span>
+                      <TreeBadge textTransform="none" letterSpacing="0">{g.profiles.length}</TreeBadge>
+                    </Box>
                     {groupOpen && (
-                      <div className="tree-children">
+                      <Box display="flex" flexDirection="column">
                         {g.profiles.map(renderProfile)}
-                      </div>
+                      </Box>
                     )}
-                  </div>
+                  </TreeNode>
                 );
               })}
         </Box>
@@ -682,6 +858,9 @@ export function ConnectionList({
     </Flex>
   );
 }
+
+const TooltipDt = chakra("dt", { base: { color: "app.textMuted", whiteSpace: "nowrap" } });
+const TooltipDd = chakra("dd", { base: { m: 0, fontFamily: "mono", wordBreak: "break-all" } });
 
 /**
  * Hover card for a schema-browser column. Shows type, NULL-ability, default,
@@ -730,47 +909,58 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
         : col.referenced_table;
 
   return (
-    <div
+    <Box
       ref={ref}
-      className="column-tooltip"
       role="tooltip"
-      style={{
-        left: pos ? pos.left : anchor.right + 8,
-        top: pos ? pos.top : anchor.top,
-        visibility: pos ? "visible" : "hidden",
-      }}
+      position="fixed"
+      zIndex={1100}
+      maxWidth="280px"
+      bg="app.surface"
+      border="1px solid"
+      borderColor="app.borderStrong"
+      borderRadius="md"
+      boxShadow="md"
+      p="8px 10px"
+      fontSize="sm"
+      color="app.text"
+      pointerEvents="none"
+      left={`${pos ? pos.left : anchor.right + 8}px`}
+      top={`${pos ? pos.top : anchor.top}px`}
+      visibility={pos ? "visible" : "hidden"}
     >
-      <div className="column-tooltip-name">{col.name}</div>
-      <dl className="column-tooltip-rows">
-        <dt>{t("colTipType")}</dt>
-        <dd>{col.data_type}</dd>
-        <dt>{t("colTipNullable")}</dt>
-        <dd>{col.nullable ? t("colTipYes") : t("colTipNo")}</dd>
+      <chakra.div fontFamily="mono" fontWeight={600} mb="6px" wordBreak="break-all">
+        {col.name}
+      </chakra.div>
+      <chakra.dl display="grid" gridTemplateColumns="auto 1fr" gap="2px 10px" m={0}>
+        <TooltipDt>{t("colTipType")}</TooltipDt>
+        <TooltipDd>{col.data_type}</TooltipDd>
+        <TooltipDt>{t("colTipNullable")}</TooltipDt>
+        <TooltipDd>{col.nullable ? t("colTipYes") : t("colTipNo")}</TooltipDd>
         {col.default !== null && (
           <>
-            <dt>{t("colTipDefault")}</dt>
-            <dd>{col.default}</dd>
+            <TooltipDt>{t("colTipDefault")}</TooltipDt>
+            <TooltipDd>{col.default}</TooltipDd>
           </>
         )}
         {col.key && (
           <>
-            <dt>{t("colTipKey")}</dt>
-            <dd>{keyLabel}</dd>
+            <TooltipDt>{t("colTipKey")}</TooltipDt>
+            <TooltipDd>{keyLabel}</TooltipDd>
           </>
         )}
         {reference && (
           <>
-            <dt>{t("colTipReferences")}</dt>
-            <dd>{reference}</dd>
+            <TooltipDt>{t("colTipReferences")}</TooltipDt>
+            <TooltipDd>{reference}</TooltipDd>
           </>
         )}
         {col.extra && (
           <>
-            <dt>{t("colTipExtra")}</dt>
-            <dd>{col.extra}</dd>
+            <TooltipDt>{t("colTipExtra")}</TooltipDt>
+            <TooltipDd>{col.extra}</TooltipDd>
           </>
         )}
-      </dl>
-    </div>
+      </chakra.dl>
+    </Box>
   );
 }

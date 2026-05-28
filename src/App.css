@@ -285,12 +285,11 @@ button.icon {
 }
 
 /* Micro-interactions: a short, consistent transition on the main interactive
-   surfaces (tree rows, tabs, menu items, etc.). Durations/easing come from the
-   --dur-* / --ease tokens and are neutralized by the reduced-motion query. */
-.tree-row,
-.group-row,
+   surfaces (menu items, autocomplete entries, etc.). Durations/easing come from
+   the --dur-* / --ease tokens and are neutralized by the reduced-motion query.
+   Tree rows / groups / color swatches carry this transition via Chakra style
+   props now (see components/tree.tsx, ConnectionList, ConnectionForm). */
 .context-menu-item,
-.color-swatch,
 .cm-tooltip-autocomplete > ul > li {
   transition: background var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease),
@@ -317,7 +316,6 @@ input:focus, select:focus {
 /* Keyboard focus ring for interactive controls. Uses :focus-visible so the
    ring shows up during keyboard navigation but not on mouse clicks. */
 button:focus-visible,
-.tree-row:focus-visible,
 .context-menu-item:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
@@ -438,101 +436,10 @@ label {
   color: var(--text);
 }
 
-.tree-node {
-  display: flex;
-  flex-direction: column;
-}
-
-.tree-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 4px 10px 4px 6px;
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-  overflow: hidden;
-  border-left: 2px solid transparent;
-}
-.tree-row:hover { background: var(--bg-hover); }
-
-/* Profile rows carry a 2-line label (name + endpoint) and a thicker left stripe
-   so the active / production accent reads clearly. The 3px border is reserved on
-   every profile row (transparent by default) to avoid a layout shift when a row
-   becomes active. */
-.tree-row.profile-row {
-  border-left-width: 3px;
-  padding: 5px 10px 5px 5px;
-}
-.profile-label {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-  min-width: 0;
-  line-height: 1.25;
-}
-.profile-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  font-size: var(--text-md);
-}
-.profile-sub {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-2xs);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-}
-
-.tree-node.profile.active > .tree-row.profile-row {
-  background: var(--bg-active);
-  border-left-color: var(--accent);
-}
-.tree-node.profile.active > .tree-row.profile-row .profile-name {
-  font-weight: 700;
-  color: var(--text);
-}
-.tree-node.profile.active > .tree-row.profile-row .profile-sub {
-  color: var(--text-secondary);
-}
-
-.tree-chevron {
-  display: inline-block;
-  width: 14px;
-  text-align: center;
-  color: var(--text-muted);
-  font-size: var(--text-2xs);
-  flex-shrink: 0;
-  transition: transform var(--dur-fast) var(--ease);
-}
-.tree-chevron.is-open { transform: rotate(90deg); }
-.tree-chevron.empty { visibility: hidden; }
-
-.tree-icon {
-  display: inline-block;
-  width: 16px;
-  text-align: center;
-  font-size: var(--text-md);
-  flex-shrink: 0;
-}
-.profile-icon { color: var(--accent); }
-.db-icon { color: #0ea5e9; }
-.table-icon { color: var(--text-secondary); }
-
-.tree-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 500;
-}
-.tree-node.db .tree-label,
-.tree-node .table-row .tree-label {
-  font-weight: 400;
-}
+/* The connection tree's node / row / chevron / icon / label primitives now live
+   as Chakra components in components/tree.tsx (shared) and ConnectionList.tsx
+   (profile / db / table / column rows, status dot, color chip, badges). Only
+   `.tree-badge` (base) below is still referenced from App.tsx's status bar. */
 
 .tree-badge {
   font-size: var(--text-2xs);
@@ -546,86 +453,8 @@ label {
   flex-shrink: 0;
 }
 
-.tree-children {
-  display: flex;
-  flex-direction: column;
-  padding-left: 12px;
-  border-left: 1px dashed var(--border);
-  margin-left: 14px;
-}
-
-.tree-node.db > .tree-row.db-row {
-  padding-left: 4px;
-}
-
-.table-row { padding-left: 4px; }
-.table-row:hover { background: var(--bg-row-hover); }
-
-.tree-node.table > .tree-row.table-row {
-  padding-left: 4px;
-}
-.column-row {
-  padding: 3px 10px 3px 6px;
-  font-size: var(--text-sm);
-  cursor: default;
-  gap: var(--space-1);
-}
-.column-row:hover { background: var(--bg-hover); }
-.column-icon { color: var(--text-muted); font-size: var(--text-xs); }
-.column-icon.is-pk { color: var(--cell-date); font-size: var(--text-xs); }
-.column-icon.is-fk { color: #f59e0b; font-size: var(--text-xs); }
-.column-name {
-  font-family: var(--font-mono);
-  font-weight: 500;
-  color: var(--text);
-}
-.tree-badge.column-type {
-  font-family: var(--font-mono);
-  text-transform: lowercase;
-  font-size: var(--text-2xs);
-}
-
-.column-tooltip {
-  position: fixed;
-  z-index: 1100;
-  max-width: 280px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  padding: 8px 10px;
-  font-size: var(--text-sm);
-  color: var(--text);
-  pointer-events: none;
-}
-.column-tooltip-name {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  margin-bottom: 6px;
-  word-break: break-all;
-}
-.column-tooltip-rows {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 10px;
-  margin: 0;
-}
-.column-tooltip-rows dt {
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-.column-tooltip-rows dd {
-  margin: 0;
-  font-family: var(--font-mono);
-  word-break: break-all;
-}
-
-.tree-empty {
-  padding: 4px 10px 4px 22px;
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-  font-style: italic;
-}
+/* .tree-children / .table-row / .column-row / .column-tooltip* / .tree-empty
+   moved to Chakra (ConnectionList.tsx). */
 
 .tree-form {
   display: flex;
@@ -665,78 +494,11 @@ label {
   background: var(--bg-muted);
 }
 
-/* ---------- Profile groups, color accent, production badge ---------- */
+/* ---------- Read-only badge (still used by App.tsx status bar) ---------- */
 
-.tree-node.profile-group > .tree-row.group-row {
-  cursor: pointer;
-  padding: 6px 10px 6px 6px;
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  background: var(--bg-muted);
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
-  border-left: 2px solid transparent;
-}
-.tree-node.profile-group > .tree-row.group-row:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-.tree-node.profile-group > .tree-children {
-  margin-left: 0;
-  padding-left: 0;
-  border-left: none;
-}
-.group-label {
-  flex: 1;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tree-badge.group-count {
-  font-size: var(--text-2xs);
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.profile-color-chip {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: var(--radius-sm);
-  margin: 0 2px 0 0;
-  flex-shrink: 0;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18) inset;
-}
-
-/* Production connections get an always-on red left stripe + tint (visible even
-   before connecting) so a risky target is unmistakable. The red wins over both
-   the active accent and any custom color. */
-.tree-node.profile.is-production > .tree-row.profile-row {
-  border-left-color: var(--status-error);
-  background: color-mix(in srgb, var(--status-error) 6%, transparent);
-}
-.tree-node.profile.is-production.active > .tree-row.profile-row {
-  border-left-color: var(--status-error);
-  background: color-mix(in srgb, var(--status-error) 12%, var(--bg-active));
-}
-
-.tree-badge.production-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  background: var(--status-error);
-  color: #fff;
-  border-color: var(--status-error);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-}
-.tree-badge.production-badge .icon-svg {
-  width: 11px;
-  height: 11px;
-}
-
+/* Profile groups, color accent and the production badge / stripe moved to
+   Chakra (ConnectionList.tsx). `.tree-badge.read-only-badge` stays because the
+   topbar in App.tsx still renders it with `className`. */
 .tree-badge.read-only-badge {
   background: var(--status-info, var(--bg-muted));
   color: var(--text);
@@ -800,20 +562,7 @@ label {
 }
 
 
-/* ---------- Color swatch picker (connection form) ---------- */
-
-.color-swatch {
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-  border: 2px solid transparent;
-  padding: 0;
-  cursor: pointer;
-  box-shadow: 0 0 0 1px var(--border-strong);
-}
-.color-swatch.selected {
-  border-color: var(--text);
-}
+/* Color swatch picker (connection form) moved to Chakra (ConnectionForm.tsx). */
 
 
 /* ---------- Status dot ---------- */
@@ -903,27 +652,7 @@ label {
   max-width: none;
 }
 
-/* Password input with an always-visible show/hide toggle pinned inside the
-   field. The input reserves right padding so text never slides under the icon. */
-.password-field { position: relative; display: flex; align-items: center; }
-.password-field input { padding-right: 34px; }
-/* Hide the WebView2/Edge native password reveal & clear controls so they don't
-   render a second eye icon alongside our own .password-toggle button. */
-.password-field input::-ms-reveal,
-.password-field input::-ms-clear { display: none; }
-.password-toggle {
-  position: absolute;
-  right: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: var(--radius-sm);
-}
-.password-toggle:hover { background: var(--bg-hover); color: var(--text); }
+/* Password input with show/hide toggle moved to Chakra (ConnectionForm.tsx). */
 
 /* ---------- Editor ---------- */
 
@@ -1047,42 +776,9 @@ label {
   to { transform: rotate(360deg); }
 }
 
-/* Manual schema-tree refresh on the active connection row. Stays subtle until
-   hovered so it doesn't compete with the connection name. */
-.schema-refresh-btn {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  color: var(--text-muted);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.schema-refresh-btn:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--bg-hover, var(--bg-muted));
-}
-.schema-refresh-btn:disabled {
-  cursor: default;
-}
-.schema-refresh-btn .icon-svg {
-  width: 13px;
-  height: 13px;
-}
-.schema-refresh-btn.spinning .icon-svg {
-  animation: spinner-rotate 0.7s linear infinite;
-}
-
-/* Loading variant of a schema-tree placeholder row: spinner beside the label. */
-.tree-empty.tree-loading {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-style: normal;
-}
+/* Manual schema-tree refresh button and the loading placeholder row moved to
+   Chakra (ConnectionList.tsx). The spinner-rotate keyframe above is still used
+   there (and by the shared Spinner component). */
 
 
 /* ---------- Splitter (drag-to-resize panes) ---------- */
