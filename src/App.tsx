@@ -321,9 +321,9 @@ interface Tab {
   pendingEdits: PendingEdits;
   /**
    * Most recent Query Builder inputs captured on its Run / Dry Run, restored
-   * when the builder is reopened in this tab. In-memory only (not persisted),
-   * so it is discarded when the tab closes, the connection drops, or the app
-   * exits. Holds the latest single snapshot — no history.
+   * when the builder is reopened in this tab. Persisted alongside the tab
+   * (#287) so it survives reconnects and app restarts; cleared only when the
+   * tab itself is closed. Holds the latest single snapshot — no history.
    */
   builderSnapshot: QueryBuilderSnapshot | null;
 }
@@ -457,6 +457,10 @@ function toPersistedTab(tab: Tab): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
+  // #287: Carry the Query Builder snapshot through so the inputs come back on
+  // the next reconnect — closing the tab still drops it because the tab is
+  // removed from the persisted list before the next save.
+  if (tab.builderSnapshot) out.builderSnapshot = tab.builderSnapshot;
   return out;
 }
 
@@ -1410,6 +1414,7 @@ export default function App() {
     async (sid: string, profile: ConnectionProfile, ws: PersistedWorkspace) => {
       const limit = Math.max(1, settings.defaultDisplayCount);
       const buildTab = async (s: PersistedTab): Promise<Tab> => {
+        const restoredSnapshot = s.builderSnapshot ?? null;
         if (s.kind === "table" && s.database && s.table) {
           try {
             await api.describeTable(sid, s.database, s.table);
@@ -1435,7 +1440,7 @@ export default function App() {
               canLoadMore: false,
               tableColumns: null,
               pendingEdits: {},
-              builderSnapshot: null,
+              builderSnapshot: restoredSnapshot,
             };
           } catch {
             // Table is gone — fall through to a query tab using the saved SQL.
@@ -1443,7 +1448,12 @@ export default function App() {
         }
         if (s.kind === "explain") {
           const tab = makeExplainTab(s.sql);
-          return { ...tab, title: s.title || tab.title, previewRowLimit: limit };
+          return {
+            ...tab,
+            title: s.title || tab.title,
+            previewRowLimit: limit,
+            builderSnapshot: restoredSnapshot,
+          };
         }
         return {
           id: newTabId(),
@@ -1463,7 +1473,7 @@ export default function App() {
           canLoadMore: false,
           tableColumns: null,
           pendingEdits: {},
-          builderSnapshot: null,
+          builderSnapshot: restoredSnapshot,
         };
       };
 

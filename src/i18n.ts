@@ -419,6 +419,9 @@ const en = {
   editCancelButton: "Cancel",
   editCancelButtonTitle: "Discard all pending edits.",
   editPreviewMultiRowTitle: "Preview supports one row at a time. Discard edits on other rows to enable.",
+  editPreviewMultiRowBanner: "Preview unavailable (multi-row)",
+  editPreviewMultiRowBannerTitle:
+    "Preview runs a single-row dry run. Apply will commit every edited row in one transaction, but per-row Preview is not available.",
   editPendingTitle: "{original} → {next} (pending — Preview or Apply to commit)",
   editNoPkHint: "No primary key — editing disabled",
   editNoPkHintTitle: "Inline cell editing needs a primary key to build a safe UPDATE WHERE clause.",
@@ -1204,6 +1207,9 @@ const ja: Dict = {
   editCancelButton: "破棄",
   editCancelButtonTitle: "未保存の編集をすべて破棄します。",
   editPreviewMultiRowTitle: "Preview は 1 行ずつのみ対応しています。他の行の編集を破棄するとボタンが有効になります。",
+  editPreviewMultiRowBanner: "Preview 未対応 (複数行)",
+  editPreviewMultiRowBannerTitle:
+    "Preview のドライランは 1 行のみ対応しています。Apply は編集した全行を 1 つのトランザクションで実行しますが、行ごとの Preview はできません。",
   editPendingTitle: "{original} → {next} (未保存 — Preview か Apply で反映)",
   editNoPkHint: "主キーが無いため編集できません",
   editNoPkHintTitle: "インラインのセル編集は、対象行を特定する WHERE 句を組み立てるために主キーが必要です。",

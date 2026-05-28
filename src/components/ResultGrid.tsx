@@ -1416,6 +1416,21 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             >
               {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
             </chakra.span>
+            {editedRowCount > 1 && !hasInvalidEdit && (
+              // #285: Preview only handles one row at a time; surface that
+              // limitation explicitly so users don't assume Apply has been
+              // dry-run-validated for every edited row.
+              <chakra.span
+                role="note"
+                fontSize="xs"
+                color="app.textMuted"
+                fontStyle="italic"
+                whiteSpace="nowrap"
+                title={t("editPreviewMultiRowBannerTitle")}
+              >
+                {t("editPreviewMultiRowBanner")}
+              </chakra.span>
+            )}
             <Button
               variant="warning"
               size="sm"
