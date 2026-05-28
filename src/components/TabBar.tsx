@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useCallback, useId, useRef } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
@@ -57,6 +57,46 @@ export function TabBar({
   // Scope the sliding indicator's layoutId to this TabBar so a split view's two
   // bars don't share one indicator (which would fly between panes on select).
   const indicatorId = `tab-active-indicator-${useId()}`;
+  // Roving tabindex 用のタブ要素参照 (#307)。配列ではなく Map にすることで、
+  // タブの追加・削除でインデックスがずれても安全に参照できる。
+  const tabRefs = useRef<Map<string, HTMLElement | null>>(new Map());
+
+  /** ArrowLeft/Right/Home/End でフォーカスとアクティブタブを同時に移動する。
+   *  Enter/Space は role="tab" の div 要素では既定で click が走らないため、
+   *  明示的に onSelect する。Delete はタブを閉じる (Mac の慣習に合わせ Backspace
+   *  も同じ動作)。 */
+  const handleTabKeyDown = useCallback(
+    (currentId: string) => (e: React.KeyboardEvent<HTMLElement>) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onSelect(currentId);
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        onClose(currentId);
+        return;
+      }
+      const idx = tabs.findIndex((tt) => tt.id === currentId);
+      if (idx < 0) return;
+      let nextIdx: number | null = null;
+      if (e.key === "ArrowRight") nextIdx = (idx + 1) % tabs.length;
+      else if (e.key === "ArrowLeft") nextIdx = (idx - 1 + tabs.length) % tabs.length;
+      else if (e.key === "Home") nextIdx = 0;
+      else if (e.key === "End") nextIdx = tabs.length - 1;
+      if (nextIdx !== null && nextIdx !== idx) {
+        const next = tabs[nextIdx];
+        if (next) {
+          e.preventDefault();
+          onSelect(next.id);
+          // setState 直後はまだ DOM が更新されていないため、次フレームでフォーカス。
+          const nextId = next.id;
+          requestAnimationFrame(() => tabRefs.current.get(nextId)?.focus());
+        }
+      }
+    },
+    [tabs, onSelect, onClose],
+  );
 
   return (
     <Box
@@ -86,9 +126,15 @@ export function TabBar({
             return (
               <MotionTab
                 key={tab.id}
+                ref={(el: HTMLElement | null) => {
+                  if (el) tabRefs.current.set(tab.id, el);
+                  else tabRefs.current.delete(tab.id);
+                }}
                 layout="position"
                 role="tab"
                 aria-selected={isActive}
+                tabIndex={isActive ? 0 : -1}
+                onKeyDown={handleTabKeyDown(tab.id)}
                 title={title}
                 initial={{ opacity: 0, width: 0 }}
                 animate={{ opacity: 1, width: "auto" }}
