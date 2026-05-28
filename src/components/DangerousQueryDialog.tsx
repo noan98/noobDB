@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DangerFinding, DangerKind } from "../dangerousSql";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -36,30 +37,61 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
         {t("dangerousTitle")}
       </ModalHeader>
 
-      <ModalBody className="dangerous-body">
+      <ModalBody display="flex" flexDirection="column" gap="var(--space-3)">
         {isProduction && (
-          <div className="dangerous-production-note">{t("dangerousProductionNote")}</div>
+          <chakra.div
+            p="8px 10px"
+            borderRadius="md"
+            fontWeight={600}
+            color="app.dangerFg"
+            bg="app.dangerBg"
+          >
+            {t("dangerousProductionNote")}
+          </chakra.div>
         )}
         {findings.length > 0 ? (
           <>
-            <p className="dangerous-intro">{t("dangerousIntro")}</p>
-            <ul className="dangerous-list">
+            <chakra.p m={0} color="app.text">
+              {t("dangerousIntro")}
+            </chakra.p>
+            <chakra.ul
+              m={0}
+              p={0}
+              listStyleType="none"
+              display="flex"
+              flexDirection="column"
+              gap="var(--space-2)"
+            >
               {findings.map((f, idx) => (
-                <li key={idx} className="dangerous-item">
-                  <span className="dangerous-kind">{t(KIND_LABEL_KEYS[f.kind])}</span>
-                  <span className="dangerous-target">
+                <chakra.li
+                  key={idx}
+                  display="flex"
+                  flexDirection="column"
+                  gap="2px"
+                  p="8px 10px"
+                  border="1px solid"
+                  borderColor="app.border"
+                  borderLeft="3px solid"
+                  borderLeftColor="app.dangerBg"
+                  borderRadius="md"
+                  bg="app.toolbar"
+                >
+                  <chakra.span fontWeight={600} color="app.text">
+                    {t(KIND_LABEL_KEYS[f.kind])}
+                  </chakra.span>
+                  <chakra.span fontSize="sm" color="app.textMuted" fontFamily="mono">
                     {f.target
                       ? t("dangerousTargetTable", { target: f.target })
                       : t("dangerousTargetUnknown")}
-                  </span>
-                </li>
+                  </chakra.span>
+                </chakra.li>
               ))}
-            </ul>
+            </chakra.ul>
           </>
         ) : (
-          <p className="dangerous-intro">
+          <chakra.p m={0} color="app.text">
             {t(writeApproval ? "dangerousWriteApprovalIntro" : "dangerousIntro")}
-          </p>
+          </chakra.p>
         )}
       </ModalBody>
 

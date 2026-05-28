@@ -9,11 +9,13 @@ import {
   type ImportOptions,
   type TableColumnInfo,
 } from "../api/tauri";
+import { chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, Select } from "./ui";
+import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -270,15 +272,14 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
         {t("importTitle", { table })}
       </ModalHeader>
 
-      <ModalBody className="import-body">
-        <section className="export-section">
-          <label className="export-label" htmlFor="import-path">
-            {t("importFile")}
-          </label>
-          <div className="export-path-row">
+      <ModalBody display="flex" flexDirection="column" gap="var(--space-4)">
+        <FormSection>
+          <FieldLabel htmlFor="import-path">{t("importFile")}</FieldLabel>
+          <PathRow>
             <Input
               id="import-path"
-              className="export-path-input"
+              flex="1"
+              minW={0}
               type="text"
               value={path}
               onChange={(e) => setPath(e.target.value)}
@@ -288,16 +289,15 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
             <Button type="button" onClick={handleBrowse} disabled={importing}>
               {t("importBrowse")}
             </Button>
-          </div>
-        </section>
+          </PathRow>
+        </FormSection>
 
-        <section className="export-section import-options">
-          <div className="import-option">
-            <label className="export-label" htmlFor="import-encoding">
-              {t("importEncoding")}
-            </label>
+        <FormSection flexDirection="row" flexWrap="wrap" gap="14px" alignItems="flex-end">
+          <chakra.div display="flex" flexDirection="column" gap="6px">
+            <FieldLabel htmlFor="import-encoding">{t("importEncoding")}</FieldLabel>
             <Select
               id="import-encoding"
+              minW="140px"
               value={encoding}
               onChange={(e) => setEncoding(e.target.value)}
               disabled={importing}
@@ -308,14 +308,13 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
                 </option>
               ))}
             </Select>
-          </div>
+          </chakra.div>
 
-          <div className="import-option">
-            <label className="export-label" htmlFor="import-delimiter">
-              {t("importDelimiter")}
-            </label>
+          <chakra.div display="flex" flexDirection="column" gap="6px">
+            <FieldLabel htmlFor="import-delimiter">{t("importDelimiter")}</FieldLabel>
             <Select
               id="import-delimiter"
+              minW="140px"
               value={delimiter}
               onChange={(e) => setDelimiter(e.target.value as DelimiterChoice)}
               disabled={importing}
@@ -324,12 +323,10 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
               <option value={"\t"}>{t("importDelimiterTab")}</option>
               <option value=";">{t("importDelimiterSemicolon")}</option>
             </Select>
-          </div>
+          </chakra.div>
 
-          <div className="import-option">
-            <label className="export-label" htmlFor="import-quote">
-              {t("importQuote")}
-            </label>
+          <chakra.div display="flex" flexDirection="column" gap="6px">
+            <FieldLabel htmlFor="import-quote">{t("importQuote")}</FieldLabel>
             <Input
               id="import-quote"
               css={{ width: "64px" }}
@@ -340,14 +337,13 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
               aria-invalid={!quoteValid}
               aria-describedby={quoteValid ? undefined : "import-quote-error"}
             />
-          </div>
+          </chakra.div>
 
-          <div className="import-option">
-            <label className="export-label" htmlFor="import-null">
-              {t("importNull")}
-            </label>
+          <chakra.div display="flex" flexDirection="column" gap="6px">
+            <FieldLabel htmlFor="import-null">{t("importNull")}</FieldLabel>
             <Select
               id="import-null"
+              minW="140px"
               value={nullMode}
               onChange={(e) => setNullMode(e.target.value as NullMode)}
               disabled={importing}
@@ -366,39 +362,76 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
                 aria-label={t("importNullCustom")}
               />
             )}
-          </div>
+          </chakra.div>
 
-          <div className="import-option import-header-toggle">
-            <label>
+          <chakra.div display="flex" flexDirection="row" alignItems="center" gap="6px">
+            <chakra.label
+              display="inline-flex"
+              alignItems="center"
+              gap="6px"
+              fontSize="md"
+              cursor="pointer"
+              userSelect="none"
+            >
               <Checkbox
                 checked={hasHeader}
                 onChange={(e) => setHasHeader(e.target.checked)}
                 disabled={importing}
               />
               <span>{t("importHasHeader")}</span>
-            </label>
-          </div>
-        </section>
+            </chakra.label>
+          </chakra.div>
+        </FormSection>
 
         {!quoteValid && (
-          <div id="import-quote-error" className="export-error">
+          <ErrorNote id="import-quote-error">
             {t("importQuote")}: {t("importQuoteInvalid")}
-          </div>
+          </ErrorNote>
         )}
-        {previewError && <div className="export-error">{previewError}</div>}
-        {loadingPreview && <div className="muted">{t("importLoadingPreview")}</div>}
+        {previewError && <ErrorNote>{previewError}</ErrorNote>}
+        {loadingPreview && (
+          <chakra.div color="app.textMuted">{t("importLoadingPreview")}</chakra.div>
+        )}
 
         {preview && tableColumns && (
-          <section className="export-section">
-            <div className="export-label">{t("importMappingTitle")}</div>
-            <div className="import-mapping">
+          <FormSection>
+            <FieldLabel as="div">{t("importMappingTitle")}</FieldLabel>
+            <chakra.div
+              display="grid"
+              gridTemplateColumns="repeat(auto-fill, minmax(280px, 1fr))"
+              gap="var(--space-2)"
+            >
               {tableColumns.map((col) => (
-                <div className="import-mapping-row" key={col.name}>
-                  <span className="import-mapping-col" title={col.data_type}>
+                <chakra.div
+                  display="flex"
+                  alignItems="center"
+                  gap="var(--space-2)"
+                  key={col.name}
+                >
+                  <chakra.span
+                    flex="0 0 40%"
+                    fontSize="md"
+                    fontFamily="mono"
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    whiteSpace="nowrap"
+                    title={col.data_type}
+                  >
                     {col.name}
-                    {col.key === "PRI" && <span className="import-pk" title={t("colPkTitle")}><Icon name="key" /></span>}
-                  </span>
+                    {col.key === "PRI" && (
+                      <chakra.span
+                        fontSize="xs"
+                        ml="var(--space-1)"
+                        color="app.cell.date"
+                        title={t("colPkTitle")}
+                      >
+                        <Icon name="key" />
+                      </chakra.span>
+                    )}
+                  </chakra.span>
                   <Select
+                    flex="1"
+                    minW={0}
                     value={mapping[col.name] ?? ""}
                     onChange={(e) =>
                       setMapping((prev) => ({
@@ -415,20 +448,45 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
                       </option>
                     ))}
                   </Select>
-                </div>
+                </chakra.div>
               ))}
-            </div>
-          </section>
+            </chakra.div>
+          </FormSection>
         )}
 
         {preview && preview.rows.length > 0 && (
-          <section className="export-section">
-            <div className="export-label">
+          <FormSection>
+            <FieldLabel as="div">
               {t("importPreviewTitle")}
-              {preview.truncated && <span className="muted"> {t("importPreviewTruncated")}</span>}
-            </div>
-            <div className="import-preview-scroll">
-              <table className="import-preview-table">
+              {preview.truncated && (
+                <chakra.span color="app.textMuted"> {t("importPreviewTruncated")}</chakra.span>
+              )}
+            </FieldLabel>
+            <chakra.div
+              overflow="auto"
+              maxH="220px"
+              border="1px solid"
+              borderColor="app.border"
+              borderRadius="md"
+            >
+              <chakra.table
+                borderCollapse="collapse"
+                fontSize="sm"
+                width="max-content"
+                minW="100%"
+                css={{
+                  "& th, & td": {
+                    border: "1px solid var(--border)",
+                    padding: "4px 8px",
+                    textAlign: "left",
+                    whiteSpace: "nowrap",
+                    maxWidth: "240px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  },
+                  "& th": { background: "var(--bg-toolbar)", position: "sticky", top: 0 },
+                }}
+              >
                 <thead>
                   <tr>
                     {preview.headers.map((h, idx) => (
@@ -445,26 +503,32 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          </section>
+              </chakra.table>
+            </chakra.div>
+          </FormSection>
         )}
 
         {status.kind === "importing" && (
-          <div className="import-progress" role="status" aria-live="polite">
-            <div className="import-progress-bar">
+          <chakra.div
+            role="status"
+            aria-live="polite"
+            display="flex"
+            flexDirection="column"
+            gap="6px"
+          >
+            <chakra.div h="8px" borderRadius="sm" bg="app.surfaceMuted" overflow="hidden">
               <motion.div
-                className="import-progress-fill"
+                style={{ height: "100%", background: "var(--accent)" }}
                 animate={{ width: `${percent}%` }}
                 transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
               />
-            </div>
-            <div className="import-progress-text">
+            </chakra.div>
+            <chakra.div fontSize="sm" color="app.textMuted">
               {t("importProgress", { inserted: status.inserted, total: status.total })}
-            </div>
-          </div>
+            </chakra.div>
+          </chakra.div>
         )}
-        {status.kind === "error" && <div className="export-error">{status.message}</div>}
+        {status.kind === "error" && <ErrorNote>{status.message}</ErrorNote>}
       </ModalBody>
 
       <ModalFooter>
