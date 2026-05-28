@@ -217,6 +217,12 @@ export const buttonRecipe = defineRecipe({
     color: "app.text",
     borderRadius: "md",
     cursor: "pointer",
+    // ボタン本文を 1 行で保持し、Flex の主軸が狭くなったときに CJK の
+    // 文字単位折り返し (「参照…」が縦書きになる現象) を防ぐ。
+    whiteSpace: "nowrap",
+    // 同じく、Input (width: 100%) と Flex の中に並んだときに min-content まで
+    // 圧縮されないようにし、ボタンは常に内容幅を保つ (Input 側が縮む)。
+    flexShrink: 0,
     transitionProperty: "background, border-color, color, box-shadow, transform",
     transitionDuration: "var(--dur-fast)",
     transitionTimingFunction: "var(--ease)",
