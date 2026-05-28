@@ -149,14 +149,19 @@
   --bg-elevated: #161b22;
   --bg-muted: #1a212b;
   --bg-hover: #222b37;
-  --bg-active: #1b2c49;
-  --bg-active-strong: #213a5e;
+  /* 行選択 / 行ハイバー / ソート列ハイライト (#284): ダーク系の元値
+     (#1b2c49 / #213a5e / #1c2633) は背景 #0d1117 とのコントラスト比が低く
+     (おおむね 1.1〜1.4)、結果グリッド・接続ツリー・EXPLAIN ノードで選択状態が
+     視認しづらかった。彩度と明度を上げてコントラスト比 ~1.7〜3.0 へ底上げし、
+     ライトテーマの外観は維持する。 */
+  --bg-active: #2c4373;
+  --bg-active-strong: #3a5894;
   --bg-toolbar: #1a212b;
   --bg-header: #1a212b;
   --bg-error: #3a1414;
   --bg-input: #1a212b;
   --bg-stripe: #12171f;
-  --bg-row-hover: #1c2633;
+  --bg-row-hover: #243a55;
 
   --text: #e6edf3;
   --text-secondary: #aeb9c7;
