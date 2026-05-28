@@ -1,3 +1,5 @@
+import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
+
 const STORAGE_PREFIX = "noobdb.tabs.";
 
 export interface PersistedTab {
@@ -6,10 +8,57 @@ export interface PersistedTab {
   database?: string;
   table?: string;
   sql: string;
+  /**
+   * Optional Query Builder snapshot (#287). Restored when the same tab is
+   * reopened so users don't have to rebuild WHERE / ORDER BY / LIMIT inputs
+   * after a reconnect. Mirrors `QueryBuilderSnapshot` — kept structural here
+   * (rather than `QueryBuilderSnapshot`) so the persisted JSON shape stays
+   * decoupled from the component's internals.
+   */
+  builderSnapshot?: QueryBuilderSnapshot;
 }
 
 function isValidKind(k: unknown): k is "table" | "query" | "explain" {
   return k === "table" || k === "query" || k === "explain";
+}
+
+function isStringPair(v: unknown): v is { column: string; value: string } {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.column === "string" && typeof o.value === "string";
+}
+
+function isWhereCondition(
+  v: unknown,
+): v is { column: string; operator: string; value: string } {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.column === "string" &&
+    typeof o.operator === "string" &&
+    typeof o.value === "string"
+  );
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((x) => typeof x === "string");
+}
+
+function isValidBuilderSnapshot(v: unknown): v is QueryBuilderSnapshot {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  if (o.kind !== "SELECT" && o.kind !== "UPDATE" && o.kind !== "DELETE" && o.kind !== "INSERT") {
+    return false;
+  }
+  if (typeof o.database !== "string") return false;
+  if (typeof o.table !== "string") return false;
+  if (typeof o.selectAll !== "boolean") return false;
+  if (typeof o.limit !== "string") return false;
+  if (!isStringArray(o.selectColumns)) return false;
+  if (!Array.isArray(o.whereConditions) || !o.whereConditions.every(isWhereCondition)) return false;
+  if (!Array.isArray(o.setPairs) || !o.setPairs.every(isStringPair)) return false;
+  if (!Array.isArray(o.insertPairs) || !o.insertPairs.every(isStringPair)) return false;
+  return true;
 }
 
 function isValidTab(v: unknown): v is PersistedTab {
@@ -20,7 +69,26 @@ function isValidTab(v: unknown): v is PersistedTab {
   if (typeof o.sql !== "string") return false;
   if (o.database !== undefined && o.database !== null && typeof o.database !== "string") return false;
   if (o.table !== undefined && o.table !== null && typeof o.table !== "string") return false;
+  // A malformed `builderSnapshot` is dropped silently rather than rejecting the
+  // whole tab — the SQL editor state is still useful even if the saved builder
+  // shape no longer matches.
   return true;
+}
+
+/**
+ * Strip fields the validator can't vouch for. Run after `isValidTab` so the
+ * returned object is safe to surface to consumers that trust the typed shape.
+ */
+function sanitizeTab(raw: unknown): PersistedTab | null {
+  if (!isValidTab(raw)) return null;
+  const o = raw as Record<string, unknown> & PersistedTab;
+  const out: PersistedTab = { kind: o.kind, title: o.title, sql: o.sql };
+  if (typeof o.database === "string") out.database = o.database;
+  if (typeof o.table === "string") out.table = o.table;
+  if (isValidBuilderSnapshot(o.builderSnapshot)) {
+    out.builderSnapshot = o.builderSnapshot;
+  }
+  return out;
 }
 
 /** One pane's worth of restored tabs plus which of them was active. */
@@ -51,6 +119,12 @@ function totalTabs(ws: PersistedWorkspace): number {
   return ws.panes.reduce((n, p) => n + p.tabs.length, 0);
 }
 
+function sanitizeTabs(raw: unknown[]): PersistedTab[] {
+  return raw
+    .map(sanitizeTab)
+    .filter((t): t is PersistedTab => t != null);
+}
+
 /**
  * Coerce already-parsed JSON into a valid workspace. Pure (no storage access)
  * so it can be unit-tested. Accepts the legacy bare-array shape (one pane) and
@@ -60,7 +134,7 @@ function totalTabs(ws: PersistedWorkspace): number {
 export function normalizePersistedWorkspace(parsed: unknown): PersistedWorkspace {
   // Legacy format: a bare array of tabs → a single pane.
   if (Array.isArray(parsed)) {
-    const tabs = parsed.filter(isValidTab);
+    const tabs = sanitizeTabs(parsed);
     return tabs.length > 0 ? { panes: [{ tabs, activeIndex: 0 }], activePane: 0 } : EMPTY_WORKSPACE;
   }
   if (parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).panes)) {
@@ -68,7 +142,7 @@ export function normalizePersistedWorkspace(parsed: unknown): PersistedWorkspace
     const panes: PersistedPane[] = rawPanes
       .filter(isValidPane)
       .map((p) => {
-        const tabs = p.tabs.filter(isValidTab);
+        const tabs = sanitizeTabs(p.tabs);
         const activeIndex =
           typeof p.activeIndex === "number" && p.activeIndex >= 0 && p.activeIndex < tabs.length
             ? p.activeIndex

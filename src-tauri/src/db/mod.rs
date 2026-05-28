@@ -676,6 +676,74 @@ mod tests {
         assert!(!is_read_only_sql("SELECT * FROM t INTO OUTFILE '/tmp/x'"));
     }
 
+    /// Shared CTE corpus (#286): mirrors the `READ_ONLY_CTE_CORPUS` table in
+    /// `src/__tests__/dangerousSql.test.ts`. The frontend `isReadOnlySql` and
+    /// this gate must agree on every entry — divergence is the integrity bug
+    /// the corpus is meant to surface. When updating one side, update the other.
+    const READ_ONLY_CTE_CORPUS: &[(&str, bool)] = &[
+        // Pure SELECT CTEs — accepted as read-only.
+        ("WITH t AS (SELECT 1) SELECT * FROM t", true),
+        (
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) SELECT * FROM r",
+            true,
+        ),
+        (
+            "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON 1=1",
+            true,
+        ),
+        // Write keyword hides inside a string literal — masking blanks it out.
+        (
+            "WITH c AS (SELECT 'delete from x' AS s) SELECT * FROM c",
+            true,
+        ),
+        // Identifier prefix containing "delete" must not match the bare keyword.
+        ("WITH c AS (SELECT deleted_at FROM logs) SELECT * FROM c", true),
+        // Write keyword living only inside a trailing comment.
+        ("WITH c AS (SELECT 1) SELECT * FROM c -- delete here", true),
+        // `REPLACE()` is a string function, not the REPLACE INTO write keyword.
+        (
+            "WITH c AS (SELECT REPLACE(name, 'a', 'b') FROM t) SELECT * FROM c",
+            true,
+        ),
+        // Mutation CTEs — rejected (not read-only).
+        ("WITH c AS (SELECT 1) DELETE FROM t", false),
+        ("WITH c AS (SELECT 1) UPDATE t SET x = 1", false),
+        ("WITH c AS (SELECT 1) INSERT INTO t VALUES (1)", false),
+        // Postgres data-modifying CTE bodies with RETURNING.
+        ("WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", false),
+        (
+            "WITH d AS (UPDATE t SET x = 1 RETURNING *) SELECT * FROM d",
+            false,
+        ),
+        (
+            "WITH d AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM d",
+            false,
+        ),
+        // Multiple CTEs followed by a DML main statement.
+        (
+            "WITH a AS (SELECT 1), b AS (SELECT 2) DELETE FROM t WHERE id IN (SELECT 1 FROM a)",
+            false,
+        ),
+        // Recursive CTE followed by a DML main statement.
+        (
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION SELECT n+1 FROM r WHERE n<5) DELETE FROM t WHERE id IN (SELECT n FROM r)",
+            false,
+        ),
+        // SELECT ... INTO is a write-shaped statement even with a CTE prefix.
+        ("WITH c AS (SELECT 1) SELECT * INTO backup FROM t", false),
+    ];
+
+    #[test]
+    fn cte_corpus_matches_frontend_classification() {
+        for (sql, expected) in READ_ONLY_CTE_CORPUS {
+            assert_eq!(
+                is_read_only_sql(sql),
+                *expected,
+                "diverges from frontend isReadOnlySql for: {sql}"
+            );
+        }
+    }
+
     #[test]
     fn ignores_keywords_hidden_in_comments_and_literals() {
         // A write keyword living only inside a comment or string must not

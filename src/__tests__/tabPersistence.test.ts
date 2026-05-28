@@ -62,4 +62,59 @@ describe("normalizePersistedWorkspace", () => {
     expect(normalizePersistedWorkspace({ foo: "bar" }).panes).toHaveLength(0);
     expect(normalizePersistedWorkspace([]).panes).toHaveLength(0);
   });
+
+  // #287: Round-trip QueryBuilderSnapshot so tab re-open restores the inputs.
+  it("keeps a valid builderSnapshot on a tab", () => {
+    const snapshot = {
+      kind: "SELECT",
+      database: "db",
+      table: "users",
+      selectAll: false,
+      selectColumns: ["id", "name"],
+      whereConditions: [{ column: "id", operator: ">", value: "10" }],
+      limit: "50",
+      setPairs: [],
+      insertPairs: [],
+    };
+    const ws = normalizePersistedWorkspace([
+      { kind: "query", title: "Q", sql: "SELECT 1", builderSnapshot: snapshot },
+    ]);
+    expect(ws.panes[0].tabs[0].builderSnapshot).toEqual(snapshot);
+  });
+
+  it("drops a malformed builderSnapshot but keeps the tab", () => {
+    const ws = normalizePersistedWorkspace([
+      {
+        kind: "query",
+        title: "Q",
+        sql: "SELECT 1",
+        // Missing required fields → snapshot is silently discarded.
+        builderSnapshot: { kind: "SELECT", database: "db" },
+      },
+    ]);
+    expect(ws.panes[0].tabs).toHaveLength(1);
+    expect(ws.panes[0].tabs[0].builderSnapshot).toBeUndefined();
+  });
+
+  it("drops a builderSnapshot with an unknown kind", () => {
+    const ws = normalizePersistedWorkspace([
+      {
+        kind: "query",
+        title: "Q",
+        sql: "SELECT 1",
+        builderSnapshot: {
+          kind: "MERGE",
+          database: "db",
+          table: "t",
+          selectAll: true,
+          selectColumns: [],
+          whereConditions: [],
+          limit: "",
+          setPairs: [],
+          insertPairs: [],
+        },
+      },
+    ]);
+    expect(ws.panes[0].tabs[0].builderSnapshot).toBeUndefined();
+  });
 });
