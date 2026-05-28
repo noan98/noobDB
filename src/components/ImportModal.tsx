@@ -14,7 +14,7 @@ import { motion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Input, Select, Switch } from "./ui";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
@@ -365,21 +365,12 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
           </chakra.div>
 
           <chakra.div display="flex" flexDirection="row" alignItems="center" gap="6px">
-            <chakra.label
-              display="inline-flex"
-              alignItems="center"
-              gap="6px"
-              fontSize="md"
-              cursor="pointer"
-              userSelect="none"
-            >
-              <Checkbox
-                checked={hasHeader}
-                onChange={(e) => setHasHeader(e.target.checked)}
-                disabled={importing}
-              />
-              <span>{t("importHasHeader")}</span>
-            </chakra.label>
+            <Switch
+              checked={hasHeader}
+              onChange={setHasHeader}
+              disabled={importing}
+              label={t("importHasHeader")}
+            />
           </chakra.div>
         </FormSection>
 

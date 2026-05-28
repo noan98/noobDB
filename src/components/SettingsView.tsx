@@ -4,7 +4,7 @@ import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { Checkbox, Input, Select } from "./ui";
+import { Input, Select, Switch } from "./ui";
 import {
   SettingsHelp,
   SettingsPane,
@@ -447,10 +447,10 @@ export function SettingsView({ theme, onClose }: Props) {
         <SettingsHelp>{t("settingsAutoLimitHelp")}</SettingsHelp>
         <SettingsToggleRow>
           <SettingsToggleLabel htmlFor="settings-auto-limit">
-            <Checkbox
+            <Switch
               id="settings-auto-limit"
               checked={settings.autoLimitEnabled}
-              onChange={(e) => setAutoLimitEnabled(e.target.checked)}
+              onChange={setAutoLimitEnabled}
             />
             {t("settingsAutoLimitEnabled")}
           </SettingsToggleLabel>
@@ -488,10 +488,10 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsSectionHeader>
         <SettingsToggleRow>
           <SettingsToggleLabel htmlFor="settings-confirm-prod">
-            <Checkbox
+            <Switch
               id="settings-confirm-prod"
               checked={settings.confirmProductionConnect}
-              onChange={(e) => setConfirmProductionConnect(e.target.checked)}
+              onChange={setConfirmProductionConnect}
             />
             {t("settingsConfirmProductionConnect")}
           </SettingsToggleLabel>
@@ -501,10 +501,10 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsToggleRow>
         <SettingsToggleRow>
           <SettingsToggleLabel htmlFor="settings-confirm-dangerous">
-            <Checkbox
+            <Switch
               id="settings-confirm-dangerous"
               checked={settings.confirmDangerousQueries}
-              onChange={(e) => setConfirmDangerousQueries(e.target.checked)}
+              onChange={setConfirmDangerousQueries}
             />
             {t("settingsConfirmDangerousQueries")}
           </SettingsToggleLabel>

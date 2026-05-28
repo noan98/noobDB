@@ -1,5 +1,15 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { Box, chakra } from "@chakra-ui/react";
+import { motion } from "motion/react";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -25,6 +35,24 @@ import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
+import { MultiStateBadge, type BadgeState } from "./MultiStateBadge";
+
+// ツールバーの各ボタンに `hover` / `tap` のマイクロインタラクションを共通で乗せるための
+// 薄いラッパ。`Button` 自体を `motion.create` するとボタンの recipe (Chakra style props)
+// 経路が複雑になるため、`motion.span` を被せる方式で済ませている。span は inline-flex
+// で本体ボタンと同じレイアウト振る舞いを保つ。
+function ToolbarButton({ children, ...rest }: ComponentProps<typeof Button> & { children: ReactNode }) {
+  return (
+    <motion.span
+      style={{ display: "inline-flex" }}
+      whileHover={!rest.disabled ? { scale: 1.04 } : undefined}
+      whileTap={!rest.disabled ? { scale: 0.97 } : undefined}
+      transition={{ type: "spring", stiffness: 600, damping: 25 }}
+    >
+      <Button {...rest}>{children}</Button>
+    </motion.span>
+  );
+}
 
 const noobDBHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "bold" },
@@ -391,6 +419,41 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       ? t("editorHintEmpty")
       : null;
 
+  // Run / Preview Badge の状態キー。`idle` / `running` / `disabled` の 3 値だけを
+  // 扱い、`done` / `error` はトースト/ステータスバー側で表現する (Badge が滞留
+  // しないように — 連打しても次の `idle` へすぐ戻る)。
+  const runState: "idle" | "running" | "disabled" =
+    disabled || !hasContent ? "disabled" : running ? "running" : "idle";
+  const runIconPlay = (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
+    </svg>
+  );
+  const runIconSpinner = <Spinner size={12} />;
+  const runStates: Record<"idle" | "running" | "disabled", BadgeState> = {
+    idle: { label: runLabel, tone: "success", icon: runIconPlay },
+    running: { label: t("editorRunRunning"), tone: "warning", icon: runIconSpinner },
+    disabled: { label: runLabel, tone: "neutral", icon: runIconPlay },
+  };
+
+  // 既存 props では Run と Preview の `running` を区別できないため、Preview は
+  // `idle` / `disabled` の 2 状態に絞る (Issue #319 留意点: `done` / `error`
+  // はトースト/ステータスバー側で表現する)。Run / Preview を区別した
+  // `running` 表示は別 Issue で取り扱う。
+  const previewState: "idle" | "running" | "disabled" =
+    disabled || !hasContent ? "disabled" : "idle";
+  const previewIconEye = (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
+      <circle cx="8" cy="8" r="2" />
+    </svg>
+  );
+  const previewStates: Record<"idle" | "running" | "disabled", BadgeState> = {
+    idle: { label: t("editorPreview"), tone: "warning", icon: previewIconEye },
+    running: { label: t("editorPreviewRunning"), tone: "warning", icon: runIconSpinner },
+    disabled: { label: t("editorPreview"), tone: "neutral", icon: previewIconEye },
+  };
+
   return (
     <Box
       display="flex"
@@ -415,40 +478,23 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           },
         }}
       >
-        <Button
-          variant="success"
+        <MultiStateBadge
+          state={runState}
+          states={runStates}
           onClick={runSelectionOrAll}
-          disabled={disabled || !hasContent}
+          disabled={runState === "disabled"}
           title={disabledReason ?? runTitle}
-        >
-          <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-            {running ? (
-              <Spinner size={12} />
-            ) : (
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
-              </svg>
-            )}
-          </chakra.span>
-          {runLabel}
-        </Button>
+        />
         {onPreview && (
-          <Button
-            variant="warning"
-              onClick={previewSelectionOrAll}
-            disabled={disabled || !hasContent}
+          <MultiStateBadge
+            state={previewState}
+            states={previewStates}
+            onClick={previewSelectionOrAll}
+            disabled={previewState === "disabled"}
             title={disabledReason ?? `${t("editorPreviewTitle")} (${t("editorPreviewShortcut")})`}
-          >
-            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
-                <circle cx="8" cy="8" r="2" />
-              </svg>
-            </chakra.span>
-            {t("editorPreview")}
-          </Button>
+          />
         )}
-        <Button
+        <ToolbarButton
           onClick={formatSelectionOrAll}
           disabled={disabled || !hasContent}
           title={disabledReason ?? t("editorFormatTitle")}
@@ -462,10 +508,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             </svg>
           </chakra.span>
           {t("editorFormat")}
-        </Button>
+        </ToolbarButton>
         {onExplain && (
-          <Button
-              onClick={explainSelectionOrAll}
+          <ToolbarButton
+            onClick={explainSelectionOrAll}
             disabled={disabled || !hasContent}
             title={disabledReason ?? t("editorExplainTitle")}
           >
@@ -478,11 +524,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               </svg>
             </chakra.span>
             {t("editorExplain")}
-          </Button>
+          </ToolbarButton>
         )}
         {onSaveSnippet && (
-          <Button
-              onClick={saveSelectionOrAll}
+          <ToolbarButton
+            onClick={saveSelectionOrAll}
             disabled={disabled || !hasContent}
             title={disabledReason ?? t("editorSaveSnippetTitle")}
           >
@@ -494,12 +540,12 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               </svg>
             </chakra.span>
             {t("editorSaveSnippet")}
-          </Button>
+          </ToolbarButton>
         )}
         {sessionId && !explainMode && (
-          <Button
+          <ToolbarButton
             variant="info"
-              onClick={() => setShowBuilder(true)}
+            onClick={() => setShowBuilder(true)}
             disabled={disabled}
             title={disabled ? t("editorHintDisabled") : t("editorBuilderTitle")}
           >
@@ -509,7 +555,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               </svg>
             </chakra.span>
             {t("editorBuilder")}
-          </Button>
+          </ToolbarButton>
         )}
       </Box>
       <Box ref={hostRef} flex="1" overflow="auto" bg="app.surface" />

@@ -5,7 +5,7 @@ import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Input, Select, Switch } from "./ui";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value never reaches the frontend, so this
@@ -136,7 +136,7 @@ function Legend({ children }: { children: ReactNode }) {
   );
 }
 
-/** Inline checkbox toggle with a muted help line underneath. */
+/** Inline switch toggle with a muted help line underneath. */
 function CheckboxRow({
   checked,
   onChange,
@@ -150,9 +150,8 @@ function CheckboxRow({
 }) {
   return (
     <Box>
-      <Flex as="label" display="inline-flex" align="center" gap="6px" fontSize="12px">
-        <Checkbox checked={checked} onChange={(e) => onChange(e.target.checked)} />
-        {label}
+      <Flex display="inline-flex" align="center" gap="6px" fontSize="12px">
+        <Switch checked={checked} onChange={onChange} size="sm" label={label} />
       </Flex>
       <Text color="app.textMuted" fontSize="11px" mt="4px" mb="0">
         {help}
@@ -557,9 +556,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       {!isFileBacked && (
         <Fieldset>
           <Legend>
-            <Flex as="label" display="inline-flex" align="center" gap="6px" fontSize="12px">
-              <Checkbox checked={useSsh} onChange={(e) => setUseSsh(e.target.checked)} />
-              {t("formUseSsh")}
+            <Flex display="inline-flex" align="center" gap="6px" fontSize="12px">
+              <Switch checked={useSsh} onChange={setUseSsh} size="sm" label={t("formUseSsh")} />
             </Flex>
           </Legend>
           {useSsh && (

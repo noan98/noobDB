@@ -4,7 +4,7 @@ import { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
 import { copyToClipboard } from "./clipboard";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Checkbox } from "./ui";
+import { Button, Switch } from "./ui";
 
 interface Props {
   /** Column name, shown in the modal header. */
@@ -108,17 +108,14 @@ export function CellValueViewer({ columnName, value, isBinary, onClose }: Props)
 
       <ModalFooter>
         {canFormat && (
-          <chakra.label
-            display="inline-flex"
-            alignItems="center"
-            gap="6px"
-            fontSize="sm"
-            color="app.text"
-            userSelect="none"
-          >
-            <Checkbox m={0} checked={pretty} onChange={(e) => setPretty(e.target.checked)} />
-            <span>{t("cellViewerFormatJson")}</span>
-          </chakra.label>
+          <chakra.span fontSize="sm" color="app.text">
+            <Switch
+              checked={pretty}
+              onChange={setPretty}
+              size="sm"
+              label={t("cellViewerFormatJson")}
+            />
+          </chakra.span>
         )}
         <chakra.div flex="1" />
         <Button type="button" onClick={handleCopy} disabled={isNull}>
