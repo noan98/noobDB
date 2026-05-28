@@ -423,7 +423,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         >
           <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
             {running ? (
-              <Spinner size={12} className="btn-spinner" />
+              <Spinner size={12} />
             ) : (
               <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />

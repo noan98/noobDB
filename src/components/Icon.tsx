@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { chakra } from "@chakra-ui/react";
 
 /**
  * Single-color SVG icon set. Every glyph shares a 24x24 viewBox, a rounded
@@ -193,14 +194,12 @@ const PATHS: Record<IconName, ReactNode> = {
 interface IconProps {
   name: IconName;
   size?: number | string;
-  className?: string;
   strokeWidth?: number;
 }
 
-export function Icon({ name, size = "1em", className, strokeWidth = 2 }: IconProps) {
+export function Icon({ name, size = "1em", strokeWidth = 2 }: IconProps) {
   return (
-    <svg
-      className={className ? `icon-svg ${className}` : "icon-svg"}
+    <chakra.svg
       width={size}
       height={size}
       viewBox="0 0 24 24"
@@ -211,8 +210,11 @@ export function Icon({ name, size = "1em", className, strokeWidth = 2 }: IconPro
       strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
+      display="inline-block"
+      verticalAlign="-0.125em"
+      flexShrink={0}
     >
       {PATHS[name]}
-    </svg>
+    </chakra.svg>
   );
 }

@@ -15,7 +15,6 @@ interface Props {
   minSize?: number;
   // If set, the user's split ratio is persisted under this localStorage key.
   storageKey?: string;
-  className?: string;
   ariaLabel?: string;
 }
 
@@ -44,7 +43,6 @@ export function Splitter({
   defaultFraction = 0.5,
   minSize = 80,
   storageKey,
-  className,
   ariaLabel,
 }: Props) {
   const [fraction, setFraction] = useState<number>(() =>
@@ -124,7 +122,6 @@ export function Splitter({
   return (
     <Box
       ref={containerRef}
-      className={className}
       display="flex"
       flexDirection={isRow ? "row" : "column"}
       flex="1 1 auto"
