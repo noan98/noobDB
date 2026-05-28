@@ -71,8 +71,8 @@ export function TitleBar() {
           flexShrink={0}
           borderRadius="4px"
           viewBox="0 0 1024 1024"
-          width="16"
-          height="16"
+          width="16px"
+          height="16px"
           aria-hidden
         >
           <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#2f7df6" />

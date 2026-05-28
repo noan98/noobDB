@@ -255,52 +255,78 @@ html, body, #root {
    コンポーネント固有の見た目はすべて Chakra recipe (`buttonRecipe` /
    `inputRecipe` / `selectRecipe` / `textareaRecipe`) で表現するが、コンポーネント
    化されていない素の `<button>` / `<input>` / `<select>` / `<label>` がフォームや
-   モーダル内に残っているため、最小限のベースラインだけここで提供する。 */
+   モーダル内に残っているため、最小限のベースラインだけここで提供する。
 
-button {
-  font: inherit;
-  padding: 6px 12px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-elevated);
-  color: var(--text);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease),
-    box-shadow var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease);
-}
-button:hover { background: var(--bg-hover); }
-button:active:not(:disabled) { transform: translateY(1px); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
-}
+   ## CSS レイヤーで Chakra recipe に負けないようにする (重要)
 
-input, select {
-  font: inherit;
-  padding: 6px 8px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-input);
-  color: var(--text);
-  border-radius: var(--radius-md);
-  width: 100%;
-}
-input::placeholder { color: var(--text-muted); }
-input:focus, select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
-}
+   Chakra v3 は recipe を `@layer recipes` に、トークン/ベースを `@layer tokens` /
+   `@layer base` に、リセットを `@layer reset` にそれぞれ wrap して出力する
+   (`node_modules/@chakra-ui/react/dist/esm/styled-system/layers.js`)。CSS の
+   カスケード規則上 **layer に属さないルールはすべての layer より優先される**
+   ため、ここで定義する素の要素セレクタ (`button` / `input` / `label` …) を
+   そのまま書くと、Chakra の `<Button variant="danger">` / `<Input>` /
+   `<Flex as="label" display="inline-flex">` などに乗っている recipe 由来の
+   背景色・幅・display を **全部踏み潰してしまう**。具体的には次の症状になる:
 
-label {
-  display: block;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 2px;
+     - `<Button variant="primary|danger|warning|...>` の色が中立色に戻る
+       (=「ボタンのカラー抜け」、Disconnect ボタンが赤くならないなど)
+     - `<Input>` を Flex の子として使うと `width: 100%` が勝ち、隣接ボタンが
+       1 文字幅まで縮んで「参照…」のように縦書きに見える
+     - `<Flex as="label" display="inline-flex">` (チェックボックス行) が
+       `display: block` に戻り、ラベルテキストが折れて崩れる
+
+   対策として、これら素の要素向けフォールバックは **`@layer reset`** (Chakra
+   レイヤー順で最下層) に入れて、Chakra recipe (`@layer recipes`) より弱く
+   する。Chakra 化されていない素の `<button>` / `<input>` などには引き続き
+   このフォールバックが効き、Chakra recipe を使うコンポーネントでは recipe
+   側が常に勝つようになる。 */
+
+@layer reset {
+  button {
+    font: inherit;
+    padding: 6px 12px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elevated);
+    color: var(--text);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease),
+      box-shadow var(--dur-fast) var(--ease),
+      transform var(--dur-fast) var(--ease);
+  }
+  button:hover { background: var(--bg-hover); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  input, select {
+    font: inherit;
+    padding: 6px 8px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-input);
+    color: var(--text);
+    border-radius: var(--radius-md);
+    width: 100%;
+  }
+  input::placeholder { color: var(--text-muted); }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  label {
+    display: block;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+  }
 }
 
 /* ---------- CodeMirror 6 ----------

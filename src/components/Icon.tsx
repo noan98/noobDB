@@ -198,10 +198,16 @@ interface IconProps {
 }
 
 export function Icon({ name, size = "1em", strokeWidth = 2 }: IconProps) {
+  // Chakra v3 では `width={12}` や `width="16"` を **サイズトークン** として解決し
+  // (`var(--chakra-sizes-12)` = 3rem = 48px / `var(--chakra-sizes-16)` = 4rem
+  // = 64px)、呼び出し側が「ピクセル」のつもりで渡した整数値が巨大なアイコンに
+  // なる。HTML 属性として渡される raw な数値とは解釈が異なるため、ここで
+  // 明示的に px 文字列へ変換してトークン解決を回避する。
+  const dim = typeof size === "number" ? `${size}px` : size;
   return (
     <chakra.svg
-      width={size}
-      height={size}
+      width={dim}
+      height={dim}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
