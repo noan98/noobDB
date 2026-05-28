@@ -997,6 +997,20 @@ export default function App() {
     savePersistedWorkspace(profileId, ws);
   }, []);
 
+  // #287: persistence used to fire only on disconnect / profile switch /
+  // connection loss, so in-session tab updates (builder snapshots, SQL edits)
+  // were lost if the user closed the app without disconnecting first. Flushing
+  // on `beforeunload` lands the current state in localStorage as the window
+  // tears down — `setItem` is synchronous so the write completes before unload.
+  useEffect(() => {
+    const id = selectedProfile?.id;
+    if (!id) return;
+    const flush = () => persistTabsForProfile(id);
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, [selectedProfile?.id, persistTabsForProfile]);
+
+
   const closeAllTabs = useCallback(async () => {
     // Cancel any in-flight streams before tearing down tabs.
     const ids = Array.from(streamIdRef.current.keys());
