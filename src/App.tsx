@@ -2582,16 +2582,42 @@ export default function App() {
                   <>
                     <StatusDot variant="connected" />
                     <chakra.span fontWeight={600} fontSize="md">{selectedProfile.name}</chakra.span>
+                    {selectedProfile.is_production && (
+                      <chakra.span
+                        title={t("listProductionTitle")}
+                        display="inline-flex"
+                        alignItems="center"
+                        gap="4px"
+                        fontSize="xs"
+                        textTransform="uppercase"
+                        letterSpacing="0.06em"
+                        fontWeight={700}
+                        px="8px"
+                        py="2px"
+                        borderRadius="pill"
+                        bg="app.status.error"
+                        color="#fff"
+                        borderWidth="1px"
+                        borderStyle="solid"
+                        borderColor="app.status.error"
+                        flexShrink={0}
+                      >
+                        <Icon name="warning" size={12} />
+                        {t("listProduction")}
+                      </chakra.span>
+                    )}
                     {selectedProfile.read_only && (
                       <chakra.span
                         title={t("listReadOnlyTitle")}
-                        display="inline-block"
-                        fontSize="2xs"
+                        display="inline-flex"
+                        alignItems="center"
+                        gap="4px"
+                        fontSize="xs"
                         textTransform="uppercase"
-                        letterSpacing="0.05em"
+                        letterSpacing="0.06em"
                         fontWeight={700}
-                        px="6px"
-                        py="1px"
+                        px="8px"
+                        py="2px"
                         borderRadius="pill"
                         bg="var(--status-info, var(--bg-muted))"
                         color="app.text"
@@ -2600,6 +2626,7 @@ export default function App() {
                         borderColor="app.borderStrong"
                         flexShrink={0}
                       >
+                        <Icon name="key" size={12} />
                         {t("listReadOnly")}
                       </chakra.span>
                     )}

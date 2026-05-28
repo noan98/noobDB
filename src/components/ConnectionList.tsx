@@ -555,27 +555,37 @@ export function ConnectionList({
             <TreeBadge
               display="inline-flex"
               alignItems="center"
-              gap="3px"
+              gap="4px"
               bg="app.status.error"
               color="#fff"
               borderColor="app.status.error"
+              fontSize="xs"
               fontWeight={700}
-              letterSpacing="0.05em"
-              title={t("listProduction")}
+              letterSpacing="0.06em"
+              px="8px"
+              py="2px"
+              title={t("listProductionTitle")}
             >
-              <Icon name="warning" size={11} />
+              <Icon name="warning" size={12} />
               {t("listProduction")}
             </TreeBadge>
           )}
           {p.read_only && (
             <TreeBadge
+              display="inline-flex"
+              alignItems="center"
+              gap="4px"
               bg="var(--status-info, var(--bg-muted))"
               color="app.text"
               borderColor="app.borderStrong"
+              fontSize="xs"
               fontWeight={700}
-              letterSpacing="0.05em"
+              letterSpacing="0.06em"
+              px="8px"
+              py="2px"
               title={t("listReadOnlyTitle")}
             >
+              <Icon name="key" size={12} />
               {t("listReadOnly")}
             </TreeBadge>
           )}
