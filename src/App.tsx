@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import { forwardRef, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -196,20 +196,44 @@ function StatusDot({ variant }: { variant: "connected" | "idle" }) {
   );
 }
 
-/** サイドバー上部の Connections / Snippets / History 切替タブ。 */
-function SidebarTabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
+/**
+ * サイドバーの切替タブ key。Connections / Snippets / History の 3 種。
+ * 配列順がタブの並び順 = 矢印キーでのフォーカス移動順になる。
+ */
+type SidebarTab = "connections" | "snippets" | "history";
+const SIDEBAR_TAB_ORDER: readonly SidebarTab[] = ["connections", "snippets", "history"];
+const sidebarTabId = (key: SidebarTab) => `sidebar-tab-${key}`;
+const sidebarPanelId = (key: SidebarTab) => `sidebar-panel-${key}`;
+
+/**
+ * サイドバー上部の Connections / Snippets / History 切替タブ (#299)。
+ *
+ * WAI-ARIA tabs パターンを実装している:
+ *   - 各タブに `role="tab"`、`aria-selected`、`aria-controls` (対応 panel の id)、
+ *     `id` (panel から `aria-labelledby` で参照される)
+ *   - ローピング tabindex: アクティブなタブのみ `tabIndex=0`、他は `-1`。
+ *     Tab キーでタブ群に入ると 1 回でアクティブタブにフォーカスする
+ *   - 矢印キー / Home / End でフォーカス移動 + 自動アクティベーション (サイドバー
+ *     の表示切替は副作用が軽いため、フォーカスの移動と同時に選択も切り替える)
+ */
+const SidebarTabButton = forwardRef<
+  HTMLButtonElement,
+  {
+    tabKey: SidebarTab;
+    active: boolean;
+    onActivate: () => void;
+    onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => void;
+    children: ReactNode;
+  }
+>(function SidebarTabButton({ tabKey, active, onActivate, onKeyDown, children }, ref) {
   return (
     <chakra.button
+      ref={ref}
       role="tab"
+      id={sidebarTabId(tabKey)}
+      aria-controls={sidebarPanelId(tabKey)}
       aria-selected={active}
+      tabIndex={active ? 0 : -1}
       flex="1"
       bg="transparent"
       border="none"
@@ -228,12 +252,13 @@ function SidebarTabButton({
         outline: "none",
         boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)",
       }}
-      onClick={onClick}
+      onClick={onActivate}
+      onKeyDown={onKeyDown}
     >
       {children}
     </chakra.button>
   );
-}
+});
 
 type TabKind = "table" | "query" | "explain";
 
@@ -567,7 +592,38 @@ export default function App() {
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
   const [showForm, setShowForm] = useState(false);
 
-  const [sidebarTab, setSidebarTab] = useState<"connections" | "snippets" | "history">("connections");
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("connections");
+  // ローピング tabindex 用に各サイドバータブのボタン要素を保持する。矢印キーで
+  // フォーカスを物理的に移動させるために必要 (`setState` だけでは tabIndex は
+  // 変わるがフォーカスは移らない)。
+  const sidebarTabRefs = useRef<Record<SidebarTab, HTMLButtonElement | null>>({
+    connections: null,
+    snippets: null,
+    history: null,
+  });
+  const handleSidebarTabKeyDown = useCallback(
+    (current: SidebarTab) => (e: React.KeyboardEvent<HTMLButtonElement>) => {
+      const idx = SIDEBAR_TAB_ORDER.indexOf(current);
+      let next: SidebarTab | null = null;
+      if (e.key === "ArrowRight") {
+        next = SIDEBAR_TAB_ORDER[(idx + 1) % SIDEBAR_TAB_ORDER.length];
+      } else if (e.key === "ArrowLeft") {
+        next = SIDEBAR_TAB_ORDER[(idx - 1 + SIDEBAR_TAB_ORDER.length) % SIDEBAR_TAB_ORDER.length];
+      } else if (e.key === "Home") {
+        next = SIDEBAR_TAB_ORDER[0];
+      } else if (e.key === "End") {
+        next = SIDEBAR_TAB_ORDER[SIDEBAR_TAB_ORDER.length - 1];
+      }
+      if (next && next !== current) {
+        e.preventDefault();
+        setSidebarTab(next);
+        // setState 直後はまだ DOM が更新されていないため、次フレームでフォーカス。
+        const target = next;
+        requestAnimationFrame(() => sidebarTabRefs.current[target]?.focus());
+      }
+    },
+    [],
+  );
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
@@ -2355,27 +2411,50 @@ export default function App() {
             ) : null}
           </Flex>
         </Flex>
-        <Flex borderBottomWidth="1px" borderBottomColor="app.border" role="tablist">
+        <Flex
+          borderBottomWidth="1px"
+          borderBottomColor="app.border"
+          role="tablist"
+          aria-label={t("sidebarTablistAria")}
+        >
           <SidebarTabButton
+            ref={(el) => { sidebarTabRefs.current.connections = el; }}
+            tabKey="connections"
             active={sidebarTab === "connections"}
-            onClick={() => setSidebarTab("connections")}
+            onActivate={() => setSidebarTab("connections")}
+            onKeyDown={handleSidebarTabKeyDown("connections")}
           >
             {t("sidebarTabConnections")}
           </SidebarTabButton>
           <SidebarTabButton
+            ref={(el) => { sidebarTabRefs.current.snippets = el; }}
+            tabKey="snippets"
             active={sidebarTab === "snippets"}
-            onClick={() => setSidebarTab("snippets")}
+            onActivate={() => setSidebarTab("snippets")}
+            onKeyDown={handleSidebarTabKeyDown("snippets")}
           >
             {t("sidebarTabSnippets")}
           </SidebarTabButton>
           <SidebarTabButton
+            ref={(el) => { sidebarTabRefs.current.history = el; }}
+            tabKey="history"
             active={sidebarTab === "history"}
-            onClick={() => setSidebarTab("history")}
+            onActivate={() => setSidebarTab("history")}
+            onKeyDown={handleSidebarTabKeyDown("history")}
           >
             {t("sidebarTabHistory")}
           </SidebarTabButton>
         </Flex>
-        {sidebarTab === "connections" ? (
+        <Box
+          role="tabpanel"
+          id={sidebarPanelId(sidebarTab)}
+          aria-labelledby={sidebarTabId(sidebarTab)}
+          display="flex"
+          flexDirection="column"
+          flex="1"
+          overflow="hidden"
+        >
+          {sidebarTab === "connections" ? (
           <ConnectionList
             profiles={profiles}
             activeProfileId={selectedProfile?.id ?? null}
@@ -2430,6 +2509,7 @@ export default function App() {
             onOpenInNewTab={handleOpenHistoryInNewTab}
           />
         )}
+        </Box>
       </Flex>
 
       {!sidebarCollapsed && (
