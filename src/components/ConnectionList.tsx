@@ -119,9 +119,14 @@ export function ConnectionList({
   const [hoveredColumn, setHoveredColumn] = useState<{ col: TableColumnInfo; rect: DOMRect } | null>(
     null,
   );
-  // Databases whose table list is being eagerly loaded for schema search, so
-  // the loader effect doesn't fire duplicate requests for the same database.
+  // Databases whose table list is currently being fetched, either by manual
+  // expand (toggleDb) or by eager schema-search loading. Shared so that rapid
+  // collapse / re-expand during an in-flight fetch can't re-issue the same
+  // request — and so the schema search and manual paths don't race.
   const tablesInFlightRef = useRef<Set<string>>(new Set());
+  // Table keys (db::tbl) whose column list is currently being fetched. Same
+  // role as `tablesInFlightRef` but for the column-level expand.
+  const columnsInFlightRef = useRef<Set<string>>(new Set());
 
   // Id of the session whose schema is currently being re-fetched, or null.
   // Keyed by session (not a shared boolean) so a refresh only disables/​spins
@@ -310,11 +315,17 @@ export function ConnectionList({
     }
     setExpandedDbs({ ...expandedDbs, [db]: true });
     if (tables[db]) return;
+    // Skip if a fetch is already in flight for this database — covers both
+    // rapid collapse / re-expand and overlap with the schema-search eager loader.
+    if (tablesInFlightRef.current.has(db)) return;
+    tablesInFlightRef.current.add(db);
     try {
       const list = await api.listTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
     } catch (e) {
       setError(String(e));
+    } finally {
+      tablesInFlightRef.current.delete(db);
     }
   };
 
@@ -328,11 +339,17 @@ export function ConnectionList({
     }
     setExpandedTables((prev) => ({ ...prev, [key]: true }));
     if (tableColumns[key]) return;
+    // Same in-flight guard as toggleDb: rapid collapse / re-expand mid-fetch
+    // must not re-issue describeTable for the same table.
+    if (columnsInFlightRef.current.has(key)) return;
+    columnsInFlightRef.current.add(key);
     try {
       const cols = await api.describeTable(sessionId, db, tbl);
       setTableColumns((prev) => ({ ...prev, [key]: cols }));
     } catch (e) {
       setError(String(e));
+    } finally {
+      columnsInFlightRef.current.delete(key);
     }
   };
 
