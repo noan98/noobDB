@@ -534,9 +534,9 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
       <ModalFooter>
         <div style={{ flex: 1 }} />
         {importing ? (
-          <Button type="button" onClick={handleCancelImport}>{t("importStop")}</Button>
+          <Button type="button" variant="warning" onClick={handleCancelImport}>{t("importStop")}</Button>
         ) : (
-          <Button type="button" onClick={onClose}>{t("importClose")}</Button>
+          <Button type="button" variant="secondary" onClick={onClose}>{t("importClose")}</Button>
         )}
         <Button
           type="button"

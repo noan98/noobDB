@@ -135,6 +135,7 @@ export function ModalHeader({
       </Dialog.Title>
       <Button
         type="button"
+        variant="ghost"
         onClick={onClose}
         disabled={closeDisabled}
         aria-label={closeLabel}

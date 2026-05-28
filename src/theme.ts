@@ -183,8 +183,24 @@ export const system = createSystem(defaultConfig, config);
  */
 
 /** ボタン。中立 (default) + primary / secondary / ghost / success / warning /
- *  danger / info と、密なツールバー向けの `sm` サイズ。`App.css` の `button` 系
- *  className と一致。 */
+ *  danger / info と、密なツールバー向けの `sm` サイズ。
+ *
+ *  ## variant 使い分け規約 (#283)
+ *
+ *  破壊的操作と安全な操作を見た目で区別し、誤操作を視覚的に防ぐためのルール。
+ *  新規ボタン追加時もこの表に従う。
+ *
+ *  | 用途                                       | variant      |
+ *  | ------------------------------------------ | ------------ |
+ *  | 主要アクション (Save / Connect / Execute)  | `primary`    |
+ *  | 破壊的アクション (削除 / Drop / Clear)     | `danger`     |
+ *  | 警告付き実行 (危険クエリ承認 / 中断)       | `warning`    |
+ *  | 成功確定 (セル編集 Apply など)             | `success`    |
+ *  | キャンセル / 閉じる (モーダル・フォーム)   | `secondary`  |
+ *  | アイコン専用 (X / メニューの ✕ など)       | `ghost`      |
+ *  | 中立 (Test / Refresh / Browse など)        | `default`    |
+ *
+ *  右クリックメニューの破壊的項目は `ContextMenu` の `danger: true` で同色に揃える。 */
 export const buttonRecipe = defineRecipe({
   className: "app-button",
   base: {

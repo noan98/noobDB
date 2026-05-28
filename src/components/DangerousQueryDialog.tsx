@@ -97,10 +97,10 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
 
       <ModalFooter>
         <div style={{ flex: 1 }} />
-        <Button ref={cancelRef} type="button" onClick={onCancel}>
+        <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel}>
           {t("dangerousCancel")}
         </Button>
-        <Button type="button" variant="danger" onClick={onConfirm}>
+        <Button type="button" variant="warning" onClick={onConfirm}>
           {t("dangerousConfirm")}
         </Button>
       </ModalFooter>
