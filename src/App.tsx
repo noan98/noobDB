@@ -37,6 +37,7 @@ import { TitleBar } from "./components/TitleBar";
 import { Splitter } from "./components/Splitter";
 import { Icon } from "./components/Icon";
 import { Button } from "./components/ui";
+import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
@@ -434,10 +435,18 @@ function toPersistedTab(tab: Tab): PersistedTab {
   return out;
 }
 
-function shouldRestoreSavedTabs(mode: TabRestoreMode, count: number): boolean {
+/**
+ * Restore-tabs ゲート。`mode === "ask"` のときだけ呼び出し側から渡された
+ * `askUser()` (Promise<boolean>) で確認する。同期的な `window.confirm` を
+ * 排除するため Promise を返す形に変更している (#280)。
+ */
+async function shouldRestoreSavedTabs(
+  mode: TabRestoreMode,
+  askUser: () => Promise<boolean>,
+): Promise<boolean> {
   if (mode === "always") return true;
   if (mode === "never") return false;
-  return window.confirm(translate("tabRestoreConfirm", { count }));
+  return askUser();
 }
 
 function emptyResult(columns: Column[]): QueryResult {
@@ -460,6 +469,9 @@ function emptyPreview(): PreviewResult {
 export default function App() {
   const t = useT();
   const toast = useToast();
+  // テーマに追従するカスタム確認ダイアログ。`window.confirm()` の代替で、
+  // `await confirm({...})` の形で同期感覚で呼べる (#280)。
+  const { confirm, dialog: confirmDialogElement } = useConfirm();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
   const [showSettings, setShowSettings] = useState(false);
@@ -936,7 +948,54 @@ export default function App() {
 
   const handleConnect = useCallback(async (profile: ConnectionProfile) => {
     if (profile.is_production && settings.confirmProductionConnect) {
-      const ok = window.confirm(translate("productionConfirm", { name: profile.name }));
+      const ok = await confirm({
+        title: translate("productionConfirmTitle"),
+        message: (
+          <Flex direction="column" gap="var(--space-2)" color="app.text">
+            <Flex align="center" gap="var(--space-2)">
+              {profile.color && (
+                <chakra.span
+                  display="inline-block"
+                  w="14px"
+                  h="14px"
+                  borderRadius="full"
+                  flexShrink={0}
+                  bg={profile.color}
+                  borderWidth="1px"
+                  borderStyle="solid"
+                  borderColor="app.borderStrong"
+                  aria-hidden
+                />
+              )}
+              <chakra.span fontWeight={600} fontSize="md">{profile.name}</chakra.span>
+              <chakra.span
+                display="inline-flex"
+                alignItems="center"
+                gap="4px"
+                fontSize="xs"
+                textTransform="uppercase"
+                letterSpacing="0.06em"
+                fontWeight={700}
+                px="8px"
+                py="2px"
+                borderRadius="pill"
+                bg="app.status.error"
+                color="#fff"
+                flexShrink={0}
+              >
+                <Icon name="warning" size={12} />
+                {translate("listProduction")}
+              </chakra.span>
+            </Flex>
+            <chakra.span>{translate("productionConfirm", { name: profile.name })}</chakra.span>
+            <chakra.span color="app.textMuted" fontSize="sm">
+              {translate("productionConfirmHint")}
+            </chakra.span>
+          </Flex>
+        ),
+        confirmLabel: translate("productionConfirmAction"),
+        tone: "warning",
+      });
       if (!ok) return;
     }
     setConnectingId(profile.id);
@@ -973,7 +1032,16 @@ export default function App() {
       const savedWs = loadPersistedWorkspace(profile.id);
       const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
       const restore =
-        savedCount > 0 && shouldRestoreSavedTabs(settings.tabRestoreMode, savedCount);
+        savedCount > 0 &&
+        (await shouldRestoreSavedTabs(settings.tabRestoreMode, () =>
+          confirm({
+            title: translate("tabRestoreConfirmTitle"),
+            message: translate("tabRestoreConfirm", { count: savedCount }),
+            confirmLabel: translate("tabRestoreConfirmRestore"),
+            cancelLabel: translate("tabRestoreConfirmDiscard"),
+            tone: "primary",
+          }),
+        ));
       if (restore && restoreSavedTabsRef.current) {
         await restoreSavedTabsRef.current(res.session_id, profile, savedWs);
       } else {
@@ -1000,6 +1068,7 @@ export default function App() {
     settings.confirmProductionConnect,
     settings.tabRestoreMode,
     toast,
+    confirm,
   ]);
 
   const handleDisconnect = useCallback(async () => {
@@ -2915,6 +2984,7 @@ export default function App() {
         );
       })()}
       </Grid>
+      {confirmDialogElement}
     </Flex>
   );
 }
