@@ -189,7 +189,7 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
 
       <ModalFooter>
         <div style={{ flex: 1 }} />
-        <Button type="button" onClick={onClose} disabled={isRunning}>
+        <Button type="button" variant="secondary" onClick={onClose} disabled={isRunning}>
           {t("dumpCancel")}
         </Button>
         <Button

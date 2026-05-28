@@ -1451,6 +1451,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               {t("editApplyButton")}
             </Button>
             <Button
+              variant="secondary"
               size="sm"
               px="10px"
               onClick={onClearEdits}

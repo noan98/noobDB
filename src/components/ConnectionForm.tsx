@@ -637,7 +637,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
 
       <Flex gridColumn="span 2" gap="var(--space-2)" justify="flex-end">
-        <Button type="button" onClick={onCancel}>{t("formCancel")}</Button>
+        <Button type="button" variant="secondary" onClick={onCancel}>{t("formCancel")}</Button>
         <Button type="button" onClick={handleTest} disabled={testing}>{testing ? t("formTesting") : t("formTest")}</Button>
         <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
       </Flex>

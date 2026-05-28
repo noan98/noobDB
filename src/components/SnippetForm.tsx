@@ -231,7 +231,7 @@ export function SnippetForm({
       {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
 
       <Box gridColumn="span 2" display="flex" gap="var(--space-2)" justifyContent="flex-end">
-        <Button type="button" onClick={onCancel}>{t("formCancel")}</Button>
+        <Button type="button" variant="secondary" onClick={onCancel}>{t("formCancel")}</Button>
         <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
       </Box>
     </Box>

@@ -225,7 +225,7 @@ export function ExportModal({ columns, rows, database, table, partial, onClose }
 
       <ModalFooter>
         <div style={{ flex: 1 }} />
-        <Button type="button" onClick={onClose} disabled={isSaving}>
+        <Button type="button" variant="secondary" onClick={onClose} disabled={isSaving}>
           {t("exportCancel")}
         </Button>
         <Button
