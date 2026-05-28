@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { chakra } from "@chakra-ui/react";
 import { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
 import { copyToClipboard } from "./clipboard";
@@ -61,29 +62,65 @@ export function CellValueViewer({ columnName, value, isBinary, onClose }: Props)
       <ModalHeader
         onClose={onClose}
         closeLabel={t("cellViewerClose")}
-        titleProps={{ className: "cell-viewer-title", title: columnName }}
+        titleProps={{
+          title: columnName,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          fontFamily: "mono",
+        }}
       >
         {columnName}
       </ModalHeader>
 
-      <ModalBody className="cell-viewer-body">
+      <ModalBody display="flex" flexDirection="column">
         {isNull ? (
-          <div className="cell-viewer-null">{t("resultNull")}</div>
+          <chakra.div fontStyle="italic" color="app.textMuted">
+            {t("resultNull")}
+          </chakra.div>
         ) : display === "" ? (
-          <div className="cell-viewer-null">{t("cellViewerEmpty")}</div>
+          <chakra.div fontStyle="italic" color="app.textMuted">
+            {t("cellViewerEmpty")}
+          </chakra.div>
         ) : (
-          <pre className="cell-viewer-content">{display}</pre>
+          <chakra.pre
+            m={0}
+            flex="1"
+            minH="80px"
+            maxH="60vh"
+            overflow="auto"
+            p="10px 12px"
+            fontFamily="mono"
+            fontSize="sm"
+            lineHeight={1.5}
+            whiteSpace="pre-wrap"
+            wordBreak="break-word"
+            color="app.text"
+            bg="app.bgInput"
+            border="1px solid"
+            borderColor="app.border"
+            borderRadius="md"
+          >
+            {display}
+          </chakra.pre>
         )}
       </ModalBody>
 
       <ModalFooter>
         {canFormat && (
-          <label className="cell-viewer-format-toggle">
-            <Checkbox checked={pretty} onChange={(e) => setPretty(e.target.checked)} />
+          <chakra.label
+            display="inline-flex"
+            alignItems="center"
+            gap="6px"
+            fontSize="sm"
+            color="app.text"
+            userSelect="none"
+          >
+            <Checkbox m={0} checked={pretty} onChange={(e) => setPretty(e.target.checked)} />
             <span>{t("cellViewerFormatJson")}</span>
-          </label>
+          </chakra.label>
         )}
-        <div className="cell-viewer-footer-spacer" />
+        <chakra.div flex="1" />
         <Button type="button" onClick={handleCopy} disabled={isNull}>
           {copied ? t("gridCopied") : t("cellViewerCopy")}
         </Button>

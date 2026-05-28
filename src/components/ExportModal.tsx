@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { chakra } from "@chakra-ui/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, CellValue, Column, ExportFormat } from "../api/tauri";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input } from "./ui";
+import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -140,49 +142,70 @@ export function ExportModal({ columns, rows, database, table, partial, onClose }
         {t("exportTitle")}
       </ModalHeader>
 
-      <ModalBody className="export-body">
-        <div className="export-rowcount">{t("exportRowCount", { rows: rows.length })}</div>
+      <ModalBody display="flex" flexDirection="column" gap="var(--space-4)">
+        <chakra.div fontSize="md" color="app.text">
+          {t("exportRowCount", { rows: rows.length })}
+        </chakra.div>
         {partial && (
-          <div className="export-warning" role="status">
+          <chakra.div
+            role="status"
+            p="8px 10px"
+            border="1px solid"
+            borderColor="color-mix(in srgb, #f59e0b 50%, var(--border))"
+            bg="color-mix(in srgb, #f59e0b 14%, var(--bg-muted))"
+            color="app.text"
+            borderRadius="md"
+            fontSize="sm"
+            lineHeight={1.5}
+          >
             {t("exportPartialWarning")}
-          </div>
+          </chakra.div>
         )}
-        <section className="export-section">
-          <div className="export-label">{t("exportFormat")}</div>
-          <div className="export-format-row" role="radiogroup" aria-label={t("exportFormat")}>
-            <label className={`export-format-option ${format === "csv" ? "active" : ""}`}>
-              <input
-                type="radio"
-                name="export-format"
-                value="csv"
-                checked={format === "csv"}
-                onChange={() => setFormat("csv")}
-                disabled={isSaving}
-              />
-              <span>{t("exportFormatCsv")}</span>
-            </label>
-            <label className={`export-format-option ${format === "json" ? "active" : ""}`}>
-              <input
-                type="radio"
-                name="export-format"
-                value="json"
-                checked={format === "json"}
-                onChange={() => setFormat("json")}
-                disabled={isSaving}
-              />
-              <span>{t("exportFormatJson")}</span>
-            </label>
-          </div>
-        </section>
+        <FormSection>
+          <FieldLabel as="div">{t("exportFormat")}</FieldLabel>
+          <chakra.div
+            role="radiogroup"
+            aria-label={t("exportFormat")}
+            display="flex"
+            gap="var(--space-2)"
+          >
+            {(["csv", "json"] as const).map((fmt) => (
+              <chakra.label
+                key={fmt}
+                display="inline-flex"
+                alignItems="center"
+                gap="6px"
+                p="6px 12px"
+                border="1px solid"
+                borderColor={format === fmt ? "app.accent" : "app.border"}
+                borderRadius="md"
+                fontSize="md"
+                cursor="pointer"
+                bg={format === fmt ? "app.rowHover" : "app.surface"}
+                userSelect="none"
+              >
+                <input
+                  type="radio"
+                  name="export-format"
+                  value={fmt}
+                  checked={format === fmt}
+                  onChange={() => setFormat(fmt)}
+                  disabled={isSaving}
+                  style={{ margin: 0 }}
+                />
+                <span>{fmt === "csv" ? t("exportFormatCsv") : t("exportFormatJson")}</span>
+              </chakra.label>
+            ))}
+          </chakra.div>
+        </FormSection>
 
-        <section className="export-section">
-          <label className="export-label" htmlFor="export-path">
-            {t("exportSavePath")}
-          </label>
-          <div className="export-path-row">
+        <FormSection>
+          <FieldLabel htmlFor="export-path">{t("exportSavePath")}</FieldLabel>
+          <PathRow>
             <Input
               id="export-path"
-              className="export-path-input"
+              flex="1"
+              minW={0}
               type="text"
               value={path}
               onChange={(e) => setPath(e.target.value)}
@@ -192,11 +215,11 @@ export function ExportModal({ columns, rows, database, table, partial, onClose }
             <Button type="button" onClick={handleBrowse} disabled={isSaving}>
               {t("exportBrowse")}
             </Button>
-          </div>
-        </section>
+          </PathRow>
+        </FormSection>
 
         {status.kind === "error" && (
-          <div className="export-error">{t("exportError", { error: status.message })}</div>
+          <ErrorNote>{t("exportError", { error: status.message })}</ErrorNote>
         )}
       </ModalBody>
 

@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
+import { chakra } from "@chakra-ui/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, DumpOptions } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input } from "./ui";
+import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -118,36 +120,56 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
         {t("dumpTitle", { database })}
       </ModalHeader>
 
-      <ModalBody className="export-body">
-        <div className="dump-note">{t("dumpNote")}</div>
+      <ModalBody display="flex" flexDirection="column" gap="var(--space-4)">
+        <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
+          {t("dumpNote")}
+        </chakra.div>
 
-        <section className="export-section">
-          <div className="export-label">{t("dumpOptionsLabel")}</div>
-          <div className="dump-options">
+        <FormSection>
+          <FieldLabel as="div">{t("dumpOptionsLabel")}</FieldLabel>
+          <chakra.div
+            display="grid"
+            gridTemplateColumns="repeat(auto-fill, minmax(240px, 1fr))"
+            gap="6px 16px"
+          >
             {OPTION_ROWS.map((row) => (
-              <label key={row.key} className="dump-option" title={t(row.hint)}>
+              <chakra.label
+                key={row.key}
+                display="flex"
+                alignItems="flex-start"
+                gap="var(--space-2)"
+                py="4px"
+                cursor="pointer"
+                userSelect="none"
+                title={t(row.hint)}
+              >
                 <Checkbox
+                  m="3px 0 0"
+                  flex="none"
                   checked={options[row.key]}
                   onChange={() => toggle(row.key)}
                   disabled={isRunning}
                 />
-                <span className="dump-option-text">
-                  <span className="dump-option-label">{t(row.label)}</span>
-                  <span className="dump-option-hint">{t(row.hint)}</span>
-                </span>
-              </label>
+                <chakra.span display="flex" flexDirection="column" gap="2px" minW={0}>
+                  <chakra.span fontSize="md" color="app.text">
+                    {t(row.label)}
+                  </chakra.span>
+                  <chakra.span fontSize="xs" color="app.textMuted" lineHeight={1.4}>
+                    {t(row.hint)}
+                  </chakra.span>
+                </chakra.span>
+              </chakra.label>
             ))}
-          </div>
-        </section>
+          </chakra.div>
+        </FormSection>
 
-        <section className="export-section">
-          <label className="export-label" htmlFor="dump-path">
-            {t("dumpSavePath")}
-          </label>
-          <div className="export-path-row">
+        <FormSection>
+          <FieldLabel htmlFor="dump-path">{t("dumpSavePath")}</FieldLabel>
+          <PathRow>
             <Input
               id="dump-path"
-              className="export-path-input"
+              flex="1"
+              minW={0}
               type="text"
               value={path}
               onChange={(e) => setPath(e.target.value)}
@@ -157,11 +179,11 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
             <Button type="button" onClick={handleBrowse} disabled={isRunning}>
               {t("dumpBrowse")}
             </Button>
-          </div>
-        </section>
+          </PathRow>
+        </FormSection>
 
         {status.kind === "error" && (
-          <div className="export-error">{t("dumpError", { error: status.message })}</div>
+          <ErrorNote>{t("dumpError", { error: status.message })}</ErrorNote>
         )}
       </ModalBody>
 
