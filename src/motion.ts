@@ -101,4 +101,14 @@ export const variants = {
     animate: { opacity: 1, y: 0 },
     exit: { opacity: 0, y: -4 },
   },
+  /**
+   * モーダル本体 (ダイアログ) の出入り。フェード + 控えめなスケール + 微小な
+   * 上下スライドを enter/exit 対称にする。バックドロップ側は `fade` を使う。
+   * `Modal.tsx` が `AnimatePresence` 配下で利用する。
+   */
+  dialog: {
+    initial: { opacity: 0, scale: 0.96, y: 8 },
+    animate: { opacity: 1, scale: 1, y: 0 },
+    exit: { opacity: 0, scale: 0.96, y: 8 },
+  },
 } satisfies Record<string, Variants>;

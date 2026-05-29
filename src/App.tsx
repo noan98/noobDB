@@ -3190,33 +3190,41 @@ export default function App() {
       </Flex>
 
       <Suspense fallback={null}>
-      {importTarget && sessionId && (
-        <ImportModal
-          sessionId={sessionId}
-          database={importTarget.database}
-          table={importTarget.table}
-          onClose={() => setImportTarget(null)}
-          onImported={() => handleImported(importTarget.database, importTarget.table)}
-        />
-      )}
+      {/* 各モーダルは `AnimatePresence` で包み、閉じる際の exit を再生させてから
+          アンマウントさせる (Modal.tsx の開閉アニメ前提)。 */}
+      <AnimatePresence>
+        {importTarget && sessionId && (
+          <ImportModal
+            sessionId={sessionId}
+            database={importTarget.database}
+            table={importTarget.table}
+            onClose={() => setImportTarget(null)}
+            onImported={() => handleImported(importTarget.database, importTarget.table)}
+          />
+        )}
+      </AnimatePresence>
 
-      {dumpTarget && sessionId && (
-        <DumpModal
-          sessionId={sessionId}
-          database={dumpTarget}
-          onClose={() => setDumpTarget(null)}
-        />
-      )}
+      <AnimatePresence>
+        {dumpTarget && sessionId && (
+          <DumpModal
+            sessionId={sessionId}
+            database={dumpTarget}
+            onClose={() => setDumpTarget(null)}
+          />
+        )}
+      </AnimatePresence>
 
-      {pendingDangerous && (
-        <DangerousQueryDialog
-          findings={pendingDangerous.findings}
-          isProduction={pendingDangerous.isProduction}
-          writeApproval={pendingDangerous.writeApproval}
-          onConfirm={handleConfirmDangerous}
-          onCancel={handleCancelDangerous}
-        />
-      )}
+      <AnimatePresence>
+        {pendingDangerous && (
+          <DangerousQueryDialog
+            findings={pendingDangerous.findings}
+            isProduction={pendingDangerous.isProduction}
+            writeApproval={pendingDangerous.writeApproval}
+            onConfirm={handleConfirmDangerous}
+            onCancel={handleCancelDangerous}
+          />
+        )}
+      </AnimatePresence>
       </Suspense>
 
       {tabMenu && (() => {

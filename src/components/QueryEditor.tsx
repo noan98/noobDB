@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { Box, chakra } from "@chakra-ui/react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -653,20 +653,22 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         )}
       </Box>
       <Box ref={hostRef} flex="1" overflow="auto" bg="app.surface" />
-      {showBuilder && sessionId && !explainMode && (
-        <QueryBuilder
-          sessionId={sessionId}
-          driver={driver}
-          defaultDatabase={defaultDatabase ?? activeTable?.database ?? null}
-          defaultTable={activeTable?.name ?? null}
-          initialSnapshot={builderSnapshot}
-          readOnly={readOnly}
-          onExecute={(builtSql) => onRun(builtSql)}
-          onPreview={onPreview ? (builtSql) => onPreview(builtSql) : undefined}
-          onPersist={onBuilderPersist}
-          onClose={() => setShowBuilder(false)}
-        />
-      )}
+      <AnimatePresence>
+        {showBuilder && sessionId && !explainMode && (
+          <QueryBuilder
+            sessionId={sessionId}
+            driver={driver}
+            defaultDatabase={defaultDatabase ?? activeTable?.database ?? null}
+            defaultTable={activeTable?.name ?? null}
+            initialSnapshot={builderSnapshot}
+            readOnly={readOnly}
+            onExecute={(builtSql) => onRun(builtSql)}
+            onPreview={onPreview ? (builtSql) => onPreview(builtSql) : undefined}
+            onPersist={onBuilderPersist}
+            onClose={() => setShowBuilder(false)}
+          />
+        )}
+      </AnimatePresence>
     </Box>
   );
 });

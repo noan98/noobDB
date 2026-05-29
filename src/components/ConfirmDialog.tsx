@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence } from "motion/react";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button } from "./ui";
@@ -73,17 +74,23 @@ export function useConfirm(): { confirm: (opts: ConfirmOptions) => Promise<boole
     });
   }, []);
 
-  const dialog: ReactNode = state ? (
-    <ConfirmDialog
-      title={state.title}
-      message={state.message}
-      confirmLabel={state.confirmLabel ?? t("confirmDefaultOk")}
-      cancelLabel={state.cancelLabel ?? t("confirmDefaultCancel")}
-      tone={state.tone ?? "primary"}
-      onConfirm={() => close(true)}
-      onCancel={() => close(false)}
-    />
-  ) : null;
+  // `AnimatePresence` で包み、確認を閉じる際に exit アニメを再生させてから
+  // アンマウントさせる (Modal.tsx の開閉アニメ前提)。
+  const dialog: ReactNode = (
+    <AnimatePresence>
+      {state && (
+        <ConfirmDialog
+          title={state.title}
+          message={state.message}
+          confirmLabel={state.confirmLabel ?? t("confirmDefaultOk")}
+          cancelLabel={state.cancelLabel ?? t("confirmDefaultCancel")}
+          tone={state.tone ?? "primary"}
+          onConfirm={() => close(true)}
+          onCancel={() => close(false)}
+        />
+      )}
+    </AnimatePresence>
+  );
 
   return { confirm, dialog };
 }
