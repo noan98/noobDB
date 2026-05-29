@@ -127,12 +127,18 @@ CI は 2 つのワークフローに分かれています:
   (Vitest) を実行します。pnpm は各ジョブで `corepack enable` により用意し、`pnpm`
   ストアを `actions/cache` でキャッシュします (`actions/setup-node` の `cache: npm`
   は使いません)。`paths-filter` は `package-lock.json` ではなく `pnpm-lock.yaml` を
-  監視します。Rust 系は 3 つのジョブに分かれます: `rust (clippy)` が
+  監視します。Rust 系は 4 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL 8 と PostgreSQL 16 のサービスコンテナに対し `cargo llvm-cov nextest`
   (カバレッジ計装下で nextest を実走) を実行し、`rust (fmt)` が
-  `cargo fmt --all -- --check` を実行します。`rust (test)` には MySQL 用の
+  `cargo fmt --all -- --check` を、`rust (deny)` が
+  `cargo deny --manifest-path src-tauri/Cargo.toml check` (依存ライセンスの許可
+  リスト検査と RustSec Advisory DB による脆弱性チェック。設定は
+  `src-tauri/deny.toml`) を実行します。`rust (deny)` は cargo metadata を読むだけで
+  コンパイル不要なため、Tauri のシステム依存やフロントエンドビルドは要らず軽量に
+  走ります (cargo-deny は他ツールと同じく `taiki-e/install-action` でプリビルド
+  バイナリを導入)。`rust (test)` には MySQL 用の
   `NOOBDB_TEST_MYSQL_URL` と PostgreSQL 用の `NOOBDB_TEST_POSTGRES_URL` を両方
   渡しており、両ドライバの統合テストが CI で実走します (SQLite は環境変数不要で
   常に走る)。カバレッジは `cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
@@ -145,8 +151,8 @@ CI は 2 つのワークフローに分かれています:
   `key` を `clippy` / `test` に分けてキャッシュを分離)。両 Rust ジョブとも CI では
   無益な incremental コンパイルを `CARGO_INCREMENTAL=0` で無効化しています。
   **必須チェックを設定する場合は `rust (check + clippy + test)` ではなく
-  `rust (clippy)` と `rust (test)` を指定してください** (ジョブ分割でチェック名が
-  変わったため)。
+  `rust (clippy)` と `rust (test)` (必要なら `rust (deny)`) を指定してください**
+  (ジョブ分割でチェック名が変わったため)。
 - `.github/workflows/release.yml` — `v*` タグまたは `workflow_dispatch` を
   トリガに、`windows-latest` 上で `tauri-action` 経由の NSIS バンドルを生成します。
   `main` への push でもキャッシュ温め目的でビルドが走ります。

@@ -92,12 +92,20 @@ impl AppState {
     }
 }
 
+/// Base32-ish alphabet without easily-confused characters (`0`/`o`/`l`/`1`).
+/// Safe as a keyring target prefix and in temp file names across platforms.
+const SLUG_ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+
+/// Random slug of `len` characters drawn from [`SLUG_ALPHABET`].
+pub fn random_slug(len: usize) -> String {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    (0..len)
+        .map(|_| SLUG_ALPHABET[rng.random_range(0..SLUG_ALPHABET.len())] as char)
+        .collect()
+}
+
 /// Short base32-ish slug (8 chars) suitable for keyring target names.
 pub fn new_session_id() -> SessionId {
-    use rand::RngExt;
-    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
-    let mut rng = rand::rng();
-    (0..8)
-        .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
-        .collect()
+    random_slug(8)
 }

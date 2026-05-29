@@ -1,0 +1,53 @@
+# cargo-deny の設定。CI (`.github/workflows/ci.yml` の `rust (deny)` ジョブ) が
+# `cargo deny --manifest-path src-tauri/Cargo.toml check` で実行します。
+#
+# 目的:
+#   - 既知のセキュリティ脆弱性 (RustSec Advisory DB) を PR 段階で検出する。
+#   - 依存ライセンスを許可リストで明示し、想定外のライセンスの混入を防ぐ。
+#
+# DB 接続・SSH 認証・システムキーリングという機密性の高い処理を担うクレート
+# (tokio / russh / sqlx / keyring など) を抱えるバックエンドの依存健全性を
+# 自動監視するのが狙いです。
+
+# cargo-deny 0.16 以降の設定スキーマを使う。
+[graph]
+# ターゲット非依存の依存も含め全体を検査対象にする (既定)。
+
+[advisories]
+# RustSec Advisory DB に対する脆弱性チェック。脆弱性 (vulnerability) と
+# unsound は cargo-deny 0.16+ では常に deny が既定。yanked クレートも拒否する。
+yanked = "deny"
+# 個別に握りつぶす場合はここに advisory ID を列挙する (現状なし)。
+ignore = []
+
+[licenses]
+# 許可するライセンス (SPDX 識別子)。現在の依存ツリーに実在するもののうち、
+# 単独で要求される / AND 式で要求されるものを網羅している。OR 式
+# (例: "MIT OR Apache-2.0") はいずれかが許可されていれば充足する。
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+# ライセンス判定の信頼度しきい値。1.0 に近いほど厳密。
+confidence-threshold = 0.8
+# 自クレート (noobdb 本体) は publish = false の非公開アプリなので検査から除外する。
+private = { ignore = true }
+
+[bans]
+# 同一クレートの複数バージョン同居は警告に留める (Tauri/sqlx の巨大依存ツリーでは
+# 推移依存のバージョン重複は避けにくいため、fail させず可視化のみ)。
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+# crates.io 以外の未知レジストリ / 未知 git ソースからの取得を拒否する。
+unknown-registry = "deny"
+unknown-git = "deny"
