@@ -90,6 +90,7 @@ const config = defineConfig({
           toolbar: { value: "var(--bg-toolbar)" },
           header: { value: "var(--bg-header)" },
           bgError: { value: "var(--bg-error)" },
+          bgWarning: { value: "var(--bg-warning)" },
           bgInput: { value: "var(--bg-input)" },
           stripe: { value: "var(--bg-stripe)" },
           rowHover: { value: "var(--bg-row-hover)" },
@@ -99,6 +100,7 @@ const config = defineConfig({
           textMuted: { value: "var(--text-muted)" },
           textNull: { value: "var(--text-null)" },
           textError: { value: "var(--text-error)" },
+          textWarning: { value: "var(--text-warning)" },
           textSuccess: { value: "var(--text-success)" },
           // ボーダー
           border: { value: "var(--border)" },
@@ -123,6 +125,7 @@ const config = defineConfig({
             connected: { value: "var(--status-connected)" },
             connecting: { value: "var(--status-connecting)" },
             error: { value: "var(--status-error)" },
+            warning: { value: "var(--status-warning)" },
             success: { value: "var(--status-success)" },
             info: { value: "var(--status-info)" },
             idle: { value: "var(--status-idle)" },

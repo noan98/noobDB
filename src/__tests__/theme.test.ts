@@ -22,6 +22,9 @@ describe("token bridge resolves to App.css CSS variables", () => {
     expect(system.token("colors.app.bgInput")).toBe("var(--bg-input)");
     expect(system.token("colors.app.borderSubtle")).toBe("var(--border-subtle)");
     expect(system.token("colors.app.status.error")).toBe("var(--status-error)");
+    expect(system.token("colors.app.status.warning")).toBe("var(--status-warning)");
+    expect(system.token("colors.app.bgWarning")).toBe("var(--bg-warning)");
+    expect(system.token("colors.app.textWarning")).toBe("var(--text-warning)");
     expect(system.token("colors.app.syntax.keyword")).toBe("var(--syntax-keyword)");
     expect(system.token("colors.app.cell.boolTrue")).toBe("var(--cell-bool-true)");
   });

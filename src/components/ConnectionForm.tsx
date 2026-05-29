@@ -5,6 +5,7 @@ import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { Spinner } from "./Spinner";
 import { Button, Input, Select, Switch } from "./ui";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
@@ -636,7 +637,16 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
       <Flex gridColumn="span 2" gap="var(--space-2)" justify="flex-end">
         <Button type="button" variant="secondary" onClick={onCancel}>{t("formCancel")}</Button>
-        <Button type="button" onClick={handleTest} disabled={testing}>{testing ? t("formTesting") : t("formTest")}</Button>
+        <Button type="button" onClick={handleTest} disabled={testing} aria-busy={testing}>
+          {testing ? (
+            <Flex as="span" display="inline-flex" align="center" gap="6px">
+              <Spinner size={13} />
+              {t("formTesting")}
+            </Flex>
+          ) : (
+            t("formTest")
+          )}
+        </Button>
         <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
       </Flex>
     </Box>
