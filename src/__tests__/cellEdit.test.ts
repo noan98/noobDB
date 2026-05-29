@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { Column, TableColumnInfo } from "../api/tauri";
+import { CellValue, Column, TableColumnInfo } from "../api/tauri";
 import {
   buildUpdateStatements,
   countEditedCells,
   countEditedRows,
   isEditableColumnType,
   resolvePkIndices,
+  rowEditKey,
   type BuildUpdateInput,
+  type PendingEdits,
 } from "../components/cellEdit";
 
 function col(name: string, type_name: string): Column {
@@ -24,6 +26,12 @@ function tcol(name: string, key: string): TableColumnInfo {
     referenced_table: null,
     referenced_column: null,
   };
+}
+
+// Edit key for a row whose (single) PK column holds `pkValue`. Mirrors how the
+// grid keys buffered edits: the row's array position is irrelevant.
+function k(pkValue: CellValue): string {
+  return rowEditKey([pkValue], [0], 0);
 }
 
 describe("isEditableColumnType", () => {
@@ -72,6 +80,39 @@ describe("resolvePkIndices", () => {
   });
 });
 
+describe("rowEditKey", () => {
+  it("keys by primary-key value, independent of array position", () => {
+    // Same PK in two different rows/pages → same key; the index is ignored.
+    expect(rowEditKey([7, "a"], [0], 0)).toBe(rowEditKey([7, "z"], [0], 9));
+  });
+
+  it("distinguishes different PK values", () => {
+    expect(rowEditKey([1], [0], 0)).not.toBe(rowEditKey([2], [0], 0));
+  });
+
+  it("does not collapse a number, its string form, a boolean, or NULL", () => {
+    const keys = [
+      rowEditKey([1], [0], 0),
+      rowEditKey(["1"], [0], 0),
+      rowEditKey([true], [0], 0),
+      rowEditKey([null], [0], 0),
+    ];
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("keeps composite keys unambiguous regardless of value contents", () => {
+    // Without length-prefixing, ["as","b"] and ["a","sb"] could collide.
+    expect(rowEditKey(["as", "b"], [0, 1], 0)).not.toBe(
+      rowEditKey(["a", "sb"], [0, 1], 0),
+    );
+  });
+
+  it("falls back to a position key (distinct from any PK key) without a PK", () => {
+    expect(rowEditKey([1, "x"], [], 3)).toBe("i3");
+    expect(rowEditKey([1, "x"], [], 3)).not.toBe(rowEditKey([1, "x"], [0], 3));
+  });
+});
+
 function baseInput(overrides: Partial<BuildUpdateInput>): BuildUpdateInput {
   return {
     driver: "mysql",
@@ -95,34 +136,33 @@ describe("buildUpdateStatements", () => {
 
   it("builds a quoted, qualified UPDATE for MySQL", () => {
     expect(
-      buildUpdateStatements(baseInput({ edits: { 0: { 1: "new" } } })),
+      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "new" } } })),
     ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'new' WHERE `id` = 1;"]);
   });
 
   it("emits numeric input for numeric columns unquoted", () => {
     expect(
-      buildUpdateStatements(baseInput({ edits: { 0: { 0: "5" } } })),
+      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 0: "5" } } })),
     ).toEqual(["UPDATE `db`.`tbl` SET `id` = 5 WHERE `id` = 1;"]);
   });
 
   it("treats the NULL keyword as SQL NULL", () => {
     expect(
-      buildUpdateStatements(baseInput({ edits: { 0: { 1: "null" } } })),
+      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "null" } } })),
     ).toEqual(["UPDATE `db`.`tbl` SET `name` = NULL WHERE `id` = 1;"]);
   });
 
   it("uses the original PK value in WHERE even when the PK is edited", () => {
     expect(
-      buildUpdateStatements(baseInput({ edits: { 0: { 0: "99" } } })),
+      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 0: "99" } } })),
     ).toEqual(["UPDATE `db`.`tbl` SET `id` = 99 WHERE `id` = 1;"]);
   });
 
   it("keeps targeting the right row by PK after rows are appended (loadMore)", () => {
-    // `loadMore` appends fetched rows, leaving existing rows at their original
-    // indices. An edit keyed by index 1 must still resolve to that row's PK (2),
-    // never to a row that arrived in a later page. (Issue #330 — App.tsx clears
-    // pending edits on loadMore as the safe-side guard, but the targeting must
-    // also be correct should an edit ever survive an append.)
+    // `loadMore` appends fetched rows. An edit keyed by the PK of the second
+    // row (id 2) must still resolve to it, never to a row that arrived in a
+    // later page — even if the edited row's array index shifts. (Issues
+    // #330 / #352: edits now survive pagination because they are PK-keyed.)
     const rowsAfterLoadMore = [
       [1, "old"],
       [2, "foo"],
@@ -131,15 +171,44 @@ describe("buildUpdateStatements", () => {
     ];
     expect(
       buildUpdateStatements(
-        baseInput({ rows: rowsAfterLoadMore, edits: { 1: { 1: "edited" } } }),
+        baseInput({ rows: rowsAfterLoadMore, edits: { [k(2)]: { 1: "edited" } } }),
       ),
     ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'edited' WHERE `id` = 2;"]);
+  });
+
+  it("targets the right row even when the array order changes", () => {
+    // Same PK key, but the edited row now sits at a different array index
+    // (e.g. a re-sorted/re-surfaced page). PK keying makes this a no-op.
+    const reordered = [
+      [2, "foo"],
+      [1, "old"],
+    ];
+    expect(
+      buildUpdateStatements(
+        baseInput({ rows: reordered, edits: { [k(1)]: { 1: "x" } } }),
+      ),
+    ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'x' WHERE `id` = 1;"]);
+  });
+
+  it("emits a re-surfaced row only once", () => {
+    // Pagination without a stable ORDER BY can return the same row twice; the
+    // edit should produce a single UPDATE, not a duplicate.
+    const withDup = [
+      [1, "old"],
+      [2, "foo"],
+      [1, "old-again"],
+    ];
+    expect(
+      buildUpdateStatements(
+        baseInput({ rows: withDup, edits: { [k(1)]: { 1: "x" } } }),
+      ),
+    ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'x' WHERE `id` = 1;"]);
   });
 
   it("quotes identifiers and qualifies for Postgres", () => {
     expect(
       buildUpdateStatements(
-        baseInput({ driver: "postgres", edits: { 0: { 1: "new" } } }),
+        baseInput({ driver: "postgres", edits: { [k(1)]: { 1: "new" } } }),
       ),
     ).toEqual(['UPDATE "db"."tbl" SET "name" = \'new\' WHERE "id" = 1;']);
   });
@@ -147,24 +216,24 @@ describe("buildUpdateStatements", () => {
   it("omits the database prefix for SQLite", () => {
     expect(
       buildUpdateStatements(
-        baseInput({ driver: "sqlite", edits: { 0: { 1: "new" } } }),
+        baseInput({ driver: "sqlite", edits: { [k(1)]: { 1: "new" } } }),
       ),
     ).toEqual(['UPDATE "tbl" SET "name" = \'new\' WHERE "id" = 1;']);
   });
 
   it("doubles single quotes in string literals", () => {
     expect(
-      buildUpdateStatements(baseInput({ edits: { 0: { 1: "O'Brien" } } })),
+      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "O'Brien" } } })),
     ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'O''Brien' WHERE `id` = 1;"]);
   });
 
   it("escapes backslashes for MySQL but not Postgres", () => {
     expect(
-      buildUpdateStatements(baseInput({ edits: { 0: { 1: "a\\b" } } })),
+      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "a\\b" } } })),
     ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'a\\\\b' WHERE `id` = 1;"]);
     expect(
       buildUpdateStatements(
-        baseInput({ driver: "postgres", edits: { 0: { 1: "a\\b" } } }),
+        baseInput({ driver: "postgres", edits: { [k(1)]: { 1: "a\\b" } } }),
       ),
     ).toEqual(['UPDATE "db"."tbl" SET "name" = \'a\\b\' WHERE "id" = 1;']);
   });
@@ -173,18 +242,18 @@ describe("buildUpdateStatements", () => {
     const columns = [col("id", "INT"), col("flag", "BOOLEAN")];
     expect(
       buildUpdateStatements(
-        baseInput({ columns, edits: { 0: { 1: "true" } } }),
+        baseInput({ columns, edits: { [k(1)]: { 1: "true" } } }),
       ),
     ).toEqual(["UPDATE `db`.`tbl` SET `flag` = TRUE WHERE `id` = 1;"]);
     expect(
-      buildUpdateStatements(baseInput({ columns, edits: { 0: { 1: "0" } } })),
+      buildUpdateStatements(baseInput({ columns, edits: { [k(1)]: { 1: "0" } } })),
     ).toEqual(["UPDATE `db`.`tbl` SET `flag` = FALSE WHERE `id` = 1;"]);
   });
 
-  it("emits one statement per edited row in ascending row order", () => {
+  it("emits one statement per edited row in row (top-to-bottom) order", () => {
     expect(
       buildUpdateStatements(
-        baseInput({ edits: { 1: { 1: "y" }, 0: { 1: "x" } } }),
+        baseInput({ edits: { [k(2)]: { 1: "y" }, [k(1)]: { 1: "x" } } }),
       ),
     ).toEqual([
       "UPDATE `db`.`tbl` SET `name` = 'x' WHERE `id` = 1;",
@@ -195,7 +264,7 @@ describe("buildUpdateStatements", () => {
 
 describe("edit counters", () => {
   it("counts cells and rows independently", () => {
-    const edits = { 0: { 0: "a", 1: "b" }, 1: { 0: "c" } };
+    const edits: PendingEdits = { [k(1)]: { 0: "a", 1: "b" }, [k(2)]: { 0: "c" } };
     expect(countEditedCells(edits)).toBe(3);
     expect(countEditedRows(edits)).toBe(2);
   });

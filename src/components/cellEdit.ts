@@ -5,12 +5,15 @@ import { quoteIdentFor } from "./sqlDialect";
 /**
  * Inline cell edits awaiting Preview/Apply.
  *
- * The outer key is the row index in `QueryResult.rows` (canonical
- * "original" position — unaffected by sort/filter); the inner key is the
- * column index in `QueryResult.columns`. Values are raw strings from the
- * input box — they are parsed into SQL literals by `buildUpdateStatements`.
+ * The outer key is the row's stable edit identity (`rowEditKey`) — derived
+ * from the row's primary-key values, NOT its array position — so a buffered
+ * edit stays bound to the same logical row across pagination, which appends
+ * rows and (without a stable ORDER BY) can re-surface a row already shown.
+ * The inner key is the column index in `QueryResult.columns`. Values are raw
+ * strings from the input box — parsed into SQL literals by
+ * `buildUpdateStatements`.
  */
-export type PendingEdits = Record<number, Record<number, string>>;
+export type PendingEdits = Record<string, Record<number, string>>;
 
 const NUMERIC_TYPES = new Set([
   "TINYINT",
@@ -168,6 +171,49 @@ export function resolvePkIndices(
   return indices;
 }
 
+// Distinct, collision-resistant encoding of a single primary-key cell. A type
+// tag keeps the value domains apart so the number 1, the string "1", the
+// boolean true and SQL NULL never collapse onto the same key. PK values are
+// simple scalars in practice, so stringifying the value is enough.
+function encodePkPart(v: CellValue): string {
+  if (v === null || v === undefined) return "x";
+  if (typeof v === "boolean") return v ? "b1" : "b0";
+  if (typeof v === "number") return "n" + String(v);
+  return "s" + String(v);
+}
+
+/**
+ * Stable identity for a result row, used as the key under which inline edits
+ * are buffered in `PendingEdits`. Derived from the row's primary-key column
+ * values so an edit follows the same logical row when the result array grows
+ * or reorders during pagination — array position does not, the primary key
+ * does.
+ *
+ * Falls back to the row's array index (prefixed so it can't collide with a
+ * PK-derived key) when the table has no resolvable primary key. Inline editing
+ * is only offered once a primary key resolves, so the fallback is effectively
+ * unused for real edits; it just keeps the function total.
+ */
+export function rowEditKey(
+  row: CellValue[],
+  pkIndices: number[],
+  fallbackIndex: number,
+): string {
+  if (pkIndices.length === 0) return "i" + fallbackIndex;
+  // Length-prefix each encoded part so a composite key is unambiguous: two
+  // different value tuples can never serialize to the same string regardless
+  // of what characters the values contain.
+  return (
+    "k" +
+    pkIndices
+      .map((i) => {
+        const part = encodePkPart(row[i]);
+        return part.length + ":" + part;
+      })
+      .join("")
+  );
+}
+
 function qualifiedTableRef(driver: string, database: string, table: string): string {
   // SQLite has a single namespace per connection — the synthetic "main"
   // database label is for the UI tree, not the SQL itself.
@@ -242,25 +288,28 @@ export interface BuildUpdateInput {
  * row. Returns an empty array when there are no edits or when the PK is
  * unresolved.
  *
- * Each row's WHERE clause uses the ORIGINAL pk values (from `rows`), not
- * any pending edits, so even an edit that changes a non-PK column still
- * targets the right row.
+ * Edits are keyed by `rowEditKey` (primary-key identity), so we walk `rows`
+ * in array order, compute each row's key, and emit a statement for any row
+ * with a matching edit. Iterating `rows` (rather than the edit map) keeps the
+ * statement order stable top-to-bottom and resolves the ORIGINAL pk values
+ * (from `rows`, not the pending edits) for the WHERE clause — so even an edit
+ * that changes a non-PK column still targets the right row. A re-surfaced row
+ * (same PK appearing twice in `rows` when pagination lacks a stable ORDER BY)
+ * is emitted only once.
  */
 export function buildUpdateStatements(input: BuildUpdateInput): string[] {
   if (input.pkIndices.length === 0) return [];
   const ref = qualifiedTableRef(input.driver, input.database, input.table);
   const stmts: string[] = [];
-  // Iterate the edits map in row-index order so the order of generated
-  // statements is stable and matches the visual top-to-bottom flow.
-  const rowIndices = Object.keys(input.edits)
-    .map((k) => Number(k))
-    .filter((k) => Number.isFinite(k))
-    .sort((a, b) => a - b);
-  for (const rowIdx of rowIndices) {
-    const rowEdits = input.edits[rowIdx];
-    if (!rowEdits) continue;
+  const emitted = new Set<string>();
+  for (let rowIdx = 0; rowIdx < input.rows.length; rowIdx++) {
     const row = input.rows[rowIdx];
     if (!row) continue;
+    const key = rowEditKey(row, input.pkIndices, rowIdx);
+    if (emitted.has(key)) continue;
+    const rowEdits = input.edits[key];
+    if (!rowEdits) continue;
+    emitted.add(key);
     const setParts: string[] = [];
     for (const colKey of Object.keys(rowEdits)) {
       const colIdx = Number(colKey);

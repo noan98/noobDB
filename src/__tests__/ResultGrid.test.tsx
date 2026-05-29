@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { ResultGrid, GRID_CSS } from "../components/ResultGrid";
+import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
 
@@ -194,7 +195,8 @@ describe("ResultGrid", () => {
       // Enter で確定 → 親へ通知。
       await user.keyboard("{Enter}");
 
-      expect(onSetCellEdit).toHaveBeenCalledWith(0, 1, "bob");
+      // 行は配列インデックスではなく主キー由来の安定キーで識別される (#352)。
+      expect(onSetCellEdit).toHaveBeenCalledWith(rowEditKey([1, "alice"], [0], 0), 1, "bob");
     });
 
     it("PK 列 (id) は編集不可セルにならない", () => {
