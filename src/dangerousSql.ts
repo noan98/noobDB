@@ -247,3 +247,43 @@ export function isReadOnlySql(sql: string): boolean {
   }
   return true;
 }
+
+const SCHEMA_MUTATING_PREFIXES = [
+  "create",
+  "alter",
+  "drop",
+  "rename",
+  "truncate",
+];
+
+/**
+ * Best-effort detection of DDL that can add/rename/remove tables, columns, or
+ * indexes, so the editor's autocomplete schema cache can be refreshed
+ * afterwards. Comments and quoted literals are masked first, then EVERY
+ * `;`-separated statement's leading keyword is checked — so a schema change
+ * hidden behind a leading comment (`-- note\nDROP TABLE t`) or after an earlier
+ * statement (`SELECT 1; DROP TABLE t`) is still caught, not just a DDL verb at
+ * the very start. Leans toward over-detection: a false positive only triggers a
+ * cheap re-fetch, so when in doubt we report `true`.
+ *
+ * `create` / `alter` / `drop` already cover the compound DDL forms the verb
+ * leads — `CREATE INDEX`, `DROP INDEX`, `ALTER TABLE ... RENAME COLUMN`,
+ * `ALTER TABLE ... RENAME TO` — because only the leading keyword is matched.
+ */
+export function isSchemaMutatingSql(sql: string): boolean {
+  const masked = maskLiterals(sql);
+  let start = 0;
+  for (let i = 0; i <= masked.length; i++) {
+    if (i === masked.length || masked[i] === ";") {
+      const body = masked.slice(start, i).toLowerCase().replace(/^[\s(]+/, "");
+      if (
+        body &&
+        SCHEMA_MUTATING_PREFIXES.some((kw) => startsWithKeyword(body, kw))
+      ) {
+        return true;
+      }
+      start = i + 1;
+    }
+  }
+  return false;
+}

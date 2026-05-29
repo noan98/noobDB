@@ -80,7 +80,12 @@ const SchemaCompareView = lazy(() =>
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
-import { analyzeDangerousSql, isReadOnlySql, type DangerFinding } from "./dangerousSql";
+import {
+  analyzeDangerousSql,
+  isReadOnlySql,
+  isSchemaMutatingSql,
+  type DangerFinding,
+} from "./dangerousSql";
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT } from "./i18n";
 import { useSettings, getSettings, BASE_FONT_SIZE_PX, type TabRestoreMode } from "./settings";
@@ -408,14 +413,6 @@ function tableDefinitionSql(driver: string, database: string, table: string): st
 // collide across (session, database) pairs.
 function schemaCacheKey(sessionId: string, database: string): string {
   return `${sessionId}\0${database}`;
-}
-
-// True when `sql` is DDL that can add/rename/remove tables or columns, so the
-// cached schema for autocomplete must be refreshed afterwards. Best-effort: a
-// false positive only triggers a cheap re-fetch.
-function isSchemaMutatingSql(sql: string): boolean {
-  const head = sql.trimStart().replace(/^\(+\s*/, "").toLowerCase();
-  return /^(create|alter|drop|rename|truncate)\b/.test(head);
 }
 
 function makeQueryTab(): Tab {
@@ -1295,12 +1292,28 @@ export default function App() {
   }, [sessionId, editorDatabases, schemaCache]);
 
   // Forget cached schemas so the fetch effect re-pulls fresh tables/columns —
-  // called after DDL. Clearing the whole map is fine: entries are cheap to
-  // rebuild and only the active database's snapshot is fetched eagerly.
-  const invalidateSchemaCache = useCallback(() => {
-    schemaInFlightRef.current.clear();
-    setSchemaCache({});
-  }, []);
+  // called after DDL. Pass the database the DDL ran against to drop only that
+  // snapshot, so a split pane editing another database keeps its cache (and
+  // doesn't trigger a needless re-fetch). With no database (or no session) we
+  // fall back to clearing the whole map; entries are cheap to rebuild.
+  const invalidateSchemaCache = useCallback(
+    (database?: string | null) => {
+      if (!sessionId || !database) {
+        schemaInFlightRef.current.clear();
+        setSchemaCache({});
+        return;
+      }
+      const key = schemaCacheKey(sessionId, database);
+      schemaInFlightRef.current.delete(key);
+      setSchemaCache((prev) => {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    },
+    [sessionId],
+  );
 
   // Tabs ref kept in sync so streaming callbacks below can read the latest
   // committed tab state without re-creating themselves on every batch.
@@ -1419,8 +1432,13 @@ export default function App() {
         }
         // A new entry was just written to history; refresh the panel.
         setHistoryReloadKey((k) => k + 1);
-        // DDL may have added/renamed tables or columns — refresh autocomplete.
-        if (isSchemaMutatingSql(sql)) invalidateSchemaCache();
+        // DDL may have added/renamed tables or columns — refresh autocomplete
+        // for the database this statement ran against (the executing tab's, or
+        // the profile default when the tab pins no database), leaving other
+        // panes' cached schemas untouched.
+        if (isSchemaMutatingSql(sql)) {
+          invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
+        }
         finalize();
       },
       onError: ({ error, timedOut, connectionLost }) => {
@@ -1470,6 +1488,7 @@ export default function App() {
     patchTab,
     cancelStreamForTab,
     invalidateSchemaCache,
+    selectedProfile?.database,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
@@ -1757,22 +1776,12 @@ export default function App() {
     const offset = tab.result.rows.length;
     const chunkSize = Math.max(1, settings.streamPrefetchSize);
     const sql = `${tab.paginatable} LIMIT ${chunkSize} OFFSET ${offset}`;
-    // Drop any in-flight inline cell edits before paginating. Appended rows
-    // keep the existing rows at their original indices, but pagination over a
-    // query without a stable ORDER BY can surface rows already shown above —
-    // so rather than reason about whether each buffered edit still lines up,
-    // we clear them on the safe side and tell the user. An incorrect UPDATE to
-    // a production row is far worse than re-typing an edit. (Issue #330)
-    const hadPendingEdits = countEditedCells(tab.pendingEdits) > 0;
-    patchTab(tabId, (tt) => ({
-      ...tt,
-      loadingMore: true,
-      pendingEdits: hadPendingEdits ? {} : tt.pendingEdits,
-      preview: hadPendingEdits ? null : tt.preview,
-    }));
-    if (hadPendingEdits) {
-      toast.info(translate("toastEditsClearedByLoadMore"));
-    }
+    // Buffered inline edits survive pagination now that they are keyed by each
+    // row's primary key (`rowEditKey`) rather than its array index. Appending a
+    // page leaves existing rows in place, and even if a query without a stable
+    // ORDER BY re-surfaces a row already shown, its PK identity is unchanged so
+    // the edit still targets the correct row. (Issues #330 / #352)
+    patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     setStatus({
       kind: "key",
       key: "statusLoadingMore",
@@ -1808,7 +1817,7 @@ export default function App() {
         error: true,
       });
     }
-  }, [sessionId, settings.streamPrefetchSize, patchTab, toast]);
+  }, [sessionId, settings.streamPrefetchSize, patchTab]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -1951,19 +1960,19 @@ export default function App() {
   }, [refreshSnippets]);
 
   const setCellEditForTab = useCallback(
-    (tabId: string, rowIdx: number, colIdx: number, value: string | null) => {
+    (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
       patchTab(tabId, (tt) => {
         const next = { ...tt.pendingEdits };
-        const row = { ...(next[rowIdx] ?? {}) };
+        const row = { ...(next[rowKey] ?? {}) };
         if (value === null) {
           delete row[colIdx];
         } else {
           row[colIdx] = value;
         }
         if (Object.keys(row).length === 0) {
-          delete next[rowIdx];
+          delete next[rowKey];
         } else {
-          next[rowIdx] = row;
+          next[rowKey] = row;
         }
         return { ...tt, pendingEdits: next };
       });

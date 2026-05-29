@@ -217,8 +217,6 @@ const en = {
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
   statusConnecting: "Connecting to {name}...",
   toastConnected: "Connected to {name}",
-  toastEditsClearedByLoadMore:
-    "Cleared your in-progress cell edits before loading more rows.",
   toastTabRestoreMissing:
     "Table “{table}” was not found and was restored as a query tab.",
   toastTabRestoreMissingMany:
@@ -1021,8 +1019,6 @@ const ja: Dict = {
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
   statusConnecting: "{name} に接続中...",
   toastConnected: "{name} に接続しました",
-  toastEditsClearedByLoadMore:
-    "追加読み込みにより編集中のセル内容をクリアしました。",
   toastTabRestoreMissing:
     "テーブル「{table}」が見つかりません。クエリタブとして復元しました。",
   toastTabRestoreMissingMany:
