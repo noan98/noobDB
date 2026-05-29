@@ -14,11 +14,28 @@
 # ターゲット非依存の依存も含め全体を検査対象にする (既定)。
 
 [advisories]
-# RustSec Advisory DB に対する脆弱性チェック。脆弱性 (vulnerability) と
-# unsound は cargo-deny 0.16+ では常に deny が既定。yanked クレートも拒否する。
+# RustSec Advisory DB に対する脆弱性チェック。脆弱性 / unsound / unmaintained は
+# cargo-deny 0.16+ では既定で error になる。
 yanked = "deny"
-# 個別に握りつぶす場合はここに advisory ID を列挙する (現状なし)。
-ignore = []
+# unmaintained は「自分が直接依存しているクレート」に限定して検出する。Tauri の
+# Linux GUI スタック (gtk/gdk/atk/gdkx11 …) や unic-*・proc-macro-error といった
+# 深い推移依存の unmaintained は upstream の管轄で本リポジトリでは差し替えられない
+# ため、transitive を対象から外す。直接依存に unmaintained を足したときは検出する。
+unmaintained = "workspace"
+# 個別に握りつぶす項目。いずれも russh / Tauri の推移依存で、本リポジトリの
+# Cargo.toml では制御できず、現時点で修正版が存在しない既知事項。新しい依存で
+# 新たな脆弱性が混入した場合はここに無いので CI で検出される。
+ignore = [
+    # rsa の Marvin 攻撃 (タイミング側チャネル)。SSH 認証用に russh が引き込む
+    # rsa 0.10.0-rc.16 に該当。修正版は未リリースで、russh 側の対応待ち。
+    "RUSTSEC-2023-0071",
+    # glib の VariantStrIter のイテレータ実装の unsound。Tauri の GTK スタックが
+    # 引き込む glib 0.18.5 に該当。Tauri / gtk-rs 側の更新待ち。
+    "RUSTSEC-2024-0429",
+    # russh が固定する aes 0.9.0 (プレリリース系暗号スタック) は crates.io で
+    # yank 済み。差し替えは russh の更新待ち。
+    { crate = "aes@0.9.0", reason = "russh 0.60 が固定する yanked なプレリリース版。upstream 更新待ち" },
+]
 
 [licenses]
 # 許可するライセンス (SPDX 識別子)。現在の依存ツリーに実在するもののうち、
