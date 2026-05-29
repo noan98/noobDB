@@ -662,50 +662,53 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
     if raw.is_null() {
         return Value::Null;
     }
-    let type_name = raw.type_info().name().to_ascii_uppercase();
+    // Borrow the declared type name in place; `type_name_matches` compares it
+    // case-insensitively so we avoid allocating an uppercased copy per cell.
+    let type_info = raw.type_info();
+    let type_name = type_info.name();
+    use super::type_name_matches as ti;
 
     // Try common scalar decodings first based on declared type, then fall back to string.
-    if matches!(
-        type_name.as_str(),
-        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "YEAR"
+    if ti(
+        type_name,
+        &["TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "YEAR"],
     ) {
         if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
             return v.map(Value::Int).unwrap_or(Value::Null);
         }
     }
-    if matches!(
-        type_name.as_str(),
-        "TINYINT UNSIGNED"
-            | "SMALLINT UNSIGNED"
-            | "MEDIUMINT UNSIGNED"
-            | "INT UNSIGNED"
-            | "BIGINT UNSIGNED"
+    if ti(
+        type_name,
+        &[
+            "TINYINT UNSIGNED",
+            "SMALLINT UNSIGNED",
+            "MEDIUMINT UNSIGNED",
+            "INT UNSIGNED",
+            "BIGINT UNSIGNED",
+        ],
     ) {
         if let Ok(v) = row.try_get::<Option<u64>, _>(i) {
             return v.map(Value::UInt).unwrap_or(Value::Null);
         }
     }
-    if matches!(type_name.as_str(), "FLOAT" | "DOUBLE") {
+    if ti(type_name, &["FLOAT", "DOUBLE"]) {
         if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
             return v.map(Value::Float).unwrap_or(Value::Null);
         }
     }
-    if type_name == "BOOLEAN" {
+    if ti(type_name, &["BOOLEAN"]) {
         if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
             return v.map(Value::Bool).unwrap_or(Value::Null);
         }
     }
-    if type_name == "DECIMAL" || type_name == "NEWDECIMAL" {
+    if ti(type_name, &["DECIMAL", "NEWDECIMAL"]) {
         if let Ok(v) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) {
             return v
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
         }
     }
-    if matches!(
-        type_name.as_str(),
-        "DATE" | "TIME" | "DATETIME" | "TIMESTAMP"
-    ) {
+    if ti(type_name, &["DATE", "TIME", "DATETIME", "TIMESTAMP"]) {
         // Each chrono type is `compatible` with exactly one MySQL column type
         // (see sqlx-mysql `types::chrono`): DATETIME→NaiveDateTime,
         // TIMESTAMP→DateTime<Utc>, DATE→NaiveDate, TIME→NaiveTime. A mismatched
@@ -735,16 +738,23 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
                 .unwrap_or(Value::Null);
         }
     }
-    if matches!(type_name.as_str(), "JSON") {
+    if ti(type_name, &["JSON"]) {
         if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(i) {
             return v
                 .map(|j| Value::String(j.to_string()))
                 .unwrap_or(Value::Null);
         }
     }
-    if matches!(
-        type_name.as_str(),
-        "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY"
+    if ti(
+        type_name,
+        &[
+            "BLOB",
+            "TINYBLOB",
+            "MEDIUMBLOB",
+            "LONGBLOB",
+            "BINARY",
+            "VARBINARY",
+        ],
     ) {
         if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(i) {
             return v

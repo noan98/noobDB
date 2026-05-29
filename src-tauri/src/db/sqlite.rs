@@ -448,30 +448,34 @@ fn decode_cell(row: &SqliteRow, i: usize) -> Value {
     if raw.is_null() {
         return Value::Null;
     }
-    let type_name = raw.type_info().name().to_ascii_uppercase();
+    // Borrow the declared type name in place; `type_name_matches` compares it
+    // case-insensitively so we avoid allocating an uppercased copy per cell.
+    let type_info = raw.type_info();
+    let type_name = type_info.name();
+    use super::type_name_matches as ti;
 
     // sqlx's sqlite driver exposes storage class names: INTEGER / REAL /
     // TEXT / BLOB / NULL. Honor the declared type for the common shapes,
     // and fall back through string/int/float/bytes for dynamically typed
     // columns where the declared type is something exotic like "DATETIME".
-    if matches!(type_name.as_str(), "INTEGER" | "INT" | "BIGINT") {
+    if ti(type_name, &["INTEGER", "INT", "BIGINT"]) {
         if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
             return v.map(Value::Int).unwrap_or(Value::Null);
         }
     }
-    if matches!(type_name.as_str(), "REAL" | "FLOAT" | "DOUBLE") {
+    if ti(type_name, &["REAL", "FLOAT", "DOUBLE"]) {
         if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
             return v.map(Value::Float).unwrap_or(Value::Null);
         }
     }
-    if type_name == "BLOB" {
+    if ti(type_name, &["BLOB"]) {
         if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(i) {
             return v
                 .map(|b| Value::Bytes(data_encoding::HEXLOWER.encode(&b)))
                 .unwrap_or(Value::Null);
         }
     }
-    if matches!(type_name.as_str(), "BOOLEAN" | "BOOL") {
+    if ti(type_name, &["BOOLEAN", "BOOL"]) {
         if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
             return v.map(Value::Bool).unwrap_or(Value::Null);
         }
