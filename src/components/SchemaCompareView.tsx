@@ -21,84 +21,76 @@ import { Icon } from "./Icon";
 import { Button, Checkbox, Input, Select } from "./ui";
 
 /**
- * スキーマ比較ビューの本体スタイル。`App.css` の `.schema-compare-*` ルール群を
- * コンポーネント側へ移設し、ルート (`.settings` 相当の枠) に `css` で適用する。
- * 共有クラス (`.settings` / `.settings-header` / `.settings-help` / `button.icon`)
- * は `SettingsView` 等が参照するため `App.css` に残し、ここでは style props で再現する。
+ * スキーマ比較ビューの本体スタイル。以前は `.schema-compare-*` の className +
+ * 子孫セレクタで `App.css` 〜コンポーネント内 `css` を当てていたが、className を
+ * 撤去して各要素へ直接 `css` を適用する形へ移行した。ステータス (DiffStatus) や
+ * 種別 (SyncKind) で色が変わる箇所はヘルパ関数で分岐する。フォーム部品を内包する
+ * ラッパ (`& select` / `& input`) だけはタグセレクタ (className ではなく要素スコープ)
+ * で残す。
  */
-const SCHEMA_CSS: SystemStyleObject = {
-  "& .schema-compare-sides": {
-    display: "flex",
-    alignItems: "flex-end",
-    gap: "12px",
-    margin: "16px 0",
-    flexWrap: "wrap",
-  },
-  "& .schema-compare-side": {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-    flex: "1 1 240px",
-    minWidth: "200px",
-  },
-  "& .schema-compare-side-label": {
-    fontSize: "var(--text-sm)",
-    fontWeight: 600,
-    color: "var(--text-secondary)",
-  },
-  "& .schema-compare-side select": { width: "100%" },
-  "& .schema-compare-side-error": {
-    fontSize: "var(--text-xs)",
-    color: "var(--status-error)",
-  },
-  "& .schema-compare-actions": { margin: "12px 0" },
-  "& .schema-compare-warning": {
-    color: "var(--status-error)",
-    fontSize: "var(--text-sm)",
-    margin: "8px 0",
-  },
-  "& .schema-compare-empty": {
-    color: "var(--text-muted)",
-    fontSize: "var(--text-sm)",
-    margin: "16px 0",
-  },
-  "& .schema-compare-summary": {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    flexWrap: "wrap",
-    margin: "16px 0 10px",
-  },
-  "& .schema-compare-chip": {
-    fontSize: "var(--text-xs)",
-    fontWeight: 600,
-    padding: "3px 10px",
-    borderRadius: "var(--radius-pill)",
-    border: "1px solid var(--border)",
-    color: "var(--text-secondary)",
-    background: "var(--bg-muted)",
-  },
-  "& .schema-compare-hidesame": {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    fontSize: "var(--text-sm)",
-    color: "var(--text-secondary)",
-    marginLeft: "auto",
-    cursor: "pointer",
-  },
-  "& .schema-compare-tables": {
-    display: "flex",
-    flexDirection: "column",
-    gap: "4px",
-  },
-  "& .schema-compare-table": {
-    border: "1px solid var(--border)",
-    borderRadius: "var(--radius-md)",
-    background: "var(--bg-elevated)",
-    overflow: "hidden",
-  },
-  "& .schema-compare-table > summary": {
+const sidesCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "flex-end",
+  gap: "12px",
+  margin: "16px 0",
+  flexWrap: "wrap",
+};
+const sideCss: SystemStyleObject = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "6px",
+  flex: "1 1 240px",
+  minWidth: "200px",
+  "& select": { width: "100%" },
+};
+const sideLabelCss: SystemStyleObject = {
+  fontSize: "var(--text-sm)",
+  fontWeight: 600,
+  color: "var(--text-secondary)",
+};
+const sideErrorCss: SystemStyleObject = {
+  fontSize: "var(--text-xs)",
+  color: "var(--status-error)",
+};
+const actionsCss: SystemStyleObject = { margin: "12px 0" };
+const warningCss: SystemStyleObject = {
+  color: "var(--status-error)",
+  fontSize: "var(--text-sm)",
+  margin: "8px 0",
+};
+const emptyCss: SystemStyleObject = {
+  color: "var(--text-muted)",
+  fontSize: "var(--text-sm)",
+  margin: "16px 0",
+};
+const summaryCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  flexWrap: "wrap",
+  margin: "16px 0 10px",
+};
+const hideSameCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  fontSize: "var(--text-sm)",
+  color: "var(--text-secondary)",
+  marginLeft: "auto",
+  cursor: "pointer",
+};
+const tablesCss: SystemStyleObject = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "4px",
+};
+// `<details>` 本体。`<summary>` はタグセレクタ (要素スコープ) で括る。
+const tableCss: SystemStyleObject = {
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-md)",
+  background: "var(--bg-elevated)",
+  overflow: "hidden",
+  "& > summary": {
     display: "flex",
     alignItems: "center",
     gap: "10px",
@@ -107,189 +99,207 @@ const SCHEMA_CSS: SystemStyleObject = {
     listStyle: "none",
     userSelect: "none",
   },
-  "& .schema-compare-table > summary::-webkit-details-marker": { display: "none" },
-  "& .schema-compare-table-name": {
-    fontFamily: "var(--font-mono)",
-    fontSize: "var(--text-sm)",
-    color: "var(--text)",
-  },
-  "& .schema-compare-colcount": {
+  "& > summary::-webkit-details-marker": { display: "none" },
+};
+const tableNameCss: SystemStyleObject = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-sm)",
+  color: "var(--text)",
+};
+const colcountCss: SystemStyleObject = {
+  fontSize: "var(--text-xs)",
+  color: "var(--text-muted)",
+  marginLeft: "auto",
+};
+const columnsCss: SystemStyleObject = {
+  listStyle: "none",
+  margin: 0,
+  padding: "0 12px 10px 12px",
+  display: "flex",
+  flexDirection: "column",
+  gap: "4px",
+};
+const columnCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: "8px",
+  fontSize: "var(--text-sm)",
+  padding: "3px 0",
+  borderTop: "1px solid var(--border-subtle)",
+};
+const columnNameCss: SystemStyleObject = {
+  fontFamily: "var(--font-mono)",
+  color: "var(--text)",
+};
+const coltypeCss: SystemStyleObject = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-xs)",
+  color: "var(--text-muted)",
+};
+const changesCss: SystemStyleObject = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "4px 12px",
+};
+const changeCss: SystemStyleObject = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-xs)",
+  color: "var(--text-secondary)",
+};
+const syncCss: SystemStyleObject = {
+  marginTop: "24px",
+  paddingTop: "16px",
+  borderTop: "1px solid var(--border)",
+};
+const syncTitleCss: SystemStyleObject = { margin: "0 0 4px", fontSize: "var(--text-md)" };
+const syncControlsCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  flexWrap: "wrap",
+  margin: "10px 0",
+};
+const destructiveCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  fontSize: "var(--text-sm)",
+  color: "var(--status-error)",
+  cursor: "pointer",
+};
+const successCss: SystemStyleObject = {
+  color: "var(--status-success)",
+  fontSize: "var(--text-sm)",
+  margin: "8px 0",
+};
+const statementsCss: SystemStyleObject = {
+  listStyle: "none",
+  margin: "8px 0",
+  padding: 0,
+  display: "flex",
+  flexDirection: "column",
+  gap: "6px",
+};
+const statementHeadCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  cursor: "pointer",
+  marginBottom: "6px",
+};
+const destructiveFlagCss: SystemStyleObject = {
+  fontSize: "var(--text-xs)",
+  fontWeight: 600,
+  color: "var(--status-error)",
+};
+const sqlCss: SystemStyleObject = {
+  display: "block",
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-xs)",
+  color: "var(--text)",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+};
+const backupCss: SystemStyleObject = {
+  fontSize: "var(--text-sm)",
+  color: "var(--status-connecting)",
+  margin: "10px 0",
+};
+const planWarningsCss: SystemStyleObject = {
+  margin: "10px 0 0",
+  paddingLeft: "18px",
+  fontSize: "var(--text-sm)",
+  color: "var(--text-muted)",
+};
+// 入力 (`<input>`) はタグセレクタ (要素スコープ) で幅を固定する。
+const limitCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  fontSize: "var(--text-sm)",
+  color: "var(--text-secondary)",
+  "& input": { width: "80px" },
+};
+
+/** DiffStatus に対応する文字色/枠色 (chip / badge 共通)。 */
+function statusColors(status: DiffStatus): { color: string; borderColor: string } {
+  switch (status) {
+    case "source_only":
+      return { color: "var(--status-success)", borderColor: "var(--status-success)" };
+    case "target_only":
+      return { color: "var(--status-error)", borderColor: "var(--status-error)" };
+    case "different":
+      return { color: "var(--status-connecting)", borderColor: "var(--status-connecting)" };
+    case "same":
+      return { color: "var(--text-muted)", borderColor: "var(--border)" };
+  }
+}
+
+/** サマリ等のステータスチップ (旧 `.schema-compare-chip` + `status-*`)。 */
+function chipCss(status: DiffStatus): SystemStyleObject {
+  return {
     fontSize: "var(--text-xs)",
-    color: "var(--text-muted)",
-    marginLeft: "auto",
-  },
-  "& .schema-compare-columns": {
-    listStyle: "none",
-    margin: 0,
-    padding: "0 12px 10px 12px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "4px",
-  },
-  "& .schema-compare-column": {
-    display: "flex",
-    alignItems: "baseline",
-    gap: "8px",
-    fontSize: "var(--text-sm)",
-    padding: "3px 0",
-    borderTop: "1px solid var(--border-subtle)",
-  },
-  "& .schema-compare-column-name": {
-    fontFamily: "var(--font-mono)",
-    color: "var(--text)",
-  },
-  "& .schema-compare-coltype": {
-    fontFamily: "var(--font-mono)",
-    fontSize: "var(--text-xs)",
-    color: "var(--text-muted)",
-  },
-  "& .schema-compare-changes": {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "4px 12px",
-  },
-  "& .schema-compare-change": {
-    fontFamily: "var(--font-mono)",
-    fontSize: "var(--text-xs)",
-    color: "var(--text-secondary)",
-  },
-  "& .schema-compare-badge": {
+    fontWeight: 600,
+    padding: "3px 10px",
+    borderRadius: "var(--radius-pill)",
+    border: "1px solid var(--border)",
+    background: "var(--bg-muted)",
+    ...statusColors(status),
+  };
+}
+
+/** テーブル/カラム行のステータスバッジ (旧 `.schema-compare-badge` + `status-*`)。 */
+function badgeCss(status: DiffStatus): SystemStyleObject {
+  return {
     fontSize: "var(--text-xs)",
     fontWeight: 600,
     padding: "1px 8px",
     borderRadius: "var(--radius-pill)",
     whiteSpace: "nowrap",
     border: "1px solid transparent",
-  },
-  "& .schema-compare-badge.status-source_only, & .schema-compare-chip.status-source_only": {
-    color: "var(--status-success)",
-    borderColor: "var(--status-success)",
-  },
-  "& .schema-compare-badge.status-target_only, & .schema-compare-chip.status-target_only": {
-    color: "var(--status-error)",
-    borderColor: "var(--status-error)",
-  },
-  "& .schema-compare-badge.status-different, & .schema-compare-chip.status-different": {
-    color: "var(--status-connecting)",
-    borderColor: "var(--status-connecting)",
-  },
-  "& .schema-compare-badge.status-same, & .schema-compare-chip.status-same": {
-    color: "var(--text-muted)",
-    borderColor: "var(--border)",
-  },
-  "& .schema-compare-sync": {
-    marginTop: "24px",
-    paddingTop: "16px",
-    borderTop: "1px solid var(--border)",
-  },
-  "& .schema-compare-sync-title": { margin: "0 0 4px", fontSize: "var(--text-md)" },
-  "& .schema-compare-sync-controls": {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    flexWrap: "wrap",
-    margin: "10px 0",
-  },
-  "& .schema-compare-destructive": {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    fontSize: "var(--text-sm)",
-    color: "var(--status-error)",
-    cursor: "pointer",
-  },
-  "& .schema-compare-success": {
-    color: "var(--status-success)",
-    fontSize: "var(--text-sm)",
-    margin: "8px 0",
-  },
-  "& .schema-compare-statements": {
-    listStyle: "none",
-    margin: "8px 0",
-    padding: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-  },
-  "& .schema-compare-statement": {
-    border: "1px solid var(--border)",
-    borderRadius: "var(--radius-md)",
-    background: "var(--bg-elevated)",
-    padding: "8px 10px",
-  },
-  "& .schema-compare-statement.destructive": { borderColor: "var(--status-error)" },
-  "& .schema-compare-statement-head": {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    cursor: "pointer",
-    marginBottom: "6px",
-  },
-  "& .schema-compare-kind": {
+    ...statusColors(status),
+  };
+}
+
+/** SyncKind に対応する文字色/枠色。 */
+function kindColors(kind: SyncKind): { color: string; borderColor: string } {
+  switch (kind) {
+    case "create_table":
+    case "add_column":
+    case "insert_row":
+      return { color: "var(--status-success)", borderColor: "var(--status-success)" };
+    case "alter_column":
+    case "update_row":
+      return { color: "var(--status-connecting)", borderColor: "var(--status-connecting)" };
+    case "drop_column":
+    case "drop_table":
+    case "delete_row":
+      return { color: "var(--status-error)", borderColor: "var(--status-error)" };
+  }
+}
+
+/** 同期文の種別バッジ (旧 `.schema-compare-kind` + `kind-*`)。 */
+function kindCss(kind: SyncKind): SystemStyleObject {
+  return {
     fontSize: "var(--text-xs)",
     fontWeight: 600,
     padding: "1px 8px",
     borderRadius: "var(--radius-pill)",
     border: "1px solid var(--border)",
-    color: "var(--text-secondary)",
-  },
-  "& .schema-compare-kind.kind-create_table, & .schema-compare-kind.kind-add_column": {
-    color: "var(--status-success)",
-    borderColor: "var(--status-success)",
-  },
-  "& .schema-compare-kind.kind-alter_column": {
-    color: "var(--status-connecting)",
-    borderColor: "var(--status-connecting)",
-  },
-  "& .schema-compare-kind.kind-drop_column, & .schema-compare-kind.kind-drop_table": {
-    color: "var(--status-error)",
-    borderColor: "var(--status-error)",
-  },
-  "& .schema-compare-kind.kind-insert_row": {
-    color: "var(--status-success)",
-    borderColor: "var(--status-success)",
-  },
-  "& .schema-compare-kind.kind-update_row": {
-    color: "var(--status-connecting)",
-    borderColor: "var(--status-connecting)",
-  },
-  "& .schema-compare-kind.kind-delete_row": {
-    color: "var(--status-error)",
-    borderColor: "var(--status-error)",
-  },
-  "& .schema-compare-destructive-flag": {
-    fontSize: "var(--text-xs)",
-    fontWeight: 600,
-    color: "var(--status-error)",
-  },
-  "& .schema-compare-sql": {
-    display: "block",
-    fontFamily: "var(--font-mono)",
-    fontSize: "var(--text-xs)",
-    color: "var(--text)",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-  },
-  "& .schema-compare-backup": {
-    fontSize: "var(--text-sm)",
-    color: "var(--status-connecting)",
-    margin: "10px 0",
-  },
-  "& .schema-compare-plan-warnings": {
-    margin: "10px 0 0",
-    paddingLeft: "18px",
-    fontSize: "var(--text-sm)",
-    color: "var(--text-muted)",
-  },
-  "& .schema-compare-limit": {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    fontSize: "var(--text-sm)",
-    color: "var(--text-secondary)",
-  },
-  "& .schema-compare-limit input": { width: "80px" },
-};
+    ...kindColors(kind),
+  };
+}
+
+/** 同期文 1 件の枠 (旧 `.schema-compare-statement` + `destructive`)。 */
+function statementCss(destructive: boolean): SystemStyleObject {
+  const base: SystemStyleObject = {
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-md)",
+    background: "var(--bg-elevated)",
+    padding: "8px 10px",
+  };
+  return destructive ? { ...base, borderColor: "var(--status-error)" } : base;
+}
 
 type Side = "source" | "target";
 
@@ -725,7 +735,6 @@ export function SchemaCompareView({
       display="flex"
       flexDirection="column"
       gap="18px"
-      css={SCHEMA_CSS}
     >
       <chakra.header
         display="flex"
@@ -756,10 +765,10 @@ export function SchemaCompareView({
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareDesc")}</chakra.p>
 
       {profiles.length === 0 ? (
-        <chakra.p className="schema-compare-empty">{t("schemaCompareNoProfiles")}</chakra.p>
+        <chakra.p css={emptyCss}>{t("schemaCompareNoProfiles")}</chakra.p>
       ) : (
         <>
-          <Box className="schema-compare-sides">
+          <Box css={sidesCss}>
             <SidePicker
               label={t("schemaCompareSource")}
               side="source"
@@ -795,25 +804,25 @@ export function SchemaCompareView({
           </Box>
 
           {driverMismatch && (
-            <chakra.p className="schema-compare-warning">{t("schemaCompareDriverMismatch")}</chakra.p>
+            <chakra.p css={warningCss}>{t("schemaCompareDriverMismatch")}</chakra.p>
           )}
 
-          <Box className="schema-compare-actions">
+          <Box css={actionsCss}>
             <Button variant="primary" onClick={runCompare} disabled={!canCompare}>
               {comparing ? t("schemaCompareComparing") : t("schemaCompareCompare")}
             </Button>
           </Box>
 
-          {compareError && <chakra.p className="schema-compare-warning">{compareError}</chakra.p>}
+          {compareError && <chakra.p css={warningCss}>{compareError}</chakra.p>}
 
           {diff && (
             <Box>
-              <Box className="schema-compare-summary">
+              <Box css={summaryCss}>
                 <StatusChip status="different" count={counts.different} t={t} />
                 <StatusChip status="source_only" count={counts.source_only} t={t} />
                 <StatusChip status="target_only" count={counts.target_only} t={t} />
                 <StatusChip status="same" count={counts.same} t={t} />
-                <chakra.label className="schema-compare-hidesame">
+                <chakra.label css={hideSameCss}>
                   <Checkbox
                     checked={hideSame}
                     onChange={(e) => setHideSame(e.target.checked)}
@@ -823,13 +832,13 @@ export function SchemaCompareView({
               </Box>
 
               {visibleTables.length === 0 ? (
-                <chakra.p className="schema-compare-empty">
+                <chakra.p css={emptyCss}>
                   {counts.different + counts.source_only + counts.target_only === 0
                     ? t("schemaCompareIdentical")
                     : t("schemaCompareAllHidden")}
                 </chakra.p>
               ) : (
-                <Box className="schema-compare-tables">
+                <Box css={tablesCss}>
                   {visibleTables.map((tbl) => (
                     <TableDiffRow key={tbl.name} table={tbl} t={t} />
                   ))}
@@ -837,11 +846,11 @@ export function SchemaCompareView({
               )}
 
               {hasDifferences && (
-                <Box className="schema-compare-sync">
-                  <chakra.h3 className="schema-compare-sync-title">{t("schemaCompareSyncTitle")}</chakra.h3>
+                <Box css={syncCss}>
+                  <chakra.h3 css={syncTitleCss}>{t("schemaCompareSyncTitle")}</chakra.h3>
                   <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareSyncDesc")}</chakra.p>
-                  <Box className="schema-compare-sync-controls">
-                    <chakra.label className="schema-compare-destructive">
+                  <Box css={syncControlsCss}>
+                    <chakra.label css={destructiveCss}>
                       <Checkbox
                         checked={allowDestructive}
                         onChange={(e) => setAllowDestructive(e.target.checked)}
@@ -856,10 +865,10 @@ export function SchemaCompareView({
               )}
 
               {comparableTables.length > 0 && (
-                <Box className="schema-compare-sync">
-                  <chakra.h3 className="schema-compare-sync-title">{t("schemaCompareDataTitle")}</chakra.h3>
+                <Box css={syncCss}>
+                  <chakra.h3 css={syncTitleCss}>{t("schemaCompareDataTitle")}</chakra.h3>
                   <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareDataDesc")}</chakra.p>
-                  <Box className="schema-compare-sync-controls">
+                  <Box css={syncControlsCss}>
                     <Select value={dataTable} onChange={(e) => setDataTable(e.target.value)}>
                       <option value="">{t("schemaCompareDataSelectTable")}</option>
                       {comparableTables.map((name) => (
@@ -868,7 +877,7 @@ export function SchemaCompareView({
                         </option>
                       ))}
                     </Select>
-                    <chakra.label className="schema-compare-limit">
+                    <chakra.label css={limitCss}>
                       {t("schemaCompareDataLimit")}
                       <Input
                         type="number"
@@ -887,24 +896,24 @@ export function SchemaCompareView({
 
                   {dataDiff && (
                     <>
-                      <Box className="schema-compare-summary">
-                        <chakra.span className="schema-compare-chip status-source_only">
+                      <Box css={summaryCss}>
+                        <chakra.span css={chipCss("source_only")}>
                           {t("schemaCompareDataInserts")}: {dataCounts.source_only}
                         </chakra.span>
-                        <chakra.span className="schema-compare-chip status-different">
+                        <chakra.span css={chipCss("different")}>
                           {t("schemaCompareDataUpdates")}: {dataCounts.different}
                         </chakra.span>
-                        <chakra.span className="schema-compare-chip status-target_only">
+                        <chakra.span css={chipCss("target_only")}>
                           {t("schemaCompareDataDeletes")}: {dataCounts.target_only}
                         </chakra.span>
                       </Box>
                       {dataDiff.truncated && (
-                        <chakra.p className="schema-compare-backup">
+                        <chakra.p css={backupCss}>
                           {t("schemaCompareDataTruncated", { limit: dataLimit })}
                         </chakra.p>
                       )}
-                      <Box className="schema-compare-sync-controls">
-                        <chakra.label className="schema-compare-destructive">
+                      <Box css={syncControlsCss}>
+                        <chakra.label css={destructiveCss}>
                           <Checkbox
                             checked={allowDelete}
                             onChange={(e) => setAllowDelete(e.target.checked)}
@@ -920,16 +929,16 @@ export function SchemaCompareView({
                 </Box>
               )}
 
-              {syncError && <chakra.p className="schema-compare-warning">{syncError}</chakra.p>}
-              {applyResult && <chakra.p className="schema-compare-success">{applyResult}</chakra.p>}
+              {syncError && <chakra.p css={warningCss}>{syncError}</chakra.p>}
+              {applyResult && <chakra.p css={successCss}>{applyResult}</chakra.p>}
 
               {plan && (
                 <Box>
                   {plan.statements.length === 0 ? (
-                    <chakra.p className="schema-compare-empty">{t("schemaCompareNoStatements")}</chakra.p>
+                    <chakra.p css={emptyCss}>{t("schemaCompareNoStatements")}</chakra.p>
                   ) : (
                     <>
-                      <chakra.ul className="schema-compare-statements">
+                      <chakra.ul css={statementsCss}>
                         {plan.statements.map((stmt, i) => (
                           <SyncStatementRow
                             key={`${stmt.table}-${i}`}
@@ -940,8 +949,8 @@ export function SchemaCompareView({
                           />
                         ))}
                       </chakra.ul>
-                      <chakra.p className="schema-compare-backup">{t("schemaCompareBackupNote")}</chakra.p>
-                      <Box className="schema-compare-actions">
+                      <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
+                      <Box css={actionsCss}>
                         <Button
                           variant="primary"
                           onClick={applyPlan}
@@ -955,7 +964,7 @@ export function SchemaCompareView({
                     </>
                   )}
                   {plan.warnings.length > 0 && (
-                    <chakra.ul className="schema-compare-plan-warnings">
+                    <chakra.ul css={planWarningsCss}>
                       {plan.warnings.map((w, i) => (
                         <chakra.li key={i}>{w}</chakra.li>
                       ))}
@@ -1004,17 +1013,17 @@ function SyncStatementRow({
   t: ReturnType<typeof useT>;
 }) {
   return (
-    <chakra.li className={`schema-compare-statement ${statement.destructive ? "destructive" : ""}`}>
-      <chakra.label className="schema-compare-statement-head">
+    <chakra.li css={statementCss(statement.destructive)}>
+      <chakra.label css={statementHeadCss}>
         <Checkbox checked={checked} onChange={onToggle} />
-        <chakra.span className={`schema-compare-kind kind-${statement.kind}`}>
+        <chakra.span css={kindCss(statement.kind)}>
           {syncKindLabel(statement.kind, t)}
         </chakra.span>
         {statement.destructive && (
-          <chakra.span className="schema-compare-destructive-flag">{t("schemaCompareDestructiveFlag")}</chakra.span>
+          <chakra.span css={destructiveFlagCss}>{t("schemaCompareDestructiveFlag")}</chakra.span>
         )}
       </chakra.label>
-      <chakra.code className="schema-compare-sql">{statement.sql}</chakra.code>
+      <chakra.code css={sqlCss}>{statement.sql}</chakra.code>
     </chakra.li>
   );
 }
@@ -1037,8 +1046,8 @@ function SidePicker({
   t: ReturnType<typeof useT>;
 }) {
   return (
-    <Box className="schema-compare-side">
-      <chakra.span className="schema-compare-side-label">{label}</chakra.span>
+    <Box css={sideCss}>
+      <chakra.span css={sideLabelCss}>{label}</chakra.span>
       <Select
         value={state.profileId ?? ""}
         onChange={(e) => onSelectProfile(side, e.target.value)}
@@ -1064,7 +1073,7 @@ function SidePicker({
           </option>
         ))}
       </Select>
-      {state.error && <chakra.span className="schema-compare-side-error">{state.error}</chakra.span>}
+      {state.error && <chakra.span css={sideErrorCss}>{state.error}</chakra.span>}
     </Box>
   );
 }
@@ -1079,7 +1088,7 @@ function StatusChip({
   t: ReturnType<typeof useT>;
 }) {
   return (
-    <chakra.span className={`schema-compare-chip status-${status}`}>
+    <chakra.span css={chipCss(status)}>
       {statusLabel(status, t)}: {count}
     </chakra.span>
   );
@@ -1101,20 +1110,20 @@ function statusLabel(status: DiffStatus, t: ReturnType<typeof useT>): string {
 function TableDiffRow({ table, t }: { table: TableDiff; t: ReturnType<typeof useT> }) {
   const expandable = table.columns.length > 0;
   return (
-    <chakra.details className="schema-compare-table" open={table.status === "different"}>
+    <chakra.details css={tableCss} open={table.status === "different"}>
       <chakra.summary>
-        <chakra.span className={`schema-compare-badge status-${table.status}`}>
+        <chakra.span css={badgeCss(table.status)}>
           {statusLabel(table.status, t)}
         </chakra.span>
-        <chakra.span className="schema-compare-table-name">{table.name}</chakra.span>
+        <chakra.span css={tableNameCss}>{table.name}</chakra.span>
         {expandable && (
-          <chakra.span className="schema-compare-colcount">
+          <chakra.span css={colcountCss}>
             {t("schemaCompareColumnCount", { count: table.columns.length })}
           </chakra.span>
         )}
       </chakra.summary>
       {expandable && (
-        <chakra.ul className="schema-compare-columns">
+        <chakra.ul css={columnsCss}>
           {table.columns.map((col) => (
             <ColumnDiffRow key={col.name} column={col} t={t} />
           ))}
@@ -1172,22 +1181,22 @@ function fieldValue(
 function ColumnDiffRow({ column, t }: { column: ColumnDiff; t: ReturnType<typeof useT> }) {
   const def = column.source ?? column.target;
   return (
-    <chakra.li className={`schema-compare-column status-${column.status}`}>
-      <chakra.span className={`schema-compare-badge status-${column.status}`}>
+    <chakra.li css={columnCss}>
+      <chakra.span css={badgeCss(column.status)}>
         {statusLabel(column.status, t)}
       </chakra.span>
-      <chakra.span className="schema-compare-column-name">{column.name}</chakra.span>
+      <chakra.span css={columnNameCss}>{column.name}</chakra.span>
       {column.status === "different" ? (
-        <chakra.span className="schema-compare-changes">
+        <chakra.span css={changesCss}>
           {column.changed_fields.map((field) => (
-            <chakra.span key={field} className="schema-compare-change">
+            <chakra.span key={field} css={changeCss}>
               {fieldLabel(field, t)}: {fieldValue(column.source, field, t)} →{" "}
               {fieldValue(column.target, field, t)}
             </chakra.span>
           ))}
         </chakra.span>
       ) : (
-        <chakra.span className="schema-compare-coltype">{def?.data_type ?? ""}</chakra.span>
+        <chakra.span css={coltypeCss}>{def?.data_type ?? ""}</chakra.span>
       )}
     </chakra.li>
   );
