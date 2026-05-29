@@ -906,3 +906,99 @@ mod tests {
         assert!(apply_auto_limit("SELECT DISTINCT count_col FROM t", 1000).is_some());
     }
 }
+
+/// `is_read_only_sql` / `apply_auto_limit` のプロパティベーステスト (#355)。
+///
+/// 手書きサンプル (上の `mod tests`) は具体的な既知ケースを固定で検証するが、
+/// 安全網のバイパスは「想定していない入力」で起きる。ここでは proptest で入力を
+/// ランダム探索し、入力の形に依らず常に成り立つべき不変条件 (許可外キーワードの
+/// 先頭文は必ず拒否される / コメント・文字列リテラルに隠したキーワードは判定を
+/// 変えない / 既存 LIMIT への二重付与は起きない 等) を検証する。反例が見つかれば
+/// proptest が最小化して報告するため、安全網の穴を継続的に検出できる。
+#[cfg(test)]
+mod proptests {
+    use super::{apply_auto_limit, is_read_only_sql};
+    use proptest::prelude::*;
+
+    /// 許可リスト外の先頭キーワード (書き込み / DDL 系)。これらで始まる文は
+    /// 後続が何であれ読み取り専用として通してはならない。
+    const DISALLOWED_LEADING: &[&str] = &[
+        "insert", "update", "delete", "drop", "alter", "truncate", "create", "call", "merge",
+        "grant", "revoke", "replace", "into",
+    ];
+
+    proptest! {
+        // 先頭が許可外キーワードなら、後続テキストが何であっても必ず拒否される。
+        // 読み取り専用ゲートをすり抜ける書き込み文が無いことの不変条件。
+        #[test]
+        fn rejects_any_disallowed_leading_keyword(
+            idx in 0usize..DISALLOWED_LEADING.len(),
+            rest in "[a-zA-Z0-9 _().,*='+-]{0,48}",
+        ) {
+            let sql = format!("{} {}", DISALLOWED_LEADING[idx], rest);
+            prop_assert!(!is_read_only_sql(&sql), "leaked write SQL: {sql:?}");
+        }
+
+        // 既知の読み取り専用 SELECT に任意内容の行コメントを足しても判定は
+        // 変わらない。コメントのマスク処理が、隠したキーワードに反応しないこと。
+        #[test]
+        fn line_comment_never_flips_to_unsafe(garbage in "[^\n]{0,64}") {
+            let sql = format!("SELECT * FROM t -- {garbage}");
+            prop_assert!(is_read_only_sql(&sql), "comment flipped verdict: {sql:?}");
+        }
+
+        // 文字列リテラルの内側に書き込みキーワードが現れても無視される
+        // (リテラルのマスク処理)。クオートとバックスラッシュは除外し、リテラルが
+        // 常に閉じる形にしている。
+        #[test]
+        fn string_literal_keyword_is_ignored(garbage in "[^'\\\\\n]{0,64}") {
+            let sql = format!("SELECT '{garbage}' AS c FROM t");
+            prop_assert!(is_read_only_sql(&sql), "literal flipped verdict: {sql:?}");
+        }
+
+        // 末尾以外にセミコロンで書き込み文を積み重ねた文は拒否される
+        // (隠れた 2 文目の検出)。
+        #[test]
+        fn stacked_write_statement_is_rejected(
+            idx in 0usize..DISALLOWED_LEADING.len(),
+            tail in "[a-zA-Z0-9 _().,*=]{0,32}",
+        ) {
+            let sql = format!("SELECT 1; {} {}", DISALLOWED_LEADING[idx], tail);
+            prop_assert!(!is_read_only_sql(&sql), "stacked write leaked: {sql:?}");
+        }
+
+        // 既に LIMIT を持つ SELECT には自動 LIMIT を二重付与しない。
+        #[test]
+        fn never_appends_to_existing_limit(n in 1usize..100_000) {
+            let sql = format!("SELECT * FROM t LIMIT {n}");
+            prop_assert!(apply_auto_limit(&sql, 100).is_none());
+        }
+
+        // 冪等性: 一度 LIMIT を付与した結果に再適用しても None を返す
+        // (二重 LIMIT による構文エラーを作らない)。付与時は必ず `limit <n>` を含む。
+        #[test]
+        fn auto_limit_is_idempotent(
+            tbl in "[a-z][a-z0-9_]{0,8}",
+            n in 1usize..100_000,
+        ) {
+            let sql = format!("SELECT a, b FROM {tbl}");
+            if let Some(limited) = apply_auto_limit(&sql, n) {
+                let lower = limited.to_ascii_lowercase();
+                prop_assert!(lower.contains(&format!("limit {n}")), "missing limit: {limited:?}");
+                prop_assert!(
+                    apply_auto_limit(&limited, n).is_none(),
+                    "double limit applied: {limited:?}",
+                );
+            }
+        }
+
+        // COUNT(*) 等の単一行集計には自動 LIMIT を付けない。
+        #[test]
+        fn single_row_aggregate_is_never_limited(tbl in "[a-z][a-z0-9_]{0,8}") {
+            for agg in ["COUNT(*)", "SUM(x)", "AVG(y)", "MAX(z)", "MIN(z)"] {
+                let sql = format!("SELECT {agg} FROM {tbl}");
+                prop_assert!(apply_auto_limit(&sql, 100).is_none(), "limited aggregate: {sql:?}");
+            }
+        }
+    }
+}
