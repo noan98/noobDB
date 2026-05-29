@@ -9,7 +9,9 @@ pub mod types;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use types::{PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema};
+use types::{
+    PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
+};
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
 /// `host`/`port` will already point to the local end of the tunnel.
@@ -207,6 +209,20 @@ impl Connection {
             Connection::MySql(c) => c.schema_overview(db).await,
             Connection::Postgres(c) => c.schema_overview(db).await,
             Connection::Sqlite(c) => c.schema_overview(db).await,
+        }
+    }
+
+    /// Approximate row counts for every base table in `db`, read from the
+    /// engine's statistics catalogs rather than a `COUNT(*)` scan, so it stays
+    /// cheap on large schemas. Values are approximate and may be stale or
+    /// absent until the engine has gathered statistics (see
+    /// [`TableRowEstimate`]). Views are omitted. SQLite has no such cheap
+    /// statistic and returns an empty list.
+    pub async fn table_row_estimates(&self, db: &str) -> Result<Vec<TableRowEstimate>> {
+        match self {
+            Connection::MySql(c) => c.table_row_estimates(db).await,
+            Connection::Postgres(c) => c.table_row_estimates(db).await,
+            Connection::Sqlite(c) => c.table_row_estimates(db).await,
         }
     }
 

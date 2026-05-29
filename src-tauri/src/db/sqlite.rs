@@ -5,7 +5,8 @@ use sqlx::sqlite::{SqliteColumn, SqliteConnectOptions, SqlitePool, SqlitePoolOpt
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value,
+    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
+    TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -411,6 +412,14 @@ impl SqliteConn {
             });
         }
         Ok(out)
+    }
+
+    pub async fn table_row_estimates(&self, _db: &str) -> Result<Vec<TableRowEstimate>> {
+        // SQLite keeps no cheap row-count statistic: sqlite_stat1 stores index
+        // selectivity, not a usable per-table total, and is absent until ANALYZE
+        // runs. A COUNT(*) per table would be a full scan — exactly what this
+        // feature avoids — so we report no estimates and the UI shows none.
+        Ok(Vec::new())
     }
 }
 

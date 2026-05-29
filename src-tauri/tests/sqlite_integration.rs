@@ -140,6 +140,45 @@ async fn sqlite_roundtrip_against_tempfile() {
 }
 
 #[tokio::test]
+async fn sqlite_table_row_estimates_are_empty() {
+    // SQLite keeps no cheap row-count statistic, so the driver reports no
+    // estimates regardless of how many rows a table holds — the tree shows no
+    // count badge rather than paying for a COUNT(*) scan.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_est_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute(
+        "CREATE TABLE est_t (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO est_t (id, label) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+        None,
+    )
+    .await
+    .expect("seed");
+
+    let estimates = conn
+        .table_row_estimates("main")
+        .await
+        .expect("table_row_estimates must not error");
+    assert!(
+        estimates.is_empty(),
+        "SQLite has no cheap estimate; expected an empty list, got: {estimates:?}"
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_execute_transaction_is_all_or_nothing() {
     let mut path = std::env::temp_dir();
     path.push(format!("noobdb_sqlite_tx_{}.db", std::process::id()));
