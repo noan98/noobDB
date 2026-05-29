@@ -26,6 +26,23 @@ fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
     Ok(())
 }
 
+/// Backend-enforced read-only guard for scheduled re-execution (auto-refresh).
+///
+/// Auto-refresh polls a statement on a timer with no human in the loop, so it
+/// must never run a write — unlike interactive runs, the UI confirmation gates
+/// (`confirmDangerousQueries` / production write approval) never fire here.
+/// This is enforced for *every* session regardless of the profile's `read_only`
+/// flag, so even a writable session can only auto-refresh SELECT-shaped SQL.
+fn ensure_auto_refresh_read_only(sql: &str) -> Result<()> {
+    if !is_read_only_sql(sql) {
+        return Err(AppError::ReadOnly(
+            "auto-refresh allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Collapses `sql` to a short, single-line summary for logging. Never used at
 /// `info` level — the full statement (which may carry sensitive literals) is
 /// only ever surfaced at `debug` and is truncated here regardless.
@@ -222,6 +239,7 @@ pub async fn run_query_stream(
     chunk_size: usize,
     auto_limit: Option<usize>,
     query_timeout_secs: Option<u64>,
+    auto_refresh: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -229,6 +247,11 @@ pub async fn run_query_stream(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     ensure_allowed_for_session(&session, &sql)?;
+    // Scheduled re-execution (auto-refresh) is read-only no matter the session.
+    let auto_refresh = auto_refresh.unwrap_or(false);
+    if auto_refresh {
+        ensure_auto_refresh_read_only(&sql)?;
+    }
     let handle = tokio::spawn(spawn_query_stream(
         app,
         session,
@@ -239,6 +262,7 @@ pub async fn run_query_stream(
         chunk_size,
         auto_limit,
         query_timeout_secs,
+        auto_refresh,
     ));
     state
         .register_stream(stream_id, handle.abort_handle())
@@ -257,6 +281,7 @@ async fn spawn_query_stream(
     chunk_size: usize,
     auto_limit: Option<usize>,
     query_timeout_secs: Option<u64>,
+    auto_refresh: bool,
 ) {
     tracing::debug!(
         session_id = %session.id,
@@ -376,7 +401,11 @@ async fn spawn_query_stream(
         }
     }
 
-    record_history(&session, &sql, database.as_deref(), &result).await;
+    // Auto-refresh re-runs the same statement on a timer; recording every tick
+    // would flood the history with duplicates, so polling never writes history.
+    if !auto_refresh {
+        record_history(&session, &sql, database.as_deref(), &result).await;
+    }
 
     if let Some(state) = app.try_state::<AppState>() {
         state.forget_stream(&stream_id).await;
@@ -635,4 +664,49 @@ fn emit_chunks(
 #[tauri::command]
 pub async fn cancel_stream(stream_id: String, state: State<'_, AppState>) -> Result<bool> {
     Ok(state.cancel_stream(&stream_id).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_refresh_allows_read_only_statements() {
+        for sql in [
+            "SELECT * FROM users",
+            "  select 1",
+            "SHOW TABLES",
+            "DESCRIBE users",
+            "EXPLAIN SELECT 1",
+            "WITH t AS (SELECT 1) SELECT * FROM t",
+        ] {
+            assert!(
+                ensure_auto_refresh_read_only(sql).is_ok(),
+                "expected `{sql}` to be allowed for auto-refresh"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_refresh_rejects_writes_and_ddl() {
+        for sql in [
+            "DELETE FROM users",
+            "UPDATE users SET name = 'x'",
+            "INSERT INTO users VALUES (1)",
+            "DROP TABLE users",
+            "TRUNCATE users",
+            // Stacked statement hiding a write behind a SELECT.
+            "SELECT 1; DELETE FROM users",
+            // Data-modifying CTE.
+            "WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
+        ] {
+            assert!(
+                matches!(
+                    ensure_auto_refresh_read_only(sql),
+                    Err(AppError::ReadOnly(_))
+                ),
+                "expected `{sql}` to be rejected for auto-refresh"
+            );
+        }
+    }
 }

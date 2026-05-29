@@ -377,6 +377,13 @@ export const api = {
     chunkSize: number;
     autoLimit?: number | null;
     queryTimeoutSecs?: number | null;
+    /**
+     * When true, the backend enforces a read-only guard regardless of the
+     * session's profile and skips writing the run to query history. Used by the
+     * result grid's scheduled auto-refresh (polling) so repeated re-runs neither
+     * mutate data nor flood the history.
+     */
+    autoRefresh?: boolean;
   }) =>
     invoke<void>("run_query_stream", {
       sessionId: params.sessionId,
@@ -387,6 +394,7 @@ export const api = {
       chunkSize: params.chunkSize,
       autoLimit: params.autoLimit ?? null,
       queryTimeoutSecs: params.queryTimeoutSecs ?? null,
+      autoRefresh: params.autoRefresh ?? false,
     }),
   previewQueryStream: (params: {
     sessionId: string;

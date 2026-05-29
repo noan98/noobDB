@@ -49,6 +49,12 @@ export interface Settings {
    * --font-scale CSS variable (scale = fontSizePx / BASE_FONT_SIZE_PX).
    */
   fontSizePx: number;
+  /**
+   * Interval (seconds) applied when the result grid's auto-refresh (scheduled
+   * re-execution) is toggled on. Remembered globally so the last chosen cadence
+   * becomes the default for the next tab. Clamped to AUTO_REFRESH_MIN_SECS.
+   */
+  autoRefreshDefaultSecs: number;
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
@@ -188,6 +194,16 @@ export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 export const DEFAULT_QUERY_TIMEOUT_SECS = 30;
 const MAX_QUERY_TIMEOUT_SECS = 86_400;
 
+/**
+ * Smallest auto-refresh cadence we allow. Polling faster than this risks
+ * piling load onto the DB and connection pool for little practical gain.
+ */
+export const AUTO_REFRESH_MIN_SECS = 5;
+const AUTO_REFRESH_MAX_SECS = 3_600;
+/** Preset cadences offered in the result grid's auto-refresh selector. */
+export const AUTO_REFRESH_INTERVAL_OPTIONS = [5, 10, 30, 60, 300] as const;
+export const DEFAULT_AUTO_REFRESH_SECS = 10;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -203,7 +219,17 @@ export const DEFAULT_SETTINGS: Settings = {
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
   fontSizePx: DEFAULT_FONT_SIZE_PX,
+  autoRefreshDefaultSecs: DEFAULT_AUTO_REFRESH_SECS,
 };
+
+/** Clamps an auto-refresh cadence (seconds) to the allowed range. */
+export function sanitizeAutoRefreshSecs(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.floor(input);
+  if (n < AUTO_REFRESH_MIN_SECS) return AUTO_REFRESH_MIN_SECS;
+  if (n > AUTO_REFRESH_MAX_SECS) return AUTO_REFRESH_MAX_SECS;
+  return n;
+}
 
 /** Clamps a timeout (seconds) to a non-negative integer; `0` means disabled. */
 function sanitizeTimeout(input: unknown, fallback: number): number {
@@ -271,6 +297,7 @@ function loadInitial(): Settings {
       tabRestoreMode?: unknown;
       queryTimeoutSecs?: unknown;
       fontSizePx?: unknown;
+      autoRefreshDefaultSecs?: unknown;
     };
     return {
       syntaxColors: {
@@ -299,6 +326,10 @@ function loadInitial(): Settings {
       tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
       queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
       fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
+      autoRefreshDefaultSecs: sanitizeAutoRefreshSecs(
+        parsed.autoRefreshDefaultSecs,
+        DEFAULT_AUTO_REFRESH_SECS,
+      ),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -446,6 +477,14 @@ export function setFontSizePx(value: number): void {
   const next = sanitizeFontSizePx(value, current.fontSizePx);
   if (current.fontSizePx === next) return;
   current = { ...current, fontSizePx: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setAutoRefreshDefaultSecs(value: number): void {
+  const next = sanitizeAutoRefreshSecs(value, current.autoRefreshDefaultSecs);
+  if (current.autoRefreshDefaultSecs === next) return;
+  current = { ...current, autoRefreshDefaultSecs: next };
   persist();
   listeners.forEach((cb) => cb());
 }
