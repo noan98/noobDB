@@ -5,7 +5,8 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value,
+    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
+    TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -455,6 +456,34 @@ impl PostgresConn {
             })
             .collect();
         Ok(super::group_columns_by_table(pairs))
+    }
+
+    pub async fn table_row_estimates(&self, schema: &str) -> Result<Vec<TableRowEstimate>> {
+        // pg_class.reltuples is the planner's cached row estimate, maintained by
+        // ANALYZE / (auto)VACUUM — no table scan. relkind 'r'/'p' covers ordinary
+        // and partitioned tables; views and indexes are excluded. reltuples is
+        // -1 when the table has never been analyzed (PG 14+), which we surface as
+        // `None` (unknown) rather than a misleading 0.
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT c.relname, c.reltuples::bigint AS est
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')
+               ORDER BY c.relname"#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let raw = r.try_get::<i64, _>(1).unwrap_or(-1);
+                TableRowEstimate {
+                    name: r.try_get::<String, _>(0).unwrap_or_default(),
+                    estimate: (raw >= 0).then_some(raw),
+                }
+            })
+            .collect())
     }
 }
 

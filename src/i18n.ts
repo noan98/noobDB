@@ -524,6 +524,8 @@ const en = {
   treeNoColumns: "(no columns)",
   treeLoading: "Loading...",
   treeTableTitle: "Click to expand columns, double-click to SELECT * LIMIT 100",
+  treeRowEstimateTitle:
+    "Approximate row count from engine statistics (no COUNT(*) scan); may be stale",
   colTipType: "Type",
   colTipNullable: "Nullable",
   colTipYes: "Yes",
@@ -1326,6 +1328,8 @@ const ja: Dict = {
   treeNoColumns: "(カラムがありません)",
   treeLoading: "読み込み中...",
   treeTableTitle: "クリックでカラム展開、ダブルクリックで SELECT * LIMIT 100",
+  treeRowEstimateTitle:
+    "統計情報に基づく概算レコード数 (COUNT(*) は実行していません)。古い可能性があります",
   colTipType: "型",
   colTipNullable: "NULL 可否",
   colTipYes: "可",

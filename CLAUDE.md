@@ -413,7 +413,8 @@ LIKE ワイルドカードはエスケープされます。
 登録されます。現在のコマンド群: 接続 (`test_connection` / `connect` / `disconnect`)、
 クエリ (`run_query` / `run_query_transaction` / `run_query_stream` /
 `preview_query_stream` / `cancel_stream`)、スキーマ (`list_databases` /
-`list_tables` / `describe_table` / `schema_overview`)、プロファイル
+`list_tables` / `describe_table` / `schema_overview` / `table_row_estimates`)、
+プロファイル
 (`list_profiles` / `save_profile` / `delete_profile`)、スニペット
 (`list_snippets` / `save_snippet` / `delete_snippet`)、履歴 (`list_history` /
 `clear_history`)、エクスポート/ダンプ/インポート (`export_query_result` /

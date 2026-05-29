@@ -131,6 +131,27 @@ async fn postgres_roundtrip_when_env_set() {
         "preview must roll back; row 1 should still hold its original label"
     );
 
+    // Approximate row counts come from pg_class.reltuples, which the planner
+    // only refreshes on ANALYZE / VACUUM. Force an ANALYZE so the estimate is
+    // populated, then assert the smoke table reports its (now-exact) 2 rows.
+    conn.execute("ANALYZE public.noobdb_pg_smoke", None)
+        .await
+        .expect("analyze");
+    let estimates = conn
+        .table_row_estimates("public")
+        .await
+        .expect("table_row_estimates");
+    let smoke = estimates
+        .iter()
+        .find(|e| e.name == "noobdb_pg_smoke")
+        .expect("smoke table must appear in estimates");
+    assert_eq!(
+        smoke.estimate,
+        Some(2),
+        "reltuples after ANALYZE should reflect the 2 surviving rows, got {:?}",
+        smoke.estimate
+    );
+
     conn.execute("DROP TABLE public.noobdb_pg_smoke", None)
         .await
         .expect("cleanup");

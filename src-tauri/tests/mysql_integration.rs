@@ -40,6 +40,60 @@ async fn mysql_roundtrip_when_env_set() {
     conn.close().await;
 }
 
+/// `table_row_estimates` must surface a value for a real base table from
+/// information_schema.TABLES.TABLE_ROWS without scanning it. InnoDB's
+/// TABLE_ROWS is approximate (and can lag even after `ANALYZE TABLE`), so we
+/// assert the table appears with *some* estimate rather than an exact count —
+/// the contract the tree relies on (base tables get a badge, views don't).
+#[tokio::test]
+async fn mysql_table_row_estimates_present_for_base_table() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS row_estimate_t", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE row_estimate_t (id INT PRIMARY KEY, label VARCHAR(32) NOT NULL)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO row_estimate_t (id, label) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+        Some(&db),
+    )
+    .await
+    .expect("insert");
+    // Nudge the engine to refresh its statistics for this table.
+    conn.execute("ANALYZE TABLE row_estimate_t", Some(&db))
+        .await
+        .expect("analyze");
+
+    let estimates = conn.table_row_estimates(&db).await.expect("estimates");
+    let est = estimates
+        .iter()
+        .find(|e| e.name == "row_estimate_t")
+        .expect("base table must appear in estimates");
+    assert!(
+        est.estimate.is_some(),
+        "a base table should report an (approximate) row estimate, got None"
+    );
+
+    conn.execute("DROP TABLE row_estimate_t", Some(&db))
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
+
 /// Regression for the "(影響のあるレコードはありません)" bug: the preview
 /// used to snapshot only the first `row_limit` rows of the target table, so
 /// an UPDATE or DELETE that touched a row past that window showed empty

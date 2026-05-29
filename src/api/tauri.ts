@@ -194,6 +194,17 @@ export interface TableSchema {
 }
 
 /**
+ * Approximate row count for one base table, sourced from the engine's own
+ * statistics (no `COUNT(*)` scan). `estimate` is `null` when no cheap estimate
+ * is available (SQLite, or stats not gathered yet) and is otherwise an
+ * approximate, possibly-stale value.
+ */
+export interface TableRowEstimate {
+  name: string;
+  estimate: number | null;
+}
+
+/**
  * Where a table or column sits relative to the two schemas in a comparison.
  * `source_only` would be added to the target, `target_only` would be removed,
  * `different` exists on both sides with differing definitions, `same` is
@@ -415,6 +426,8 @@ export const api = {
     invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }),
   schemaOverview: (sessionId: string, database: string) =>
     invoke<TableSchema[]>("schema_overview", { sessionId, database }),
+  tableRowEstimates: (sessionId: string, database: string) =>
+    invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }),
   compareSchema: (params: {
     sourceSessionId: string;
     sourceDatabase: string;

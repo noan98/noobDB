@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
+import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Icon } from "./Icon";
@@ -145,6 +146,13 @@ export function ConnectionList({
   const [tableColumns, setTableColumns] = useState<Record<string, TableColumnInfo[]>>({});
   const [databases, setDatabases] = useState<string[] | null>(null);
   const [tables, setTables] = useState<Record<string, string[]>>({});
+  // Approximate row counts per database, keyed `db -> table -> estimate`. Read
+  // from engine statistics (no COUNT(*) scan); a table with no cheap estimate
+  // (views, SQLite, stats not yet gathered) simply has no entry and shows no
+  // badge. Loaded alongside the table list when a database is expanded.
+  const [rowEstimates, setRowEstimates] = useState<
+    Record<string, Record<string, number | null>>
+  >({});
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -159,6 +167,9 @@ export function ConnectionList({
   // Table keys (db::tbl) whose column list is currently being fetched. Same
   // role as `tablesInFlightRef` but for the column-level expand.
   const columnsInFlightRef = useRef<Set<string>>(new Set());
+  // Databases whose row-count estimates are currently being fetched. Mirrors
+  // `tablesInFlightRef` so overlapping expands don't re-issue the estimate query.
+  const estimatesInFlightRef = useRef<Set<string>>(new Set());
 
   // Id of the session whose schema is currently being re-fetched, or null.
   // Keyed by session (not a shared boolean) so a refresh only disables/​spins
@@ -201,12 +212,21 @@ export function ConnectionList({
         (db) => expandedDbs[db] && dbs.includes(db),
       );
       const nextTables: Record<string, string[]> = {};
+      const nextEstimates: Record<string, Record<string, number | null>> = {};
       await Promise.all(
         openDbs.map(async (db) => {
           try {
             nextTables[db] = await api.listTables(targetSessionId, db);
           } catch {
             // Skip a database that failed to list; re-expanding retries it.
+          }
+          try {
+            const est = await api.tableRowEstimates(targetSessionId, db);
+            const map: Record<string, number | null> = {};
+            for (const e of est) map[e.name] = e.estimate;
+            nextEstimates[db] = map;
+          } catch {
+            // Estimates are decorative; a failure just drops the badges.
           }
         }),
       );
@@ -232,6 +252,7 @@ export function ConnectionList({
       tablesInFlightRef.current.clear();
       setDatabases(dbs);
       setTables(nextTables);
+      setRowEstimates(nextEstimates);
       setTableColumns(nextCols);
     } catch (e) {
       // Suppress a stale session's error so it can't surface on the new one.
@@ -245,10 +266,12 @@ export function ConnectionList({
 
   useEffect(() => {
     setTables({});
+    setRowEstimates({});
     setExpandedDbs({});
     setExpandedTables({});
     setTableColumns({});
     tablesInFlightRef.current.clear();
+    estimatesInFlightRef.current.clear();
     if (sessionId) {
       setDatabases(null);
       loadDatabases();
@@ -355,6 +378,26 @@ export function ConnectionList({
     });
   };
 
+  // Fetch approximate row counts for a database and merge them into state. Best
+  // effort: failures (e.g. a driver that doesn't support it) are swallowed so
+  // the tree still renders without badges. Guarded by an in-flight set and a
+  // session check so a stale connection's result can't clobber the new one.
+  const loadRowEstimates = async (sid: string, db: string) => {
+    if (estimatesInFlightRef.current.has(db)) return;
+    estimatesInFlightRef.current.add(db);
+    try {
+      const list = await api.tableRowEstimates(sid, db);
+      if (sessionIdRef.current !== sid) return;
+      const map: Record<string, number | null> = {};
+      for (const e of list) map[e.name] = e.estimate;
+      setRowEstimates((prev) => ({ ...prev, [db]: map }));
+    } catch {
+      // Estimates are decorative; never block the tree on them.
+    } finally {
+      estimatesInFlightRef.current.delete(db);
+    }
+  };
+
   const toggleDb = async (db: string) => {
     if (!sessionId) return;
     const isOpen = expandedDbs[db];
@@ -371,6 +414,7 @@ export function ConnectionList({
     try {
       const list = await api.listTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
+      void loadRowEstimates(sessionId, db);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -748,6 +792,9 @@ export function ConnectionList({
                             const tOpen =
                               !!expandedTables[tKey] || (schemaFiltered && columnNameMatches(db, tbl));
                             const cols = tableColumns[tKey];
+                            const rowEst = rowEstimates[db]?.[tbl];
+                            const rowEstLabel =
+                              typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
                             return (
                               <TreeNode key={tbl}>
                                 <TreeRow
@@ -763,6 +810,17 @@ export function ConnectionList({
                                   <TreeChevron transform={tOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
                                   <TreeIcon color="app.textSecondary" aria-hidden><Icon name="table" /></TreeIcon>
                                   <TreeLabel fontWeight={400}>{tbl}</TreeLabel>
+                                  {rowEstLabel && (
+                                    <TreeBadge
+                                      fontFamily="mono"
+                                      fontSize="2xs"
+                                      textTransform="none"
+                                      letterSpacing="0"
+                                      title={`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`}
+                                    >
+                                      {rowEstLabel}
+                                    </TreeBadge>
+                                  )}
                                 </TreeRow>
                                 <TreeCollapse open={tOpen}>
                                   <TreeChildren>

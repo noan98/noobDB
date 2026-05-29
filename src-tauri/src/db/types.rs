@@ -64,6 +64,22 @@ pub struct TableSchema {
     pub columns: Vec<String>,
 }
 
+/// Approximate row count for one base table, read from the engine's own
+/// statistics catalogs (no `COUNT(*)` scan), so it stays cheap on large
+/// schemas and never touches table data.
+///
+/// `estimate` is intentionally fuzzy:
+/// - `Some(n)` is the engine's reported estimate. It may be stale (it updates
+///   only when the engine gathers statistics) and, for some engines (InnoDB),
+///   is approximate even when fresh.
+/// - `None` means no cheap estimate is available — the driver has no such
+///   statistic (SQLite), or the engine has not gathered one yet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableRowEstimate {
+    pub name: String,
+    pub estimate: Option<i64>,
+}
+
 /// One unit produced by streaming SELECT execution. Columns are reported
 /// once (before any rows) so the UI can render headers immediately, then
 /// row batches arrive as they are read off the wire.

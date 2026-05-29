@@ -6,7 +6,8 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableSchema, Value,
+    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
+    TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -588,6 +589,33 @@ impl MySqlConn {
             })
             .collect();
         Ok(super::group_columns_by_table(pairs))
+    }
+
+    pub async fn table_row_estimates(&self, db: &str) -> Result<Vec<TableRowEstimate>> {
+        // information_schema.TABLES.TABLE_ROWS is the engine's own row estimate
+        // (exact for MyISAM, approximate for InnoDB) and needs no table scan.
+        // Restricting to BASE TABLE skips views, whose TABLE_ROWS is NULL.
+        // TABLE_ROWS is BIGINT UNSIGNED, so decode as u64 before narrowing.
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT TABLE_NAME, TABLE_ROWS
+               FROM information_schema.TABLES
+               WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
+               ORDER BY TABLE_NAME"#,
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| TableRowEstimate {
+                name: r.try_get::<String, _>(0).unwrap_or_default(),
+                estimate: r
+                    .try_get::<Option<u64>, _>(1)
+                    .ok()
+                    .flatten()
+                    .map(|v| v as i64),
+            })
+            .collect())
     }
 }
 

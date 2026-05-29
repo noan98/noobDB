@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::db::types::{TableColumnInfo, TableSchema};
+use crate::db::types::{TableColumnInfo, TableRowEstimate, TableSchema};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -51,4 +51,17 @@ pub async fn schema_overview(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session.conn.schema_overview(&database).await
+}
+
+#[tauri::command]
+pub async fn table_row_estimates(
+    session_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TableRowEstimate>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.table_row_estimates(&database).await
 }
