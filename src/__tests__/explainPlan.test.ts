@@ -73,6 +73,14 @@ describe("scorePlan", () => {
     expect(s.score).toBe(30);
   });
 
+  it("treats a present zero cost as light, not missing", () => {
+    const root = singleTable(0, { access_type: "const" });
+    const s = scorePlan(root);
+    expect(s.costMissing).toBe(false);
+    expect(s.score).toBe(0);
+    expect(s.band).toBe("low");
+  });
+
   it("clamps the combined score to the 0..100 range", () => {
     const root = singleTable(10_000_000, {
       access_type: "ALL",

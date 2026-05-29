@@ -298,7 +298,10 @@ const COST_FLOOR = 10;
 const COST_CEIL = 1_000_000;
 
 function costToScore(cost: number | null): { score: number; missing: boolean } {
-  if (cost === null || cost <= 0) return { score: 0, missing: true };
+  // `null` はオプティマイザがコストを返さなかった真の欠落。一方 `0` 以下は
+  // `nodeCost` が read_cost + eval_cost = 0 のように「存在するが極めて軽い」
+  // ケースで返しうるので、欠落ではなくスコア 0 として扱う。
+  if (cost === null) return { score: 0, missing: true };
   if (cost <= COST_FLOOR) return { score: 0, missing: false };
   if (cost >= COST_CEIL) return { score: 100, missing: false };
   const r =
