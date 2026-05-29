@@ -522,7 +522,11 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const runIconSpinner = <Spinner size={12} />;
   const runStates: Record<"idle" | "running" | "disabled", BadgeState> = {
     idle: { label: runLabel, tone: "success", icon: runIconPlay },
-    running: { label: t("editorRunRunning"), tone: "warning", icon: runIconSpinner },
+    // 実行中はスピナーのみを表示する。Run/Preview は英語ラベルのボタンであり、
+    // 日本語の状態テキスト ("実行中...") を併記するとスピナーと意味が重複し、ボタン
+    // ラベルとの言語的な齟齬も生むため、可視テキストは落とす。SR 向けには
+    // `srLabel` でアナウンスを残す。
+    running: { label: "", srLabel: t("editorRunRunning"), tone: "warning", icon: runIconSpinner },
     disabled: { label: runLabel, tone: "neutral", icon: runIconPlay },
   };
 
@@ -539,7 +543,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   );
   const previewStates: Record<"idle" | "running" | "disabled", BadgeState> = {
     idle: { label: t("editorPreview"), tone: "warning", icon: previewIconEye },
-    running: { label: t("editorPreviewRunning"), tone: "warning", icon: runIconSpinner },
+    running: { label: "", srLabel: t("editorPreviewRunning"), tone: "warning", icon: runIconSpinner },
     disabled: { label: t("editorPreview"), tone: "neutral", icon: previewIconEye },
   };
 
