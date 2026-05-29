@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence } from "motion/react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   flexRender,
@@ -1147,14 +1148,16 @@ export function DataGrid({
           {t("gridCopied")}
         </Box>
       )}
-      {viewer && (
-        <CellValueViewer
-          columnName={columns[viewer.colIdx]?.name ?? ""}
-          value={rows[viewer.rowIdx]?.[viewer.colIdx] ?? null}
-          isBinary={columnKinds[viewer.colIdx] === "binary"}
-          onClose={() => setViewer(null)}
-        />
-      )}
+      <AnimatePresence>
+        {viewer && (
+          <CellValueViewer
+            columnName={columns[viewer.colIdx]?.name ?? ""}
+            value={rows[viewer.rowIdx]?.[viewer.colIdx] ?? null}
+            isBinary={columnKinds[viewer.colIdx] === "binary"}
+            onClose={() => setViewer(null)}
+          />
+        )}
+      </AnimatePresence>
     </>
   );
 }
@@ -1612,16 +1615,18 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           </Box>
         )}
       </Box>
-      {showExport && (
-        <ExportModal
-          columns={result.columns}
-          rows={result.rows}
-          database={database ?? null}
-          table={table ?? null}
-          partial={showAutoLimitBadge || !!canLoadMore}
-          onClose={() => setShowExport(false)}
-        />
-      )}
+      <AnimatePresence>
+        {showExport && (
+          <ExportModal
+            columns={result.columns}
+            rows={result.rows}
+            database={database ?? null}
+            table={table ?? null}
+            partial={showAutoLimitBadge || !!canLoadMore}
+            onClose={() => setShowExport(false)}
+          />
+        )}
+      </AnimatePresence>
     </Box>
   );
 });
