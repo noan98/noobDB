@@ -276,8 +276,11 @@ impl SqliteConn {
             let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
             for row in chunk {
                 for ci in 0..ncols {
-                    let cell = row.get(ci).cloned().unwrap_or(None);
-                    q = q.bind(cell);
+                    // Bind the cell text by reference: a large import would
+                    // otherwise clone every value just to hand it to the driver.
+                    // `Option<&str>` binds identically to `Option<String>` (text,
+                    // `NULL` for `None`), so the wire output is unchanged.
+                    q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
                 }
             }
             q.execute(&mut *tx).await?;
@@ -649,14 +652,26 @@ fn build_insert_sql(table_ident: &str, cols_sql: &str, ncols: usize, nrows: usiz
         tuple.push('?');
     }
     tuple.push(')');
-    let values = std::iter::repeat(tuple.as_str())
-        .take(nrows)
-        .collect::<Vec<_>>()
-        .join(",");
-    format!(
-        "INSERT INTO {} ({}) VALUES {}",
-        table_ident, cols_sql, values
-    )
+    // Write the statement directly into one pre-sized buffer instead of
+    // materialising a `Vec<&str>` of the repeated tuple and joining it.
+    let mut out = String::with_capacity(
+        "INSERT INTO  () VALUES ".len()
+            + table_ident.len()
+            + cols_sql.len()
+            + nrows * (tuple.len() + 1),
+    );
+    out.push_str("INSERT INTO ");
+    out.push_str(table_ident);
+    out.push_str(" (");
+    out.push_str(cols_sql);
+    out.push_str(") VALUES ");
+    for r in 0..nrows {
+        if r > 0 {
+            out.push(',');
+        }
+        out.push_str(&tuple);
+    }
+    out
 }
 
 fn strip_identifier_quotes(s: &str) -> String {

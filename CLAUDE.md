@@ -166,9 +166,9 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
 ローカルと CI の Rust ビルドを速くするための設定をいくつか入れています。
 
 - `src-tauri/Cargo.toml` の `[profile.dev]` で `debug = "line-tables-only"` を
-  指定し、dev ビルドの debuginfo を行テーブルのみに削減しています。リンク時間と
-  生成物サイズが減り、バックトレースのファイル:行情報は維持されます。ツール導入
-  不要で全環境に効きます。
+  指定し、dev ビルドの debuginfo を行テーブルのみに削減しています。リンク時間が
+  減り dev ビルドの反復が速くなる一方、バックトレースのファイル:行情報は維持され
+  ます。ツール導入不要で全環境に効きます。
 - `src-tauri/Cargo.toml` の `[lib] crate-type` は **`["rlib"]` のみ**にしています。
   `staticlib` / `cdylib` はモバイル (iOS/Android) 専用の生成物で、デスクトップ
   専用の本プロジェクトでは不要です。これらを残すとリリースビルドで依存ツリー全体を
