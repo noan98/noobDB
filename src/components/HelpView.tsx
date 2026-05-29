@@ -102,6 +102,12 @@ const SECTIONS: Section[] = [
       { titleKey: "helpDiscardTitle", descKey: "helpDiscardDesc", impact: "no" },
       { titleKey: "helpHistoryTitle", descKey: "helpHistoryDesc", impact: "no" },
       { titleKey: "helpPaginationTitle", descKey: "helpPaginationDesc", impact: "no" },
+      {
+        titleKey: "helpSchemaCompareTitle",
+        descKey: "helpSchemaCompareDesc",
+        impact: "no",
+        noteKey: "helpSchemaCompareNote",
+      },
     ],
   },
   {

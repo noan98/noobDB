@@ -217,6 +217,14 @@ const en = {
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
   statusConnecting: "Connecting to {name}...",
   toastConnected: "Connected to {name}",
+  toastEditsClearedByLoadMore:
+    "Cleared your in-progress cell edits before loading more rows.",
+  toastTabRestoreMissing:
+    "Table “{table}” was not found and was restored as a query tab.",
+  toastTabRestoreMissingMany:
+    "{count} tables could not be found and were restored as query tabs: {table}.",
+  toastTabRestoreConnectionLost:
+    "Could not verify saved table tabs (the connection may have dropped): {table}. They were restored as query tabs.",
   statusConnectionFailed: "Connection failed: {error}",
   statusNotConnected: "Not connected",
   statusRunningQuery: "Running query...",
@@ -667,6 +675,11 @@ const en = {
   helpPaginationTitle: "Pagination / scroll fetch",
   helpPaginationDesc:
     "Fetches more rows with additional SELECTs as you scroll. Read-only.",
+  helpSchemaCompareTitle: "Schema compare",
+  helpSchemaCompareDesc:
+    "Compares two connections' schemas (and table data) side by side and highlights the differences. Open it from the diff icon in the top toolbar.",
+  helpSchemaCompareNote:
+    "Comparing is read-only, but the generated sync DDL/DML can write — review it before applying.",
 
   helpRunTitle: "Run",
   helpRunDesc:
@@ -1008,6 +1021,14 @@ const ja: Dict = {
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
   statusConnecting: "{name} に接続中...",
   toastConnected: "{name} に接続しました",
+  toastEditsClearedByLoadMore:
+    "追加読み込みにより編集中のセル内容をクリアしました。",
+  toastTabRestoreMissing:
+    "テーブル「{table}」が見つかりません。クエリタブとして復元しました。",
+  toastTabRestoreMissingMany:
+    "{count} 件のテーブルが見つからず、クエリタブとして復元しました: {table}。",
+  toastTabRestoreConnectionLost:
+    "保存済みのテーブルタブを確認できませんでした（接続が切れた可能性があります）: {table}。クエリタブとして復元しました。",
   statusConnectionFailed: "接続に失敗しました: {error}",
   statusNotConnected: "接続されていません",
   statusRunningQuery: "クエリを実行中...",
@@ -1458,6 +1479,11 @@ const ja: Dict = {
   helpPaginationTitle: "ページネーション / スクロール取得",
   helpPaginationDesc:
     "スクロールに応じて追加の SELECT で行を取得します。読み取りのみです。",
+  helpSchemaCompareTitle: "スキーマ比較",
+  helpSchemaCompareDesc:
+    "2 つの接続のスキーマ (およびテーブルデータ) を並べて比較し、差分を表示します。上部ツールバーの差分アイコンから開けます。",
+  helpSchemaCompareNote:
+    "比較自体は読み取りのみですが、生成される同期用 DDL/DML は書き込みを行うため、適用前に必ず内容を確認してください。",
 
   helpRunTitle: "Run",
   helpRunDesc:

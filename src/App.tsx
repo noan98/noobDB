@@ -1482,6 +1482,11 @@ export default function App() {
   const restoreSavedTabs = useCallback(
     async (sid: string, profile: ConnectionProfile, ws: PersistedWorkspace) => {
       const limit = Math.max(1, settings.defaultDisplayCount);
+      // Table tabs whose table can no longer be described (dropped, renamed, or
+      // the connection dropped) silently downgrade to query tabs. We collect
+      // those here so the user gets one consolidated toast explaining why a
+      // table tab came back as a query tab, instead of silently losing it.
+      const restoreFailures: { table: string; reason: "missing" | "connection" | "other" }[] = [];
       const buildTab = async (s: PersistedTab): Promise<Tab> => {
         const restoredSnapshot = s.builderSnapshot ?? null;
         if (s.kind === "table" && s.database && s.table) {
@@ -1512,8 +1517,17 @@ export default function App() {
               pendingEdits: {},
               builderSnapshot: restoredSnapshot,
             };
-          } catch {
-            // Table is gone — fall through to a query tab using the saved SQL.
+          } catch (e) {
+            // Table is gone — fall through to a query tab using the saved SQL,
+            // but record why so we can tell the user (Issue #329).
+            const msg = String(e);
+            const reason: "missing" | "connection" | "other" =
+              /table .* does(?:n't| not) exist|no such table|relation .* does not exist|unknown table/i.test(msg)
+                ? "missing"
+                : /server has gone away|lost connection|broken pipe|connection was killed|server closed the connection|terminating connection|error communicating with database|connection refused|connection reset|connection timed out|not connected/i.test(msg)
+                  ? "connection"
+                  : "other";
+            restoreFailures.push({ table: s.table, reason });
           }
         }
         if (s.kind === "explain") {
@@ -1581,8 +1595,23 @@ export default function App() {
           runQueryInTab(tab.id, tab.sql, tab.paginatable);
         }
       }
+      // Surface any table tabs that downgraded to query tabs. `skip_history`
+      // sessions opt out of incidental notifications, so stay quiet for them.
+      if (restoreFailures.length > 0 && !profile.skip_history) {
+        const names = restoreFailures.map((f) => f.table).join(", ");
+        const allConnection = restoreFailures.every((f) => f.reason === "connection");
+        const key = allConnection
+          ? "toastTabRestoreConnectionLost"
+          : restoreFailures.length === 1
+            ? "toastTabRestoreMissing"
+            : "toastTabRestoreMissingMany";
+        toast.info(
+          translate(key, { table: names, count: restoreFailures.length }),
+          6000,
+        );
+      }
     },
-    [runQueryInTab, settings.defaultDisplayCount],
+    [runQueryInTab, settings.defaultDisplayCount, toast],
   );
 
   useEffect(() => {
@@ -1728,7 +1757,22 @@ export default function App() {
     const offset = tab.result.rows.length;
     const chunkSize = Math.max(1, settings.streamPrefetchSize);
     const sql = `${tab.paginatable} LIMIT ${chunkSize} OFFSET ${offset}`;
-    patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
+    // Drop any in-flight inline cell edits before paginating. Appended rows
+    // keep the existing rows at their original indices, but pagination over a
+    // query without a stable ORDER BY can surface rows already shown above —
+    // so rather than reason about whether each buffered edit still lines up,
+    // we clear them on the safe side and tell the user. An incorrect UPDATE to
+    // a production row is far worse than re-typing an edit. (Issue #330)
+    const hadPendingEdits = countEditedCells(tab.pendingEdits) > 0;
+    patchTab(tabId, (tt) => ({
+      ...tt,
+      loadingMore: true,
+      pendingEdits: hadPendingEdits ? {} : tt.pendingEdits,
+      preview: hadPendingEdits ? null : tt.preview,
+    }));
+    if (hadPendingEdits) {
+      toast.info(translate("toastEditsClearedByLoadMore"));
+    }
     setStatus({
       kind: "key",
       key: "statusLoadingMore",
@@ -1764,7 +1808,7 @@ export default function App() {
         error: true,
       });
     }
-  }, [sessionId, settings.streamPrefetchSize, patchTab]);
+  }, [sessionId, settings.streamPrefetchSize, patchTab, toast]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
