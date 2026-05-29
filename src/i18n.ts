@@ -554,7 +554,7 @@ const en = {
 
   gridFilterPlaceholder: "Filter...",
   gridFilterAria: "Filter {column}",
-  gridSearchPlaceholder: "Search all columns...",
+  gridSearchPlaceholder: "Search all columns (Cmd/Ctrl+F)...",
   gridSearchAria: "Search across all columns",
   gridSortAsc: "Sort ascending",
   gridSortDesc: "Sort descending",
@@ -1358,7 +1358,7 @@ const ja: Dict = {
 
   gridFilterPlaceholder: "絞り込み...",
   gridFilterAria: "{column} を絞り込む",
-  gridSearchPlaceholder: "全カラムを検索...",
+  gridSearchPlaceholder: "全カラムを検索 (Cmd/Ctrl+F)...",
   gridSearchAria: "全カラム横断検索",
   gridSortAsc: "昇順で並び替え",
   gridSortDesc: "降順で並び替え",
