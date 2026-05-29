@@ -223,6 +223,18 @@ impl Connection {
 /// must be grouped by table (consecutive rows of the same table), which the
 /// driver queries guarantee via `ORDER BY <table>, <ordinal>`; column order
 /// within each table is preserved.
+/// Case-insensitive membership test for a column's declared SQL type name.
+///
+/// Called once per cell on the row-decode hot path. Comparing the driver's
+/// borrowed type name in place — rather than allocating an uppercased `String`
+/// copy of it for every cell — avoids `rows * columns` short-lived heap
+/// allocations when materialising a result set. `eq_ignore_ascii_case` matches
+/// regardless of the case each driver reports (MySQL upper, Postgres lower,
+/// SQLite as declared), so the candidate literals stay uppercase.
+pub(crate) fn type_name_matches(name: &str, candidates: &[&str]) -> bool {
+    candidates.iter().any(|c| name.eq_ignore_ascii_case(c))
+}
+
 pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableSchema> {
     let mut out: Vec<TableSchema> = Vec::new();
     for (table, column) in pairs {

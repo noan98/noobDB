@@ -513,82 +513,86 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
     if raw.is_null() {
         return Value::Null;
     }
-    let type_name = raw.type_info().name().to_ascii_uppercase();
+    // Borrow the declared type name in place; `type_name_matches` compares it
+    // case-insensitively so we avoid allocating an uppercased copy per cell.
+    let type_info = raw.type_info();
+    let type_name = type_info.name();
+    use super::type_name_matches as ti;
 
     // Integer family. Postgres has signed-only int2/int4/int8 (no unsigned).
-    if type_name == "INT2" {
+    if ti(type_name, &["INT2"]) {
         if let Ok(v) = row.try_get::<Option<i16>, _>(i) {
             return v.map(|n| Value::Int(n as i64)).unwrap_or(Value::Null);
         }
     }
-    if type_name == "INT4" {
+    if ti(type_name, &["INT4"]) {
         if let Ok(v) = row.try_get::<Option<i32>, _>(i) {
             return v.map(|n| Value::Int(n as i64)).unwrap_or(Value::Null);
         }
     }
-    if type_name == "INT8" {
+    if ti(type_name, &["INT8"]) {
         if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
             return v.map(Value::Int).unwrap_or(Value::Null);
         }
     }
-    if matches!(type_name.as_str(), "FLOAT4") {
+    if ti(type_name, &["FLOAT4"]) {
         if let Ok(v) = row.try_get::<Option<f32>, _>(i) {
             return v.map(|f| Value::Float(f as f64)).unwrap_or(Value::Null);
         }
     }
-    if matches!(type_name.as_str(), "FLOAT8") {
+    if ti(type_name, &["FLOAT8"]) {
         if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
             return v.map(Value::Float).unwrap_or(Value::Null);
         }
     }
-    if type_name == "BOOL" {
+    if ti(type_name, &["BOOL"]) {
         if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
             return v.map(Value::Bool).unwrap_or(Value::Null);
         }
     }
-    if type_name == "NUMERIC" {
+    if ti(type_name, &["NUMERIC"]) {
         if let Ok(v) = row.try_get::<Option<rust_decimal::Decimal>, _>(i) {
             return v
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
         }
     }
-    if type_name == "TIMESTAMPTZ" {
+    if ti(type_name, &["TIMESTAMPTZ"]) {
         if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) {
             return v
                 .map(|d| Value::String(d.to_rfc3339()))
                 .unwrap_or(Value::Null);
         }
     }
-    if type_name == "TIMESTAMP" {
+    if ti(type_name, &["TIMESTAMP"]) {
         if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
             return v
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
         }
     }
-    if type_name == "DATE" {
+    if ti(type_name, &["DATE"]) {
         if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(i) {
             return v
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
         }
     }
-    if type_name == "TIME" {
+    if ti(type_name, &["TIME"]) {
         if let Ok(v) = row.try_get::<Option<chrono::NaiveTime>, _>(i) {
             return v
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
         }
     }
-    if matches!(type_name.as_str(), "JSON" | "JSONB") {
+    if ti(type_name, &["JSON", "JSONB"]) {
         if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(i) {
             return v
                 .map(|j| Value::String(j.to_string()))
                 .unwrap_or(Value::Null);
         }
     }
-    if type_name == "BYTEA" {
+    if ti(type_name, &["BYTEA"]) {
         if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(i) {
             return v
                 .map(|b| Value::Bytes(data_encoding::HEXLOWER.encode(&b)))
