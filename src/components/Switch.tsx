@@ -1,6 +1,7 @@
 import { chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { useId, type KeyboardEvent, type ReactNode } from "react";
+import { springs } from "../motion";
 
 /**
  * `motion` の `layout` を使って thumb をスプリングアニメーションで動かす
@@ -114,7 +115,7 @@ export function Switch({
       >
         <MotionThumb
           layout
-          transition={{ type: "spring", stiffness: 700, damping: 30 }}
+          transition={springs.snappy}
           display="block"
           width={`${dims.thumb}px`}
           height={`${dims.thumb}px`}

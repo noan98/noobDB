@@ -1,6 +1,7 @@
 import { chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode } from "react";
+import { transitions, variants } from "../motion";
 
 /**
  * 状態キーに応じてラベル・色・アイコンが `motion` でアニメーション遷移する Badge。
@@ -135,7 +136,7 @@ export function MultiStateBadge<S extends string>({
     >
       <MotionInner
         layout
-        transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+        transition={transitions.layout}
         display="inline-flex"
         alignItems="center"
         gap="6px"
@@ -144,10 +145,10 @@ export function MultiStateBadge<S extends string>({
           <AnimatePresence mode="wait" initial={false}>
             <MotionInner
               key={`icon-${state}`}
-              initial={{ opacity: 0, scale: 0.7 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.7 }}
-              transition={{ duration: 0.15 }}
+              initial={variants.fadeScale.initial}
+              animate={variants.fadeScale.animate}
+              exit={variants.fadeScale.exit}
+              transition={transitions.crossfade}
               display="inline-flex"
               flexShrink={0}
               aria-hidden
@@ -160,10 +161,10 @@ export function MultiStateBadge<S extends string>({
           <AnimatePresence mode="wait" initial={false}>
             <MotionInner
               key={`label-${state}`}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.15 }}
+              initial={variants.slideUp.initial}
+              animate={variants.slideUp.animate}
+              exit={variants.slideUp.exit}
+              transition={transitions.crossfade}
               display="inline-block"
             >
               {current.label}

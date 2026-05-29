@@ -32,6 +32,7 @@ import { tags } from "@lezer/highlight";
 import { format as formatSql } from "sql-formatter";
 import type { TableSchema } from "../api/tauri";
 import { useT } from "../i18n";
+import { springs } from "../motion";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
@@ -54,7 +55,7 @@ function ToolbarButton({ children, ...rest }: ComponentProps<typeof Button> & { 
       style={{ display: "inline-flex" }}
       whileHover={!rest.disabled ? { scale: 1.04 } : undefined}
       whileTap={!rest.disabled ? { scale: 0.97 } : undefined}
-      transition={{ type: "spring", stiffness: 600, damping: 25 }}
+      transition={springs.gentle}
     >
       <Button {...rest}>{children}</Button>
     </motion.span>

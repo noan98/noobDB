@@ -88,6 +88,7 @@ import {
 } from "./dangerousSql";
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT } from "./i18n";
+import { transitions } from "./motion";
 import { useSettings, getSettings, BASE_FONT_SIZE_PX, type TabRestoreMode } from "./settings";
 import {
   clearPersistedTabs,
@@ -2359,7 +2360,7 @@ export default function App() {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 2 }}
               exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.18 }}
+              transition={transitions.fade}
               aria-hidden
               style={{
                 position: "relative",

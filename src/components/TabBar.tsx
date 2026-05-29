@@ -3,6 +3,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { transitions } from "../motion";
 
 // キーボードフォーカスリング (App.css のフォーカス表現と一致、動的アクセントへ追従)。
 const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
@@ -139,7 +140,7 @@ export function TabBar({
                 initial={{ opacity: 0, width: 0 }}
                 animate={{ opacity: 1, width: "auto" }}
                 exit={{ opacity: 0, width: 0 }}
-                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                transition={transitions.enter}
                 position="relative"
                 display="inline-flex"
                 alignItems="center"
@@ -240,7 +241,7 @@ export function TabBar({
                 {isActive && (
                   <MotionIndicator
                     layoutId={indicatorId}
-                    transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                    transition={transitions.emphasized}
                     position="absolute"
                     left="0"
                     right="0"
