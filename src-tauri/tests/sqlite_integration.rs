@@ -5,7 +5,7 @@
 //! and exercises the full driver surface against it: connect, CRUD,
 //! schema introspection, and preview rollback.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use noobdb_lib::__test_api as t;
 
@@ -518,4 +518,193 @@ async fn sqlite_missing_path_reports_invalid_input() {
         msg.contains("file_path") || msg.contains("invalid input"),
         "unexpected error: {msg}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// read-only セッション強制 (IPC レベル) — Issue #288
+//
+// `is_read_only_sql` の単体テストは `db/mod.rs` にあるが、ここでは実際の
+// クエリコマンド経路 (`run_query` / `run_query_transaction` / `import_csv` の
+// コア) を `AppState` + read-only な `Session` で駆動し、書き込み系が
+// `AppError::ReadOnly` で**ドライバに届く前に**拒否されることを確認する。
+// SQLite ベースなので環境変数不要で常時実行され、ガードのリグレッション検出器
+// として機能する。
+// ---------------------------------------------------------------------------
+
+/// 一意な一時 SQLite ファイルを作り、書き込み可能な接続でテーブルを 1 件用意して
+/// パスを返すヘルパ。read-only テストは同じファイルに別接続で繋ぎ直す。
+async fn seed_ro_fixture(tag: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_ro_{tag}_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect (seed)");
+    conn.execute(
+        "CREATE TABLE ro_t (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO ro_t (id, label) VALUES (1, 'a')", None)
+        .await
+        .expect("seed");
+    conn.close().await;
+    path
+}
+
+/// read-only セッションをファイルに対して開き、`AppState` に登録して返す。
+async fn ro_state(path: &Path) -> (t::AppState, String) {
+    let opts = t::sqlite_options(path.to_str().unwrap());
+    let conn = t::connect(&opts)
+        .await
+        .expect("connect (read-only session)");
+    let session = t::make_session("ro_sess", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    (state, sid)
+}
+
+#[tokio::test]
+async fn read_only_session_rejects_writes_via_ipc() {
+    let path = seed_ro_fixture("rejects").await;
+    let (state, sid) = ro_state(&path).await;
+
+    // INSERT / UPDATE / DELETE / DDL はすべて read-only ガードで拒否される。
+    for sql in [
+        "INSERT INTO ro_t (id, label) VALUES (2, 'b')",
+        "UPDATE ro_t SET label = 'z' WHERE id = 1",
+        "DELETE FROM ro_t WHERE id = 1",
+        "DROP TABLE ro_t",
+        "CREATE TABLE evil (id INTEGER)",
+        "TRUNCATE TABLE ro_t",
+    ] {
+        let err = t::run_query_via_command(&state, &sid, sql, None)
+            .await
+            .expect_err(&format!("read-only session must reject: {sql}"));
+        assert!(
+            matches!(err, t::AppError::ReadOnly(_)),
+            "expected ReadOnly for `{sql}`, got: {err:?}"
+        );
+    }
+
+    // ガードはドライバに到達する前に弾くので、データは一切変化していないはず。
+    let verify = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect (verify)");
+    let rows = verify
+        .execute("SELECT id, label FROM ro_t ORDER BY id", None)
+        .await
+        .expect("select after rejected writes")
+        .rows;
+    assert_eq!(rows.len(), 1, "no write should have landed");
+    assert!(matches!(&rows[0][1], t::Value::String(s) if s == "a"));
+    verify.close().await;
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn read_only_session_allows_select_via_ipc() {
+    let path = seed_ro_fixture("select").await;
+    let (state, sid) = ro_state(&path).await;
+
+    // 許可リストの文 (SELECT / WITH ... SELECT など) は通る。
+    let res = t::run_query_via_command(&state, &sid, "SELECT id, label FROM ro_t", None)
+        .await
+        .expect("read-only session must allow SELECT");
+    assert_eq!(res.rows.len(), 1);
+    assert!(matches!(&res.rows[0][1], t::Value::String(s) if s == "a"));
+
+    let cte = t::run_query_via_command(
+        &state,
+        &sid,
+        "WITH x AS (SELECT id FROM ro_t) SELECT count(*) FROM x",
+        None,
+    )
+    .await
+    .expect("read-only session must allow WITH ... SELECT");
+    assert_eq!(cte.rows.len(), 1);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn read_only_session_rejects_transaction_writes() {
+    let path = seed_ro_fixture("tx").await;
+    let (state, sid) = ro_state(&path).await;
+
+    // バッチ内の 1 文でも書き込みがあれば、トランザクション全体が拒否される。
+    let err = t::run_query_transaction_via_command(
+        &state,
+        &sid,
+        vec![
+            "SELECT 1".to_string(),
+            "UPDATE ro_t SET label = 'z' WHERE id = 1".to_string(),
+        ],
+        None,
+    )
+    .await
+    .expect_err("read-only session must reject a transaction containing a write");
+    assert!(
+        matches!(err, t::AppError::ReadOnly(_)),
+        "expected ReadOnly, got: {err:?}"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn read_only_session_rejects_csv_import() {
+    let path = seed_ro_fixture("import").await;
+    let opts = t::sqlite_options(path.to_str().unwrap());
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_session("ro_imp", conn, opts, /* read_only */ true);
+
+    // `import_csv` が CSV 行を読む前に適用する read-only ガードを直接確認する。
+    let err =
+        t::ensure_import_writable(&session).expect_err("read-only session must reject CSV import");
+    assert!(
+        matches!(err, t::AppError::ReadOnly(_)),
+        "expected ReadOnly, got: {err:?}"
+    );
+
+    session.conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn writable_session_allows_writes_via_ipc() {
+    // ガードが過剰に広くないことの確認: read-only でないセッションでは書き込みが
+    // コマンド経路を通って実際に成功する。
+    let path = seed_ro_fixture("writable").await;
+    let opts = t::sqlite_options(path.to_str().unwrap());
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_session("rw_sess", conn, opts, /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let res = t::run_query_via_command(
+        &state,
+        &sid,
+        "INSERT INTO ro_t (id, label) VALUES (2, 'b')",
+        None,
+    )
+    .await
+    .expect("writable session must allow INSERT");
+    assert_eq!(res.rows_affected, 1);
+
+    assert!(t::ensure_import_writable(&t::make_session(
+        "rw_imp",
+        t::connect(&t::sqlite_options(path.to_str().unwrap()))
+            .await
+            .expect("connect"),
+        t::sqlite_options(path.to_str().unwrap()),
+        false,
+    ))
+    .is_ok());
+
+    let _ = std::fs::remove_file(&path);
 }

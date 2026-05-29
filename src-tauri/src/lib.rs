@@ -16,11 +16,68 @@ pub mod __test_api {
     };
     pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
-    pub use crate::db::types::Value;
+    pub use crate::db::types::{QueryResult, Value};
     pub use crate::db::{Connection, DbConnectOptions, DriverKind};
+    pub use crate::error::AppError;
+    pub use crate::state::{AppState, Session};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
+    }
+
+    /// Builds a [`Session`] around a live connection for integration tests, so
+    /// they can register it in an [`AppState`] and drive the real query
+    /// commands. `skip_history` is forced on to keep tests from touching the
+    /// on-disk history database.
+    pub fn make_session(
+        id: &str,
+        conn: Connection,
+        opts: DbConnectOptions,
+        read_only: bool,
+    ) -> Session {
+        Session {
+            id: id.to_string(),
+            profile_id: None,
+            conn,
+            connect_options: opts,
+            read_only,
+            skip_history: true,
+            _tunnel: None,
+        }
+    }
+
+    /// Drives the `run_query` IPC command's core path (session lookup +
+    /// read-only guard + execute) without a Tauri runtime.
+    pub async fn run_query_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        database: Option<&str>,
+    ) -> crate::error::Result<QueryResult> {
+        crate::commands::query::run_query_inner(state, session_id, sql, database).await
+    }
+
+    /// Drives the `run_query_transaction` IPC command's core path, exercising
+    /// the per-statement read-only guard.
+    pub async fn run_query_transaction_via_command(
+        state: &AppState,
+        session_id: &str,
+        statements: Vec<String>,
+        database: Option<&str>,
+    ) -> crate::error::Result<QueryResult> {
+        crate::commands::query::run_query_transaction_inner(
+            state,
+            session_id.to_string(),
+            statements,
+            database.map(str::to_string),
+        )
+        .await
+    }
+
+    /// The read-only guard the `import_csv` IPC command applies before any CSV
+    /// rows reach the driver.
+    pub fn ensure_import_writable(session: &Session) -> crate::error::Result<()> {
+        crate::commands::import::ensure_import_writable(session)
     }
 
     /// Drives the full schema-comparison path (`commands::diff`) without Tauri:
