@@ -130,7 +130,10 @@ type Status =
   | { kind: "literal"; text: string; error?: boolean }
   | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
 
-type StatusTone = "running" | "success" | "error" | "info";
+// エラーは重大度別に区別する (#281)。`critical` は接続喪失など回復に再接続を要する
+// 致命的状態 (赤、目立つバッジ)、`warning` はタイムアウトなど接続は生きている軽度
+// 障害 (黄)、`error` は SQL 構文エラー・制約違反など個別クエリの失敗 (赤)。
+type StatusTone = "running" | "success" | "error" | "warning" | "critical" | "info";
 
 // Status keys that represent an in-progress operation (spinner + accent border).
 const RUNNING_STATUS_KEYS = new Set([
@@ -140,17 +143,28 @@ const RUNNING_STATUS_KEYS = new Set([
   "statusApplyingEdits",
 ]);
 
+// 致命的 (critical): セッションが使えなくなり再接続が必要な状態。フッターに残し、
+// 「重大」バッジ + 再接続導線で対処を促す (#281)。
+const CRITICAL_STATUS_KEYS = new Set(["statusConnectionLost"]);
+
+// 警告 (warning): 接続は維持されており、設定変更や再試行で回復しうる軽度の障害。
+const WARNING_STATUS_KEYS = new Set(["statusQueryTimeout"]);
+
 // Maps a status to a tone for the footer's icon + colored left border (#131).
 // Derived from the existing `error` flag and known keys, so call sites don't
-// each have to declare a severity.
+// each have to declare a severity (#281 でエラーを critical/warning/error に細分化)。
 function statusTone(s: Status): StatusTone {
   if (s.kind === "idle") return "info";
-  if (s.error) return "error";
   if (s.kind === "key") {
     if (RUNNING_STATUS_KEYS.has(s.key)) return "running";
+    // critical / warning は error フラグの有無より優先して重大度を確定させる。
+    if (CRITICAL_STATUS_KEYS.has(s.key)) return "critical";
+    if (WARNING_STATUS_KEYS.has(s.key)) return "warning";
+    if (s.error) return "error";
     if (s.key === "appDisconnected") return "info";
     return "success";
   }
+  if (s.error) return "error";
   return "info";
 }
 
@@ -650,6 +664,10 @@ export default function App() {
   );
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
+  // 直近の実行クエリ (最新が先頭、連続重複は畳む)。QueryEditor の ↑/↓ 履歴
+  // ナビゲーション (#325) 用。接続プロファイル単位で読み込み、実行のたびに
+  // `historyReloadKey` が増えるのを契機に再取得する。
+  const [queryHistory, setQueryHistory] = useState<string[]>([]);
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
   const [snippetFormSql, setSnippetFormSql] = useState<string>("");
   const [showSnippetForm, setShowSnippetForm] = useState(false);
@@ -975,6 +993,35 @@ export default function App() {
   useEffect(() => {
     refreshSnippets();
   }, [refreshSnippets]);
+
+  // 履歴ナビゲーション (#325) 用に直近の実行クエリを読み込む。接続中のみ取得し、
+  // プロファイル切替・実行 (`historyReloadKey`) を契機に最新化する。連続して同じ
+  // SQL が並ぶと ↑/↓ で 1 件しか進まないように、隣り合う重複は畳む。
+  useEffect(() => {
+    const profileId = selectedProfile?.id ?? null;
+    if (!sessionId || !profileId) {
+      setQueryHistory([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const entries = await api.listHistory({ profileId, limit: 100 });
+        if (cancelled) return;
+        const sqls: string[] = [];
+        for (const e of entries) {
+          if (sqls.length === 0 || sqls[sqls.length - 1] !== e.sql) sqls.push(e.sql);
+        }
+        setQueryHistory(sqls);
+      } catch {
+        // 履歴の取得失敗はナビゲーションを無効化するだけで、致命的ではない。
+        if (!cancelled) setQueryHistory([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, selectedProfile?.id, historyReloadKey]);
 
   // Keep the active profile pointer in sync when the profile is edited or
   // when the saved list is refreshed for any other reason.
@@ -2325,6 +2372,7 @@ export default function App() {
                     builderSnapshot={tab.builderSnapshot}
                     onBuilderPersist={(snapshot) => updateTab(tab.id, { builderSnapshot: snapshot })}
                     readOnly={readOnly}
+                    queryHistory={queryHistory}
                   />
                 </Suspense>
               }
@@ -2885,28 +2933,36 @@ export default function App() {
 
         {!statusDismissed && status.kind !== "idle" && (() => {
           const tone = statusTone(status);
+          // critical は error と同じ赤系で描き、加えて「重大」バッジで際立たせる。
+          // warning は黄系。どちらも閉じる導線を出す (#281)。
+          const isCritical = tone === "critical";
+          const isError = tone === "error" || isCritical;
+          const isWarning = tone === "warning";
+          const isDismissible = isError || isWarning;
           const toneColor =
             tone === "running"
               ? "app.accent"
               : tone === "success"
                 ? "app.status.success"
-                : tone === "error"
+                : isError
                   ? "app.status.error"
-                  : undefined;
+                  : isWarning
+                    ? "app.status.warning"
+                    : undefined;
           return (
             <Flex
               align="center"
               gap="var(--space-2)"
               px="14px"
               py="5px"
-              bg={tone === "error" ? "app.bgError" : "app.surfaceMuted"}
+              bg={isError ? "app.bgError" : isWarning ? "app.bgWarning" : "app.surfaceMuted"}
               borderTopWidth="1px"
               borderTopColor="app.border"
               borderLeftWidth="3px"
               borderLeftStyle="solid"
               borderLeftColor={toneColor ?? "transparent"}
               fontSize="sm"
-              color={tone === "error" ? "app.textError" : "app.textSecondary"}
+              color={isError ? "app.textError" : isWarning ? "app.textWarning" : "app.textSecondary"}
             >
               <chakra.span
                 aria-hidden
@@ -2920,10 +2976,26 @@ export default function App() {
                   <Spinner size={13} />
                 ) : tone === "success" ? (
                   <Icon name="check" />
-                ) : tone === "error" ? (
+                ) : isError || isWarning ? (
                   <Icon name="warning" />
                 ) : null}
               </chakra.span>
+              {isCritical && (
+                <chakra.span
+                  flexShrink="0"
+                  fontWeight={700}
+                  fontSize="xs"
+                  letterSpacing="0.04em"
+                  textTransform="uppercase"
+                  px="7px"
+                  py="2px"
+                  borderRadius="sm"
+                  bg="app.status.error"
+                  color="#fff"
+                >
+                  {t("statusSeverityCritical")}
+                </chakra.span>
+              )}
               <Box flex="1" minW="0">
                 {statusHintKey && !hintDismissed ? (
                   <Flex direction="column" gap="3px">
@@ -2988,7 +3060,7 @@ export default function App() {
                   statusText
                 )}
               </Box>
-              {reconnectProfile && tone === "error" && (
+              {reconnectProfile && isError && (
                 <chakra.button
                   type="button"
                   flexShrink="0"
@@ -3021,7 +3093,7 @@ export default function App() {
                   {t("statusReconnect")}
                 </chakra.button>
               )}
-              {tone === "error" && (
+              {isDismissible && (
                 <chakra.button
                   type="button"
                   flexShrink="0"

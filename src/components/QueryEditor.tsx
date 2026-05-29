@@ -20,6 +20,7 @@ import {
   closeBrackets,
   closeBracketsKeymap,
   completionKeymap,
+  completionStatus,
 } from "@codemirror/autocomplete";
 import {
   bracketMatching,
@@ -36,6 +37,12 @@ import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
 import { MultiStateBadge, type BadgeState } from "./MultiStateBadge";
+import {
+  initialHistoryNav,
+  navigateNewer,
+  navigateOlder,
+  type HistoryNavState,
+} from "./queryHistoryNav";
 
 // ツールバーの各ボタンに `hover` / `tap` のマイクロインタラクションを共通で乗せるための
 // 薄いラッパ。`Button` 自体を `motion.create` するとボタンの recipe (Chakra style props)
@@ -124,6 +131,11 @@ interface Props {
    * its Run button is disabled for write query kinds.
    */
   readOnly?: boolean;
+  /**
+   * 直近に実行したクエリの一覧 (最新が先頭)。エディタ 1 行目での ↑ / 末尾行での ↓
+   * による履歴ナビゲーション (#325) に使う。未接続時などは空/undefined。
+   */
+  queryHistory?: string[];
 }
 
 export interface QueryEditorHandle {
@@ -246,6 +258,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   builderSnapshot,
   onBuilderPersist,
   readOnly,
+  queryHistory,
 }: Props, ref) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -263,10 +276,48 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onPreviewRef.current = onPreview;
   const driverRef = useRef(driver);
   driverRef.current = driver;
+  // 履歴ナビゲーション (#325) 用。エディタは初回だけ生成されキーマップ内のクロージャ
+  // から ref を読むため、props の履歴はレンダのたびに ref へ流し込む。
+  const historyRef = useRef<string[]>(queryHistory ?? []);
+  historyRef.current = queryHistory ?? [];
+  const navStateRef = useRef<HistoryNavState>(initialHistoryNav);
+  // 履歴ナビゲーションによる doc 書き換え中は true。updateListener がこのフラグを見て、
+  // ユーザのタイプ由来の変更とプログラム由来の変更を区別し、前者でだけ位置をリセット
+  // する (タイプし始めたら bash 同様に履歴位置から離脱する)。
+  const navigatingRef = useRef(false);
+
+  // 実行・編集を機にナビゲーション位置を初期化する。実行後に ↑ を押したら最新から
+  // たどり直せるようにする (bash の挙動に準拠)。
+  const resetHistoryNav = () => {
+    navStateRef.current = initialHistoryNav;
+  };
 
   useEffect(() => {
     if (!hostRef.current) return;
     const startDoc = initialSql ?? "SELECT 1;";
+
+    // 履歴ナビゲーションの結果をエディタへ反映する。`navigatingRef` を立てて dispatch
+    // することで、この doc 変更を updateListener がユーザのタイプと誤認してナビ位置を
+    // リセットしないようにする (dispatch は同期で updateListener を呼ぶ)。
+    const applyHistoryNav = (
+      view: EditorView,
+      result: ReturnType<typeof navigateOlder>,
+    ): boolean => {
+      if (!result) return false;
+      navStateRef.current = result.state;
+      navigatingRef.current = true;
+      try {
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: result.text },
+          selection: { anchor: result.cursor === "start" ? 0 : result.text.length },
+          scrollIntoView: true,
+        });
+      } finally {
+        navigatingRef.current = false;
+      }
+      return true;
+    };
+
     const view = new EditorView({
       parent: hostRef.current,
       state: EditorState.create({
@@ -283,11 +334,40 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           sqlCompartment.of(buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase)),
           keymap.of([
             { key: "Tab", run: acceptCompletion },
+            // ↑ / ↓ による実行済みクエリの履歴ナビゲーション (#325)。1 行目での ↑ /
+            // 末尾行での ↓ のときだけ起動し、それ以外は false を返して通常のカーソル
+            // 移動へ委ねる。補完ポップアップ表示中はその選択移動を優先する。
+            {
+              key: "ArrowUp",
+              run: (v) => {
+                if (completionStatus(v.state) === "active") return false;
+                const sel = v.state.selection.main;
+                if (!sel.empty) return false;
+                if (v.state.doc.lineAt(sel.head).number !== 1) return false;
+                return applyHistoryNav(
+                  v,
+                  navigateOlder(historyRef.current, v.state.doc.toString(), navStateRef.current),
+                );
+              },
+            },
+            {
+              key: "ArrowDown",
+              run: (v) => {
+                if (completionStatus(v.state) === "active") return false;
+                const sel = v.state.selection.main;
+                if (!sel.empty) return false;
+                if (v.state.doc.lineAt(sel.head).number !== v.state.doc.lines) return false;
+                return applyHistoryNav(v, navigateNewer(historyRef.current, navStateRef.current));
+              },
+            },
             {
               key: "Mod-Enter",
               run: (v) => {
                 const text = selectionOrAllText(v);
-                if (text !== null) onRunRef.current(text);
+                if (text !== null) {
+                  resetHistoryNav();
+                  onRunRef.current(text);
+                }
                 return true;
               },
             },
@@ -313,6 +393,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           ]),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) {
+              // ユーザのタイプ由来の変更なら履歴ナビ位置を離脱する (履歴ナビによる
+              // 書き換えは `navigatingRef` で除外)。bash で履歴呼び出し後に編集すると
+              // その行が現在行になるのと同じ挙動。
+              if (!navigatingRef.current) resetHistoryNav();
               setHasContent(u.state.doc.length > 0);
               onChangeRef.current?.(u.state.doc.toString());
             }
@@ -380,7 +464,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
 
   const runSelectionOrAll = () => {
     const text = currentText();
-    if (text !== null) onRun(text);
+    if (text !== null) {
+      resetHistoryNav();
+      onRun(text);
+    }
   };
 
   const formatSelectionOrAll = () => {

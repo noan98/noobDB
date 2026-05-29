@@ -79,6 +79,7 @@
   --bg-toolbar: #fafbfc;
   --bg-header: #eef1f5;
   --bg-error: #fef2f2;
+  --bg-warning: #fffbeb;
   --bg-input: #ffffff;
   --bg-stripe: #f8fafc;
   --bg-row-hover: #eef5ff;
@@ -88,6 +89,7 @@
   --text-muted: #5c6776;
   --text-null: #97a1b0;
   --text-error: #b91c1c;
+  --text-warning: #b45309;
   --text-success: #15803d;
 
   --border: #e3e8ef;
@@ -114,6 +116,7 @@
   --status-connected: #16a34a;
   --status-connecting: #f59e0b;
   --status-error: #dc2626;
+  --status-warning: #d97706;
   --status-success: #16a34a;
   --status-info: #2563eb;
   --status-idle: #9ca3af;
@@ -159,6 +162,7 @@
   --bg-toolbar: #1a212b;
   --bg-header: #1a212b;
   --bg-error: #3a1414;
+  --bg-warning: #3a2c10;
   --bg-input: #1a212b;
   --bg-stripe: #12171f;
   --bg-row-hover: #243a55;
@@ -168,6 +172,7 @@
   --text-muted: #8794a3;
   --text-null: #5f6b7a;
   --text-error: #f87171;
+  --text-warning: #fbbf24;
   --text-success: #4ade80;
 
   --border: #2a323d;
@@ -194,6 +199,7 @@
   --status-connected: #22c55e;
   --status-connecting: #fbbf24;
   --status-error: #ef4444;
+  --status-warning: #f59e0b;
   --status-success: #22c55e;
   --status-info: #3b82f6;
   --status-idle: #6b7280;
