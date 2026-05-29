@@ -96,6 +96,49 @@ describe("WCAG AA contrast for core tokens (#326)", () => {
       check(vars, "accent", "bg", AA_TEXT);
     });
 
+    it("text on accent backgrounds (primary button / accent badge) meets AA (#348)", () => {
+      // primary ボタン文字・SettingsView のアクセントバッジ文字が --accent 地に
+      // 乗る。ダークは紺文字、ライトは白文字で AA を満たす。
+      check(vars, "accent-text", "accent", AA_TEXT);
+      check(vars, "accent-text", "accent-hover", AA_TEXT);
+    });
+
+    it("semantic message text colors meet AA (#348)", () => {
+      // text-error/warning/success はエラー/警告/成功メッセージの本文色として
+      // 既定背景と専用の淡色背景 (bg-error/bg-warning) の双方で使われる。
+      check(vars, "text-error", "bg", AA_TEXT);
+      check(vars, "text-error", "bg-error", AA_TEXT);
+      check(vars, "text-warning", "bg", AA_TEXT);
+      check(vars, "text-warning", "bg-warning", AA_TEXT);
+      check(vars, "text-success", "bg", AA_TEXT);
+    });
+
+    it("decimal cell color meets AA on the cell surface (#348)", () => {
+      // cell-number は #326 で検証済みだが cell-decimal は未カバーだった。
+      check(vars, "cell-decimal", "bg-elevated", AA_TEXT);
+      check(vars, "cell-decimal", "bg-stripe", AA_TEXT);
+    });
+
+    it("SQL syntax highlight colors meet AA on the editor surface (#348)", () => {
+      // QueryEditor (CodeMirror) の既定シンタックス色。入力面 (--bg-input) 上で
+      // 通常テキスト基準を満たす。ユーザ設定で上書き可能だが既定値を固定する。
+      for (const c of [
+        "syntax-keyword",
+        "syntax-string",
+        "syntax-number",
+        "syntax-comment",
+        "syntax-function",
+        "syntax-operator",
+      ]) {
+        check(vars, c, "bg-input", AA_TEXT);
+      }
+    });
+
+    it("preview banner text meets AA on its banner background (#348)", () => {
+      // PreviewGrid のドライラン注意バナー本文。
+      check(vars, "preview-banner-text", "preview-banner-bg", AA_TEXT);
+    });
+
     it("status colors used as badge text meet AA", () => {
       // connected / connecting / success / error は SchemaCompareView / HelpView で
       // バッジ文字色に使われるため通常テキスト基準。

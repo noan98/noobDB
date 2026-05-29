@@ -11,6 +11,26 @@ import { TreeBadge, TreeChevron, TreeIcon, TreeLabel, TreeNode, TreeRow } from "
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
+/** 接続リストのグループ折りたたみ状態を永続化する localStorage キー (#350)。
+ *  既定はすべて展開なので、明示的に「閉じている」グループ key の配列だけを保存する。 */
+const COLLAPSED_GROUPS_KEY = "noobdb.connlist.collapsedGroups";
+
+/** localStorage から閉じているグループ集合を復元し、`expandedGroups` の初期値
+ *  ({ key: false } の Record) に変換する。SSR/未対応環境やパース失敗時は空。 */
+function readCollapsedGroups(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_GROUPS_KEY);
+    if (!raw) return {};
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return {};
+    const out: Record<string, boolean> = {};
+    for (const k of arr) if (typeof k === "string") out[k] = false;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 /** ネストした子ノードを包む破線インデント (旧 .tree-children)。 */
 const TreeChildren = chakra("div", {
   base: {
@@ -109,7 +129,8 @@ export function ConnectionList({
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
   const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  // グループ折りたたみ状態は localStorage に永続化し、再起動後も維持する (#350)。
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(readCollapsedGroups);
   const [tableColumns, setTableColumns] = useState<Record<string, TableColumnInfo[]>>({});
   const [databases, setDatabases] = useState<string[] | null>(null);
   const [tables, setTables] = useState<Record<string, string[]>>({});
@@ -231,6 +252,23 @@ export function ConnectionList({
       setExpandedProfiles((prev) => ({ ...prev, [activeProfileId]: true }));
     }
   }, [activeProfileId]);
+
+  // 閉じているグループだけを localStorage に保存する (#350)。展開が既定なので
+  // false のキーのみを書き出し、ストレージを最小限に保つ。
+  useEffect(() => {
+    const collapsed = Object.entries(expandedGroups)
+      .filter(([, open]) => open === false)
+      .map(([key]) => key);
+    try {
+      if (collapsed.length > 0) {
+        localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify(collapsed));
+      } else {
+        localStorage.removeItem(COLLAPSED_GROUPS_KEY);
+      }
+    } catch {
+      // ストレージ不可環境では永続化を諦める (セッション内の動作には影響しない)。
+    }
+  }, [expandedGroups]);
 
   // The column tooltip is anchored to a snapshot of the row's position, so it
   // would detach if the tree scrolls or the window resizes under the pointer.
@@ -508,7 +546,10 @@ export function ConnectionList({
           pb="5px"
           pr="10px"
           pl="5px"
-          borderLeftWidth="3px"
+          // プロファイルカラー / 本番 / アクティブを左端のアクセントバーで示す。
+          // 識別性を上げるため 4px に。全行で同一幅 (色なしは transparent) にして
+          // 行頭テキストの揃えを保つ (#350)。
+          borderLeftWidth="4px"
           borderLeftColor={borderLeftColor}
           bg={rowBg}
           _hover={{ bg: rowBg ?? "app.hover" }}
