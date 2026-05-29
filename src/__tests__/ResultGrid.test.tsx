@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { ResultGrid } from "../components/ResultGrid";
+import { ResultGrid, GRID_CSS } from "../components/ResultGrid";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
 
@@ -209,5 +209,19 @@ describe("ResultGrid", () => {
       // 編集可能セルは name の 1 つだけ (id は PK のため除外)。
       expect(container.querySelectorAll("td.is-editable-cell")).toHaveLength(1);
     });
+  });
+});
+
+describe("editable-cell visual affordance (#349)", () => {
+  it("GRID_CSS distinguishes editable cells with cursor + hover/active outline", () => {
+    // 編集可能セルはテキストカーソル、ホバーで細いアクセントリング、編集中 (focus内)
+    // で太いアクセントアウトラインを出す。読み取り専用/非編集セルは既定カーソル。
+    const css = GRID_CSS as Record<string, { cursor?: string; outline?: string }>;
+    expect(css["& td.is-editable-cell"]?.cursor).toBe("text");
+    expect(
+      css["& tbody td:not(.row-index):not(.col-filler):not(.grid-empty-cell)"]?.cursor,
+    ).toBe("default");
+    expect(css["& tbody tr td.is-editable-cell:hover"]?.outline).toContain("var(--accent)");
+    expect(css["& td.is-editable-cell:focus-within"]?.outline).toContain("var(--accent)");
   });
 });

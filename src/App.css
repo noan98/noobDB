@@ -203,7 +203,13 @@
 
   --accent: #4c93f7;
   --accent-hover: #6cb0fb;
-  --accent-text: #ffffff;
+  /* primary ボタン / アクセントバッジの「アクセント地に乗る文字」。ダークでは
+     アクセントを暗背景上のリンクとして読めるよう明るくしている (--accent on --bg
+     6.15:1) 結果、白文字を乗せると 3.08:1 で AA テキスト未達になる (#348)。
+     success/warning/info のダークボタンと同じ「明背景 + 暗前景」へ倒し、紺色文字に
+     することで accent 上 5.05:1 / accent-hover 上 6.84:1 を確保する。
+     白いつまみが必要な Switch のサムは Switch.tsx 側で個別に白を指定している。 */
+  --accent-text: #0a2540;
 
   --cm-selection: #2c3a5a;
 

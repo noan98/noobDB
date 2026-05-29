@@ -274,7 +274,28 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--preview-highlight) 24%, transparent)",
   },
   "& .cell-pending-value": { color: "var(--preview-highlight)", fontWeight: 500 },
+  // セルの編集可否と選択状態の視覚フィードバック (#349)。
+  // 既定のデータセルは「編集できない」ことが伝わるよう矢印カーソルにし (読み取り
+  // 専用セッションや PK/BLOB 列・非テーブル結果では is-editable-cell が付かないため
+  // 自動的にこの見た目になる)、編集可能セルだけテキストカーソル + ホバー時の
+  // アクセントリングで「ダブルクリックで編集できる」affordance を与える。
+  // outline を使うのは、is-pending-edit / is-changed / is-invalid-edit が使う左端の
+  // box-shadow バーと競合させずに重ねるため (両者は別プロパティ)。色は --accent
+  // トークン参照なのでライト/ダーク両テーマで一貫する。
+  "& tbody td:not(.row-index):not(.col-filler):not(.grid-empty-cell)": {
+    cursor: "default",
+  },
   "& td.is-editable-cell": { cursor: "text" },
+  "& tbody tr td.is-editable-cell:hover": {
+    outline: "1px solid color-mix(in srgb, var(--accent) 45%, transparent)",
+    outlineOffset: "-1px",
+  },
+  // 編集中 (アクティブ) のセルははっきりしたアクセントのアウトラインで強調し、
+  // どのセルを編集しているかを把握しやすくする。
+  "& td.is-editable-cell:focus-within": {
+    outline: "2px solid var(--accent)",
+    outlineOffset: "-2px",
+  },
   "& td.is-invalid-edit": { boxShadow: "inset 2px 0 0 var(--status-error)" },
   "& td.is-invalid-edit.is-pending-edit": {
     background: "color-mix(in srgb, var(--status-error) 12%, transparent)",
