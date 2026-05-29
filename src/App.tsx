@@ -3101,7 +3101,18 @@ export default function App() {
                     </chakra.details>
                   </Flex>
                 ) : (
-                  statusText
+                  // 単一行ステータスは折り返さず省略記号で詰め、全文はホバー
+                  // (title) で確認できるようにする (#346)。フッターが複数行に
+                  // 伸びてレイアウトが崩れるのを防ぐ。
+                  <chakra.span
+                    display="block"
+                    whiteSpace="nowrap"
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    title={statusText}
+                  >
+                    {statusText}
+                  </chakra.span>
                 )}
               </Box>
               {reconnectProfile && isError && (
