@@ -117,6 +117,25 @@ describe("buildUpdateStatements", () => {
     ).toEqual(["UPDATE `db`.`tbl` SET `id` = 99 WHERE `id` = 1;"]);
   });
 
+  it("keeps targeting the right row by PK after rows are appended (loadMore)", () => {
+    // `loadMore` appends fetched rows, leaving existing rows at their original
+    // indices. An edit keyed by index 1 must still resolve to that row's PK (2),
+    // never to a row that arrived in a later page. (Issue #330 — App.tsx clears
+    // pending edits on loadMore as the safe-side guard, but the targeting must
+    // also be correct should an edit ever survive an append.)
+    const rowsAfterLoadMore = [
+      [1, "old"],
+      [2, "foo"],
+      [3, "page2-a"],
+      [4, "page2-b"],
+    ];
+    expect(
+      buildUpdateStatements(
+        baseInput({ rows: rowsAfterLoadMore, edits: { 1: { 1: "edited" } } }),
+      ),
+    ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'edited' WHERE `id` = 2;"]);
+  });
+
   it("quotes identifiers and qualifies for Postgres", () => {
     expect(
       buildUpdateStatements(
