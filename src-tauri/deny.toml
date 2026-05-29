@@ -1,0 +1,70 @@
+# cargo-deny の設定。CI (`.github/workflows/ci.yml` の `rust (deny)` ジョブ) が
+# `cargo deny --manifest-path src-tauri/Cargo.toml check` で実行します。
+#
+# 目的:
+#   - 既知のセキュリティ脆弱性 (RustSec Advisory DB) を PR 段階で検出する。
+#   - 依存ライセンスを許可リストで明示し、想定外のライセンスの混入を防ぐ。
+#
+# DB 接続・SSH 認証・システムキーリングという機密性の高い処理を担うクレート
+# (tokio / russh / sqlx / keyring など) を抱えるバックエンドの依存健全性を
+# 自動監視するのが狙いです。
+
+# cargo-deny 0.16 以降の設定スキーマを使う。
+[graph]
+# ターゲット非依存の依存も含め全体を検査対象にする (既定)。
+
+[advisories]
+# RustSec Advisory DB に対する脆弱性チェック。脆弱性 / unsound / unmaintained は
+# cargo-deny 0.16+ では既定で error になる。
+yanked = "deny"
+# unmaintained は「自分が直接依存しているクレート」に限定して検出する。Tauri の
+# Linux GUI スタック (gtk/gdk/atk/gdkx11 …) や unic-*・proc-macro-error といった
+# 深い推移依存の unmaintained は upstream の管轄で本リポジトリでは差し替えられない
+# ため、transitive を対象から外す。直接依存に unmaintained を足したときは検出する。
+unmaintained = "workspace"
+# 個別に握りつぶす項目。いずれも russh / Tauri の推移依存で、本リポジトリの
+# Cargo.toml では制御できず、現時点で修正版が存在しない既知事項。新しい依存で
+# 新たな脆弱性が混入した場合はここに無いので CI で検出される。
+ignore = [
+    # rsa の Marvin 攻撃 (タイミング側チャネル)。SSH 認証用に russh が引き込む
+    # rsa 0.10.0-rc.16 に該当。修正版は未リリースで、russh 側の対応待ち。
+    "RUSTSEC-2023-0071",
+    # glib の VariantStrIter のイテレータ実装の unsound。Tauri の GTK スタックが
+    # 引き込む glib 0.18.5 に該当。Tauri / gtk-rs 側の更新待ち。
+    "RUSTSEC-2024-0429",
+    # russh が固定する aes 0.9.0 (プレリリース系暗号スタック) は crates.io で
+    # yank 済み。差し替えは russh の更新待ち。
+    { crate = "aes@0.9.0", reason = "russh 0.60 が固定する yanked なプレリリース版。upstream 更新待ち" },
+]
+
+[licenses]
+# 許可するライセンス (SPDX 識別子)。現在の依存ツリーに実在するもののうち、
+# 単独で要求される / AND 式で要求されるものを網羅している。OR 式
+# (例: "MIT OR Apache-2.0") はいずれかが許可されていれば充足する。
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+# ライセンス判定の信頼度しきい値。1.0 に近いほど厳密。
+confidence-threshold = 0.8
+# 自クレート (noobdb 本体) は publish = false の非公開アプリなので検査から除外する。
+private = { ignore = true }
+
+[bans]
+# 同一クレートの複数バージョン同居は警告に留める (Tauri/sqlx の巨大依存ツリーでは
+# 推移依存のバージョン重複は避けにくいため、fail させず可視化のみ)。
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+# crates.io 以外の未知レジストリ / 未知 git ソースからの取得を拒否する。
+unknown-registry = "deny"
+unknown-git = "deny"

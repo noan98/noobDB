@@ -1,7 +1,6 @@
-use std::path::PathBuf;
+use std::io::Write;
 
 use serde::Deserialize;
-use tokio::fs;
 
 use crate::db::types::{Column, Value};
 use crate::error::{AppError, Result};
@@ -24,7 +23,7 @@ pub async fn export_query_result(
         return Err(AppError::InvalidInput("save path is empty".into()));
     }
     let row_count = rows.len();
-    let result = write_export(&path, format, &columns, &rows).await;
+    let result = write_export(path, format, columns, rows).await;
     match &result {
         Ok(bytes) => tracing::info!(
             format = ?format,
@@ -37,18 +36,32 @@ pub async fn export_query_result(
     result
 }
 
+/// Write the result set to `path`, streaming row-by-row into a buffered writer
+/// instead of building the whole output in memory first. The CPU-bound
+/// formatting and synchronous file I/O run on a blocking thread so the async
+/// runtime worker is not held up by a large export. Returns the bytes written.
 async fn write_export(
-    path: &str,
+    path: String,
     format: ExportFormat,
-    columns: &[Column],
-    rows: &[Vec<Value>],
+    columns: Vec<Column>,
+    rows: Vec<Vec<Value>>,
 ) -> Result<u64> {
-    let buf = match format {
-        ExportFormat::Csv => render_csv(columns, rows),
-        ExportFormat::Json => render_json(columns, rows)?,
-    };
-    fs::write(PathBuf::from(path), &buf).await?;
-    Ok(buf.len() as u64)
+    tokio::task::spawn_blocking(move || -> Result<u64> {
+        let file = std::fs::File::create(&path)?;
+        let mut writer = std::io::BufWriter::new(file);
+        match format {
+            ExportFormat::Csv => write_csv(&mut writer, &columns, &rows)?,
+            ExportFormat::Json => write_json(&mut writer, &columns, &rows)?,
+        }
+        // `into_inner` flushes the buffer; surface any flush error as I/O.
+        let file = writer
+            .into_inner()
+            .map_err(|e| AppError::Io(e.into_error()))?;
+        let bytes = file.metadata()?.len();
+        Ok(bytes)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("export task failed: {e}")))?
 }
 
 fn csv_field(s: &str) -> String {
@@ -72,44 +85,58 @@ fn value_to_csv(v: &Value) -> String {
     }
 }
 
-fn render_csv(columns: &[Column], rows: &[Vec<Value>]) -> Vec<u8> {
-    let mut out = String::new();
-    let header: Vec<String> = columns.iter().map(|c| csv_field(&c.name)).collect();
-    out.push_str(&header.join(","));
-    out.push_str("\r\n");
-    for row in rows {
-        let mut first = true;
-        for i in 0..columns.len() {
-            if !first {
-                out.push(',');
-            }
-            first = false;
-            let v = row.get(i).cloned().unwrap_or(Value::Null);
-            out.push_str(&value_to_csv(&v));
+/// RFC4180-ish CSV with `\r\n` terminators, written one row at a time. A single
+/// reused line buffer keeps allocations and `write` syscalls down (one write per
+/// row); the `BufWriter` from the caller batches them further.
+fn write_csv<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> std::io::Result<()> {
+    let mut line = String::new();
+    for (i, col) in columns.iter().enumerate() {
+        if i > 0 {
+            line.push(',');
         }
-        out.push_str("\r\n");
+        line.push_str(&csv_field(&col.name));
     }
-    out.into_bytes()
+    line.push_str("\r\n");
+    w.write_all(line.as_bytes())?;
+
+    for row in rows {
+        line.clear();
+        for i in 0..columns.len() {
+            if i > 0 {
+                line.push(',');
+            }
+            line.push_str(&value_to_csv(row.get(i).unwrap_or(&Value::Null)));
+        }
+        line.push_str("\r\n");
+        w.write_all(line.as_bytes())?;
+    }
+    Ok(())
 }
 
-fn render_json(columns: &[Column], rows: &[Vec<Value>]) -> Result<Vec<u8>> {
+/// Pretty JSON array of row objects, serialized directly to the writer. Each row
+/// object is built and serialized individually via `SerializeSeq`, so the full
+/// `Vec`-of-objects tree is never materialized. The output is byte-identical to
+/// `serde_json::to_vec_pretty` of the equivalent array (serde drives a `Vec`
+/// through the same `serialize_seq`/`serialize_element` path).
+fn write_json<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
+    use serde::ser::{SerializeSeq, Serializer};
     use serde_json::{Map, Value as J};
 
-    let mut arr: Vec<J> = Vec::with_capacity(rows.len());
+    let mut ser = serde_json::Serializer::pretty(w);
+    let mut seq = ser.serialize_seq(Some(rows.len()))?;
     for row in rows {
         let mut obj = Map::with_capacity(columns.len());
         for (i, col) in columns.iter().enumerate() {
-            let v = row.get(i).cloned().unwrap_or(Value::Null);
-            let jv = match v {
-                Value::Bytes(ref hex) => J::String(format!("0x{}", hex)),
-                _ => serde_json::to_value(&v).unwrap_or(J::Null),
+            let jv = match row.get(i).unwrap_or(&Value::Null) {
+                Value::Bytes(hex) => J::String(format!("0x{}", hex)),
+                v => serde_json::to_value(v).unwrap_or(J::Null),
             };
             obj.insert(col.name.clone(), jv);
         }
-        arr.push(J::Object(obj));
+        seq.serialize_element(&J::Object(obj))?;
     }
-    let bytes = serde_json::to_vec_pretty(&arr)?;
-    Ok(bytes)
+    seq.end()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -121,6 +148,18 @@ mod tests {
             name: name.into(),
             type_name: "VARCHAR".into(),
         }
+    }
+
+    fn csv_bytes(columns: &[Column], rows: &[Vec<Value>]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_csv(&mut buf, columns, rows).unwrap();
+        buf
+    }
+
+    fn json_bytes(columns: &[Column], rows: &[Vec<Value>]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_json(&mut buf, columns, rows).unwrap();
+        buf
     }
 
     #[test]
@@ -139,7 +178,7 @@ mod tests {
             ],
             vec![Value::Int(3), Value::Null, Value::Bool(true)],
         ];
-        let out = String::from_utf8(render_csv(&columns, &rows)).unwrap();
+        let out = String::from_utf8(csv_bytes(&columns, &rows)).unwrap();
         let expected = "id,name,note\r\n\
                         1,Alice,ok\r\n\
                         2,\"Bob, the \"\"Builder\"\"\",\"multi\nline\"\r\n\
@@ -154,11 +193,53 @@ mod tests {
             vec![Value::Int(7), Value::Bytes("deadbeef".into())],
             vec![Value::Null, Value::Null],
         ];
-        let out = render_json(&columns, &rows).unwrap();
+        let out = json_bytes(&columns, &rows);
         let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(parsed[0]["id"], serde_json::json!(7));
         assert_eq!(parsed[0]["blob"], serde_json::json!("0xdeadbeef"));
         assert_eq!(parsed[1]["id"], serde_json::Value::Null);
         assert_eq!(parsed[1]["blob"], serde_json::Value::Null);
+    }
+
+    // Streaming serialization must stay byte-identical to the previous
+    // "build the whole array then to_vec_pretty" approach (#274).
+    #[test]
+    fn json_matches_to_vec_pretty() {
+        use serde_json::{Map, Value as J};
+        let columns = vec![col("id"), col("name"), col("blob")];
+        let rows = vec![
+            vec![
+                Value::Int(1),
+                Value::String("Alice".into()),
+                Value::Bytes("00ff".into()),
+            ],
+            vec![Value::Null, Value::String("x\"y".into()), Value::Null],
+        ];
+
+        // Reference: the old in-memory construction.
+        let mut arr: Vec<J> = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let mut obj = Map::with_capacity(columns.len());
+            for (i, c) in columns.iter().enumerate() {
+                let v = row.get(i).cloned().unwrap_or(Value::Null);
+                let jv = match v {
+                    Value::Bytes(ref hex) => J::String(format!("0x{}", hex)),
+                    _ => serde_json::to_value(&v).unwrap_or(J::Null),
+                };
+                obj.insert(c.name.clone(), jv);
+            }
+            arr.push(J::Object(obj));
+        }
+        let reference = serde_json::to_vec_pretty(&arr).unwrap();
+
+        assert_eq!(json_bytes(&columns, &rows), reference);
+    }
+
+    #[test]
+    fn json_empty_rows_is_empty_array() {
+        let columns = vec![col("id")];
+        let rows: Vec<Vec<Value>> = vec![];
+        let reference = serde_json::to_vec_pretty(&Vec::<serde_json::Value>::new()).unwrap();
+        assert_eq!(json_bytes(&columns, &rows), reference);
     }
 }

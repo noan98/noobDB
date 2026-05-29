@@ -5,6 +5,9 @@ description = "noobDB - Rust DB client (MySQL / PostgreSQL / SQLite) with SSH tu
 authors = ["noobDB contributors"]
 edition = "2021"
 rust-version = "1.77"
+# 配布専用のデスクトップアプリで crates.io へ公開しないため publish = false。
+# cargo-deny のライセンス検査でも自クレートを非公開扱いで除外できる。
+publish = false
 
 # staticlib / cdylib はモバイル (iOS/Android) 専用の生成物。本プロジェクトは
 # デスクトップ専用 (tauri.conf.json の targets は nsis のみ) で、バイナリ
@@ -46,8 +49,11 @@ tokio = { version = "1", features = [
     "fs",
     "process",
 ] }
-tokio-util = { version = "0.7", features = ["io", "compat"] }
-futures-util = "0.3"
+# futures-util は 3 ドライバの `StreamExt` / `stream.next().await`
+# (db/{mysql,postgres,sqlite}.rs) のみで使う。default features (std など) は
+# 不要で、`StreamExt::next` は default-features = false でも利用できるため
+# 無効化してビルド対象を絞る (#276)。
+futures-util = { version = "0.3", default-features = false }
 
 # DB
 sqlx = { version = "0.9", default-features = false, features = [
@@ -65,7 +71,9 @@ sqlx = { version = "0.9", default-features = false, features = [
 russh = "0.60"
 
 # Secrets / config
-keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+# keyring のネイティブバックエンドはターゲット OS ごとに分け、ビルド中のターゲットに
+# 不要なバックエンド (とその依存) を依存グラフから外す (#273)。モバイル対応や別 OS の
+# サポートを足す場合は対応する [target.*] ブロックを追加すること。
 directories = "6"
 
 # Serialization & errors
@@ -78,13 +86,23 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utility
-uuid = { version = "1", features = ["v4"] }
 data-encoding = "2"
 csv = "1"
 encoding_rs = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.10"
+
+# keyring のネイティブバックエンドはターゲット OS ごとに有効化する。これにより
+# ビルド中のターゲットに不要なバックエンド (とその推移依存) が依存グラフから外れる。
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["linux-native"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
@@ -102,3 +120,18 @@ custom-protocol = ["tauri/custom-protocol"]
 # 巨大な依存ツリーでは debuginfo の処理がリンク時間の大きな割合を占めるため効果的。
 [profile.dev]
 debug = "line-tables-only"
+
+# リリースバイナリ (NSIS で配布する Windows 実行ファイル) のサイズを縮小する設定
+# (#273)。このプロファイルは `tauri build` (release.yml) のリリースビルドにのみ効き、
+# CI の clippy / nextest / fmt や日常の dev ビルドには影響しない (それらは dev /
+# test プロファイル)。実行時の処理は大半が DB I/O 待ちで CPU バウンドな箇所が
+# 少ないため、サイズ優先の最適化による体感への影響は限定的。
+#
+# panic は既定の "unwind" を維持する。"abort" はサイズを削れるが、tokio タスク内の
+# パニックがアプリ全体を巻き込んで落とすためロバスト性が下がる (各ドライバのデコード
+# 経路などを点検したうえでなければ採用しない)。
+[profile.release]
+opt-level = "s"      # サイズ優先 (実行時スループットとのトレードオフ)
+lto = "thin"         # クレート跨ぎの最適化でサイズ削減 ("fat" は更に縮むがリンク時間大)
+codegen-units = 1    # 最適化単位を絞りサイズ削減 (リリースビルド時間とのトレードオフ)
+strip = true         # シンボルストリップ。低リスクで効果が安定して大きい

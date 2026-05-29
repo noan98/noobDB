@@ -171,7 +171,10 @@ impl DefaultsFile {
     fn create(opts: &DbConnectOptions) -> Result<Self> {
         use std::io::Write;
 
-        let name = format!("noobdb-dump-{}.cnf", uuid::Uuid::new_v4().simple());
+        // Unique temp file name. An 8-char slug from a 31-char alphabet is more
+        // than enough uniqueness for a short-lived per-dump option file, and lets
+        // us drop the uuid dependency (#273).
+        let name = format!("noobdb-dump-{}.cnf", crate::state::random_slug(8));
         let path = std::env::temp_dir().join(name);
 
         let mut content = String::from("[client]\n");

@@ -179,6 +179,32 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
 
+  # 依存ライセンスの許可リスト検査と、RustSec Advisory DB による既知脆弱性チェック
+  # を cargo-deny で行う (#332)。設定は src-tauri/deny.toml。cargo metadata を読む
+  # だけでコンパイルは不要なため、Tauri のシステム依存やフロントエンドビルドは要らず
+  # 軽量に走る。cargo-deny は他ツールと同様 taiki-e/install-action でプリビルド
+  # バイナリを入れる (新しいアクションを増やさず既存の固定 SHA に揃える)。
+  rust-deny:
+    name: rust (deny)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
+        with:
+          tool: cargo-deny
+
+      - name: cargo deny check
+        run: cargo deny --manifest-path src-tauri/Cargo.toml check
+
   rust-test:
     name: rust (test)
     needs: changes
