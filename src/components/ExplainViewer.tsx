@@ -5,42 +5,44 @@ import { useT, type I18nKey } from "../i18n";
 import { Button } from "./ui";
 
 /**
- * EXPLAIN プラン可視化のツリー/詳細パネルのスタイル。`App.css` の `.explain-*`
- * ルール群をコンポーネント側へ移設し、ルート (`.explain-viewer`) に `css` で適用する。
- * ヒート (warm/hot) のハードコード色とダークテーマ上書きはそのまま維持する。
+ * EXPLAIN プラン可視化のツリー/詳細パネルのスタイル。以前は `.explain-*` の
+ * className + 子孫セレクタで `App.css` 〜コンポーネント内 `css` を当てていたが、
+ * className を撤去し、各要素へ直接 `css` (状態依存はヘルパで分岐) を適用する形へ
+ * 移行した。ヒート (warm/hot) のハードコード色とダークテーマ上書きはそのまま維持する。
  */
-const EXPLAIN_CSS: SystemStyleObject = {
-  "& .explain-tree-pane": {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
-    overflow: "hidden",
-  },
-  "& .explain-toolbar": {
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-    padding: "4px 8px",
-    background: "var(--bg-toolbar)",
-    borderBottom: "1px solid var(--border-subtle)",
-    flexShrink: 0,
-  },
-  "& .explain-toolbar-spacer": { flex: 1 },
-  "& .explain-total-cost": {
-    fontSize: "var(--text-sm)",
-    color: "var(--text-secondary)",
-    fontWeight: 500,
-  },
-  "& .explain-tree": {
-    flex: 1,
-    overflow: "auto",
-    minHeight: 0,
-    padding: "4px 0",
-    fontFamily: "var(--font-mono)",
-    fontSize: "var(--text-sm)",
-  },
-  "& .explain-node": {
+const treePaneCss: SystemStyleObject = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  minWidth: 0,
+  overflow: "hidden",
+};
+const toolbarCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  padding: "4px 8px",
+  background: "var(--bg-toolbar)",
+  borderBottom: "1px solid var(--border-subtle)",
+  flexShrink: 0,
+};
+const totalCostCss: SystemStyleObject = {
+  fontSize: "var(--text-sm)",
+  color: "var(--text-secondary)",
+  fontWeight: 500,
+};
+const treeCss: SystemStyleObject = {
+  flex: 1,
+  overflow: "auto",
+  minHeight: 0,
+  padding: "4px 0",
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-sm)",
+};
+
+/** ツリー行 (旧 `.explain-node`)。ヒートと選択状態で背景/ホバーを切り替える。 */
+function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
+  const base: SystemStyleObject = {
     display: "flex",
     alignItems: "center",
     gap: "6px",
@@ -48,103 +50,151 @@ const EXPLAIN_CSS: SystemStyleObject = {
     cursor: "pointer",
     whiteSpace: "nowrap",
     borderLeft: "2px solid transparent",
-  },
-  "& .explain-node:hover": { background: "var(--bg-row-hover)" },
-  "& .explain-node.warm": { background: "color-mix(in srgb, #f59e0b 14%, transparent)" },
-  "& .explain-node.hot": { background: "color-mix(in srgb, #dc2626 16%, transparent)" },
-  "& .explain-node.warm:hover": { background: "color-mix(in srgb, #f59e0b 22%, transparent)" },
-  "& .explain-node.hot:hover": { background: "color-mix(in srgb, #dc2626 24%, transparent)" },
-  "& .explain-node.selected": {
-    background: "var(--bg-active)",
-    borderLeftColor: "var(--accent)",
-  },
-  "& .explain-node.selected.warm": { background: "color-mix(in srgb, #f59e0b 22%, var(--bg-active))" },
-  "& .explain-node.selected.hot": { background: "color-mix(in srgb, #dc2626 24%, var(--bg-active))" },
-  "& .explain-caret, & .explain-caret-spacer": {
-    flexShrink: 0,
-    width: "16px",
-    height: "16px",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  "& .explain-caret": {
-    padding: 0,
-    border: "none",
-    background: "none",
-    color: "var(--text-muted)",
-    fontSize: "var(--text-2xs)",
-    lineHeight: 1,
-    borderRadius: "var(--radius-sm)",
-  },
-  "& .explain-caret:hover": { background: "var(--bg-hover)", color: "var(--text)" },
-  "& .explain-node-label": {
-    color: "var(--text)",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-  },
-  "& .explain-node-badges": {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "var(--space-1)",
-    flexShrink: 0,
-  },
-  "& .explain-badge": {
-    fontSize: "var(--text-2xs)",
-    lineHeight: 1,
-    padding: "2px 5px",
-    borderRadius: "var(--radius-sm)",
-    background: "var(--bg-muted)",
-    border: "1px solid var(--border)",
-    color: "var(--text-secondary)",
-    whiteSpace: "nowrap",
-  },
-  "& .explain-badge.access": { fontWeight: 600 },
-  "& .explain-badge.access.bad": {
-    background: "color-mix(in srgb, #dc2626 16%, transparent)",
-    borderColor: "color-mix(in srgb, #dc2626 40%, transparent)",
-    color: "var(--text-error)",
-  },
-  "& .explain-badge.index": {
-    background: "color-mix(in srgb, var(--accent) 14%, transparent)",
-    borderColor: "color-mix(in srgb, var(--accent) 35%, transparent)",
-    color: "var(--accent)",
-  },
-  "& .explain-badge.cost.warm": {
-    color: "#b45309",
-    borderColor: "color-mix(in srgb, #f59e0b 40%, transparent)",
-    _dark: { color: "#fbbf24" },
-  },
-  "& .explain-badge.cost.hot": {
-    color: "var(--text-error)",
-    borderColor: "color-mix(in srgb, #dc2626 40%, transparent)",
-  },
-  "& .explain-badge.hint": {
+  };
+  if (selected) {
+    const bg =
+      heat === "hot"
+        ? "color-mix(in srgb, #dc2626 24%, var(--bg-active))"
+        : heat === "warm"
+          ? "color-mix(in srgb, #f59e0b 22%, var(--bg-active))"
+          : "var(--bg-active)";
+    // 選択行はホバーしても選択色を維持する (旧 CSS の specificity 順を踏襲)。
+    return { ...base, background: bg, borderLeftColor: "var(--accent)", _hover: { background: bg } };
+  }
+  if (heat === "hot") {
+    return {
+      ...base,
+      background: "color-mix(in srgb, #dc2626 16%, transparent)",
+      _hover: { background: "color-mix(in srgb, #dc2626 24%, transparent)" },
+    };
+  }
+  if (heat === "warm") {
+    return {
+      ...base,
+      background: "color-mix(in srgb, #f59e0b 14%, transparent)",
+      _hover: { background: "color-mix(in srgb, #f59e0b 22%, transparent)" },
+    };
+  }
+  return { ...base, _hover: { background: "var(--bg-row-hover)" } };
+}
+
+const caretBoxCss: SystemStyleObject = {
+  flexShrink: 0,
+  width: "16px",
+  height: "16px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+const caretButtonCss: SystemStyleObject = {
+  ...caretBoxCss,
+  padding: 0,
+  border: "none",
+  background: "none",
+  color: "var(--text-muted)",
+  fontSize: "var(--text-2xs)",
+  lineHeight: 1,
+  borderRadius: "var(--radius-sm)",
+  _hover: { background: "var(--bg-hover)", color: "var(--text)" },
+};
+const nodeLabelCss: SystemStyleObject = {
+  color: "var(--text)",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+const nodeBadgesCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "var(--space-1)",
+  flexShrink: 0,
+};
+
+const badgeBaseCss: SystemStyleObject = {
+  fontSize: "var(--text-2xs)",
+  lineHeight: 1,
+  padding: "2px 5px",
+  borderRadius: "var(--radius-sm)",
+  background: "var(--bg-muted)",
+  border: "1px solid var(--border)",
+  color: "var(--text-secondary)",
+  whiteSpace: "nowrap",
+};
+/** access バッジ。`ALL` (フルスキャン) のときだけ警告色にする。 */
+function accessBadgeCss(bad: boolean): SystemStyleObject {
+  if (bad) {
+    return {
+      ...badgeBaseCss,
+      fontWeight: 600,
+      background: "color-mix(in srgb, #dc2626 16%, transparent)",
+      borderColor: "color-mix(in srgb, #dc2626 40%, transparent)",
+      color: "var(--text-error)",
+    };
+  }
+  return { ...badgeBaseCss, fontWeight: 600 };
+}
+const indexBadgeCss: SystemStyleObject = {
+  ...badgeBaseCss,
+  background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+  borderColor: "color-mix(in srgb, var(--accent) 35%, transparent)",
+  color: "var(--accent)",
+};
+/** cost バッジ。ヒートに応じて文字/枠色を上げる。 */
+function costBadgeCss(heat: Heat): SystemStyleObject {
+  if (heat === "warm") {
+    return {
+      ...badgeBaseCss,
+      color: "#b45309",
+      borderColor: "color-mix(in srgb, #f59e0b 40%, transparent)",
+      _dark: { color: "#fbbf24" },
+    };
+  }
+  if (heat === "hot") {
+    return {
+      ...badgeBaseCss,
+      color: "var(--text-error)",
+      borderColor: "color-mix(in srgb, #dc2626 40%, transparent)",
+    };
+  }
+  return badgeBaseCss;
+}
+/** ヒント有無を示す `!` マーカーバッジ (caution / warning)。 */
+function hintBadgeCss(sev: "caution" | "warning"): SystemStyleObject {
+  const base: SystemStyleObject = {
+    ...badgeBaseCss,
     fontWeight: 700,
     minWidth: "14px",
     textAlign: "center",
     padding: "2px 4px",
-  },
-  "& .explain-badge.hint.caution": {
-    background: "color-mix(in srgb, #f59e0b 16%, transparent)",
-    borderColor: "color-mix(in srgb, #f59e0b 45%, transparent)",
-    color: "#b45309",
-    _dark: { color: "#fbbf24" },
-  },
-  "& .explain-badge.hint.warning": {
+  };
+  if (sev === "caution") {
+    return {
+      ...base,
+      background: "color-mix(in srgb, #f59e0b 16%, transparent)",
+      borderColor: "color-mix(in srgb, #f59e0b 45%, transparent)",
+      color: "#b45309",
+      _dark: { color: "#fbbf24" },
+    };
+  }
+  return {
+    ...base,
     background: "color-mix(in srgb, #dc2626 16%, transparent)",
     borderColor: "color-mix(in srgb, #dc2626 45%, transparent)",
     color: "var(--text-error)",
-  },
-  "& .explain-hints": {
-    listStyle: "none",
-    margin: "0 0 10px",
-    padding: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-  },
-  "& .explain-hint": {
+  };
+}
+
+const hintsListCss: SystemStyleObject = {
+  listStyle: "none",
+  margin: "0 0 10px",
+  padding: 0,
+  display: "flex",
+  flexDirection: "column",
+  gap: "6px",
+};
+/** 詳細パネルのヒント 1 件 (旧 `.explain-hint`)。重大度で左枠色を変える。 */
+function hintItemCss(sev: HintSeverity): SystemStyleObject {
+  const borderLeftColor = sev === "info" ? "var(--accent)" : sev === "caution" ? "#f59e0b" : "#dc2626";
+  return {
     display: "flex",
     flexDirection: "column",
     gap: "3px",
@@ -152,75 +202,79 @@ const EXPLAIN_CSS: SystemStyleObject = {
     borderRadius: "var(--radius-sm)",
     border: "1px solid var(--border)",
     borderLeftWidth: "3px",
+    borderLeftColor,
     background: "var(--bg-subtle, var(--bg-muted))",
     fontSize: "var(--text-sm)",
     lineHeight: 1.45,
-  },
-  "& .explain-hint.info": { borderLeftColor: "var(--accent)" },
-  "& .explain-hint.caution": { borderLeftColor: "#f59e0b" },
-  "& .explain-hint.warning": { borderLeftColor: "#dc2626" },
-  "& .explain-hint-sev": {
+  };
+}
+/** ヒントの重大度ラベル (旧 `.explain-hint-sev`)。 */
+function hintSevCss(sev: HintSeverity): SystemStyleObject {
+  const color = sev === "info" ? "var(--accent)" : sev === "warning" ? "var(--text-error)" : "#b45309";
+  const base: SystemStyleObject = {
     fontWeight: 600,
     fontSize: "var(--text-2xs)",
     letterSpacing: "0.04em",
     textTransform: "uppercase",
-  },
-  "& .explain-hint.info .explain-hint-sev": { color: "var(--accent)" },
-  "& .explain-hint.caution .explain-hint-sev": { color: "#b45309", _dark: { color: "#fbbf24" } },
-  "& .explain-hint.warning .explain-hint-sev": { color: "var(--text-error)" },
-  "& .explain-hint-text": { color: "var(--text)" },
-  "& .explain-detail": {
-    width: "320px",
-    flexShrink: 0,
-    display: "flex",
-    flexDirection: "column",
-    borderLeft: "1px solid var(--border)",
-    background: "var(--bg-muted)",
-    overflow: "hidden",
-  },
-  "& .explain-detail-header": {
-    padding: "6px 12px",
-    fontSize: "var(--text-sm)",
-    fontWeight: 600,
-    color: "var(--text-secondary)",
-    borderBottom: "1px solid var(--border-subtle)",
-    background: "var(--bg-toolbar)",
-    flexShrink: 0,
-  },
-  "& .explain-detail-body": { overflow: "auto", padding: "10px 12px" },
-  "& .explain-detail-hint": {
-    padding: "var(--space-3)",
-    color: "var(--text-muted)",
-    fontSize: "var(--text-sm)",
-  },
-  "& .explain-detail-label": {
-    fontFamily: "var(--font-mono)",
-    fontSize: "var(--text-md)",
-    fontWeight: 600,
-    color: "var(--text)",
-    marginBottom: "8px",
-    wordBreak: "break-word",
-  },
-  "& .explain-detail-table": {
-    width: "100%",
-    borderCollapse: "collapse",
-    fontSize: "var(--text-xs)",
-    fontFamily: "var(--font-mono)",
-  },
-  "& .explain-detail-table th, & .explain-detail-table td": {
+    color,
+  };
+  if (sev === "caution") return { ...base, _dark: { color: "#fbbf24" } };
+  return base;
+}
+const hintTextCss: SystemStyleObject = { color: "var(--text)" };
+
+const detailCss: SystemStyleObject = {
+  width: "320px",
+  flexShrink: 0,
+  display: "flex",
+  flexDirection: "column",
+  borderLeft: "1px solid var(--border)",
+  background: "var(--bg-muted)",
+  overflow: "hidden",
+};
+const detailHeaderCss: SystemStyleObject = {
+  padding: "6px 12px",
+  fontSize: "var(--text-sm)",
+  fontWeight: 600,
+  color: "var(--text-secondary)",
+  borderBottom: "1px solid var(--border-subtle)",
+  background: "var(--bg-toolbar)",
+  flexShrink: 0,
+};
+const detailBodyCss: SystemStyleObject = { overflow: "auto", padding: "10px 12px" };
+const detailHintCss: SystemStyleObject = {
+  padding: "var(--space-3)",
+  color: "var(--text-muted)",
+  fontSize: "var(--text-sm)",
+};
+const detailLabelCss: SystemStyleObject = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-md)",
+  fontWeight: 600,
+  color: "var(--text)",
+  marginBottom: "8px",
+  wordBreak: "break-word",
+};
+// 属性テーブルのみ `th`/`td` をタグセレクタで括る (className ではなく要素スコープ)。
+const detailTableCss: SystemStyleObject = {
+  width: "100%",
+  borderCollapse: "collapse",
+  fontSize: "var(--text-xs)",
+  fontFamily: "var(--font-mono)",
+  "& th, & td": {
     textAlign: "left",
     verticalAlign: "top",
     padding: "3px 6px",
     borderBottom: "1px solid var(--border-subtle)",
     wordBreak: "break-word",
   },
-  "& .explain-detail-table th": {
+  "& th": {
     color: "var(--text-muted)",
     fontWeight: 500,
     whiteSpace: "nowrap",
     width: "45%",
   },
-  "& .explain-detail-table td": { color: "var(--text)" },
+  "& td": { color: "var(--text)" },
 };
 
 /** 空 / ローディング時のプレースホルダ枠 (`.explain-viewer-empty` 相当)。 */
@@ -548,8 +602,8 @@ function NodeRow({
   return (
     <>
       <Box
-        className={`explain-node ${heat} ${selected ? "selected" : ""}`}
-        style={{ paddingLeft: 6 + depth * 16 }}
+        css={nodeCss(heat, selected)}
+        pl={`${6 + depth * 16}px`}
         role="treeitem"
         aria-selected={selected}
         aria-expanded={hasChildren ? !isCollapsed : undefined}
@@ -557,7 +611,7 @@ function NodeRow({
       >
         {hasChildren ? (
           <chakra.button
-            className="explain-caret"
+            css={caretButtonCss}
             title={isCollapsed ? expandLabel : collapseLabel}
             aria-label={isCollapsed ? expandLabel : collapseLabel}
             onClick={(e) => {
@@ -568,28 +622,24 @@ function NodeRow({
             {isCollapsed ? "▸" : "▾"}
           </chakra.button>
         ) : (
-          <chakra.span className="explain-caret-spacer" aria-hidden />
+          <chakra.span css={caretBoxCss} aria-hidden />
         )}
-        <chakra.span className="explain-node-label">{node.label}</chakra.span>
-        <chakra.span className="explain-node-badges">
+        <chakra.span css={nodeLabelCss}>{node.label}</chakra.span>
+        <chakra.span css={nodeBadgesCss}>
           {showHintMarker && (
-            <chakra.span
-              className={`explain-badge hint ${worstHint}`}
-              title={hintsLabel}
-              aria-label={hintsLabel}
-            >
+            <chakra.span css={hintBadgeCss(worstHint)} title={hintsLabel} aria-label={hintsLabel}>
               !
             </chakra.span>
           )}
           {typeof access === "string" && (
-            <chakra.span className={`explain-badge access ${access === "ALL" ? "bad" : ""}`}>{access}</chakra.span>
+            <chakra.span css={accessBadgeCss(access === "ALL")}>{access}</chakra.span>
           )}
-          {usingIndex && <chakra.span className="explain-badge index">index</chakra.span>}
+          {usingIndex && <chakra.span css={indexBadgeCss}>index</chakra.span>}
           {node.cost !== null && (
-            <chakra.span className={`explain-badge cost ${heat}`}>{formatNumber(node.cost)}</chakra.span>
+            <chakra.span css={costBadgeCss(heat)}>{formatNumber(node.cost)}</chakra.span>
           )}
           {parseNum(rows) !== null && (
-            <chakra.span className="explain-badge rows">{formatNumber(parseNum(rows) as number)} rows</chakra.span>
+            <chakra.span css={badgeBaseCss}>{formatNumber(parseNum(rows) as number)} rows</chakra.span>
           )}
         </chakra.span>
       </Box>
@@ -713,16 +763,15 @@ export function ExplainViewer({ result, streaming }: Props) {
       flexDirection="row"
       bg="app.surface"
       overflow="hidden"
-      css={EXPLAIN_CSS}
     >
-      <Box className="explain-tree-pane">
-        <Box className="explain-toolbar">
+      <Box css={treePaneCss}>
+        <Box css={toolbarCss}>
           {root.cost !== null && (
-            <chakra.span className="explain-total-cost">
+            <chakra.span css={totalCostCss}>
               {t("explainTotalCost", { cost: formatNumber(root.cost) })}
             </chakra.span>
           )}
-          <chakra.span className="explain-toolbar-spacer" />
+          <chakra.span flex={1} />
           <Button
             size="sm"
             px="10px"
@@ -740,7 +789,7 @@ export function ExplainViewer({ result, streaming }: Props) {
             {t("explainCollapseAll")}
           </Button>
         </Box>
-        <Box className="explain-tree" role="tree">
+        <Box css={treeCss} role="tree">
           <NodeRow
             node={root}
             depth={0}
@@ -755,25 +804,25 @@ export function ExplainViewer({ result, streaming }: Props) {
           />
         </Box>
       </Box>
-      <Box className="explain-detail">
-        <Box className="explain-detail-header">{t("explainDetailTitle")}</Box>
+      <Box css={detailCss}>
+        <Box css={detailHeaderCss}>{t("explainDetailTitle")}</Box>
         {selected ? (
-          <Box className="explain-detail-body">
-            <Box className="explain-detail-label">{selected.label}</Box>
+          <Box css={detailBodyCss}>
+            <Box css={detailLabelCss}>{selected.label}</Box>
             {selectedHints.length > 0 && (
-              <chakra.ul className="explain-hints">
+              <chakra.ul css={hintsListCss}>
                 {selectedHints.map((h, i) => (
-                  <chakra.li key={i} className={`explain-hint ${h.severity}`}>
-                    <chakra.span className="explain-hint-sev">{t(severityLabelKey(h.severity))}</chakra.span>
-                    <chakra.span className="explain-hint-text">{t(h.key)}</chakra.span>
+                  <chakra.li key={i} css={hintItemCss(h.severity)}>
+                    <chakra.span css={hintSevCss(h.severity)}>{t(severityLabelKey(h.severity))}</chakra.span>
+                    <chakra.span css={hintTextCss}>{t(h.key)}</chakra.span>
                   </chakra.li>
                 ))}
               </chakra.ul>
             )}
             {selected.attrs.length === 0 ? (
-              <chakra.p className="explain-detail-hint">{t("explainNoAttrs")}</chakra.p>
+              <chakra.p css={detailHintCss}>{t("explainNoAttrs")}</chakra.p>
             ) : (
-              <chakra.table className="explain-detail-table">
+              <chakra.table css={detailTableCss}>
                 <tbody>
                   {selected.attrs.map(([k, v]) => (
                     <tr key={k}>
@@ -786,7 +835,7 @@ export function ExplainViewer({ result, streaming }: Props) {
             )}
           </Box>
         ) : (
-          <chakra.p className="explain-detail-hint">{t("explainSelectHint")}</chakra.p>
+          <chakra.p css={detailHintCss}>{t("explainSelectHint")}</chakra.p>
         )}
       </Box>
     </Box>

@@ -43,6 +43,13 @@ import {
  * 性能上、セル/行は素の `th` / `td` / `span` のまま (重い Chakra コンポーネントを
  * セル単位で使わない) で、ここで子孫セレクタとして一括スタイルする。色はテーマの
  * CSS 変数を直接参照する (`--cell-*` などのトークン定義は `App.css` に残す方針)。
+ *
+ * **方針 (className 撤去の意図的な例外)**: 他コンポーネント (ExplainViewer /
+ * QueryBuilder / SchemaCompareView) は className + 子孫セレクタを撤去し各要素へ
+ * 直接 `css` を適用したが、結果グリッドは TanStack Table が生成する大量のセルを
+ * 扱うため、セル単位の style props 化はレンダリングコストが高い。ここは単一の
+ * `css` オブジェクト + 子孫セレクタを **意図的に維持** する (className 文字列の
+ * 同期が不要なよう、対象は素のタグセレクタに限定している)。
  */
 export const GRID_CSS: SystemStyleObject = {
   "& table": {

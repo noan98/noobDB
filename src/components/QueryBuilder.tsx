@@ -13,52 +13,56 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
 
 /**
- * Query Builder のフォーム部のスタイル。`App.css` の `.qb-*` ルール群を
- * コンポーネント側へ移設し、本体 (`ModalBody` 内のラッパ) に `css` で適用する。
- * SQL プレビューの CodeMirror 周りのレイアウト (`.qb-preview .cm-*`) もここに含む
- * (CodeMirror 本体のテーマは対象外で `App.css` に残す)。
+ * Query Builder のフォーム部のスタイル。以前は `.qb-*` の className + 子孫セレクタで
+ * `App.css` 〜コンポーネント内 `css` を当てていたが、className を撤去して各要素へ
+ * 直接 `css` を適用する形へ移行した。SQL プレビューの CodeMirror 周りのレイアウト
+ * (`.cm-*`) だけは CodeMirror が生成する DOM を対象にするため、`previewCss` 内で
+ * タグ/要素スコープのセレクタとして残す (CodeMirror 本体のテーマは対象外)。
  */
-const QB_CSS: SystemStyleObject = {
-  "& .qb-error": {
-    padding: "8px 10px",
-    border: "1px solid var(--border)",
-    background: "var(--bg-error)",
-    color: "var(--text-error)",
-    borderRadius: "var(--radius-md)",
-    fontSize: "var(--text-sm)",
-    marginBottom: "10px",
-  },
-  "& .qb-section": {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-    marginBottom: "10px",
-  },
-  "& .qb-section-title": {
-    fontSize: "var(--text-xs)",
-    fontWeight: 600,
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-    color: "var(--text-muted)",
-  },
-  "& .qb-section-row": {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "var(--space-2)",
-  },
-  "& .qb-grid-2": {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "var(--space-3)",
-  },
-  "& .qb-grid-2 > div": {
-    display: "flex",
-    flexDirection: "column",
-    gap: "var(--space-1)",
-  },
-  "& .qb-pill-list": { display: "flex", flexWrap: "wrap", gap: "var(--space-1)" },
-  "& .qb-pill": {
+const errorCss: SystemStyleObject = {
+  padding: "8px 10px",
+  border: "1px solid var(--border)",
+  background: "var(--bg-error)",
+  color: "var(--text-error)",
+  borderRadius: "var(--radius-md)",
+  fontSize: "var(--text-sm)",
+  marginBottom: "10px",
+};
+const sectionCss: SystemStyleObject = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "6px",
+  marginBottom: "10px",
+};
+const sectionTitleCss: SystemStyleObject = {
+  fontSize: "var(--text-xs)",
+  fontWeight: 600,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  color: "var(--text-muted)",
+};
+const sectionRowCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "var(--space-2)",
+};
+// `qb-section` + `qb-grid-2` の合成 (grid が flex を上書きする)。
+const grid2SectionCss: SystemStyleObject = {
+  marginBottom: "10px",
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "var(--space-3)",
+};
+const grid2ChildCss: SystemStyleObject = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-1)",
+};
+const pillListCss: SystemStyleObject = { display: "flex", flexWrap: "wrap", gap: "var(--space-1)" };
+/** クエリ種別ピル (旧 `.qb-pill`)。選択中はアクセント色。 */
+function pillCss(active: boolean): SystemStyleObject {
+  const base: SystemStyleObject = {
     padding: "4px 10px",
     border: "1px solid var(--border-strong)",
     background: "var(--bg-elevated)",
@@ -67,61 +71,60 @@ const QB_CSS: SystemStyleObject = {
     fontSize: "var(--text-sm)",
     cursor: "pointer",
     transition: "background 0.12s, border-color 0.12s",
-  },
-  "& .qb-pill:hover": { background: "var(--bg-hover)" },
-  "& .qb-pill.active": {
-    background: "var(--accent)",
-    color: "var(--accent-text)",
-    borderColor: "var(--accent)",
-  },
-  "& .qb-checkbox": {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    fontSize: "var(--text-md)",
-    fontWeight: 500,
-    color: "var(--text)",
-    margin: 0,
-  },
-  "& .qb-checkbox input": { width: "auto", margin: 0 },
-  "& .qb-row": { display: "flex", gap: "6px", alignItems: "center" },
-  "& .qb-row > .qb-row-input": { flex: 1, minWidth: 0 },
-  "& .qb-col-input": { flex: 1, minWidth: 0 },
-  "& .qb-op": { width: "110px", flexShrink: 0 },
-  "& .qb-eq": {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "var(--text-muted)",
-    fontWeight: 600,
-    minWidth: "16px",
-  },
-  "& .qb-icon-btn": {
-    padding: "2px 8px",
-    fontSize: "var(--text-sm)",
-    border: "1px solid var(--border-strong)",
-    background: "var(--bg-elevated)",
-    color: "var(--text-muted)",
-    borderRadius: "var(--radius-sm)",
-    cursor: "pointer",
-    flexShrink: 0,
-  },
-  "& .qb-icon-btn:hover:not(:disabled)": {
+    _hover: { background: "var(--bg-hover)" },
+  };
+  if (active) {
+    return { ...base, background: "var(--accent)", color: "var(--accent-text)", borderColor: "var(--accent)" };
+  }
+  return base;
+}
+const checkboxLabelCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  fontSize: "var(--text-md)",
+  fontWeight: 500,
+  color: "var(--text)",
+  margin: 0,
+};
+const rowCss: SystemStyleObject = { display: "flex", gap: "6px", alignItems: "center" };
+// 行内の入力 (旧 `.qb-row-input` / `.qb-col-input`) は伸縮させる。
+const rowInputCss: SystemStyleObject = { flex: 1, minWidth: 0 };
+const opCss: SystemStyleObject = { width: "110px", flexShrink: 0 };
+const eqCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "var(--text-muted)",
+  fontWeight: 600,
+  minWidth: "16px",
+};
+const iconBtnCss: SystemStyleObject = {
+  padding: "2px 8px",
+  fontSize: "var(--text-sm)",
+  border: "1px solid var(--border-strong)",
+  background: "var(--bg-elevated)",
+  color: "var(--text-muted)",
+  borderRadius: "var(--radius-sm)",
+  cursor: "pointer",
+  flexShrink: 0,
+  "&:hover:not(:disabled)": {
     color: "var(--text-error)",
     borderColor: "var(--text-error)",
   },
-  "& .qb-selected-cols-wrap": {
-    overflowX: "auto",
-    border: "1px solid var(--border)",
-    borderRadius: "var(--radius-md)",
-    background: "var(--bg-muted)",
-  },
-  "& .qb-selected-cols": {
-    borderCollapse: "collapse",
-    width: "max-content",
-    minWidth: "100%",
-  },
-  "& .qb-selected-cols td": {
+};
+const selectedColsWrapCss: SystemStyleObject = {
+  overflowX: "auto",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-md)",
+  background: "var(--bg-muted)",
+};
+// 属性テーブルのみ `td` をタグセレクタで括る (className ではなく要素スコープ)。
+const selectedColsCss: SystemStyleObject = {
+  borderCollapse: "collapse",
+  width: "max-content",
+  minWidth: "100%",
+  "& td": {
     padding: "4px 6px 4px 10px",
     borderRight: "1px solid var(--border)",
     fontSize: "var(--text-sm)",
@@ -129,82 +132,80 @@ const QB_CSS: SystemStyleObject = {
     whiteSpace: "nowrap",
     verticalAlign: "middle",
   },
-  "& .qb-selected-cols td:last-child": { borderRight: "none" },
-  "& .qb-selected-col-name": { marginRight: "6px" },
-  "& .qb-chip-remove": {
-    padding: "0 6px",
-    fontSize: "var(--text-xs)",
-    lineHeight: 1.4,
-    border: "1px solid transparent",
-    background: "transparent",
-    color: "var(--text-muted)",
-    borderRadius: "var(--radius-sm)",
-    cursor: "pointer",
-  },
-  "& .qb-chip-remove:hover": {
-    color: "var(--text-error)",
-    borderColor: "var(--text-error)",
-  },
-  "& .qb-small": {
-    padding: "3px 10px",
-    fontSize: "var(--text-xs)",
-    borderRadius: "var(--radius-sm)",
-  },
-  "& .qb-limit-section": {
-    display: "grid",
-    gridTemplateColumns: "80px 1fr",
-    alignItems: "center",
-    gap: "var(--space-3)",
-  },
-  "& .qb-limit-section label": { margin: 0 },
-  "& .qb-limit-input": { maxWidth: "120px" },
-  "& .qb-preview-wrap": { position: "relative" },
-  "& .qb-preview-copy": {
-    position: "absolute",
-    top: "6px",
-    right: "6px",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "26px",
-    height: "26px",
-    padding: 0,
-    border: "1px solid var(--border-strong)",
-    background: "var(--bg-elevated)",
-    color: "var(--text-muted)",
-    borderRadius: "var(--radius-sm)",
-    cursor: "pointer",
-    zIndex: 1,
-    transition: "color 0.12s, border-color 0.12s, background 0.12s",
-  },
-  "& .qb-preview-copy:hover": { color: "var(--text)", background: "var(--bg-hover)" },
-  "& .qb-preview-copy:focus-visible": {
+  "& td:last-child": { borderRight: "none" },
+};
+const selectedColNameCss: SystemStyleObject = { marginRight: "6px" };
+const chipRemoveCss: SystemStyleObject = {
+  padding: "0 6px",
+  fontSize: "var(--text-xs)",
+  lineHeight: 1.4,
+  border: "1px solid transparent",
+  background: "transparent",
+  color: "var(--text-muted)",
+  borderRadius: "var(--radius-sm)",
+  cursor: "pointer",
+  _hover: { color: "var(--text-error)", borderColor: "var(--text-error)" },
+};
+const smallBtnCss: SystemStyleObject = {
+  padding: "3px 10px",
+  fontSize: "var(--text-xs)",
+  borderRadius: "var(--radius-sm)",
+};
+// `qb-section` + `qb-limit-section` の合成。
+const limitSectionCss: SystemStyleObject = {
+  marginBottom: "10px",
+  display: "grid",
+  gridTemplateColumns: "80px 1fr",
+  alignItems: "center",
+  gap: "var(--space-3)",
+};
+const limitInputCss: SystemStyleObject = { maxWidth: "120px" };
+const previewWrapCss: SystemStyleObject = { position: "relative" };
+const previewCopyCss: SystemStyleObject = {
+  position: "absolute",
+  top: "6px",
+  right: "6px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "26px",
+  height: "26px",
+  padding: 0,
+  border: "1px solid var(--border-strong)",
+  background: "var(--bg-elevated)",
+  color: "var(--text-muted)",
+  borderRadius: "var(--radius-sm)",
+  cursor: "pointer",
+  zIndex: 1,
+  transition: "color 0.12s, border-color 0.12s, background 0.12s",
+  _hover: { color: "var(--text)", background: "var(--bg-hover)" },
+  _focusVisible: {
     outline: "none",
     borderColor: "var(--accent)",
     boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)",
   },
-  "& .qb-preview": {
-    margin: 0,
-    background: "var(--bg-muted)",
-    border: "1px solid var(--border)",
-    borderRadius: "var(--radius-md)",
-    overflow: "hidden",
-    fontFamily: "var(--font-mono)",
-    fontSize: "var(--text-sm)",
-    color: "var(--text)",
-    lineHeight: 1.5,
-  },
-  "& .qb-preview .cm-editor": {
+};
+const previewCss: SystemStyleObject = {
+  margin: 0,
+  background: "var(--bg-muted)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-md)",
+  overflow: "hidden",
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-sm)",
+  color: "var(--text)",
+  lineHeight: 1.5,
+  "& .cm-editor": {
     background: "transparent",
     fontFamily: "inherit",
     fontSize: "inherit",
     color: "inherit",
     lineHeight: "inherit",
   },
-  "& .qb-preview .cm-editor.cm-focused": { outline: "none" },
-  "& .qb-preview .cm-scroller": { fontFamily: "inherit", overflow: "auto" },
-  "& .qb-preview .cm-content": { padding: "10px 40px 10px 12px" },
-  "& .qb-preview .cm-line": { padding: 0 },
+  "& .cm-editor.cm-focused": { outline: "none" },
+  "& .cm-scroller": { fontFamily: "inherit", overflow: "auto" },
+  "& .cm-content": { padding: "10px 40px 10px 12px" },
+  "& .cm-line": { padding: 0 },
 };
 
 const qbHighlightStyle = HighlightStyle.define([
@@ -557,17 +558,17 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
         {t("qbTitle")}
       </ModalHeader>
       <ModalBody>
-        <Box css={QB_CSS} display="flex" flexDirection="column" gap="6px">
-          {loadError && <Box className="qb-error">{loadError}</Box>}
+        <Box display="flex" flexDirection="column" gap="6px">
+          {loadError && <Box css={errorCss}>{loadError}</Box>}
 
-          <chakra.section className="qb-section">
-            <Box className="qb-section-title">{t("qbQueryType")}</Box>
-            <Box className="qb-pill-list">
+          <chakra.section css={sectionCss}>
+            <Box css={sectionTitleCss}>{t("qbQueryType")}</Box>
+            <Box css={pillListCss}>
               {(["SELECT", "INSERT", "UPDATE", "DELETE"] as QueryKind[]).map((k) => (
                 <chakra.button
                   key={k}
                   type="button"
-                  className={`qb-pill ${kind === k ? "active" : ""}`}
+                  css={pillCss(kind === k)}
                   onClick={() => setKind(k)}
                 >
                   {k}
@@ -576,8 +577,8 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
             </Box>
           </chakra.section>
 
-          <chakra.section className="qb-section qb-grid-2">
-            <Box>
+          <chakra.section css={grid2SectionCss}>
+            <Box css={grid2ChildCss}>
               <chakra.label htmlFor="qb-db">{t("qbDatabase")}</chakra.label>
               <Select
                 id="qb-db"
@@ -594,7 +595,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                 ))}
               </Select>
             </Box>
-            <Box>
+            <Box css={grid2ChildCss}>
               <chakra.label htmlFor="qb-tbl">{t("qbTable")}</chakra.label>
               <Select
                 id="qb-tbl"
@@ -611,20 +612,22 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           </chakra.section>
 
           {showSelectColumns && (
-            <chakra.section className="qb-section">
-              <Box className="qb-section-title">{t("qbColumns")}</Box>
-              <chakra.label className="qb-checkbox">
+            <chakra.section css={sectionCss}>
+              <Box css={sectionTitleCss}>{t("qbColumns")}</Box>
+              <chakra.label css={checkboxLabelCss}>
                 <Checkbox
                   checked={selectAll}
+                  w="auto"
+                  m={0}
                   onChange={(e) => setSelectAll(e.target.checked)}
                 />
                 <chakra.span>{t("qbAllColumns")}</chakra.span>
               </chakra.label>
               {!selectAll && (
                 <>
-                  <Box className="qb-row">
+                  <Box css={rowCss}>
                     <ComboBox
-                      className="qb-col-input"
+                      css={rowInputCss}
                       value={newSelectCol}
                       options={columnOptions.filter((c) => !selectColumns.includes(c))}
                       placeholder={loadingColumns ? t("qbLoading") : t("qbColumn")}
@@ -633,7 +636,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     />
                     <chakra.button
                       type="button"
-                      className="qb-small"
+                      css={smallBtnCss}
                       onClick={() => addSelectColumn(newSelectCol)}
                       disabled={!newSelectCol.trim()}
                     >
@@ -641,16 +644,16 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     </chakra.button>
                   </Box>
                   {selectColumns.length > 0 ? (
-                    <Box className="qb-selected-cols-wrap">
-                      <chakra.table className="qb-selected-cols">
+                    <Box css={selectedColsWrapCss}>
+                      <chakra.table css={selectedColsCss}>
                         <tbody>
                           <tr>
                             {selectColumns.map((c) => (
                               <chakra.td key={c}>
-                                <chakra.span className="qb-selected-col-name">{c}</chakra.span>
+                                <chakra.span css={selectedColNameCss}>{c}</chakra.span>
                                 <chakra.button
                                   type="button"
-                                  className="qb-chip-remove"
+                                  css={chipRemoveCss}
                                   onClick={() => removeSelectColumn(c)}
                                   aria-label={t("qbRemove")}
                                   title={t("qbRemove")}
@@ -676,31 +679,31 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           )}
 
           {showSet && (
-            <chakra.section className="qb-section">
-              <Box className="qb-section-row">
-                <Box className="qb-section-title">{t("qbSet")}</Box>
-                <chakra.button type="button" className="qb-small" onClick={() => addPair("set")}>
+            <chakra.section css={sectionCss}>
+              <Box css={sectionRowCss}>
+                <Box css={sectionTitleCss}>{t("qbSet")}</Box>
+                <chakra.button type="button" css={smallBtnCss} onClick={() => addPair("set")}>
                   + {t("qbAddSet")}
                 </chakra.button>
               </Box>
               {setPairs.map((p, i) => (
-                <Box className="qb-row" key={`set-${i}`}>
+                <Box css={rowCss} key={`set-${i}`}>
                   <ColumnPicker
                     value={p.column}
                     options={columnOptions}
                     onChange={(v) => updatePair("set", i, { column: v })}
                     placeholder={t("qbColumn")}
                   />
-                  <chakra.span className="qb-eq">=</chakra.span>
+                  <chakra.span css={eqCss}>=</chakra.span>
                   <chakra.input
-                    className="qb-row-input"
+                    css={rowInputCss}
                     value={p.value}
                     placeholder={t("qbValue")}
                     onChange={(e) => updatePair("set", i, { value: e.target.value })}
                   />
                   <chakra.button
                     type="button"
-                    className="qb-icon-btn"
+                    css={iconBtnCss}
                     onClick={() => removePair("set", i)}
                     aria-label={t("qbRemove")}
                     title={t("qbRemove")}
@@ -714,31 +717,31 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           )}
 
           {showInsertValues && (
-            <chakra.section className="qb-section">
-              <Box className="qb-section-row">
-                <Box className="qb-section-title">{t("qbInsertValues")}</Box>
-                <chakra.button type="button" className="qb-small" onClick={() => addPair("insert")}>
+            <chakra.section css={sectionCss}>
+              <Box css={sectionRowCss}>
+                <Box css={sectionTitleCss}>{t("qbInsertValues")}</Box>
+                <chakra.button type="button" css={smallBtnCss} onClick={() => addPair("insert")}>
                   + {t("qbAddValue")}
                 </chakra.button>
               </Box>
               {insertPairs.map((p, i) => (
-                <Box className="qb-row" key={`ins-${i}`}>
+                <Box css={rowCss} key={`ins-${i}`}>
                   <ColumnPicker
                     value={p.column}
                     options={columnOptions}
                     onChange={(v) => updatePair("insert", i, { column: v })}
                     placeholder={t("qbColumn")}
                   />
-                  <chakra.span className="qb-eq">=</chakra.span>
+                  <chakra.span css={eqCss}>=</chakra.span>
                   <chakra.input
-                    className="qb-row-input"
+                    css={rowInputCss}
                     value={p.value}
                     placeholder={t("qbValue")}
                     onChange={(e) => updatePair("insert", i, { value: e.target.value })}
                   />
                   <chakra.button
                     type="button"
-                    className="qb-icon-btn"
+                    css={iconBtnCss}
                     onClick={() => removePair("insert", i)}
                     aria-label={t("qbRemove")}
                     title={t("qbRemove")}
@@ -752,15 +755,15 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           )}
 
           {showWhere && (
-            <chakra.section className="qb-section">
-              <Box className="qb-section-row">
-                <Box className="qb-section-title">{t("qbWhere")}</Box>
-                <chakra.button type="button" className="qb-small" onClick={addCondition}>
+            <chakra.section css={sectionCss}>
+              <Box css={sectionRowCss}>
+                <Box css={sectionTitleCss}>{t("qbWhere")}</Box>
+                <chakra.button type="button" css={smallBtnCss} onClick={addCondition}>
                   + {t("qbAddCondition")}
                 </chakra.button>
               </Box>
               {whereConditions.map((c, i) => (
-                <Box className="qb-row" key={`w-${i}`}>
+                <Box css={rowCss} key={`w-${i}`}>
                   <ColumnPicker
                     value={c.column}
                     options={columnOptions}
@@ -768,13 +771,13 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     placeholder={t("qbColumn")}
                   />
                   <ComboBox
-                    className="qb-op"
+                    css={opCss}
                     value={c.operator}
                     options={[...WHERE_OPERATORS]}
                     onChange={(v) => updateCondition(i, { operator: v })}
                   />
                   <chakra.input
-                    className="qb-row-input"
+                    css={rowInputCss}
                     value={c.value}
                     placeholder={
                       isNullOperator(c.operator)
@@ -788,7 +791,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   />
                   <chakra.button
                     type="button"
-                    className="qb-icon-btn"
+                    css={iconBtnCss}
                     onClick={() => removeCondition(i)}
                     aria-label={t("qbRemove")}
                     title={t("qbRemove")}
@@ -802,11 +805,11 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           )}
 
           {showLimit && (
-            <chakra.section className="qb-section qb-limit-section">
-              <chakra.label htmlFor="qb-limit">{t("qbLimit")}</chakra.label>
+            <chakra.section css={limitSectionCss}>
+              <chakra.label htmlFor="qb-limit" m={0}>{t("qbLimit")}</chakra.label>
               <chakra.input
                 id="qb-limit"
-                className="qb-limit-input"
+                css={limitInputCss}
                 value={limit}
                 placeholder="100"
                 onChange={(e) => setLimit(e.target.value)}
@@ -815,12 +818,12 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
             </chakra.section>
           )}
 
-          <chakra.section className="qb-section">
-            <Box className="qb-section-title">{t("qbPreview")}</Box>
-            <Box className="qb-preview-wrap">
+          <chakra.section css={sectionCss}>
+            <Box css={sectionTitleCss}>{t("qbPreview")}</Box>
+            <Box css={previewWrapCss}>
               <chakra.button
                 type="button"
-                className="qb-preview-copy"
+                css={previewCopyCss}
                 onClick={handleCopy}
                 aria-label={copied ? t("qbCopied") : t("qbCopy")}
                 title={copied ? t("qbCopied") : t("qbCopy")}
@@ -903,7 +906,7 @@ interface ColumnPickerProps {
 function ColumnPicker({ value, options, onChange, placeholder }: ColumnPickerProps) {
   return (
     <ComboBox
-      className="qb-col-input"
+      css={rowInputCss}
       value={value}
       options={options}
       placeholder={placeholder}
@@ -917,7 +920,7 @@ interface ComboBoxProps {
   options: readonly string[];
   onChange: (v: string) => void;
   placeholder?: string;
-  className?: string;
+  css?: SystemStyleObject;
   disabled?: boolean;
   id?: string;
   onEnter?: () => void;
@@ -928,7 +931,7 @@ function ComboBox({
   options,
   onChange,
   placeholder,
-  className,
+  css,
   disabled,
   id,
   onEnter,
@@ -938,7 +941,7 @@ function ComboBox({
     <>
       <chakra.input
         id={id}
-        className={className}
+        css={css}
         list={listId}
         value={value}
         placeholder={placeholder}
@@ -1001,5 +1004,5 @@ function SqlPreview({ sql, driver }: SqlPreviewProps) {
     view.dispatch({ changes: { from: 0, to: current.length, insert: sql } });
   }, [sql]);
 
-  return <Box className="qb-preview" ref={hostRef} />;
+  return <Box css={previewCss} ref={hostRef} />;
 }
