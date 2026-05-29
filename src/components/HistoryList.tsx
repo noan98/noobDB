@@ -2,17 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { useT } from "../i18n";
+import { transitions, variants } from "../motion";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Button, Checkbox, Input } from "./ui";
 import {
+  MotionTreeNode,
   ScopeToggle,
   Tree,
   TreeBadge,
   TreeChevron,
   TreeIcon,
   TreeLabel,
-  TreeNode,
   TreePane,
   TreeRow,
   TreeSearch,
@@ -140,6 +141,11 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
         )
       ) : (
         <Tree role="tree">
+          {/* 履歴は検索/スコープ変更のたびに丸ごと入れ替わり、件数も多くなりうる。
+              enter/exit の AnimatePresence で全件を出入りさせると重く・うるさく
+              なるため、ここは「控えめ」方針 (Epic #370) に従い、マウント時の
+              opacity フェードイン (enter のみ・height 補間なし) に留める。新しい
+              クエリ実行で先頭に積まれた項目が軽く出現し、削除は即時。 */}
           {entries.map((h) => {
             const failed = h.status === "error";
             const meta =
@@ -149,7 +155,12 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
                   ? t("historyAffectedMeta", { rows: h.rows_affected })
                   : "";
             return (
-              <TreeNode key={h.id}>
+              <MotionTreeNode
+                key={h.id}
+                initial={variants.fade.initial}
+                animate={variants.fade.animate}
+                transition={transitions.crossfade}
+              >
                 <TreeRow
                   position="relative"
                   role="treeitem"
@@ -250,7 +261,7 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
                 <Box pt="0" pr="6px" pb="4px" pl="28px" fontSize="2xs" color="app.textMuted">
                   {formatTime(h.executed_at)}
                 </Box>
-              </TreeNode>
+              </MotionTreeNode>
             );
           })}
         </Tree>

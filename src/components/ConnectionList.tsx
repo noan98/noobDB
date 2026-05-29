@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
+import { AnimatePresence } from "motion/react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
+import { transitions, variants } from "../motion";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Spinner } from "./Spinner";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { Input } from "./ui";
-import { TreeBadge, TreeChevron, TreeIcon, TreeLabel, TreeNode, TreeRow } from "./tree";
+import {
+  MotionTreeNode,
+  TreeBadge,
+  TreeChevron,
+  TreeCollapse,
+  TreeIcon,
+  TreeLabel,
+  TreeNode,
+  TreeRow,
+} from "./tree";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 
@@ -540,7 +551,7 @@ export function ConnectionList({
         : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
     return (
-      <TreeNode key={p.id}>
+      <MotionTreeNode key={p.id} {...variants.collapse} transition={transitions.enter}>
         <TreeRow
           pt="5px"
           pb="5px"
@@ -694,7 +705,7 @@ export function ConnectionList({
           <TreeBadge>{p.driver}</TreeBadge>
         </TreeRow>
 
-        {isOpen && isActive && sessionId && (
+        <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
           <TreeChildren>
             {databases === null ? (
               renderLoadingRow()
@@ -721,7 +732,7 @@ export function ConnectionList({
                       <TreeIcon color="#0ea5e9" aria-hidden><Icon name="database" /></TreeIcon>
                       <TreeLabel fontWeight={400}>{db}</TreeLabel>
                     </TreeRow>
-                    {dbOpen && (
+                    <TreeCollapse open={dbOpen}>
                       <TreeChildren>
                         {dbTables === undefined ? (
                           renderLoadingRow()
@@ -753,7 +764,7 @@ export function ConnectionList({
                                   <TreeIcon color="app.textSecondary" aria-hidden><Icon name="table" /></TreeIcon>
                                   <TreeLabel fontWeight={400}>{tbl}</TreeLabel>
                                 </TreeRow>
-                                {tOpen && (
+                                <TreeCollapse open={tOpen}>
                                   <TreeChildren>
                                     {cols === undefined ? (
                                       renderLoadingRow()
@@ -806,20 +817,20 @@ export function ConnectionList({
                                       })
                                     )}
                                   </TreeChildren>
-                                )}
+                                </TreeCollapse>
                               </TreeNode>
                             );
                           })
                         )}
                       </TreeChildren>
-                    )}
+                    </TreeCollapse>
                   </TreeNode>
                 );
               })
             )}
           </TreeChildren>
-        )}
-      </TreeNode>
+        </TreeCollapse>
+      </MotionTreeNode>
     );
   };
 
@@ -862,7 +873,7 @@ export function ConnectionList({
       ) : (
         <Box flex="1" overflowY="auto" py="4px" fontSize="md" color="app.text" role="tree">
           {grouped === null
-            ? visibleProfiles.map(renderProfile)
+            ? <AnimatePresence initial={false}>{visibleProfiles.map(renderProfile)}</AnimatePresence>
             : grouped.map((g) => {
                 const key = g.name ?? "__ungrouped__";
                 const groupOpen = expandedGroups[key] !== false;
@@ -907,11 +918,13 @@ export function ConnectionList({
                       </chakra.span>
                       <TreeBadge textTransform="none" letterSpacing="0">{g.profiles.length}</TreeBadge>
                     </Box>
-                    {groupOpen && (
+                    <TreeCollapse open={groupOpen}>
                       <Box display="flex" flexDirection="column">
-                        {g.profiles.map(renderProfile)}
+                        <AnimatePresence initial={false}>
+                          {g.profiles.map(renderProfile)}
+                        </AnimatePresence>
                       </Box>
-                    )}
+                    </TreeCollapse>
                   </TreeNode>
                 );
               })}
