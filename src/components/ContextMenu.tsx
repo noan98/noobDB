@@ -1,6 +1,19 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
+import { motion } from "motion/react";
+import { transitions } from "../motion";
+
+/**
+ * メニュー本体を motion 化するラッパー。`transition` を Chakra のスタイルプロップに
+ * 飲まれず motion へ渡すため `forwardProps` に含める (`TabBar` / `Modal` と同方式)。
+ * 出現は enter のみ (軽い fade + scale) で、閉じるのは従来どおり親のアンマウントに
+ * よる即時消去 — メニューは複数箇所から `{menu && }` で
+ * 条件マウントされており、exit のために各所へ `AnimatePresence` を足すコストに
+ * 見合わないため (Epic #370 の「控えめ」方針)。reduced-motion 時は MotionConfig が
+ * enter を即時化する。
+ */
+const MotionMenu = chakra(motion.div, {}, { forwardProps: ["transition"] });
 
 /** Enabled items carry `role="menuitem"`; disabled ones get the `disabled`
  *  attribute. Keyboard navigation (focus-first + arrow roving) selects against
@@ -113,7 +126,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
         onClose();
       }}
     >
-      <Box
+      <MotionMenu
         ref={menuRef}
         position="fixed"
         zIndex={1000}
@@ -126,6 +139,12 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
         p="var(--space-1)"
         display="flex"
         flexDirection="column"
+        // 出現位置 (クリック点) を起点に伸びるよう原点を左上に。scale は控えめ
+        // (0.97) なので、測定 (getBoundingClientRect) によるクランプへの影響は無視できる。
+        transformOrigin="top left"
+        initial={{ opacity: 0, scale: 0.97 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={transitions.enter}
         style={{
           left: pos?.left ?? x,
           top: pos?.top ?? y,
@@ -180,7 +199,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
             </chakra.button>
           ),
         )}
-      </Box>
+      </MotionMenu>
     </Box>,
     document.body,
   );

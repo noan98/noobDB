@@ -1,6 +1,13 @@
-import { Flex, Text } from "@chakra-ui/react";
+import { chakra, Flex, Text } from "@chakra-ui/react";
+import { motion } from "motion/react";
+import { transitions } from "../motion";
 import { Button } from "./ui";
 import { Icon, type IconName } from "./Icon";
+
+/** ルートを motion 化するラッパー。`transition` を motion へ転送する
+ *  (`TabBar` / `Modal` と同方式)。`Flex` のショートハンド (direction/align/justify)
+ *  は使えないため、対応する style プロップ名で同じレイアウトを再現する。 */
+const MotionRoot = chakra(motion.div, {}, { forwardProps: ["transition"] });
 
 interface Props {
   /** Optional glyph shown above the title. */
@@ -25,14 +32,20 @@ interface Props {
  */
 export function EmptyState({ icon, title, description, action, compact = false }: Props) {
   return (
-    <Flex
-      direction="column"
-      align={compact ? "flex-start" : "center"}
-      justify="center"
+    // 一時表示 (空/オンボーディング) の控えめな fade-in。マウント時のみ動かす
+    // enter で、reduced-motion 時は MotionConfig により即時化される (Epic #370)。
+    <MotionRoot
+      display="flex"
+      flexDirection="column"
+      alignItems={compact ? "flex-start" : "center"}
+      justifyContent="center"
       gap={compact ? "6px" : "var(--space-2)"}
       px={compact ? "16px" : "20px"}
       py={compact ? "20px" : "32px"}
       textAlign={compact ? "left" : "center"}
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={transitions.enter}
     >
       {icon && (
         <Flex
@@ -70,6 +83,6 @@ export function EmptyState({ icon, title, description, action, compact = false }
           {action.label}
         </Button>
       )}
-    </Flex>
+    </MotionRoot>
   );
 }

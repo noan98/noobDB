@@ -20,7 +20,7 @@ import type { Transition, Variants } from "motion/react";
  * - **CSS:** `src/App.css` 末尾の `@media (prefers-reduced-motion: reduce)` が
  *   全要素の transition / animation を実質無効化する。
  *
- * ## 「CSS のまま残す / Motion 化する」の境界
+ * ## 「CSS のまま残す / Motion 化する」の境界 (Epic #370 で確定)
  *
  * - **CSS のまま残す:** 単純な hover / focus / active の色・影・枠線などの
  *   transition。状態を 1 プロパティの補間で表現でき、要素の出入り (mount/unmount)
@@ -30,6 +30,29 @@ import type { Transition, Variants } from "motion/react";
  * - **Motion 化する:** 要素の出入り (`AnimatePresence`)、レイアウト遷移
  *   (`layout` / `layoutId`)、複数プロパティの協調 (フェード + スケール + 移動)、
  *   spring など、CSS transition だけでは表現が難しい/煩雑になるもの。
+ *
+ * ### 具体的に CSS transition のまま残すもの (Motion 化しない確定リスト)
+ *
+ * - `TitleBar` のウィンドウ操作ボタン (最小化/最大化/閉じる) の hover/active 配色。
+ * - `ConnectionForm` をはじめとするフォーム入力の focus/hover の枠線・影。
+ * - 共通ボタン (`ui.tsx` の `Button`)、タブ・ツリー行・コンテキストメニュー項目・
+ *   ツールバーボタンの hover/focus 配色とフォーカスリング (box-shadow)。
+ * - キャレット (▸) の回転 (`tree.tsx` の `TreeChevron` の `transform` transition)。
+ * - 接続ステータスドットの色/影遷移、`connecting` の脈動 (`@keyframes pulse`)、
+ *   スピナー回転 (`@keyframes spinner-rotate`) などの CSS アニメーション。
+ *
+ * ### 具体的に Motion 化したもの (Epic #370 の対象)
+ *
+ * - モーダル/ダイアログの開閉 (`Modal` — `variants.dialog` / `fade`)。
+ * - タブの追加/削除とアクティブインジケータ (`TabBar` — `layout` / `layoutId`)。
+ * - トースト通知の出入り (`Toast` — `transitions.emphasized`)。
+ * - ツリーの展開/折りたたみとリスト項目の出入り (`ConnectionList` /
+ *   `SnippetList` / `HistoryList` — `TreeCollapse` / `MotionTreeNode` /
+ *   `variants.collapse`)。
+ * - コンテキストメニューの出現 (`ContextMenu` — 軽い fade + scale、enter のみ)。
+ * - 空/オンボーディング表示の fade-in (`EmptyState`)。
+ * - `Switch` のつまみ (`springs.snappy`)、アイコン/バッジのクロスフェード
+ *   (`MultiStateBadge` / `QueryEditor` / `ImportModal` / `App`)。
  */
 
 /** cubic-bezier カーブ。CSS の `--ease` / `--ease-out` と同じ値。 */
