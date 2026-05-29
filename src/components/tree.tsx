@@ -1,4 +1,7 @@
 import { chakra } from "@chakra-ui/react";
+import type { ReactNode } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { transitions, variants } from "../motion";
 
 /**
  * サイドパネルのツリー表示で共有する Chakra プリミティブ群。
@@ -122,3 +125,44 @@ export const ScopeToggle = chakra("label", {
     cursor: "pointer",
   },
 });
+
+/**
+ * Motion 化したツリーノード。`TreeNode` と同じ縦積みレイアウトを持つ `motion.div`
+ * で、`AnimatePresence` 配下に置くと項目の追加/削除が enter/exit でアニメーション
+ * する (`variants.collapse` の高さ収縮で隣接項目が滑らかに詰まる)。
+ *
+ * motion の `transition` プロップは Chakra のスタイルプロップ名と衝突するため
+ * `forwardProps` で明示的に転送する (`TabBar` / `Modal` と同方式)。`initial` /
+ * `animate` / `exit` はスタイルプロップではないので既定で転送される。利用側は
+ * `key` と `variants.collapse` (または `initial`/`animate` のみ) を渡す。
+ */
+export const MotionTreeNode = chakra(
+  motion.div,
+  { base: { display: "flex", flexDirection: "column" } },
+  { forwardProps: ["transition"] },
+);
+
+const MotionCollapse = chakra(
+  motion.div,
+  { base: { display: "flex", flexDirection: "column" } },
+  { forwardProps: ["transition"] },
+);
+
+/**
+ * ツリーノードの展開/折りたたみコンテナ。`open` の間だけ子をマウントし、
+ * `AnimatePresence initial={false}` で height/opacity を 0 ↔ auto に補間する
+ * (`variants.collapse`)。`initial={false}` なので初期表示で既に開いている
+ * ノードは enter アニメせず、クリックによる開閉のみが動く。子の中身 (破線
+ * インデントの `TreeChildren` 等) はそのまま渡す。
+ */
+export function TreeCollapse({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <AnimatePresence initial={false}>
+      {open && (
+        <MotionCollapse {...variants.collapse} transition={transitions.layout}>
+          {children}
+        </MotionCollapse>
+      )}
+    </AnimatePresence>
+  );
+}

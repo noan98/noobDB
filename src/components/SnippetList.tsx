@@ -1,15 +1,19 @@
 import { useMemo, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
+import { AnimatePresence } from "motion/react";
 import { ConnectionProfile, Snippet } from "../api/tauri";
 import { useT } from "../i18n";
+import { transitions, variants } from "../motion";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Checkbox, Input } from "./ui";
 import {
+  MotionTreeNode,
   ScopeToggle,
   Tree,
   TreeBadge,
   TreeChevron,
+  TreeCollapse,
   TreeIcon,
   TreeLabel,
   TreeNode,
@@ -108,7 +112,7 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
   };
 
   const renderSnippet = (s: Snippet) => (
-    <TreeNode key={s.id}>
+    <MotionTreeNode key={s.id} {...variants.collapse} transition={transitions.enter}>
       <TreeRow
         role="treeitem"
         tabIndex={0}
@@ -133,7 +137,7 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
         ))}
         {s.driver && <TreeBadge>{s.driver}</TreeBadge>}
       </TreeRow>
-    </TreeNode>
+    </MotionTreeNode>
   );
 
   return (
@@ -163,7 +167,7 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
       ) : (
         <Tree role="tree">
           {grouped === null
-            ? visibleSnippets.map(renderSnippet)
+            ? <AnimatePresence initial={false}>{visibleSnippets.map(renderSnippet)}</AnimatePresence>
             : grouped.map((g) => {
                 const key = g.name ?? "__unfiled__";
                 const folderOpen = expandedFolders[key] !== false;
@@ -218,11 +222,13 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
                       </chakra.span>
                       <TreeBadge textTransform="none" letterSpacing="0">{g.snippets.length}</TreeBadge>
                     </Box>
-                    {folderOpen && (
+                    <TreeCollapse open={folderOpen}>
                       <Box display="flex" flexDirection="column">
-                        {g.snippets.map(renderSnippet)}
+                        <AnimatePresence initial={false}>
+                          {g.snippets.map(renderSnippet)}
+                        </AnimatePresence>
                       </Box>
-                    )}
+                    </TreeCollapse>
                   </TreeNode>
                 );
               })}

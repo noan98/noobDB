@@ -111,4 +111,20 @@ export const variants = {
     animate: { opacity: 1, scale: 1, y: 0 },
     exit: { opacity: 0, scale: 0.96, y: 8 },
   },
+  /**
+   * 展開/折りたたみ (アコーディオン)。`height` を 0 ↔ auto に補間し opacity も
+   * 連動させる。`AnimatePresence initial={false}` 配下でツリーノードの開閉や、
+   * リスト項目の追加/削除 (高さ収縮で隣接項目が滑らかに詰まる) に使う。
+   *
+   * height アニメには `overflow: hidden` が必須だが、定常状態でそのままだと
+   * 先頭/末尾行のフォーカスリング (box-shadow) が 2px 切れてしまう。そこで
+   * `transitionEnd` で enter 完了後に `overflow: visible` へ戻し、収縮 (exit) 中
+   * だけ hidden にすることで、見た目の退行なくクリッピングを両立する。
+   * reduced-motion 時は `MotionConfig reducedMotion="user"` により即時化される。
+   */
+  collapse: {
+    initial: { height: 0, opacity: 0, overflow: "hidden" },
+    animate: { height: "auto", opacity: 1, transitionEnd: { overflow: "visible" } },
+    exit: { height: 0, opacity: 0, overflow: "hidden" },
+  },
 } satisfies Record<string, Variants>;
