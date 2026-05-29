@@ -25,6 +25,13 @@ export interface BadgeState {
   label: string;
   tone: BadgeTone;
   icon?: ReactNode;
+  /**
+   * Screen-reader-only label used as the button's accessible name when `label`
+   * is intentionally blank (e.g. a spinner-only "running" state). Visible text
+   * is dropped to avoid redundancy with the icon, but SR users still hear the
+   * state. Falls back to `label` when omitted.
+   */
+  srLabel?: string;
 }
 
 interface Props<S extends string> {
@@ -101,7 +108,7 @@ export function MultiStateBadge<S extends string>({
       onClick={() => !disabled && onClick?.()}
       disabled={disabled}
       title={title}
-      aria-label={ariaLabel ?? current.label}
+      aria-label={ariaLabel ?? current.srLabel ?? current.label}
       aria-live="polite"
       display="inline-flex"
       alignItems="center"
@@ -149,18 +156,20 @@ export function MultiStateBadge<S extends string>({
             </MotionInner>
           </AnimatePresence>
         )}
-        <AnimatePresence mode="wait" initial={false}>
-          <MotionInner
-            key={`label-${state}`}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.15 }}
-            display="inline-block"
-          >
-            {current.label}
-          </MotionInner>
-        </AnimatePresence>
+        {current.label !== "" && (
+          <AnimatePresence mode="wait" initial={false}>
+            <MotionInner
+              key={`label-${state}`}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.15 }}
+              display="inline-block"
+            >
+              {current.label}
+            </MotionInner>
+          </AnimatePresence>
+        )}
       </MotionInner>
     </chakra.button>
   );
