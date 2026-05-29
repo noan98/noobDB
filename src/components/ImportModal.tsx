@@ -13,6 +13,7 @@ import { chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { transitions } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Select, Switch } from "./ui";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
@@ -511,7 +512,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported }:
               <motion.div
                 style={{ height: "100%", background: "var(--accent)" }}
                 animate={{ width: `${percent}%` }}
-                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                transition={transitions.progress}
               />
             </chakra.div>
             <chakra.div fontSize="sm" color="app.textMuted">

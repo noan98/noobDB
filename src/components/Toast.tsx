@@ -11,6 +11,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { Box, chakra } from "@chakra-ui/react";
 import { Icon } from "./Icon";
+import { transitions } from "../motion";
 
 export type ToastTone = "success" | "error" | "info";
 
@@ -136,7 +137,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               initial={{ opacity: 0, y: 14, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, x: 28, scale: 0.96 }}
-              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              transition={transitions.emphasized}
             >
               <Box
                 role="status"
