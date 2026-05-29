@@ -88,6 +88,10 @@ rand = "0.10"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+# SQL 安全網関数 (is_read_only_sql / apply_auto_limit) のプロパティベーステスト用。
+# 手書きサンプルでは思いつきにくいエッジケース (コメント/文字列リテラルに隠した
+# キーワード等) を自動探索し、安全網のバイパスを継続的に検出する (#355)。
+proptest = "1"
 
 [features]
 default = ["custom-protocol"]
