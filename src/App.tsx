@@ -89,7 +89,13 @@ import {
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT } from "./i18n";
 import { transitions } from "./motion";
-import { useSettings, getSettings, BASE_FONT_SIZE_PX, type TabRestoreMode } from "./settings";
+import {
+  useSettings,
+  getSettings,
+  setAutoRefreshDefaultSecs,
+  BASE_FONT_SIZE_PX,
+  type TabRestoreMode,
+} from "./settings";
 import {
   clearPersistedTabs,
   loadPersistedWorkspace,
@@ -352,6 +358,15 @@ interface Tab {
    * tab itself is closed. Holds the latest single snapshot — no history.
    */
   builderSnapshot: QueryBuilderSnapshot | null;
+  /**
+   * Auto-refresh (scheduled re-execution) cadence in seconds, or null/undefined
+   * when off. Only ever set for read-only `lastExecutedSql`; a manual write run
+   * clears it. In-memory only (not persisted) so polling never resumes silently
+   * after a restart.
+   */
+  autoRefreshSecs?: number | null;
+  /** Wall-clock time (ms) of the last completed auto-refresh tick, for the badge. */
+  autoRefreshLastRunAt?: number | null;
 }
 
 /**
@@ -803,6 +818,10 @@ export default function App() {
   // we can synchronously cancel from anywhere (tab close, disconnect).
   const streamUnlistenRef = useRef<Map<string, UnlistenFn>>(new Map());
   const streamIdRef = useRef<Map<string, string>>(new Map());
+
+  // Active auto-refresh (scheduled re-execution) timers, keyed by tab id. Held
+  // in a ref so reconciling them doesn't churn on every streamed row batch.
+  const autoRefreshTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
   // restoreSavedTabs is declared after runQueryInTab; the ref breaks the
   // ordering cycle so handleConnect (declared above) can still call it.
@@ -1332,6 +1351,7 @@ export default function App() {
     sql: string,
     paginatableBase: string | null = null,
     autoLimit: number | null = null,
+    autoRefresh: boolean = false,
   ) => {
     if (!sessionId) {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
@@ -1358,6 +1378,10 @@ export default function App() {
       // Drop any in-flight cell edits: their row indices reference the
       // previous result set and would no longer line up with the new rows.
       pendingEdits: {},
+      // A manual run of a non-read-only statement turns auto-refresh off so the
+      // toggle never lingers "on" while silently skipping ticks. Read-only
+      // manual re-runs keep polling, now targeting the new SQL.
+      ...(!autoRefresh && !isReadOnlySql(sql) ? { autoRefreshSecs: null } : {}),
     });
 
     const finalize = () => {
@@ -1424,6 +1448,7 @@ export default function App() {
             streaming: false,
             canLoadMore: tt.paginatable !== null,
             autoLimitApplied: appliedAutoLimit,
+            ...(autoRefresh ? { autoRefreshLastRunAt: Date.now() } : {}),
           };
         });
         if (hasColumns) {
@@ -1431,8 +1456,9 @@ export default function App() {
         } else {
           setStatus({ kind: "key", key: "statusRowsAffected", vars: { rows: rowsAffected, ms: elapsedMs } });
         }
-        // A new entry was just written to history; refresh the panel.
-        setHistoryReloadKey((k) => k + 1);
+        // A new entry was just written to history; refresh the panel. Auto-refresh
+        // ticks never write history, so they skip the (otherwise per-tick) reload.
+        if (!autoRefresh) setHistoryReloadKey((k) => k + 1);
         // DDL may have added/renamed tables or columns — refresh autocomplete
         // for the database this statement ran against (the executing tab's, or
         // the profile default when the tab pins no database), leaving other
@@ -1476,6 +1502,7 @@ export default function App() {
         chunkSize: settings.streamPrefetchSize,
         autoLimit,
         queryTimeoutSecs: timeoutSecs,
+        autoRefresh,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
@@ -1494,6 +1521,68 @@ export default function App() {
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
   ]);
+
+  // ---- Auto-refresh (scheduled re-execution) -------------------------------
+  // Latest `runQueryInTab` / `sessionId` kept in refs so a long-lived timer
+  // always calls the current closure without being torn down on every render.
+  const runQueryInTabRef = useRef(runQueryInTab);
+  runQueryInTabRef.current = runQueryInTab;
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+
+  // Toggle auto-refresh for a tab: `secs` enables polling at that cadence (also
+  // remembered as the global default), `null` turns it off.
+  const setAutoRefreshForTab = useCallback((tabId: string, secs: number | null) => {
+    if (secs !== null) setAutoRefreshDefaultSecs(secs);
+    updateTab(tabId, { autoRefreshSecs: secs, autoRefreshLastRunAt: null });
+  }, [updateTab]);
+
+  // Reconcile live timers with each tab's cadence. Keyed on a compact signature
+  // of just (tabId, secs) pairs so streamed row batches — which mutate `tabs`
+  // constantly — don't tear down and recreate the intervals.
+  const autoRefreshSignature = tabs
+    .map((tt) => `${tt.id}:${tt.autoRefreshSecs ?? 0}`)
+    .join("|");
+  useEffect(() => {
+    const timers = autoRefreshTimers.current;
+    const desired = new Map<string, number>();
+    for (const tt of tabsRef.current) {
+      const secs = tt.autoRefreshSecs ?? 0;
+      if (secs > 0) desired.set(tt.id, secs);
+    }
+    // Drop timers for tabs that turned auto-refresh off (or were closed).
+    for (const [tabId, handle] of timers) {
+      if (!desired.has(tabId)) {
+        clearInterval(handle);
+        timers.delete(tabId);
+      }
+    }
+    // (Re)create a timer for each desired tab. Recreated unconditionally because
+    // the cadence may have changed since the last reconcile.
+    for (const [tabId, secs] of desired) {
+      const existing = timers.get(tabId);
+      if (existing) clearInterval(existing);
+      const handle = setInterval(() => {
+        if (!sessionIdRef.current) return;
+        const tt = tabsRef.current.find((x) => x.id === tabId);
+        if (!tt) return;
+        // In-flight guard: skip this tick if the previous run is still streaming.
+        if (tt.streaming) return;
+        const sql = tt.lastExecutedSql;
+        // Defence in depth: never poll a non-read-only statement (the backend
+        // enforces this too via the auto-refresh guard).
+        if (!sql || !isReadOnlySql(sql)) return;
+        void runQueryInTabRef.current(tabId, sql, tt.paginatable ?? null, null, true);
+      }, secs * 1000);
+      timers.set(tabId, handle);
+    }
+  }, [autoRefreshSignature]);
+
+  // Clear every timer on unmount so intervals don't outlive the component.
+  useEffect(() => () => {
+    for (const handle of autoRefreshTimers.current.values()) clearInterval(handle);
+    autoRefreshTimers.current.clear();
+  }, []);
 
   // Build fresh Tab objects from a saved workspace and replace the live layout.
   // Table tabs are verified via describeTable; entries pointing at tables that
@@ -2474,6 +2563,10 @@ export default function App() {
                       onClearEdits={() => clearEditsForTab(tab.id)}
                       onPreviewEdits={() => previewEditsForTab(tab)}
                       onApplyEdits={() => applyEditsForTab(tab)}
+                      autoRefreshSecs={tab.autoRefreshSecs ?? null}
+                      autoRefreshAllowed={!!tab.result && isReadOnlySql(tab.lastExecutedSql)}
+                      autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
+                      onSetAutoRefresh={(secs) => setAutoRefreshForTab(tab.id, secs)}
                     />
                   )}
                 </Suspense>

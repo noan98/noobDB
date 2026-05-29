@@ -18,6 +18,7 @@ import {
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
+import { AUTO_REFRESH_INTERVAL_OPTIONS, useSettings } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
 import { ContextMenu } from "./ContextMenu";
@@ -391,6 +392,17 @@ interface Props {
   onPreviewEdits?: () => void;
   /** Build & execute the UPDATE(s) for the pending edits, then refresh. */
   onApplyEdits?: () => void;
+  /** Current auto-refresh cadence (seconds), or null when polling is off. */
+  autoRefreshSecs?: number | null;
+  /**
+   * Whether auto-refresh may be enabled: the result came from a read-only query
+   * that has been executed at least once. When false the control is disabled.
+   */
+  autoRefreshAllowed?: boolean;
+  /** Wall-clock ms of the last completed auto-refresh tick, for the badge. */
+  autoRefreshLastRunAt?: number | null;
+  /** Enable polling at `secs`, or disable it when `null`. */
+  onSetAutoRefresh?: (secs: number | null) => void;
 }
 
 export interface ResultGridHandle {
@@ -1180,10 +1192,23 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onClearEdits,
   onPreviewEdits,
   onApplyEdits,
+  autoRefreshSecs,
+  autoRefreshAllowed,
+  autoRefreshLastRunAt,
+  onSetAutoRefresh,
 }: Props, ref) {
   const t = useT();
+  const settings = useSettings();
   const [showExport, setShowExport] = useState(false);
   const [search, setSearch] = useState("");
+  // Interval the toggle will use when switched on. Seeded from the persisted
+  // default and from the live cadence so the selector reflects the active poll.
+  const [intervalChoice, setIntervalChoice] = useState(
+    () => autoRefreshSecs ?? settings.autoRefreshDefaultSecs,
+  );
+  useEffect(() => {
+    if (autoRefreshSecs != null) setIntervalChoice(autoRefreshSecs);
+  }, [autoRefreshSecs]);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -1328,6 +1353,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
   const hasPendingEdits = editsCount > 0;
   const editableActive = !!editable && pkIndices.length > 0;
+  const autoRefreshOn = autoRefreshSecs != null && autoRefreshSecs > 0;
 
   // Preview wraps a single statement; multi-row edits would need a
   // multi-statement preview path that doesn't exist yet, so the button is
@@ -1440,6 +1466,71 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         >
           {t("exportButton")}
         </Button>
+        {onSetAutoRefresh && (
+          <Box
+            display="inline-flex"
+            alignItems="center"
+            gap="6px"
+            paddingLeft="2px"
+            title={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}
+          >
+            <chakra.label
+              display="inline-flex"
+              alignItems="center"
+              gap="4px"
+              fontSize="xs"
+              whiteSpace="nowrap"
+              color={autoRefreshAllowed ? "app.text" : "app.textMuted"}
+              cursor={autoRefreshAllowed ? "pointer" : "not-allowed"}
+            >
+              <chakra.input
+                type="checkbox"
+                checked={autoRefreshOn}
+                disabled={!autoRefreshAllowed}
+                aria-label={t("autoRefreshAria")}
+                onChange={(e) => onSetAutoRefresh(e.target.checked ? intervalChoice : null)}
+              />
+              {t("autoRefreshLabel")}
+            </chakra.label>
+            <chakra.select
+              aria-label={t("autoRefreshIntervalAria")}
+              value={String(intervalChoice)}
+              disabled={!autoRefreshAllowed}
+              onChange={(e) => {
+                const secs = Number(e.target.value);
+                setIntervalChoice(secs);
+                // Retarget the live timer immediately when already polling.
+                if (autoRefreshOn) onSetAutoRefresh(secs);
+              }}
+              fontSize="xs"
+              fontFamily="inherit"
+              padding="2px 4px"
+              border="1px solid var(--border)"
+              background="var(--bg-input)"
+              color="var(--text)"
+              borderRadius="var(--radius-sm)"
+            >
+              {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s % 60 === 0
+                    ? t("autoRefreshIntervalMins", { mins: s / 60 })
+                    : t("autoRefreshIntervalSecs", { secs: s })}
+                </option>
+              ))}
+            </chakra.select>
+            {autoRefreshOn && (
+              <chakra.span fontSize="xs" color="app.textMuted" whiteSpace="nowrap">
+                {streaming
+                  ? t("autoRefreshRunning")
+                  : autoRefreshLastRunAt
+                    ? t("autoRefreshUpdatedAt", {
+                        time: new Date(autoRefreshLastRunAt).toLocaleTimeString(),
+                      })
+                    : ""}
+              </chakra.span>
+            )}
+          </Box>
+        )}
         {editable && tableColumns && pkIndices.length === 0 && (
           <chakra.span
             fontSize="xs"
