@@ -24,6 +24,10 @@ dist-ssr/
 *.local
 .DS_Store
 
+# Coverage reports (Vitest v8 / cargo-llvm-cov)
+coverage/
+src-tauri/lcov.info
+
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/gen/

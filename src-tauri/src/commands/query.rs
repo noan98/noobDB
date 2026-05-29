@@ -47,12 +47,25 @@ pub async fn run_query(
     database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult> {
+    run_query_inner(state.inner(), &session_id, &sql, database.as_deref()).await
+}
+
+/// Core of [`run_query`] decoupled from Tauri's `State` wrapper so integration
+/// tests can drive the exact command path (session lookup + read-only guard +
+/// execute) without standing up a Tauri runtime. The `#[tauri::command]`
+/// wrapper above is intentionally a one-liner over this.
+pub(crate) async fn run_query_inner(
+    state: &AppState,
+    session_id: &str,
+    sql: &str,
+    database: Option<&str>,
+) -> Result<QueryResult> {
     let session = state
-        .get(&session_id)
+        .get(session_id)
         .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    ensure_allowed_for_session(&session, &sql)?;
-    session.conn.execute(&sql, database.as_deref()).await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    ensure_allowed_for_session(&session, sql)?;
+    session.conn.execute(sql, database).await
 }
 
 /// Applies `statements` as a single all-or-nothing transaction. Every
@@ -66,6 +79,18 @@ pub async fn run_query_transaction(
     statements: Vec<String>,
     database: Option<String>,
     state: State<'_, AppState>,
+) -> Result<QueryResult> {
+    run_query_transaction_inner(state.inner(), session_id, statements, database).await
+}
+
+/// Core of [`run_query_transaction`] decoupled from Tauri's `State` wrapper so
+/// integration tests can exercise the per-statement read-only guard on the real
+/// command path. See [`run_query_inner`].
+pub(crate) async fn run_query_transaction_inner(
+    state: &AppState,
+    session_id: String,
+    statements: Vec<String>,
+    database: Option<String>,
 ) -> Result<QueryResult> {
     let session = state
         .get(&session_id)

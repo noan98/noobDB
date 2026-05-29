@@ -207,6 +207,22 @@ const EV_IMPORT_PROGRESS: &str = "csv-import:progress";
 const EV_IMPORT_DONE: &str = "csv-import:done";
 const EV_IMPORT_ERROR: &str = "csv-import:error";
 
+/// Rejects a CSV import on a read-only session. Extracted so the IPC-level
+/// integration tests can assert the same guard `import_csv` enforces, keeping
+/// the read-only contract covered against refactors.
+pub(crate) fn ensure_import_writable(session: &Session) -> Result<()> {
+    if session.read_only {
+        tracing::warn!(
+            session_id = %session.id,
+            "read-only guard rejected a CSV import"
+        );
+        return Err(AppError::ReadOnly(
+            "read-only profile: CSV import is not allowed".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Streams a CSV file into `table`. The whole import runs in one transaction
 /// (all-or-nothing); progress is reported via `csv-import:*` events keyed by
 /// `stream_id`, mirroring the query-stream protocol. Cancel via `cancel_stream`.
@@ -228,15 +244,7 @@ pub async fn import_csv(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    if session.read_only {
-        tracing::warn!(
-            session_id = %session_id,
-            "read-only guard rejected a CSV import"
-        );
-        return Err(AppError::ReadOnly(
-            "read-only profile: CSV import is not allowed".into(),
-        ));
-    }
+    ensure_import_writable(&session)?;
     validate_chars(&options)?;
     if mapping.is_empty() {
         return Err(AppError::InvalidInput(
