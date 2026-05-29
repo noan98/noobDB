@@ -3,6 +3,25 @@ import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Button } from "./ui";
+import {
+  type Heat,
+  type HintSeverity,
+  type PlanNode,
+  type ScoreBand,
+  attrVal,
+  collectIds,
+  computeHints,
+  findNode,
+  formatNumber,
+  formatValue,
+  heatFor,
+  maxCost,
+  parseNum,
+  parsePlan,
+  scorePlan,
+  severityLabelKey,
+  worstSeverity,
+} from "./explainPlan";
 
 /**
  * EXPLAIN プラン可視化のツリー/詳細パネルのスタイル。以前は `.explain-*` の
@@ -31,6 +50,65 @@ const totalCostCss: SystemStyleObject = {
   color: "var(--text-secondary)",
   fontWeight: 500,
 };
+
+/**
+ * 重さスコアのバッジ (0〜100)。band (low/mid/high) で配色を切り替える。
+ * low は緑、mid は warm (#f59e0b)、high は hot (#dc2626) でヒート色と揃える。
+ */
+function scoreBadgeCss(band: ScoreBand): SystemStyleObject {
+  const base: SystemStyleObject = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "5px",
+    fontSize: "var(--text-sm)",
+    fontWeight: 700,
+    lineHeight: 1,
+    padding: "3px 9px",
+    borderRadius: "var(--radius-full, 999px)",
+    border: "1px solid",
+    cursor: "default",
+  };
+  if (band === "high") {
+    return {
+      ...base,
+      background: "color-mix(in srgb, #dc2626 16%, transparent)",
+      borderColor: "color-mix(in srgb, #dc2626 45%, transparent)",
+      color: "var(--text-error)",
+    };
+  }
+  if (band === "mid") {
+    return {
+      ...base,
+      background: "color-mix(in srgb, #f59e0b 16%, transparent)",
+      borderColor: "color-mix(in srgb, #f59e0b 45%, transparent)",
+      color: "#b45309",
+      _dark: { color: "#fbbf24" },
+    };
+  }
+  return {
+    ...base,
+    background: "color-mix(in srgb, #16a34a 16%, transparent)",
+    borderColor: "color-mix(in srgb, #16a34a 45%, transparent)",
+    color: "#15803d",
+    _dark: { color: "#4ade80" },
+  };
+}
+const scoreValueCss: SystemStyleObject = {
+  fontVariantNumeric: "tabular-nums",
+};
+const scoreBandCss: SystemStyleObject = {
+  fontSize: "var(--text-2xs)",
+  fontWeight: 600,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  opacity: 0.85,
+};
+
+function scoreBandLabelKey(band: ScoreBand): I18nKey {
+  if (band === "high") return "explainScoreHigh";
+  if (band === "mid") return "explainScoreMid";
+  return "explainScoreLow";
+}
 const treeCss: SystemStyleObject = {
   flex: 1,
   overflow: "auto",
@@ -302,267 +380,6 @@ interface Props {
   streaming?: boolean;
 }
 
-/**
- * A parsed node of the MySQL EXPLAIN plan tree. `attrs` keeps the scalar
- * fields (and flattened `cost_info.*`) for the detail panel; `children` are
- * the structural sub-plans (nested_loop tables, ordering/grouping operations,
- * sub-queries, ...).
- */
-interface PlanNode {
-  id: string;
-  kind: string;
-  label: string;
-  cost: number | null;
-  attrs: [string, unknown][];
-  children: PlanNode[];
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function isScalarArray(v: unknown[]): boolean {
-  return v.every((x) => x === null || typeof x !== "object");
-}
-
-function parseNum(v: unknown): number | null {
-  if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  if (typeof v === "string") {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-/**
- * Pick the most representative cost for a node. `query_block`/operation nodes
- * carry a `query_cost` (whole-subtree cost); `table` nodes carry a cumulative
- * `prefix_cost`. We fall back to read_cost + eval_cost when neither is set.
- */
-function nodeCost(costInfo: Record<string, unknown> | undefined): number | null {
-  if (!costInfo) return null;
-  const qc = parseNum(costInfo.query_cost);
-  if (qc !== null) return qc;
-  const pc = parseNum(costInfo.prefix_cost);
-  if (pc !== null) return pc;
-  const rc = parseNum(costInfo.read_cost);
-  const ec = parseNum(costInfo.eval_cost);
-  if (rc !== null || ec !== null) return (rc ?? 0) + (ec ?? 0);
-  return null;
-}
-
-const KIND_LABELS: Record<string, string> = {
-  query_block: "Query block",
-  nested_loop: "Nested loop",
-  ordering_operation: "Ordering",
-  grouping_operation: "Grouping",
-  duplicates_removal: "Duplicates removal",
-  buffer_result: "Buffer result",
-  materialized_from_subquery: "Materialized subquery",
-  union_result: "Union result",
-  query_specifications: "Query specifications",
-  attached_subqueries: "Attached subqueries",
-  optimized_away_subqueries: "Optimized-away subqueries",
-  select_list_subqueries: "Select-list subqueries",
-  group_by_subqueries: "GROUP BY subqueries",
-  order_by_subqueries: "ORDER BY subqueries",
-  windowing: "Windowing",
-  table: "Table",
-};
-
-function humanize(key: string): string {
-  return KIND_LABELS[key] ?? key.replace(/_/g, " ");
-}
-
-function labelFor(key: string, obj: Record<string, unknown> | null): string {
-  if (key === "table" && obj && typeof obj.table_name === "string") {
-    return `table: ${obj.table_name}`;
-  }
-  return humanize(key);
-}
-
-// `cost_info` is an object but it is an attribute, not a sub-plan, so it is
-// flattened into `attrs` rather than walked as a child.
-const ATTR_OBJECT_KEYS = new Set(["cost_info"]);
-
-function buildNode(key: string, obj: Record<string, unknown>, path: string): PlanNode {
-  const attrs: [string, unknown][] = [];
-  let costInfo: Record<string, unknown> | undefined;
-  for (const [k, v] of Object.entries(obj)) {
-    if (k === "cost_info" && isPlainObject(v)) {
-      costInfo = v;
-      for (const [ck, cv] of Object.entries(v)) attrs.push([`cost_info.${ck}`, cv]);
-      continue;
-    }
-    if (isPlainObject(v)) continue; // structural child
-    if (Array.isArray(v)) {
-      if (isScalarArray(v)) attrs.push([k, v]); // scalar array → attribute
-      continue; // structural array → child
-    }
-    attrs.push([k, v]); // scalar attribute
-  }
-  return {
-    id: path,
-    kind: key,
-    label: labelFor(key, obj),
-    cost: nodeCost(costInfo),
-    attrs,
-    children: buildChildren(obj, path),
-  };
-}
-
-function buildChildren(obj: Record<string, unknown>, path: string): PlanNode[] {
-  const out: PlanNode[] = [];
-  for (const [k, v] of Object.entries(obj)) {
-    if (ATTR_OBJECT_KEYS.has(k)) continue;
-    if (isPlainObject(v)) {
-      out.push(buildNode(k, v, `${path}/${k}`));
-    } else if (Array.isArray(v) && v.some(isPlainObject)) {
-      // Structural arrays (nested_loop, query_specifications, *_subqueries).
-      // Each element typically wraps a single sub-plan (e.g. nested_loop
-      // elements are `{ table: {...} }`), so we splice the element's own
-      // children in to avoid an empty intermediate wrapper per element.
-      const arrPath = `${path}/${k}`;
-      const children: PlanNode[] = [];
-      v.forEach((el, i) => {
-        if (isPlainObject(el)) children.push(...buildChildren(el, `${arrPath}/${i}`));
-      });
-      out.push({ id: arrPath, kind: k, label: humanize(k), cost: null, attrs: [], children });
-    }
-  }
-  return out;
-}
-
-function parsePlan(json: string): { root: PlanNode | null; error: string | null } {
-  let data: unknown;
-  try {
-    data = JSON.parse(json);
-  } catch (e) {
-    return { root: null, error: e instanceof Error ? e.message : String(e) };
-  }
-  if (!isPlainObject(data)) return { root: null, error: "unexpected plan shape" };
-  if (isPlainObject(data.query_block)) {
-    return { root: buildNode("query_block", data.query_block, "query_block"), error: null };
-  }
-  return { root: buildNode("plan", data, "plan"), error: null };
-}
-
-function maxCost(node: PlanNode): number {
-  let m = node.cost ?? 0;
-  for (const c of node.children) m = Math.max(m, maxCost(c));
-  return m;
-}
-
-function collectIds(node: PlanNode, into: string[]): void {
-  into.push(node.id);
-  for (const c of node.children) collectIds(c, into);
-}
-
-function findNode(node: PlanNode, id: string): PlanNode | null {
-  if (node.id === id) return node;
-  for (const c of node.children) {
-    const hit = findNode(c, id);
-    if (hit) return hit;
-  }
-  return null;
-}
-
-type Heat = "" | "warm" | "hot";
-
-function heatFor(cost: number | null, max: number): Heat {
-  if (cost === null || max <= 0) return "";
-  const r = cost / max;
-  if (r >= 0.66) return "hot";
-  if (r >= 0.33) return "warm";
-  return "";
-}
-
-function attrVal(node: PlanNode, key: string): unknown {
-  const hit = node.attrs.find(([k]) => k === key);
-  return hit ? hit[1] : undefined;
-}
-
-function formatNumber(n: number): string {
-  if (Number.isInteger(n)) return n.toLocaleString();
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
-function formatValue(v: unknown): string {
-  if (v === null || v === undefined) return "—";
-  if (Array.isArray(v)) return v.map((x) => formatValue(x)).join(", ");
-  if (typeof v === "boolean") return v ? "true" : "false";
-  if (typeof v === "number") return formatNumber(v);
-  return String(v);
-}
-
-type HintSeverity = "info" | "caution" | "warning";
-
-interface PlanHint {
-  severity: HintSeverity;
-  key: I18nKey;
-}
-
-// `rows_examined_per_scan` above these thresholds is flagged so juniors notice
-// scans that won't scale. Tuned conservatively to avoid false alarms on the
-// small tables that dominate development databases.
-const ROWS_CAUTION_THRESHOLD = 100_000;
-const ROWS_WARNING_THRESHOLD = 1_000_000;
-
-const SEVERITY_RANK: Record<HintSeverity, number> = { info: 0, caution: 1, warning: 2 };
-
-// Reads a node's raw MySQL EXPLAIN attributes and derives plain-language
-// performance hints. Each hint maps to an i18n key explaining the cause and a
-// concrete fix. Returns an empty array when nothing notable is found.
-function computeHints(node: PlanNode): PlanHint[] {
-  const hints: PlanHint[] = [];
-
-  if (node.kind === "table") {
-    const access = attrVal(node, "access_type");
-    if (access === "ALL") {
-      hints.push({ severity: "warning", key: "explainHintFullScan" });
-    } else if (access === "index") {
-      hints.push({ severity: "caution", key: "explainHintFullIndexScan" });
-    }
-    if (typeof attrVal(node, "using_join_buffer") === "string") {
-      hints.push({ severity: "caution", key: "explainHintJoinBuffer" });
-    }
-    const rows = parseNum(attrVal(node, "rows_examined_per_scan"));
-    if (rows !== null && rows >= ROWS_WARNING_THRESHOLD) {
-      hints.push({ severity: "warning", key: "explainHintManyRows" });
-    } else if (rows !== null && rows >= ROWS_CAUTION_THRESHOLD) {
-      hints.push({ severity: "caution", key: "explainHintManyRows" });
-    }
-    if (attrVal(node, "using_index") === true) {
-      hints.push({ severity: "info", key: "explainHintCoveringIndex" });
-    }
-  }
-
-  // Sort/group bookkeeping flags can appear on operation nodes regardless of
-  // kind, so they are checked on every node.
-  if (attrVal(node, "using_temporary_table") === true) {
-    hints.push({ severity: "caution", key: "explainHintTempTable" });
-  }
-  if (attrVal(node, "using_filesort") === true) {
-    hints.push({ severity: "caution", key: "explainHintFilesort" });
-  }
-
-  return hints;
-}
-
-function worstSeverity(hints: PlanHint[]): HintSeverity | null {
-  let worst: HintSeverity | null = null;
-  for (const h of hints) {
-    if (worst === null || SEVERITY_RANK[h.severity] > SEVERITY_RANK[worst]) worst = h.severity;
-  }
-  return worst;
-}
-
-function severityLabelKey(s: HintSeverity): I18nKey {
-  if (s === "warning") return "explainSeverityWarning";
-  if (s === "caution") return "explainSeverityCaution";
-  return "explainSeverityInfo";
-}
-
 interface NodeRowProps {
   node: PlanNode;
   depth: number;
@@ -676,6 +493,7 @@ export function ExplainViewer({ result, streaming }: Props) {
     [raw],
   );
   const max = useMemo(() => (root ? maxCost(root) : 0), [root]);
+  const score = useMemo(() => (root ? scorePlan(root) : null), [root]);
   const allIds = useMemo(() => {
     if (!root) return [];
     const ids: string[] = [];
@@ -766,6 +584,23 @@ export function ExplainViewer({ result, streaming }: Props) {
     >
       <Box css={treePaneCss}>
         <Box css={toolbarCss}>
+          {score && (
+            <chakra.span
+              css={scoreBadgeCss(score.band)}
+              title={t("explainScoreTooltip", {
+                cost: score.costMissing ? "—" : score.costScore,
+                risk: score.riskScore,
+              })}
+              aria-label={t("explainScoreAria", {
+                score: score.score,
+                band: t(scoreBandLabelKey(score.band)),
+              })}
+            >
+              <chakra.span>{t("explainScoreLabel")}</chakra.span>
+              <chakra.span css={scoreValueCss}>{score.score}</chakra.span>
+              <chakra.span css={scoreBandCss}>{t(scoreBandLabelKey(score.band))}</chakra.span>
+            </chakra.span>
+          )}
           {root.cost !== null && (
             <chakra.span css={totalCostCss}>
               {t("explainTotalCost", { cost: formatNumber(root.cost) })}
