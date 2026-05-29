@@ -1,0 +1,141 @@
+import { describe, it, expect } from "vitest";
+// Vite の `?raw` インポートで App.css の中身を文字列として取り込む (node の fs に
+// 依存せず、vite build / vitest 双方で同じ経路で読める)。型は vite/client が提供。
+import css from "../App.css?raw";
+
+/**
+ * デザイントークンの WCAG AA コントラスト回帰テスト (#326) と、フォントスケール
+ * 追従の余白 (#327) のガード。
+ *
+ * App.css の `:root` (ライト) と `:root[data-theme="dark"]` (ダーク) で定義された
+ * CSS 変数を実ファイルから読み取り、主要なテキスト/UI 色ペアのコントラスト比を
+ * 計算して AA 基準 (通常テキスト 4.5:1、UI 部品 3:1) を満たすことを固定する。
+ * 値を将来いじって基準を割り込むと、ここで即座に検知できる。
+ */
+
+/** `:root { ... }` / `:root[data-theme="dark"] { ... }` ブロック内の `--var: value;`
+ *  を抽出して map にする (16 進カラーのみ対象。calc()/var() などは無視)。 */
+function parseVars(blockSelectorRegex: RegExp): Record<string, string> {
+  const m = css.match(blockSelectorRegex);
+  if (!m) throw new Error(`block not found: ${blockSelectorRegex}`);
+  const body = m[1];
+  const out: Record<string, string> = {};
+  const re = /--([\w-]+):\s*([^;]+);/g;
+  let v: RegExpExecArray | null;
+  while ((v = re.exec(body))) {
+    const name = v[1];
+    const value = v[2].trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(value)) out[name] = value.toLowerCase();
+  }
+  return out;
+}
+
+const light = parseVars(/:root\s*\{([\s\S]*?)\n\}/);
+const dark = parseVars(/:root\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/);
+
+function srgbToLinear(c: number): number {
+  const cs = c / 255;
+  return cs <= 0.03928 ? cs / 12.92 : ((cs + 0.055) / 1.055) ** 2.4;
+}
+
+function luminance(hex: string): number {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
+}
+
+function contrast(fg: string, bg: string): number {
+  const lf = luminance(fg);
+  const lb = luminance(bg);
+  const hi = Math.max(lf, lb);
+  const lo = Math.min(lf, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function check(
+  vars: Record<string, string>,
+  fgVar: string,
+  bgVar: string,
+  min: number,
+): void {
+  const fg = vars[fgVar];
+  const bg = vars[bgVar];
+  expect(fg, `--${fgVar} must be a hex color`).toBeTruthy();
+  expect(bg, `--${bgVar} must be a hex color`).toBeTruthy();
+  const ratio = contrast(fg, bg);
+  expect(
+    ratio,
+    `--${fgVar} (${fg}) on --${bgVar} (${bg}) = ${ratio.toFixed(2)}:1, need >= ${min}:1`,
+  ).toBeGreaterThanOrEqual(min);
+}
+
+const AA_TEXT = 4.5;
+const AA_UI = 3;
+
+describe("WCAG AA contrast for core tokens (#326)", () => {
+  describe.each([
+    ["light", light],
+    ["dark", dark],
+  ] as const)("%s theme", (_name, vars) => {
+    it("primary text meets AA (4.5:1)", () => {
+      check(vars, "text", "bg", AA_TEXT);
+      check(vars, "text", "bg-elevated", AA_TEXT);
+      check(vars, "text-secondary", "bg", AA_TEXT);
+      check(vars, "text-muted", "bg", AA_TEXT);
+      check(vars, "text-muted", "bg-header", AA_TEXT);
+    });
+
+    it("NULL cell text meets AA on grid row backgrounds", () => {
+      check(vars, "text-null", "bg-elevated", AA_TEXT);
+      check(vars, "text-null", "bg-stripe", AA_TEXT);
+    });
+
+    it("accent text meets AA", () => {
+      check(vars, "accent", "bg", AA_TEXT);
+    });
+
+    it("status colors used as badge text meet AA", () => {
+      // connected / connecting / success / error は SchemaCompareView / HelpView で
+      // バッジ文字色に使われるため通常テキスト基準。
+      check(vars, "status-connected", "bg", AA_TEXT);
+      check(vars, "status-connecting", "bg", AA_TEXT);
+      check(vars, "status-success", "bg", AA_TEXT);
+      check(vars, "status-error", "bg", AA_TEXT);
+    });
+
+    it("status dots meet the UI-component minimum (3:1)", () => {
+      check(vars, "status-warning", "bg", AA_UI);
+      check(vars, "status-idle", "bg", AA_UI);
+      check(vars, "status-info", "bg", AA_UI);
+    });
+
+    it("typed cell colors meet AA on the cell surface", () => {
+      for (const c of [
+        "cell-number",
+        "cell-bool-true",
+        "cell-bool-false",
+        "cell-date",
+        "cell-json",
+        "cell-binary",
+      ]) {
+        check(vars, c, "bg-elevated", AA_TEXT);
+      }
+    });
+
+    it("text on the row-selection / row-hover highlight meets AA", () => {
+      check(vars, "text", "bg-active", AA_TEXT);
+      check(vars, "text", "bg-row-hover", AA_TEXT);
+    });
+  });
+});
+
+describe("spacing scale tracks the font scale (#327)", () => {
+  it("every --space-N is defined as calc(... * var(--font-scale))", () => {
+    for (let n = 1; n <= 6; n++) {
+      const re = new RegExp(`--space-${n}:\\s*calc\\([^;]*var\\(--font-scale\\)[^;]*\\);`);
+      expect(css, `--space-${n} must scale with --font-scale`).toMatch(re);
+    }
+  });
+});

@@ -56,7 +56,9 @@ export const GRID_CSS: SystemStyleObject = {
   "& th, & td": {
     borderRight: "1px solid var(--border)",
     borderBottom: "1px solid var(--border)",
-    padding: "5px 10px",
+    // セル余白はフォントスケール (--font-scale) に追従させ、フォント拡大時に行が
+    // 詰まってテキストが窮屈にならないようにする (#327)。
+    padding: "calc(5px * var(--font-scale)) calc(10px * var(--font-scale))",
     textAlign: "left",
     whiteSpace: "nowrap",
     overflow: "hidden",
@@ -136,7 +138,8 @@ export const GRID_CSS: SystemStyleObject = {
     alignItems: "center",
     gap: "6px",
     width: "100%",
-    padding: "5px 10px",
+    // ソート可能ヘッダのボタン余白もセルと同値でスケール追従させる (#327)。
+    padding: "calc(5px * var(--font-scale)) calc(10px * var(--font-scale))",
     background: "transparent",
     border: "none",
     borderRadius: 0,
