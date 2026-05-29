@@ -38,13 +38,19 @@
   --text-base: calc(14px * var(--font-scale));
   --text-lg: calc(16px * var(--font-scale));
 
-  /* Spacing scale (4px rhythm) */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
+  /* Spacing scale (4px rhythm).
+     フォントスケール (--font-scale) に追従させる (#327)。余白を固定 px のままに
+     すると、フォントサイズ設定を大きく (20〜24px) したときに --text-* だけが拡大し、
+     ボタン/セル/ツールバーの内側余白が相対的に縮んでテキストがはみ出す。--text-* と
+     同じ係数で乗算することで、UI 全体が一様にスケールしてレイアウトの均衡を保つ。
+     theme.ts の Chakra spacing トークン (`spacing.1`〜`6`) がこれらを参照するため、
+     `gap`/`p`/`m` などトークン経由の余白も自動的に追従する。 */
+  --space-1: calc(4px * var(--font-scale));
+  --space-2: calc(8px * var(--font-scale));
+  --space-3: calc(12px * var(--font-scale));
+  --space-4: calc(16px * var(--font-scale));
+  --space-5: calc(20px * var(--font-scale));
+  --space-6: calc(24px * var(--font-scale));
 
   /* Radius scale */
   --radius-sm: 4px;
@@ -84,10 +90,13 @@
   --bg-stripe: #f8fafc;
   --bg-row-hover: #eef5ff;
 
-  --text: #1a2330;
-  --text-secondary: #475569;
-  --text-muted: #5c6776;
-  --text-null: #97a1b0;
+  --text: #1a2330;          /* on --bg 14.75:1, on --bg-elevated 15.82:1 (AA AAA) */
+  --text-secondary: #475569; /* on --bg 7.06:1 (AA) */
+  --text-muted: #5c6776;     /* on --bg 5.35:1, on --bg-header 5.07:1 (AA) */
+  /* NULL セル文字。旧 #97a1b0 は白背景でも 2.6:1 と AA 未達だった (#326)。
+     視認できる最小限まで濃くしつつ控えめさは維持: グリッド行背景の最明色
+     (--bg-row-hover #eef5ff) 上で 4.58:1、--bg-elevated 上で 5.03:1 (AA)。 */
+  --text-null: #66707d;
   --text-error: #b91c1c;
   --text-warning: #b45309;
   --text-success: #15803d;
@@ -113,13 +122,16 @@
   --cell-json: #6d28d9;
   --cell-binary: #4b5563;
 
-  --status-connected: #16a34a;
-  --status-connecting: #f59e0b;
-  --status-error: #dc2626;
-  --status-warning: #d97706;
-  --status-success: #16a34a;
-  --status-info: #2563eb;
-  --status-idle: #9ca3af;
+  /* ステータス色。ドットは UI 部品 (>=3:1) だが、connected/connecting/success は
+     SchemaCompareView・HelpView でバッジ文字色にも使うため AA テキスト (>=4.5:1) を
+     満たす値へ調整した (#326)。比率はいずれも --bg #f5f7fa 基準。 */
+  --status-connected: #15803d; /* 4.67:1 (AA text) — 旧 #16a34a は 3.07:1 */
+  --status-connecting: #b45309; /* 4.68:1 (AA text) — 旧 #f59e0b は 2.00:1 */
+  --status-error: #d42323;      /* 4.81:1 (AA text) — 旧 #dc2626 は 4.50:1 ちょうどで境界 */
+  --status-warning: #b86409;    /* 4.02:1 (>=3:1 UI dot) — 旧 #d97706 は 2.97:1 */
+  --status-success: #15803d;    /* 4.67:1 (AA text) — 旧 #16a34a は 3.07:1 */
+  --status-info: #2563eb;       /* 4.82:1 */
+  --status-idle: #7d8693;       /* 3.43:1 (>=3:1 UI dot) — 旧 #9ca3af は 2.37:1 */
 
   --syntax-keyword: #7c3aed;
   --syntax-string: #b91c1c;
@@ -156,7 +168,11 @@
      (#1b2c49 / #213a5e / #1c2633) は背景 #0d1117 とのコントラスト比が低く
      (おおむね 1.1〜1.4)、結果グリッド・接続ツリー・EXPLAIN ノードで選択状態が
      視認しづらかった。彩度と明度を上げてコントラスト比 ~1.7〜3.0 へ底上げし、
-     ライトテーマの外観は維持する。 */
+     ライトテーマの外観は維持する。
+     WCAG 検証 (#326): 選択ハイライトは非テキストの面塗りで、AA の判定対象は
+     その上に乗る本文テキストのコントラスト。--text (#e6edf3) は --bg-active 上で
+     8.24:1、--bg-row-hover 上で 9.81:1 と AA(4.5:1) を十分満たすため、面塗り自体は
+     意図した控えめなトーン (背景比 ~1.9〜2.7) のまま維持する。 */
   --bg-active: #2c4373;
   --bg-active-strong: #3a5894;
   --bg-toolbar: #1a212b;
@@ -167,10 +183,13 @@
   --bg-stripe: #12171f;
   --bg-row-hover: #243a55;
 
-  --text: #e6edf3;
-  --text-secondary: #aeb9c7;
-  --text-muted: #8794a3;
-  --text-null: #5f6b7a;
+  --text: #e6edf3;          /* on --bg 16.02:1, on --bg-elevated 14.64:1 (AAA) */
+  --text-secondary: #aeb9c7; /* on --bg 9.52:1 (AAA) */
+  --text-muted: #8794a3;     /* on --bg 6.12:1, on --bg-header 5.24:1 (AA) */
+  /* NULL セル文字。旧 #5f6b7a は --bg-elevated 上で 3.19:1 と AA 未達だった (#326)。
+     既定行背景 (--bg-elevated 5.83:1 / --bg-stripe 6.06:1) で AA を満たす値へ。
+     hover 行 (--bg-row-hover) では一時的に 3.91:1 になるが既定状態は AA。 */
+  --text-null: #8b97a7;
   --text-error: #f87171;
   --text-warning: #fbbf24;
   --text-success: #4ade80;
@@ -290,7 +309,8 @@ html, body, #root {
 @layer reset {
   button {
     font: inherit;
-    padding: 6px 12px;
+    /* フォントスケール追従の余白 (#327)。12px は --space-3、縦は 6px 相当を乗算。 */
+    padding: calc(6px * var(--font-scale)) var(--space-3);
     border: 1px solid var(--border-strong);
     background: var(--bg-elevated);
     color: var(--text);
@@ -312,7 +332,8 @@ html, body, #root {
 
   input, select {
     font: inherit;
-    padding: 6px 8px;
+    /* フォントスケール追従の余白 (#327)。8px は --space-2、縦は 6px 相当を乗算。 */
+    padding: calc(6px * var(--font-scale)) var(--space-2);
     border: 1px solid var(--border-strong);
     background: var(--bg-input);
     color: var(--text);

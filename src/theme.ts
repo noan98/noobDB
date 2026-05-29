@@ -154,19 +154,28 @@ const config = defineConfig({
       },
       // カラー付きボタンはライト/ダークで別々の固定色を使い (App.css でも CSS 変数を
       // 経由しない)、単純な var() ブリッジでは表現できないため、ここで `_dark` 条件付き
-      // の値として定義する。値は App.css のボタン色定義と一致させている。
+      // の値として定義する。
+      //
+      // WCAG AA 検証 (#326): ボタン文字 (前景) と背景のコントラストが通常テキスト
+      // 基準 (4.5:1) を満たすように調整した。下記コメントの比率は前景/背景の実測値。
+      //   - success(light): 旧 #16a34a+白 は 3.30:1 で未達 → 背景を #15803d に暗くして 5.02:1。
+      //   - warning(light): #d97706+白 は 3.19:1 で、白では AA に届く暗さにすると琥珀色が
+      //     失われるため、前景を濃色 #2a1707 に変更 (琥珀の地色は維持) して 5.39:1。
+      //   - danger(dark):   旧 #ef4444+白 は 3.76:1 で未達 → 背景を #dc2626 に暗くして 4.83:1。
+      // それ以外 (success dark 6.54 / warning dark 7.99 / danger light 4.83 / info 両 >=5.9) は
+      // 既に AA を満たしていたため据え置き。hover 色も同基準を満たす値に揃えた。
       colors: {
         app: {
-          successBg: { value: { base: "#16a34a", _dark: "#22c55e" } },
-          successBgHover: { value: { base: "#15803d", _dark: "#4ade80" } },
+          successBg: { value: { base: "#15803d", _dark: "#22c55e" } }, // 白文字 5.02:1 / 濃文字側 6.54:1
+          successBgHover: { value: { base: "#166534", _dark: "#4ade80" } },
           successFg: { value: { base: "#ffffff", _dark: "#052e16" } },
           warningBg: { value: { base: "#d97706", _dark: "#f59e0b" } },
-          warningBgHover: { value: { base: "#b45309", _dark: "#fbbf24" } },
-          warningFg: { value: { base: "#ffffff", _dark: "#2a1707" } },
-          dangerBg: { value: { base: "#dc2626", _dark: "#ef4444" } },
-          dangerBgHover: { value: { base: "#b91c1c", _dark: "#f87171" } },
+          warningBgHover: { value: { base: "#cf7008", _dark: "#fbbf24" } }, // 濃文字 4.88:1
+          warningFg: { value: { base: "#2a1707", _dark: "#2a1707" } }, // 琥珀地に濃文字 5.39:1
+          dangerBg: { value: { base: "#dc2626", _dark: "#dc2626" } }, // 白文字 4.83:1
+          dangerBgHover: { value: { base: "#b91c1c", _dark: "#b91c1c" } }, // 白文字 6.47:1
           dangerFg: { value: { base: "#ffffff", _dark: "#ffffff" } },
-          infoBg: { value: { base: "#0369a1", _dark: "#38bdf8" } },
+          infoBg: { value: { base: "#0369a1", _dark: "#38bdf8" } }, // 白 5.93 / 濃 6.48
           infoBgHover: { value: { base: "#075985", _dark: "#7dd3fc" } },
           infoFg: { value: { base: "#ffffff", _dark: "#082f49" } },
         },
@@ -211,9 +220,11 @@ export const buttonRecipe = defineRecipe({
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: "6px",
-    px: "12px",
-    py: "6px",
+    // 余白はフォントスケール (--font-scale) に追従させ、大きいフォント設定でも
+    // ラベルがボタンからはみ出さず比率を保つ (#327)。
+    gap: "calc(6px * var(--font-scale))",
+    px: "calc(12px * var(--font-scale))",
+    py: "calc(6px * var(--font-scale))",
     border: "1px solid",
     borderColor: "app.borderStrong",
     bg: "app.surface",
@@ -284,8 +295,13 @@ export const buttonRecipe = defineRecipe({
     size: {
       // 既定サイズは base の padding をそのまま使う。
       md: {},
-      // 密なツールバー / モーダルフッタ向け (App.css の `button.btn-sm`)。
-      sm: { px: "8px", py: "3px", fontSize: "sm" },
+      // 密なツールバー / モーダルフッタ向け (App.css の `button.btn-sm`)。余白は #327 で
+      // フォントスケール追従に変更。
+      sm: {
+        px: "calc(8px * var(--font-scale))",
+        py: "calc(3px * var(--font-scale))",
+        fontSize: "sm",
+      },
     },
   },
   defaultVariants: {
@@ -299,8 +315,9 @@ export const inputRecipe = defineRecipe({
   className: "app-input",
   base: {
     font: "inherit",
-    px: "8px",
-    py: "6px",
+    // 余白はフォントスケール追従 (#327)。
+    px: "calc(8px * var(--font-scale))",
+    py: "calc(6px * var(--font-scale))",
     border: "1px solid",
     borderColor: "app.borderStrong",
     bg: "app.bgInput",
@@ -317,8 +334,9 @@ export const selectRecipe = defineRecipe({
   className: "app-select",
   base: {
     font: "inherit",
-    px: "8px",
-    py: "6px",
+    // 余白はフォントスケール追従 (#327)。
+    px: "calc(8px * var(--font-scale))",
+    py: "calc(6px * var(--font-scale))",
     border: "1px solid",
     borderColor: "app.borderStrong",
     bg: "app.bgInput",
@@ -335,7 +353,8 @@ export const textareaRecipe = defineRecipe({
   className: "app-textarea",
   base: {
     font: "inherit",
-    p: "8px",
+    // 余白はフォントスケール追従 (#327)。
+    p: "calc(8px * var(--font-scale))",
     border: "1px solid",
     borderColor: "app.borderStrong",
     bg: "app.bgInput",
