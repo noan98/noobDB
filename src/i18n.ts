@@ -369,6 +369,14 @@ const en = {
   explainSelectHint: "Select a node to see its details.",
   explainNoAttrs: "This node has no extra attributes.",
 
+  explainScoreLabel: "Heaviness",
+  explainScoreLow: "Light",
+  explainScoreMid: "Medium",
+  explainScoreHigh: "Heavy",
+  explainScoreTooltip:
+    "Estimated from EXPLAIN — cost {cost} / risk {risk}. A relative guide to how heavy the query is, not a measured execution time.",
+  explainScoreAria: "Query heaviness score {score} of 100, {band}.",
+
   explainHintsTitle: "Performance hints",
   explainSeverityInfo: "Info",
   explainSeverityCaution: "Caution",
@@ -642,7 +650,7 @@ const en = {
 
   helpExplainTitle: "Explain",
   helpExplainDesc:
-    "Runs EXPLAIN FORMAT=JSON and shows the query plan. It inspects the optimizer only and never changes data.",
+    "Runs EXPLAIN FORMAT=JSON and shows the query plan. A heaviness score (0–100, Light/Medium/Heavy) combines the optimizer's estimated cost with detected risks (full scans, filesort, …) for an at-a-glance read of how heavy the query is — a relative guide, not a measured time. It inspects the optimizer only and never changes data.",
 
   helpFormatTitle: "Format",
   helpFormatDesc:
@@ -1171,6 +1179,14 @@ const ja: Dict = {
   explainSelectHint: "ノードを選択すると詳細が表示されます。",
   explainNoAttrs: "このノードに追加の属性はありません。",
 
+  explainScoreLabel: "重さ",
+  explainScoreLow: "軽い",
+  explainScoreMid: "中程度",
+  explainScoreHigh: "重い",
+  explainScoreTooltip:
+    "EXPLAIN の見積りに基づく目安 — コスト {cost} / リスク {risk}。クエリの重さの相対的な目安であり、実測の実行時間ではありません。",
+  explainScoreAria: "クエリ重さスコア 100 点中 {score} 点、{band}。",
+
   explainHintsTitle: "パフォーマンスのヒント",
   explainSeverityInfo: "情報",
   explainSeverityCaution: "注意",
@@ -1444,7 +1460,7 @@ const ja: Dict = {
 
   helpExplainTitle: "Explain",
   helpExplainDesc:
-    "EXPLAIN FORMAT=JSON を実行し、実行計画を表示します。オプティマイザを確認するだけで、データは変更しません。",
+    "EXPLAIN FORMAT=JSON を実行し、実行計画を表示します。重さスコア (0〜100、軽い/中程度/重い) は、オプティマイザの見積りコストと検出したリスク (フルスキャン・filesort など) を合成し、クエリの重さを一目で把握できるようにしたものです (実測時間ではなく相対的な目安)。オプティマイザを確認するだけで、データは変更しません。",
 
   helpFormatTitle: "整形 (Format)",
   helpFormatDesc:
