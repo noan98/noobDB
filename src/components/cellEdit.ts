@@ -3,14 +3,50 @@ import type { I18nKey } from "../i18n";
 import { quoteIdentFor } from "./sqlDialect";
 
 /**
- * Inline cell edits awaiting Preview/Apply.
+ * A single row's pending inline edits awaiting Preview/Apply.
  *
- * The outer key is the row index in `QueryResult.rows` (canonical
- * "original" position — unaffected by sort/filter); the inner key is the
- * column index in `QueryResult.columns`. Values are raw strings from the
- * input box — they are parsed into SQL literals by `buildUpdateStatements`.
+ * `pk` holds the row's ORIGINAL primary-key values (in primary-key order,
+ * i.e. the order of `resolvePkIndices`) and identifies the row in the
+ * generated `UPDATE ... WHERE` clause. `cells` maps a column index in
+ * `QueryResult.columns` to the raw string from the edit box (parsed into a
+ * SQL literal by `buildUpdateStatements`).
  */
-export type PendingEdits = Record<number, Record<number, string>>;
+export interface RowEdit {
+  pk: CellValue[];
+  cells: Record<number, string>;
+}
+
+/**
+ * Inline cell edits awaiting Preview/Apply, keyed by a stable signature of
+ * the edited row's PRIMARY KEY values (see `rowPkKey`) — NOT the row's
+ * position in `QueryResult.rows`.
+ *
+ * Keying by the primary key (rather than the row index) keeps each edit
+ * pinned to its logical row even when the result set later grows (scroll
+ * "load more" appends rows) or is re-sorted: Apply always targets the row the
+ * user actually edited, never whichever row now happens to sit at that index.
+ * Inline editing is only offered for tables with a resolvable primary key, so
+ * every edited row has a usable key.
+ */
+export type PendingEdits = Record<string, RowEdit>;
+
+/**
+ * Stable string signature of a row's primary-key values, used as the map key
+ * for `PendingEdits`. Each value carries a short type tag so distinct types
+ * that stringify alike (the number 1 vs the string "1") never collide, and
+ * the array shape keeps composite keys from colliding with a concatenation of
+ * their parts.
+ */
+export function rowPkKey(pkValues: CellValue[]): string {
+  return JSON.stringify(
+    pkValues.map((v) => {
+      if (v === null || v === undefined) return ["n"];
+      if (typeof v === "boolean") return ["b", v];
+      if (typeof v === "number") return ["d", v];
+      return ["s", String(v)];
+    }),
+  );
+}
 
 const NUMERIC_TYPES = new Set([
   "TINYINT",
@@ -232,7 +268,6 @@ export interface BuildUpdateInput {
   database: string;
   table: string;
   columns: Column[];
-  rows: CellValue[][];
   pkIndices: number[];
   edits: PendingEdits;
 }
@@ -242,38 +277,37 @@ export interface BuildUpdateInput {
  * row. Returns an empty array when there are no edits or when the PK is
  * unresolved.
  *
- * Each row's WHERE clause uses the ORIGINAL pk values (from `rows`), not
- * any pending edits, so even an edit that changes a non-PK column still
- * targets the right row.
+ * Each row's WHERE clause uses the ORIGINAL pk values captured in the
+ * `RowEdit` when the edit was made, so the statement targets the exact row
+ * the user edited regardless of how the result set has since been paginated
+ * or re-sorted — and even when the edit itself changes a non-PK column.
  */
 export function buildUpdateStatements(input: BuildUpdateInput): string[] {
   if (input.pkIndices.length === 0) return [];
   const ref = qualifiedTableRef(input.driver, input.database, input.table);
   const stmts: string[] = [];
-  // Iterate the edits map in row-index order so the order of generated
-  // statements is stable and matches the visual top-to-bottom flow.
-  const rowIndices = Object.keys(input.edits)
-    .map((k) => Number(k))
-    .filter((k) => Number.isFinite(k))
-    .sort((a, b) => a - b);
-  for (const rowIdx of rowIndices) {
-    const rowEdits = input.edits[rowIdx];
-    if (!rowEdits) continue;
-    const row = input.rows[rowIdx];
-    if (!row) continue;
+  // Sort by the PK signature so the generated statements have a stable,
+  // deterministic order (they run in one transaction, so ordering across
+  // distinct rows is otherwise immaterial).
+  const rowKeys = Object.keys(input.edits).sort();
+  for (const rowKey of rowKeys) {
+    const rowEdit = input.edits[rowKey];
+    if (!rowEdit) continue;
+    // Without a complete PK we cannot build a safe WHERE clause for this row.
+    if (rowEdit.pk.length !== input.pkIndices.length) continue;
     const setParts: string[] = [];
-    for (const colKey of Object.keys(rowEdits)) {
+    for (const colKey of Object.keys(rowEdit.cells)) {
       const colIdx = Number(colKey);
       const col = input.columns[colIdx];
       if (!col) continue;
       setParts.push(
-        `${quoteIdentFor(input.driver, col.name)} = ${literalFromInput(input.driver, rowEdits[colIdx], col)}`,
+        `${quoteIdentFor(input.driver, col.name)} = ${literalFromInput(input.driver, rowEdit.cells[colIdx], col)}`,
       );
     }
     if (setParts.length === 0) continue;
-    const whereParts = input.pkIndices.map((i) => {
+    const whereParts = input.pkIndices.map((i, k) => {
       const col = input.columns[i];
-      return `${quoteIdentFor(input.driver, col.name)} = ${literalFromCellValue(input.driver, row[i])}`;
+      return `${quoteIdentFor(input.driver, col.name)} = ${literalFromCellValue(input.driver, rowEdit.pk[k])}`;
     });
     stmts.push(
       `UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`,
@@ -286,7 +320,7 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
 export function countEditedCells(edits: PendingEdits): number {
   let n = 0;
   for (const row of Object.values(edits)) {
-    n += Object.keys(row).length;
+    n += Object.keys(row.cells).length;
   }
   return n;
 }

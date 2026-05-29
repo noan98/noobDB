@@ -29,6 +29,7 @@ import {
   countEditedRows,
   isEditableColumnType,
   resolvePkIndices,
+  rowPkKey,
   validateCellInput,
   type PendingEdits,
 } from "./cellEdit";
@@ -345,10 +346,18 @@ interface Props {
   editable?: boolean;
   /** Column metadata from `describeTable` — used to detect PK + types. */
   tableColumns?: TableColumnInfo[] | null;
-  /** Edits awaiting Preview/Apply. Keyed by [rowIdx][colIdx]. */
+  /** Edits awaiting Preview/Apply. Keyed by the row's primary-key signature. */
   pendingEdits?: PendingEdits;
-  /** Called when a cell's pending value is set (or cleared via `null`). */
-  onSetCellEdit?: (rowIdx: number, colIdx: number, value: string | null) => void;
+  /**
+   * Called when a cell's pending value is set (or cleared via `null`).
+   * `rowKey` is the edited row's `rowPkKey` and `pk` its primary-key values.
+   */
+  onSetCellEdit?: (
+    rowKey: string,
+    pk: CellValue[],
+    colIdx: number,
+    value: string | null,
+  ) => void;
   /** Discard all pending edits for the active tab. */
   onClearEdits?: () => void;
   /** Build & preview the UPDATE for the pending edits (single-row only). */
@@ -583,6 +592,7 @@ export function DataGrid({
   globalFilter,
   editable = false,
   editableColumns,
+  pkIndices,
   pendingEdits,
   onSetCellEdit,
   validateEdit,
@@ -603,8 +613,15 @@ export function DataGrid({
    */
   editable?: boolean;
   editableColumns?: boolean[];
+  /** Primary-key column indices, used to derive each row's edit key. */
+  pkIndices?: number[];
   pendingEdits?: PendingEdits;
-  onSetCellEdit?: (rowIdx: number, colIdx: number, value: string | null) => void;
+  onSetCellEdit?: (
+    rowKey: string,
+    pk: CellValue[],
+    colIdx: number,
+    value: string | null,
+  ) => void;
   /**
    * Validates a pending edit by result-column index, returning an i18n key
    * describing the problem or `null` when the value is acceptable. Drives the
@@ -781,6 +798,15 @@ export function DataGrid({
         .join("\t")}`,
     );
 
+  // Primary-key values + stable key for a row by its ORIGINAL index, used to
+  // anchor an edit to its logical row (so it survives pagination / re-sort).
+  const pkForRow = (rowIdx: number): CellValue[] | null => {
+    if (!pkIndices || pkIndices.length === 0) return null;
+    const row = rows[rowIdx];
+    if (!row) return null;
+    return pkIndices.map((i) => row[i] ?? null);
+  };
+
   const commitEdit = (
     rowIdx: number,
     colIdx: number,
@@ -788,12 +814,15 @@ export function DataGrid({
     originalDisplay: string,
   ) => {
     if (!onSetCellEdit) return;
+    const pk = pkForRow(rowIdx);
+    if (!pk) return;
+    const key = rowPkKey(pk);
     // Re-typing the original value clears the pending edit so the user
     // can "undo" without hitting Cancel.
     if (value === originalDisplay) {
-      onSetCellEdit(rowIdx, colIdx, null);
+      onSetCellEdit(key, pk, colIdx, null);
     } else {
-      onSetCellEdit(rowIdx, colIdx, value);
+      onSetCellEdit(key, pk, colIdx, value);
     }
   };
 
@@ -929,8 +958,9 @@ export function DataGrid({
                   const isNull = v === null || v === undefined;
                   const isChanged = changedCells?.[row.index]?.[idx] ?? false;
                   const colEditable = editable && (editableColumns?.[idx] ?? false);
-                  const pendingForRow = pendingEdits?.[row.index];
-                  const pendingValue = pendingForRow?.[idx];
+                  const pk = pkForRow(row.index);
+                  const pendingForRow = pk ? pendingEdits?.[rowPkKey(pk)] : undefined;
+                  const pendingValue = pendingForRow?.cells?.[idx];
                   const hasPending = pendingValue !== undefined;
                   const isEditingHere =
                     editing !== null &&
@@ -1219,10 +1249,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const hasInvalidEdit = useMemo(() => {
     if (!pendingEdits) return false;
     for (const rowKey of Object.keys(pendingEdits)) {
-      const rowEdits = pendingEdits[Number(rowKey)];
-      if (!rowEdits) continue;
-      for (const colKey of Object.keys(rowEdits)) {
-        if (validateEdit(Number(colKey), rowEdits[Number(colKey)])) return true;
+      const rowEdit = pendingEdits[rowKey];
+      if (!rowEdit) continue;
+      for (const colKey of Object.keys(rowEdit.cells)) {
+        if (validateEdit(Number(colKey), rowEdit.cells[Number(colKey)])) return true;
       }
     }
     return false;
@@ -1522,6 +1552,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           globalFilter={search}
           editable={editableActive}
           editableColumns={editableCols}
+          pkIndices={pkIndices}
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
           validateEdit={validateEdit}

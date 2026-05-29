@@ -1757,22 +1757,10 @@ export default function App() {
     const offset = tab.result.rows.length;
     const chunkSize = Math.max(1, settings.streamPrefetchSize);
     const sql = `${tab.paginatable} LIMIT ${chunkSize} OFFSET ${offset}`;
-    // Drop any in-flight inline cell edits before paginating. Appended rows
-    // keep the existing rows at their original indices, but pagination over a
-    // query without a stable ORDER BY can surface rows already shown above —
-    // so rather than reason about whether each buffered edit still lines up,
-    // we clear them on the safe side and tell the user. An incorrect UPDATE to
-    // a production row is far worse than re-typing an edit. (Issue #330)
-    const hadPendingEdits = countEditedCells(tab.pendingEdits) > 0;
-    patchTab(tabId, (tt) => ({
-      ...tt,
-      loadingMore: true,
-      pendingEdits: hadPendingEdits ? {} : tt.pendingEdits,
-      preview: hadPendingEdits ? null : tt.preview,
-    }));
-    if (hadPendingEdits) {
-      toast.info(translate("toastEditsClearedByLoadMore"));
-    }
+    // In-flight inline cell edits survive pagination: each edit is keyed by its
+    // row's primary key (not its index), so appending rows here can't make an
+    // edit point at the wrong row when it is later applied. (Issue #330)
+    patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     setStatus({
       kind: "key",
       key: "statusLoadingMore",
@@ -1808,7 +1796,7 @@ export default function App() {
         error: true,
       });
     }
-  }, [sessionId, settings.streamPrefetchSize, patchTab, toast]);
+  }, [sessionId, settings.streamPrefetchSize, patchTab]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -1951,19 +1939,22 @@ export default function App() {
   }, [refreshSnippets]);
 
   const setCellEditForTab = useCallback(
-    (tabId: string, rowIdx: number, colIdx: number, value: string | null) => {
+    (tabId: string, rowKey: string, pk: CellValue[], colIdx: number, value: string | null) => {
       patchTab(tabId, (tt) => {
         const next = { ...tt.pendingEdits };
-        const row = { ...(next[rowIdx] ?? {}) };
+        const existing = next[rowKey];
+        const cells = { ...(existing?.cells ?? {}) };
         if (value === null) {
-          delete row[colIdx];
+          delete cells[colIdx];
         } else {
-          row[colIdx] = value;
+          cells[colIdx] = value;
         }
-        if (Object.keys(row).length === 0) {
-          delete next[rowIdx];
+        if (Object.keys(cells).length === 0) {
+          delete next[rowKey];
         } else {
-          next[rowIdx] = row;
+          // Keep the PK captured when the row was first edited so the edit
+          // stays bound to that logical row across pagination / re-sorts.
+          next[rowKey] = { pk: existing?.pk ?? pk, cells };
         }
         return { ...tt, pendingEdits: next };
       });
@@ -1995,7 +1986,6 @@ export default function App() {
       database,
       table,
       columns: result.columns,
-      rows: result.rows,
       pkIndices,
       edits: pendingEdits,
     });
@@ -2016,7 +2006,6 @@ export default function App() {
       database,
       table,
       columns: result.columns,
-      rows: result.rows,
       pkIndices,
       edits: pendingEdits,
     });
@@ -2460,7 +2449,7 @@ export default function App() {
                       editable={tab.kind === "table" && !readOnly}
                       tableColumns={tab.tableColumns}
                       pendingEdits={tab.pendingEdits}
-                      onSetCellEdit={(r, c, v) => setCellEditForTab(tab.id, r, c, v)}
+                      onSetCellEdit={(key, pk, c, v) => setCellEditForTab(tab.id, key, pk, c, v)}
                       onClearEdits={() => clearEditsForTab(tab.id)}
                       onPreviewEdits={() => previewEditsForTab(tab)}
                       onApplyEdits={() => applyEditsForTab(tab)}
