@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Box } from "@chakra-ui/react";
+import { animate, useReducedMotion } from "motion/react";
+import { durations, easings } from "../motion";
 
 type Direction = "row" | "column";
 
@@ -113,9 +115,19 @@ export function Splitter({
     }
   }, []);
 
+  const prefersReducedMotion = useReducedMotion();
+
   const onDoubleClick = useCallback(() => {
-    setFraction(defaultFraction);
-  }, [defaultFraction]);
+    if (prefersReducedMotion) {
+      setFraction(defaultFraction);
+      return;
+    }
+    animate(fraction, defaultFraction, {
+      duration: durations.slow,
+      ease: easings.out,
+      onUpdate: (v) => setFraction(v),
+    });
+  }, [defaultFraction, fraction, prefersReducedMotion]);
 
   const isRow = direction === "row";
 
