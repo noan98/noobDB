@@ -344,6 +344,8 @@ interface Tab {
   loadingMore: boolean;
   /** True when another scroll-triggered page may yield more rows. */
   canLoadMore: boolean;
+  /** Non-null when the last query run failed (cleared on the next run). */
+  queryError: string | null;
   /**
    * Column metadata for the underlying table (only table tabs). Used to
    * detect the primary key for inline cell edits and to decide which
@@ -457,6 +459,7 @@ function makeQueryTab(): Tab {
     autoLimitSql: null,
     loadingMore: false,
     canLoadMore: false,
+    queryError: null,
     tableColumns: null,
     pendingEdits: {},
     builderSnapshot: null,
@@ -489,6 +492,7 @@ function makeExplainTab(sql: string): Tab {
     autoLimitSql: null,
     loadingMore: false,
     canLoadMore: false,
+    queryError: null,
     tableColumns: null,
     pendingEdits: {},
     builderSnapshot: null,
@@ -1422,6 +1426,7 @@ export default function App() {
       autoLimitSql: autoLimit !== null ? sql : null,
       loadingMore: false,
       canLoadMore: false,
+      queryError: null,
       // Drop any in-flight cell edits: their row indices reference the
       // previous result set and would no longer line up with the new rows.
       pendingEdits: {},
@@ -1516,7 +1521,11 @@ export default function App() {
         finalize();
       },
       onError: ({ error, timedOut, connectionLost }) => {
-        patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          streaming: false,
+          queryError: connectionLost ? null : (error ?? "Unknown error"),
+        }));
         setHistoryReloadKey((k) => k + 1);
         finalize();
         // A dropped connection leaves the session unusable: tear it down and
@@ -1552,7 +1561,7 @@ export default function App() {
         autoRefresh,
       });
     } catch (e) {
-      patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+      patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
       setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
       finalize();
     }
@@ -1669,6 +1678,7 @@ export default function App() {
               autoLimitSql: null,
               loadingMore: false,
               canLoadMore: false,
+              queryError: null,
               tableColumns: null,
               pendingEdits: {},
               builderSnapshot: restoredSnapshot,
@@ -1712,6 +1722,7 @@ export default function App() {
           autoLimitSql: null,
           loadingMore: false,
           canLoadMore: false,
+          queryError: null,
           tableColumns: null,
           pendingEdits: {},
           builderSnapshot: restoredSnapshot,
@@ -2281,6 +2292,7 @@ export default function App() {
       autoLimitSql: null,
       loadingMore: false,
       canLoadMore: false,
+      queryError: null,
       tableColumns: null,
       pendingEdits: {},
       builderSnapshot: null,
@@ -2695,6 +2707,18 @@ export default function App() {
                       autoRefreshAllowed={!!tab.result && isReadOnlySql(tab.lastExecutedSql)}
                       autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
                       onSetAutoRefresh={(secs) => setAutoRefreshForTab(tab.id, secs)}
+                      queryError={tab.queryError ?? null}
+                      onRetry={
+                        tab.lastExecutedSql
+                          ? () => {
+                              if (tab.kind === "table") {
+                                void runQueryInTab(tab.id, tab.lastExecutedSql, tab.paginatable);
+                                return;
+                              }
+                              runInTabWithGate(tab, tab.lastExecutedSql);
+                            }
+                          : undefined
+                      }
                     />
                   )}
                 </Suspense>

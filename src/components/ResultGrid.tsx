@@ -276,6 +276,14 @@ export const GRID_CSS: SystemStyleObject = {
     textAlign: "center",
     whiteSpace: "normal",
   },
+  "& tbody tr.grid-skeleton-row": { pointerEvents: "none" },
+  "& td.grid-skeleton-cell > div": {
+    height: "10px",
+    borderRadius: "2px",
+    background: "linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-elevated) 50%, var(--bg-muted) 75%)",
+    backgroundSize: "200% 100%",
+    animation: "skeleton-shimmer 1.4s ease-in-out infinite",
+  },
   "& .grid-filter-summary": {
     position: "sticky",
     top: 0,
@@ -468,6 +476,10 @@ interface Props {
   autoRefreshLastRunAt?: number | null;
   /** Enable polling at `secs`, or disable it when `null`. */
   onSetAutoRefresh?: (secs: number | null) => void;
+  /** Non-null when the last query failed (before a new run). Shows an error EmptyState in the grid body. */
+  queryError?: string | null;
+  /** Called when the user clicks "Retry" in the error EmptyState. */
+  onRetry?: () => void;
 }
 
 export interface ResultGridHandle {
@@ -1080,6 +1092,9 @@ function ColumnFilterMenu({
  * (i.e. `rows[i]`) and applied after sort/filter via `row.index`, so the
  * highlight tracks the row even when the user re-sorts the preview pane.
  */
+/** Pseudo-random width percentages for skeleton shimmer bars (cycles by column index). */
+const SKELETON_WIDTHS = [68, 85, 52, 90, 72, 58];
+
 export function DataGrid({
   columns,
   rows,
@@ -1095,6 +1110,7 @@ export function DataGrid({
   validateEdit,
   columnSizingStorageKey,
   emptyMessage,
+  skeleton = false,
   scrollContainerRef,
   rowSqlDriver,
   rowSqlDatabase,
@@ -1139,6 +1155,8 @@ export function DataGrid({
    * Omitted (e.g. mid-stream) leaves the body empty under the header.
    */
   emptyMessage?: ReactNode;
+  /** When true and `rows` is empty, render skeleton shimmer rows instead of the empty body. */
+  skeleton?: boolean;
   /**
    * Scroll container that owns this grid's vertical overflow. When provided the
    * `<tbody>` is **row-virtualized** (`@tanstack/react-virtual`): only the rows
@@ -1688,7 +1706,31 @@ export function DataGrid({
           ))}
         </thead>
         <tbody>
-          {visibleRows.length === 0 && (isFiltered || emptyMessage) ? (
+          {skeleton && rows.length === 0 ? (
+            // Skeleton shimmer rows shown while the first batch of a streaming query
+            // has not yet arrived. Rows fade out progressively to create visual depth.
+            Array.from({ length: 6 }, (_, i) => (
+              <tr key={i} className="grid-skeleton-row" style={{ opacity: 1 - i * 0.14 }} aria-hidden>
+                <td className="row-index" />
+                {columns.length > 0 ? columns.map((_, ci) => (
+                  <td key={ci} className="grid-skeleton-cell">
+                    <div style={{
+                      width: `${SKELETON_WIDTHS[ci % SKELETON_WIDTHS.length]}%`,
+                      animationDelay: `${i * 0.1}s`,
+                    }} />
+                  </td>
+                )) : (
+                  <td colSpan={1} className="grid-skeleton-cell">
+                    <div style={{
+                      width: `${SKELETON_WIDTHS[i % SKELETON_WIDTHS.length]}%`,
+                      animationDelay: `${i * 0.1}s`,
+                    }} />
+                  </td>
+                )}
+                <td className="col-filler" />
+              </tr>
+            ))
+          ) : visibleRows.length === 0 && (isFiltered || emptyMessage) ? (
             <tr>
               <td className="row-index" aria-hidden />
               <td className="grid-empty-cell" colSpan={columns.length}>
@@ -1847,6 +1889,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   autoRefreshAllowed,
   autoRefreshLastRunAt,
   onSetAutoRefresh,
+  queryError,
+  onRetry,
 }: Props, ref) {
   const t = useT();
   const settings = useSettings();
@@ -2331,8 +2375,17 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           rowSqlDatabase={database}
           rowSqlTable={table}
           columnSizingStorageKey={columnSizingStorageKey}
+          skeleton={!!streaming}
           emptyMessage={
-            streaming ? undefined : (
+            streaming ? undefined : queryError ? (
+              <EmptyState
+                compact
+                icon="warning"
+                title={t("gridQueryError")}
+                description={queryError}
+                action={onRetry ? { label: t("gridRetry"), onClick: onRetry } : undefined}
+              />
+            ) : (
               <EmptyState
                 compact
                 icon="table"
