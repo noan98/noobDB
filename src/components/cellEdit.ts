@@ -221,7 +221,7 @@ function qualifiedTableRef(driver: string, database: string, table: string): str
   return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 
-function quoteString(driver: string, s: string): string {
+export function quoteString(driver: string, s: string): string {
   // Single quotes are doubled in every dialect. Backslash is only special
   // inside MySQL string literals; Postgres (with the default
   // `standard_conforming_strings = on`) and SQLite treat it as an ordinary
