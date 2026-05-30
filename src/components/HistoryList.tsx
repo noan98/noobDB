@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { useT } from "../i18n";
@@ -39,7 +39,9 @@ function formatTime(iso: string): string {
   return d.toLocaleString();
 }
 
-export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTab }: Props) {
+// memo 化して App.tsx の高頻度な再レンダリングから切り離す (#403)。props は親で
+// useCallback 安定化済み。i18n は内部の useT 購読で追従する。
+export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTab }: Props) {
   const t = useT();
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -268,4 +270,4 @@ export function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTa
       )}
     </TreePane>
   );
-}
+});
