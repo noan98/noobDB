@@ -127,6 +127,14 @@ export const GRID_CSS: SystemStyleObject = {
   "& thead th.row-index": { top: 0, zIndex: 3 },
   "& tbody tr.grid-row-stripe td.row-index": { background: "var(--bg-stripe)" },
   "& tbody tr:hover td.row-index": { background: "var(--bg-row-hover)" },
+  // 編集保留中の行は、行番号セルの左端にアクセントバーを出して「この行に未適用の
+  // 編集がある」ことを行レベルで示す (#387)。個々のセルの is-pending-edit ハイライト
+  // (列方向) と合わせ、行・セルの両軸で保留編集を把握できるようにする。
+  "& tbody tr.grid-row-pending td.row-index": {
+    boxShadow: "inset 3px 0 0 var(--preview-highlight)",
+    color: "var(--preview-highlight)",
+    fontWeight: 600,
+  },
   "& th.col-filler, & td.col-filler": {
     padding: 0,
     borderRight: "none",
@@ -134,7 +142,22 @@ export const GRID_CSS: SystemStyleObject = {
   },
   "& tbody tr.grid-row-stripe td.col-filler": { background: "var(--bg-elevated)" },
   "& tbody tr:hover td.col-filler": { background: "var(--bg-elevated)" },
-  "& .cell-null": { color: "var(--text-null)", fontStyle: "italic" },
+  // NULL を空文字列と取り違えないよう、淡いピル型バッジで明示する (#385)。空文字列は
+  // セルが本当に空のまま描画されるので、バッジの有無で両者を一目で区別できる。色は
+  // --text-null トークン参照なのでライト/ダーク両テーマで一貫する。
+  "& .cell-null": {
+    display: "inline-block",
+    padding: "0 5px",
+    fontSize: "var(--text-2xs)",
+    fontWeight: 600,
+    fontStyle: "normal",
+    lineHeight: 1.5,
+    letterSpacing: "0.04em",
+    color: "var(--text-null)",
+    background: "color-mix(in srgb, var(--text-null) 14%, transparent)",
+    border: "1px solid color-mix(in srgb, var(--text-null) 38%, transparent)",
+    borderRadius: "var(--radius-sm)",
+  },
   "& td.is-null": { backgroundImage: "linear-gradient(transparent, transparent)" },
   "& .cell-number, & .cell-decimal": {
     color: "var(--cell-number)",
@@ -146,6 +169,21 @@ export const GRID_CSS: SystemStyleObject = {
   "& .cell-date": { color: "var(--cell-date)" },
   "& .cell-json": { color: "var(--cell-json)" },
   "& .cell-binary": { color: "var(--cell-binary)", fontStyle: "italic" },
+  // BLOB セルの先頭に付ける「BLOB · <サイズ>」ラベル。16 進プレビューだけだと
+  // バイナリだと気付きにくいので、ピル型タグで明示する (#385)。
+  "& .cell-binary-tag": {
+    display: "inline-block",
+    marginRight: "6px",
+    padding: "0 5px",
+    fontSize: "var(--text-2xs)",
+    fontWeight: 600,
+    fontStyle: "normal",
+    letterSpacing: "0.04em",
+    color: "var(--cell-binary)",
+    background: "color-mix(in srgb, var(--cell-binary) 14%, transparent)",
+    border: "1px solid color-mix(in srgb, var(--cell-binary) 38%, transparent)",
+    borderRadius: "var(--radius-sm)",
+  },
   "& .cell-string": { color: "var(--text)" },
   // 列ヘッダのソート/フィルタ
   "& th.is-sortable": { padding: 0 },
@@ -480,6 +518,18 @@ function formatNumber(v: number): string {
   return v.toString();
 }
 
+/**
+ * BLOB の概算サイズを人間可読な単位 (B / KB / MB) に整形する。`Value::Bytes` は
+ * 16 進文字列としてワイヤに乗る (CLAUDE.md 参照) ため、バイト長は文字数の半分。
+ */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const kb = n / 1024;
+  if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+  const mb = kb / 1024;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
+
 // Sort: nulls are pushed after non-null values for asc; flipped to top by desc inversion.
 function cmpNullable<T>(a: T | null, b: T | null, cmp: (a: T, b: T) => number): number {
   if (a === null && b === null) return 0;
@@ -774,8 +824,13 @@ export function DataGrid({
           }
           if (effectiveKind === "binary") {
             const s = String(v);
+            const label = t("gridBlobBytes", { size: formatBytes(Math.floor(s.length / 2)) });
             const preview = s.length > 64 ? `${s.slice(0, 64)}…` : s;
-            return <span className="cell-binary" title={s}>0x{preview}</span>;
+            return (
+              <span className="cell-binary" title={`${label} — 0x${s}`}>
+                <span className="cell-binary-tag">{label}</span>0x{preview}
+              </span>
+            );
           }
           return <span className="cell-string">{String(v)}</span>;
         },
@@ -905,13 +960,26 @@ export function DataGrid({
   // `row.index` is the absolute index into `rows` used for edit/changed lookups.
   // `measureIndex` (when virtualizing) wires the row to the virtualizer so its
   // real height is measured.
-  const renderRow = (row: Row<RowShape>, rowIdx: number, measureIndex?: number) => (
-    <tr
-      key={row.id}
+  const renderRow = (row: Row<RowShape>, rowIdx: number, measureIndex?: number) => {
+    // Does this row hold any buffered edit? Drives the row-level pending marker
+    // (#387). Looked up by the row's PK-derived identity, like the per-cell
+    // lookup below, so it tracks the row across pagination/sort.
+    const rowPendingKey = rowEditKey(rows[row.index] ?? [], pkIndices ?? [], row.index);
+    const rowHasPending =
+      !!pendingEdits?.[rowPendingKey] && Object.keys(pendingEdits[rowPendingKey]).length > 0;
+    const rowClass = [
       // Zebra striping by visible position. Class-based (not `:nth-of-type`)
       // because the virtualized body inserts spacer `<tr>` that would otherwise
       // flip the parity as you scroll.
-      className={rowIdx % 2 === 1 ? "grid-row-stripe" : undefined}
+      rowIdx % 2 === 1 ? "grid-row-stripe" : "",
+      rowHasPending ? "grid-row-pending" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return (
+    <tr
+      key={row.id}
+      className={rowClass || undefined}
       ref={measureIndex === undefined ? undefined : rowVirtualizer.measureElement}
       data-index={measureIndex}
     >
@@ -978,7 +1046,11 @@ export function DataGrid({
                     })
                   : isNull
                     ? t("resultNull")
-                    : String(v)
+                    : // 長文テキストは省略記号で切れて全長が分からないので、ホバーの
+                      // タイトルに文字数を添える (#385)。テキスト系の列だけが対象。
+                      (kind === "string" || kind === "json") && String(v).length > 40
+                      ? `${String(v)}\n(${t("gridCharCount", { count: String(v).length })})`
+                      : String(v)
             }
             onDoubleClick={handleDoubleClick}
             onContextMenu={(e) => {
@@ -1052,7 +1124,8 @@ export function DataGrid({
       })}
       <td className="col-filler" aria-hidden />
     </tr>
-  );
+    );
+  };
 
   return (
     <>

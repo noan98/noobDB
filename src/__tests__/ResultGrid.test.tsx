@@ -214,6 +214,50 @@ describe("ResultGrid", () => {
   });
 });
 
+describe("データタイプ別の視覚表現 (#385)", () => {
+  beforeEach(() => setLocale("en"));
+
+  it("NULL セルは cell-null バッジで描画され、空文字列セルとは区別される", () => {
+    const cols: Column[] = [
+      { name: "note", type_name: "VARCHAR" },
+      { name: "qty", type_name: "INT" },
+    ];
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(cols, [[null, 1], ["", 2]])} />,
+    );
+    const nullBadges = container.querySelectorAll(".cell-null");
+    // NULL の行だけにバッジが付き、空文字列の行には付かない。
+    expect(nullBadges).toHaveLength(1);
+    expect(nullBadges[0].textContent).toBe(t("resultNull"));
+  });
+
+  it("数値列は align-right が付き、右揃えになる", () => {
+    const cols: Column[] = [{ name: "qty", type_name: "INT" }];
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(cols, [[42]])} />,
+    );
+    const cell = container.querySelector("tbody td.col-number");
+    expect(cell?.classList.contains("align-right")).toBe(true);
+  });
+
+  it("BLOB セルは BLOB ラベルとバイト長を表示する", () => {
+    const cols: Column[] = [{ name: "data", type_name: "BLOB" }];
+    // 4 文字の 16 進 → 2 バイト。
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(cols, [["dead"]])} />,
+    );
+    const tag = container.querySelector(".cell-binary-tag");
+    expect(tag).not.toBeNull();
+    expect(tag?.textContent).toBe(t("gridBlobBytes", { size: "2 B" }));
+  });
+
+  it("GRID_CSS の NULL バッジは枠線付きピルとして定義される", () => {
+    const css = GRID_CSS as Record<string, { border?: string; borderRadius?: string }>;
+    expect(css["& .cell-null"]?.border).toContain("var(--text-null)");
+    expect(css["& .cell-binary-tag"]?.border).toContain("var(--cell-binary)");
+  });
+});
+
 describe("editable-cell visual affordance (#349)", () => {
   it("GRID_CSS distinguishes editable cells with cursor + hover/active outline", () => {
     // 編集可能セルはテキストカーソル、ホバーで細いアクセントリング、編集中 (focus内)

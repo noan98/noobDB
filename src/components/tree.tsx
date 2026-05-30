@@ -68,6 +68,39 @@ export const TreeRow = chakra("div", {
   },
 });
 
+/**
+ * Motion 化したツリー行。`TreeRow` と同じ見た目 (base スタイルを共有) を持つ
+ * `motion.div` で、`whileHover` などのジェスチャプロップを受け付ける。接続プロファイル
+ * 行のホバー演出 (scale + 影、Epic #370 準拠) に使う。`prefers-reduced-motion` は
+ * ルートの `<MotionConfig reducedMotion="user">` (src/main.tsx) が自動で抑制する。
+ *
+ * motion の `transition` プロップは Chakra のスタイルプロップ名と衝突するため
+ * `forwardProps` で明示転送する (`MotionTreeNode` と同方式)。
+ */
+export const MotionTreeRow = chakra(
+  motion.div,
+  {
+    base: {
+      display: "flex",
+      alignItems: "center",
+      gap: "var(--space-1)",
+      pt: "4px",
+      pb: "4px",
+      pr: "10px",
+      pl: "6px",
+      cursor: "pointer",
+      userSelect: "none",
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      borderLeft: "2px solid transparent",
+      ...TREE_ROW_TRANSITION,
+      _hover: { bg: "app.hover" },
+      _focusVisible: { outline: "none", boxShadow: FOCUS_RING },
+    },
+  },
+  { forwardProps: ["transition"] },
+);
+
 export const TreeChevron = chakra("span", {
   base: {
     display: "inline-block",
