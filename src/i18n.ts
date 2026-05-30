@@ -231,6 +231,8 @@ const en = {
   autoLimitFetchAllTitle: "Re-run this query without the automatic LIMIT.",
 
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
+  statusFailedDeleteProfile: "Failed to delete profile: {error}",
+  statusFailedDeleteSnippet: "Failed to delete snippet: {error}",
   statusConnecting: "Connecting to {name}...",
   toastConnected: "Connected to {name}",
   toastTabRestoreMissing:
@@ -1095,6 +1097,8 @@ const ja: Dict = {
   autoLimitFetchAllTitle: "自動 LIMIT を外してこのクエリを再実行します。",
 
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
+  statusFailedDeleteProfile: "プロファイルの削除に失敗しました: {error}",
+  statusFailedDeleteSnippet: "スニペットの削除に失敗しました: {error}",
   statusConnecting: "{name} に接続中...",
   toastConnected: "{name} に接続しました",
   toastTabRestoreMissing:

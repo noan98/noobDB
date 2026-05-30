@@ -1028,6 +1028,17 @@ export default function App() {
     refreshSnippets();
   }, [refreshSnippets]);
 
+  const runWithErrorStatus = useCallback(
+    async (fn: () => Promise<void>, key: Parameters<ReturnType<typeof useT>>[0]) => {
+      try {
+        await fn();
+      } catch (e) {
+        setStatus({ kind: "key", key, vars: { error: String(e) }, error: true });
+      }
+    },
+    [],
+  );
+
   // 履歴ナビゲーション (#325) 用に直近の実行クエリを読み込む。接続中のみ取得し、
   // プロファイル切替・実行 (`historyReloadKey`) を契機に最新化する。連続して同じ
   // SQL が並ぶと ↑/↓ で 1 件しか進まないように、隣り合う重複は畳む。
@@ -2101,9 +2112,11 @@ export default function App() {
   }, []);
 
   const handleDeleteSnippet = useCallback(async (id: string) => {
-    await api.deleteSnippet(id);
-    await refreshSnippets();
-  }, [refreshSnippets]);
+    await runWithErrorStatus(async () => {
+      await api.deleteSnippet(id);
+      await refreshSnippets();
+    }, "statusFailedDeleteSnippet");
+  }, [runWithErrorStatus, refreshSnippets]);
 
   const setCellEditForTab = useCallback(
     (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
@@ -2333,9 +2346,11 @@ export default function App() {
     setFormInstanceId((n) => n + 1);
   }, []);
   const handleDeleteProfile = useCallback(async (id: string) => {
-    await api.deleteProfile(id);
-    await refreshProfiles();
-  }, [refreshProfiles]);
+    await runWithErrorStatus(async () => {
+      await api.deleteProfile(id);
+      await refreshProfiles();
+    }, "statusFailedDeleteProfile");
+  }, [runWithErrorStatus, refreshProfiles]);
 
   // After a CSV import, refresh the matching open table tab so the new rows
   // show up without the user reopening the table.
@@ -3001,7 +3016,7 @@ export default function App() {
             onSaved={async () => {
               setShowForm(false);
               setEditing(null);
-              await refreshProfiles();
+              await runWithErrorStatus(refreshProfiles, "statusFailedLoadProfiles");
             }}
             onCancel={() => { setShowForm(false); setEditing(null); }}
           />
@@ -3018,7 +3033,7 @@ export default function App() {
               setEditingSnippet(null);
               setSnippetFormSql("");
               setSidebarTab("snippets");
-              await refreshSnippets();
+              await runWithErrorStatus(refreshSnippets, "statusFailedLoadSnippets");
             }}
             onCancel={() => { setShowSnippetForm(false); setEditingSnippet(null); setSnippetFormSql(""); }}
           />
