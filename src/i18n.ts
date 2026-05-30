@@ -286,6 +286,8 @@ const en = {
   listDeleteConfirm: 'Delete "{name}"?',
   listDuplicateSuffix: " (copy)",
   listVia: "via SSH {host}",
+  listSsh: "SSH",
+  listSshTitle: "Connects through an SSH tunnel",
 
   statusBadge_connected: "Connected",
   statusBadge_connecting: "Connecting...",
@@ -428,6 +430,8 @@ const en = {
   resultEmpty: "No results yet. Run a query above.",
   resultExecuted: "Statement executed. {rows} rows affected ({ms} ms).",
   resultNull: "NULL",
+  gridCharCount: "{count} chars",
+  gridBlobBytes: "BLOB · {size}",
 
   editPendingCount: "{cells} cells / {rows} rows edited",
   editPreviewButton: "Preview",
@@ -1108,6 +1112,8 @@ const ja: Dict = {
   listDeleteConfirm: "「{name}」を削除しますか？",
   listDuplicateSuffix: "（コピー）",
   listVia: "SSH {host} 経由",
+  listSsh: "SSH",
+  listSshTitle: "SSH トンネル経由で接続します",
 
   statusBadge_connected: "接続中",
   statusBadge_connecting: "接続処理中...",
@@ -1250,6 +1256,8 @@ const ja: Dict = {
   resultEmpty: "まだ結果はありません。上のエディタでクエリを実行してください。",
   resultExecuted: "ステートメントを実行しました。影響行数 {rows} 件 ({ms} ms)。",
   resultNull: "NULL",
+  gridCharCount: "{count} 文字",
+  gridBlobBytes: "BLOB · {size}",
 
   editPendingCount: "{cells} セル / {rows} 行を編集中",
   editPreviewButton: "Preview",
