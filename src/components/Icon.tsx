@@ -34,6 +34,7 @@ export type IconName =
   | "eye-off"
   | "diff"
   | "columns"
+  | "filter"
   | "lock"
   | "mysql"
   | "postgres"
@@ -201,6 +202,7 @@ const PATHS: Record<IconName, ReactNode> = {
       <line x1="12" x2="12" y1="3" y2="21" />
     </>
   ),
+  filter: <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />,
   lock: (
     <>
       <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
