@@ -14,6 +14,9 @@ import {
 } from "./settingsLayout";
 import { copyToClipboard } from "./clipboard";
 import {
+  ACCENT_PRESET_ORDER,
+  ACCENT_PRESETS,
+  AccentPresetKey,
   DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_DISPLAY_COUNT,
   DEFAULT_FONT_SIZE_PX,
@@ -28,9 +31,14 @@ import {
   Theme,
   applySyntaxPreset,
   detectSyntaxPreset,
+  pickAccentForeground,
+  resetAccentColor,
   resetPreviewHighlight,
   resetStreamingDefaults,
   resetSyntaxColors,
+  setAccentCustomDark,
+  setAccentCustomLight,
+  setAccentPreset,
   setAutoLimitCount,
   setAutoLimitEnabled,
   setConfirmDangerousQueries,
@@ -251,6 +259,16 @@ const PRESET_LABEL_KEYS: Record<SyntaxPresetKey, Parameters<ReturnType<typeof us
   monokai: "settingsSyntaxPresetMonokai",
 };
 
+const ACCENT_PRESET_LABEL_KEYS: Record<AccentPresetKey, Parameters<ReturnType<typeof useT>>[0]> = {
+  blue: "settingsAccentPresetBlue",
+  indigo: "settingsAccentPresetIndigo",
+  violet: "settingsAccentPresetViolet",
+  rose: "settingsAccentPresetRose",
+  emerald: "settingsAccentPresetEmerald",
+  amber: "settingsAccentPresetAmber",
+  teal: "settingsAccentPresetTeal",
+};
+
 export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
   const settings = useSettings();
@@ -384,6 +402,117 @@ export function SettingsView({ theme, onClose }: Props) {
             })}
           </SettingsHelpInline>
         </SettingsNumberRow>
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsAccentColor")}</chakra.h3>
+          <SettingsReset onClick={resetAccentColor}>{t("settingsReset")}</SettingsReset>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsAccentColorHelp")}</SettingsHelp>
+
+        {/* Preset swatches */}
+        <SettingsToggleRow>
+          {ACCENT_PRESET_ORDER.map((key) => {
+            const palette = ACCENT_PRESETS[key];
+            const accentHex = theme === "dark" ? palette.dark.accent : palette.light.accent;
+            const accentText = theme === "dark" ? palette.dark.accentText : palette.light.accentText;
+            const isActive = settings.accentPreset === key;
+            return (
+              <chakra.button
+                key={key}
+                title={t(ACCENT_PRESET_LABEL_KEYS[key])}
+                aria-label={t(ACCENT_PRESET_LABEL_KEYS[key])}
+                aria-pressed={isActive}
+                onClick={() => setAccentPreset(key)}
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                width="28px"
+                height="28px"
+                borderRadius="full"
+                border="2px solid"
+                borderColor={isActive ? "app.borderStrong" : "transparent"}
+                bg={accentHex}
+                color={accentText}
+                outline={isActive ? "2px solid" : "none"}
+                outlineOffset="2px"
+                style={{ outlineColor: isActive ? accentHex : undefined }}
+                cursor="pointer"
+                fontSize="xs"
+                fontWeight={700}
+                flexShrink={0}
+                _focusVisible={{ outline: "none", boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent)" }}
+              >
+                {isActive ? "✓" : ""}
+              </chakra.button>
+            );
+          })}
+
+          {/* Custom option */}
+          <chakra.button
+            title={t("settingsAccentPresetCustom")}
+            aria-label={t("settingsAccentPresetCustom")}
+            aria-pressed={settings.accentPreset === "custom"}
+            onClick={() => setAccentPreset("custom")}
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            width="28px"
+            height="28px"
+            borderRadius="full"
+            border="2px solid"
+            borderColor={settings.accentPreset === "custom" ? "app.borderStrong" : "app.borderSubtle"}
+            bg="app.surfaceMuted"
+            color="app.textSecondary"
+            cursor="pointer"
+            fontSize="xs"
+            fontWeight={700}
+            flexShrink={0}
+            _hover={{ bg: "app.hover" }}
+            _focusVisible={{ outline: "none", boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent)" }}
+          >
+            {t("settingsAccentPresetCustom").slice(0, 1)}
+          </chakra.button>
+        </SettingsToggleRow>
+
+        {/* Custom color picker — only shown when "custom" preset is active */}
+        {settings.accentPreset === "custom" && (
+          <SettingsColorGrid>
+            <SettingsColorRow>
+              <chakra.label htmlFor="accent-custom">
+                {t("settingsAccentCustomLabel", { theme: themeLabel })}
+              </chakra.label>
+              <SettingsColorControls>
+                <SettingsColorInput
+                  id="accent-custom"
+                  type="color"
+                  value={theme === "dark" ? settings.accentCustomDark : settings.accentCustomLight}
+                  onChange={(e) => {
+                    if (theme === "dark") setAccentCustomDark(e.target.value);
+                    else setAccentCustomLight(e.target.value);
+                  }}
+                />
+                <SettingsColorHex>
+                  {theme === "dark" ? settings.accentCustomDark : settings.accentCustomLight}
+                </SettingsColorHex>
+                <SettingsColorSample
+                  px="10px"
+                  py="4px"
+                  borderRadius="sm"
+                  style={{
+                    background: theme === "dark" ? settings.accentCustomDark : settings.accentCustomLight,
+                    color: pickAccentForeground(
+                      theme === "dark" ? settings.accentCustomDark : settings.accentCustomLight,
+                    ),
+                  }}
+                >
+                  {t("settingsAccentPresetCustom")}
+                </SettingsColorSample>
+              </SettingsColorControls>
+            </SettingsColorRow>
+          </SettingsColorGrid>
+        )}
       </SettingsSection>
 
       <SettingsSection>

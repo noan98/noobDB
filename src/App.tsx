@@ -97,6 +97,7 @@ import {
   useSettings,
   getSettings,
   setAutoRefreshDefaultSecs,
+  getAccentColors,
   BASE_FONT_SIZE_PX,
   type TabRestoreMode,
 } from "./settings";
@@ -561,6 +562,10 @@ export default function App() {
     }
     root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
     root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
+    const ac = getAccentColors(settings, theme);
+    root.style.setProperty("--accent", ac.accent);
+    root.style.setProperty("--accent-hover", ac.accentHover);
+    root.style.setProperty("--accent-text", ac.accentText);
   }, [settings, theme]);
 
   const toggleTheme = useCallback(() => {
