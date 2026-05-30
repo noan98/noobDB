@@ -52,6 +52,17 @@
   --space-5: calc(20px * var(--font-scale));
   --space-6: calc(24px * var(--font-scale));
 
+  /* Display density (#410). An axis independent of the font scale: it tunes the
+     result grid's cell padding / row height so the same font can be packed
+     tighter (4K screens) or loosened (small screens). The `normal` values below
+     match the historical grid padding (5px/10px) exactly so the default is a
+     no-op; `data-density="compact|spacious"` overrides them (App.tsx writes the
+     attribute from the density setting). Still multiplied by --font-scale so the
+     two axes compose. */
+  --density-cell-py: calc(5px * var(--font-scale));
+  --density-cell-px: calc(10px * var(--font-scale));
+  --density-row-h: 30px;
+
   /* Radius scale */
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -243,6 +254,20 @@
   --preview-banner-dot: #fbbf24;
 
   color-scheme: dark;
+}
+
+/* Density overrides (#410). Only the grid-facing tokens change; everything else
+   keeps tracking --font-scale. Compact trims vertical padding for more rows on
+   screen; spacious loosens it for comfort on large displays. */
+:root[data-density="compact"] {
+  --density-cell-py: calc(2px * var(--font-scale));
+  --density-cell-px: calc(8px * var(--font-scale));
+  --density-row-h: 24px;
+}
+:root[data-density="spacious"] {
+  --density-cell-py: calc(9px * var(--font-scale));
+  --density-cell-px: calc(12px * var(--font-scale));
+  --density-row-h: 40px;
 }
 
 * { box-sizing: border-box; }

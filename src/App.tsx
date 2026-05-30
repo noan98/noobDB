@@ -100,6 +100,7 @@ import {
   BASE_FONT_SIZE_PX,
   type TabRestoreMode,
 } from "./settings";
+import { accentVars } from "./accent";
 import {
   clearPersistedTabs,
   loadPersistedWorkspace,
@@ -561,6 +562,23 @@ export default function App() {
     }
     root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
     root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
+
+    // アクセント色: ユーザー指定があれば 3 つの CSS 変数を実行時に注入し、未指定
+    // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す (#409)。前景と
+    // hover はテーマに応じて算出するため、theme 変更時も再実行される。
+    if (settings.accentColor) {
+      const v = accentVars(settings.accentColor, theme);
+      root.style.setProperty("--accent", v.accent);
+      root.style.setProperty("--accent-hover", v.accentHover);
+      root.style.setProperty("--accent-text", v.accentText);
+    } else {
+      root.style.removeProperty("--accent");
+      root.style.removeProperty("--accent-hover");
+      root.style.removeProperty("--accent-text");
+    }
+
+    // 表示密度: data-density 属性で App.css の `--density-*` トークンを切り替える (#410)。
+    root.setAttribute("data-density", settings.density);
   }, [settings, theme]);
 
   const toggleTheme = useCallback(() => {

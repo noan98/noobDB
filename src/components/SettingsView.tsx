@@ -19,9 +19,11 @@ import {
   DEFAULT_FONT_SIZE_PX,
   DEFAULT_QUERY_TIMEOUT_SECS,
   DEFAULT_STREAM_PREFETCH_SIZE,
+  DENSITY_ORDER,
   MAX_FONT_SIZE_PX,
   MIN_FONT_SIZE_PX,
   SYNTAX_PRESET_ORDER,
+  Density,
   SyntaxColors,
   SyntaxPresetKey,
   TabRestoreMode,
@@ -31,11 +33,13 @@ import {
   resetPreviewHighlight,
   resetStreamingDefaults,
   resetSyntaxColors,
+  setAccentColor,
   setAutoLimitCount,
   setAutoLimitEnabled,
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
   setDefaultDisplayCount,
+  setDensity,
   setFontSizePx,
   setQueryTimeoutSecs,
   setPreviewHighlight,
@@ -44,6 +48,7 @@ import {
   setTabRestoreMode,
   useSettings,
 } from "../settings";
+import { ACCENT_PRESETS } from "../accent";
 
 interface Props {
   theme: Theme;
@@ -191,6 +196,77 @@ const SettingsColorSample = chakra("span", {
   base: { fontFamily: "mono", fontSize: "md", fontWeight: 600 },
 });
 
+// 表示密度の 3 択セグメント (#410)。アクティブはアクセント地に反転。
+const SettingsSegment = chakra("div", {
+  base: {
+    display: "inline-flex",
+    border: "1px solid",
+    borderColor: "app.borderStrong",
+    borderRadius: "md",
+    overflow: "hidden",
+    flexShrink: 0,
+  },
+});
+
+const SettingsSegmentButton = chakra("button", {
+  base: {
+    px: "12px",
+    py: "5px",
+    fontSize: "sm",
+    fontWeight: 500,
+    border: "none",
+    borderRadius: 0,
+    background: "app.surface",
+    color: "app.text",
+    cursor: "pointer",
+    transitionProperty: "background, color",
+    transitionDuration: "var(--dur-fast)",
+    transitionTimingFunction: "var(--ease)",
+    _hover: { background: "app.hover" },
+    "&[aria-pressed=true]": {
+      background: "app.accent",
+      color: "app.accentText",
+    },
+    "&[aria-pressed=true]:hover": { background: "app.accentHover" },
+    "& + &": { borderLeft: "1px solid var(--border-strong)" },
+  },
+});
+
+// アクセント色のプリセットスウォッチ列 (#409)。
+const SettingsSwatchRow = chakra("div", {
+  base: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" },
+});
+
+const SettingsSwatch = chakra("button", {
+  base: {
+    width: "26px",
+    height: "26px",
+    p: 0,
+    borderRadius: "999px",
+    border: "2px solid",
+    borderColor: "app.borderStrong",
+    background: "app.surfaceMuted",
+    cursor: "pointer",
+    flexShrink: 0,
+    transitionProperty: "box-shadow, transform",
+    transitionDuration: "var(--dur-fast)",
+    transitionTimingFunction: "var(--ease)",
+    // "既定 (テーマ追従)" のスウォッチは斜めストライプで他の単色と区別する。
+    "&[data-default]": {
+      background:
+        "repeating-linear-gradient(45deg, var(--bg-muted), var(--bg-muted) 4px, var(--border-strong) 4px, var(--border-strong) 8px)",
+    },
+    "&[aria-pressed=true]": {
+      borderColor: "app.text",
+      boxShadow: "inset 0 0 0 2px var(--bg-elevated)",
+    },
+    _focusVisible: {
+      outline: "none",
+      boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)",
+    },
+  },
+});
+
 const SettingsLogsActions = chakra("div", {
   base: { display: "flex", alignItems: "center", gap: "var(--space-2)" },
 });
@@ -249,6 +325,23 @@ const PRESET_LABEL_KEYS: Record<SyntaxPresetKey, Parameters<ReturnType<typeof us
   githubLight: "settingsSyntaxPresetGithubLight",
   githubDark: "settingsSyntaxPresetGithubDark",
   monokai: "settingsSyntaxPresetMonokai",
+};
+
+const DENSITY_LABEL_KEYS: Record<Density, Parameters<ReturnType<typeof useT>>[0]> = {
+  compact: "settingsDensityCompact",
+  normal: "settingsDensityNormal",
+  spacious: "settingsDensitySpacious",
+};
+
+const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> = {
+  default: "settingsAccentDefault",
+  blue: "settingsAccentBlue",
+  indigo: "settingsAccentIndigo",
+  violet: "settingsAccentViolet",
+  teal: "settingsAccentTeal",
+  green: "settingsAccentGreen",
+  amber: "settingsAccentAmber",
+  rose: "settingsAccentRose",
 };
 
 export function SettingsView({ theme, onClose }: Props) {
@@ -384,6 +477,55 @@ export function SettingsView({ theme, onClose }: Props) {
             })}
           </SettingsHelpInline>
         </SettingsNumberRow>
+
+        <SettingsToggleRow>
+          <SettingsToggleLabel as="span">{t("settingsDensity")}</SettingsToggleLabel>
+          <SettingsSegment role="group" aria-label={t("settingsDensity")}>
+            {DENSITY_ORDER.map((d) => (
+              <SettingsSegmentButton
+                key={d}
+                type="button"
+                aria-pressed={settings.density === d}
+                onClick={() => setDensity(d)}
+              >
+                {t(DENSITY_LABEL_KEYS[d])}
+              </SettingsSegmentButton>
+            ))}
+          </SettingsSegment>
+          <SettingsHelpInline>{t("settingsDensityHelp")}</SettingsHelpInline>
+        </SettingsToggleRow>
+
+        <SettingsToggleRow>
+          <SettingsToggleLabel as="span">{t("settingsAccentColor")}</SettingsToggleLabel>
+          <SettingsSwatchRow role="group" aria-label={t("settingsAccentColor")}>
+            {ACCENT_PRESETS.map((p) => {
+              const selected =
+                p.hex === null
+                  ? settings.accentColor === null
+                  : settings.accentColor?.toLowerCase() === p.hex.toLowerCase();
+              return (
+                <SettingsSwatch
+                  key={p.key}
+                  type="button"
+                  aria-pressed={selected}
+                  aria-label={t(ACCENT_LABEL_KEYS[p.key])}
+                  title={t(ACCENT_LABEL_KEYS[p.key])}
+                  data-default={p.hex === null ? "" : undefined}
+                  style={p.hex ? { background: p.hex } : undefined}
+                  onClick={() => setAccentColor(p.hex)}
+                />
+              );
+            })}
+            <SettingsColorInput
+              type="color"
+              aria-label={t("settingsAccentCustom")}
+              title={t("settingsAccentCustom")}
+              value={settings.accentColor ?? "#2563eb"}
+              onChange={(e) => setAccentColor(e.target.value)}
+            />
+          </SettingsSwatchRow>
+          <SettingsHelpInline>{t("settingsAccentColorHelp")}</SettingsHelpInline>
+        </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection>

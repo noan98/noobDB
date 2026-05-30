@@ -50,6 +50,17 @@ export interface Settings {
    */
   fontSizePx: number;
   /**
+   * Global accent color (hex `#rrggbb`) applied across buttons, selection,
+   * focus rings and active tabs. `null` keeps the per-theme default accent
+   * baked into App.css. Foreground/hover are derived at runtime (see accent.ts).
+   */
+  accentColor: string | null;
+  /**
+   * UI density preset. Drives row height / cell padding independently of the
+   * font size, via the `data-density` attribute and `--density-*` CSS vars.
+   */
+  density: Density;
+  /**
    * Interval (seconds) applied when the result grid's auto-refresh (scheduled
    * re-execution) is toggled on. Remembered globally so the last chosen cadence
    * becomes the default for the next tab. Clamped to AUTO_REFRESH_MIN_SECS.
@@ -58,6 +69,15 @@ export interface Settings {
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
+
+export type Density = "compact" | "normal" | "spacious";
+
+/** Density presets offered in the appearance settings, in display order. */
+export const DENSITY_ORDER: Density[] = ["compact", "normal", "spacious"];
+export const DEFAULT_DENSITY: Density = "normal";
+
+/** Default accent color: `null` means "use the per-theme CSS default". */
+export const DEFAULT_ACCENT_COLOR: string | null = null;
 
 /** Pixel size that maps to a 1.0 font scale (the unscaled default). */
 export const BASE_FONT_SIZE_PX = 14;
@@ -219,6 +239,8 @@ export const DEFAULT_SETTINGS: Settings = {
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
   fontSizePx: DEFAULT_FONT_SIZE_PX,
+  accentColor: DEFAULT_ACCENT_COLOR,
+  density: DEFAULT_DENSITY,
   autoRefreshDefaultSecs: DEFAULT_AUTO_REFRESH_SECS,
 };
 
@@ -242,6 +264,17 @@ function sanitizeTimeout(input: unknown, fallback: number): number {
 
 function sanitizeTabRestoreMode(input: unknown, fallback: TabRestoreMode): TabRestoreMode {
   return input === "always" || input === "ask" || input === "never" ? input : fallback;
+}
+
+function sanitizeDensity(input: unknown, fallback: Density): Density {
+  return input === "compact" || input === "normal" || input === "spacious"
+    ? input
+    : fallback;
+}
+
+function sanitizeAccentColor(input: unknown, fallback: string | null): string | null {
+  if (input === null) return null;
+  return isHexColor(input) ? input : fallback;
 }
 
 function sanitizeFontSizePx(input: unknown, fallback: number): number {
@@ -297,6 +330,8 @@ function loadInitial(): Settings {
       tabRestoreMode?: unknown;
       queryTimeoutSecs?: unknown;
       fontSizePx?: unknown;
+      accentColor?: unknown;
+      density?: unknown;
       autoRefreshDefaultSecs?: unknown;
     };
     return {
@@ -326,6 +361,8 @@ function loadInitial(): Settings {
       tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
       queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
       fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
+      accentColor: sanitizeAccentColor(parsed.accentColor, DEFAULT_ACCENT_COLOR),
+      density: sanitizeDensity(parsed.density, DEFAULT_DENSITY),
       autoRefreshDefaultSecs: sanitizeAutoRefreshSecs(
         parsed.autoRefreshDefaultSecs,
         DEFAULT_AUTO_REFRESH_SECS,
@@ -477,6 +514,22 @@ export function setFontSizePx(value: number): void {
   const next = sanitizeFontSizePx(value, current.fontSizePx);
   if (current.fontSizePx === next) return;
   current = { ...current, fontSizePx: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setAccentColor(value: string | null): void {
+  const next = sanitizeAccentColor(value, current.accentColor);
+  if (current.accentColor === next) return;
+  current = { ...current, accentColor: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setDensity(value: Density): void {
+  const next = sanitizeDensity(value, current.density);
+  if (current.density === next) return;
+  current = { ...current, density: next };
   persist();
   listeners.forEach((cb) => cb());
 }
