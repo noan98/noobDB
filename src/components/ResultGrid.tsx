@@ -627,7 +627,31 @@ function cellToText(v: CellValue): string {
   return String(v);
 }
 
-function readStoredColumnSizing(storageKey: string | undefined): ColumnSizingState {
+const COL_SIZING_LRU_KEY = "noobdb.colsizing.lru.v1";
+const COL_SIZING_MAX_ENTRIES = 50;
+
+function readLruOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(COL_SIZING_LRU_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as string[];
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function writeLruOrder(order: string[]): void {
+  try {
+    localStorage.setItem(COL_SIZING_LRU_KEY, JSON.stringify(order));
+  } catch {
+    // ignore
+  }
+}
+
+export function readStoredColumnSizing(storageKey: string | undefined): ColumnSizingState {
   if (!storageKey) return {};
   try {
     const stored = localStorage.getItem(storageKey);
@@ -641,13 +665,23 @@ function readStoredColumnSizing(storageKey: string | undefined): ColumnSizingSta
   return {};
 }
 
-function writeStoredColumnSizing(
+export function writeStoredColumnSizing(
   storageKey: string | undefined,
   sizing: ColumnSizingState,
 ): void {
   if (!storageKey) return;
   try {
     localStorage.setItem(storageKey, JSON.stringify(sizing));
+    // LRU: move this key to the front, evict oldest beyond the cap.
+    const order = readLruOrder().filter((k) => k !== storageKey);
+    order.unshift(storageKey);
+    if (order.length > COL_SIZING_MAX_ENTRIES) {
+      const evicted = order.splice(COL_SIZING_MAX_ENTRIES);
+      for (const k of evicted) {
+        try { localStorage.removeItem(k); } catch { /* ignore */ }
+      }
+    }
+    writeLruOrder(order);
   } catch {
     // ignore
   }
