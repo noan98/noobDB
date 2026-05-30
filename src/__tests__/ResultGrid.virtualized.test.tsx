@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { renderWithProviders } from "./testUtils";
 import { ResultGrid } from "../components/ResultGrid";
 import type { Column, QueryResult } from "../api/tauri";
-import { setLocale } from "../i18n";
+import { setLocale, getLocale } from "../i18n";
 
 // ResultGrid の行仮想化 (#403) を検証する。本体の ResultGrid.test.tsx は jsdom の
 // ビューポート寸法が 0 なので「全行描画フォールバック」経路を通る (= 仮想化されない)。
@@ -22,8 +22,13 @@ const ROW_H = 28;
 // (スクロール枠の <div> など) はビューポート高を返す。
 const protoOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
 const protoOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
+// ロケールと ResizeObserver も書き換えるため、元の値を控えて afterAll で確実に戻す
+// (Vitest はファイル単位で環境を隔離するが、後始末を漏らさないようにする)。
+const originalResizeObserver = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+let originalLocale: ReturnType<typeof getLocale>;
 
 beforeAll(() => {
+  originalLocale = getLocale();
   setLocale("en");
   if (!("ResizeObserver" in globalThis)) {
     (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
@@ -47,6 +52,12 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  setLocale(originalLocale);
+  if (originalResizeObserver === undefined) {
+    Reflect.deleteProperty(globalThis, "ResizeObserver");
+  } else {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = originalResizeObserver;
+  }
   if (protoOffsetHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", protoOffsetHeight);
   if (protoOffsetWidth) Object.defineProperty(HTMLElement.prototype, "offsetWidth", protoOffsetWidth);
 });
