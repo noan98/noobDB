@@ -698,6 +698,11 @@ function makeDefaultFilter(kind: CellKind): ColumnFilter {
   };
 }
 
+/** A plain (optionally signed) base-10 integer string, safe for BigInt(). */
+function isIntegerLiteral(s: string): boolean {
+  return /^[+-]?\d+$/.test(s.trim());
+}
+
 /** Does the filter carry a value operand (vs. being a NULL-only condition)? */
 function filterHasValue(f: ColumnFilter): boolean {
   if (f.op === "between") return f.value.trim() !== "" || f.value2.trim() !== "";
@@ -731,16 +736,35 @@ function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFi
     case "gt":
     case "lt":
     case "between": {
+      const raw = String(v).trim();
+      const a = f.value.trim();
+      const b = f.value2.trim();
+      // Big integers (e.g. BIGINT ids beyond 2^53) lose precision through
+      // Number(), which would break `eq`/range on real-world key columns. When
+      // the cell value and every supplied operand are plain integers, compare
+      // exactly via BigInt. Fractional decimals (and anything non-integer) fall
+      // back to Number — the same precision ceiling the numeric sort comparator
+      // already accepts.
+      const operands = f.op === "between" ? [a, b] : [a];
+      const present = operands.filter((x) => x !== "");
+      if (isIntegerLiteral(raw) && present.length > 0 && present.every(isIntegerLiteral)) {
+        const n = BigInt(raw);
+        if (f.op === "eq") return n === BigInt(a);
+        if (f.op === "gt") return n > BigInt(a);
+        if (f.op === "lt") return n < BigInt(a);
+        // between: an empty bound is treated as open.
+        return (a === "" || n >= BigInt(a)) && (b === "" || n <= BigInt(b));
+      }
       const n = Number(v);
       if (Number.isNaN(n)) return false;
-      const a = f.value.trim() === "" ? NaN : Number(f.value);
-      if (f.op === "eq") return !Number.isNaN(a) && n === a;
-      if (f.op === "gt") return !Number.isNaN(a) && n > a;
-      if (f.op === "lt") return !Number.isNaN(a) && n < a;
+      const an = a === "" ? NaN : Number(a);
+      if (f.op === "eq") return !Number.isNaN(an) && n === an;
+      if (f.op === "gt") return !Number.isNaN(an) && n > an;
+      if (f.op === "lt") return !Number.isNaN(an) && n < an;
       // between: an empty bound is treated as open (-∞ / +∞).
-      const b = f.value2.trim() === "" ? NaN : Number(f.value2);
-      const lo = Number.isNaN(a) ? -Infinity : a;
-      const hi = Number.isNaN(b) ? Infinity : b;
+      const bn = b === "" ? NaN : Number(b);
+      const lo = Number.isNaN(an) ? -Infinity : an;
+      const hi = Number.isNaN(bn) ? Infinity : bn;
       return n >= lo && n <= hi;
     }
   }
@@ -830,7 +854,9 @@ function ColumnFilterMenu({
   };
 
   // Clamp into the viewport once measured: anchor the right edge under the
-  // icon, flipping up/left when it would overflow.
+  // icon, flipping up/left when it would overflow. Re-runs on `draft.op` too,
+  // since switching to `between` adds a row and changes the menu height — a
+  // popup opened near the bottom edge must re-measure so it doesn't overflow.
   useLayoutEffect(() => {
     const el = menuRef.current;
     if (!el) return;
@@ -843,7 +869,7 @@ function ColumnFilterMenu({
     left = Math.min(Math.max(margin, left), window.innerWidth - width - margin);
     top = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
     setPos({ left, top });
-  }, [anchor]);
+  }, [anchor, draft.op]);
 
   // Dismiss on Escape, outside pointer-down, scroll or resize (as ContextMenu).
   useEffect(() => {

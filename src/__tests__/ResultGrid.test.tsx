@@ -354,6 +354,26 @@ describe("カラム別フィルタ (#390)", () => {
     expect(container.querySelector("th.is-filtered-col")).toBeNull();
   });
 
+  it("2^53 を超える BIGINT を精度を落とさず等値比較する", async () => {
+    const user = userEvent.setup();
+    // 連続する大整数は Number に丸めると同値になってしまう。BigInt 比較なら
+    // 正しく 1 行だけに絞り込めることを確認する。
+    const cols: Column[] = [{ name: "id", type_name: "BIGINT" }];
+    const result = makeResult(cols, [
+      ["9007199254740993"],
+      ["9007199254740992"],
+    ]);
+    const { container } = renderWithProviders(<ResultGrid result={result} />);
+
+    const dialog = await openFilter(user, "id");
+    await user.type(within(dialog).getByRole("textbox"), "9007199254740993");
+
+    // Number ベースの等値だと両行が同じ値に丸められて 2 行残る。BigInt 比較なら
+    // ちょうど 1 行に絞り込めるので、行数で精度を検証する (表示は number 列として
+    // 整形されるため、生文字列ではなく件数で確認する)。
+    expect(dataRowTexts(container)).toHaveLength(1);
+  });
+
   it("isColumnFilterActive は値も NULL ゲートも無い条件を非アクティブと判定する", () => {
     expect(isColumnFilterActive(undefined)).toBe(false);
     expect(
