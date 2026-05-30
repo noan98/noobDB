@@ -80,12 +80,16 @@ const SchemaCompareView = lazy(() =>
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
+const ParameterInputModal = lazy(() =>
+  import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
+);
 import {
   analyzeDangerousSql,
   isReadOnlySql,
   isSchemaMutatingSql,
   type DangerFinding,
 } from "./dangerousSql";
+import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT } from "./i18n";
 import { transitions } from "./motion";
@@ -770,6 +774,17 @@ export default function App() {
     // approval for any write (no specific destructive pattern was detected).
     writeApproval: boolean;
     autoLimit: number | null;
+  } | null>(null);
+
+  // Pending {{variable}} parameter prompt. When the editor's SQL contains
+  // placeholders, the run/preview/explain action is held here while the input
+  // modal collects values; on submit the substituted SQL re-enters the same
+  // action (so it still passes the danger gate). `mode` records which action
+  // to resume. (#388)
+  const [pendingParams, setPendingParams] = useState<{
+    tab: Tab;
+    sql: string;
+    mode: "run" | "preview" | "explain";
   } | null>(null);
 
   // The focused pane drives all the "active tab" handlers (sidebar inserts,
@@ -1989,6 +2004,44 @@ export default function App() {
     runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
   }, [runQueryInTab, addTab]);
 
+  // Run the resolved SQL through whichever action the user triggered. Used both
+  // directly (no parameters) and after the parameter modal substitutes values.
+  const dispatchEditorAction = useCallback(
+    (tab: Tab, sql: string, mode: "run" | "preview" | "explain") => {
+      if (mode === "preview") previewQueryInTab(tab.id, sql);
+      else if (mode === "explain") explainForTab(tab, sql);
+      else runInTabWithGate(tab, sql);
+    },
+    [previewQueryInTab, explainForTab, runInTabWithGate],
+  );
+
+  // Editor run/preview/explain gate for {{variable}} parameters: when the SQL
+  // has placeholders, prompt for values first; otherwise run straight through.
+  const resolveParamsThen = useCallback(
+    (tab: Tab, sql: string, mode: "run" | "preview" | "explain") => {
+      if (extractQueryParams(sql).length === 0) {
+        dispatchEditorAction(tab, sql, mode);
+        return;
+      }
+      setPendingParams({ tab, sql, mode });
+    },
+    [dispatchEditorAction],
+  );
+
+  const handleParamsSubmit = useCallback(
+    (values: Record<string, string>, types: Record<string, ParamType>) => {
+      if (!pendingParams) return;
+      const { tab, sql, mode } = pendingParams;
+      const driver = (selectedProfile?.driver ?? "mysql") as DriverKind;
+      const finalSql = substituteQueryParams(sql, driver, values, types);
+      setPendingParams(null);
+      dispatchEditorAction(tab, finalSql, mode);
+    },
+    [pendingParams, selectedProfile?.driver, dispatchEditorAction],
+  );
+
+  const handleParamsCancel = useCallback(() => setPendingParams(null), []);
+
   // User-driven stop: cancel the tab's in-flight stream, drop the streaming
   // flag, and keep whatever rows have already arrived. The backend
   // `cancelStream` tears down the cursor while leaving the connection open.
@@ -2528,9 +2581,9 @@ export default function App() {
                     initialSql={tab.sql}
                     running={tab.streaming && !tab.previewStreaming}
                     previewRunning={tab.previewStreaming}
-                    onRun={(sql) => runInTabWithGate(tab, sql)}
-                    onPreview={tab.kind === "explain" ? undefined : (sql) => previewQueryInTab(tab.id, sql)}
-                    onExplain={tab.kind === "explain" ? undefined : (sql) => explainForTab(tab, sql)}
+                    onRun={(sql) => resolveParamsThen(tab, sql, "run")}
+                    onPreview={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "preview")}
+                    onExplain={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "explain")}
                     explainMode={tab.kind === "explain"}
                     onChange={(sql) => updateTab(tab.id, { sql })}
                     onSaveSnippet={handleSaveSnippetFromEditor}
@@ -3334,6 +3387,14 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {pendingParams && (
+          <ParameterInputModal
+            sql={pendingParams.sql}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            onSubmit={handleParamsSubmit}
+            onCancel={handleParamsCancel}
+          />
+        )}
         {pendingDangerous && (
           <DangerousQueryDialog
             findings={pendingDangerous.findings}
