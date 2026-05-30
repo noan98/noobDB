@@ -30,6 +30,7 @@ import { ExportModal } from "./ExportModal";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
 import {
+  buildRowSql,
   countEditedCells,
   countEditedRows,
   isEditableColumnType,
@@ -37,6 +38,7 @@ import {
   rowEditKey,
   validateCellInput,
   type PendingEdits,
+  type RowSqlKind,
 } from "./cellEdit";
 
 /**
@@ -418,6 +420,8 @@ interface Props {
   autoLimitApplied?: number | null;
   /** Called from the badge to re-run the query without the auto LIMIT. */
   onFetchAllRows?: () => void;
+  /** Active connection's driver ("mysql" | "postgres" | "sqlite"), for row→SQL generation. */
+  driver?: string;
   /** Schema (database) name of the active tab, used for the export default filename. */
   database?: string | null;
   /** Table name of the active tab, used for the export default filename. */
@@ -1048,6 +1052,9 @@ export function DataGrid({
   columnSizingStorageKey,
   emptyMessage,
   scrollContainerRef,
+  rowSqlDriver,
+  rowSqlDatabase,
+  rowSqlTable,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -1098,6 +1105,18 @@ export function DataGrid({
    * snapshots) to render every row as before.
    */
   scrollContainerRef?: RefObject<HTMLDivElement | null>;
+  /**
+   * When `rowSqlTable` is set, the right-click menu can generate executable
+   * INSERT / UPDATE / DELETE statements for the clicked row. `rowSqlDriver`
+   * selects the dialect (identifier quoting, BLOB literal form) and
+   * `rowSqlDatabase` qualifies the table reference (ignored for SQLite).
+   * UPDATE / DELETE additionally require a resolvable primary key (`pkIndices`).
+   * Omit `rowSqlTable` (free-form query results with no single target table) to
+   * hide the SQL-copy items entirely.
+   */
+  rowSqlDriver?: string;
+  rowSqlDatabase?: string | null;
+  rowSqlTable?: string | null;
 }) {
   const t = useT();
 
@@ -1265,6 +1284,28 @@ export function DataGrid({
         .map(cellToText)
         .join("\t")}`,
     );
+
+  // Whether the right-click menu can offer "copy as SQL": we need a concrete
+  // target table (set only for table tabs, not free-form query results).
+  const rowSqlAvailable = !!rowSqlTable;
+  const rowSqlHasPk = (pkIndices?.length ?? 0) > 0;
+  const copyRowSql = (rowIdx: number, kind: RowSqlKind) => {
+    const row = rows[rowIdx];
+    if (!row || !rowSqlTable) return;
+    const stmts = buildRowSql(
+      {
+        driver: rowSqlDriver ?? "mysql",
+        database: rowSqlDatabase ?? "",
+        table: rowSqlTable,
+        columns,
+        rows: [row],
+        pkIndices: pkIndices ?? [],
+      },
+      kind,
+    );
+    if (stmts.length === 0) return;
+    void runCopy(stmts.join("\n"));
+  };
 
   const commitEdit = (
     rowIdx: number,
@@ -1649,6 +1690,28 @@ export function DataGrid({
               label: t("gridCopyRowWithHeaders"),
               onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
             },
+            ...(rowSqlAvailable
+              ? [
+                  { separator: true as const },
+                  {
+                    label: t("gridCopyAsInsert"),
+                    onSelect: () => copyRowSql(copyMenu.rowIdx, "insert"),
+                  },
+                  {
+                    label: t("gridCopyAsUpdate"),
+                    onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
+                    disabled: !rowSqlHasPk,
+                    title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                  },
+                  {
+                    label: t("gridCopyAsDelete"),
+                    onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
+                    disabled: !rowSqlHasPk,
+                    title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                  },
+                ]
+              : []),
+            { separator: true as const },
             {
               label: t("gridViewFull"),
               onSelect: () => setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx }),
@@ -1716,6 +1779,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onLoadMore,
   autoLimitApplied,
   onFetchAllRows,
+  driver,
   database,
   table,
   editable,
@@ -1785,9 +1849,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // the hook order stays stable as `result` transitions null → columns
   // (otherwise React aborts the whole tree on the next render).
   const columns = result?.columns;
+  // Resolve the PK regardless of `editable`: a read-only table tab still wants
+  // it for row→SQL generation (UPDATE/DELETE WHERE clause). Inline editing
+  // stays gated on `editable` downstream, so this never makes cells editable.
   const pkIndices = useMemo(
-    () => (editable && columns ? resolvePkIndices(columns, tableColumns ?? null) : []),
-    [editable, columns, tableColumns],
+    () => (columns ? resolvePkIndices(columns, tableColumns ?? null) : []),
+    [columns, tableColumns],
   );
   const editableCols = useMemo<boolean[]>(() => {
     if (!editable || !columns) return columns ? columns.map(() => false) : [];
@@ -2206,6 +2273,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
           validateEdit={validateEdit}
+          rowSqlDriver={driver}
+          rowSqlDatabase={database}
+          rowSqlTable={table}
           columnSizingStorageKey={columnSizingStorageKey}
           emptyMessage={
             streaming ? undefined : (

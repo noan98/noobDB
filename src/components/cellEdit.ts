@@ -331,6 +331,108 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
   return stmts;
 }
 
+/**
+ * Renders a BLOB cell value (carried as a bare hex string, per CLAUDE.md's
+ * `Value::Bytes`) as a driver-appropriate binary literal:
+ *   - PostgreSQL: `'\xDEADBEEF'` (bytea hex input; backslash is literal under
+ *     the default `standard_conforming_strings = on`)
+ *   - SQLite:     `X'DEADBEEF'` (blob literal)
+ *   - MySQL:      `0xDEADBEEF` (hex literal; an empty blob has no `0x` form, so
+ *     it falls back to the empty string `''`)
+ */
+function blobLiteral(driver: string, hex: string): string {
+  if (driver === "postgres") return "'\\x" + hex + "'";
+  if (driver === "sqlite") return "X'" + hex + "'";
+  return hex.length > 0 ? "0x" + hex : "''";
+}
+
+/**
+ * Converts a `CellValue` straight from a result row into a SQL literal for
+ * row→SQL generation. Unlike `literalFromInput` (which parses user-typed edit
+ * text) this trusts the value's runtime type and the column's declared type:
+ *   - NULL/undefined → SQL NULL
+ *   - BLOB-family column → driver-specific binary literal (`blobLiteral`)
+ *   - boolean → TRUE/FALSE, finite number → bare numeral
+ *   - numeric column whose value arrived as a numeric-looking string (e.g. a
+ *     BIGINT/DECIMAL kept as text to preserve precision) → unquoted numeral
+ *   - everything else → a quoted, escaped string literal
+ */
+function rowValueLiteral(driver: string, v: CellValue, col: Column): string {
+  if (v === null || v === undefined) return "NULL";
+  const t = col.type_name.toUpperCase();
+  if (BINARY_TYPES.has(t)) return blobLiteral(driver, String(v));
+  if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
+  if (typeof v === "number") return Number.isFinite(v) ? String(v) : "NULL";
+  if (NUMERIC_TYPES.has(t) && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(String(v).trim())) {
+    return String(v).trim();
+  }
+  return quoteString(driver, String(v));
+}
+
+/** Which statement shape `buildRowSql` should emit for the selected rows. */
+export type RowSqlKind = "insert" | "update" | "delete";
+
+export interface BuildRowSqlInput {
+  driver: string;
+  database: string;
+  table: string;
+  columns: Column[];
+  /** The result rows to turn into statements (one statement per row). */
+  rows: CellValue[][];
+  /** Primary-key column indices; empty means no resolvable PK. */
+  pkIndices: number[];
+}
+
+/**
+ * Builds executable `INSERT` / `UPDATE` / `DELETE` statements from selected
+ * result rows, one statement per row, for the right-click "copy as SQL" menu.
+ *
+ * - INSERT lists every column with its literal value.
+ * - UPDATE sets every non-PK column and keys the WHERE clause on the PK.
+ * - DELETE keys the WHERE clause on the PK.
+ *
+ * `UPDATE`/`DELETE` require a resolvable primary key: without one we cannot
+ * build a row-identifying WHERE clause, so they return `[]` (the menu disables
+ * them in that case). Identifiers are quoted and the table reference qualified
+ * per the driver's dialect, reusing the same helpers as inline-edit Apply.
+ */
+export function buildRowSql(input: BuildRowSqlInput, kind: RowSqlKind): string[] {
+  const { driver, database, table, columns, rows, pkIndices } = input;
+  if (columns.length === 0) return [];
+  if ((kind === "update" || kind === "delete") && pkIndices.length === 0) return [];
+  const ref = qualifiedTableRef(driver, database, table);
+  const pkSet = new Set(pkIndices);
+  const stmts: string[] = [];
+  for (const row of rows) {
+    if (!row) continue;
+    const whereParts = pkIndices.map(
+      (i) =>
+        `${quoteIdentFor(driver, columns[i].name)} = ${rowValueLiteral(driver, row[i], columns[i])}`,
+    );
+    if (kind === "insert") {
+      const cols = columns.map((c) => quoteIdentFor(driver, c.name)).join(", ");
+      const vals = columns.map((c, i) => rowValueLiteral(driver, row[i], c)).join(", ");
+      stmts.push(`INSERT INTO ${ref} (${cols}) VALUES (${vals});`);
+    } else if (kind === "update") {
+      const setParts = columns
+        .map((c, i) =>
+          pkSet.has(i)
+            ? null
+            : `${quoteIdentFor(driver, c.name)} = ${rowValueLiteral(driver, row[i], c)}`,
+        )
+        .filter((s): s is string => s !== null);
+      // Every column is part of the PK — there is nothing to SET.
+      if (setParts.length === 0) continue;
+      stmts.push(
+        `UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`,
+      );
+    } else {
+      stmts.push(`DELETE FROM ${ref} WHERE ${whereParts.join(" AND ")};`);
+    }
+  }
+  return stmts;
+}
+
 /** Total number of cells (across all rows) currently flagged for edit. */
 export function countEditedCells(edits: PendingEdits): number {
   let n = 0;

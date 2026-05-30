@@ -2648,6 +2648,7 @@ export default function App() {
                       onLoadMore={() => loadMoreInTab(tab.id)}
                       autoLimitApplied={tab.autoLimitApplied}
                       onFetchAllRows={() => fetchAllForTab(tab)}
+                      driver={selectedProfile?.driver ?? "mysql"}
                       database={tab.database ?? selectedProfile?.database ?? null}
                       table={tab.table ?? null}
                       editable={tab.kind === "table" && !readOnly}
