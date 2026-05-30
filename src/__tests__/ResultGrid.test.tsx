@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { ResultGrid, GRID_CSS, isColumnFilterActive } from "../components/ResultGrid";
+import { ResultGrid, GRID_CSS, isColumnFilterActive, readStoredColumnSizing, writeStoredColumnSizing } from "../components/ResultGrid";
 import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
@@ -446,5 +446,75 @@ describe("editable-cell visual affordance (#349)", () => {
     ).toBe("default");
     expect(css["& tbody tr td.is-editable-cell:hover"]?.outline).toContain("var(--accent)");
     expect(css["& td.is-editable-cell:focus-within"]?.outline).toContain("var(--accent)");
+  });
+});
+
+// 列幅永続化ユーティリティのユニットテスト (#383)
+describe("column sizing persistence", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("存在しないキーは空オブジェクトを返す", () => {
+    expect(readStoredColumnSizing("noobdb.colsizing.v1::db::t1::[\"a\"]")).toEqual({});
+  });
+
+  it("undefined キーは常に空オブジェクトを返す", () => {
+    expect(readStoredColumnSizing(undefined)).toEqual({});
+  });
+
+  it("書き込んだ列幅を同じキーで読み返せる", () => {
+    const key = 'noobdb.colsizing.v1::db::users::["id","name"]';
+    writeStoredColumnSizing(key, { "0": 80, "1": 200 });
+    expect(readStoredColumnSizing(key)).toEqual({ "0": 80, "1": 200 });
+  });
+
+  it("書き込みを重ねると最新の値で上書きされる", () => {
+    const key = 'noobdb.colsizing.v1::db::users::["id"]';
+    writeStoredColumnSizing(key, { "0": 80 });
+    writeStoredColumnSizing(key, { "0": 160 });
+    expect(readStoredColumnSizing(key)).toEqual({ "0": 160 });
+  });
+
+  it("異なるキーの値は独立して保持される", () => {
+    const k1 = 'noobdb.colsizing.v1::db::t1::["a"]';
+    const k2 = 'noobdb.colsizing.v1::db::t2::["b"]';
+    writeStoredColumnSizing(k1, { "0": 100 });
+    writeStoredColumnSizing(k2, { "0": 200 });
+    expect(readStoredColumnSizing(k1)).toEqual({ "0": 100 });
+    expect(readStoredColumnSizing(k2)).toEqual({ "0": 200 });
+  });
+
+  it("50 エントリ上限を超えると最も古いエントリが削除される", () => {
+    const keys: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      const k = `noobdb.colsizing.v1::db::t${i}::["col"]`;
+      keys.push(k);
+      writeStoredColumnSizing(k, { "0": i });
+    }
+    // この時点で 50 エントリ。最初に書いた t0 が最も古い (LRU 末尾)。
+    expect(readStoredColumnSizing(keys[0])).toEqual({ "0": 0 });
+
+    // 51 件目を書くと最古の t0 が削除される。
+    const k51 = 'noobdb.colsizing.v1::db::t50::["col"]';
+    writeStoredColumnSizing(k51, { "0": 50 });
+    expect(readStoredColumnSizing(keys[0])).toEqual({});
+    expect(readStoredColumnSizing(k51)).toEqual({ "0": 50 });
+  });
+
+  it("既存キーを再書き込みすると LRU 先頭に移動し、別エントリが削除されない", () => {
+    const keys: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      const k = `noobdb.colsizing.v1::db::u${i}::["col"]`;
+      keys.push(k);
+      writeStoredColumnSizing(k, { "0": i });
+    }
+    // u0 を更新 → LRU 先頭へ移動。
+    writeStoredColumnSizing(keys[0], { "0": 999 });
+    // 51 件目を書くと末尾 (u1) が削除される。u0 は先頭のため残る。
+    const kNew = 'noobdb.colsizing.v1::db::uNew::["col"]';
+    writeStoredColumnSizing(kNew, { "0": 100 });
+    expect(readStoredColumnSizing(keys[0])).toEqual({ "0": 999 });
+    expect(readStoredColumnSizing(keys[1])).toEqual({});
   });
 });
