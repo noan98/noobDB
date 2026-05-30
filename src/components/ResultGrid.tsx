@@ -20,7 +20,7 @@ import {
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
-import { AUTO_REFRESH_INTERVAL_OPTIONS, useSettings } from "../settings";
+import { AUTO_REFRESH_INTERVAL_OPTIONS, useSettings, type Density } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
 import { ContextMenu } from "./ContextMenu";
@@ -58,6 +58,15 @@ import {
  * `css` オブジェクト + 子孫セレクタを **意図的に維持** する (className 文字列の
  * 同期が不要なよう、対象は素のタグセレクタに限定している)。
  */
+/** Per-density seed height (px) for the virtualizer's first paint (#410). The
+ *  real height is measured afterwards; these only need to be close. Values track
+ *  the `--density-row-h` tokens in App.css. */
+const DENSITY_ROW_ESTIMATE: Record<Density, number> = {
+  compact: 24,
+  normal: 30,
+  spacious: 40,
+};
+
 export const GRID_CSS: SystemStyleObject = {
   "& table": {
     borderCollapse: "separate",
@@ -71,9 +80,10 @@ export const GRID_CSS: SystemStyleObject = {
   "& th, & td": {
     borderRight: "1px solid var(--border)",
     borderBottom: "1px solid var(--border)",
-    // セル余白はフォントスケール (--font-scale) に追従させ、フォント拡大時に行が
-    // 詰まってテキストが窮屈にならないようにする (#327)。
-    padding: "calc(5px * var(--font-scale)) calc(10px * var(--font-scale))",
+    // セル余白は密度トークン (--density-cell-*) に従う。これ自体が --font-scale を
+    // 内包するため、フォント拡大時に窮屈にならず (#327)、かつ表示密度の切り替え
+    // (Compact / Normal / Spacious) で行高さ・余白を統合的に調整できる (#410)。
+    padding: "var(--density-cell-py) var(--density-cell-px)",
     textAlign: "left",
     whiteSpace: "nowrap",
     overflow: "hidden",
@@ -204,8 +214,8 @@ export const GRID_CSS: SystemStyleObject = {
     gap: "6px",
     flex: "1 1 auto",
     minWidth: 0,
-    // ソート可能ヘッダのボタン余白もセルと同値でスケール追従させる (#327)。
-    padding: "calc(5px * var(--font-scale)) calc(10px * var(--font-scale))",
+    // ソート可能ヘッダのボタン余白もセルと同じ密度トークンに揃える (#327 / #410)。
+    padding: "var(--density-cell-py) var(--density-cell-px)",
     background: "transparent",
     border: "none",
     borderRadius: 0,
@@ -1339,12 +1349,22 @@ export function DataGrid({
   // the first paint. When `scrollContainerRef` is absent (preview panes) we
   // render every row, so `virtualize` gates whether the virtual items are used.
   const virtualize = !!scrollContainerRef;
+  // Seed the virtual row height from the active density preset (#410). The exact
+  // height is still measured via `measureElement`, but a density-matched seed
+  // avoids a visible re-layout jump on the first paint and after switching
+  // density (see the re-measure effect below).
+  const density = useSettings().density;
   const rowVirtualizer = useVirtualizer({
     count: visibleRows.length,
     getScrollElement: () => scrollContainerRef?.current ?? null,
-    estimateSize: () => 30,
+    estimateSize: () => DENSITY_ROW_ESTIMATE[density],
     overscan: 16,
   });
+  // Density changes the row height via CSS vars; re-measure so the virtualizer's
+  // cached sizes (and total scroll height) follow instead of lagging by a paint.
+  useEffect(() => {
+    if (virtualize) rowVirtualizer.measure();
+  }, [density, virtualize, rowVirtualizer]);
   const virtualItems = virtualize ? rowVirtualizer.getVirtualItems() : [];
   const virtualPaddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
   const virtualPaddingBottom =
