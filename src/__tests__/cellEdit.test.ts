@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { CellValue, Column, TableColumnInfo } from "../api/tauri";
 import {
+  buildRowSql,
   buildUpdateStatements,
   countEditedCells,
   countEditedRows,
   isEditableColumnType,
   resolvePkIndices,
   rowEditKey,
+  type BuildRowSqlInput,
   type BuildUpdateInput,
   type PendingEdits,
 } from "../components/cellEdit";
@@ -259,6 +261,155 @@ describe("buildUpdateStatements", () => {
       "UPDATE `db`.`tbl` SET `name` = 'x' WHERE `id` = 1;",
       "UPDATE `db`.`tbl` SET `name` = 'y' WHERE `id` = 2;",
     ]);
+  });
+});
+
+function baseRowSql(overrides: Partial<BuildRowSqlInput>): BuildRowSqlInput {
+  return {
+    driver: "mysql",
+    database: "db",
+    table: "tbl",
+    columns: [col("id", "INT"), col("name", "VARCHAR")],
+    rows: [[1, "old"]],
+    pkIndices: [0],
+    ...overrides,
+  };
+}
+
+describe("buildRowSql", () => {
+  describe("INSERT", () => {
+    it("lists every column with quoted, qualified MySQL syntax", () => {
+      expect(buildRowSql(baseRowSql({}), "insert")).toEqual([
+        "INSERT INTO `db`.`tbl` (`id`, `name`) VALUES (1, 'old');",
+      ]);
+    });
+
+    it("does not require a primary key", () => {
+      expect(buildRowSql(baseRowSql({ pkIndices: [] }), "insert")).toEqual([
+        "INSERT INTO `db`.`tbl` (`id`, `name`) VALUES (1, 'old');",
+      ]);
+    });
+
+    it("quotes identifiers and qualifies for Postgres", () => {
+      expect(buildRowSql(baseRowSql({ driver: "postgres" }), "insert")).toEqual([
+        'INSERT INTO "db"."tbl" ("id", "name") VALUES (1, \'old\');',
+      ]);
+    });
+
+    it("omits the database prefix for SQLite", () => {
+      expect(buildRowSql(baseRowSql({ driver: "sqlite" }), "insert")).toEqual([
+        'INSERT INTO "tbl" ("id", "name") VALUES (1, \'old\');',
+      ]);
+    });
+
+    it("renders NULL, booleans and escaped strings", () => {
+      const columns = [col("id", "INT"), col("flag", "BOOLEAN"), col("note", "VARCHAR")];
+      expect(
+        buildRowSql(baseRowSql({ columns, rows: [[1, true, null]] }), "insert"),
+      ).toEqual(["INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (1, TRUE, NULL);"]);
+      expect(
+        buildRowSql(baseRowSql({ columns, rows: [[2, false, "O'Brien"]] }), "insert"),
+      ).toEqual([
+        "INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (2, FALSE, 'O''Brien');",
+      ]);
+    });
+
+    it("keeps a precision-preserving numeric string unquoted for numeric columns", () => {
+      // BIGINT beyond 2^53 arrives as a string to avoid precision loss; it must
+      // still emit as a bare numeral, not a quoted string.
+      const columns = [col("id", "BIGINT"), col("amount", "DECIMAL")];
+      expect(
+        buildRowSql(
+          baseRowSql({ columns, rows: [["9007199254740993", "12.50"]] }),
+          "insert",
+        ),
+      ).toEqual([
+        "INSERT INTO `db`.`tbl` (`id`, `amount`) VALUES (9007199254740993, 12.50);",
+      ]);
+    });
+
+    it("emits driver-specific BLOB literals", () => {
+      const columns = [col("id", "INT"), col("data", "BLOB")];
+      const rows: CellValue[][] = [[1, "deadbeef"]];
+      expect(buildRowSql(baseRowSql({ columns, rows }), "insert")).toEqual([
+        "INSERT INTO `db`.`tbl` (`id`, `data`) VALUES (1, 0xdeadbeef);",
+      ]);
+      expect(
+        buildRowSql(baseRowSql({ driver: "postgres", columns, rows }), "insert"),
+      ).toEqual(['INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xdeadbeef\');']);
+      expect(
+        buildRowSql(baseRowSql({ driver: "sqlite", columns, rows }), "insert"),
+      ).toEqual(['INSERT INTO "tbl" ("id", "data") VALUES (1, X\'deadbeef\');']);
+    });
+
+    it("emits one statement per row", () => {
+      expect(
+        buildRowSql(baseRowSql({ rows: [[1, "a"], [2, "b"]] }), "insert"),
+      ).toEqual([
+        "INSERT INTO `db`.`tbl` (`id`, `name`) VALUES (1, 'a');",
+        "INSERT INTO `db`.`tbl` (`id`, `name`) VALUES (2, 'b');",
+      ]);
+    });
+  });
+
+  describe("UPDATE", () => {
+    it("sets non-PK columns and keys WHERE on the PK", () => {
+      expect(buildRowSql(baseRowSql({}), "update")).toEqual([
+        "UPDATE `db`.`tbl` SET `name` = 'old' WHERE `id` = 1;",
+      ]);
+    });
+
+    it("returns [] without a resolvable primary key", () => {
+      expect(buildRowSql(baseRowSql({ pkIndices: [] }), "update")).toEqual([]);
+    });
+
+    it("returns [] when every column is part of the primary key", () => {
+      // A pure join table (both columns are PK) has nothing to SET.
+      expect(buildRowSql(baseRowSql({ pkIndices: [0, 1] }), "update")).toEqual([]);
+    });
+
+    it("ANDs a composite primary key in the WHERE clause", () => {
+      const columns = [col("a", "INT"), col("b", "INT"), col("v", "VARCHAR")];
+      expect(
+        buildRowSql(
+          baseRowSql({ columns, rows: [[1, 2, "x"]], pkIndices: [0, 1] }),
+          "update",
+        ),
+      ).toEqual(["UPDATE `db`.`tbl` SET `v` = 'x' WHERE `a` = 1 AND `b` = 2;"]);
+    });
+  });
+
+  describe("DELETE", () => {
+    it("keys WHERE on the PK", () => {
+      expect(buildRowSql(baseRowSql({}), "delete")).toEqual([
+        "DELETE FROM `db`.`tbl` WHERE `id` = 1;",
+      ]);
+    });
+
+    it("returns [] without a resolvable primary key", () => {
+      expect(buildRowSql(baseRowSql({ pkIndices: [] }), "delete")).toEqual([]);
+    });
+
+    it("ANDs a composite primary key and quotes for Postgres", () => {
+      const columns = [col("a", "INT"), col("b", "VARCHAR"), col("v", "VARCHAR")];
+      expect(
+        buildRowSql(
+          baseRowSql({
+            driver: "postgres",
+            columns,
+            rows: [[1, "k", "x"]],
+            pkIndices: [0, 1],
+          }),
+          "delete",
+        ),
+      ).toEqual(['DELETE FROM "db"."tbl" WHERE "a" = 1 AND "b" = \'k\';']);
+    });
+  });
+
+  it("returns [] when there are no columns", () => {
+    expect(buildRowSql(baseRowSql({ columns: [], rows: [[]], pkIndices: [] }), "insert")).toEqual(
+      [],
+    );
   });
 });
 
