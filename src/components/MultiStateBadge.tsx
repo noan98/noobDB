@@ -20,7 +20,7 @@ import { transitions, variants } from "../motion";
  * - 状態が変わったことを SR にアナウンスするため `aria-live="polite"` を付与。
  */
 
-export type BadgeTone = "neutral" | "success" | "warning" | "danger" | "info";
+export type BadgeTone = "neutral" | "accent" | "success" | "warning" | "danger" | "info";
 
 export interface BadgeState {
   label: string;
@@ -57,6 +57,14 @@ const TONE_TOKENS: Record<BadgeTone, {
     fg: "app.text",
     hoverBg: "app.hover",
     border: "app.borderStrong",
+  },
+  // 主要アクション (Run) 用。theme.ts の Button `primary` variant と同じ
+  // アクセント色に揃え、ツールバー上で最も目立つ唯一のボタンにする (#283)。
+  accent: {
+    bg: "app.accent",
+    fg: "app.accentText",
+    hoverBg: "app.accentHover",
+    border: "app.accent",
   },
   success: {
     bg: "app.successBg",

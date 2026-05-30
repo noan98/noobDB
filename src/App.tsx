@@ -432,7 +432,9 @@ function schemaCacheKey(sessionId: string, database: string): string {
 }
 
 function makeQueryTab(): Tab {
-  const sql = "SELECT 1;";
+  // 新規クエリタブは空のエディタで開く。以前は "SELECT 1;" をプレースホルダ的に
+  // 入れていたが、用途が分からず混乱を招くため空文字にした (#283 関連)。
+  const sql = "";
   return {
     id: newTabId(),
     kind: "query",
@@ -1192,11 +1194,12 @@ export default function App() {
         await restoreSavedTabsRef.current(res.session_id, profile, savedWs);
       } else {
         if (savedCount > 0 && !restore) clearPersistedTabs(profile.id);
-        const tab = makeQueryTab();
-        const paneId = newPaneId();
-        setTabs([tab]);
-        setPanes([{ id: paneId, tabIds: [tab.id], activeTabId: tab.id }]);
-        setActivePaneId(paneId);
+        // 接続直後はクエリタブを自動で開かない。空のワークスペース
+        // (panes.length === 0) は EmptyState (「新規クエリ」ボタン付き) が
+        // 表示されるため、ユーザが必要なときだけ明示的にタブを開ける。
+        setTabs([]);
+        setPanes([]);
+        setActivePaneId(null);
       }
       setStatus({ kind: "idle" });
       toast.success(translate("toastConnected", { name: profile.name }));
