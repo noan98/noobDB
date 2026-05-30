@@ -127,7 +127,7 @@ CI は 2 つのワークフローに分かれています:
   (Vitest) を実行します。pnpm は各ジョブで `corepack enable` により用意し、`pnpm`
   ストアを `actions/cache` でキャッシュします (`actions/setup-node` の `cache: npm`
   は使いません)。`paths-filter` は `package-lock.json` ではなく `pnpm-lock.yaml` を
-  監視します。Rust 系は 4 つのジョブに分かれます: `rust (clippy)` が
+  監視します。Rust 系は 5 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL 8 と PostgreSQL 16 のサービスコンテナに対し `cargo llvm-cov nextest`
@@ -150,9 +150,26 @@ CI は 2 つのワークフローに分かれています:
   ます。これを別ジョブで**並列**に走らせて壁時計時間を縮めています (rust-cache の
   `key` を `clippy` / `test` に分けてキャッシュを分離)。両 Rust ジョブとも CI では
   無益な incremental コンパイルを `CARGO_INCREMENTAL=0` で無効化しています。
+  5 つ目の `rust (windows)` は `windows-latest` 上で `cargo clippy` と
+  `cargo nextest run` を実行し、Windows 固有 (keyring・ファイルパス・改行コード・
+  MSVC リンカ `lld-link`) のリグレッションを PR 段階で検出します (#392)。MySQL/
+  PostgreSQL の URL 環境変数を渡さないため統合テストはスキップされ、外部サービス
+  不要の SQLite 統合テストのみ実走します。Tauri の全スタックビルド (WebView2 等) は
+  不要で MSVC toolchain だけで足り、rust-cache の `key` は `windows` で Linux と
+  分離しています。
+  さらに `rust (clippy)` / `rust (test)` / `rust (windows)` の各コンパイルジョブは
+  **sccache** を `RUSTC_WRAPPER` として有効化し (`taiki-e/install-action` で導入)、
+  `SCCACHE_DIR` を `actions/cache` で永続化してブランチ跨ぎでコンパイル単位を再利用
+  します (#417)。rust-cache が `target` ディレクトリをキャッシュするのに対し sccache
+  は rustc 呼び出し単位をキャッシュする役割分担で、キャッシュキーは
+  `sccache-<os>-<job>-<Cargo.lock ハッシュ>` で分離します。`config.toml` の sccache
+  設定はコメントアウトのままで、CI 限定で環境変数により有効化しています。なお
+  `rust (test)` のカバレッジ計装ビルド (`-C instrument-coverage`) は sccache が
+  キャッシュ対象外として素通しするため、sccache の効果は主に clippy/windows ジョブと
+  依存クレートのコンパイルに現れます。
   **必須チェックを設定する場合は `rust (check + clippy + test)` ではなく
-  `rust (clippy)` と `rust (test)` (必要なら `rust (deny)`) を指定してください**
-  (ジョブ分割でチェック名が変わったため)。
+  `rust (clippy)` と `rust (test)` (必要なら `rust (deny)` / `rust (windows)`) を
+  指定してください** (ジョブ分割でチェック名が変わったため)。
 - `.github/workflows/release.yml` — `v*` タグまたは `workflow_dispatch` を
   トリガに、`windows-latest` 上で `tauri-action` 経由の NSIS バンドルを生成します。
   `main` への push でもキャッシュ温め目的でビルドが走ります。
@@ -194,10 +211,15 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
   状態で同梱しています。プロジェクト/ブランチを跨いでコンパイル成果物を再利用
   したい場合は `cargo install sccache` してから該当行を有効化してください。
   クリーンビルドや `Cargo.lock` 変更時のビルドに効きます (リンク時間は短縮
-  されないので mold と併用すると効果的)。
+  されないので mold と併用すると効果的)。**CI では `config.toml` を書き換えず**、
+  `ci.yml` の各コンパイルジョブで `RUSTC_WRAPPER=sccache` を環境変数として与える
+  方式で有効化しています (`SCCACHE_DIR` を `actions/cache` で永続化)。ローカルの
+  挙動を変えたくないため config はコメントアウトのままにしています。
 - CI (`ci.yml` の rust ジョブ) では上記 config に合わせて `clang` と `mold` を
   apt で導入済みで、`cargo nextest` のテストバイナリ群のリンクが mold で高速化
-  されます。
+  されます。加えて `rust (clippy)` / `rust (test)` / `rust (windows)` では
+  **sccache** を `RUSTC_WRAPPER` で有効化し、コンパイル単位のキャッシュをブランチ
+  跨ぎで再利用します (詳細は上の CI セクションを参照)。
 
 JS のリンタは設定されていません。フロントエンドは `tsc` (`pnpm run build` 経由) で
 型チェックされます。`tsconfig.json` では `strict`、`noUnusedLocals`、
