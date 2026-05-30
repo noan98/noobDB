@@ -595,7 +595,7 @@ export function ConnectionList({
         : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
     return (
-      <MotionTreeNode key={p.id} {...variants.collapse} transition={transitions.enter}>
+      <MotionTreeNode key={p.id} {...variants.fade} transition={transitions.crossfade}>
         <TreeRow
           pt="5px"
           pb="5px"

@@ -112,7 +112,7 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
   };
 
   const renderSnippet = (s: Snippet) => (
-    <MotionTreeNode key={s.id} {...variants.collapse} transition={transitions.enter}>
+    <MotionTreeNode key={s.id} {...variants.fade} transition={transitions.crossfade}>
       <TreeRow
         role="treeitem"
         tabIndex={0}
