@@ -2710,7 +2710,13 @@ export default function App() {
                       queryError={tab.queryError ?? null}
                       onRetry={
                         tab.lastExecutedSql
-                          ? () => void runQueryInTab(tab.id, tab.lastExecutedSql, tab.paginatable)
+                          ? () => {
+                              if (tab.kind === "table") {
+                                void runQueryInTab(tab.id, tab.lastExecutedSql, tab.paginatable);
+                                return;
+                              }
+                              runInTabWithGate(tab, tab.lastExecutedSql);
+                            }
                           : undefined
                       }
                     />
