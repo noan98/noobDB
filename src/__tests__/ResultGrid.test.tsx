@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { ResultGrid, GRID_CSS } from "../components/ResultGrid";
+import { ResultGrid, GRID_CSS, isColumnFilterActive } from "../components/ResultGrid";
 import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
@@ -211,6 +211,163 @@ describe("ResultGrid", () => {
       // 編集可能セルは name の 1 つだけ (id は PK のため除外)。
       expect(container.querySelectorAll("td.is-editable-cell")).toHaveLength(1);
     });
+  });
+});
+
+describe("カラム別フィルタ (#390)", () => {
+  beforeEach(() => setLocale("en"));
+
+  const NULLABLE_COLUMNS: Column[] = [
+    { name: "name", type_name: "VARCHAR" },
+    { name: "qty", type_name: "INT" },
+  ];
+  const NULLABLE_RESULT = makeResult(NULLABLE_COLUMNS, [
+    ["banana", 2],
+    ["apple", 5],
+    ["cherry", 9],
+    [null, 7],
+  ]);
+
+  /** Open the per-column filter popup by clicking the header's filter icon. */
+  async function openFilter(user: ReturnType<typeof userEvent.setup>, column: string) {
+    await user.click(
+      screen.getByRole("button", { name: t("gridFilterAria", { column }) }),
+    );
+    return screen.getByRole("dialog");
+  }
+
+  it("テキスト列を contains で絞り込み、列ヘッダをハイライトする", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    const dialog = await openFilter(user, "name");
+    // 既定演算子 (contains) のまま値を入力。
+    await user.type(within(dialog).getByRole("textbox"), "an");
+
+    expect(dataRowTexts(container)).toEqual([["banana", "2"]]);
+    // フィルタが効いた列はヘッダがアクセント色で区別される。
+    expect(container.querySelector("th.is-filtered-col")).not.toBeNull();
+    expect(container.querySelector(".th-filter-button.is-active")).not.toBeNull();
+  });
+
+  it("テキスト列の equals は完全一致のみ通す", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    const dialog = await openFilter(user, "name");
+    await user.selectOptions(
+      within(dialog).getByRole("combobox", { name: t("gridFilterOperatorLabel") }),
+      "equals",
+    );
+    await user.type(within(dialog).getByRole("textbox"), "apple");
+
+    expect(dataRowTexts(container)).toEqual([["apple", "5"]]);
+  });
+
+  it("数値列を > で絞り込む", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    const dialog = await openFilter(user, "qty");
+    await user.selectOptions(
+      within(dialog).getByRole("combobox", { name: t("gridFilterOperatorLabel") }),
+      "gt",
+    );
+    await user.type(within(dialog).getByRole("textbox"), "4");
+
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["apple", "cherry"]);
+  });
+
+  it("数値列を範囲 (between) で絞り込む", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    const dialog = await openFilter(user, "qty");
+    await user.selectOptions(
+      within(dialog).getByRole("combobox", { name: t("gridFilterOperatorLabel") }),
+      "between",
+    );
+    await user.type(
+      within(dialog).getByLabelText(t("gridFilterMinPlaceholder")),
+      "3",
+    );
+    await user.type(
+      within(dialog).getByLabelText(t("gridFilterMaxPlaceholder")),
+      "6",
+    );
+
+    expect(dataRowTexts(container)).toEqual([["apple", "5"]]);
+  });
+
+  it("NULL のみ / NULL を除外でフィルタできる", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={NULLABLE_RESULT} />);
+
+    const dialog = await openFilter(user, "name");
+    const nullSelect = within(dialog).getByRole("combobox", {
+      name: t("gridFilterNullLabel"),
+    });
+
+    // NULL のみ → name が NULL の 1 行だけ。
+    await user.selectOptions(nullSelect, "only");
+    expect(dataRowTexts(container).map((r) => r[1])).toEqual(["7"]);
+
+    // NULL を除外 → NULL 行が落ちる。
+    await user.selectOptions(nullSelect, "exclude");
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual([
+      "banana",
+      "apple",
+      "cherry",
+    ]);
+  });
+
+  it("カラムフィルタはグローバルフィルタと AND 結合で動作する", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    // 全文検索で "a" を含む行 (banana / apple) に絞る。
+    await user.type(screen.getByLabelText(t("gridSearchAria")), "a");
+    // さらに qty >= 5 のカラムフィルタを足すと apple だけが残る。
+    const dialog = await openFilter(user, "qty");
+    await user.selectOptions(
+      within(dialog).getByRole("combobox", { name: t("gridFilterOperatorLabel") }),
+      "gt",
+    );
+    await user.type(within(dialog).getByRole("textbox"), "4");
+
+    expect(dataRowTexts(container)).toEqual([["apple", "5"]]);
+  });
+
+  it("ポップアップのクリアでフィルタを解除する", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    const dialog = await openFilter(user, "name");
+    await user.type(within(dialog).getByRole("textbox"), "an");
+    expect(dataRowTexts(container)).toEqual([["banana", "2"]]);
+
+    await user.click(
+      within(dialog).getByRole("button", { name: t("gridFilterClearColumn") }),
+    );
+    // 全行に戻り、ハイライトも消える。
+    expect(dataRowTexts(container)).toHaveLength(3);
+    expect(container.querySelector("th.is-filtered-col")).toBeNull();
+  });
+
+  it("isColumnFilterActive は値も NULL ゲートも無い条件を非アクティブと判定する", () => {
+    expect(isColumnFilterActive(undefined)).toBe(false);
+    expect(
+      isColumnFilterActive({ op: "contains", value: "", value2: "", nullMode: "any" }),
+    ).toBe(false);
+    expect(
+      isColumnFilterActive({ op: "contains", value: "x", value2: "", nullMode: "any" }),
+    ).toBe(true);
+    expect(
+      isColumnFilterActive({ op: "eq", value: "", value2: "", nullMode: "exclude" }),
+    ).toBe(true);
+    expect(
+      isColumnFilterActive({ op: "between", value: "", value2: "5", nullMode: "any" }),
+    ).toBe(true);
   });
 });
 

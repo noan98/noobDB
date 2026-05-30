@@ -1,4 +1,5 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence } from "motion/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
@@ -24,6 +25,7 @@ import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
 import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
+import { Icon } from "./Icon";
 import { ExportModal } from "./ExportModal";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
@@ -187,11 +189,19 @@ export const GRID_CSS: SystemStyleObject = {
   "& .cell-string": { color: "var(--text)" },
   // 列ヘッダのソート/フィルタ
   "& th.is-sortable": { padding: 0 },
+  // ヘッダ内はソートボタン (伸長) とフィルタアイコン (固定) の横並び。
+  "& th .th-inner": {
+    display: "flex",
+    alignItems: "stretch",
+    width: "100%",
+    minWidth: 0,
+  },
   "& th.is-sortable .th-sort-button": {
     display: "flex",
     alignItems: "center",
     gap: "6px",
-    width: "100%",
+    flex: "1 1 auto",
+    minWidth: 0,
     // ソート可能ヘッダのボタン余白もセルと同値でスケール追従させる (#327)。
     padding: "calc(5px * var(--font-scale)) calc(10px * var(--font-scale))",
     background: "transparent",
@@ -224,32 +234,29 @@ export const GRID_CSS: SystemStyleObject = {
   "& th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc):hover .th-sort-indicator::before": {
     opacity: 0.85,
   },
-  "& tr.filter-row th": {
-    position: "sticky",
-    top: "38px",
-    background: "var(--bg-muted)",
-    padding: "3px 6px",
-    fontWeight: 400,
-    borderBottom: "1px solid var(--border-strong)",
-    zIndex: 2,
+  // 列ヘッダのフィルタアイコン。クリックで条件ポップアップ (ColumnFilterMenu) を開く。
+  "& th .th-filter-button": {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    padding: "0 7px",
+    marginRight: "4px",
+    background: "transparent",
+    border: "none",
+    borderLeft: "1px solid var(--border)",
+    color: "var(--text-muted)",
+    cursor: "pointer",
+    transition:
+      "color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease)",
   },
-  "& tr.filter-row th.row-index": { top: "38px", zIndex: 3, background: "var(--bg-muted)" },
-  "& .grid-filter-input": {
-    width: "100%",
-    padding: "3px 6px",
-    fontSize: "var(--text-xs)",
-    fontFamily: "inherit",
-    border: "1px solid var(--border)",
-    background: "var(--bg-input)",
-    color: "var(--text)",
-    borderRadius: "var(--radius-sm)",
+  "& th .th-filter-button:hover": { background: "var(--bg-hover)", color: "var(--text)" },
+  // フィルタが設定されている列はアイコンとヘッダ全体をアクセント色で強調する。
+  "& th .th-filter-button.is-active": { color: "var(--accent)" },
+  "& th.is-filtered-col": {
+    background: "color-mix(in srgb, var(--accent) 14%, var(--bg-header))",
   },
-  "& .grid-filter-input::placeholder": { color: "var(--text-muted)" },
-  "& .grid-filter-input:focus": {
-    outline: "none",
-    borderColor: "var(--accent)",
-    boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
-  },
+  "& th.is-filtered-col .th-name": { color: "var(--accent)" },
   "& td.grid-empty-cell": {
     padding: "14px",
     color: "var(--text-muted)",
@@ -642,14 +649,115 @@ function writeStoredColumnSizing(
   }
 }
 
-const includesFilter: FilterFn<RowShape> = (row, columnId, filterValue) => {
-  const fv = (filterValue ?? "") as string;
-  if (fv === "") return true;
-  const v = row.getValue(columnId) as CellValue;
-  if (v === null || v === undefined) {
-    return "null".includes(fv.toLowerCase());
+/**
+ * Per-column filter model. Replaces the old plain-string "contains" filter
+ * with an operator-driven condition so each header can express text matches
+ * (contains / equals / starts / ends), numeric comparisons (= / > / < / range)
+ * and a NULL gate, all combined with the cross-column global filter (AND). The
+ * structured value is stored as the TanStack column filter value and read back
+ * by `columnFilter` (the `filterFn`) and the header popup.
+ */
+export type FilterNullMode = "any" | "only" | "exclude";
+export type TextFilterOp = "contains" | "equals" | "startsWith" | "endsWith";
+export type NumberFilterOp = "eq" | "gt" | "lt" | "between";
+export type FilterOp = TextFilterOp | NumberFilterOp;
+
+export interface ColumnFilter {
+  op: FilterOp;
+  /** Primary operand (or lower bound for `between`). */
+  value: string;
+  /** Upper bound for `between`; ignored by every other operator. */
+  value2: string;
+  nullMode: FilterNullMode;
+}
+
+const TEXT_FILTER_OPS: { op: TextFilterOp; key: I18nKey }[] = [
+  { op: "contains", key: "gridFilterOpContains" },
+  { op: "equals", key: "gridFilterOpEquals" },
+  { op: "startsWith", key: "gridFilterOpStartsWith" },
+  { op: "endsWith", key: "gridFilterOpEndsWith" },
+];
+
+const NUMBER_FILTER_OPS: { op: NumberFilterOp; key: I18nKey }[] = [
+  { op: "eq", key: "gridFilterOpEq" },
+  { op: "gt", key: "gridFilterOpGt" },
+  { op: "lt", key: "gridFilterOpLt" },
+  { op: "between", key: "gridFilterOpBetween" },
+];
+
+function isNumericFilterKind(kind: CellKind): boolean {
+  return kind === "number" || kind === "decimal";
+}
+
+function makeDefaultFilter(kind: CellKind): ColumnFilter {
+  return {
+    op: isNumericFilterKind(kind) ? "eq" : "contains",
+    value: "",
+    value2: "",
+    nullMode: "any",
+  };
+}
+
+/** Does the filter carry a value operand (vs. being a NULL-only condition)? */
+function filterHasValue(f: ColumnFilter): boolean {
+  if (f.op === "between") return f.value.trim() !== "" || f.value2.trim() !== "";
+  return f.value.trim() !== "";
+}
+
+/**
+ * A filter only counts as "active" when it actually narrows the result: it has
+ * a value operand or a non-default NULL gate. Inactive filters are stored as
+ * `undefined` so the header icon highlight and the filtered-row summary track
+ * real conditions only.
+ */
+export function isColumnFilterActive(f: ColumnFilter | undefined): f is ColumnFilter {
+  return !!f && (f.nullMode !== "any" || filterHasValue(f));
+}
+
+function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFilter): boolean {
+  switch (f.op) {
+    case "contains":
+    case "equals":
+    case "startsWith":
+    case "endsWith": {
+      const s = String(v).toLowerCase();
+      const q = f.value.toLowerCase();
+      if (f.op === "contains") return s.includes(q);
+      if (f.op === "equals") return s === q;
+      if (f.op === "startsWith") return s.startsWith(q);
+      return s.endsWith(q);
+    }
+    case "eq":
+    case "gt":
+    case "lt":
+    case "between": {
+      const n = Number(v);
+      if (Number.isNaN(n)) return false;
+      const a = f.value.trim() === "" ? NaN : Number(f.value);
+      if (f.op === "eq") return !Number.isNaN(a) && n === a;
+      if (f.op === "gt") return !Number.isNaN(a) && n > a;
+      if (f.op === "lt") return !Number.isNaN(a) && n < a;
+      // between: an empty bound is treated as open (-∞ / +∞).
+      const b = f.value2.trim() === "" ? NaN : Number(f.value2);
+      const lo = Number.isNaN(a) ? -Infinity : a;
+      const hi = Number.isNaN(b) ? Infinity : b;
+      return n >= lo && n <= hi;
+    }
   }
-  return String(v).toLowerCase().includes(fv.toLowerCase());
+}
+
+const columnFilter: FilterFn<RowShape> = (row, columnId, filterValue) => {
+  const f = filterValue as ColumnFilter | undefined;
+  if (!isColumnFilterActive(f)) return true;
+  const v = row.getValue(columnId) as CellValue;
+  const isNull = v === null || v === undefined;
+  if (f.nullMode === "only") return isNull;
+  if (f.nullMode === "exclude" && isNull) return false;
+  // The NULL gate is satisfied; a bare NULL gate (no value operand) passes here.
+  if (!filterHasValue(f)) return true;
+  // A value condition can't be met by NULL (the "only" case already returned).
+  if (isNull) return false;
+  return matchesColumnValue(v, f);
 };
 
 const globalIncludesFilter: FilterFn<RowShape> = (row, _columnId, filterValue) => {
@@ -666,13 +774,233 @@ const globalIncludesFilter: FilterFn<RowShape> = (row, _columnId, filterValue) =
   return false;
 };
 
+/** Field styling shared by the filter popup's selects/inputs. */
+const FILTER_FIELD_CSS: SystemStyleObject = {
+  width: "100%",
+  padding: "4px 6px",
+  fontSize: "var(--text-sm)",
+  fontFamily: "var(--font-mono)",
+  color: "var(--text)",
+  background: "var(--bg-input)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm)",
+  _focus: {
+    outline: "none",
+    borderColor: "var(--accent)",
+    boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+  },
+  _disabled: { opacity: 0.5, cursor: "not-allowed" },
+};
+
+/**
+ * Per-column filter popup, anchored under a header's filter icon and rendered
+ * to <body> via a portal (so it escapes the grid's overflow/sticky clipping,
+ * mirroring `ContextMenu`). It owns a local `draft` seeded once from the active
+ * filter; every edit is pushed up via `onChange` — as the structured value when
+ * it narrows anything, or `undefined` to clear it. Text columns expose
+ * contains/equals/starts/ends; numeric columns expose = / > / < / range; both
+ * carry a NULL gate (include / only / exclude).
+ */
+function ColumnFilterMenu({
+  columnName,
+  kind,
+  anchor,
+  value,
+  onChange,
+  onClose,
+}: {
+  columnName: string;
+  kind: CellKind;
+  anchor: DOMRect;
+  value: ColumnFilter | undefined;
+  onChange: (next: ColumnFilter | undefined) => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const numeric = isNumericFilterKind(kind);
+  const ops = numeric ? NUMBER_FILTER_OPS : TEXT_FILTER_OPS;
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [draft, setDraft] = useState<ColumnFilter>(() => value ?? makeDefaultFilter(kind));
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  // Commit the draft up to the table, clearing it when it no longer narrows.
+  const apply = (next: ColumnFilter) => {
+    setDraft(next);
+    onChange(isColumnFilterActive(next) ? next : undefined);
+  };
+
+  // Clamp into the viewport once measured: anchor the right edge under the
+  // icon, flipping up/left when it would overflow.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const margin = 6;
+    let left = anchor.right - width;
+    if (left < margin) left = anchor.left;
+    let top = anchor.bottom + 4;
+    if (top + height + margin > window.innerHeight) top = anchor.top - height - 4;
+    left = Math.min(Math.max(margin, left), window.innerWidth - width - margin);
+    top = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
+    setPos({ left, top });
+  }, [anchor]);
+
+  // Dismiss on Escape, outside pointer-down, scroll or resize (as ContextMenu).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onDown, true);
+    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  const valuesDisabled = draft.nullMode === "only";
+  const label = t("gridFilterAria", { column: columnName });
+
+  return createPortal(
+    <Box
+      ref={menuRef}
+      role="dialog"
+      aria-label={label}
+      position="fixed"
+      zIndex={1000}
+      width="240px"
+      display="flex"
+      flexDirection="column"
+      gap="8px"
+      padding="10px"
+      bg="app.surface"
+      border="1px solid"
+      borderColor="app.borderStrong"
+      borderRadius="md"
+      boxShadow="md"
+      style={{
+        left: pos?.left ?? anchor.left,
+        top: pos?.top ?? anchor.bottom,
+        visibility: pos ? "visible" : "hidden",
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <chakra.div
+        fontSize="var(--text-sm)"
+        fontWeight={600}
+        color="app.text"
+        whiteSpace="nowrap"
+        overflow="hidden"
+        textOverflow="ellipsis"
+        title={columnName}
+      >
+        {columnName}
+      </chakra.div>
+
+      <chakra.label display="flex" flexDirection="column" gap="3px">
+        <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+          {t("gridFilterOperatorLabel")}
+        </chakra.span>
+        <chakra.select
+          css={FILTER_FIELD_CSS}
+          value={draft.op}
+          onChange={(e) => apply({ ...draft, op: e.target.value as FilterOp })}
+        >
+          {ops.map((o) => (
+            <option key={o.op} value={o.op}>
+              {t(o.key)}
+            </option>
+          ))}
+        </chakra.select>
+      </chakra.label>
+
+      {draft.op === "between" ? (
+        <Box display="flex" gap="6px">
+          <chakra.input
+            css={FILTER_FIELD_CSS}
+            type="text"
+            inputMode="decimal"
+            value={draft.value}
+            disabled={valuesDisabled}
+            placeholder={t("gridFilterMinPlaceholder")}
+            aria-label={t("gridFilterMinPlaceholder")}
+            onChange={(e) => apply({ ...draft, value: e.target.value })}
+          />
+          <chakra.input
+            css={FILTER_FIELD_CSS}
+            type="text"
+            inputMode="decimal"
+            value={draft.value2}
+            disabled={valuesDisabled}
+            placeholder={t("gridFilterMaxPlaceholder")}
+            aria-label={t("gridFilterMaxPlaceholder")}
+            onChange={(e) => apply({ ...draft, value2: e.target.value })}
+          />
+        </Box>
+      ) : (
+        <chakra.input
+          autoFocus
+          css={FILTER_FIELD_CSS}
+          type="text"
+          inputMode={numeric ? "decimal" : undefined}
+          value={draft.value}
+          disabled={valuesDisabled}
+          placeholder={t("gridFilterValuePlaceholder")}
+          aria-label={label}
+          onChange={(e) => apply({ ...draft, value: e.target.value })}
+        />
+      )}
+
+      <chakra.label display="flex" flexDirection="column" gap="3px">
+        <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+          {t("gridFilterNullLabel")}
+        </chakra.span>
+        <chakra.select
+          css={FILTER_FIELD_CSS}
+          value={draft.nullMode}
+          onChange={(e) => apply({ ...draft, nullMode: e.target.value as FilterNullMode })}
+        >
+          <option value="any">{t("gridFilterNullAny")}</option>
+          <option value="only">{t("gridFilterNullOnly")}</option>
+          <option value="exclude">{t("gridFilterNullExclude")}</option>
+        </chakra.select>
+      </chakra.label>
+
+      <Box display="flex" justifyContent="space-between" gap="6px" paddingTop="2px">
+        <Button
+          variant="secondary"
+          size="sm"
+          px="10px"
+          onClick={() => {
+            apply(makeDefaultFilter(kind));
+            onClose();
+          }}
+        >
+          {t("gridFilterClearColumn")}
+        </Button>
+        <Button size="sm" px="10px" onClick={onClose}>
+          {t("gridFilterCloseMenu")}
+        </Button>
+      </Box>
+    </Box>,
+    document.body,
+  );
+}
+
 /**
  * Render a column/row pair as a TanStack-backed HTML table. Used by both
  * `ResultGrid` (single result) and the preview view (before/after).
  *
  * When `enableColumnControls` is true (default), each header is clickable
- * to cycle sort (none → asc → desc → none) and a per-column filter row is
- * shown beneath the headers.
+ * to cycle sort (none → asc → desc → none) and exposes a filter icon that
+ * opens a per-column condition popup (`ColumnFilterMenu`).
  *
  * `changedCells`/`changedColumns` are indexed by the ORIGINAL row position
  * (i.e. `rows[i]`) and applied after sort/filter via `row.index`, so the
@@ -788,7 +1116,7 @@ export function DataGrid({
         ),
         accessorFn: (row) => row[String(i)],
         sortingFn: sortingFnForKind(kind),
-        filterFn: includesFilter,
+        filterFn: columnFilter,
         enableSorting: enableColumnControls,
         enableColumnFilter: enableColumnControls,
         size: defaultColumnSize(kind),
@@ -882,6 +1210,10 @@ export function DataGrid({
 
   // Full-value viewer target (original row index + display column index).
   const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
+
+  // Open per-column filter popup: which column, and the anchor rect of the
+  // header's filter icon (captured at click for portal positioning).
+  const [filterMenu, setFilterMenu] = useState<{ colIdx: number; anchor: DOMRect } | null>(null);
 
   useEffect(
     () => () => {
@@ -1174,24 +1506,46 @@ export function DataGrid({
                       ? t("gridSortClear")
                       : t("gridSortAsc");
                 const isChangedCol = changedColumns?.[idx] ?? false;
+                const colFilterActive = isColumnFilterActive(
+                  h.column.getFilterValue() as ColumnFilter | undefined,
+                );
+                const filterLabel = t("gridFilterAria", { column: columns[idx]?.name ?? "" });
                 return (
                   <th
                     key={h.id}
-                    className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""}`}
+                    className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${colFilterActive ? "is-filtered-col" : ""}`}
                     aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
                   >
-                    {canSort ? (
-                      <chakra.button
-                        type="button"
-                        className="th-sort-button"
-                        onClick={h.column.getToggleSortingHandler()}
-                        title={sortTitle}
-                      >
-                        {flexRender(h.column.columnDef.header, h.getContext())}
-                        <chakra.span className="th-sort-indicator" aria-hidden>
-                          {sortGlyph}
-                        </chakra.span>
-                      </chakra.button>
+                    {enableColumnControls ? (
+                      <div className="th-inner">
+                        <chakra.button
+                          type="button"
+                          className="th-sort-button"
+                          onClick={h.column.getToggleSortingHandler()}
+                          title={sortTitle}
+                        >
+                          {flexRender(h.column.columnDef.header, h.getContext())}
+                          <chakra.span className="th-sort-indicator" aria-hidden>
+                            {sortGlyph}
+                          </chakra.span>
+                        </chakra.button>
+                        <chakra.button
+                          type="button"
+                          className={`th-filter-button ${colFilterActive ? "is-active" : ""}`}
+                          onClick={(e) =>
+                            setFilterMenu({
+                              colIdx: idx,
+                              anchor: e.currentTarget.getBoundingClientRect(),
+                            })
+                          }
+                          title={filterLabel}
+                          aria-label={filterLabel}
+                          aria-haspopup="dialog"
+                          aria-expanded={filterMenu?.colIdx === idx}
+                        >
+                          <Icon name="filter" size={12} strokeWidth={2.2} />
+                        </chakra.button>
+                      </div>
                     ) : (
                       flexRender(h.column.columnDef.header, h.getContext())
                     )}
@@ -1211,28 +1565,6 @@ export function DataGrid({
               <th className="col-filler" aria-hidden />
             </tr>
           ))}
-          {enableColumnControls && (
-            <tr className="filter-row">
-              <th className="row-index" aria-hidden />
-              {table.getHeaderGroups()[0]?.headers.map((h, idx) => {
-                const kind = columnKinds[idx] ?? "string";
-                const value = (h.column.getFilterValue() as string | undefined) ?? "";
-                return (
-                  <th key={`${h.id}-filter`} className={`col-${kind} filter-cell`}>
-                    <input
-                      className="grid-filter-input"
-                      type="search"
-                      value={value}
-                      placeholder={t("gridFilterPlaceholder")}
-                      onChange={(e) => h.column.setFilterValue(e.target.value)}
-                      aria-label={t("gridFilterAria", { column: columns[idx]?.name ?? "" })}
-                    />
-                  </th>
-                );
-              })}
-              <th className="col-filler" aria-hidden />
-            </tr>
-          )}
         </thead>
         <tbody>
           {visibleRows.length === 0 && (isFiltered || emptyMessage) ? (
@@ -1296,6 +1628,23 @@ export function DataGrid({
               onSelect: () => setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx }),
             },
           ]}
+        />
+      )}
+      {filterMenu && (
+        <ColumnFilterMenu
+          key={filterMenu.colIdx}
+          columnName={columns[filterMenu.colIdx]?.name ?? ""}
+          kind={columnKinds[filterMenu.colIdx] ?? "string"}
+          anchor={filterMenu.anchor}
+          value={
+            table.getColumn(String(filterMenu.colIdx))?.getFilterValue() as
+              | ColumnFilter
+              | undefined
+          }
+          onChange={(next) =>
+            table.getColumn(String(filterMenu.colIdx))?.setFilterValue(next)
+          }
+          onClose={() => setFilterMenu(null)}
         />
       )}
       {copied && (
