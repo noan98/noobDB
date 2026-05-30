@@ -2246,6 +2246,44 @@ export default function App() {
     if (sql) openAndRunQuery(sql, table);
   }, [openAndRunQuery, selectedProfile?.driver]);
 
+  // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
+  // で渡すため useCallback で固定する (#403)。依存は useState セッター (安定) と
+  // モジュールレベルの `t`・`api`、useCallback 済みの refreshProfiles のみ。
+  const handleOpenCreateForm = useCallback(() => {
+    setEditing(null);
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowSnippetForm(false);
+    setShowForm(true);
+    setFormInstanceId((n) => n + 1);
+  }, []);
+  const handleOpenEditForm = useCallback((p: ConnectionProfile) => {
+    setEditing(p);
+    setShowSnippetForm(false);
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowForm(true);
+    setFormInstanceId((n) => n + 1);
+  }, []);
+  const handleDuplicateProfile = useCallback((p: ConnectionProfile) => {
+    // Open the form pre-filled with the source profile's non-secret settings as
+    // a brand-new entry: blank id forces save_profile to mint a fresh id, and
+    // secrets (password/passphrase) are never carried over from the keyring.
+    setEditing({ ...p, id: "", name: `${p.name}${t("listDuplicateSuffix")}` });
+    setShowSnippetForm(false);
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowForm(true);
+    setFormInstanceId((n) => n + 1);
+  }, []);
+  const handleDeleteProfile = useCallback(async (id: string) => {
+    await api.deleteProfile(id);
+    await refreshProfiles();
+  }, [refreshProfiles]);
+
   // After a CSV import, refresh the matching open table tab so the new rows
   // show up without the user reopening the table.
   const handleImported = useCallback((database: string, table: string) => {
@@ -2766,25 +2804,10 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             onConnect={handleConnect}
-            onCreate={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
-            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
-            onDuplicate={(p) => {
-              // Open the form pre-filled with the source profile's non-secret
-              // settings as a brand-new entry: blank id forces save_profile to
-              // mint a fresh id, and secrets (password/passphrase) are never
-              // carried over from the keyring.
-              setEditing({ ...p, id: "", name: `${p.name}${t("listDuplicateSuffix")}` });
-              setShowSnippetForm(false);
-              setShowSettings(false);
-              setShowHelp(false);
-              setShowCompare(false);
-              setShowForm(true);
-              setFormInstanceId((n) => n + 1);
-            }}
-            onDelete={async (id) => {
-              await api.deleteProfile(id);
-              await refreshProfiles();
-            }}
+            onCreate={handleOpenCreateForm}
+            onEdit={handleOpenEditForm}
+            onDuplicate={handleDuplicateProfile}
+            onDelete={handleDeleteProfile}
             onPickTable={handleOpenTable}
             onImportTable={handleImportTable}
             onDumpDatabase={handleDumpDatabase}

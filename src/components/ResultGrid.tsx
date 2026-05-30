@@ -1,5 +1,6 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { AnimatePresence } from "motion/react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   flexRender,
@@ -105,7 +106,12 @@ export const GRID_CSS: SystemStyleObject = {
     letterSpacing: "0.01em",
     opacity: 0.85,
   },
-  "& tbody tr:nth-of-type(even) td": { background: "var(--bg-stripe)" },
+  // Zebra striping keys off an explicit class (`grid-row-stripe`, applied to
+  // every odd visible row) rather than `:nth-of-type(even)`, because the
+  // virtualized body inserts spacer `<tr>` that would otherwise flip the parity
+  // as the user scrolls. The class is applied by visible position so the
+  // pattern stays stable regardless of which rows are mounted.
+  "& tbody tr.grid-row-stripe td": { background: "var(--bg-stripe)" },
   "& tbody tr:hover td": { background: "var(--bg-row-hover)" },
   "& td.row-index, & th.row-index": {
     position: "sticky",
@@ -119,14 +125,14 @@ export const GRID_CSS: SystemStyleObject = {
     borderRight: "1px solid var(--border-strong)",
   },
   "& thead th.row-index": { top: 0, zIndex: 3 },
-  "& tbody tr:nth-of-type(even) td.row-index": { background: "var(--bg-stripe)" },
+  "& tbody tr.grid-row-stripe td.row-index": { background: "var(--bg-stripe)" },
   "& tbody tr:hover td.row-index": { background: "var(--bg-row-hover)" },
   "& th.col-filler, & td.col-filler": {
     padding: 0,
     borderRight: "none",
     background: "var(--bg-elevated)",
   },
-  "& tbody tr:nth-of-type(even) td.col-filler": { background: "var(--bg-elevated)" },
+  "& tbody tr.grid-row-stripe td.col-filler": { background: "var(--bg-elevated)" },
   "& tbody tr:hover td.col-filler": { background: "var(--bg-elevated)" },
   "& .cell-null": { color: "var(--text-null)", fontStyle: "italic" },
   "& td.is-null": { backgroundImage: "linear-gradient(transparent, transparent)" },
@@ -261,7 +267,7 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--preview-highlight) 18%, transparent)",
     boxShadow: "inset 2px 0 0 var(--preview-highlight)",
   },
-  "& tbody tr:nth-of-type(even) td.is-changed": {
+  "& tbody tr.grid-row-stripe td.is-changed": {
     background: "color-mix(in srgb, var(--preview-highlight) 22%, transparent)",
   },
   "& tbody tr:hover td.is-changed": {
@@ -277,7 +283,7 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--preview-highlight) 14%, transparent)",
     boxShadow: "inset 2px 0 0 var(--preview-highlight)",
   },
-  "& tbody tr:nth-of-type(even) td.is-pending-edit": {
+  "& tbody tr.grid-row-stripe td.is-pending-edit": {
     background: "color-mix(in srgb, var(--preview-highlight) 18%, transparent)",
   },
   "& tbody tr:hover td.is-pending-edit": {
@@ -637,6 +643,7 @@ export function DataGrid({
   validateEdit,
   columnSizingStorageKey,
   emptyMessage,
+  scrollContainerRef,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -677,6 +684,16 @@ export function DataGrid({
    * Omitted (e.g. mid-stream) leaves the body empty under the header.
    */
   emptyMessage?: ReactNode;
+  /**
+   * Scroll container that owns this grid's vertical overflow. When provided the
+   * `<tbody>` is **row-virtualized** (`@tanstack/react-virtual`): only the rows
+   * near the viewport are rendered, with top/bottom spacer `<tr>` absorbing the
+   * off-screen height. Large result sets (the default auto LIMIT is 1000 rows,
+   * and "load more" appends thousands) otherwise mount every cell, which makes
+   * scrolling and re-renders heavy. Omit it (e.g. preview panes with small
+   * snapshots) to render every row as before.
+   */
+  scrollContainerRef?: RefObject<HTMLDivElement | null>;
 }) {
   const t = useT();
 
@@ -861,6 +878,182 @@ export function DataGrid({
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
   const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter);
 
+  // Row virtualization. Cells are single-line (`white-space: nowrap` +
+  // ellipsis), so rows are uniform height; we still let the virtualizer
+  // `measureElement` the real height so it follows the font-scale setting and
+  // the occasional taller row (open inline editor). `estimateSize` only seeds
+  // the first paint. When `scrollContainerRef` is absent (preview panes) we
+  // render every row, so `virtualize` gates whether the virtual items are used.
+  const virtualize = !!scrollContainerRef;
+  const rowVirtualizer = useVirtualizer({
+    count: visibleRows.length,
+    getScrollElement: () => scrollContainerRef?.current ?? null,
+    estimateSize: () => 30,
+    overscan: 16,
+  });
+  const virtualItems = virtualize ? rowVirtualizer.getVirtualItems() : [];
+  const virtualPaddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const virtualPaddingBottom =
+    virtualItems.length > 0
+      ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end
+      : 0;
+  // Total column count (row-index + data columns + filler) for spacer colSpan.
+  const totalColCount = columns.length + 2;
+
+  // One row's JSX, shared by the virtualized and non-virtualized paths.
+  // `rowIdx` is the visible position (drives the row number and zebra parity);
+  // `row.index` is the absolute index into `rows` used for edit/changed lookups.
+  // `measureIndex` (when virtualizing) wires the row to the virtualizer so its
+  // real height is measured.
+  const renderRow = (row: Row<RowShape>, rowIdx: number, measureIndex?: number) => (
+    <tr
+      key={row.id}
+      // Zebra striping by visible position. Class-based (not `:nth-of-type`)
+      // because the virtualized body inserts spacer `<tr>` that would otherwise
+      // flip the parity as you scroll.
+      className={rowIdx % 2 === 1 ? "grid-row-stripe" : undefined}
+      ref={measureIndex === undefined ? undefined : rowVirtualizer.measureElement}
+      data-index={measureIndex}
+    >
+      <td className="row-index">{rowIdx + 1}</td>
+      {row.getVisibleCells().map((cell, idx) => {
+        const v = cell.getValue() as CellValue;
+        const kind = columnKinds[idx] ?? "string";
+        const isNull = v === null || v === undefined;
+        const isChanged = changedCells?.[row.index]?.[idx] ?? false;
+        const colEditable = editable && (editableColumns?.[idx] ?? false);
+        // Buffered edits are keyed by the row's PK identity, so look
+        // them up by `rowEditKey` rather than the array position.
+        const rowKey = rowEditKey(
+          rows[row.index] ?? [],
+          pkIndices ?? [],
+          row.index,
+        );
+        const pendingForRow = pendingEdits?.[rowKey];
+        const pendingValue = pendingForRow?.[idx];
+        const hasPending = pendingValue !== undefined;
+        const isEditingHere =
+          editing !== null &&
+          editing.rowIdx === row.index &&
+          editing.colIdx === idx;
+        // Live validation of the value being typed, and of an
+        // already-buffered value that's sitting invalid in the grid.
+        const editError =
+          isEditingHere && validateEdit
+            ? validateEdit(idx, editing!.value)
+            : null;
+        const pendingError =
+          hasPending && !isEditingHere && validateEdit
+            ? validateEdit(idx, pendingValue)
+            : null;
+        // Original display string — used both for the input's
+        // default contents and to detect "user typed it back to
+        // the original" (which clears the pending edit).
+        const originalDisplay = isNull ? "" : String(v);
+        const handleDoubleClick = () => {
+          // Editable cells edit on double-click; everything else
+          // (read-only grids, PK/BLOB columns, preview panes) opens
+          // the full-value viewer instead, so the two never collide.
+          if (colEditable && onSetCellEdit) {
+            setEditing({
+              rowIdx: row.index,
+              colIdx: idx,
+              value: hasPending ? pendingValue : originalDisplay,
+            });
+            return;
+          }
+          setViewer({ rowIdx: row.index, colIdx: idx });
+        };
+        return (
+          <td
+            key={cell.id}
+            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""}`}
+            title={
+              isEditingHere
+                ? undefined
+                : hasPending
+                  ? t("editPendingTitle", {
+                      original: isNull ? t("resultNull") : String(v),
+                      next: pendingValue,
+                    })
+                  : isNull
+                    ? t("resultNull")
+                    : String(v)
+            }
+            onDoubleClick={handleDoubleClick}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setCopyMenu({
+                x: e.clientX,
+                y: e.clientY,
+                rowIdx: row.index,
+                colIdx: idx,
+              });
+            }}
+          >
+            {isEditingHere ? (
+              <div className="cell-edit-wrap">
+                <input
+                  autoFocus
+                  className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
+                  aria-invalid={editError ? true : undefined}
+                  value={editing!.value}
+                  onChange={(e) =>
+                    setEditing({
+                      rowIdx: editing!.rowIdx,
+                      colIdx: editing!.colIdx,
+                      value: e.target.value,
+                    })
+                  }
+                  onBlur={() => {
+                    commitEdit(
+                      editing!.rowIdx,
+                      editing!.colIdx,
+                      editing!.value,
+                      originalDisplay,
+                    );
+                    setEditing(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitEdit(
+                        editing!.rowIdx,
+                        editing!.colIdx,
+                        editing!.value,
+                        originalDisplay,
+                      );
+                      setEditing(null);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      setEditing(null);
+                    }
+                  }}
+                />
+                {editError && (
+                  <div className="cell-edit-error" role="alert">
+                    {t(editError)}
+                  </div>
+                )}
+              </div>
+            ) : hasPending ? (
+              /^null$/i.test(pendingValue.trim()) ? (
+                <span className="cell-null cell-pending-value">
+                  {t("resultNull")}
+                </span>
+              ) : (
+                <span className="cell-pending-value">{pendingValue}</span>
+              )
+            ) : (
+              flexRender(cell.column.columnDef.cell, cell.getContext())
+            )}
+          </td>
+        );
+      })}
+      <td className="col-filler" aria-hidden />
+    </tr>
+  );
+
   return (
     <>
       {isFiltered && (
@@ -977,147 +1170,39 @@ export function DataGrid({
               </td>
               <td className="col-filler" aria-hidden />
             </tr>
+          ) : virtualize && virtualItems.length > 0 ? (
+            // `virtualItems.length > 0` gates the virtualized path: when the
+            // scroll container has no measured height yet (first render before
+            // the ref attaches, or non-layout test environments like jsdom) the
+            // virtualizer yields no items, so we fall through to rendering every
+            // row. In a real browser the layout effect measures the viewport and
+            // re-renders virtualized before paint; by the time a result grows to
+            // thousands of rows (streaming/paging/"fetch all") the grid is
+            // already mounted and measured, so the full render only ever covers
+            // the small initial batch.
+            <>
+              {/* Spacer rows hold the off-screen height so the scrollbar and
+                  sticky columns behave as if every row were present. */}
+              {virtualPaddingTop > 0 && (
+                <tr aria-hidden>
+                  <td
+                    colSpan={totalColCount}
+                    style={{ height: virtualPaddingTop, padding: 0, border: 0, background: "transparent" }}
+                  />
+                </tr>
+              )}
+              {virtualItems.map((vi) => renderRow(visibleRows[vi.index], vi.index, vi.index))}
+              {virtualPaddingBottom > 0 && (
+                <tr aria-hidden>
+                  <td
+                    colSpan={totalColCount}
+                    style={{ height: virtualPaddingBottom, padding: 0, border: 0, background: "transparent" }}
+                  />
+                </tr>
+              )}
+            </>
           ) : (
-            visibleRows.map((row, rowIdx) => (
-              <tr key={row.id}>
-                <td className="row-index">{rowIdx + 1}</td>
-                {row.getVisibleCells().map((cell, idx) => {
-                  const v = cell.getValue() as CellValue;
-                  const kind = columnKinds[idx] ?? "string";
-                  const isNull = v === null || v === undefined;
-                  const isChanged = changedCells?.[row.index]?.[idx] ?? false;
-                  const colEditable = editable && (editableColumns?.[idx] ?? false);
-                  // Buffered edits are keyed by the row's PK identity, so look
-                  // them up by `rowEditKey` rather than the array position.
-                  const rowKey = rowEditKey(
-                    rows[row.index] ?? [],
-                    pkIndices ?? [],
-                    row.index,
-                  );
-                  const pendingForRow = pendingEdits?.[rowKey];
-                  const pendingValue = pendingForRow?.[idx];
-                  const hasPending = pendingValue !== undefined;
-                  const isEditingHere =
-                    editing !== null &&
-                    editing.rowIdx === row.index &&
-                    editing.colIdx === idx;
-                  // Live validation of the value being typed, and of an
-                  // already-buffered value that's sitting invalid in the grid.
-                  const editError =
-                    isEditingHere && validateEdit
-                      ? validateEdit(idx, editing!.value)
-                      : null;
-                  const pendingError =
-                    hasPending && !isEditingHere && validateEdit
-                      ? validateEdit(idx, pendingValue)
-                      : null;
-                  // Original display string — used both for the input's
-                  // default contents and to detect "user typed it back to
-                  // the original" (which clears the pending edit).
-                  const originalDisplay = isNull ? "" : String(v);
-                  const handleDoubleClick = () => {
-                    // Editable cells edit on double-click; everything else
-                    // (read-only grids, PK/BLOB columns, preview panes) opens
-                    // the full-value viewer instead, so the two never collide.
-                    if (colEditable && onSetCellEdit) {
-                      setEditing({
-                        rowIdx: row.index,
-                        colIdx: idx,
-                        value: hasPending ? pendingValue : originalDisplay,
-                      });
-                      return;
-                    }
-                    setViewer({ rowIdx: row.index, colIdx: idx });
-                  };
-                  return (
-                    <td
-                      key={cell.id}
-                      className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""}`}
-                      title={
-                        isEditingHere
-                          ? undefined
-                          : hasPending
-                            ? t("editPendingTitle", {
-                                original: isNull ? t("resultNull") : String(v),
-                                next: pendingValue,
-                              })
-                            : isNull
-                              ? t("resultNull")
-                              : String(v)
-                      }
-                      onDoubleClick={handleDoubleClick}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        setCopyMenu({
-                          x: e.clientX,
-                          y: e.clientY,
-                          rowIdx: row.index,
-                          colIdx: idx,
-                        });
-                      }}
-                    >
-                      {isEditingHere ? (
-                        <div className="cell-edit-wrap">
-                          <input
-                            autoFocus
-                            className={`cell-edit-input ${editError ? "is-invalid" : ""}`}
-                            aria-invalid={editError ? true : undefined}
-                            value={editing!.value}
-                            onChange={(e) =>
-                              setEditing({
-                                rowIdx: editing!.rowIdx,
-                                colIdx: editing!.colIdx,
-                                value: e.target.value,
-                              })
-                            }
-                            onBlur={() => {
-                              commitEdit(
-                                editing!.rowIdx,
-                                editing!.colIdx,
-                                editing!.value,
-                                originalDisplay,
-                              );
-                              setEditing(null);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                commitEdit(
-                                  editing!.rowIdx,
-                                  editing!.colIdx,
-                                  editing!.value,
-                                  originalDisplay,
-                                );
-                                setEditing(null);
-                              } else if (e.key === "Escape") {
-                                e.preventDefault();
-                                setEditing(null);
-                              }
-                            }}
-                          />
-                          {editError && (
-                            <div className="cell-edit-error" role="alert">
-                              {t(editError)}
-                            </div>
-                          )}
-                        </div>
-                      ) : hasPending ? (
-                        /^null$/i.test(pendingValue.trim()) ? (
-                          <span className="cell-null cell-pending-value">
-                            {t("resultNull")}
-                          </span>
-                        ) : (
-                          <span className="cell-pending-value">{pendingValue}</span>
-                        )
-                      ) : (
-                        flexRender(cell.column.columnDef.cell, cell.getContext())
-                      )}
-                    </td>
-                  );
-                })}
-                <td className="col-filler" aria-hidden />
-              </tr>
-            ))
+            visibleRows.map((row, rowIdx) => renderRow(row, rowIdx))
           )}
         </tbody>
       </table>
@@ -1665,6 +1750,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         <DataGrid
           columns={result.columns}
           rows={result.rows}
+          scrollContainerRef={containerRef}
           globalFilter={search}
           editable={editableActive}
           editableColumns={editableCols}

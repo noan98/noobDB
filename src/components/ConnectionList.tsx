@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
@@ -118,7 +118,12 @@ interface MenuState {
   items: ContextMenuEntry[];
 }
 
-export function ConnectionList({
+// React.memo でラップし、App.tsx の再レンダリング (クエリ入力やストリーミングの
+// たびに発生する) でツリー全体が無駄に再描画されるのを防ぐ (#403)。親から渡る
+// コールバックは App 側で useCallback 安定化済みのため、接続状態が変わらない限り
+// memo がスキップする。ロケール/設定は本コンポーネントが内部で useT/useSettings を
+// 購読しているため、memo してもそれらの変更では再描画される。
+export const ConnectionList = memo(function ConnectionList({
   profiles,
   activeProfileId,
   sessionId,
@@ -595,7 +600,7 @@ export function ConnectionList({
         : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
     return (
-      <MotionTreeNode key={p.id} {...variants.collapse} transition={transitions.enter}>
+      <MotionTreeNode key={p.id} {...variants.fade} transition={transitions.crossfade}>
         <TreeRow
           pt="5px"
           pb="5px"
@@ -996,7 +1001,7 @@ export function ConnectionList({
       {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
     </Flex>
   );
-}
+});
 
 const TooltipDt = chakra("dt", { base: { color: "app.textMuted", whiteSpace: "nowrap" } });
 const TooltipDd = chakra("dd", { base: { m: 0, fontFamily: "mono", wordBreak: "break-all" } });
