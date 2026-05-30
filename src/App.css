@@ -466,6 +466,7 @@ html, body, #root {
    - `streaming-pulse`: ResultGrid のストリーミングインジケータの脈動
    - `spinner-rotate`: 共通 Spinner コンポーネントのリング回転
    - `query-progress-slide`: クエリ実行中バーのスライド
+   - `skeleton-shimmer`: ResultGrid スケルトンローダーのシマー
    いずれも下の reduced-motion メディアクエリで静止化される。 */
 
 @keyframes pulse {
@@ -485,6 +486,11 @@ html, body, #root {
 @keyframes query-progress-slide {
   0% { transform: translateX(-120%); }
   100% { transform: translateX(360%); }
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
 /* ---------- Reduced motion ----------
