@@ -39,7 +39,7 @@ import { Icon } from "./components/Icon";
 import { Button } from "./components/ui";
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
-import { singleLine, type CommandItem } from "./components/commandPalette";
+import { singleLine, type CommandItem } from "./components/commandPaletteSearch";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
 // bundle the WebView parses and mounts on launch stays small. CodeMirror
@@ -86,6 +86,9 @@ const DangerousQueryDialog = lazy(() =>
 );
 const CommandPalette = lazy(() =>
   import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette })),
+);
+const ShortcutCheatSheet = lazy(() =>
+  import("./components/ShortcutCheatSheet").then((m) => ({ default: m.ShortcutCheatSheet })),
 );
 const ParameterInputModal = lazy(() =>
   import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
@@ -577,6 +580,8 @@ export default function App() {
   // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
   // 状態には依存させない (#382)。
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  // `?` キーで開くショートカット チートシートの開閉 (#448)。
+  const [showCheatSheet, setShowCheatSheet] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -2507,7 +2512,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showErd || showSnippetForm || showCommandPalette) return;
+    if (!sessionId || showForm || showSettings || showHelp || showCompare || showErd || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -2562,7 +2567,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showErd, showSnippetForm, showCommandPalette, handleNewTab, selectTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showErd, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -2577,6 +2582,36 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // `?` (Shift+/) でショートカット チートシートを開閉する (#448)。入力欄・
+  // CodeMirror エディタにフォーカスがある間は `?` を文字入力として通し、奪わない
+  // (誤発火防止)。他のモーダル/フォームが開いている間も発火させない。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "?" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el) {
+        const tag = el.tagName;
+        if (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT" ||
+          el.isContentEditable ||
+          el.closest(".cm-editor")
+        ) {
+          return;
+        }
+      }
+      // チートシート以外のオーバーレイが開いているときは介入しない。
+      if (showForm || showSettings || showHelp || showCompare || showSnippetForm || showCommandPalette) {
+        return;
+      }
+      e.preventDefault();
+      setShowCheatSheet((v) => !v);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [showForm, showSettings, showHelp, showCompare, showSnippetForm, showCommandPalette]);
 
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
@@ -3782,6 +3817,9 @@ export default function App() {
               onClose={() => setShowCommandPalette(false)}
             />
           )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showCheatSheet && <ShortcutCheatSheet onClose={() => setShowCheatSheet(false)} />}
         </AnimatePresence>
       </Suspense>
       {confirmDialogElement}

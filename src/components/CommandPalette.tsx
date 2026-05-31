@@ -9,7 +9,7 @@ import {
   splitLabel,
   type CommandGroup,
   type CommandItem,
-} from "./commandPalette";
+} from "./commandPaletteSearch";
 
 /**
  * コマンドパレット (Cmd/Ctrl+K)。接続・テーブル・スニペット・履歴・画面遷移を
