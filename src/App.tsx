@@ -78,6 +78,9 @@ const SettingsView = lazy(() =>
 const SchemaCompareView = lazy(() =>
   import("./components/SchemaCompareView").then((m) => ({ default: m.SchemaCompareView })),
 );
+const ERDiagramView = lazy(() =>
+  import("./components/ERDiagramView").then((m) => ({ default: m.ERDiagramView })),
+);
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
@@ -570,6 +573,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
+  const [showErd, setShowErd] = useState(false);
   // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
   // 状態には依存させない (#382)。
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -2152,6 +2156,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
+    setShowErd(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -2163,6 +2168,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
+    setShowErd(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -2410,6 +2416,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
+    setShowErd(false);
     setShowSnippetForm(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -2420,6 +2427,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
+    setShowErd(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -2432,6 +2440,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
+    setShowErd(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -2498,7 +2507,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showSnippetForm || showCommandPalette) return;
+    if (!sessionId || showForm || showSettings || showHelp || showCompare || showErd || showSnippetForm || showCommandPalette) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -2553,7 +2562,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showSnippetForm, showCommandPalette, handleNewTab, selectTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showErd, showSnippetForm, showCommandPalette, handleNewTab, selectTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -2572,16 +2581,18 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
+    setShowErd(false);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
     else if (view === "help") setShowHelp(true);
     else if (view === "compare") setShowCompare(true);
+    else if (view === "erDiagram") setShowErd(true);
     else if (view === "newConnection") {
       setShowForm(true);
       setFormInstanceId((n) => n + 1);
@@ -2600,6 +2611,14 @@ export default function App() {
         icon: "plus",
         keywords: "query tab editor クエリ タブ",
         run: () => handleNewTab(),
+      });
+      items.push({
+        id: "nav:er-diagram",
+        group: "navigation",
+        label: t("cmdkActionErDiagram"),
+        icon: "er-diagram",
+        keywords: "er diagram schema relations foreign key 図 スキーマ 関係 外部キー",
+        run: () => openFullView("erDiagram"),
       });
     }
     items.push(
@@ -3069,26 +3088,35 @@ export default function App() {
               <Icon name={theme === "dark" ? "sun" : "moon"} />
             </IconButton>
             <IconButton
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowSettings(false); setShowHelp(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowErd(false); setShowSettings(false); setShowHelp(true); }}
               title={t("appHelp")}
               aria-label={t("appHelp")}
             >
               <Icon name="help" />
             </IconButton>
             <IconButton
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowHelp(false); setShowSettings(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowErd(false); setShowHelp(false); setShowSettings(true); }}
               title={t("appSettings")}
               aria-label={t("appSettings")}
             >
               <Icon name="settings" />
             </IconButton>
             <IconButton
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowCompare(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowErd(false); setShowCompare(true); }}
               title={t("appSchemaCompare")}
               aria-label={t("appSchemaCompare")}
             >
               <Icon name="diff" />
             </IconButton>
+            {sessionId && (
+              <IconButton
+                onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowCompare(false); setShowErd(true); }}
+                title={t("appErDiagram")}
+                aria-label={t("appErDiagram")}
+              >
+                <Icon name="er-diagram" />
+              </IconButton>
+            )}
             {sidebarTab === "snippets" ? (
               <IconButton
                 onClick={() => {
@@ -3097,6 +3125,7 @@ export default function App() {
                   setShowSettings(false);
                   setShowHelp(false);
                   setShowCompare(false);
+                  setShowErd(false);
                   setShowForm(false);
                   setShowSnippetForm(true);
                   setFormInstanceId((n) => n + 1);
@@ -3108,7 +3137,7 @@ export default function App() {
               </IconButton>
             ) : sidebarTab === "connections" ? (
               <IconButton
-                onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                 title={t("appNew")}
                 aria-label={t("appNew")}
               >
@@ -3303,6 +3332,14 @@ export default function App() {
           <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
         ) : showCompare ? (
           <SchemaCompareView profiles={profiles} onClose={() => setShowCompare(false)} />
+        ) : showErd && sessionId ? (
+          <ERDiagramView
+            sessionId={sessionId}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
+            onOpenTable={handleOpenTable}
+            onClose={() => setShowErd(false)}
+          />
         ) : showForm ? (
           <ConnectionForm
             key={formInstanceId}

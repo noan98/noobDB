@@ -179,6 +179,75 @@ async fn sqlite_table_row_estimates_are_empty() {
 }
 
 #[tokio::test]
+async fn sqlite_foreign_keys_are_introspected_for_er_diagram() {
+    // The ER diagram is fed by `foreign_keys`: it must surface every FK in the
+    // database (across all tables) with the referencing and referenced sides,
+    // including a composite key folded under one constraint name.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_fk_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute(
+        "CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create authors");
+    // Single-column FK referencing an explicit column.
+    conn.execute(
+        "CREATE TABLE books (
+           id INTEGER PRIMARY KEY,
+           author_id INTEGER REFERENCES authors(id),
+           title TEXT NOT NULL
+         )",
+        None,
+    )
+    .await
+    .expect("create books");
+    // Composite FK so we can assert both columns are grouped under one id.
+    conn.execute(
+        "CREATE TABLE chapters (
+           book_id INTEGER,
+           author_id INTEGER,
+           seq INTEGER,
+           PRIMARY KEY (book_id, seq),
+           FOREIGN KEY (book_id, author_id) REFERENCES books(id, author_id)
+         )",
+        None,
+    )
+    .await
+    .expect("create chapters");
+
+    let fks = conn.foreign_keys("main").await.expect("foreign_keys");
+
+    let books_fk: Vec<_> = fks.iter().filter(|f| f.table == "books").collect();
+    assert_eq!(books_fk.len(), 1, "books has exactly one FK column");
+    assert_eq!(books_fk[0].column, "author_id");
+    assert_eq!(books_fk[0].referenced_table, "authors");
+    assert_eq!(books_fk[0].referenced_column.as_deref(), Some("id"));
+
+    let chapters_fk: Vec<_> = fks.iter().filter(|f| f.table == "chapters").collect();
+    assert_eq!(
+        chapters_fk.len(),
+        2,
+        "the composite FK contributes one entry per column"
+    );
+    assert!(chapters_fk.iter().all(|f| f.referenced_table == "books"));
+    let constraint = chapters_fk[0].constraint_name.clone();
+    assert!(
+        constraint.is_some() && chapters_fk.iter().all(|f| f.constraint_name == constraint),
+        "both columns of the composite key share one constraint name"
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_execute_transaction_is_all_or_nothing() {
     let mut path = std::env::temp_dir();
     path.push(format!("noobdb_sqlite_tx_{}.db", std::process::id()));

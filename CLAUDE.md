@@ -435,7 +435,8 @@ LIKE ワイルドカードはエスケープされます。
 登録されます。現在のコマンド群: 接続 (`test_connection` / `connect` / `disconnect`)、
 クエリ (`run_query` / `run_query_transaction` / `run_query_stream` /
 `preview_query_stream` / `cancel_stream`)、スキーマ (`list_databases` /
-`list_tables` / `describe_table` / `schema_overview` / `table_row_estimates`)、
+`list_tables` / `describe_table` / `schema_overview` / `foreign_keys` /
+`table_row_estimates`)、
 プロファイル
 (`list_profiles` / `save_profile` / `delete_profile`)、スニペット
 (`list_snippets` / `save_snippet` / `delete_snippet`)、履歴 (`list_history` /
@@ -473,7 +474,9 @@ LIKE ワイルドカードはエスケープされます。
   (CodeMirror 6 + スキーマ補完)、`QueryBuilder`、`ResultGrid`/`PreviewGrid`
   (TanStack Table)、`TabBar`、`HistoryList`、`SnippetList`/`SnippetForm`、
   `ExportModal`/`DumpModal`/`ImportModal`、`ExplainViewer`、`SettingsView`、
-  `HelpView`、`DangerousQueryDialog`、`CellValueViewer` など。
+  `HelpView`、`DangerousQueryDialog`、`CellValueViewer`、`ERDiagramView`
+  (`@xyflow/react` + `@dagrejs/dagre` による ER 図。レイアウト/グラフ構築の純ロジックは
+  `erDiagram.ts` に分離してテスト) など。
 - `settings.ts` — `useSyncExternalStore` ベースの設定ストア (シンタックスカラー、
   自動 LIMIT、本番接続確認、危険クエリ確認、タブ復元モード、クエリタイムアウト等)。
 - `dangerousSql.ts` — WHERE なし UPDATE/DELETE・DROP・TRUNCATE を検出する

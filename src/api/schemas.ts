@@ -51,6 +51,14 @@ export const tableSchema = z.object({
   columns: z.array(z.string()),
 });
 
+export const foreignKey = z.object({
+  table: z.string(),
+  column: z.string(),
+  referenced_table: z.string(),
+  referenced_column: z.string().nullable(),
+  constraint_name: z.string().nullable(),
+});
+
 export const tableRowEstimate = z.object({
   name: z.string(),
   estimate: z.number().nullable(),
@@ -213,6 +221,7 @@ export const stringResponse = z.string();
 /** 配列を返すコマンド用のラッパースキーマ。 */
 export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
+export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
 export const connectionProfileArray = z.array(connectionProfile);
 export const snippetArray = z.array(snippet);

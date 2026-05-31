@@ -54,6 +54,23 @@ pub struct TableColumnInfo {
     pub referenced_column: Option<String>,
 }
 
+/// One foreign-key relationship within a database, used to draw the ER
+/// diagram's edges. There is one entry per referencing column; the columns of
+/// a composite foreign key share the same `constraint_name`. `referenced_column`
+/// is `None` only when the driver cannot resolve the target column (e.g. an
+/// implicit SQLite foreign key onto a composite primary key) — the referencing
+/// table/column and the referenced table are always present.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForeignKey {
+    pub table: String,
+    pub column: String,
+    pub referenced_table: String,
+    pub referenced_column: Option<String>,
+    /// Constraint name when the engine exposes one. Lets the UI group the
+    /// columns of a composite key into a single edge. `None` when unavailable.
+    pub constraint_name: Option<String>,
+}
+
 /// One table (or view) and its column names, used to feed whole-schema SQL
 /// autocomplete. Only names are carried — type/key metadata lives in the
 /// per-table `TableColumnInfo` path, which the editor does not need for

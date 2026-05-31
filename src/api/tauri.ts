@@ -196,6 +196,20 @@ export interface TableSchema {
 }
 
 /**
+ * One foreign-key relationship in a database, used to draw ER-diagram edges.
+ * One entry per referencing column; the columns of a composite key share a
+ * `constraint_name`. `referenced_column` is `null` only when the driver can't
+ * resolve the target column.
+ */
+export interface ForeignKey {
+  table: string;
+  column: string;
+  referenced_table: string;
+  referenced_column: string | null;
+  constraint_name: string | null;
+}
+
+/**
  * Approximate row count for one base table, sourced from the engine's own
  * statistics (no `COUNT(*)` scan). `estimate` is `null` when no cheap estimate
  * is available (SQLite, or stats not gathered yet) and is otherwise an
@@ -453,6 +467,10 @@ export const api = {
   schemaOverview: (sessionId: string, database: string) =>
     invoke<TableSchema[]>("schema_overview", { sessionId, database }).then((r) =>
       parseResponse(schemas.tableSchemaArray, r, "schema_overview"),
+    ),
+  foreignKeys: (sessionId: string, database: string) =>
+    invoke<ForeignKey[]>("foreign_keys", { sessionId, database }).then((r) =>
+      parseResponse(schemas.foreignKeyArray, r, "foreign_keys"),
     ),
   tableRowEstimates: (sessionId: string, database: string) =>
     invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(

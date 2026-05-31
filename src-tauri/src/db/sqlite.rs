@@ -5,7 +5,7 @@ use sqlx::sqlite::{SqliteColumn, SqliteConnectOptions, SqlitePool, SqlitePoolOpt
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
+    Column, ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
     TableSchema, Value,
 };
 use super::DbConnectOptions;
@@ -437,6 +437,43 @@ impl SqliteConn {
                 }
             })
             .collect())
+    }
+
+    pub async fn foreign_keys(&self, db: &str) -> Result<Vec<ForeignKey>> {
+        // SQLite has no catalog table listing every FK, so loop the per-table
+        // PRAGMA (cheap on a local file). foreign_key_list columns:
+        // id, seq, table, from, to, on_update, on_delete, match. The `id`
+        // groups the columns of one composite key, which we fold into a stable
+        // synthetic constraint name (`<table>:<id>`). `to` is NULL when the FK
+        // implicitly targets the parent's primary key.
+        let tables = self.tables(db).await?;
+        let mut out = Vec::new();
+        for table in tables {
+            if table.contains('"') || table.contains('\0') {
+                continue;
+            }
+            let sql = format!("PRAGMA foreign_key_list(\"{}\")", table);
+            let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+                .fetch_all(&self.pool)
+                .await?;
+            for r in rows {
+                let column = r.try_get::<String, _>("from").unwrap_or_default();
+                if column.is_empty() {
+                    continue;
+                }
+                let referenced_table = r.try_get::<String, _>("table").unwrap_or_default();
+                let referenced_column = r.try_get::<Option<String>, _>("to").ok().flatten();
+                let id = r.try_get::<i64, _>("id").ok();
+                out.push(ForeignKey {
+                    table: table.clone(),
+                    column,
+                    referenced_table,
+                    referenced_column,
+                    constraint_name: id.map(|i| format!("{}:{}", table, i)),
+                });
+            }
+        }
+        Ok(out)
     }
 
     pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {
