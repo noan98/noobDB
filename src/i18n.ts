@@ -822,6 +822,18 @@ const en = {
   helpShortcutNthTabTitle: "Cmd/Ctrl+1–9",
   helpShortcutNthTabDesc: "Jump to the nth tab.",
 
+  shortcutCheatSheetTitle: "?",
+  shortcutCheatSheetDesc: "Open this keyboard shortcut cheat sheet.",
+  shortcutCommandPaletteTitle: "Cmd/Ctrl+K",
+  shortcutCommandPaletteDesc:
+    "Open the command palette to jump across connections, tables, snippets, history and views.",
+  shortcutCatGlobal: "Global",
+  shortcutCatEditor: "Editor",
+  shortcutCatGrid: "Result grid",
+  shortcutCatTabs: "Tabs",
+  cheatSheetTitle: "Keyboard shortcuts",
+  cheatSheetClose: "Close",
+
   appSchemaCompare: "Compare schemas",
   schemaCompareTitle: "Schema comparison",
   schemaCompareClose: "Close",
@@ -1761,6 +1773,18 @@ const ja: Dict = {
   helpShortcutCycleTabDesc: "次 / 前のタブへ切り替えます。",
   helpShortcutNthTabTitle: "Cmd/Ctrl+1〜9",
   helpShortcutNthTabDesc: "n 番目のタブへ移動します。",
+
+  shortcutCheatSheetTitle: "?",
+  shortcutCheatSheetDesc: "このキーボードショートカット チートシートを開きます。",
+  shortcutCommandPaletteTitle: "Cmd/Ctrl+K",
+  shortcutCommandPaletteDesc:
+    "コマンドパレットを開き、接続・テーブル・スニペット・履歴・画面遷移を横断的に呼び出します。",
+  shortcutCatGlobal: "グローバル",
+  shortcutCatEditor: "エディタ",
+  shortcutCatGrid: "結果グリッド",
+  shortcutCatTabs: "タブ",
+  cheatSheetTitle: "キーボードショートカット",
+  cheatSheetClose: "閉じる",
 
   appSchemaCompare: "スキーマ比較",
   schemaCompareTitle: "スキーマ比較",
