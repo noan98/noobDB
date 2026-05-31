@@ -39,7 +39,7 @@ import { Icon } from "./components/Icon";
 import { Button } from "./components/ui";
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
-import { singleLine, type CommandItem } from "./components/commandPalette";
+import { singleLine, type CommandItem } from "./components/commandPaletteSearch";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
 // bundle the WebView parses and mounts on launch stays small. CodeMirror

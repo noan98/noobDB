@@ -8,7 +8,7 @@ import {
   singleLine,
   GROUP_ORDER,
   type CommandItem,
-} from "../components/commandPalette";
+} from "../components/commandPaletteSearch";
 
 const noop = () => {};
 
