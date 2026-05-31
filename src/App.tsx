@@ -39,6 +39,7 @@ import { Icon } from "./components/Icon";
 import { Button } from "./components/ui";
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
+import { singleLine, type CommandItem } from "./components/commandPalette";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
 // bundle the WebView parses and mounts on launch stays small. CodeMirror
@@ -80,6 +81,9 @@ const SchemaCompareView = lazy(() =>
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
+const CommandPalette = lazy(() =>
+  import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette })),
+);
 const ParameterInputModal = lazy(() =>
   import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
 );
@@ -91,7 +95,7 @@ import {
 } from "./dangerousSql";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
 import { matchErrorHint } from "./errorHints";
-import { t as translate, useT } from "./i18n";
+import { t as translate, useT, useLocale } from "./i18n";
 import { transitions } from "./motion";
 import {
   useSettings,
@@ -554,6 +558,9 @@ function emptyPreview(): PreviewResult {
 
 export default function App() {
   const t = useT();
+  // `t` 自体は識別子が安定なので、ロケール切替でコマンドパレット候補の文言メモが
+  // 再計算されるよう、現在のロケールを依存に含めるために購読する。
+  const locale = useLocale();
   const toast = useToast();
   // テーマに追従するカスタム確認ダイアログ。`window.confirm()` の代替で、
   // `await confirm({...})` の形で同期感覚で呼べる (#280)。
@@ -563,6 +570,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
+  // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
+  // 状態には依存させない (#382)。
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -2488,7 +2498,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showSnippetForm) return;
+    if (!sessionId || showForm || showSettings || showHelp || showCompare || showSnippetForm || showCommandPalette) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -2543,7 +2553,195 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showSnippetForm, handleNewTab, selectTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showSnippetForm, showCommandPalette, handleNewTab, selectTab]);
+
+  // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
+  // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCommandPalette((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
+  // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
+  // パレット側で実行直後にパレットを閉じる。
+  const openFullView = useCallback((view: "settings" | "help" | "compare" | "newConnection") => {
+    setEditing(null);
+    setShowForm(false);
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowSnippetForm(false);
+    if (view === "settings") setShowSettings(true);
+    else if (view === "help") setShowHelp(true);
+    else if (view === "compare") setShowCompare(true);
+    else if (view === "newConnection") {
+      setShowForm(true);
+      setFormInstanceId((n) => n + 1);
+    }
+  }, []);
+
+  const commandItems = useMemo<CommandItem[]>(() => {
+    const items: CommandItem[] = [];
+
+    // 画面遷移・グローバル操作。
+    if (sessionId) {
+      items.push({
+        id: "nav:new-query-tab",
+        group: "navigation",
+        label: t("cmdkActionNewQueryTab"),
+        icon: "plus",
+        keywords: "query tab editor クエリ タブ",
+        run: () => handleNewTab(),
+      });
+    }
+    items.push(
+      {
+        id: "nav:new-connection",
+        group: "navigation",
+        label: t("cmdkActionNewConnection"),
+        icon: "link",
+        keywords: "connection profile 接続 新規",
+        run: () => openFullView("newConnection"),
+      },
+      {
+        id: "nav:settings",
+        group: "navigation",
+        label: t("cmdkActionSettings"),
+        icon: "settings",
+        keywords: "settings preferences 設定",
+        run: () => openFullView("settings"),
+      },
+      {
+        id: "nav:help",
+        group: "navigation",
+        label: t("cmdkActionHelp"),
+        icon: "help",
+        keywords: "help docs ヘルプ",
+        run: () => openFullView("help"),
+      },
+      {
+        id: "nav:compare",
+        group: "navigation",
+        label: t("cmdkActionCompare"),
+        icon: "diff",
+        keywords: "schema compare diff スキーマ 比較",
+        run: () => openFullView("compare"),
+      },
+      {
+        id: "nav:toggle-theme",
+        group: "navigation",
+        label: t("cmdkActionToggleTheme"),
+        icon: theme === "dark" ? "sun" : "moon",
+        keywords: "theme dark light テーマ ダーク ライト",
+        run: () => toggleTheme(),
+      },
+    );
+    if (sessionId) {
+      items.push({
+        id: "nav:disconnect",
+        group: "navigation",
+        label: t("cmdkActionDisconnect"),
+        icon: "close",
+        keywords: "disconnect close 切断",
+        run: () => void handleDisconnect(),
+      });
+    }
+
+    // 接続プロファイル。
+    for (const profile of profiles) {
+      const isSqlite = profile.driver === "sqlite";
+      const sublabel = isSqlite
+        ? profile.file_path ?? ""
+        : `${profile.user}@${profile.host}:${profile.port}${profile.database ? ` · ${profile.database}` : ""}`;
+      const badges: string[] = [profile.driver.toUpperCase()];
+      if (profile.is_production) badges.push(t("listProduction"));
+      if (profile.read_only) badges.push(t("listReadOnly"));
+      if (sessionId && selectedProfile?.id === profile.id) badges.push(t("cmdkBadgeConnected"));
+      items.push({
+        id: `conn:${profile.id}`,
+        group: "connections",
+        label: profile.name,
+        sublabel: sublabel || undefined,
+        keywords: `${profile.driver} ${profile.host} ${profile.database ?? ""} ${profile.group ?? ""}`,
+        icon: "link",
+        badges,
+        run: () => void handleConnect(profile),
+      });
+    }
+
+    // 現在の接続でキャッシュ済みのスキーマからテーブルを列挙する。
+    if (sessionId) {
+      const prefix = `${sessionId}\0`;
+      for (const [key, schema] of Object.entries(schemaCache)) {
+        if (!key.startsWith(prefix)) continue;
+        const database = key.slice(prefix.length);
+        for (const table of schema) {
+          items.push({
+            id: `table:${database}\0${table.name}`,
+            group: "tables",
+            label: table.name,
+            sublabel: database,
+            keywords: `${database} ${table.columns.join(" ")}`,
+            icon: "table",
+            run: () => handleRunTableSelect(database, table.name),
+          });
+        }
+      }
+    }
+
+    // スニペット。
+    for (const snippet of snippets) {
+      items.push({
+        id: `snippet:${snippet.id}`,
+        group: "snippets",
+        label: snippet.name,
+        sublabel: snippet.folder ?? undefined,
+        keywords: `${snippet.tags.join(" ")} ${snippet.sql}`,
+        icon: "snippet",
+        run: () => handleInsertSnippet(snippet),
+      });
+    }
+
+    // 直近のクエリ履歴 (最新優先、件数を抑える)。
+    for (const [i, sql] of queryHistory.slice(0, 40).entries()) {
+      items.push({
+        id: `history:${i}`,
+        group: "history",
+        label: singleLine(sql),
+        keywords: sql,
+        icon: "clock",
+        run: () => handleRestoreHistory(sql),
+      });
+    }
+
+    return items;
+  }, [
+    sessionId,
+    selectedProfile?.id,
+    profiles,
+    schemaCache,
+    snippets,
+    queryHistory,
+    theme,
+    t,
+    locale,
+    handleNewTab,
+    handleDisconnect,
+    handleConnect,
+    handleRunTableSelect,
+    handleInsertSnippet,
+    handleRestoreHistory,
+    openFullView,
+    toggleTheme,
+  ]);
 
   // Clean up any active listeners when the app unmounts.
   useEffect(() => {
@@ -3539,6 +3737,16 @@ export default function App() {
         );
       })()}
       </Grid>
+      <Suspense fallback={null}>
+        <AnimatePresence>
+          {showCommandPalette && (
+            <CommandPalette
+              items={commandItems}
+              onClose={() => setShowCommandPalette(false)}
+            />
+          )}
+        </AnimatePresence>
+      </Suspense>
       {confirmDialogElement}
     </Flex>
   );
