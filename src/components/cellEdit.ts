@@ -240,7 +240,7 @@ export function quoteString(driver: string, s: string): string {
  * suitable for a WHERE clause. Used for the PK columns identifying the
  * row to update — these come from the original row, not user input.
  */
-function literalFromCellValue(driver: string, v: CellValue): string {
+export function literalFromCellValue(driver: string, v: CellValue): string {
   if (v === null || v === undefined) return "NULL";
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : "NULL";

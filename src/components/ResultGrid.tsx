@@ -42,12 +42,14 @@ import {
   countEditedCells,
   countEditedRows,
   isEditableColumnType,
+  literalFromCellValue,
   resolvePkIndices,
   rowEditKey,
   validateCellInput,
   type PendingEdits,
   type RowSqlKind,
 } from "./cellEdit";
+import { quoteIdentFor } from "./sqlDialect";
 
 /**
  * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。`App.css` の
@@ -127,6 +129,21 @@ export const GRID_CSS: SystemStyleObject = {
     textTransform: "lowercase",
     letterSpacing: "0.01em",
     opacity: 0.85,
+  },
+  "& th .th-fk-badge": {
+    display: "inline-block",
+    padding: "0 4px",
+    fontSize: "var(--text-2xs)",
+    fontWeight: 700,
+    fontFamily: "var(--font-sans, sans-serif)",
+    lineHeight: 1.4,
+    letterSpacing: "0.04em",
+    color: "var(--accent)",
+    background: "color-mix(in srgb, var(--accent) 12%, transparent)",
+    border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
+    borderRadius: "var(--radius-sm)",
+    alignSelf: "flex-start",
+    textTransform: "uppercase",
   },
   // Zebra striping keys off an explicit class (`grid-row-stripe`, applied to
   // every odd visible row) rather than `:nth-of-type(even)`, because the
@@ -501,6 +518,12 @@ interface Props {
   queryError?: string | null;
   /** Called when the user clicks "Retry" in the error EmptyState. */
   onRetry?: () => void;
+  /**
+   * When provided, a "Jump to …" item appears in the right-click menu for
+   * cells belonging to a foreign-key column (from `tableColumns`). The
+   * callback receives the generated `SELECT … WHERE …` SQL.
+   */
+  onFkJump?: (sql: string) => void;
 }
 
 export interface ResultGridHandle {
@@ -1136,6 +1159,8 @@ export function DataGrid({
   rowSqlDriver,
   rowSqlDatabase,
   rowSqlTable,
+  columnMeta,
+  onFkJump,
   paginationState,
   onPaginationChange,
   onUndoEdit,
@@ -1204,6 +1229,14 @@ export function DataGrid({
   rowSqlDriver?: string;
   rowSqlDatabase?: string | null;
   rowSqlTable?: string | null;
+  /**
+   * Column metadata from `describe_table` (FK, key info). When provided and a
+   * column carries `referenced_table`, a "Jump to …" item is added to the
+   * right-click menu and an FK badge appears in the column header.
+   */
+  columnMeta?: TableColumnInfo[];
+  /** Called when the user triggers a FK jump with the generated SELECT SQL. */
+  onFkJump?: (sql: string) => void;
   /** When set, TanStack pagination is activated and only this page of rows is rendered. */
   paginationState?: PaginationState;
   onPaginationChange?: OnChangeFn<PaginationState>;
@@ -1243,10 +1276,16 @@ export function DataGrid({
   const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
     return columns.map((c, i) => {
       const kind = columnKinds[i];
+      const fkInfo = columnMeta?.find((m) => m.name === c.name);
+      const fkTable = fkInfo?.referenced_table ?? null;
       return {
         id: String(i),
         header: () => (
-          <span className="th-content" title={c.type_name}>
+          <span
+            className="th-content"
+            title={fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name}
+          >
+            {fkTable && <span className="th-fk-badge">FK</span>}
             <span className="th-name">{c.name}</span>
             <span className="th-type">{c.type_name}</span>
           </span>
@@ -1301,7 +1340,7 @@ export function DataGrid({
         },
       };
     });
-  }, [columns, columnKinds, t, enableColumnControls]);
+  }, [columns, columnKinds, columnMeta, t, enableColumnControls]);
 
   const data = useMemo<RowShape[]>(() => {
     return rows.map((r) => {
@@ -2002,6 +2041,33 @@ export function DataGrid({
                   },
                 ]
               : []),
+            ...(() => {
+              const fkMeta = columnMeta?.find(
+                (m) => m.name === columns[copyMenu.colIdx]?.name,
+              );
+              if (!fkMeta?.referenced_table || !fkMeta.referenced_column || !onFkJump) return [];
+              const driver = rowSqlDriver ?? "mysql";
+              const refTable = fkMeta.referenced_table;
+              const refColumn = fkMeta.referenced_column;
+              const cellValue = rows[copyMenu.rowIdx]?.[copyMenu.colIdx] ?? null;
+              const fromRef =
+                driver === "sqlite" || !rowSqlDatabase
+                  ? quoteIdentFor(driver, refTable)
+                  : `${quoteIdentFor(driver, rowSqlDatabase)}.${quoteIdentFor(driver, refTable)}`;
+              const predicate =
+                cellValue === null || cellValue === undefined
+                  ? `${quoteIdentFor(driver, refColumn)} IS NULL`
+                  : `${quoteIdentFor(driver, refColumn)} = ${literalFromCellValue(driver, cellValue)}`;
+              const sql = `SELECT * FROM ${fromRef} WHERE ${predicate}`;
+              return [
+                { separator: true as const },
+                {
+                  label: t("gridFkJump", { table: refTable }),
+                  title: t("gridFkJumpTitle"),
+                  onSelect: () => { setCopyMenu(null); onFkJump(sql); },
+                },
+              ];
+            })(),
             { separator: true as const },
             {
               label: t("gridViewFull"),
@@ -2090,6 +2156,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onSetAutoRefresh,
   queryError,
   onRetry,
+  onFkJump,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -2651,6 +2718,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           rowSqlDriver={driver}
           rowSqlDatabase={database}
           rowSqlTable={table}
+          columnMeta={tableColumns ?? undefined}
+          onFkJump={onFkJump}
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}
           paginationState={paginateMode ? pagination : undefined}
