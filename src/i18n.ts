@@ -495,6 +495,11 @@ const en = {
   editDiscardConfirmTitle: "Discard all pending edits?",
   editDiscardConfirmBody: "This will clear {cells} cell edit(s) across {rows} row(s). You can undo with Ctrl+Z afterwards.",
   editDiscardConfirmOk: "Discard",
+  editBlurTitle: "Commit edit?",
+  editBlurMessage:
+    "The cell editor lost focus with an unsaved value. Commit it as a pending edit, or discard it?",
+  editBlurCommit: "Commit",
+  editBlurDiscard: "Discard",
   statusApplyingEdits: "Applying {count} update(s)...",
   statusAppliedEdits: "Applied {count} update(s); {rows} rows affected.",
   statusApplyEditsError: "Apply failed: {error}",
@@ -906,6 +911,9 @@ const en = {
   settingsResultGridModePaginate: "Paginated",
   settingsResultGridPageSize: "Page size",
   settingsResultGridPageSizeHelp: "Number of rows shown per page in paginated mode.",
+  settingsCellEditOnBlur: "Confirm on focus loss while editing a cell",
+  settingsCellEditOnBlurHelp:
+    "When on, clicking away from an open cell editor asks whether to commit or discard the typed value, guarding against accidental loss. When off, the value is auto-committed as a pending edit (the default).",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1405,6 +1413,11 @@ const ja: Dict = {
   editDiscardConfirmTitle: "未保存の編集をすべて破棄しますか？",
   editDiscardConfirmBody: "{rows} 行 {cells} セルの編集が失われます。破棄後は Ctrl+Z で元に戻せます。",
   editDiscardConfirmOk: "破棄",
+  editBlurTitle: "編集を確定しますか？",
+  editBlurMessage:
+    "未保存の値が残ったままセル編集からフォーカスが外れました。保留編集として確定しますか、それとも破棄しますか？",
+  editBlurCommit: "確定",
+  editBlurDiscard: "破棄",
   statusApplyingEdits: "{count} 件の UPDATE を適用中...",
   statusAppliedEdits: "{count} 件の UPDATE を適用しました ({rows} 行に影響)。",
   statusApplyEditsError: "適用に失敗しました: {error}",
@@ -1816,6 +1829,9 @@ const ja: Dict = {
   settingsResultGridModePaginate: "ページネーション",
   settingsResultGridPageSize: "1ページの行数",
   settingsResultGridPageSizeHelp: "ページネーションモードで表示する行数。",
+  settingsCellEditOnBlur: "セル編集中にフォーカスが外れたら確認する",
+  settingsCellEditOnBlurHelp:
+    "オンにすると、セル編集を開いたまま別の場所をクリックした際に、入力値を確定するか破棄するかを確認します (誤操作による入力消失を防止)。オフのときは入力値を保留編集として自動確定します (既定)。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

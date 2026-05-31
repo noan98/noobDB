@@ -45,6 +45,7 @@ import {
   setFontSizePx,
   setQueryTimeoutSecs,
   setPreviewHighlight,
+  setCellEditOnBlur,
   setResultGridMode,
   setResultGridPageSize,
   setStreamPrefetchSize,
@@ -666,6 +667,19 @@ export function SettingsView({ theme, onClose }: Props) {
             {t("settingsResultGridPageSizeHelp")}
           </SettingsHelpInline>
         </SettingsNumberRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-cell-edit-on-blur">
+            <Switch
+              id="settings-cell-edit-on-blur"
+              checked={settings.cellEditOnBlur === "confirm"}
+              onChange={(checked) => setCellEditOnBlur(checked ? "confirm" : "commit")}
+            />
+            {t("settingsCellEditOnBlur")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsCellEditOnBlurHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection>

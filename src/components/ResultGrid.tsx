@@ -30,6 +30,7 @@ import {
 } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
+import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
@@ -1244,6 +1245,8 @@ export function DataGrid({
   onRedoEdit?: () => void;
 }) {
   const t = useT();
+  const { cellEditOnBlur } = useSettings();
+  const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
 
   const columnKinds = useMemo<CellKind[]>(() => columns.map(classifyColumn), [columns]);
 
@@ -1762,13 +1765,34 @@ export function DataGrid({
                     })
                   }
                   onBlur={() => {
-                    commitEdit(
-                      editing!.rowIdx,
-                      editing!.colIdx,
-                      editing!.value,
-                      originalDisplay,
-                    );
+                    const eRowIdx = editing!.rowIdx;
+                    const eColIdx = editing!.colIdx;
+                    const eValue = editing!.value;
+                    const eOrigDisplay = originalDisplay;
+                    if (cellEditOnBlur !== "confirm") {
+                      commitEdit(eRowIdx, eColIdx, eValue, eOrigDisplay);
+                      setEditing(null);
+                      return;
+                    }
+                    // Capture the row's stable key now: an auto-refresh while
+                    // the dialog is open could shift `rows[eRowIdx]`.
+                    const eRowKey = rowEditKey(rows[eRowIdx] ?? [], pkIndices ?? [], eRowIdx);
                     setEditing(null);
+                    void (async () => {
+                      const commit = await confirmBlur({
+                        title: t("editBlurTitle"),
+                        message: t("editBlurMessage"),
+                        confirmLabel: t("editBlurCommit"),
+                        cancelLabel: t("editBlurDiscard"),
+                      });
+                      if (commit && onSetCellEdit) {
+                        onSetCellEdit(
+                          eRowKey,
+                          eColIdx,
+                          eValue === eOrigDisplay ? null : eValue,
+                        );
+                      }
+                    })();
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Tab") {
@@ -2123,6 +2147,7 @@ export function DataGrid({
           />
         )}
       </AnimatePresence>
+      {blurDialog}
     </>
   );
 }
