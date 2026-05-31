@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import * as schemas from "./schemas";
+import { parseResponse } from "./schemas";
 
 export type DriverKind = "mysql" | "postgres" | "sqlite";
 
@@ -361,14 +363,22 @@ export interface CsvPreview {
 
 export const api = {
   testConnection: (req: ConnectRequest) =>
-    invoke<string>("test_connection", { req }),
+    invoke<string>("test_connection", { req }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "test_connection"),
+    ),
   connect: (req: ConnectRequest) =>
-    invoke<{ session_id: string }>("connect", { req }),
+    invoke<{ session_id: string }>("connect", { req }).then((r) =>
+      parseResponse(schemas.connectResult, r, "connect"),
+    ),
   disconnect: (sessionId: string) =>
     invoke<void>("disconnect", { sessionId }),
 
   runQuery: (sessionId: string, sql: string, database?: string | null) =>
-    invoke<QueryResult>("run_query", { sessionId, sql, database: database ?? null }),
+    invoke<QueryResult>("run_query", {
+      sessionId,
+      sql,
+      database: database ?? null,
+    }).then((r) => parseResponse(schemas.queryResult, r, "run_query")),
   runQueryTransaction: (
     sessionId: string,
     statements: string[],
@@ -378,7 +388,7 @@ export const api = {
       sessionId,
       statements,
       database: database ?? null,
-    }),
+    }).then((r) => parseResponse(schemas.queryResult, r, "run_query_transaction")),
   runQueryStream: (params: {
     sessionId: string;
     streamId: string;
@@ -424,18 +434,30 @@ export const api = {
       chunkSize: params.chunkSize,
     }),
   cancelStream: (streamId: string) =>
-    invoke<boolean>("cancel_stream", { streamId }),
+    invoke<boolean>("cancel_stream", { streamId }).then((r) =>
+      parseResponse(schemas.booleanResponse, r, "cancel_stream"),
+    ),
 
   listDatabases: (sessionId: string) =>
-    invoke<string[]>("list_databases", { sessionId }),
+    invoke<string[]>("list_databases", { sessionId }).then((r) =>
+      parseResponse(schemas.stringArray, r, "list_databases"),
+    ),
   listTables: (sessionId: string, database: string) =>
-    invoke<string[]>("list_tables", { sessionId, database }),
+    invoke<string[]>("list_tables", { sessionId, database }).then((r) =>
+      parseResponse(schemas.stringArray, r, "list_tables"),
+    ),
   describeTable: (sessionId: string, database: string, table: string) =>
-    invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }),
+    invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }).then(
+      (r) => parseResponse(schemas.tableColumnInfoArray, r, "describe_table"),
+    ),
   schemaOverview: (sessionId: string, database: string) =>
-    invoke<TableSchema[]>("schema_overview", { sessionId, database }),
+    invoke<TableSchema[]>("schema_overview", { sessionId, database }).then((r) =>
+      parseResponse(schemas.tableSchemaArray, r, "schema_overview"),
+    ),
   tableRowEstimates: (sessionId: string, database: string) =>
-    invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }),
+    invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(
+      (r) => parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
+    ),
   compareSchema: (params: {
     sourceSessionId: string;
     sourceDatabase: string;
@@ -447,9 +469,11 @@ export const api = {
       sourceDatabase: params.sourceDatabase,
       targetSessionId: params.targetSessionId,
       targetDatabase: params.targetDatabase,
-    }),
+    }).then((r) => parseResponse(schemas.schemaDiff, r, "compare_schema")),
   generateSyncSql: (diff: SchemaDiff, allowDestructive: boolean) =>
-    invoke<SyncPlan>("generate_sync_sql", { diff, allowDestructive }),
+    invoke<SyncPlan>("generate_sync_sql", { diff, allowDestructive }).then((r) =>
+      parseResponse(schemas.syncPlan, r, "generate_sync_sql"),
+    ),
   compareTableData: (params: {
     sourceSessionId: string;
     sourceDatabase: string;
@@ -465,9 +489,11 @@ export const api = {
       targetDatabase: params.targetDatabase,
       table: params.table,
       limit: params.limit ?? null,
-    }),
+    }).then((r) => parseResponse(schemas.dataDiff, r, "compare_table_data")),
   generateDataSyncSql: (diff: DataDiff, allowDelete: boolean) =>
-    invoke<SyncPlan>("generate_data_sync_sql", { diff, allowDelete }),
+    invoke<SyncPlan>("generate_data_sync_sql", { diff, allowDelete }).then((r) =>
+      parseResponse(schemas.syncPlan, r, "generate_data_sync_sql"),
+    ),
   applySyncSql: (params: {
     sessionId: string;
     database?: string | null;
@@ -477,16 +503,26 @@ export const api = {
       sessionId: params.sessionId,
       database: params.database ?? null,
       statements: params.statements,
-    }),
+    }).then((r) => parseResponse(schemas.numberResponse, r, "apply_sync_sql")),
 
-  listProfiles: () => invoke<ConnectionProfile[]>("list_profiles"),
+  listProfiles: () =>
+    invoke<ConnectionProfile[]>("list_profiles").then((r) =>
+      parseResponse(schemas.connectionProfileArray, r, "list_profiles"),
+    ),
   saveProfile: (req: SaveProfileRequest) =>
-    invoke<ConnectionProfile>("save_profile", { req }),
+    invoke<ConnectionProfile>("save_profile", { req }).then((r) =>
+      parseResponse(schemas.connectionProfile, r, "save_profile"),
+    ),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
 
-  listSnippets: () => invoke<Snippet[]>("list_snippets"),
+  listSnippets: () =>
+    invoke<Snippet[]>("list_snippets").then((r) =>
+      parseResponse(schemas.snippetArray, r, "list_snippets"),
+    ),
   saveSnippet: (req: SaveSnippetRequest) =>
-    invoke<Snippet>("save_snippet", { req }),
+    invoke<Snippet>("save_snippet", { req }).then((r) =>
+      parseResponse(schemas.snippet, r, "save_snippet"),
+    ),
   deleteSnippet: (id: string) => invoke<void>("delete_snippet", { id }),
 
   listHistory: (params: {
@@ -498,11 +534,16 @@ export const api = {
       profileId: params.profileId ?? null,
       limit: params.limit ?? null,
       search: params.search ?? null,
-    }),
+    }).then((r) => parseResponse(schemas.historyEntryArray, r, "list_history")),
   clearHistory: (profileId?: string | null) =>
-    invoke<number>("clear_history", { profileId: profileId ?? null }),
+    invoke<number>("clear_history", { profileId: profileId ?? null }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "clear_history"),
+    ),
 
-  readLogs: () => invoke<LogView>("read_logs"),
+  readLogs: () =>
+    invoke<LogView>("read_logs").then((r) =>
+      parseResponse(schemas.logView, r, "read_logs"),
+    ),
   clearLogs: () => invoke<void>("clear_logs"),
 
   exportQueryResult: (params: {
@@ -516,7 +557,7 @@ export const api = {
       format: params.format,
       columns: params.columns,
       rows: params.rows,
-    }),
+    }).then((r) => parseResponse(schemas.numberResponse, r, "export_query_result")),
 
   dumpDatabase: (params: {
     sessionId: string;
@@ -529,10 +570,12 @@ export const api = {
       database: params.database,
       path: params.path,
       options: params.options,
-    }),
+    }).then((r) => parseResponse(schemas.numberResponse, r, "dump_database")),
 
   parseCsvPreview: (path: string, options: ImportOptions) =>
-    invoke<CsvPreview>("parse_csv_preview", { path, options }),
+    invoke<CsvPreview>("parse_csv_preview", { path, options }).then((r) =>
+      parseResponse(schemas.csvPreview, r, "parse_csv_preview"),
+    ),
   importCsv: (params: {
     sessionId: string;
     streamId: string;
@@ -669,15 +712,33 @@ export async function listenQueryStream(
   handlers: QueryStreamHandlers,
 ): Promise<UnlistenFn> {
   const filter =
-    <T extends { streamId: string }>(cb?: (e: T) => void) =>
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
     (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) cb(e.payload);
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
     };
   const unlisteners = await Promise.all([
-    listen<QueryStreamColumnsEvent>("query-stream:columns", filter(handlers.onColumns)),
-    listen<QueryStreamRowsEvent>("query-stream:rows", filter(handlers.onRows)),
-    listen<QueryStreamDoneEvent>("query-stream:done", filter(handlers.onDone)),
-    listen<QueryStreamErrorEvent>("query-stream:error", filter(handlers.onError)),
+    listen<QueryStreamColumnsEvent>(
+      "query-stream:columns",
+      filter(schemas.queryStreamColumnsEvent, "query-stream:columns", handlers.onColumns),
+    ),
+    listen<QueryStreamRowsEvent>(
+      "query-stream:rows",
+      filter(schemas.streamRowsEventLite, "query-stream:rows", handlers.onRows),
+    ),
+    listen<QueryStreamDoneEvent>(
+      "query-stream:done",
+      filter(schemas.queryStreamDoneEvent, "query-stream:done", handlers.onDone),
+    ),
+    listen<QueryStreamErrorEvent>(
+      "query-stream:error",
+      filter(schemas.queryStreamErrorEvent, "query-stream:error", handlers.onError),
+    ),
   ]);
   return () => unlisteners.forEach((un) => un());
 }
@@ -687,16 +748,37 @@ export async function listenPreviewStream(
   handlers: PreviewStreamHandlers,
 ): Promise<UnlistenFn> {
   const filter =
-    <T extends { streamId: string }>(cb?: (e: T) => void) =>
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
     (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) cb(e.payload);
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
     };
   const unlisteners = await Promise.all([
-    listen<PreviewStreamMetaEvent>("preview-stream:meta", filter(handlers.onMeta)),
-    listen<PreviewStreamRowsEvent>("preview-stream:before-rows", filter(handlers.onBeforeRows)),
-    listen<PreviewStreamRowsEvent>("preview-stream:after-rows", filter(handlers.onAfterRows)),
-    listen<PreviewStreamDoneEvent>("preview-stream:done", filter(handlers.onDone)),
-    listen<PreviewStreamErrorEvent>("preview-stream:error", filter(handlers.onError)),
+    listen<PreviewStreamMetaEvent>(
+      "preview-stream:meta",
+      filter(schemas.previewStreamMetaEvent, "preview-stream:meta", handlers.onMeta),
+    ),
+    listen<PreviewStreamRowsEvent>(
+      "preview-stream:before-rows",
+      filter(schemas.streamRowsEventLite, "preview-stream:before-rows", handlers.onBeforeRows),
+    ),
+    listen<PreviewStreamRowsEvent>(
+      "preview-stream:after-rows",
+      filter(schemas.streamRowsEventLite, "preview-stream:after-rows", handlers.onAfterRows),
+    ),
+    listen<PreviewStreamDoneEvent>(
+      "preview-stream:done",
+      filter(schemas.previewStreamDoneEvent, "preview-stream:done", handlers.onDone),
+    ),
+    listen<PreviewStreamErrorEvent>(
+      "preview-stream:error",
+      filter(schemas.previewStreamErrorEvent, "preview-stream:error", handlers.onError),
+    ),
   ]);
   return () => unlisteners.forEach((un) => un());
 }
@@ -710,15 +792,33 @@ export async function listenImportStream(
   handlers: ImportStreamHandlers,
 ): Promise<UnlistenFn> {
   const filter =
-    <T extends { streamId: string }>(cb?: (e: T) => void) =>
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
     (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) cb(e.payload);
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
     };
   const unlisteners = await Promise.all([
-    listen<ImportStartedEvent>("csv-import:started", filter(handlers.onStarted)),
-    listen<ImportProgressEvent>("csv-import:progress", filter(handlers.onProgress)),
-    listen<ImportDoneEvent>("csv-import:done", filter(handlers.onDone)),
-    listen<ImportErrorEvent>("csv-import:error", filter(handlers.onError)),
+    listen<ImportStartedEvent>(
+      "csv-import:started",
+      filter(schemas.importStartedEvent, "csv-import:started", handlers.onStarted),
+    ),
+    listen<ImportProgressEvent>(
+      "csv-import:progress",
+      filter(schemas.importProgressEvent, "csv-import:progress", handlers.onProgress),
+    ),
+    listen<ImportDoneEvent>(
+      "csv-import:done",
+      filter(schemas.importDoneEvent, "csv-import:done", handlers.onDone),
+    ),
+    listen<ImportErrorEvent>(
+      "csv-import:error",
+      filter(schemas.importErrorEvent, "csv-import:error", handlers.onError),
+    ),
   ]);
   return () => unlisteners.forEach((un) => un());
 }
