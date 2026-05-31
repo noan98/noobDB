@@ -122,10 +122,11 @@ impl SshTunnel {
 
                 // Register the handle and prune already-finished ones to avoid
                 // unbounded growth when the tunnel handles many short-lived connections.
-                if let Ok(mut tasks) = tasks_for_accept.lock() {
-                    tasks.retain(|h| !h.is_finished());
-                    tasks.push(handle);
-                }
+                // unwrap_or_else recovers from a poisoned mutex so the handle is
+                // always tracked even if a previous operation panicked.
+                let mut tasks = tasks_for_accept.lock().unwrap_or_else(|e| e.into_inner());
+                tasks.retain(|h| !h.is_finished());
+                tasks.push(handle);
             }
         });
 
@@ -145,10 +146,14 @@ impl Drop for SshTunnel {
         }
         // Abort all in-flight transfer tasks so no orphan tasks outlive the
         // tunnel and the SSH session/socket can be released promptly.
-        if let Ok(mut tasks) = self.transfer_tasks.lock() {
-            for h in tasks.drain(..) {
-                h.abort();
-            }
+        // unwrap_or_else recovers from a poisoned mutex so abort never silently
+        // skips tasks—essential for the orphan-prevention guarantee.
+        let mut tasks = self
+            .transfer_tasks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for h in tasks.drain(..) {
+            h.abort();
         }
         tracing::info!(local_port = self.local_port, "ssh tunnel closed");
     }
