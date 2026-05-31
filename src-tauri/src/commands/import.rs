@@ -324,24 +324,32 @@ async fn spawn_import(
                 elapsed_ms,
                 "csv import completed"
             );
-            let _ = app.emit(
+            if let Err(e) = app.emit(
                 EV_IMPORT_DONE,
                 ImportDoneEvent {
                     stream_id: stream_id.clone(),
                     inserted,
                     elapsed_ms,
                 },
-            );
+            ) {
+                tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit import done event");
+            }
         }
         Err(e) => {
             tracing::error!(stream_id = %stream_id, error = %e, "csv import failed");
-            let _ = app.emit(
+            if let Err(emit_err) = app.emit(
                 EV_IMPORT_ERROR,
                 ImportErrorEvent {
                     stream_id: stream_id.clone(),
                     error: e.to_string(),
                 },
-            );
+            ) {
+                tracing::warn!(
+                    stream_id = %stream_id,
+                    error = %emit_err,
+                    "failed to emit import error event"
+                );
+            }
         }
     }
 
@@ -376,13 +384,15 @@ async fn run_import(
         "csv import starting"
     );
 
-    let _ = app.emit(
+    if let Err(e) = app.emit(
         EV_IMPORT_STARTED,
         ImportStartedEvent {
             stream_id: stream_id.to_string(),
             total,
         },
-    );
+    ) {
+        tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit import started event");
+    }
 
     let started = Instant::now();
     let emit_app = app.clone();
@@ -396,14 +406,20 @@ async fn run_import(
             &rows,
             batch_size,
             |n| {
-                let _ = emit_app.emit(
+                if let Err(e) = emit_app.emit(
                     EV_IMPORT_PROGRESS,
                     ImportProgressEvent {
                         stream_id: emit_id.clone(),
                         inserted: n,
                         total,
                     },
-                );
+                ) {
+                    tracing::warn!(
+                        stream_id = %emit_id,
+                        error = %e,
+                        "failed to emit import progress event"
+                    );
+                }
                 Ok(())
             },
         )

@@ -131,7 +131,12 @@ export function TabBar({
                   if (el) tabRefs.current.set(tab.id, el);
                   else tabRefs.current.delete(tab.id);
                 }}
-                layout="position"
+                // 以前は `layout="position"` で全タブを FLIP アニメーションさせて
+                // いたが、TabBar はストリーミングや入力のたびに再レンダリングされ、
+                // そのたびに全タブの bounding box を測り直すため操作が重くなる原因
+                // だった (#403)。追加/削除時の width/opacity アニメーション
+                // (initial/animate/exit) とアクティブインジケータの layoutId は
+                // 維持しつつ、per-element の layout 計測のみをやめて軽量化する。
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}

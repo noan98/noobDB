@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { ConnectionProfile, Snippet } from "../api/tauri";
@@ -47,7 +47,9 @@ export function scopeMatches(snippet: Snippet, profile: ConnectionProfile | null
   return false;
 }
 
-export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelete }: Props) {
+// memo 化して App.tsx の高頻度な再レンダリングから切り離す (#403)。props は親で
+// useCallback 安定化済み。i18n は内部の useT 購読で追従する。
+export const SnippetList = memo(function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelete }: Props) {
   const t = useT();
   const [filter, setFilter] = useState("");
   const [showAllScopes, setShowAllScopes] = useState(false);
@@ -112,7 +114,7 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
   };
 
   const renderSnippet = (s: Snippet) => (
-    <MotionTreeNode key={s.id} {...variants.collapse} transition={transitions.enter}>
+    <MotionTreeNode key={s.id} {...variants.fade} transition={transitions.crossfade}>
       <TreeRow
         role="treeitem"
         tabIndex={0}
@@ -240,4 +242,4 @@ export function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelet
       )}
     </TreePane>
   );
-}
+});

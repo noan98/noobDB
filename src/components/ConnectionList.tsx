@@ -1,17 +1,18 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
-import { transitions, variants } from "../motion";
-import { Icon } from "./Icon";
+import { springs, transitions, variants } from "../motion";
+import { Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Spinner } from "./Spinner";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { Input } from "./ui";
 import {
   MotionTreeNode,
+  MotionTreeRow,
   TreeBadge,
   TreeChevron,
   TreeCollapse,
@@ -22,6 +23,39 @@ import {
 } from "./tree";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
+
+/** ドライバ名 (プロファイルの自由文字列) を Icon のブランドロゴ名へ正規化する。
+ *  未知のドライバは null を返し、呼び出し側で汎用アイコンへフォールバックする。 */
+function driverIconName(driver: string): IconName | null {
+  switch (driver.toLowerCase()) {
+    case "mysql":
+    case "mariadb":
+      return "mysql";
+    case "postgres":
+    case "postgresql":
+      return "postgres";
+    case "sqlite":
+    case "sqlite3":
+      return "sqlite";
+    default:
+      return null;
+  }
+}
+
+/** ドライバごとのブランドアクセント色。ライト/ダーク両テーマで視認できる中間色を
+ *  選んでいる (暗い純正色だとダークテーマで沈むため)。 */
+function driverColor(driver: string): string {
+  switch (driverIconName(driver)) {
+    case "mysql":
+      return "#00758f";
+    case "postgres":
+      return "#3b82c4";
+    case "sqlite":
+      return "#0f9bdc";
+    default:
+      return "var(--accent)";
+  }
+}
 
 /** 接続リストのグループ折りたたみ状態を永続化する localStorage キー (#350)。
  *  既定はすべて展開なので、明示的に「閉じている」グループ key の配列だけを保存する。 */
@@ -118,7 +152,12 @@ interface MenuState {
   items: ContextMenuEntry[];
 }
 
-export function ConnectionList({
+// React.memo でラップし、App.tsx の再レンダリング (クエリ入力やストリーミングの
+// たびに発生する) でツリー全体が無駄に再描画されるのを防ぐ (#403)。親から渡る
+// コールバックは App 側で useCallback 安定化済みのため、接続状態が変わらない限り
+// memo がスキップする。ロケール/設定は本コンポーネントが内部で useT/useSettings を
+// 購読しているため、memo してもそれらの変更では再描画される。
+export const ConnectionList = memo(function ConnectionList({
   profiles,
   activeProfileId,
   sessionId,
@@ -594,9 +633,11 @@ export function ConnectionList({
           : "SQLite"
         : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
+    const driverIcon = driverIconName(p.driver);
+
     return (
-      <MotionTreeNode key={p.id} {...variants.collapse} transition={transitions.enter}>
-        <TreeRow
+      <MotionTreeNode key={p.id} {...variants.fade} transition={transitions.crossfade}>
+        <MotionTreeRow
           pt="5px"
           pb="5px"
           pr="10px"
@@ -608,6 +649,11 @@ export function ConnectionList({
           borderLeftColor={borderLeftColor}
           bg={rowBg}
           _hover={{ bg: rowBg ?? "app.hover" }}
+          // ホバーで控えめに拡大 + 影を出すモーション (#386, Epic #370 準拠)。
+          // prefers-reduced-motion はルートの MotionConfig が自動抑制する。
+          whileHover={{ scale: 1.01, boxShadow: "0 2px 8px rgba(0, 0, 0, 0.12)" }}
+          transition={springs.gentle}
+          style={{ transformOrigin: "center left" }}
           onClick={() => handleProfileClick(p)}
           onContextMenu={(e) => handleProfileContextMenu(e, p)}
           role="treeitem"
@@ -619,21 +665,13 @@ export function ConnectionList({
           }
         >
           <TreeChevron transform={isOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
-          {accent ? (
-            <chakra.span
-              display="inline-block"
-              width="10px"
-              height="10px"
-              borderRadius="sm"
-              m="0 2px 0 0"
-              flexShrink={0}
-              boxShadow="0 0 0 1px rgba(0, 0, 0, 0.18) inset"
-              bg={accent}
-              aria-hidden
-            />
-          ) : (
-            <TreeIcon color="app.accent" aria-hidden><Icon name="server" /></TreeIcon>
-          )}
+          {/* ドライバ別ブランドアイコン (MySQL/PostgreSQL/SQLite) でひと目で種別が
+              分かるようにする (#386)。ユーザ設定のカスタム色があればそれで着色して
+              個別識別性も残し、無ければドライバのブランド色を使う。プロファイルカラーは
+              左端のアクセントバーにも出る。未知ドライバは汎用 server アイコン。 */}
+          <TreeIcon color={accent ?? (driverIcon ? driverColor(p.driver) : "app.accent")} aria-hidden>
+            <Icon name={driverIcon ?? "server"} />
+          </TreeIcon>
           <chakra.span
             display="flex"
             flexDirection="column"
@@ -702,6 +740,25 @@ export function ConnectionList({
               {t("listReadOnly")}
             </TreeBadge>
           )}
+          {p.ssh && (
+            <TreeBadge
+              display="inline-flex"
+              alignItems="center"
+              gap="4px"
+              bg="app.surfaceMuted"
+              color="app.textSecondary"
+              borderColor="app.borderStrong"
+              fontSize="xs"
+              fontWeight={700}
+              letterSpacing="0.06em"
+              px="8px"
+              py="2px"
+              title={t("listSshTitle")}
+            >
+              <Icon name="lock" size={12} />
+              {t("listSsh")}
+            </TreeBadge>
+          )}
           {status === "connected" && (
             <chakra.button
               type="button"
@@ -746,8 +803,13 @@ export function ConnectionList({
             aria-label={statusLabel(status)}
             title={statusLabel(status)}
           />
-          <TreeBadge>{p.driver}</TreeBadge>
-        </TreeRow>
+          <TreeBadge
+            color={driverIcon ? driverColor(p.driver) : undefined}
+            borderColor={driverIcon ? "color-mix(in srgb, currentColor 40%, transparent)" : undefined}
+          >
+            {p.driver}
+          </TreeBadge>
+        </MotionTreeRow>
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
           <TreeChildren>
@@ -996,7 +1058,7 @@ export function ConnectionList({
       {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
     </Flex>
   );
-}
+});
 
 const TooltipDt = chakra("dt", { base: { color: "app.textMuted", whiteSpace: "nowrap" } });
 const TooltipDd = chakra("dd", { base: { m: 0, fontFamily: "mono", wordBreak: "break-all" } });

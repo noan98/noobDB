@@ -84,12 +84,16 @@ const DangerousQueryDialog = lazy(() =>
 const CommandPalette = lazy(() =>
   import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette })),
 );
+const ParameterInputModal = lazy(() =>
+  import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
+);
 import {
   analyzeDangerousSql,
   isReadOnlySql,
   isSchemaMutatingSql,
   type DangerFinding,
 } from "./dangerousSql";
+import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT, useLocale } from "./i18n";
 import { transitions } from "./motion";
@@ -100,6 +104,7 @@ import {
   BASE_FONT_SIZE_PX,
   type TabRestoreMode,
 } from "./settings";
+import { accentVars } from "./accent";
 import {
   clearPersistedTabs,
   loadPersistedWorkspace,
@@ -343,6 +348,8 @@ interface Tab {
   loadingMore: boolean;
   /** True when another scroll-triggered page may yield more rows. */
   canLoadMore: boolean;
+  /** Non-null when the last query run failed (cleared on the next run). */
+  queryError: string | null;
   /**
    * Column metadata for the underlying table (only table tabs). Used to
    * detect the primary key for inline cell edits and to decide which
@@ -355,6 +362,10 @@ interface Tab {
    * index in `result.columns`. Cleared on Apply success or Cancel.
    */
   pendingEdits: PendingEdits;
+  /** Previous pendingEdits snapshots for Ctrl+Z undo. In-memory only (not persisted). */
+  editUndoStack: PendingEdits[];
+  /** Re-applicable snapshots for Ctrl+Shift+Z redo. Cleared when a new edit is made. */
+  editRedoStack: PendingEdits[];
   /**
    * Most recent Query Builder inputs captured on its Run / Dry Run, restored
    * when the builder is reopened in this tab. Persisted alongside the tab
@@ -384,6 +395,9 @@ interface PaneState {
   tabIds: string[];
   activeTabId: string | null;
 }
+
+/** Maximum number of undo/redo snapshots kept per tab. */
+const EDIT_UNDO_LIMIT = 50;
 
 let tabSeq = 0;
 function newTabId(): string {
@@ -436,7 +450,9 @@ function schemaCacheKey(sessionId: string, database: string): string {
 }
 
 function makeQueryTab(): Tab {
-  const sql = "SELECT 1;";
+  // 新規クエリタブは空のエディタで開く。以前は "SELECT 1;" をプレースホルダ的に
+  // 入れていたが、用途が分からず混乱を招くため空文字にした (#283 関連)。
+  const sql = "";
   return {
     id: newTabId(),
     kind: "query",
@@ -454,8 +470,11 @@ function makeQueryTab(): Tab {
     autoLimitSql: null,
     loadingMore: false,
     canLoadMore: false,
+    queryError: null,
     tableColumns: null,
     pendingEdits: {},
+    editUndoStack: [],
+    editRedoStack: [],
     builderSnapshot: null,
   };
 }
@@ -486,8 +505,11 @@ function makeExplainTab(sql: string): Tab {
     autoLimitSql: null,
     loadingMore: false,
     canLoadMore: false,
+    queryError: null,
     tableColumns: null,
     pendingEdits: {},
+    editUndoStack: [],
+    editRedoStack: [],
     builderSnapshot: null,
   };
 }
@@ -565,6 +587,23 @@ export default function App() {
     }
     root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
     root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
+
+    // アクセント色: ユーザー指定があれば 3 つの CSS 変数を実行時に注入し、未指定
+    // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す (#409)。前景と
+    // hover はテーマに応じて算出するため、theme 変更時も再実行される。
+    if (settings.accentColor) {
+      const v = accentVars(settings.accentColor, theme);
+      root.style.setProperty("--accent", v.accent);
+      root.style.setProperty("--accent-hover", v.accentHover);
+      root.style.setProperty("--accent-text", v.accentText);
+    } else {
+      root.style.removeProperty("--accent");
+      root.style.removeProperty("--accent-hover");
+      root.style.removeProperty("--accent-text");
+    }
+
+    // 表示密度: data-density 属性で App.css の `--density-*` トークンを切り替える (#410)。
+    root.setAttribute("data-density", settings.density);
   }, [settings, theme]);
 
   const toggleTheme = useCallback(() => {
@@ -778,6 +817,17 @@ export default function App() {
     // approval for any write (no specific destructive pattern was detected).
     writeApproval: boolean;
     autoLimit: number | null;
+  } | null>(null);
+
+  // Pending {{variable}} parameter prompt. When the editor's SQL contains
+  // placeholders, the run/preview/explain action is held here while the input
+  // modal collects values; on submit the substituted SQL re-enters the same
+  // action (so it still passes the danger gate). `mode` records which action
+  // to resume. (#388)
+  const [pendingParams, setPendingParams] = useState<{
+    tab: Tab;
+    sql: string;
+    mode: "run" | "preview" | "explain";
   } | null>(null);
 
   // The focused pane drives all the "active tab" handlers (sidebar inserts,
@@ -1021,6 +1071,17 @@ export default function App() {
     refreshSnippets();
   }, [refreshSnippets]);
 
+  const runWithErrorStatus = useCallback(
+    async (fn: () => Promise<void>, key: Parameters<ReturnType<typeof useT>>[0]) => {
+      try {
+        await fn();
+      } catch (e) {
+        setStatus({ kind: "key", key, vars: { error: String(e) }, error: true });
+      }
+    },
+    [],
+  );
+
   // 履歴ナビゲーション (#325) 用に直近の実行クエリを読み込む。接続中のみ取得し、
   // プロファイル切替・実行 (`historyReloadKey`) を契機に最新化する。連続して同じ
   // SQL が並ぶと ↑/↓ で 1 件しか進まないように、隣り合う重複は畳む。
@@ -1202,11 +1263,12 @@ export default function App() {
         await restoreSavedTabsRef.current(res.session_id, profile, savedWs);
       } else {
         if (savedCount > 0 && !restore) clearPersistedTabs(profile.id);
-        const tab = makeQueryTab();
-        const paneId = newPaneId();
-        setTabs([tab]);
-        setPanes([{ id: paneId, tabIds: [tab.id], activeTabId: tab.id }]);
-        setActivePaneId(paneId);
+        // 接続直後はクエリタブを自動で開かない。空のワークスペース
+        // (panes.length === 0) は EmptyState (「新規クエリ」ボタン付き) が
+        // 表示されるため、ユーザが必要なときだけ明示的にタブを開ける。
+        setTabs([]);
+        setPanes([]);
+        setActivePaneId(null);
       }
       setStatus({ kind: "idle" });
       toast.success(translate("toastConnected", { name: profile.name }));
@@ -1385,9 +1447,12 @@ export default function App() {
       autoLimitSql: autoLimit !== null ? sql : null,
       loadingMore: false,
       canLoadMore: false,
+      queryError: null,
       // Drop any in-flight cell edits: their row indices reference the
       // previous result set and would no longer line up with the new rows.
       pendingEdits: {},
+      editUndoStack: [],
+      editRedoStack: [],
       // A manual run of a non-read-only statement turns auto-refresh off so the
       // toggle never lingers "on" while silently skipping ticks. Read-only
       // manual re-runs keep polling, now targeting the new SQL.
@@ -1479,7 +1544,11 @@ export default function App() {
         finalize();
       },
       onError: ({ error, timedOut, connectionLost }) => {
-        patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          streaming: false,
+          queryError: connectionLost ? null : (error ?? "Unknown error"),
+        }));
         setHistoryReloadKey((k) => k + 1);
         finalize();
         // A dropped connection leaves the session unusable: tear it down and
@@ -1515,7 +1584,7 @@ export default function App() {
         autoRefresh,
       });
     } catch (e) {
-      patchTab(tabId, (tt) => ({ ...tt, streaming: false }));
+      patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
       setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
       finalize();
     }
@@ -1632,8 +1701,11 @@ export default function App() {
               autoLimitSql: null,
               loadingMore: false,
               canLoadMore: false,
+              queryError: null,
               tableColumns: null,
               pendingEdits: {},
+              editUndoStack: [],
+              editRedoStack: [],
               builderSnapshot: restoredSnapshot,
             };
           } catch (e) {
@@ -1675,8 +1747,11 @@ export default function App() {
           autoLimitSql: null,
           loadingMore: false,
           canLoadMore: false,
+          queryError: null,
           tableColumns: null,
           pendingEdits: {},
+          editUndoStack: [],
+          editRedoStack: [],
           builderSnapshot: restoredSnapshot,
         };
       };
@@ -1996,6 +2071,44 @@ export default function App() {
     runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
   }, [runQueryInTab, addTab]);
 
+  // Run the resolved SQL through whichever action the user triggered. Used both
+  // directly (no parameters) and after the parameter modal substitutes values.
+  const dispatchEditorAction = useCallback(
+    (tab: Tab, sql: string, mode: "run" | "preview" | "explain") => {
+      if (mode === "preview") previewQueryInTab(tab.id, sql);
+      else if (mode === "explain") explainForTab(tab, sql);
+      else runInTabWithGate(tab, sql);
+    },
+    [previewQueryInTab, explainForTab, runInTabWithGate],
+  );
+
+  // Editor run/preview/explain gate for {{variable}} parameters: when the SQL
+  // has placeholders, prompt for values first; otherwise run straight through.
+  const resolveParamsThen = useCallback(
+    (tab: Tab, sql: string, mode: "run" | "preview" | "explain") => {
+      if (extractQueryParams(sql).length === 0) {
+        dispatchEditorAction(tab, sql, mode);
+        return;
+      }
+      setPendingParams({ tab, sql, mode });
+    },
+    [dispatchEditorAction],
+  );
+
+  const handleParamsSubmit = useCallback(
+    (values: Record<string, string>, types: Record<string, ParamType>) => {
+      if (!pendingParams) return;
+      const { tab, sql, mode } = pendingParams;
+      const driver = (selectedProfile?.driver ?? "mysql") as DriverKind;
+      const finalSql = substituteQueryParams(sql, driver, values, types);
+      setPendingParams(null);
+      dispatchEditorAction(tab, finalSql, mode);
+    },
+    [pendingParams, selectedProfile?.driver, dispatchEditorAction],
+  );
+
+  const handleParamsCancel = useCallback(() => setPendingParams(null), []);
+
   // User-driven stop: cancel the tab's in-flight stream, drop the streaming
   // flag, and keep whatever rows have already arrived. The backend
   // `cancelStream` tears down the cursor while leaving the connection open.
@@ -2055,9 +2168,11 @@ export default function App() {
   }, []);
 
   const handleDeleteSnippet = useCallback(async (id: string) => {
-    await api.deleteSnippet(id);
-    await refreshSnippets();
-  }, [refreshSnippets]);
+    await runWithErrorStatus(async () => {
+      await api.deleteSnippet(id);
+      await refreshSnippets();
+    }, "statusFailedDeleteSnippet");
+  }, [runWithErrorStatus, refreshSnippets]);
 
   const setCellEditForTab = useCallback(
     (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
@@ -2074,14 +2189,19 @@ export default function App() {
         } else {
           next[rowKey] = row;
         }
-        return { ...tt, pendingEdits: next };
+        const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+        return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: [] };
       });
     },
     [patchTab],
   );
 
   const clearEditsForTab = useCallback((tabId: string) => {
-    patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {} }));
+    patchTab(tabId, (tt) => {
+      if (Object.keys(tt.pendingEdits).length === 0) return tt;
+      const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+      return { ...tt, pendingEdits: {}, editUndoStack: undoStack, editRedoStack: [] };
+    });
   }, [patchTab]);
 
   // Discard from inside the preview pane: clear the edits AND dismiss the
@@ -2091,8 +2211,34 @@ export default function App() {
   // cleared it.
   const discardEditsAndPreviewForTab = useCallback((tabId: string) => {
     void cancelStreamForTab(tabId);
-    patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null }));
+    patchTab(tabId, (tt) => {
+      const undoStack =
+        Object.keys(tt.pendingEdits).length > 0
+          ? [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT)
+          : (tt.editUndoStack ?? []);
+      return { ...tt, pendingEdits: {}, editUndoStack: undoStack, editRedoStack: [], preview: null };
+    });
   }, [patchTab, cancelStreamForTab]);
+
+  const undoCellEditForTab = useCallback((tabId: string) => {
+    patchTab(tabId, (tt) => {
+      const stack = tt.editUndoStack ?? [];
+      if (stack.length === 0) return tt;
+      const prev = stack[stack.length - 1];
+      const redoStack = [...(tt.editRedoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+      return { ...tt, pendingEdits: prev, editUndoStack: stack.slice(0, -1), editRedoStack: redoStack };
+    });
+  }, [patchTab]);
+
+  const redoCellEditForTab = useCallback((tabId: string) => {
+    patchTab(tabId, (tt) => {
+      const stack = tt.editRedoStack ?? [];
+      if (stack.length === 0) return tt;
+      const next = stack[stack.length - 1];
+      const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+      return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: stack.slice(0, -1) };
+    });
+  }, [patchTab]);
 
   const previewEditsForTab = useCallback((tab: Tab) => {
     if (!sessionId) return;
@@ -2150,7 +2296,7 @@ export default function App() {
       const refresh = `${paginatable} LIMIT ${limit}`;
       runQueryInTab(tabId, refresh, paginatable);
     } else {
-      patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null }));
+      patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, editUndoStack: [], editRedoStack: [], preview: null }));
     }
     if (failure) {
       setStatus({
@@ -2204,8 +2350,11 @@ export default function App() {
       autoLimitSql: null,
       loadingMore: false,
       canLoadMore: false,
+      queryError: null,
       tableColumns: null,
       pendingEdits: {},
+      editUndoStack: [],
+      editRedoStack: [],
       builderSnapshot: null,
     };
     addTab(tab);
@@ -2252,6 +2401,46 @@ export default function App() {
     const sql = tableDefinitionSql(selectedProfile?.driver ?? "mysql", database, table);
     if (sql) openAndRunQuery(sql, table);
   }, [openAndRunQuery, selectedProfile?.driver]);
+
+  // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
+  // で渡すため useCallback で固定する (#403)。依存は useState セッター (安定) と
+  // モジュールレベルの `t`・`api`、useCallback 済みの refreshProfiles のみ。
+  const handleOpenCreateForm = useCallback(() => {
+    setEditing(null);
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowSnippetForm(false);
+    setShowForm(true);
+    setFormInstanceId((n) => n + 1);
+  }, []);
+  const handleOpenEditForm = useCallback((p: ConnectionProfile) => {
+    setEditing(p);
+    setShowSnippetForm(false);
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowForm(true);
+    setFormInstanceId((n) => n + 1);
+  }, []);
+  const handleDuplicateProfile = useCallback((p: ConnectionProfile) => {
+    // Open the form pre-filled with the source profile's non-secret settings as
+    // a brand-new entry: blank id forces save_profile to mint a fresh id, and
+    // secrets (password/passphrase) are never carried over from the keyring.
+    setEditing({ ...p, id: "", name: `${p.name}${t("listDuplicateSuffix")}` });
+    setShowSnippetForm(false);
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowForm(true);
+    setFormInstanceId((n) => n + 1);
+  }, []);
+  const handleDeleteProfile = useCallback(async (id: string) => {
+    await runWithErrorStatus(async () => {
+      await api.deleteProfile(id);
+      await refreshProfiles();
+    }, "statusFailedDeleteProfile");
+  }, [runWithErrorStatus, refreshProfiles]);
 
   // After a CSV import, refresh the matching open table tab so the new rows
   // show up without the user reopening the table.
@@ -2685,9 +2874,9 @@ export default function App() {
                     initialSql={tab.sql}
                     running={tab.streaming && !tab.previewStreaming}
                     previewRunning={tab.previewStreaming}
-                    onRun={(sql) => runInTabWithGate(tab, sql)}
-                    onPreview={tab.kind === "explain" ? undefined : (sql) => previewQueryInTab(tab.id, sql)}
-                    onExplain={tab.kind === "explain" ? undefined : (sql) => explainForTab(tab, sql)}
+                    onRun={(sql) => resolveParamsThen(tab, sql, "run")}
+                    onPreview={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "preview")}
+                    onExplain={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "explain")}
                     explainMode={tab.kind === "explain"}
                     onChange={(sql) => updateTab(tab.id, { sql })}
                     onSaveSnippet={handleSaveSnippetFromEditor}
@@ -2752,19 +2941,37 @@ export default function App() {
                       onLoadMore={() => loadMoreInTab(tab.id)}
                       autoLimitApplied={tab.autoLimitApplied}
                       onFetchAllRows={() => fetchAllForTab(tab)}
+                      driver={selectedProfile?.driver ?? "mysql"}
                       database={tab.database ?? selectedProfile?.database ?? null}
                       table={tab.table ?? null}
                       editable={tab.kind === "table" && !readOnly}
                       tableColumns={tab.tableColumns}
                       pendingEdits={tab.pendingEdits}
+                      canUndo={(tab.editUndoStack?.length ?? 0) > 0}
+                      canRedo={(tab.editRedoStack?.length ?? 0) > 0}
                       onSetCellEdit={(r, c, v) => setCellEditForTab(tab.id, r, c, v)}
                       onClearEdits={() => clearEditsForTab(tab.id)}
+                      onUndoEdit={() => undoCellEditForTab(tab.id)}
+                      onRedoEdit={() => redoCellEditForTab(tab.id)}
                       onPreviewEdits={() => previewEditsForTab(tab)}
                       onApplyEdits={() => applyEditsForTab(tab)}
                       autoRefreshSecs={tab.autoRefreshSecs ?? null}
                       autoRefreshAllowed={!!tab.result && isReadOnlySql(tab.lastExecutedSql)}
                       autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
                       onSetAutoRefresh={(secs) => setAutoRefreshForTab(tab.id, secs)}
+                      queryError={tab.queryError ?? null}
+                      onRetry={
+                        tab.lastExecutedSql
+                          ? () => {
+                              if (tab.kind === "table") {
+                                void runQueryInTab(tab.id, tab.lastExecutedSql, tab.paginatable);
+                                return;
+                              }
+                              runInTabWithGate(tab, tab.lastExecutedSql);
+                            }
+                          : undefined
+                      }
+                      onFkJump={(sql) => openAndRunQuery(sql)}
                     />
                   )}
                 </Suspense>
@@ -2961,25 +3168,10 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             onConnect={handleConnect}
-            onCreate={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
-            onEdit={(p) => { setEditing(p); setShowSnippetForm(false); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
-            onDuplicate={(p) => {
-              // Open the form pre-filled with the source profile's non-secret
-              // settings as a brand-new entry: blank id forces save_profile to
-              // mint a fresh id, and secrets (password/passphrase) are never
-              // carried over from the keyring.
-              setEditing({ ...p, id: "", name: `${p.name}${t("listDuplicateSuffix")}` });
-              setShowSnippetForm(false);
-              setShowSettings(false);
-              setShowHelp(false);
-              setShowCompare(false);
-              setShowForm(true);
-              setFormInstanceId((n) => n + 1);
-            }}
-            onDelete={async (id) => {
-              await api.deleteProfile(id);
-              await refreshProfiles();
-            }}
+            onCreate={handleOpenCreateForm}
+            onEdit={handleOpenEditForm}
+            onDuplicate={handleDuplicateProfile}
+            onDelete={handleDeleteProfile}
             onPickTable={handleOpenTable}
             onImportTable={handleImportTable}
             onDumpDatabase={handleDumpDatabase}
@@ -3119,7 +3311,7 @@ export default function App() {
             onSaved={async () => {
               setShowForm(false);
               setEditing(null);
-              await refreshProfiles();
+              await runWithErrorStatus(refreshProfiles, "statusFailedLoadProfiles");
             }}
             onCancel={() => { setShowForm(false); setEditing(null); }}
           />
@@ -3136,7 +3328,7 @@ export default function App() {
               setEditingSnippet(null);
               setSnippetFormSql("");
               setSidebarTab("snippets");
-              await refreshSnippets();
+              await runWithErrorStatus(refreshSnippets, "statusFailedLoadSnippets");
             }}
             onCancel={() => { setShowSnippetForm(false); setEditingSnippet(null); setSnippetFormSql(""); }}
           />
@@ -3506,6 +3698,14 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {pendingParams && (
+          <ParameterInputModal
+            sql={pendingParams.sql}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            onSubmit={handleParamsSubmit}
+            onCancel={handleParamsCancel}
+          />
+        )}
         {pendingDangerous && (
           <DangerousQueryDialog
             findings={pendingDangerous.findings}

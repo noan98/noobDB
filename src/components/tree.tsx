@@ -68,6 +68,39 @@ export const TreeRow = chakra("div", {
   },
 });
 
+/**
+ * Motion 化したツリー行。`TreeRow` と同じ見た目 (base スタイルを共有) を持つ
+ * `motion.div` で、`whileHover` などのジェスチャプロップを受け付ける。接続プロファイル
+ * 行のホバー演出 (scale + 影、Epic #370 準拠) に使う。`prefers-reduced-motion` は
+ * ルートの `<MotionConfig reducedMotion="user">` (src/main.tsx) が自動で抑制する。
+ *
+ * motion の `transition` プロップは Chakra のスタイルプロップ名と衝突するため
+ * `forwardProps` で明示転送する (`MotionTreeNode` と同方式)。
+ */
+export const MotionTreeRow = chakra(
+  motion.div,
+  {
+    base: {
+      display: "flex",
+      alignItems: "center",
+      gap: "var(--space-1)",
+      pt: "4px",
+      pb: "4px",
+      pr: "10px",
+      pl: "6px",
+      cursor: "pointer",
+      userSelect: "none",
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      borderLeft: "2px solid transparent",
+      ...TREE_ROW_TRANSITION,
+      _hover: { bg: "app.hover" },
+      _focusVisible: { outline: "none", boxShadow: FOCUS_RING },
+    },
+  },
+  { forwardProps: ["transition"] },
+);
+
 export const TreeChevron = chakra("span", {
   base: {
     display: "inline-block",
@@ -129,7 +162,8 @@ export const ScopeToggle = chakra("label", {
 /**
  * Motion 化したツリーノード。`TreeNode` と同じ縦積みレイアウトを持つ `motion.div`
  * で、`AnimatePresence` 配下に置くと項目の追加/削除が enter/exit でアニメーション
- * する (`variants.collapse` の高さ収縮で隣接項目が滑らかに詰まる)。
+ * する。性能のため利用側は `variants.fade` (opacity のみ) を渡す運用とし、検索
+ * フィルタ入力中に多数項目の height を毎フレーム測り直す負荷を避ける (#403)。
  *
  * motion の `transition` プロップは Chakra のスタイルプロップ名と衝突するため
  * `forwardProps` で明示的に転送する (`TabBar` / `Modal` と同方式)。`initial` /
@@ -150,16 +184,22 @@ const MotionCollapse = chakra(
 
 /**
  * ツリーノードの展開/折りたたみコンテナ。`open` の間だけ子をマウントし、
- * `AnimatePresence initial={false}` で height/opacity を 0 ↔ auto に補間する
- * (`variants.collapse`)。`initial={false}` なので初期表示で既に開いている
+ * `AnimatePresence initial={false}` で **opacity のみ**を補間する
+ * (`variants.fade`)。`initial={false}` なので初期表示で既に開いている
  * ノードは enter アニメせず、クリックによる開閉のみが動く。子の中身 (破線
  * インデントの `TreeChildren` 等) はそのまま渡す。
+ *
+ * **性能上の注意 (#403):** 以前は `height: 0 ↔ auto` を補間していたが、これは
+ * 大きな DB を展開するたびに配下の数百行のレイアウトを毎フレーム測り直すため、
+ * スキーマ操作が体感で重くなる原因だった。height は補間せず opacity だけを
+ * フェードすることで、ブラウザのレイアウト/リフローを起こさず (合成のみで)
+ * 軽量に開閉する。隣接項目はアニメーションせず即座に詰まる。
  */
 export function TreeCollapse({ open, children }: { open: boolean; children: ReactNode }) {
   return (
     <AnimatePresence initial={false}>
       {open && (
-        <MotionCollapse {...variants.collapse} transition={transitions.layout}>
+        <MotionCollapse {...variants.fade} transition={transitions.crossfade}>
           {children}
         </MotionCollapse>
       )}

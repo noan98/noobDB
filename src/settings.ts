@@ -50,14 +50,54 @@ export interface Settings {
    */
   fontSizePx: number;
   /**
+   * Global accent color (hex `#rrggbb`) applied across buttons, selection,
+   * focus rings and active tabs. `null` keeps the per-theme default accent
+   * baked into App.css. Foreground/hover are derived at runtime (see accent.ts).
+   */
+  accentColor: string | null;
+  /**
+   * UI density preset. Drives row height / cell padding independently of the
+   * font size, via the `data-density` attribute and `--density-*` CSS vars.
+   */
+  density: Density;
+  /**
    * Interval (seconds) applied when the result grid's auto-refresh (scheduled
    * re-execution) is toggled on. Remembered globally so the last chosen cadence
    * becomes the default for the next tab. Clamped to AUTO_REFRESH_MIN_SECS.
    */
   autoRefreshDefaultSecs: number;
+  /**
+   * How the result grid navigates rows: "scroll" keeps the existing infinite-scroll
+   * behaviour; "paginate" adds a footer with page controls instead.
+   */
+  resultGridMode: ResultGridMode;
+  /** Number of rows per page when resultGridMode is "paginate". */
+  resultGridPageSize: number;
+  /**
+   * Behavior when the inline cell editor loses focus (blur). "commit"
+   * auto-commits the typed value as a pending edit (the historical default);
+   * "confirm" shows a dialog so the user can choose to commit or discard,
+   * guarding against accidentally clicking away and losing an in-progress edit.
+   */
+  cellEditOnBlur: CellEditOnBlur;
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
+
+export type ResultGridMode = "scroll" | "paginate";
+
+export type CellEditOnBlur = "commit" | "confirm";
+/** Preserve the historical auto-commit behavior; the guard is opt-in. */
+export const DEFAULT_CELL_EDIT_ON_BLUR: CellEditOnBlur = "commit";
+
+export type Density = "compact" | "normal" | "spacious";
+
+/** Density presets offered in the appearance settings, in display order. */
+export const DENSITY_ORDER: Density[] = ["compact", "normal", "spacious"];
+export const DEFAULT_DENSITY: Density = "normal";
+
+/** Default accent color: `null` means "use the per-theme CSS default". */
+export const DEFAULT_ACCENT_COLOR: string | null = null;
 
 /** Pixel size that maps to a 1.0 font scale (the unscaled default). */
 export const BASE_FONT_SIZE_PX = 14;
@@ -194,6 +234,13 @@ export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 export const DEFAULT_QUERY_TIMEOUT_SECS = 30;
 const MAX_QUERY_TIMEOUT_SECS = 86_400;
 
+export const DEFAULT_RESULT_GRID_MODE: ResultGridMode = "scroll";
+export const DEFAULT_RESULT_GRID_PAGE_SIZE = 100;
+/** Page-size options offered in the result grid's paginator selector. */
+export const RESULT_GRID_PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000] as const;
+const MIN_PAGE_SIZE = 1;
+const MAX_PAGE_SIZE = 100_000;
+
 /**
  * Smallest auto-refresh cadence we allow. Polling faster than this risks
  * piling load onto the DB and connection pool for little practical gain.
@@ -219,7 +266,12 @@ export const DEFAULT_SETTINGS: Settings = {
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
   fontSizePx: DEFAULT_FONT_SIZE_PX,
+  accentColor: DEFAULT_ACCENT_COLOR,
+  density: DEFAULT_DENSITY,
   autoRefreshDefaultSecs: DEFAULT_AUTO_REFRESH_SECS,
+  resultGridMode: DEFAULT_RESULT_GRID_MODE,
+  resultGridPageSize: DEFAULT_RESULT_GRID_PAGE_SIZE,
+  cellEditOnBlur: DEFAULT_CELL_EDIT_ON_BLUR,
 };
 
 /** Clamps an auto-refresh cadence (seconds) to the allowed range. */
@@ -242,6 +294,29 @@ function sanitizeTimeout(input: unknown, fallback: number): number {
 
 function sanitizeTabRestoreMode(input: unknown, fallback: TabRestoreMode): TabRestoreMode {
   return input === "always" || input === "ask" || input === "never" ? input : fallback;
+}
+
+function sanitizeDensity(input: unknown, fallback: Density): Density {
+  return input === "compact" || input === "normal" || input === "spacious"
+    ? input
+    : fallback;
+}
+
+function sanitizeResultGridMode(input: unknown, fallback: ResultGridMode): ResultGridMode {
+  return input === "scroll" || input === "paginate" ? input : fallback;
+}
+
+function sanitizePageSize(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.floor(input);
+  if (n < MIN_PAGE_SIZE) return MIN_PAGE_SIZE;
+  if (n > MAX_PAGE_SIZE) return MAX_PAGE_SIZE;
+  return n;
+}
+
+function sanitizeAccentColor(input: unknown, fallback: string | null): string | null {
+  if (input === null) return null;
+  return isHexColor(input) ? input : fallback;
 }
 
 function sanitizeFontSizePx(input: unknown, fallback: number): number {
@@ -297,7 +372,12 @@ function loadInitial(): Settings {
       tabRestoreMode?: unknown;
       queryTimeoutSecs?: unknown;
       fontSizePx?: unknown;
+      accentColor?: unknown;
+      density?: unknown;
       autoRefreshDefaultSecs?: unknown;
+      resultGridMode?: unknown;
+      resultGridPageSize?: unknown;
+      cellEditOnBlur?: unknown;
     };
     return {
       syntaxColors: {
@@ -326,10 +406,18 @@ function loadInitial(): Settings {
       tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
       queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
       fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
+      accentColor: sanitizeAccentColor(parsed.accentColor, DEFAULT_ACCENT_COLOR),
+      density: sanitizeDensity(parsed.density, DEFAULT_DENSITY),
       autoRefreshDefaultSecs: sanitizeAutoRefreshSecs(
         parsed.autoRefreshDefaultSecs,
         DEFAULT_AUTO_REFRESH_SECS,
       ),
+      resultGridMode: sanitizeResultGridMode(parsed.resultGridMode, DEFAULT_RESULT_GRID_MODE),
+      resultGridPageSize: sanitizePageSize(parsed.resultGridPageSize, DEFAULT_RESULT_GRID_PAGE_SIZE),
+      cellEditOnBlur:
+        parsed.cellEditOnBlur === "commit" || parsed.cellEditOnBlur === "confirm"
+          ? parsed.cellEditOnBlur
+          : DEFAULT_CELL_EDIT_ON_BLUR,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -481,10 +569,50 @@ export function setFontSizePx(value: number): void {
   listeners.forEach((cb) => cb());
 }
 
+export function setAccentColor(value: string | null): void {
+  const next = sanitizeAccentColor(value, current.accentColor);
+  if (current.accentColor === next) return;
+  current = { ...current, accentColor: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setDensity(value: Density): void {
+  const next = sanitizeDensity(value, current.density);
+  if (current.density === next) return;
+  current = { ...current, density: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
 export function setAutoRefreshDefaultSecs(value: number): void {
   const next = sanitizeAutoRefreshSecs(value, current.autoRefreshDefaultSecs);
   if (current.autoRefreshDefaultSecs === next) return;
   current = { ...current, autoRefreshDefaultSecs: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setResultGridMode(value: ResultGridMode): void {
+  const next = sanitizeResultGridMode(value, current.resultGridMode);
+  if (current.resultGridMode === next) return;
+  current = { ...current, resultGridMode: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setResultGridPageSize(value: number): void {
+  const next = sanitizePageSize(value, current.resultGridPageSize);
+  if (current.resultGridPageSize === next) return;
+  current = { ...current, resultGridPageSize: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setCellEditOnBlur(value: CellEditOnBlur): void {
+  const next = value === "commit" || value === "confirm" ? value : DEFAULT_CELL_EDIT_ON_BLUR;
+  if (current.cellEditOnBlur === next) return;
+  current = { ...current, cellEditOnBlur: next };
   persist();
   listeners.forEach((cb) => cb());
 }

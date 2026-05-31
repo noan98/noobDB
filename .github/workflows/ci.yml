@@ -70,7 +70,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -121,10 +121,23 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: "0"
+      # sccache をコンパイルキャッシュとして使う (#417)。rust-cache が target
+      # ディレクトリをキャッシュするのに対し、sccache はコンパイル単位 (rustc 呼び
+      # 出し) をキャッシュし、Cargo.lock 変更やキャッシュミス時のクリーンビルドを
+      # 高速化する。SCCACHE_DIR を actions/cache で永続化してブランチ跨ぎで再利用する。
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップ
+      # (rust-cache のツールチェーン情報取得など) より前に sccache 本体を導入する。
+      - name: Install sccache
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
+        with:
+          tool: sccache
 
       # clippy は check モードでリンクしないが、build.rs (tauri-build 等) の
       # 生成・実行で linker を使うため clang + mold は必要
@@ -148,7 +161,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -166,6 +179,18 @@ jobs:
           workspaces: "./src-tauri -> target"
           key: clippy
 
+      # sccache のローカルディスクキャッシュを永続化する。キーは Cargo.lock の
+      # ハッシュ + ジョブ種別 (clippy) で分け、rust-cache の target キャッシュとは
+      # 別物として管理する。Cargo.lock が変わってもプレフィックス一致で前回分を
+      # 復元し、差分のみ再コンパイルする。
+      - name: Cache sccache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-clippy-
+
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
@@ -178,6 +203,11 @@ jobs:
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
+
+      # sccache のヒット率を Job ログに出して効果計測の材料にする (#417)。
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats
 
   # 依存ライセンスの許可リスト検査と、RustSec Advisory DB による既知脆弱性チェック
   # を cargo-deny で行う (#332)。設定は src-tauri/deny.toml。cargo metadata を読む
@@ -212,6 +242,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: "0"
+      # sccache をコンパイルキャッシュとして使う (#417)。カバレッジ計装ビルド
+      # (-C instrument-coverage) は sccache がキャッシュ対象外として素通しするため、
+      # 主な効果は依存クレートのコンパイルに現れる。rust-cache (target) とは別管理。
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
     services:
       mysql:
         image: mysql:8.0
@@ -243,6 +278,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
+      # 前に sccache 本体を導入する。
+      - name: Install sccache
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
+        with:
+          tool: sccache
+
       # clang + mold はビルド高速化用 (src-tauri/.cargo/config.toml が
       # Linux ターゲットのリンカに clang + mold を指定している)。mold で
       # テストバイナリ群のリンク時間を短縮する。
@@ -265,7 +307,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -283,6 +325,15 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
           key: test
+
+      # sccache のローカルディスクキャッシュを永続化する (ジョブ種別 test で分離)。
+      - name: Cache sccache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-test-
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
@@ -336,3 +387,104 @@ jobs:
       - name: Enforce coverage threshold
         working-directory: src-tauri
         run: cargo llvm-cov report --fail-under-lines 48
+
+      # sccache のヒット率を Job ログに出して効果計測の材料にする (#417)。
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats
+
+  # Windows ターゲットの PR 事前検証 (#392)。Rust のコンパイル・テストは普段
+  # Linux でしか走らず、Windows 固有の挙動 (keyring・ファイルパス・改行コード・
+  # MSVC リンカ) のリグレッションは release.yml の main push まで検出できなかった。
+  # ここで PR 段階で clippy + SQLite ユニット/統合テストを Windows 上で実行する。
+  # Tauri の全スタックビルド (WebView2 等) は不要で、MSVC toolchain のみで足りる。
+  # MySQL/PostgreSQL は接続 URL 環境変数を渡さないので統合テストはスキップされ、
+  # SQLite 統合テスト (外部サービス不要) は常時実行される。
+  rust-windows:
+    name: rust (windows)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: windows-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      # Linux ジョブと同じく sccache でコンパイルキャッシュを効かせる (#417)。
+      # キャッシュキーは runner.os (Windows) を含むので Linux とは自動的に分離される。
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
+      # 前に sccache 本体を導入する。
+      - name: Install sccache
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
+        with:
+          tool: sccache
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      # Windows では config.toml が MSVC リンカに lld-link を指定している。
+      # windows-latest には LLVM がプリインストール済みで lld-link が PATH 上にある。
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: windows
+
+      - name: Cache sccache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ github.workspace }}/.sccache
+          key: sccache-${{ runner.os }}-windows-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-windows-
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
+        with:
+          tool: cargo-nextest
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend (needed for tauri::generate_context!)
+        run: pnpm run build
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # SQLite 統合テスト (tests/sqlite_integration.rs) は外部サービス不要で常時
+      # 実行される。MySQL/PostgreSQL は URL 環境変数を渡していないのでスキップ。
+      - name: cargo nextest run
+        working-directory: src-tauri
+        run: cargo nextest run --locked --all-targets
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats

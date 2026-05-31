@@ -259,7 +259,9 @@ export interface QueryBuilderSnapshot {
   table: string;
   selectAll: boolean;
   selectColumns: string[];
+  whereEnabled: boolean;
   whereConditions: WhereCondition[];
+  limitEnabled: boolean;
   limit: string;
   setPairs: ColumnValuePair[];
   insertPairs: ColumnValuePair[];
@@ -341,20 +343,22 @@ function buildSql(
   table: string,
   selectColumns: string[],
   selectAll: boolean,
+  whereEnabled: boolean,
   whereConditions: WhereCondition[],
+  limitEnabled: boolean,
   limit: string,
   setPairs: ColumnValuePair[],
   insertPairs: ColumnValuePair[],
 ): string {
   const ref = tableRef(driver, database, table);
+  const where = whereEnabled ? renderWhereClause(driver, whereConditions) : "";
   switch (kind) {
     case "SELECT": {
       const cols = selectAll || selectColumns.length === 0
         ? "*"
         : selectColumns.map((c) => quoteIdentFor(driver, c)).join(", ");
-      const where = renderWhereClause(driver, whereConditions);
       const trimmedLimit = limit.trim();
-      const limitClause = trimmedLimit && /^\d+$/.test(trimmedLimit) ? ` LIMIT ${trimmedLimit}` : "";
+      const limitClause = limitEnabled && trimmedLimit && /^\d+$/.test(trimmedLimit) ? ` LIMIT ${trimmedLimit}` : "";
       return `SELECT ${cols} FROM ${ref}${where}${limitClause};`;
     }
     case "UPDATE": {
@@ -362,12 +366,10 @@ function buildSql(
         .filter((p) => p.column)
         .map((p) => `${quoteIdentFor(driver, p.column)} = ${quoteValue(driver, p.value)}`)
         .join(", ");
-      const where = renderWhereClause(driver, whereConditions);
       const setClause = set || "<column> = <value>";
       return `UPDATE ${ref} SET ${setClause}${where};`;
     }
     case "DELETE": {
-      const where = renderWhereClause(driver, whereConditions);
       return `DELETE FROM ${ref}${where};`;
     }
     case "INSERT": {
@@ -399,9 +401,11 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   const [selectAll, setSelectAll] = useState(initialSnapshot?.selectAll ?? true);
   const [selectColumns, setSelectColumns] = useState<string[]>(initialSnapshot?.selectColumns ?? []);
   const [newSelectCol, setNewSelectCol] = useState("");
+  const [whereEnabled, setWhereEnabled] = useState(initialSnapshot?.whereEnabled ?? true);
   const [whereConditions, setWhereConditions] = useState<WhereCondition[]>(
     initialSnapshot?.whereConditions ?? [{ column: "", operator: "=", value: "" }],
   );
+  const [limitEnabled, setLimitEnabled] = useState(initialSnapshot?.limitEnabled ?? true);
   const [limit, setLimit] = useState(initialSnapshot?.limit ?? "100");
   const [setPairs, setSetPairs] = useState<ColumnValuePair[]>(
     initialSnapshot?.setPairs ?? [{ column: "", value: "" }],
@@ -462,8 +466,8 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   }, [sessionId, database, table]);
 
   const sql = useMemo(
-    () => buildSql(driver, kind, database, table, selectColumns, selectAll, whereConditions, limit, setPairs, insertPairs),
-    [driver, kind, database, table, selectColumns, selectAll, whereConditions, limit, setPairs, insertPairs],
+    () => buildSql(driver, kind, database, table, selectColumns, selectAll, whereEnabled, whereConditions, limitEnabled, limit, setPairs, insertPairs),
+    [driver, kind, database, table, selectColumns, selectAll, whereEnabled, whereConditions, limitEnabled, limit, setPairs, insertPairs],
   );
 
   const handleCopy = useCallback(async () => {
@@ -489,11 +493,13 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
     table,
     selectAll,
     selectColumns: [...selectColumns],
+    whereEnabled,
     whereConditions: whereConditions.map((c) => ({ ...c })),
+    limitEnabled,
     limit,
     setPairs: setPairs.map((p) => ({ ...p })),
     insertPairs: insertPairs.map((p) => ({ ...p })),
-  }), [kind, database, table, selectAll, selectColumns, whereConditions, limit, setPairs, insertPairs]);
+  }), [kind, database, table, selectAll, selectColumns, whereEnabled, whereConditions, limitEnabled, limit, setPairs, insertPairs]);
 
   const handleExecute = useCallback(() => {
     onPersist?.(captureSnapshot());
@@ -757,12 +763,23 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           {showWhere && (
             <chakra.section css={sectionCss}>
               <Box css={sectionRowCss}>
-                <Box css={sectionTitleCss}>{t("qbWhere")}</Box>
-                <chakra.button type="button" css={smallBtnCss} onClick={addCondition}>
-                  + {t("qbAddCondition")}
-                </chakra.button>
+                <chakra.label css={{ ...checkboxLabelCss, ...sectionTitleCss }}>
+                  <Checkbox
+                    checked={whereEnabled}
+                    w="auto"
+                    m={0}
+                    onChange={(e) => setWhereEnabled(e.target.checked)}
+                    aria-label={t("qbWhereToggle")}
+                  />
+                  <chakra.span>{t("qbWhere")}</chakra.span>
+                </chakra.label>
+                {whereEnabled && (
+                  <chakra.button type="button" css={smallBtnCss} onClick={addCondition}>
+                    + {t("qbAddCondition")}
+                  </chakra.button>
+                )}
               </Box>
-              {whereConditions.map((c, i) => (
+              {whereEnabled && whereConditions.map((c, i) => (
                 <Box css={rowCss} key={`w-${i}`}>
                   <ColumnPicker
                     value={c.column}
@@ -806,12 +823,22 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
 
           {showLimit && (
             <chakra.section css={limitSectionCss}>
-              <chakra.label htmlFor="qb-limit" m={0}>{t("qbLimit")}</chakra.label>
+              <chakra.label css={{ ...checkboxLabelCss, m: 0 }}>
+                <Checkbox
+                  checked={limitEnabled}
+                  w="auto"
+                  m={0}
+                  onChange={(e) => setLimitEnabled(e.target.checked)}
+                  aria-label={t("qbLimitToggle")}
+                />
+                <chakra.span>{t("qbLimit")}</chakra.span>
+              </chakra.label>
               <chakra.input
                 id="qb-limit"
                 css={limitInputCss}
                 value={limit}
                 placeholder="100"
+                disabled={!limitEnabled}
                 onChange={(e) => setLimit(e.target.value)}
                 inputMode="numeric"
               />

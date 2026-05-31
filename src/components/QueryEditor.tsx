@@ -295,7 +295,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
 
   useEffect(() => {
     if (!hostRef.current) return;
-    const startDoc = initialSql ?? "SELECT 1;";
+    const startDoc = initialSql ?? "";
 
     // 履歴ナビゲーションの結果をエディタへ反映する。`navigatingRef` を立てて dispatch
     // することで、この doc 変更を updateListener がユーザのタイプと誤認してナビ位置を
@@ -522,12 +522,14 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   );
   const runIconSpinner = <Spinner size={12} />;
   const runStates: Record<"idle" | "running" | "disabled", BadgeState> = {
-    idle: { label: runLabel, tone: "success", icon: runIconPlay },
+    // Run はエディタの主要アクションなので、アクセント色 (primary 相当) で
+    // ツールバー上で唯一際立たせる (#283 の「主要アクション = primary」)。
+    idle: { label: runLabel, tone: "accent", icon: runIconPlay },
     // 実行中はスピナーのみを表示する。Run/Preview は英語ラベルのボタンであり、
     // 日本語の状態テキスト ("実行中...") を併記するとスピナーと意味が重複し、ボタン
     // ラベルとの言語的な齟齬も生むため、可視テキストは落とす。SR 向けには
-    // `srLabel` でアナウンスを残す。
-    running: { label: "", srLabel: t("editorRunRunning"), tone: "warning", icon: runIconSpinner },
+    // `srLabel` でアナウンスを残す。実行中もアクセント色を保ち状態の連続性を出す。
+    running: { label: "", srLabel: t("editorRunRunning"), tone: "accent", icon: runIconSpinner },
     disabled: { label: runLabel, tone: "neutral", icon: runIconPlay },
   };
 
@@ -543,8 +545,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     </svg>
   );
   const previewStates: Record<"idle" | "running" | "disabled", BadgeState> = {
-    idle: { label: t("editorPreview"), tone: "warning", icon: previewIconEye },
-    running: { label: "", srLabel: t("editorPreviewRunning"), tone: "warning", icon: runIconSpinner },
+    // Dry Run は安全なプレビュー実行 (常にロールバック) なので、Run のような
+    // 主役色は使わず中立トーンに統一し、補助アクションとして落ち着かせる (#283)。
+    idle: { label: t("editorPreview"), tone: "neutral", icon: previewIconEye },
+    running: { label: "", srLabel: t("editorPreviewRunning"), tone: "neutral", icon: runIconSpinner },
     disabled: { label: t("editorPreview"), tone: "neutral", icon: previewIconEye },
   };
 
@@ -638,7 +642,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         )}
         {sessionId && !explainMode && (
           <ToolbarButton
-            variant="info"
             onClick={() => setShowBuilder(true)}
             disabled={disabled}
             title={disabled ? t("editorHintDisabled") : t("editorBuilderTitle")}
