@@ -56,6 +56,32 @@ describe("renderParamValue", () => {
     expect(out.endsWith("'")).toBe(true);
   });
 
+  it("text のシングルクオートエスケープは全 3 方言で同一", () => {
+    // シングルクオートの二重化は方言非依存 (バックスラッシュのみ MySQL 固有)。
+    for (const driver of ["mysql", "postgres", "sqlite"] as const) {
+      expect(renderParamValue(driver, "O'Brien", "text")).toBe("'O''Brien'");
+    }
+  });
+
+  it("text はバックスラッシュを MySQL でのみ二重化する", () => {
+    // Postgres/SQLite は standard_conforming_strings 既定下でバックスラッシュを
+    // 通常文字として扱うため、二重化するとデータが壊れる。
+    expect(renderParamValue("mysql", "a\\b", "text")).toBe("'a\\\\b'");
+    expect(renderParamValue("postgres", "a\\b", "text")).toBe("'a\\b'");
+    expect(renderParamValue("sqlite", "a\\b", "text")).toBe("'a\\b'");
+  });
+
+  it("text は改行・タブ・Unicode をそのままリテラルに通す", () => {
+    // 改行/タブ/マルチバイトはエスケープ対象ではない。クオート文字でなければ
+    // 素通しされ、外側のクオートで安全に閉じ込められる。
+    expect(renderParamValue("postgres", "line1\nline2\tend", "text")).toBe(
+      "'line1\nline2\tend'",
+    );
+    expect(renderParamValue("mysql", "café—日本語😀", "text")).toBe("'café—日本語😀'");
+    // Unicode に紛れたシングルクオートも確実に二重化される。
+    expect(renderParamValue("sqlite", "naïve's", "text")).toBe("'naïve''s'");
+  });
+
   it("number は裸の数値、非数値は安全なクオート文字列にフォールバックする", () => {
     expect(renderParamValue("mysql", "100", "number")).toBe("100");
     expect(renderParamValue("mysql", "-2.5", "number")).toBe("-2.5");
