@@ -1786,30 +1786,30 @@ export function DataGrid({
                     const eColIdx = editing!.colIdx;
                     const eValue = editing!.value;
                     const eOrigDisplay = originalDisplay;
-                    // Capture rowKey before clearing editing state so that
-                    // an auto-refresh mid-dialog can't shift rows[eRowIdx].
-                    const eRowKey = rowEditKey(rows[eRowIdx] ?? [], pkIndices ?? [], eRowIdx);
-                    if (cellEditOnBlur === "confirm") {
-                      setEditing(null);
-                      void (async () => {
-                        const ok = await confirmBlur({
-                          title: t("editBlurTitle"),
-                          message: t("editBlurMessage"),
-                          confirmLabel: t("editBlurCommit"),
-                          cancelLabel: t("editBlurDiscard"),
-                        });
-                        if (ok && onSetCellEdit) {
-                          if (eValue === eOrigDisplay) {
-                            onSetCellEdit(eRowKey, eColIdx, null);
-                          } else {
-                            onSetCellEdit(eRowKey, eColIdx, eValue);
-                          }
-                        }
-                      })();
-                    } else {
+                    if (cellEditOnBlur !== "confirm") {
                       commitEdit(eRowIdx, eColIdx, eValue, eOrigDisplay);
                       setEditing(null);
+                      return;
                     }
+                    // Capture the row's stable key now: an auto-refresh while
+                    // the dialog is open could shift `rows[eRowIdx]`.
+                    const eRowKey = rowEditKey(rows[eRowIdx] ?? [], pkIndices ?? [], eRowIdx);
+                    setEditing(null);
+                    void (async () => {
+                      const commit = await confirmBlur({
+                        title: t("editBlurTitle"),
+                        message: t("editBlurMessage"),
+                        confirmLabel: t("editBlurCommit"),
+                        cancelLabel: t("editBlurDiscard"),
+                      });
+                      if (commit && onSetCellEdit) {
+                        onSetCellEdit(
+                          eRowKey,
+                          eColIdx,
+                          eValue === eOrigDisplay ? null : eValue,
+                        );
+                      }
+                    })();
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Tab") {

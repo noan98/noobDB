@@ -495,7 +495,7 @@ const en = {
   editRedo: "Redo",
   editRedoTitle: "Redo edit (Ctrl+Shift+Z)",
   editBlurTitle: "Commit edit?",
-  editBlurMessage: "The typed value will be committed as a pending edit. Click Commit to save it, or Discard to lose it.",
+  editBlurMessage: "The cell editor lost focus with an unsaved value. Commit it as a pending edit, or discard it?",
   editBlurCommit: "Commit",
   editBlurDiscard: "Discard",
   editDiscardConfirmTitle: "Discard all pending edits?",
@@ -912,6 +912,9 @@ const en = {
   settingsResultGridModePaginate: "Paginated",
   settingsResultGridPageSize: "Page size",
   settingsResultGridPageSizeHelp: "Number of rows shown per page in paginated mode.",
+  settingsCellEditOnBlur: "Confirm on focus loss while editing a cell",
+  settingsCellEditOnBlurHelp:
+    "When on, clicking away from an open cell editor asks whether to commit or discard the typed value, guarding against accidental loss. When off, the value is auto-committed as a pending edit (the default).",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1411,7 +1414,7 @@ const ja: Dict = {
   editRedo: "やり直す",
   editRedoTitle: "編集をやり直す (Ctrl+Shift+Z)",
   editBlurTitle: "編集を確定しますか？",
-  editBlurMessage: "入力した値を保留編集として保存します。「確定」をクリックして保存するか、「破棄」をクリックして入力を失ってください。",
+  editBlurMessage: "未保存の値が残ったままセル編集からフォーカスが外れました。保留編集として確定しますか、それとも破棄しますか？",
   editBlurCommit: "確定",
   editBlurDiscard: "破棄",
   editDiscardConfirmTitle: "未保存の編集をすべて破棄しますか？",
@@ -1828,6 +1831,9 @@ const ja: Dict = {
   settingsResultGridModePaginate: "ページネーション",
   settingsResultGridPageSize: "1ページの行数",
   settingsResultGridPageSizeHelp: "ページネーションモードで表示する行数。",
+  settingsCellEditOnBlur: "セル編集中にフォーカスが外れたら確認する",
+  settingsCellEditOnBlurHelp:
+    "オンにすると、セル編集を開いたまま別の場所をクリックした際に、入力値を確定するか破棄するかを確認します (誤操作による入力消失を防止)。オフのときは入力値を保留編集として自動確定します (既定)。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

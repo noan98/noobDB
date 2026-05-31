@@ -74,9 +74,10 @@ export interface Settings {
   /** Number of rows per page when resultGridMode is "paginate". */
   resultGridPageSize: number;
   /**
-   * Behavior when the inline cell editor loses focus. "commit" auto-commits the
-   * typed value as a pending edit (current behavior); "confirm" shows a dialog
-   * so the user can choose between committing or discarding.
+   * Behavior when the inline cell editor loses focus (blur). "commit"
+   * auto-commits the typed value as a pending edit (the historical default);
+   * "confirm" shows a dialog so the user can choose to commit or discard,
+   * guarding against accidentally clicking away and losing an in-progress edit.
    */
   cellEditOnBlur: CellEditOnBlur;
 }
