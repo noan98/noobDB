@@ -1265,7 +1265,7 @@ export function DataGrid({
         header: () => (
           <span
             className="th-content"
-            title={fkTable ? `FK → ${fkTable}` : c.type_name}
+            title={fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name}
           >
             {fkTable && <span className="th-fk-badge">FK</span>}
             <span className="th-name">{c.name}</span>
@@ -1875,9 +1875,15 @@ export function DataGrid({
               const refTable = fkMeta.referenced_table;
               const refColumn = fkMeta.referenced_column;
               const cellValue = rows[copyMenu.rowIdx]?.[copyMenu.colIdx] ?? null;
-              const sql =
-                `SELECT * FROM ${quoteIdentFor(driver, refTable)}` +
-                ` WHERE ${quoteIdentFor(driver, refColumn)} = ${literalFromCellValue(driver, cellValue)}`;
+              const fromRef =
+                driver === "sqlite" || !rowSqlDatabase
+                  ? quoteIdentFor(driver, refTable)
+                  : `${quoteIdentFor(driver, rowSqlDatabase)}.${quoteIdentFor(driver, refTable)}`;
+              const predicate =
+                cellValue === null || cellValue === undefined
+                  ? `${quoteIdentFor(driver, refColumn)} IS NULL`
+                  : `${quoteIdentFor(driver, refColumn)} = ${literalFromCellValue(driver, cellValue)}`;
+              const sql = `SELECT * FROM ${fromRef} WHERE ${predicate}`;
               return [
                 { separator: true as const },
                 {

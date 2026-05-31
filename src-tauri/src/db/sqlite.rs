@@ -363,6 +363,51 @@ impl SqliteConn {
             fks.entry(from).or_insert((ref_table, ref_column));
         }
 
+        // When `to` is NULL the FK implicitly targets the parent's PRIMARY KEY.
+        // Resolve the PK column name so callers can still build a WHERE clause.
+        // We only handle single-column PKs; composite PKs are left as None.
+        let implicit_tables: std::collections::HashSet<String> = fks
+            .values()
+            .filter(|(_, ref_col)| ref_col.is_none())
+            .map(|(ref_table, _)| ref_table.clone())
+            .collect();
+        let mut resolved_pks: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        for ref_table in &implicit_tables {
+            if ref_table.contains('"') || ref_table.contains('\0') {
+                resolved_pks.insert(ref_table.clone(), None);
+                continue;
+            }
+            let pk_sql = format!("PRAGMA table_info(\"{}\")", ref_table);
+            let pk_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(pk_sql))
+                .fetch_all(&self.pool)
+                .await
+                .unwrap_or_default();
+            let mut pk_cols: Vec<(i64, String)> = pk_rows
+                .iter()
+                .filter_map(|r| {
+                    let pk_idx = r.try_get::<i64, _>("pk").unwrap_or(0);
+                    if pk_idx > 0 {
+                        r.try_get::<String, _>("name").ok().map(|n| (pk_idx, n))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            pk_cols.sort_by_key(|(pk_idx, _)| *pk_idx);
+            let resolved = if pk_cols.len() == 1 {
+                pk_cols.into_iter().next().map(|(_, n)| n)
+            } else {
+                None
+            };
+            resolved_pks.insert(ref_table.clone(), resolved);
+        }
+        for (_, (ref_table, ref_col)) in fks.iter_mut() {
+            if ref_col.is_none() {
+                *ref_col = resolved_pks.get(ref_table).and_then(|p| p.clone());
+            }
+        }
+
         let sql = format!("PRAGMA table_info(\"{}\")", table);
         let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&self.pool)
