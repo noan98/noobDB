@@ -7,6 +7,7 @@ import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
   type ColumnDef,
@@ -14,13 +15,19 @@ import {
   type ColumnSizingState,
   type FilterFn,
   type OnChangeFn,
+  type PaginationState,
   type SortingFn,
   type SortingState,
   type Row,
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
-import { AUTO_REFRESH_INTERVAL_OPTIONS, useSettings, type Density } from "../settings";
+import {
+  AUTO_REFRESH_INTERVAL_OPTIONS,
+  RESULT_GRID_PAGE_SIZE_OPTIONS,
+  useSettings,
+  type Density,
+} from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
 import { ContextMenu } from "./ContextMenu";
@@ -1115,6 +1122,8 @@ export function DataGrid({
   rowSqlDriver,
   rowSqlDatabase,
   rowSqlTable,
+  paginationState,
+  onPaginationChange,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -1179,6 +1188,9 @@ export function DataGrid({
   rowSqlDriver?: string;
   rowSqlDatabase?: string | null;
   rowSqlTable?: string | null;
+  /** When set, TanStack pagination is activated and only this page of rows is rendered. */
+  paginationState?: PaginationState;
+  onPaginationChange?: OnChangeFn<PaginationState>;
 }) {
   const t = useT();
 
@@ -1284,14 +1296,22 @@ export function DataGrid({
   const table = useReactTable({
     data,
     columns: tableColumns,
-    state: { sorting, columnFilters, globalFilter: globalFilter ?? "", columnSizing },
+    state: {
+      sorting,
+      columnFilters,
+      globalFilter: globalFilter ?? "",
+      columnSizing,
+      ...(paginationState ? { pagination: paginationState } : {}),
+    },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onColumnSizingChange: handleColumnSizingChange,
+    ...(onPaginationChange ? { onPaginationChange } : {}),
     globalFilterFn: globalIncludesFilter,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    ...(paginationState ? { getPaginationRowModel: getPaginationRowModel() } : {}),
     enableSortingRemoval: true,
     enableColumnResizing: true,
     columnResizeMode: "onChange",
@@ -1894,6 +1914,24 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
 }: Props, ref) {
   const t = useT();
   const settings = useSettings();
+  const paginateMode = settings.resultGridMode === "paginate";
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: settings.resultGridPageSize,
+  });
+  // Sync page size when the setting changes (but preserve the current page index).
+  useEffect(() => {
+    setPagination((p) => ({ ...p, pageSize: settings.resultGridPageSize }));
+  }, [settings.resultGridPageSize]);
+  // Reset to page 0 whenever new results arrive (new query run).
+  const rowCount = result?.rows.length ?? 0;
+  const prevRowCountRef = useRef(rowCount);
+  useEffect(() => {
+    const prev = prevRowCountRef.current;
+    prevRowCountRef.current = rowCount;
+    // A shrink (new query) resets; a grow (load more) keeps the current page.
+    if (rowCount < prev) setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [rowCount]);
   const [showExport, setShowExport] = useState(false);
   const [search, setSearch] = useState("");
   // Interval the toggle will use when switched on. Seeded from the persisted
@@ -1925,9 +1963,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // `canLoadMore` or `loadingMore` flips, so a completed load can be
   // immediately followed by another if the user is still pinned to the
   // end (e.g. the table fits in the viewport and natural scroll never
-  // happens).
+  // happens). Disabled in paginate mode — loading is triggered from the
+  // paginator footer instead.
   useEffect(() => {
-    if (!canLoadMore || loadingMore) return;
+    if (paginateMode || !canLoadMore || loadingMore) return;
     const el = containerRef.current;
     if (!el) return;
     const trigger = () => {
@@ -2376,6 +2415,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           rowSqlTable={table}
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}
+          paginationState={paginateMode ? pagination : undefined}
+          onPaginationChange={paginateMode ? setPagination : undefined}
           emptyMessage={
             streaming ? undefined : queryError ? (
               <EmptyState
@@ -2395,7 +2436,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             )
           }
         />
-        {loadingMore && (
+        {!paginateMode && loadingMore && (
           <Box
             role="status"
             aria-live="polite"
@@ -2416,6 +2457,115 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             {t("gridLoadingMore")}
           </Box>
         )}
+        {paginateMode && (() => {
+          const totalLoaded = result.rows.length;
+          const { pageIndex, pageSize } = pagination;
+          const pageCount = Math.max(1, Math.ceil(totalLoaded / pageSize));
+          const from = pageIndex * pageSize + 1;
+          const to = Math.min((pageIndex + 1) * pageSize, totalLoaded);
+          const isFirst = pageIndex === 0;
+          const isLast = pageIndex >= pageCount - 1;
+          const navButton = (
+            label: string,
+            title: string,
+            disabled: boolean,
+            onClick: () => void,
+          ) => (
+            <chakra.button
+              aria-label={title}
+              title={title}
+              disabled={disabled}
+              onClick={onClick}
+              fontSize="xs"
+              px="6px"
+              py="2px"
+              border="1px solid var(--border)"
+              borderRadius="var(--radius-sm)"
+              background={disabled ? "transparent" : "var(--bg-input)"}
+              color={disabled ? "var(--text-muted)" : "var(--text)"}
+              cursor={disabled ? "not-allowed" : "pointer"}
+              _hover={disabled ? {} : { background: "var(--bg-muted)" }}
+              whiteSpace="nowrap"
+              lineHeight={1.4}
+            >
+              {label}
+            </chakra.button>
+          );
+          const handleNext = () => {
+            if (isLast && canLoadMore && !loadingMore) onLoadMore?.();
+            if (!isLast) setPagination((p) => ({ ...p, pageIndex: p.pageIndex + 1 }));
+          };
+          return (
+            <Box
+              role="navigation"
+              aria-label="pagination"
+              display="flex"
+              alignItems="center"
+              flexWrap="wrap"
+              gap="6px"
+              px="10px"
+              py="5px"
+              fontSize="xs"
+              color="app.textMuted"
+              borderTop="1px solid"
+              borderColor="app.borderSubtle"
+              bg="app.toolbar"
+              flexShrink={0}
+            >
+              {navButton("«", t("paginationFirst"), isFirst, () =>
+                setPagination((p) => ({ ...p, pageIndex: 0 }))
+              )}
+              {navButton("‹", t("paginationPrev"), isFirst, () =>
+                setPagination((p) => ({ ...p, pageIndex: p.pageIndex - 1 }))
+              )}
+              <chakra.span color="app.text" whiteSpace="nowrap">
+                {t("paginationPage", { page: pageIndex + 1, pages: pageCount })}
+              </chakra.span>
+              {navButton("›", t("paginationNext"), isLast && !canLoadMore, handleNext)}
+              {navButton("»", t("paginationLast"), isLast && !canLoadMore, () =>
+                setPagination((p) => ({ ...p, pageIndex: pageCount - 1 }))
+              )}
+              <chakra.span whiteSpace="nowrap">
+                {totalLoaded > 0
+                  ? t("paginationRows", { from, to, total: totalLoaded })
+                  : ""}
+              </chakra.span>
+              {loadingMore && (
+                <Box display="flex" alignItems="center" gap="4px">
+                  <Spinner size={12} />
+                  <chakra.span>{t("paginationLoadingMore")}</chakra.span>
+                </Box>
+              )}
+              {!loadingMore && isLast && canLoadMore && (
+                <chakra.span color="app.textMuted" fontStyle="italic">
+                  {t("paginationCanLoadMore")}
+                </chakra.span>
+              )}
+              <chakra.span marginLeft="auto" display="flex" alignItems="center" gap="4px" whiteSpace="nowrap">
+                {t("paginationRowsPerPage")}
+                <chakra.select
+                  aria-label={t("paginationRowsPerPage")}
+                  value={String(pageSize)}
+                  onChange={(e) => {
+                    const newSize = Number(e.target.value);
+                    setPagination({ pageIndex: 0, pageSize: newSize });
+                  }}
+                  fontSize="xs"
+                  fontFamily="inherit"
+                  padding="1px 4px"
+                  border="1px solid var(--border)"
+                  background="var(--bg-input)"
+                  color="var(--text)"
+                  borderRadius="var(--radius-sm)"
+                >
+                  {RESULT_GRID_PAGE_SIZE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </chakra.select>
+              </chakra.span>
+            </Box>
+          );
+        })()}
       </Box>
       <AnimatePresence>
         {showExport && (

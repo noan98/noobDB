@@ -22,8 +22,10 @@ import {
   DENSITY_ORDER,
   MAX_FONT_SIZE_PX,
   MIN_FONT_SIZE_PX,
+  RESULT_GRID_PAGE_SIZE_OPTIONS,
   SYNTAX_PRESET_ORDER,
   Density,
+  ResultGridMode,
   SyntaxColors,
   SyntaxPresetKey,
   TabRestoreMode,
@@ -43,6 +45,8 @@ import {
   setFontSizePx,
   setQueryTimeoutSecs,
   setPreviewHighlight,
+  setResultGridMode,
+  setResultGridPageSize,
   setStreamPrefetchSize,
   setSyntaxColor,
   setTabRestoreMode,
@@ -620,6 +624,46 @@ export function SettingsView({ theme, onClose }: Props) {
           />
           <SettingsHelpInline>
             {t("settingsAutoLimitCountHelp")}
+          </SettingsHelpInline>
+        </SettingsNumberRow>
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsResultGridMode")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsResultGridModeHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel>
+            {t("settingsResultGridMode")}
+          </SettingsToggleLabel>
+          <Select
+            value={settings.resultGridMode}
+            onChange={(e) => setResultGridMode(e.target.value as ResultGridMode)}
+          >
+            <option value="scroll">{t("settingsResultGridModeScroll")}</option>
+            <option value="paginate">{t("settingsResultGridModePaginate")}</option>
+          </Select>
+          <SettingsHelpInline>
+            {t("settingsResultGridModeHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-page-size">
+            {t("settingsResultGridPageSize")}
+          </chakra.label>
+          <Select
+            id="settings-page-size"
+            value={String(settings.resultGridPageSize)}
+            disabled={settings.resultGridMode !== "paginate"}
+            onChange={(e) => setResultGridPageSize(Number(e.target.value))}
+          >
+            {RESULT_GRID_PAGE_SIZE_OPTIONS.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </Select>
+          <SettingsHelpInline>
+            {t("settingsResultGridPageSizeHelp")}
           </SettingsHelpInline>
         </SettingsNumberRow>
       </SettingsSection>

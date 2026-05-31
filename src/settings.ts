@@ -66,9 +66,18 @@ export interface Settings {
    * becomes the default for the next tab. Clamped to AUTO_REFRESH_MIN_SECS.
    */
   autoRefreshDefaultSecs: number;
+  /**
+   * How the result grid navigates rows: "scroll" keeps the existing infinite-scroll
+   * behaviour; "paginate" adds a footer with page controls instead.
+   */
+  resultGridMode: ResultGridMode;
+  /** Number of rows per page when resultGridMode is "paginate". */
+  resultGridPageSize: number;
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
+
+export type ResultGridMode = "scroll" | "paginate";
 
 export type Density = "compact" | "normal" | "spacious";
 
@@ -214,6 +223,13 @@ export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 export const DEFAULT_QUERY_TIMEOUT_SECS = 30;
 const MAX_QUERY_TIMEOUT_SECS = 86_400;
 
+export const DEFAULT_RESULT_GRID_MODE: ResultGridMode = "scroll";
+export const DEFAULT_RESULT_GRID_PAGE_SIZE = 100;
+/** Page-size options offered in the result grid's paginator selector. */
+export const RESULT_GRID_PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000] as const;
+const MIN_PAGE_SIZE = 1;
+const MAX_PAGE_SIZE = 100_000;
+
 /**
  * Smallest auto-refresh cadence we allow. Polling faster than this risks
  * piling load onto the DB and connection pool for little practical gain.
@@ -242,6 +258,8 @@ export const DEFAULT_SETTINGS: Settings = {
   accentColor: DEFAULT_ACCENT_COLOR,
   density: DEFAULT_DENSITY,
   autoRefreshDefaultSecs: DEFAULT_AUTO_REFRESH_SECS,
+  resultGridMode: DEFAULT_RESULT_GRID_MODE,
+  resultGridPageSize: DEFAULT_RESULT_GRID_PAGE_SIZE,
 };
 
 /** Clamps an auto-refresh cadence (seconds) to the allowed range. */
@@ -270,6 +288,18 @@ function sanitizeDensity(input: unknown, fallback: Density): Density {
   return input === "compact" || input === "normal" || input === "spacious"
     ? input
     : fallback;
+}
+
+function sanitizeResultGridMode(input: unknown, fallback: ResultGridMode): ResultGridMode {
+  return input === "scroll" || input === "paginate" ? input : fallback;
+}
+
+function sanitizePageSize(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.floor(input);
+  if (n < MIN_PAGE_SIZE) return MIN_PAGE_SIZE;
+  if (n > MAX_PAGE_SIZE) return MAX_PAGE_SIZE;
+  return n;
 }
 
 function sanitizeAccentColor(input: unknown, fallback: string | null): string | null {
@@ -333,6 +363,8 @@ function loadInitial(): Settings {
       accentColor?: unknown;
       density?: unknown;
       autoRefreshDefaultSecs?: unknown;
+      resultGridMode?: unknown;
+      resultGridPageSize?: unknown;
     };
     return {
       syntaxColors: {
@@ -367,6 +399,8 @@ function loadInitial(): Settings {
         parsed.autoRefreshDefaultSecs,
         DEFAULT_AUTO_REFRESH_SECS,
       ),
+      resultGridMode: sanitizeResultGridMode(parsed.resultGridMode, DEFAULT_RESULT_GRID_MODE),
+      resultGridPageSize: sanitizePageSize(parsed.resultGridPageSize, DEFAULT_RESULT_GRID_PAGE_SIZE),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -538,6 +572,22 @@ export function setAutoRefreshDefaultSecs(value: number): void {
   const next = sanitizeAutoRefreshSecs(value, current.autoRefreshDefaultSecs);
   if (current.autoRefreshDefaultSecs === next) return;
   current = { ...current, autoRefreshDefaultSecs: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setResultGridMode(value: ResultGridMode): void {
+  const next = sanitizeResultGridMode(value, current.resultGridMode);
+  if (current.resultGridMode === next) return;
+  current = { ...current, resultGridMode: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setResultGridPageSize(value: number): void {
+  const next = sanitizePageSize(value, current.resultGridPageSize);
+  if (current.resultGridPageSize === next) return;
+  current = { ...current, resultGridPageSize: next };
   persist();
   listeners.forEach((cb) => cb());
 }

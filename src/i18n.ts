@@ -880,6 +880,24 @@ const en = {
     "Comparison capped at {limit} rows per side — the result is partial. Raise the limit or narrow the table.",
   schemaCompareAllowDelete: "Allow deletes (DELETE rows missing from the source)",
   schemaCompareDataGenerate: "Generate data DML",
+
+  paginationPage: "Page {page} of {pages}",
+  paginationRows: "{from}–{to} of {total} rows",
+  paginationFirst: "First page",
+  paginationPrev: "Previous page",
+  paginationNext: "Next page",
+  paginationLast: "Last page",
+  paginationRowsPerPage: "Rows per page",
+  paginationLoadingMore: "+ more rows loading…",
+  paginationCanLoadMore: "+ more rows available",
+
+  settingsResultGridMode: "Result grid mode",
+  settingsResultGridModeHelp:
+    "Switch between infinite scroll (appends rows as you scroll down) and paginated mode (page controls in the footer).",
+  settingsResultGridModeScroll: "Infinite scroll",
+  settingsResultGridModePaginate: "Paginated",
+  settingsResultGridPageSize: "Page size",
+  settingsResultGridPageSizeHelp: "Number of rows shown per page in paginated mode.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1764,6 +1782,24 @@ const ja: Dict = {
     "片側あたり {limit} 行で打ち切ったため、結果は部分的です。上限を上げるか対象を絞ってください。",
   schemaCompareAllowDelete: "削除を許可する (ソースに無い行を DELETE)",
   schemaCompareDataGenerate: "データ DML を生成",
+
+  paginationPage: "{page} / {pages} ページ",
+  paginationRows: "{total} 件中 {from}–{to} 件",
+  paginationFirst: "先頭ページ",
+  paginationPrev: "前のページ",
+  paginationNext: "次のページ",
+  paginationLast: "末尾ページ",
+  paginationRowsPerPage: "1ページの行数",
+  paginationLoadingMore: "+ 追加行を読み込み中…",
+  paginationCanLoadMore: "+ さらに行があります",
+
+  settingsResultGridMode: "結果グリッドのモード",
+  settingsResultGridModeHelp:
+    "無限スクロール (下スクロールで行を追記) とページネーション (フッターにページ操作) を切り替えます。",
+  settingsResultGridModeScroll: "無限スクロール",
+  settingsResultGridModePaginate: "ページネーション",
+  settingsResultGridPageSize: "1ページの行数",
+  settingsResultGridPageSizeHelp: "ページネーションモードで表示する行数。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
