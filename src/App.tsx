@@ -358,9 +358,9 @@ interface Tab {
    * index in `result.columns`. Cleared on Apply success or Cancel.
    */
   pendingEdits: PendingEdits;
-  /** PendingEdits snapshots before each committed edit — newest last. Cleared on Apply/Cancel/new query. */
+  /** Previous pendingEdits snapshots for Ctrl+Z undo. In-memory only (not persisted). */
   editUndoStack: PendingEdits[];
-  /** Re-doable states after Undo — newest last. Cleared when a new edit is committed. */
+  /** Re-applicable snapshots for Ctrl+Shift+Z redo. Cleared when a new edit is made. */
   editRedoStack: PendingEdits[];
   /**
    * Most recent Query Builder inputs captured on its Run / Dry Run, restored
@@ -391,6 +391,9 @@ interface PaneState {
   tabIds: string[];
   activeTabId: string | null;
 }
+
+/** Maximum number of undo/redo snapshots kept per tab. */
+const EDIT_UNDO_LIMIT = 50;
 
 let tabSeq = 0;
 function newTabId(): string {
@@ -2177,32 +2180,19 @@ export default function App() {
         } else {
           next[rowKey] = row;
         }
-        return { ...tt, pendingEdits: next, editUndoStack: [...tt.editUndoStack, prev], editRedoStack: [] };
+        const undoStack = [...(tt.editUndoStack ?? []), prev].slice(-EDIT_UNDO_LIMIT);
+        return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: [] };
       });
     },
     [patchTab],
   );
 
-  const undoCellEditForTab = useCallback((tabId: string) => {
-    patchTab(tabId, (tt) => {
-      if (tt.editUndoStack.length === 0) return tt;
-      const stack = [...tt.editUndoStack];
-      const prev = stack.pop()!;
-      return { ...tt, pendingEdits: prev, editUndoStack: stack, editRedoStack: [...tt.editRedoStack, tt.pendingEdits] };
-    });
-  }, [patchTab]);
-
-  const redoCellEditForTab = useCallback((tabId: string) => {
-    patchTab(tabId, (tt) => {
-      if (tt.editRedoStack.length === 0) return tt;
-      const stack = [...tt.editRedoStack];
-      const next = stack.pop()!;
-      return { ...tt, pendingEdits: next, editRedoStack: stack, editUndoStack: [...tt.editUndoStack, tt.pendingEdits] };
-    });
-  }, [patchTab]);
-
   const clearEditsForTab = useCallback((tabId: string) => {
-    patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, editUndoStack: [], editRedoStack: [] }));
+    patchTab(tabId, (tt) => {
+      if (Object.keys(tt.pendingEdits).length === 0) return tt;
+      const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+      return { ...tt, pendingEdits: {}, editUndoStack: undoStack, editRedoStack: [] };
+    });
   }, [patchTab]);
 
   // Discard from inside the preview pane: clear the edits AND dismiss the
@@ -2212,8 +2202,34 @@ export default function App() {
   // cleared it.
   const discardEditsAndPreviewForTab = useCallback((tabId: string) => {
     void cancelStreamForTab(tabId);
-    patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null, editUndoStack: [], editRedoStack: [] }));
+    patchTab(tabId, (tt) => {
+      const undoStack =
+        Object.keys(tt.pendingEdits).length > 0
+          ? [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT)
+          : (tt.editUndoStack ?? []);
+      return { ...tt, pendingEdits: {}, editUndoStack: undoStack, editRedoStack: [], preview: null };
+    });
   }, [patchTab, cancelStreamForTab]);
+
+  const undoCellEditForTab = useCallback((tabId: string) => {
+    patchTab(tabId, (tt) => {
+      const stack = tt.editUndoStack ?? [];
+      if (stack.length === 0) return tt;
+      const prev = stack[stack.length - 1];
+      const redoStack = [...(tt.editRedoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+      return { ...tt, pendingEdits: prev, editUndoStack: stack.slice(0, -1), editRedoStack: redoStack };
+    });
+  }, [patchTab]);
+
+  const redoCellEditForTab = useCallback((tabId: string) => {
+    patchTab(tabId, (tt) => {
+      const stack = tt.editRedoStack ?? [];
+      if (stack.length === 0) return tt;
+      const next = stack[stack.length - 1];
+      const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+      return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: stack.slice(0, -1) };
+    });
+  }, [patchTab]);
 
   const previewEditsForTab = useCallback((tab: Tab) => {
     if (!sessionId) return;
@@ -2271,7 +2287,7 @@ export default function App() {
       const refresh = `${paginatable} LIMIT ${limit}`;
       runQueryInTab(tabId, refresh, paginatable);
     } else {
-      patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null, editUndoStack: [], editRedoStack: [] }));
+      patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, editUndoStack: [], editRedoStack: [], preview: null }));
     }
     if (failure) {
       setStatus({
@@ -2734,14 +2750,14 @@ export default function App() {
                       editable={tab.kind === "table" && !readOnly}
                       tableColumns={tab.tableColumns}
                       pendingEdits={tab.pendingEdits}
+                      canUndo={(tab.editUndoStack?.length ?? 0) > 0}
+                      canRedo={(tab.editRedoStack?.length ?? 0) > 0}
                       onSetCellEdit={(r, c, v) => setCellEditForTab(tab.id, r, c, v)}
                       onClearEdits={() => clearEditsForTab(tab.id)}
-                      onPreviewEdits={() => previewEditsForTab(tab)}
-                      onApplyEdits={() => applyEditsForTab(tab)}
                       onUndoEdit={() => undoCellEditForTab(tab.id)}
                       onRedoEdit={() => redoCellEditForTab(tab.id)}
-                      canUndoEdit={tab.editUndoStack.length > 0}
-                      canRedoEdit={tab.editRedoStack.length > 0}
+                      onPreviewEdits={() => previewEditsForTab(tab)}
+                      onApplyEdits={() => applyEditsForTab(tab)}
                       autoRefreshSecs={tab.autoRefreshSecs ?? null}
                       autoRefreshAllowed={!!tab.result && isReadOnlySql(tab.lastExecutedSql)}
                       autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
@@ -2758,6 +2774,7 @@ export default function App() {
                             }
                           : undefined
                       }
+                      onFkJump={(sql) => openAndRunQuery(sql)}
                     />
                   )}
                 </Suspense>

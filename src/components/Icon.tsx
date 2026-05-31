@@ -36,6 +36,8 @@ export type IconName =
   | "columns"
   | "filter"
   | "lock"
+  | "undo"
+  | "redo"
   | "mysql"
   | "postgres"
   | "sqlite";
@@ -207,6 +209,18 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </>
+  ),
+  undo: (
+    <>
+      <path d="M3 7v6h6" />
+      <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+    </>
+  ),
+  redo: (
+    <>
+      <path d="M21 7v6h-6" />
+      <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" />
     </>
   ),
   // ドライバのブランドロゴ (simple-icons, CC0 / 単一パスの塗り)。FILLED_ICONS 経由で
