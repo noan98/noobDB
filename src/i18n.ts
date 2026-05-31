@@ -835,6 +835,22 @@ const en = {
   cheatSheetClose: "Close",
 
   appSchemaCompare: "Compare schemas",
+  appErDiagram: "ER diagram",
+  erDiagramTitle: "ER diagram",
+  erDiagramClose: "Close",
+  erDiagramDesc:
+    "Tables and their foreign-key relationships in the selected database. Drag cards to rearrange, scroll to zoom, and drag the background to pan. Click a table's header to open it as a table tab.",
+  erDiagramDatabase: "Database",
+  erDiagramLoading: "Loading schema...",
+  erDiagramEmpty: "This database has no tables to diagram.",
+  erDiagramNoSession: "Connect to a database to view its ER diagram.",
+  erDiagramError: "Failed to load the ER diagram: {error}",
+  erDiagramOpenTable: "Open {table} as a table tab",
+  erDiagramSummary: "{tables} tables · {relationships} relationships",
+  erDiagramTruncated:
+    "Showing the {shown} most-connected of {total} tables to keep the diagram readable.",
+  erDiagramPk: "Primary key",
+  erDiagramFk: "Foreign key",
   schemaCompareTitle: "Schema comparison",
   schemaCompareClose: "Close",
   schemaCompareDesc:
@@ -925,6 +941,7 @@ const en = {
   cmdkActionSettings: "Open settings",
   cmdkActionHelp: "Open help",
   cmdkActionCompare: "Open schema compare",
+  cmdkActionErDiagram: "Open ER diagram",
   cmdkActionToggleTheme: "Toggle light / dark theme",
   cmdkActionDisconnect: "Disconnect",
 
@@ -1787,6 +1804,22 @@ const ja: Dict = {
   cheatSheetClose: "閉じる",
 
   appSchemaCompare: "スキーマ比較",
+  appErDiagram: "ER 図",
+  erDiagramTitle: "ER 図",
+  erDiagramClose: "閉じる",
+  erDiagramDesc:
+    "選択中のデータベースのテーブルと外部キー関係を表示します。カードはドラッグで移動、ホイールでズーム、背景のドラッグでパンできます。テーブルのヘッダーをクリックすると、そのテーブルをタブで開きます。",
+  erDiagramDatabase: "データベース",
+  erDiagramLoading: "スキーマを読み込み中...",
+  erDiagramEmpty: "このデータベースには図示できるテーブルがありません。",
+  erDiagramNoSession: "ER 図を表示するにはデータベースに接続してください。",
+  erDiagramError: "ER 図の読み込みに失敗しました: {error}",
+  erDiagramOpenTable: "{table} をテーブルタブで開く",
+  erDiagramSummary: "テーブル {tables} 件 · リレーション {relationships} 件",
+  erDiagramTruncated:
+    "図を見やすく保つため、{total} 件のうち関連の多い {shown} 件のテーブルを表示しています。",
+  erDiagramPk: "主キー",
+  erDiagramFk: "外部キー",
   schemaCompareTitle: "スキーマ比較",
   schemaCompareClose: "閉じる",
   schemaCompareDesc:
@@ -1877,6 +1910,7 @@ const ja: Dict = {
   cmdkActionSettings: "設定を開く",
   cmdkActionHelp: "ヘルプを開く",
   cmdkActionCompare: "スキーマ比較を開く",
+  cmdkActionErDiagram: "ER 図を開く",
   cmdkActionToggleTheme: "ライト / ダークテーマ切替",
   cmdkActionDisconnect: "切断する",
 

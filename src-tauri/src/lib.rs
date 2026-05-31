@@ -204,6 +204,7 @@ pub fn run() {
             commands::schema::list_tables,
             commands::schema::describe_table,
             commands::schema::schema_overview,
+            commands::schema::foreign_keys,
             commands::schema::table_row_estimates,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,

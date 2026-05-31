@@ -5,7 +5,7 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
+    Column, ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
     TableSchema, Value,
 };
 use super::DbConnectOptions;
@@ -429,6 +429,46 @@ impl PostgresConn {
                 extra: r.try_get::<String, _>(5).unwrap_or_default(),
                 referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
                 referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
+            })
+            .collect())
+    }
+
+    pub async fn foreign_keys(&self, schema: &str) -> Result<Vec<ForeignKey>> {
+        // Join the FK constraints to their referencing columns (key_column_usage)
+        // and referenced columns (constraint_column_usage). This mirrors the
+        // per-table query in `columns`; like that one, the column pairing is
+        // exact for single-column keys (the common case) and best-effort for
+        // composite keys, which is sufficient for drawing table-to-table edges.
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT
+                 tc.table_name,
+                 kcu.column_name,
+                 ccu.table_name  AS ref_table,
+                 ccu.column_name AS ref_column,
+                 tc.constraint_name
+               FROM information_schema.table_constraints tc
+               JOIN information_schema.key_column_usage kcu
+                 ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema    = kcu.table_schema
+                AND tc.table_name      = kcu.table_name
+               JOIN information_schema.constraint_column_usage ccu
+                 ON ccu.constraint_name = tc.constraint_name
+                AND ccu.table_schema    = tc.table_schema
+               WHERE tc.constraint_type = 'FOREIGN KEY'
+                 AND tc.table_schema = $1
+               ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position"#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ForeignKey {
+                table: r.try_get::<String, _>(0).unwrap_or_default(),
+                column: r.try_get::<String, _>(1).unwrap_or_default(),
+                referenced_table: r.try_get::<String, _>(2).unwrap_or_default(),
+                referenced_column: r.try_get::<Option<String>, _>(3).ok().flatten(),
+                constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
             })
             .collect())
     }

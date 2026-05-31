@@ -6,7 +6,7 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
+    Column, ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
     TableSchema, Value,
 };
 use super::DbConnectOptions;
@@ -565,6 +565,33 @@ impl MySqlConn {
                 extra: r.try_get::<String, _>(5).unwrap_or_default(),
                 referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
                 referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
+            })
+            .collect())
+    }
+
+    pub async fn foreign_keys(&self, db: &str) -> Result<Vec<ForeignKey>> {
+        // KEY_COLUMN_USAGE carries the referencing/referenced column pairs;
+        // rows with a non-NULL REFERENCED_TABLE_NAME are exactly the FK columns.
+        // Ordering by CONSTRAINT_NAME then ORDINAL_POSITION keeps the columns of
+        // a composite key together and in declaration order.
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME,
+                      REFERENCED_COLUMN_NAME, CONSTRAINT_NAME
+               FROM information_schema.KEY_COLUMN_USAGE
+               WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL
+               ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION"#,
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ForeignKey {
+                table: r.try_get::<String, _>(0).unwrap_or_default(),
+                column: r.try_get::<String, _>(1).unwrap_or_default(),
+                referenced_table: r.try_get::<String, _>(2).unwrap_or_default(),
+                referenced_column: r.try_get::<Option<String>, _>(3).ok().flatten(),
+                constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
             })
             .collect())
     }

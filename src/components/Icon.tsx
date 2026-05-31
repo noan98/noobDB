@@ -33,6 +33,7 @@ export type IconName =
   | "eye"
   | "eye-off"
   | "diff"
+  | "er-diagram"
   | "columns"
   | "filter"
   | "lock"
@@ -205,6 +206,14 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   filter: <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />,
+  "er-diagram": (
+    <>
+      <rect width="7" height="6" x="2" y="3" rx="1" />
+      <rect width="7" height="6" x="15" y="15" rx="1" />
+      <path d="M5.5 9v3a2 2 0 0 0 2 2h11" />
+      <path d="M18.5 9v6" />
+    </>
+  ),
   lock: (
     <>
       <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />

@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use types::{
-    PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
+    ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
+    TableSchema,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -209,6 +210,19 @@ impl Connection {
             Connection::MySql(c) => c.schema_overview(db).await,
             Connection::Postgres(c) => c.schema_overview(db).await,
             Connection::Sqlite(c) => c.schema_overview(db).await,
+        }
+    }
+
+    /// Every foreign-key relationship in `db`, used to draw ER-diagram edges.
+    /// One entry per referencing column; the columns of a composite key share a
+    /// `constraint_name` so the UI can fold them into a single edge. Fetched in
+    /// one round trip on MySQL/PostgreSQL; SQLite loops `PRAGMA foreign_key_list`
+    /// per table (cheap on a local file).
+    pub async fn foreign_keys(&self, db: &str) -> Result<Vec<ForeignKey>> {
+        match self {
+            Connection::MySql(c) => c.foreign_keys(db).await,
+            Connection::Postgres(c) => c.foreign_keys(db).await,
+            Connection::Sqlite(c) => c.foreign_keys(db).await,
         }
     }
 
