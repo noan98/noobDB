@@ -803,6 +803,8 @@ mod tests {
         // A separator anywhere before the final statement counts, even when the
         // trailing statement is itself harmless.
         assert!(has_stacked_statements("UPDATE t SET a = 1; SELECT 1"));
+        // Two SELECTs are still stacked — the function checks structure, not intent.
+        assert!(has_stacked_statements("SELECT 1; SELECT 2"));
     }
 
     #[test]
@@ -824,6 +826,16 @@ mod tests {
         ));
         assert!(!has_stacked_statements("DELETE FROM t -- drop; this\n"));
         assert!(!has_stacked_statements("UPDATE t SET a = 1 /* ; */"));
+
+        // Issue #393: the five representative cases called out in the bug report.
+        // Single-quoted string with embedded semicolon.
+        assert!(!has_stacked_statements("SELECT 'hello;world'"));
+        // Double-quoted identifier with embedded semicolon.
+        assert!(!has_stacked_statements(r#"SELECT "col;name" FROM t"#));
+        // Block comment containing a semicolon.
+        assert!(!has_stacked_statements("SELECT /* comment; */ 1"));
+        // Multiple semicolons inside a single string literal.
+        assert!(!has_stacked_statements("INSERT INTO t VALUES ('a;b;c')"));
     }
 
     #[test]
