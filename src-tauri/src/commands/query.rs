@@ -308,26 +308,38 @@ async fn spawn_query_stream(
         initial_batch,
         chunk_size,
         |batch| match batch {
-            StreamBatch::Columns(columns) => {
-                let _ = emit_app.emit(
+            StreamBatch::Columns(columns) => emit_app
+                .emit(
                     EV_QUERY_COLS,
                     StreamColumnsEvent {
                         stream_id: emit_id.clone(),
                         columns,
                     },
-                );
-                Ok(())
-            }
-            StreamBatch::Rows(rows) => {
-                let _ = emit_app.emit(
+                )
+                .map_err(|e| {
+                    tracing::warn!(
+                        stream_id = %emit_id,
+                        error = %e,
+                        "failed to emit columns event; aborting stream"
+                    );
+                    AppError::Other(format!("ipc emit failed: {e}"))
+                }),
+            StreamBatch::Rows(rows) => emit_app
+                .emit(
                     EV_QUERY_ROWS,
                     StreamRowsEvent {
                         stream_id: emit_id.clone(),
                         rows,
                     },
-                );
-                Ok(())
-            }
+                )
+                .map_err(|e| {
+                    tracing::warn!(
+                        stream_id = %emit_id,
+                        error = %e,
+                        "failed to emit rows event; aborting stream"
+                    );
+                    AppError::Other(format!("ipc emit failed: {e}"))
+                }),
         },
     );
     // When a positive timeout is configured, race the whole run against it.
@@ -353,7 +365,7 @@ async fn spawn_query_stream(
                 has_columns = !res.columns.is_empty(),
                 "query stream completed"
             );
-            let _ = app.emit(
+            if let Err(e) = app.emit(
                 EV_QUERY_DONE,
                 StreamDoneEvent {
                     stream_id: stream_id.clone(),
@@ -371,7 +383,14 @@ async fn spawn_query_stream(
                         applied_auto_limit
                     },
                 },
-            );
+            ) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %e,
+                    "failed to emit done event"
+                );
+            }
         }
         Err(e) => {
             if matches!(e, AppError::Timeout(_)) {
@@ -389,7 +408,7 @@ async fn spawn_query_stream(
                     "query stream failed"
                 );
             }
-            let _ = app.emit(
+            if let Err(emit_err) = app.emit(
                 EV_QUERY_ERROR,
                 StreamErrorEvent {
                     stream_id: stream_id.clone(),
@@ -397,7 +416,14 @@ async fn spawn_query_stream(
                     timed_out: matches!(e, AppError::Timeout(_)),
                     connection_lost: e.is_connection_lost(),
                 },
-            );
+            ) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %emit_err,
+                    "failed to emit error event"
+                );
+            }
         }
     }
 
@@ -583,7 +609,7 @@ async fn spawn_preview_stream(
         .await;
     match result {
         Ok(p) => {
-            let _ = app.emit(
+            if let Err(e) = app.emit(
                 EV_PREVIEW_META,
                 PreviewMetaEvent {
                     stream_id: stream_id.clone(),
@@ -594,7 +620,14 @@ async fn spawn_preview_stream(
                     elapsed_ms: p.elapsed_ms,
                     truncated: p.truncated,
                 },
-            );
+            ) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %e,
+                    "failed to emit preview meta event"
+                );
+            }
             emit_chunks(
                 &app,
                 &stream_id,
@@ -609,12 +642,19 @@ async fn spawn_preview_stream(
                 &p.after_rows,
                 chunk_size,
             );
-            let _ = app.emit(
+            if let Err(e) = app.emit(
                 EV_PREVIEW_DONE,
                 PreviewDoneEvent {
                     stream_id: stream_id.clone(),
                 },
-            );
+            ) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %e,
+                    "failed to emit preview done event"
+                );
+            }
         }
         Err(e) => {
             tracing::warn!(
@@ -623,7 +663,7 @@ async fn spawn_preview_stream(
                 error = %e,
                 "preview stream failed"
             );
-            let _ = app.emit(
+            if let Err(emit_err) = app.emit(
                 EV_PREVIEW_ERROR,
                 StreamErrorEvent {
                     stream_id: stream_id.clone(),
@@ -631,7 +671,14 @@ async fn spawn_preview_stream(
                     timed_out: false,
                     connection_lost: e.is_connection_lost(),
                 },
-            );
+            ) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %emit_err,
+                    "failed to emit preview error event"
+                );
+            }
         }
     }
     if let Some(state) = app.try_state::<AppState>() {
@@ -650,13 +697,20 @@ fn emit_chunks(
     let mut i = 0;
     while i < rows.len() {
         let end = (i + chunk).min(rows.len());
-        let _ = app.emit(
+        if let Err(e) = app.emit(
             event,
             PreviewRowsEvent {
                 stream_id: stream_id.to_string(),
                 rows: rows[i..end].to_vec(),
             },
-        );
+        ) {
+            tracing::warn!(
+                stream_id = %stream_id,
+                event = %event,
+                error = %e,
+                "failed to emit preview rows chunk"
+            );
+        }
         i = end;
     }
 }
