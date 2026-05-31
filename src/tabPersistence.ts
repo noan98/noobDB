@@ -54,6 +54,10 @@ function isValidBuilderSnapshot(v: unknown): v is QueryBuilderSnapshot {
   if (typeof o.table !== "string") return false;
   if (typeof o.selectAll !== "boolean") return false;
   if (typeof o.limit !== "string") return false;
+  // `whereEnabled` / `limitEnabled` were added later; tolerate older snapshots
+  // that omit them (they default to enabled when restored) but reject wrong types.
+  if (o.whereEnabled !== undefined && typeof o.whereEnabled !== "boolean") return false;
+  if (o.limitEnabled !== undefined && typeof o.limitEnabled !== "boolean") return false;
   if (!isStringArray(o.selectColumns)) return false;
   if (!Array.isArray(o.whereConditions) || !o.whereConditions.every(isWhereCondition)) return false;
   if (!Array.isArray(o.setPairs) || !o.setPairs.every(isStringPair)) return false;
