@@ -84,7 +84,7 @@ export interface Settings {
 export type TabRestoreMode = "always" | "ask" | "never";
 
 export type CellEditOnBlur = "commit" | "confirm";
-export const DEFAULT_CELL_EDIT_ON_BLUR: CellEditOnBlur = "commit";
+export const DEFAULT_CELL_EDIT_ON_BLUR: CellEditOnBlur = "confirm";
 
 export type ResultGridMode = "scroll" | "paginate";
 

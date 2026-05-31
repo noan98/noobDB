@@ -1737,6 +1737,9 @@ export function DataGrid({
                     const eColIdx = editing!.colIdx;
                     const eValue = editing!.value;
                     const eOrigDisplay = originalDisplay;
+                    // Capture rowKey before clearing editing state so that
+                    // an auto-refresh mid-dialog can't shift rows[eRowIdx].
+                    const eRowKey = rowEditKey(rows[eRowIdx] ?? [], pkIndices ?? [], eRowIdx);
                     if (cellEditOnBlur === "confirm") {
                       setEditing(null);
                       void (async () => {
@@ -1746,7 +1749,13 @@ export function DataGrid({
                           confirmLabel: t("editBlurCommit"),
                           cancelLabel: t("editBlurDiscard"),
                         });
-                        if (ok) commitEdit(eRowIdx, eColIdx, eValue, eOrigDisplay);
+                        if (ok && onSetCellEdit) {
+                          if (eValue === eOrigDisplay) {
+                            onSetCellEdit(eRowKey, eColIdx, null);
+                          } else {
+                            onSetCellEdit(eRowKey, eColIdx, eValue);
+                          }
+                        }
                       })();
                     } else {
                       commitEdit(eRowIdx, eColIdx, eValue, eOrigDisplay);
