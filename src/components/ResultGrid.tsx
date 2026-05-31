@@ -34,6 +34,7 @@ import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
 import { ExportModal } from "./ExportModal";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
 import {
@@ -471,8 +472,16 @@ interface Props {
    * is identified by its PK-derived `rowEditKey`, not its array index.
    */
   onSetCellEdit?: (rowKey: string, colIdx: number, value: string | null) => void;
+  /** Whether there is at least one undo snapshot available. */
+  canUndo?: boolean;
+  /** Whether there is at least one redo snapshot available. */
+  canRedo?: boolean;
   /** Discard all pending edits for the active tab. */
   onClearEdits?: () => void;
+  /** Undo the last pending-edit change (Ctrl+Z). */
+  onUndoEdit?: () => void;
+  /** Redo the previously undone edit (Ctrl+Shift+Z). */
+  onRedoEdit?: () => void;
   /** Build & preview the UPDATE for the pending edits (single-row only). */
   onPreviewEdits?: () => void;
   /** Build & execute the UPDATE(s) for the pending edits, then refresh. */
@@ -1129,6 +1138,8 @@ export function DataGrid({
   rowSqlTable,
   paginationState,
   onPaginationChange,
+  onUndoEdit,
+  onRedoEdit,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -1196,6 +1207,8 @@ export function DataGrid({
   /** When set, TanStack pagination is activated and only this page of rows is rendered. */
   paginationState?: PaginationState;
   onPaginationChange?: OnChangeFn<PaginationState>;
+  onUndoEdit?: () => void;
+  onRedoEdit?: () => void;
 }) {
   const t = useT();
 
@@ -1557,6 +1570,15 @@ export function DataGrid({
             e.preventDefault();
             setEditing({ rowIdx, colIdx, value: e.key });
           }
+        } else if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "z" || e.key === "Z") && !e.shiftKey) {
+          e.preventDefault();
+          onUndoEdit?.();
+        } else if (
+          (e.ctrlKey || e.metaKey) && !e.altKey &&
+          ((e.key === "z" || e.key === "Z") && e.shiftKey || e.key === "y" || e.key === "Y")
+        ) {
+          e.preventDefault();
+          onRedoEdit?.();
         } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
           e.preventDefault();
           copyCell(rowIdx, colIdx);
@@ -2054,8 +2076,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   editable,
   tableColumns,
   pendingEdits,
+  canUndo,
+  canRedo,
   onSetCellEdit,
   onClearEdits,
+  onUndoEdit,
+  onRedoEdit,
   onPreviewEdits,
   onApplyEdits,
   autoRefreshSecs,
@@ -2066,6 +2092,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onRetry,
 }: Props, ref) {
   const t = useT();
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const settings = useSettings();
   const paginateMode = settings.resultGridMode === "paginate";
   const [pagination, setPagination] = useState<PaginationState>({
@@ -2468,6 +2495,28 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               </chakra.span>
             )}
             <Button
+              variant="secondary"
+              size="sm"
+              px="6px"
+              onClick={onUndoEdit}
+              disabled={!canUndo}
+              title={t("editUndoTitle")}
+              aria-label={t("editUndoTitle")}
+            >
+              <Icon name="undo" />
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              px="6px"
+              onClick={onRedoEdit}
+              disabled={!canRedo}
+              title={t("editRedoTitle")}
+              aria-label={t("editRedoTitle")}
+            >
+              <Icon name="redo" />
+            </Button>
+            <Button
               variant="warning"
               size="sm"
               px="10px"
@@ -2505,13 +2554,47 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               variant="secondary"
               size="sm"
               px="10px"
-              onClick={onClearEdits}
+              onClick={() => setShowDiscardConfirm(true)}
               title={t("editCancelButtonTitle")}
             >
               {t("editCancelButton")}
             </Button>
           </Box>
         )}
+        <AnimatePresence>
+          {showDiscardConfirm && (
+            <Modal width="400px" onClose={() => setShowDiscardConfirm(false)}>
+              <ModalHeader onClose={() => setShowDiscardConfirm(false)} closeLabel={t("dangerousCancel")}>
+                {t("editDiscardConfirmTitle")}
+              </ModalHeader>
+              <ModalBody>
+                {t("editDiscardConfirmBody", {
+                  cells: String(countEditedCells(pendingEdits ?? {})),
+                  rows: String(countEditedRows(pendingEdits ?? {})),
+                })}
+              </ModalBody>
+              <ModalFooter>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShowDiscardConfirm(false)}
+                >
+                  {t("dangerousCancel")}
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => {
+                    setShowDiscardConfirm(false);
+                    onClearEdits?.();
+                  }}
+                >
+                  {t("editDiscardConfirmOk")}
+                </Button>
+              </ModalFooter>
+            </Modal>
+          )}
+        </AnimatePresence>
         <chakra.input
           ref={searchInputRef}
           type="search"
@@ -2562,6 +2645,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           pkIndices={pkIndices}
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
+          onUndoEdit={onUndoEdit}
+          onRedoEdit={onRedoEdit}
           validateEdit={validateEdit}
           rowSqlDriver={driver}
           rowSqlDatabase={database}
