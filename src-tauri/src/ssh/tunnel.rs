@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -34,10 +34,15 @@ pub struct SshConfig {
 }
 
 /// An active local-port-forward SSH tunnel.
-/// Dropping this struct tears down the accept loop and the SSH session.
+/// Dropping this struct tears down the accept loop, all in-flight transfer
+/// tasks, and the SSH session.
 pub struct SshTunnel {
     pub local_port: u16,
     accept_task: Option<JoinHandle<()>>,
+    /// Handles for per-connection `copy_bidirectional` tasks.  The accept loop
+    /// prunes finished handles on every new connection; `Drop` aborts whatever
+    /// remains so no orphan tasks outlive the tunnel.
+    transfer_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Holding the Arc keeps the SSH session alive. When dropped together
     /// with the task, russh closes the underlying connection.
     _session: Arc<russh::client::Handle<ClientHandler>>,
@@ -74,6 +79,8 @@ impl SshTunnel {
         let remote_host = cfg.remote_host.clone();
         let remote_port = cfg.remote_port;
         let session_for_task = session.clone();
+        let transfer_tasks: Arc<Mutex<Vec<JoinHandle<()>>>> = Arc::new(Mutex::new(Vec::new()));
+        let tasks_for_accept = transfer_tasks.clone();
 
         let accept_task = tokio::spawn(async move {
             loop {
@@ -87,7 +94,7 @@ impl SshTunnel {
 
                 let session = session_for_task.clone();
                 let remote_host = remote_host.clone();
-                tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     let channel = match session
                         .channel_open_direct_tcpip(
                             remote_host.clone(),
@@ -112,12 +119,20 @@ impl SshTunnel {
                     let _ = stream.shutdown().await;
                     let _ = socket.shutdown().await;
                 });
+
+                // Register the handle and prune already-finished ones to avoid
+                // unbounded growth when the tunnel handles many short-lived connections.
+                if let Ok(mut tasks) = tasks_for_accept.lock() {
+                    tasks.retain(|h| !h.is_finished());
+                    tasks.push(handle);
+                }
             }
         });
 
         Ok(Self {
             local_port,
             accept_task: Some(accept_task),
+            transfer_tasks,
             _session: session,
         })
     }
@@ -127,6 +142,13 @@ impl Drop for SshTunnel {
     fn drop(&mut self) {
         if let Some(h) = self.accept_task.take() {
             h.abort();
+        }
+        // Abort all in-flight transfer tasks so no orphan tasks outlive the
+        // tunnel and the SSH session/socket can be released promptly.
+        if let Ok(mut tasks) = self.transfer_tasks.lock() {
+            for h in tasks.drain(..) {
+                h.abort();
+            }
         }
         tracing::info!(local_port = self.local_port, "ssh tunnel closed");
     }
