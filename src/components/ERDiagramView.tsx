@@ -49,6 +49,7 @@ import { Spinner } from "./Spinner";
  */
 interface ErNodeData extends ErTableData {
   onOpen: () => void;
+  openTitle: string;
   pkTitle: string;
   fkTitle: string;
   [key: string]: unknown;
@@ -131,7 +132,8 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
         css={cardHeaderCss}
         onClick={data.onOpen}
         className="nodrag"
-        title={data.table}
+        title={data.openTitle}
+        aria-label={data.openTitle}
       >
         <Icon name="table" size={13} />
         <chakra.span css={colNameCss} flex="1">
@@ -213,13 +215,18 @@ function ERDiagramInner({
         setDatabases(dbs);
         setDatabase((cur) => cur ?? dbs[0] ?? null);
       })
-      .catch(() => {
-        /* fall back to the initial database; diagram load reports real errors */
+      .catch((e) => {
+        if (cancelled) return;
+        // With an initialDatabase the load effect still runs and surfaces real
+        // errors. Without one, `database` would stay null and the load effect
+        // (guarded by `if (!database) return`) would never run, silently
+        // showing an empty diagram — so report the failure here instead.
+        if (!initialDatabase) setError(String(e));
       });
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, initialDatabase]);
 
   const handleOpen = useCallback(
     (db: string, table: string) => {
@@ -275,6 +282,7 @@ function ERDiagramInner({
           data: {
             ...n.data,
             onOpen: () => handleOpen(database, n.data.table),
+            openTitle: t("erDiagramOpenTable", { table: n.data.table }),
             pkTitle: t("erDiagramPk"),
             fkTitle: t("erDiagramFk"),
           },
