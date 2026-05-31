@@ -22,6 +22,7 @@ export default defineConfig(async () => ({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/__tests__/setup.ts"],
+    exclude: ["node_modules/**", ".claude/**"],
     css: true,
     // カバレッジ計測 (#290 で導入 → #356 で対象を src/ 全体へ拡大)。
     //

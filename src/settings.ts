@@ -73,9 +73,18 @@ export interface Settings {
   resultGridMode: ResultGridMode;
   /** Number of rows per page when resultGridMode is "paginate". */
   resultGridPageSize: number;
+  /**
+   * Behavior when the inline cell editor loses focus. "commit" auto-commits the
+   * typed value as a pending edit (current behavior); "confirm" shows a dialog
+   * so the user can choose between committing or discarding.
+   */
+  cellEditOnBlur: CellEditOnBlur;
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
+
+export type CellEditOnBlur = "commit" | "confirm";
+export const DEFAULT_CELL_EDIT_ON_BLUR: CellEditOnBlur = "commit";
 
 export type ResultGridMode = "scroll" | "paginate";
 
@@ -260,6 +269,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoRefreshDefaultSecs: DEFAULT_AUTO_REFRESH_SECS,
   resultGridMode: DEFAULT_RESULT_GRID_MODE,
   resultGridPageSize: DEFAULT_RESULT_GRID_PAGE_SIZE,
+  cellEditOnBlur: DEFAULT_CELL_EDIT_ON_BLUR,
 };
 
 /** Clamps an auto-refresh cadence (seconds) to the allowed range. */
@@ -365,6 +375,7 @@ function loadInitial(): Settings {
       autoRefreshDefaultSecs?: unknown;
       resultGridMode?: unknown;
       resultGridPageSize?: unknown;
+      cellEditOnBlur?: unknown;
     };
     return {
       syntaxColors: {
@@ -401,6 +412,10 @@ function loadInitial(): Settings {
       ),
       resultGridMode: sanitizeResultGridMode(parsed.resultGridMode, DEFAULT_RESULT_GRID_MODE),
       resultGridPageSize: sanitizePageSize(parsed.resultGridPageSize, DEFAULT_RESULT_GRID_PAGE_SIZE),
+      cellEditOnBlur:
+        parsed.cellEditOnBlur === "commit" || parsed.cellEditOnBlur === "confirm"
+          ? parsed.cellEditOnBlur
+          : DEFAULT_CELL_EDIT_ON_BLUR,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -588,6 +603,14 @@ export function setResultGridPageSize(value: number): void {
   const next = sanitizePageSize(value, current.resultGridPageSize);
   if (current.resultGridPageSize === next) return;
   current = { ...current, resultGridPageSize: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setCellEditOnBlur(value: CellEditOnBlur): void {
+  const next = value === "commit" || value === "confirm" ? value : DEFAULT_CELL_EDIT_ON_BLUR;
+  if (current.cellEditOnBlur === next) return;
+  current = { ...current, cellEditOnBlur: next };
   persist();
   listeners.forEach((cb) => cb());
 }

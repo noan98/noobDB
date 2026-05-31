@@ -28,6 +28,7 @@ import {
   useSettings,
   type Density,
 } from "../settings";
+import { useConfirm } from "./ConfirmDialog";
 import { CellValueViewer } from "./CellValueViewer";
 import { copyToClipboard } from "./clipboard";
 import { ContextMenu } from "./ContextMenu";
@@ -477,6 +478,14 @@ interface Props {
   onPreviewEdits?: () => void;
   /** Build & execute the UPDATE(s) for the pending edits, then refresh. */
   onApplyEdits?: () => void;
+  /** Called when the user undoes the last pending cell edit (Ctrl+Z / Cmd+Z). */
+  onUndoEdit?: () => void;
+  /** Called when the user redoes an undone edit (Ctrl+Shift+Z / Cmd+Shift+Z). */
+  onRedoEdit?: () => void;
+  /** Whether there is anything to undo. */
+  canUndoEdit?: boolean;
+  /** Whether there is anything to redo. */
+  canRedoEdit?: boolean;
   /** Current auto-refresh cadence (seconds), or null when polling is off. */
   autoRefreshSecs?: number | null;
   /**
@@ -1119,6 +1128,8 @@ export function DataGrid({
   pkIndices,
   pendingEdits,
   onSetCellEdit,
+  onUndoEdit,
+  onRedoEdit,
   validateEdit,
   columnSizingStorageKey,
   emptyMessage,
@@ -1152,6 +1163,8 @@ export function DataGrid({
   pkIndices?: number[];
   pendingEdits?: PendingEdits;
   onSetCellEdit?: (rowKey: string, colIdx: number, value: string | null) => void;
+  onUndoEdit?: () => void;
+  onRedoEdit?: () => void;
   /**
    * Validates a pending edit by result-column index, returning an i18n key
    * describing the problem or `null` when the value is acceptable. Drives the
@@ -1198,6 +1211,8 @@ export function DataGrid({
   onPaginationChange?: OnChangeFn<PaginationState>;
 }) {
   const t = useT();
+  const { cellEditOnBlur } = useSettings();
+  const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
 
   const columnKinds = useMemo<CellKind[]>(() => columns.map(classifyColumn), [columns]);
 
@@ -1485,6 +1500,23 @@ export function DataGrid({
   // Fires on the <table> (bubbled from the focused <td>). When the inline
   // editor is open the input handles its own keys and this handler short-circuits.
   const handleGridKeyDown = (e: React.KeyboardEvent<HTMLTableElement>) => {
+    if (!editing && (e.ctrlKey || e.metaKey) && !e.altKey) {
+      if ((e.key === "z" || e.key === "Z") && !e.shiftKey) {
+        e.preventDefault();
+        onUndoEdit?.();
+        return;
+      }
+      if ((e.key === "z" || e.key === "Z") && e.shiftKey) {
+        e.preventDefault();
+        onRedoEdit?.();
+        return;
+      }
+      if ((e.key === "y" || e.key === "Y") && !e.shiftKey) {
+        e.preventDefault();
+        onRedoEdit?.();
+        return;
+      }
+    }
     if (editing) return;
     if (!activeCell) return;
     const { rowIdx, colIdx } = activeCell;
@@ -1701,13 +1733,25 @@ export function DataGrid({
                     })
                   }
                   onBlur={() => {
-                    commitEdit(
-                      editing!.rowIdx,
-                      editing!.colIdx,
-                      editing!.value,
-                      originalDisplay,
-                    );
-                    setEditing(null);
+                    const eRowIdx = editing!.rowIdx;
+                    const eColIdx = editing!.colIdx;
+                    const eValue = editing!.value;
+                    const eOrigDisplay = originalDisplay;
+                    if (cellEditOnBlur === "confirm") {
+                      setEditing(null);
+                      void (async () => {
+                        const ok = await confirmBlur({
+                          title: t("editBlurTitle"),
+                          message: t("editBlurMessage"),
+                          confirmLabel: t("editBlurCommit"),
+                          cancelLabel: t("editBlurDiscard"),
+                        });
+                        if (ok) commitEdit(eRowIdx, eColIdx, eValue, eOrigDisplay);
+                      })();
+                    } else {
+                      commitEdit(eRowIdx, eColIdx, eValue, eOrigDisplay);
+                      setEditing(null);
+                    }
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Tab") {
@@ -2035,6 +2079,7 @@ export function DataGrid({
           />
         )}
       </AnimatePresence>
+      {blurDialog}
     </>
   );
 }
@@ -2058,6 +2103,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onClearEdits,
   onPreviewEdits,
   onApplyEdits,
+  onUndoEdit,
+  onRedoEdit,
+  canUndoEdit,
+  canRedoEdit,
   autoRefreshSecs,
   autoRefreshAllowed,
   autoRefreshLastRunAt,
@@ -2432,6 +2481,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             {t("editNoPkHint")}
           </chakra.span>
         )}
+        {editableActive && !hasPendingEdits && canRedoEdit && (
+          <Box
+            role="group"
+            aria-label={t("editToolbarAria")}
+            display="inline-flex"
+            alignItems="center"
+            gap="6px"
+            paddingLeft="4px"
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              px="8px"
+              onClick={onRedoEdit}
+              title={t("editRedoTitle")}
+              aria-label={t("editRedoTitle")}
+            >
+              {t("editRedo")}
+            </Button>
+          </Box>
+        )}
         {editableActive && hasPendingEdits && (
           <Box
             role="group"
@@ -2444,6 +2514,28 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             borderRight="1px solid var(--border-subtle)"
             background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
           >
+            <Button
+              variant="secondary"
+              size="sm"
+              px="8px"
+              onClick={onUndoEdit}
+              disabled={!canUndoEdit}
+              title={t("editUndoTitle")}
+              aria-label={t("editUndoTitle")}
+            >
+              {t("editUndo")}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              px="8px"
+              onClick={onRedoEdit}
+              disabled={!canRedoEdit}
+              title={t("editRedoTitle")}
+              aria-label={t("editRedoTitle")}
+            >
+              {t("editRedo")}
+            </Button>
             <chakra.span
               fontSize="xs"
               color="var(--preview-highlight)"
@@ -2562,6 +2654,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           pkIndices={pkIndices}
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
+          onUndoEdit={onUndoEdit}
+          onRedoEdit={onRedoEdit}
           validateEdit={validateEdit}
           rowSqlDriver={driver}
           rowSqlDatabase={database}

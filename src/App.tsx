@@ -358,6 +358,10 @@ interface Tab {
    * index in `result.columns`. Cleared on Apply success or Cancel.
    */
   pendingEdits: PendingEdits;
+  /** PendingEdits snapshots before each committed edit — newest last. Cleared on Apply/Cancel/new query. */
+  editUndoStack: PendingEdits[];
+  /** Re-doable states after Undo — newest last. Cleared when a new edit is committed. */
+  editRedoStack: PendingEdits[];
   /**
    * Most recent Query Builder inputs captured on its Run / Dry Run, restored
    * when the builder is reopened in this tab. Persisted alongside the tab
@@ -462,6 +466,8 @@ function makeQueryTab(): Tab {
     queryError: null,
     tableColumns: null,
     pendingEdits: {},
+    editUndoStack: [],
+    editRedoStack: [],
     builderSnapshot: null,
   };
 }
@@ -495,6 +501,8 @@ function makeExplainTab(sql: string): Tab {
     queryError: null,
     tableColumns: null,
     pendingEdits: {},
+    editUndoStack: [],
+    editRedoStack: [],
     builderSnapshot: null,
   };
 }
@@ -1430,6 +1438,8 @@ export default function App() {
       // Drop any in-flight cell edits: their row indices reference the
       // previous result set and would no longer line up with the new rows.
       pendingEdits: {},
+      editUndoStack: [],
+      editRedoStack: [],
       // A manual run of a non-read-only statement turns auto-refresh off so the
       // toggle never lingers "on" while silently skipping ticks. Read-only
       // manual re-runs keep polling, now targeting the new SQL.
@@ -1681,6 +1691,8 @@ export default function App() {
               queryError: null,
               tableColumns: null,
               pendingEdits: {},
+              editUndoStack: [],
+              editRedoStack: [],
               builderSnapshot: restoredSnapshot,
             };
           } catch (e) {
@@ -1725,6 +1737,8 @@ export default function App() {
           queryError: null,
           tableColumns: null,
           pendingEdits: {},
+          editUndoStack: [],
+          editRedoStack: [],
           builderSnapshot: restoredSnapshot,
         };
       };
@@ -2150,7 +2164,8 @@ export default function App() {
   const setCellEditForTab = useCallback(
     (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
       patchTab(tabId, (tt) => {
-        const next = { ...tt.pendingEdits };
+        const prev = tt.pendingEdits;
+        const next = { ...prev };
         const row = { ...(next[rowKey] ?? {}) };
         if (value === null) {
           delete row[colIdx];
@@ -2162,14 +2177,32 @@ export default function App() {
         } else {
           next[rowKey] = row;
         }
-        return { ...tt, pendingEdits: next };
+        return { ...tt, pendingEdits: next, editUndoStack: [...tt.editUndoStack, prev], editRedoStack: [] };
       });
     },
     [patchTab],
   );
 
+  const undoCellEditForTab = useCallback((tabId: string) => {
+    patchTab(tabId, (tt) => {
+      if (tt.editUndoStack.length === 0) return tt;
+      const stack = [...tt.editUndoStack];
+      const prev = stack.pop()!;
+      return { ...tt, pendingEdits: prev, editUndoStack: stack, editRedoStack: [...tt.editRedoStack, tt.pendingEdits] };
+    });
+  }, [patchTab]);
+
+  const redoCellEditForTab = useCallback((tabId: string) => {
+    patchTab(tabId, (tt) => {
+      if (tt.editRedoStack.length === 0) return tt;
+      const stack = [...tt.editRedoStack];
+      const next = stack.pop()!;
+      return { ...tt, pendingEdits: next, editRedoStack: stack, editUndoStack: [...tt.editUndoStack, tt.pendingEdits] };
+    });
+  }, [patchTab]);
+
   const clearEditsForTab = useCallback((tabId: string) => {
-    patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {} }));
+    patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, editUndoStack: [], editRedoStack: [] }));
   }, [patchTab]);
 
   // Discard from inside the preview pane: clear the edits AND dismiss the
@@ -2179,7 +2212,7 @@ export default function App() {
   // cleared it.
   const discardEditsAndPreviewForTab = useCallback((tabId: string) => {
     void cancelStreamForTab(tabId);
-    patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null }));
+    patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null, editUndoStack: [], editRedoStack: [] }));
   }, [patchTab, cancelStreamForTab]);
 
   const previewEditsForTab = useCallback((tab: Tab) => {
@@ -2238,7 +2271,7 @@ export default function App() {
       const refresh = `${paginatable} LIMIT ${limit}`;
       runQueryInTab(tabId, refresh, paginatable);
     } else {
-      patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null }));
+      patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, preview: null, editUndoStack: [], editRedoStack: [] }));
     }
     if (failure) {
       setStatus({
@@ -2295,6 +2328,8 @@ export default function App() {
       queryError: null,
       tableColumns: null,
       pendingEdits: {},
+      editUndoStack: [],
+      editRedoStack: [],
       builderSnapshot: null,
     };
     addTab(tab);
@@ -2703,6 +2738,10 @@ export default function App() {
                       onClearEdits={() => clearEditsForTab(tab.id)}
                       onPreviewEdits={() => previewEditsForTab(tab)}
                       onApplyEdits={() => applyEditsForTab(tab)}
+                      onUndoEdit={() => undoCellEditForTab(tab.id)}
+                      onRedoEdit={() => redoCellEditForTab(tab.id)}
+                      canUndoEdit={tab.editUndoStack.length > 0}
+                      canRedoEdit={tab.editRedoStack.length > 0}
                       autoRefreshSecs={tab.autoRefreshSecs ?? null}
                       autoRefreshAllowed={!!tab.result && isReadOnlySql(tab.lastExecutedSql)}
                       autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
