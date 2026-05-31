@@ -1,5 +1,6 @@
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
+import { SHORTCUTS } from "../shortcuts";
 import { Icon } from "./Icon";
 import {
   SettingsHelp,
@@ -136,17 +137,9 @@ const SECTIONS: Section[] = [
   {
     headerKey: "helpSectionShortcuts",
     descKey: "helpSectionShortcutsDesc",
-    features: [
-      { titleKey: "helpShortcutRunTitle", descKey: "helpShortcutRunDesc" },
-      { titleKey: "helpShortcutPreviewTitle", descKey: "helpShortcutPreviewDesc" },
-      { titleKey: "helpShortcutFormatTitle", descKey: "helpShortcutFormatDesc" },
-      { titleKey: "helpShortcutCompleteTitle", descKey: "helpShortcutCompleteDesc" },
-      { titleKey: "helpShortcutSearchTitle", descKey: "helpShortcutSearchDesc" },
-      { titleKey: "helpShortcutNewTabTitle", descKey: "helpShortcutNewTabDesc" },
-      { titleKey: "helpShortcutCloseTabTitle", descKey: "helpShortcutCloseTabDesc" },
-      { titleKey: "helpShortcutCycleTabTitle", descKey: "helpShortcutCycleTabDesc" },
-      { titleKey: "helpShortcutNthTabTitle", descKey: "helpShortcutNthTabDesc" },
-    ],
+    // ショートカット一覧は `shortcuts.ts` の単一ソースから生成し、`?` で開く
+    // チートシート (`ShortcutCheatSheet`) と定義を共有する (#448)。
+    features: SHORTCUTS.map((s) => ({ titleKey: s.keysKey, descKey: s.descKey })),
   },
 ];
 
