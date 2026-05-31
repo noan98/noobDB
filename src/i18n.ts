@@ -818,6 +818,26 @@ const en = {
     "Comparison capped at {limit} rows per side — the result is partial. Raise the limit or narrow the table.",
   schemaCompareAllowDelete: "Allow deletes (DELETE rows missing from the source)",
   schemaCompareDataGenerate: "Generate data DML",
+
+  // コマンドパレット (#382)
+  cmdkPlaceholder: "Search connections, tables, snippets, history…",
+  cmdkNoResults: "No matching commands",
+  cmdkGroupNavigation: "Actions",
+  cmdkGroupConnections: "Connections",
+  cmdkGroupTables: "Tables",
+  cmdkGroupSnippets: "Snippets",
+  cmdkGroupHistory: "History",
+  cmdkHintMove: "Navigate",
+  cmdkHintSelect: "Select",
+  cmdkHintClose: "Close",
+  cmdkBadgeConnected: "Connected",
+  cmdkActionNewQueryTab: "New query tab",
+  cmdkActionNewConnection: "New connection…",
+  cmdkActionSettings: "Open settings",
+  cmdkActionHelp: "Open help",
+  cmdkActionCompare: "Open schema compare",
+  cmdkActionToggleTheme: "Toggle light / dark theme",
+  cmdkActionDisconnect: "Disconnect",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1640,6 +1660,26 @@ const ja: Dict = {
     "片側あたり {limit} 行で打ち切ったため、結果は部分的です。上限を上げるか対象を絞ってください。",
   schemaCompareAllowDelete: "削除を許可する (ソースに無い行を DELETE)",
   schemaCompareDataGenerate: "データ DML を生成",
+
+  // コマンドパレット (#382)
+  cmdkPlaceholder: "接続・テーブル・スニペット・履歴を検索…",
+  cmdkNoResults: "一致するコマンドがありません",
+  cmdkGroupNavigation: "操作",
+  cmdkGroupConnections: "接続",
+  cmdkGroupTables: "テーブル",
+  cmdkGroupSnippets: "スニペット",
+  cmdkGroupHistory: "履歴",
+  cmdkHintMove: "移動",
+  cmdkHintSelect: "選択",
+  cmdkHintClose: "閉じる",
+  cmdkBadgeConnected: "接続中",
+  cmdkActionNewQueryTab: "新しいクエリタブ",
+  cmdkActionNewConnection: "新規接続…",
+  cmdkActionSettings: "設定を開く",
+  cmdkActionHelp: "ヘルプを開く",
+  cmdkActionCompare: "スキーマ比較を開く",
+  cmdkActionToggleTheme: "ライト / ダークテーマ切替",
+  cmdkActionDisconnect: "切断する",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
