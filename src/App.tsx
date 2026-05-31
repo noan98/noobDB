@@ -2719,6 +2719,7 @@ export default function App() {
                             }
                           : undefined
                       }
+                      onFkJump={(sql) => openAndRunQuery(sql)}
                     />
                   )}
                 </Suspense>
