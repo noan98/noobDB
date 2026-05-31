@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, within } from "./testUtils";
+import { fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { ResultGrid, GRID_CSS, isColumnFilterActive, readStoredColumnSizing, writeStoredColumnSizing } from "../components/ResultGrid";
 import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
@@ -516,5 +516,125 @@ describe("column sizing persistence", () => {
     writeStoredColumnSizing(kNew, { "0": 100 });
     expect(readStoredColumnSizing(keys[0])).toEqual({ "0": 999 });
     expect(readStoredColumnSizing(keys[1])).toEqual({});
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// キーボードセルナビゲーション (#406)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("キーボードセルナビゲーション (#406)", () => {
+  beforeEach(() => setLocale("en"));
+
+  /** tbody のデータ <td> だけ (row-index・col-filler を除く) を行×列の 2D 配列で返す。 */
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  it("セルにフォーカスすると is-active-cell クラスが付く", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    const cell = cells[0][0];
+    fireEvent.focus(cell);
+    expect(cell.classList.contains("is-active-cell")).toBe(true);
+  });
+
+  it("ArrowDown でひとつ下の行に移動する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowDown" });
+    expect(cells[1][0].classList.contains("is-active-cell")).toBe(true);
+    expect(cells[0][0].classList.contains("is-active-cell")).toBe(false);
+  });
+
+  it("ArrowUp でひとつ上の行に移動する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[1][0]);
+    fireEvent.keyDown(cells[1][0], { key: "ArrowUp" });
+    expect(cells[0][0].classList.contains("is-active-cell")).toBe(true);
+  });
+
+  it("ArrowRight でひとつ右の列に移動する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight" });
+    expect(cells[0][1].classList.contains("is-active-cell")).toBe(true);
+  });
+
+  it("ArrowLeft でひとつ左の列に移動する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][1]);
+    fireEvent.keyDown(cells[0][1], { key: "ArrowLeft" });
+    expect(cells[0][0].classList.contains("is-active-cell")).toBe(true);
+  });
+
+  it("Home で同行の先頭列に移動する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][1]);
+    fireEvent.keyDown(cells[0][1], { key: "Home" });
+    expect(cells[0][0].classList.contains("is-active-cell")).toBe(true);
+  });
+
+  it("End で同行の末尾列に移動する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "End" });
+    expect(cells[0][1].classList.contains("is-active-cell")).toBe(true);
+  });
+
+  it("Tab で次の列に移動し、行末では次行の先頭列に移動する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    // 行末列 (col 1) → Tab → 次行先頭 (row 1, col 0)
+    fireEvent.focus(cells[0][1]);
+    fireEvent.keyDown(cells[0][1], { key: "Tab" });
+    expect(cells[1][0].classList.contains("is-active-cell")).toBe(true);
+  });
+
+  it("Shift+Tab で前の列に移動し、行頭では前行の末尾列に移動する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    // 行頭列 (row 1, col 0) → Shift+Tab → 前行末尾 (row 0, col 1)
+    fireEvent.focus(cells[1][0]);
+    fireEvent.keyDown(cells[1][0], { key: "Tab", shiftKey: true });
+    expect(cells[0][1].classList.contains("is-active-cell")).toBe(true);
+  });
+
+  it("Escape でアクティブセルが解除される", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    expect(cells[0][0].classList.contains("is-active-cell")).toBe(true);
+    fireEvent.keyDown(cells[0][0], { key: "Escape" });
+    expect(cells[0][0].classList.contains("is-active-cell")).toBe(false);
+  });
+
+  it("Ctrl+C で現在のセル値がクリップボードにコピーされる", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "c", ctrlKey: true });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("banana"));
+  });
+
+  it("テーブルに role=grid、行に role=row、データセルに role=gridcell が付く", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    expect(container.querySelector("table[role='grid']")).toBeTruthy();
+    const bodyRows = container.querySelectorAll("tbody tr[role='row']");
+    expect(bodyRows.length).toBeGreaterThan(0);
+    expect(container.querySelector("td[role='gridcell']")).toBeTruthy();
   });
 });

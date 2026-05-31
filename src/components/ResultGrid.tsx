@@ -384,6 +384,11 @@ export const GRID_CSS: SystemStyleObject = {
     outline: "2px solid var(--accent)",
     outlineOffset: "-2px",
   },
+  // キーボードナビゲーションで選択中のセル (編集モードでない場合のみ表示)
+  "& td.is-active-cell:not(:focus-within)": {
+    outline: "2px solid var(--accent)",
+    outlineOffset: "-2px",
+  },
   "& td.is-invalid-edit": { boxShadow: "inset 2px 0 0 var(--status-error)" },
   "& td.is-invalid-edit.is-pending-edit": {
     background: "color-mix(in srgb, var(--status-error) 12%, transparent)",
@@ -1326,6 +1331,13 @@ export function DataGrid({
     { rowIdx: number; colIdx: number; value: string } | null
   >(null);
 
+  // Keyboard navigation: the currently selected cell (row = original row index).
+  const [activeCell, setActiveCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
+  // When set, the next layout effect will try to focus that cell's <td>.
+  const pendingFocusRef = useRef<{ rowIdx: number; colIdx: number } | null>(null);
+  // Refs to mounted data <td> elements keyed by "rowIdx:colIdx".
+  const cellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map());
+
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
   // column position. `copied` drives a brief confirmation toast.
@@ -1414,6 +1426,29 @@ export function DataGrid({
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
   const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter);
 
+  // After every render, attempt to focus the pending cell (the element may not
+  // have been in the DOM on the previous cycle if the virtualizer needed to
+  // scroll it into view first).
+  useLayoutEffect(() => {
+    const target = pendingFocusRef.current;
+    if (!target) return;
+    const el = cellRefs.current.get(`${target.rowIdx}:${target.colIdx}`);
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    pendingFocusRef.current = null;
+  });
+
+  // Move keyboard focus to the given cell (original row index + column index).
+  // Scrolls the virtualizer when the target row is off-screen.
+  const navigateCell = (newRowIdx: number, newColIdx: number) => {
+    const visIdx = visibleRows.findIndex((r) => r.index === newRowIdx);
+    if (visIdx >= 0 && virtualize) {
+      rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
+    }
+    setActiveCell({ rowIdx: newRowIdx, colIdx: newColIdx });
+    pendingFocusRef.current = { rowIdx: newRowIdx, colIdx: newColIdx };
+  };
+
   // Row virtualization. Cells are single-line (`white-space: nowrap` +
   // ellipsis), so rows are uniform height; we still let the virtualizer
   // `measureElement` the real height so it follows the font-scale setting and
@@ -1446,6 +1481,89 @@ export function DataGrid({
   // Total column count (row-index + data columns + filler) for spacer colSpan.
   const totalColCount = columns.length + 2;
 
+  // Grid-level keyboard handler: arrow keys, Tab, Enter, Ctrl+C, etc.
+  // Fires on the <table> (bubbled from the focused <td>). When the inline
+  // editor is open the input handles its own keys and this handler short-circuits.
+  const handleGridKeyDown = (e: React.KeyboardEvent<HTMLTableElement>) => {
+    if (editing) return;
+    if (!activeCell) return;
+    const { rowIdx, colIdx } = activeCell;
+    const visIdx = visibleRows.findIndex((r) => r.index === rowIdx);
+    if (visIdx < 0) return;
+    const colCount = columns.length;
+    const rowCount = visibleRows.length;
+
+    switch (e.key) {
+      case "ArrowUp":
+        e.preventDefault();
+        if (visIdx > 0) navigateCell(visibleRows[visIdx - 1].index, colIdx);
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        if (visIdx < rowCount - 1) navigateCell(visibleRows[visIdx + 1].index, colIdx);
+        break;
+      case "ArrowLeft":
+        e.preventDefault();
+        if (colIdx > 0) navigateCell(rowIdx, colIdx - 1);
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        if (colIdx < colCount - 1) navigateCell(rowIdx, colIdx + 1);
+        break;
+      case "Tab":
+        e.preventDefault();
+        if (!e.shiftKey) {
+          if (colIdx < colCount - 1) navigateCell(rowIdx, colIdx + 1);
+          else if (visIdx < rowCount - 1) navigateCell(visibleRows[visIdx + 1].index, 0);
+        } else {
+          if (colIdx > 0) navigateCell(rowIdx, colIdx - 1);
+          else if (visIdx > 0) navigateCell(visibleRows[visIdx - 1].index, colCount - 1);
+        }
+        break;
+      case "Home":
+        e.preventDefault();
+        navigateCell(rowIdx, 0);
+        break;
+      case "End":
+        e.preventDefault();
+        navigateCell(rowIdx, colCount - 1);
+        break;
+      case "Escape":
+        e.preventDefault();
+        setActiveCell(null);
+        break;
+      case "Enter": {
+        e.preventDefault();
+        const colEd = editable && (editableColumns?.[colIdx] ?? false);
+        if (colEd && onSetCellEdit) {
+          const v = rows[rowIdx]?.[colIdx] ?? null;
+          const rowKey = rowEditKey(rows[rowIdx] ?? [], pkIndices ?? [], rowIdx);
+          const pending = pendingEdits?.[rowKey]?.[colIdx];
+          setEditing({
+            rowIdx,
+            colIdx,
+            value: pending !== undefined ? pending : (v === null || v === undefined ? "" : String(v)),
+          });
+        } else if (visIdx < rowCount - 1) {
+          navigateCell(visibleRows[visIdx + 1].index, colIdx);
+        }
+        break;
+      }
+      default:
+        // Printable character → start editing with that char
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
+          const colEd = editable && (editableColumns?.[colIdx] ?? false);
+          if (colEd && onSetCellEdit) {
+            e.preventDefault();
+            setEditing({ rowIdx, colIdx, value: e.key });
+          }
+        } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+          e.preventDefault();
+          copyCell(rowIdx, colIdx);
+        }
+    }
+  };
+
   // One row's JSX, shared by the virtualized and non-virtualized paths.
   // `rowIdx` is the visible position (drives the row number and zebra parity);
   // `row.index` is the absolute index into `rows` used for edit/changed lookups.
@@ -1470,6 +1588,7 @@ export function DataGrid({
     return (
     <tr
       key={row.id}
+      role="row"
       className={rowClass || undefined}
       ref={measureIndex === undefined ? undefined : rowVirtualizer.measureElement}
       data-index={measureIndex}
@@ -1495,6 +1614,7 @@ export function DataGrid({
           editing !== null &&
           editing.rowIdx === row.index &&
           editing.colIdx === idx;
+        const isActiveCell = activeCell?.rowIdx === row.index && activeCell?.colIdx === idx;
         // Live validation of the value being typed, and of an
         // already-buffered value that's sitting invalid in the grid.
         const editError =
@@ -1526,7 +1646,14 @@ export function DataGrid({
         return (
           <td
             key={cell.id}
-            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""}`}
+            role="gridcell"
+            tabIndex={isActiveCell ? 0 : -1}
+            ref={(el) => {
+              const key = `${row.index}:${idx}`;
+              if (el) cellRefs.current.set(key, el);
+              else cellRefs.current.delete(key);
+            }}
+            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""}`}
             title={
               isEditingHere
                 ? undefined
@@ -1543,6 +1670,11 @@ export function DataGrid({
                       ? `${String(v)}\n(${t("gridCharCount", { count: String(v).length })})`
                       : String(v)
             }
+            onFocus={(e) => {
+              if (e.target === e.currentTarget) {
+                setActiveCell({ rowIdx: row.index, colIdx: idx });
+              }
+            }}
             onDoubleClick={handleDoubleClick}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -1578,18 +1710,39 @@ export function DataGrid({
                     setEditing(null);
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") {
+                    if (e.key === "Tab") {
                       e.preventDefault();
-                      commitEdit(
-                        editing!.rowIdx,
-                        editing!.colIdx,
-                        editing!.value,
-                        originalDisplay,
-                      );
+                      const eRowIdx = editing!.rowIdx;
+                      const eColIdx = editing!.colIdx;
+                      commitEdit(eRowIdx, eColIdx, editing!.value, originalDisplay);
                       setEditing(null);
+                      const vi2 = visibleRows.findIndex((r) => r.index === eRowIdx);
+                      const nc = columns.length;
+                      if (!e.shiftKey) {
+                        if (eColIdx < nc - 1) navigateCell(eRowIdx, eColIdx + 1);
+                        else if (vi2 >= 0 && vi2 < visibleRows.length - 1)
+                          navigateCell(visibleRows[vi2 + 1].index, 0);
+                        else navigateCell(eRowIdx, eColIdx);
+                      } else {
+                        if (eColIdx > 0) navigateCell(eRowIdx, eColIdx - 1);
+                        else if (vi2 > 0)
+                          navigateCell(visibleRows[vi2 - 1].index, nc - 1);
+                        else navigateCell(eRowIdx, eColIdx);
+                      }
+                    } else if (e.key === "Enter") {
+                      e.preventDefault();
+                      const eRowIdx = editing!.rowIdx;
+                      const eColIdx = editing!.colIdx;
+                      commitEdit(eRowIdx, eColIdx, editing!.value, originalDisplay);
+                      setEditing(null);
+                      const vi2 = visibleRows.findIndex((r) => r.index === eRowIdx);
+                      if (vi2 >= 0 && vi2 < visibleRows.length - 1)
+                        navigateCell(visibleRows[vi2 + 1].index, eColIdx);
+                      else navigateCell(eRowIdx, eColIdx);
                     } else if (e.key === "Escape") {
                       e.preventDefault();
                       setEditing(null);
+                      navigateCell(editing!.rowIdx, editing!.colIdx);
                     }
                   }}
                 />
@@ -1637,7 +1790,7 @@ export function DataGrid({
           )}
         </Box>
       )}
-      <table style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }}>
+      <table role="grid" style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }} onKeyDown={handleGridKeyDown}>
         <colgroup>
           <col style={{ width: ROW_INDEX_WIDTH }} />
           {table.getHeaderGroups()[0]?.headers.map((h) => (
