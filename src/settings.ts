@@ -80,6 +80,13 @@ export interface Settings {
    * guarding against accidentally clicking away and losing an in-progress edit.
    */
   cellEditOnBlur: CellEditOnBlur;
+  /**
+   * Render cell values with type-aware formatting in the result grid: compact
+   * JSON, localized date/time, boolean badges and enum color badges (#451).
+   * Display-only — copy/edit/export always keep the original value. Turn off to
+   * see every cell as the raw string the driver returned.
+   */
+  richCellRendering: boolean;
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
@@ -89,6 +96,9 @@ export type ResultGridMode = "scroll" | "paginate";
 export type CellEditOnBlur = "commit" | "confirm";
 /** Preserve the historical auto-commit behavior; the guard is opt-in. */
 export const DEFAULT_CELL_EDIT_ON_BLUR: CellEditOnBlur = "commit";
+
+/** Rich cell rendering is on by default; it is a display-only enhancement. */
+export const DEFAULT_RICH_CELL_RENDERING = true;
 
 export type Density = "compact" | "normal" | "spacious";
 
@@ -272,6 +282,7 @@ export const DEFAULT_SETTINGS: Settings = {
   resultGridMode: DEFAULT_RESULT_GRID_MODE,
   resultGridPageSize: DEFAULT_RESULT_GRID_PAGE_SIZE,
   cellEditOnBlur: DEFAULT_CELL_EDIT_ON_BLUR,
+  richCellRendering: DEFAULT_RICH_CELL_RENDERING,
 };
 
 /** Clamps an auto-refresh cadence (seconds) to the allowed range. */
@@ -378,6 +389,7 @@ function loadInitial(): Settings {
       resultGridMode?: unknown;
       resultGridPageSize?: unknown;
       cellEditOnBlur?: unknown;
+      richCellRendering?: unknown;
     };
     return {
       syntaxColors: {
@@ -418,6 +430,10 @@ function loadInitial(): Settings {
         parsed.cellEditOnBlur === "commit" || parsed.cellEditOnBlur === "confirm"
           ? parsed.cellEditOnBlur
           : DEFAULT_CELL_EDIT_ON_BLUR,
+      richCellRendering:
+        typeof parsed.richCellRendering === "boolean"
+          ? parsed.richCellRendering
+          : DEFAULT_RICH_CELL_RENDERING,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -613,6 +629,13 @@ export function setCellEditOnBlur(value: CellEditOnBlur): void {
   const next = value === "commit" || value === "confirm" ? value : DEFAULT_CELL_EDIT_ON_BLUR;
   if (current.cellEditOnBlur === next) return;
   current = { ...current, cellEditOnBlur: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setRichCellRendering(value: boolean): void {
+  if (current.richCellRendering === value) return;
+  current = { ...current, richCellRendering: value };
   persist();
   listeners.forEach((cb) => cb());
 }

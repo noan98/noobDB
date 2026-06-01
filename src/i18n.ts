@@ -965,6 +965,9 @@ const en = {
   settingsCellEditOnBlur: "Confirm on focus loss while editing a cell",
   settingsCellEditOnBlurHelp:
     "When on, clicking away from an open cell editor asks whether to commit or discard the typed value, guarding against accidental loss. When off, the value is auto-committed as a pending edit (the default).",
+  settingsRichCellRendering: "Rich cell rendering",
+  settingsRichCellRenderingHelp:
+    "Format cell values by type in the result grid: compact JSON, localized date/time, boolean badges and enum color badges. Display-only — copy, inline edit and export always keep the original value. Turn off to show every cell as the raw string the driver returned.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1934,6 +1937,9 @@ const ja: Dict = {
   settingsCellEditOnBlur: "セル編集中にフォーカスが外れたら確認する",
   settingsCellEditOnBlurHelp:
     "オンにすると、セル編集を開いたまま別の場所をクリックした際に、入力値を確定するか破棄するかを確認します (誤操作による入力消失を防止)。オフのときは入力値を保留編集として自動確定します (既定)。",
+  settingsRichCellRendering: "セル値のリッチ表示",
+  settingsRichCellRenderingHelp:
+    "結果グリッドのセル値を種類に応じて整形します: JSON のコンパクト表示、日付/時刻のローカライズ、真偽値バッジ、列挙値の色分けバッジ。表示専用で、コピー・インライン編集・エクスポートでは常に元の値を保持します。オフにすると、ドライバが返した素の文字列のまま表示します。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

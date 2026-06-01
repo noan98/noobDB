@@ -5,6 +5,8 @@ import { ResultGrid, GRID_CSS, isColumnFilterActive, readStoredColumnSizing, wri
 import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
+import { setRichCellRendering } from "../settings";
+import { formatJsonCompact } from "../components/cellFormat";
 
 // ResultGrid の主要インタラクション (描画・全文フィルタ・列ソート・ページ読み込み
 // トリガー・インラインセル編集) の退行を検出するテスト (#354)。1,577 行に渡る
@@ -432,6 +434,70 @@ describe("データタイプ別の視覚表現 (#385)", () => {
     const css = GRID_CSS as Record<string, { border?: string; borderRadius?: string }>;
     expect(css["& .cell-null"]?.border).toContain("var(--text-null)");
     expect(css["& .cell-binary-tag"]?.border).toContain("var(--cell-binary)");
+  });
+});
+
+describe("セル値のリッチ表示 (#451)", () => {
+  beforeEach(() => {
+    setLocale("en");
+    setRichCellRendering(true);
+  });
+
+  it("JSON セルはコンパクトに整形され、title に原文を残す", () => {
+    const cols: Column[] = [{ name: "meta", type_name: "JSON" }];
+    const raw = '{ "a": 1,  "b": [2, 3] }';
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(cols, [[raw]])} />,
+    );
+    const cell = container.querySelector("tbody td .cell-json");
+    expect(cell?.textContent).toBe(formatJsonCompact(raw));
+    // 原文は title (コピー/編集で使う実値) に保持される。
+    expect(cell?.getAttribute("title")).toBe(raw);
+  });
+
+  it("真偽値はピル型バッジ (cell-bool-badge) で描画される", () => {
+    const cols: Column[] = [{ name: "active", type_name: "BOOLEAN" }];
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(cols, [[true], [false]])} />,
+    );
+    const badges = container.querySelectorAll(".cell-bool-badge");
+    expect(badges).toHaveLength(2);
+    expect(badges[0].classList.contains("is-true")).toBe(true);
+    expect(badges[0].textContent).toBe("true");
+    expect(badges[1].classList.contains("is-false")).toBe(true);
+  });
+
+  it("ENUM 列は色相を持つ色分けバッジで描画される", () => {
+    const cols: Column[] = [{ name: "status", type_name: "ENUM" }];
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(cols, [["active"]])} />,
+    );
+    const badge = container.querySelector(".cell-enum-badge") as HTMLElement | null;
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe("active");
+    expect(badge?.style.getPropertyValue("--enum-hue")).not.toBe("");
+  });
+
+  it("日付列はロケール整形され、title に原文 (実値) を残す", () => {
+    const cols: Column[] = [{ name: "created", type_name: "DATE" }];
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(cols, [["2026-06-01"]])} />,
+    );
+    const cell = container.querySelector("tbody td .cell-date");
+    expect(cell?.textContent).toBe("Jun 1, 2026");
+    expect(cell?.getAttribute("title")).toBe("2026-06-01");
+  });
+
+  it("リッチ表示を OFF にすると素の値で描画される (整形なし)", () => {
+    setRichCellRendering(false);
+    const cols: Column[] = [{ name: "meta", type_name: "JSON" }];
+    const raw = '{ "a": 1 }';
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(cols, [[raw]])} />,
+    );
+    const cell = container.querySelector("tbody td .cell-json");
+    expect(cell?.textContent).toBe(raw);
+    expect(cell?.getAttribute("title")).toBeNull();
   });
 });
 
