@@ -48,6 +48,7 @@ import {
   setCellEditOnBlur,
   setResultGridMode,
   setResultGridPageSize,
+  setRichCellRendering,
   setStreamPrefetchSize,
   setSyntaxColor,
   setTabRestoreMode,
@@ -678,6 +679,19 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsToggleLabel>
           <SettingsHelpInline>
             {t("settingsCellEditOnBlurHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-rich-cell-rendering">
+            <Switch
+              id="settings-rich-cell-rendering"
+              checked={settings.richCellRendering}
+              onChange={setRichCellRendering}
+            />
+            {t("settingsRichCellRendering")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsRichCellRenderingHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>

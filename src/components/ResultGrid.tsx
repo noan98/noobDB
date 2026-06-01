@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence } from "motion/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -21,7 +21,8 @@ import {
   type Row,
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
-import { useT, type I18nKey } from "../i18n";
+import { useLocale, useT, type I18nKey } from "../i18n";
+import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact } from "./cellFormat";
 import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
@@ -206,8 +207,45 @@ export const GRID_CSS: SystemStyleObject = {
   "& .cell-bool": { fontWeight: 600 },
   "& .cell-bool.is-true": { color: "var(--cell-bool-true)" },
   "& .cell-bool.is-false": { color: "var(--cell-bool-false)" },
+  // リッチ表示時の真偽値はピル型バッジで on/off を一目で示す (#451)。色は既存の
+  // --cell-bool-* トークン参照なのでライト/ダーク両テーマで一貫する。
+  "& .cell-bool.cell-bool-badge": {
+    display: "inline-block",
+    padding: "0 6px",
+    fontSize: "var(--text-2xs)",
+    lineHeight: 1.5,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    borderRadius: "var(--radius-sm)",
+  },
+  "& .cell-bool-badge.is-true": {
+    background: "color-mix(in srgb, var(--cell-bool-true) 14%, transparent)",
+    border: "1px solid color-mix(in srgb, var(--cell-bool-true) 38%, transparent)",
+  },
+  "& .cell-bool-badge.is-false": {
+    background: "color-mix(in srgb, var(--cell-bool-false) 14%, transparent)",
+    border: "1px solid color-mix(in srgb, var(--cell-bool-false) 38%, transparent)",
+  },
   "& .cell-date": { color: "var(--cell-date)" },
   "& .cell-json": { color: "var(--cell-json)" },
+  // 列挙値 (ENUM/SET) の色分けバッジ (#451)。色相はセルごとに --enum-hue で渡され、
+  // 彩度/明度はテーマトークン (--cell-enum-s / -l) で吸収する。
+  "& .cell-enum-badge": {
+    display: "inline-block",
+    maxWidth: "100%",
+    padding: "0 6px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    verticalAlign: "bottom",
+    fontSize: "var(--text-2xs)",
+    fontWeight: 600,
+    lineHeight: 1.6,
+    letterSpacing: "0.02em",
+    borderRadius: "var(--radius-sm)",
+    color: "hsl(var(--enum-hue, 0) var(--cell-enum-s) var(--cell-enum-l))",
+    background: "hsl(var(--enum-hue, 0) var(--cell-enum-s) var(--cell-enum-l) / 0.12)",
+    border: "1px solid hsl(var(--enum-hue, 0) var(--cell-enum-s) var(--cell-enum-l) / 0.35)",
+  },
   "& .cell-binary": { color: "var(--cell-binary)", fontStyle: "italic" },
   // BLOB セルの先頭に付ける「BLOB · <サイズ>」ラベル。16 進プレビューだけだと
   // バイナリだと気付きにくいので、ピル型タグで明示する (#385)。
@@ -539,7 +577,16 @@ interface RowShape {
   [key: string]: CellValue;
 }
 
-type CellKind = "number" | "decimal" | "bool" | "date" | "time" | "json" | "binary" | "string";
+type CellKind =
+  | "number"
+  | "decimal"
+  | "bool"
+  | "date"
+  | "time"
+  | "json"
+  | "enum"
+  | "binary"
+  | "string";
 
 const NUMERIC_TYPES = new Set([
   "TINYINT",
@@ -578,7 +625,8 @@ function classifyColumn(col: Column): CellKind {
   if (t === "BOOLEAN" || t === "BOOL") return "bool";
   if (DATE_TYPES.has(t)) return "date";
   if (TIME_TYPES.has(t)) return "time";
-  if (t === "JSON") return "json";
+  if (t === "JSON" || t === "JSONB") return "json";
+  if (t === "ENUM" || t === "SET") return "enum";
   if (BINARY_TYPES.has(t)) return "binary";
   return "string";
 }
@@ -662,6 +710,7 @@ function sortingFnForKind(kind: CellKind): SortingFn<RowShape> {
     case "date":
     case "time":
     case "json":
+    case "enum":
     case "binary":
     case "string":
       return sortString;
@@ -680,6 +729,8 @@ function defaultColumnSize(kind: CellKind): number {
       return 170;
     case "binary":
       return 220;
+    case "enum":
+      return 130;
     case "json":
     case "string":
       return 180;
@@ -1245,7 +1296,8 @@ export function DataGrid({
   onRedoEdit?: () => void;
 }) {
   const t = useT();
-  const { cellEditOnBlur } = useSettings();
+  const locale = useLocale();
+  const { cellEditOnBlur, richCellRendering } = useSettings();
   const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
 
   const columnKinds = useMemo<CellKind[]>(() => columns.map(classifyColumn), [columns]);
@@ -1317,17 +1369,59 @@ export function DataGrid({
           }
           if (effectiveKind === "bool") {
             const truthy = v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
+            // リッチ表示時はピル型バッジ、OFF 時は従来の色付きテキスト。どちらも
+            // 表示文字列は "true"/"false" のまま (コピー時は元の値を使う)。
+            const cls = richCellRendering ? "cell-bool cell-bool-badge" : "cell-bool";
             return (
-              <span className={`cell-bool ${truthy ? "is-true" : "is-false"}`}>
+              <span className={`${cls} ${truthy ? "is-true" : "is-false"}`}>
                 {truthy ? "true" : "false"}
               </span>
             );
           }
           if (effectiveKind === "date" || effectiveKind === "time") {
-            return <span className="cell-date">{String(v)}</span>;
+            const raw = String(v);
+            // 日付/時刻のローカライズ整形は表示専用。原文を title に残し、コピー/
+            // 編集/エクスポートは元の値 (raw) を使う。time 型や解析不能な値は素の
+            // ままにする。
+            const formatted =
+              richCellRendering && effectiveKind === "date"
+                ? formatDateTimeDisplay(raw, locale)
+                : null;
+            return formatted !== null ? (
+              <span className="cell-date" title={raw}>
+                {formatted}
+              </span>
+            ) : (
+              <span className="cell-date">{raw}</span>
+            );
           }
           if (effectiveKind === "json") {
-            return <span className="cell-json">{String(v)}</span>;
+            const raw = String(v);
+            // グリッド内では空白を畳んだコンパクト表現にする (表示専用、原文は title)。
+            const compact = richCellRendering ? formatJsonCompact(raw) : null;
+            return compact !== null ? (
+              <span className="cell-json" title={raw}>
+                {compact}
+              </span>
+            ) : (
+              <span className="cell-json">{raw}</span>
+            );
+          }
+          if (effectiveKind === "enum") {
+            const raw = String(v);
+            // 列挙値は値ごとに決まる色相でバッジ表示する (表示専用)。OFF 時は素の文字列。
+            if (!richCellRendering) {
+              return <span className="cell-string">{raw}</span>;
+            }
+            return (
+              <span
+                className="cell-enum-badge"
+                title={raw}
+                style={{ "--enum-hue": enumBadgeHue(raw) } as CSSProperties}
+              >
+                {raw}
+              </span>
+            );
           }
           if (effectiveKind === "binary") {
             const s = String(v);
@@ -1343,7 +1437,7 @@ export function DataGrid({
         },
       };
     });
-  }, [columns, columnKinds, columnMeta, t, enableColumnControls]);
+  }, [columns, columnKinds, columnMeta, t, enableColumnControls, richCellRendering, locale]);
 
   const data = useMemo<RowShape[]>(() => {
     return rows.map((r) => {

@@ -132,6 +132,10 @@
   --cell-date: #b45309;
   --cell-json: #6d28d9;
   --cell-binary: #4b5563;
+  /* ENUM/SET の色分けバッジ (#451)。色相はセルごとに値から決まる (--enum-hue)。
+     ライト/ダークで読みやすさを保てるよう彩度・明度のみテーマで切り替える。 */
+  --cell-enum-s: 60%;
+  --cell-enum-l: 38%;
 
   /* ステータス色。ドットは UI 部品 (>=3:1) だが、connected/connecting/success は
      SchemaCompareView・HelpView でバッジ文字色にも使うため AA テキスト (>=4.5:1) を
@@ -230,6 +234,8 @@
   --cell-bool-false: #d8b4fe;
   --cell-date: #fcd34d;
   --cell-json: #c4b5fd;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 72%;
   --cell-binary: #9ca3af;
 
   --status-connected: #22c55e;
