@@ -968,6 +968,11 @@ const en = {
   settingsRichCellRendering: "Rich cell rendering",
   settingsRichCellRenderingHelp:
     "Format cell values by type in the result grid: compact JSON, localized date/time, boolean badges and enum color badges. Display-only — copy, inline edit and export always keep the original value. Turn off to show every cell as the raw string the driver returned.",
+
+  resultStatusBar: "{rows} rows · {ms} ms",
+
+  shortcutSidebarFilterTitle: "Cmd/Ctrl+P",
+  shortcutSidebarFilterDesc: "Focus the connection / schema filter in the sidebar.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1940,6 +1945,11 @@ const ja: Dict = {
   settingsRichCellRendering: "セル値のリッチ表示",
   settingsRichCellRenderingHelp:
     "結果グリッドのセル値を種類に応じて整形します: JSON のコンパクト表示、日付/時刻のローカライズ、真偽値バッジ、列挙値の色分けバッジ。表示専用で、コピー・インライン編集・エクスポートでは常に元の値を保持します。オフにすると、ドライバが返した素の文字列のまま表示します。",
+
+  resultStatusBar: "{rows} 件 · {ms} ms",
+
+  shortcutSidebarFilterTitle: "Cmd/Ctrl+P",
+  shortcutSidebarFilterDesc: "サイドバーの接続・スキーマフィルタにフォーカスします。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

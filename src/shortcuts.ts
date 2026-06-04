@@ -42,6 +42,7 @@ export const SHORTCUT_CATEGORY_ORDER: ShortcutCategory[] = ["global", "editor", 
 export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutCommandPaletteTitle", descKey: "shortcutCommandPaletteDesc", category: "global" },
   { keysKey: "shortcutCheatSheetTitle", descKey: "shortcutCheatSheetDesc", category: "global" },
+  { keysKey: "shortcutSidebarFilterTitle", descKey: "shortcutSidebarFilterDesc", category: "global" },
   { keysKey: "helpShortcutRunTitle", descKey: "helpShortcutRunDesc", category: "editor" },
   { keysKey: "helpShortcutPreviewTitle", descKey: "helpShortcutPreviewDesc", category: "editor" },
   { keysKey: "helpShortcutFormatTitle", descKey: "helpShortcutFormatDesc", category: "editor" },

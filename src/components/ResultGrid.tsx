@@ -2781,10 +2781,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             </Modal>
           )}
         </AnimatePresence>
+        {!streaming && result.elapsed_ms != null && result.columns.length > 0 && (
+          <chakra.span
+            marginLeft="auto"
+            fontSize="xs"
+            color="app.textMuted"
+            whiteSpace="nowrap"
+            fontFamily="mono"
+            aria-live="polite"
+          >
+            {t("resultStatusBar", { rows: result.rows.length, ms: result.elapsed_ms })}
+            {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
+              <chakra.span color="#f59e0b" marginLeft="6px" title={t("autoLimitApplied", { limit: autoLimitApplied })}>
+                LIMIT {autoLimitApplied}
+              </chakra.span>
+            )}
+          </chakra.span>
+        )}
         <chakra.input
           ref={searchInputRef}
           type="search"
-          marginLeft="auto"
+          marginLeft={!streaming && result.elapsed_ms != null && result.columns.length > 0 ? "8px" : "auto"}
           width="220px"
           padding="3px 8px"
           fontSize="sm"

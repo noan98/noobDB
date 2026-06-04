@@ -23,7 +23,7 @@ import {
   resolvePkIndices,
   type PendingEdits,
 } from "./components/cellEdit";
-import { ConnectionList } from "./components/ConnectionList";
+import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { EmptyState } from "./components/EmptyState";
 import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
@@ -752,6 +752,7 @@ export default function App() {
   // inserts and Cmd/Ctrl+F target the focused pane's handle.
   const editorRefs = useRef<Map<string, QueryEditorHandle>>(new Map());
   const resultGridRefs = useRef<Map<string, ResultGridHandle>>(new Map());
+  const connectionListRef = useRef<ConnectionListHandle>(null);
   const editorRefSetters = useRef<Map<string, (h: QueryEditorHandle | null) => void>>(new Map());
   const gridRefSetters = useRef<Map<string, (h: ResultGridHandle | null) => void>>(new Map());
   const getEditorRefSetter = useCallback((paneId: string) => {
@@ -2583,6 +2584,21 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする (#487)。
+  // 接続タブが選択されていなければ切り替えてからフォーカスする。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        setSidebarTab("connections");
+        requestAnimationFrame(() => connectionListRef.current?.focusFilter());
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   // `?` (Shift+/) でショートカット チートシートを開閉する (#448)。入力欄・
   // CodeMirror エディタにフォーカスがある間は `?` を文字入力として通し、奪わない
   // (誤発火防止)。他のモーダル/フォームが開いている間も発火させない。
@@ -3226,6 +3242,7 @@ export default function App() {
         >
           {sidebarTab === "connections" ? (
           <ConnectionList
+            ref={connectionListRef}
             profiles={profiles}
             activeProfileId={selectedProfile?.id ?? null}
             sessionId={sessionId}

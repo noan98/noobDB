@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
@@ -23,6 +23,34 @@ import {
 } from "./tree";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
+
+/** サイドバーフィルタで公開するハンドル型。App.tsx が Cmd/Ctrl+P でフォーカスを当てるために使う。 */
+export interface ConnectionListHandle {
+  focusFilter: () => void;
+}
+
+/** 検索クエリ `query` にマッチする部分をハイライト表示するシンプルなコンポーネント。
+ *  大小無視の部分一致で最初のマッチのみ強調し、マッチがなければそのまま返す。 */
+function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>;
+  const lowerText = text.toLowerCase();
+  const idx = lowerText.indexOf(query);
+  if (idx === -1) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <chakra.mark
+        bg="color-mix(in srgb, var(--accent) 35%, transparent)"
+        color="inherit"
+        borderRadius="2px"
+        px="1px"
+      >
+        {text.slice(idx, idx + query.length)}
+      </chakra.mark>
+      {text.slice(idx + query.length)}
+    </>
+  );
+}
 
 /** ドライバ名 (プロファイルの自由文字列) を Icon のブランドロゴ名へ正規化する。
  *  未知のドライバは null を返し、呼び出し側で汎用アイコンへフォールバックする。 */
@@ -152,12 +180,12 @@ interface MenuState {
   items: ContextMenuEntry[];
 }
 
-// React.memo でラップし、App.tsx の再レンダリング (クエリ入力やストリーミングの
-// たびに発生する) でツリー全体が無駄に再描画されるのを防ぐ (#403)。親から渡る
-// コールバックは App 側で useCallback 安定化済みのため、接続状態が変わらない限り
-// memo がスキップする。ロケール/設定は本コンポーネントが内部で useT/useSettings を
-// 購読しているため、memo してもそれらの変更では再描画される。
-export const ConnectionList = memo(function ConnectionList({
+// React.memo + forwardRef でラップし、App.tsx の再レンダリング (クエリ入力や
+// ストリーミングのたびに発生する) でツリー全体が無駄に再描画されるのを防ぐ (#403)。
+// forwardRef は App.tsx から focusFilter() を呼ぶための ConnectionListHandle を
+// 公開するために必要。親から渡るコールバックは App 側で useCallback 安定化済みの
+// ため、接続状態が変わらない限り memo がスキップする。
+export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(function ConnectionList({
   profiles,
   activeProfileId,
   sessionId,
@@ -175,7 +203,7 @@ export const ConnectionList = memo(function ConnectionList({
   onInsertTableSelect,
   onShowCreateTable,
   selectLimit,
-}: Props) {
+}, ref) {
   const t = useT();
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
   const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
@@ -193,6 +221,7 @@ export const ConnectionList = memo(function ConnectionList({
     Record<string, Record<string, number | null>>
   >({});
   const [filter, setFilter] = useState("");
+  const filterInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [hoveredColumn, setHoveredColumn] = useState<{ col: TableColumnInfo; rect: DOMRect } | null>(
@@ -209,6 +238,13 @@ export const ConnectionList = memo(function ConnectionList({
   // Databases whose row-count estimates are currently being fetched. Mirrors
   // `tablesInFlightRef` so overlapping expands don't re-issue the estimate query.
   const estimatesInFlightRef = useRef<Set<string>>(new Set());
+
+  useImperativeHandle(ref, () => ({
+    focusFilter: () => {
+      filterInputRef.current?.focus();
+      filterInputRef.current?.select();
+    },
+  }));
 
   // Id of the session whose schema is currently being re-fetched, or null.
   // Keyed by session (not a shared boolean) so a refresh only disables/​spins
@@ -688,7 +724,7 @@ export const ConnectionList = memo(function ConnectionList({
               fontSize="md"
               color={isActive ? "app.text" : undefined}
             >
-              {p.name}
+              <HighlightText text={p.name} query={q} />
             </chakra.span>
             <chakra.span
               overflow="hidden"
@@ -836,7 +872,7 @@ export const ConnectionList = memo(function ConnectionList({
                     >
                       <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
                       <TreeIcon color="#0ea5e9" aria-hidden><Icon name="database" /></TreeIcon>
-                      <TreeLabel fontWeight={400}>{db}</TreeLabel>
+                      <TreeLabel fontWeight={400}><HighlightText text={db} query={q} /></TreeLabel>
                     </TreeRow>
                     <TreeCollapse open={dbOpen}>
                       <TreeChildren>
@@ -871,7 +907,7 @@ export const ConnectionList = memo(function ConnectionList({
                                 >
                                   <TreeChevron transform={tOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
                                   <TreeIcon color="app.textSecondary" aria-hidden><Icon name="table" /></TreeIcon>
-                                  <TreeLabel fontWeight={400}>{tbl}</TreeLabel>
+                                  <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
                                   {rowEstLabel && (
                                     <TreeBadge
                                       fontFamily="mono"
@@ -923,7 +959,7 @@ export const ConnectionList = memo(function ConnectionList({
                                             >
                                               {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
                                             </TreeIcon>
-                                            <TreeLabel fontFamily="mono" color="app.text">{col.name}</TreeLabel>
+                                            <TreeLabel fontFamily="mono" color="app.text"><HighlightText text={col.name} query={q} /></TreeLabel>
                                             <TreeBadge
                                               fontFamily="mono"
                                               textTransform="lowercase"
@@ -958,6 +994,7 @@ export const ConnectionList = memo(function ConnectionList({
     <Flex direction="column" overflow="hidden" flex="1">
       <Box px="10px" py="8px" borderBottom="1px solid" borderColor="app.borderSubtle">
         <Input
+          ref={filterInputRef}
           type="search"
           py="5px"
           fontSize="sm"
@@ -1058,7 +1095,7 @@ export const ConnectionList = memo(function ConnectionList({
       {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
     </Flex>
   );
-});
+}));
 
 const TooltipDt = chakra("dt", { base: { color: "app.textMuted", whiteSpace: "nowrap" } });
 const TooltipDd = chakra("dd", { base: { m: 0, fontFamily: "mono", wordBreak: "break-all" } });
