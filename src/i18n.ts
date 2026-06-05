@@ -1954,6 +1954,8 @@ const ja: Dict = {
 
 const dicts: Record<Locale, Dict> = { en, ja };
 
+export const dictionaries: Record<Locale, Readonly<Dict>> = dicts;
+
 const STORAGE_KEY = "noobdb.locale";
 
 function detectInitial(): Locale {
