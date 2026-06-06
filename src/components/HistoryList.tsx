@@ -56,10 +56,12 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
   }, []);
 
   const handleCopy = (id: number, sql: string) => {
-    void copyToClipboard(sql);
-    setCopiedId(id);
-    if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
-    copiedTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
+    void copyToClipboard(sql).then((ok) => {
+      if (!ok) return;
+      setCopiedId(id);
+      if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
+    });
   };
 
   // Debounce the search box so each keystroke doesn't hit the backend.

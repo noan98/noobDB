@@ -51,7 +51,8 @@ export function CellValueViewer({ columnName, value, isBinary, onClose }: Props)
   );
 
   const handleCopy = async () => {
-    await copyToClipboard(display);
+    const ok = await copyToClipboard(display);
+    if (!ok) return;
     setCopied(true);
     if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
     copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);

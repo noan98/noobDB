@@ -8,6 +8,7 @@ import { tags } from "@lezer/highlight";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
+import { copyToClipboard } from "./clipboard";
 import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
@@ -471,20 +472,10 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   );
 
   const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(sql);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = sql;
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand("copy"); } catch { /* ignore */ }
-      document.body.removeChild(ta);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    }
+    const ok = await copyToClipboard(sql);
+    if (!ok) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   }, [sql]);
 
   const captureSnapshot = useCallback((): QueryBuilderSnapshot => ({

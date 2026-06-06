@@ -417,7 +417,8 @@ export function SettingsView({ theme, onClose }: Props) {
 
   const copyLogs = async () => {
     if (!logText) return;
-    await copyToClipboard(logText);
+    const ok = await copyToClipboard(logText);
+    if (!ok) return;
     setLogCopied(true);
     setTimeout(() => setLogCopied(false), 1500);
   };

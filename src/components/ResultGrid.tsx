@@ -1494,6 +1494,7 @@ export function DataGrid({
     { x: number; y: number; rowIdx: number; colIdx: number } | null
   >(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const copiedTimer = useRef<number | null>(null);
 
   // Full-value viewer target (original row index + display column index).
@@ -1512,10 +1513,17 @@ export function DataGrid({
 
   const runCopy = async (text: string) => {
     setCopyMenu(null);
-    await copyToClipboard(text);
-    setCopied(true);
+    const ok = await copyToClipboard(text);
     if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
-    copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+    if (ok) {
+      setCopied(true);
+      setCopyFailed(false);
+      copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+    } else {
+      setCopyFailed(true);
+      setCopied(false);
+      copiedTimer.current = window.setTimeout(() => setCopyFailed(false), 3000);
+    }
   };
   const copyCell = (rowIdx: number, colIdx: number) =>
     void runCopy(cellToText(rows[rowIdx]?.[colIdx] ?? null));
@@ -2229,6 +2237,26 @@ export function DataGrid({
           pointerEvents="none"
         >
           {t("gridCopied")}
+        </Box>
+      )}
+      {copyFailed && (
+        <Box
+          role="alert"
+          aria-live="assertive"
+          position="fixed"
+          bottom="48px"
+          left="50%"
+          transform="translateX(-50%)"
+          zIndex={1100}
+          padding="6px 14px"
+          fontSize="sm"
+          color="#ffffff"
+          background="color-mix(in srgb, #dc2626 92%, #000000)"
+          borderRadius="md"
+          boxShadow="lg"
+          pointerEvents="none"
+        >
+          {t("gridCopyFailed")}
         </Box>
       )}
       <AnimatePresence>
