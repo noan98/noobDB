@@ -75,6 +75,9 @@ const DumpModal = lazy(() =>
 const ProfileImportDialog = lazy(() =>
   import("./components/ProfileImportDialog").then((m) => ({ default: m.ProfileImportDialog })),
 );
+const PaginationBar = lazy(() =>
+  import("./components/PaginationBar").then((m) => ({ default: m.PaginationBar })),
+);
 const HelpView = lazy(() =>
   import("./components/HelpView").then((m) => ({ default: m.HelpView })),
 );
@@ -128,6 +131,11 @@ import {
   type PersistedTab,
   type PersistedWorkspace,
 } from "./tabPersistence";
+import {
+  buildPageSql,
+  clampPage,
+  estimatedTotalPages,
+} from "./pagination";
 import {
   EMPTY_QUICK_ACCESS,
   loadQuickAccess,
@@ -372,6 +380,21 @@ interface Tab {
   loadingMore: boolean;
   /** True when another scroll-triggered page may yield more rows. */
   canLoadMore: boolean;
+  /**
+   * 現在のページ番号 (1 始まり)。table タブのページネーション (#484) 用。
+   * 未指定は 1 ページ目とみなす。
+   */
+  page?: number;
+  /**
+   * ページサイズ (1 ページの行数)。table タブのページネーション用。未指定なら
+   * `previewRowLimit` (= テーブルを開いたときの表示件数) を使う。
+   */
+  pageSize?: number;
+  /**
+   * テーブルの行数推定 (総ページ数の目安算出用)。table タブを開いたときに
+   * `table_row_estimates` から取得して設定する。未取得/不明なら null/undefined。
+   */
+  rowEstimateTotal?: number | null;
   /** Non-null when the last query run failed (cleared on the next run). */
   queryError: string | null;
   /**
@@ -2124,6 +2147,60 @@ export default function App() {
     }
   }, [sessionId, settings.streamPrefetchSize, patchTab]);
 
+  // ページネーション (#484): table タブの `paginatable` base SQL から N ページ目を
+  // 取得して結果を**置き換える** (loadMore は追記、こちらはページ送り)。ページング用の
+  // 内部クエリは `api.runQuery` 経由なので履歴を汚さない (CLAUDE.md のクエリ履歴方針)。
+  const goToPageInTab = useCallback(async (tabId: string, page: number, sizeOverride?: number) => {
+    if (!sessionId) return;
+    const tab = tabsRef.current.find((tt) => tt.id === tabId);
+    if (
+      !tab ||
+      tab.kind !== "table" ||
+      !tab.paginatable ||
+      tab.streaming ||
+      tab.loadingMore
+    ) {
+      return;
+    }
+    const pageSize = Math.max(1, sizeOverride ?? tab.pageSize ?? tab.previewRowLimit);
+    const total = estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
+    const target = clampPage(page, total);
+    if (target === (tab.page ?? 1) && tab.result) return;
+    const sql = buildPageSql(tab.paginatable, pageSize, target);
+    patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
+    try {
+      const res = await api.runQuery(sessionId, sql, tab.database ?? null);
+      patchTab(tabId, (tt) => ({
+        ...tt,
+        result: res,
+        page: target,
+        pageSize,
+        loadingMore: false,
+        // ページングは置換なので、無限スクロールの load-more は無効化する。
+        canLoadMore: false,
+      }));
+      setStatus({
+        kind: "key",
+        key: "statusStreamingDone",
+        vars: { rows: res.rows.length, ms: res.elapsed_ms },
+      });
+    } catch (e) {
+      patchTab(tabId, (tt) => ({ ...tt, loadingMore: false }));
+      setStatus({
+        kind: "key",
+        key: "statusQueryError",
+        vars: { error: String(e) },
+        error: true,
+      });
+    }
+  }, [sessionId, patchTab]);
+
+  // ページサイズを変更し、1 ページ目から取り直す。状態反映のレースを避けるため、
+  // 新サイズを goToPageInTab に直接渡す。
+  const setPageSizeInTab = useCallback((tabId: string, size: number) => {
+    void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
+  }, [goToPageInTab]);
+
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
   // independently.
@@ -2484,6 +2561,9 @@ export default function App() {
       autoLimitSql: null,
       loadingMore: false,
       canLoadMore: false,
+      page: 1,
+      pageSize: limit,
+      rowEstimateTotal: null,
       queryError: null,
       tableColumns: null,
       pendingEdits: {},
@@ -2493,7 +2573,17 @@ export default function App() {
     };
     addTab(tab);
     runQueryInTab(tab.id, sql, base);
-  }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, selectedProfile?.driver, recordRecentTableOpen]);
+    // ページネーション (#484) の総ページ数目安に使う行数推定を取得 (ベストエフォート)。
+    if (sessionId) {
+      void api
+        .tableRowEstimates(sessionId, database)
+        .then((list) => {
+          const est = list.find((e) => e.name === table)?.estimate ?? null;
+          if (est != null) patchTab(tab.id, (tt) => ({ ...tt, rowEstimateTotal: est }));
+        })
+        .catch(() => {});
+    }
+  }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, selectedProfile?.driver, recordRecentTableOpen, sessionId, patchTab]);
 
   const handleImportTable = useCallback((database: string, table: string) => {
     setImportTarget({ database, table });
@@ -3123,13 +3213,14 @@ export default function App() {
                       }
                     />
                   ) : (
+                    <Flex direction="column" h="100%" minH={0} minW={0}>
                     <ResultGrid
                       ref={getGridRefSetter(pane.id)}
                       result={tab.result}
                       streaming={tab.streaming}
                       onStopStreaming={() => stopTab(tab)}
                       loadingMore={tab.loadingMore}
-                      canLoadMore={tab.canLoadMore}
+                      canLoadMore={tab.kind === "table" && tab.paginatable ? false : tab.canLoadMore}
                       onLoadMore={() => loadMoreInTab(tab.id)}
                       autoLimitApplied={tab.autoLimitApplied}
                       onFetchAllRows={() => fetchAllForTab(tab)}
@@ -3166,6 +3257,21 @@ export default function App() {
                       onFkJump={(sql) => openAndRunQuery(sql)}
                       lastEditAppliedAt={tab.lastEditAppliedAt}
                     />
+                    {tab.kind === "table" && tab.paginatable && tab.result && !tab.streaming && (
+                      <PaginationBar
+                        page={tab.page ?? 1}
+                        pageSize={tab.pageSize ?? tab.previewRowLimit}
+                        rowsOnPage={tab.result.rows.length}
+                        totalPages={estimatedTotalPages(
+                          tab.rowEstimateTotal ?? null,
+                          tab.pageSize ?? tab.previewRowLimit,
+                        )}
+                        loading={tab.loadingMore}
+                        onGoToPage={(p) => goToPageInTab(tab.id, p)}
+                        onSetPageSize={(s) => setPageSizeInTab(tab.id, s)}
+                      />
+                    )}
+                    </Flex>
                   )}
                 </Suspense>
               }
