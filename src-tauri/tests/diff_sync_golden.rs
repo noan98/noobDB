@@ -113,10 +113,16 @@ fn null_equals_null_in_non_key_columns() {
     ];
     let rows = t::compute_data_diff(&columns, &pk_idx, &source, &target);
 
-    assert_eq!(rows.len(), 2, "id=1 は NULL==NULL で同一、差分は id=2,3 の 2 件");
-    assert!(rows
-        .iter()
-        .all(|r| r.status == RowStatus::Different && r.changed_columns == vec!["note".to_string()]));
+    assert_eq!(
+        rows.len(),
+        2,
+        "id=1 は NULL==NULL で同一、差分は id=2,3 の 2 件"
+    );
+    assert!(
+        rows.iter()
+            .all(|r| r.status == RowStatus::Different
+                && r.changed_columns == vec!["note".to_string()])
+    );
 }
 
 #[test]
@@ -249,7 +255,11 @@ async fn sqlite_composite_pk_with_nulls_converges_end_to_end() {
     .await
     .expect("seed target");
 
-    let columns = vec!["region".to_string(), "code".to_string(), "label".to_string()];
+    let columns = vec![
+        "region".to_string(),
+        "code".to_string(),
+        "label".to_string(),
+    ];
     let pk_idx = [0usize, 1usize];
     let select = "SELECT region, code, label FROM catalog ORDER BY region, code";
 
