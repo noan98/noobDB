@@ -91,6 +91,7 @@ export type IconName =
  * 基盤と整合した一貫サイズで描画する (#489)。
  */
 export const ICON_SIZES = { sm: 13, md: 16, lg: 20 } as const;
+/** アイコンサイズトークンのキー。呼び出し側が型安全に指定するための公開型。 @public */
 export type IconSizeToken = keyof typeof ICON_SIZES;
 
 /** ストローク幅トークン。既定は `regular`。 */

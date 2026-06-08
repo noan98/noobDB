@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "knip": "knip",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -44,6 +45,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "@vitest/coverage-v8": "^4.1.8",
     "jsdom": "^29.1.1",
+    "knip": "^6.16.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
     "vitest": "^4.1.8",
