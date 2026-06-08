@@ -171,6 +171,31 @@ describe("WCAG AA contrast for core tokens (#326)", () => {
       check(vars, "text", "bg-active", AA_TEXT);
       check(vars, "text", "bg-row-hover", AA_TEXT);
     });
+
+    it("semantic family text meets AA on default + subtle surfaces (#476)", () => {
+      for (const fam of ["info", "success", "warning", "error"]) {
+        check(vars, `${fam}-text`, "bg", AA_TEXT);
+        check(vars, `${fam}-text`, "bg-elevated", AA_TEXT);
+        check(vars, `${fam}-text`, `${fam}-subtle`, AA_TEXT);
+      }
+    });
+
+    it("neutral ramp is monotonic in luminance from 0 to 950 (#476)", () => {
+      // 0=地, 950=最も濃い文字。luminance はライト/ダークで向きが逆になるが、
+      // どちらも「0 から 950 へ向かって地から単調に離れる」ことを固定する。
+      const steps = [0, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
+      const lums = steps.map((s) => {
+        const hex = vars[`neutral-${s}`];
+        expect(hex, `--neutral-${s} must be a hex color`).toBeTruthy();
+        return luminance(hex);
+      });
+      // ライトは 0(白) が最も明るく単調減少、ダークは 0(地) が最も暗く単調増加。
+      const decreasing = lums[0] > lums[lums.length - 1];
+      for (let i = 1; i < lums.length; i++) {
+        if (decreasing) expect(lums[i]).toBeLessThanOrEqual(lums[i - 1]);
+        else expect(lums[i]).toBeGreaterThanOrEqual(lums[i - 1]);
+      }
+    });
   });
 });
 
