@@ -44,9 +44,10 @@ describe("token bridge resolves to App.css CSS variables", () => {
 });
 
 describe("dark mode condition targets the data-theme attribute", () => {
-  it("emits a [data-theme=dark] selector for _dark styles", () => {
+  it("emits a [data-theme$=dark] selector for _dark styles (matches preset dark themes, #465)", () => {
     const out = system.css({ color: "red", _dark: { color: "blue" } });
-    expect(JSON.stringify(out)).toContain("data-theme=dark");
+    // 末尾一致にしてダーク系プリセット ("dracula-dark" 等) でも _dark が効く。
+    expect(JSON.stringify(out)).toContain("data-theme$=dark");
   });
 });
 

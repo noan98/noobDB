@@ -400,6 +400,89 @@
   color-scheme: dark;
 }
 
+/* ── Theme preset: Dracula (#465) ─────────────────────────────────────────
+   追加カラーテーマプリセット。`data-theme="dracula-dark"` で選択され (App.tsx が
+   themePreset 設定から合成)、ベース :root のライト値を全面的にダーク系へ上書き
+   する。テーマ名は "...-dark" で終わるため theme.ts の `conditions.dark`
+   ([data-theme$=dark]) に一致し、カラー付きボタンの _dark トークンも効く。
+   配色は Dracula 公式パレットを基に、テキスト/状態色は WCAG AA を満たすよう明度を
+   調整している (themeContrast.test.ts がプリセットも検証)。アクセント色・密度・
+   シンタックス配色のユーザ設定とは直交し、それらは引き続き実行時に上書きできる。 */
+:root[data-theme="dracula-dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.62);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.72);
+
+  --bg: #282a36;
+  --bg-elevated: #343746;
+  --bg-muted: #21222c;
+  --bg-hover: #3b3e4f;
+  --bg-active: #44475a;
+  --bg-active-strong: #565a72;
+  --bg-toolbar: #21222c;
+  --bg-header: #21222c;
+  --bg-error: #3b1f23;
+  --bg-warning: #3a2f1a;
+  --bg-input: #21222c;
+  --bg-stripe: #2b2d39;
+  --bg-row-hover: #3a3d4e;
+
+  --text: #f8f8f2;
+  --text-secondary: #cdd0e6;
+  --text-muted: #a3a8c8;
+  --text-null: #a0a4c1;
+  --text-error: #ff8a8a;
+  --text-warning: #ffb86c;
+  --text-success: #6dffa0;
+
+  --border: #44475a;
+  --border-strong: #565a72;
+  --border-subtle: #343746;
+
+  --scrollbar-thumb: #565a72;
+  --scrollbar-thumb-hover: #6b6f8c;
+
+  --accent: #bd93f9;
+  --accent-hover: #cba6fc;
+  --accent-text: #1a142b;
+
+  --cm-selection: #44475a;
+
+  --cell-number: #6dffa0;
+  --cell-decimal: #6dffa0;
+  --cell-bool-true: #8be9fd;
+  --cell-bool-false: #ff92df;
+  --cell-date: #ffb86c;
+  --cell-json: #d6acff;
+  --cell-enum-s: 60%;
+  --cell-enum-l: 74%;
+  --cell-binary: #a8adcb;
+
+  --status-connected: #6dffa0;
+  --status-connecting: #ffb86c;
+  --status-error: #ff8a8a;
+  --status-warning: #f1fa8c;
+  --status-success: #6dffa0;
+  --status-info: #8be9fd;
+  --status-idle: #7782ad;
+
+  --syntax-keyword: #ff79c6;
+  --syntax-string: #f1fa8c;
+  --syntax-number: #bd93f9;
+  --syntax-comment: #99a0cf;
+  --syntax-function: #8be9fd;
+  --syntax-operator: #ff79c6;
+
+  --preview-highlight: #bd93f9;
+  --preview-banner-bg: #3a2f1a;
+  --preview-banner-border: #6b5a2c;
+  --preview-banner-text: #f1fa8c;
+  --preview-banner-dot: #ffb86c;
+
+  color-scheme: dark;
+}
+
 /* Density overrides (#410). Only the grid-facing tokens change; everything else
    keeps tracking --font-scale. Compact trims vertical padding for more rows on
    screen; spacious loosens it for comfort on large displays. */
