@@ -64,6 +64,11 @@ export const tableRowEstimate = z.object({
   estimate: z.number().nullable(),
 });
 
+/**
+ * プレビュー結果の検証スキーマ。他の IPC スキーマと対をなす公開検証表面で、
+ * 現状ランタイム検証には未配線だが API 完全性のため保持する (#391)。
+ * @public
+ */
 export const previewResult = z.object({
   target_table: z.string().nullable(),
   columns: z.array(column),
