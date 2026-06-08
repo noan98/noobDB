@@ -934,6 +934,13 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
   // 新規行追加モーダル (#441): 対象タブ ID。null で閉じる。
   const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
+  // 明示トランザクション (#414): 現在のセッションでトランザクションが有効か。実行経路の
+  // 振り分けにコールバックから参照するため ref も併せ持つ。
+  const [txActive, setTxActive] = useState(false);
+  const txActiveRef = useRef(false);
+  useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
+  // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
+  useEffect(() => { setTxActive(false); }, [sessionId]);
   // Whole-schema autocomplete snapshots, keyed by schemaCacheKey(session, db).
   // Fetched lazily per database and reused across tabs; invalidated after DDL
   // and dropped wholesale when the session changes.
@@ -2297,7 +2304,10 @@ export default function App() {
         continue;
       }
       try {
-        const res = await api.runQuery(sessionId, stmt, db);
+        // 明示トランザクション (#414) が有効なら同一接続で実行して tx に乗せる。
+        const res = txActiveRef.current
+          ? await api.runInTransaction(sessionId, stmt)
+          : await api.runQuery(sessionId, stmt, db);
         const isSelect = res.columns.length > 0;
         results.push({
           sql: stmt,
@@ -2328,6 +2338,59 @@ export default function App() {
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
   // independently.
+  // 明示トランザクション (#414) 内で 1 文を実行し、結果をタブへ反映する (非ストリーム)。
+  const runTxInTab = useCallback(async (tabId: string, sql: string) => {
+    if (!sessionId) return;
+    patchTab(tabId, (tt) => ({
+      ...tt,
+      streaming: true,
+      queryError: null,
+      showChart: false,
+      batchResults: undefined,
+      preview: null,
+    }));
+    try {
+      const res = await api.runInTransaction(sessionId, sql);
+      patchTab(tabId, (tt) => ({
+        ...tt,
+        streaming: false,
+        result: res,
+        lastExecutedSql: sql,
+        paginatable: null,
+        canLoadMore: false,
+        autoLimitApplied: null,
+        autoLimitSql: null,
+      }));
+      setStatus({ kind: "key", key: "statusStreamingDone", vars: { rows: res.rows.length, ms: res.elapsed_ms } });
+    } catch (e) {
+      patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
+      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
+    }
+  }, [sessionId, patchTab]);
+
+  // トランザクション制御 (#414)。開始/確定/破棄。
+  const handleBeginTransaction = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      await api.beginTransaction(sessionId, selectedProfile?.database ?? null);
+      setTxActive(true);
+      toast.info(translate("txBegun"));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [sessionId, selectedProfile?.database, toast]);
+
+  const handleFinishTransaction = useCallback(async (commit: boolean) => {
+    if (!sessionId) return;
+    try {
+      await api.finishTransaction(sessionId, commit);
+      setTxActive(false);
+      toast.success(commit ? translate("txCommitted") : translate("txRolledBack"));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }, [sessionId, toast]);
+
   const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean }) => {
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
     // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
@@ -2383,10 +2446,16 @@ export default function App() {
       void runBatchInTab(target.id, sql, true);
       return;
     }
+    // 明示トランザクション (#414) 中は同一接続で実行する経路に振り分ける。
+    if (txActiveRef.current && target.kind === "query") {
+      void runTxInTab(target.id, sql);
+      return;
+    }
     runQueryInTab(target.id, sql, null, autoLimit);
   }, [
     runQueryInTab,
     runBatchInTab,
+    runTxInTab,
     addTab,
     selectedProfile?.is_production,
     selectedProfile?.confirm_writes,
@@ -2405,8 +2474,12 @@ export default function App() {
       void runBatchInTab(tabId, sql, true);
       return;
     }
+    if (txActiveRef.current) {
+      void runTxInTab(tabId, sql);
+      return;
+    }
     runQueryInTab(tabId, sql, null, autoLimit);
-  }, [pendingDangerous, runQueryInTab, runBatchInTab]);
+  }, [pendingDangerous, runQueryInTab, runBatchInTab, runTxInTab]);
 
   const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
 
@@ -4198,6 +4271,37 @@ export default function App() {
                 )}
               </Flex>
               <Box flex="1" />
+              {sessionId && (
+                <Flex align="center" gap="8px" mr="10px">
+                  {txActive ? (
+                    <>
+                      <chakra.span
+                        fontSize="2xs"
+                        fontWeight={700}
+                        letterSpacing="0.06em"
+                        px="6px"
+                        py="2px"
+                        borderRadius="4px"
+                        bg="color-mix(in srgb, #f59e0b 18%, transparent)"
+                        color="#f59e0b"
+                        title={t("txActiveHelp")}
+                      >
+                        {t("txActiveBadge")}
+                      </chakra.span>
+                      <Button variant="success" size="sm" onClick={() => handleFinishTransaction(true)}>
+                        {t("txCommit")}
+                      </Button>
+                      <Button variant="warning" size="sm" onClick={() => handleFinishTransaction(false)}>
+                        {t("txRollback")}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="secondary" size="sm" onClick={handleBeginTransaction} title={t("txBeginHelp")}>
+                      {t("txBegin")}
+                    </Button>
+                  )}
+                </Flex>
+              )}
               {sessionId && (
                 <Button variant="danger" onClick={handleDisconnect}>
                   {t("appDisconnect")}

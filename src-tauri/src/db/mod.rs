@@ -85,6 +85,47 @@ impl Connection {
         }
     }
 
+    /// Begin an explicit transaction (#414) on a dedicated held connection so
+    /// subsequent `execute_in_transaction` calls all run on the same connection
+    /// (and thus the same transaction). `database` sets the connection's
+    /// default schema/db context. Errs if a transaction is already active.
+    pub async fn begin_transaction(&self, database: Option<&str>) -> Result<()> {
+        match self {
+            Connection::MySql(c) => c.tx_begin(database).await,
+            Connection::Postgres(c) => c.tx_begin(database).await,
+            Connection::Sqlite(c) => c.tx_begin(database).await,
+        }
+    }
+
+    /// Run one statement inside the active explicit transaction (#414). Errs if
+    /// no transaction is active.
+    pub async fn execute_in_transaction(&self, sql: &str) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.tx_execute(sql).await,
+            Connection::Postgres(c) => c.tx_execute(sql).await,
+            Connection::Sqlite(c) => c.tx_execute(sql).await,
+        }
+    }
+
+    /// Commit (`true`) or roll back (`false`) the active explicit transaction
+    /// (#414) and release the held connection. Errs if none is active.
+    pub async fn finish_transaction(&self, commit: bool) -> Result<()> {
+        match self {
+            Connection::MySql(c) => c.tx_finish(commit).await,
+            Connection::Postgres(c) => c.tx_finish(commit).await,
+            Connection::Sqlite(c) => c.tx_finish(commit).await,
+        }
+    }
+
+    /// Whether an explicit transaction (#414) is currently active.
+    pub async fn transaction_active(&self) -> bool {
+        match self {
+            Connection::MySql(c) => c.tx_active().await,
+            Connection::Postgres(c) => c.tx_active().await,
+            Connection::Sqlite(c) => c.tx_active().await,
+        }
+    }
+
     /// Lightweight connection liveness check (#485): runs `SELECT 1` through the
     /// normal execute path (which dispatches per driver). Returns `Err` when the
     /// connection is dead — e.g. after an OS sleep or a dropped SSH tunnel — so

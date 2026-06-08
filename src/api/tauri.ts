@@ -431,6 +431,17 @@ export const api = {
    * トンネル断) false。セッションが見つからない場合のみ reject する。
    */
   pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
+  /** 明示トランザクション (#414) を開始する。 */
+  beginTransaction: (sessionId: string, database?: string | null) =>
+    invoke<void>("begin_transaction", { sessionId, database: database ?? null }),
+  /** 明示トランザクション内で 1 文を実行する (#414)。 */
+  runInTransaction: (sessionId: string, sql: string) =>
+    invoke<QueryResult>("run_in_transaction", { sessionId, sql }).then((r) =>
+      parseResponse(schemas.queryResult, r, "run_in_transaction"),
+    ),
+  /** 明示トランザクションを確定 (commit=true) / 破棄 (false) する (#414)。 */
+  finishTransaction: (sessionId: string, commit: boolean) =>
+    invoke<void>("finish_transaction", { sessionId, commit }),
 
   runQuery: (sessionId: string, sql: string, database?: string | null) =>
     invoke<QueryResult>("run_query", {
