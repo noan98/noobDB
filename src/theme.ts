@@ -44,7 +44,9 @@ const config = defineConfig({
   // Chakra の `_dark` 条件をアプリのテーマ属性 (`<html data-theme="dark">`) に
   // 合わせる。既定の `.dark &` ではなく `data-theme` を見るようにする。
   conditions: {
-    dark: "[data-theme=dark] &",
+    // "dark" だけでなく、ダーク系テーマプリセット ("dracula-dark" 等) でも
+    // カラー付きボタンの _dark トークンが効くよう、末尾一致にする (#465)。
+    dark: "[data-theme$=dark] &",
   },
   theme: {
     tokens: {

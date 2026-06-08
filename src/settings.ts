@@ -100,6 +100,31 @@ export interface Settings {
    * into `--font-sans` at runtime.
    */
   uiFontFamily: string | null;
+  /**
+   * Color theme preset (#465). `default` follows the light/dark toggle with the
+   * stock palette; other presets are full palettes (currently `dracula`,
+   * dark-only) selected via the `data-theme` attribute. Independent of accent
+   * color, density and syntax colors, which still override at runtime.
+   */
+  themePreset: ThemePreset;
+}
+
+/** Color theme presets (#465). `default` = stock light/dark. */
+export type ThemePreset = "default" | "dracula";
+
+/** Presets offered in settings, in display order. */
+export const THEME_PRESET_ORDER: ThemePreset[] = ["default", "dracula"];
+export const DEFAULT_THEME_PRESET: ThemePreset = "default";
+
+/**
+ * Maps a preset + the current light/dark theme to the `data-theme` attribute
+ * value. Dark-only presets ignore the light/dark toggle. Names end with
+ * "-dark"/"-light" so theme.ts `conditions.dark` ([data-theme$=dark]) resolves
+ * colored-button tokens correctly.
+ */
+export function themePresetDataTheme(preset: ThemePreset, theme: Theme): string {
+  if (preset === "dracula") return "dracula-dark";
+  return theme;
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
@@ -349,6 +374,7 @@ export const DEFAULT_SETTINGS: Settings = {
   richCellRendering: DEFAULT_RICH_CELL_RENDERING,
   monoFontFamily: DEFAULT_MONO_FONT_FAMILY,
   uiFontFamily: DEFAULT_UI_FONT_FAMILY,
+  themePreset: DEFAULT_THEME_PRESET,
 };
 
 /** Clamps an auto-refresh cadence (seconds) to the allowed range. */
@@ -420,6 +446,10 @@ function sanitizeFontSizePx(input: unknown, fallback: number): number {
   return n;
 }
 
+function sanitizeThemePreset(input: unknown, fallback: ThemePreset): ThemePreset {
+  return THEME_PRESET_ORDER.includes(input as ThemePreset) ? (input as ThemePreset) : fallback;
+}
+
 const STORAGE_KEY = "noobdb.settings";
 
 function isHexColor(v: unknown): v is string {
@@ -474,6 +504,7 @@ function loadInitial(): Settings {
       richCellRendering?: unknown;
       monoFontFamily?: unknown;
       uiFontFamily?: unknown;
+      themePreset?: unknown;
     };
     return {
       syntaxColors: {
@@ -520,6 +551,7 @@ function loadInitial(): Settings {
           : DEFAULT_RICH_CELL_RENDERING,
       monoFontFamily: sanitizeFontFamily(parsed.monoFontFamily, DEFAULT_MONO_FONT_FAMILY),
       uiFontFamily: sanitizeFontFamily(parsed.uiFontFamily, DEFAULT_UI_FONT_FAMILY),
+      themePreset: sanitizeThemePreset(parsed.themePreset, DEFAULT_THEME_PRESET),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -738,6 +770,14 @@ export function setUiFontFamily(value: string | null): void {
   const next = sanitizeFontFamily(value, current.uiFontFamily);
   if (current.uiFontFamily === next) return;
   current = { ...current, uiFontFamily: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setThemePreset(value: ThemePreset): void {
+  const next = sanitizeThemePreset(value, current.themePreset);
+  if (current.themePreset === next) return;
+  current = { ...current, themePreset: next };
   persist();
   listeners.forEach((cb) => cb());
 }

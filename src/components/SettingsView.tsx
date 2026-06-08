@@ -29,6 +29,9 @@ import {
   uiFontStack,
   setMonoFontFamily,
   setUiFontFamily,
+  THEME_PRESET_ORDER,
+  setThemePreset,
+  type ThemePreset,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
   SYNTAX_PRESET_ORDER,
   Density,
@@ -431,6 +434,11 @@ const DENSITY_LABEL_KEYS: Record<Density, Parameters<ReturnType<typeof useT>>[0]
   spacious: "settingsDensitySpacious",
 };
 
+const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof useT>>[0]> = {
+  default: "themePresetDefault",
+  dracula: "themePresetDracula",
+};
+
 const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> = {
   default: "settingsAccentDefault",
   blue: "settingsAccentBlue",
@@ -622,6 +630,23 @@ export function SettingsView({ theme, onClose }: Props) {
           stack={uiFontStack}
           onChange={setUiFontFamily}
         />
+
+        <SettingsToggleRow>
+          <SettingsToggleLabel as="span">{t("settingsThemePreset")}</SettingsToggleLabel>
+          <SettingsSegment role="group" aria-label={t("settingsThemePreset")}>
+            {THEME_PRESET_ORDER.map((p) => (
+              <SettingsSegmentButton
+                key={p}
+                type="button"
+                aria-pressed={settings.themePreset === p}
+                onClick={() => setThemePreset(p as ThemePreset)}
+              >
+                {t(THEME_PRESET_LABEL_KEYS[p])}
+              </SettingsSegmentButton>
+            ))}
+          </SettingsSegment>
+          <SettingsHelpInline>{t("settingsThemePresetHelp")}</SettingsHelpInline>
+        </SettingsToggleRow>
 
         <SettingsToggleRow>
           <SettingsToggleLabel as="span">{t("settingsAccentColor")}</SettingsToggleLabel>

@@ -111,8 +111,10 @@ import {
   BASE_FONT_SIZE_PX,
   monoFontStack,
   uiFontStack,
+  themePresetDataTheme,
   type TabRestoreMode,
 } from "./settings";
+import { ThemeTransition } from "./components/ThemeTransition";
 import { accentVars } from "./accent";
 import {
   clearPersistedTabs,
@@ -586,10 +588,13 @@ export default function App() {
   // `?` キーで開くショートカット チートシートの開閉 (#448)。
   const [showCheatSheet, setShowCheatSheet] = useState(false);
 
+  // data-theme はテーマプリセット (#465) と light/dark トグルから合成する。
+  // THEME_STORAGE_KEY には従来どおり light/dark のみ保存する。
+  const dataTheme = themePresetDataTheme(settings.themePreset, theme);
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.setAttribute("data-theme", dataTheme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
+  }, [dataTheme, theme]);
 
   useEffect(() => {
     const colors = settings.syntaxColors[theme];
@@ -3076,6 +3081,7 @@ export default function App() {
 
   return (
     <Flex direction="column" h="100vh">
+      <ThemeTransition themeKey={dataTheme} />
       <TitleBar />
       <Grid
         templateColumns={
