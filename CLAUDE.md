@@ -313,6 +313,16 @@ build_options` が SQLite を最初に短絡処理します)。
 実行) を返します。単一行集計 (`COUNT(*)` 等) や既存の `LIMIT`/`OFFSET`、ロック句がある
 場合は付与しません。`db/mod.rs` の単体テストがこれら 2 関数の挙動を広くカバーしています。
 
+読み取り専用判定は、バックの `is_read_only_sql` とフロントの `dangerousSql.ts`
+`isReadOnlySql` で**独立に二重実装**されているため、両者の判定がズレないよう**共有
+ゴールデンベクタ**で整合性を継続検証します (#444)。代表的な SQL とその期待値を
+`src/__tests__/fixtures/readOnlySqlVectors.json` に 1 ファイルだけ置き、フロントは
+Vitest (`readOnlyGolden.test.ts`) で import、バックは統合テスト
+(`tests/read_only_golden.rs`) が `include_str!` で読み込んで `__test_api::is_read_only_sql`
+に通します。スタック文・ロック付き SELECT・データ変更 CTE・マスク済みキーワードなどの
+境界ケースを網羅しており、片方の実装だけ変えてズレるとどちらかのテストが落ちます。
+**境界ケースを追加するときはこの JSON に追記**すれば両言語に反映されます。
+
 **安全網には「強制レベル」の違いがある点に注意してください。** 同じ「安全網」でも、
 バックエンドで強制されるものと、UI 上の確認に留まるものがあります。
 
