@@ -3080,9 +3080,30 @@ export default function App() {
   };
 
   return (
-    <Flex direction="column" h="100vh">
+    <Flex
+      direction="column"
+      h="100vh"
+      // アクティブ接続色をルートに伝播し、タイトルバー (#466) も含め全体で参照できる
+      // ようにする。main 側 (gridColumn 2) でも個別に上書きしているため作業画面の
+      // ヘッダーは従来どおり。
+      style={
+        sessionId && selectedProfile?.color
+          ? ({ "--ws-accent": selectedProfile.color } as CSSProperties)
+          : undefined
+      }
+    >
       <ThemeTransition themeKey={dataTheme} />
-      <TitleBar />
+      <TitleBar
+        connection={
+          sessionId && selectedProfile
+            ? {
+                name: selectedProfile.name,
+                color: selectedProfile.color ?? null,
+                isProduction: selectedProfile.is_production,
+              }
+            : null
+        }
+      />
       <Grid
         templateColumns={
           sidebarCollapsed || (narrow && narrowSidebarOpen)
