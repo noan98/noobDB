@@ -26,6 +26,12 @@ import {
   type PendingEdits,
 } from "./components/cellEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
+import { copyToClipboard } from "./components/clipboard";
+import {
+  buildDropTableSql,
+  buildRenameTableSql,
+  buildTruncateSql,
+} from "./components/tableMaintenance";
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration } from "./components/illustrations";
 import { Spinner } from "./components/Spinner";
@@ -83,6 +89,9 @@ const ObjectSearchModal = lazy(() =>
 );
 const CreateTableModal = lazy(() =>
   import("./components/CreateTableModal").then((m) => ({ default: m.CreateTableModal })),
+);
+const RenameTableDialog = lazy(() =>
+  import("./components/RenameTableDialog").then((m) => ({ default: m.RenameTableDialog })),
 );
 const HelpView = lazy(() =>
   import("./components/HelpView").then((m) => ({ default: m.HelpView })),
@@ -882,6 +891,8 @@ export default function App() {
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
   // CREATE TABLE ウィザード (#460): 対象データベース。null で閉じる。
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
+  // テーブル名変更 (#496): 対象。null で閉じる。
+  const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
   // Whole-schema autocomplete snapshots, keyed by schemaCacheKey(session, db).
   // Fetched lazily per database and reused across tabs; invalidated after DDL
   // and dropped wholesale when the session changes.
@@ -2631,6 +2642,88 @@ export default function App() {
     openQueryInEditor(sql);
   }, [openQueryInEditor]);
 
+  // テーブル保守操作 (#496): DDL を実行し、スキーマキャッシュとツリーを更新する。
+  const runMaintenanceDdl = useCallback(async (sql: string, database: string): Promise<boolean> => {
+    if (!sessionId) return false;
+    try {
+      await api.runQuery(sessionId, sql, database);
+      invalidateSchemaCache(database);
+      connectionListRef.current?.refreshSchema();
+      return true;
+    } catch (e) {
+      toast.error(translate("statusQueryError", { error: String(e) }));
+      return false;
+    }
+  }, [sessionId, invalidateSchemaCache, toast]);
+
+  const handleCopyTableName = useCallback(async (table: string) => {
+    if (await copyToClipboard(table)) {
+      toast.success(translate("tableNameCopied", { table }));
+    }
+  }, [toast]);
+
+  // 破壊的操作の確認メッセージ。本番接続では追加警告を添える。
+  const maintenanceMessage = useCallback((body: string): ReactNode => {
+    if (selectedProfile?.is_production) {
+      return (
+        <>
+          {body}
+          <br />
+          <br />
+          <strong>{translate("maintenanceProductionWarning")}</strong>
+        </>
+      );
+    }
+    return body;
+  }, [selectedProfile?.is_production]);
+
+  const handleTruncateTable = useCallback(async (database: string, table: string) => {
+    const ok = await confirm({
+      title: translate("truncateConfirmTitle", { table }),
+      message: maintenanceMessage(translate("truncateConfirmBody", { table })),
+      confirmLabel: translate("truncateConfirmOk"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, runMaintenanceDdl]);
+
+  const handleDropTable = useCallback(async (database: string, table: string) => {
+    const ok = await confirm({
+      title: translate("dropConfirmTitle", { table }),
+      message: maintenanceMessage(translate("dropConfirmBody", { table })),
+      confirmLabel: translate("dropConfirmOk"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const success = await runMaintenanceDdl(buildDropTableSql(driver, database, table), database);
+    if (success) {
+      // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
+        .forEach((tt) => handleCloseTabRef.current(tt.id));
+    }
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, runMaintenanceDdl]);
+
+  const handleRenameTableSubmit = useCallback(async (newName: string) => {
+    const target = renameTarget;
+    setRenameTarget(null);
+    if (!target || !newName.trim() || newName.trim() === target.table) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const success = await runMaintenanceDdl(
+      buildRenameTableSql(driver, target.database, target.table, newName.trim()),
+      target.database,
+    );
+    if (success) {
+      // 開いている対象テーブルのタブは旧名のままなので閉じる (新名で開き直せる)。
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
+        .forEach((tt) => handleCloseTabRef.current(tt.id));
+    }
+  }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl]);
+
   const handleRunTableSelect = useCallback((database: string, table: string) => {
     const limit = Math.max(1, settings.defaultDisplayCount);
     const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
@@ -3568,6 +3661,10 @@ export default function App() {
             recent={quickAccess.recent}
             onToggleFavorite={handleToggleFavorite}
             onCreateTable={(db) => setCreateTableDb(db)}
+            onTruncateTable={handleTruncateTable}
+            onDropTable={handleDropTable}
+            onRenameTable={(database, table) => setRenameTarget({ database, table })}
+            onCopyTableName={handleCopyTableName}
           />
         ) : sidebarTab === "snippets" ? (
           <SnippetList
@@ -4111,6 +4208,18 @@ export default function App() {
               onRun={handleCreateTableRun}
               onSendToEditor={handleCreateTableToEditor}
               onClose={() => setCreateTableDb(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {renameTarget && (
+          <Suspense fallback={null}>
+            <RenameTableDialog
+              table={renameTarget.table}
+              onConfirm={handleRenameTableSubmit}
+              onCancel={() => setRenameTarget(null)}
             />
           </Suspense>
         )}

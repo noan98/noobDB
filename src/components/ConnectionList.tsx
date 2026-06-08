@@ -30,6 +30,8 @@ const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 /** サイドバーフィルタで公開するハンドル型。App.tsx が Cmd/Ctrl+P でフォーカスを当てるために使う。 */
 export interface ConnectionListHandle {
   focusFilter: () => void;
+  /** スキーマツリーをサーバーから再取得する (#496: DDL 実行後の反映に使う)。 */
+  refreshSchema: () => void;
 }
 
 /** 検索クエリ `query` にマッチする部分をハイライト表示するシンプルなコンポーネント。
@@ -190,6 +192,12 @@ interface Props {
   onShowCreateTable?: (database: string, table: string) => void;
   /** DB ノードから新規テーブル作成ウィザード (#460) を開く。 */
   onCreateTable?: (database: string) => void;
+  /** テーブル保守操作 (#496): TRUNCATE / DROP / RENAME。read_only では無効化される。 */
+  onTruncateTable?: (database: string, table: string) => void;
+  onDropTable?: (database: string, table: string) => void;
+  onRenameTable?: (database: string, table: string) => void;
+  /** テーブル名をクリップボードへコピー (#496 補助)。 */
+  onCopyTableName?: (table: string) => void;
   /** Row cap shown in the "Run SELECT *" menu label. */
   selectLimit: number;
   /** お気に入りテーブル (アクティブ接続) のクイックアクセス (#461)。 */
@@ -229,6 +237,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onInsertTableSelect,
   onShowCreateTable,
   onCreateTable,
+  onTruncateTable,
+  onDropTable,
+  onRenameTable,
+  onCopyTableName,
   selectLimit,
   favorites,
   recent,
@@ -276,7 +288,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       filterInputRef.current?.focus();
       filterInputRef.current?.select();
     },
+    refreshSchema: () => {
+      void refreshSchemaRef.current?.();
+    },
   }));
+  // `refreshSchema` is defined later in the body; reach it through a ref so the
+  // imperative handle doesn't depend on declaration order.
+  const refreshSchemaRef = useRef<(() => Promise<void>) | null>(null);
 
   // Id of the session whose schema is currently being re-fetched, or null.
   // Keyed by session (not a shared boolean) so a refresh only disables/​spins
@@ -370,6 +388,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setRefreshingSession((cur) => (cur === targetSessionId ? null : cur));
     }
   }, [sessionId, refreshingSession, expandedDbs, expandedTables]);
+  // Keep the imperative-handle ref pointed at the latest refreshSchema.
+  refreshSchemaRef.current = refreshSchema;
 
   useEffect(() => {
     setTables({});
@@ -481,6 +501,41 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       disabled: activeReadOnly,
       title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
     });
+    if (onCopyTableName) {
+      items.push({ label: t("contextMenuCopyTableName"), onSelect: () => onCopyTableName(tbl) });
+    }
+    // テーブル保守操作 (#496): TRUNCATE / DROP / RENAME。破壊的なので read_only では
+    // 無効化し、実行時は呼び出し側 (App) が確認ダイアログを挟む。
+    if (onTruncateTable || onDropTable || onRenameTable) {
+      const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
+      items.push({ separator: true });
+      if (onRenameTable) {
+        items.push({
+          label: t("contextMenuRenameTable"),
+          onSelect: () => onRenameTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+        });
+      }
+      if (onTruncateTable) {
+        items.push({
+          label: t("contextMenuTruncateTable"),
+          onSelect: () => onTruncateTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+          danger: true,
+        });
+      }
+      if (onDropTable) {
+        items.push({
+          label: t("contextMenuDropTable"),
+          onSelect: () => onDropTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+          danger: true,
+        });
+      }
+    }
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
