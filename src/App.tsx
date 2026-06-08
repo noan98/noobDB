@@ -102,6 +102,9 @@ const RowInsertModal = lazy(() =>
 const ChartView = lazy(() =>
   import("./components/ChartView").then((m) => ({ default: m.ChartView })),
 );
+const BatchResultsView = lazy(() =>
+  import("./components/BatchResultsView").then((m) => ({ default: m.BatchResultsView })),
+);
 const HelpView = lazy(() =>
   import("./components/HelpView").then((m) => ({ default: m.HelpView })),
 );
@@ -160,6 +163,11 @@ import {
   clampPage,
   estimatedTotalPages,
 } from "./pagination";
+import {
+  isMultiStatement,
+  splitSqlStatements,
+  type BatchStatementResult,
+} from "./sqlScript";
 import {
   EMPTY_QUICK_ACCESS,
   loadQuickAccess,
@@ -443,6 +451,12 @@ interface Tab {
   pendingInserts?: PendingInsertRow[];
   /** チャートビュー (#440) を表示中か。結果グリッドの代わりにチャートを描く。 */
   showChart?: boolean;
+  /** SQL スクリプトのバッチ実行 (#495) の文ごとの結果。設定時は結果ビューに代えて表示。 */
+  batchResults?: BatchStatementResult[];
+  /** バッチ実行のスクリプト本文 (stop/continue 切替で再実行するため保持)。 */
+  batchScript?: string;
+  /** バッチ実行中フラグ。 */
+  batchRunning?: boolean;
   /**
    * Wall-clock timestamp (ms) set each time an Apply edit completes successfully.
    * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
@@ -928,6 +942,8 @@ export default function App() {
     // approval for any write (no specific destructive pattern was detected).
     writeApproval: boolean;
     autoLimit: number | null;
+    /** True when this run should execute as a multi-statement batch (#495). */
+    batch?: boolean;
   } | null>(null);
 
   // Pending {{variable}} parameter prompt. When the editor's SQL contains
@@ -2241,6 +2257,64 @@ export default function App() {
     void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
   }, [goToPageInTab]);
 
+  // SQL スクリプト (複数文) のバッチ実行 (#495)。文ごとに順次実行し、各文の結果
+  // (結果セット / 影響行数 / エラー) を集めて batchResults に積む。stopOnError なら
+  // 最初のエラーで残りをスキップ、false なら続行する。読み取り専用ガードは文ごとに
+  // バックエンドが強制する (api.runQuery 経由なので履歴は汚さない)。
+  const runBatchInTab = useCallback(async (tabId: string, sql: string, stopOnError: boolean) => {
+    if (!sessionId) return;
+    const tab = tabsRef.current.find((tt) => tt.id === tabId);
+    if (!tab) return;
+    const statements = splitSqlStatements(sql);
+    if (statements.length === 0) return;
+    const db = tab.database ?? selectedProfile?.database ?? null;
+    const MAX_PREVIEW_ROWS = 200;
+    patchTab(tabId, (tt) => ({
+      ...tt,
+      batchRunning: true,
+      batchScript: sql,
+      batchResults: [],
+      showChart: false,
+      preview: null,
+      queryError: null,
+    }));
+    setStatus({ kind: "key", key: "statusBatchRunning", vars: { total: statements.length } });
+    const results: BatchStatementResult[] = [];
+    let stopped = false;
+    for (const stmt of statements) {
+      if (stopped) {
+        results.push({ sql: stmt, status: "skipped" });
+        continue;
+      }
+      try {
+        const res = await api.runQuery(sessionId, stmt, db);
+        const isSelect = res.columns.length > 0;
+        results.push({
+          sql: stmt,
+          status: "ok",
+          columns: isSelect ? res.columns : undefined,
+          rows: isSelect ? res.rows.slice(0, MAX_PREVIEW_ROWS) : undefined,
+          rowsAffected: isSelect ? undefined : Number(res.rows_affected ?? 0),
+          elapsedMs: res.elapsed_ms,
+        });
+      } catch (e) {
+        results.push({ sql: stmt, status: "error", error: String(e) });
+        if (stopOnError) stopped = true;
+      }
+      // 進捗を反映 (途中経過を見せる)。コピーして積む。
+      patchTab(tabId, (tt) => ({ ...tt, batchResults: [...results] }));
+    }
+    patchTab(tabId, (tt) => ({ ...tt, batchRunning: false, batchResults: results }));
+    const okCount = results.filter((r) => r.status === "ok").length;
+    const errCount = results.filter((r) => r.status === "error").length;
+    setStatus({
+      kind: "key",
+      key: "statusBatchDone",
+      vars: { ok: okCount, errors: errCount, total: results.length },
+      error: errCount > 0,
+    });
+  }, [sessionId, selectedProfile?.database, patchTab]);
+
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
   // independently.
@@ -2264,6 +2338,8 @@ export default function App() {
     // outright on the backend, so there is nothing to approve here.
     const requireWriteApproval =
       isProduction && (selectedProfile?.confirm_writes ?? false) && !sessionReadOnly;
+    // 複数文スクリプトはバッチ実行 (#495) に振り分ける。auto LIMIT は付けない。
+    const batch = tab.kind === "query" && isMultiStatement(sql);
     const findings =
       isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
     const needsWriteApproval = requireWriteApproval && !isReadOnlySql(sql);
@@ -2275,12 +2351,18 @@ export default function App() {
         isProduction,
         writeApproval: needsWriteApproval,
         autoLimit,
+        batch,
       });
+      return;
+    }
+    if (batch) {
+      void runBatchInTab(tab.id, sql, true);
       return;
     }
     runQueryInTab(tab.id, sql, null, autoLimit);
   }, [
     runQueryInTab,
+    runBatchInTab,
     selectedProfile?.is_production,
     selectedProfile?.confirm_writes,
     selectedProfile?.read_only,
@@ -2291,10 +2373,14 @@ export default function App() {
 
   const handleConfirmDangerous = useCallback(() => {
     if (!pendingDangerous) return;
-    const { tabId, sql, autoLimit } = pendingDangerous;
+    const { tabId, sql, autoLimit, batch } = pendingDangerous;
     setPendingDangerous(null);
+    if (batch) {
+      void runBatchInTab(tabId, sql, true);
+      return;
+    }
     runQueryInTab(tabId, sql, null, autoLimit);
-  }, [pendingDangerous, runQueryInTab]);
+  }, [pendingDangerous, runQueryInTab, runBatchInTab]);
 
   const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
 
@@ -3405,6 +3491,15 @@ export default function App() {
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   {tab.kind === "explain" ? (
                     <ExplainViewer result={tab.result} streaming={tab.streaming} />
+                  ) : tab.batchResults ? (
+                    <BatchResultsView
+                      results={tab.batchResults}
+                      running={!!tab.batchRunning}
+                      onRerun={(stopOnError) => {
+                        if (tab.batchScript) void runBatchInTab(tab.id, tab.batchScript, stopOnError);
+                      }}
+                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, batchResults: undefined, batchScript: undefined }))}
+                    />
                   ) : tab.showChart && tab.result && !tab.streaming ? (
                     <ChartView
                       result={tab.result}
