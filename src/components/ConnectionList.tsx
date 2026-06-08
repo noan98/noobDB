@@ -1,7 +1,7 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
-import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
+import { api, ConnectionProfile, IndexInfo, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
 import { formatRowEstimate } from "./rowEstimate";
@@ -238,6 +238,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // グループ折りたたみ状態は localStorage に永続化し、再起動後も維持する (#350)。
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(readCollapsedGroups);
   const [tableColumns, setTableColumns] = useState<Record<string, TableColumnInfo[]>>({});
+  // テーブルごとのインデックス一覧 (#459)。テーブル展開時に列と並行で遅延取得する。
+  const [tableIndexes, setTableIndexes] = useState<Record<string, IndexInfo[]>>({});
   const [databases, setDatabases] = useState<string[] | null>(null);
   const [tables, setTables] = useState<Record<string, string[]>>({});
   // Approximate row counts per database, keyed `db -> table -> estimate`. Read
@@ -372,6 +374,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setExpandedDbs({});
     setExpandedTables({});
     setTableColumns({});
+    setTableIndexes({});
     tablesInFlightRef.current.clear();
     estimatesInFlightRef.current.clear();
     if (sessionId) {
@@ -549,6 +552,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     try {
       const cols = await api.describeTable(sessionId, db, tbl);
       setTableColumns((prev) => ({ ...prev, [key]: cols }));
+      // インデックス一覧はベストエフォート: 取得失敗 (権限など) でも列表示は維持する。
+      try {
+        const idx = await api.listIndexes(sessionId, db, tbl);
+        setTableIndexes((prev) => ({ ...prev, [key]: idx }));
+      } catch {
+        setTableIndexes((prev) => ({ ...prev, [key]: [] }));
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -1073,6 +1083,45 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                           </TreeRow>
                                         );
                                       })
+                                    )}
+                                    {/* インデックス一覧 (#459)。展開時に列と並行取得し、
+                                        列の下に小見出し付きで表示する。 */}
+                                    {showAllCols && (tableIndexes[tKey]?.length ?? 0) > 0 && (
+                                      <>
+                                        <QuickAccessHeader>{t("indexesLabel")}</QuickAccessHeader>
+                                        {tableIndexes[tKey].map((idx) => (
+                                          <TreeRow
+                                            key={`idx:${idx.name}`}
+                                            pt="3px"
+                                            pb="3px"
+                                            cursor="default"
+                                            fontSize="sm"
+                                            role="treeitem"
+                                            title={`${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`}
+                                          >
+                                            <TreeChevron visibility="hidden" aria-hidden />
+                                            <TreeIcon
+                                              fontSize="xs"
+                                              color={idx.primary ? "app.cell.date" : idx.unique ? "#10b981" : "app.textMuted"}
+                                              aria-hidden
+                                            >
+                                              {idx.primary ? <Icon name="key" /> : <Icon name="list" />}
+                                            </TreeIcon>
+                                            <TreeLabel fontFamily="mono" color="app.text">
+                                              {idx.columns.join(", ") || idx.name}
+                                            </TreeLabel>
+                                            {(idx.primary || idx.unique) && (
+                                              <TreeBadge
+                                                fontSize="2xs"
+                                                textTransform="uppercase"
+                                                title={idx.name}
+                                              >
+                                                {idx.primary ? t("indexBadgePk") : t("indexBadgeUnique")}
+                                              </TreeBadge>
+                                            )}
+                                          </TreeRow>
+                                        ))}
+                                      </>
                                     )}
                                   </TreeChildren>
                                 </TreeCollapse>

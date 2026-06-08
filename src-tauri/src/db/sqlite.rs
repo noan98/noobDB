@@ -5,8 +5,8 @@ use sqlx::sqlite::{SqliteColumn, SqliteConnectOptions, SqlitePool, SqlitePoolOpt
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
-    TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, StreamBatch, TableColumnInfo,
+    TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -472,6 +472,50 @@ impl SqliteConn {
                     constraint_name: id.map(|i| format!("{}:{}", table, i)),
                 });
             }
+        }
+        Ok(out)
+    }
+
+    pub async fn list_indexes(&self, _db: &str, table: &str) -> Result<Vec<IndexInfo>> {
+        // PRAGMA can't bind parameters — reject anything that could break out of
+        // the quoted identifier, then build the statement literally.
+        if table.contains('"') || table.contains('\0') {
+            return Err(AppError::InvalidInput("invalid table name".into()));
+        }
+        // index_list columns: seq, name, unique, origin, partial.
+        // origin = 'pk' for the implicit/auto PRIMARY KEY index.
+        let list_sql = format!("PRAGMA index_list(\"{}\")", table);
+        let list_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(list_sql))
+            .fetch_all(&self.pool)
+            .await?;
+        let mut out = Vec::with_capacity(list_rows.len());
+        for r in &list_rows {
+            let name = r.try_get::<String, _>("name").unwrap_or_default();
+            if name.is_empty() || name.contains('"') || name.contains('\0') {
+                continue;
+            }
+            let unique = r.try_get::<i64, _>("unique").unwrap_or(0) != 0;
+            let primary = r
+                .try_get::<String, _>("origin")
+                .map(|o| o == "pk")
+                .unwrap_or(false);
+            // index_info columns: seqno, cid, name. NULL name = an expression
+            // index column; skip those (no plain column name to show).
+            let info_sql = format!("PRAGMA index_info(\"{}\")", name);
+            let info_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(info_sql))
+                .fetch_all(&self.pool)
+                .await?;
+            let columns = info_rows
+                .iter()
+                .filter_map(|c| c.try_get::<Option<String>, _>("name").ok().flatten())
+                .collect();
+            out.push(IndexInfo {
+                name,
+                columns,
+                unique,
+                primary,
+                method: None,
+            });
         }
         Ok(out)
     }

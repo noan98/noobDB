@@ -71,6 +71,19 @@ pub struct ForeignKey {
     pub constraint_name: Option<String>,
 }
 
+/// One index on a table (#459). Carries the index name, its constituent columns
+/// in order, and whether it is UNIQUE / the PRIMARY KEY. `method` is the access
+/// method when the engine exposes one (e.g. PostgreSQL `btree`/`gin`, MySQL
+/// `BTREE`/`HASH`); `None` for SQLite, which has no such concept.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexInfo {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub unique: bool,
+    pub primary: bool,
+    pub method: Option<String>,
+}
+
 /// One table (or view) and its column names, used to feed whole-schema SQL
 /// autocomplete. Only names are carried — type/key metadata lives in the
 /// per-table `TableColumnInfo` path, which the editor does not need for

@@ -6,8 +6,8 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
-    TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, StreamBatch, TableColumnInfo,
+    TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -593,6 +593,52 @@ impl MySqlConn {
                 referenced_column: r.try_get::<Option<String>, _>(3).ok().flatten(),
                 constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
             })
+            .collect())
+    }
+
+    pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {
+        // information_schema.STATISTICS has one row per (index, column). Order by
+        // SEQ_IN_INDEX so composite indexes keep declaration order. NON_UNIQUE=0
+        // means UNIQUE; the special index name "PRIMARY" is the primary key.
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, INDEX_TYPE, SEQ_IN_INDEX
+               FROM information_schema.STATISTICS
+               WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+               ORDER BY INDEX_NAME, SEQ_IN_INDEX"#,
+        )
+        .bind(db)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        // Preserve first-seen index order while grouping columns.
+        let mut order: Vec<String> = Vec::new();
+        let mut by_name: std::collections::HashMap<String, IndexInfo> =
+            std::collections::HashMap::new();
+        for r in &rows {
+            let name = r.try_get::<String, _>(0).unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            let column = r.try_get::<Option<String>, _>(1).ok().flatten();
+            let non_unique = r.try_get::<i64, _>(2).unwrap_or(1);
+            let method = r.try_get::<Option<String>, _>(3).ok().flatten();
+            let entry = by_name.entry(name.clone()).or_insert_with(|| {
+                order.push(name.clone());
+                IndexInfo {
+                    name: name.clone(),
+                    columns: Vec::new(),
+                    unique: non_unique == 0,
+                    primary: name == "PRIMARY",
+                    method,
+                }
+            });
+            if let Some(col) = column {
+                entry.columns.push(col);
+            }
+        }
+        Ok(order
+            .into_iter()
+            .filter_map(|n| by_name.remove(&n))
             .collect())
     }
 

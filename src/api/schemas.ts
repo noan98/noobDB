@@ -64,6 +64,14 @@ export const tableRowEstimate = z.object({
   estimate: z.number().nullable(),
 });
 
+export const indexInfo = z.object({
+  name: z.string(),
+  columns: z.array(z.string()),
+  unique: z.boolean(),
+  primary: z.boolean(),
+  method: z.string().nullable(),
+});
+
 /**
  * プレビュー結果の検証スキーマ。他の IPC スキーマと対をなす公開検証表面で、
  * 現状ランタイム検証には未配線だが API 完全性のため保持する (#391)。
@@ -228,6 +236,7 @@ export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
+export const indexInfoArray = z.array(indexInfo);
 export const connectionProfileArray = z.array(connectionProfile);
 export const snippetArray = z.array(snippet);
 export const historyEntryArray = z.array(historyEntry);

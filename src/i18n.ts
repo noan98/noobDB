@@ -647,6 +647,10 @@ const en = {
   treeNoDatabases: "(no databases)",
   treeNoTables: "(no tables)",
   treeNoColumns: "(no columns)",
+  // テーブルのインデックス表示 (#459)。
+  indexesLabel: "Indexes",
+  indexBadgePk: "PK",
+  indexBadgeUnique: "Unique",
   treeLoading: "Loading...",
   treeTableTitle: "Click to expand columns, double-click to SELECT * LIMIT 100",
   treeRowEstimateTitle:
@@ -1706,6 +1710,10 @@ const ja: Dict = {
   treeNoDatabases: "(データベースがありません)",
   treeNoTables: "(テーブルがありません)",
   treeNoColumns: "(カラムがありません)",
+  // テーブルのインデックス表示 (#459)。
+  indexesLabel: "インデックス",
+  indexBadgePk: "PK",
+  indexBadgeUnique: "ユニーク",
   treeLoading: "読み込み中...",
   treeTableTitle: "クリックでカラム展開、ダブルクリックで SELECT * LIMIT 100",
   treeRowEstimateTitle:

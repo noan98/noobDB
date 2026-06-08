@@ -206,6 +206,15 @@ export interface TableSchema {
   columns: string[];
 }
 
+/** テーブル 1 つのインデックス情報 (#459)。 */
+export interface IndexInfo {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  primary: boolean;
+  method: string | null;
+}
+
 /**
  * One foreign-key relationship in a database, used to draw ER-diagram edges.
  * One entry per referencing column; the columns of a composite key share a
@@ -492,6 +501,11 @@ export const api = {
   tableRowEstimates: (sessionId: string, database: string) =>
     invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(
       (r) => parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
+    ),
+  /** テーブルのインデックス一覧を取得する (#459)。 */
+  listIndexes: (sessionId: string, database: string, table: string) =>
+    invoke<IndexInfo[]>("list_indexes", { sessionId, database, table }).then((r) =>
+      parseResponse(schemas.indexInfoArray, r, "list_indexes"),
     ),
   compareSchema: (params: {
     sourceSessionId: string;

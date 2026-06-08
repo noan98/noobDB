@@ -248,6 +248,72 @@ async fn sqlite_foreign_keys_are_introspected_for_er_diagram() {
 }
 
 #[tokio::test]
+async fn sqlite_list_indexes_reports_primary_unique_and_plain() {
+    // list_indexes (#459) must surface the implicit PK index, an explicit UNIQUE
+    // index, and a plain multi-column index with its columns in declaration order.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_idx_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute(
+        "CREATE TABLE items (
+           id INTEGER PRIMARY KEY,
+           sku TEXT NOT NULL,
+           category TEXT,
+           name TEXT
+         )",
+        None,
+    )
+    .await
+    .expect("create items");
+    conn.execute("CREATE UNIQUE INDEX idx_items_sku ON items(sku)", None)
+        .await
+        .expect("create unique index");
+    conn.execute(
+        "CREATE INDEX idx_items_cat_name ON items(category, name)",
+        None,
+    )
+    .await
+    .expect("create plain index");
+
+    let indexes = conn
+        .list_indexes("main", "items")
+        .await
+        .expect("list_indexes");
+
+    let unique = indexes
+        .iter()
+        .find(|i| i.name == "idx_items_sku")
+        .expect("unique index present");
+    assert!(unique.unique, "idx_items_sku is UNIQUE");
+    assert!(!unique.primary);
+    assert_eq!(unique.columns, vec!["sku".to_string()]);
+
+    let plain = indexes
+        .iter()
+        .find(|i| i.name == "idx_items_cat_name")
+        .expect("plain index present");
+    assert!(!plain.unique);
+    assert_eq!(
+        plain.columns,
+        vec!["category".to_string(), "name".to_string()],
+        "composite index keeps declaration order"
+    );
+
+    // Note: an `INTEGER PRIMARY KEY` is a rowid alias with no separate index, so
+    // `PRIMARY KEY` indexes are not asserted here (their visibility in
+    // PRAGMA index_list is engine/version dependent). The `primary` flag is still
+    // derived from index_list's `origin = 'pk'` for engines that expose it.
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_execute_transaction_is_all_or_nothing() {
     let mut path = std::env::temp_dir();
     path.push(format!("noobdb_sqlite_tx_{}.db", std::process::id()));

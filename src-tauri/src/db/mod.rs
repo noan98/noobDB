@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use types::{
-    ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
-    TableSchema,
+    ForeignKey, IndexInfo, PreviewResult, QueryResult, StreamBatch, TableColumnInfo,
+    TableRowEstimate, TableSchema,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -223,6 +223,18 @@ impl Connection {
             Connection::MySql(c) => c.foreign_keys(db).await,
             Connection::Postgres(c) => c.foreign_keys(db).await,
             Connection::Sqlite(c) => c.foreign_keys(db).await,
+        }
+    }
+
+    /// Every index on `table` in `db` (#459): name, constituent columns (in
+    /// order), and UNIQUE / PRIMARY flags. Dispatches per driver — MySQL uses
+    /// `SHOW INDEX`, PostgreSQL reads `pg_index`/`pg_class`, SQLite loops
+    /// `PRAGMA index_list` + `PRAGMA index_info`.
+    pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {
+        match self {
+            Connection::MySql(c) => c.list_indexes(db, table).await,
+            Connection::Postgres(c) => c.list_indexes(db, table).await,
+            Connection::Sqlite(c) => c.list_indexes(db, table).await,
         }
     }
 
