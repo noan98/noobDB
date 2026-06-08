@@ -13,6 +13,9 @@ use crate::error::{AppError, Result};
 
 pub struct PostgresConn {
     pool: PgPool,
+    /// 明示トランザクション (#414) で確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
+    /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
+    tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Postgres>>>,
 }
 
 impl PostgresConn {
@@ -43,7 +46,10 @@ impl PostgresConn {
                 );
                 e
             })?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            tx: tokio::sync::Mutex::new(None),
+        })
     }
 
     pub async fn close(&self) {
@@ -51,33 +57,47 @@ impl PostgresConn {
     }
 
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
-        let started = Instant::now();
-        let is_query = is_query_shape(sql);
-
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database).await?;
+        run_sql_on(&mut conn, sql).await
+    }
 
-        if is_query {
-            let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .fetch_all(&mut *conn)
-                .await?;
-            let columns = columns_of(&rows);
-            let rows_out = rows.iter().map(row_to_values).collect();
-            Ok(QueryResult {
-                columns,
-                rows: rows_out,
-                rows_affected: 0,
-                elapsed_ms: started.elapsed().as_millis() as u64,
-            })
-        } else {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .execute(&mut *conn)
-                .await?;
-            Ok(QueryResult::empty(
-                result.rows_affected(),
-                started.elapsed().as_millis() as u64,
-            ))
+    // ── 明示トランザクション (#414) ──
+
+    pub async fn tx_begin(&self, database: Option<&str>) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        if guard.is_some() {
+            return Err(AppError::InvalidInput(
+                "a transaction is already active".into(),
+            ));
         }
+        let mut conn = self.pool.acquire().await?;
+        apply_search_path(&mut conn, database).await?;
+        sqlx::query("BEGIN").execute(&mut *conn).await?;
+        *guard = Some(conn);
+        Ok(())
+    }
+
+    pub async fn tx_execute(&self, sql: &str) -> Result<QueryResult> {
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        run_sql_on(conn, sql).await
+    }
+
+    pub async fn tx_finish(&self, commit: bool) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        let mut conn = guard
+            .take()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
+        sqlx::query(stmt).execute(&mut *conn).await?;
+        Ok(())
+    }
+
+    pub async fn tx_active(&self) -> bool {
+        self.tx.lock().await.is_some()
     }
 
     pub async fn execute_stream<F>(
@@ -693,6 +713,33 @@ async fn apply_search_path(
     let sql = format!("SET search_path TO \"{}\"", s);
     sqlx::Executor::execute(&mut **conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql))).await?;
     Ok(())
+}
+
+/// Run one statement on a specific connection and decode it (#414). Shared by
+/// `execute` (pool connection) and `tx_execute` (held transaction connection).
+async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryResult> {
+    let started = Instant::now();
+    if is_query_shape(sql) {
+        let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut *conn)
+            .await?;
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    } else {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await?;
+        Ok(QueryResult::empty(
+            result.rows_affected(),
+            started.elapsed().as_millis() as u64,
+        ))
+    }
 }
 
 fn columns_of(rows: &[PgRow]) -> Vec<Column> {

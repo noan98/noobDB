@@ -17,6 +17,10 @@ pub const DEFAULT_DB_NAME: &str = "main";
 
 pub struct SqliteConn {
     pool: SqlitePool,
+    /// 明示トランザクション (#414) で確保した専用接続。BEGIN で取得し、COMMIT/ROLLBACK
+    /// で解放する。トランザクション中の文はこの 1 本の接続で実行され、確実に同一
+    /// トランザクションに乗る (プールの別接続に散らばらない)。
+    tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>>,
 }
 
 impl SqliteConn {
@@ -44,7 +48,10 @@ impl SqliteConn {
                 tracing::error!(path, error = %e, "sqlite: failed to create connection pool");
                 e
             })?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            tx: tokio::sync::Mutex::new(None),
+        })
     }
 
     pub async fn close(&self) {
@@ -52,32 +59,45 @@ impl SqliteConn {
     }
 
     pub async fn execute(&self, sql: &str, _database: Option<&str>) -> Result<QueryResult> {
-        let started = Instant::now();
-        let is_query = is_query_shape(sql);
-
         let mut conn = self.pool.acquire().await?;
+        run_sql_on(&mut conn, sql).await
+    }
 
-        if is_query {
-            let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .fetch_all(&mut *conn)
-                .await?;
-            let columns = columns_of(&rows);
-            let rows_out = rows.iter().map(row_to_values).collect();
-            Ok(QueryResult {
-                columns,
-                rows: rows_out,
-                rows_affected: 0,
-                elapsed_ms: started.elapsed().as_millis() as u64,
-            })
-        } else {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .execute(&mut *conn)
-                .await?;
-            Ok(QueryResult::empty(
-                result.rows_affected(),
-                started.elapsed().as_millis() as u64,
-            ))
+    // ── 明示トランザクション (#414) ──
+
+    pub async fn tx_begin(&self, _database: Option<&str>) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        if guard.is_some() {
+            return Err(AppError::InvalidInput(
+                "a transaction is already active".into(),
+            ));
         }
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("BEGIN").execute(&mut *conn).await?;
+        *guard = Some(conn);
+        Ok(())
+    }
+
+    pub async fn tx_execute(&self, sql: &str) -> Result<QueryResult> {
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        run_sql_on(conn, sql).await
+    }
+
+    pub async fn tx_finish(&self, commit: bool) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        let mut conn = guard
+            .take()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
+        sqlx::query(stmt).execute(&mut *conn).await?;
+        Ok(())
+    }
+
+    pub async fn tx_active(&self) -> bool {
+        self.tx.lock().await.is_some()
     }
 
     pub async fn execute_stream<F>(
@@ -591,6 +611,34 @@ fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("with")
         || trimmed.starts_with("values")
         || trimmed.starts_with("pragma")
+}
+
+/// Run one statement on a specific connection (pool-acquired or the held tx
+/// connection) and decode it into a [`QueryResult`]. Shared by `execute` and
+/// `tx_execute` (#414).
+async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<QueryResult> {
+    let started = Instant::now();
+    if is_query_shape(sql) {
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut *conn)
+            .await?;
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    } else {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await?;
+        Ok(QueryResult::empty(
+            result.rows_affected(),
+            started.elapsed().as_millis() as u64,
+        ))
+    }
 }
 
 fn columns_of(rows: &[SqliteRow]) -> Vec<Column> {

@@ -368,6 +368,57 @@ async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
 }
 
 #[tokio::test]
+async fn sqlite_explicit_transaction_commits_and_rolls_back() {
+    // 明示トランザクション (#414): BEGIN→INSERT→ROLLBACK は何も残さず、
+    // BEGIN→INSERT→COMMIT は永続化される。文は同一の保持接続で実行される。
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_tx_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+
+    // ROLLBACK path.
+    assert!(!conn.transaction_active().await);
+    conn.begin_transaction(None).await.expect("begin");
+    assert!(conn.transaction_active().await);
+    conn.execute_in_transaction("INSERT INTO t (id) VALUES (1)")
+        .await
+        .expect("insert in tx");
+    conn.finish_transaction(false).await.expect("rollback");
+    assert!(!conn.transaction_active().await);
+    let after_rollback = conn
+        .execute("SELECT COUNT(*) AS c FROM t", None)
+        .await
+        .expect("count");
+    assert!(matches!(&after_rollback.rows[0][0], t::Value::Int(0)));
+
+    // COMMIT path.
+    conn.begin_transaction(None).await.expect("begin");
+    conn.execute_in_transaction("INSERT INTO t (id) VALUES (2)")
+        .await
+        .expect("insert in tx");
+    conn.finish_transaction(true).await.expect("commit");
+    let after_commit = conn
+        .execute("SELECT COUNT(*) AS c FROM t", None)
+        .await
+        .expect("count");
+    assert!(matches!(&after_commit.rows[0][0], t::Value::Int(1)));
+
+    // Beginning twice without finishing is rejected.
+    conn.begin_transaction(None).await.expect("begin again");
+    assert!(conn.begin_transaction(None).await.is_err());
+    conn.finish_transaction(false).await.expect("rollback");
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_health_check_succeeds_on_live_connection() {
     // health_check (#485) runs `SELECT 1` through the driver; it must succeed on
     // a freshly opened connection.

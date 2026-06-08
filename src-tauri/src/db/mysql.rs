@@ -14,6 +14,9 @@ use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
     pool: MySqlPool,
+    /// 明示トランザクション (#414) で確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
+    /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
+    tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::MySql>>>,
 }
 
 impl MySqlConn {
@@ -44,7 +47,10 @@ impl MySqlConn {
                 );
                 e
             })?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            tx: tokio::sync::Mutex::new(None),
+        })
     }
 
     pub async fn close(&self) {
@@ -52,40 +58,47 @@ impl MySqlConn {
     }
 
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
-        let started = Instant::now();
-
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
+        run_sql_on(&mut conn, sql).await
+    }
 
-        // CALL is decided at runtime: a stored procedure may or may not return
-        // a result set, so neither the fetch nor the execute path fits it
-        // unconditionally (see `collect_call`).
-        if is_call_shape(sql) {
-            return collect_call(&mut conn, sql, started).await;
-        }
+    // ── 明示トランザクション (#414) ──
 
-        let is_query = is_query_shape(sql);
-        if is_query {
-            let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .fetch_all(&mut *conn)
-                .await?;
-            let columns = columns_of(&rows);
-            let rows_out = rows.iter().map(row_to_values).collect();
-            Ok(QueryResult {
-                columns,
-                rows: rows_out,
-                rows_affected: 0,
-                elapsed_ms: started.elapsed().as_millis() as u64,
-            })
-        } else {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .execute(&mut *conn)
-                .await?;
-            Ok(QueryResult::empty(
-                result.rows_affected(),
-                started.elapsed().as_millis() as u64,
-            ))
+    pub async fn tx_begin(&self, database: Option<&str>) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        if guard.is_some() {
+            return Err(AppError::InvalidInput(
+                "a transaction is already active".into(),
+            ));
         }
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        sqlx::query("START TRANSACTION").execute(&mut *conn).await?;
+        *guard = Some(conn);
+        Ok(())
+    }
+
+    pub async fn tx_execute(&self, sql: &str) -> Result<QueryResult> {
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        run_sql_on(conn, sql).await
+    }
+
+    pub async fn tx_finish(&self, commit: bool) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        let mut conn = guard
+            .take()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
+        sqlx::query(stmt).execute(&mut *conn).await?;
+        Ok(())
+    }
+
+    pub async fn tx_active(&self) -> bool {
+        self.tx.lock().await.is_some()
     }
 
     /// Runs `sql` inside a transaction that is always rolled back. Captures
@@ -822,6 +835,37 @@ fn decode_text_col(row: &MySqlRow, i: usize) -> Result<String> {
     String::from_utf8(bytes).map_err(|e| AppError::Other(e.to_string()))
 }
 
+/// Run one statement on a specific connection and decode it (#414). Shared by
+/// `execute` (pool connection) and `tx_execute` (held transaction connection).
+/// Handles CALL (which may or may not return a result set) like `execute`.
+async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<QueryResult> {
+    let started = Instant::now();
+    if is_call_shape(sql) {
+        return collect_call(conn, sql, started).await;
+    }
+    if is_query_shape(sql) {
+        let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut *conn)
+            .await?;
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    } else {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await?;
+        Ok(QueryResult::empty(
+            result.rows_affected(),
+            started.elapsed().as_millis() as u64,
+        ))
+    }
+}
+
 fn columns_of(rows: &[MySqlRow]) -> Vec<Column> {
     let Some(first) = rows.first() else {
         return Vec::new();
@@ -1426,11 +1470,11 @@ fn is_call_shape(sql: &str) -> bool {
 /// support is out of scope); otherwise we sum the affected-row counts so a
 /// DML-only procedure reports `rows_affected` instead of a silent zero.
 async fn collect_call(
-    conn: &mut PoolConnection<MySql>,
+    conn: &mut sqlx::MySqlConnection,
     sql: &str,
     started: Instant,
 ) -> Result<QueryResult> {
-    let mut stream = sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).fetch_many(&mut **conn);
+    let mut stream = sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).fetch_many(&mut *conn);
     let mut rows: Vec<MySqlRow> = Vec::new();
     let mut saw_result_set = false;
     let mut first_set_done = false;
