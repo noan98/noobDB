@@ -19,11 +19,14 @@ import {
   listenQueryStream,
 } from "./api/tauri";
 import {
+  buildDeleteStatements,
+  buildInsertStatements,
   buildUpdateStatements,
   countEditedCells,
   countEditedRows,
   resolvePkIndices,
   type PendingEdits,
+  type PendingInsertRow,
 } from "./components/cellEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { copyToClipboard } from "./components/clipboard";
@@ -92,6 +95,9 @@ const CreateTableModal = lazy(() =>
 );
 const RenameTableDialog = lazy(() =>
   import("./components/RenameTableDialog").then((m) => ({ default: m.RenameTableDialog })),
+);
+const RowInsertModal = lazy(() =>
+  import("./components/RowInsertModal").then((m) => ({ default: m.RowInsertModal })),
 );
 const HelpView = lazy(() =>
   import("./components/HelpView").then((m) => ({ default: m.HelpView })),
@@ -428,6 +434,10 @@ interface Tab {
   editUndoStack: PendingEdits[];
   /** Re-applicable snapshots for Ctrl+Shift+Z redo. Cleared when a new edit is made. */
   editRedoStack: PendingEdits[];
+  /** 削除予定の行 (#441): rowEditKey のリスト。Apply で DELETE される。 */
+  pendingDeletes?: string[];
+  /** 追加予定の新規行 (#441): 各要素は colIdx→値。Apply で INSERT される。 */
+  pendingInserts?: PendingInsertRow[];
   /**
    * Wall-clock timestamp (ms) set each time an Apply edit completes successfully.
    * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
@@ -893,6 +903,8 @@ export default function App() {
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更 (#496): 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
+  // 新規行追加モーダル (#441): 対象タブ ID。null で閉じる。
+  const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
   // Whole-schema autocomplete snapshots, keyed by schemaCacheKey(session, db).
   // Fetched lazily per database and reused across tabs; invalidated after DDL
   // and dropped wholesale when the session changes.
@@ -2498,15 +2510,20 @@ export default function App() {
     const { result, tableColumns, database, table, pendingEdits, paginatable } = tab;
     if (!result || !tableColumns || !database || !table) return;
     const pkIndices = resolvePkIndices(result.columns, tableColumns);
-    const stmts = buildUpdateStatements({
-      driver: selectedProfile?.driver ?? "mysql",
-      database,
-      table,
-      columns: result.columns,
-      rows: result.rows,
-      pkIndices,
-      edits: pendingEdits,
+    const driver = selectedProfile?.driver ?? "mysql";
+    // 1 トランザクションに UPDATE (セル編集) + DELETE (削除予定行) + INSERT (新規行) を
+    // まとめる (#441)。all-or-nothing なので一部失敗で全体がロールバックする。
+    const updates = buildUpdateStatements({
+      driver, database, table, columns: result.columns, rows: result.rows, pkIndices, edits: pendingEdits,
     });
+    const deletes = buildDeleteStatements({
+      driver, database, table, columns: result.columns, rows: result.rows, pkIndices,
+      deleteKeys: new Set(tab.pendingDeletes ?? []),
+    });
+    const inserts = buildInsertStatements({
+      driver, database, table, columns: result.columns, inserts: tab.pendingInserts ?? [],
+    });
+    const stmts = [...updates, ...deletes, ...inserts];
     if (stmts.length === 0) return;
     const tabId = tab.id;
     setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: stmts.length } });
@@ -2522,7 +2539,9 @@ export default function App() {
       failure = String(e);
     }
     // Always refresh & drop edits afterwards: the result indices no
-    // longer line up with whatever the user had buffered.
+    // longer line up with whatever the user had buffered. Row ops (#441) are
+    // cleared too so the bar disappears once applied.
+    patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
     if (paginatable) {
       const limit = Math.max(1, settings.defaultDisplayCount);
       const refresh = `${paginatable} LIMIT ${limit}`;
@@ -2552,6 +2571,31 @@ export default function App() {
     settings.defaultDisplayCount,
     selectedProfile?.driver,
   ]);
+
+  // 行を削除予定にトグルする (#441)。
+  const toggleRowDeleteForTab = useCallback((tabId: string, rowKey: string) => {
+    patchTab(tabId, (tt) => {
+      const cur = tt.pendingDeletes ?? [];
+      const next = cur.includes(rowKey) ? cur.filter((k) => k !== rowKey) : [...cur, rowKey];
+      return { ...tt, pendingDeletes: next };
+    });
+  }, [patchTab]);
+
+  // 新規行追加モーダルを開く (#441)。
+  const requestInsertRowForTab = useCallback((tabId: string) => {
+    setRowInsertTabId(tabId);
+  }, []);
+
+  // モーダルで確定した新規行を保留に追加する (#441)。
+  const addInsertRowForTab = useCallback((tabId: string, row: PendingInsertRow) => {
+    setRowInsertTabId(null);
+    patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
+  }, [patchTab]);
+
+  // 行操作 (追加/削除) の保留を破棄する (#441)。
+  const discardRowOpsForTab = useCallback((tabId: string) => {
+    patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
+  }, [patchTab]);
 
   const handleOpenTable = useCallback((database: string, table: string) => {
     recordRecentTableOpen(database, table);
@@ -3367,6 +3411,35 @@ export default function App() {
                     />
                   ) : (
                     <Flex direction="column" h="100%" minH={0} minW={0}>
+                    {tab.kind === "table" && !readOnly &&
+                      ((tab.pendingInserts?.length ?? 0) > 0 || (tab.pendingDeletes?.length ?? 0) > 0) && (
+                      <Flex
+                        align="center"
+                        gap="10px"
+                        px="12px"
+                        py="6px"
+                        flex="none"
+                        borderBottomWidth="1px"
+                        borderBottomColor="app.border"
+                        bg="color-mix(in srgb, var(--accent) 8%, transparent)"
+                        fontSize="sm"
+                      >
+                        <Icon name="table" size={14} />
+                        <chakra.span color="app.text">
+                          {t("rowOpsBarSummary", {
+                            inserts: tab.pendingInserts?.length ?? 0,
+                            deletes: tab.pendingDeletes?.length ?? 0,
+                          })}
+                        </chakra.span>
+                        <chakra.span flex="1" />
+                        <Button type="button" variant="secondary" size="sm" onClick={() => discardRowOpsForTab(tab.id)}>
+                          {t("rowOpsDiscard")}
+                        </Button>
+                        <Button type="button" variant="success" size="sm" onClick={() => applyEditsForTab(tab)}>
+                          {t("rowOpsApply")}
+                        </Button>
+                      </Flex>
+                    )}
                     <ResultGrid
                       ref={getGridRefSetter(pane.id)}
                       result={tab.result}
@@ -3375,6 +3448,9 @@ export default function App() {
                       loadingMore={tab.loadingMore}
                       canLoadMore={tab.kind === "table" && tab.paginatable ? false : tab.canLoadMore}
                       onLoadMore={() => loadMoreInTab(tab.id)}
+                      pendingDeleteKeys={tab.pendingDeletes ? new Set(tab.pendingDeletes) : undefined}
+                      onToggleRowDelete={tab.kind === "table" && !readOnly ? (key) => toggleRowDeleteForTab(tab.id, key) : undefined}
+                      onRequestInsertRow={tab.kind === "table" && !readOnly ? () => requestInsertRowForTab(tab.id) : undefined}
                       autoLimitApplied={tab.autoLimitApplied}
                       onFetchAllRows={() => fetchAllForTab(tab)}
                       driver={selectedProfile?.driver ?? "mysql"}
@@ -4261,6 +4337,23 @@ export default function App() {
             />
           </Suspense>
         )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {(() => {
+          const insTab = rowInsertTabId ? tabs.find((tt) => tt.id === rowInsertTabId) : null;
+          if (!insTab || !insTab.result || !insTab.table) return null;
+          return (
+            <Suspense fallback={null}>
+              <RowInsertModal
+                table={insTab.table}
+                columns={insTab.result.columns}
+                onConfirm={(row) => addInsertRowForTab(insTab.id, row)}
+                onCancel={() => setRowInsertTabId(null)}
+              />
+            </Suspense>
+          );
+        })()}
       </AnimatePresence>
 
       <AnimatePresence>
