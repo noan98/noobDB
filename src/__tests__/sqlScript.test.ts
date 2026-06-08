@@ -1,0 +1,68 @@
+import { describe, expect, it } from "vitest";
+import { isMultiStatement, splitSqlStatements } from "../sqlScript";
+
+describe("splitSqlStatements", () => {
+  it("splits simple statements and drops empties", () => {
+    expect(splitSqlStatements("SELECT 1; SELECT 2;")).toEqual(["SELECT 1", "SELECT 2"]);
+    expect(splitSqlStatements("SELECT 1;;; SELECT 2")).toEqual(["SELECT 1", "SELECT 2"]);
+    expect(splitSqlStatements("   ")).toEqual([]);
+  });
+
+  it("does not split on a semicolon inside a string literal", () => {
+    expect(splitSqlStatements("SELECT ';' AS s; SELECT 2")).toEqual([
+      "SELECT ';' AS s",
+      "SELECT 2",
+    ]);
+  });
+
+  it("handles doubled-quote escapes inside strings", () => {
+    expect(splitSqlStatements("SELECT 'a;''b'; SELECT 2")).toEqual([
+      "SELECT 'a;''b'",
+      "SELECT 2",
+    ]);
+  });
+
+  it("ignores semicolons in identifiers and backticks", () => {
+    expect(splitSqlStatements('SELECT "a;b"; SELECT `c;d`')).toEqual([
+      'SELECT "a;b"',
+      "SELECT `c;d`",
+    ]);
+  });
+
+  it("ignores semicolons inside line and block comments", () => {
+    expect(splitSqlStatements("SELECT 1 -- a; b\n; SELECT 2")).toEqual([
+      "SELECT 1 -- a; b",
+      "SELECT 2",
+    ]);
+    expect(splitSqlStatements("SELECT 1 /* x; y */; SELECT 2")).toEqual([
+      "SELECT 1 /* x; y */",
+      "SELECT 2",
+    ]);
+  });
+
+  it("keeps a dollar-quoted function body as a single statement", () => {
+    const sql =
+      "CREATE FUNCTION f() RETURNS int AS $$ BEGIN; RETURN 1; END; $$ LANGUAGE plpgsql; SELECT f()";
+    expect(splitSqlStatements(sql)).toEqual([
+      "CREATE FUNCTION f() RETURNS int AS $$ BEGIN; RETURN 1; END; $$ LANGUAGE plpgsql",
+      "SELECT f()",
+    ]);
+  });
+
+  it("supports tagged dollar quotes", () => {
+    const sql = "SELECT $tag$ a; b $tag$; SELECT 2";
+    expect(splitSqlStatements(sql)).toEqual(["SELECT $tag$ a; b $tag$", "SELECT 2"]);
+  });
+
+  it("returns the whole input when there is a single statement", () => {
+    expect(splitSqlStatements("SELECT 1")).toEqual(["SELECT 1"]);
+  });
+});
+
+describe("isMultiStatement", () => {
+  it("is true only for more than one statement", () => {
+    expect(isMultiStatement("SELECT 1")).toBe(false);
+    expect(isMultiStatement("SELECT 1; SELECT 2")).toBe(true);
+    expect(isMultiStatement("SELECT ';'")).toBe(false);
+  });
+});
