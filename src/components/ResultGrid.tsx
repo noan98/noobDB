@@ -218,9 +218,9 @@ export const GRID_CSS: SystemStyleObject = {
   },
   "& tbody tr.grid-row-stripe td.col-filler": { background: "var(--bg-elevated)" },
   "& tbody tr:hover td.col-filler": { background: "var(--bg-elevated)" },
-  // NULL を空文字列と取り違えないよう、淡いピル型バッジで明示する (#385)。空文字列は
-  // セルが本当に空のまま描画されるので、バッジの有無で両者を一目で区別できる。色は
-  // --text-null トークン参照なのでライト/ダーク両テーマで一貫する。
+  // NULL と空文字列を淡いピル型バッジで描き分ける。NULL は --text-null カラー、
+  // 空文字列は --text-muted カラーで区別できる。色はトークン参照なので
+  // ライト/ダーク両テーマで一貫する (#385, #474)。
   "& .cell-null": {
     display: "inline-block",
     padding: "0 5px",
@@ -565,6 +565,11 @@ export const GRID_CSS: SystemStyleObject = {
     whiteSpace: "normal",
     pointerEvents: "none",
   },
+  // Apply 成功時の一時的な成功フラッシュ (#467)。App.css の @keyframes apply-flash と
+  // セットで動作する。is-apply-flash クラスは ResultGrid の useEffect で付与/除去される。
+  "&.is-apply-flash": {
+    animation: "apply-flash 0.7s ease-out",
+  },
 };
 
 interface Props {
@@ -643,6 +648,12 @@ interface Props {
    * callback receives the generated `SELECT … WHERE …` SQL.
    */
   onFkJump?: (sql: string) => void;
+  /**
+   * Wall-clock timestamp (ms) set by the parent each time an Apply edit
+   * succeeds. `ResultGrid` uses changes to this value to play a brief
+   * success-flash animation on the grid container.
+   */
+  lastEditAppliedAt?: number;
 }
 
 export interface ResultGridHandle {
@@ -2443,7 +2454,10 @@ export function DataGrid({
               bottom: "48px",
               left: "50%",
               transform: "translateX(-50%)",
-              zIndex: "popover",
+              // motion.div は素の DOM 要素なので Chakra の zIndex トークン名
+              // ("popover") は効かない。CSS 変数を直接参照して popover レイヤーに乗せる
+              // (ThemeTransition と同じ方式)。
+              zIndex: "var(--z-popover)" as unknown as number,
               pointerEvents: "none",
             }}
           >
@@ -2507,6 +2521,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   queryError,
   onRetry,
   onFkJump,
+  lastEditAppliedAt,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -2541,6 +2556,28 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }, [autoRefreshSecs]);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // 直近に再生済みの apply-flash タイムスタンプ。タブ切替などで同じ
+  // lastEditAppliedAt を持つ ResultGrid が再マウント/再評価されても、過去の成功時刻で
+  // フラッシュが再発火しないよう単調増加チェックに使う。
+  const lastHandledApplyAtRef = useRef(0);
+
+  // Apply-edit 成功時に containerRef に apply-flash アニメーションを付与する。
+  // lastEditAppliedAt の変化を検知して CSS animation クラスを一時的に追加し、
+  // アニメーション完了後 (0.7s) に除去する。新しいタイムスタンプのときだけ発火させ、
+  // 既に再生済み (タブ復帰時など) の時刻では何もしない。
+  useEffect(() => {
+    if (!lastEditAppliedAt) return;
+    if (lastEditAppliedAt <= lastHandledApplyAtRef.current) return;
+    lastHandledApplyAtRef.current = lastEditAppliedAt;
+    const el = containerRef.current;
+    if (!el) return;
+    el.classList.add("is-apply-flash");
+    const timer = window.setTimeout(() => el.classList.remove("is-apply-flash"), 700);
+    return () => {
+      window.clearTimeout(timer);
+      el.classList.remove("is-apply-flash");
+    };
+  }, [lastEditAppliedAt]);
 
   useImperativeHandle(ref, () => ({
     focusSearch: () => {

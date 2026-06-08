@@ -378,6 +378,11 @@ interface Tab {
   /** Re-applicable snapshots for Ctrl+Shift+Z redo. Cleared when a new edit is made. */
   editRedoStack: PendingEdits[];
   /**
+   * Wall-clock timestamp (ms) set each time an Apply edit completes successfully.
+   * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
+   */
+  lastEditAppliedAt?: number;
+  /**
    * Most recent Query Builder inputs captured on its Run / Dry Run, restored
    * when the builder is reopened in this tab. Persisted alongside the tab
    * (#287) so it survives reconnects and app restarts; cleared only when the
@@ -2335,6 +2340,7 @@ export default function App() {
         error: true,
       });
     } else {
+      patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
       setStatus({
         kind: "key",
         key: "statusAppliedEdits",
@@ -3059,6 +3065,7 @@ export default function App() {
                           : undefined
                       }
                       onFkJump={(sql) => openAndRunQuery(sql)}
+                      lastEditAppliedAt={tab.lastEditAppliedAt}
                     />
                   )}
                 </Suspense>
