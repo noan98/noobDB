@@ -108,6 +108,8 @@ import {
   getSettings,
   setAutoRefreshDefaultSecs,
   BASE_FONT_SIZE_PX,
+  monoFontStack,
+  uiFontStack,
   type TabRestoreMode,
 } from "./settings";
 import { accentVars } from "./accent";
@@ -596,6 +598,15 @@ export default function App() {
     }
     root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
     root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
+
+    // フォントファミリ (#449): 設定があれば共有フォールバック付きのスタックを
+    // --font-mono / --font-sans に注入し、未指定なら App.css の既定スタックへ戻す。
+    const monoStack = monoFontStack(settings.monoFontFamily);
+    if (monoStack) root.style.setProperty("--font-mono", monoStack);
+    else root.style.removeProperty("--font-mono");
+    const sansStack = uiFontStack(settings.uiFontFamily);
+    if (sansStack) root.style.setProperty("--font-sans", sansStack);
+    else root.style.removeProperty("--font-sans");
 
     // アクセント色: ユーザー指定があれば 3 つの CSS 変数を実行時に注入し、未指定
     // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す (#409)。前景と
