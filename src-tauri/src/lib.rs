@@ -16,7 +16,9 @@ pub mod __test_api {
     };
     pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
-    pub use crate::db::types::{QueryResult, Value};
+    pub use crate::db::types::{
+        Column, ForeignKey, QueryResult, TableColumnInfo, TableSchema, Value,
+    };
     pub use crate::db::{is_read_only_sql, Connection, DbConnectOptions, DriverKind};
     pub use crate::error::AppError;
     pub use crate::state::{AppState, Session};
