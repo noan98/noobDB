@@ -571,6 +571,16 @@ const en = {
   profileImportError: "Profile import failed: {error}",
   exportRowCount: "{rows} rows will be exported.",
   exportPartialWarning: "Only the rows currently loaded are exported. To export the full result set, run \"Fetch all rows\" first.",
+  // 全件ストリーミングエクスポート (#494)。
+  exportScope: "What to export",
+  exportScopeCurrent: "Current grid only",
+  exportScopeCurrentHint: "Export the {rows} rows currently loaded in the grid.",
+  exportScopeFull: "Full result (re-run query)",
+  exportScopeFullHint: "Re-run the query and stream every row to the file (no auto LIMIT).",
+  exportFullProgress: "Exported {rows} rows...",
+  exportFullDone: "Exported {rows} rows ({bytes} bytes) to {path}",
+  exportStreamRunning: "Exporting...",
+  exportStreamCancel: "Stop",
 
   dumpTitle: "Dump database \"{database}\"",
   dumpClose: "Close",
@@ -1669,6 +1679,16 @@ const ja: Dict = {
   profileImportError: "プロファイルのインポートに失敗しました: {error}",
   exportRowCount: "{rows} 行をエクスポートします。",
   exportPartialWarning: "現在読み込み済みの行のみが対象です。全件をエクスポートするには、先に「全件取得」を実行してください。",
+  // 全件ストリーミングエクスポート (#494)。
+  exportScope: "エクスポート対象",
+  exportScopeCurrent: "現在のグリッドのみ",
+  exportScopeCurrentHint: "グリッドに読み込み済みの {rows} 行を書き出します。",
+  exportScopeFull: "全件 (クエリを再実行)",
+  exportScopeFullHint: "クエリを再実行し、全行をストリーミングでファイルへ書き出します (自動 LIMIT なし)。",
+  exportFullProgress: "{rows} 行をエクスポート中...",
+  exportFullDone: "{rows} 行 ({bytes} バイト) を {path} にエクスポートしました",
+  exportStreamRunning: "エクスポート中...",
+  exportStreamCancel: "中止",
 
   dumpTitle: "データベース「{database}」のダンプ",
   dumpClose: "閉じる",

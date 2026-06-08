@@ -3381,6 +3381,17 @@ export default function App() {
                           : undefined
                       }
                       onFkJump={(sql) => openAndRunQuery(sql)}
+                      fullExport={
+                        sessionId && (tab.kind === "table" ? tab.paginatable : tab.lastExecutedSql)
+                          ? {
+                              sessionId,
+                              // table タブは LIMIT を持たない base SQL を再実行して全件出す。
+                              sql: tab.kind === "table" ? (tab.paginatable as string) : tab.lastExecutedSql,
+                              initialBatch: Math.max(1, settings.defaultDisplayCount),
+                              chunkSize: Math.max(1, settings.streamPrefetchSize),
+                            }
+                          : undefined
+                      }
                       lastEditAppliedAt={tab.lastEditAppliedAt}
                     />
                     {tab.kind === "table" && tab.paginatable && tab.result && !tab.streaming && (

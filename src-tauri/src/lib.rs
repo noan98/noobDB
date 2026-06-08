@@ -229,6 +229,7 @@ pub fn run() {
             commands::logs::read_logs,
             commands::logs::clear_logs,
             commands::export::export_query_result,
+            commands::export::export_query_stream,
             commands::dump::dump_database,
             commands::import::parse_csv_preview,
             commands::import::import_csv,
