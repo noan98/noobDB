@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
@@ -27,6 +27,9 @@ export function SnippetForm({
   onCancel,
 }: Props) {
   const t = useT();
+  // フォーム内のラベルと入力を htmlFor / id で関連付けるための一意な接頭辞。
+  // 同一画面に複数フォームがあっても衝突しないよう useId を使う (a11y, #491)。
+  const fid = useId();
 
   const folderSuggestions = useMemo(() => {
     const set = new Set<string>();
@@ -120,8 +123,9 @@ export function SnippetForm({
       </chakra.h2>
 
       <Box gridColumn="span 2">
-        <chakra.label>{t("snippetName")}</chakra.label>
+        <chakra.label htmlFor={`${fid}-name`}>{t("snippetName")}</chakra.label>
         <Input
+          id={`${fid}-name`}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={t("snippetNamePlaceholder")}
@@ -129,8 +133,9 @@ export function SnippetForm({
       </Box>
 
       <Box>
-        <chakra.label>{t("snippetFolder")}</chakra.label>
+        <chakra.label htmlFor={`${fid}-folder`}>{t("snippetFolder")}</chakra.label>
         <Input
+          id={`${fid}-folder`}
           value={folder}
           onChange={(e) => setFolder(e.target.value)}
           placeholder={t("snippetFolderPlaceholder")}
@@ -144,8 +149,8 @@ export function SnippetForm({
       </Box>
 
       <Box>
-        <chakra.label>{t("snippetDriver")}</chakra.label>
-        <Select value={driver} onChange={(e) => setDriver(e.target.value)}>
+        <chakra.label htmlFor={`${fid}-driver`}>{t("snippetDriver")}</chakra.label>
+        <Select id={`${fid}-driver`} value={driver} onChange={(e) => setDriver(e.target.value)}>
           <option value="">{t("snippetDriverAny")}</option>
           <option value="mysql">{t("formDriverMysql")}</option>
           <option value="postgres">{t("formDriverPostgres")}</option>
@@ -154,8 +159,9 @@ export function SnippetForm({
       </Box>
 
       <Box gridColumn="span 2">
-        <chakra.label>{t("snippetTags")}</chakra.label>
+        <chakra.label htmlFor={`${fid}-tags`}>{t("snippetTags")}</chakra.label>
         <Input
+          id={`${fid}-tags`}
           value={tags}
           onChange={(e) => setTags(e.target.value)}
           placeholder={t("snippetTagsPlaceholder")}
@@ -175,8 +181,12 @@ export function SnippetForm({
         <chakra.legend fontWeight={600} fontSize="sm" px="6px">{t("snippetScope")}</chakra.legend>
         <Box display="grid" gridTemplateColumns="1fr 1fr" gap="12px">
           <Box>
-            <chakra.label>{t("snippetScopeKind")}</chakra.label>
-            <Select value={scopeKind} onChange={(e) => setScopeKind(e.target.value as ScopeKind)}>
+            <chakra.label htmlFor={`${fid}-scope-kind`}>{t("snippetScopeKind")}</chakra.label>
+            <Select
+              id={`${fid}-scope-kind`}
+              value={scopeKind}
+              onChange={(e) => setScopeKind(e.target.value as ScopeKind)}
+            >
               <option value="any">{t("snippetScopeAny")}</option>
               <option value="profile">{t("snippetScopeProfile")}</option>
               <option value="group">{t("snippetScopeGroup")}</option>
@@ -184,8 +194,12 @@ export function SnippetForm({
           </Box>
           {scopeKind === "profile" && (
             <Box>
-              <chakra.label>{t("snippetScopeProfileLabel")}</chakra.label>
-              <Select value={scopeProfileId} onChange={(e) => setScopeProfileId(e.target.value)}>
+              <chakra.label htmlFor={`${fid}-scope-profile`}>{t("snippetScopeProfileLabel")}</chakra.label>
+              <Select
+                id={`${fid}-scope-profile`}
+                value={scopeProfileId}
+                onChange={(e) => setScopeProfileId(e.target.value)}
+              >
                 {profiles.length === 0 && <option value="">—</option>}
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
@@ -195,8 +209,9 @@ export function SnippetForm({
           )}
           {scopeKind === "group" && (
             <Box>
-              <chakra.label>{t("snippetScopeGroupLabel")}</chakra.label>
+              <chakra.label htmlFor={`${fid}-scope-group`}>{t("snippetScopeGroupLabel")}</chakra.label>
               <Input
+                id={`${fid}-scope-group`}
                 value={scopeGroup}
                 onChange={(e) => setScopeGroup(e.target.value)}
                 placeholder={t("formGroupPlaceholder")}
@@ -216,8 +231,9 @@ export function SnippetForm({
       </chakra.fieldset>
 
       <Box gridColumn="span 2">
-        <chakra.label>{t("snippetSql")}</chakra.label>
+        <chakra.label htmlFor={`${fid}-sql`}>{t("snippetSql")}</chakra.label>
         <Textarea
+          id={`${fid}-sql`}
           fontFamily="mono"
           fontSize="md"
           value={sql}
