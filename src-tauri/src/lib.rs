@@ -211,6 +211,8 @@ pub fn run() {
             commands::schema::schema_overview,
             commands::schema::foreign_keys,
             commands::schema::list_indexes,
+            commands::schema::list_schema_objects,
+            commands::schema::get_object_definition,
             commands::schema::table_row_estimates,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,

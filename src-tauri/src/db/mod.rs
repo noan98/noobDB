@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use types::{
-    ForeignKey, IndexInfo, PreviewResult, QueryResult, StreamBatch, TableColumnInfo,
+    ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch, TableColumnInfo,
     TableRowEstimate, TableSchema,
 };
 
@@ -232,6 +232,28 @@ impl Connection {
             Connection::MySql(c) => c.foreign_keys(db).await,
             Connection::Postgres(c) => c.foreign_keys(db).await,
             Connection::Sqlite(c) => c.foreign_keys(db).await,
+        }
+    }
+
+    /// Non-table schema objects in `db` (#483): views, materialized views,
+    /// routines (procedures/functions), and triggers. Dispatches per driver to
+    /// `information_schema` / `pg_catalog` / `sqlite_master`. Kinds the driver
+    /// doesn't support (e.g. SQLite routines) are simply absent.
+    pub async fn schema_objects(&self, db: &str) -> Result<Vec<SchemaObject>> {
+        match self {
+            Connection::MySql(c) => c.schema_objects(db).await,
+            Connection::Postgres(c) => c.schema_objects(db).await,
+            Connection::Sqlite(c) => c.schema_objects(db).await,
+        }
+    }
+
+    /// The DDL/definition of a non-table schema object (#483). `kind` is one of
+    /// the values returned by [`schema_objects`].
+    pub async fn object_definition(&self, db: &str, kind: &str, name: &str) -> Result<String> {
+        match self {
+            Connection::MySql(c) => c.object_definition(db, kind, name).await,
+            Connection::Postgres(c) => c.object_definition(db, kind, name).await,
+            Connection::Sqlite(c) => c.object_definition(db, kind, name).await,
         }
     }
 

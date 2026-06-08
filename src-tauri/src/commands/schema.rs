@@ -1,6 +1,8 @@
 use tauri::State;
 
-use crate::db::types::{ForeignKey, IndexInfo, TableColumnInfo, TableRowEstimate, TableSchema};
+use crate::db::types::{
+    ForeignKey, IndexInfo, SchemaObject, TableColumnInfo, TableRowEstimate, TableSchema,
+};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -64,6 +66,39 @@ pub async fn foreign_keys(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session.conn.foreign_keys(&database).await
+}
+
+/// 非テーブルのスキーマオブジェクト一覧を返す (#483)。ビュー/マテビュー/ルーチン/トリガー。
+#[tauri::command]
+pub async fn list_schema_objects(
+    session_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SchemaObject>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.schema_objects(&database).await
+}
+
+/// スキーマオブジェクトの定義 (DDL) を返す (#483)。
+#[tauri::command]
+pub async fn get_object_definition(
+    session_id: String,
+    database: String,
+    kind: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<String> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session
+        .conn
+        .object_definition(&database, &kind, &name)
+        .await
 }
 
 /// テーブルのインデックス一覧を返す (#459)。名前・構成カラム・UNIQUE/PRIMARY/方式。

@@ -84,6 +84,16 @@ pub struct IndexInfo {
     pub method: Option<String>,
 }
 
+/// A non-table schema object (#483): a view, materialized view, stored
+/// procedure, function, or trigger. `kind` is one of `view` /
+/// `materialized_view` / `procedure` / `function` / `trigger` so the UI can
+/// group them; `name` is the object's identifier within the database/schema.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaObject {
+    pub kind: String,
+    pub name: String,
+}
+
 /// One table (or view) and its column names, used to feed whole-schema SQL
 /// autocomplete. Only names are carried — type/key metadata lives in the
 /// per-table `TableColumnInfo` path, which the editor does not need for

@@ -215,6 +215,20 @@ export interface IndexInfo {
   method: string | null;
 }
 
+/** 非テーブルのスキーマオブジェクト種別 (#483)。 */
+export type SchemaObjectKind =
+  | "view"
+  | "materialized_view"
+  | "procedure"
+  | "function"
+  | "trigger";
+
+/** 非テーブルのスキーマオブジェクト (#483)。 */
+export interface SchemaObject {
+  kind: SchemaObjectKind;
+  name: string;
+}
+
 /**
  * One foreign-key relationship in a database, used to draw ER-diagram edges.
  * One entry per referencing column; the columns of a composite key share a
@@ -512,6 +526,14 @@ export const api = {
     invoke<IndexInfo[]>("list_indexes", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.indexInfoArray, r, "list_indexes"),
     ),
+  /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する (#483)。 */
+  listSchemaObjects: (sessionId: string, database: string) =>
+    invoke<SchemaObject[]>("list_schema_objects", { sessionId, database }).then((r) =>
+      parseResponse(schemas.schemaObjectArray, r, "list_schema_objects"),
+    ),
+  /** スキーマオブジェクトの定義 (DDL) を取得する (#483)。 */
+  getObjectDefinition: (sessionId: string, database: string, kind: string, name: string) =>
+    invoke<string>("get_object_definition", { sessionId, database, kind, name }),
   compareSchema: (params: {
     sourceSessionId: string;
     sourceDatabase: string;

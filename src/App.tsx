@@ -2677,6 +2677,17 @@ export default function App() {
     addTab(tab);
   }, [addTab]);
 
+  // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する (#483)。
+  const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string) => {
+    if (!sessionId) return;
+    try {
+      const ddl = await api.getObjectDefinition(sessionId, database, kind, name);
+      openQueryInEditor(ddl, name);
+    } catch (e) {
+      toast.error(translate("objDefinitionError", { error: String(e) }));
+    }
+  }, [sessionId, openQueryInEditor, toast]);
+
   // CREATE TABLE ウィザード (#460) の実行: DDL を新しいクエリタブで実行し、閉じる。
   const handleCreateTableRun = useCallback((sql: string) => {
     setCreateTableDb(null);
@@ -3779,6 +3790,7 @@ export default function App() {
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
             onCopyTableName={handleCopyTableName}
+            onOpenObjectDefinition={handleOpenObjectDefinition}
           />
         ) : sidebarTab === "snippets" ? (
           <SnippetList

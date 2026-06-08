@@ -72,6 +72,11 @@ export const indexInfo = z.object({
   method: z.string().nullable(),
 });
 
+export const schemaObject = z.object({
+  kind: z.string(),
+  name: z.string(),
+});
+
 /**
  * プレビュー結果の検証スキーマ。他の IPC スキーマと対をなす公開検証表面で、
  * 現状ランタイム検証には未配線だが API 完全性のため保持する (#391)。
@@ -237,6 +242,7 @@ export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
 export const indexInfoArray = z.array(indexInfo);
+export const schemaObjectArray = z.array(schemaObject);
 export const connectionProfileArray = z.array(connectionProfile);
 export const snippetArray = z.array(snippet);
 export const historyEntryArray = z.array(historyEntry);

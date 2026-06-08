@@ -5,8 +5,8 @@ use sqlx::sqlite::{SqliteColumn, SqliteConnectOptions, SqlitePool, SqlitePoolOpt
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, StreamBatch, TableColumnInfo,
-    TableRowEstimate, TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -518,6 +518,41 @@ impl SqliteConn {
             });
         }
         Ok(out)
+    }
+
+    pub async fn schema_objects(&self, _db: &str) -> Result<Vec<SchemaObject>> {
+        // SQLite only has views and triggers (no stored procedures/functions).
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT type, name FROM sqlite_master \
+             WHERE type IN ('view','trigger') AND name NOT LIKE 'sqlite_%' \
+             ORDER BY type, name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                let kind = r.try_get::<String, _>("type").ok()?;
+                let name = r.try_get::<String, _>("name").ok()?;
+                Some(SchemaObject { kind, name })
+            })
+            .collect())
+    }
+
+    pub async fn object_definition(&self, _db: &str, kind: &str, name: &str) -> Result<String> {
+        // The DDL is stored verbatim in sqlite_master.sql.
+        let row: Option<SqliteRow> =
+            sqlx::query("SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2")
+                .bind(kind)
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?;
+        match row.and_then(|r| r.try_get::<Option<String>, _>("sql").ok().flatten()) {
+            Some(sql) => Ok(sql),
+            None => Err(AppError::InvalidInput(format!(
+                "no definition found for {kind} '{name}'"
+            ))),
+        }
     }
 
     pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {

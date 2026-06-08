@@ -5,8 +5,8 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, StreamBatch, TableColumnInfo,
-    TableRowEstimate, TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -471,6 +471,87 @@ impl PostgresConn {
                 constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
             })
             .collect())
+    }
+
+    pub async fn schema_objects(&self, schema: &str) -> Result<Vec<SchemaObject>> {
+        // Views, materialized views, routines, and triggers in one query each,
+        // unioned in display order (views, matviews, procedures/functions,
+        // triggers). `schema` is the namespace (the tree's "database" for PG).
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"
+            SELECT 'view'::text AS kind, viewname AS name FROM pg_views WHERE schemaname = $1
+            UNION ALL
+            SELECT 'materialized_view', matviewname FROM pg_matviews WHERE schemaname = $1
+            UNION ALL
+            SELECT CASE WHEN routine_type = 'PROCEDURE' THEN 'procedure' ELSE 'function' END,
+                   routine_name
+              FROM information_schema.routines WHERE routine_schema = $1
+            UNION ALL
+            SELECT 'trigger', trigger_name
+              FROM (SELECT DISTINCT trigger_name FROM information_schema.triggers
+                     WHERE trigger_schema = $1) tg
+            ORDER BY kind, name
+            "#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| SchemaObject {
+                kind: r.try_get::<String, _>(0).unwrap_or_default(),
+                name: r.try_get::<String, _>(1).unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    pub async fn object_definition(&self, schema: &str, kind: &str, name: &str) -> Result<String> {
+        // All definition lookups bind the schema + name as parameters (no
+        // identifier interpolation), using pg_catalog helper functions.
+        let def: Option<String> = match kind {
+            "view" | "materialized_view" => {
+                sqlx::query_scalar("SELECT pg_get_viewdef(format('%I.%I', $1, $2)::regclass, true)")
+                    .bind(schema)
+                    .bind(name)
+                    .fetch_optional(&self.pool)
+                    .await?
+            }
+            "function" | "procedure" => {
+                sqlx::query_scalar(
+                    "SELECT pg_get_functiondef(p.oid)
+                       FROM pg_proc p
+                       JOIN pg_namespace n ON n.oid = p.pronamespace
+                      WHERE n.nspname = $1 AND p.proname = $2
+                      LIMIT 1",
+                )
+                .bind(schema)
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+            "trigger" => {
+                sqlx::query_scalar(
+                    "SELECT pg_get_triggerdef(t.oid)
+                       FROM pg_trigger t
+                       JOIN pg_class c ON c.oid = t.tgrelid
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = $1 AND t.tgname = $2 AND NOT t.tgisinternal
+                      LIMIT 1",
+                )
+                .bind(schema)
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+            other => {
+                return Err(AppError::InvalidInput(format!(
+                    "unsupported object kind: {other}"
+                )))
+            }
+        };
+        def.ok_or_else(|| {
+            AppError::InvalidInput(format!("no definition found for {kind} '{name}'"))
+        })
     }
 
     pub async fn list_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>> {
