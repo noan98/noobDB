@@ -5,8 +5,8 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
-    TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, StreamBatch, TableColumnInfo,
+    TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -470,6 +470,66 @@ impl PostgresConn {
                 referenced_column: r.try_get::<Option<String>, _>(3).ok().flatten(),
                 constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
             })
+            .collect())
+    }
+
+    pub async fn list_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>> {
+        // Expand pg_index.indkey (the ordered column attnums) with ordinality so
+        // composite indexes keep declaration order, then resolve each attnum to a
+        // column name via pg_attribute. indisprimary marks the PK; indisunique
+        // marks UNIQUE; pg_am.amname is the access method (btree/gin/...).
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT
+                 i.relname           AS index_name,
+                 a.attname           AS column_name,
+                 ix.indisunique      AS is_unique,
+                 ix.indisprimary     AS is_primary,
+                 am.amname           AS method,
+                 k.ord               AS ord
+               FROM pg_class t
+               JOIN pg_namespace n ON n.oid = t.relnamespace
+               JOIN pg_index ix    ON ix.indrelid = t.oid
+               JOIN pg_class i     ON i.oid = ix.indexrelid
+               JOIN pg_am am       ON am.oid = i.relam
+               JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+               LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+               WHERE t.relname = $1 AND n.nspname = $2
+               ORDER BY i.relname, k.ord"#,
+        )
+        .bind(table)
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut order: Vec<String> = Vec::new();
+        let mut by_name: std::collections::HashMap<String, IndexInfo> =
+            std::collections::HashMap::new();
+        for r in &rows {
+            let name = r.try_get::<String, _>("index_name").unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            let column = r.try_get::<Option<String>, _>("column_name").ok().flatten();
+            let unique = r.try_get::<bool, _>("is_unique").unwrap_or(false);
+            let primary = r.try_get::<bool, _>("is_primary").unwrap_or(false);
+            let method = r.try_get::<Option<String>, _>("method").ok().flatten();
+            let entry = by_name.entry(name.clone()).or_insert_with(|| {
+                order.push(name.clone());
+                IndexInfo {
+                    name: name.clone(),
+                    columns: Vec::new(),
+                    unique,
+                    primary,
+                    method,
+                }
+            });
+            // attnum 0 (an expression index column) resolves to NULL; skip it.
+            if let Some(col) = column {
+                entry.columns.push(col);
+            }
+        }
+        Ok(order
+            .into_iter()
+            .filter_map(|n| by_name.remove(&n))
             .collect())
     }
 

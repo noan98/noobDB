@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::db::types::{ForeignKey, TableColumnInfo, TableRowEstimate, TableSchema};
+use crate::db::types::{ForeignKey, IndexInfo, TableColumnInfo, TableRowEstimate, TableSchema};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -64,6 +64,21 @@ pub async fn foreign_keys(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session.conn.foreign_keys(&database).await
+}
+
+/// テーブルのインデックス一覧を返す (#459)。名前・構成カラム・UNIQUE/PRIMARY/方式。
+#[tauri::command]
+pub async fn list_indexes(
+    session_id: String,
+    database: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<IndexInfo>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.list_indexes(&database, &table).await
 }
 
 #[tauri::command]
