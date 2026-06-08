@@ -123,6 +123,14 @@ import {
   type PersistedTab,
   type PersistedWorkspace,
 } from "./tabPersistence";
+import {
+  EMPTY_QUICK_ACCESS,
+  loadQuickAccess,
+  recordRecent as recordRecentTable,
+  saveQuickAccess,
+  toggleFavorite as toggleFavoriteTable,
+  type QuickAccessState,
+} from "./tableQuickAccess";
 
 type Theme = "light" | "dark";
 
@@ -756,6 +764,9 @@ export default function App() {
     [],
   );
   const [snippets, setSnippets] = useState<Snippet[]>([]);
+  // お気に入り / 最近使ったテーブル (#461)。アクティブ接続プロファイル単位で
+  // localStorage に永続化する。`handleOpenTable` がテーブルを開くたびに最近へ記録。
+  const [quickAccess, setQuickAccess] = useState<QuickAccessState>(EMPTY_QUICK_ACCESS);
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // 直近の実行クエリ (最新が先頭、連続重複は畳む)。QueryEditor の ↑/↓ 履歴
   // ナビゲーション (#325) 用。接続プロファイル単位で読み込み、実行のたびに
@@ -1142,6 +1153,35 @@ export default function App() {
       cancelled = true;
     };
   }, [sessionId, selectedProfile?.id, historyReloadKey]);
+
+  // クイックアクセス (#461): アクティブ接続が変わったら、そのプロファイルの
+  // お気に入り/最近をストレージから読み込む。未接続時は空にする。
+  useEffect(() => {
+    const id = selectedProfile?.id ?? null;
+    setQuickAccess(id ? loadQuickAccess(id) : EMPTY_QUICK_ACCESS);
+  }, [selectedProfile?.id]);
+
+  // 最近開いたテーブルを記録する。`handleOpenTable` から呼ばれ、永続化も行う。
+  const recordRecentTableOpen = useCallback((database: string, table: string) => {
+    const id = selectedProfile?.id;
+    if (!id) return;
+    setQuickAccess((prev) => {
+      const next = recordRecentTable(prev, { database, table });
+      saveQuickAccess(id, next);
+      return next;
+    });
+  }, [selectedProfile?.id]);
+
+  // お気に入りのトグル (登録/解除)。永続化も行う。
+  const handleToggleFavorite = useCallback((database: string, table: string) => {
+    const id = selectedProfile?.id;
+    if (!id) return;
+    setQuickAccess((prev) => {
+      const next = toggleFavoriteTable(prev, { database, table });
+      saveQuickAccess(id, next);
+      return next;
+    });
+  }, [selectedProfile?.id]);
 
   // Keep the active profile pointer in sync when the profile is edited or
   // when the saved list is refreshed for any other reason.
@@ -2356,6 +2396,7 @@ export default function App() {
   ]);
 
   const handleOpenTable = useCallback((database: string, table: string) => {
+    recordRecentTableOpen(database, table);
     const existing = tabs.find(
       (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
     );
@@ -2394,7 +2435,7 @@ export default function App() {
     };
     addTab(tab);
     runQueryInTab(tab.id, sql, base);
-  }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, selectedProfile?.driver]);
+  }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, selectedProfile?.driver, recordRecentTableOpen]);
 
   const handleImportTable = useCallback((database: string, table: string) => {
     setImportTarget({ database, table });
@@ -3310,6 +3351,9 @@ export default function App() {
                 : undefined
             }
             selectLimit={Math.max(1, settings.defaultDisplayCount)}
+            favorites={quickAccess.favorites}
+            recent={quickAccess.recent}
+            onToggleFavorite={handleToggleFavorite}
           />
         ) : sidebarTab === "snippets" ? (
           <SnippetList
