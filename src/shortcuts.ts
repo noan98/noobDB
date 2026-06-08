@@ -45,6 +45,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutSidebarFilterTitle", descKey: "shortcutSidebarFilterDesc", category: "global" },
   { keysKey: "shortcutObjectSearchTitle", descKey: "shortcutObjectSearchDesc", category: "global" },
   { keysKey: "helpShortcutRunTitle", descKey: "helpShortcutRunDesc", category: "editor" },
+  { keysKey: "shortcutRunNewTabTitle", descKey: "shortcutRunNewTabDesc", category: "editor" },
   { keysKey: "helpShortcutPreviewTitle", descKey: "helpShortcutPreviewDesc", category: "editor" },
   { keysKey: "helpShortcutFormatTitle", descKey: "helpShortcutFormatDesc", category: "editor" },
   { keysKey: "helpShortcutCompleteTitle", descKey: "helpShortcutCompleteDesc", category: "editor" },
