@@ -2,12 +2,14 @@ import { forwardRef, lazy, Suspense, useCallback, useEffect, useMemo, useRef, us
 import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   api,
   CellValue,
   Column,
   ConnectionProfile,
   DriverKind,
+  type ProfileImportStrategy,
   PreviewResult,
   QueryResult,
   Snippet,
@@ -69,6 +71,9 @@ const ImportModal = lazy(() =>
 );
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
+);
+const ProfileImportDialog = lazy(() =>
+  import("./components/ProfileImportDialog").then((m) => ({ default: m.ProfileImportDialog })),
 );
 const HelpView = lazy(() =>
   import("./components/HelpView").then((m) => ({ default: m.HelpView })),
@@ -842,6 +847,8 @@ export default function App() {
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
+  // プロファイルインポート (#442): ファイル選択後、衝突解決ダイアログに渡すパス。
+  const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
   // Whole-schema autocomplete snapshots, keyed by schemaCacheKey(session, db).
   // Fetched lazily per database and reused across tabs; invalidated after DDL
   // and dropped wholesale when the session changes.
@@ -1100,6 +1107,57 @@ export default function App() {
   useEffect(() => {
     refreshProfiles();
   }, [refreshProfiles]);
+
+  // 接続プロファイルのエクスポート (#442): 全プロファイルを秘密情報抜きで JSON へ。
+  const handleExportProfiles = useCallback(async () => {
+    if (profiles.length === 0) {
+      toast.info(translate("profileExportEmpty"));
+      return;
+    }
+    try {
+      const dest = await saveFileDialog({
+        defaultPath: "noobdb-profiles.json",
+        title: translate("profileExportTitle"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof dest !== "string" || !dest) return;
+      await api.exportProfiles(dest);
+      toast.success(translate("profileExportSuccess", { path: dest }));
+    } catch (e) {
+      toast.error(translate("profileExportError", { error: String(e) }));
+    }
+  }, [profiles.length, toast, translate]);
+
+  // 接続プロファイルのインポート (#442): ファイルを選び、衝突解決ダイアログを開く。
+  const handleImportProfilesPick = useCallback(async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: translate("profileImportTitle"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      setImportProfilesPath(picked);
+    } catch (e) {
+      toast.error(translate("profileImportError", { error: String(e) }));
+    }
+  }, [toast, translate]);
+
+  const handleImportProfilesConfirm = useCallback(
+    async (strategy: ProfileImportStrategy) => {
+      const path = importProfilesPath;
+      setImportProfilesPath(null);
+      if (!path) return;
+      try {
+        const res = await api.importProfiles(path, strategy);
+        await refreshProfiles();
+        toast.success(translate("profileImportSuccess", res as unknown as Record<string, string | number>));
+      } catch (e) {
+        toast.error(translate("profileImportError", { error: String(e) }));
+      }
+    },
+    [importProfilesPath, refreshProfiles, toast, translate],
+  );
 
   const refreshSnippets = useCallback(async () => {
     try {
@@ -3274,13 +3332,29 @@ export default function App() {
                 <Icon name="plus" />
               </IconButton>
             ) : sidebarTab === "connections" ? (
-              <IconButton
-                onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
-                title={t("appNew")}
-                aria-label={t("appNew")}
-              >
-                <Icon name="plus" />
-              </IconButton>
+              <>
+                <IconButton
+                  onClick={handleImportProfilesPick}
+                  title={t("profileImportAria")}
+                  aria-label={t("profileImportAria")}
+                >
+                  <Icon name="upload" />
+                </IconButton>
+                <IconButton
+                  onClick={handleExportProfiles}
+                  title={t("profileExportAria")}
+                  aria-label={t("profileExportAria")}
+                >
+                  <Icon name="download" />
+                </IconButton>
+                <IconButton
+                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                  title={t("appNew")}
+                  aria-label={t("appNew")}
+                >
+                  <Icon name="plus" />
+                </IconButton>
+              </>
             ) : null}
           </Flex>
         </Flex>
@@ -3873,6 +3947,15 @@ export default function App() {
             sessionId={sessionId}
             database={dumpTarget}
             onClose={() => setDumpTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {importProfilesPath && (
+          <ProfileImportDialog
+            onConfirm={handleImportProfilesConfirm}
+            onCancel={() => setImportProfilesPath(null)}
           />
         )}
       </AnimatePresence>

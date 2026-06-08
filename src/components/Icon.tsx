@@ -77,6 +77,8 @@ export type IconName =
   | "pin"
   | "star"
   | "star-filled"
+  | "download"
+  | "upload"
   | "hash"
   | "toggle"
   | "calendar"
@@ -359,6 +361,22 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   "star-filled": (
     <path d="M12 2.5l2.92 5.92 6.53.95-4.72 4.6 1.11 6.5L12 17.9l-5.84 3.07 1.11-6.5L2.55 9.87l6.53-.95L12 2.5z" />
+  ),
+  // エクスポート (#442): 下向き矢印 + トレイ。
+  download: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M12 15V3" />
+    </>
+  ),
+  // インポート (#442): 上向き矢印 + トレイ。
+  upload: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="M7 9l5-5 5 5" />
+      <path d="M12 4v12" />
+    </>
   ),
   // ── カラム型ヘッダーアイコン (#474) ──
   // 数値 (整数/小数共通): ハッシュ #。

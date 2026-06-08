@@ -104,6 +104,17 @@ export interface SaveProfileRequest {
   file_path?: string | null;
 }
 
+/** プロファイルインポート時の ID 衝突解決戦略 (#442)。 */
+export type ProfileImportStrategy = "rename" | "skip" | "overwrite";
+
+/** `importProfiles` の結果要約 (#442)。 */
+export interface ProfileImportResult {
+  imported: number;
+  skipped: number;
+  overwritten: number;
+  invalid: number;
+}
+
 export type SnippetScope =
   | { kind: "any" }
   | { kind: "profile"; profile_id: string }
@@ -532,6 +543,19 @@ export const api = {
       parseResponse(schemas.connectionProfile, r, "save_profile"),
     ),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
+  /**
+   * 接続プロファイルを **秘密情報抜きで** `path` に JSON 出力する (#442)。`ids`
+   * 省略時は全件。返り値は書き込んだバイト数。
+   */
+  exportProfiles: (path: string, ids?: string[]) =>
+    invoke<number>("export_profiles", { path, ids: ids ?? null }),
+  /**
+   * `path` の JSON (`exportProfiles` 出力) を取り込む (#442)。`strategy` は ID 衝突時の
+   * 解決方法。秘密情報は含まれないため、取り込んだプロファイルは接続時に資格情報の
+   * 再入力が要る。
+   */
+  importProfiles: (path: string, strategy: ProfileImportStrategy) =>
+    invoke<ProfileImportResult>("import_profiles", { path, strategy }),
 
   listSnippets: () =>
     invoke<Snippet[]>("list_snippets").then((r) =>

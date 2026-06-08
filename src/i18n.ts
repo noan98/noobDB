@@ -549,6 +549,26 @@ const en = {
   exportError: "Export failed: {error}",
   exportNoData: "No rows to export.",
   exportPickFileTitle: "Choose export destination",
+  // 接続プロファイルのエクスポート/インポート (#442)。
+  profileExportTitle: "Export connection profiles",
+  profileExportAria: "Export connection profiles",
+  profileExportSuccess: "Exported profiles to {path} (no secrets included)",
+  profileExportError: "Profile export failed: {error}",
+  profileExportEmpty: "There are no profiles to export.",
+  profileImportTitle: "Import connection profiles",
+  profileImportAria: "Import connection profiles",
+  profileImportNote:
+    "The file contains no secrets (passwords / passphrases). Re-enter credentials when you connect.",
+  profileImportConfirm: "Import",
+  profileImportRename: "Add as new",
+  profileImportRenameDesc: "Keep existing profiles; give colliding ids a fresh id.",
+  profileImportSkip: "Skip duplicates",
+  profileImportSkipDesc: "Keep existing profiles; skip any with a matching id.",
+  profileImportOverwrite: "Overwrite",
+  profileImportOverwriteDesc: "Replace existing profiles that share an id.",
+  profileImportSuccess:
+    "Imported {imported}, skipped {skipped}, overwritten {overwritten}, invalid {invalid}",
+  profileImportError: "Profile import failed: {error}",
   exportRowCount: "{rows} rows will be exported.",
   exportPartialWarning: "Only the rows currently loaded are exported. To export the full result set, run \"Fetch all rows\" first.",
 
@@ -1563,6 +1583,26 @@ const ja: Dict = {
   exportError: "エクスポートに失敗しました: {error}",
   exportNoData: "出力できる行がありません。",
   exportPickFileTitle: "エクスポート先を選択",
+  // 接続プロファイルのエクスポート/インポート (#442)。
+  profileExportTitle: "接続プロファイルをエクスポート",
+  profileExportAria: "接続プロファイルをエクスポート",
+  profileExportSuccess: "{path} にプロファイルをエクスポートしました (秘密情報は含まれません)",
+  profileExportError: "プロファイルのエクスポートに失敗しました: {error}",
+  profileExportEmpty: "エクスポートできるプロファイルがありません。",
+  profileImportTitle: "接続プロファイルをインポート",
+  profileImportAria: "接続プロファイルをインポート",
+  profileImportNote:
+    "ファイルに秘密情報 (パスワード/パスフレーズ) は含まれません。接続時に資格情報を再入力してください。",
+  profileImportConfirm: "インポート",
+  profileImportRename: "新規として追加",
+  profileImportRenameDesc: "既存プロファイルは残し、ID が衝突するものには新しい ID を採番します。",
+  profileImportSkip: "重複をスキップ",
+  profileImportSkipDesc: "既存プロファイルを残し、ID が一致するものはスキップします。",
+  profileImportOverwrite: "上書き",
+  profileImportOverwriteDesc: "ID が一致する既存プロファイルを置き換えます。",
+  profileImportSuccess:
+    "インポート {imported} 件 / スキップ {skipped} 件 / 上書き {overwritten} 件 / 無効 {invalid} 件",
+  profileImportError: "プロファイルのインポートに失敗しました: {error}",
   exportRowCount: "{rows} 行をエクスポートします。",
   exportPartialWarning: "現在読み込み済みの行のみが対象です。全件をエクスポートするには、先に「全件取得」を実行してください。",
 
