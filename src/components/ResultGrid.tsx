@@ -35,7 +35,25 @@ import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
-import { Icon } from "./Icon";
+import { NoResultsIllustration } from "./illustrations";
+import { Icon, ICON_SIZES } from "./Icon";
+import {
+  type CellKind,
+  CELL_KIND_META,
+  classifyEmptyValue,
+  EMPTY_BADGE,
+} from "./cellTypeMeta";
+import {
+  type CondFormatMode,
+  type NumericStats,
+  toNumber,
+  computeNumericStats,
+  normalize,
+  dataBarPercent,
+  heatmapColor,
+  HEAT_PALETTES,
+  DEFAULT_HEAT_PALETTE,
+} from "./cellConditionalFormat";
 import { ExportModal } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
@@ -120,10 +138,25 @@ export const GRID_CSS: SystemStyleObject = {
     lineHeight: 1.2,
     gap: "1px",
   },
+  // 型アイコン + 名前を横並びにする行 (#474)。
+  "& th .th-label-row": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    minWidth: 0,
+  },
+  "& th .th-type-icon": {
+    display: "inline-flex",
+    alignItems: "center",
+    color: "var(--text-muted)",
+    flexShrink: 0,
+  },
   "& th .th-name": {
     fontWeight: 600,
     color: "var(--text)",
     letterSpacing: "0.01em",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   "& th .th-type": {
     fontSize: "var(--text-2xs)",
@@ -202,10 +235,45 @@ export const GRID_CSS: SystemStyleObject = {
     borderRadius: "var(--radius-sm)",
   },
   "& td.is-null": { backgroundImage: "linear-gradient(transparent, transparent)" },
+  // 空文字 / 空配列 / 空オブジェクトの淡色バッジ (#474)。NULL とは別トーンにして、
+  // 「NULL ではないが空」であることを区別できるようにする。
+  "& .cell-empty": {
+    display: "inline-block",
+    padding: "0 5px",
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-2xs)",
+    fontWeight: 600,
+    lineHeight: 1.5,
+    letterSpacing: "0.04em",
+    color: "var(--text-muted)",
+    background: "color-mix(in srgb, var(--text-muted) 10%, transparent)",
+    border: "1px dashed color-mix(in srgb, var(--text-muted) 36%, transparent)",
+    borderRadius: "var(--radius-sm)",
+  },
   "& .cell-number, & .cell-decimal": {
     color: "var(--cell-number)",
     fontVariantNumeric: "tabular-nums",
   },
+  // 条件付き書式 (#499): データバー / ヒートマップの背景レイヤ。値テキストは前面。
+  "& .cell-cf-wrap": {
+    position: "relative",
+    display: "block",
+    width: "100%",
+    borderRadius: "var(--radius-sm)",
+    overflow: "hidden",
+  },
+  "& .cell-databar": {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    background: "color-mix(in srgb, var(--accent) 28%, transparent)",
+    borderRadius: "var(--radius-sm)",
+    transitionProperty: "width",
+    transitionDuration: "var(--dur-med)",
+    transitionTimingFunction: "var(--ease-out)",
+  },
+  "& .cell-cf-value": { position: "relative" },
   "& .cell-bool": { fontWeight: 600 },
   "& .cell-bool.is-true": { color: "var(--cell-bool-true)" },
   "& .cell-bool.is-false": { color: "var(--cell-bool-false)" },
@@ -298,9 +366,11 @@ export const GRID_CSS: SystemStyleObject = {
     background: "var(--bg-active)",
   },
   "& th .th-sort-indicator": {
-    fontSize: "var(--text-2xs)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
     color: "var(--accent)",
-    width: "10px",
+    width: "13px",
     flexShrink: 0,
     lineHeight: 1,
   },
@@ -421,6 +491,14 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--preview-highlight) 24%, transparent)",
   },
   "& .cell-pending-value": { color: "var(--preview-highlight)", fontWeight: 500 },
+  // ── セル状態の視覚言語 (4 段階の優先順位, #475) ──
+  // 1. selection (キーボード選択) … is-active-cell: アクセントの 2px アウトライン
+  // 2. focus/editing (フォーカス内/編集中) … focus-within: 同じく 2px アウトライン
+  //    + 編集入力 (cell-edit-input) に共有フォーカスリングトークン
+  // 3. pending edit (未適用の編集) … is-pending-edit: 左端のアクセントバー + 淡塗り
+  // 4. invalid (検証エラー) … is-invalid-edit: 左端の危険色バー + 危険色リング
+  // いずれも --focus-ring / --accent / --error(status-error) トークンを参照し、
+  // ライト/ダーク両テーマで一貫する。outline と box-shadow を使い分けて重ねられる。
   // セルの編集可否と選択状態の視覚フィードバック (#349)。
   // 既定のデータセルは「編集できない」ことが伝わるよう矢印カーソルにし (読み取り
   // 専用セッションや PK/BLOB 列・非テーブル結果では is-editable-cell が付かないため
@@ -465,11 +543,11 @@ export const GRID_CSS: SystemStyleObject = {
     border: "1px solid var(--accent)",
     borderRadius: "var(--radius-sm)",
     outline: "none",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent)",
+    boxShadow: "var(--focus-ring)",
   },
   "& .cell-edit-input.is-invalid": {
-    borderColor: "var(--status-error)",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-error) 30%, transparent)",
+    borderColor: "var(--error-solid)",
+    boxShadow: "var(--focus-ring-danger)",
   },
   "& .cell-edit-error": {
     position: "absolute",
@@ -579,16 +657,8 @@ interface RowShape {
   [key: string]: CellValue;
 }
 
-type CellKind =
-  | "number"
-  | "decimal"
-  | "bool"
-  | "date"
-  | "time"
-  | "json"
-  | "enum"
-  | "binary"
-  | "string";
+// CellKind は表示メタ (型アイコン/空値分類) と共有するため cellTypeMeta.ts に集約し、
+// ここでは import して使う (#474)。
 
 const NUMERIC_TYPES = new Set([
   "TINYINT",
@@ -990,6 +1060,11 @@ function ColumnFilterMenu({
   value,
   onChange,
   onClose,
+  formatSupported,
+  formatMode,
+  onFormatModeChange,
+  paletteKey,
+  onPaletteChange,
 }: {
   columnName: string;
   kind: CellKind;
@@ -997,6 +1072,12 @@ function ColumnFilterMenu({
   value: ColumnFilter | undefined;
   onChange: (next: ColumnFilter | undefined) => void;
   onClose: () => void;
+  /** 数値列のみ条件付き書式 (データバー/ヒート) を出す (#499)。 */
+  formatSupported: boolean;
+  formatMode: CondFormatMode;
+  onFormatModeChange: (mode: CondFormatMode) => void;
+  paletteKey: string;
+  onPaletteChange: (key: string) => void;
 }) {
   const t = useT();
   const numeric = isNumericFilterKind(kind);
@@ -1058,7 +1139,7 @@ function ColumnFilterMenu({
       role="dialog"
       aria-label={label}
       position="fixed"
-      zIndex={1000}
+      zIndex="popover"
       width="240px"
       display="flex"
       flexDirection="column"
@@ -1156,6 +1237,38 @@ function ColumnFilterMenu({
           <option value="exclude">{t("gridFilterNullExclude")}</option>
         </chakra.select>
       </chakra.label>
+
+      {formatSupported && (
+        <chakra.label display="flex" flexDirection="column" gap="3px">
+          <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+            {t("gridCondFormatLabel")}
+          </chakra.span>
+          <chakra.select
+            css={FILTER_FIELD_CSS}
+            value={formatMode}
+            onChange={(e) => onFormatModeChange(e.target.value as CondFormatMode)}
+          >
+            <option value="off">{t("gridCondFormatOff")}</option>
+            <option value="bar">{t("gridCondFormatBar")}</option>
+            <option value="heat">{t("gridCondFormatHeat")}</option>
+          </chakra.select>
+          {formatMode === "heat" && (
+            <chakra.select
+              css={FILTER_FIELD_CSS}
+              value={paletteKey}
+              aria-label={t("gridCondFormatPalette")}
+              onChange={(e) => onPaletteChange(e.target.value)}
+            >
+              {Object.values(HEAT_PALETTES).map((p) => (
+                <option key={p.key} value={p.key}>
+                  {t(`gridPalette_${p.key}` as Parameters<typeof t>[0])}
+                  {p.colorBlindSafe ? ` ${t("gridPaletteCbSafe")}` : ""}
+                </option>
+              ))}
+            </chakra.select>
+          )}
+        </chakra.label>
+      )}
 
       <Box display="flex" justifyContent="space-between" gap="6px" paddingTop="2px">
         <Button
@@ -1305,6 +1418,20 @@ export function DataGrid({
 
   const columnKinds = useMemo<CellKind[]>(() => columns.map(classifyColumn), [columns]);
 
+  // 数値セルの条件付き書式 (#499)。列ごとの適用モードと、共有のヒートパレット。
+  const [colFormats, setColFormats] = useState<Record<number, CondFormatMode>>({});
+  const [heatPaletteKey, setHeatPaletteKey] = useState<string>(DEFAULT_HEAT_PALETTE);
+  // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のみ算出。
+  const columnStats = useMemo<(NumericStats | null)[]>(
+    () =>
+      columnKinds.map((k, i) =>
+        k === "number" || k === "decimal"
+          ? computeNumericStats(rows.map((r) => r[i]))
+          : null,
+      ),
+    [columnKinds, rows],
+  );
+
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
 
@@ -1343,8 +1470,20 @@ export function DataGrid({
             className="th-content"
             title={fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name}
           >
-            {fkTable && <span className="th-fk-badge">FK</span>}
-            <span className="th-name">{c.name}</span>
+            <span className="th-label-row">
+              {fkTable && <span className="th-fk-badge">FK</span>}
+              <span className="th-name">{c.name}</span>
+              {/* カラム型アイコン (#474)。aria-label で SR にも型を伝える。
+                  名前の後ろに置き、ヘッダーのアクセシブル名が列名から始まるようにする。 */}
+              <span
+                className="th-type-icon"
+                role="img"
+                aria-label={t(CELL_KIND_META[kind].labelKey)}
+                title={t(CELL_KIND_META[kind].labelKey)}
+              >
+                <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
+              </span>
+            </span>
             <span className="th-type">{c.type_name}</span>
           </span>
         ),
@@ -1358,17 +1497,64 @@ export function DataGrid({
         maxSize: 800,
         cell: (info) => {
           const v = info.getValue() as CellValue;
-          if (v === null || v === undefined) {
+          // NULL / 空文字 / 空配列・空オブジェクトを描き分ける (#474)。表示専用で、
+          // コピー/編集/エクスポートは常に元の値 (info.getValue()) を使う。
+          const emptyKind = classifyEmptyValue(v);
+          if (emptyKind === "null") {
             return <span className="cell-null">{t("resultNull")}</span>;
           }
+          if (richCellRendering && emptyKind) {
+            const badge = EMPTY_BADGE[emptyKind];
+            return (
+              <span
+                className={`cell-empty cell-empty-${emptyKind}`}
+                title={t(badge.labelKey)}
+                aria-label={t(badge.labelKey)}
+              >
+                {badge.glyph}
+              </span>
+            );
+          }
           const effectiveKind = classifyByValue(v) ?? kind;
+          // 数値セルの条件付き書式 (#499): 列単位でオプトインされたデータバー /
+          // ヒートマップを背景に描く。NULL/非数値は対象外 (上で弾き済み or num===null)。
+          const renderNumeric = (display: string, extraClass: string) => {
+            const mode = colFormats[i] ?? "off";
+            const stats = columnStats[i];
+            const num = toNumber(v);
+            if (mode === "off" || !stats || num === null) {
+              return <span className={`cell-number ${extraClass}`}>{display}</span>;
+            }
+            if (mode === "bar") {
+              return (
+                <span className="cell-cf-wrap">
+                  <span
+                    className="cell-databar"
+                    style={{ width: `${dataBarPercent(num, stats)}%` }}
+                    aria-hidden
+                  />
+                  <span className={`cell-number cell-cf-value ${extraClass}`}>{display}</span>
+                </span>
+              );
+            }
+            const palette = HEAT_PALETTES[heatPaletteKey] ?? HEAT_PALETTES[DEFAULT_HEAT_PALETTE];
+            const color = heatmapColor(normalize(num, stats), palette);
+            return (
+              <span
+                className="cell-cf-wrap"
+                style={{ background: `color-mix(in srgb, ${color} 45%, transparent)` }}
+              >
+                <span className={`cell-number cell-cf-value ${extraClass}`}>{display}</span>
+              </span>
+            );
+          };
           if (effectiveKind === "number") {
             const num = typeof v === "number" ? v : Number(v);
             const display = Number.isFinite(num) ? formatNumber(num) : String(v);
-            return <span className="cell-number">{display}</span>;
+            return renderNumeric(display, "");
           }
           if (effectiveKind === "decimal") {
-            return <span className="cell-number cell-decimal">{String(v)}</span>;
+            return renderNumeric(String(v), "cell-decimal");
           }
           if (effectiveKind === "bool") {
             const truthy = v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
@@ -1440,7 +1626,18 @@ export function DataGrid({
         },
       };
     });
-  }, [columns, columnKinds, columnMeta, t, enableColumnControls, richCellRendering, locale]);
+  }, [
+    columns,
+    columnKinds,
+    columnMeta,
+    t,
+    enableColumnControls,
+    richCellRendering,
+    locale,
+    colFormats,
+    columnStats,
+    heatPaletteKey,
+  ]);
 
   const data = useMemo<RowShape[]>(() => {
     return rows.map((r) => {
@@ -1996,7 +2193,6 @@ export function DataGrid({
                 const canResize = h.column.getCanResize();
                 const isResizing = h.column.getIsResizing();
                 const sortDir = h.column.getIsSorted();
-                const sortGlyph = sortDir === "asc" ? "▲" : sortDir === "desc" ? "▼" : "";
                 const sortTitle =
                   sortDir === "asc"
                     ? t("gridSortDesc")
@@ -2024,7 +2220,11 @@ export function DataGrid({
                         >
                           {flexRender(h.column.columnDef.header, h.getContext())}
                           <chakra.span className="th-sort-indicator" aria-hidden>
-                            {sortGlyph}
+                            {sortDir === "asc" ? (
+                              <Icon name="sort-asc" size={ICON_SIZES.sm} />
+                            ) : sortDir === "desc" ? (
+                              <Icon name="sort-desc" size={ICON_SIZES.sm} />
+                            ) : null}
                           </chakra.span>
                         </chakra.button>
                         <chakra.button
@@ -2216,6 +2416,18 @@ export function DataGrid({
             table.getColumn(String(filterMenu.colIdx))?.setFilterValue(next)
           }
           onClose={() => setFilterMenu(null)}
+          formatSupported={isNumericKind(columnKinds[filterMenu.colIdx] ?? "string")}
+          formatMode={colFormats[filterMenu.colIdx] ?? "off"}
+          onFormatModeChange={(mode) =>
+            setColFormats((prev) => {
+              const next = { ...prev };
+              if (mode === "off") delete next[filterMenu.colIdx];
+              else next[filterMenu.colIdx] = mode;
+              return next;
+            })
+          }
+          paletteKey={heatPaletteKey}
+          onPaletteChange={setHeatPaletteKey}
         />
       )}
       <AnimatePresence>
@@ -2231,7 +2443,7 @@ export function DataGrid({
               bottom: "48px",
               left: "50%",
               transform: "translateX(-50%)",
-              zIndex: 1100,
+              zIndex: "popover",
               pointerEvents: "none",
             }}
           >
@@ -2890,7 +3102,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               />
             ) : (
               <EmptyState
-                compact
+                illustration={<NoResultsIllustration />}
                 icon="table"
                 title={t("gridZeroRows")}
                 description={t("gridZeroRowsHint", { ms: result.elapsed_ms })}

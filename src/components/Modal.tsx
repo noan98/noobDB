@@ -85,7 +85,7 @@ export function Modal({
           css={{
             position: "fixed",
             inset: 0,
-            zIndex: 100,
+            zIndex: "modal",
             bg: "rgba(0, 0, 0, 0.45)",
             backdropFilter: "blur(2px)",
           }}
@@ -94,7 +94,7 @@ export function Modal({
           css={{
             position: "fixed",
             inset: 0,
-            zIndex: 100,
+            zIndex: "modal",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -116,7 +116,7 @@ export function Modal({
                 border: "1px solid",
                 borderColor: "app.border",
                 borderRadius: "lg",
-                boxShadow: "xl",
+                boxShadow: "elevationModal",
               }}
             >
               {children}

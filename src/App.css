@@ -37,6 +37,25 @@
   --text-md: calc(13px * var(--font-scale));
   --text-base: calc(14px * var(--font-scale));
   --text-lg: calc(16px * var(--font-scale));
+  --text-xl: calc(20px * var(--font-scale));
+
+  /* ── Typography rhythm (#490) ─────────────────────────────────────────
+     タイプスケール (--text-*) は上記の通り --font-scale に追従するため、フォント
+     サイズ設定を変えるとスケール全体が相対的に追従する。ここでは行間
+     (line-height) と字間 (letter-spacing) を役割別にトークン化し、見出し/本文/
+     補助テキスト/モノスペース (数値・SQL) の縦リズムを統一する。
+       --leading-tight   : 見出し (密)
+       --leading-snug    : UI ラベル・コンパクトな本文
+       --leading-normal  : 標準本文
+       --leading-relaxed : エディタなど長文 (CodeMirror と共有)
+     数値・SQL は等幅 (--font-mono) で桁揃えを優先する。 */
+  --leading-tight: 1.25;
+  --leading-snug: 1.4;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.6;
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
 
   /* Spacing scale (4px rhythm).
      フォントスケール (--font-scale) に追従させる (#327)。余白を固定 px のままに
@@ -75,12 +94,52 @@
   --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.18);
   --shadow-xl: 0 24px 60px rgba(15, 23, 42, 0.28);
 
+  /* ── Elevation / layering system (#500) ───────────────────────────────
+     オーバーレイ表面のエレベーション (影) とサーフェスをレイヤ単位で対応付ける。
+     影は --shadow-* を参照するためダークでは自動的に強い影へ追従し、ダークでは
+     border (--border-strong) と併用して輪郭を補う運用とする。
+       raised  : カード/浮き出し要素   → shadow-sm
+       popover : メニュー/ポップオーバー → shadow-md
+       toast   : トースト通知           → shadow-lg
+       modal   : ダイアログ             → shadow-xl */
+  --elevation-raised: var(--shadow-sm);
+  --elevation-popover: var(--shadow-md);
+  --elevation-toast: var(--shadow-lg);
+  --elevation-modal: var(--shadow-xl);
+
+  /* z-index スケール (#500): オーバーレイの重なり順を中央管理し、各所に散在する
+     マジックナンバーを解消する。低→高:
+       base < sticky < raised < sidebar < modal < dropdown < popover < toast
+     コンテキストメニュー/ポップオーバーは modal より上 (モーダル内から開けるため)、
+     トーストが常に最前面。Chakra の `zIndex="modal"` 等のトークン名と一致させて
+     いるため、JS/CSS どちらからでも同じ尺度を参照できる。 */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-raised: 20;
+  --z-sidebar: 40;
+  --z-modal: 100;
+  --z-dropdown: 500;
+  --z-popover: 1000;
+  --z-toast: 2000;
+
   /* Motion: shared easing/durations for micro-interactions.
      The reduced-motion media query at the bottom neutralizes these. */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast: 120ms;
   --dur-med: 200ms;
+
+  /* ── Focus ring tokens (#475) ─────────────────────────────────────────
+     キーボードフォーカスのリングを 1 か所で定義し、全フォーカス要素 (ボタン/
+     入力/セレクト/グリッドセル等) が同じ太さ・色・オフセットで `:focus-visible`
+     に統一されるようにする。色は動的アクセント (--accent) に追従。視認性のため
+     不透明度を上げ (旧 25% → 45%)、ライト/ダーク両テーマで >=3:1 を確保する。
+     エラー状態は危険色 (--error-solid) のリングに切り替える (セマンティック分岐)。 */
+  --focus-ring-width: 2px;
+  --focus-ring-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
+  --focus-ring-danger: 0 0 0 var(--focus-ring-width)
+    color-mix(in srgb, var(--error-solid) 55%, transparent);
 
   /* Workspace accent: defaults to the brand accent; the active connection's
      color overrides this inline (see #138) so the topbar/active tab tint to
@@ -118,6 +177,51 @@
 
   --scrollbar-thumb: #c2cad6;
   --scrollbar-thumb-hover: #a8b2c0;
+
+  /* ── Neutral ramp (#476) ──────────────────────────────────────────────
+     拡張ニュートラル階調。既存の bg/text/border トークンは用途別の意味名で
+     据え置き、ここでは「明→暗」を 0〜950 の 11 段で連続的に並べた汎用グレー
+     スケールを追加する。新規 UI はこのランプから濃淡を選ぶことで、テーマを
+     跨いで一貫した階調になる。ライトは 0=最明(白) → 950=最暗、ダーク
+     (:root[data-theme=dark]) では反転させ「0=最暗(地) → 950=最明(文字)」と
+     し、同じトークン名が常に "地からの距離" を表すようにする。 */
+  --neutral-0: #ffffff;
+  --neutral-50: #f8fafc;
+  --neutral-100: #eef1f5;
+  --neutral-200: #e3e8ef;
+  --neutral-300: #cdd4df;
+  --neutral-400: #a8b2c0;
+  --neutral-500: #7d8693;
+  --neutral-600: #5c6776;
+  --neutral-700: #475569;
+  --neutral-800: #313c4a;
+  --neutral-900: #1a2330;
+  --neutral-950: #0d1117;
+
+  /* ── Semantic color families (#476) ───────────────────────────────────
+     状態色 (info/success/warning/error) を役割別に展開する。色だけに依存
+     しない運用 (アイコン/形状/テキストラベル併用) を前提とする — 赤緑色弱でも
+     区別できるよう、利用側ガイドは theme.ts のコメントを参照。
+       *-subtle : 淡い面塗り背景 (バナー/バッジ地)。下の *-text が AA を満たす。
+       *-border : subtle 地と調和する境界線。
+       *-solid  : 塗りつぶしボタン/ドット等のベタ塗り (白文字が AA)。
+       *-text   : 通常背景 (--bg / --bg-elevated) 上で AA(>=4.5:1) を満たす文字色。 */
+  --info-subtle: #e0f2fe;
+  --info-border: #bae6fd;
+  --info-solid: #0369a1;   /* 白文字 5.93:1 */
+  --info-text: #075985;    /* on --bg 6.48:1 */
+  --success-subtle: #dcfce7;
+  --success-border: #bbf7d0;
+  --success-solid: #15803d; /* 白文字 5.02:1 */
+  --success-text: #15803d;  /* on --bg 4.67:1 */
+  --warning-subtle: #fef3c7;
+  --warning-border: #fde68a;
+  --warning-solid: #b45309;  /* 白文字 5.05:1 */
+  --warning-text: #b45309;   /* on --bg 4.59:1 */
+  --error-subtle: #fef2f2;
+  --error-border: #fecaca;
+  --error-solid: #d42323;    /* 白文字 5.17:1 */
+  --error-text: #b91c1c;     /* on --bg 5.93:1 */
 
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
@@ -164,6 +268,8 @@
   color-scheme: light;
   font-family: var(--font-sans);
   font-size: var(--text-base);
+  /* 標準本文の縦リズム (#490)。各コンポーネントは必要に応じて leading-* で上書き。 */
+  line-height: var(--leading-normal);
   color: var(--text);
   background: var(--bg);
 }
@@ -216,6 +322,38 @@
   --scrollbar-thumb: #3a4453;
   --scrollbar-thumb-hover: #515d6e;
 
+  /* Neutral ramp (dark): 0=最暗(地) → 950=最明(文字)。ライトと反転 (#476)。 */
+  --neutral-0: #0d1117;
+  --neutral-50: #12171f;
+  --neutral-100: #161b22;
+  --neutral-200: #1a212b;
+  --neutral-300: #222b37;
+  --neutral-400: #2a323d;
+  --neutral-500: #3c4553;
+  --neutral-600: #515d6e;
+  --neutral-700: #8794a3;
+  --neutral-800: #aeb9c7;
+  --neutral-900: #e6edf3;
+  --neutral-950: #ffffff;
+
+  /* Semantic families (dark): subtle は暗い面塗り、text は明色で AA を満たす (#476)。 */
+  --info-subtle: #0c2a3f;
+  --info-border: #155b7e;
+  --info-solid: #38bdf8;
+  --info-text: #7dd3fc;     /* on --bg 高コントラスト */
+  --success-subtle: #0f2a1a;
+  --success-border: #1f5235;
+  --success-solid: #22c55e;
+  --success-text: #4ade80;
+  --warning-subtle: #3a2c10;
+  --warning-border: #92670c;
+  --warning-solid: #f59e0b;
+  --warning-text: #fbbf24;
+  --error-subtle: #3a1414;
+  --error-border: #7f1d1d;
+  --error-solid: #ef4444;
+  --error-text: #f87171;
+
   --accent: #4c93f7;
   --accent-hover: #6cb0fb;
   /* primary ボタン / アクセントバッジの「アクセント地に乗る文字」。ダークでは
@@ -258,6 +396,89 @@
   --preview-banner-border: #92670c;
   --preview-banner-text: #fde68a;
   --preview-banner-dot: #fbbf24;
+
+  color-scheme: dark;
+}
+
+/* ── Theme preset: Dracula (#465) ─────────────────────────────────────────
+   追加カラーテーマプリセット。`data-theme="dracula-dark"` で選択され (App.tsx が
+   themePreset 設定から合成)、ベース :root のライト値を全面的にダーク系へ上書き
+   する。テーマ名は "...-dark" で終わるため theme.ts の `conditions.dark`
+   ([data-theme$=dark]) に一致し、カラー付きボタンの _dark トークンも効く。
+   配色は Dracula 公式パレットを基に、テキスト/状態色は WCAG AA を満たすよう明度を
+   調整している (themeContrast.test.ts がプリセットも検証)。アクセント色・密度・
+   シンタックス配色のユーザ設定とは直交し、それらは引き続き実行時に上書きできる。 */
+:root[data-theme="dracula-dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.62);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.72);
+
+  --bg: #282a36;
+  --bg-elevated: #343746;
+  --bg-muted: #21222c;
+  --bg-hover: #3b3e4f;
+  --bg-active: #44475a;
+  --bg-active-strong: #565a72;
+  --bg-toolbar: #21222c;
+  --bg-header: #21222c;
+  --bg-error: #3b1f23;
+  --bg-warning: #3a2f1a;
+  --bg-input: #21222c;
+  --bg-stripe: #2b2d39;
+  --bg-row-hover: #3a3d4e;
+
+  --text: #f8f8f2;
+  --text-secondary: #cdd0e6;
+  --text-muted: #a3a8c8;
+  --text-null: #a0a4c1;
+  --text-error: #ff8a8a;
+  --text-warning: #ffb86c;
+  --text-success: #6dffa0;
+
+  --border: #44475a;
+  --border-strong: #565a72;
+  --border-subtle: #343746;
+
+  --scrollbar-thumb: #565a72;
+  --scrollbar-thumb-hover: #6b6f8c;
+
+  --accent: #bd93f9;
+  --accent-hover: #cba6fc;
+  --accent-text: #1a142b;
+
+  --cm-selection: #44475a;
+
+  --cell-number: #6dffa0;
+  --cell-decimal: #6dffa0;
+  --cell-bool-true: #8be9fd;
+  --cell-bool-false: #ff92df;
+  --cell-date: #ffb86c;
+  --cell-json: #d6acff;
+  --cell-enum-s: 60%;
+  --cell-enum-l: 74%;
+  --cell-binary: #a8adcb;
+
+  --status-connected: #6dffa0;
+  --status-connecting: #ffb86c;
+  --status-error: #ff8a8a;
+  --status-warning: #f1fa8c;
+  --status-success: #6dffa0;
+  --status-info: #8be9fd;
+  --status-idle: #7782ad;
+
+  --syntax-keyword: #ff79c6;
+  --syntax-string: #f1fa8c;
+  --syntax-number: #bd93f9;
+  --syntax-comment: #99a0cf;
+  --syntax-function: #8be9fd;
+  --syntax-operator: #ff79c6;
+
+  --preview-highlight: #bd93f9;
+  --preview-banner-bg: #3a2f1a;
+  --preview-banner-border: #6b5a2c;
+  --preview-banner-text: #f1fa8c;
+  --preview-banner-dot: #ffb86c;
 
   color-scheme: dark;
 }
@@ -364,7 +585,7 @@ html, body, #root {
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   button:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+    box-shadow: var(--focus-ring);
   }
 
   input, select {
@@ -378,16 +599,30 @@ html, body, #root {
     width: 100%;
   }
   input::placeholder { color: var(--text-muted); }
-  input:focus, select:focus {
+  /* :focus-visible に統一し、マウスクリック時に不要なリングを出さない (#475)。
+     テキスト入力はキーボード操作中も :focus-visible が一致するため挙動は維持。 */
+  input:focus-visible, select:focus-visible {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+    box-shadow: var(--focus-ring);
+  }
+  /* エラー入力 (aria-invalid) は危険色の枠線 + リングへ切り替える (#475)。 */
+  input[aria-invalid="true"], select[aria-invalid="true"] {
+    border-color: var(--error-solid);
+  }
+  input[aria-invalid="true"]:focus-visible,
+  select[aria-invalid="true"]:focus-visible {
+    border-color: var(--error-solid);
+    box-shadow: var(--focus-ring-danger);
   }
 
   label {
     display: block;
     font-size: var(--text-sm);
     font-weight: 600;
+    /* 小さな見出し的ラベルは字間をわずかに広げて可読性を上げる (#490)。 */
+    line-height: var(--leading-snug);
+    letter-spacing: var(--tracking-wide);
     color: var(--text-secondary);
     margin-bottom: 2px;
   }
@@ -409,7 +644,7 @@ html, body, #root {
    comfortably in both themes: looser line-height, gutter breathing room, and
    accent-tinted active line / caret (#145). */
 .cm-editor .cm-scroller {
-  line-height: 1.6;
+  line-height: var(--leading-relaxed);
   font-family: var(--font-mono);
 }
 .cm-editor .cm-content {

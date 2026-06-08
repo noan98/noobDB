@@ -25,6 +25,7 @@ import {
 } from "./components/cellEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { EmptyState } from "./components/EmptyState";
+import { DisconnectedIllustration } from "./components/illustrations";
 import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -108,8 +109,12 @@ import {
   getSettings,
   setAutoRefreshDefaultSecs,
   BASE_FONT_SIZE_PX,
+  monoFontStack,
+  uiFontStack,
+  themePresetDataTheme,
   type TabRestoreMode,
 } from "./settings";
+import { ThemeTransition } from "./components/ThemeTransition";
 import { accentVars } from "./accent";
 import {
   clearPersistedTabs,
@@ -583,10 +588,13 @@ export default function App() {
   // `?` キーで開くショートカット チートシートの開閉 (#448)。
   const [showCheatSheet, setShowCheatSheet] = useState(false);
 
+  // data-theme はテーマプリセット (#465) と light/dark トグルから合成する。
+  // THEME_STORAGE_KEY には従来どおり light/dark のみ保存する。
+  const dataTheme = themePresetDataTheme(settings.themePreset, theme);
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.setAttribute("data-theme", dataTheme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
+  }, [dataTheme, theme]);
 
   useEffect(() => {
     const colors = settings.syntaxColors[theme];
@@ -596,6 +604,15 @@ export default function App() {
     }
     root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
     root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
+
+    // フォントファミリ (#449): 設定があれば共有フォールバック付きのスタックを
+    // --font-mono / --font-sans に注入し、未指定なら App.css の既定スタックへ戻す。
+    const monoStack = monoFontStack(settings.monoFontFamily);
+    if (monoStack) root.style.setProperty("--font-mono", monoStack);
+    else root.style.removeProperty("--font-mono");
+    const sansStack = uiFontStack(settings.uiFontFamily);
+    if (sansStack) root.style.setProperty("--font-sans", sansStack);
+    else root.style.removeProperty("--font-sans");
 
     // アクセント色: ユーザー指定があれば 3 つの CSS 変数を実行時に注入し、未指定
     // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す (#409)。前景と
@@ -3063,8 +3080,30 @@ export default function App() {
   };
 
   return (
-    <Flex direction="column" h="100vh">
-      <TitleBar />
+    <Flex
+      direction="column"
+      h="100vh"
+      // アクティブ接続色をルートに伝播し、タイトルバー (#466) も含め全体で参照できる
+      // ようにする。main 側 (gridColumn 2) でも個別に上書きしているため作業画面の
+      // ヘッダーは従来どおり。
+      style={
+        sessionId && selectedProfile?.color
+          ? ({ "--ws-accent": selectedProfile.color } as CSSProperties)
+          : undefined
+      }
+    >
+      <ThemeTransition themeKey={dataTheme} />
+      <TitleBar
+        connection={
+          sessionId && selectedProfile
+            ? {
+                name: selectedProfile.name,
+                color: selectedProfile.color ?? null,
+                isProduction: selectedProfile.is_production,
+              }
+            : null
+        }
+      />
       <Grid
         templateColumns={
           sidebarCollapsed || (narrow && narrowSidebarOpen)
@@ -3546,6 +3585,7 @@ export default function App() {
               <Flex direction="column" flex="1" overflow="hidden">
                 <PaneEmpty>
                   <EmptyState
+                    illustration={<DisconnectedIllustration />}
                     icon="database"
                     title={t("notConnectedTitle")}
                     description={t("editorHintDisabled")}
