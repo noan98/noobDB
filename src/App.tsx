@@ -78,6 +78,9 @@ const ProfileImportDialog = lazy(() =>
 const PaginationBar = lazy(() =>
   import("./components/PaginationBar").then((m) => ({ default: m.PaginationBar })),
 );
+const ObjectSearchModal = lazy(() =>
+  import("./components/ObjectSearchModal").then((m) => ({ default: m.ObjectSearchModal })),
+);
 const HelpView = lazy(() =>
   import("./components/HelpView").then((m) => ({ default: m.HelpView })),
 );
@@ -626,6 +629,8 @@ export default function App() {
   // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
   // 状態には依存させない (#382)。
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  // スキーマ横断のグローバルオブジェクト検索 (#473) の開閉。
+  const [showObjectSearch, setShowObjectSearch] = useState(false);
   // `?` キーで開くショートカット チートシートの開閉 (#448)。
   const [showCheatSheet, setShowCheatSheet] = useState(false);
 
@@ -2791,6 +2796,11 @@ export default function App() {
         e.preventDefault();
         setShowCommandPalette((v) => !v);
       }
+      // Cmd/Ctrl+Shift+O: スキーマ横断のグローバルオブジェクト検索 (#473)。接続中のみ。
+      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        if (sessionIdRef.current) setShowObjectSearch((v) => !v);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -4113,6 +4123,16 @@ export default function App() {
             <CommandPalette
               items={commandItems}
               onClose={() => setShowCommandPalette(false)}
+            />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showObjectSearch && sessionId && (
+            <ObjectSearchModal
+              sessionId={sessionId}
+              currentDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
+              onOpenTable={handleOpenTable}
+              onClose={() => setShowObjectSearch(false)}
             />
           )}
         </AnimatePresence>
