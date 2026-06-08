@@ -3946,6 +3946,7 @@ export default function App() {
           <DumpModal
             sessionId={sessionId}
             database={dumpTarget}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             onClose={() => setDumpTarget(null)}
           />
         )}
