@@ -351,10 +351,16 @@ export interface DumpOptions {
   extendedInsert: boolean;
   /** `--complete-insert`: write column names in every `INSERT`. */
   completeInsert: boolean;
-  /** `--no-data`: schema only, no row data. */
+  /** `--no-data` (pg `--schema-only`; sqlite skips INSERTs): schema only. */
   noData: boolean;
-  /** `--no-create-info`: data only, no `CREATE TABLE`. */
+  /** `--no-create-info` (pg `--data-only`; sqlite skips schema): data only. */
   noCreateInfo: boolean;
+  /** PostgreSQL only — `pg_dump --no-owner`. */
+  noOwner?: boolean;
+  /** PostgreSQL only — `pg_dump --no-privileges`. */
+  noPrivileges?: boolean;
+  /** PostgreSQL only — `pg_dump -n <schema>`; empty/undefined = all schemas. */
+  pgSchema?: string | null;
 }
 
 export interface ImportOptions {
