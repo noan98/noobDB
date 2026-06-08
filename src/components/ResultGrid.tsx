@@ -36,6 +36,12 @@ import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
+import {
+  type CellKind,
+  CELL_KIND_META,
+  classifyEmptyValue,
+  EMPTY_BADGE,
+} from "./cellTypeMeta";
 import { ExportModal } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
@@ -120,10 +126,25 @@ export const GRID_CSS: SystemStyleObject = {
     lineHeight: 1.2,
     gap: "1px",
   },
+  // 型アイコン + 名前を横並びにする行 (#474)。
+  "& th .th-label-row": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    minWidth: 0,
+  },
+  "& th .th-type-icon": {
+    display: "inline-flex",
+    alignItems: "center",
+    color: "var(--text-muted)",
+    flexShrink: 0,
+  },
   "& th .th-name": {
     fontWeight: 600,
     color: "var(--text)",
     letterSpacing: "0.01em",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   "& th .th-type": {
     fontSize: "var(--text-2xs)",
@@ -202,6 +223,21 @@ export const GRID_CSS: SystemStyleObject = {
     borderRadius: "var(--radius-sm)",
   },
   "& td.is-null": { backgroundImage: "linear-gradient(transparent, transparent)" },
+  // 空文字 / 空配列 / 空オブジェクトの淡色バッジ (#474)。NULL とは別トーンにして、
+  // 「NULL ではないが空」であることを区別できるようにする。
+  "& .cell-empty": {
+    display: "inline-block",
+    padding: "0 5px",
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-2xs)",
+    fontWeight: 600,
+    lineHeight: 1.5,
+    letterSpacing: "0.04em",
+    color: "var(--text-muted)",
+    background: "color-mix(in srgb, var(--text-muted) 10%, transparent)",
+    border: "1px dashed color-mix(in srgb, var(--text-muted) 36%, transparent)",
+    borderRadius: "var(--radius-sm)",
+  },
   "& .cell-number, & .cell-decimal": {
     color: "var(--cell-number)",
     fontVariantNumeric: "tabular-nums",
@@ -589,16 +625,8 @@ interface RowShape {
   [key: string]: CellValue;
 }
 
-type CellKind =
-  | "number"
-  | "decimal"
-  | "bool"
-  | "date"
-  | "time"
-  | "json"
-  | "enum"
-  | "binary"
-  | "string";
+// CellKind は表示メタ (型アイコン/空値分類) と共有するため cellTypeMeta.ts に集約し、
+// ここでは import して使う (#474)。
 
 const NUMERIC_TYPES = new Set([
   "TINYINT",
@@ -1353,8 +1381,20 @@ export function DataGrid({
             className="th-content"
             title={fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name}
           >
-            {fkTable && <span className="th-fk-badge">FK</span>}
-            <span className="th-name">{c.name}</span>
+            <span className="th-label-row">
+              {fkTable && <span className="th-fk-badge">FK</span>}
+              <span className="th-name">{c.name}</span>
+              {/* カラム型アイコン (#474)。aria-label で SR にも型を伝える。
+                  名前の後ろに置き、ヘッダーのアクセシブル名が列名から始まるようにする。 */}
+              <span
+                className="th-type-icon"
+                role="img"
+                aria-label={t(CELL_KIND_META[kind].labelKey)}
+                title={t(CELL_KIND_META[kind].labelKey)}
+              >
+                <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
+              </span>
+            </span>
             <span className="th-type">{c.type_name}</span>
           </span>
         ),
@@ -1368,8 +1408,23 @@ export function DataGrid({
         maxSize: 800,
         cell: (info) => {
           const v = info.getValue() as CellValue;
-          if (v === null || v === undefined) {
+          // NULL / 空文字 / 空配列・空オブジェクトを描き分ける (#474)。表示専用で、
+          // コピー/編集/エクスポートは常に元の値 (info.getValue()) を使う。
+          const emptyKind = classifyEmptyValue(v);
+          if (emptyKind === "null") {
             return <span className="cell-null">{t("resultNull")}</span>;
+          }
+          if (richCellRendering && emptyKind) {
+            const badge = EMPTY_BADGE[emptyKind];
+            return (
+              <span
+                className={`cell-empty cell-empty-${emptyKind}`}
+                title={t(badge.labelKey)}
+                aria-label={t(badge.labelKey)}
+              >
+                {badge.glyph}
+              </span>
+            );
           }
           const effectiveKind = classifyByValue(v) ?? kind;
           if (effectiveKind === "number") {
