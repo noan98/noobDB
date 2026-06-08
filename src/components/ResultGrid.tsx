@@ -35,7 +35,7 @@ import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { ExportModal } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
@@ -298,9 +298,11 @@ export const GRID_CSS: SystemStyleObject = {
     background: "var(--bg-active)",
   },
   "& th .th-sort-indicator": {
-    fontSize: "var(--text-2xs)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
     color: "var(--accent)",
-    width: "10px",
+    width: "13px",
     flexShrink: 0,
     lineHeight: 1,
   },
@@ -1996,7 +1998,6 @@ export function DataGrid({
                 const canResize = h.column.getCanResize();
                 const isResizing = h.column.getIsResizing();
                 const sortDir = h.column.getIsSorted();
-                const sortGlyph = sortDir === "asc" ? "▲" : sortDir === "desc" ? "▼" : "";
                 const sortTitle =
                   sortDir === "asc"
                     ? t("gridSortDesc")
@@ -2024,7 +2025,11 @@ export function DataGrid({
                         >
                           {flexRender(h.column.columnDef.header, h.getContext())}
                           <chakra.span className="th-sort-indicator" aria-hidden>
-                            {sortGlyph}
+                            {sortDir === "asc" ? (
+                              <Icon name="sort-asc" size={ICON_SIZES.sm} />
+                            ) : sortDir === "desc" ? (
+                              <Icon name="sort-desc" size={ICON_SIZES.sm} />
+                            ) : null}
                           </chakra.span>
                         </chakra.button>
                         <chakra.button
