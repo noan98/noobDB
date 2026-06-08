@@ -25,6 +25,7 @@ import {
 } from "./components/cellEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { EmptyState } from "./components/EmptyState";
+import { DisconnectedIllustration } from "./components/illustrations";
 import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -3557,6 +3558,7 @@ export default function App() {
               <Flex direction="column" flex="1" overflow="hidden">
                 <PaneEmpty>
                   <EmptyState
+                    illustration={<DisconnectedIllustration />}
                     icon="database"
                     title={t("notConnectedTitle")}
                     description={t("editorHintDisabled")}

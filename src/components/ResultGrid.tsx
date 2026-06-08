@@ -35,6 +35,7 @@ import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
+import { NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
   type CellKind,
@@ -3101,7 +3102,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               />
             ) : (
               <EmptyState
-                compact
+                illustration={<NoResultsIllustration />}
                 icon="table"
                 title={t("gridZeroRows")}
                 description={t("gridZeroRowsHint", { ms: result.elapsed_ms })}

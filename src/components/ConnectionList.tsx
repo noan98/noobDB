@@ -7,6 +7,7 @@ import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
 import { Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { WelcomeIllustration } from "./illustrations";
 import { Spinner } from "./Spinner";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { Input } from "./ui";
@@ -1020,6 +1021,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
       {profiles.length === 0 ? (
         <EmptyState
+          illustration={<WelcomeIllustration />}
           icon="server"
           title={t("listEmptyTitle")}
           description={t("listEmptyDesc")}
