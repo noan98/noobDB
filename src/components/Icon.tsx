@@ -7,6 +7,34 @@ import { chakra } from "@chakra-ui/react";
  * stay visually consistent in size/weight across light and dark themes. This
  * replaces the previous mix of emoji (🔑 / ✅ / ☀ …) and Unicode glyphs
  * (▤ ❖ ✎ ⛁ …) that rendered differently per OS/font.
+ *
+ * ## セマンティック・レキシコン (#489)
+ *
+ * アイコンは「見た目」ではなく「意味」で選ぶ。用途ごとに 1 つの glyph を割り当て、
+ * アプリ全体で同じ意味には常に同じアイコンを使う。新しい用途を足すときは、まず
+ * 下表に意味を追加してから glyph を定義する (同義の重複定義を避ける)。
+ *
+ * | 意味 (semantic)            | IconName        |
+ * | -------------------------- | --------------- |
+ * | テーブル                   | `table`         |
+ * | ビュー                     | `view`          |
+ * | ルーチン/プロシージャ/関数 | `routine`       |
+ * | トリガー                   | `trigger`       |
+ * | 主キー                     | `key`           |
+ * | 本番接続 (危険)            | `production`    |
+ * | 読み取り専用               | `lock`          |
+ * | 並び替え (無指定/昇/降)    | `sort` / `sort-asc` / `sort-desc` |
+ * | 列のピン留め               | `pin`           |
+ * | データベース / サーバ      | `database` / `server` |
+ *
+ * ## サイズ / ストローク規約 (#489)
+ *
+ * 呼び出し側はピクセル直値ではなく `ICON_SIZES` / `ICON_STROKE` のトークンを参照し、
+ * 密度・タイポグラフィ基盤 (#476/#490) と歩調を合わせる。
+ *   - `sm` (13px): 行内・ツリー行・バッジなど密な文脈。
+ *   - `md` (16px): ツールバー/ボタンの既定。
+ *   - `lg` (20px): 見出し・空状態など強調したい箇所。
+ * ストロークは既定 `regular` (2)。塗り glyph (ブランドロゴ) は対象外。
  */
 export type IconName =
   | "sun"
@@ -39,9 +67,27 @@ export type IconName =
   | "lock"
   | "undo"
   | "redo"
+  | "view"
+  | "routine"
+  | "trigger"
+  | "production"
+  | "sort"
+  | "sort-asc"
+  | "sort-desc"
+  | "pin"
   | "mysql"
   | "postgres"
   | "sqlite";
+
+/**
+ * アイコンのサイズトークン (px)。呼び出し側はこの定数を参照し、密度/タイポグラフィ
+ * 基盤と整合した一貫サイズで描画する (#489)。
+ */
+export const ICON_SIZES = { sm: 13, md: 16, lg: 20 } as const;
+export type IconSizeToken = keyof typeof ICON_SIZES;
+
+/** ストローク幅トークン。既定は `regular`。 */
+export const ICON_STROKE = { thin: 1.5, regular: 2, bold: 2.5 } as const;
 
 /**
  * 塗り (fill) で描画するアイコン名。既定のグリフは単色ストローク (`fill="none"` +
@@ -230,6 +276,71 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M21 7v6h-6" />
       <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" />
+    </>
+  ),
+  // ── 新オブジェクト種別 / グリッド操作 (#489) ──
+  // ビュー: テーブル枠 + 目 (参照専用のテーブル様オブジェクト)。
+  view: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M3 9h18" />
+      <path d="M7.5 15c.9-1.4 2.5-2.2 4.5-2.2s3.6.8 4.5 2.2c-.9 1.4-2.5 2.2-4.5 2.2s-3.6-.8-4.5-2.2Z" />
+      <circle cx="12" cy="15" r="1" />
+    </>
+  ),
+  // ルーチン / プロシージャ / 関数: コードブレース { }。
+  routine: (
+    <>
+      <path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" />
+      <path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1" />
+    </>
+  ),
+  // トリガー: 稲妻 (イベント起動)。
+  trigger: (
+    <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+  ),
+  // 本番接続 (危険): シールド + 感嘆符。
+  production: (
+    <>
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C10.51 3.81 13 5 15 5a1 1 0 0 1 1 1z" />
+      <path d="M12 8v4" />
+      <path d="M12 16h.01" />
+    </>
+  ),
+  // 並び替え (方向なし): 上下両矢印。
+  sort: (
+    <>
+      <path d="m3 8 4-4 4 4" />
+      <path d="M7 4v16" />
+      <path d="m21 16-4 4-4-4" />
+      <path d="M17 20V4" />
+    </>
+  ),
+  // 昇順: 上向き矢印 + 短→長。
+  "sort-asc": (
+    <>
+      <path d="m3 8 4-4 4 4" />
+      <path d="M7 4v16" />
+      <path d="M11 12h4" />
+      <path d="M11 16h7" />
+      <path d="M11 20h10" />
+    </>
+  ),
+  // 降順: 下向き矢印 + 長→短。
+  "sort-desc": (
+    <>
+      <path d="m3 16 4 4 4-4" />
+      <path d="M7 20V4" />
+      <path d="M11 4h10" />
+      <path d="M11 8h7" />
+      <path d="M11 12h4" />
+    </>
+  ),
+  // 列のピン留め。
+  pin: (
+    <>
+      <path d="M12 17v5" />
+      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
     </>
   ),
   // ドライバのブランドロゴ (simple-icons, CC0 / 単一パスの塗り)。FILLED_ICONS 経由で
