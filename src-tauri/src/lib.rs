@@ -21,6 +21,8 @@ pub mod __test_api {
     };
     pub use crate::db::{is_read_only_sql, Connection, DbConnectOptions, DriverKind};
     pub use crate::error::AppError;
+    pub use crate::profiles::SshAuthMethod;
+    pub use crate::ssh::{SshConfig, SshTunnel};
     pub use crate::state::{AppState, Session};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
