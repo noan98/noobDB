@@ -110,6 +110,56 @@ const config = defineConfig({
           accent: { value: "var(--accent)" },
           accentHover: { value: "var(--accent-hover)" },
           accentText: { value: "var(--accent-text)" },
+          // 拡張ニュートラル階調 (#476)。0=地, 950=最も濃い文字。テーマ反転は
+          // App.css 側で吸収するため、ここは var() ブリッジのみ。
+          neutral: {
+            0: { value: "var(--neutral-0)" },
+            50: { value: "var(--neutral-50)" },
+            100: { value: "var(--neutral-100)" },
+            200: { value: "var(--neutral-200)" },
+            300: { value: "var(--neutral-300)" },
+            400: { value: "var(--neutral-400)" },
+            500: { value: "var(--neutral-500)" },
+            600: { value: "var(--neutral-600)" },
+            700: { value: "var(--neutral-700)" },
+            800: { value: "var(--neutral-800)" },
+            900: { value: "var(--neutral-900)" },
+            950: { value: "var(--neutral-950)" },
+          },
+          // セマンティックカラー体系 (#476)。役割別 (subtle/border/solid/text)。
+          //
+          // ## カラーブラインド配慮ガイド (赤緑色弱)
+          // success(緑) と error(赤) は色相だけでは区別しづらいため、これらを
+          // 状態の「唯一の手がかり」にしない。必ず次のいずれかを併用する:
+          //   - アイコン (Icon.tsx の check / warning / close など) や形状
+          //   - テキストラベル ("成功" / "失敗" / "本番" 等)
+          //   - 位置・順序の一貫性
+          // 色は強調の補助に留める。info(青) / warning(橙) は緑赤と弁別しやすい
+          // ため軸として有効だが、同様にラベル併用を推奨する。
+          info: {
+            subtle: { value: "var(--info-subtle)" },
+            border: { value: "var(--info-border)" },
+            solid: { value: "var(--info-solid)" },
+            text: { value: "var(--info-text)" },
+          },
+          success: {
+            subtle: { value: "var(--success-subtle)" },
+            border: { value: "var(--success-border)" },
+            solid: { value: "var(--success-solid)" },
+            text: { value: "var(--success-text)" },
+          },
+          warning: {
+            subtle: { value: "var(--warning-subtle)" },
+            border: { value: "var(--warning-border)" },
+            solid: { value: "var(--warning-solid)" },
+            text: { value: "var(--warning-text)" },
+          },
+          error: {
+            subtle: { value: "var(--error-subtle)" },
+            border: { value: "var(--error-border)" },
+            solid: { value: "var(--error-solid)" },
+            text: { value: "var(--error-text)" },
+          },
           // セル値の型別色
           cell: {
             number: { value: "var(--cell-number)" },

@@ -119,6 +119,51 @@
   --scrollbar-thumb: #c2cad6;
   --scrollbar-thumb-hover: #a8b2c0;
 
+  /* ── Neutral ramp (#476) ──────────────────────────────────────────────
+     拡張ニュートラル階調。既存の bg/text/border トークンは用途別の意味名で
+     据え置き、ここでは「明→暗」を 0〜950 の 11 段で連続的に並べた汎用グレー
+     スケールを追加する。新規 UI はこのランプから濃淡を選ぶことで、テーマを
+     跨いで一貫した階調になる。ライトは 0=最明(白) → 950=最暗、ダーク
+     (:root[data-theme=dark]) では反転させ「0=最暗(地) → 950=最明(文字)」と
+     し、同じトークン名が常に "地からの距離" を表すようにする。 */
+  --neutral-0: #ffffff;
+  --neutral-50: #f8fafc;
+  --neutral-100: #eef1f5;
+  --neutral-200: #e3e8ef;
+  --neutral-300: #cdd4df;
+  --neutral-400: #a8b2c0;
+  --neutral-500: #7d8693;
+  --neutral-600: #5c6776;
+  --neutral-700: #475569;
+  --neutral-800: #313c4a;
+  --neutral-900: #1a2330;
+  --neutral-950: #0d1117;
+
+  /* ── Semantic color families (#476) ───────────────────────────────────
+     状態色 (info/success/warning/error) を役割別に展開する。色だけに依存
+     しない運用 (アイコン/形状/テキストラベル併用) を前提とする — 赤緑色弱でも
+     区別できるよう、利用側ガイドは theme.ts のコメントを参照。
+       *-subtle : 淡い面塗り背景 (バナー/バッジ地)。下の *-text が AA を満たす。
+       *-border : subtle 地と調和する境界線。
+       *-solid  : 塗りつぶしボタン/ドット等のベタ塗り (白文字が AA)。
+       *-text   : 通常背景 (--bg / --bg-elevated) 上で AA(>=4.5:1) を満たす文字色。 */
+  --info-subtle: #e0f2fe;
+  --info-border: #bae6fd;
+  --info-solid: #0369a1;   /* 白文字 5.93:1 */
+  --info-text: #075985;    /* on --bg 6.48:1 */
+  --success-subtle: #dcfce7;
+  --success-border: #bbf7d0;
+  --success-solid: #15803d; /* 白文字 5.02:1 */
+  --success-text: #15803d;  /* on --bg 4.67:1 */
+  --warning-subtle: #fef3c7;
+  --warning-border: #fde68a;
+  --warning-solid: #b45309;  /* 白文字 5.05:1 */
+  --warning-text: #b45309;   /* on --bg 4.59:1 */
+  --error-subtle: #fef2f2;
+  --error-border: #fecaca;
+  --error-solid: #d42323;    /* 白文字 5.17:1 */
+  --error-text: #b91c1c;     /* on --bg 5.93:1 */
+
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
   --accent-text: #ffffff;
@@ -215,6 +260,38 @@
 
   --scrollbar-thumb: #3a4453;
   --scrollbar-thumb-hover: #515d6e;
+
+  /* Neutral ramp (dark): 0=最暗(地) → 950=最明(文字)。ライトと反転 (#476)。 */
+  --neutral-0: #0d1117;
+  --neutral-50: #12171f;
+  --neutral-100: #161b22;
+  --neutral-200: #1a212b;
+  --neutral-300: #222b37;
+  --neutral-400: #2a323d;
+  --neutral-500: #3c4553;
+  --neutral-600: #515d6e;
+  --neutral-700: #8794a3;
+  --neutral-800: #aeb9c7;
+  --neutral-900: #e6edf3;
+  --neutral-950: #ffffff;
+
+  /* Semantic families (dark): subtle は暗い面塗り、text は明色で AA を満たす (#476)。 */
+  --info-subtle: #0c2a3f;
+  --info-border: #155b7e;
+  --info-solid: #38bdf8;
+  --info-text: #7dd3fc;     /* on --bg 高コントラスト */
+  --success-subtle: #0f2a1a;
+  --success-border: #1f5235;
+  --success-solid: #22c55e;
+  --success-text: #4ade80;
+  --warning-subtle: #3a2c10;
+  --warning-border: #92670c;
+  --warning-solid: #f59e0b;
+  --warning-text: #fbbf24;
+  --error-subtle: #3a1414;
+  --error-border: #7f1d1d;
+  --error-solid: #ef4444;
+  --error-text: #f87171;
 
   --accent: #4c93f7;
   --accent-hover: #6cb0fb;
