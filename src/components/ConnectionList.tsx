@@ -188,6 +188,8 @@ interface Props {
   onInsertTableSelect: (database: string, table: string) => void;
   /** Provided only for drivers with a single-statement definition (MySQL/SQLite). */
   onShowCreateTable?: (database: string, table: string) => void;
+  /** DB ノードから新規テーブル作成ウィザード (#460) を開く。 */
+  onCreateTable?: (database: string) => void;
   /** Row cap shown in the "Run SELECT *" menu label. */
   selectLimit: number;
   /** お気に入りテーブル (アクティブ接続) のクイックアクセス (#461)。 */
@@ -226,6 +228,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunTableSelect,
   onInsertTableSelect,
   onShowCreateTable,
+  onCreateTable,
   selectLimit,
   favorites,
   recent,
@@ -484,11 +487,17 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const handleDbContextMenu = (e: React.MouseEvent, db: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setMenu({
-      x: e.clientX,
-      y: e.clientY,
-      items: [{ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) }],
-    });
+    const items: ContextMenuEntry[] = [];
+    if (onCreateTable) {
+      items.push({
+        label: t("contextMenuCreateTable"),
+        onSelect: () => onCreateTable(db),
+        disabled: activeReadOnly,
+        title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+      });
+    }
+    items.push({ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) });
+    setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
   // Fetch approximate row counts for a database and merge them into state. Best
