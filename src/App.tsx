@@ -99,6 +99,9 @@ const RenameTableDialog = lazy(() =>
 const RowInsertModal = lazy(() =>
   import("./components/RowInsertModal").then((m) => ({ default: m.RowInsertModal })),
 );
+const ChartView = lazy(() =>
+  import("./components/ChartView").then((m) => ({ default: m.ChartView })),
+);
 const HelpView = lazy(() =>
   import("./components/HelpView").then((m) => ({ default: m.HelpView })),
 );
@@ -438,6 +441,8 @@ interface Tab {
   pendingDeletes?: string[];
   /** 追加予定の新規行 (#441): 各要素は colIdx→値。Apply で INSERT される。 */
   pendingInserts?: PendingInsertRow[];
+  /** チャートビュー (#440) を表示中か。結果グリッドの代わりにチャートを描く。 */
+  showChart?: boolean;
   /**
    * Wall-clock timestamp (ms) set each time an Apply edit completes successfully.
    * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
@@ -3400,6 +3405,11 @@ export default function App() {
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   {tab.kind === "explain" ? (
                     <ExplainViewer result={tab.result} streaming={tab.streaming} />
+                  ) : tab.showChart && tab.result && !tab.streaming ? (
+                    <ChartView
+                      result={tab.result}
+                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: false }))}
+                    />
                   ) : tab.preview ? (
                     <PreviewGrid
                       result={tab.preview}
@@ -3422,6 +3432,19 @@ export default function App() {
                     />
                   ) : (
                     <Flex direction="column" h="100%" minH={0} minW={0}>
+                    {tab.result && tab.result.rows.length > 0 && !tab.streaming && (
+                      <Flex justify="flex-end" px="10px" py="4px" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: true }))}
+                          title={t("chartShow")}
+                        >
+                          <Icon name="er-diagram" size={14} /> {t("chartShow")}
+                        </Button>
+                      </Flex>
+                    )}
                     {tab.kind === "table" && !readOnly &&
                       ((tab.pendingInserts?.length ?? 0) > 0 || (tab.pendingDeletes?.length ?? 0) > 0) && (
                       <Flex
