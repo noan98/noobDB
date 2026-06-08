@@ -611,6 +611,12 @@ const en = {
   pageRowRange: "rows {from}–{to}",
   pageJumpLabel: "Go to",
   pageSizeLabel: "Per page",
+  // スキーマ横断のグローバルオブジェクト検索 (#473)。
+  objSearchPlaceholder: "Search tables and columns across the schema...",
+  objSearchScopeCurrent: "Current DB",
+  objSearchScopeAll: "All DBs",
+  objSearchNoResults: "No matching tables or columns",
+  objSearchHint: "Type to search table and column names",
   dumpSavePath: "Save to",
   dumpSavePathPlaceholder: "Path to the .sql output file",
   dumpBrowse: "Browse...",
@@ -1047,6 +1053,8 @@ const en = {
 
   shortcutSidebarFilterTitle: "Cmd/Ctrl+P",
   shortcutSidebarFilterDesc: "Focus the connection / schema filter in the sidebar.",
+  shortcutObjectSearchTitle: "Cmd/Ctrl+Shift+O",
+  shortcutObjectSearchDesc: "Search tables and columns across the schema and jump to one.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -1662,6 +1670,12 @@ const ja: Dict = {
   pageRowRange: "{from}–{to} 行目",
   pageJumpLabel: "移動",
   pageSizeLabel: "1 ページ",
+  // スキーマ横断のグローバルオブジェクト検索 (#473)。
+  objSearchPlaceholder: "テーブル/カラムをスキーマ横断で検索...",
+  objSearchScopeCurrent: "現在の DB",
+  objSearchScopeAll: "全 DB",
+  objSearchNoResults: "一致するテーブル/カラムがありません",
+  objSearchHint: "テーブル名/カラム名を入力して検索",
   dumpSavePath: "保存先",
   dumpSavePathPlaceholder: ".sql 出力ファイルのパス",
   dumpBrowse: "参照...",
@@ -2098,6 +2112,8 @@ const ja: Dict = {
 
   shortcutSidebarFilterTitle: "Cmd/Ctrl+P",
   shortcutSidebarFilterDesc: "サイドバーの接続・スキーマフィルタにフォーカスします。",
+  shortcutObjectSearchTitle: "Cmd/Ctrl+Shift+O",
+  shortcutObjectSearchDesc: "テーブル/カラムをスキーマ横断で検索して該当テーブルへジャンプします。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
