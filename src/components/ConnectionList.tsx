@@ -198,8 +198,8 @@ interface Props {
   onRenameTable?: (database: string, table: string) => void;
   /** テーブル名をクリップボードへコピー (#496 補助)。 */
   onCopyTableName?: (table: string) => void;
-  /** スキーマオブジェクト (#483) の定義を開く。 */
-  onOpenObjectDefinition?: (database: string, kind: string, name: string) => void;
+  /** スキーマオブジェクト (#483) の定義を開く。`id` は同名衝突を避ける一意識別子。 */
+  onOpenObjectDefinition?: (database: string, kind: string, name: string, id: string | null) => void;
   /** Row cap shown in the "Run SELECT *" menu label. */
   selectLimit: number;
   /** お気に入りテーブル (アクティブ接続) のクイックアクセス (#461)。 */
@@ -599,10 +599,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setTables((prev) => ({ ...prev, [db]: list }));
       void loadRowEstimates(sessionId, db);
       // 非テーブルのスキーマオブジェクト (#483) もベストエフォートで取得する。
+      // 接続切替中に旧セッションの結果を反映しないよう sid を確認する。
+      const sid = sessionId;
       void api
-        .listSchemaObjects(sessionId, db)
-        .then((objs) => setSchemaObjects((prev) => ({ ...prev, [db]: objs })))
-        .catch(() => setSchemaObjects((prev) => ({ ...prev, [db]: [] })));
+        .listSchemaObjects(sid, db)
+        .then((objs) => {
+          if (sessionIdRef.current !== sid) return;
+          setSchemaObjects((prev) => ({ ...prev, [db]: objs }));
+        })
+        .catch(() => {
+          if (sessionIdRef.current !== sid) return;
+          setSchemaObjects((prev) => ({ ...prev, [db]: [] }));
+        });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -833,10 +841,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               <QuickAccessHeader>{labels[kind] ?? kind}</QuickAccessHeader>
               {items.map((o) => (
                 <TreeRow
-                  key={`${kind}:${o.name}`}
+                  key={`${kind}:${o.name}:${o.id ?? ""}`}
                   pl="4px"
                   role="treeitem"
-                  onClick={() => onOpenObjectDefinition(db, o.kind, o.name)}
+                  onClick={() => onOpenObjectDefinition(db, o.kind, o.name, o.id)}
                   title={`${o.name} — ${labels[kind] ?? kind}`}
                   _hover={{ bg: "app.rowHover" }}
                 >

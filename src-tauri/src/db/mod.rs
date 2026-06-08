@@ -288,12 +288,19 @@ impl Connection {
         }
     }
 
-    /// The DDL/definition of a non-table schema object (#483). `kind` is one of
-    /// the values returned by [`schema_objects`].
-    pub async fn object_definition(&self, db: &str, kind: &str, name: &str) -> Result<String> {
+    /// The DDL/definition of a non-table schema object (#483). `kind`/`name` are
+    /// from [`schema_objects`]; `id` is the optional unique identifier (PostgreSQL
+    /// oid) used to disambiguate overloaded functions / same-name triggers.
+    pub async fn object_definition(
+        &self,
+        db: &str,
+        kind: &str,
+        name: &str,
+        id: Option<&str>,
+    ) -> Result<String> {
         match self {
             Connection::MySql(c) => c.object_definition(db, kind, name).await,
-            Connection::Postgres(c) => c.object_definition(db, kind, name).await,
+            Connection::Postgres(c) => c.object_definition(db, kind, name, id).await,
             Connection::Sqlite(c) => c.object_definition(db, kind, name).await,
         }
     }

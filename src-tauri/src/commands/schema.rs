@@ -89,6 +89,7 @@ pub async fn get_object_definition(
     database: String,
     kind: String,
     name: String,
+    id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String> {
     let session = state
@@ -97,7 +98,7 @@ pub async fn get_object_definition(
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session
         .conn
-        .object_definition(&database, &kind, &name)
+        .object_definition(&database, &kind, &name, id.as_deref())
         .await
 }
 

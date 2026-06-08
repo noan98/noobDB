@@ -107,9 +107,12 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
         move(-1);
         break;
       case "Tab":
-        e.preventDefault();
-        e.stopPropagation();
-        move(e.shiftKey ? -1 : 1);
+        // 候補があるときだけ Tab を奪う。0 件なら通常のフォーカス移動を妨げない。
+        if (results.length > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          move(e.shiftKey ? -1 : 1);
+        }
         break;
       case "Enter":
         e.preventDefault();

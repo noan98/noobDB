@@ -17,7 +17,9 @@ export function splitSqlStatements(sql: string): string[] {
 
   const pushCurrent = () => {
     const trimmed = current.trim();
-    if (trimmed.length > 0) statements.push(trimmed);
+    // コメントだけの断片 (例: `SELECT 1; -- note` の `-- note`) は実行文ではないので
+    // 数えない。複数文判定 (isMultiStatement) が誤って true にならないようにする。
+    if (trimmed.length > 0 && hasExecutableSql(trimmed)) statements.push(trimmed);
     current = "";
   };
 
@@ -70,6 +72,15 @@ export function splitSqlStatements(sql: string): string[] {
   }
   pushCurrent();
   return statements;
+}
+
+/** コメント (行 `--` / ブロック `/* *​/`) を除いて実行可能な SQL が残るか。 */
+function hasExecutableSql(fragment: string): boolean {
+  const stripped = fragment
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/--[^\n\r]*/g, "")
+    .trim();
+  return stripped.length > 0;
 }
 
 /** `sql` が複数の実行可能文を含むか (バッチ実行を提案する判定に使う)。 */

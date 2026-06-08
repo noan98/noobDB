@@ -494,22 +494,30 @@ impl PostgresConn {
     }
 
     pub async fn schema_objects(&self, schema: &str) -> Result<Vec<SchemaObject>> {
-        // Views, materialized views, routines, and triggers in one query each,
-        // unioned in display order (views, matviews, procedures/functions,
-        // triggers). `schema` is the namespace (the tree's "database" for PG).
+        // Views, materialized views, routines, and triggers, unioned in display
+        // order. `schema` is the namespace (the tree's "database" for PG).
+        // Routines and triggers carry their `oid` (as text) so `object_definition`
+        // can fetch the exact object — same-name overloaded functions and
+        // same-name triggers on different tables would otherwise collide.
         let rows: Vec<PgRow> = sqlx::query(
             r#"
-            SELECT 'view'::text AS kind, viewname AS name FROM pg_views WHERE schemaname = $1
+            SELECT 'view'::text AS kind, viewname AS name, NULL::text AS id
+              FROM pg_views WHERE schemaname = $1
             UNION ALL
-            SELECT 'materialized_view', matviewname FROM pg_matviews WHERE schemaname = $1
+            SELECT 'materialized_view', matviewname, NULL::text
+              FROM pg_matviews WHERE schemaname = $1
             UNION ALL
-            SELECT CASE WHEN routine_type = 'PROCEDURE' THEN 'procedure' ELSE 'function' END,
-                   routine_name
-              FROM information_schema.routines WHERE routine_schema = $1
+            SELECT CASE WHEN p.prokind = 'p' THEN 'procedure' ELSE 'function' END,
+                   p.proname, p.oid::text
+              FROM pg_proc p
+              JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = $1
             UNION ALL
-            SELECT 'trigger', trigger_name
-              FROM (SELECT DISTINCT trigger_name FROM information_schema.triggers
-                     WHERE trigger_schema = $1) tg
+            SELECT 'trigger', t.tgname, t.oid::text
+              FROM pg_trigger t
+              JOIN pg_class c ON c.oid = t.tgrelid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND NOT t.tgisinternal
             ORDER BY kind, name
             "#,
         )
@@ -521,13 +529,21 @@ impl PostgresConn {
             .map(|r| SchemaObject {
                 kind: r.try_get::<String, _>(0).unwrap_or_default(),
                 name: r.try_get::<String, _>(1).unwrap_or_default(),
+                id: r.try_get::<Option<String>, _>(2).ok().flatten(),
             })
             .collect())
     }
 
-    pub async fn object_definition(&self, schema: &str, kind: &str, name: &str) -> Result<String> {
-        // All definition lookups bind the schema + name as parameters (no
-        // identifier interpolation), using pg_catalog helper functions.
+    pub async fn object_definition(
+        &self,
+        schema: &str,
+        kind: &str,
+        name: &str,
+        id: Option<&str>,
+    ) -> Result<String> {
+        // Routines/triggers are looked up by their oid (`id`) so overloads and
+        // same-name triggers resolve to the exact object. Views/matviews are
+        // unique per schema, so name is sufficient.
         let def: Option<String> = match kind {
             "view" | "materialized_view" => {
                 sqlx::query_scalar("SELECT pg_get_viewdef(format('%I.%I', $1, $2)::regclass, true)")
@@ -536,33 +552,49 @@ impl PostgresConn {
                     .fetch_optional(&self.pool)
                     .await?
             }
-            "function" | "procedure" => {
-                sqlx::query_scalar(
-                    "SELECT pg_get_functiondef(p.oid)
-                       FROM pg_proc p
-                       JOIN pg_namespace n ON n.oid = p.pronamespace
-                      WHERE n.nspname = $1 AND p.proname = $2
-                      LIMIT 1",
-                )
-                .bind(schema)
-                .bind(name)
-                .fetch_optional(&self.pool)
-                .await?
-            }
-            "trigger" => {
-                sqlx::query_scalar(
-                    "SELECT pg_get_triggerdef(t.oid)
-                       FROM pg_trigger t
-                       JOIN pg_class c ON c.oid = t.tgrelid
-                       JOIN pg_namespace n ON n.oid = c.relnamespace
-                      WHERE n.nspname = $1 AND t.tgname = $2 AND NOT t.tgisinternal
-                      LIMIT 1",
-                )
-                .bind(schema)
-                .bind(name)
-                .fetch_optional(&self.pool)
-                .await?
-            }
+            "function" | "procedure" => match id {
+                Some(oid) => {
+                    sqlx::query_scalar("SELECT pg_get_functiondef(($1)::oid)")
+                        .bind(oid)
+                        .fetch_optional(&self.pool)
+                        .await?
+                }
+                None => {
+                    sqlx::query_scalar(
+                        "SELECT pg_get_functiondef(p.oid)
+                           FROM pg_proc p
+                           JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = $1 AND p.proname = $2
+                          LIMIT 1",
+                    )
+                    .bind(schema)
+                    .bind(name)
+                    .fetch_optional(&self.pool)
+                    .await?
+                }
+            },
+            "trigger" => match id {
+                Some(oid) => {
+                    sqlx::query_scalar("SELECT pg_get_triggerdef(($1)::oid)")
+                        .bind(oid)
+                        .fetch_optional(&self.pool)
+                        .await?
+                }
+                None => {
+                    sqlx::query_scalar(
+                        "SELECT pg_get_triggerdef(t.oid)
+                           FROM pg_trigger t
+                           JOIN pg_class c ON c.oid = t.tgrelid
+                           JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = $1 AND t.tgname = $2 AND NOT t.tgisinternal
+                          LIMIT 1",
+                    )
+                    .bind(schema)
+                    .bind(name)
+                    .fetch_optional(&self.pool)
+                    .await?
+                }
+            },
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "unsupported object kind: {other}"

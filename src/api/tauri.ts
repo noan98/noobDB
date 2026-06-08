@@ -227,6 +227,8 @@ export type SchemaObjectKind =
 export interface SchemaObject {
   kind: SchemaObjectKind;
   name: string;
+  /** 同名衝突を避ける一意識別子 (PostgreSQL の oid 等)。無いドライバ/種別では null。 */
+  id: string | null;
 }
 
 /**
@@ -542,9 +544,21 @@ export const api = {
     invoke<SchemaObject[]>("list_schema_objects", { sessionId, database }).then((r) =>
       parseResponse(schemas.schemaObjectArray, r, "list_schema_objects"),
     ),
-  /** スキーマオブジェクトの定義 (DDL) を取得する (#483)。 */
-  getObjectDefinition: (sessionId: string, database: string, kind: string, name: string) =>
-    invoke<string>("get_object_definition", { sessionId, database, kind, name }),
+  /** スキーマオブジェクトの定義 (DDL) を取得する (#483)。`id` は同名衝突を避ける一意識別子。 */
+  getObjectDefinition: (
+    sessionId: string,
+    database: string,
+    kind: string,
+    name: string,
+    id?: string | null,
+  ) =>
+    invoke<string>("get_object_definition", {
+      sessionId,
+      database,
+      kind,
+      name,
+      id: id ?? null,
+    }),
   compareSchema: (params: {
     sourceSessionId: string;
     sourceDatabase: string;
@@ -606,14 +620,18 @@ export const api = {
    * 省略時は全件。返り値は書き込んだバイト数。
    */
   exportProfiles: (path: string, ids?: string[]) =>
-    invoke<number>("export_profiles", { path, ids: ids ?? null }),
+    invoke<number>("export_profiles", { path, ids: ids ?? null }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "export_profiles"),
+    ),
   /**
    * `path` の JSON (`exportProfiles` 出力) を取り込む (#442)。`strategy` は ID 衝突時の
    * 解決方法。秘密情報は含まれないため、取り込んだプロファイルは接続時に資格情報の
    * 再入力が要る。
    */
   importProfiles: (path: string, strategy: ProfileImportStrategy) =>
-    invoke<ProfileImportResult>("import_profiles", { path, strategy }),
+    invoke<ProfileImportResult>("import_profiles", { path, strategy }).then((r) =>
+      parseResponse(schemas.profileImportResult, r, "import_profiles"),
+    ),
 
   listSnippets: () =>
     invoke<Snippet[]>("list_snippets").then((r) =>

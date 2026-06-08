@@ -941,6 +941,16 @@ export default function App() {
   useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
   // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
   useEffect(() => { setTxActive(false); }, [sessionId]);
+  // 切断時はセッション依存のモーダル状態をリセットする (#473 の検索モーダルが
+  // 再接続時に意図せず再表示されるのを防ぐ)。
+  useEffect(() => {
+    if (!sessionId) {
+      setShowObjectSearch(false);
+      setCreateTableDb(null);
+      setRenameTarget(null);
+      setRowInsertTabId(null);
+    }
+  }, [sessionId]);
   // Whole-schema autocomplete snapshots, keyed by schemaCacheKey(session, db).
   // Fetched lazily per database and reused across tabs; invalidated after DDL
   // and dropped wholesale when the session changes.
@@ -2251,6 +2261,11 @@ export default function App() {
         loadingMore: false,
         // ページングは置換なので、無限スクロールの load-more は無効化する。
         canLoadMore: false,
+        // 別ページに切り替えたら旧ページ由来の保留編集は孤立するため破棄する。
+        pendingEdits: {},
+        editUndoStack: [],
+        editRedoStack: [],
+        preview: null,
       }));
       setStatus({
         kind: "key",
@@ -2282,6 +2297,8 @@ export default function App() {
     if (!sessionId) return;
     const tab = tabsRef.current.find((tt) => tt.id === tabId);
     if (!tab) return;
+    // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
+    if (tab.batchRunning || tab.streaming) return;
     const statements = splitSqlStatements(sql);
     if (statements.length === 0) return;
     const db = tab.database ?? selectedProfile?.database ?? null;
@@ -2868,10 +2885,10 @@ export default function App() {
   }, [addTab]);
 
   // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する (#483)。
-  const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string) => {
+  const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string, id: string | null) => {
     if (!sessionId) return;
     try {
-      const ddl = await api.getObjectDefinition(sessionId, database, kind, name);
+      const ddl = await api.getObjectDefinition(sessionId, database, kind, name, id);
       openQueryInEditor(ddl, name);
     } catch (e) {
       toast.error(translate("objDefinitionError", { error: String(e) }));

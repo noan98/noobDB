@@ -57,6 +57,11 @@ describe("splitSqlStatements", () => {
   it("returns the whole input when there is a single statement", () => {
     expect(splitSqlStatements("SELECT 1")).toEqual(["SELECT 1"]);
   });
+
+  it("drops a trailing comment-only fragment", () => {
+    expect(splitSqlStatements("SELECT 1; -- note")).toEqual(["SELECT 1"]);
+    expect(splitSqlStatements("SELECT 1; /* x */")).toEqual(["SELECT 1"]);
+  });
 });
 
 describe("isMultiStatement", () => {
@@ -64,5 +69,7 @@ describe("isMultiStatement", () => {
     expect(isMultiStatement("SELECT 1")).toBe(false);
     expect(isMultiStatement("SELECT 1; SELECT 2")).toBe(true);
     expect(isMultiStatement("SELECT ';'")).toBe(false);
+    // 末尾のコメントだけの断片は 2 文目として数えない。
+    expect(isMultiStatement("SELECT 1; -- note")).toBe(false);
   });
 });

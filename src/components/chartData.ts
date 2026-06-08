@@ -118,18 +118,23 @@ export function buildChartModel(
 
   // グループ集計: X 値ごとに Y を畳み込む。
   const order: string[] = [];
-  const groups = new Map<string, { count: number; sums: number[] }>();
+  // NULL / 非数値を集計から除外するため、列ごとに「数値として加算した件数」を別管理する
+  // (SQL の SUM/AVG/COUNT(col) と同じく非 NULL の数値のみを対象にする)。
+  const groups = new Map<string, { sums: number[]; numericCounts: number[] }>();
   for (const r of rows) {
     const key = cellLabel(r[xCol]);
     let g = groups.get(key);
     if (!g) {
-      g = { count: 0, sums: yCols.map(() => 0) };
+      g = { sums: yCols.map(() => 0), numericCounts: yCols.map(() => 0) };
       groups.set(key, g);
       order.push(key);
     }
-    g.count++;
     yCols.forEach((c, i) => {
-      g!.sums[i] += toNumber(r[c]) ?? 0;
+      const n = toNumber(r[c]);
+      if (n !== null) {
+        g!.sums[i] += n;
+        g!.numericCounts[i] += 1;
+      }
     });
   }
   const labels = order;
@@ -137,8 +142,11 @@ export function buildChartModel(
     name: aggregation === "count" ? `COUNT(${yNames[i]})` : `${aggregation.toUpperCase()}(${yNames[i]})`,
     values: order.map((key) => {
       const g = groups.get(key)!;
-      if (aggregation === "count") return g.count;
-      if (aggregation === "avg") return g.count > 0 ? g.sums[i] / g.count : 0;
+      if (aggregation === "count") return g.numericCounts[i];
+      if (aggregation === "avg") {
+        const denom = g.numericCounts[i];
+        return denom > 0 ? g.sums[i] / denom : 0;
+      }
       return g.sums[i];
     }),
   }));

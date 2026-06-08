@@ -622,6 +622,7 @@ impl MySqlConn {
             out.push(SchemaObject {
                 kind: "view".into(),
                 name: r.try_get::<String, _>(0).unwrap_or_default(),
+                id: None,
             });
         }
         // Routines (procedures / functions).
@@ -642,6 +643,7 @@ impl MySqlConn {
             out.push(SchemaObject {
                 kind: kind.into(),
                 name: r.try_get::<String, _>(0).unwrap_or_default(),
+                id: None,
             });
         }
         // Triggers.
@@ -655,6 +657,7 @@ impl MySqlConn {
             out.push(SchemaObject {
                 kind: "trigger".into(),
                 name: r.try_get::<String, _>(0).unwrap_or_default(),
+                id: None,
             });
         }
         Ok(out)

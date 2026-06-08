@@ -92,6 +92,12 @@ pub struct IndexInfo {
 pub struct SchemaObject {
     pub kind: String,
     pub name: String,
+    /// 同名衝突を避けるための一意識別子 (#483)。PostgreSQL では関数/手続き/トリガーの
+    /// `oid` を文字列で持ち、`object_definition` に渡して正しい 1 件を引く (オーバーロード
+    /// 関数やテーブル別同名トリガーの取り違えを防ぐ)。名前で一意な種別 (ビュー等) や
+    /// MySQL/SQLite では `None`。
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 /// One table (or view) and its column names, used to feed whole-schema SQL

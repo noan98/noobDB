@@ -554,7 +554,11 @@ impl SqliteConn {
             .filter_map(|r| {
                 let kind = r.try_get::<String, _>("type").ok()?;
                 let name = r.try_get::<String, _>("name").ok()?;
-                Some(SchemaObject { kind, name })
+                Some(SchemaObject {
+                    kind,
+                    name,
+                    id: None,
+                })
             })
             .collect())
     }

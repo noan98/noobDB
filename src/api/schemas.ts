@@ -75,6 +75,7 @@ export const indexInfo = z.object({
 export const schemaObject = z.object({
   kind: z.string(),
   name: z.string(),
+  id: z.string().nullish().transform((v) => v ?? null),
 });
 
 /**
@@ -235,6 +236,14 @@ export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
 export const booleanResponse = z.boolean();
 export const stringResponse = z.string();
+
+/** プロファイルインポート結果 (#442)。 */
+export const profileImportResult = z.object({
+  imported: z.number(),
+  skipped: z.number(),
+  overwritten: z.number(),
+  invalid: z.number(),
+});
 
 /** 配列を返すコマンド用のラッパースキーマ。 */
 export const tableColumnInfoArray = z.array(tableColumnInfo);

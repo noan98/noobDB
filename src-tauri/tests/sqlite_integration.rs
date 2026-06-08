@@ -357,7 +357,7 @@ async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
         .all(|o| o.kind != "procedure" && o.kind != "function"));
 
     let view_def = conn
-        .object_definition("main", "view", "v_pos")
+        .object_definition("main", "view", "v_pos", None)
         .await
         .expect("view definition");
     assert!(view_def.contains("CREATE VIEW"));
@@ -372,7 +372,7 @@ async fn sqlite_explicit_transaction_commits_and_rolls_back() {
     // 明示トランザクション (#414): BEGIN→INSERT→ROLLBACK は何も残さず、
     // BEGIN→INSERT→COMMIT は永続化される。文は同一の保持接続で実行される。
     let mut path = std::env::temp_dir();
-    path.push(format!("noobdb_sqlite_tx_{}.db", std::process::id()));
+    path.push(format!("noobdb_sqlite_xtx_{}.db", std::process::id()));
     let _ = std::fs::remove_file(&path);
     std::fs::File::create(&path).expect("create temp sqlite file");
 
