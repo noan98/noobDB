@@ -83,6 +83,12 @@ jobs:
       - name: Type-check and build
         run: pnpm run build
 
+      # ビルド成果物 (dist/) の JS/CSS サイズを計測して Job Summary に出力する
+      # (#443)。カバレッジ可視化と同じく当面は閾値による fail を設けず可視化のみ。
+      # チャート可視化などライブラリ追加に伴うバンドル肥大化を PR で早期に検知する。
+      - name: Bundle size report
+        run: pnpm run bundle-size
+
       # 未使用エクスポート / 到達不能コード / 未使用依存を検出し、モジュール跨ぎの
       # デッドコード (tsc の noUnusedLocals では拾えない) と IPC ラッパ ⇔ UI 利用の
       # ドリフトを防ぐ (#470)。ベースラインは knip.json で green。新規の未使用
