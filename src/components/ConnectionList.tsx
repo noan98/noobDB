@@ -2,6 +2,8 @@ import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayou
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
+import type { TableRef } from "../tableQuickAccess";
+import { tableRefEquals } from "../tableQuickAccess";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
@@ -131,6 +133,21 @@ const TreeEmpty = chakra("div", {
   },
 });
 
+// クイックアクセスのセクション見出し (お気に入り / 最近)。
+const QuickAccessHeader = chakra("div", {
+  base: {
+    pt: "6px",
+    pb: "2px",
+    pl: "8px",
+    pr: "10px",
+    fontSize: "2xs",
+    fontWeight: 600,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: "app.textMuted",
+  },
+});
+
 /** 接続状態ドットの状態別 style (旧 .status-dot.status-*)。色は動的トークンの
  *  ため CSS 変数を直接参照する。`connecting` の脈動は App.css の @keyframes pulse。 */
 const STATUS_DOT_STYLE = {
@@ -173,6 +190,12 @@ interface Props {
   onShowCreateTable?: (database: string, table: string) => void;
   /** Row cap shown in the "Run SELECT *" menu label. */
   selectLimit: number;
+  /** お気に入りテーブル (アクティブ接続) のクイックアクセス (#461)。 */
+  favorites?: TableRef[];
+  /** 最近開いたテーブル (アクティブ接続) のクイックアクセス (#461)。 */
+  recent?: TableRef[];
+  /** お気に入りのトグル (登録/解除)。未指定ならお気に入り UI を出さない。 */
+  onToggleFavorite?: (database: string, table: string) => void;
 }
 
 interface MenuState {
@@ -204,6 +227,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onInsertTableSelect,
   onShowCreateTable,
   selectLimit,
+  favorites,
+  recent,
+  onToggleFavorite,
 }, ref) {
   const t = useT();
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
@@ -432,6 +458,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (onShowCreateTable) {
       items.push({ label: t("contextMenuShowCreate"), onSelect: () => onShowCreateTable(db, tbl) });
     }
+    if (onToggleFavorite) {
+      const fav = (favorites ?? []).some((f) => tableRefEquals(f, { database: db, table: tbl }));
+      items.push({ separator: true });
+      items.push({
+        label: fav ? t("contextMenuRemoveFavorite") : t("contextMenuAddFavorite"),
+        onSelect: () => onToggleFavorite(db, tbl),
+      });
+    }
     items.push({ separator: true });
     // Import writes to the table, so it's rejected on a read-only session;
     // disable it up front rather than letting the backend fail later.
@@ -632,6 +666,72 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       <span>{t("treeLoading")}</span>
     </TreeEmpty>
   );
+
+  // クイックアクセス (#461): アクティブ接続の databases の上に「お気に入り」「最近」を
+  // 並べ、ワンクリックで開けるようにする。各行は db.table を表示し、`onPickTable` で開く。
+  const renderQuickAccessRow = (refItem: TableRef, kind: "favorite" | "recent") => {
+    const star = kind === "favorite";
+    return (
+      <TreeRow
+        key={`${kind}:${tableKey(refItem.database, refItem.table)}`}
+        pl="4px"
+        role="treeitem"
+        onClick={() => onPickTable(refItem.database, refItem.table)}
+        onContextMenu={(e) => handleTableContextMenu(e, refItem.database, refItem.table)}
+        title={`${refItem.database}.${refItem.table}`}
+        _hover={{ bg: "app.rowHover" }}
+      >
+        <TreeChevron aria-hidden style={{ visibility: "hidden" }}>▸</TreeChevron>
+        <TreeIcon color={star ? "#eab308" : "app.textSecondary"} aria-hidden>
+          <Icon name={star ? "star-filled" : "clock"} />
+        </TreeIcon>
+        <TreeLabel fontWeight={400}>
+          {refItem.table}
+          <chakra.span color="app.textMuted" fontSize="2xs" ml="6px">
+            {refItem.database}
+          </chakra.span>
+        </TreeLabel>
+        {star && onToggleFavorite && (
+          <chakra.button
+            type="button"
+            aria-label={t("quickAccessRemoveTitle")}
+            title={t("quickAccessRemoveTitle")}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFavorite(refItem.database, refItem.table);
+            }}
+            color="app.textMuted"
+            px="4px"
+            _hover={{ color: "app.text" }}
+          >
+            <Icon name="close" size="sm" />
+          </chakra.button>
+        )}
+      </TreeRow>
+    );
+  };
+
+  const renderQuickAccess = () => {
+    const favs = favorites ?? [];
+    const recents = recent ?? [];
+    if (favs.length === 0 && recents.length === 0) return null;
+    return (
+      <>
+        {favs.length > 0 && (
+          <>
+            <QuickAccessHeader>{t("quickAccessFavorites")}</QuickAccessHeader>
+            {favs.map((r) => renderQuickAccessRow(r, "favorite"))}
+          </>
+        )}
+        {recents.length > 0 && (
+          <>
+            <QuickAccessHeader>{t("quickAccessRecent")}</QuickAccessHeader>
+            {recents.map((r) => renderQuickAccessRow(r, "recent"))}
+          </>
+        )}
+      </>
+    );
+  };
 
   const renderProfile = (p: ConnectionProfile) => {
     const isActive = p.id === activeProfileId;
@@ -850,6 +950,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
           <TreeChildren>
+            {isActive && sessionId && renderQuickAccess()}
             {databases === null ? (
               renderLoadingRow()
             ) : databases.length === 0 ? (
