@@ -37,6 +37,12 @@ export interface Settings {
    * confirm regardless of this flag.
    */
   confirmDangerousQueries: boolean;
+  /**
+   * 複数結果タブ (#472): true のとき、エディタでのクエリ実行は現在の結果を
+   * 置き換えず、SQL を複製した**新しいタブ**で実行して前の結果を残す。複数クエリの
+   * 結果を別タブとして保持・比較できるようにする。
+   */
+  resultsInNewTab: boolean;
   /** Behavior when previously open tabs exist for a profile being reconnected. */
   tabRestoreMode: TabRestoreMode;
   /**
@@ -362,6 +368,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoLimitCount: DEFAULT_AUTO_LIMIT_COUNT,
   confirmProductionConnect: DEFAULT_CONFIRM_PRODUCTION_CONNECT,
   confirmDangerousQueries: DEFAULT_CONFIRM_DANGEROUS_QUERIES,
+  resultsInNewTab: false,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
   fontSizePx: DEFAULT_FONT_SIZE_PX,
@@ -492,6 +499,7 @@ function loadInitial(): Settings {
       autoLimitCount?: unknown;
       confirmProductionConnect?: unknown;
       confirmDangerousQueries?: unknown;
+      resultsInNewTab?: unknown;
       tabRestoreMode?: unknown;
       queryTimeoutSecs?: unknown;
       fontSizePx?: unknown;
@@ -530,6 +538,8 @@ function loadInitial(): Settings {
         typeof parsed.confirmDangerousQueries === "boolean"
           ? parsed.confirmDangerousQueries
           : DEFAULT_CONFIRM_DANGEROUS_QUERIES,
+      resultsInNewTab:
+        typeof parsed.resultsInNewTab === "boolean" ? parsed.resultsInNewTab : false,
       tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
       queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
       fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
@@ -675,6 +685,13 @@ export function setConfirmProductionConnect(value: boolean): void {
 export function setConfirmDangerousQueries(value: boolean): void {
   if (current.confirmDangerousQueries === value) return;
   current = { ...current, confirmDangerousQueries: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setResultsInNewTab(value: boolean): void {
+  if (current.resultsInNewTab === value) return;
+  current = { ...current, resultsInNewTab: value };
   persist();
   listeners.forEach((cb) => cb());
 }

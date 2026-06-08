@@ -50,6 +50,7 @@ import {
   setAutoLimitEnabled,
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
+  setResultsInNewTab,
   setDefaultDisplayCount,
   setDensity,
   setFontSizePx,
@@ -871,6 +872,19 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsToggleLabel>
           <SettingsHelpInline>
             {t("settingsConfirmDangerousQueriesHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-results-new-tab">
+            <Switch
+              id="settings-results-new-tab"
+              checked={settings.resultsInNewTab}
+              onChange={setResultsInNewTab}
+            />
+            {t("settingsResultsInNewTab")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsResultsInNewTabHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
         <SettingsNumberRow>

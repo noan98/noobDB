@@ -545,6 +545,16 @@ function schemaCacheKey(sessionId: string, database: string): string {
   return `${sessionId}\0${database}`;
 }
 
+/**
+ * 複数結果タブ (#472) で新しい結果タブのタイトルを SQL から導出する。先頭の
+ * 1 行を短く切り詰める。空なら既定の無題タイトル。
+ */
+function deriveResultTabTitle(sql: string): string {
+  const firstLine = sql.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+  if (!firstLine) return translate("tabUntitledQuery");
+  return firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine;
+}
+
 function makeQueryTab(): Tab {
   // 新規クエリタブは空のエディタで開く。以前は "SELECT 1;" をプレースホルダ的に
   // 入れていたが、用途が分からず混乱を招くため空文字にした (#283 関連)。
@@ -2318,7 +2328,7 @@ export default function App() {
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
   // independently.
-  const runInTabWithGate = useCallback((tab: Tab, sql: string) => {
+  const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean }) => {
     // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
     // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
     // it never trips the destructive-query gate or auto LIMIT.
@@ -2326,11 +2336,25 @@ export default function App() {
       runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
       return;
     }
+    // 複数結果タブ (#472): 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
+    // せず SQL を複製した新しいタブで実行して前の結果を残す。以降のゲート/実行はこの
+    // ターゲットタブに対して行う。
+    let target = tab;
+    if (tab.kind === "query" && (opts?.newTab ?? settings.resultsInNewTab)) {
+      const newTab: Tab = {
+        ...makeQueryTab(),
+        sql,
+        lastExecutedSql: sql,
+        title: deriveResultTabTitle(sql),
+      };
+      addTab(newTab);
+      target = newTab;
+    }
     // Auto LIMIT only guards free-form editor queries; table tabs carry their
     // own LIMIT. Writes pass through here too but the backend parser leaves
     // them untouched.
     const autoLimit =
-      tab.kind === "query" && settings.autoLimitEnabled ? settings.autoLimitCount : null;
+      target.kind === "query" && settings.autoLimitEnabled ? settings.autoLimitCount : null;
     const isProduction = selectedProfile?.is_production ?? false;
     const sessionReadOnly = selectedProfile?.read_only ?? false;
     // Production connections may opt into approving every data-modifying
@@ -2339,13 +2363,13 @@ export default function App() {
     const requireWriteApproval =
       isProduction && (selectedProfile?.confirm_writes ?? false) && !sessionReadOnly;
     // 複数文スクリプトはバッチ実行 (#495) に振り分ける。auto LIMIT は付けない。
-    const batch = tab.kind === "query" && isMultiStatement(sql);
+    const batch = target.kind === "query" && isMultiStatement(sql);
     const findings =
       isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
     const needsWriteApproval = requireWriteApproval && !isReadOnlySql(sql);
     if (findings.length > 0 || needsWriteApproval) {
       setPendingDangerous({
-        tabId: tab.id,
+        tabId: target.id,
         sql,
         findings,
         isProduction,
@@ -2356,19 +2380,21 @@ export default function App() {
       return;
     }
     if (batch) {
-      void runBatchInTab(tab.id, sql, true);
+      void runBatchInTab(target.id, sql, true);
       return;
     }
-    runQueryInTab(tab.id, sql, null, autoLimit);
+    runQueryInTab(target.id, sql, null, autoLimit);
   }, [
     runQueryInTab,
     runBatchInTab,
+    addTab,
     selectedProfile?.is_production,
     selectedProfile?.confirm_writes,
     selectedProfile?.read_only,
     settings.confirmDangerousQueries,
     settings.autoLimitEnabled,
     settings.autoLimitCount,
+    settings.resultsInNewTab,
   ]);
 
   const handleConfirmDangerous = useCallback(() => {
@@ -3069,6 +3095,23 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // 複数結果タブ (#472): Cmd/Ctrl+Shift+Enter で、アクティブなクエリタブの SQL を
+  // 結果を残したまま**新しいタブ**で実行する (設定 resultsInNewTab の一回限り版)。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.shiftKey && !e.altKey && e.key === "Enter") {
+        const t = activeTab;
+        if (t && t.kind === "query" && t.sql.trim() && sessionId) {
+          e.preventDefault();
+          runInTabWithGate(t, t.sql, { newTab: true });
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [activeTab, sessionId, runInTabWithGate]);
 
   // 接続のヘルスチェックと自動再接続 (#485)。ウィンドウがフォーカスを取り戻したとき
   // (= OS スリープ復帰やタブ切り替え後) に SELECT 1 で接続が生きているか確認し、死んで
