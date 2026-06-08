@@ -1151,7 +1151,7 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
       ref={ref}
       role="tooltip"
       position="fixed"
-      zIndex={1100}
+      zIndex="popover"
       maxWidth="280px"
       bg="app.surface"
       border="1px solid"

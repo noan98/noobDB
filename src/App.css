@@ -94,6 +94,34 @@
   --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.18);
   --shadow-xl: 0 24px 60px rgba(15, 23, 42, 0.28);
 
+  /* ── Elevation / layering system (#500) ───────────────────────────────
+     オーバーレイ表面のエレベーション (影) とサーフェスをレイヤ単位で対応付ける。
+     影は --shadow-* を参照するためダークでは自動的に強い影へ追従し、ダークでは
+     border (--border-strong) と併用して輪郭を補う運用とする。
+       raised  : カード/浮き出し要素   → shadow-sm
+       popover : メニュー/ポップオーバー → shadow-md
+       toast   : トースト通知           → shadow-lg
+       modal   : ダイアログ             → shadow-xl */
+  --elevation-raised: var(--shadow-sm);
+  --elevation-popover: var(--shadow-md);
+  --elevation-toast: var(--shadow-lg);
+  --elevation-modal: var(--shadow-xl);
+
+  /* z-index スケール (#500): オーバーレイの重なり順を中央管理し、各所に散在する
+     マジックナンバーを解消する。低→高:
+       base < sticky < raised < sidebar < modal < dropdown < popover < toast
+     コンテキストメニュー/ポップオーバーは modal より上 (モーダル内から開けるため)、
+     トーストが常に最前面。Chakra の `zIndex="modal"` 等のトークン名と一致させて
+     いるため、JS/CSS どちらからでも同じ尺度を参照できる。 */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-raised: 20;
+  --z-sidebar: 40;
+  --z-modal: 100;
+  --z-dropdown: 500;
+  --z-popover: 1000;
+  --z-toast: 2000;
+
   /* Motion: shared easing/durations for micro-interactions.
      The reduced-motion media query at the bottom neutralizes these. */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);

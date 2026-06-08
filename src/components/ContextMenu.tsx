@@ -119,7 +119,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     <Box
       position="fixed"
       inset={0}
-      zIndex={1000}
+      zIndex="popover"
       onMouseDown={onClose}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -129,13 +129,13 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       <MotionMenu
         ref={menuRef}
         position="fixed"
-        zIndex={1000}
+        zIndex="popover"
         minW="180px"
         bg="app.surface"
         border="1px solid"
         borderColor="app.borderStrong"
         borderRadius="md"
-        boxShadow="md"
+        boxShadow="elevationPopover"
         p="var(--space-1)"
         display="flex"
         flexDirection="column"
