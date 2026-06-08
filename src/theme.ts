@@ -60,6 +60,20 @@ const config = defineConfig({
         md: { value: "var(--text-md)" },
         base: { value: "var(--text-base)" },
         lg: { value: "var(--text-lg)" },
+        xl: { value: "var(--text-xl)" },
+      },
+      // 縦リズム (#490)。`lineHeight="snug"` / `letterSpacing="wide"` のように
+      // 役割名で参照でき、App.css の --leading-* / --tracking-* を正とする。
+      lineHeights: {
+        tight: { value: "var(--leading-tight)" },
+        snug: { value: "var(--leading-snug)" },
+        normal: { value: "var(--leading-normal)" },
+        relaxed: { value: "var(--leading-relaxed)" },
+      },
+      letterSpacings: {
+        tight: { value: "var(--tracking-tight)" },
+        normal: { value: "var(--tracking-normal)" },
+        wide: { value: "var(--tracking-wide)" },
       },
       // 4px リズムの余白スケール。
       spacing: {
