@@ -13,7 +13,7 @@
 //! プリミティブであり、SQLite (max 4 接続) で外部サーバ不要・常時実行できる。
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use noobdb_lib::__test_api as t;
 
@@ -105,15 +105,23 @@ async fn repeated_timeouts_do_not_exhaust_pool() {
         assert!(res.is_err(), "iteration {i}: 50ms で超過するはず");
     }
 
-    // SQLite の worker スレッドが残りのカウントを終えて接続をプールに返すのを待つ
-    // (リークがなければ確実に回収される。リークがあれば返らない)。
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
-    let quick = conn
-        .execute(QUICK_SQL, None)
-        .await
-        .expect("複数回タイムアウト後もプールが枯渇せず後続クエリが成功するはず");
-    assert_eq!(quick.rows.len(), 1);
+    // SQLite の worker スレッドが残りのカウントを終えて接続をプールへ返すのを待つ。
+    // マシンスペックでカウント時間が振れるため固定 sleep ではフレークしうる。期限
+    // 付きの短周期リトライで「回収完了 = 後続クエリ成功」を待ち、期限内に回復しなけ
+    // れば (= 接続リーク) panic する形にして決定的にする。
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match tokio::time::timeout(Duration::from_millis(250), conn.execute(QUICK_SQL, None)).await {
+            Ok(Ok(quick)) => {
+                assert_eq!(quick.rows.len(), 1);
+                break;
+            }
+            _ if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            _ => panic!("複数回タイムアウト後の接続回収が期限内に完了しませんでした (プール枯渇/リークの疑い)"),
+        }
+    }
 
     let _ = std::fs::remove_file(&path);
 }
