@@ -168,7 +168,12 @@ CI は 2 つのワークフローに分かれています:
   `NOOBDB_TEST_MYSQL_URL` と PostgreSQL 用の `NOOBDB_TEST_POSTGRES_URL` を両方
   渡しており、両ドライバの統合テストが CI で実走します (SQLite は環境変数不要で
   常に走る)。カバレッジは `cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
-  Job Summary に出力して PR ごとに可視化します (閾値による fail は設けていない)。
+  Job Summary に出力して PR ごとに可視化し、加えて `--fail-under-lines` で行
+  カバレッジの**下限を強制**します。閾値は**ラチェット式 (下げない)** で運用し
+  (#482)、テスト整備で実測が上がったら実測をわずかに下回る値へ段階的に引き上げます
+  (現在 Rust 60 / フロント `vite.config.ts` の `lines: 26`)。当面は branch/function/
+  per-file ではなく lines 全体のみで運用します (誤検出回避)。閾値割れで落ちても
+  Job Summary には実測が残るよう、強制ステップはサマリ出力の後に置いています。
   llvm-cov の計装には `llvm-tools-preview` コンポーネントと `cargo-llvm-cov` が
   必要で、いずれもこのジョブで導入しています。
   clippy (cargo check 相当) と nextest (実バイナリ生成) は cargo が成果物を共有

@@ -402,14 +402,17 @@ jobs:
       # サマリ出力の後に置くことで、閾値割れで落ちても Job Summary には実測値が
       # 残り、原因を追いやすくする。
       #
-      # 初期閾値 48% の根拠: ローカル (SQLite のみ。MySQL/PostgreSQL 統合テストは
-      # 環境変数未設定でスキップ) の実測が lines 48.56%。CI はこの両ドライバの
-      # 統合テストも実走する**上位集合**なので、行カバレッジは必ずローカル以上に
-      # なる。したがって 48% は CI で確実に通る保守的な開始値。テストが充実したら
-      # 段階的に引き上げる。
+      # 閾値はラチェット式 (下げない) で運用する (#482)。テスト整備の進捗に応じて
+      # 実測を**わずかに下回る**値へ段階的に引き上げ、品質の後退を防ぐ。
+      # 48 → 60 への更新根拠: 全統合テスト (MySQL/PostgreSQL/SSH を含む) 実走時の
+      # 実測が lines 63.3% (Epic #397 のテスト整備 — read-only ゴールデン #444・
+      # diff/sync #480・タイムアウト/キャンセル #481・introspection #493・SSH #331 —
+      # により上昇)。CI の nextest と libtest で計測差はごく小さい (doctest なし) ため、
+      # 実測−約 3pt の 60 を CI で確実に通る保守的なベースラインとする。下げないのが
+      # 原則で、次の引き上げは更なるテスト整備で実測が上がってから行う。
       - name: Enforce coverage threshold
         working-directory: src-tauri
-        run: cargo llvm-cov report --fail-under-lines 48
+        run: cargo llvm-cov report --fail-under-lines 60
 
       # sccache のヒット率を Job ログに出して効果計測の材料にする (#417)。
       - name: sccache stats
