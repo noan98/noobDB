@@ -1,6 +1,6 @@
 /**
  * Copy text to the clipboard, falling back to execCommand on older webviews.
- * Returns true when the copy succeeded via either method, false when both failed.
+ * Returns true on success, false when both paths fail.
  */
 export async function copyToClipboard(text: string): Promise<boolean> {
   try {
@@ -13,13 +13,13 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     ta.style.opacity = "0";
     document.body.appendChild(ta);
     ta.select();
-    let ok = false;
     try {
-      ok = document.execCommand("copy");
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
     } catch {
-      // execCommand not supported in this environment
+      document.body.removeChild(ta);
+      return false;
     }
-    document.body.removeChild(ta);
-    return ok;
   }
 }

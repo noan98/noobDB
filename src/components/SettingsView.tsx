@@ -13,6 +13,7 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { copyToClipboard } from "./clipboard";
+import { useToast } from "./Toast";
 import {
   DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_DISPLAY_COUNT,
@@ -22,6 +23,15 @@ import {
   DENSITY_ORDER,
   MAX_FONT_SIZE_PX,
   MIN_FONT_SIZE_PX,
+  MONO_FONT_PRESETS,
+  UI_FONT_PRESETS,
+  monoFontStack,
+  uiFontStack,
+  setMonoFontFamily,
+  setUiFontFamily,
+  THEME_PRESET_ORDER,
+  setThemePreset,
+  type ThemePreset,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
   SYNTAX_PRESET_ORDER,
   Density,
@@ -59,6 +69,91 @@ import { ACCENT_PRESETS } from "../accent";
 interface Props {
   theme: Theme;
   onClose: () => void;
+}
+
+/** Sentinel select values for the "default" and "custom" choices (#449). */
+const FONT_DEFAULT = "__default__";
+const FONT_CUSTOM = "__custom__";
+
+/**
+ * Font family picker (#449): a preset dropdown plus a free-form family input
+ * (shown when "custom" is chosen), with a live sample rendered in the resulting
+ * stack so the user sees the font before committing.
+ */
+function FontFamilyControl(props: {
+  id: string;
+  label: string;
+  value: string | null;
+  presets: readonly string[];
+  customLabel: string;
+  defaultLabel: string;
+  placeholder: string;
+  sample: string;
+  stack: (family: string | null) => string | null;
+  onChange: (value: string | null) => void;
+}) {
+  const { value, presets, stack } = props;
+  const isPreset = value !== null && presets.includes(value);
+  const selectValue = value === null ? FONT_DEFAULT : isPreset ? value : FONT_CUSTOM;
+  const [customText, setCustomText] = useState(isPreset || value === null ? "" : (value ?? ""));
+  useEffect(() => {
+    if (value !== null && !presets.includes(value)) setCustomText(value);
+  }, [value, presets]);
+
+  const previewStack = stack(value) ?? "var(--font-mono)";
+
+  return (
+    <SettingsToggleRow>
+      <SettingsToggleLabel as="label" htmlFor={props.id}>
+        {props.label}
+      </SettingsToggleLabel>
+      <Select
+        id={props.id}
+        width="auto"
+        value={selectValue}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === FONT_DEFAULT) props.onChange(null);
+          else if (v === FONT_CUSTOM) props.onChange(customText.trim() || null);
+          else props.onChange(v);
+        }}
+      >
+        <option value={FONT_DEFAULT}>{props.defaultLabel}</option>
+        {presets.map((p) => (
+          <option key={p} value={p}>
+            {p}
+          </option>
+        ))}
+        <option value={FONT_CUSTOM}>{props.customLabel}</option>
+      </Select>
+      {selectValue === FONT_CUSTOM && (
+        <Input
+          width="auto"
+          aria-label={props.customLabel}
+          placeholder={props.placeholder}
+          value={customText}
+          onChange={(e) => setCustomText(e.target.value)}
+          onBlur={() => props.onChange(customText.trim() || null)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+        />
+      )}
+      <chakra.span
+        aria-hidden="true"
+        flex="1"
+        minW="120px"
+        fontSize="md"
+        color="app.text"
+        whiteSpace="nowrap"
+        overflow="hidden"
+        textOverflow="ellipsis"
+        style={{ fontFamily: previewStack }}
+      >
+        {props.sample}
+      </chakra.span>
+    </SettingsToggleRow>
+  );
 }
 
 // 各セクション内のレイアウト要素 (元々は App.css の `.settings-*` クラス)。
@@ -339,6 +434,11 @@ const DENSITY_LABEL_KEYS: Record<Density, Parameters<ReturnType<typeof useT>>[0]
   spacious: "settingsDensitySpacious",
 };
 
+const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof useT>>[0]> = {
+  default: "themePresetDefault",
+  dracula: "themePresetDracula",
+};
+
 const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> = {
   default: "settingsAccentDefault",
   blue: "settingsAccentBlue",
@@ -352,6 +452,7 @@ const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> 
 
 export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
+  const toast = useToast();
   const settings = useSettings();
   const colors = settings.syntaxColors[theme];
   const previewHighlight = settings.previewHighlight[theme];
@@ -418,7 +519,10 @@ export function SettingsView({ theme, onClose }: Props) {
   const copyLogs = async () => {
     if (!logText) return;
     const ok = await copyToClipboard(logText);
-    if (!ok) return;
+    if (!ok) {
+      toast.error(t("clipboardCopyFailed"));
+      return;
+    }
     setLogCopied(true);
     setTimeout(() => setLogCopied(false), 1500);
   };
@@ -500,6 +604,48 @@ export function SettingsView({ theme, onClose }: Props) {
             ))}
           </SettingsSegment>
           <SettingsHelpInline>{t("settingsDensityHelp")}</SettingsHelpInline>
+        </SettingsToggleRow>
+
+        <FontFamilyControl
+          id="settings-mono-font"
+          label={t("settingsMonoFont")}
+          value={settings.monoFontFamily}
+          presets={MONO_FONT_PRESETS}
+          defaultLabel={t("settingsFontDefault")}
+          customLabel={t("settingsFontCustom")}
+          placeholder={t("settingsFontCustomPlaceholder")}
+          sample="SELECT 0 != 1; -- il1 O0"
+          stack={monoFontStack}
+          onChange={setMonoFontFamily}
+        />
+        <FontFamilyControl
+          id="settings-ui-font"
+          label={t("settingsUiFont")}
+          value={settings.uiFontFamily}
+          presets={UI_FONT_PRESETS}
+          defaultLabel={t("settingsFontDefault")}
+          customLabel={t("settingsFontCustom")}
+          placeholder={t("settingsFontCustomPlaceholder")}
+          sample={t("settingsFontSample")}
+          stack={uiFontStack}
+          onChange={setUiFontFamily}
+        />
+
+        <SettingsToggleRow>
+          <SettingsToggleLabel as="span">{t("settingsThemePreset")}</SettingsToggleLabel>
+          <SettingsSegment role="group" aria-label={t("settingsThemePreset")}>
+            {THEME_PRESET_ORDER.map((p) => (
+              <SettingsSegmentButton
+                key={p}
+                type="button"
+                aria-pressed={settings.themePreset === p}
+                onClick={() => setThemePreset(p as ThemePreset)}
+              >
+                {t(THEME_PRESET_LABEL_KEYS[p])}
+              </SettingsSegmentButton>
+            ))}
+          </SettingsSegment>
+          <SettingsHelpInline>{t("settingsThemePresetHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
 
         <SettingsToggleRow>

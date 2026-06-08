@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { chakra, Flex, type HTMLChakraProps } from "@chakra-ui/react";
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
+import { connectionBandColor, type TitleBarConnection } from "./titleBarContext";
+
+export type { TitleBarConnection } from "./titleBarContext";
 
 const appWindow = getCurrentWindow();
 
@@ -36,7 +40,7 @@ function TitleControl(props: HTMLChakraProps<"button">) {
  * on the right mirror the platform window buttons. Window actions require the
  * matching `core:window:*` permissions in `capabilities/default.json`.
  */
-export function TitleBar() {
+export function TitleBar({ connection }: { connection?: TitleBarConnection | null }) {
   const t = useT();
   const [maximized, setMaximized] = useState(false);
 
@@ -54,6 +58,10 @@ export function TitleBar() {
     return () => unlisten?.();
   }, []);
 
+  // 接続中はタイトルバー下端にアクセントの帯を常時表示する (#466)。本番接続は
+  // 危険色の帯にして全画面で「本番にいる」ことを一目で示す。色遷移は CSS transition。
+  const bandColor = connectionBandColor(connection);
+
   return (
     <Flex
       data-tauri-drag-region
@@ -63,6 +71,8 @@ export function TitleBar() {
       bg="app.surface"
       borderBottom="1px solid"
       borderColor="app.border"
+      boxShadow={`inset 0 -2px 0 ${bandColor}`}
+      transition="box-shadow var(--dur-med) var(--ease)"
       css={{ userSelect: "none", WebkitUserSelect: "none" }}
     >
       <Flex data-tauri-drag-region align="center" gap="8px" flex="1" minW={0} px="12px">
@@ -95,9 +105,63 @@ export function TitleBar() {
           fontWeight="600"
           letterSpacing="0.02em"
           color="app.textSecondary"
+          flexShrink={0}
         >
           noobDB
         </chakra.span>
+
+        {/* アクティブ接続コンテキスト (#466)。Settings/Help など作業画面以外でも常時表示。 */}
+        {connection && (
+          <Flex align="center" gap="6px" minW={0} css={{ pointerEvents: "none" }}>
+            <chakra.span color="app.borderStrong" flexShrink={0} aria-hidden>
+              /
+            </chakra.span>
+            <chakra.span
+              aria-hidden
+              boxSize="9px"
+              borderRadius="full"
+              flexShrink={0}
+              borderWidth="1px"
+              borderStyle="solid"
+              borderColor="app.borderStrong"
+              style={{ background: connection.color ?? "var(--ws-accent)" }}
+              transition="background var(--dur-med) var(--ease)"
+            />
+            <chakra.span
+              fontSize="var(--text-sm)"
+              fontWeight="600"
+              color="app.text"
+              overflow="hidden"
+              textOverflow="ellipsis"
+              whiteSpace="nowrap"
+              maxW="220px"
+              title={connection.name}
+            >
+              {connection.name}
+            </chakra.span>
+            {connection.isProduction && (
+              <chakra.span
+                title={t("listProductionTitle")}
+                display="inline-flex"
+                alignItems="center"
+                gap="3px"
+                flexShrink={0}
+                fontSize="var(--text-2xs)"
+                fontWeight={700}
+                textTransform="uppercase"
+                letterSpacing="0.06em"
+                px="6px"
+                py="1px"
+                borderRadius="pill"
+                bg="app.status.error"
+                color="#fff"
+              >
+                <Icon name="production" size={11} />
+                {t("listProduction")}
+              </chakra.span>
+            )}
+          </Flex>
+        )}
       </Flex>
 
       <Flex align="stretch">

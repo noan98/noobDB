@@ -4,6 +4,7 @@ import { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
 import { copyToClipboard } from "./clipboard";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { useToast } from "./Toast";
 import { Button, Switch } from "./ui";
 
 interface Props {
@@ -29,6 +30,7 @@ function tryFormatJson(s: string): string | null {
 
 export function CellValueViewer({ columnName, value, isBinary, onClose }: Props) {
   const t = useT();
+  const toast = useToast();
   const isNull = value === null || value === undefined;
   const raw = isNull ? "" : isBinary ? `0x${String(value)}` : String(value);
 
@@ -52,7 +54,10 @@ export function CellValueViewer({ columnName, value, isBinary, onClose }: Props)
 
   const handleCopy = async () => {
     const ok = await copyToClipboard(display);
-    if (!ok) return;
+    if (!ok) {
+      toast.error(t("clipboardCopyFailed"));
+      return;
+    }
     setCopied(true);
     if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
     copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);

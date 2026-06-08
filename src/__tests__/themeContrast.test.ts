@@ -32,6 +32,8 @@ function parseVars(blockSelectorRegex: RegExp): Record<string, string> {
 
 const light = parseVars(/:root\s*\{([\s\S]*?)\n\}/);
 const dark = parseVars(/:root\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/);
+// 追加テーマプリセット (#465)。プリセットのフルトークンブロックを実ファイルから読む。
+const dracula = parseVars(/:root\[data-theme="dracula-dark"\]\s*\{([\s\S]*?)\n\}/);
 
 function srgbToLinear(c: number): number {
   const cs = c / 255;
@@ -168,6 +170,77 @@ describe("WCAG AA contrast for core tokens (#326)", () => {
     });
 
     it("text on the row-selection / row-hover highlight meets AA", () => {
+      check(vars, "text", "bg-active", AA_TEXT);
+      check(vars, "text", "bg-row-hover", AA_TEXT);
+    });
+
+    it("semantic family text meets AA on default + subtle surfaces (#476)", () => {
+      for (const fam of ["info", "success", "warning", "error"]) {
+        check(vars, `${fam}-text`, "bg", AA_TEXT);
+        check(vars, `${fam}-text`, "bg-elevated", AA_TEXT);
+        check(vars, `${fam}-text`, `${fam}-subtle`, AA_TEXT);
+      }
+    });
+
+    it("neutral ramp is monotonic in luminance from 0 to 950 (#476)", () => {
+      // 0=地, 950=最も濃い文字。luminance はライト/ダークで向きが逆になるが、
+      // どちらも「0 から 950 へ向かって地から単調に離れる」ことを固定する。
+      const steps = [0, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
+      const lums = steps.map((s) => {
+        const hex = vars[`neutral-${s}`];
+        expect(hex, `--neutral-${s} must be a hex color`).toBeTruthy();
+        return luminance(hex);
+      });
+      // ライトは 0(白) が最も明るく単調減少、ダークは 0(地) が最も暗く単調増加。
+      const decreasing = lums[0] > lums[lums.length - 1];
+      for (let i = 1; i < lums.length; i++) {
+        if (decreasing) expect(lums[i]).toBeLessThanOrEqual(lums[i - 1]);
+        else expect(lums[i]).toBeGreaterThanOrEqual(lums[i - 1]);
+      }
+    });
+  });
+});
+
+describe("WCAG AA contrast for theme presets (#465)", () => {
+  // プリセットは追加のフルトークンテーマ。ベース light/dark と同じ主要ペアが AA を
+  // 満たすことを固定する (#476 のニュートラル/セマンティック拡張トークンは
+  // プリセットでは未定義なので、ここでは中核ペアのみ検証する)。
+  describe.each([["dracula", dracula]] as const)("%s preset", (_name, vars) => {
+    it("primary / secondary / muted text meet AA", () => {
+      check(vars, "text", "bg", AA_TEXT);
+      check(vars, "text", "bg-elevated", AA_TEXT);
+      check(vars, "text-secondary", "bg", AA_TEXT);
+      check(vars, "text-muted", "bg", AA_TEXT);
+      check(vars, "text-muted", "bg-header", AA_TEXT);
+      check(vars, "text-null", "bg-elevated", AA_TEXT);
+      check(vars, "text-null", "bg-stripe", AA_TEXT);
+    });
+    it("accent and accent text meet AA", () => {
+      check(vars, "accent", "bg", AA_TEXT);
+      check(vars, "accent-text", "accent", AA_TEXT);
+      check(vars, "accent-text", "accent-hover", AA_TEXT);
+    });
+    it("semantic message + status badge text meet AA", () => {
+      check(vars, "text-error", "bg", AA_TEXT);
+      check(vars, "text-warning", "bg", AA_TEXT);
+      check(vars, "text-success", "bg", AA_TEXT);
+      check(vars, "status-connected", "bg", AA_TEXT);
+      check(vars, "status-error", "bg", AA_TEXT);
+    });
+    it("status dots meet the UI minimum (3:1)", () => {
+      check(vars, "status-warning", "bg", AA_UI);
+      check(vars, "status-idle", "bg", AA_UI);
+      check(vars, "status-info", "bg", AA_UI);
+    });
+    it("typed cell + syntax colors meet AA on their surfaces", () => {
+      for (const c of ["cell-number", "cell-bool-true", "cell-date", "cell-json", "cell-binary"]) {
+        check(vars, c, "bg-elevated", AA_TEXT);
+      }
+      for (const c of ["syntax-keyword", "syntax-string", "syntax-comment", "syntax-function"]) {
+        check(vars, c, "bg-input", AA_TEXT);
+      }
+    });
+    it("text stays legible on row selection / hover", () => {
       check(vars, "text", "bg-active", AA_TEXT);
       check(vars, "text", "bg-row-hover", AA_TEXT);
     });

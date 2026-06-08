@@ -33,16 +33,20 @@ import {
  * まま参照する (フォーカスリングの `color-mix(... var(--accent) ...)` など)。
  */
 
-/** キーボードフォーカス時のリング。`App.css` のフォーカス表現と一致させる。
- *  動的アクセントへ追従させるため CSS 変数を直接参照する。 */
-const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
+/** キーボードフォーカス時のリング (#475)。`App.css` の --focus-ring トークンを
+ *  参照して 1 か所に集約し、太さ・色・オフセットを全要素で統一する。エラー入力は
+ *  危険色リング (--focus-ring-danger) に切り替える。 */
+const focusRing = "var(--focus-ring)";
+const focusRingDanger = "var(--focus-ring-danger)";
 
 const config = defineConfig({
   preflight: false,
   // Chakra の `_dark` 条件をアプリのテーマ属性 (`<html data-theme="dark">`) に
   // 合わせる。既定の `.dark &` ではなく `data-theme` を見るようにする。
   conditions: {
-    dark: "[data-theme=dark] &",
+    // "dark" だけでなく、ダーク系テーマプリセット ("dracula-dark" 等) でも
+    // カラー付きボタンの _dark トークンが効くよう、末尾一致にする (#465)。
+    dark: "[data-theme$=dark] &",
   },
   theme: {
     tokens: {
@@ -60,6 +64,20 @@ const config = defineConfig({
         md: { value: "var(--text-md)" },
         base: { value: "var(--text-base)" },
         lg: { value: "var(--text-lg)" },
+        xl: { value: "var(--text-xl)" },
+      },
+      // 縦リズム (#490)。`lineHeight="snug"` / `letterSpacing="wide"` のように
+      // 役割名で参照でき、App.css の --leading-* / --tracking-* を正とする。
+      lineHeights: {
+        tight: { value: "var(--leading-tight)" },
+        snug: { value: "var(--leading-snug)" },
+        normal: { value: "var(--leading-normal)" },
+        relaxed: { value: "var(--leading-relaxed)" },
+      },
+      letterSpacings: {
+        tight: { value: "var(--tracking-tight)" },
+        normal: { value: "var(--tracking-normal)" },
+        wide: { value: "var(--tracking-wide)" },
       },
       // 4px リズムの余白スケール。
       spacing: {
@@ -75,6 +93,19 @@ const config = defineConfig({
         md: { value: "var(--radius-md)" },
         lg: { value: "var(--radius-lg)" },
         pill: { value: "var(--radius-pill)" },
+      },
+      // レイヤリング (#500)。`zIndex="popover"` 等の名前で参照でき、App.css の
+      // --z-* を正とする。Chakra 既定の zIndex トークン名 (modal/popover/toast/
+      // dropdown) を意図的に踏襲し、既存コンポーネントの記述とも揃える。
+      zIndex: {
+        base: { value: "var(--z-base)" },
+        sticky: { value: "var(--z-sticky)" },
+        raised: { value: "var(--z-raised)" },
+        sidebar: { value: "var(--z-sidebar)" },
+        modal: { value: "var(--z-modal)" },
+        dropdown: { value: "var(--z-dropdown)" },
+        popover: { value: "var(--z-popover)" },
+        toast: { value: "var(--z-toast)" },
       },
       // 既存デザイントークンへの色ブリッジ。`app.*` 名前空間に隔離して
       // Chakra 既定のセマンティックカラーを壊さないようにしている。
@@ -110,6 +141,56 @@ const config = defineConfig({
           accent: { value: "var(--accent)" },
           accentHover: { value: "var(--accent-hover)" },
           accentText: { value: "var(--accent-text)" },
+          // 拡張ニュートラル階調 (#476)。0=地, 950=最も濃い文字。テーマ反転は
+          // App.css 側で吸収するため、ここは var() ブリッジのみ。
+          neutral: {
+            0: { value: "var(--neutral-0)" },
+            50: { value: "var(--neutral-50)" },
+            100: { value: "var(--neutral-100)" },
+            200: { value: "var(--neutral-200)" },
+            300: { value: "var(--neutral-300)" },
+            400: { value: "var(--neutral-400)" },
+            500: { value: "var(--neutral-500)" },
+            600: { value: "var(--neutral-600)" },
+            700: { value: "var(--neutral-700)" },
+            800: { value: "var(--neutral-800)" },
+            900: { value: "var(--neutral-900)" },
+            950: { value: "var(--neutral-950)" },
+          },
+          // セマンティックカラー体系 (#476)。役割別 (subtle/border/solid/text)。
+          //
+          // ## カラーブラインド配慮ガイド (赤緑色弱)
+          // success(緑) と error(赤) は色相だけでは区別しづらいため、これらを
+          // 状態の「唯一の手がかり」にしない。必ず次のいずれかを併用する:
+          //   - アイコン (Icon.tsx の check / warning / close など) や形状
+          //   - テキストラベル ("成功" / "失敗" / "本番" 等)
+          //   - 位置・順序の一貫性
+          // 色は強調の補助に留める。info(青) / warning(橙) は緑赤と弁別しやすい
+          // ため軸として有効だが、同様にラベル併用を推奨する。
+          info: {
+            subtle: { value: "var(--info-subtle)" },
+            border: { value: "var(--info-border)" },
+            solid: { value: "var(--info-solid)" },
+            text: { value: "var(--info-text)" },
+          },
+          success: {
+            subtle: { value: "var(--success-subtle)" },
+            border: { value: "var(--success-border)" },
+            solid: { value: "var(--success-solid)" },
+            text: { value: "var(--success-text)" },
+          },
+          warning: {
+            subtle: { value: "var(--warning-subtle)" },
+            border: { value: "var(--warning-border)" },
+            solid: { value: "var(--warning-solid)" },
+            text: { value: "var(--warning-text)" },
+          },
+          error: {
+            subtle: { value: "var(--error-subtle)" },
+            border: { value: "var(--error-border)" },
+            solid: { value: "var(--error-solid)" },
+            text: { value: "var(--error-text)" },
+          },
           // セル値の型別色
           cell: {
             number: { value: "var(--cell-number)" },
@@ -151,6 +232,11 @@ const config = defineConfig({
         md: { value: "var(--shadow-md)" },
         lg: { value: "var(--shadow-lg)" },
         xl: { value: "var(--shadow-xl)" },
+        // レイヤ別エレベーション (#500)。`shadow="elevationModal"` のように参照する。
+        elevationRaised: { value: "var(--elevation-raised)" },
+        elevationPopover: { value: "var(--elevation-popover)" },
+        elevationToast: { value: "var(--elevation-toast)" },
+        elevationModal: { value: "var(--elevation-modal)" },
       },
       // カラー付きボタンはライト/ダークで別々の固定色を使い (App.css でも CSS 変数を
       // 経由しない)、単純な var() ブリッジでは表現できないため、ここで `_dark` 条件付き
@@ -325,7 +411,13 @@ export const inputRecipe = defineRecipe({
     borderRadius: "md",
     width: "100%",
     _placeholder: { color: "app.textMuted" },
-    _focus: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // :focus-visible に統一 (#475)。テキスト入力はキーボード操作中も一致する。
+    _focusVisible: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // aria-invalid な入力は危険色の枠線 + リングへ (セマンティックフォーカス分岐)。
+    "&[aria-invalid='true']": {
+      borderColor: "app.error.solid",
+      _focusVisible: { borderColor: "app.error.solid", boxShadow: focusRingDanger },
+    },
   },
 });
 
@@ -344,7 +436,13 @@ export const selectRecipe = defineRecipe({
     borderRadius: "md",
     width: "100%",
     cursor: "pointer",
-    _focus: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // :focus-visible に統一 (#475)。テキスト入力はキーボード操作中も一致する。
+    _focusVisible: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // aria-invalid な入力は危険色の枠線 + リングへ (セマンティックフォーカス分岐)。
+    "&[aria-invalid='true']": {
+      borderColor: "app.error.solid",
+      _focusVisible: { borderColor: "app.error.solid", boxShadow: focusRingDanger },
+    },
   },
 });
 
@@ -363,7 +461,13 @@ export const textareaRecipe = defineRecipe({
     width: "100%",
     resize: "vertical",
     _placeholder: { color: "app.textMuted" },
-    _focus: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // :focus-visible に統一 (#475)。テキスト入力はキーボード操作中も一致する。
+    _focusVisible: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // aria-invalid な入力は危険色の枠線 + リングへ (セマンティックフォーカス分岐)。
+    "&[aria-invalid='true']": {
+      borderColor: "app.error.solid",
+      _focusVisible: { borderColor: "app.error.solid", boxShadow: focusRingDanger },
+    },
   },
 });
 

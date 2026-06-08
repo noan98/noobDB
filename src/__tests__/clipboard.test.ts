@@ -1,23 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { copyToClipboard } from "../components/clipboard";
 
-// navigator.clipboard は jsdom で部分的にしか実装されていないため、
-// 各テストで Object.defineProperty で差し替えてモックする。
-// document.execCommand も jsdom では未定義のため、同様に定義してモックする。
-
-function mockClipboardWriteText(impl: () => Promise<void>) {
-  Object.defineProperty(navigator, "clipboard", {
-    value: { writeText: vi.fn().mockImplementation(impl) },
-    configurable: true,
-  });
-}
-
-function mockExecCommand(impl: () => boolean) {
-  Object.defineProperty(document, "execCommand", {
-    value: vi.fn().mockImplementation(impl),
-    configurable: true,
-    writable: true,
-  });
+// jsdom では document.execCommand が未定義のため、テスト前に stub として定義する。
+function stubExecCommand(returnValue: boolean | (() => never)) {
+  if (typeof returnValue === "function") {
+    document.execCommand = returnValue as unknown as typeof document.execCommand;
+  } else {
+    document.execCommand = vi.fn().mockReturnValue(returnValue) as unknown as typeof document.execCommand;
+  }
 }
 
 describe("copyToClipboard", () => {
@@ -25,52 +15,47 @@ describe("copyToClipboard", () => {
     vi.restoreAllMocks();
   });
 
-  afterEach(() => {
-    // execCommand のモックを元に戻す
-    Object.defineProperty(document, "execCommand", {
-      value: undefined,
+  it("returns true when navigator.clipboard succeeds", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
       configurable: true,
-      writable: true,
     });
-  });
-
-  it("navigator.clipboard.writeText が成功すると true を返す", async () => {
-    mockClipboardWriteText(() => Promise.resolve());
-
     const result = await copyToClipboard("hello");
-
     expect(result).toBe(true);
-    expect((navigator.clipboard as { writeText: ReturnType<typeof vi.fn> }).writeText)
-      .toHaveBeenCalledWith("hello");
+    expect(writeText).toHaveBeenCalledWith("hello");
   });
 
-  it("navigator.clipboard が失敗したとき execCommand でフォールバックし true を返す", async () => {
-    mockClipboardWriteText(() => Promise.reject(new Error("not allowed")));
-    mockExecCommand(() => true);
-
-    const result = await copyToClipboard("fallback");
-
+  it("falls back to execCommand when navigator.clipboard rejects", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("no permission")) },
+      configurable: true,
+    });
+    stubExecCommand(true);
+    const result = await copyToClipboard("world");
     expect(result).toBe(true);
     expect(document.execCommand).toHaveBeenCalledWith("copy");
   });
 
-  it("両方の手段が失敗すると false を返す (execCommand が false を返す場合)", async () => {
-    mockClipboardWriteText(() => Promise.reject(new Error("not allowed")));
-    mockExecCommand(() => false);
-
-    const result = await copyToClipboard("fail");
-
+  it("returns false when execCommand returns false", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("no permission")) },
+      configurable: true,
+    });
+    stubExecCommand(false);
+    const result = await copyToClipboard("test");
     expect(result).toBe(false);
   });
 
-  it("execCommand が例外を投げても false を返す", async () => {
-    mockClipboardWriteText(() => Promise.reject(new Error("not allowed")));
-    mockExecCommand(() => {
-      throw new Error("not supported");
+  it("returns false when execCommand throws", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("no permission")) },
+      configurable: true,
     });
-
-    const result = await copyToClipboard("fail");
-
+    stubExecCommand(() => {
+      throw new Error("execCommand not supported");
+    });
+    const result = await copyToClipboard("test");
     expect(result).toBe(false);
   });
 });
