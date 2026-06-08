@@ -11,8 +11,9 @@ use crate::history::NewHistoryEntry;
 use crate::state::{AppState, Session};
 
 /// Returns `Err(AppError::ReadOnly)` when the session is RO and `sql` is not
-/// strictly read-only. Used at every query entry point.
-fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
+/// strictly read-only. Used at every query entry point (and the streaming
+/// export path in `commands::export`).
+pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
     if session.read_only && !is_read_only_sql(sql) {
         tracing::warn!(
             session_id = %session.id,

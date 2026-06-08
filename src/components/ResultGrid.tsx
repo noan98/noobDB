@@ -54,7 +54,7 @@ import {
   HEAT_PALETTES,
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
-import { ExportModal } from "./ExportModal";
+import { ExportModal, type FullExportContext } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
@@ -648,6 +648,11 @@ interface Props {
    * callback receives the generated `SELECT … WHERE …` SQL.
    */
   onFkJump?: (sql: string) => void;
+  /**
+   * 全件ストリーミングエクスポート (#494) のコンテキスト。提供されると ExportModal に
+   * 「全件 (再実行)」モードが現れる。
+   */
+  fullExport?: FullExportContext;
   /**
    * Wall-clock timestamp (ms) set by the parent each time an Apply edit
    * succeeds. `ResultGrid` uses changes to this value to play a brief
@@ -2521,6 +2526,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   queryError,
   onRetry,
   onFkJump,
+  fullExport,
   lastEditAppliedAt,
 }: Props, ref) {
   const t = useT();
@@ -3286,6 +3292,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             database={database ?? null}
             table={table ?? null}
             partial={showAutoLimitBadge || !!canLoadMore}
+            fullExport={fullExport}
             onClose={() => setShowExport(false)}
           />
         )}

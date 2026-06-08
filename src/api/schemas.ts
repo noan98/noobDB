@@ -318,6 +318,23 @@ export const importErrorEvent = z.object({
   error: z.string(),
 });
 
+// 全件ストリーミングエクスポート (#494) のイベント。
+export const exportProgressEvent = z.object({
+  streamId: z.string(),
+  rows: z.number(),
+});
+
+export const exportDoneEvent = z.object({
+  streamId: z.string(),
+  rows: z.number(),
+  bytes: z.number(),
+});
+
+export const exportStreamErrorEvent = z.object({
+  streamId: z.string(),
+  message: z.string(),
+});
+
 /** DEV ビルドでのみ詳細なバリデーションエラーをコンソールへ出す。 */
 const DEV = import.meta.env.DEV;
 

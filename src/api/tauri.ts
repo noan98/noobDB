@@ -621,6 +621,33 @@ export const api = {
       rows: params.rows,
     }).then((r) => parseResponse(schemas.numberResponse, r, "export_query_result")),
 
+  /**
+   * クエリを再実行し、全件をストリーミングで直接ファイルへ書き出す (#494)。結果は
+   * `export-stream:*` イベントで通知され、`cancelStream` で中断できる。SELECT 系のみ。
+   */
+  exportQueryStream: (params: {
+    sessionId: string;
+    streamId: string;
+    sql: string;
+    database: string | null;
+    format: ExportFormat;
+    path: string;
+    initialBatch: number;
+    chunkSize: number;
+    queryTimeoutSecs: number | null;
+  }) =>
+    invoke<void>("export_query_stream", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      sql: params.sql,
+      database: params.database,
+      format: params.format,
+      path: params.path,
+      initialBatch: params.initialBatch,
+      chunkSize: params.chunkSize,
+      queryTimeoutSecs: params.queryTimeoutSecs,
+    }),
+
   dumpDatabase: (params: {
     sessionId: string;
     database: string;
@@ -741,6 +768,26 @@ export interface ImportDoneEvent {
 export interface ImportErrorEvent {
   streamId: string;
   error: string;
+}
+
+// 全件ストリーミングエクスポート (#494)。
+export interface ExportProgressEvent {
+  streamId: string;
+  rows: number;
+}
+export interface ExportDoneEvent {
+  streamId: string;
+  rows: number;
+  bytes: number;
+}
+export interface ExportStreamErrorEvent {
+  streamId: string;
+  message: string;
+}
+export interface ExportStreamHandlers {
+  onProgress?: (event: ExportProgressEvent) => void;
+  onDone?: (event: ExportDoneEvent) => void;
+  onError?: (event: ExportStreamErrorEvent) => void;
 }
 
 export interface ImportStreamHandlers {
@@ -880,6 +927,39 @@ export async function listenImportStream(
     listen<ImportErrorEvent>(
       "csv-import:error",
       filter(schemas.importErrorEvent, "csv-import:error", handlers.onError),
+    ),
+  ]);
+  return () => unlisteners.forEach((un) => un());
+}
+
+/** 全件ストリーミングエクスポート (#494) の進捗/完了/エラーイベントを購読する。 */
+export async function listenExportStream(
+  streamId: string,
+  handlers: ExportStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+  const unlisteners = await Promise.all([
+    listen<ExportProgressEvent>(
+      "export-stream:progress",
+      filter(schemas.exportProgressEvent, "export-stream:progress", handlers.onProgress),
+    ),
+    listen<ExportDoneEvent>(
+      "export-stream:done",
+      filter(schemas.exportDoneEvent, "export-stream:done", handlers.onDone),
+    ),
+    listen<ExportStreamErrorEvent>(
+      "export-stream:error",
+      filter(schemas.exportStreamErrorEvent, "export-stream:error", handlers.onError),
     ),
   ]);
   return () => unlisteners.forEach((un) => un());
