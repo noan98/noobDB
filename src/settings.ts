@@ -87,6 +87,19 @@ export interface Settings {
    * see every cell as the raw string the driver returned.
    */
   richCellRendering: boolean;
+  /**
+   * Preferred monospace font family for the editor, result grid and code views
+   * (#449). `null` keeps the App.css default mono stack. A non-null value is
+   * prepended to the shared fallback chain so an uninstalled font degrades
+   * gracefully. Driven into the `--font-mono` CSS variable at runtime.
+   */
+  monoFontFamily: string | null;
+  /**
+   * Preferred UI (sans-serif) font family (#449). `null` keeps the App.css
+   * default sans stack. Prepended to the shared sans fallback chain and driven
+   * into `--font-sans` at runtime.
+   */
+  uiFontFamily: string | null;
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
@@ -99,6 +112,57 @@ export const DEFAULT_CELL_EDIT_ON_BLUR: CellEditOnBlur = "commit";
 
 /** Rich cell rendering is on by default; it is a display-only enhancement. */
 export const DEFAULT_RICH_CELL_RENDERING = true;
+
+/** Font family defaults: `null` means "use the App.css default stack" (#449). */
+export const DEFAULT_MONO_FONT_FAMILY: string | null = null;
+export const DEFAULT_UI_FONT_FAMILY: string | null = null;
+
+/** Shared fallback chains, kept in sync with App.css `--font-mono` / `--font-sans`. */
+export const MONO_FONT_FALLBACK = 'ui-monospace, "SF Mono", Consolas, monospace';
+export const UI_FONT_FALLBACK =
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans CJK JP", sans-serif';
+
+/** Monospace presets offered in the appearance settings (primary family names). */
+export const MONO_FONT_PRESETS = [
+  "JetBrains Mono",
+  "Fira Code",
+  "Cascadia Code",
+  "Source Code Pro",
+  "IBM Plex Mono",
+  "Menlo",
+  "Consolas",
+] as const;
+
+/** UI (sans) presets offered in the appearance settings. */
+export const UI_FONT_PRESETS = [
+  "Inter",
+  "Roboto",
+  "Segoe UI",
+  "Helvetica Neue",
+  "Arial",
+] as const;
+
+/** Wrap a family name in quotes when it contains spaces (and isn't already quoted). */
+function quoteFamily(family: string): string {
+  const f = family.trim();
+  if (/[\s]/.test(f) && !/^['"].*['"]$/.test(f)) return `"${f}"`;
+  return f;
+}
+
+/**
+ * Builds a full font stack from a chosen family by prepending it to the shared
+ * fallback chain, so an uninstalled font degrades to the platform default
+ * instead of breaking. Returns `null` for the default (no override).
+ */
+export function monoFontStack(family: string | null): string | null {
+  if (!family) return null;
+  return `${quoteFamily(family)}, ${MONO_FONT_FALLBACK}`;
+}
+
+export function uiFontStack(family: string | null): string | null {
+  if (!family) return null;
+  return `${quoteFamily(family)}, ${UI_FONT_FALLBACK}`;
+}
 
 export type Density = "compact" | "normal" | "spacious";
 
@@ -283,6 +347,8 @@ export const DEFAULT_SETTINGS: Settings = {
   resultGridPageSize: DEFAULT_RESULT_GRID_PAGE_SIZE,
   cellEditOnBlur: DEFAULT_CELL_EDIT_ON_BLUR,
   richCellRendering: DEFAULT_RICH_CELL_RENDERING,
+  monoFontFamily: DEFAULT_MONO_FONT_FAMILY,
+  uiFontFamily: DEFAULT_UI_FONT_FAMILY,
 };
 
 /** Clamps an auto-refresh cadence (seconds) to the allowed range. */
@@ -328,6 +394,22 @@ function sanitizePageSize(input: unknown, fallback: number): number {
 function sanitizeAccentColor(input: unknown, fallback: string | null): string | null {
   if (input === null) return null;
   return isHexColor(input) ? input : fallback;
+}
+
+/**
+ * Validates a user-provided font family. `null` (default) passes through. A
+ * string is trimmed and accepted only when it contains the safe characters a
+ * CSS font-family list uses (letters, digits, spaces, quotes, commas, hyphens),
+ * guarding against CSS injection via `;{}<>()`. Returns `fallback` otherwise.
+ */
+function sanitizeFontFamily(input: unknown, fallback: string | null): string | null {
+  if (input === null) return null;
+  if (typeof input !== "string") return fallback;
+  const v = input.trim();
+  if (v.length === 0) return null;
+  if (v.length > 120) return fallback;
+  if (!/^[\w \-'",]+$/.test(v)) return fallback;
+  return v;
 }
 
 function sanitizeFontSizePx(input: unknown, fallback: number): number {
@@ -390,6 +472,8 @@ function loadInitial(): Settings {
       resultGridPageSize?: unknown;
       cellEditOnBlur?: unknown;
       richCellRendering?: unknown;
+      monoFontFamily?: unknown;
+      uiFontFamily?: unknown;
     };
     return {
       syntaxColors: {
@@ -434,6 +518,8 @@ function loadInitial(): Settings {
         typeof parsed.richCellRendering === "boolean"
           ? parsed.richCellRendering
           : DEFAULT_RICH_CELL_RENDERING,
+      monoFontFamily: sanitizeFontFamily(parsed.monoFontFamily, DEFAULT_MONO_FONT_FAMILY),
+      uiFontFamily: sanitizeFontFamily(parsed.uiFontFamily, DEFAULT_UI_FONT_FAMILY),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -636,6 +722,22 @@ export function setCellEditOnBlur(value: CellEditOnBlur): void {
 export function setRichCellRendering(value: boolean): void {
   if (current.richCellRendering === value) return;
   current = { ...current, richCellRendering: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setMonoFontFamily(value: string | null): void {
+  const next = sanitizeFontFamily(value, current.monoFontFamily);
+  if (current.monoFontFamily === next) return;
+  current = { ...current, monoFontFamily: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setUiFontFamily(value: string | null): void {
+  const next = sanitizeFontFamily(value, current.uiFontFamily);
+  if (current.uiFontFamily === next) return;
+  current = { ...current, uiFontFamily: next };
   persist();
   listeners.forEach((cb) => cb());
 }
