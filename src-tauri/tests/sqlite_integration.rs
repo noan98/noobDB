@@ -314,6 +314,25 @@ async fn sqlite_list_indexes_reports_primary_unique_and_plain() {
 }
 
 #[tokio::test]
+async fn sqlite_health_check_succeeds_on_live_connection() {
+    // health_check (#485) runs `SELECT 1` through the driver; it must succeed on
+    // a freshly opened connection.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_health_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.health_check()
+        .await
+        .expect("health check on a live connection");
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_execute_transaction_is_all_or_nothing() {
     let mut path = std::env::temp_dir();
     path.push(format!("noobdb_sqlite_tx_{}.db", std::process::id()));
