@@ -8,9 +8,11 @@ import { tags } from "@lezer/highlight";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
+import { copyToClipboard } from "./clipboard";
 import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
+import { useToast } from "./Toast";
 
 /**
  * Query Builder のフォーム部のスタイル。以前は `.qb-*` の className + 子孫セレクタで
@@ -387,6 +389,7 @@ function buildSql(
 
 export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable, initialSnapshot, readOnly, onExecute, onPreview, onPersist, onClose }: Props) {
   const t = useT();
+  const toast = useToast();
 
   const [kind, setKind] = useState<QueryKind>(initialSnapshot?.kind ?? "SELECT");
   const [databases, setDatabases] = useState<string[]>([]);
@@ -471,21 +474,14 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   );
 
   const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(sql);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = sql;
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand("copy"); } catch { /* ignore */ }
-      document.body.removeChild(ta);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+    const ok = await copyToClipboard(sql);
+    if (!ok) {
+      toast.error(t("clipboardCopyFailed"));
+      return;
     }
-  }, [sql]);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [sql, toast, t]);
 
   const captureSnapshot = useCallback((): QueryBuilderSnapshot => ({
     kind,

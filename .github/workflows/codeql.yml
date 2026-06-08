@@ -1,0 +1,49 @@
+name: codeql
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # 毎週月曜 JST 09:00 (UTC 00:00) に定期スキャン
+    - cron: "0 0 * * 1"
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # javascript-typescript は JS/TS ソースを対象にするビルトイン言語名。
+        # Rust は CodeQL の実験的サポートであり、成熟度が低くノイズが多いため
+        # 当面は JS/TS のみでシグナルを安定させる。
+        language: ["javascript-typescript"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          languages: ${{ matrix.language }}
+          # ノイズの多いルールを抑制してシグナル重視のベースラインから運用開始する。
+          # 追加のカスタムクエリは queries: フィールドで指定できる。
+          queries: security-extended
+
+      # JS/TS は autobuild で対応できる (ビルド成果物に依存しないため)。
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          category: "/language:${{ matrix.language }}"
