@@ -1,7 +1,7 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
-import { api, ConnectionProfile, IndexInfo, TableColumnInfo } from "../api/tauri";
+import { api, ConnectionProfile, IndexInfo, SchemaObject, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
 import { formatRowEstimate } from "./rowEstimate";
@@ -198,6 +198,8 @@ interface Props {
   onRenameTable?: (database: string, table: string) => void;
   /** テーブル名をクリップボードへコピー (#496 補助)。 */
   onCopyTableName?: (table: string) => void;
+  /** スキーマオブジェクト (#483) の定義を開く。 */
+  onOpenObjectDefinition?: (database: string, kind: string, name: string) => void;
   /** Row cap shown in the "Run SELECT *" menu label. */
   selectLimit: number;
   /** お気に入りテーブル (アクティブ接続) のクイックアクセス (#461)。 */
@@ -241,6 +243,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onDropTable,
   onRenameTable,
   onCopyTableName,
+  onOpenObjectDefinition,
   selectLimit,
   favorites,
   recent,
@@ -255,6 +258,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const [tableColumns, setTableColumns] = useState<Record<string, TableColumnInfo[]>>({});
   // テーブルごとのインデックス一覧 (#459)。テーブル展開時に列と並行で遅延取得する。
   const [tableIndexes, setTableIndexes] = useState<Record<string, IndexInfo[]>>({});
+  // DB ごとの非テーブルオブジェクト (#483)。DB 展開時に遅延取得する。
+  const [schemaObjects, setSchemaObjects] = useState<Record<string, SchemaObject[]>>({});
   const [databases, setDatabases] = useState<string[] | null>(null);
   const [tables, setTables] = useState<Record<string, string[]>>({});
   // Approximate row counts per database, keyed `db -> table -> estimate`. Read
@@ -398,6 +403,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setExpandedTables({});
     setTableColumns({});
     setTableIndexes({});
+    setSchemaObjects({});
     tablesInFlightRef.current.clear();
     estimatesInFlightRef.current.clear();
     if (sessionId) {
@@ -592,6 +598,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       const list = await api.listTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
       void loadRowEstimates(sessionId, db);
+      // 非テーブルのスキーマオブジェクト (#483) もベストエフォートで取得する。
+      void api
+        .listSchemaObjects(sessionId, db)
+        .then((objs) => setSchemaObjects((prev) => ({ ...prev, [db]: objs })))
+        .catch(() => setSchemaObjects((prev) => ({ ...prev, [db]: [] })));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -782,6 +793,66 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           </chakra.button>
         )}
       </TreeRow>
+    );
+  };
+
+  // 非テーブルのスキーマオブジェクト (#483) を種別ごとにグループ化して描画する。
+  // 選択すると onOpenObjectDefinition で定義 DDL を開く。
+  const renderSchemaObjects = (db: string) => {
+    if (!onOpenObjectDefinition) return null;
+    const objs = schemaObjects[db];
+    if (!objs || objs.length === 0) return null;
+    const order: SchemaObject["kind"][] = [
+      "view",
+      "materialized_view",
+      "procedure",
+      "function",
+      "trigger",
+    ];
+    const labels: Record<string, string> = {
+      view: t("objGroupViews"),
+      materialized_view: t("objGroupMatViews"),
+      procedure: t("objGroupProcedures"),
+      function: t("objGroupFunctions"),
+      trigger: t("objGroupTriggers"),
+    };
+    const icons: Record<string, IconName> = {
+      view: "view",
+      materialized_view: "view",
+      procedure: "routine",
+      function: "routine",
+      trigger: "trigger",
+    };
+    return (
+      <>
+        {order.map((kind) => {
+          const items = objs.filter((o) => o.kind === kind);
+          if (items.length === 0) return null;
+          return (
+            <div key={kind}>
+              <QuickAccessHeader>{labels[kind] ?? kind}</QuickAccessHeader>
+              {items.map((o) => (
+                <TreeRow
+                  key={`${kind}:${o.name}`}
+                  pl="4px"
+                  role="treeitem"
+                  onClick={() => onOpenObjectDefinition(db, o.kind, o.name)}
+                  title={`${o.name} — ${labels[kind] ?? kind}`}
+                  _hover={{ bg: "app.rowHover" }}
+                >
+                  <TreeChevron visibility="hidden" aria-hidden />
+                  <TreeIcon color="app.textSecondary" aria-hidden>
+                    <Icon name={icons[kind] ?? "query"} />
+                  </TreeIcon>
+                  <TreeLabel fontWeight={400}>
+                    <HighlightText text={o.name} query={q} />
+                  </TreeLabel>
+                </TreeRow>
+              ))}
+            </div>
+          );
+        })}
+      </>
     );
   };
 
@@ -1193,6 +1264,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                             );
                           })
                         )}
+                        {!schemaFiltered && renderSchemaObjects(db)}
                       </TreeChildren>
                     </TreeCollapse>
                   </TreeNode>

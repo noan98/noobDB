@@ -693,6 +693,13 @@ const en = {
   dropConfirmOk: "Drop table",
   maintenanceProductionWarning: "This is a PRODUCTION connection. Proceed only if you are certain.",
   tableNameCopied: "Copied table name: {table}",
+  // スキーマオブジェクト閲覧 (#483)。
+  objGroupViews: "Views",
+  objGroupMatViews: "Materialized views",
+  objGroupProcedures: "Procedures",
+  objGroupFunctions: "Functions",
+  objGroupTriggers: "Triggers",
+  objDefinitionError: "Failed to load definition: {error}",
   // テーブルのインデックス表示 (#459)。
   indexesLabel: "Indexes",
   indexBadgePk: "PK",
@@ -1812,6 +1819,13 @@ const ja: Dict = {
   dropConfirmOk: "DROP TABLE",
   maintenanceProductionWarning: "これは本番 (PRODUCTION) 接続です。確信がある場合のみ実行してください。",
   tableNameCopied: "テーブル名をコピーしました: {table}",
+  // スキーマオブジェクト閲覧 (#483)。
+  objGroupViews: "ビュー",
+  objGroupMatViews: "マテリアライズドビュー",
+  objGroupProcedures: "プロシージャ",
+  objGroupFunctions: "関数",
+  objGroupTriggers: "トリガー",
+  objDefinitionError: "定義の取得に失敗しました: {error}",
   // テーブルのインデックス表示 (#459)。
   indexesLabel: "インデックス",
   indexBadgePk: "PK",

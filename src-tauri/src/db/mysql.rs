@@ -6,8 +6,8 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, StreamBatch, TableColumnInfo,
-    TableRowEstimate, TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -594,6 +594,90 @@ impl MySqlConn {
                 constraint_name: r.try_get::<Option<String>, _>(4).ok().flatten(),
             })
             .collect())
+    }
+
+    pub async fn schema_objects(&self, db: &str) -> Result<Vec<SchemaObject>> {
+        let mut out: Vec<SchemaObject> = Vec::new();
+        // Views.
+        let views: Vec<MySqlRow> = sqlx::query(
+            "SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        for r in &views {
+            out.push(SchemaObject {
+                kind: "view".into(),
+                name: r.try_get::<String, _>(0).unwrap_or_default(),
+            });
+        }
+        // Routines (procedures / functions).
+        let routines: Vec<MySqlRow> = sqlx::query(
+            "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM information_schema.ROUTINES \
+             WHERE ROUTINE_SCHEMA = ? ORDER BY ROUTINE_TYPE, ROUTINE_NAME",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        for r in &routines {
+            let rtype = r.try_get::<String, _>(1).unwrap_or_default();
+            let kind = if rtype.eq_ignore_ascii_case("PROCEDURE") {
+                "procedure"
+            } else {
+                "function"
+            };
+            out.push(SchemaObject {
+                kind: kind.into(),
+                name: r.try_get::<String, _>(0).unwrap_or_default(),
+            });
+        }
+        // Triggers.
+        let triggers: Vec<MySqlRow> = sqlx::query(
+            "SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = ? ORDER BY TRIGGER_NAME",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        for r in &triggers {
+            out.push(SchemaObject {
+                kind: "trigger".into(),
+                name: r.try_get::<String, _>(0).unwrap_or_default(),
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn object_definition(&self, db: &str, kind: &str, name: &str) -> Result<String> {
+        if db.contains('`') || db.contains('\0') || name.contains('`') || name.contains('\0') {
+            return Err(AppError::InvalidInput("invalid identifier".into()));
+        }
+        // SHOW CREATE ... can't bind identifiers; quote them manually after the
+        // guard above. The result column holding the DDL differs by object kind.
+        let qualified = format!("`{db}`.`{name}`");
+        let (stmt, col) = match kind {
+            "view" => (format!("SHOW CREATE VIEW {qualified}"), "Create View"),
+            "procedure" => (
+                format!("SHOW CREATE PROCEDURE {qualified}"),
+                "Create Procedure",
+            ),
+            "function" => (
+                format!("SHOW CREATE FUNCTION {qualified}"),
+                "Create Function",
+            ),
+            "trigger" => (
+                format!("SHOW CREATE TRIGGER {qualified}"),
+                "SQL Original Statement",
+            ),
+            other => {
+                return Err(AppError::InvalidInput(format!(
+                    "unsupported object kind: {other}"
+                )))
+            }
+        };
+        let row: MySqlRow = sqlx::query(sqlx::AssertSqlSafe(stmt))
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.try_get::<String, _>(col).unwrap_or_default())
     }
 
     pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {

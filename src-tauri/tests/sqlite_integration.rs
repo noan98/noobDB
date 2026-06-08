@@ -314,6 +314,60 @@ async fn sqlite_list_indexes_reports_primary_unique_and_plain() {
 }
 
 #[tokio::test]
+async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
+    // schema_objects (#483) surfaces SQLite views and triggers (no routines),
+    // and object_definition returns the stored DDL verbatim.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_obj_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER)", None)
+        .await
+        .expect("create table");
+    conn.execute("CREATE VIEW v_pos AS SELECT id FROM t WHERE n > 0", None)
+        .await
+        .expect("create view");
+    conn.execute(
+        "CREATE TRIGGER trg_ai AFTER INSERT ON t BEGIN UPDATE t SET n = 0 WHERE n IS NULL; END",
+        None,
+    )
+    .await
+    .expect("create trigger");
+
+    let objects = conn.schema_objects("main").await.expect("schema_objects");
+    assert!(
+        objects
+            .iter()
+            .any(|o| o.kind == "view" && o.name == "v_pos"),
+        "view should be listed: {objects:?}"
+    );
+    assert!(
+        objects
+            .iter()
+            .any(|o| o.kind == "trigger" && o.name == "trg_ai"),
+        "trigger should be listed: {objects:?}"
+    );
+    // No stored procedures/functions in SQLite.
+    assert!(objects
+        .iter()
+        .all(|o| o.kind != "procedure" && o.kind != "function"));
+
+    let view_def = conn
+        .object_definition("main", "view", "v_pos")
+        .await
+        .expect("view definition");
+    assert!(view_def.contains("CREATE VIEW"));
+    assert!(view_def.contains("v_pos"));
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_health_check_succeeds_on_live_connection() {
     // health_check (#485) runs `SELECT 1` through the driver; it must succeed on
     // a freshly opened connection.
