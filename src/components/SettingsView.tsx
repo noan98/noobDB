@@ -13,6 +13,7 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { copyToClipboard } from "./clipboard";
+import { useToast } from "./Toast";
 import {
   DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_DISPLAY_COUNT,
@@ -352,6 +353,7 @@ const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> 
 
 export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
+  const toast = useToast();
   const settings = useSettings();
   const colors = settings.syntaxColors[theme];
   const previewHighlight = settings.previewHighlight[theme];
@@ -417,7 +419,11 @@ export function SettingsView({ theme, onClose }: Props) {
 
   const copyLogs = async () => {
     if (!logText) return;
-    await copyToClipboard(logText);
+    const ok = await copyToClipboard(logText);
+    if (!ok) {
+      toast.error(t("clipboardCopyFailed"));
+      return;
+    }
     setLogCopied(true);
     setTimeout(() => setLogCopied(false), 1500);
   };

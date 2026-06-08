@@ -19,6 +19,7 @@ import {
   TreeSearch,
 } from "./tree";
 import { copyToClipboard } from "./clipboard";
+import { useToast } from "./Toast";
 
 interface Props {
   activeProfile: ConnectionProfile | null;
@@ -43,6 +44,7 @@ function formatTime(iso: string): string {
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
 export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTab }: Props) {
   const t = useT();
+  const toast = useToast();
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -55,8 +57,12 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
     if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
   }, []);
 
-  const handleCopy = (id: number, sql: string) => {
-    void copyToClipboard(sql);
+  const handleCopy = async (id: number, sql: string) => {
+    const ok = await copyToClipboard(sql);
+    if (!ok) {
+      toast.error(t("clipboardCopyFailed"));
+      return;
+    }
     setCopiedId(id);
     if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
     copiedTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
@@ -233,7 +239,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
                       aria-label={t("historyCopySql")}
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleCopy(h.id, h.sql);
+                        void handleCopy(h.id, h.sql);
                       }}
                     >
                       <Icon name={copiedId === h.id ? "check" : "copy"} size={15} />
