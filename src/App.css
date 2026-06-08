@@ -37,6 +37,25 @@
   --text-md: calc(13px * var(--font-scale));
   --text-base: calc(14px * var(--font-scale));
   --text-lg: calc(16px * var(--font-scale));
+  --text-xl: calc(20px * var(--font-scale));
+
+  /* ── Typography rhythm (#490) ─────────────────────────────────────────
+     タイプスケール (--text-*) は上記の通り --font-scale に追従するため、フォント
+     サイズ設定を変えるとスケール全体が相対的に追従する。ここでは行間
+     (line-height) と字間 (letter-spacing) を役割別にトークン化し、見出し/本文/
+     補助テキスト/モノスペース (数値・SQL) の縦リズムを統一する。
+       --leading-tight   : 見出し (密)
+       --leading-snug    : UI ラベル・コンパクトな本文
+       --leading-normal  : 標準本文
+       --leading-relaxed : エディタなど長文 (CodeMirror と共有)
+     数値・SQL は等幅 (--font-mono) で桁揃えを優先する。 */
+  --leading-tight: 1.25;
+  --leading-snug: 1.4;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.6;
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
 
   /* Spacing scale (4px rhythm).
      フォントスケール (--font-scale) に追従させる (#327)。余白を固定 px のままに
@@ -209,6 +228,8 @@
   color-scheme: light;
   font-family: var(--font-sans);
   font-size: var(--text-base);
+  /* 標準本文の縦リズム (#490)。各コンポーネントは必要に応じて leading-* で上書き。 */
+  line-height: var(--leading-normal);
   color: var(--text);
   background: var(--bg);
 }
@@ -465,6 +486,9 @@ html, body, #root {
     display: block;
     font-size: var(--text-sm);
     font-weight: 600;
+    /* 小さな見出し的ラベルは字間をわずかに広げて可読性を上げる (#490)。 */
+    line-height: var(--leading-snug);
+    letter-spacing: var(--tracking-wide);
     color: var(--text-secondary);
     margin-bottom: 2px;
   }
@@ -486,7 +510,7 @@ html, body, #root {
    comfortably in both themes: looser line-height, gutter breathing room, and
    accent-tinted active line / caret (#145). */
 .cm-editor .cm-scroller {
-  line-height: 1.6;
+  line-height: var(--leading-relaxed);
   font-family: var(--font-mono);
 }
 .cm-editor .cm-content {
