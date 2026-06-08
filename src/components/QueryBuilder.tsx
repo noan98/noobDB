@@ -12,6 +12,7 @@ import { copyToClipboard } from "./clipboard";
 import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
+import { useToast } from "./Toast";
 
 /**
  * Query Builder のフォーム部のスタイル。以前は `.qb-*` の className + 子孫セレクタで
@@ -388,6 +389,7 @@ function buildSql(
 
 export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable, initialSnapshot, readOnly, onExecute, onPreview, onPersist, onClose }: Props) {
   const t = useT();
+  const toast = useToast();
 
   const [kind, setKind] = useState<QueryKind>(initialSnapshot?.kind ?? "SELECT");
   const [databases, setDatabases] = useState<string[]>([]);
@@ -473,10 +475,13 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
 
   const handleCopy = useCallback(async () => {
     const ok = await copyToClipboard(sql);
-    if (!ok) return;
+    if (!ok) {
+      toast.error(t("clipboardCopyFailed"));
+      return;
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
-  }, [sql]);
+  }, [sql, toast, t]);
 
   const captureSnapshot = useCallback((): QueryBuilderSnapshot => ({
     kind,
