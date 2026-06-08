@@ -129,6 +129,18 @@
   --dur-fast: 120ms;
   --dur-med: 200ms;
 
+  /* ── Focus ring tokens (#475) ─────────────────────────────────────────
+     キーボードフォーカスのリングを 1 か所で定義し、全フォーカス要素 (ボタン/
+     入力/セレクト/グリッドセル等) が同じ太さ・色・オフセットで `:focus-visible`
+     に統一されるようにする。色は動的アクセント (--accent) に追従。視認性のため
+     不透明度を上げ (旧 25% → 45%)、ライト/ダーク両テーマで >=3:1 を確保する。
+     エラー状態は危険色 (--error-solid) のリングに切り替える (セマンティック分岐)。 */
+  --focus-ring-width: 2px;
+  --focus-ring-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-ring: 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
+  --focus-ring-danger: 0 0 0 var(--focus-ring-width)
+    color-mix(in srgb, var(--error-solid) 55%, transparent);
+
   /* Workspace accent: defaults to the brand accent; the active connection's
      color overrides this inline (see #138) so the topbar/active tab tint to
      the environment color. */
@@ -490,7 +502,7 @@ html, body, #root {
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   button:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+    box-shadow: var(--focus-ring);
   }
 
   input, select {
@@ -504,10 +516,21 @@ html, body, #root {
     width: 100%;
   }
   input::placeholder { color: var(--text-muted); }
-  input:focus, select:focus {
+  /* :focus-visible に統一し、マウスクリック時に不要なリングを出さない (#475)。
+     テキスト入力はキーボード操作中も :focus-visible が一致するため挙動は維持。 */
+  input:focus-visible, select:focus-visible {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+    box-shadow: var(--focus-ring);
+  }
+  /* エラー入力 (aria-invalid) は危険色の枠線 + リングへ切り替える (#475)。 */
+  input[aria-invalid="true"], select[aria-invalid="true"] {
+    border-color: var(--error-solid);
+  }
+  input[aria-invalid="true"]:focus-visible,
+  select[aria-invalid="true"]:focus-visible {
+    border-color: var(--error-solid);
+    box-shadow: var(--focus-ring-danger);
   }
 
   label {

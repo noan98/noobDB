@@ -423,6 +423,14 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--preview-highlight) 24%, transparent)",
   },
   "& .cell-pending-value": { color: "var(--preview-highlight)", fontWeight: 500 },
+  // ── セル状態の視覚言語 (4 段階の優先順位, #475) ──
+  // 1. selection (キーボード選択) … is-active-cell: アクセントの 2px アウトライン
+  // 2. focus/editing (フォーカス内/編集中) … focus-within: 同じく 2px アウトライン
+  //    + 編集入力 (cell-edit-input) に共有フォーカスリングトークン
+  // 3. pending edit (未適用の編集) … is-pending-edit: 左端のアクセントバー + 淡塗り
+  // 4. invalid (検証エラー) … is-invalid-edit: 左端の危険色バー + 危険色リング
+  // いずれも --focus-ring / --accent / --error(status-error) トークンを参照し、
+  // ライト/ダーク両テーマで一貫する。outline と box-shadow を使い分けて重ねられる。
   // セルの編集可否と選択状態の視覚フィードバック (#349)。
   // 既定のデータセルは「編集できない」ことが伝わるよう矢印カーソルにし (読み取り
   // 専用セッションや PK/BLOB 列・非テーブル結果では is-editable-cell が付かないため
@@ -467,11 +475,11 @@ export const GRID_CSS: SystemStyleObject = {
     border: "1px solid var(--accent)",
     borderRadius: "var(--radius-sm)",
     outline: "none",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent)",
+    boxShadow: "var(--focus-ring)",
   },
   "& .cell-edit-input.is-invalid": {
-    borderColor: "var(--status-error)",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-error) 30%, transparent)",
+    borderColor: "var(--error-solid)",
+    boxShadow: "var(--focus-ring-danger)",
   },
   "& .cell-edit-error": {
     position: "absolute",

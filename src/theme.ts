@@ -33,9 +33,11 @@ import {
  * まま参照する (フォーカスリングの `color-mix(... var(--accent) ...)` など)。
  */
 
-/** キーボードフォーカス時のリング。`App.css` のフォーカス表現と一致させる。
- *  動的アクセントへ追従させるため CSS 変数を直接参照する。 */
-const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
+/** キーボードフォーカス時のリング (#475)。`App.css` の --focus-ring トークンを
+ *  参照して 1 か所に集約し、太さ・色・オフセットを全要素で統一する。エラー入力は
+ *  危険色リング (--focus-ring-danger) に切り替える。 */
+const focusRing = "var(--focus-ring)";
+const focusRingDanger = "var(--focus-ring-danger)";
 
 const config = defineConfig({
   preflight: false,
@@ -407,7 +409,13 @@ export const inputRecipe = defineRecipe({
     borderRadius: "md",
     width: "100%",
     _placeholder: { color: "app.textMuted" },
-    _focus: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // :focus-visible に統一 (#475)。テキスト入力はキーボード操作中も一致する。
+    _focusVisible: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // aria-invalid な入力は危険色の枠線 + リングへ (セマンティックフォーカス分岐)。
+    "&[aria-invalid='true']": {
+      borderColor: "app.error.solid",
+      _focusVisible: { borderColor: "app.error.solid", boxShadow: focusRingDanger },
+    },
   },
 });
 
@@ -426,7 +434,13 @@ export const selectRecipe = defineRecipe({
     borderRadius: "md",
     width: "100%",
     cursor: "pointer",
-    _focus: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // :focus-visible に統一 (#475)。テキスト入力はキーボード操作中も一致する。
+    _focusVisible: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // aria-invalid な入力は危険色の枠線 + リングへ (セマンティックフォーカス分岐)。
+    "&[aria-invalid='true']": {
+      borderColor: "app.error.solid",
+      _focusVisible: { borderColor: "app.error.solid", boxShadow: focusRingDanger },
+    },
   },
 });
 
@@ -445,7 +459,13 @@ export const textareaRecipe = defineRecipe({
     width: "100%",
     resize: "vertical",
     _placeholder: { color: "app.textMuted" },
-    _focus: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // :focus-visible に統一 (#475)。テキスト入力はキーボード操作中も一致する。
+    _focusVisible: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
+    // aria-invalid な入力は危険色の枠線 + リングへ (セマンティックフォーカス分岐)。
+    "&[aria-invalid='true']": {
+      borderColor: "app.error.solid",
+      _focusVisible: { borderColor: "app.error.solid", boxShadow: focusRingDanger },
+    },
   },
 });
 
