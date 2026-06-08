@@ -116,7 +116,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         position="fixed"
         bottom="var(--space-4)"
         right="var(--space-4)"
-        zIndex={2000}
+        zIndex="toast"
         display="flex"
         flexDirection="column"
         gap="var(--space-2)"
@@ -153,7 +153,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 borderColor="app.border"
                 borderLeftWidth="3px"
                 borderLeftColor={TONE_COLOR[toast.tone]}
-                boxShadow="lg"
+                boxShadow="elevationToast"
                 fontSize="sm"
                 color="app.text"
               >

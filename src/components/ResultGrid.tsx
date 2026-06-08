@@ -1060,7 +1060,7 @@ function ColumnFilterMenu({
       role="dialog"
       aria-label={label}
       position="fixed"
-      zIndex={1000}
+      zIndex="popover"
       width="240px"
       display="flex"
       flexDirection="column"
@@ -2236,7 +2236,7 @@ export function DataGrid({
               bottom: "48px",
               left: "50%",
               transform: "translateX(-50%)",
-              zIndex: 1100,
+              zIndex: "popover",
               pointerEvents: "none",
             }}
           >

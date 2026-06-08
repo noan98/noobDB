@@ -90,6 +90,19 @@ const config = defineConfig({
         lg: { value: "var(--radius-lg)" },
         pill: { value: "var(--radius-pill)" },
       },
+      // レイヤリング (#500)。`zIndex="popover"` 等の名前で参照でき、App.css の
+      // --z-* を正とする。Chakra 既定の zIndex トークン名 (modal/popover/toast/
+      // dropdown) を意図的に踏襲し、既存コンポーネントの記述とも揃える。
+      zIndex: {
+        base: { value: "var(--z-base)" },
+        sticky: { value: "var(--z-sticky)" },
+        raised: { value: "var(--z-raised)" },
+        sidebar: { value: "var(--z-sidebar)" },
+        modal: { value: "var(--z-modal)" },
+        dropdown: { value: "var(--z-dropdown)" },
+        popover: { value: "var(--z-popover)" },
+        toast: { value: "var(--z-toast)" },
+      },
       // 既存デザイントークンへの色ブリッジ。`app.*` 名前空間に隔離して
       // Chakra 既定のセマンティックカラーを壊さないようにしている。
       colors: {
@@ -215,6 +228,11 @@ const config = defineConfig({
         md: { value: "var(--shadow-md)" },
         lg: { value: "var(--shadow-lg)" },
         xl: { value: "var(--shadow-xl)" },
+        // レイヤ別エレベーション (#500)。`shadow="elevationModal"` のように参照する。
+        elevationRaised: { value: "var(--elevation-raised)" },
+        elevationPopover: { value: "var(--elevation-popover)" },
+        elevationToast: { value: "var(--elevation-toast)" },
+        elevationModal: { value: "var(--elevation-modal)" },
       },
       // カラー付きボタンはライト/ダークで別々の固定色を使い (App.css でも CSS 変数を
       // 経由しない)、単純な var() ブリッジでは表現できないため、ここで `_dark` 条件付き
