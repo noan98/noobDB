@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "knip": "knip",
+    "bundle-size": "node scripts/bundle-size.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -123,8 +123,13 @@ CI は 2 つのワークフローに分かれています:
 - `.github/workflows/ci.yml` — `main` への PR で起動。`dorny/paths-filter` で
   変更領域 (frontend / rust / workflow) を判定し、ジョブ単位の `if:` で出し分け
   します (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
-  ジョブを skip させる方式)。frontend ジョブは `pnpm run build` に続けて `pnpm test`
-  (Vitest) を実行します。pnpm は各ジョブで `corepack enable` により用意し、`pnpm`
+  ジョブを skip させる方式)。frontend ジョブは `pnpm run build` に続けて
+  `pnpm run bundle-size` (バンドルサイズ計測 → Job Summary。#443)、`pnpm run knip`
+  (未使用エクスポート/到達不能コード検出。#470)、`pnpm test` (Vitest) を実行します。
+  バンドルサイズはカバレッジと同じく当面は閾値による fail を設けず可視化のみで、
+  `dist/` の JS/CSS の gzip 後サイズを Node 標準の zlib だけで集計します
+  (`scripts/bundle-size.mjs`、size-limit 等の追加ツールは増やしません)。pnpm は
+  各ジョブで `corepack enable` により用意し、`pnpm`
   ストアを `actions/cache` でキャッシュします (`actions/setup-node` の `cache: npm`
   は使いません)。`paths-filter` は `package-lock.json` ではなく `pnpm-lock.yaml` を
   監視します。Rust 系は 5 つのジョブに分かれます: `rust (clippy)` が
