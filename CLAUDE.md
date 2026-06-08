@@ -115,6 +115,23 @@ NOOBDB_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/testdb \
   cargo test --test postgres_integration
 ```
 
+SSH トンネル統合テスト (`tests/ssh_integration.rs`、#331) は `NOOBDB_TEST_SSH_URL`
+(`ssh://user:password@host:port`) が設定されているときだけ実走します。鍵認証テストは
+追加で `NOOBDB_TEST_SSH_KEY` (秘密鍵パス) を要し、未設定ならその 1 件のみスキップ
+します。ローカルでは `scripts/ci-setup-sshd.sh` が apt の `openssh-server` で
+127.0.0.1:2222 にテスト用 sshd を立て、両環境変数を出力します (CI ではこのスクリプトが
+`$GITHUB_ENV` に追記)。トンネル越しの転送はテスト内の TCP エコーサーバへの
+`direct-tcpip` フォワードで検証します (SQLite はファイルベースで TCP トンネルに
+載らないため)。TOFU ホスト鍵検証の判定ロジックは `ssh/handler.rs` の単体テストが
+known_hosts パスを制御して網羅済みです。
+
+```sh
+SSH_PORT=2222 bash scripts/ci-setup-sshd.sh   # sshd を起動し env を出力
+NOOBDB_TEST_SSH_URL=ssh://sshtest:sshpw123@127.0.0.1:2222 \
+NOOBDB_TEST_SSH_KEY=/tmp/noobdb-sshtest/client_key \
+  cargo test --test ssh_integration
+```
+
 `tests/sqlite_integration.rs` は外部サーバを必要とせず、`std::env::temp_dir()`
 に一時ファイルを作って**常に**実行されます。
 
@@ -136,7 +153,11 @@ CI は 2 つのワークフローに分かれています:
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL 8 と PostgreSQL 16 のサービスコンテナに対し `cargo llvm-cov nextest`
-  (カバレッジ計装下で nextest を実走) を実行し、`rust (fmt)` が
+  (カバレッジ計装下で nextest を実走) を実行します。`rust (test)` は加えて
+  `scripts/ci-setup-sshd.sh` で apt の `openssh-server` を 127.0.0.1:2222 に立て、
+  `NOOBDB_TEST_SSH_URL` / `NOOBDB_TEST_SSH_KEY` を `$GITHUB_ENV` に渡すことで SSH
+  トンネル統合テスト (#331) も実走します (サービスコンテナはイメージ pull が要るため
+  使わず、apt 構成で再現性を確保)。`rust (fmt)` が
   `cargo fmt --all -- --check` を、`rust (deny)` が
   `cargo deny --manifest-path src-tauri/Cargo.toml check` (依存ライセンスの許可
   リスト検査と RustSec Advisory DB による脆弱性チェック。設定は
