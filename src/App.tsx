@@ -81,6 +81,9 @@ const PaginationBar = lazy(() =>
 const ObjectSearchModal = lazy(() =>
   import("./components/ObjectSearchModal").then((m) => ({ default: m.ObjectSearchModal })),
 );
+const CreateTableModal = lazy(() =>
+  import("./components/CreateTableModal").then((m) => ({ default: m.CreateTableModal })),
+);
 const HelpView = lazy(() =>
   import("./components/HelpView").then((m) => ({ default: m.HelpView })),
 );
@@ -877,6 +880,8 @@ export default function App() {
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
   // プロファイルインポート (#442): ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
+  // CREATE TABLE ウィザード (#460): 対象データベース。null で閉じる。
+  const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // Whole-schema autocomplete snapshots, keyed by schemaCacheKey(session, db).
   // Fetched lazily per database and reused across tabs; invalidated after DDL
   // and dropped wholesale when the session changes.
@@ -2608,6 +2613,24 @@ export default function App() {
     runQueryInTab(tab.id, sql);
   }, [sessionId, runQueryInTab, addTab]);
 
+  // SQL を実行せずに新しいクエリタブのエディタへ流し込む (#460 の「エディタへ送る」)。
+  const openQueryInEditor = useCallback((sql: string, title?: string) => {
+    const tab: Tab = { ...makeQueryTab(), sql };
+    if (title) tab.title = title;
+    addTab(tab);
+  }, [addTab]);
+
+  // CREATE TABLE ウィザード (#460) の実行: DDL を新しいクエリタブで実行し、閉じる。
+  const handleCreateTableRun = useCallback((sql: string) => {
+    setCreateTableDb(null);
+    openAndRunQuery(sql);
+  }, [openAndRunQuery]);
+
+  const handleCreateTableToEditor = useCallback((sql: string) => {
+    setCreateTableDb(null);
+    openQueryInEditor(sql);
+  }, [openQueryInEditor]);
+
   const handleRunTableSelect = useCallback((database: string, table: string) => {
     const limit = Math.max(1, settings.defaultDisplayCount);
     const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
@@ -3544,6 +3567,7 @@ export default function App() {
             favorites={quickAccess.favorites}
             recent={quickAccess.recent}
             onToggleFavorite={handleToggleFavorite}
+            onCreateTable={(db) => setCreateTableDb(db)}
           />
         ) : sidebarTab === "snippets" ? (
           <SnippetList
@@ -4074,6 +4098,21 @@ export default function App() {
             onConfirm={handleImportProfilesConfirm}
             onCancel={() => setImportProfilesPath(null)}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {createTableDb !== null && sessionId && (
+          <Suspense fallback={null}>
+            <CreateTableModal
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={createTableDb || null}
+              readOnly={readOnly}
+              onRun={handleCreateTableRun}
+              onSendToEditor={handleCreateTableToEditor}
+              onClose={() => setCreateTableDb(null)}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
 
