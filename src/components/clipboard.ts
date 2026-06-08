@@ -1,7 +1,11 @@
-/** Copy text to the clipboard, falling back to execCommand on older webviews. */
-export async function copyToClipboard(text: string): Promise<void> {
+/**
+ * Copy text to the clipboard, falling back to execCommand on older webviews.
+ * Returns true on success, false when both paths fail.
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
+    return true;
   } catch {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -10,10 +14,12 @@ export async function copyToClipboard(text: string): Promise<void> {
     document.body.appendChild(ta);
     ta.select();
     try {
-      document.execCommand("copy");
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
     } catch {
-      // ignore
+      document.body.removeChild(ta);
+      return false;
     }
-    document.body.removeChild(ta);
   }
 }

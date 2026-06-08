@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
+import { transitions } from "../motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
@@ -38,6 +39,7 @@ import { Icon } from "./Icon";
 import { ExportModal } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
+import { useToast } from "./Toast";
 import { Button } from "./ui";
 import {
   buildRowSql,
@@ -1297,6 +1299,7 @@ export function DataGrid({
 }) {
   const t = useT();
   const locale = useLocale();
+  const toast = useToast();
   const { cellEditOnBlur, richCellRendering } = useSettings();
   const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
 
@@ -1512,7 +1515,11 @@ export function DataGrid({
 
   const runCopy = async (text: string) => {
     setCopyMenu(null);
-    await copyToClipboard(text);
+    const ok = await copyToClipboard(text);
+    if (!ok) {
+      toast.error(t("clipboardCopyFailed"));
+      return;
+    }
     setCopied(true);
     if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
     copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
@@ -2211,26 +2218,38 @@ export function DataGrid({
           onClose={() => setFilterMenu(null)}
         />
       )}
-      {copied && (
-        <Box
-          role="status"
-          aria-live="polite"
-          position="fixed"
-          bottom="48px"
-          left="50%"
-          transform="translateX(-50%)"
-          zIndex={1100}
-          padding="6px 14px"
-          fontSize="sm"
-          color="#ffffff"
-          background="color-mix(in srgb, #16a34a 92%, #000000)"
-          borderRadius="md"
-          boxShadow="lg"
-          pointerEvents="none"
-        >
-          {t("gridCopied")}
-        </Box>
-      )}
+      <AnimatePresence>
+        {copied && (
+          <motion.div
+            key="copy-confirm"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={transitions.enter}
+            style={{
+              position: "fixed",
+              bottom: "48px",
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 1100,
+              pointerEvents: "none",
+            }}
+          >
+            <Box
+              role="status"
+              aria-live="polite"
+              padding="6px 14px"
+              fontSize="sm"
+              color="#ffffff"
+              background="color-mix(in srgb, #16a34a 92%, #000000)"
+              borderRadius="md"
+              boxShadow="lg"
+            >
+              {t("gridCopied")}
+            </Box>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {viewer && (
           <CellValueViewer
