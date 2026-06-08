@@ -412,6 +412,11 @@ export const api = {
     ),
   disconnect: (sessionId: string) =>
     invoke<void>("disconnect", { sessionId }),
+  /**
+   * 接続のヘルスチェック (#485)。生きていれば true、死んでいれば (スリープ復帰や
+   * トンネル断) false。セッションが見つからない場合のみ reject する。
+   */
+  pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
 
   runQuery: (sessionId: string, sql: string, database?: string | null) =>
     invoke<QueryResult>("run_query", {

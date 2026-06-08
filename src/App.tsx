@@ -1782,6 +1782,8 @@ export default function App() {
   runQueryInTabRef.current = runQueryInTab;
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  // 接続ヘルスチェック (#485) の同時実行を防ぐフラグ。
+  const healthCheckBusyRef = useRef(false);
 
   // Toggle auto-refresh for a tab: `secs` enables polling at that cadence (also
   // remembered as the global default), `null` turns it off.
@@ -2921,6 +2923,31 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // 接続のヘルスチェックと自動再接続 (#485)。ウィンドウがフォーカスを取り戻したとき
+  // (= OS スリープ復帰やタブ切り替え後) に SELECT 1 で接続が生きているか確認し、死んで
+  // いれば現在のプロファイルで再接続する。トンネル断やスリープ復帰で「次のクエリが急に
+  // 失敗する」体験を緩和する。同時実行は healthCheckBusyRef で 1 件に絞る。
+  useEffect(() => {
+    if (!sessionId || !selectedProfile) return;
+    const onFocus = async () => {
+      if (healthCheckBusyRef.current || connectingId) return;
+      healthCheckBusyRef.current = true;
+      try {
+        const alive = await api.pingSession(sessionId);
+        if (!alive) {
+          toast.info(translate("reconnectDetected"));
+          await handleConnect(selectedProfile);
+        }
+      } catch {
+        // セッションが既に消えている等は無視 (UI 側で切断扱い)。
+      } finally {
+        healthCheckBusyRef.current = false;
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [sessionId, selectedProfile, connectingId, handleConnect, toast]);
 
   // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする (#487)。
   // 接続タブが選択されていなければ切り替えてからフォーカスする。

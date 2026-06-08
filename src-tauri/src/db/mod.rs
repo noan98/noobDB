@@ -85,6 +85,15 @@ impl Connection {
         }
     }
 
+    /// Lightweight connection liveness check (#485): runs `SELECT 1` through the
+    /// normal execute path (which dispatches per driver). Returns `Err` when the
+    /// connection is dead — e.g. after an OS sleep or a dropped SSH tunnel — so
+    /// callers can decide to reconnect. Cheap enough to run before a query or on
+    /// window-focus.
+    pub async fn health_check(&self) -> Result<()> {
+        self.execute("SELECT 1", None).await.map(|_| ())
+    }
+
     pub async fn preview_execute_with_limit(
         &self,
         sql: &str,

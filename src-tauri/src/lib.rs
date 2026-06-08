@@ -199,6 +199,7 @@ pub fn run() {
             commands::connection::test_connection,
             commands::connection::connect,
             commands::connection::disconnect,
+            commands::connection::ping_session,
             commands::query::run_query,
             commands::query::run_query_transaction,
             commands::query::run_query_stream,
