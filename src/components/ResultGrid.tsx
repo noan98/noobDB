@@ -211,6 +211,16 @@ export const GRID_CSS: SystemStyleObject = {
     color: "var(--preview-highlight)",
     fontWeight: 600,
   },
+  // 削除予定の行 (#441): 取り消し線 + 危険色の淡い背景で「Apply で DELETE される」
+  // ことを行レベルで示す。
+  "& tbody tr.grid-row-deleting td": {
+    textDecoration: "line-through",
+    color: "var(--text-muted)",
+    background: "color-mix(in srgb, var(--danger-bg, #ef4444) 12%, transparent)",
+  },
+  "& tbody tr.grid-row-deleting td.row-index": {
+    boxShadow: "inset 3px 0 0 var(--danger-fg, #ef4444)",
+  },
   "& th.col-filler, & td.col-filler": {
     padding: 0,
     borderRight: "none",
@@ -648,6 +658,12 @@ interface Props {
    * callback receives the generated `SELECT … WHERE …` SQL.
    */
   onFkJump?: (sql: string) => void;
+  /** 削除予定の行 (#441): rowEditKey の集合。 */
+  pendingDeleteKeys?: Set<string>;
+  /** 行を削除予定にトグルする (#441)。 */
+  onToggleRowDelete?: (rowKey: string) => void;
+  /** 新規行追加を要求する (#441)。 */
+  onRequestInsertRow?: () => void;
   /**
    * 全件ストリーミングエクスポート (#494) のコンテキスト。提供されると ExportModal に
    * 「全件 (再実行)」モードが現れる。
@@ -1334,6 +1350,9 @@ export function DataGrid({
   pkIndices,
   pendingEdits,
   onSetCellEdit,
+  pendingDeleteKeys,
+  onToggleRowDelete,
+  onRequestInsertRow,
   validateEdit,
   columnSizingStorageKey,
   emptyMessage,
@@ -1371,6 +1390,12 @@ export function DataGrid({
   pkIndices?: number[];
   pendingEdits?: PendingEdits;
   onSetCellEdit?: (rowKey: string, colIdx: number, value: string | null) => void;
+  /** 削除予定の行 (#441): rowEditKey の集合。該当行は取り消し線で示す。 */
+  pendingDeleteKeys?: Set<string>;
+  /** 行を削除予定にトグルする (#441)。未指定ならメニュー項目を出さない。 */
+  onToggleRowDelete?: (rowKey: string) => void;
+  /** 新規行追加を要求する (#441)。未指定ならメニュー項目を出さない。 */
+  onRequestInsertRow?: () => void;
   /**
    * Validates a pending edit by result-column index, returning an i18n key
    * describing the problem or `null` when the value is acceptable. Drives the
@@ -1954,12 +1979,14 @@ export function DataGrid({
     const rowPendingKey = rowEditKey(rows[row.index] ?? [], pkIndices ?? [], row.index);
     const rowHasPending =
       !!pendingEdits?.[rowPendingKey] && Object.keys(pendingEdits[rowPendingKey]).length > 0;
+    const rowMarkedDelete = !!pendingDeleteKeys?.has(rowPendingKey);
     const rowClass = [
       // Zebra striping by visible position. Class-based (not `:nth-of-type`)
       // because the virtualized body inserts spacer `<tr>` that would otherwise
       // flip the parity as you scroll.
       rowIdx % 2 === 1 ? "grid-row-stripe" : "",
       rowHasPending ? "grid-row-pending" : "",
+      rowMarkedDelete ? "grid-row-deleting" : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -2414,6 +2441,34 @@ export function DataGrid({
               label: t("gridViewFull"),
               onSelect: () => setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx }),
             },
+            // 行の追加・削除 (#441)。PK が無いテーブルでは削除を無効化 (行を一意に
+            // 特定できないため)。新規行追加は PK 有無に依らず可能。
+            ...(onToggleRowDelete || onRequestInsertRow
+              ? [{ separator: true as const }]
+              : []),
+            ...(onRequestInsertRow
+              ? [{ label: t("gridAddRow"), onSelect: () => { setCopyMenu(null); onRequestInsertRow(); } }]
+              : []),
+            ...(onToggleRowDelete
+              ? [
+                  (() => {
+                    const key = rowEditKey(
+                      rows[copyMenu.rowIdx] ?? [],
+                      pkIndices ?? [],
+                      copyMenu.rowIdx,
+                    );
+                    const marked = !!pendingDeleteKeys?.has(key);
+                    const hasPk = (pkIndices?.length ?? 0) > 0;
+                    return {
+                      label: marked ? t("gridUnmarkDelete") : t("gridMarkDelete"),
+                      onSelect: () => { setCopyMenu(null); onToggleRowDelete(key); },
+                      disabled: !hasPk,
+                      title: hasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                      danger: !marked,
+                    };
+                  })(),
+                ]
+              : []),
           ]}
         />
       )}
@@ -2526,6 +2581,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   queryError,
   onRetry,
   onFkJump,
+  pendingDeleteKeys,
+  onToggleRowDelete,
+  onRequestInsertRow,
   fullExport,
   lastEditAppliedAt,
 }: Props, ref) {
@@ -3122,6 +3180,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           pkIndices={pkIndices}
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
+          pendingDeleteKeys={pendingDeleteKeys}
+          onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
+          onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
           onUndoEdit={onUndoEdit}
           onRedoEdit={onRedoEdit}
           validateEdit={validateEdit}

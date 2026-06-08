@@ -331,6 +331,74 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
   return stmts;
 }
 
+/** One pending new row (#441): column index → typed value. Unset columns are
+ *  omitted from the INSERT so the database applies defaults / auto-increment.
+ *  A value of `"null"` (any case) becomes SQL `NULL`. */
+export type PendingInsertRow = Record<number, string>;
+
+/**
+ * Builds one `INSERT INTO ... (cols) VALUES (...)` per pending new row (#441).
+ * Only the columns the user filled are included; the typed value is converted
+ * with the same `literalFromInput` coercion used by cell edits. Rows with no
+ * filled columns are skipped.
+ */
+export function buildInsertStatements(input: {
+  driver: string;
+  database: string;
+  table: string;
+  columns: Column[];
+  inserts: PendingInsertRow[];
+}): string[] {
+  const ref = qualifiedTableRef(input.driver, input.database, input.table);
+  const stmts: string[] = [];
+  for (const row of input.inserts) {
+    const idxs = Object.keys(row)
+      .map(Number)
+      .filter((i) => input.columns[i] !== undefined);
+    if (idxs.length === 0) continue;
+    const cols = idxs.map((i) => quoteIdentFor(input.driver, input.columns[i].name)).join(", ");
+    const vals = idxs
+      .map((i) => literalFromInput(input.driver, row[i], input.columns[i]))
+      .join(", ");
+    stmts.push(`INSERT INTO ${ref} (${cols}) VALUES (${vals});`);
+  }
+  return stmts;
+}
+
+/**
+ * Builds one `DELETE FROM ... WHERE pk = ...` per row whose PK-derived
+ * `rowEditKey` is in `deleteKeys` (#441). The original PK values come from
+ * `rows`, so the delete targets the correct row regardless of sort/pagination.
+ * Returns empty when there is no resolvable PK.
+ */
+export function buildDeleteStatements(input: {
+  driver: string;
+  database: string;
+  table: string;
+  columns: Column[];
+  rows: CellValue[][];
+  pkIndices: number[];
+  deleteKeys: Set<string>;
+}): string[] {
+  if (input.pkIndices.length === 0 || input.deleteKeys.size === 0) return [];
+  const ref = qualifiedTableRef(input.driver, input.database, input.table);
+  const stmts: string[] = [];
+  const emitted = new Set<string>();
+  for (let rowIdx = 0; rowIdx < input.rows.length; rowIdx++) {
+    const row = input.rows[rowIdx];
+    if (!row) continue;
+    const key = rowEditKey(row, input.pkIndices, rowIdx);
+    if (!input.deleteKeys.has(key) || emitted.has(key)) continue;
+    emitted.add(key);
+    const whereParts = input.pkIndices.map((i) => {
+      const col = input.columns[i];
+      return `${quoteIdentFor(input.driver, col.name)} = ${literalFromCellValue(input.driver, row[i])}`;
+    });
+    stmts.push(`DELETE FROM ${ref} WHERE ${whereParts.join(" AND ")};`);
+  }
+  return stmts;
+}
+
 /**
  * Renders a BLOB cell value (carried as a bare hex string, per CLAUDE.md's
  * `Value::Bytes`) as a driver-appropriate binary literal:
