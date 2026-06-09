@@ -630,6 +630,77 @@ describe("列レイアウト永続化 (#447 / #463)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 複数列ソート (#479)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("複数列ソート (#479)", () => {
+  beforeEach(() => setLocale("en"));
+
+  const SORT_COLUMNS: Column[] = [
+    { name: "status", type_name: "VARCHAR" },
+    { name: "qty", type_name: "INT" },
+  ];
+  const SORT_RESULT = makeResult(SORT_COLUMNS, [
+    ["b", 3],
+    ["a", 2],
+    ["a", 1],
+    ["b", 1],
+  ]);
+
+  it("Shift+クリックで第2ソートキーを追加し、優先順位と方向を表示する", async () => {
+    const { container } = renderWithProviders(<ResultGrid result={SORT_RESULT} />);
+
+    // status を昇順 (単一ソート)。
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^status/ }));
+    // qty を Shift 押下中にクリックして第2キーに追加。
+    await user.keyboard("{Shift>}");
+    await user.click(screen.getByRole("button", { name: /^qty/ }));
+    await user.keyboard("{/Shift}");
+
+    // status 昇順 → 同値内は qty で第2ソート (数値列は降順が既定)。
+    expect(dataRowTexts(container)).toEqual([
+      ["a", "2"],
+      ["a", "1"],
+      ["b", "3"],
+      ["b", "1"],
+    ]);
+
+    // 優先順位バッジ (1, 2) が両ヘッダに出る。
+    expect(screen.getByLabelText(t("gridSortPriority", { n: 1 }))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("gridSortPriority", { n: 2 }))).toBeInTheDocument();
+
+    // aria-sort が両列に付与される (status=ascending, qty=descending)。
+    const ths = Array.from(container.querySelectorAll("thead th"));
+    const sorted = ths.filter((th) => {
+      const v = th.getAttribute("aria-sort");
+      return v === "ascending" || v === "descending";
+    });
+    expect(sorted.length).toBe(2);
+  });
+
+  it("複数列ソート時はサマリにクリア導線が出て、全解除できる", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={SORT_RESULT} />);
+
+    await user.click(screen.getByRole("button", { name: /^status/ }));
+    await user.keyboard("{Shift>}");
+    await user.click(screen.getByRole("button", { name: /^qty/ }));
+    await user.keyboard("{/Shift}");
+
+    const clearBtn = screen.getByRole("button", { name: t("gridClearSort") });
+    await user.click(clearBtn);
+
+    // 解除後は元の挿入順に戻る。
+    expect(dataRowTexts(container)).toEqual([
+      ["b", "3"],
+      ["a", "2"],
+      ["a", "1"],
+      ["b", "1"],
+    ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // キーボードセルナビゲーション (#406)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("キーボードセルナビゲーション (#406)", () => {
