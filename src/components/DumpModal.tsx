@@ -254,6 +254,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
           {t("dumpCancel")}
         </Button>
         <LoadingButton
+          pressable
           type="button"
           variant="primary"
           loading={isRunning}

@@ -253,7 +253,7 @@ export function SnippetForm({
 
       <Box gridColumn="span 2" display="flex" gap="var(--space-2)" justifyContent="flex-end">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>{t("formCancel")}</Button>
-        <LoadingButton type="button" variant="primary" loading={saving} onClick={handleSave}>{t("formSave")}</LoadingButton>
+        <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave}>{t("formSave")}</LoadingButton>
       </Box>
     </Box>
   );

@@ -361,6 +361,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
           </Button>
         )}
         <LoadingButton
+          pressable
           type="button"
           variant="primary"
           loading={status.kind === "saving"}

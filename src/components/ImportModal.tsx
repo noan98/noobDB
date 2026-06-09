@@ -550,6 +550,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
           <Button type="button" variant="secondary" onClick={onClose}>{t("importClose")}</Button>
         )}
         <LoadingButton
+          pressable
           type="button"
           variant="primary"
           loading={importing}

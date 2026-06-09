@@ -646,7 +646,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <LoadingButton type="button" loading={testing} onClick={handleTest} disabled={saving}>
           {testing ? t("formTesting") : t("formTest")}
         </LoadingButton>
-        <LoadingButton type="button" variant="primary" loading={saving} onClick={handleSave} disabled={testing}>
+        <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave} disabled={testing}>
           {t("formSave")}
         </LoadingButton>
       </Flex>
