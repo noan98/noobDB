@@ -32,6 +32,7 @@ import {
   type Density,
 } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
+import { RowInspector } from "./RowInspector";
 import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
@@ -2043,6 +2044,9 @@ export function DataGrid({
   // Full-value viewer target (original row index + display column index).
   const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
 
+  // Row inspector (#462): when open, shows the active cell's row vertically.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+
   // Open per-column filter popup: which column, and the anchor rect of the
   // header's filter icon (captured at click for portal positioning).
   const [filterMenu, setFilterMenu] = useState<{ colIdx: number; anchor: DOMRect } | null>(null);
@@ -2318,11 +2322,17 @@ export function DataGrid({
         break;
       case "Escape":
         e.preventDefault();
-        if (selection) setSelection(null);
+        if (inspectorOpen) setInspectorOpen(false);
+        else if (selection) setSelection(null);
         else setActiveCell(null);
         break;
       case "Enter": {
         e.preventDefault();
+        // Alt/Option+Enter toggles the row inspector (#462) for the active row.
+        if (e.altKey) {
+          setInspectorOpen((o) => !o);
+          break;
+        }
         const colEd = editable && (editableColumns?.[colIdx] ?? false);
         if (colEd && onSetCellEdit) {
           const v = rows[rowIdx]?.[colIdx] ?? null;
@@ -2943,6 +2953,16 @@ export function DataGrid({
               label: t("gridViewFull"),
               onSelect: () => setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx }),
             },
+            {
+              label: t("gridRowInspector"),
+              onSelect: () => {
+                const rk = copyMenu.rowIdx;
+                const ck = copyMenu.colIdx;
+                setCopyMenu(null);
+                setActiveCell({ rowIdx: rk, colIdx: ck });
+                setInspectorOpen(true);
+              },
+            },
             // 行の追加・削除 (#441)。PK が無いテーブルでは削除を無効化 (行を一意に
             // 特定できないため)。新規行追加は PK 有無に依らず可能。
             ...(onToggleRowDelete || onRequestInsertRow
@@ -3067,6 +3087,26 @@ export function DataGrid({
           />
         )}
       </AnimatePresence>
+      {inspectorOpen && activeCell && rows[activeCell.rowIdx] && (() => {
+        const inspVis = visibleRows.findIndex((r) => r.index === activeCell.rowIdx);
+        const moveTo = (visTarget: number) => {
+          const r = visibleRows[visTarget];
+          if (r) navigateCell(r.index, activeCell.colIdx);
+        };
+        return (
+          <RowInspector
+            columns={columns}
+            values={rows[activeCell.rowIdx]}
+            columnKinds={columnKinds}
+            rowNumber={inspVis >= 0 ? inspVis + 1 : activeCell.rowIdx + 1}
+            hasPrev={inspVis > 0}
+            hasNext={inspVis >= 0 && inspVis < visibleRows.length - 1}
+            onPrev={() => moveTo(inspVis - 1)}
+            onNext={() => moveTo(inspVis + 1)}
+            onClose={() => setInspectorOpen(false)}
+          />
+        );
+      })()}
       {blurDialog}
     </>
   );
