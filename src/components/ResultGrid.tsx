@@ -190,6 +190,11 @@ export const GRID_CSS: SystemStyleObject = {
   // pattern stays stable regardless of which rows are mounted.
   "& tbody tr.grid-row-stripe td": { background: "var(--bg-stripe)" },
   "& tbody tr:hover td": { background: "var(--bg-row-hover)" },
+  // 矩形範囲選択 (#486)。アクセント色の薄い塗りで選択範囲を示す。アクティブセルの
+  // フォーカスリングはそのまま重ねて表示される。ストライプ/ホバーより優先する。
+  "& tbody td.is-selected-cell, & tbody tr.grid-row-stripe td.is-selected-cell, & tbody tr:hover td.is-selected-cell": {
+    background: "color-mix(in srgb, var(--accent) 22%, var(--bg))",
+  },
   "& td.row-index, & th.row-index": {
     position: "sticky",
     left: 0,
@@ -2013,6 +2018,14 @@ export function DataGrid({
 
   // Keyboard navigation: the currently selected cell (row = original row index).
   const [activeCell, setActiveCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
+  // Rectangular range selection (#486): anchor (where Shift-extension started)
+  // and focus (the moving end = active cell). Both are ORIGINAL row/column
+  // indices; the visible rectangle is derived from the current display order so
+  // it stays a contiguous block under sort/filter/reorder/hide.
+  const [selection, setSelection] = useState<{
+    anchor: { rowIdx: number; colIdx: number };
+    focus: { rowIdx: number; colIdx: number };
+  } | null>(null);
   // When set, the next layout effect will try to focus that cell's <td>.
   const pendingFocusRef = useRef<{ rowIdx: number; colIdx: number } | null>(null);
   // Refs to mounted data <td> elements keyed by "rowIdx:colIdx".
@@ -2117,6 +2130,28 @@ export function DataGrid({
   // than one sort key is active (single-column sort clears via its own cycle).
   const multiSortActive = enableColumnControls && sorting.length > 1;
 
+  // Resolve the range selection (#486) into the set of original row indices and
+  // column ids it covers, plus the display bounds (for copy ordering). Derived
+  // from the current display order so the rectangle stays contiguous even after
+  // sort/filter/reorder/hide. Returns null when there is no multi-cell range.
+  const selectionRect = useMemo(() => {
+    if (!selection) return null;
+    const aVis = visibleRows.findIndex((r) => r.index === selection.anchor.rowIdx);
+    const fVis = visibleRows.findIndex((r) => r.index === selection.focus.rowIdx);
+    const aCol = visibleColIds.indexOf(selection.anchor.colIdx);
+    const fCol = visibleColIds.indexOf(selection.focus.colIdx);
+    if (aVis < 0 || fVis < 0 || aCol < 0 || fCol < 0) return null;
+    const r0 = Math.min(aVis, fVis);
+    const r1 = Math.max(aVis, fVis);
+    const c0 = Math.min(aCol, fCol);
+    const c1 = Math.max(aCol, fCol);
+    // A single cell isn't a "range" — let plain copy handle it.
+    if (r0 === r1 && c0 === c1) return null;
+    const rowIndexSet = new Set(visibleRows.slice(r0, r1 + 1).map((r) => r.index));
+    const colIdSet = new Set(visibleColIds.slice(c0, c1 + 1));
+    return { r0, r1, c0, c1, rowIndexSet, colIdSet };
+  }, [selection, visibleRows, visibleColIds]);
+
   // After every render, attempt to focus the pending cell (the element may not
   // have been in the DOM on the previous cycle if the virtualizer needed to
   // scroll it into view first).
@@ -2138,6 +2173,46 @@ export function DataGrid({
     }
     setActiveCell({ rowIdx: newRowIdx, colIdx: newColIdx });
     pendingFocusRef.current = { rowIdx: newRowIdx, colIdx: newColIdx };
+  };
+
+  // Move the active cell *and* clear any range selection (plain navigation).
+  const moveActive = (newRowIdx: number, newColIdx: number) => {
+    setSelection(null);
+    navigateCell(newRowIdx, newColIdx);
+  };
+
+  // Extend the range selection to the given cell (Shift navigation / click).
+  // The anchor is the previous active cell when no selection exists yet.
+  const extendSelectionTo = (newRowIdx: number, newColIdx: number) => {
+    const anchor = selection?.anchor ?? activeCell ?? { rowIdx: newRowIdx, colIdx: newColIdx };
+    setSelection({ anchor, focus: { rowIdx: newRowIdx, colIdx: newColIdx } });
+    navigateCell(newRowIdx, newColIdx);
+  };
+
+  // Copy the current selection (or the active cell) as TSV using *real* values
+  // (display formatting is for the grid only). `withHeaders` prepends the column
+  // names of the covered columns.
+  const copySelection = (withHeaders: boolean) => {
+    if (selectionRect) {
+      const rowIdxs = visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index);
+      const colIds = visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1);
+      const lines: string[] = [];
+      if (withHeaders) lines.push(colIds.map((ci) => columns[ci]?.name ?? "").join("\t"));
+      for (const ri of rowIdxs) {
+        lines.push(colIds.map((ci) => cellToText(rows[ri]?.[ci] ?? null)).join("\t"));
+      }
+      void runCopy(lines.join("\n"));
+      return;
+    }
+    if (activeCell) {
+      if (withHeaders) {
+        void runCopy(
+          `${columns[activeCell.colIdx]?.name ?? ""}\n${cellToText(rows[activeCell.rowIdx]?.[activeCell.colIdx] ?? null)}`,
+        );
+      } else {
+        copyCell(activeCell.rowIdx, activeCell.colIdx);
+      }
+    }
   };
 
   // Row virtualization. Cells are single-line (`white-space: nowrap` +
@@ -2189,45 +2264,62 @@ export function DataGrid({
     const lastColPos = visibleColIds.length - 1;
     const firstCol = visibleColIds[0] ?? 0;
     const lastCol = visibleColIds[lastColPos] ?? 0;
+    const PAGE_ROWS = 10;
+    // Plain move clears the selection; Shift+move extends a rectangular range.
+    const go = (r: number, c: number) => (e.shiftKey ? extendSelectionTo(r, c) : moveActive(r, c));
 
     switch (e.key) {
       case "ArrowUp":
         e.preventDefault();
-        if (visIdx > 0) navigateCell(visibleRows[visIdx - 1].index, colIdx);
+        if (visIdx > 0) go(visibleRows[visIdx - 1].index, colIdx);
         break;
       case "ArrowDown":
         e.preventDefault();
-        if (visIdx < rowCount - 1) navigateCell(visibleRows[visIdx + 1].index, colIdx);
+        if (visIdx < rowCount - 1) go(visibleRows[visIdx + 1].index, colIdx);
         break;
       case "ArrowLeft":
         e.preventDefault();
-        if (colPos > 0) navigateCell(rowIdx, visibleColIds[colPos - 1]);
+        if (colPos > 0) go(rowIdx, visibleColIds[colPos - 1]);
         break;
       case "ArrowRight":
         e.preventDefault();
-        if (colPos >= 0 && colPos < lastColPos) navigateCell(rowIdx, visibleColIds[colPos + 1]);
+        if (colPos >= 0 && colPos < lastColPos) go(rowIdx, visibleColIds[colPos + 1]);
         break;
+      case "PageUp": {
+        e.preventDefault();
+        const target = Math.max(0, visIdx - PAGE_ROWS);
+        if (target !== visIdx) go(visibleRows[target].index, colIdx);
+        break;
+      }
+      case "PageDown": {
+        e.preventDefault();
+        const target = Math.min(rowCount - 1, visIdx + PAGE_ROWS);
+        if (target !== visIdx) go(visibleRows[target].index, colIdx);
+        break;
+      }
       case "Tab":
+        // Tab always moves a single active cell (never extends a selection).
         e.preventDefault();
         if (!e.shiftKey) {
-          if (colPos < lastColPos) navigateCell(rowIdx, visibleColIds[colPos + 1]);
-          else if (visIdx < rowCount - 1) navigateCell(visibleRows[visIdx + 1].index, firstCol);
+          if (colPos < lastColPos) moveActive(rowIdx, visibleColIds[colPos + 1]);
+          else if (visIdx < rowCount - 1) moveActive(visibleRows[visIdx + 1].index, firstCol);
         } else {
-          if (colPos > 0) navigateCell(rowIdx, visibleColIds[colPos - 1]);
-          else if (visIdx > 0) navigateCell(visibleRows[visIdx - 1].index, lastCol);
+          if (colPos > 0) moveActive(rowIdx, visibleColIds[colPos - 1]);
+          else if (visIdx > 0) moveActive(visibleRows[visIdx - 1].index, lastCol);
         }
         break;
       case "Home":
         e.preventDefault();
-        navigateCell(rowIdx, firstCol);
+        go(rowIdx, firstCol);
         break;
       case "End":
         e.preventDefault();
-        navigateCell(rowIdx, lastCol);
+        go(rowIdx, lastCol);
         break;
       case "Escape":
         e.preventDefault();
-        setActiveCell(null);
+        if (selection) setSelection(null);
+        else setActiveCell(null);
         break;
       case "Enter": {
         e.preventDefault();
@@ -2264,8 +2356,10 @@ export function DataGrid({
           e.preventDefault();
           onRedoEdit?.();
         } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+          // Copy the selection range (or active cell) as TSV. Shift includes a
+          // header row of the covered column names.
           e.preventDefault();
-          copyCell(rowIdx, colIdx);
+          copySelection(e.shiftKey);
         }
     }
   };
@@ -2326,6 +2420,8 @@ export function DataGrid({
           editing.rowIdx === row.index &&
           editing.colIdx === colIdx;
         const isActiveCell = activeCell?.rowIdx === row.index && activeCell?.colIdx === colIdx;
+        const inSelection =
+          !!selectionRect && selectionRect.rowIndexSet.has(row.index) && selectionRect.colIdSet.has(colIdx);
         // Live validation of the value being typed, and of an
         // already-buffered value that's sitting invalid in the grid.
         const editError =
@@ -2375,7 +2471,7 @@ export function DataGrid({
               if (el) cellRefs.current.set(key, el);
               else cellRefs.current.delete(key);
             }}
-            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
+            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
             title={
               isEditingHere
                 ? undefined
@@ -2392,6 +2488,16 @@ export function DataGrid({
                       ? `${String(v)}\n(${t("gridCharCount", { count: String(v).length })})`
                       : String(v)
             }
+            onMouseDown={(e) => {
+              // Shift+click extends a rectangular selection from the active
+              // cell; a plain click clears any selection (focus sets active).
+              if (e.shiftKey && activeCell) {
+                e.preventDefault();
+                extendSelectionTo(row.index, colIdx);
+              } else if (selection) {
+                setSelection(null);
+              }
+            }}
             onFocus={(e) => {
               if (e.target === e.currentTarget) {
                 setActiveCell({ rowIdx: row.index, colIdx });

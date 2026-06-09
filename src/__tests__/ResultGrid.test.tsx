@@ -837,6 +837,58 @@ describe("キーボードセルナビゲーション (#406)", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("banana"));
   });
 
+  it("Shift+矢印でセルの矩形範囲を選択する (#486)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cells[0][1], { key: "ArrowDown", shiftKey: true });
+    // 2x2 の範囲が選択状態になる。
+    const selected = container.querySelectorAll("td.is-selected-cell");
+    expect(selected.length).toBe(4);
+  });
+
+  it("Ctrl+C で選択範囲を TSV としてコピーする (#486)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cells[0][1], { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cells[1][1], { key: "c", ctrlKey: true });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("banana\t2\napple\t5"));
+  });
+
+  it("Ctrl+Shift+C で列名ヘッダ付きの範囲コピーをする (#486)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cells[0][1], { key: "c", ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("name\tqty\nbanana\t2"));
+  });
+
+  it("Escape で選択範囲を解除する (#486)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    expect(container.querySelectorAll("td.is-selected-cell").length).toBe(2);
+    fireEvent.keyDown(cells[0][1], { key: "Escape" });
+    expect(container.querySelectorAll("td.is-selected-cell").length).toBe(0);
+  });
+
   it("テーブルに role=grid、行に role=row、データセルに role=gridcell が付く", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     expect(container.querySelector("table[role='grid']")).toBeTruthy();
