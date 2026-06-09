@@ -511,3 +511,137 @@ async fn temporal_columns_decode_to_strings() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// list_indexes (#459) / schema_objects (#483) / 明示トランザクション (#414) /
+/// health_check (#485) を MySQL 上で一通り実行する。CI のサービスコンテナで実走し、
+/// 新規ドライバメソッドの動作とカバレッジを担保する。
+#[tokio::test]
+async fn mysql_new_schema_apis_and_transaction_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts.database.clone().expect("test db in url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // Clean slate (ignore errors if absent).
+    for stmt in [
+        "DROP TRIGGER IF EXISTS noobdb_objtest_trg",
+        "DROP VIEW IF EXISTS noobdb_objtest_view",
+        "DROP TABLE IF EXISTS noobdb_objtest_idx",
+    ] {
+        let _ = conn.execute(stmt, Some(&db)).await;
+    }
+
+    conn.execute(
+        "CREATE TABLE noobdb_objtest_idx (id INT PRIMARY KEY, sku VARCHAR(50), cat VARCHAR(50))",
+        Some(&db),
+    )
+    .await
+    .expect("create table");
+    conn.execute(
+        "CREATE UNIQUE INDEX noobdb_uq_sku ON noobdb_objtest_idx (sku)",
+        Some(&db),
+    )
+    .await
+    .expect("unique index");
+    conn.execute(
+        "CREATE INDEX noobdb_ix_cat ON noobdb_objtest_idx (cat)",
+        Some(&db),
+    )
+    .await
+    .expect("plain index");
+
+    // list_indexes.
+    let indexes = conn
+        .list_indexes(&db, "noobdb_objtest_idx")
+        .await
+        .expect("list_indexes");
+    assert!(
+        indexes.iter().any(|i| i.name == "PRIMARY" && i.primary),
+        "PRIMARY index present: {indexes:?}"
+    );
+    let uq = indexes
+        .iter()
+        .find(|i| i.name == "noobdb_uq_sku")
+        .expect("unique index listed");
+    assert!(uq.unique && uq.columns == vec!["sku".to_string()]);
+
+    // schema_objects: view + trigger.
+    conn.execute(
+        "CREATE VIEW noobdb_objtest_view AS SELECT id FROM noobdb_objtest_idx",
+        Some(&db),
+    )
+    .await
+    .expect("create view");
+    conn.execute(
+        "CREATE TRIGGER noobdb_objtest_trg BEFORE INSERT ON noobdb_objtest_idx \
+         FOR EACH ROW SET NEW.cat = NEW.cat",
+        Some(&db),
+    )
+    .await
+    .expect("create trigger");
+
+    let objects = conn.schema_objects(&db).await.expect("schema_objects");
+    assert!(
+        objects
+            .iter()
+            .any(|o| o.kind == "view" && o.name == "noobdb_objtest_view"),
+        "view listed: {objects:?}"
+    );
+    assert!(
+        objects
+            .iter()
+            .any(|o| o.kind == "trigger" && o.name == "noobdb_objtest_trg"),
+        "trigger listed"
+    );
+    let view_def = conn
+        .object_definition(&db, "view", "noobdb_objtest_view", None)
+        .await
+        .expect("view definition");
+    assert!(view_def.to_uppercase().contains("CREATE"));
+    let trg_def = conn
+        .object_definition(&db, "trigger", "noobdb_objtest_trg", None)
+        .await
+        .expect("trigger definition");
+    assert!(trg_def.to_uppercase().contains("TRIGGER"));
+
+    // Explicit transaction: rollback then commit.
+    assert!(!conn.transaction_active().await);
+    conn.begin_transaction(Some(&db)).await.expect("begin");
+    assert!(conn.transaction_active().await);
+    conn.execute_in_transaction("INSERT INTO noobdb_objtest_idx (id, sku) VALUES (1, 'a')")
+        .await
+        .expect("insert in tx");
+    conn.finish_transaction(false).await.expect("rollback");
+    let after_rollback = conn
+        .execute("SELECT COUNT(*) AS c FROM noobdb_objtest_idx", Some(&db))
+        .await
+        .expect("count");
+    assert!(matches!(&after_rollback.rows[0][0], t::Value::Int(0)));
+
+    conn.begin_transaction(Some(&db)).await.expect("begin 2");
+    conn.execute_in_transaction("INSERT INTO noobdb_objtest_idx (id, sku) VALUES (2, 'b')")
+        .await
+        .expect("insert in tx 2");
+    conn.finish_transaction(true).await.expect("commit");
+    let after_commit = conn
+        .execute("SELECT COUNT(*) AS c FROM noobdb_objtest_idx", Some(&db))
+        .await
+        .expect("count");
+    assert!(matches!(&after_commit.rows[0][0], t::Value::Int(1)));
+
+    // health_check.
+    conn.health_check().await.expect("health check");
+
+    // Cleanup.
+    for stmt in [
+        "DROP TRIGGER IF EXISTS noobdb_objtest_trg",
+        "DROP VIEW IF EXISTS noobdb_objtest_view",
+        "DROP TABLE IF EXISTS noobdb_objtest_idx",
+    ] {
+        let _ = conn.execute(stmt, Some(&db)).await;
+    }
+    conn.close().await;
+}
