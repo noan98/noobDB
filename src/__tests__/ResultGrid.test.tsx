@@ -501,17 +501,19 @@ describe("セル値のリッチ表示 (#451)", () => {
   });
 });
 
-describe("editable-cell visual affordance (#349)", () => {
-  it("GRID_CSS distinguishes editable cells with cursor + hover/active outline", () => {
+describe("editable-cell visual affordance (#349, #540)", () => {
+  it("GRID_CSS distinguishes editable cells with cursor + hover/active ring", () => {
     // 編集可能セルはテキストカーソル、ホバーで細いアクセントリング、編集中 (focus内)
-    // で太いアクセントアウトラインを出す。読み取り専用/非編集セルは既定カーソル。
-    const css = GRID_CSS as Record<string, { cursor?: string; outline?: string }>;
+    // で inset フォーカスリング (--focus-ring-inset) を出す (#540)。
+    // 読み取り専用/非編集セルは既定カーソル。
+    const css = GRID_CSS as Record<string, { cursor?: string; outline?: string; boxShadow?: string }>;
     expect(css["& td.is-editable-cell"]?.cursor).toBe("text");
     expect(
       css["& tbody td:not(.row-index):not(.col-filler):not(.grid-empty-cell)"]?.cursor,
     ).toBe("default");
     expect(css["& tbody tr td.is-editable-cell:hover"]?.outline).toContain("var(--accent)");
-    expect(css["& td.is-editable-cell:focus-within"]?.outline).toContain("var(--accent)");
+    // #540: focus-within は outline ではなく inset box-shadow で描画する。
+    expect(css["& td.is-editable-cell:focus-within"]?.boxShadow).toContain("var(--focus-ring-inset)");
   });
 });
 
