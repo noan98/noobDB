@@ -21,17 +21,26 @@ name: coderabbit-fallback-approve
 #   - CodeRabbit が稼働していない PR では Step 2 で抜けるため、純正の挙動を壊さない。
 #
 # トリガ:
-#   - pull_request_review_thread (resolved/unresolved): スレッド解消を契機に再評価
 #   - pull_request_review (submitted/edited/dismissed): レビュー状態の更新を契機に
+#   - pull_request_review_comment (created/edited/deleted): レビュースレッドへの
+#     返信・修正を契機に再評価 (スレッド解消フローの大半はコメント活動を伴う)
 #   - issue_comment (created/edited): CodeRabbit のサマリ更新等を契機に
 #   - check_run (completed): CodeRabbit の check 完了を契機に
 #   - status: CodeRabbit のコミットステータス更新を契機に
+#
+# 注意: `pull_request_review_thread` (resolved/unresolved) は使わないこと。
+# Actions のワークフロー検証が "Unexpected value 'pull_request_review_thread'" で
+# 拒否し、**ファイル全体が Invalid workflow file になって全トリガが死んだうえ、
+# push のたびに起動失敗 (failure) の run と通知が量産される** (本ワークフローが
+# 一度も実行されていなかった原因)。スレッドの解消操作そのものはイベントを発火
+# しないが、解消だけで他に何も起きないケースは次のレビュー/コメント/チェック
+# 更新時に再評価されるため、フォールバックとしては十分。
 
 on:
-  pull_request_review_thread:
-    types: [resolved, unresolved]
   pull_request_review:
     types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
   issue_comment:
     types: [created, edited]
   check_run:
@@ -93,7 +102,7 @@ jobs:
           repo="${GH_REPO#*/}"
 
           # 1. 対象 PR 番号を解決する。イベントごとに参照先が異なる。
-          if [ "$EVENT_NAME" = "pull_request_review_thread" ] || [ "$EVENT_NAME" = "pull_request_review" ]; then
+          if [ "$EVENT_NAME" = "pull_request_review" ] || [ "$EVENT_NAME" = "pull_request_review_comment" ]; then
             PR="$REVIEW_PR"
           elif [ "$EVENT_NAME" = "issue_comment" ]; then
             PR="$ISSUE_PR"
