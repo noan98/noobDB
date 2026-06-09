@@ -16,8 +16,50 @@ permissions:
   security-events: write
 
 jobs:
+  # 変更されたパスを見て解析ジョブを出し分ける (ci.yml と同じ方式)。CodeQL は
+  # JS/TS のみを解析するため、Rust やドキュメントだけの PR で走らせても結果は
+  # 変わらない。ワークフロー単位の paths: で丸ごとスキップすると必須チェック設定時に
+  # 「待機中」で固まるため、ジョブ単位の if: でゲートする (スキップは必須チェックを
+  # 満たす)。週次の schedule 実行は常にフル解析する。
+  changes:
+    name: detect changed areas
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      js: ${{ steps.filter.outputs.js }}
+    steps:
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        id: filter
+        with:
+          # CodeQL の JS 抽出器はリポジトリ全体の .js/.mjs/.ts/.tsx を対象にする
+          # ため、src/ だけでなく scripts/ (bundle-size.mjs 等) も監視する。
+          filters: |
+            js:
+              - 'src/**'
+              - 'index.html'
+              - 'scripts/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'tsconfig.json'
+              - 'tsconfig.node.json'
+              - 'vite.config.ts'
+              - 'vitest.browser.config.ts'
+              - '.github/workflows/codeql.yml'
+
   analyze:
     name: CodeQL (${{ matrix.language }})
+    needs: changes
+    # schedule (週次) は常に実行。PR では JS/TS 関連パスに変更があるときだけ実行する。
+    # changes ジョブは schedule ではスキップされるため、!cancelled() で「依存ジョブが
+    # スキップでも評価する」ようにしている。
+    if: >-
+      !cancelled() && (
+        github.event_name == 'schedule' ||
+        needs.changes.outputs.js == 'true'
+      )
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

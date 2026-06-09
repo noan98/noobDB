@@ -44,6 +44,20 @@ jobs:
       - name: Enable pnpm (corepack)
         run: corepack enable
 
+      # 他のワークフローと同じ方式で pnpm ストアをキャッシュする (ci.yml が保存した
+      # main / PR スコープのキャッシュをそのまま再利用できる)。
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
