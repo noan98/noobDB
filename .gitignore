@@ -23,10 +23,17 @@ dist-ssr/
 .vite/
 *.local
 .DS_Store
+*.tsbuildinfo
 
 # Coverage reports (Vitest v8 / cargo-llvm-cov)
 coverage/
 src-tauri/lcov.info
+
+# ビジュアル回帰 (#306) の失敗時アーティファクト。ベースライン PNG 本体
+# (__screenshots__/.../<name>-chromium-linux.png) はコミットするが、不一致時に
+# Vitest が出力する実測/差分画像はコミットしない (デバッグ用の一時生成物)。
+**/__screenshots__/**/*-actual.png
+**/__screenshots__/**/*-diff.png
 
 # Tauri build artifacts
 src-tauri/target/

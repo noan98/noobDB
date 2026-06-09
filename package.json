@@ -9,6 +9,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test:browser:update": "VITE_RUN_VISUAL=1 vitest run --config vitest.browser.config.ts --update",
     "knip": "knip",
     "bundle-size": "node scripts/bundle-size.mjs",
     "tauri": "tauri"
@@ -44,12 +46,15 @@
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/browser-playwright": "4.1.8",
     "@vitest/coverage-v8": "^4.1.8",
     "jsdom": "^29.1.1",
     "knip": "^6.16.1",
+    "playwright": "^1.60.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
     "vitest": "^4.1.8",
-    "vitest-axe": "^0.1.0"
+    "vitest-axe": "^0.1.0",
+    "vitest-browser-react": "^2.2.0"
   }
 }

@@ -23,6 +23,15 @@ export default defineConfig(async () => ({
     environment: "jsdom",
     setupFiles: ["./src/__tests__/setup.ts"],
     css: true,
+    // 実ブラウザ用テスト (#306) は jsdom では動かない (vitest/browser を import)。
+    // 実行環境が異なるため別 glob (`*.browser.test.tsx`) に分け、専用設定
+    // (vitest.browser.config.ts) でのみ実行する。ここでは jsdom スイートから除外する。
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/src/__tests__/browser/**",
+      "**/*.browser.test.tsx",
+    ],
     // カバレッジ計測 (#290 で導入 → #356 で対象を src/ 全体へ拡大)。
     //
     // 当初は「安全性に直結する純粋ロジック + 確認ダイアログ」の 6 ファイルだけを
