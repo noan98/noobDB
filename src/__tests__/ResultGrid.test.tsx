@@ -897,3 +897,55 @@ describe("キーボードセルナビゲーション (#406)", () => {
     expect(container.querySelector("td[role='gridcell']")).toBeTruthy();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 行インスペクタ (#462)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("行インスペクタ (#462)", () => {
+  beforeEach(() => setLocale("en"));
+
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  it("Alt+Enter で選択行の全カラムを縦表示し、行移動に追従する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "Enter", altKey: true });
+
+    const dialog = screen.getByRole("dialog", { name: t("gridRowInspectorTitle", { row: 1 }) });
+    // 全カラム名と 1 行目の値が縦に並ぶ。
+    expect(within(dialog).getByText("name")).toBeInTheDocument();
+    expect(within(dialog).getByText("qty")).toBeInTheDocument();
+    expect(within(dialog).getByText("banana")).toBeInTheDocument();
+    expect(within(dialog).getByText("2")).toBeInTheDocument();
+
+    // 次の行へ追従。
+    fireEvent.click(within(dialog).getByRole("button", { name: t("gridInspectorNext") }));
+    const dialog2 = screen.getByRole("dialog", { name: t("gridRowInspectorTitle", { row: 2 }) });
+    expect(within(dialog2).getByText("apple")).toBeInTheDocument();
+  });
+
+  it("NULL は専用表記で示し、Esc で閉じる", () => {
+    const result = makeResult(
+      [
+        { name: "id", type_name: "INT" },
+        { name: "note", type_name: "TEXT" },
+      ],
+      [[1, null]],
+    );
+    const { container } = renderWithProviders(<ResultGrid result={result} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "Enter", altKey: true });
+
+    const dialog = screen.getByRole("dialog", { name: t("gridRowInspectorTitle", { row: 1 }) });
+    expect(within(dialog).getByText(t("resultNull"))).toBeInTheDocument();
+
+    fireEvent.keyDown(cells[0][0], { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: t("gridRowInspectorTitle", { row: 1 }) })).toBeNull();
+  });
+});
