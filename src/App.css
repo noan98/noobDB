@@ -700,6 +700,62 @@ html, body, #root {
 .cm-completionDetail { color: var(--text-muted); font-style: normal; }
 .cm-completionMatchedText { color: var(--accent); text-decoration: none; font-weight: 600; }
 
+/* エディタ内検索・置換パネル (#464、@codemirror/search)。ライト/ダーク・アクセント・
+   シンタックステーマに追従させるためトークンで配色する。 */
+.cm-editor .cm-panels {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-top: 1px solid var(--border);
+}
+.cm-editor .cm-panels.cm-panels-top { border-top: none; border-bottom: 1px solid var(--border); }
+.cm-editor .cm-panel.cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: var(--text-sm);
+}
+.cm-editor .cm-panel.cm-search label { color: var(--text-muted); font-size: var(--text-xs); }
+.cm-editor .cm-panel.cm-search .cm-textfield {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+}
+.cm-editor .cm-panel.cm-search .cm-textfield:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.cm-editor .cm-panel.cm-search .cm-button {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  background-image: none;
+  cursor: pointer;
+}
+.cm-editor .cm-panel.cm-search .cm-button:hover { background: var(--bg-hover); }
+.cm-editor .cm-panel.cm-search [name="close"] {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.cm-editor .cm-panel.cm-search [name="close"]:hover { color: var(--text); }
+/* 検索ヒット・現在のヒット・選択語の同一語ハイライト。 */
+.cm-editor .cm-searchMatch {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 2px;
+}
+.cm-editor .cm-searchMatch.cm-searchMatch-selected {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.cm-editor .cm-selectionMatch {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 /* ---------- Keyframes ----------
    Chakra コンポーネントが `animation` prop から名前参照しているため、コンポーネント
    側にスコープした記述ができず、ここでグローバルに提供する。

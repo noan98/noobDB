@@ -49,6 +49,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "helpShortcutPreviewTitle", descKey: "helpShortcutPreviewDesc", category: "editor" },
   { keysKey: "helpShortcutFormatTitle", descKey: "helpShortcutFormatDesc", category: "editor" },
   { keysKey: "helpShortcutCompleteTitle", descKey: "helpShortcutCompleteDesc", category: "editor" },
+  { keysKey: "shortcutEditorFindTitle", descKey: "shortcutEditorFindDesc", category: "editor" },
   { keysKey: "helpShortcutSearchTitle", descKey: "helpShortcutSearchDesc", category: "grid" },
   { keysKey: "shortcutGridNavTitle", descKey: "shortcutGridNavDesc", category: "grid" },
   { keysKey: "shortcutGridSelectTitle", descKey: "shortcutGridSelectDesc", category: "grid" },

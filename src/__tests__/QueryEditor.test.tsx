@@ -62,4 +62,20 @@ describe("QueryEditor", () => {
     await user.click(screen.getByRole("button", { name: t("editorPreview") }));
     expect(onPreview).toHaveBeenCalledWith("DELETE FROM t");
   });
+
+  it("Ctrl+F でエディタ内の検索・置換パネルが開く (#464)", async () => {
+    renderWithProviders(<QueryEditor onRun={() => {}} initialSql="SELECT id FROM users" />);
+    const editable = document.querySelector(".cm-content") as HTMLElement;
+    expect(editable).toBeTruthy();
+    editable.focus();
+    const user = userEvent.setup();
+    await user.keyboard("{Control>}f{/Control}");
+
+    await waitFor(() => {
+      const panel = document.querySelector(".cm-panel.cm-search");
+      expect(panel).toBeTruthy();
+      // 検索フィールドに加えて置換フィールドも備える (find & replace)。
+      expect(panel!.querySelectorAll("input.cm-textfield").length).toBeGreaterThanOrEqual(2);
+    });
+  });
 });

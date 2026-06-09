@@ -3148,7 +3148,10 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       // Cmd/Ctrl+F → focus the focused pane's cross-column result search (no
       // Shift so the editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
+      // When focus is inside the query editor (CodeMirror), defer to its own
+      // in-editor find/replace (#464) instead of stealing the shortcut.
       if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        if ((e.target as HTMLElement | null)?.closest?.(".cm-editor")) return;
         const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
         if (grid) {
           e.preventDefault();
