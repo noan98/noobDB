@@ -44,6 +44,7 @@ jobs:
               - 'tsconfig.json'
               - 'tsconfig.node.json'
               - 'vite.config.ts'
+              - 'vitest.browser.config.ts'
             rust:
               - 'src-tauri/**'
 
@@ -100,6 +101,62 @@ jobs:
       # 下回ったらここで fail させる (品質ゲート / #290)。
       - name: Unit tests (Vitest) + coverage threshold
         run: pnpm test --coverage
+
+  # 実ブラウザ (Vitest ブラウザモード / Playwright + headless Chromium) で主要画面の
+  # レンダリングとビジュアル回帰を検証する (#306)。jsdom の純ロジックテスト
+  # (frontend ジョブ) とは実行環境が異なるため別ジョブに分離している。Chakra UI
+  # 全面移行 (#271) のレイアウト/テーマ追従の退行を実 CSS で捕まえる受け皿。
+  #
+  # ビジュアル回帰のベースライン PNG は CI と同一環境 (この ubuntu-latest /
+  # Chromium) で生成・コミットする運用 (.github/workflows/visual-baseline.yml の
+  # workflow_dispatch で更新)。ローカル (macOS/Windows) の描画差による false
+  # positive を避けるため、ベースライン生成は常にこの環境で行う。
+  frontend-visual:
+    name: frontend (browser render + visual)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # Playwright の Chromium とシステム依存を導入する。--only-shell で headless
+      # 実行に必要な chromium-headless-shell のみを入れて軽量化する。
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+
+      # 主要画面のレンダリングスモーク (screens.browser.test.tsx) を実行する。
+      # ビジュアル回帰 (visual.browser.test.tsx) は VITE_RUN_VISUAL=1 のときだけ走る
+      # ため、ここでは既定でスキップされる (ベースライン PNG が無い環境では
+      # toMatchScreenshot が失敗するため)。ベースラインを visual-baseline.yml の
+      # workflow_dispatch で生成・コミットしたら、この step に
+      # `env: VITE_RUN_VISUAL: "1"` を足してビジュアル回帰も必須化できる。
+      - name: Browser render smoke (Vitest)
+        run: pnpm test:browser
 
   rust-fmt:
     name: rust (fmt)

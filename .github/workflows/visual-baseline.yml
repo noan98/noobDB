@@ -1,0 +1,70 @@
+name: visual baseline update
+
+# ビジュアル回帰 (#306) のベースライン PNG を更新する手動ワークフロー。
+#
+# スクリーンショットは OS/フォント/GPU で描画差が出るため、ベースラインは比較を
+# 行う CI と**同一環境 (ubuntu-latest / Chromium)** で生成しなければ false positive
+# が頻発する。ローカル (macOS/Windows) では生成せず、意図的に見た目を変えたとき
+# (または初回導入時) にこのワークフローを手動 (workflow_dispatch) で実行して
+# ベースラインを再生成し、対象ブランチへコミットする運用にしている。
+#
+# 使い方: Actions タブから対象ブランチを選んで実行する。`pnpm test:browser:update`
+# が `--update` 付きでブラウザテストを走らせ、`__screenshots__` 配下の PNG を
+# 生成/更新し、変更があればそのブランチへ自動コミットする。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: visual-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  update-baseline:
+    name: regenerate screenshots
+    runs-on: ubuntu-latest
+    steps:
+      # ベースライン PNG をコミットして push し返すため、認証情報を保持する
+      # (persist-credentials: true / 既定)。GITHUB_TOKEN の contents: write で足りる。
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+
+      # --update 付きでブラウザテストを実行し、ベースライン PNG を生成/更新する。
+      # スモークテストも一緒に走るが、こちらはスクリーンショットを持たないので影響なし。
+      - name: Update screenshots
+        run: pnpm test:browser:update
+
+      # 生成/更新されたベースライン PNG をコミットして push し返す。差分が無ければ
+      # 何もしない (意図的変更でなければベースラインは変わらないため空コミットを避ける)。
+      - name: Commit updated baselines
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain -- 'src/__tests__/browser')" ]; then
+            git add src/__tests__/browser
+            git commit -m "test(visual): ビジュアル回帰ベースラインを更新 (#306)"
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "ベースラインに変更はありません。"
+          fi
