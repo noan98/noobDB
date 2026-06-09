@@ -61,6 +61,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
+import { LoadingButton } from "./LoadingButton";
 import {
   buildRowSql,
   countEditedCells,
@@ -694,6 +695,8 @@ interface Props {
   onPreviewEdits?: () => void;
   /** Build & execute the UPDATE(s) for the pending edits, then refresh. */
   onApplyEdits?: () => void;
+  /** True while the Apply transaction is in flight — shows an inline spinner (#538). */
+  applyingEdits?: boolean;
   /** Current auto-refresh cadence (seconds), or null when polling is off. */
   autoRefreshSecs?: number | null;
   /**
@@ -3155,6 +3158,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onRequestInsertRow,
   fullExport,
   lastEditAppliedAt,
+  applyingEdits,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -3621,10 +3625,11 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             >
               {t("editPreviewButton")}
             </Button>
-            <Button
+            <LoadingButton
               variant="success"
               size="sm"
               px="10px"
+              loading={applyingEdits}
               onClick={onApplyEdits}
               disabled={!canApply}
               title={
@@ -3636,7 +3641,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               }
             >
               {t("editApplyButton")}
-            </Button>
+            </LoadingButton>
             <Button
               variant="secondary"
               size="sm"

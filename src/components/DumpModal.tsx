@@ -5,7 +5,7 @@ import { api, DumpOptions, type DriverKind } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Switch } from "./ui";
-import { Spinner } from "./Spinner";
+import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
@@ -253,33 +253,15 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
         <Button type="button" variant="secondary" onClick={onClose} disabled={isRunning}>
           {t("dumpCancel")}
         </Button>
-        <Button
+        <LoadingButton
           type="button"
           variant="primary"
+          loading={isRunning}
           onClick={handleDump}
           disabled={isRunning || !path.trim()}
         >
-          {isRunning && (
-            // primary (accent 背景) 上でスピナーが埋もれないよう currentColor
-            // (accentText) に寄せる。Run/Preview と同様、実行中であることを視覚的に
-            // フィードバックする。モーダルの操作ボタンなのでラベル ("ダンプ中...") は
-            // 状態説明として残す。
-            <chakra.span
-              display="inline-flex"
-              flexShrink={0}
-              aria-hidden
-              css={{
-                "& > span": {
-                  borderColor: "color-mix(in srgb, currentColor 35%, transparent)",
-                  borderTopColor: "currentColor",
-                },
-              }}
-            >
-              <Spinner size={13} />
-            </chakra.span>
-          )}
           {isRunning ? t("dumpRunning") : t("dumpExecute")}
-        </Button>
+        </LoadingButton>
       </ModalFooter>
     </Modal>
   );
