@@ -10,6 +10,7 @@ use crate::error::{AppError, Result};
 pub enum ExportFormat {
     Csv,
     Json,
+    Ndjson,
 }
 
 #[tauri::command]
@@ -52,6 +53,7 @@ async fn write_export(
         match format {
             ExportFormat::Csv => write_csv(&mut writer, &columns, &rows)?,
             ExportFormat::Json => write_json(&mut writer, &columns, &rows)?,
+            ExportFormat::Ndjson => write_ndjson(&mut writer, &columns, &rows)?,
         }
         // `into_inner` flushes the buffer; surface any flush error as I/O.
         let file = writer
@@ -139,6 +141,32 @@ fn write_json<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> R
     Ok(())
 }
 
+fn row_to_json_object(columns: &[Column], row: &[Value]) -> serde_json::Value {
+    use serde_json::{Map, Value as J};
+    let mut obj = Map::with_capacity(columns.len());
+    for (i, col) in columns.iter().enumerate() {
+        let jv = match row.get(i).unwrap_or(&Value::Null) {
+            Value::Bytes(hex) => J::String(format!("0x{}", hex)),
+            v => serde_json::to_value(v).unwrap_or(J::Null),
+        };
+        obj.insert(col.name.clone(), jv);
+    }
+    J::Object(obj)
+}
+
+/// NDJSON (newline-delimited JSON): one compact JSON object per line, no
+/// surrounding brackets or separators. Empty result produces an empty file.
+/// Value encoding (BLOB as `0x...`, NULL, numbers) matches the JSON exporter.
+fn write_ndjson<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
+    for row in rows {
+        let obj = row_to_json_object(columns, row);
+        let line = serde_json::to_string(&obj)?;
+        w.write_all(line.as_bytes())?;
+        w.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +187,12 @@ mod tests {
     fn json_bytes(columns: &[Column], rows: &[Vec<Value>]) -> Vec<u8> {
         let mut buf = Vec::new();
         write_json(&mut buf, columns, rows).unwrap();
+        buf
+    }
+
+    fn ndjson_bytes(columns: &[Column], rows: &[Vec<Value>]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_ndjson(&mut buf, columns, rows).unwrap();
         buf
     }
 
@@ -241,5 +275,53 @@ mod tests {
         let rows: Vec<Vec<Value>> = vec![];
         let reference = serde_json::to_vec_pretty(&Vec::<serde_json::Value>::new()).unwrap();
         assert_eq!(json_bytes(&columns, &rows), reference);
+    }
+
+    #[test]
+    fn ndjson_one_object_per_line() {
+        let columns = vec![col("id"), col("name"), col("blob")];
+        let rows = vec![
+            vec![
+                Value::Int(1),
+                Value::String("Alice".into()),
+                Value::Bytes("deadbeef".into()),
+            ],
+            vec![Value::Int(2), Value::Null, Value::Null],
+        ];
+        let out = String::from_utf8(ndjson_bytes(&columns, &rows)).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let row0: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(row0["id"], serde_json::json!(1));
+        assert_eq!(row0["name"], serde_json::json!("Alice"));
+        assert_eq!(row0["blob"], serde_json::json!("0xdeadbeef"));
+        let row1: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(row1["id"], serde_json::json!(2));
+        assert_eq!(row1["name"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn ndjson_empty_rows_is_empty_file() {
+        let columns = vec![col("id")];
+        let rows: Vec<Vec<Value>> = vec![];
+        assert_eq!(ndjson_bytes(&columns, &rows), b"");
+    }
+
+    #[test]
+    fn ndjson_value_encoding_matches_json() {
+        let columns = vec![col("n"), col("u"), col("f"), col("b"), col("s"), col("x")];
+        let rows = vec![vec![
+            Value::Int(-99),
+            Value::UInt(42),
+            Value::Float(3.14),
+            Value::Bool(true),
+            Value::String("hello".into()),
+            Value::Bytes("ff00".into()),
+        ]];
+        let ndjson_out = String::from_utf8(ndjson_bytes(&columns, &rows)).unwrap();
+        let ndjson_obj: serde_json::Value = serde_json::from_str(ndjson_out.trim()).unwrap();
+        let json_out = json_bytes(&columns, &rows);
+        let json_arr: serde_json::Value = serde_json::from_slice(&json_out).unwrap();
+        assert_eq!(ndjson_obj, json_arr[0]);
     }
 }

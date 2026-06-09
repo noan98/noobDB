@@ -322,7 +322,7 @@ export interface LogView {
   path: string | null;
 }
 
-export type ExportFormat = "csv" | "json";
+export type ExportFormat = "csv" | "json" | "ndjson";
 
 /** Checkbox-selected `mysqldump` flags for a database dump. */
 export interface DumpOptions {
