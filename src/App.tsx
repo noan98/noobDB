@@ -1195,6 +1195,33 @@ export default function App() {
     }
   }, []);
 
+  // Reorder tabs within a pane via drag/keyboard (#446). `orderedIds` is the
+  // pane's full tab-id list in its new order; we only accept a permutation of
+  // the pane's current ids so a stale callback can't smuggle in foreign tabs.
+  // Persistence is order-aware already (persistTabsForProfile maps tabIds in
+  // order), so the new order is saved on the next flush.
+  const reorderTabsInPane = useCallback((paneId: string, orderedIds: string[]) => {
+    setPanes((prev) =>
+      prev.map((p) => {
+        if (p.id !== paneId) return p;
+        const cur = new Set(p.tabIds);
+        const next = new Set(orderedIds);
+        // Accept only a true permutation: same length, no duplicates, and the
+        // two id sets match exactly. This rejects a corrupt list like
+        // ["a","a","b"] that would otherwise drop a tab and leave it unreachable.
+        if (
+          orderedIds.length !== p.tabIds.length ||
+          next.size !== p.tabIds.length ||
+          !orderedIds.every((id) => cur.has(id)) ||
+          !p.tabIds.every((id) => next.has(id))
+        ) {
+          return p;
+        }
+        return { ...p, tabIds: orderedIds };
+      }),
+    );
+  }, []);
+
   const openTabMenu = useCallback((tabId: string, x: number, y: number) => {
     setTabMenu({ tabId, x, y });
   }, []);
@@ -3130,7 +3157,10 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       // Cmd/Ctrl+F → focus the focused pane's cross-column result search (no
       // Shift so the editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
+      // When focus is inside the query editor (CodeMirror), defer to its own
+      // in-editor find/replace (#464) instead of stealing the shortcut.
       if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        if ((e.target as HTMLElement | null)?.closest?.(".cm-editor")) return;
         const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
         if (grid) {
           e.preventDefault();
@@ -3553,6 +3583,7 @@ export default function App() {
           onSelect={(id) => selectTab(pane.id, id)}
           onClose={handleCloseTab}
           onNew={() => handleNewTab(pane.id)}
+          onReorder={(ids) => reorderTabsInPane(pane.id, ids)}
           onTabContextMenu={openTabMenu}
           onSplit={split ? () => closePane(pane.id) : splitPane}
           splitMode={split ? "close" : "split"}

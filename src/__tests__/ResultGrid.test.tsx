@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { ResultGrid, GRID_CSS, isColumnFilterActive, readStoredColumnSizing, writeStoredColumnSizing } from "../components/ResultGrid";
+import { ResultGrid, GRID_CSS, isColumnFilterActive, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
 import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
@@ -586,10 +586,151 @@ describe("column sizing persistence", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 列レイアウト永続化 (順序 / 表示 / ピン) (#447 / #463)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("列レイアウト永続化 (#447 / #463)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("列幅キーから列状態キーを導出する (同じ result shape)", () => {
+    const sizing = 'noobdb.colsizing.v1::db::users::["id","name"]';
+    expect(colStateKeyFrom(sizing)).toBe('noobdb.colstate.v1::db::users::["id","name"]');
+    expect(colStateKeyFrom(undefined)).toBeUndefined();
+  });
+
+  it("存在しない / undefined キーは空オブジェクトを返す", () => {
+    expect(readStoredColumnState("noobdb.colstate.v1::db::t::[]")).toEqual({});
+    expect(readStoredColumnState(undefined)).toEqual({});
+  });
+
+  it("order / visibility / pinning を書き込んで読み返せる", () => {
+    const key = 'noobdb.colstate.v1::db::users::["id","name","email"]';
+    const state = {
+      order: ["2", "0", "1"],
+      visibility: { "1": false },
+      pinning: { left: ["0"], right: [] },
+    };
+    writeStoredColumnState(key, state);
+    expect(readStoredColumnState(key)).toEqual(state);
+  });
+
+  it("空のレイアウトを書き込むとエントリ自体を削除する (既定に戻す)", () => {
+    const key = 'noobdb.colstate.v1::db::users::["id"]';
+    writeStoredColumnState(key, { order: ["0"], visibility: { "0": false } });
+    expect(readStoredColumnState(key)).not.toEqual({});
+    writeStoredColumnState(key, { order: [], visibility: {}, pinning: { left: [], right: [] } });
+    expect(localStorage.getItem(key)).toBeNull();
+    expect(readStoredColumnState(key)).toEqual({});
+  });
+
+  it("undefined キーへの書き込みは無視される", () => {
+    expect(() => writeStoredColumnState(undefined, { order: ["0"] })).not.toThrow();
+  });
+
+  it("列メニューから列を左にピン留めすると sticky 固定クラスが付く (#463)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    // qty 列のフィルタ/列メニューを開く。
+    await user.click(
+      screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }),
+    );
+    // ピン留めセレクトで「左に固定」を選ぶ。
+    const pinSelect = screen.getByText(t("gridPinLeft")).closest("select") as HTMLSelectElement;
+    await user.selectOptions(pinSelect, "left");
+
+    // ヘッダ・ボディの該当列が左ピン留めクラスを得る。
+    const pinnedTh = container.querySelector("th.is-pinned-left");
+    expect(pinnedTh).not.toBeNull();
+    expect(pinnedTh?.textContent).toContain("qty");
+    expect(container.querySelector("td.is-pinned-left")).not.toBeNull();
+    // sticky 配置になっている。
+    expect((pinnedTh as HTMLElement).style.position).toBe("sticky");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 複数列ソート (#479)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("複数列ソート (#479)", () => {
+  beforeEach(() => setLocale("en"));
+
+  const SORT_COLUMNS: Column[] = [
+    { name: "status", type_name: "VARCHAR" },
+    { name: "qty", type_name: "INT" },
+  ];
+  const SORT_RESULT = makeResult(SORT_COLUMNS, [
+    ["b", 3],
+    ["a", 2],
+    ["a", 1],
+    ["b", 1],
+  ]);
+
+  it("Shift+クリックで第2ソートキーを追加し、優先順位と方向を表示する", async () => {
+    const { container } = renderWithProviders(<ResultGrid result={SORT_RESULT} />);
+
+    // status を昇順 (単一ソート)。
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^status/ }));
+    // qty を Shift 押下中にクリックして第2キーに追加。
+    await user.keyboard("{Shift>}");
+    await user.click(screen.getByRole("button", { name: /^qty/ }));
+    await user.keyboard("{/Shift}");
+
+    // status 昇順 → 同値内は qty で第2ソート (数値列は降順が既定)。
+    expect(dataRowTexts(container)).toEqual([
+      ["a", "2"],
+      ["a", "1"],
+      ["b", "3"],
+      ["b", "1"],
+    ]);
+
+    // 優先順位バッジ (1, 2) が両ヘッダに出る。
+    expect(screen.getByLabelText(t("gridSortPriority", { n: 1 }))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("gridSortPriority", { n: 2 }))).toBeInTheDocument();
+
+    // aria-sort が両列に付与される (status=ascending, qty=descending)。
+    const ths = Array.from(container.querySelectorAll("thead th"));
+    const sorted = ths.filter((th) => {
+      const v = th.getAttribute("aria-sort");
+      return v === "ascending" || v === "descending";
+    });
+    expect(sorted.length).toBe(2);
+  });
+
+  it("複数列ソート時はサマリにクリア導線が出て、全解除できる", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={SORT_RESULT} />);
+
+    await user.click(screen.getByRole("button", { name: /^status/ }));
+    await user.keyboard("{Shift>}");
+    await user.click(screen.getByRole("button", { name: /^qty/ }));
+    await user.keyboard("{/Shift}");
+
+    const clearBtn = screen.getByRole("button", { name: t("gridClearSort") });
+    await user.click(clearBtn);
+
+    // 解除後は元の挿入順に戻る。
+    expect(dataRowTexts(container)).toEqual([
+      ["b", "3"],
+      ["a", "2"],
+      ["a", "1"],
+      ["b", "1"],
+    ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // キーボードセルナビゲーション (#406)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("キーボードセルナビゲーション (#406)", () => {
-  beforeEach(() => setLocale("en"));
+  beforeEach(() => {
+    // 直前の describe で永続化した列レイアウト (ピン/順序) が同一 result shape の
+    // ストレージキー経由で漏れ込み、列順が変わってナビが狂うのを防ぐ。
+    localStorage.clear();
+    setLocale("en");
+  });
 
   /** tbody のデータ <td> だけ (row-index・col-filler を除く) を行×列の 2D 配列で返す。 */
   function dataCells(container: HTMLElement): HTMLElement[][] {
@@ -696,11 +837,115 @@ describe("キーボードセルナビゲーション (#406)", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("banana"));
   });
 
+  it("Shift+矢印でセルの矩形範囲を選択する (#486)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cells[0][1], { key: "ArrowDown", shiftKey: true });
+    // 2x2 の範囲が選択状態になる。
+    const selected = container.querySelectorAll("td.is-selected-cell");
+    expect(selected.length).toBe(4);
+  });
+
+  it("Ctrl+C で選択範囲を TSV としてコピーする (#486)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cells[0][1], { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cells[1][1], { key: "c", ctrlKey: true });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("banana\t2\napple\t5"));
+  });
+
+  it("Ctrl+Shift+C で列名ヘッダ付きの範囲コピーをする (#486)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cells[0][1], { key: "c", ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("name\tqty\nbanana\t2"));
+  });
+
+  it("Escape で選択範囲を解除する (#486)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    expect(container.querySelectorAll("td.is-selected-cell").length).toBe(2);
+    fireEvent.keyDown(cells[0][1], { key: "Escape" });
+    expect(container.querySelectorAll("td.is-selected-cell").length).toBe(0);
+  });
+
   it("テーブルに role=grid、行に role=row、データセルに role=gridcell が付く", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     expect(container.querySelector("table[role='grid']")).toBeTruthy();
     const bodyRows = container.querySelectorAll("tbody tr[role='row']");
     expect(bodyRows.length).toBeGreaterThan(0);
     expect(container.querySelector("td[role='gridcell']")).toBeTruthy();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 行インスペクタ (#462)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("行インスペクタ (#462)", () => {
+  beforeEach(() => setLocale("en"));
+
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  it("Alt+Enter で選択行の全カラムを縦表示し、行移動に追従する", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "Enter", altKey: true });
+
+    const dialog = screen.getByRole("dialog", { name: t("gridRowInspectorTitle", { row: 1 }) });
+    // 全カラム名と 1 行目の値が縦に並ぶ。
+    expect(within(dialog).getByText("name")).toBeInTheDocument();
+    expect(within(dialog).getByText("qty")).toBeInTheDocument();
+    expect(within(dialog).getByText("banana")).toBeInTheDocument();
+    expect(within(dialog).getByText("2")).toBeInTheDocument();
+
+    // 次の行へ追従。
+    fireEvent.click(within(dialog).getByRole("button", { name: t("gridInspectorNext") }));
+    const dialog2 = screen.getByRole("dialog", { name: t("gridRowInspectorTitle", { row: 2 }) });
+    expect(within(dialog2).getByText("apple")).toBeInTheDocument();
+  });
+
+  it("NULL は専用表記で示し、Esc で閉じる", () => {
+    const result = makeResult(
+      [
+        { name: "id", type_name: "INT" },
+        { name: "note", type_name: "TEXT" },
+      ],
+      [[1, null]],
+    );
+    const { container } = renderWithProviders(<ResultGrid result={result} />);
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "Enter", altKey: true });
+
+    const dialog = screen.getByRole("dialog", { name: t("gridRowInspectorTitle", { row: 1 }) });
+    expect(within(dialog).getByText(t("resultNull"))).toBeInTheDocument();
+
+    fireEvent.keyDown(cells[0][0], { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: t("gridRowInspectorTitle", { row: 1 }) })).toBeNull();
   });
 });

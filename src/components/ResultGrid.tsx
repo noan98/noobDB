@@ -20,6 +20,7 @@ import {
   type SortingFn,
   type SortingState,
   type Row,
+  type VisibilityState,
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
@@ -31,6 +32,7 @@ import {
   type Density,
 } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
+import { RowInspector } from "./RowInspector";
 import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
@@ -189,6 +191,11 @@ export const GRID_CSS: SystemStyleObject = {
   // pattern stays stable regardless of which rows are mounted.
   "& tbody tr.grid-row-stripe td": { background: "var(--bg-stripe)" },
   "& tbody tr:hover td": { background: "var(--bg-row-hover)" },
+  // 矩形範囲選択 (#486)。アクセント色の薄い塗りで選択範囲を示す。アクティブセルの
+  // フォーカスリングはそのまま重ねて表示される。ストライプ/ホバーより優先する。
+  "& tbody td.is-selected-cell, & tbody tr.grid-row-stripe td.is-selected-cell, & tbody tr:hover td.is-selected-cell": {
+    background: "color-mix(in srgb, var(--accent) 22%, var(--bg))",
+  },
   "& td.row-index, & th.row-index": {
     position: "sticky",
     left: 0,
@@ -392,6 +399,22 @@ export const GRID_CSS: SystemStyleObject = {
   "& th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc):hover .th-sort-indicator::before": {
     opacity: 0.85,
   },
+  // 多列ソートの優先順位バッジ (#479)。方向アイコンの右に小さな順位番号を出す。
+  "& th .th-sort-rank": {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: "14px",
+    height: "14px",
+    marginLeft: "2px",
+    padding: "0 3px",
+    fontSize: "9px",
+    fontWeight: 700,
+    lineHeight: 1,
+    color: "var(--bg)",
+    background: "var(--accent)",
+    borderRadius: "7px",
+  },
   // 列ヘッダのフィルタアイコン。クリックで条件ポップアップ (ColumnFilterMenu) を開く。
   "& th .th-filter-button": {
     display: "inline-flex",
@@ -415,6 +438,40 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--accent) 14%, var(--bg-header))",
   },
   "& th.is-filtered-col .th-name": { color: "var(--accent)" },
+  // 列の並び替えグリップ (#447)。ホバーで現れ、ドラッグで列順を入れ替える。
+  "& th .th-drag-grip": {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    width: "16px",
+    cursor: "grab",
+    color: "var(--text-muted)",
+    opacity: 0,
+    transition: "opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+  },
+  "& th:hover .th-drag-grip, & th.is-dragging-col .th-drag-grip": { opacity: 0.7 },
+  "& th .th-drag-grip:hover": { color: "var(--text)", opacity: 1 },
+  "& th .th-drag-grip:active": { cursor: "grabbing" },
+  "& th.is-dragging-col": { opacity: 0.5 },
+  // ドロップ先候補のヘッダを左端のアクセント線とごく薄い塗りで示す。
+  "& th.is-drag-over": {
+    boxShadow: "inset 2px 0 0 0 var(--accent)",
+    background: "color-mix(in srgb, var(--accent) 12%, var(--bg-header))",
+  },
+  // ピン留め列 (#463) は sticky で固定する。背景を不透明にして横スクロール時に
+  // 下を流れる列を隠し、ストライプ/ホバーの行背景にも追従させる。
+  "& th.is-pinned": { background: "var(--bg-header)" },
+  "& td.is-pinned": { background: "var(--bg)" },
+  "& tbody tr.grid-row-stripe td.is-pinned": { background: "var(--bg-stripe)" },
+  "& tbody tr:hover td.is-pinned": { background: "var(--bg-row-hover)" },
+  // 固定列とスクロール列の境界に影を出してピン状態を視覚的に示す。
+  "& th.is-pinned-left, & td.is-pinned-left": {
+    boxShadow: "2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& th.is-pinned-right, & td.is-pinned-right": {
+    boxShadow: "-2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
   "& td.grid-empty-cell": {
     padding: "14px",
     color: "var(--text-muted)",
@@ -910,6 +967,61 @@ export function writeStoredColumnSizing(
 }
 
 /**
+ * Persisted per-result column layout (#447 order/visibility, #463 pinning).
+ * Stored per result shape under a key derived from the column-sizing key, so it
+ * follows the same database+table+column signature and is dropped for preview
+ * panes (no key). All fields are optional — absent means "default".
+ */
+export interface PersistedColumnState {
+  /** Display order as a list of column ids (`String(originalIndex)`). */
+  order?: string[];
+  /** Map of column id → visible flag. Absent ids default to visible. */
+  visibility?: Record<string, boolean>;
+  /** Pinned column ids per side (left/right). */
+  pinning?: { left?: string[]; right?: string[] };
+}
+
+/** Derive the column-state storage key from the sizing key (same result shape). */
+export function colStateKeyFrom(sizingKey: string | undefined): string | undefined {
+  return sizingKey ? sizingKey.replace("noobdb.colsizing.v1", "noobdb.colstate.v1") : undefined;
+}
+
+export function readStoredColumnState(storageKey: string | undefined): PersistedColumnState {
+  if (!storageKey) return {};
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored !== null) {
+      const parsed = JSON.parse(stored);
+      if (parsed && typeof parsed === "object") return parsed as PersistedColumnState;
+    }
+  } catch {
+    // ignore (corrupt entry, private mode, quota)
+  }
+  return {};
+}
+
+export function writeStoredColumnState(
+  storageKey: string | undefined,
+  state: PersistedColumnState,
+): void {
+  if (!storageKey) return;
+  try {
+    // Empty state → remove the entry so a reset truly falls back to defaults.
+    const empty =
+      (!state.order || state.order.length === 0) &&
+      (!state.visibility || Object.keys(state.visibility).length === 0) &&
+      (!state.pinning || ((state.pinning.left?.length ?? 0) === 0 && (state.pinning.right?.length ?? 0) === 0));
+    if (empty) {
+      localStorage.removeItem(storageKey);
+    } else {
+      localStorage.setItem(storageKey, JSON.stringify(state));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Per-column filter model. Replaces the old plain-string "contains" filter
  * with an operator-driven condition so each header can express text matches
  * (contains / equals / starts / ends), numeric comparisons (= / > / < / range)
@@ -1097,6 +1209,11 @@ function ColumnFilterMenu({
   onFormatModeChange,
   paletteKey,
   onPaletteChange,
+  onHideColumn,
+  onShowAllColumns,
+  onResetLayout,
+  pinned,
+  onPin,
 }: {
   columnName: string;
   kind: CellKind;
@@ -1110,6 +1227,13 @@ function ColumnFilterMenu({
   onFormatModeChange: (mode: CondFormatMode) => void;
   paletteKey: string;
   onPaletteChange: (key: string) => void;
+  /** 列の表示/並び替え操作 (#447)。未指定なら該当セクションを出さない。 */
+  onHideColumn?: () => void;
+  onShowAllColumns?: () => void;
+  onResetLayout?: () => void;
+  /** 列のピン留め状態と切替 (#463)。未指定ならピン操作を出さない。 */
+  pinned?: false | "left" | "right";
+  onPin?: (side: false | "left" | "right") => void;
 }) {
   const t = useT();
   const numeric = isNumericFilterKind(kind);
@@ -1300,6 +1424,67 @@ function ColumnFilterMenu({
             </chakra.select>
           )}
         </chakra.label>
+      )}
+
+      {onPin && (
+        <chakra.label display="flex" flexDirection="column" gap="3px">
+          <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+            {t("gridPinLabel")}
+          </chakra.span>
+          <chakra.select
+            css={FILTER_FIELD_CSS}
+            value={pinned ? pinned : "none"}
+            onChange={(e) => {
+              const v = e.target.value;
+              onPin(v === "none" ? false : (v as "left" | "right"));
+            }}
+          >
+            <option value="none">{t("gridPinNone")}</option>
+            <option value="left">{t("gridPinLeft")}</option>
+            <option value="right">{t("gridPinRight")}</option>
+          </chakra.select>
+        </chakra.label>
+      )}
+
+      {(onHideColumn || onShowAllColumns || onResetLayout) && (
+        <Box display="flex" flexDirection="column" gap="4px" paddingTop="2px" borderTop="1px solid" borderColor="app.borderSubtle">
+          <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="6px">
+            {t("gridColumnsLabel")}
+          </chakra.span>
+          <Box display="flex" flexWrap="wrap" gap="6px">
+            {onHideColumn && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="8px"
+                onClick={() => {
+                  onHideColumn();
+                  onClose();
+                }}
+              >
+                {t("gridHideColumn")}
+              </Button>
+            )}
+            {onShowAllColumns && (
+              <Button variant="secondary" size="sm" px="8px" onClick={onShowAllColumns}>
+                {t("gridShowAllColumns")}
+              </Button>
+            )}
+            {onResetLayout && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="8px"
+                onClick={() => {
+                  onResetLayout();
+                  onClose();
+                }}
+              >
+                {t("gridResetLayout")}
+              </Button>
+            )}
+          </Box>
+        </Box>
       )}
 
       <Box display="flex" justifyContent="space-between" gap="6px" paddingTop="2px">
@@ -1499,6 +1684,103 @@ export function DataGrid({
     writeStoredColumnSizing(columnSizingStorageKey, next);
   };
 
+  // --- Column order & visibility (#447), persisted per result shape ---
+  const colStateKey = useMemo(
+    () => colStateKeyFrom(columnSizingStorageKey),
+    [columnSizingStorageKey],
+  );
+  const [columnOrder, setColumnOrder] = useState<string[]>(
+    () => readStoredColumnState(colStateKey).order ?? [],
+  );
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+    () => readStoredColumnState(colStateKey).visibility ?? {},
+  );
+  const columnOrderRef = useRef(columnOrder);
+  columnOrderRef.current = columnOrder;
+  const columnVisibilityRef = useRef(columnVisibility);
+  columnVisibilityRef.current = columnVisibility;
+  // Reload (order/visibility/pinning) when the result shape changes.
+  useEffect(() => {
+    const s = readStoredColumnState(colStateKey);
+    setColumnOrder(s.order ?? []);
+    setColumnVisibility(s.visibility ?? {});
+    setColumnPinning({ left: s.pinning?.left ?? [], right: s.pinning?.right ?? [] });
+  }, [colStateKey]);
+
+  // Column pinning (#463) lives alongside order/visibility in one persisted blob.
+  const [columnPinning, setColumnPinning] = useState<{ left: string[]; right: string[] }>(
+    () => {
+      const p = readStoredColumnState(colStateKey).pinning;
+      return { left: p?.left ?? [], right: p?.right ?? [] };
+    },
+  );
+  const columnPinningRef = useRef(columnPinning);
+  columnPinningRef.current = columnPinning;
+
+  // Persist the full layout blob (snapshotting from refs so each writer sees
+  // the latest of the other two fields).
+  const persistColumnState = useCallback(
+    (patch: Partial<PersistedColumnState>) => {
+      writeStoredColumnState(colStateKey, {
+        order: patch.order ?? columnOrderRef.current,
+        visibility: patch.visibility ?? columnVisibilityRef.current,
+        pinning: patch.pinning ?? columnPinningRef.current,
+      });
+    },
+    [colStateKey],
+  );
+
+  const handleColumnOrderChange: OnChangeFn<string[]> = (updater) => {
+    const next = typeof updater === "function" ? updater(columnOrderRef.current) : updater;
+    setColumnOrder(next);
+    persistColumnState({ order: next });
+  };
+  const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) => {
+    const next = typeof updater === "function" ? updater(columnVisibilityRef.current) : updater;
+    setColumnVisibility(next);
+    persistColumnState({ visibility: next });
+  };
+
+  // Reset order/visibility/pinning to defaults (#447). Column widths are a
+  // separate concern and left untouched.
+  const resetColumnLayout = useCallback(() => {
+    setColumnOrder([]);
+    setColumnVisibility({});
+    setColumnPinning({ left: [], right: [] });
+    writeStoredColumnState(colStateKey, {});
+  }, [colStateKey]);
+
+  // Whether any non-default layout is active (drives the "reset" affordance).
+  const hasCustomLayout =
+    columnOrder.length > 0 ||
+    Object.values(columnVisibility).some((v) => v === false) ||
+    columnPinning.left.length > 0 ||
+    columnPinning.right.length > 0;
+
+  // Drag-to-reorder columns (#447): track the dragged/hovered column ids for
+  // visual feedback, and commit a new order on drop.
+  const [dragColId, setDragColId] = useState<string | null>(null);
+  const [dragOverColId, setDragOverColId] = useState<string | null>(null);
+  // Plain (non-memoized) function so it always closes over the current
+  // `handleColumnOrderChange` / `persistColumnState`, whose persist key
+  // (`colStateKey`) tracks database/table — not just `columns`. It's only
+  // invoked from the (already per-render) header onDrop, so it needn't be stable.
+  const reorderColumn = (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    const base = (
+      columnOrderRef.current.length
+        ? columnOrderRef.current
+        : columns.map((_, i) => String(i))
+    ).slice();
+    const fromIdx = base.indexOf(fromId);
+    if (fromIdx < 0) return;
+    const [moved] = base.splice(fromIdx, 1);
+    const insertAt = base.indexOf(toId);
+    if (insertAt < 0) return;
+    base.splice(insertAt, 0, moved);
+    handleColumnOrderChange(base);
+  };
+
   const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
     return columns.map((c, i) => {
       const kind = columnKinds[i];
@@ -1696,11 +1978,23 @@ export function DataGrid({
       columnFilters,
       globalFilter: globalFilter ?? "",
       columnSizing,
+      columnOrder,
+      columnVisibility,
+      columnPinning,
       ...(paginationState ? { pagination: paginationState } : {}),
     },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onColumnSizingChange: handleColumnSizingChange,
+    onColumnOrderChange: handleColumnOrderChange,
+    onColumnVisibilityChange: handleColumnVisibilityChange,
+    onColumnPinningChange: (updater) => {
+      const prev = columnPinningRef.current;
+      const nextRaw = typeof updater === "function" ? updater(prev) : updater;
+      const next = { left: nextRaw.left ?? [], right: nextRaw.right ?? [] };
+      setColumnPinning(next);
+      persistColumnState({ pinning: next });
+    },
     ...(onPaginationChange ? { onPaginationChange } : {}),
     globalFilterFn: globalIncludesFilter,
     getCoreRowModel: getCoreRowModel(),
@@ -1723,6 +2017,14 @@ export function DataGrid({
 
   // Keyboard navigation: the currently selected cell (row = original row index).
   const [activeCell, setActiveCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
+  // Rectangular range selection (#486): anchor (where Shift-extension started)
+  // and focus (the moving end = active cell). Both are ORIGINAL row/column
+  // indices; the visible rectangle is derived from the current display order so
+  // it stays a contiguous block under sort/filter/reorder/hide.
+  const [selection, setSelection] = useState<{
+    anchor: { rowIdx: number; colIdx: number };
+    focus: { rowIdx: number; colIdx: number };
+  } | null>(null);
   // When set, the next layout effect will try to focus that cell's <td>.
   const pendingFocusRef = useRef<{ rowIdx: number; colIdx: number } | null>(null);
   // Refs to mounted data <td> elements keyed by "rowIdx:colIdx".
@@ -1739,6 +2041,9 @@ export function DataGrid({
 
   // Full-value viewer target (original row index + display column index).
   const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
+
+  // Row inspector (#462): when open, shows the active cell's row vertically.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
 
   // Open per-column filter popup: which column, and the anchor rect of the
   // header's filter icon (captured at click for portal positioning).
@@ -1815,10 +2120,39 @@ export function DataGrid({
   };
 
   const visibleRows = table.getRowModel().rows;
+  // Original column indices in their current *display* order (reorder/hide
+  // aware). Keyboard navigation steps through this; data lookups use the
+  // original index it yields.
+  const visibleColIds = table.getVisibleLeafColumns().map((c) => Number(c.id));
   const totalRows = rows.length;
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
   const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter);
+  // Multi-column sort summary (#479): surface a clear-all affordance when more
+  // than one sort key is active (single-column sort clears via its own cycle).
+  const multiSortActive = enableColumnControls && sorting.length > 1;
+
+  // Resolve the range selection (#486) into the set of original row indices and
+  // column ids it covers, plus the display bounds (for copy ordering). Derived
+  // from the current display order so the rectangle stays contiguous even after
+  // sort/filter/reorder/hide. Returns null when there is no multi-cell range.
+  const selectionRect = useMemo(() => {
+    if (!selection) return null;
+    const aVis = visibleRows.findIndex((r) => r.index === selection.anchor.rowIdx);
+    const fVis = visibleRows.findIndex((r) => r.index === selection.focus.rowIdx);
+    const aCol = visibleColIds.indexOf(selection.anchor.colIdx);
+    const fCol = visibleColIds.indexOf(selection.focus.colIdx);
+    if (aVis < 0 || fVis < 0 || aCol < 0 || fCol < 0) return null;
+    const r0 = Math.min(aVis, fVis);
+    const r1 = Math.max(aVis, fVis);
+    const c0 = Math.min(aCol, fCol);
+    const c1 = Math.max(aCol, fCol);
+    // A single cell isn't a "range" — let plain copy handle it.
+    if (r0 === r1 && c0 === c1) return null;
+    const rowIndexSet = new Set(visibleRows.slice(r0, r1 + 1).map((r) => r.index));
+    const colIdSet = new Set(visibleColIds.slice(c0, c1 + 1));
+    return { r0, r1, c0, c1, rowIndexSet, colIdSet };
+  }, [selection, visibleRows, visibleColIds]);
 
   // After every render, attempt to focus the pending cell (the element may not
   // have been in the DOM on the previous cycle if the virtualizer needed to
@@ -1841,6 +2175,46 @@ export function DataGrid({
     }
     setActiveCell({ rowIdx: newRowIdx, colIdx: newColIdx });
     pendingFocusRef.current = { rowIdx: newRowIdx, colIdx: newColIdx };
+  };
+
+  // Move the active cell *and* clear any range selection (plain navigation).
+  const moveActive = (newRowIdx: number, newColIdx: number) => {
+    setSelection(null);
+    navigateCell(newRowIdx, newColIdx);
+  };
+
+  // Extend the range selection to the given cell (Shift navigation / click).
+  // The anchor is the previous active cell when no selection exists yet.
+  const extendSelectionTo = (newRowIdx: number, newColIdx: number) => {
+    const anchor = selection?.anchor ?? activeCell ?? { rowIdx: newRowIdx, colIdx: newColIdx };
+    setSelection({ anchor, focus: { rowIdx: newRowIdx, colIdx: newColIdx } });
+    navigateCell(newRowIdx, newColIdx);
+  };
+
+  // Copy the current selection (or the active cell) as TSV using *real* values
+  // (display formatting is for the grid only). `withHeaders` prepends the column
+  // names of the covered columns.
+  const copySelection = (withHeaders: boolean) => {
+    if (selectionRect) {
+      const rowIdxs = visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index);
+      const colIds = visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1);
+      const lines: string[] = [];
+      if (withHeaders) lines.push(colIds.map((ci) => columns[ci]?.name ?? "").join("\t"));
+      for (const ri of rowIdxs) {
+        lines.push(colIds.map((ci) => cellToText(rows[ri]?.[ci] ?? null)).join("\t"));
+      }
+      void runCopy(lines.join("\n"));
+      return;
+    }
+    if (activeCell) {
+      if (withHeaders) {
+        void runCopy(
+          `${columns[activeCell.colIdx]?.name ?? ""}\n${cellToText(rows[activeCell.rowIdx]?.[activeCell.colIdx] ?? null)}`,
+        );
+      } else {
+        copyCell(activeCell.rowIdx, activeCell.colIdx);
+      }
+    }
   };
 
   // Row virtualization. Cells are single-line (`white-space: nowrap` +
@@ -1872,8 +2246,10 @@ export function DataGrid({
     virtualItems.length > 0
       ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end
       : 0;
-  // Total column count (row-index + data columns + filler) for spacer colSpan.
-  const totalColCount = columns.length + 2;
+  // Total column count (row-index + visible data columns + filler) for spacer
+  // colSpan. Uses the visible leaf count so hidden columns (#447) don't inflate
+  // the virtual spacer span.
+  const totalColCount = visibleColIds.length + 2;
 
   // Grid-level keyboard handler: arrow keys, Tab, Enter, Ctrl+C, etc.
   // Fires on the <table> (bubbled from the focused <td>). When the inline
@@ -1884,50 +2260,77 @@ export function DataGrid({
     const { rowIdx, colIdx } = activeCell;
     const visIdx = visibleRows.findIndex((r) => r.index === rowIdx);
     if (visIdx < 0) return;
-    const colCount = columns.length;
     const rowCount = visibleRows.length;
+    // Position of the active column within the current display order.
+    const colPos = visibleColIds.indexOf(colIdx);
+    const lastColPos = visibleColIds.length - 1;
+    const firstCol = visibleColIds[0] ?? 0;
+    const lastCol = visibleColIds[lastColPos] ?? 0;
+    const PAGE_ROWS = 10;
+    // Plain move clears the selection; Shift+move extends a rectangular range.
+    const go = (r: number, c: number) => (e.shiftKey ? extendSelectionTo(r, c) : moveActive(r, c));
 
     switch (e.key) {
       case "ArrowUp":
         e.preventDefault();
-        if (visIdx > 0) navigateCell(visibleRows[visIdx - 1].index, colIdx);
+        if (visIdx > 0) go(visibleRows[visIdx - 1].index, colIdx);
         break;
       case "ArrowDown":
         e.preventDefault();
-        if (visIdx < rowCount - 1) navigateCell(visibleRows[visIdx + 1].index, colIdx);
+        if (visIdx < rowCount - 1) go(visibleRows[visIdx + 1].index, colIdx);
         break;
       case "ArrowLeft":
         e.preventDefault();
-        if (colIdx > 0) navigateCell(rowIdx, colIdx - 1);
+        if (colPos > 0) go(rowIdx, visibleColIds[colPos - 1]);
         break;
       case "ArrowRight":
         e.preventDefault();
-        if (colIdx < colCount - 1) navigateCell(rowIdx, colIdx + 1);
+        if (colPos >= 0 && colPos < lastColPos) go(rowIdx, visibleColIds[colPos + 1]);
         break;
+      case "PageUp": {
+        e.preventDefault();
+        const target = Math.max(0, visIdx - PAGE_ROWS);
+        if (target !== visIdx) go(visibleRows[target].index, colIdx);
+        break;
+      }
+      case "PageDown": {
+        e.preventDefault();
+        const target = Math.min(rowCount - 1, visIdx + PAGE_ROWS);
+        if (target !== visIdx) go(visibleRows[target].index, colIdx);
+        break;
+      }
       case "Tab":
+        // Tab always moves a single active cell (never extends a selection).
         e.preventDefault();
         if (!e.shiftKey) {
-          if (colIdx < colCount - 1) navigateCell(rowIdx, colIdx + 1);
-          else if (visIdx < rowCount - 1) navigateCell(visibleRows[visIdx + 1].index, 0);
+          if (colPos < lastColPos) moveActive(rowIdx, visibleColIds[colPos + 1]);
+          else if (visIdx < rowCount - 1) moveActive(visibleRows[visIdx + 1].index, firstCol);
         } else {
-          if (colIdx > 0) navigateCell(rowIdx, colIdx - 1);
-          else if (visIdx > 0) navigateCell(visibleRows[visIdx - 1].index, colCount - 1);
+          if (colPos > 0) moveActive(rowIdx, visibleColIds[colPos - 1]);
+          else if (visIdx > 0) moveActive(visibleRows[visIdx - 1].index, lastCol);
         }
         break;
       case "Home":
         e.preventDefault();
-        navigateCell(rowIdx, 0);
+        go(rowIdx, firstCol);
         break;
       case "End":
         e.preventDefault();
-        navigateCell(rowIdx, colCount - 1);
+        go(rowIdx, lastCol);
         break;
       case "Escape":
         e.preventDefault();
-        setActiveCell(null);
+        if (inspectorOpen) setInspectorOpen(false);
+        else if (selection) setSelection(null);
+        else setActiveCell(null);
         break;
       case "Enter": {
         e.preventDefault();
+        // Alt/Option+Enter toggles the row inspector (#462) for the active row.
+        if (e.altKey) {
+          setInspectorOpen((o) => !o);
+          break;
+        }
         const colEd = editable && (editableColumns?.[colIdx] ?? false);
         if (colEd && onSetCellEdit) {
           const v = rows[rowIdx]?.[colIdx] ?? null;
@@ -1961,8 +2364,10 @@ export function DataGrid({
           e.preventDefault();
           onRedoEdit?.();
         } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+          // Copy the selection range (or active cell) as TSV. Shift includes a
+          // header row of the covered column names.
           e.preventDefault();
-          copyCell(rowIdx, colIdx);
+          copySelection(e.shiftKey);
         }
     }
   };
@@ -1999,12 +2404,15 @@ export function DataGrid({
       data-index={measureIndex}
     >
       <td className="row-index">{rowIdx + 1}</td>
-      {row.getVisibleCells().map((cell, idx) => {
+      {row.getVisibleCells().map((cell) => {
+        // Resolve original column index from the column id so reorder/hide
+        // (#447) and pinning (#463) don't misalign per-column lookups.
+        const colIdx = Number(cell.column.id);
         const v = cell.getValue() as CellValue;
-        const kind = columnKinds[idx] ?? "string";
+        const kind = columnKinds[colIdx] ?? "string";
         const isNull = v === null || v === undefined;
-        const isChanged = changedCells?.[row.index]?.[idx] ?? false;
-        const colEditable = editable && (editableColumns?.[idx] ?? false);
+        const isChanged = changedCells?.[row.index]?.[colIdx] ?? false;
+        const colEditable = editable && (editableColumns?.[colIdx] ?? false);
         // Buffered edits are keyed by the row's PK identity, so look
         // them up by `rowEditKey` rather than the array position.
         const rowKey = rowEditKey(
@@ -2013,27 +2421,39 @@ export function DataGrid({
           row.index,
         );
         const pendingForRow = pendingEdits?.[rowKey];
-        const pendingValue = pendingForRow?.[idx];
+        const pendingValue = pendingForRow?.[colIdx];
         const hasPending = pendingValue !== undefined;
         const isEditingHere =
           editing !== null &&
           editing.rowIdx === row.index &&
-          editing.colIdx === idx;
-        const isActiveCell = activeCell?.rowIdx === row.index && activeCell?.colIdx === idx;
+          editing.colIdx === colIdx;
+        const isActiveCell = activeCell?.rowIdx === row.index && activeCell?.colIdx === colIdx;
+        const inSelection =
+          !!selectionRect && selectionRect.rowIndexSet.has(row.index) && selectionRect.colIdSet.has(colIdx);
         // Live validation of the value being typed, and of an
         // already-buffered value that's sitting invalid in the grid.
         const editError =
           isEditingHere && validateEdit
-            ? validateEdit(idx, editing!.value)
+            ? validateEdit(colIdx, editing!.value)
             : null;
         const pendingError =
           hasPending && !isEditingHere && validateEdit
-            ? validateEdit(idx, pendingValue)
+            ? validateEdit(colIdx, pendingValue)
             : null;
         // Original display string — used both for the input's
         // default contents and to detect "user typed it back to
         // the original" (which clears the pending edit).
         const originalDisplay = isNull ? "" : String(v);
+        const pinSide = cell.column.getIsPinned();
+        const pinStyle: CSSProperties = pinSide
+          ? {
+              position: "sticky",
+              zIndex: 1,
+              ...(pinSide === "left"
+                ? { left: ROW_INDEX_WIDTH + cell.column.getStart("left") }
+                : { right: cell.column.getAfter("right") }),
+            }
+          : {};
         const handleDoubleClick = () => {
           // Editable cells edit on double-click; everything else
           // (read-only grids, PK/BLOB columns, preview panes) opens
@@ -2041,24 +2461,25 @@ export function DataGrid({
           if (colEditable && onSetCellEdit) {
             setEditing({
               rowIdx: row.index,
-              colIdx: idx,
+              colIdx,
               value: hasPending ? pendingValue : originalDisplay,
             });
             return;
           }
-          setViewer({ rowIdx: row.index, colIdx: idx });
+          setViewer({ rowIdx: row.index, colIdx });
         };
         return (
           <td
             key={cell.id}
             role="gridcell"
             tabIndex={isActiveCell ? 0 : -1}
+            style={pinStyle}
             ref={(el) => {
-              const key = `${row.index}:${idx}`;
+              const key = `${row.index}:${colIdx}`;
               if (el) cellRefs.current.set(key, el);
               else cellRefs.current.delete(key);
             }}
-            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""}`}
+            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
             title={
               isEditingHere
                 ? undefined
@@ -2075,9 +2496,19 @@ export function DataGrid({
                       ? `${String(v)}\n(${t("gridCharCount", { count: String(v).length })})`
                       : String(v)
             }
+            onMouseDown={(e) => {
+              // Shift+click extends a rectangular selection from the active
+              // cell; a plain click clears any selection (focus sets active).
+              if (e.shiftKey && activeCell) {
+                e.preventDefault();
+                extendSelectionTo(row.index, colIdx);
+              } else if (selection) {
+                setSelection(null);
+              }
+            }}
             onFocus={(e) => {
               if (e.target === e.currentTarget) {
-                setActiveCell({ rowIdx: row.index, colIdx: idx });
+                setActiveCell({ rowIdx: row.index, colIdx });
               }
             }}
             onDoubleClick={handleDoubleClick}
@@ -2087,7 +2518,7 @@ export function DataGrid({
                 x: e.clientX,
                 y: e.clientY,
                 rowIdx: row.index,
-                colIdx: idx,
+                colIdx,
               });
             }}
           >
@@ -2143,16 +2574,17 @@ export function DataGrid({
                       commitEdit(eRowIdx, eColIdx, editing!.value, originalDisplay);
                       setEditing(null);
                       const vi2 = visibleRows.findIndex((r) => r.index === eRowIdx);
-                      const nc = columns.length;
+                      const ePos = visibleColIds.indexOf(eColIdx);
+                      const lastPos = visibleColIds.length - 1;
                       if (!e.shiftKey) {
-                        if (eColIdx < nc - 1) navigateCell(eRowIdx, eColIdx + 1);
+                        if (ePos >= 0 && ePos < lastPos) navigateCell(eRowIdx, visibleColIds[ePos + 1]);
                         else if (vi2 >= 0 && vi2 < visibleRows.length - 1)
-                          navigateCell(visibleRows[vi2 + 1].index, 0);
+                          navigateCell(visibleRows[vi2 + 1].index, visibleColIds[0] ?? 0);
                         else navigateCell(eRowIdx, eColIdx);
                       } else {
-                        if (eColIdx > 0) navigateCell(eRowIdx, eColIdx - 1);
+                        if (ePos > 0) navigateCell(eRowIdx, visibleColIds[ePos - 1]);
                         else if (vi2 > 0)
-                          navigateCell(visibleRows[vi2 - 1].index, nc - 1);
+                          navigateCell(visibleRows[vi2 - 1].index, visibleColIds[lastPos] ?? 0);
                         else navigateCell(eRowIdx, eColIdx);
                       }
                     } else if (e.key === "Enter") {
@@ -2199,9 +2631,12 @@ export function DataGrid({
 
   return (
     <>
-      {isFiltered && (
+      {(isFiltered || multiSortActive) && (
         <Box className="grid-filter-summary">
-          {t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
+          {isFiltered && t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
+          {multiSortActive && (
+            <chakra.span>{t("gridSortCount", { n: sorting.length })}</chakra.span>
+          )}
           {hasColumnFilter && (
             <chakra.button
               type="button"
@@ -2212,6 +2647,15 @@ export function DataGrid({
               }}
             >
               {t("gridClearFilters")}
+            </chakra.button>
+          )}
+          {multiSortActive && (
+            <chakra.button
+              type="button"
+              className="grid-filter-clear"
+              onClick={() => setSorting([])}
+            >
+              {t("gridClearSort")}
             </chakra.button>
           )}
         </Box>
@@ -2230,31 +2674,89 @@ export function DataGrid({
           {table.getHeaderGroups().map((hg) => (
             <tr key={hg.id}>
               <th className="row-index" aria-hidden />
-              {hg.headers.map((h, idx) => {
-                const kind = columnKinds[idx] ?? "string";
+              {hg.headers.map((h) => {
+                // After reorder/hide the header's array position no longer
+                // matches the original column index, so resolve all
+                // original-order lookups (kind, name, changed flag, filter,
+                // pinning) from the column id (`String(originalIndex)`).
+                const colIdx = Number(h.column.id);
+                const kind = columnKinds[colIdx] ?? "string";
                 const canSort = enableColumnControls && h.column.getCanSort();
                 const canResize = h.column.getCanResize();
                 const isResizing = h.column.getIsResizing();
                 const sortDir = h.column.getIsSorted();
+                // Multi-column sort (#479): a rank badge shows each key's
+                // priority when more than one column is sorted (Shift+click
+                // chains additional keys; plain click resets to single sort).
+                const multiSort = sorting.length > 1;
+                const sortRank = sortDir && multiSort ? h.column.getSortIndex() + 1 : 0;
                 const sortTitle =
                   sortDir === "asc"
                     ? t("gridSortDesc")
                     : sortDir === "desc"
                       ? t("gridSortClear")
                       : t("gridSortAsc");
-                const isChangedCol = changedColumns?.[idx] ?? false;
+                const isChangedCol = changedColumns?.[colIdx] ?? false;
                 const colFilterActive = isColumnFilterActive(
                   h.column.getFilterValue() as ColumnFilter | undefined,
                 );
-                const filterLabel = t("gridFilterAria", { column: columns[idx]?.name ?? "" });
+                const filterLabel = t("gridFilterAria", { column: columns[colIdx]?.name ?? "" });
+                const pinSide = h.column.getIsPinned();
+                const pinStyle: CSSProperties = pinSide
+                  ? {
+                      position: "sticky",
+                      zIndex: 3,
+                      ...(pinSide === "left"
+                        ? { left: ROW_INDEX_WIDTH + h.column.getStart("left") }
+                        : { right: h.column.getAfter("right") }),
+                    }
+                  : {};
                 return (
                   <th
                     key={h.id}
-                    className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${colFilterActive ? "is-filtered-col" : ""}`}
+                    style={pinStyle}
+                    className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${colFilterActive ? "is-filtered-col" : ""} ${dragOverColId === h.column.id ? "is-drag-over" : ""} ${dragColId === h.column.id ? "is-dragging-col" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
                     aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
+                    onDragOver={
+                      dragColId
+                        ? (e) => {
+                            e.preventDefault();
+                            if (dragOverColId !== h.column.id) setDragOverColId(h.column.id);
+                          }
+                        : undefined
+                    }
+                    onDrop={
+                      dragColId
+                        ? (e) => {
+                            e.preventDefault();
+                            reorderColumn(dragColId, h.column.id);
+                            setDragColId(null);
+                            setDragOverColId(null);
+                          }
+                        : undefined
+                    }
                   >
                     {enableColumnControls ? (
                       <div className="th-inner">
+                        <chakra.span
+                          className="th-drag-grip"
+                          draggable
+                          role="button"
+                          tabIndex={-1}
+                          aria-label={t("gridDragColumn")}
+                          title={t("gridDragColumn")}
+                          onDragStart={(e) => {
+                            setDragColId(h.column.id);
+                            e.dataTransfer.effectAllowed = "move";
+                            e.dataTransfer.setData("text/plain", h.column.id);
+                          }}
+                          onDragEnd={() => {
+                            setDragColId(null);
+                            setDragOverColId(null);
+                          }}
+                        >
+                          <Icon name="columns" size={12} />
+                        </chakra.span>
                         <chakra.button
                           type="button"
                           className="th-sort-button"
@@ -2268,6 +2770,14 @@ export function DataGrid({
                             ) : sortDir === "desc" ? (
                               <Icon name="sort-desc" size={ICON_SIZES.sm} />
                             ) : null}
+                            {sortRank > 0 && (
+                              <chakra.span
+                                className="th-sort-rank"
+                                aria-label={t("gridSortPriority", { n: sortRank })}
+                              >
+                                {sortRank}
+                              </chakra.span>
+                            )}
                           </chakra.span>
                         </chakra.button>
                         <chakra.button
@@ -2275,14 +2785,14 @@ export function DataGrid({
                           className={`th-filter-button ${colFilterActive ? "is-active" : ""}`}
                           onClick={(e) =>
                             setFilterMenu({
-                              colIdx: idx,
+                              colIdx,
                               anchor: e.currentTarget.getBoundingClientRect(),
                             })
                           }
                           title={filterLabel}
                           aria-label={filterLabel}
                           aria-haspopup="dialog"
-                          aria-expanded={filterMenu?.colIdx === idx}
+                          aria-expanded={filterMenu?.colIdx === colIdx}
                         >
                           <Icon name="filter" size={12} strokeWidth={2.2} />
                         </chakra.button>
@@ -2441,6 +2951,16 @@ export function DataGrid({
               label: t("gridViewFull"),
               onSelect: () => setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx }),
             },
+            {
+              label: t("gridRowInspector"),
+              onSelect: () => {
+                const rk = copyMenu.rowIdx;
+                const ck = copyMenu.colIdx;
+                setCopyMenu(null);
+                setActiveCell({ rowIdx: rk, colIdx: ck });
+                setInspectorOpen(true);
+              },
+            },
             // 行の追加・削除 (#441)。PK が無いテーブルでは削除を無効化 (行を一意に
             // 特定できないため)。新規行追加は PK 有無に依らず可能。
             ...(onToggleRowDelete || onRequestInsertRow
@@ -2499,6 +3019,25 @@ export function DataGrid({
           }
           paletteKey={heatPaletteKey}
           onPaletteChange={setHeatPaletteKey}
+          onHideColumn={
+            enableColumnControls
+              ? () => table.getColumn(String(filterMenu.colIdx))?.toggleVisibility(false)
+              : undefined
+          }
+          onShowAllColumns={
+            enableColumnControls ? () => table.toggleAllColumnsVisible(true) : undefined
+          }
+          onResetLayout={enableColumnControls && hasCustomLayout ? resetColumnLayout : undefined}
+          pinned={
+            enableColumnControls
+              ? table.getColumn(String(filterMenu.colIdx))?.getIsPinned() ?? false
+              : undefined
+          }
+          onPin={
+            enableColumnControls
+              ? (side) => table.getColumn(String(filterMenu.colIdx))?.pin(side)
+              : undefined
+          }
         />
       )}
       <AnimatePresence>
@@ -2546,6 +3085,26 @@ export function DataGrid({
           />
         )}
       </AnimatePresence>
+      {inspectorOpen && activeCell && rows[activeCell.rowIdx] && (() => {
+        const inspVis = visibleRows.findIndex((r) => r.index === activeCell.rowIdx);
+        const moveTo = (visTarget: number) => {
+          const r = visibleRows[visTarget];
+          if (r) navigateCell(r.index, activeCell.colIdx);
+        };
+        return (
+          <RowInspector
+            columns={columns}
+            values={rows[activeCell.rowIdx]}
+            columnKinds={columnKinds}
+            rowNumber={inspVis >= 0 ? inspVis + 1 : activeCell.rowIdx + 1}
+            hasPrev={inspVis > 0}
+            hasNext={inspVis >= 0 && inspVis < visibleRows.length - 1}
+            onPrev={() => moveTo(inspVis - 1)}
+            onNext={() => moveTo(inspVis + 1)}
+            onClose={() => setInspectorOpen(false)}
+          />
+        );
+      })()}
       {blurDialog}
     </>
   );

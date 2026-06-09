@@ -13,6 +13,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { sql, type SQLNamespace } from "@codemirror/lang-sql";
 import {
   acceptCompletion,
@@ -332,6 +333,12 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           closeBrackets(),
           syntaxHighlighting(noobDBHighlightStyle, { fallback: true }),
           autocompletion(),
+          // エディタ内検索・置換 (#464)。検索パネルはエディタ上部に出し、選択語の
+          // 同一語ハイライトも有効化する。キーバインドは下の keymap に searchKeymap
+          // を含める (Mod-f はエディタにフォーカスがあるときだけ起動し、結果横断検索
+          // の Cmd/Ctrl+F とはフォーカス文脈で住み分ける — App 側でガード)。
+          search({ top: true }),
+          highlightSelectionMatches(),
           sqlCompartment.of(buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase)),
           keymap.of([
             { key: "Tab", run: acceptCompletion },
@@ -387,6 +394,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               preventDefault: true,
               run: (v) => formatEditorContent(v, driverRef.current, onFormatErrorRef.current),
             },
+            ...searchKeymap,
             ...defaultKeymap,
             ...historyKeymap,
             ...completionKeymap,
