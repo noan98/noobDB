@@ -347,8 +347,6 @@ const en = {
   listDeleteConfirm: 'Delete "{name}"?',
   listDuplicateSuffix: " (copy)",
   listVia: "via SSH {host}",
-  listSsh: "SSH",
-  listSshTitle: "Connects through an SSH tunnel",
 
   statusBadge_connected: "Connected",
   statusBadge_connecting: "Connecting...",
@@ -1514,8 +1512,6 @@ const ja: Dict = {
   listDeleteConfirm: "「{name}」を削除しますか？",
   listDuplicateSuffix: "（コピー）",
   listVia: "SSH {host} 経由",
-  listSsh: "SSH",
-  listSshTitle: "SSH トンネル経由で接続します",
 
   statusBadge_connected: "接続中",
   statusBadge_connecting: "接続処理中...",

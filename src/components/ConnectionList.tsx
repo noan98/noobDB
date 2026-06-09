@@ -1030,25 +1030,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               {t("listReadOnly")}
             </TreeBadge>
           )}
-          {p.ssh && (
-            <TreeBadge
-              display="inline-flex"
-              alignItems="center"
-              gap="4px"
-              bg="app.surfaceMuted"
-              color="app.textSecondary"
-              borderColor="app.borderStrong"
-              fontSize="xs"
-              fontWeight={700}
-              letterSpacing="0.06em"
-              px="8px"
-              py="2px"
-              title={t("listSshTitle")}
-            >
-              <Icon name="lock" size={12} />
-              {t("listSsh")}
-            </TreeBadge>
-          )}
           {status === "connected" && (
             <chakra.button
               type="button"
@@ -1093,12 +1074,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             aria-label={statusLabel(status)}
             title={statusLabel(status)}
           />
-          <TreeBadge
-            color={driverIcon ? driverColor(p.driver) : undefined}
-            borderColor={driverIcon ? "color-mix(in srgb, currentColor 40%, transparent)" : undefined}
-          >
-            {p.driver}
-          </TreeBadge>
         </MotionTreeRow>
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
