@@ -627,6 +627,27 @@ describe("列レイアウト永続化 (#447 / #463)", () => {
   it("undefined キーへの書き込みは無視される", () => {
     expect(() => writeStoredColumnState(undefined, { order: ["0"] })).not.toThrow();
   });
+
+  it("列メニューから列を左にピン留めすると sticky 固定クラスが付く (#463)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    // qty 列のフィルタ/列メニューを開く。
+    await user.click(
+      screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }),
+    );
+    // ピン留めセレクトで「左に固定」を選ぶ。
+    const pinSelect = screen.getByText(t("gridPinLeft")).closest("select") as HTMLSelectElement;
+    await user.selectOptions(pinSelect, "left");
+
+    // ヘッダ・ボディの該当列が左ピン留めクラスを得る。
+    const pinnedTh = container.querySelector("th.is-pinned-left");
+    expect(pinnedTh).not.toBeNull();
+    expect(pinnedTh?.textContent).toContain("qty");
+    expect(container.querySelector("td.is-pinned-left")).not.toBeNull();
+    // sticky 配置になっている。
+    expect((pinnedTh as HTMLElement).style.position).toBe("sticky");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -704,7 +725,12 @@ describe("複数列ソート (#479)", () => {
 // キーボードセルナビゲーション (#406)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("キーボードセルナビゲーション (#406)", () => {
-  beforeEach(() => setLocale("en"));
+  beforeEach(() => {
+    // 直前の describe で永続化した列レイアウト (ピン/順序) が同一 result shape の
+    // ストレージキー経由で漏れ込み、列順が変わってナビが狂うのを防ぐ。
+    localStorage.clear();
+    setLocale("en");
+  });
 
   /** tbody のデータ <td> だけ (row-index・col-filler を除く) を行×列の 2D 配列で返す。 */
   function dataCells(container: HTMLElement): HTMLElement[][] {
