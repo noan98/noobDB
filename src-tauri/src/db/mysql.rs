@@ -74,7 +74,13 @@ impl MySqlConn {
         }
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
-        sqlx::query("START TRANSACTION").execute(&mut *conn).await?;
+        // Transaction-control statements go through the text protocol (raw_sql),
+        // like `USE`, so they can't trip MySQL's prepared-statement error 1295.
+        sqlx::Executor::execute(
+            &mut *conn,
+            sqlx::raw_sql(sqlx::AssertSqlSafe("START TRANSACTION")),
+        )
+        .await?;
         *guard = Some(conn);
         Ok(())
     }
@@ -93,7 +99,7 @@ impl MySqlConn {
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
-        sqlx::query(stmt).execute(&mut *conn).await?;
+        sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(stmt))).await?;
         Ok(())
     }
 
