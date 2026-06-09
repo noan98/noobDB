@@ -129,7 +129,45 @@ export function Splitter({
     });
   }, [defaultFraction, fraction, prefersReducedMotion]);
 
+  // Keyboard resize (a11y): arrow keys nudge the divider, Home/End jump to the
+  // min/max, Enter/Backspace reset to the default split. Step respects the same
+  // min-size clamp as pointer dragging.
+  const nudge = useCallback(
+    (delta: number) => {
+      const el = containerRef.current;
+      const total = el ? (direction === "row" ? el.getBoundingClientRect().width : el.getBoundingClientRect().height) : 0;
+      const minF = total > 2 * minSize ? minSize / total : 0;
+      const maxF = total > 2 * minSize ? 1 - minSize / total : 1;
+      setFraction((f) => clamp(f + delta, minF, maxF));
+    },
+    [direction, minSize],
+  );
+
   const isRow = direction === "row";
+
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const dec = isRow ? "ArrowLeft" : "ArrowUp";
+      const inc = isRow ? "ArrowRight" : "ArrowDown";
+      if (e.key === dec) {
+        e.preventDefault();
+        nudge(-0.02);
+      } else if (e.key === inc) {
+        e.preventDefault();
+        nudge(0.02);
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        nudge(-1);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        nudge(1);
+      } else if (e.key === "Enter" || e.key === "Backspace") {
+        e.preventDefault();
+        setFraction(defaultFraction);
+      }
+    },
+    [isRow, nudge, defaultFraction],
+  );
 
   return (
     <Box
@@ -155,23 +193,79 @@ export function Splitter({
         flex="0 0 auto"
         position="relative"
         zIndex={4}
-        bg={dragging ? "app.accent" : "app.border"}
-        _hover={{ bg: "app.accent" }}
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
         userSelect="none"
         touchAction="none"
-        transition="background 0.12s"
-        width={isRow ? "5px" : undefined}
-        height={isRow ? undefined : "5px"}
+        // Hit area is deliberately wider than the visible line so the divider is
+        // easy to grab; the line itself (the ::before child) stays thin.
+        width={isRow ? "11px" : undefined}
+        height={isRow ? undefined : "11px"}
+        marginX={isRow ? "-3px" : undefined}
+        marginY={isRow ? undefined : "-3px"}
         cursor={isRow ? "ew-resize" : "ns-resize"}
         role="separator"
+        tabIndex={0}
         aria-orientation={isRow ? "vertical" : "horizontal"}
         aria-label={ariaLabel}
+        aria-valuenow={Math.round(fraction * 100)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        className="pane-splitter"
+        data-dragging={dragging ? "" : undefined}
+        data-row={isRow ? "" : undefined}
+        css={{
+          // 細い視認ライン (見た目)。ホバー/ドラッグ/フォーカスでアクセント色に。
+          "&::before": {
+            content: '""',
+            position: "absolute",
+            background: "var(--border)",
+            transition: "background var(--dur-fast) var(--ease)",
+            ...(isRow
+              ? { top: 0, bottom: 0, left: "50%", width: "1px", transform: "translateX(-50%)" }
+              : { left: 0, right: 0, top: "50%", height: "1px", transform: "translateY(-50%)" }),
+          },
+          "&:hover::before, &[data-dragging]::before, &:focus-visible::before": {
+            background: "var(--accent)",
+            ...(isRow ? { width: "2px" } : { height: "2px" }),
+          },
+          // つかみどころのグリップ (ドット)。ホバー/フォーカスで出す。
+          "& .pane-splitter-grip": {
+            position: "relative",
+            zIndex: 1,
+            display: "flex",
+            flexDirection: isRow ? "column" : "row",
+            gap: "3px",
+            opacity: 0,
+            transition: "opacity var(--dur-fast) var(--ease)",
+          },
+          "&:hover .pane-splitter-grip, &[data-dragging] .pane-splitter-grip, &:focus-visible .pane-splitter-grip":
+            { opacity: 0.9 },
+          "& .pane-splitter-grip > span": {
+            width: "3px",
+            height: "3px",
+            borderRadius: "50%",
+            background: "var(--accent)",
+          },
+          "&:focus-visible": {
+            outline: "none",
+            boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)",
+          },
+        }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onDoubleClick={onDoubleClick}
-      />
+        onKeyDown={onKeyDown}
+      >
+        <Box className="pane-splitter-grip" aria-hidden>
+          <span />
+          <span />
+          <span />
+        </Box>
+      </Box>
       <Box
         display="flex"
         flexDirection="column"
