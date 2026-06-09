@@ -393,6 +393,22 @@ export const GRID_CSS: SystemStyleObject = {
   "& th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc):hover .th-sort-indicator::before": {
     opacity: 0.85,
   },
+  // 多列ソートの優先順位バッジ (#479)。方向アイコンの右に小さな順位番号を出す。
+  "& th .th-sort-rank": {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: "14px",
+    height: "14px",
+    marginLeft: "2px",
+    padding: "0 3px",
+    fontSize: "9px",
+    fontWeight: 700,
+    lineHeight: 1,
+    color: "var(--bg)",
+    background: "var(--accent)",
+    borderRadius: "7px",
+  },
   // 列ヘッダのフィルタアイコン。クリックで条件ポップアップ (ColumnFilterMenu) を開く。
   "& th .th-filter-button": {
     display: "inline-flex",
@@ -2093,6 +2109,9 @@ export function DataGrid({
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
   const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter);
+  // Multi-column sort summary (#479): surface a clear-all affordance when more
+  // than one sort key is active (single-column sort clears via its own cycle).
+  const multiSortActive = enableColumnControls && sorting.length > 1;
 
   // After every render, attempt to focus the pending cell (the element may not
   // have been in the DOM on the previous cycle if the virtualizer needed to
@@ -2494,9 +2513,12 @@ export function DataGrid({
 
   return (
     <>
-      {isFiltered && (
+      {(isFiltered || multiSortActive) && (
         <Box className="grid-filter-summary">
-          {t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
+          {isFiltered && t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
+          {multiSortActive && (
+            <chakra.span>{t("gridSortCount", { n: sorting.length })}</chakra.span>
+          )}
           {hasColumnFilter && (
             <chakra.button
               type="button"
@@ -2507,6 +2529,15 @@ export function DataGrid({
               }}
             >
               {t("gridClearFilters")}
+            </chakra.button>
+          )}
+          {multiSortActive && (
+            <chakra.button
+              type="button"
+              className="grid-filter-clear"
+              onClick={() => setSorting([])}
+            >
+              {t("gridClearSort")}
             </chakra.button>
           )}
         </Box>
@@ -2536,6 +2567,11 @@ export function DataGrid({
                 const canResize = h.column.getCanResize();
                 const isResizing = h.column.getIsResizing();
                 const sortDir = h.column.getIsSorted();
+                // Multi-column sort (#479): a rank badge shows each key's
+                // priority when more than one column is sorted (Shift+click
+                // chains additional keys; plain click resets to single sort).
+                const multiSort = sorting.length > 1;
+                const sortRank = sortDir && multiSort ? h.column.getSortIndex() + 1 : 0;
                 const sortTitle =
                   sortDir === "asc"
                     ? t("gridSortDesc")
@@ -2616,6 +2652,14 @@ export function DataGrid({
                             ) : sortDir === "desc" ? (
                               <Icon name="sort-desc" size={ICON_SIZES.sm} />
                             ) : null}
+                            {sortRank > 0 && (
+                              <chakra.span
+                                className="th-sort-rank"
+                                aria-label={t("gridSortPriority", { n: sortRank })}
+                              >
+                                {sortRank}
+                              </chakra.span>
+                            )}
                           </chakra.span>
                         </chakra.button>
                         <chakra.button
