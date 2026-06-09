@@ -453,9 +453,13 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow: "inset 2px 0 0 0 var(--accent)",
     background: "color-mix(in srgb, var(--accent) 12%, var(--bg-header))",
   },
-  // ピン留め列 (#463) の背景はヘッダ/セルの不透明背景で下の列を隠す。
+  // ピン留め列 (#463) は sticky で固定する。背景を不透明にして横スクロール時に
+  // 下を流れる列を隠し、ストライプ/ホバーの行背景にも追従させる。
   "& th.is-pinned": { background: "var(--bg-header)" },
-  "& td.is-pinned": { background: "var(--bg-cell, var(--bg))" },
+  "& td.is-pinned": { background: "var(--bg)" },
+  "& tbody tr.grid-row-stripe td.is-pinned": { background: "var(--bg-stripe)" },
+  "& tbody tr:hover td.is-pinned": { background: "var(--bg-row-hover)" },
+  // 固定列とスクロール列の境界に影を出してピン状態を視覚的に示す。
   "& th.is-pinned-left, & td.is-pinned-left": {
     boxShadow: "2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
   },
@@ -2900,6 +2904,16 @@ export function DataGrid({
             enableColumnControls ? () => table.toggleAllColumnsVisible(true) : undefined
           }
           onResetLayout={enableColumnControls && hasCustomLayout ? resetColumnLayout : undefined}
+          pinned={
+            enableColumnControls
+              ? table.getColumn(String(filterMenu.colIdx))?.getIsPinned() ?? false
+              : undefined
+          }
+          onPin={
+            enableColumnControls
+              ? (side) => table.getColumn(String(filterMenu.colIdx))?.pin(side)
+              : undefined
+          }
         />
       )}
       <AnimatePresence>
