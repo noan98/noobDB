@@ -567,22 +567,22 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--preview-highlight) 24%, transparent)",
   },
   "& .cell-pending-value": { color: "var(--preview-highlight)", fontWeight: 500 },
-  // ── セル状態の視覚言語 (4 段階の優先順位, #475) ──
-  // 1. selection (キーボード選択) … is-active-cell: アクセントの 2px アウトライン
-  // 2. focus/editing (フォーカス内/編集中) … focus-within: 同じく 2px アウトライン
+  // ── セル状態の視覚言語 (4 段階の優先順位, #475, #540) ──
+  // 1. selection (キーボード選択) … is-active-cell: アクセントの inset リング (#540)
+  // 2. focus/editing (フォーカス内/編集中) … focus-within: 同じく inset リング
   //    + 編集入力 (cell-edit-input) に共有フォーカスリングトークン
   // 3. pending edit (未適用の編集) … is-pending-edit: 左端のアクセントバー + 淡塗り
   // 4. invalid (検証エラー) … is-invalid-edit: 左端の危険色バー + 危険色リング
-  // いずれも --focus-ring / --accent / --error(status-error) トークンを参照し、
-  // ライト/ダーク両テーマで一貫する。outline と box-shadow を使い分けて重ねられる。
-  // セルの編集可否と選択状態の視覚フィードバック (#349)。
-  // 既定のデータセルは「編集できない」ことが伝わるよう矢印カーソルにし (読み取り
-  // 専用セッションや PK/BLOB 列・非テーブル結果では is-editable-cell が付かないため
-  // 自動的にこの見た目になる)、編集可能セルだけテキストカーソル + ホバー時の
-  // アクセントリングで「ダブルクリックで編集できる」affordance を与える。
-  // outline を使うのは、is-pending-edit / is-changed / is-invalid-edit が使う左端の
-  // box-shadow バーと競合させずに重ねるため (両者は別プロパティ)。色は --accent
-  // トークン参照なのでライト/ダーク両テーマで一貫する。
+  // いずれも --focus-ring / --focus-ring-inset / --accent / --error トークンを参照し、
+  // ライト/ダーク両テーマで一貫する。
+  //
+  // #540 の変更: グリッドセルのアクティブ/選択リングをすべて inset に統一。
+  //   - 外側 outline だと隣接セルのリングが重なり合い、矩形選択範囲の輪郭が読みづらい。
+  //   - inset box-shadow はセル境界内に収まるため、選択範囲の輪郭が明確になる。
+  //   - is-pending-edit / is-changed / is-invalid-edit も box-shadow (inset バー) を
+  //     使っているが、方向 (左端バー vs 全周リング) が異なり視覚的に区別できる。
+  //     box-shadow は複数値をカンマで重ねられるため、is-pending-edit + is-active-cell の
+  //     組み合わせでもバーとリングが同時に表示される。
   "& tbody td:not(.row-index):not(.col-filler):not(.grid-empty-cell)": {
     cursor: "default",
   },
@@ -591,20 +591,33 @@ export const GRID_CSS: SystemStyleObject = {
     outline: "1px solid color-mix(in srgb, var(--accent) 45%, transparent)",
     outlineOffset: "-1px",
   },
-  // 編集中 (アクティブ) のセルははっきりしたアクセントのアウトラインで強調し、
-  // どのセルを編集しているかを把握しやすくする。
+  // 編集中 (アクティブ) のセルははっきりした inset リングで強調し、
+  // どのセルを編集しているかを把握しやすくする (#540: inset で隣接セルと重ならない)。
   "& td.is-editable-cell:focus-within": {
-    outline: "2px solid var(--accent)",
-    outlineOffset: "-2px",
+    outline: "none",
+    boxShadow: "var(--focus-ring-inset)",
   },
   // キーボードナビゲーションで選択中のセル (編集モードでない場合のみ表示)
+  // inset リングで描くことで隣接セルのリングが重ならず、選択範囲の輪郭が明確 (#540)。
   "& td.is-active-cell:not(:focus-within)": {
-    outline: "2px solid var(--accent)",
-    outlineOffset: "-2px",
+    outline: "none",
+    boxShadow: "var(--focus-ring-inset)",
+  },
+  // 矩形範囲選択の各セルにも inset リングを付与し、選択範囲の輪郭を強調する (#540)。
+  // アクティブセルと区別するため透明度を下げ (--focus-ring-inset より淡い)、
+  // 「選択されているが現在のカーソル位置ではない」状態を視覚的に分離する。
+  "& tbody td.is-selected-cell:not(.is-active-cell)": {
+    boxShadow:
+      "inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--accent) 45%, transparent)",
   },
   "& td.is-invalid-edit": { boxShadow: "inset 2px 0 0 var(--status-error)" },
   "& td.is-invalid-edit.is-pending-edit": {
     background: "color-mix(in srgb, var(--status-error) 12%, transparent)",
+  },
+  // アクティブセルが invalid-edit のとき: 左端エラーバー + inset エラーリングを重ねる (#540)。
+  "& td.is-invalid-edit.is-active-cell:not(:focus-within)": {
+    boxShadow:
+      "inset 2px 0 0 var(--status-error), inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--status-error) 55%, transparent)",
   },
   "& .cell-edit-wrap": { position: "relative" },
   "& .cell-edit-input": {
