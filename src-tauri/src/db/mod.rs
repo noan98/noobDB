@@ -633,11 +633,15 @@ fn mask_for_analysis(src: &[char]) -> Vec<char> {
 /// Which driver's string / comment syntaxes [`strip_sql_comments`] should
 /// recognise. The differences that matter here:
 ///
-/// * MySQL: `#` starts a line comment, backslash escapes work inside `'…'` /
-///   `"…"` strings, and backticks quote identifiers.
+/// * MySQL: `#` starts a line comment, `--` starts one only when followed by
+///   whitespace or a control character (`x--1` is `x - (-1)`), backslash
+///   escapes work inside `'…'` / `"…"` strings, and backticks quote
+///   identifiers.
 /// * PostgreSQL: dollar-quoted strings (`$$…$$` / `$tag$…$tag$`) must be
-///   preserved verbatim; backslash is not an escape in standard strings.
-/// * SQLite: like PostgreSQL minus dollar quotes, plus backtick identifiers.
+///   preserved verbatim, block comments nest, and backslash is not an escape
+///   in standard strings.
+/// * SQLite: like PostgreSQL minus dollar quotes and comment nesting, plus
+///   backtick identifiers.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SqlFlavor {
     MySql,
@@ -662,21 +666,46 @@ pub(crate) fn strip_sql_comments(sql: &str, flavor: SqlFlavor) -> String {
     let mut i = 0;
     while i < n {
         let c = src[i];
-        // Line comment: `-- …` (all flavors) or `# …` (MySQL), up to newline.
-        if (c == '-' && i + 1 < n && src[i + 1] == '-') || (c == '#' && flavor == SqlFlavor::MySql)
-        {
+        // Line comment: `-- …` up to newline, plus `# …` on MySQL. MySQL only
+        // treats `--` as a comment opener when followed by whitespace or a
+        // control character — `balance--1` is `balance - (-1)` there — while
+        // PostgreSQL / SQLite need no separator.
+        let dash_comment = c == '-'
+            && i + 1 < n
+            && src[i + 1] == '-'
+            && match flavor {
+                SqlFlavor::MySql => {
+                    i + 2 < n && (src[i + 2].is_ascii_whitespace() || src[i + 2].is_ascii_control())
+                }
+                SqlFlavor::Postgres | SqlFlavor::Sqlite => true,
+            };
+        if dash_comment || (c == '#' && flavor == SqlFlavor::MySql) {
             while i < n && src[i] != '\n' {
                 i += 1;
             }
             continue; // the newline itself is emitted by the loop below
         }
-        // Block comment: `/* … */` → one space.
+        // Block comment: `/* … */` → one space. PostgreSQL block comments
+        // nest (`/* a /* b */ c */` is one comment), so track depth there;
+        // MySQL / SQLite end at the first `*/`.
         if c == '/' && i + 1 < n && src[i + 1] == '*' {
+            let mut depth = 1usize;
             i += 2;
-            while i < n && !(src[i] == '*' && i + 1 < n && src[i + 1] == '/') {
-                i += 1;
+            while i < n && depth > 0 {
+                if src[i] == '*' && i + 1 < n && src[i + 1] == '/' {
+                    depth -= 1;
+                    i += 2;
+                } else if flavor == SqlFlavor::Postgres
+                    && src[i] == '/'
+                    && i + 1 < n
+                    && src[i + 1] == '*'
+                {
+                    depth += 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
             }
-            i = (i + 2).min(n);
             out.push(' ');
             continue;
         }
@@ -1182,6 +1211,55 @@ mod tests {
         assert_eq!(
             strip_sql_comments("SELECT $fn$ -- not a comment $fn$", SqlFlavor::Postgres),
             "SELECT $fn$ -- not a comment $fn$"
+        );
+    }
+
+    #[test]
+    fn strip_sql_comments_mysql_dash_dash_needs_separator() {
+        use super::{strip_sql_comments, SqlFlavor};
+        // MySQL: `--` without a following space is subtraction of a negative
+        // (`x--1` = `x - (-1)`), not a comment.
+        assert_eq!(
+            strip_sql_comments("UPDATE t SET x = x--1 WHERE id = 1", SqlFlavor::MySql),
+            "UPDATE t SET x = x--1 WHERE id = 1"
+        );
+        assert_eq!(
+            strip_sql_comments("SELECT balance--1 FROM t", SqlFlavor::MySql),
+            "SELECT balance--1 FROM t"
+        );
+        // With the separator it is a comment again (newline kept).
+        assert_eq!(
+            strip_sql_comments("SELECT 1 -- note\nFROM t", SqlFlavor::MySql),
+            "SELECT 1 \nFROM t"
+        );
+        // PostgreSQL / SQLite need no separator after `--`.
+        assert_eq!(
+            strip_sql_comments("SELECT balance--1 FROM t", SqlFlavor::Postgres),
+            "SELECT balance"
+        );
+        assert_eq!(
+            strip_sql_comments("SELECT balance--1 FROM t", SqlFlavor::Sqlite),
+            "SELECT balance"
+        );
+    }
+
+    #[test]
+    fn strip_sql_comments_postgres_block_comments_nest() {
+        use super::{strip_sql_comments, SqlFlavor};
+        // PostgreSQL block comments nest: the whole thing is one comment.
+        assert_eq!(
+            strip_sql_comments("SELECT /* a /* b */ c */ 1", SqlFlavor::Postgres),
+            "SELECT   1"
+        );
+        // MySQL / SQLite end at the first `*/` (no nesting).
+        assert_eq!(
+            strip_sql_comments("SELECT /* a /* b */ c */ 1", SqlFlavor::MySql),
+            "SELECT   c */ 1"
+        );
+        // Unterminated nested comment swallows to end-of-input, like before.
+        assert_eq!(
+            strip_sql_comments("SELECT /* a /* b */ c", SqlFlavor::Postgres),
+            "SELECT  "
         );
     }
 
