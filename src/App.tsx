@@ -37,7 +37,7 @@ import {
   buildTruncateSql,
 } from "./components/tableMaintenance";
 import { EmptyState } from "./components/EmptyState";
-import { DisconnectedIllustration } from "./components/illustrations";
+import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -1478,7 +1478,8 @@ export default function App() {
       const ok = await confirm({
         title: translate("productionConfirmTitle"),
         message: (
-          <Flex direction="column" gap="var(--space-2)" color="app.text">
+          <Flex direction="column" gap="var(--space-2)" color="app.text" alignItems="center">
+            <ProductionWarningIllustration size={80} />
             <Flex align="center" gap="var(--space-2)">
               {profile.color && (
                 <chakra.span

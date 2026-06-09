@@ -4,6 +4,52 @@ import type { I18nKey } from "./i18n";
 // when nothing matches. Patterns cover the wording used by MySQL, PostgreSQL
 // and SQLite (all three drivers this app can connect to). The first matching
 // pattern wins, so more specific checks must come before broader ones.
+
+/**
+ * エラー状態に対応するイラスト種別。
+ * illustrations.tsx の各コンポーネント名に対応する文字列リテラルで表す (#539)。
+ * - "connectionFailed": サーバに到達できない / 接続失敗
+ * - "timeout": クエリやセッションがタイムアウト
+ * - "permissionDenied": 認証失敗 / アクセス拒否 / 権限不足
+ * - "schemaLoadFailed": スキーマ読み込み失敗 (テーブル/カラム/データベース不明含む)
+ * - "queryFailed": その他のクエリエラー (構文エラー・制約違反など)
+ */
+export type ErrorIllustrationKind =
+  | "connectionFailed"
+  | "timeout"
+  | "permissionDenied"
+  | "schemaLoadFailed"
+  | "queryFailed";
+
+/**
+ * エラーメッセージ文字列からイラスト種別を選択する。
+ * `matchErrorHint` と同じ PATTERNS を補完する形で使う。
+ * null を返すことはなく、常に何らかの種別を返す (フォールバックは "queryFailed")。
+ */
+export function illustrationForError(raw: string): ErrorIllustrationKind {
+  // タイムアウト: Rust バックエンドの AppError::Timeout の文言と sqlx の pool タイムアウト
+  if (/timed? ?out|timeout/i.test(raw)) return "timeout";
+  // 接続失敗: サーバへの到達不能 / 接続切断
+  if (
+    /connection refused|(?:can't|cannot|couldn't|could not) connect|connection reset|connection timed out|server has gone away|lost connection|broken pipe|connection was killed|server closed the connection|terminating connection|error communicating with database/i.test(
+      raw,
+    )
+  )
+    return "connectionFailed";
+  // 権限不足: 認証失敗 / アクセス拒否
+  if (/access denied|authentication failed|password authentication failed|permission denied|insufficient privilege/i.test(raw))
+    return "permissionDenied";
+  // スキーマ系: テーブル/カラム/データベースが存在しない
+  if (
+    /unknown column|no such column|column .* does(?:n't| not) exist|unknown database|database .* does(?:n't| not) exist|table .* does(?:n't| not) exist|no such table|relation .* does not exist/i.test(
+      raw,
+    )
+  )
+    return "schemaLoadFailed";
+  // その他 (構文エラー・制約違反など)
+  return "queryFailed";
+}
+
 const PATTERNS: { test: RegExp; key: I18nKey }[] = [
   { test: /sql syntax|syntax error/i, key: "errorHintSyntax" },
   {
