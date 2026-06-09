@@ -1205,7 +1205,16 @@ export default function App() {
       prev.map((p) => {
         if (p.id !== paneId) return p;
         const cur = new Set(p.tabIds);
-        if (orderedIds.length !== p.tabIds.length || !orderedIds.every((id) => cur.has(id))) {
+        const next = new Set(orderedIds);
+        // Accept only a true permutation: same length, no duplicates, and the
+        // two id sets match exactly. This rejects a corrupt list like
+        // ["a","a","b"] that would otherwise drop a tab and leave it unreachable.
+        if (
+          orderedIds.length !== p.tabIds.length ||
+          next.size !== p.tabIds.length ||
+          !orderedIds.every((id) => cur.has(id)) ||
+          !p.tabIds.every((id) => next.has(id))
+        ) {
           return p;
         }
         return { ...p, tabIds: orderedIds };

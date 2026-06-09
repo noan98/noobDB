@@ -1761,27 +1761,25 @@ export function DataGrid({
   // visual feedback, and commit a new order on drop.
   const [dragColId, setDragColId] = useState<string | null>(null);
   const [dragOverColId, setDragOverColId] = useState<string | null>(null);
-  const reorderColumn = useCallback(
-    (fromId: string, toId: string) => {
-      if (fromId === toId) return;
-      const base = (
-        columnOrderRef.current.length
-          ? columnOrderRef.current
-          : columns.map((_, i) => String(i))
-      ).slice();
-      const fromIdx = base.indexOf(fromId);
-      if (fromIdx < 0) return;
-      const [moved] = base.splice(fromIdx, 1);
-      const insertAt = base.indexOf(toId);
-      if (insertAt < 0) return;
-      base.splice(insertAt, 0, moved);
-      handleColumnOrderChange(base);
-    },
-    // The natural-order fallback derives from `columns`; the persist handler is
-    // stable per result shape.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [columns],
-  );
+  // Plain (non-memoized) function so it always closes over the current
+  // `handleColumnOrderChange` / `persistColumnState`, whose persist key
+  // (`colStateKey`) tracks database/table — not just `columns`. It's only
+  // invoked from the (already per-render) header onDrop, so it needn't be stable.
+  const reorderColumn = (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    const base = (
+      columnOrderRef.current.length
+        ? columnOrderRef.current
+        : columns.map((_, i) => String(i))
+    ).slice();
+    const fromIdx = base.indexOf(fromId);
+    if (fromIdx < 0) return;
+    const [moved] = base.splice(fromIdx, 1);
+    const insertAt = base.indexOf(toId);
+    if (insertAt < 0) return;
+    base.splice(insertAt, 0, moved);
+    handleColumnOrderChange(base);
+  };
 
   const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
     return columns.map((c, i) => {

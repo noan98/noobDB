@@ -73,6 +73,16 @@ export function Splitter({
     };
   }, [dragging, direction]);
 
+  // Min/max fraction the divider may take, leaving at least `minSize` px on each
+  // side. Shared by pointer drag and keyboard nudge so the clamp stays identical.
+  const fractionBounds = useCallback(
+    (total: number) => ({
+      minF: total > 2 * minSize ? minSize / total : 0,
+      maxF: total > 2 * minSize ? 1 - minSize / total : 1,
+    }),
+    [minSize],
+  );
+
   const updateFromPointer = useCallback(
     (clientX: number, clientY: number) => {
       const el = containerRef.current;
@@ -81,11 +91,10 @@ export function Splitter({
       const total = direction === "row" ? rect.width : rect.height;
       if (total <= 0) return;
       const offset = direction === "row" ? clientX - rect.left : clientY - rect.top;
-      const minF = total > 2 * minSize ? minSize / total : 0;
-      const maxF = total > 2 * minSize ? 1 - minSize / total : 1;
+      const { minF, maxF } = fractionBounds(total);
       setFraction(clamp(offset / total, minF, maxF));
     },
-    [direction, minSize],
+    [direction, fractionBounds],
   );
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -130,17 +139,16 @@ export function Splitter({
   }, [defaultFraction, fraction, prefersReducedMotion]);
 
   // Keyboard resize (a11y): arrow keys nudge the divider, Home/End jump to the
-  // min/max, Enter/Backspace reset to the default split. Step respects the same
-  // min-size clamp as pointer dragging.
+  // min/max, Enter resets to the default split. Step respects the same min-size
+  // clamp as pointer dragging.
   const nudge = useCallback(
     (delta: number) => {
       const el = containerRef.current;
       const total = el ? (direction === "row" ? el.getBoundingClientRect().width : el.getBoundingClientRect().height) : 0;
-      const minF = total > 2 * minSize ? minSize / total : 0;
-      const maxF = total > 2 * minSize ? 1 - minSize / total : 1;
+      const { minF, maxF } = fractionBounds(total);
       setFraction((f) => clamp(f + delta, minF, maxF));
     },
-    [direction, minSize],
+    [direction, fractionBounds],
   );
 
   const isRow = direction === "row";
@@ -161,7 +169,9 @@ export function Splitter({
       } else if (e.key === "End") {
         e.preventDefault();
         nudge(1);
-      } else if (e.key === "Enter" || e.key === "Backspace") {
+      } else if (e.key === "Enter") {
+        // Reset to the default split. (Backspace is intentionally not used — it
+        // can trigger browser "back" navigation on a focused non-input element.)
         e.preventDefault();
         setFraction(defaultFraction);
       }
