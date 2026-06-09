@@ -2293,9 +2293,13 @@ export default function App() {
   // (結果セット / 影響行数 / エラー) を集めて batchResults に積む。stopOnError なら
   // 最初のエラーで残りをスキップ、false なら続行する。読み取り専用ガードは文ごとに
   // バックエンドが強制する (api.runQuery 経由なので履歴は汚さない)。
-  const runBatchInTab = useCallback(async (tabId: string, sql: string, stopOnError: boolean) => {
+  // `tabOverride` は、新規結果タブ (#472) を addTab した直後に呼ぶケース用。tabsRef は
+  // effect 経由で更新されるため直後は新タブを見つけられない。その場合はメモリ上の Tab を
+  // 直接渡してレース (無実行化) を避ける。同一タブの再実行では渡さず、tabsRef の最新
+  // フラグで再入ガードを効かせる。
+  const runBatchInTab = useCallback(async (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => {
     if (!sessionId) return;
-    const tab = tabsRef.current.find((tt) => tt.id === tabId);
+    const tab = tabOverride ?? tabsRef.current.find((tt) => tt.id === tabId);
     if (!tab) return;
     // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
     if (tab.batchRunning || tab.streaming) return;
@@ -2365,6 +2369,10 @@ export default function App() {
       showChart: false,
       batchResults: undefined,
       preview: null,
+      // 結果を置き換えるので、旧結果由来の保留編集 (#441) は破棄して整合を保つ。
+      pendingEdits: {},
+      editUndoStack: [],
+      editRedoStack: [],
     }));
     try {
       const res = await api.runInTransaction(sessionId, sql);
@@ -2420,6 +2428,7 @@ export default function App() {
     // せず SQL を複製した新しいタブで実行して前の結果を残す。以降のゲート/実行はこの
     // ターゲットタブに対して行う。
     let target = tab;
+    let openedInNewTab = false;
     if (tab.kind === "query" && (opts?.newTab ?? settings.resultsInNewTab)) {
       const newTab: Tab = {
         ...makeQueryTab(),
@@ -2429,6 +2438,7 @@ export default function App() {
       };
       addTab(newTab);
       target = newTab;
+      openedInNewTab = true;
     }
     // Auto LIMIT only guards free-form editor queries; table tabs carry their
     // own LIMIT. Writes pass through here too but the backend parser leaves
@@ -2460,7 +2470,8 @@ export default function App() {
       return;
     }
     if (batch) {
-      void runBatchInTab(target.id, sql, true);
+      // 新タブ直後は tabsRef に未反映なので、メモリ上の target を直接渡す。
+      void runBatchInTab(target.id, sql, true, openedInNewTab ? target : undefined);
       return;
     }
     // 明示トランザクション (#414) 中は同一接続で実行する経路に振り分ける。
@@ -2491,7 +2502,9 @@ export default function App() {
       void runBatchInTab(tabId, sql, true);
       return;
     }
-    if (txActiveRef.current) {
+    // 明示トランザクション中の振り分けは runInTabWithGate と同じく query タブのみ。
+    const target = tabsRef.current.find((tt) => tt.id === tabId);
+    if (txActiveRef.current && target?.kind === "query") {
       void runTxInTab(tabId, sql);
       return;
     }
