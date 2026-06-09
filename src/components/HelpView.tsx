@@ -2,10 +2,9 @@ import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { SHORTCUTS } from "../shortcuts";
 import { Icon } from "./Icon";
+import { Modal, ModalBody, ModalHeader } from "./Modal";
 import {
   SettingsHelp,
-  SettingsPane,
-  SettingsHeader,
   SettingsSection,
   SettingsSectionHeader,
 } from "./settingsLayout";
@@ -174,23 +173,12 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
 export function HelpView({ onClose }: { onClose: () => void }) {
   const t = useT();
   return (
-    <SettingsPane>
-      <SettingsHeader>
-        <chakra.h2>{t("helpTitle")}</chakra.h2>
-        <chakra.button
-          px="8px"
-          py="4px"
-          minW="28px"
-          fontSize="base"
-          lineHeight="1"
-          onClick={onClose}
-          aria-label={t("helpClose")}
-          title={t("helpClose")}
-        >
-          <Icon name="close" size={13} />
-        </chakra.button>
-      </SettingsHeader>
-
+    <Modal onClose={onClose} width="760px">
+      <ModalHeader onClose={onClose} closeLabel={t("helpClose")}>
+        {t("helpTitle")}
+      </ModalHeader>
+      <ModalBody>
+        <chakra.div display="flex" flexDirection="column" gap="18px">
       <SettingsHelp fontSize="md" lineHeight="1.5">{t("helpIntro")}</SettingsHelp>
 
       {SECTIONS.map((section) => (
@@ -230,6 +218,8 @@ export function HelpView({ onClose }: { onClose: () => void }) {
           </HelpFeatureGrid>
         </SettingsSection>
       ))}
-    </SettingsPane>
+        </chakra.div>
+      </ModalBody>
+    </Modal>
   );
 }

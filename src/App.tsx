@@ -4169,11 +4169,7 @@ export default function App() {
         }
       >
         <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-        {showHelp ? (
-          <HelpView onClose={() => setShowHelp(false)} />
-        ) : showSettings ? (
-          <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
-        ) : showCompare ? (
+        {showCompare ? (
           <SchemaCompareView profiles={profiles} onClose={() => setShowCompare(false)} />
         ) : showErd && sessionId ? (
           <ERDiagramView
@@ -4724,6 +4720,14 @@ export default function App() {
         </AnimatePresence>
         <AnimatePresence>
           {showCheatSheet && <ShortcutCheatSheet onClose={() => setShowCheatSheet(false)} />}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showSettings && (
+            <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showHelp && <HelpView onClose={() => setShowHelp(false)} />}
         </AnimatePresence>
       </Suspense>
       {confirmDialogElement}

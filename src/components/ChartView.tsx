@@ -8,6 +8,7 @@ import {
   buildChartModel,
   defaultChartConfig,
   inferNumericColumns,
+  niceTicks,
   valueExtent,
   type Aggregation,
   type ChartType,
@@ -144,9 +145,14 @@ export function ChartView({ result, onClose }: Props) {
         ) : config.yCols.length === 0 ? (
           <chakra.div color="app.textMuted" fontSize="sm">{t("chartPickY")}</chakra.div>
         ) : config.type === "pie" ? (
-          <PieChart model={model} />
+          <PieChart model={model} colors={SERIES_COLORS} />
         ) : (
-          <CartesianChart model={model} type={config.type} />
+          <CartesianChart
+            model={model}
+            type={config.type}
+            xName={result.columns[config.xCol]?.name ?? ""}
+            colors={SERIES_COLORS}
+          />
         )}
       </chakra.div>
     </Flex>
@@ -163,10 +169,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const W = 900;
-const H = 420;
-const PAD = { left: 56, right: 16, top: 12, bottom: 56 };
+const H = 440;
+const PAD = { left: 60, right: 20, top: 16, bottom: 66 };
 
-function CartesianChart({ model, type }: { model: ChartModel; type: ChartType }) {
+function CartesianChart({
+  model,
+  type,
+  xName,
+  colors,
+}: {
+  model: ChartModel;
+  type: ChartType;
+  xName: string;
+  colors: string[];
+}) {
+  // ホバー中のバンド (X インデックス)。値を読み取るためのガイド/ツールチップに使う。
+  const [hover, setHover] = useState<number | null>(null);
   const { min, max } = valueExtent(model);
   const span = max - min || 1;
   const plotW = W - PAD.left - PAD.right;
@@ -177,21 +195,78 @@ function CartesianChart({ model, type }: { model: ChartModel; type: ChartType })
   const xAt = (i: number) => PAD.left + bandW * i + bandW / 2;
   const yAt = (v: number) => PAD.top + plotH - ((v - min) / span) * plotH;
   const zeroY = yAt(0);
-
+  // キリの良い目盛り値でグリッド線を引き、値を読み取りやすくする。
+  const ticks = niceTicks(min, max, 5);
   // X 軸ラベルは多すぎると間引く。
   const labelStep = Math.ceil(n / 16);
+  // 点が少ないときだけマーカーを描く (多いとつぶれて逆に読みにくい)。
+  const showMarkers = type !== "bar" && n <= 60;
+
+  // ポインタの X からバンドインデックスを逆算する (viewBox スケールに依存しないよう
+  // 実ピクセル幅で正規化してから W 座標へ写す)。
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const svgX = ((e.clientX - rect.left) / rect.width) * W;
+    const idx = Math.floor((svgX - PAD.left) / bandW);
+    setHover(idx >= 0 && idx < n ? idx : null);
+  };
 
   return (
-    <chakra.svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxHeight: "100%" }} role="img">
-      {/* 軸 */}
+    <chakra.svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      style={{ maxHeight: "100%" }}
+      role="img"
+      onMouseMove={onMove}
+      onMouseLeave={() => setHover(null)}
+    >
+      {/* 水平グリッド線 + Y 目盛ラベル。0 基線だけ濃く実線にする。 */}
+      {ticks.map((v, i) => {
+        const y = yAt(v);
+        const baseline = v === 0;
+        return (
+          <g key={i}>
+            <line
+              x1={PAD.left}
+              y1={y}
+              x2={PAD.left + plotW}
+              y2={y}
+              stroke={baseline ? "var(--border)" : "var(--border-subtle)"}
+              strokeDasharray={baseline ? undefined : "3 4"}
+            />
+            <text x={PAD.left - 8} y={y + 3} textAnchor="end" fontSize="11" fill="var(--text-muted)">
+              {formatTick(v)}
+            </text>
+          </g>
+        );
+      })}
+      {/* Y 軸線 */}
       <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + plotH} stroke="var(--border)" />
-      <line x1={PAD.left} y1={zeroY} x2={PAD.left + plotW} y2={zeroY} stroke="var(--border)" />
-      {/* Y 軸の目盛 (min/0/max) */}
-      {[min, 0, max].map((v, i) => (
-        <text key={i} x={PAD.left - 6} y={yAt(v) + 3} textAnchor="end" fontSize="10" fill="var(--text-muted)">
-          {formatTick(v)}
-        </text>
-      ))}
+
+      {/* ホバー中バンドの強調 + 縦ガイド */}
+      {hover != null && (
+        <>
+          <rect
+            x={PAD.left + bandW * hover}
+            y={PAD.top}
+            width={bandW}
+            height={plotH}
+            fill="var(--accent)"
+            fillOpacity={0.08}
+          />
+          <line
+            x1={xAt(hover)}
+            y1={PAD.top}
+            x2={xAt(hover)}
+            y2={PAD.top + plotH}
+            stroke="var(--accent)"
+            strokeOpacity={0.5}
+            strokeDasharray="2 3"
+          />
+        </>
+      )}
+
       {/* X 軸ラベル */}
       {model.labels.map((lab, i) =>
         i % labelStep === 0 ? (
@@ -201,9 +276,16 @@ function CartesianChart({ model, type }: { model: ChartModel; type: ChartType })
           </text>
         ) : null,
       )}
+      {/* X 軸タイトル (どの列が横軸かを明示) */}
+      {xName && (
+        <text x={PAD.left + plotW / 2} y={H - 6} textAnchor="middle" fontSize="11" fontWeight={600} fill="var(--text-secondary)">
+          {truncate(xName, 48)}
+        </text>
+      )}
+
       {/* 系列 */}
       {model.series.map((s, si) => {
-        const color = SERIES_COLORS[si % SERIES_COLORS.length];
+        const color = colors[si % colors.length];
         if (type === "bar") {
           const seriesCount = model.series.length;
           const barW = (bandW * 0.7) / seriesCount;
@@ -213,7 +295,17 @@ function CartesianChart({ model, type }: { model: ChartModel; type: ChartType })
                 const x = PAD.left + bandW * i + bandW * 0.15 + barW * si;
                 const y = Math.min(yAt(v), zeroY);
                 const h = Math.abs(yAt(v) - zeroY);
-                return <rect key={i} x={x} y={y} width={Math.max(1, barW)} height={Math.max(0, h)} fill={color} />;
+                return (
+                  <rect
+                    key={i}
+                    x={x}
+                    y={y}
+                    width={Math.max(1, barW)}
+                    height={Math.max(0, h)}
+                    fill={color}
+                    fillOpacity={hover == null || hover === i ? 1 : 0.5}
+                  />
+                );
               })}
             </g>
           );
@@ -225,15 +317,94 @@ function CartesianChart({ model, type }: { model: ChartModel; type: ChartType })
           <g key={si}>
             {type === "area" && <path d={areaPath} fill={color} fillOpacity={0.18} />}
             <polyline points={pts} fill="none" stroke={color} strokeWidth={2} />
+            {showMarkers &&
+              s.values.map((v, i) => (
+                <circle
+                  key={i}
+                  cx={xAt(i)}
+                  cy={yAt(v)}
+                  r={hover === i ? 4.5 : 2.5}
+                  fill={color}
+                  stroke="var(--bg-surface)"
+                  strokeWidth={1}
+                />
+              ))}
+            {/* マーカー非表示時もホバー点だけは強調する。 */}
+            {!showMarkers && hover != null && (
+              <circle cx={xAt(hover)} cy={yAt(s.values[hover])} r={4} fill={color} stroke="var(--bg-surface)" strokeWidth={1} />
+            )}
           </g>
         );
       })}
+
+      {/* ツールチップ (ホバー中バンドの全系列の値) */}
+      {hover != null && <HoverTooltip model={model} index={hover} gx={xAt(hover)} colors={colors} />}
     </chakra.svg>
   );
 }
 
-function PieChart({ model }: { model: ChartModel }) {
+/** カルテシアンチャートのホバーツールチップ。X ラベルと各系列の値を一覧表示する。 */
+function HoverTooltip({
+  model,
+  index,
+  gx,
+  colors,
+}: {
+  model: ChartModel;
+  index: number;
+  gx: number;
+  colors: string[];
+}) {
+  const header = truncate(model.labels[index], 26);
+  const rows = model.series.map((s, si) => ({
+    name: truncate(s.name, 22),
+    value: formatValue(s.values[index]),
+    color: colors[si % colors.length],
+  }));
+  const charW = 6.2;
+  const longest = Math.max(header.length, ...rows.map((r) => r.name.length + r.value.length + 4));
+  const boxW = Math.min(320, Math.max(120, longest * charW + 24));
+  const rowH = 17;
+  const boxH = 12 + rowH + rows.length * rowH + 6;
+  // ガイドの右に置くと右端からはみ出す場合は左側へ寄せる。
+  const left = gx + 14 + boxW > W ? gx - 14 - boxW : gx + 14;
+  const top = PAD.top + 6;
+  return (
+    <g pointerEvents="none">
+      <rect
+        x={left}
+        y={top}
+        width={boxW}
+        height={boxH}
+        rx={6}
+        fill="var(--bg-elevated)"
+        stroke="var(--border)"
+        opacity={0.98}
+      />
+      <text x={left + 10} y={top + 18} fontSize="11" fontWeight={700} fill="var(--text)">
+        {header}
+      </text>
+      {rows.map((r, i) => {
+        const ry = top + 12 + rowH + i * rowH;
+        return (
+          <g key={i}>
+            <rect x={left + 10} y={ry - 8} width="9" height="9" rx="2" fill={r.color} />
+            <text x={left + 24} y={ry} fontSize="11" fill="var(--text-secondary)">
+              {r.name}
+            </text>
+            <text x={left + boxW - 10} y={ry} textAnchor="end" fontSize="11" fontWeight={600} fill="var(--text)">
+              {r.value}
+            </text>
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+function PieChart({ model, colors }: { model: ChartModel; colors: string[] }) {
   // 円グラフは先頭系列のみ。負値は 0 にクランプ。
+  const [hover, setHover] = useState<number | null>(null);
   const series = model.series[0];
   const values = series.values.map((v) => Math.max(0, v));
   const total = values.reduce((a, b) => a + b, 0);
@@ -242,7 +413,7 @@ function PieChart({ model }: { model: ChartModel }) {
   const r = 170;
   let angle = -Math.PI / 2;
   return (
-    <chakra.svg viewBox="0 0 720 420" width="100%" style={{ maxHeight: "100%" }} role="img">
+    <chakra.svg viewBox="0 0 720 440" width="100%" style={{ maxHeight: "100%" }} role="img">
       {total === 0 ? (
         <text x={cx} y={cy} textAnchor="middle" fontSize="12" fill="var(--text-muted)">∅</text>
       ) : (
@@ -252,25 +423,57 @@ function PieChart({ model }: { model: ChartModel }) {
           const end = angle + frac * Math.PI * 2;
           angle = end;
           const large = end - start > Math.PI ? 1 : 0;
-          const x1 = cx + r * Math.cos(start);
-          const y1 = cy + r * Math.sin(start);
-          const x2 = cx + r * Math.cos(end);
-          const y2 = cy + r * Math.sin(end);
-          const color = SERIES_COLORS[i % SERIES_COLORS.length];
+          const mid = (start + end) / 2;
+          // ホバー中のスライスは中心から少し飛び出させて強調する。
+          const pop = hover === i ? 10 : 0;
+          const ox = Math.cos(mid) * pop;
+          const oy = Math.sin(mid) * pop;
+          const x1 = cx + ox + r * Math.cos(start);
+          const y1 = cy + oy + r * Math.sin(start);
+          const x2 = cx + ox + r * Math.cos(end);
+          const y2 = cy + oy + r * Math.sin(end);
+          const color = colors[i % colors.length];
+          const pct = frac * 100;
+          // ラベルは十分大きいスライスにだけ重ねる (小さいと文字がはみ出す)。
+          const lx = cx + ox + r * 0.62 * Math.cos(mid);
+          const ly = cy + oy + r * 0.62 * Math.sin(mid);
           return (
-            <path key={i} d={`M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`} fill={color} stroke="var(--bg-surface)" strokeWidth={1} />
+            <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} style={{ cursor: "default" }}>
+              <path
+                d={`M ${cx + ox} ${cy + oy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`}
+                fill={color}
+                stroke="var(--bg-surface)"
+                strokeWidth={1}
+              >
+                <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
+              </path>
+              {frac >= 0.05 && (
+                <text x={lx} y={ly} textAnchor="middle" fontSize="12" fontWeight={700} fill="#fff" pointerEvents="none">
+                  {pct.toFixed(0)}%
+                </text>
+              )}
+            </g>
           );
         })
       )}
-      {/* 凡例 (ラベル + 値) */}
-      {model.labels.map((lab, i) => (
-        <g key={i} transform={`translate(440 ${28 + i * 20})`}>
-          <rect width="12" height="12" rx="2" fill={SERIES_COLORS[i % SERIES_COLORS.length]} />
-          <text x="18" y="11" fontSize="11" fill="var(--text)">
-            {truncate(lab)} ({values[i]})
-          </text>
-        </g>
-      ))}
+      {/* 凡例 (ラベル + 値 + 割合) */}
+      {model.labels.map((lab, i) => {
+        const pct = total > 0 ? (values[i] / total) * 100 : 0;
+        return (
+          <g
+            key={i}
+            transform={`translate(440 ${28 + i * 20})`}
+            onMouseEnter={() => setHover(i)}
+            onMouseLeave={() => setHover(null)}
+            style={{ cursor: "default" }}
+          >
+            <rect width="12" height="12" rx="2" fill={colors[i % colors.length]} fillOpacity={hover == null || hover === i ? 1 : 0.5} />
+            <text x="18" y="11" fontSize="11" fontWeight={hover === i ? 700 : 400} fill="var(--text)">
+              {truncate(lab)} — {formatValue(values[i])} ({pct.toFixed(1)}%)
+            </text>
+          </g>
+        );
+      })}
     </chakra.svg>
   );
 }
@@ -278,6 +481,12 @@ function PieChart({ model }: { model: ChartModel }) {
 function formatTick(v: number): string {
   if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(1)}k`;
   return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+/** ツールチップ/凡例向けの値整形。整数は桁区切り、小数は最大 3 桁。 */
+function formatValue(v: number): string {
+  if (Number.isInteger(v)) return v.toLocaleString();
+  return v.toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
 function truncate(s: string, max = 16): string {

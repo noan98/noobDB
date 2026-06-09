@@ -2,13 +2,11 @@ import { useEffect, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Input, Select, Switch } from "./ui";
 import {
   SettingsHelp,
-  SettingsPane,
-  SettingsHeader,
   SettingsSection,
   SettingsSectionHeader,
 } from "./settingsLayout";
@@ -534,23 +532,12 @@ export function SettingsView({ theme, onClose }: Props) {
   };
 
   return (
-    <SettingsPane>
-      <SettingsHeader>
-        <chakra.h2>{t("settingsTitle")}</chakra.h2>
-        <chakra.button
-          px="8px"
-          py="4px"
-          minW="28px"
-          fontSize="base"
-          lineHeight="1"
-          onClick={onClose}
-          aria-label={t("settingsClose")}
-          title={t("settingsClose")}
-        >
-          <Icon name="close" size={13} />
-        </chakra.button>
-      </SettingsHeader>
-
+    <Modal onClose={onClose} width="760px">
+      <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
+        {t("settingsTitle")}
+      </ModalHeader>
+      <ModalBody>
+        <chakra.div display="flex" flexDirection="column" gap="18px">
       <SettingsSection>
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsLanguage")}</chakra.h3>
@@ -1061,6 +1048,8 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsLogsPath>
         )}
       </SettingsSection>
-    </SettingsPane>
+        </chakra.div>
+      </ModalBody>
+    </Modal>
   );
 }

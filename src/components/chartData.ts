@@ -153,6 +153,38 @@ export function buildChartModel(
   return { labels, series, sampledFrom: null };
 }
 
+/**
+ * 軸の目盛りに使う「キリの良い」値の配列を昇順で返す (#440 可読性改善)。
+ * `[min, max]` を覆う nice step を求め、その範囲内に収まる目盛り値だけ返す。
+ * 値が縮退している (min === max もしくは非有限) 場合はその 1 点のみ返す。
+ * グリッド線と Y 軸ラベルを等間隔の読みやすい値に揃えるために使う。
+ */
+export function niceTicks(min: number, max: number, count = 5): number[] {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
+    return [Number.isFinite(min) ? min : 0];
+  }
+  const niceNum = (range: number, round: boolean): number => {
+    const exp = Math.floor(Math.log10(range));
+    const frac = range / 10 ** exp;
+    let nf: number;
+    if (round) {
+      nf = frac < 1.5 ? 1 : frac < 3 ? 2 : frac < 7 ? 5 : 10;
+    } else {
+      nf = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 5 ? 5 : 10;
+    }
+    return nf * 10 ** exp;
+  };
+  const step = niceNum(niceNum(max - min, false) / Math.max(1, count - 1), true);
+  const start = Math.ceil(min / step) * step;
+  // 浮動小数の桁ずれ (0.1 + 0.2 など) を丸めるための小数桁数。
+  const decimals = Math.max(0, -Math.floor(Math.log10(step)));
+  const ticks: number[] = [];
+  for (let v = start; v <= max + step * 1e-6; v += step) {
+    ticks.push(Number(v.toFixed(decimals)));
+  }
+  return ticks;
+}
+
 /** 系列全体の最大値・最小値 (軸スケール用)。空なら {min:0,max:0}。 */
 export function valueExtent(model: ChartModel): { min: number; max: number } {
   let min = Infinity;
