@@ -61,6 +61,25 @@ function maskLiterals(sql: string): string {
       i = j;
       continue;
     }
+    if (c === "$" && (i === 0 || !isWordChar(sql[i - 1]))) {
+      // PostgreSQL dollar-quoted string: $$…$$ / $tag$…$tag$. Only treated as
+      // a string when the opening tag is valid (empty or identifier-like, not
+      // starting with a digit — `$1` is a parameter placeholder) and a
+      // matching closing tag exists; otherwise the `$` stays literal so any
+      // keywords remain visible (fail-closed for the checks built on this
+      // mask). A `$` straight after a word char is part of an identifier
+      // (MySQL allows `$` in names), never an opening tag. Mirrors the
+      // backend `mask_for_analysis` (src-tauri/src/db/mod.rs).
+      const tag = matchDollarQuoteTag(sql, i);
+      if (tag) {
+        const close = sql.indexOf(tag, i + tag.length);
+        if (close !== -1) {
+          blank(i + tag.length, close);
+          i = close + tag.length;
+          continue;
+        }
+      }
+    }
     if (c === "'" || c === '"' || c === "`") {
       const quote = c;
       let j = i + 1;
@@ -89,6 +108,19 @@ function maskLiterals(sql: string): string {
     i++;
   }
   return out.join("");
+}
+
+/**
+ * Returns the opening dollar-quote tag (`$$` / `$tag$`) starting at `sql[i]`
+ * (which must be `$`), or null when what follows is not a valid tag. Valid
+ * tags are identifier-like and never start with a digit (`$1` is a Postgres
+ * parameter placeholder, not a tag).
+ */
+function matchDollarQuoteTag(sql: string, i: number): string | null {
+  let j = i + 1;
+  if (/[0-9]/.test(sql[j] ?? "")) return null;
+  while (j < sql.length && /[A-Za-z0-9_]/.test(sql[j])) j++;
+  return sql[j] === "$" ? sql.slice(i, j + 1) : null;
 }
 
 function startsWithKeyword(body: string, keyword: string): boolean {

@@ -104,8 +104,18 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
   const [path, setPath] = useState<string>(`${initialBasename}${extensionFor("csv")}`);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const unlistenRef = useRef<(() => void) | null>(null);
+  // Set on unmount so an in-flight `listenExportStream` (awaited below) can
+  // tell its registration arrived too late and must self-unlisten — otherwise
+  // the listener would be orphaned (the cleanup below has already run).
+  const disposedRef = useRef(false);
 
-  useEffect(() => () => unlistenRef.current?.(), []);
+  useEffect(
+    () => () => {
+      disposedRef.current = true;
+      unlistenRef.current?.();
+    },
+    [],
+  );
 
   const isSaving = status.kind === "saving" || status.kind === "streaming";
 
@@ -179,6 +189,12 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
         toast.error(t("exportError", { error: e.message }));
       },
     });
+    // The modal may have unmounted while the listener was attaching; its
+    // cleanup already ran, so register nothing and drop the listener here.
+    if (disposedRef.current) {
+      unlisten();
+      return;
+    }
     unlistenRef.current = unlisten;
     try {
       await api.exportQueryStream({

@@ -1391,43 +1391,9 @@ fn bind_value<'q>(
     }
 }
 
+/// Quote-aware comment stripping shared across drivers (`db::strip_sql_comments`).
 fn strip_sql_comments(sql: &str) -> String {
-    let mut out = String::with_capacity(sql.len());
-    let mut chars = sql.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '-' if matches!(chars.peek(), Some('-')) => {
-                chars.next();
-                for n in chars.by_ref() {
-                    if n == '\n' {
-                        out.push('\n');
-                        break;
-                    }
-                }
-            }
-            '#' => {
-                for n in chars.by_ref() {
-                    if n == '\n' {
-                        out.push('\n');
-                        break;
-                    }
-                }
-            }
-            '/' if matches!(chars.peek(), Some('*')) => {
-                chars.next();
-                let mut prev = '\0';
-                for n in chars.by_ref() {
-                    if prev == '*' && n == '/' {
-                        break;
-                    }
-                    prev = n;
-                }
-                out.push(' ');
-            }
-            _ => out.push(c),
-        }
-    }
-    out
+    super::strip_sql_comments(sql, super::SqlFlavor::MySql)
 }
 
 /// Decides whether `sql` should run through the result-set path

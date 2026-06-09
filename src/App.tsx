@@ -1879,6 +1879,15 @@ export default function App() {
         }
       },
     });
+    // While the listener was being attached (await above), a newer run on this
+    // tab may have cancelled this stream and registered its own id. Registering
+    // our unlisten now would overwrite (and leak) the newer one, and starting
+    // the backend stream would race two writers patching the same tab — so
+    // detach and bail instead.
+    if (streamIdRef.current.get(tabId) !== streamId) {
+      unlisten();
+      return;
+    }
     streamUnlistenRef.current.set(tabId, unlisten);
 
     try {
@@ -2221,6 +2230,12 @@ export default function App() {
         setStatus({ kind: "key", key: "statusPreviewError", vars: { error }, error: true });
       },
     });
+    // Same stale-stream guard as runQueryInTab: a newer run/preview on this
+    // tab may have superseded this stream while the listener attached.
+    if (streamIdRef.current.get(tabId) !== streamId) {
+      unlisten();
+      return;
+    }
     streamUnlistenRef.current.set(tabId, unlisten);
 
     try {

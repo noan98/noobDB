@@ -50,8 +50,9 @@ export function splitSqlStatements(sql: string): string[] {
       i = closeIdx;
       continue;
     }
-    // ドル引用 $tag$ ... $tag$ (PostgreSQL)。tag は省略可 ($$)。
-    if (ch === "$") {
+    // ドル引用 $tag$ ... $tag$ (PostgreSQL)。tag は省略可 ($$)。直前が単語文字の
+    // `$` は識別子の一部 (MySQL は名前に `$` を許す) なので開始タグとみなさない。
+    if (ch === "$" && (i === 0 || !/[A-Za-z0-9_]/.test(sql[i - 1]))) {
       const open = matchDollarTag(sql, i);
       if (open) {
         const closeIdx = sql.indexOf(open, i + open.length);
@@ -131,10 +132,14 @@ function scanQuoted(sql: string, i: number, quote: string): number {
   return n;
 }
 
-/** `sql[i]` が `$` のとき、ドル引用の開始タグ (`$$` / `$tag$`) を返す。無効なら null。 */
+/**
+ * `sql[i]` が `$` のとき、ドル引用の開始タグ (`$$` / `$tag$`) を返す。無効なら null。
+ * タグは識別子風で数字始まりは不可 (`$1` は PostgreSQL のパラメータプレースホルダ)。
+ */
 function matchDollarTag(sql: string, i: number): string | null {
-  // $tag$ : $ の後に [A-Za-z0-9_]* が続き、再び $ で閉じる。
+  // $tag$ : $ の後に数字以外で始まる [A-Za-z0-9_]* が続き、再び $ で閉じる。
   let j = i + 1;
+  if (/[0-9]/.test(sql[j] ?? "")) return null;
   while (j < sql.length && /[A-Za-z0-9_]/.test(sql[j])) j++;
   if (sql[j] === "$") return sql.slice(i, j + 1);
   return null;
