@@ -59,6 +59,7 @@ import {
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
+import { Skeleton } from "./Skeleton";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
 import {
@@ -3321,20 +3322,51 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }
   if (result.columns.length === 0) {
     if (streaming) {
+      // カラム情報未着のストリーミング中: 密度設定に合わせた行数ぶんのスケルトン行を
+      // 表示してレイアウトシフトを抑える。データ到着後は DataGrid に差し替わる。
+      // 行数は「表示領域の高さ / 推定行高」から概算し、空白が目立たないよう 8 行を
+      // 最大として適度な数にする。
+      const skeletonRowCount = Math.min(8, Math.max(3, Math.round(320 / DENSITY_ROW_ESTIMATE[settings.density])));
+      const skeletonColWidths = [42, 68, 55, 80, 50, 72, 60, 45];
       return (
         <Box
           flex="1 1 auto"
           minHeight={0}
           minWidth={0}
-          overflow="auto"
+          overflow="hidden"
           bg="app.surface"
-          display="flex"
-          alignItems="center"
-          justifyContent="center"
-          gap="8px"
+          role="status"
+          aria-label={t("statusRunningQuery")}
+          aria-busy="true"
+          aria-live="polite"
         >
-          <Spinner />
-          <chakra.span>{t("statusRunningQuery")}</chakra.span>
+          {/* スケルトン行: 密度ごとの行高に合わせた疑似列バーを並べる */}
+          <Box
+            px="12px"
+            pt="10px"
+            display="flex"
+            flexDirection="column"
+            gap={settings.density === "compact" ? "4px" : settings.density === "spacious" ? "8px" : "6px"}
+            aria-hidden
+          >
+            {Array.from({ length: skeletonRowCount }, (_, i) => (
+              <Box key={i} display="flex" gap="8px" opacity={1 - i * 0.1}>
+                {skeletonColWidths.slice(0, 5).map((w, ci) => (
+                  <Skeleton
+                    key={ci}
+                    height={`${DENSITY_ROW_ESTIMATE[settings.density] - 8}px`}
+                    style={{ width: `${w}px`, animationDelay: `${(i * 5 + ci) * 0.05}s` }}
+                    flexShrink={0}
+                  />
+                ))}
+                <Skeleton
+                  height={`${DENSITY_ROW_ESTIMATE[settings.density] - 8}px`}
+                  flex="1"
+                  style={{ animationDelay: `${(i * 5 + 5) * 0.05}s` }}
+                />
+              </Box>
+            ))}
+          </Box>
         </Box>
       );
     }
