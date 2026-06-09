@@ -967,6 +967,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             flexDirection="column"
             justifyContent="center"
             gap="1px"
+            flex="1"
             minWidth={0}
             lineHeight="1.25"
           >

@@ -35,13 +35,12 @@ const NavButton = chakra("button", {
     h: "26px",
     px: "6px",
     borderRadius: "6px",
-    borderWidth: "1px",
-    borderColor: "app.border",
+    borderWidth: 0,
     color: "app.text",
-    bg: "app.surface",
+    bg: "transparent",
     cursor: "pointer",
     _hover: { bg: "app.rowHover" },
-    _disabled: { opacity: 0.4, cursor: "not-allowed", _hover: { bg: "app.surface" } },
+    _disabled: { opacity: 0.4, cursor: "not-allowed", _hover: { bg: "transparent" } },
   },
 });
 
@@ -138,7 +137,7 @@ export function PaginationBar({
 
       <chakra.span flex="1" />
 
-      <chakra.label display="inline-flex" alignItems="center" gap="6px" fontSize="xs">
+      <chakra.label display="inline-flex" alignItems="center" gap="6px" fontSize="xs" whiteSpace="nowrap">
         {t("pageJumpLabel")}
         <chakra.input
           type="number"
@@ -161,7 +160,7 @@ export function PaginationBar({
         />
       </chakra.label>
 
-      <chakra.label display="inline-flex" alignItems="center" gap="6px" fontSize="xs">
+      <chakra.label display="inline-flex" alignItems="center" gap="6px" fontSize="xs" whiteSpace="nowrap">
         {t("pageSizeLabel")}
         <chakra.select
           value={pageSize}
