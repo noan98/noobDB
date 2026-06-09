@@ -1,7 +1,9 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
-import { api, ConnectionProfile, TableColumnInfo } from "../api/tauri";
+import { api, ConnectionProfile, IndexInfo, SchemaObject, TableColumnInfo } from "../api/tauri";
+import type { TableRef } from "../tableQuickAccess";
+import { tableRefEquals } from "../tableQuickAccess";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
@@ -28,6 +30,8 @@ const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 /** サイドバーフィルタで公開するハンドル型。App.tsx が Cmd/Ctrl+P でフォーカスを当てるために使う。 */
 export interface ConnectionListHandle {
   focusFilter: () => void;
+  /** スキーマツリーをサーバーから再取得する (#496: DDL 実行後の反映に使う)。 */
+  refreshSchema: () => void;
 }
 
 /** 検索クエリ `query` にマッチする部分をハイライト表示するシンプルなコンポーネント。
@@ -131,6 +135,21 @@ const TreeEmpty = chakra("div", {
   },
 });
 
+// クイックアクセスのセクション見出し (お気に入り / 最近)。
+const QuickAccessHeader = chakra("div", {
+  base: {
+    pt: "6px",
+    pb: "2px",
+    pl: "8px",
+    pr: "10px",
+    fontSize: "2xs",
+    fontWeight: 600,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: "app.textMuted",
+  },
+});
+
 /** 接続状態ドットの状態別 style (旧 .status-dot.status-*)。色は動的トークンの
  *  ため CSS 変数を直接参照する。`connecting` の脈動は App.css の @keyframes pulse。 */
 const STATUS_DOT_STYLE = {
@@ -171,8 +190,24 @@ interface Props {
   onInsertTableSelect: (database: string, table: string) => void;
   /** Provided only for drivers with a single-statement definition (MySQL/SQLite). */
   onShowCreateTable?: (database: string, table: string) => void;
+  /** DB ノードから新規テーブル作成ウィザード (#460) を開く。 */
+  onCreateTable?: (database: string) => void;
+  /** テーブル保守操作 (#496): TRUNCATE / DROP / RENAME。read_only では無効化される。 */
+  onTruncateTable?: (database: string, table: string) => void;
+  onDropTable?: (database: string, table: string) => void;
+  onRenameTable?: (database: string, table: string) => void;
+  /** テーブル名をクリップボードへコピー (#496 補助)。 */
+  onCopyTableName?: (table: string) => void;
+  /** スキーマオブジェクト (#483) の定義を開く。`id` は同名衝突を避ける一意識別子。 */
+  onOpenObjectDefinition?: (database: string, kind: string, name: string, id: string | null) => void;
   /** Row cap shown in the "Run SELECT *" menu label. */
   selectLimit: number;
+  /** お気に入りテーブル (アクティブ接続) のクイックアクセス (#461)。 */
+  favorites?: TableRef[];
+  /** 最近開いたテーブル (アクティブ接続) のクイックアクセス (#461)。 */
+  recent?: TableRef[];
+  /** お気に入りのトグル (登録/解除)。未指定ならお気に入り UI を出さない。 */
+  onToggleFavorite?: (database: string, table: string) => void;
 }
 
 interface MenuState {
@@ -203,7 +238,16 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunTableSelect,
   onInsertTableSelect,
   onShowCreateTable,
+  onCreateTable,
+  onTruncateTable,
+  onDropTable,
+  onRenameTable,
+  onCopyTableName,
+  onOpenObjectDefinition,
   selectLimit,
+  favorites,
+  recent,
+  onToggleFavorite,
 }, ref) {
   const t = useT();
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
@@ -212,6 +256,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // グループ折りたたみ状態は localStorage に永続化し、再起動後も維持する (#350)。
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(readCollapsedGroups);
   const [tableColumns, setTableColumns] = useState<Record<string, TableColumnInfo[]>>({});
+  // テーブルごとのインデックス一覧 (#459)。テーブル展開時に列と並行で遅延取得する。
+  const [tableIndexes, setTableIndexes] = useState<Record<string, IndexInfo[]>>({});
+  // DB ごとの非テーブルオブジェクト (#483)。DB 展開時に遅延取得する。
+  const [schemaObjects, setSchemaObjects] = useState<Record<string, SchemaObject[]>>({});
   const [databases, setDatabases] = useState<string[] | null>(null);
   const [tables, setTables] = useState<Record<string, string[]>>({});
   // Approximate row counts per database, keyed `db -> table -> estimate`. Read
@@ -245,7 +293,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       filterInputRef.current?.focus();
       filterInputRef.current?.select();
     },
+    refreshSchema: () => {
+      void refreshSchemaRef.current?.();
+    },
   }));
+  // `refreshSchema` is defined later in the body; reach it through a ref so the
+  // imperative handle doesn't depend on declaration order.
+  const refreshSchemaRef = useRef<(() => Promise<void>) | null>(null);
 
   // Id of the session whose schema is currently being re-fetched, or null.
   // Keyed by session (not a shared boolean) so a refresh only disables/​spins
@@ -339,6 +393,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setRefreshingSession((cur) => (cur === targetSessionId ? null : cur));
     }
   }, [sessionId, refreshingSession, expandedDbs, expandedTables]);
+  // Keep the imperative-handle ref pointed at the latest refreshSchema.
+  refreshSchemaRef.current = refreshSchema;
 
   useEffect(() => {
     setTables({});
@@ -346,6 +402,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setExpandedDbs({});
     setExpandedTables({});
     setTableColumns({});
+    setTableIndexes({});
+    setSchemaObjects({});
     tablesInFlightRef.current.clear();
     estimatesInFlightRef.current.clear();
     if (sessionId) {
@@ -432,6 +490,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (onShowCreateTable) {
       items.push({ label: t("contextMenuShowCreate"), onSelect: () => onShowCreateTable(db, tbl) });
     }
+    if (onToggleFavorite) {
+      const fav = (favorites ?? []).some((f) => tableRefEquals(f, { database: db, table: tbl }));
+      items.push({ separator: true });
+      items.push({
+        label: fav ? t("contextMenuRemoveFavorite") : t("contextMenuAddFavorite"),
+        onSelect: () => onToggleFavorite(db, tbl),
+      });
+    }
     items.push({ separator: true });
     // Import writes to the table, so it's rejected on a read-only session;
     // disable it up front rather than letting the backend fail later.
@@ -441,17 +507,58 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       disabled: activeReadOnly,
       title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
     });
+    if (onCopyTableName) {
+      items.push({ label: t("contextMenuCopyTableName"), onSelect: () => onCopyTableName(tbl) });
+    }
+    // テーブル保守操作 (#496): TRUNCATE / DROP / RENAME。破壊的なので read_only では
+    // 無効化し、実行時は呼び出し側 (App) が確認ダイアログを挟む。
+    if (onTruncateTable || onDropTable || onRenameTable) {
+      const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
+      items.push({ separator: true });
+      if (onRenameTable) {
+        items.push({
+          label: t("contextMenuRenameTable"),
+          onSelect: () => onRenameTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+        });
+      }
+      if (onTruncateTable) {
+        items.push({
+          label: t("contextMenuTruncateTable"),
+          onSelect: () => onTruncateTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+          danger: true,
+        });
+      }
+      if (onDropTable) {
+        items.push({
+          label: t("contextMenuDropTable"),
+          onSelect: () => onDropTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+          danger: true,
+        });
+      }
+    }
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
   const handleDbContextMenu = (e: React.MouseEvent, db: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setMenu({
-      x: e.clientX,
-      y: e.clientY,
-      items: [{ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) }],
-    });
+    const items: ContextMenuEntry[] = [];
+    if (onCreateTable) {
+      items.push({
+        label: t("contextMenuCreateTable"),
+        onSelect: () => onCreateTable(db),
+        disabled: activeReadOnly,
+        title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+      });
+    }
+    items.push({ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) });
+    setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
   // Fetch approximate row counts for a database and merge them into state. Best
@@ -491,6 +598,19 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       const list = await api.listTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
       void loadRowEstimates(sessionId, db);
+      // 非テーブルのスキーマオブジェクト (#483) もベストエフォートで取得する。
+      // 接続切替中に旧セッションの結果を反映しないよう sid を確認する。
+      const sid = sessionId;
+      void api
+        .listSchemaObjects(sid, db)
+        .then((objs) => {
+          if (sessionIdRef.current !== sid) return;
+          setSchemaObjects((prev) => ({ ...prev, [db]: objs }));
+        })
+        .catch(() => {
+          if (sessionIdRef.current !== sid) return;
+          setSchemaObjects((prev) => ({ ...prev, [db]: [] }));
+        });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -515,6 +635,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     try {
       const cols = await api.describeTable(sessionId, db, tbl);
       setTableColumns((prev) => ({ ...prev, [key]: cols }));
+      // インデックス一覧はベストエフォート: 取得失敗 (権限など) でも列表示は維持する。
+      try {
+        const idx = await api.listIndexes(sessionId, db, tbl);
+        setTableIndexes((prev) => ({ ...prev, [key]: idx }));
+      } catch {
+        setTableIndexes((prev) => ({ ...prev, [key]: [] }));
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -632,6 +759,132 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       <span>{t("treeLoading")}</span>
     </TreeEmpty>
   );
+
+  // クイックアクセス (#461): アクティブ接続の databases の上に「お気に入り」「最近」を
+  // 並べ、ワンクリックで開けるようにする。各行は db.table を表示し、`onPickTable` で開く。
+  const renderQuickAccessRow = (refItem: TableRef, kind: "favorite" | "recent") => {
+    const star = kind === "favorite";
+    return (
+      <TreeRow
+        key={`${kind}:${tableKey(refItem.database, refItem.table)}`}
+        pl="4px"
+        role="treeitem"
+        onClick={() => onPickTable(refItem.database, refItem.table)}
+        onContextMenu={(e) => handleTableContextMenu(e, refItem.database, refItem.table)}
+        title={`${refItem.database}.${refItem.table}`}
+        _hover={{ bg: "app.rowHover" }}
+      >
+        <TreeChevron aria-hidden style={{ visibility: "hidden" }}>▸</TreeChevron>
+        <TreeIcon color={star ? "#eab308" : "app.textSecondary"} aria-hidden>
+          <Icon name={star ? "star-filled" : "clock"} />
+        </TreeIcon>
+        <TreeLabel fontWeight={400}>
+          {refItem.table}
+          <chakra.span color="app.textMuted" fontSize="2xs" ml="6px">
+            {refItem.database}
+          </chakra.span>
+        </TreeLabel>
+        {star && onToggleFavorite && (
+          <chakra.button
+            type="button"
+            aria-label={t("quickAccessRemoveTitle")}
+            title={t("quickAccessRemoveTitle")}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFavorite(refItem.database, refItem.table);
+            }}
+            color="app.textMuted"
+            px="4px"
+            _hover={{ color: "app.text" }}
+          >
+            <Icon name="close" size="sm" />
+          </chakra.button>
+        )}
+      </TreeRow>
+    );
+  };
+
+  // 非テーブルのスキーマオブジェクト (#483) を種別ごとにグループ化して描画する。
+  // 選択すると onOpenObjectDefinition で定義 DDL を開く。
+  const renderSchemaObjects = (db: string) => {
+    if (!onOpenObjectDefinition) return null;
+    const objs = schemaObjects[db];
+    if (!objs || objs.length === 0) return null;
+    const order: SchemaObject["kind"][] = [
+      "view",
+      "materialized_view",
+      "procedure",
+      "function",
+      "trigger",
+    ];
+    const labels: Record<string, string> = {
+      view: t("objGroupViews"),
+      materialized_view: t("objGroupMatViews"),
+      procedure: t("objGroupProcedures"),
+      function: t("objGroupFunctions"),
+      trigger: t("objGroupTriggers"),
+    };
+    const icons: Record<string, IconName> = {
+      view: "view",
+      materialized_view: "view",
+      procedure: "routine",
+      function: "routine",
+      trigger: "trigger",
+    };
+    return (
+      <>
+        {order.map((kind) => {
+          const items = objs.filter((o) => o.kind === kind);
+          if (items.length === 0) return null;
+          return (
+            <div key={kind}>
+              <QuickAccessHeader>{labels[kind] ?? kind}</QuickAccessHeader>
+              {items.map((o) => (
+                <TreeRow
+                  key={`${kind}:${o.name}:${o.id ?? ""}`}
+                  pl="4px"
+                  role="treeitem"
+                  onClick={() => onOpenObjectDefinition(db, o.kind, o.name, o.id)}
+                  title={`${o.name} — ${labels[kind] ?? kind}`}
+                  _hover={{ bg: "app.rowHover" }}
+                >
+                  <TreeChevron visibility="hidden" aria-hidden />
+                  <TreeIcon color="app.textSecondary" aria-hidden>
+                    <Icon name={icons[kind] ?? "query"} />
+                  </TreeIcon>
+                  <TreeLabel fontWeight={400}>
+                    <HighlightText text={o.name} query={q} />
+                  </TreeLabel>
+                </TreeRow>
+              ))}
+            </div>
+          );
+        })}
+      </>
+    );
+  };
+
+  const renderQuickAccess = () => {
+    const favs = favorites ?? [];
+    const recents = recent ?? [];
+    if (favs.length === 0 && recents.length === 0) return null;
+    return (
+      <>
+        {favs.length > 0 && (
+          <>
+            <QuickAccessHeader>{t("quickAccessFavorites")}</QuickAccessHeader>
+            {favs.map((r) => renderQuickAccessRow(r, "favorite"))}
+          </>
+        )}
+        {recents.length > 0 && (
+          <>
+            <QuickAccessHeader>{t("quickAccessRecent")}</QuickAccessHeader>
+            {recents.map((r) => renderQuickAccessRow(r, "recent"))}
+          </>
+        )}
+      </>
+    );
+  };
 
   const renderProfile = (p: ConnectionProfile) => {
     const isActive = p.id === activeProfileId;
@@ -850,6 +1103,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
           <TreeChildren>
+            {isActive && sessionId && renderQuickAccess()}
             {databases === null ? (
               renderLoadingRow()
             ) : databases.length === 0 ? (
@@ -973,12 +1227,52 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                         );
                                       })
                                     )}
+                                    {/* インデックス一覧 (#459)。展開時に列と並行取得し、
+                                        列の下に小見出し付きで表示する。 */}
+                                    {showAllCols && (tableIndexes[tKey]?.length ?? 0) > 0 && (
+                                      <>
+                                        <QuickAccessHeader>{t("indexesLabel")}</QuickAccessHeader>
+                                        {tableIndexes[tKey].map((idx) => (
+                                          <TreeRow
+                                            key={`idx:${idx.name}`}
+                                            pt="3px"
+                                            pb="3px"
+                                            cursor="default"
+                                            fontSize="sm"
+                                            role="treeitem"
+                                            title={`${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`}
+                                          >
+                                            <TreeChevron visibility="hidden" aria-hidden />
+                                            <TreeIcon
+                                              fontSize="xs"
+                                              color={idx.primary ? "app.cell.date" : idx.unique ? "#10b981" : "app.textMuted"}
+                                              aria-hidden
+                                            >
+                                              {idx.primary ? <Icon name="key" /> : <Icon name="list" />}
+                                            </TreeIcon>
+                                            <TreeLabel fontFamily="mono" color="app.text">
+                                              {idx.columns.join(", ") || idx.name}
+                                            </TreeLabel>
+                                            {(idx.primary || idx.unique) && (
+                                              <TreeBadge
+                                                fontSize="2xs"
+                                                textTransform="uppercase"
+                                                title={idx.name}
+                                              >
+                                                {idx.primary ? t("indexBadgePk") : t("indexBadgeUnique")}
+                                              </TreeBadge>
+                                            )}
+                                          </TreeRow>
+                                        ))}
+                                      </>
+                                    )}
                                   </TreeChildren>
                                 </TreeCollapse>
                               </TreeNode>
                             );
                           })
                         )}
+                        {!schemaFiltered && renderSchemaObjects(db)}
                       </TreeChildren>
                     </TreeCollapse>
                   </TreeNode>

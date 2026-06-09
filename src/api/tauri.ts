@@ -104,6 +104,17 @@ export interface SaveProfileRequest {
   file_path?: string | null;
 }
 
+/** プロファイルインポート時の ID 衝突解決戦略 (#442)。 */
+export type ProfileImportStrategy = "rename" | "skip" | "overwrite";
+
+/** `importProfiles` の結果要約 (#442)。 */
+export interface ProfileImportResult {
+  imported: number;
+  skipped: number;
+  overwritten: number;
+  invalid: number;
+}
+
 export type SnippetScope =
   | { kind: "any" }
   | { kind: "profile"; profile_id: string }
@@ -193,6 +204,31 @@ export interface TableColumnInfo {
 export interface TableSchema {
   name: string;
   columns: string[];
+}
+
+/** テーブル 1 つのインデックス情報 (#459)。 */
+export interface IndexInfo {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  primary: boolean;
+  method: string | null;
+}
+
+/** 非テーブルのスキーマオブジェクト種別 (#483)。 */
+export type SchemaObjectKind =
+  | "view"
+  | "materialized_view"
+  | "procedure"
+  | "function"
+  | "trigger";
+
+/** 非テーブルのスキーマオブジェクト (#483)。 */
+export interface SchemaObject {
+  kind: SchemaObjectKind;
+  name: string;
+  /** 同名衝突を避ける一意識別子 (PostgreSQL の oid 等)。無いドライバ/種別では null。 */
+  id: string | null;
 }
 
 /**
@@ -340,10 +376,16 @@ export interface DumpOptions {
   extendedInsert: boolean;
   /** `--complete-insert`: write column names in every `INSERT`. */
   completeInsert: boolean;
-  /** `--no-data`: schema only, no row data. */
+  /** `--no-data` (pg `--schema-only`; sqlite skips INSERTs): schema only. */
   noData: boolean;
-  /** `--no-create-info`: data only, no `CREATE TABLE`. */
+  /** `--no-create-info` (pg `--data-only`; sqlite skips schema): data only. */
   noCreateInfo: boolean;
+  /** PostgreSQL only — `pg_dump --no-owner`. */
+  noOwner?: boolean;
+  /** PostgreSQL only — `pg_dump --no-privileges`. */
+  noPrivileges?: boolean;
+  /** PostgreSQL only — `pg_dump -n <schema>`; empty/undefined = all schemas. */
+  pgSchema?: string | null;
 }
 
 export interface ImportOptions {
@@ -386,6 +428,22 @@ export const api = {
     ),
   disconnect: (sessionId: string) =>
     invoke<void>("disconnect", { sessionId }),
+  /**
+   * 接続のヘルスチェック (#485)。生きていれば true、死んでいれば (スリープ復帰や
+   * トンネル断) false。セッションが見つからない場合のみ reject する。
+   */
+  pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
+  /** 明示トランザクション (#414) を開始する。 */
+  beginTransaction: (sessionId: string, database?: string | null) =>
+    invoke<void>("begin_transaction", { sessionId, database: database ?? null }),
+  /** 明示トランザクション内で 1 文を実行する (#414)。 */
+  runInTransaction: (sessionId: string, sql: string) =>
+    invoke<QueryResult>("run_in_transaction", { sessionId, sql }).then((r) =>
+      parseResponse(schemas.queryResult, r, "run_in_transaction"),
+    ),
+  /** 明示トランザクションを確定 (commit=true) / 破棄 (false) する (#414)。 */
+  finishTransaction: (sessionId: string, commit: boolean) =>
+    invoke<void>("finish_transaction", { sessionId, commit }),
 
   runQuery: (sessionId: string, sql: string, database?: string | null) =>
     invoke<QueryResult>("run_query", {
@@ -476,6 +534,31 @@ export const api = {
     invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(
       (r) => parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
     ),
+  /** テーブルのインデックス一覧を取得する (#459)。 */
+  listIndexes: (sessionId: string, database: string, table: string) =>
+    invoke<IndexInfo[]>("list_indexes", { sessionId, database, table }).then((r) =>
+      parseResponse(schemas.indexInfoArray, r, "list_indexes"),
+    ),
+  /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する (#483)。 */
+  listSchemaObjects: (sessionId: string, database: string) =>
+    invoke<SchemaObject[]>("list_schema_objects", { sessionId, database }).then((r) =>
+      parseResponse(schemas.schemaObjectArray, r, "list_schema_objects"),
+    ),
+  /** スキーマオブジェクトの定義 (DDL) を取得する (#483)。`id` は同名衝突を避ける一意識別子。 */
+  getObjectDefinition: (
+    sessionId: string,
+    database: string,
+    kind: string,
+    name: string,
+    id?: string | null,
+  ) =>
+    invoke<string>("get_object_definition", {
+      sessionId,
+      database,
+      kind,
+      name,
+      id: id ?? null,
+    }),
   compareSchema: (params: {
     sourceSessionId: string;
     sourceDatabase: string;
@@ -532,6 +615,23 @@ export const api = {
       parseResponse(schemas.connectionProfile, r, "save_profile"),
     ),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
+  /**
+   * 接続プロファイルを **秘密情報抜きで** `path` に JSON 出力する (#442)。`ids`
+   * 省略時は全件。返り値は書き込んだバイト数。
+   */
+  exportProfiles: (path: string, ids?: string[]) =>
+    invoke<number>("export_profiles", { path, ids: ids ?? null }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "export_profiles"),
+    ),
+  /**
+   * `path` の JSON (`exportProfiles` 出力) を取り込む (#442)。`strategy` は ID 衝突時の
+   * 解決方法。秘密情報は含まれないため、取り込んだプロファイルは接続時に資格情報の
+   * 再入力が要る。
+   */
+  importProfiles: (path: string, strategy: ProfileImportStrategy) =>
+    invoke<ProfileImportResult>("import_profiles", { path, strategy }).then((r) =>
+      parseResponse(schemas.profileImportResult, r, "import_profiles"),
+    ),
 
   listSnippets: () =>
     invoke<Snippet[]>("list_snippets").then((r) =>
@@ -576,6 +676,33 @@ export const api = {
       columns: params.columns,
       rows: params.rows,
     }).then((r) => parseResponse(schemas.numberResponse, r, "export_query_result")),
+
+  /**
+   * クエリを再実行し、全件をストリーミングで直接ファイルへ書き出す (#494)。結果は
+   * `export-stream:*` イベントで通知され、`cancelStream` で中断できる。SELECT 系のみ。
+   */
+  exportQueryStream: (params: {
+    sessionId: string;
+    streamId: string;
+    sql: string;
+    database: string | null;
+    format: ExportFormat;
+    path: string;
+    initialBatch: number;
+    chunkSize: number;
+    queryTimeoutSecs: number | null;
+  }) =>
+    invoke<void>("export_query_stream", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      sql: params.sql,
+      database: params.database,
+      format: params.format,
+      path: params.path,
+      initialBatch: params.initialBatch,
+      chunkSize: params.chunkSize,
+      queryTimeoutSecs: params.queryTimeoutSecs,
+    }),
 
   dumpDatabase: (params: {
     sessionId: string;
@@ -697,6 +824,26 @@ export interface ImportDoneEvent {
 export interface ImportErrorEvent {
   streamId: string;
   error: string;
+}
+
+// 全件ストリーミングエクスポート (#494)。
+export interface ExportProgressEvent {
+  streamId: string;
+  rows: number;
+}
+export interface ExportDoneEvent {
+  streamId: string;
+  rows: number;
+  bytes: number;
+}
+export interface ExportStreamErrorEvent {
+  streamId: string;
+  message: string;
+}
+export interface ExportStreamHandlers {
+  onProgress?: (event: ExportProgressEvent) => void;
+  onDone?: (event: ExportDoneEvent) => void;
+  onError?: (event: ExportStreamErrorEvent) => void;
 }
 
 export interface ImportStreamHandlers {
@@ -836,6 +983,39 @@ export async function listenImportStream(
     listen<ImportErrorEvent>(
       "csv-import:error",
       filter(schemas.importErrorEvent, "csv-import:error", handlers.onError),
+    ),
+  ]);
+  return () => unlisteners.forEach((un) => un());
+}
+
+/** 全件ストリーミングエクスポート (#494) の進捗/完了/エラーイベントを購読する。 */
+export async function listenExportStream(
+  streamId: string,
+  handlers: ExportStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+  const unlisteners = await Promise.all([
+    listen<ExportProgressEvent>(
+      "export-stream:progress",
+      filter(schemas.exportProgressEvent, "export-stream:progress", handlers.onProgress),
+    ),
+    listen<ExportDoneEvent>(
+      "export-stream:done",
+      filter(schemas.exportDoneEvent, "export-stream:done", handlers.onDone),
+    ),
+    listen<ExportStreamErrorEvent>(
+      "export-stream:error",
+      filter(schemas.exportStreamErrorEvent, "export-stream:error", handlers.onError),
     ),
   ]);
   return () => unlisteners.forEach((un) => un());

@@ -64,6 +64,20 @@ export const tableRowEstimate = z.object({
   estimate: z.number().nullable(),
 });
 
+export const indexInfo = z.object({
+  name: z.string(),
+  columns: z.array(z.string()),
+  unique: z.boolean(),
+  primary: z.boolean(),
+  method: z.string().nullable(),
+});
+
+export const schemaObject = z.object({
+  kind: z.string(),
+  name: z.string(),
+  id: z.string().nullish().transform((v) => v ?? null),
+});
+
 /**
  * プレビュー結果の検証スキーマ。他の IPC スキーマと対をなす公開検証表面で、
  * 現状ランタイム検証には未配線だが API 完全性のため保持する (#391)。
@@ -223,11 +237,21 @@ export const numberResponse = z.number();
 export const booleanResponse = z.boolean();
 export const stringResponse = z.string();
 
+/** プロファイルインポート結果 (#442)。 */
+export const profileImportResult = z.object({
+  imported: z.number(),
+  skipped: z.number(),
+  overwritten: z.number(),
+  invalid: z.number(),
+});
+
 /** 配列を返すコマンド用のラッパースキーマ。 */
 export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
+export const indexInfoArray = z.array(indexInfo);
+export const schemaObjectArray = z.array(schemaObject);
 export const connectionProfileArray = z.array(connectionProfile);
 export const snippetArray = z.array(snippet);
 export const historyEntryArray = z.array(historyEntry);
@@ -307,6 +331,23 @@ export const importDoneEvent = z.object({
 export const importErrorEvent = z.object({
   streamId: z.string(),
   error: z.string(),
+});
+
+// 全件ストリーミングエクスポート (#494) のイベント。
+export const exportProgressEvent = z.object({
+  streamId: z.string(),
+  rows: z.number(),
+});
+
+export const exportDoneEvent = z.object({
+  streamId: z.string(),
+  rows: z.number(),
+  bytes: z.number(),
+});
+
+export const exportStreamErrorEvent = z.object({
+  streamId: z.string(),
+  message: z.string(),
 });
 
 /** DEV ビルドでのみ詳細なバリデーションエラーをコンソールへ出す。 */

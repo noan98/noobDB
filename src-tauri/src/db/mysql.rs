@@ -6,14 +6,17 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
-    TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
     pool: MySqlPool,
+    /// 明示トランザクション (#414) で確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
+    /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
+    tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::MySql>>>,
 }
 
 impl MySqlConn {
@@ -44,7 +47,10 @@ impl MySqlConn {
                 );
                 e
             })?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            tx: tokio::sync::Mutex::new(None),
+        })
     }
 
     pub async fn close(&self) {
@@ -52,40 +58,53 @@ impl MySqlConn {
     }
 
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
-        let started = Instant::now();
-
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
+        run_sql_on(&mut conn, sql).await
+    }
 
-        // CALL is decided at runtime: a stored procedure may or may not return
-        // a result set, so neither the fetch nor the execute path fits it
-        // unconditionally (see `collect_call`).
-        if is_call_shape(sql) {
-            return collect_call(&mut conn, sql, started).await;
-        }
+    // ── 明示トランザクション (#414) ──
 
-        let is_query = is_query_shape(sql);
-        if is_query {
-            let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .fetch_all(&mut *conn)
-                .await?;
-            let columns = columns_of(&rows);
-            let rows_out = rows.iter().map(row_to_values).collect();
-            Ok(QueryResult {
-                columns,
-                rows: rows_out,
-                rows_affected: 0,
-                elapsed_ms: started.elapsed().as_millis() as u64,
-            })
-        } else {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .execute(&mut *conn)
-                .await?;
-            Ok(QueryResult::empty(
-                result.rows_affected(),
-                started.elapsed().as_millis() as u64,
-            ))
+    pub async fn tx_begin(&self, database: Option<&str>) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        if guard.is_some() {
+            return Err(AppError::InvalidInput(
+                "a transaction is already active".into(),
+            ));
         }
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        // Transaction-control statements go through the text protocol (raw_sql),
+        // like `USE`, so they can't trip MySQL's prepared-statement error 1295.
+        sqlx::Executor::execute(
+            &mut *conn,
+            sqlx::raw_sql(sqlx::AssertSqlSafe("START TRANSACTION")),
+        )
+        .await?;
+        *guard = Some(conn);
+        Ok(())
+    }
+
+    pub async fn tx_execute(&self, sql: &str) -> Result<QueryResult> {
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        run_sql_on(conn, sql).await
+    }
+
+    pub async fn tx_finish(&self, commit: bool) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        let mut conn = guard
+            .take()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
+        sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(stmt))).await?;
+        Ok(())
+    }
+
+    pub async fn tx_active(&self) -> bool {
+        self.tx.lock().await.is_some()
     }
 
     /// Runs `sql` inside a transaction that is always rolled back. Captures
@@ -596,6 +615,139 @@ impl MySqlConn {
             .collect())
     }
 
+    pub async fn schema_objects(&self, db: &str) -> Result<Vec<SchemaObject>> {
+        let mut out: Vec<SchemaObject> = Vec::new();
+        // Views.
+        let views: Vec<MySqlRow> = sqlx::query(
+            "SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        for r in &views {
+            out.push(SchemaObject {
+                kind: "view".into(),
+                name: r.try_get::<String, _>(0).unwrap_or_default(),
+                id: None,
+            });
+        }
+        // Routines (procedures / functions).
+        let routines: Vec<MySqlRow> = sqlx::query(
+            "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM information_schema.ROUTINES \
+             WHERE ROUTINE_SCHEMA = ? ORDER BY ROUTINE_TYPE, ROUTINE_NAME",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        for r in &routines {
+            let rtype = r.try_get::<String, _>(1).unwrap_or_default();
+            let kind = if rtype.eq_ignore_ascii_case("PROCEDURE") {
+                "procedure"
+            } else {
+                "function"
+            };
+            out.push(SchemaObject {
+                kind: kind.into(),
+                name: r.try_get::<String, _>(0).unwrap_or_default(),
+                id: None,
+            });
+        }
+        // Triggers.
+        let triggers: Vec<MySqlRow> = sqlx::query(
+            "SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = ? ORDER BY TRIGGER_NAME",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        for r in &triggers {
+            out.push(SchemaObject {
+                kind: "trigger".into(),
+                name: r.try_get::<String, _>(0).unwrap_or_default(),
+                id: None,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn object_definition(&self, db: &str, kind: &str, name: &str) -> Result<String> {
+        if db.contains('`') || db.contains('\0') || name.contains('`') || name.contains('\0') {
+            return Err(AppError::InvalidInput("invalid identifier".into()));
+        }
+        // SHOW CREATE ... can't bind identifiers; quote them manually after the
+        // guard above. The result column holding the DDL differs by object kind.
+        let qualified = format!("`{db}`.`{name}`");
+        let (stmt, col) = match kind {
+            "view" => (format!("SHOW CREATE VIEW {qualified}"), "Create View"),
+            "procedure" => (
+                format!("SHOW CREATE PROCEDURE {qualified}"),
+                "Create Procedure",
+            ),
+            "function" => (
+                format!("SHOW CREATE FUNCTION {qualified}"),
+                "Create Function",
+            ),
+            "trigger" => (
+                format!("SHOW CREATE TRIGGER {qualified}"),
+                "SQL Original Statement",
+            ),
+            other => {
+                return Err(AppError::InvalidInput(format!(
+                    "unsupported object kind: {other}"
+                )))
+            }
+        };
+        let row: MySqlRow = sqlx::query(sqlx::AssertSqlSafe(stmt))
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.try_get::<String, _>(col).unwrap_or_default())
+    }
+
+    pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {
+        // information_schema.STATISTICS has one row per (index, column). Order by
+        // SEQ_IN_INDEX so composite indexes keep declaration order. NON_UNIQUE=0
+        // means UNIQUE; the special index name "PRIMARY" is the primary key.
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, INDEX_TYPE, SEQ_IN_INDEX
+               FROM information_schema.STATISTICS
+               WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+               ORDER BY INDEX_NAME, SEQ_IN_INDEX"#,
+        )
+        .bind(db)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        // Preserve first-seen index order while grouping columns.
+        let mut order: Vec<String> = Vec::new();
+        let mut by_name: std::collections::HashMap<String, IndexInfo> =
+            std::collections::HashMap::new();
+        for r in &rows {
+            let name = r.try_get::<String, _>(0).unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            let column = r.try_get::<Option<String>, _>(1).ok().flatten();
+            let non_unique = r.try_get::<i64, _>(2).unwrap_or(1);
+            let method = r.try_get::<Option<String>, _>(3).ok().flatten();
+            let entry = by_name.entry(name.clone()).or_insert_with(|| {
+                order.push(name.clone());
+                IndexInfo {
+                    name: name.clone(),
+                    columns: Vec::new(),
+                    unique: non_unique == 0,
+                    primary: name == "PRIMARY",
+                    method,
+                }
+            });
+            if let Some(col) = column {
+                entry.columns.push(col);
+            }
+        }
+        Ok(order
+            .into_iter()
+            .filter_map(|n| by_name.remove(&n))
+            .collect())
+    }
+
     pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {
         let rows: Vec<MySqlRow> = sqlx::query(
             r#"SELECT TABLE_NAME, COLUMN_NAME
@@ -690,6 +842,37 @@ async fn apply_use_database(
 fn decode_text_col(row: &MySqlRow, i: usize) -> Result<String> {
     let bytes: Vec<u8> = row.try_get(i)?;
     String::from_utf8(bytes).map_err(|e| AppError::Other(e.to_string()))
+}
+
+/// Run one statement on a specific connection and decode it (#414). Shared by
+/// `execute` (pool connection) and `tx_execute` (held transaction connection).
+/// Handles CALL (which may or may not return a result set) like `execute`.
+async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<QueryResult> {
+    let started = Instant::now();
+    if is_call_shape(sql) {
+        return collect_call(conn, sql, started).await;
+    }
+    if is_query_shape(sql) {
+        let rows: Vec<MySqlRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut *conn)
+            .await?;
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    } else {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await?;
+        Ok(QueryResult::empty(
+            result.rows_affected(),
+            started.elapsed().as_millis() as u64,
+        ))
+    }
 }
 
 fn columns_of(rows: &[MySqlRow]) -> Vec<Column> {
@@ -1296,11 +1479,11 @@ fn is_call_shape(sql: &str) -> bool {
 /// support is out of scope); otherwise we sum the affected-row counts so a
 /// DML-only procedure reports `rows_affected` instead of a silent zero.
 async fn collect_call(
-    conn: &mut PoolConnection<MySql>,
+    conn: &mut sqlx::MySqlConnection,
     sql: &str,
     started: Instant,
 ) -> Result<QueryResult> {
-    let mut stream = sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).fetch_many(&mut **conn);
+    let mut stream = sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).fetch_many(&mut *conn);
     let mut rows: Vec<MySqlRow> = Vec::new();
     let mut saw_result_set = false;
     let mut first_set_done = false;

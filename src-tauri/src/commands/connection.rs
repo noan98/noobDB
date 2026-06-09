@@ -110,6 +110,23 @@ pub async fn connect(req: ConnectRequest, state: State<'_, AppState>) -> Result<
     Ok(ConnectResponse { session_id: id })
 }
 
+/// Connection health check (#485). Returns `true` when the session's connection
+/// answers a lightweight `SELECT 1`, `false` when it is dead (sleep / dropped
+/// tunnel), and `Err` only when the session id is unknown. The frontend polls
+/// this (e.g. on window focus) and reconnects when it reports `false`.
+#[tauri::command]
+pub async fn ping_session(session_id: String, state: State<'_, AppState>) -> Result<bool> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    let alive = session.conn.health_check().await.is_ok();
+    if !alive {
+        tracing::info!(session_id = %session_id, "health check failed; connection appears dead");
+    }
+    Ok(alive)
+}
+
 #[tauri::command]
 pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Result<()> {
     if let Some(sess) = state.remove(&session_id).await {

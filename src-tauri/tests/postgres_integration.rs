@@ -157,3 +157,156 @@ async fn postgres_roundtrip_when_env_set() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// list_indexes (#459) / schema_objects + object_definition (#483, oid 識別子) /
+/// 明示トランザクション (#414) / health_check (#485) を PostgreSQL 上で実行する。
+/// CI のサービスコンテナで実走し、新規ドライバメソッドの動作とカバレッジを担保する。
+#[tokio::test]
+async fn postgres_new_schema_apis_and_transaction_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let schema = "public";
+
+    // Clean slate (ignore errors if absent).
+    for stmt in [
+        "DROP TRIGGER IF EXISTS noobdb_objtest_trg ON public.noobdb_objtest_idx",
+        "DROP VIEW IF EXISTS public.noobdb_objtest_view",
+        "DROP FUNCTION IF EXISTS public.noobdb_objtest_fn()",
+        "DROP FUNCTION IF EXISTS public.noobdb_objtest_trgfn() CASCADE",
+        "DROP TABLE IF EXISTS public.noobdb_objtest_idx",
+    ] {
+        let _ = conn.execute(stmt, None).await;
+    }
+
+    conn.execute(
+        "CREATE TABLE public.noobdb_objtest_idx (id INT PRIMARY KEY, sku TEXT, cat TEXT)",
+        None,
+    )
+    .await
+    .expect("create table");
+    conn.execute(
+        "CREATE UNIQUE INDEX noobdb_uq_sku ON public.noobdb_objtest_idx (sku)",
+        None,
+    )
+    .await
+    .expect("unique index");
+    conn.execute(
+        "CREATE INDEX noobdb_ix_cat ON public.noobdb_objtest_idx (cat)",
+        None,
+    )
+    .await
+    .expect("plain index");
+
+    let indexes = conn
+        .list_indexes(schema, "noobdb_objtest_idx")
+        .await
+        .expect("list_indexes");
+    assert!(
+        indexes.iter().any(|i| i.primary),
+        "primary-key index present: {indexes:?}"
+    );
+    let uq = indexes
+        .iter()
+        .find(|i| i.name == "noobdb_uq_sku")
+        .expect("unique index listed");
+    assert!(uq.unique && uq.columns == vec!["sku".to_string()]);
+
+    // Objects: view, function, trigger (with its function).
+    conn.execute(
+        "CREATE VIEW public.noobdb_objtest_view AS SELECT id FROM public.noobdb_objtest_idx",
+        None,
+    )
+    .await
+    .expect("create view");
+    conn.execute(
+        "CREATE FUNCTION public.noobdb_objtest_fn() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$",
+        None,
+    )
+    .await
+    .expect("create function");
+    conn.execute(
+        "CREATE FUNCTION public.noobdb_objtest_trgfn() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RETURN NEW; END $$",
+        None,
+    )
+    .await
+    .expect("create trigger function");
+    conn.execute(
+        "CREATE TRIGGER noobdb_objtest_trg BEFORE INSERT ON public.noobdb_objtest_idx \
+         FOR EACH ROW EXECUTE FUNCTION public.noobdb_objtest_trgfn()",
+        None,
+    )
+    .await
+    .expect("create trigger");
+
+    let objects = conn.schema_objects(schema).await.expect("schema_objects");
+    let func = objects
+        .iter()
+        .find(|o| o.kind == "function" && o.name == "noobdb_objtest_fn")
+        .expect("function listed with id");
+    assert!(func.id.is_some(), "PG function carries an oid identifier");
+    let func_def = conn
+        .object_definition(schema, "function", "noobdb_objtest_fn", func.id.as_deref())
+        .await
+        .expect("function definition by oid");
+    assert!(func_def.contains("noobdb_objtest_fn"));
+
+    let trg = objects
+        .iter()
+        .find(|o| o.kind == "trigger" && o.name == "noobdb_objtest_trg")
+        .expect("trigger listed with id");
+    let trg_def = conn
+        .object_definition(schema, "trigger", "noobdb_objtest_trg", trg.id.as_deref())
+        .await
+        .expect("trigger definition by oid");
+    assert!(trg_def.to_uppercase().contains("TRIGGER"));
+
+    let view_def = conn
+        .object_definition(schema, "view", "noobdb_objtest_view", None)
+        .await
+        .expect("view definition");
+    assert!(view_def.to_lowercase().contains("select"));
+
+    // Explicit transaction: rollback then commit.
+    assert!(!conn.transaction_active().await);
+    conn.begin_transaction(None).await.expect("begin");
+    assert!(conn.transaction_active().await);
+    conn.execute_in_transaction("INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (1, 'a')")
+        .await
+        .expect("insert in tx");
+    conn.finish_transaction(false).await.expect("rollback");
+    let after_rollback = conn
+        .execute("SELECT COUNT(*) AS c FROM public.noobdb_objtest_idx", None)
+        .await
+        .expect("count");
+    assert!(matches!(&after_rollback.rows[0][0], t::Value::Int(0)));
+
+    conn.begin_transaction(None).await.expect("begin 2");
+    conn.execute_in_transaction("INSERT INTO public.noobdb_objtest_idx (id, sku) VALUES (2, 'b')")
+        .await
+        .expect("insert in tx 2");
+    conn.finish_transaction(true).await.expect("commit");
+    let after_commit = conn
+        .execute("SELECT COUNT(*) AS c FROM public.noobdb_objtest_idx", None)
+        .await
+        .expect("count");
+    assert!(matches!(&after_commit.rows[0][0], t::Value::Int(1)));
+
+    conn.health_check().await.expect("health check");
+
+    // Cleanup.
+    for stmt in [
+        "DROP TRIGGER IF EXISTS noobdb_objtest_trg ON public.noobdb_objtest_idx",
+        "DROP VIEW IF EXISTS public.noobdb_objtest_view",
+        "DROP FUNCTION IF EXISTS public.noobdb_objtest_fn()",
+        "DROP FUNCTION IF EXISTS public.noobdb_objtest_trgfn() CASCADE",
+        "DROP TABLE IF EXISTS public.noobdb_objtest_idx",
+    ] {
+        let _ = conn.execute(stmt, None).await;
+    }
+    conn.close().await;
+}

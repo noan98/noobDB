@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use types::{
-    ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
-    TableSchema,
+    ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch, TableColumnInfo,
+    TableRowEstimate, TableSchema,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -83,6 +83,56 @@ impl Connection {
             Connection::Postgres(c) => c.execute(sql, database).await,
             Connection::Sqlite(c) => c.execute(sql, database).await,
         }
+    }
+
+    /// Begin an explicit transaction (#414) on a dedicated held connection so
+    /// subsequent `execute_in_transaction` calls all run on the same connection
+    /// (and thus the same transaction). `database` sets the connection's
+    /// default schema/db context. Errs if a transaction is already active.
+    pub async fn begin_transaction(&self, database: Option<&str>) -> Result<()> {
+        match self {
+            Connection::MySql(c) => c.tx_begin(database).await,
+            Connection::Postgres(c) => c.tx_begin(database).await,
+            Connection::Sqlite(c) => c.tx_begin(database).await,
+        }
+    }
+
+    /// Run one statement inside the active explicit transaction (#414). Errs if
+    /// no transaction is active.
+    pub async fn execute_in_transaction(&self, sql: &str) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.tx_execute(sql).await,
+            Connection::Postgres(c) => c.tx_execute(sql).await,
+            Connection::Sqlite(c) => c.tx_execute(sql).await,
+        }
+    }
+
+    /// Commit (`true`) or roll back (`false`) the active explicit transaction
+    /// (#414) and release the held connection. Errs if none is active.
+    pub async fn finish_transaction(&self, commit: bool) -> Result<()> {
+        match self {
+            Connection::MySql(c) => c.tx_finish(commit).await,
+            Connection::Postgres(c) => c.tx_finish(commit).await,
+            Connection::Sqlite(c) => c.tx_finish(commit).await,
+        }
+    }
+
+    /// Whether an explicit transaction (#414) is currently active.
+    pub async fn transaction_active(&self) -> bool {
+        match self {
+            Connection::MySql(c) => c.tx_active().await,
+            Connection::Postgres(c) => c.tx_active().await,
+            Connection::Sqlite(c) => c.tx_active().await,
+        }
+    }
+
+    /// Lightweight connection liveness check (#485): runs `SELECT 1` through the
+    /// normal execute path (which dispatches per driver). Returns `Err` when the
+    /// connection is dead — e.g. after an OS sleep or a dropped SSH tunnel — so
+    /// callers can decide to reconnect. Cheap enough to run before a query or on
+    /// window-focus.
+    pub async fn health_check(&self) -> Result<()> {
+        self.execute("SELECT 1", None).await.map(|_| ())
     }
 
     pub async fn preview_execute_with_limit(
@@ -223,6 +273,47 @@ impl Connection {
             Connection::MySql(c) => c.foreign_keys(db).await,
             Connection::Postgres(c) => c.foreign_keys(db).await,
             Connection::Sqlite(c) => c.foreign_keys(db).await,
+        }
+    }
+
+    /// Non-table schema objects in `db` (#483): views, materialized views,
+    /// routines (procedures/functions), and triggers. Dispatches per driver to
+    /// `information_schema` / `pg_catalog` / `sqlite_master`. Kinds the driver
+    /// doesn't support (e.g. SQLite routines) are simply absent.
+    pub async fn schema_objects(&self, db: &str) -> Result<Vec<SchemaObject>> {
+        match self {
+            Connection::MySql(c) => c.schema_objects(db).await,
+            Connection::Postgres(c) => c.schema_objects(db).await,
+            Connection::Sqlite(c) => c.schema_objects(db).await,
+        }
+    }
+
+    /// The DDL/definition of a non-table schema object (#483). `kind`/`name` are
+    /// from [`schema_objects`]; `id` is the optional unique identifier (PostgreSQL
+    /// oid) used to disambiguate overloaded functions / same-name triggers.
+    pub async fn object_definition(
+        &self,
+        db: &str,
+        kind: &str,
+        name: &str,
+        id: Option<&str>,
+    ) -> Result<String> {
+        match self {
+            Connection::MySql(c) => c.object_definition(db, kind, name).await,
+            Connection::Postgres(c) => c.object_definition(db, kind, name, id).await,
+            Connection::Sqlite(c) => c.object_definition(db, kind, name).await,
+        }
+    }
+
+    /// Every index on `table` in `db` (#459): name, constituent columns (in
+    /// order), and UNIQUE / PRIMARY flags. Dispatches per driver — MySQL uses
+    /// `SHOW INDEX`, PostgreSQL reads `pg_index`/`pg_class`, SQLite loops
+    /// `PRAGMA index_list` + `PRAGMA index_info`.
+    pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {
+        match self {
+            Connection::MySql(c) => c.list_indexes(db, table).await,
+            Connection::Postgres(c) => c.list_indexes(db, table).await,
+            Connection::Sqlite(c) => c.list_indexes(db, table).await,
         }
     }
 

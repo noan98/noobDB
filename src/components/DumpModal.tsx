@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { api, DumpOptions } from "../api/tauri";
+import { api, DumpOptions, type DriverKind } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Switch } from "./ui";
@@ -12,6 +12,7 @@ import { useToast } from "./Toast";
 interface Props {
   sessionId: string;
   database: string;
+  driver: DriverKind;
   onClose: () => void;
 }
 
@@ -53,10 +54,17 @@ const DEFAULT_OPTIONS: DumpOptions = {
   completeInsert: false,
   noData: false,
   noCreateInfo: false,
+  noOwner: true,
+  noPrivileges: false,
+  pgSchema: null,
 };
 
-/** Each toggle maps one checkbox to a `DumpOptions` field and its labels. */
-const OPTION_ROWS: { key: keyof DumpOptions; label: I18nKey; hint: I18nKey }[] = [
+type BoolOptionKey = {
+  [K in keyof DumpOptions]-?: DumpOptions[K] extends boolean | undefined ? K : never;
+}[keyof DumpOptions];
+
+/** Each toggle maps one checkbox to a boolean `DumpOptions` field and its labels. */
+const OPTION_ROWS: { key: BoolOptionKey; label: I18nKey; hint: I18nKey }[] = [
   { key: "singleTransaction", label: "dumpOptSingleTransaction", hint: "dumpOptSingleTransactionHint" },
   { key: "routines", label: "dumpOptRoutines", hint: "dumpOptRoutinesHint" },
   { key: "events", label: "dumpOptEvents", hint: "dumpOptEventsHint" },
@@ -66,14 +74,34 @@ const OPTION_ROWS: { key: keyof DumpOptions; label: I18nKey; hint: I18nKey }[] =
   { key: "completeInsert", label: "dumpOptCompleteInsert", hint: "dumpOptCompleteInsertHint" },
   { key: "noData", label: "dumpOptNoData", hint: "dumpOptNoDataHint" },
   { key: "noCreateInfo", label: "dumpOptNoCreateInfo", hint: "dumpOptNoCreateInfoHint" },
+  { key: "noOwner", label: "dumpOptNoOwner", hint: "dumpOptNoOwnerHint" },
+  { key: "noPrivileges", label: "dumpOptNoPrivileges", hint: "dumpOptNoPrivilegesHint" },
 ];
+
+/** Which toggle keys each driver shows. Omitted fields are sent at their default
+ *  but hidden, so the wire shape stays a full `DumpOptions` for every driver. */
+const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
+  mysql: [
+    "singleTransaction",
+    "routines",
+    "events",
+    "triggers",
+    "addDropTable",
+    "extendedInsert",
+    "completeInsert",
+    "noData",
+    "noCreateInfo",
+  ],
+  postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges"],
+  sqlite: ["addDropTable", "noData", "noCreateInfo"],
+};
 
 type Status =
   | { kind: "idle" }
   | { kind: "running" }
   | { kind: "error"; message: string };
 
-export function DumpModal({ sessionId, database, onClose }: Props) {
+export function DumpModal({ sessionId, database, driver, onClose }: Props) {
   const t = useT();
   const toast = useToast();
   const initialBasename = useMemo(() => defaultBasename(database), [database]);
@@ -82,8 +110,12 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   const isRunning = status.kind === "running";
+  const visibleRows = useMemo(() => {
+    const allowed = new Set(DRIVER_OPTIONS[driver]);
+    return OPTION_ROWS.filter((row) => allowed.has(row.key));
+  }, [driver]);
 
-  const toggle = (key: keyof DumpOptions) =>
+  const toggle = (key: BoolOptionKey) =>
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const handleBrowse = async () => {
@@ -133,7 +165,7 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
             gridTemplateColumns="repeat(auto-fill, minmax(240px, 1fr))"
             gap="6px 16px"
           >
-            {OPTION_ROWS.map((row) => (
+            {visibleRows.map((row) => (
               <chakra.div
                 key={row.key}
                 display="flex"
@@ -155,7 +187,7 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
               >
                 <chakra.span mt="2px" flex="none">
                   <Switch
-                    checked={options[row.key]}
+                    checked={!!options[row.key]}
                     onChange={() => toggle(row.key)}
                     disabled={isRunning}
                     size="sm"
@@ -172,6 +204,24 @@ export function DumpModal({ sessionId, database, onClose }: Props) {
               </chakra.div>
             ))}
           </chakra.div>
+          {driver === "postgres" && (
+            <chakra.div mt="10px" display="flex" flexDirection="column" gap="4px">
+              <FieldLabel htmlFor="dump-pg-schema">{t("dumpOptPgSchema")}</FieldLabel>
+              <Input
+                id="dump-pg-schema"
+                type="text"
+                value={options.pgSchema ?? ""}
+                onChange={(e) =>
+                  setOptions((prev) => ({ ...prev, pgSchema: e.target.value || null }))
+                }
+                placeholder={t("dumpOptPgSchemaPlaceholder")}
+                disabled={isRunning}
+              />
+              <chakra.span fontSize="xs" color="app.textMuted">
+                {t("dumpOptPgSchemaHint")}
+              </chakra.span>
+            </chakra.div>
+          )}
         </FormSection>
 
         <FormSection>

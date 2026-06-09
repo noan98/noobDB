@@ -11,8 +11,9 @@ use crate::history::NewHistoryEntry;
 use crate::state::{AppState, Session};
 
 /// Returns `Err(AppError::ReadOnly)` when the session is RO and `sql` is not
-/// strictly read-only. Used at every query entry point.
-fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
+/// strictly read-only. Used at every query entry point (and the streaming
+/// export path in `commands::export`).
+pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
     if session.read_only && !is_read_only_sql(sql) {
         tracing::warn!(
             session_id = %session.id,
@@ -170,6 +171,59 @@ pub(crate) async fn run_query_transaction_inner(
     }
     let affected = result?;
     Ok(QueryResult::empty(affected, elapsed_ms))
+}
+
+// ── 明示トランザクションモード (#414) ──
+//
+// BEGIN で専用接続を確保し、その接続で文を逐次実行して、COMMIT/ROLLBACK で確定/破棄
+// する。フロントはトランザクションが有効な間、エディタの実行を `run_in_transaction`
+// 経由に切り替える (通常のストリーミング経路はプールの別接続を使うため tx に乗らない)。
+
+/// 明示トランザクションを開始する。`database` は接続のスキーマ/DB コンテキスト。
+#[tauri::command]
+pub async fn begin_transaction(
+    session_id: String,
+    database: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.begin_transaction(database.as_deref()).await?;
+    tracing::info!(session_id = %session_id, "explicit transaction begun");
+    Ok(())
+}
+
+/// 明示トランザクション内で 1 文を実行する。読み取り専用ガードは通常実行と同じく適用。
+#[tauri::command]
+pub async fn run_in_transaction(
+    session_id: String,
+    sql: String,
+    state: State<'_, AppState>,
+) -> Result<QueryResult> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    ensure_allowed_for_session(&session, &sql)?;
+    session.conn.execute_in_transaction(&sql).await
+}
+
+/// 明示トランザクションを確定 (commit=true) または破棄 (false) する。
+#[tauri::command]
+pub async fn finish_transaction(
+    session_id: String,
+    commit: bool,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.finish_transaction(commit).await?;
+    tracing::info!(session_id = %session_id, commit, "explicit transaction finished");
+    Ok(())
 }
 
 #[derive(Debug, Serialize, Clone)]

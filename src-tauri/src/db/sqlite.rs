@@ -5,8 +5,8 @@ use sqlx::sqlite::{SqliteColumn, SqliteConnectOptions, SqlitePool, SqlitePoolOpt
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, PreviewResult, QueryResult, StreamBatch, TableColumnInfo, TableRowEstimate,
-    TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -17,6 +17,10 @@ pub const DEFAULT_DB_NAME: &str = "main";
 
 pub struct SqliteConn {
     pool: SqlitePool,
+    /// 明示トランザクション (#414) で確保した専用接続。BEGIN で取得し、COMMIT/ROLLBACK
+    /// で解放する。トランザクション中の文はこの 1 本の接続で実行され、確実に同一
+    /// トランザクションに乗る (プールの別接続に散らばらない)。
+    tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>>,
 }
 
 impl SqliteConn {
@@ -44,7 +48,10 @@ impl SqliteConn {
                 tracing::error!(path, error = %e, "sqlite: failed to create connection pool");
                 e
             })?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            tx: tokio::sync::Mutex::new(None),
+        })
     }
 
     pub async fn close(&self) {
@@ -52,32 +59,45 @@ impl SqliteConn {
     }
 
     pub async fn execute(&self, sql: &str, _database: Option<&str>) -> Result<QueryResult> {
-        let started = Instant::now();
-        let is_query = is_query_shape(sql);
-
         let mut conn = self.pool.acquire().await?;
+        run_sql_on(&mut conn, sql).await
+    }
 
-        if is_query {
-            let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .fetch_all(&mut *conn)
-                .await?;
-            let columns = columns_of(&rows);
-            let rows_out = rows.iter().map(row_to_values).collect();
-            Ok(QueryResult {
-                columns,
-                rows: rows_out,
-                rows_affected: 0,
-                elapsed_ms: started.elapsed().as_millis() as u64,
-            })
-        } else {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .execute(&mut *conn)
-                .await?;
-            Ok(QueryResult::empty(
-                result.rows_affected(),
-                started.elapsed().as_millis() as u64,
-            ))
+    // ── 明示トランザクション (#414) ──
+
+    pub async fn tx_begin(&self, _database: Option<&str>) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        if guard.is_some() {
+            return Err(AppError::InvalidInput(
+                "a transaction is already active".into(),
+            ));
         }
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("BEGIN").execute(&mut *conn).await?;
+        *guard = Some(conn);
+        Ok(())
+    }
+
+    pub async fn tx_execute(&self, sql: &str) -> Result<QueryResult> {
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        run_sql_on(conn, sql).await
+    }
+
+    pub async fn tx_finish(&self, commit: bool) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        let mut conn = guard
+            .take()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
+        sqlx::query(stmt).execute(&mut *conn).await?;
+        Ok(())
+    }
+
+    pub async fn tx_active(&self) -> bool {
+        self.tx.lock().await.is_some()
     }
 
     pub async fn execute_stream<F>(
@@ -476,6 +496,89 @@ impl SqliteConn {
         Ok(out)
     }
 
+    pub async fn list_indexes(&self, _db: &str, table: &str) -> Result<Vec<IndexInfo>> {
+        // PRAGMA can't bind parameters — reject anything that could break out of
+        // the quoted identifier, then build the statement literally.
+        if table.contains('"') || table.contains('\0') {
+            return Err(AppError::InvalidInput("invalid table name".into()));
+        }
+        // index_list columns: seq, name, unique, origin, partial.
+        // origin = 'pk' for the implicit/auto PRIMARY KEY index.
+        let list_sql = format!("PRAGMA index_list(\"{}\")", table);
+        let list_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(list_sql))
+            .fetch_all(&self.pool)
+            .await?;
+        let mut out = Vec::with_capacity(list_rows.len());
+        for r in &list_rows {
+            let name = r.try_get::<String, _>("name").unwrap_or_default();
+            if name.is_empty() || name.contains('"') || name.contains('\0') {
+                continue;
+            }
+            let unique = r.try_get::<i64, _>("unique").unwrap_or(0) != 0;
+            let primary = r
+                .try_get::<String, _>("origin")
+                .map(|o| o == "pk")
+                .unwrap_or(false);
+            // index_info columns: seqno, cid, name. NULL name = an expression
+            // index column; skip those (no plain column name to show).
+            let info_sql = format!("PRAGMA index_info(\"{}\")", name);
+            let info_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(info_sql))
+                .fetch_all(&self.pool)
+                .await?;
+            let columns = info_rows
+                .iter()
+                .filter_map(|c| c.try_get::<Option<String>, _>("name").ok().flatten())
+                .collect();
+            out.push(IndexInfo {
+                name,
+                columns,
+                unique,
+                primary,
+                method: None,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn schema_objects(&self, _db: &str) -> Result<Vec<SchemaObject>> {
+        // SQLite only has views and triggers (no stored procedures/functions).
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT type, name FROM sqlite_master \
+             WHERE type IN ('view','trigger') AND name NOT LIKE 'sqlite_%' \
+             ORDER BY type, name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                let kind = r.try_get::<String, _>("type").ok()?;
+                let name = r.try_get::<String, _>("name").ok()?;
+                Some(SchemaObject {
+                    kind,
+                    name,
+                    id: None,
+                })
+            })
+            .collect())
+    }
+
+    pub async fn object_definition(&self, _db: &str, kind: &str, name: &str) -> Result<String> {
+        // The DDL is stored verbatim in sqlite_master.sql.
+        let row: Option<SqliteRow> =
+            sqlx::query("SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2")
+                .bind(kind)
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?;
+        match row.and_then(|r| r.try_get::<Option<String>, _>("sql").ok().flatten()) {
+            Some(sql) => Ok(sql),
+            None => Err(AppError::InvalidInput(format!(
+                "no definition found for {kind} '{name}'"
+            ))),
+        }
+    }
+
     pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {
         // SQLite has no single information_schema query for every column, but
         // the database is a local file so per-table PRAGMA lookups are cheap.
@@ -512,6 +615,34 @@ fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("with")
         || trimmed.starts_with("values")
         || trimmed.starts_with("pragma")
+}
+
+/// Run one statement on a specific connection (pool-acquired or the held tx
+/// connection) and decode it into a [`QueryResult`]. Shared by `execute` and
+/// `tx_execute` (#414).
+async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<QueryResult> {
+    let started = Instant::now();
+    if is_query_shape(sql) {
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut *conn)
+            .await?;
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    } else {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await?;
+        Ok(QueryResult::empty(
+            result.rows_affected(),
+            started.elapsed().as_millis() as u64,
+        ))
+    }
 }
 
 fn columns_of(rows: &[SqliteRow]) -> Vec<Column> {

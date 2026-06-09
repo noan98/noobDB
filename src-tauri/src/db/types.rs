@@ -71,6 +71,35 @@ pub struct ForeignKey {
     pub constraint_name: Option<String>,
 }
 
+/// One index on a table (#459). Carries the index name, its constituent columns
+/// in order, and whether it is UNIQUE / the PRIMARY KEY. `method` is the access
+/// method when the engine exposes one (e.g. PostgreSQL `btree`/`gin`, MySQL
+/// `BTREE`/`HASH`); `None` for SQLite, which has no such concept.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexInfo {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub unique: bool,
+    pub primary: bool,
+    pub method: Option<String>,
+}
+
+/// A non-table schema object (#483): a view, materialized view, stored
+/// procedure, function, or trigger. `kind` is one of `view` /
+/// `materialized_view` / `procedure` / `function` / `trigger` so the UI can
+/// group them; `name` is the object's identifier within the database/schema.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaObject {
+    pub kind: String,
+    pub name: String,
+    /// 同名衝突を避けるための一意識別子 (#483)。PostgreSQL では関数/手続き/トリガーの
+    /// `oid` を文字列で持ち、`object_definition` に渡して正しい 1 件を引く (オーバーロード
+    /// 関数やテーブル別同名トリガーの取り違えを防ぐ)。名前で一意な種別 (ビュー等) や
+    /// MySQL/SQLite では `None`。
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
 /// One table (or view) and its column names, used to feed whole-schema SQL
 /// autocomplete. Only names are carried — type/key metadata lives in the
 /// per-table `TableColumnInfo` path, which the editor does not need for

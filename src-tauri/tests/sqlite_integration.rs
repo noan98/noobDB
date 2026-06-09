@@ -248,6 +248,196 @@ async fn sqlite_foreign_keys_are_introspected_for_er_diagram() {
 }
 
 #[tokio::test]
+async fn sqlite_list_indexes_reports_primary_unique_and_plain() {
+    // list_indexes (#459) must surface the implicit PK index, an explicit UNIQUE
+    // index, and a plain multi-column index with its columns in declaration order.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_idx_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute(
+        "CREATE TABLE items (
+           id INTEGER PRIMARY KEY,
+           sku TEXT NOT NULL,
+           category TEXT,
+           name TEXT
+         )",
+        None,
+    )
+    .await
+    .expect("create items");
+    conn.execute("CREATE UNIQUE INDEX idx_items_sku ON items(sku)", None)
+        .await
+        .expect("create unique index");
+    conn.execute(
+        "CREATE INDEX idx_items_cat_name ON items(category, name)",
+        None,
+    )
+    .await
+    .expect("create plain index");
+
+    let indexes = conn
+        .list_indexes("main", "items")
+        .await
+        .expect("list_indexes");
+
+    let unique = indexes
+        .iter()
+        .find(|i| i.name == "idx_items_sku")
+        .expect("unique index present");
+    assert!(unique.unique, "idx_items_sku is UNIQUE");
+    assert!(!unique.primary);
+    assert_eq!(unique.columns, vec!["sku".to_string()]);
+
+    let plain = indexes
+        .iter()
+        .find(|i| i.name == "idx_items_cat_name")
+        .expect("plain index present");
+    assert!(!plain.unique);
+    assert_eq!(
+        plain.columns,
+        vec!["category".to_string(), "name".to_string()],
+        "composite index keeps declaration order"
+    );
+
+    // Note: an `INTEGER PRIMARY KEY` is a rowid alias with no separate index, so
+    // `PRIMARY KEY` indexes are not asserted here (their visibility in
+    // PRAGMA index_list is engine/version dependent). The `primary` flag is still
+    // derived from index_list's `origin = 'pk'` for engines that expose it.
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
+    // schema_objects (#483) surfaces SQLite views and triggers (no routines),
+    // and object_definition returns the stored DDL verbatim.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_obj_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER)", None)
+        .await
+        .expect("create table");
+    conn.execute("CREATE VIEW v_pos AS SELECT id FROM t WHERE n > 0", None)
+        .await
+        .expect("create view");
+    conn.execute(
+        "CREATE TRIGGER trg_ai AFTER INSERT ON t BEGIN UPDATE t SET n = 0 WHERE n IS NULL; END",
+        None,
+    )
+    .await
+    .expect("create trigger");
+
+    let objects = conn.schema_objects("main").await.expect("schema_objects");
+    assert!(
+        objects
+            .iter()
+            .any(|o| o.kind == "view" && o.name == "v_pos"),
+        "view should be listed: {objects:?}"
+    );
+    assert!(
+        objects
+            .iter()
+            .any(|o| o.kind == "trigger" && o.name == "trg_ai"),
+        "trigger should be listed: {objects:?}"
+    );
+    // No stored procedures/functions in SQLite.
+    assert!(objects
+        .iter()
+        .all(|o| o.kind != "procedure" && o.kind != "function"));
+
+    let view_def = conn
+        .object_definition("main", "view", "v_pos", None)
+        .await
+        .expect("view definition");
+    assert!(view_def.contains("CREATE VIEW"));
+    assert!(view_def.contains("v_pos"));
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn sqlite_explicit_transaction_commits_and_rolls_back() {
+    // 明示トランザクション (#414): BEGIN→INSERT→ROLLBACK は何も残さず、
+    // BEGIN→INSERT→COMMIT は永続化される。文は同一の保持接続で実行される。
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_xtx_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+
+    // ROLLBACK path.
+    assert!(!conn.transaction_active().await);
+    conn.begin_transaction(None).await.expect("begin");
+    assert!(conn.transaction_active().await);
+    conn.execute_in_transaction("INSERT INTO t (id) VALUES (1)")
+        .await
+        .expect("insert in tx");
+    conn.finish_transaction(false).await.expect("rollback");
+    assert!(!conn.transaction_active().await);
+    let after_rollback = conn
+        .execute("SELECT COUNT(*) AS c FROM t", None)
+        .await
+        .expect("count");
+    assert!(matches!(&after_rollback.rows[0][0], t::Value::Int(0)));
+
+    // COMMIT path.
+    conn.begin_transaction(None).await.expect("begin");
+    conn.execute_in_transaction("INSERT INTO t (id) VALUES (2)")
+        .await
+        .expect("insert in tx");
+    conn.finish_transaction(true).await.expect("commit");
+    let after_commit = conn
+        .execute("SELECT COUNT(*) AS c FROM t", None)
+        .await
+        .expect("count");
+    assert!(matches!(&after_commit.rows[0][0], t::Value::Int(1)));
+
+    // Beginning twice without finishing is rejected.
+    conn.begin_transaction(None).await.expect("begin again");
+    assert!(conn.begin_transaction(None).await.is_err());
+    conn.finish_transaction(false).await.expect("rollback");
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn sqlite_health_check_succeeds_on_live_connection() {
+    // health_check (#485) runs `SELECT 1` through the driver; it must succeed on
+    // a freshly opened connection.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_health_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.health_check()
+        .await
+        .expect("health check on a live connection");
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_execute_transaction_is_all_or_nothing() {
     let mut path = std::env::temp_dir();
     path.push(format!("noobdb_sqlite_tx_{}.db", std::process::id()));

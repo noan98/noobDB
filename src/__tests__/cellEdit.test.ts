@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { CellValue, Column, TableColumnInfo } from "../api/tauri";
 import {
+  buildDeleteStatements,
+  buildInsertStatements,
   buildRowSql,
   buildUpdateStatements,
   countEditedCells,
@@ -423,5 +425,69 @@ describe("edit counters", () => {
   it("returns zero for an empty edit set", () => {
     expect(countEditedCells({})).toBe(0);
     expect(countEditedRows({})).toBe(0);
+  });
+});
+
+describe("buildInsertStatements", () => {
+  const columns = [col("id", "INT"), col("name", "VARCHAR"), col("active", "BOOLEAN")];
+
+  it("builds an INSERT from only the filled columns", () => {
+    const stmts = buildInsertStatements({
+      driver: "mysql",
+      database: "shop",
+      table: "users",
+      columns,
+      inserts: [{ 1: "Alice", 2: "true" }],
+    });
+    expect(stmts).toEqual([
+      "INSERT INTO `shop`.`users` (`name`, `active`) VALUES ('Alice', TRUE);",
+    ]);
+  });
+
+  it("coerces null and numbers, and skips empty rows", () => {
+    const stmts = buildInsertStatements({
+      driver: "postgres",
+      database: "public",
+      table: "t",
+      columns,
+      inserts: [{ 0: "5", 1: "null" }, {}],
+    });
+    expect(stmts).toEqual(['INSERT INTO "public"."t" ("id", "name") VALUES (5, NULL);']);
+  });
+});
+
+describe("buildDeleteStatements", () => {
+  const columns = [col("id", "INT"), col("name", "VARCHAR")];
+  const rows: CellValue[][] = [
+    [1, "Alice"],
+    [2, "Bob"],
+    [3, "Carol"],
+  ];
+  const pkIndices = [0];
+
+  it("emits a DELETE per marked row, keyed by PK identity", () => {
+    const keys = new Set([rowEditKey(rows[0], pkIndices, 0), rowEditKey(rows[2], pkIndices, 2)]);
+    const stmts = buildDeleteStatements({
+      driver: "mysql",
+      database: "shop",
+      table: "users",
+      columns,
+      rows,
+      pkIndices,
+      deleteKeys: keys,
+    });
+    expect(stmts).toEqual([
+      "DELETE FROM `shop`.`users` WHERE `id` = 1;",
+      "DELETE FROM `shop`.`users` WHERE `id` = 3;",
+    ]);
+  });
+
+  it("returns empty without a PK or marks", () => {
+    expect(
+      buildDeleteStatements({ driver: "mysql", database: "d", table: "t", columns, rows, pkIndices: [], deleteKeys: new Set(["x"]) }),
+    ).toEqual([]);
+    expect(
+      buildDeleteStatements({ driver: "mysql", database: "d", table: "t", columns, rows, pkIndices, deleteKeys: new Set() }),
+    ).toEqual([]);
   });
 });
