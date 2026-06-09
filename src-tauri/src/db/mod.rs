@@ -570,6 +570,29 @@ fn mask_for_analysis(src: &[char]) -> Vec<char> {
             }
             continue;
         }
+        // Dollar-quoted string (PostgreSQL): `$$…$$` or `$tag$…$tag$`. Only
+        // treated as a string when the opening tag is valid (empty or
+        // identifier-like, not starting with a digit — `$1` is a parameter
+        // placeholder) and a matching closing tag exists; otherwise the `$`
+        // is left as-is so any keywords stay visible, which is the
+        // fail-closed direction for the gates built on this mask. A `$`
+        // straight after a word char is part of an identifier (MySQL allows
+        // `$` in names), never an opening tag.
+        if c == '$' && (i == 0 || !is_word_char(src[i - 1])) {
+            if let Some(tag_len) = dollar_quote_tag_len(src, i) {
+                if let Some(close) = find_dollar_tag(src, i + tag_len, &src[i..i + tag_len]) {
+                    // Keep both delimiters, blank the interior (preserving
+                    // newlines) so token boundaries and positions survive.
+                    out.extend_from_slice(&src[i..i + tag_len]);
+                    for &d in &src[i + tag_len..close] {
+                        out.push(if d == '\n' { '\n' } else { ' ' });
+                    }
+                    out.extend_from_slice(&src[close..close + tag_len]);
+                    i = close + tag_len;
+                    continue;
+                }
+            }
+        }
         // Quoted literal / identifier: '…' "…" `…`.
         if c == '\'' || c == '"' || c == '`' {
             let quote = c;
@@ -605,6 +628,159 @@ fn mask_for_analysis(src: &[char]) -> Vec<char> {
         i += 1;
     }
     out
+}
+
+/// Which driver's string / comment syntaxes [`strip_sql_comments`] should
+/// recognise. The differences that matter here:
+///
+/// * MySQL: `#` starts a line comment, `--` starts one only when followed by
+///   whitespace or a control character (`x--1` is `x - (-1)`), backslash
+///   escapes work inside `'…'` / `"…"` strings, and backticks quote
+///   identifiers.
+/// * PostgreSQL: dollar-quoted strings (`$$…$$` / `$tag$…$tag$`) must be
+///   preserved verbatim, block comments nest, and backslash is not an escape
+///   in standard strings.
+/// * SQLite: like PostgreSQL minus dollar quotes and comment nesting, plus
+///   backtick identifiers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SqlFlavor {
+    MySql,
+    Postgres,
+    Sqlite,
+}
+
+/// Removes line (`-- …`, MySQL `# …`) and block (`/* … */`) comments from
+/// `sql`, leaving everything else verbatim. String literals and quoted
+/// identifiers are tracked so a comment marker *inside* a string — e.g.
+/// `'a -- b'` or `'url: /*x*/'` — is not mistaken for a comment and the
+/// string survives intact. Line comments keep their terminating newline;
+/// block comments collapse to a single space (so `a/*x*/b` stays two tokens).
+///
+/// Used by the per-driver `tokenize_sql` / `extract_where_and_after` helpers
+/// on the dry-run preview path; the drivers used to carry three identical,
+/// quote-unaware copies of this.
+pub(crate) fn strip_sql_comments(sql: &str, flavor: SqlFlavor) -> String {
+    let src: Vec<char> = sql.chars().collect();
+    let n = src.len();
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0;
+    while i < n {
+        let c = src[i];
+        // Line comment: `-- …` up to newline, plus `# …` on MySQL. MySQL only
+        // treats `--` as a comment opener when followed by whitespace or a
+        // control character — `balance--1` is `balance - (-1)` there — while
+        // PostgreSQL / SQLite need no separator.
+        let dash_comment = c == '-'
+            && i + 1 < n
+            && src[i + 1] == '-'
+            && match flavor {
+                SqlFlavor::MySql => {
+                    i + 2 < n && (src[i + 2].is_ascii_whitespace() || src[i + 2].is_ascii_control())
+                }
+                SqlFlavor::Postgres | SqlFlavor::Sqlite => true,
+            };
+        if dash_comment || (c == '#' && flavor == SqlFlavor::MySql) {
+            while i < n && src[i] != '\n' {
+                i += 1;
+            }
+            continue; // the newline itself is emitted by the loop below
+        }
+        // Block comment: `/* … */` → one space. PostgreSQL block comments
+        // nest (`/* a /* b */ c */` is one comment), so track depth there;
+        // MySQL / SQLite end at the first `*/`.
+        if c == '/' && i + 1 < n && src[i + 1] == '*' {
+            let mut depth = 1usize;
+            i += 2;
+            while i < n && depth > 0 {
+                if src[i] == '*' && i + 1 < n && src[i + 1] == '/' {
+                    depth -= 1;
+                    i += 2;
+                } else if flavor == SqlFlavor::Postgres
+                    && src[i] == '/'
+                    && i + 1 < n
+                    && src[i + 1] == '*'
+                {
+                    depth += 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            out.push(' ');
+            continue;
+        }
+        // Dollar-quoted string (PostgreSQL): copy verbatim through the
+        // matching closing tag. Without a closing tag the `$` is literal.
+        if flavor == SqlFlavor::Postgres && c == '$' && (i == 0 || !is_word_char(src[i - 1])) {
+            if let Some(tag_len) = dollar_quote_tag_len(&src, i) {
+                if let Some(close) = find_dollar_tag(&src, i + tag_len, &src[i..i + tag_len]) {
+                    out.extend(&src[i..close + tag_len]);
+                    i = close + tag_len;
+                    continue;
+                }
+            }
+        }
+        // String literal / quoted identifier: copy verbatim to the closing
+        // delimiter (honouring doubled-quote escapes, and backslash escapes
+        // in MySQL strings).
+        if c == '\'' || c == '"' || c == '`' {
+            let quote = c;
+            let backslash_escapes = flavor == SqlFlavor::MySql && quote != '`';
+            out.push(c);
+            i += 1;
+            while i < n {
+                let d = src[i];
+                if backslash_escapes && d == '\\' && i + 1 < n {
+                    out.push(d);
+                    out.push(src[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                out.push(d);
+                i += 1;
+                if d == quote {
+                    if i < n && src[i] == quote {
+                        // Doubled quote: escaped delimiter, keep going.
+                        out.push(quote);
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// Length (in chars, including both `$`) of a dollar-quote tag starting at
+/// `src[i]` (which must be `$`), or `None` when what follows is not a valid
+/// tag. Valid tags are `$$` or `$tag$` where `tag` is identifier-like and
+/// does not start with a digit (`$1` is a Postgres parameter placeholder).
+fn dollar_quote_tag_len(src: &[char], i: usize) -> Option<usize> {
+    let n = src.len();
+    let mut j = i + 1;
+    if j < n && src[j].is_ascii_digit() {
+        return None;
+    }
+    while j < n && (src[j].is_ascii_alphanumeric() || src[j] == '_') {
+        j += 1;
+    }
+    (j < n && src[j] == '$').then_some(j + 1 - i)
+}
+
+/// Index of the next occurrence of `tag` in `src` at or after `from`.
+fn find_dollar_tag(src: &[char], from: usize, tag: &[char]) -> Option<usize> {
+    let n = src.len();
+    let m = tag.len();
+    (from..n.checked_sub(m)? + 1).find(|&k| src[k..k + m] == *tag)
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
 }
 
 fn is_word_byte(b: u8) -> bool {
@@ -941,6 +1117,150 @@ mod tests {
         assert!(!has_stacked_statements("SELECT /* comment; */ 1"));
         // Multiple semicolons inside a single string literal.
         assert!(!has_stacked_statements("INSERT INTO t VALUES ('a;b;c')"));
+    }
+
+    #[test]
+    fn masks_postgres_dollar_quoted_strings() {
+        // Keywords and semicolons inside `$$…$$` / `$tag$…$tag$` are string
+        // content, not SQL.
+        assert!(is_read_only_sql("SELECT $$delete from t$$ AS s"));
+        assert!(is_read_only_sql("SELECT $tag$drop table x; -- $tag$ AS s"));
+        assert!(!has_stacked_statements("SELECT $$a; b$$"));
+        assert!(!has_stacked_statements(
+            "INSERT INTO t VALUES ($body$x; y$body$)"
+        ));
+        // The closing tag must match the opening one exactly.
+        assert!(!is_read_only_sql("SELECT $a$ delete from t $b$"));
+    }
+
+    #[test]
+    fn dollar_quote_masking_fails_closed() {
+        // Unterminated dollar quote: the `$` is literal, keywords stay visible.
+        assert!(!is_read_only_sql("SELECT $$; DELETE FROM t"));
+        // `$1`/`$2` are parameter placeholders, never opening tags — the
+        // DELETE between them must not be swallowed as string content.
+        assert!(!is_read_only_sql("SELECT $1; DELETE FROM t WHERE id = $1"));
+        // `$` inside an identifier (MySQL allows it) is not an opening tag.
+        assert!(is_read_only_sql("SELECT a$b FROM t"));
+        assert!(!is_read_only_sql(
+            "SELECT a$x$; DELETE FROM t WHERE c = a$x$"
+        ));
+    }
+
+    #[test]
+    fn auto_limit_ignores_keywords_inside_dollar_quotes() {
+        assert_eq!(
+            apply_auto_limit("SELECT $$limit 5$$ AS s", 1000).as_deref(),
+            Some("SELECT $$limit 5$$ AS s LIMIT 1000"),
+        );
+    }
+
+    #[test]
+    fn strip_sql_comments_removes_comments_outside_strings() {
+        use super::{strip_sql_comments, SqlFlavor};
+        assert_eq!(
+            strip_sql_comments("SELECT 1 -- bye\nFROM t", SqlFlavor::Postgres),
+            "SELECT 1 \nFROM t"
+        );
+        assert_eq!(strip_sql_comments("a/*x*/b", SqlFlavor::Sqlite), "a b");
+        // `#` line comments are MySQL-only.
+        assert_eq!(
+            strip_sql_comments("SELECT 1 # note", SqlFlavor::MySql),
+            "SELECT 1 "
+        );
+        assert_eq!(
+            strip_sql_comments("SELECT '#1' # note", SqlFlavor::Postgres),
+            "SELECT '#1' # note"
+        );
+    }
+
+    #[test]
+    fn strip_sql_comments_keeps_markers_inside_strings() {
+        use super::{strip_sql_comments, SqlFlavor};
+        // `--` / `/*` inside a string literal are content, not comments.
+        assert_eq!(
+            strip_sql_comments(
+                "UPDATE t SET note = 'a -- b' WHERE id = 1",
+                SqlFlavor::MySql
+            ),
+            "UPDATE t SET note = 'a -- b' WHERE id = 1"
+        );
+        assert_eq!(
+            strip_sql_comments(
+                "UPDATE t SET url = 'http://x/*p*/q' WHERE id = 1",
+                SqlFlavor::Postgres
+            ),
+            "UPDATE t SET url = 'http://x/*p*/q' WHERE id = 1"
+        );
+        // Doubled-quote escape keeps the string open across the marker.
+        assert_eq!(
+            strip_sql_comments("SELECT 'it''s -- fine'", SqlFlavor::Sqlite),
+            "SELECT 'it''s -- fine'"
+        );
+        // MySQL backslash escape: `\'` does not close the string.
+        assert_eq!(
+            strip_sql_comments(r"SELECT 'a\' -- b'", SqlFlavor::MySql),
+            r"SELECT 'a\' -- b'"
+        );
+        // Quoted identifiers survive too.
+        assert_eq!(
+            strip_sql_comments("SELECT `weird -- name` FROM t", SqlFlavor::MySql),
+            "SELECT `weird -- name` FROM t"
+        );
+        // Postgres dollar-quoted bodies are copied verbatim.
+        assert_eq!(
+            strip_sql_comments("SELECT $fn$ -- not a comment $fn$", SqlFlavor::Postgres),
+            "SELECT $fn$ -- not a comment $fn$"
+        );
+    }
+
+    #[test]
+    fn strip_sql_comments_mysql_dash_dash_needs_separator() {
+        use super::{strip_sql_comments, SqlFlavor};
+        // MySQL: `--` without a following space is subtraction of a negative
+        // (`x--1` = `x - (-1)`), not a comment.
+        assert_eq!(
+            strip_sql_comments("UPDATE t SET x = x--1 WHERE id = 1", SqlFlavor::MySql),
+            "UPDATE t SET x = x--1 WHERE id = 1"
+        );
+        assert_eq!(
+            strip_sql_comments("SELECT balance--1 FROM t", SqlFlavor::MySql),
+            "SELECT balance--1 FROM t"
+        );
+        // With the separator it is a comment again (newline kept).
+        assert_eq!(
+            strip_sql_comments("SELECT 1 -- note\nFROM t", SqlFlavor::MySql),
+            "SELECT 1 \nFROM t"
+        );
+        // PostgreSQL / SQLite need no separator after `--`.
+        assert_eq!(
+            strip_sql_comments("SELECT balance--1 FROM t", SqlFlavor::Postgres),
+            "SELECT balance"
+        );
+        assert_eq!(
+            strip_sql_comments("SELECT balance--1 FROM t", SqlFlavor::Sqlite),
+            "SELECT balance"
+        );
+    }
+
+    #[test]
+    fn strip_sql_comments_postgres_block_comments_nest() {
+        use super::{strip_sql_comments, SqlFlavor};
+        // PostgreSQL block comments nest: the whole thing is one comment.
+        assert_eq!(
+            strip_sql_comments("SELECT /* a /* b */ c */ 1", SqlFlavor::Postgres),
+            "SELECT   1"
+        );
+        // MySQL / SQLite end at the first `*/` (no nesting).
+        assert_eq!(
+            strip_sql_comments("SELECT /* a /* b */ c */ 1", SqlFlavor::MySql),
+            "SELECT   c */ 1"
+        );
+        // Unterminated nested comment swallows to end-of-input, like before.
+        assert_eq!(
+            strip_sql_comments("SELECT /* a /* b */ c", SqlFlavor::Postgres),
+            "SELECT  "
+        );
     }
 
     #[test]

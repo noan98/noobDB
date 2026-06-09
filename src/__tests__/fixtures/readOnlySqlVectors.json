@@ -41,6 +41,15 @@
     { "sql": "", "readOnly": false, "note": "空文字列" },
     { "sql": "   ", "readOnly": false, "note": "空白のみ" },
     { "sql": ";", "readOnly": false, "note": "セミコロンのみ" },
-    { "sql": "REPLACE INTO users (id) VALUES (1)", "readOnly": false, "note": "REPLACE INTO は許可プレフィックスでなく弾かれる" }
+    { "sql": "REPLACE INTO users (id) VALUES (1)", "readOnly": false, "note": "REPLACE INTO は許可プレフィックスでなく弾かれる" },
+
+    { "sql": "SELECT $$delete from users$$ AS s", "readOnly": true, "note": "ドル引用 ($$...$$) 内の write キーワードはマスクされる" },
+    { "sql": "SELECT $tag$drop table x; -- $tag$ AS s", "readOnly": true, "note": "タグ付きドル引用 ($tag$...$tag$) 内の DDL/セミコロンはマスクされる" },
+    { "sql": "SELECT $$a; b$$ AS s", "readOnly": true, "note": "ドル引用内のセミコロンは文区切りでない" },
+    { "sql": "SELECT $$x$$; DELETE FROM users", "readOnly": false, "note": "ドル引用の後ろに隠れた 2 文目は弾く" },
+    { "sql": "SELECT $$; DELETE FROM users", "readOnly": false, "note": "未終端のドル引用は文字列とみなさずフェイルクローズ" },
+    { "sql": "SELECT $1; DELETE FROM users WHERE id = $1", "readOnly": false, "note": "$1 はパラメータプレースホルダでありドル引用の開始タグでない" },
+    { "sql": "SELECT a$b FROM t", "readOnly": true, "note": "識別子内の $ (MySQL) はドル引用と誤認しない" },
+    { "sql": "SELECT $a$ delete from users $b$", "readOnly": false, "note": "開始タグと不一致の閉じタグでは文字列にならずフェイルクローズ" }
   ]
 }

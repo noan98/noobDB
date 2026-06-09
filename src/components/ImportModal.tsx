@@ -104,6 +104,10 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const streamIdRef = useRef<string | null>(null);
+  // Set on unmount so an in-flight `listenImportStream` (awaited in
+  // handleImport) can tell its registration arrived too late and must
+  // self-unlisten — the unmount cleanup has already run by then.
+  const disposedRef = useRef(false);
 
   const importing = status.kind === "importing";
   const quoteValid = isValidSingleByteChar(quote);
@@ -166,6 +170,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
   // Detach the event listener on unmount.
   useEffect(() => {
     return () => {
+      disposedRef.current = true;
       if (unlistenRef.current) unlistenRef.current();
     };
   }, []);
@@ -205,7 +210,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
     setStatus({ kind: "importing", inserted: 0, total: 0 });
 
     if (unlistenRef.current) unlistenRef.current();
-    unlistenRef.current = await listenImportStream(streamId, {
+    const unlisten = await listenImportStream(streamId, {
       onStarted: (e) => setStatus({ kind: "importing", inserted: 0, total: e.total }),
       onProgress: (e) =>
         setStatus({ kind: "importing", inserted: e.inserted, total: e.total }),
@@ -227,6 +232,13 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
         }
       },
     });
+    // The modal may have unmounted while the listener was attaching; its
+    // cleanup already ran, so register nothing and drop the listener here.
+    if (disposedRef.current) {
+      unlisten();
+      return;
+    }
+    unlistenRef.current = unlisten;
 
     try {
       await api.importCsv({

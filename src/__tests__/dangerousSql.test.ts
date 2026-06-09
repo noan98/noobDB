@@ -104,6 +104,34 @@ describe("analyzeDangerousSql", () => {
       analyzeDangerousSql("/* cleanup */ DELETE FROM sessions"),
     ).toEqual([{ kind: "deleteNoWhere", target: "sessions" }]);
   });
+
+  it("does not treat a WHERE inside a dollar-quoted string as a guard", () => {
+    // PostgreSQL: $$…$$ / $tag$…$tag$ are string literals; a `where` inside
+    // must not make an unguarded UPDATE look safe.
+    expect(analyzeDangerousSql("UPDATE t SET c = $$ where id = 1 $$")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
+    expect(
+      analyzeDangerousSql("UPDATE t SET c = $tag$ where id = 1 $tag$"),
+    ).toEqual([{ kind: "updateNoWhere", target: "t" }]);
+  });
+
+  it("does not split statements on a semicolon inside a dollar-quoted string", () => {
+    expect(
+      analyzeDangerousSql("UPDATE t SET c = $$a; b$$ WHERE id = 1"),
+    ).toEqual([]);
+  });
+
+  it("does not mistake parameter placeholders or $-identifiers for dollar quotes", () => {
+    // `$1 … $1` must not be swallowed as a string: the DELETE stays visible.
+    expect(
+      analyzeDangerousSql("DELETE FROM t; SELECT $1 WHERE x = $1"),
+    ).toEqual([{ kind: "deleteNoWhere", target: "t" }]);
+    // `a$b` is a MySQL-legal identifier, not an opening tag.
+    expect(analyzeDangerousSql("DELETE FROM a$b")).toEqual([
+      { kind: "deleteNoWhere", target: "a$b" },
+    ]);
+  });
 });
 
 describe("isReadOnlySql", () => {

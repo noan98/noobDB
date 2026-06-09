@@ -54,6 +54,24 @@ describe("splitSqlStatements", () => {
     expect(splitSqlStatements(sql)).toEqual(["SELECT $tag$ a; b $tag$", "SELECT 2"]);
   });
 
+  it("does not mistake parameter placeholders for dollar-quote tags", () => {
+    // `$1$ ... $1$` のような数字始まりタグは PostgreSQL では無効 ($1 はパラメータ)。
+    // 文字列とみなして 2 文目を飲み込まないこと。
+    expect(splitSqlStatements("SELECT $1; SELECT $1")).toEqual([
+      "SELECT $1",
+      "SELECT $1",
+    ]);
+  });
+
+  it("does not treat `$` inside an identifier as a dollar-quote opener", () => {
+    // MySQL は識別子に `$` を許す。`a$tag$` ... `b$tag$` で挟まれた `;` を
+    // ドル引用の内側と誤認して分割を失わないこと。
+    expect(splitSqlStatements("SELECT a$tag$; SELECT b$tag$")).toEqual([
+      "SELECT a$tag$",
+      "SELECT b$tag$",
+    ]);
+  });
+
   it("returns the whole input when there is a single statement", () => {
     expect(splitSqlStatements("SELECT 1")).toEqual(["SELECT 1"]);
   });
