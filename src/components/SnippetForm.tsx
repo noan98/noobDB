@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
-import { Button, Input, Select, Textarea } from "./ui";
+import { Button, Input, PressableButton, Select, Textarea } from "./ui";
 
 interface Props {
   initial: Snippet | null;
@@ -248,7 +248,7 @@ export function SnippetForm({
 
       <Box gridColumn="span 2" display="flex" gap="var(--space-2)" justifyContent="flex-end">
         <Button type="button" variant="secondary" onClick={onCancel}>{t("formCancel")}</Button>
-        <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
+        <PressableButton type="button" variant="primary" onClick={handleSave}>{t("formSave")}</PressableButton>
       </Box>
     </Box>
   );

@@ -15,7 +15,7 @@ import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { transitions } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, Select, Switch } from "./ui";
+import { Button, Input, PressableButton, Select, Switch } from "./ui";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
@@ -548,14 +548,14 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
         ) : (
           <Button type="button" variant="secondary" onClick={onClose}>{t("importClose")}</Button>
         )}
-        <Button
+        <PressableButton
           type="button"
           variant="primary"
           onClick={handleImport}
           disabled={importing || !path || mappingEntries.length === 0 || !quoteValid}
         >
           {importing ? t("importImporting") : t("importExecute")}
-        </Button>
+        </PressableButton>
       </ModalFooter>
     </Modal>
   );

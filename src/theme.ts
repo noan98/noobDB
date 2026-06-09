@@ -328,6 +328,9 @@ export const buttonRecipe = defineRecipe({
     transitionTimingFunction: "var(--ease)",
     _hover: { bg: "app.hover" },
     "&:active:not(:disabled)": { transform: "translateY(1px)" },
+    // PressableButton に包まれたとき (data-pressable) は motion の whileTap で
+    // スケールアニメーションを行うため、CSS の translateY 変位を打ち消す。
+    "&[data-pressable]:active:not(:disabled)": { transform: "none" },
     _focusVisible: { outline: "none", boxShadow: focusRing },
     _disabled: { opacity: 0.5, cursor: "not-allowed" },
   },

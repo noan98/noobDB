@@ -4,7 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api, DumpOptions, type DriverKind } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, Switch } from "./ui";
+import { Button, Input, PressableButton, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
@@ -253,7 +253,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
         <Button type="button" variant="secondary" onClick={onClose} disabled={isRunning}>
           {t("dumpCancel")}
         </Button>
-        <Button
+        <PressableButton
           type="button"
           variant="primary"
           onClick={handleDump}
@@ -279,7 +279,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
             </chakra.span>
           )}
           {isRunning ? t("dumpRunning") : t("dumpExecute")}
-        </Button>
+        </PressableButton>
       </ModalFooter>
     </Modal>
   );

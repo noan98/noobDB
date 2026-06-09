@@ -6,7 +6,7 @@ import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri"
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { Spinner } from "./Spinner";
-import { Button, Input, Select, Switch } from "./ui";
+import { Button, Input, PressableButton, Select, Switch } from "./ui";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value never reaches the frontend, so this
@@ -647,7 +647,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             t("formTest")
           )}
         </Button>
-        <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
+        <PressableButton type="button" variant="primary" onClick={handleSave}>{t("formSave")}</PressableButton>
       </Flex>
     </Box>
   );

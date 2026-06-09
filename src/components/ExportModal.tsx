@@ -4,7 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api/tauri";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input } from "./ui";
+import { Button, Input, PressableButton } from "./ui";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
@@ -359,7 +359,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
             {t("exportCancel")}
           </Button>
         )}
-        <Button
+        <PressableButton
           type="button"
           variant="primary"
           onClick={handleExport}
@@ -370,7 +370,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
             : isSaving
               ? t("exportSaving")
               : t("exportExecute")}
-        </Button>
+        </PressableButton>
       </ModalFooter>
     </Modal>
   );
