@@ -741,6 +741,16 @@ export const api = {
       mapping: params.mapping,
       batchSize: params.batchSize ?? null,
     }),
+
+  /**
+   * ドロップされた `.sql` / `.txt` ファイルの内容を読む (#497)。フロントが fs API を
+   * 直に叩かずバックエンド経由で読む (capabilities を最小に保つ)。サイズ上限を超える
+   * ファイルは reject される。
+   */
+  readTextFile: (path: string) =>
+    invoke<string>("read_text_file", { path }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "read_text_file"),
+    ),
 };
 
 export interface QueryStreamColumnsEvent {

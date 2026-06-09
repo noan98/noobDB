@@ -2,6 +2,7 @@ import { forwardRef, lazy, Suspense, useCallback, useEffect, useMemo, useRef, us
 import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   api,
@@ -138,7 +139,7 @@ import {
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
 import { matchErrorHint } from "./errorHints";
 import { t as translate, useT, useLocale } from "./i18n";
-import { transitions } from "./motion";
+import { transitions, variants } from "./motion";
 import {
   useSettings,
   getSettings,
@@ -620,6 +621,45 @@ function makeExplainTab(sql: string): Tab {
   };
 }
 
+/** ドラッグ&ドロップ (#497) で受理するファイル種別の判定結果。 */
+type DroppedKind = "sql" | "csv" | "unsupported";
+
+/** パスの拡張子 (小文字、ドットなし)。拡張子が無ければ空文字。 */
+function fileExtension(path: string): string {
+  const base = path.split(/[/\\]/).pop() ?? path;
+  const dot = base.lastIndexOf(".");
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/** パスのファイル名部分 (ディレクトリを除く)。タブのタイトルに使う。 */
+function fileBaseName(path: string): string {
+  return path.split(/[/\\]/).pop() || path;
+}
+
+/** ドロップされた 1 ファイルの種別を拡張子から判定する (#497)。 */
+function classifyDroppedFile(path: string): DroppedKind {
+  const ext = fileExtension(path);
+  if (ext === "sql" || ext === "txt") return "sql";
+  if (ext === "csv" || ext === "tsv") return "csv";
+  return "unsupported";
+}
+
+/**
+ * ドラッグオーバー中のオーバーレイ表示用に、ドロップ予定ファイル群を 1 つの
+ * フィードバック状態へ畳み込む (#497)。受理できるファイルが 1 つでもあれば
+ * `accept`、種別が混在していれば `mixed`、すべて非対応なら `reject`。
+ */
+type DragFeedback = { accept: boolean; kind: "sql" | "csv" | "mixed" | "reject" };
+
+function dragFeedbackFor(paths: string[]): DragFeedback {
+  const kinds = new Set(paths.map(classifyDroppedFile));
+  const hasSql = kinds.has("sql");
+  const hasCsv = kinds.has("csv");
+  if (!hasSql && !hasCsv) return { accept: false, kind: "reject" };
+  if (hasSql && hasCsv) return { accept: true, kind: "mixed" };
+  return { accept: true, kind: hasSql ? "sql" : "csv" };
+}
+
 function toPersistedTab(tab: Tab): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
   if (tab.database) out.database = tab.database;
@@ -925,6 +965,11 @@ export default function App() {
   // Right-click target for the tab move/close menu (viewport coords).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
+  // ドラッグ&ドロップ (#497) で .csv を落としたときに ImportModal へ渡す事前選択パス。
+  const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
+  // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック (#497)。
+  // null のときオーバーレイは出さない。
+  const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
   // プロファイルインポート (#442): ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
@@ -996,6 +1041,10 @@ export default function App() {
     () => tabs.find((tt) => tt.id === activeTabId) ?? null,
     [tabs, activeTabId],
   );
+  // ドラッグ&ドロップのイベント購読 (#497) を毎タブ切替で貼り直さずに済むよう、
+  // アクティブタブを ref でも参照できるようにする (ドロップ時の最新値読み取り用)。
+  const activeTabRef = useRef<Tab | null>(activeTab);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
   // The active tab of every pane, in pane order. Drives per-pane schema
   // prefetch and lets effects react to either pane changing tabs.
@@ -3110,6 +3159,96 @@ export default function App() {
     addTab(makeQueryTab(), paneId);
   }, [addTab]);
 
+  /**
+   * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する (#497)。
+   * - `.sql` / `.txt` … 内容を読んで新規クエリタブとして開く (複数なら複数タブ)。
+   * - `.csv` / `.tsv` … アクティブなテーブルタブがあれば ImportModal を事前選択
+   *   パス付きで開く (ImportModal は単一ファイルなので先頭のみ)。
+   * - 非対応拡張子 … トーストで明示的に拒否する。
+   * 最新のセッション/アクティブタブは ref 経由で読むため、購読は貼り直さない。
+   */
+  const handleFilesDropped = useCallback(async (paths: string[]) => {
+    if (paths.length === 0) return;
+    const sqlPaths = paths.filter((p) => classifyDroppedFile(p) === "sql");
+    const csvPaths = paths.filter((p) => classifyDroppedFile(p) === "csv");
+    const unsupported = paths.filter((p) => classifyDroppedFile(p) === "unsupported");
+
+    // .sql / .txt → 新規クエリタブ。
+    let openedSql = 0;
+    for (const p of sqlPaths) {
+      try {
+        const content = await api.readTextFile(p);
+        addTab({
+          ...makeQueryTab(),
+          title: fileBaseName(p),
+          sql: content,
+          lastExecutedSql: content,
+        });
+        openedSql += 1;
+      } catch (e) {
+        toast.error(translate("dropReadError", { name: fileBaseName(p), error: String(e) }));
+      }
+    }
+    if (openedSql === 1 && sqlPaths.length === 1) {
+      toast.success(translate("dropOpenedSql", { name: fileBaseName(sqlPaths[0]) }));
+    } else if (openedSql > 1) {
+      toast.success(translate("dropOpenedSqlMulti", { count: openedSql }));
+    }
+
+    // .csv / .tsv → ImportModal (アクティブなテーブルタブが対象)。
+    if (csvPaths.length > 0) {
+      const tab = activeTabRef.current;
+      if (!sessionIdRef.current || !tab || tab.kind !== "table" || !tab.database || !tab.table) {
+        toast.error(translate("dropCsvNoTable"));
+      } else {
+        if (csvPaths.length > 1) {
+          toast.info(translate("dropCsvMultiOnlyFirst"));
+        }
+        setImportInitialPath(csvPaths[0]);
+        setImportTarget({ database: tab.database, table: tab.table });
+      }
+    }
+
+    // 非対応ファイル。
+    if (unsupported.length > 0) {
+      toast.error(translate("dropUnsupported", { name: fileBaseName(unsupported[0]) }));
+    }
+  }, [addTab, toast]);
+
+  // Tauri のウィンドウ drag-drop イベントを購読する (#497)。enter でファイル群の
+  // 受理可否を判定してオーバーレイ用の状態を立て、drop で実際に振り分ける。over は
+  // 座標のみでパスを持たないため、enter で得た判定をそのまま維持する。`leave` /
+  // `drop` でオーバーレイを畳む。`dragDropEnabled` は Tauri v2 で既定 true のため、
+  // tauri.conf.json の追加設定は不要 (capabilities も core イベントで足りる)。
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let disposed = false;
+    void (async () => {
+      try {
+        const webview = getCurrentWebview();
+        const un = await webview.onDragDropEvent((event) => {
+          const payload = event.payload;
+          if (payload.type === "enter") {
+            setDragFeedback(dragFeedbackFor(payload.paths));
+          } else if (payload.type === "leave") {
+            setDragFeedback(null);
+          } else if (payload.type === "drop") {
+            setDragFeedback(null);
+            void handleFilesDropped(payload.paths);
+          }
+        });
+        if (disposed) un();
+        else unlisten = un;
+      } catch {
+        // 非 Tauri 環境 (ブラウザテスト等) では webview が無いので無視する。
+      }
+    })();
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [handleFilesDropped]);
+
   // Close a tab, removing it from its pane and picking a neighbour as that
   // pane's new active tab. A second pane emptied by the close collapses back
   // into a single pane.
@@ -3245,6 +3384,65 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [activeTab, sessionId, runInTabWithGate]);
+
+  // Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z で、アクティブなテーブルタブの未適用インライン
+  // セル編集を Undo / Redo する (#498)。トーストやツールバーのボタンと同じ編集
+  // スタックを操作する。テキスト入力 (セル編集の input / CodeMirror エディタ /
+  // その他の input・textarea) にフォーカスがある間は介入せず、その場のネイティブ
+  // undo に委ねる (フォーカス文脈での衝突を避ける受け入れ条件)。各種オーバーレイ
+  // 表示中も発火させない。スタックが空のときは preventDefault せず素通しする。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
+      if (
+        showForm || showSettings || showHelp || showCompare || showErd ||
+        showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
+      ) {
+        return;
+      }
+      const tab = activeTab;
+      if (!tab || tab.kind !== "table") return;
+      // テキスト編集文脈ではネイティブ undo を優先 (誤発火防止)。
+      const el = document.activeElement as HTMLElement | null;
+      if (el) {
+        const tag = el.tagName;
+        if (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT" ||
+          el.isContentEditable ||
+          el.closest(".cm-editor")
+        ) {
+          return;
+        }
+      }
+      if (e.shiftKey) {
+        if ((tab.editRedoStack?.length ?? 0) === 0) return;
+        e.preventDefault();
+        redoCellEditForTab(tab.id);
+      } else {
+        if ((tab.editUndoStack?.length ?? 0) === 0) return;
+        e.preventDefault();
+        undoCellEditForTab(tab.id);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [
+    activeTab,
+    showForm,
+    showSettings,
+    showHelp,
+    showCompare,
+    showErd,
+    showSnippetForm,
+    showCommandPalette,
+    showObjectSearch,
+    showCheatSheet,
+    undoCellEditForTab,
+    redoCellEditForTab,
+  ]);
 
   // 接続のヘルスチェックと自動再接続 (#485)。ウィンドウがフォーカスを取り戻したとき
   // (= OS スリープ復帰やタブ切り替え後) に SELECT 1 で接続が生きているか確認し、死んで
@@ -4620,7 +4818,11 @@ export default function App() {
             sessionId={sessionId}
             database={importTarget.database}
             table={importTarget.table}
-            onClose={() => setImportTarget(null)}
+            initialPath={importInitialPath ?? undefined}
+            onClose={() => {
+              setImportTarget(null);
+              setImportInitialPath(null);
+            }}
             onImported={() => handleImported(importTarget.database, importTarget.table)}
           />
         )}
@@ -4762,6 +4964,66 @@ export default function App() {
         </AnimatePresence>
       </Suspense>
       {confirmDialogElement}
+      {/* ファイルのドラッグ&ドロップ時のオーバーレイ (#497)。受理/拒否を視覚的に
+          示す。pointerEvents none で実際のドロップは webview のネイティブ経路に任せ、
+          このレイヤはフィードバック表示専用。 */}
+      <AnimatePresence>
+        {dragFeedback && (
+          <motion.div
+            initial={variants.fade.initial}
+            animate={variants.fade.animate}
+            exit={variants.fade.exit}
+            transition={transitions.enter}
+            aria-hidden
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 2000,
+              pointerEvents: "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "color-mix(in srgb, var(--bg) 55%, transparent)",
+              backdropFilter: "blur(2px)",
+            }}
+          >
+            <motion.div
+              initial={variants.fadeScale.initial}
+              animate={variants.fadeScale.animate}
+              exit={variants.fadeScale.exit}
+              transition={transitions.enter}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "12px",
+                padding: "32px 48px",
+                borderRadius: "16px",
+                border: `2px dashed ${dragFeedback.accept ? "var(--accent)" : "var(--status-error)"}`,
+                background: "var(--bg-elevated, var(--bg))",
+                color: dragFeedback.accept ? "var(--accent)" : "var(--status-error)",
+                boxShadow: "var(--shadow-lg, 0 12px 40px rgba(0,0,0,0.3))",
+              }}
+            >
+              <Icon name={dragFeedback.accept ? "upload" : "warning"} size={32} />
+              <chakra.span fontSize="lg" fontWeight={600}>
+                {dragFeedback.accept
+                  ? t("dropOverlayTitle")
+                  : t("dropOverlayReject")}
+              </chakra.span>
+              {dragFeedback.accept && (
+                <chakra.span fontSize="sm" color="app.textMuted" textAlign="center">
+                  {dragFeedback.kind === "sql"
+                    ? t("dropOverlayHintSql")
+                    : dragFeedback.kind === "csv"
+                      ? t("dropOverlayHintCsv")
+                      : t("dropOverlayHintMixed")}
+                </chakra.span>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Flex>
   );
 }

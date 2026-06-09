@@ -26,6 +26,12 @@ interface Props {
   onClose: () => void;
   /** Called after a successful import so the caller can refresh the grid. */
   onImported: () => void;
+  /**
+   * Pre-selected file path (#497). When the modal is opened by dropping a
+   * `.csv` onto the window, the path is filled in up front so the preview
+   * loads immediately without the user re-picking the file.
+   */
+  initialPath?: string;
 }
 
 type DelimiterChoice = "," | "\t" | ";";
@@ -78,10 +84,10 @@ function autoMap(
   return m;
 }
 
-export function ImportModal({ sessionId, database, table, onClose, onImported }: Props) {
+export function ImportModal({ sessionId, database, table, onClose, onImported, initialPath }: Props) {
   const t = useT();
   const toast = useToast();
-  const [path, setPath] = useState("");
+  const [path, setPath] = useState(initialPath ?? "");
   const [encoding, setEncoding] = useState("utf-8");
   const [delimiter, setDelimiter] = useState<DelimiterChoice>(",");
   const [quote, setQuote] = useState('"');
