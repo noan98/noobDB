@@ -7,7 +7,7 @@ import { tableRefEquals } from "../tableQuickAccess";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
-import { Icon, type IconName } from "./Icon";
+import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { Spinner } from "./Spinner";
@@ -797,7 +797,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             px="4px"
             _hover={{ color: "app.text" }}
           >
-            <Icon name="close" size="sm" />
+            <Icon name="close" size={ICON_SIZES.sm} />
           </chakra.button>
         )}
       </TreeRow>

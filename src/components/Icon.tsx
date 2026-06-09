@@ -466,7 +466,15 @@ export function Icon({ name, size = "1em", strokeWidth = 2 }: IconProps) {
   // = 64px)、呼び出し側が「ピクセル」のつもりで渡した整数値が巨大なアイコンに
   // なる。HTML 属性として渡される raw な数値とは解釈が異なるため、ここで
   // 明示的に px 文字列へ変換してトークン解決を回避する。
-  const dim = typeof size === "number" ? `${size}px` : size;
+  // また `size="sm"` のようなサイズトークン名がそのまま渡ると Chakra が
+  // `var(--chakra-sizes-sm)` (= 24rem) として解決し巨大化する。`ICON_SIZES` の
+  // キー (sm/md/lg) は px 値へ変換し、誤って巨大アイコンになるのを防ぐ。
+  const dim =
+    typeof size === "number"
+      ? `${size}px`
+      : size in ICON_SIZES
+        ? `${ICON_SIZES[size as IconSizeToken]}px`
+        : size;
   const filled = FILLED_ICONS.has(name);
   return (
     <chakra.svg

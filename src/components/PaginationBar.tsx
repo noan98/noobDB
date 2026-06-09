@@ -7,7 +7,7 @@ import {
   canGoPrev,
   pageRange,
 } from "../pagination";
-import { Icon } from "./Icon";
+import { ICON_SIZES, Icon } from "./Icon";
 import { Spinner } from "./Spinner";
 
 /**
@@ -102,7 +102,7 @@ export function PaginationBar({
         title={t("pagePrev")}
         aria-label={t("pagePrev")}
       >
-        <Icon name="chevron-left" size="sm" />
+        <Icon name="chevron-left" size={ICON_SIZES.sm} />
       </NavButton>
 
       <chakra.span display="inline-flex" alignItems="center" gap="6px" minW="0">
@@ -120,7 +120,7 @@ export function PaginationBar({
         title={t("pageNext")}
         aria-label={t("pageNext")}
       >
-        <Icon name="chevron-right" size="sm" />
+        <Icon name="chevron-right" size={ICON_SIZES.sm} />
       </NavButton>
       <NavButton
         type="button"
