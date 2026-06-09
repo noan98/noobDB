@@ -137,10 +137,17 @@ NOOBDB_TEST_SSH_KEY=/tmp/noobdb-sshtest/client_key \
 
 CI は 2 つのワークフローに分かれています:
 
-- `.github/workflows/ci.yml` — `main` への PR で起動。`dorny/paths-filter` で
+- `.github/workflows/ci.yml` — `main` への PR と `main` への push で起動。
+  push トリガは**キャッシュを main スコープへ保存するため**にあります:
+  pull_request 実行で保存される rust-cache / sccache / pnpm のキャッシュは PR の
+  マージ ref スコープにしか残らず他の PR から参照できないため、main push 時に同じ
+  ジョブを走らせて全 PR ブランチがフォールバック復元できる main スコープを温めます
+  (これが無いと新規 PR ブランチの初回 Rust ビルドは毎回コールド)。マージ後の main
+  の健全性確認も兼ねます。`dorny/paths-filter` で
   変更領域 (frontend / rust / workflow) を判定し、ジョブ単位の `if:` で出し分け
   します (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
-  ジョブを skip させる方式)。frontend ジョブは `pnpm run build` に続けて
+  ジョブを skip させる方式。push イベントでは paths-filter が git 履歴比較を行う
+  ため `changes` ジョブは checkout してから filter を実行します)。frontend ジョブは `pnpm run build` に続けて
   `pnpm run bundle-size` (バンドルサイズ計測 → Job Summary。#443)、`pnpm run knip`
   (未使用エクスポート/到達不能コード検出。#470)、`pnpm test` (Vitest) を実行します。
   バンドルサイズはカバレッジと同じく当面は閾値による fail を設けず可視化のみで、
@@ -149,7 +156,7 @@ CI は 2 つのワークフローに分かれています:
   各ジョブで `corepack enable` により用意し、`pnpm`
   ストアを `actions/cache` でキャッシュします (`actions/setup-node` の `cache: npm`
   は使いません)。`paths-filter` は `package-lock.json` ではなく `pnpm-lock.yaml` を
-  監視します。Rust 系は 5 つのジョブに分かれます: `rust (clippy)` が
+  監視します。Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL 8 と PostgreSQL 16 のサービスコンテナに対し `cargo llvm-cov nextest`
@@ -181,14 +188,18 @@ CI は 2 つのワークフローに分かれています:
   ます。これを別ジョブで**並列**に走らせて壁時計時間を縮めています (rust-cache の
   `key` を `clippy` / `test` に分けてキャッシュを分離)。両 Rust ジョブとも CI では
   無益な incremental コンパイルを `CARGO_INCREMENTAL=0` で無効化しています。
-  5 つ目の `rust (windows)` は `windows-latest` 上で `cargo clippy` と
-  `cargo nextest run` を実行し、Windows 固有 (keyring・ファイルパス・改行コード・
-  MSVC リンカ `lld-link`) のリグレッションを PR 段階で検出します (#392)。MySQL/
+  残る 2 つの `rust (windows clippy)` / `rust (windows test)` は `windows-latest`
+  上でそれぞれ `cargo clippy` と `cargo nextest run` を実行し、Windows 固有
+  (keyring・ファイルパス・改行コード・MSVC リンカ `lld-link`) のリグレッションを
+  PR 段階で検出します (#392)。Linux と同じ理由 (check と codegen+link の成果物
+  非共有) で clippy と nextest を並列ジョブに分割しており、単一ジョブで直列実行
+  していた頃は Windows がワークフロー全体のクリティカルパスでした。MySQL/
   PostgreSQL の URL 環境変数を渡さないため統合テストはスキップされ、外部サービス
   不要の SQLite 統合テストのみ実走します。Tauri の全スタックビルド (WebView2 等) は
-  不要で MSVC toolchain だけで足り、rust-cache の `key` は `windows` で Linux と
-  分離しています。
-  さらに `rust (clippy)` / `rust (test)` / `rust (windows)` の各コンパイルジョブは
+  不要で MSVC toolchain だけで足り、rust-cache の `key` は `windows-clippy` /
+  `windows-test` で Linux と分離しています。
+  さらに `rust (clippy)` / `rust (test)` / `rust (windows clippy)` /
+  `rust (windows test)` の各コンパイルジョブは
   **sccache** を `RUSTC_WRAPPER` として有効化し (`taiki-e/install-action` で導入)、
   `SCCACHE_DIR` を `actions/cache` で永続化してブランチ跨ぎでコンパイル単位を再利用
   します (#417)。rust-cache が `target` ディレクトリをキャッシュするのに対し sccache
@@ -198,8 +209,9 @@ CI は 2 つのワークフローに分かれています:
   `rust (test)` のカバレッジ計装ビルド (`-C instrument-coverage`) は sccache が
   キャッシュ対象外として素通しするため、sccache の効果は主に clippy/windows ジョブと
   依存クレートのコンパイルに現れます。
-  **必須チェックを設定する場合は `rust (check + clippy + test)` ではなく
-  `rust (clippy)` と `rust (test)` (必要なら `rust (deny)` / `rust (windows)`) を
+  **必須チェックを設定する場合は `rust (check + clippy + test)` や旧
+  `rust (windows)` ではなく `rust (clippy)` と `rust (test)` (必要なら
+  `rust (deny)` / `rust (windows clippy)` / `rust (windows test)`) を
   指定してください** (ジョブ分割でチェック名が変わったため)。
 - `.github/workflows/release.yml` — `v*` タグまたは `workflow_dispatch` を
   トリガに、`windows-latest` 上で `tauri-action` 経由の NSIS バンドルを生成します。
@@ -248,7 +260,8 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
   挙動を変えたくないため config はコメントアウトのままにしています。
 - CI (`ci.yml` の rust ジョブ) では上記 config に合わせて `clang` と `mold` を
   apt で導入済みで、`cargo nextest` のテストバイナリ群のリンクが mold で高速化
-  されます。加えて `rust (clippy)` / `rust (test)` / `rust (windows)` では
+  されます。加えて `rust (clippy)` / `rust (test)` / `rust (windows clippy)` /
+  `rust (windows test)` では
   **sccache** を `RUSTC_WRAPPER` で有効化し、コンパイル単位のキャッシュをブランチ
   跨ぎで再利用します (詳細は上の CI セクションを参照)。
 
