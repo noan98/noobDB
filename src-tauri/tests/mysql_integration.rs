@@ -527,7 +527,6 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
 
     // Clean slate (ignore errors if absent).
     for stmt in [
-        "DROP TRIGGER IF EXISTS noobdb_objtest_trg",
         "DROP VIEW IF EXISTS noobdb_objtest_view",
         "DROP TABLE IF EXISTS noobdb_objtest_idx",
     ] {
@@ -568,20 +567,16 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
         .expect("unique index listed");
     assert!(uq.unique && uq.columns == vec!["sku".to_string()]);
 
-    // schema_objects: view + trigger.
+    // schema_objects: view. (Triggers/routines are created via DDL that MySQL
+    // rejects over the prepared-statement protocol — error 1295 — so we don't
+    // create them here; the trigger/routine listing queries still run. The
+    // PostgreSQL integration test covers the function/trigger definition paths.)
     conn.execute(
         "CREATE VIEW noobdb_objtest_view AS SELECT id FROM noobdb_objtest_idx",
         Some(&db),
     )
     .await
     .expect("create view");
-    conn.execute(
-        "CREATE TRIGGER noobdb_objtest_trg BEFORE INSERT ON noobdb_objtest_idx \
-         FOR EACH ROW SET NEW.cat = NEW.cat",
-        Some(&db),
-    )
-    .await
-    .expect("create trigger");
 
     let objects = conn.schema_objects(&db).await.expect("schema_objects");
     assert!(
@@ -590,22 +585,11 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
             .any(|o| o.kind == "view" && o.name == "noobdb_objtest_view"),
         "view listed: {objects:?}"
     );
-    assert!(
-        objects
-            .iter()
-            .any(|o| o.kind == "trigger" && o.name == "noobdb_objtest_trg"),
-        "trigger listed"
-    );
     let view_def = conn
         .object_definition(&db, "view", "noobdb_objtest_view", None)
         .await
         .expect("view definition");
     assert!(view_def.to_uppercase().contains("CREATE"));
-    let trg_def = conn
-        .object_definition(&db, "trigger", "noobdb_objtest_trg", None)
-        .await
-        .expect("trigger definition");
-    assert!(trg_def.to_uppercase().contains("TRIGGER"));
 
     // Explicit transaction: rollback then commit.
     assert!(!conn.transaction_active().await);
@@ -637,7 +621,6 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
 
     // Cleanup.
     for stmt in [
-        "DROP TRIGGER IF EXISTS noobdb_objtest_trg",
         "DROP VIEW IF EXISTS noobdb_objtest_view",
         "DROP TABLE IF EXISTS noobdb_objtest_idx",
     ] {
