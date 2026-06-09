@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { ResultGrid, GRID_CSS, isColumnFilterActive, readStoredColumnSizing, writeStoredColumnSizing } from "../components/ResultGrid";
+import { ResultGrid, GRID_CSS, isColumnFilterActive, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
 import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
@@ -582,6 +582,50 @@ describe("column sizing persistence", () => {
     writeStoredColumnSizing(kNew, { "0": 100 });
     expect(readStoredColumnSizing(keys[0])).toEqual({ "0": 999 });
     expect(readStoredColumnSizing(keys[1])).toEqual({});
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 列レイアウト永続化 (順序 / 表示 / ピン) (#447 / #463)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("列レイアウト永続化 (#447 / #463)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("列幅キーから列状態キーを導出する (同じ result shape)", () => {
+    const sizing = 'noobdb.colsizing.v1::db::users::["id","name"]';
+    expect(colStateKeyFrom(sizing)).toBe('noobdb.colstate.v1::db::users::["id","name"]');
+    expect(colStateKeyFrom(undefined)).toBeUndefined();
+  });
+
+  it("存在しない / undefined キーは空オブジェクトを返す", () => {
+    expect(readStoredColumnState("noobdb.colstate.v1::db::t::[]")).toEqual({});
+    expect(readStoredColumnState(undefined)).toEqual({});
+  });
+
+  it("order / visibility / pinning を書き込んで読み返せる", () => {
+    const key = 'noobdb.colstate.v1::db::users::["id","name","email"]';
+    const state = {
+      order: ["2", "0", "1"],
+      visibility: { "1": false },
+      pinning: { left: ["0"], right: [] },
+    };
+    writeStoredColumnState(key, state);
+    expect(readStoredColumnState(key)).toEqual(state);
+  });
+
+  it("空のレイアウトを書き込むとエントリ自体を削除する (既定に戻す)", () => {
+    const key = 'noobdb.colstate.v1::db::users::["id"]';
+    writeStoredColumnState(key, { order: ["0"], visibility: { "0": false } });
+    expect(readStoredColumnState(key)).not.toEqual({});
+    writeStoredColumnState(key, { order: [], visibility: {}, pinning: { left: [], right: [] } });
+    expect(localStorage.getItem(key)).toBeNull();
+    expect(readStoredColumnState(key)).toEqual({});
+  });
+
+  it("undefined キーへの書き込みは無視される", () => {
+    expect(() => writeStoredColumnState(undefined, { order: ["0"] })).not.toThrow();
   });
 });
 
