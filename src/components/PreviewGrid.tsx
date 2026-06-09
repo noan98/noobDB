@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 import { DataGrid, GRID_CSS } from "./ResultGrid";
 import { Splitter } from "./Splitter";
 import { Button, Checkbox } from "./ui";
+import { LoadingButton } from "./LoadingButton";
 
 const SYNC_SCROLL_STORAGE_KEY = "noobdb.preview.syncScroll";
 
@@ -44,6 +45,8 @@ interface Props {
   pendingEditsSummary?: { cells: number; rows: number };
   onApplyEdits?: () => void;
   onDiscardEdits?: () => void;
+  /** True while the Apply transaction is in flight — shows an inline spinner (#538). */
+  applyingEdits?: boolean;
 }
 
 interface Diff {
@@ -161,6 +164,7 @@ export function PreviewGrid({
   pendingEditsSummary,
   onApplyEdits,
   onDiscardEdits,
+  applyingEdits,
 }: Props) {
   const t = useT();
   const hasSnapshots = result.columns.length > 0;
@@ -292,16 +296,17 @@ export function PreviewGrid({
               })}
             </chakra.span>
             {onApplyEdits && (
-              <Button
+              <LoadingButton
                 variant="success"
                 size="sm"
                 px="10px"
+                loading={applyingEdits}
                 onClick={onApplyEdits}
                 disabled={streaming}
                 title={t("editApplyButtonTitle")}
               >
                 {t("editApplyButton")}
-              </Button>
+              </LoadingButton>
             )}
             {onDiscardEdits && (
               <Button
