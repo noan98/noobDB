@@ -5,6 +5,7 @@ import {
   defaultChartConfig,
   inferNumericColumns,
   MAX_POINTS,
+  niceTicks,
   toNumber,
   valueExtent,
 } from "../components/chartData";
@@ -113,5 +114,35 @@ describe("valueExtent", () => {
   it("handles negative values", () => {
     const model = { labels: [], series: [{ name: "s", values: [-5, -2] }], sampledFrom: null };
     expect(valueExtent(model)).toEqual({ min: -5, max: 0 });
+  });
+});
+
+describe("niceTicks", () => {
+  it("produces evenly spaced round ticks covering the range", () => {
+    expect(niceTicks(0, 100)).toEqual([0, 20, 40, 60, 80, 100]);
+    expect(niceTicks(0, 5)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it("includes the zero baseline for ranges spanning zero", () => {
+    const ticks = niceTicks(-50, 100);
+    expect(ticks).toContain(0);
+    expect(ticks[0]).toBeLessThanOrEqual(0);
+    expect(ticks[ticks.length - 1]).toBeGreaterThanOrEqual(99);
+  });
+
+  it("keeps all ticks within the requested range", () => {
+    for (const v of niceTicks(3, 27)) {
+      expect(v).toBeGreaterThanOrEqual(3);
+      expect(v).toBeLessThanOrEqual(27);
+    }
+  });
+
+  it("avoids floating point drift on fractional steps", () => {
+    expect(niceTicks(0, 1)).toEqual([0, 0.2, 0.4, 0.6, 0.8, 1]);
+  });
+
+  it("returns a single tick for degenerate ranges", () => {
+    expect(niceTicks(0, 0)).toEqual([0]);
+    expect(niceTicks(7, 7)).toEqual([7]);
   });
 });
