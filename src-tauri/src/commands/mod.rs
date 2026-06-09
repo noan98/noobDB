@@ -2,6 +2,7 @@ pub mod connection;
 pub mod diff;
 pub mod dump;
 pub mod export;
+pub mod file;
 pub mod history;
 pub mod import;
 pub mod logs;

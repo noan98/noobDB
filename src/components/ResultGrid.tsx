@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { transitions } from "../motion";
+import { transitions, variants } from "../motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
@@ -2611,13 +2611,23 @@ export function DataGrid({
                 )}
               </div>
             ) : hasPending ? (
-              /^null$/i.test(pendingValue.trim()) ? (
-                <span className="cell-null cell-pending-value">
-                  {t("resultNull")}
-                </span>
-              ) : (
-                <span className="cell-pending-value">{pendingValue}</span>
-              )
+              // 未適用編集の値は Motion で軽くハイライトする (#498)。`key` を
+              // pendingValue にして値が変わるたび (= 編集/Undo/Redo のたび) 再マウント
+              // させ、入場アニメを再生する。reduced-motion は MotionConfig 配下で
+              // 自動的に即時化される。
+              <motion.span
+                key={pendingValue}
+                className={
+                  /^null$/i.test(pendingValue.trim())
+                    ? "cell-null cell-pending-value"
+                    : "cell-pending-value"
+                }
+                initial={variants.slideUp.initial}
+                animate={variants.slideUp.animate}
+                transition={transitions.crossfade}
+              >
+                {/^null$/i.test(pendingValue.trim()) ? t("resultNull") : pendingValue}
+              </motion.span>
             ) : (
               flexRender(cell.column.columnDef.cell, cell.getContext())
             )}
