@@ -771,6 +771,11 @@ const en = {
   tabClosePane: "Close this pane",
   tabMoveOtherPane: "Move to other pane",
   tabMoveOtherPaneDisabled: "Can't move the only tab of a single pane",
+  tabScrollLeft: "Scroll tabs left",
+  tabScrollRight: "Scroll tabs right",
+  tabListAll: "All tabs",
+  tabListFilter: "Filter tabs…",
+  tabListEmpty: "No matching tabs",
   splitterPanesAria: "Drag to resize the left and right panes; double-click to reset",
 
   gridFilterPlaceholder: "Filter...",
@@ -1936,6 +1941,11 @@ const ja: Dict = {
   tabClosePane: "このペインを閉じる",
   tabMoveOtherPane: "別ペインへ移動",
   tabMoveOtherPaneDisabled: "単一ペインで唯一のタブは移動できません",
+  tabScrollLeft: "タブを左にスクロール",
+  tabScrollRight: "タブを右にスクロール",
+  tabListAll: "すべてのタブ",
+  tabListFilter: "タブを絞り込み…",
+  tabListEmpty: "一致するタブがありません",
   splitterPanesAria: "ドラッグで左右ペインの幅を変更、ダブルクリックでリセット",
 
   gridFilterPlaceholder: "絞り込み...",

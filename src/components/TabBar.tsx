@@ -1,9 +1,9 @@
-import { forwardRef, useCallback, useId, useRef } from "react";
-import { Box, chakra } from "@chakra-ui/react";
+import { forwardRef, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Box, chakra, Input } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
-import { transitions } from "../motion";
+import { transitions, variants } from "../motion";
 
 // キーボードフォーカスリング (App.css のフォーカス表現と一致、動的アクセントへ追従)。
 const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
@@ -133,6 +133,108 @@ export function TabBar({
 
   const tabIds = tabs.map((tab) => tab.id);
 
+  // --- Overflow handling (#477): scroll arrows + "all tabs" dropdown ---
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [overflow, setOverflow] = useState({ left: false, right: false });
+  const [listOpen, setListOpen] = useState(false);
+  const [listFilter, setListFilter] = useState("");
+  const listWrapRef = useRef<HTMLDivElement | null>(null);
+  const listBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // Most-recently-used order (#477): the dropdown surfaces recently visited tabs
+  // first so far-away tabs are quick to return to. Updated whenever the active
+  // tab changes; ids no longer open are pruned lazily when the list is built.
+  const mruRef = useRef<string[]>([]);
+  useEffect(() => {
+    if (!activeTabId) return;
+    mruRef.current = [activeTabId, ...mruRef.current.filter((id) => id !== activeTabId)];
+  }, [activeTabId]);
+
+  const recomputeOverflow = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    setOverflow({
+      left: el.scrollLeft > 1,
+      right: el.scrollLeft < maxScroll - 1,
+    });
+  }, []);
+
+  // Recompute on resize (ResizeObserver) and whenever the tab set changes. The
+  // scroll listener keeps the arrow enabled-state in sync as the user scrolls.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    recomputeOverflow();
+    const ro = new ResizeObserver(recomputeOverflow);
+    ro.observe(el);
+    el.addEventListener("scroll", recomputeOverflow, { passive: true });
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", recomputeOverflow);
+    };
+  }, [recomputeOverflow, tabs.length]);
+
+  // Keep the active tab visible — when selection moves to an off-screen tab
+  // (e.g. via keyboard or programmatic open), scroll it into view horizontally.
+  useEffect(() => {
+    if (!activeTabId) return;
+    const el = tabRefs.current.get(activeTabId);
+    el?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [activeTabId, tabs.length]);
+
+  const scrollBy = useCallback((dir: -1 | 1) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * Math.max(120, el.clientWidth * 0.7), behavior: "smooth" });
+  }, []);
+
+  const overflowing = overflow.left || overflow.right;
+
+  // Close the dropdown on outside click / Escape.
+  useEffect(() => {
+    if (!listOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        !listWrapRef.current?.contains(e.target as Node) &&
+        !listBtnRef.current?.contains(e.target as Node)
+      ) {
+        setListOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setListOpen(false);
+        listBtnRef.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [listOpen]);
+
+  const listTabs = useMemo(() => {
+    const order = new Map(tabs.map((tt, i) => [tt.id, i]));
+    const mruRank = new Map(mruRef.current.map((id, i) => [id, i]));
+    const q = listFilter.trim().toLowerCase();
+    const filtered = q
+      ? tabs.filter((tt) => {
+          const hay = `${tt.title} ${tt.database ?? ""} ${tt.table ?? ""}`.toLowerCase();
+          return hay.includes(q);
+        })
+      : tabs.slice();
+    // MRU first (recently active), then natural tab order for the rest.
+    return filtered.sort((a, b) => {
+      const ra = mruRank.has(a.id) ? mruRank.get(a.id)! : Infinity;
+      const rb = mruRank.has(b.id) ? mruRank.get(b.id)! : Infinity;
+      if (ra !== rb) return ra - rb;
+      return (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0);
+    });
+  }, [tabs, listFilter, listOpen]);
+
   return (
     <Box
       role="tablist"
@@ -142,9 +244,32 @@ export function TabBar({
       borderColor="app.border"
       bg="app.surfaceMuted"
       minH="34px"
-      overflow="hidden"
+      position="relative"
+      overflow="visible"
     >
+      {overflow.left && (
+        <chakra.button
+          display="inline-flex"
+          alignItems="center"
+          justifyContent="center"
+          w="26px"
+          border="none"
+          borderRight="1px solid"
+          borderRightColor="app.border"
+          bg="app.surfaceMuted"
+          color="app.textMuted"
+          cursor="pointer"
+          flexShrink={0}
+          _hover={{ bg: "app.hover", color: "app.text" }}
+          onClick={() => scrollBy(-1)}
+          title={t("tabScrollLeft")}
+          aria-label={t("tabScrollLeft")}
+        >
+          <Icon name="chevron-left" size={16} />
+        </chakra.button>
+      )}
       <Reorder.Group
+        ref={scrollRef}
         as="div"
         axis="x"
         values={tabIds}
@@ -312,6 +437,142 @@ export function TabBar({
           })}
         </AnimatePresence>
       </Reorder.Group>
+      {overflow.right && (
+        <chakra.button
+          display="inline-flex"
+          alignItems="center"
+          justifyContent="center"
+          w="26px"
+          border="none"
+          borderLeft="1px solid"
+          borderLeftColor="app.border"
+          bg="app.surfaceMuted"
+          color="app.textMuted"
+          cursor="pointer"
+          flexShrink={0}
+          _hover={{ bg: "app.hover", color: "app.text" }}
+          onClick={() => scrollBy(1)}
+          title={t("tabScrollRight")}
+          aria-label={t("tabScrollRight")}
+        >
+          <Icon name="chevron-right" size={16} />
+        </chakra.button>
+      )}
+      {overflowing && (
+        <Box position="relative" flexShrink={0} display="inline-flex">
+          <chakra.button
+            ref={listBtnRef}
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            w="30px"
+            h="100%"
+            border="none"
+            borderLeft="1px solid"
+            borderLeftColor="app.border"
+            bg={listOpen ? "app.active" : "app.surfaceMuted"}
+            color={listOpen ? "app.text" : "app.textMuted"}
+            cursor="pointer"
+            _hover={{ bg: "app.hover", color: "app.text" }}
+            onClick={() => setListOpen((v) => !v)}
+            title={t("tabListAll")}
+            aria-label={t("tabListAll")}
+            aria-haspopup="menu"
+            aria-expanded={listOpen}
+          >
+            <Icon name="list" size={16} />
+          </chakra.button>
+          <AnimatePresence>
+            {listOpen && (
+              <motion.div
+                ref={listWrapRef}
+                variants={variants.slideUp}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={transitions.enter}
+                style={{ position: "absolute", top: "100%", right: 0, zIndex: 30 }}
+              >
+                <Box
+                  mt="2px"
+                  w="280px"
+                  maxH="60vh"
+                  display="flex"
+                  flexDirection="column"
+                  bg="app.surface"
+                  border="1px solid"
+                  borderColor="app.border"
+                  borderRadius="md"
+                  boxShadow="lg"
+                  overflow="hidden"
+                  role="menu"
+                >
+                  <Box p="6px" borderBottom="1px solid" borderColor="app.border">
+                    <Input
+                      autoFocus
+                      size="sm"
+                      value={listFilter}
+                      onChange={(e) => setListFilter(e.target.value)}
+                      placeholder={t("tabListFilter")}
+                      aria-label={t("tabListFilter")}
+                    />
+                  </Box>
+                  <Box overflowY="auto" css={{ scrollbarWidth: "thin" }}>
+                    {listTabs.length === 0 ? (
+                      <Box px="10px" py="8px" fontSize="sm" color="app.textMuted">
+                        {t("tabListEmpty")}
+                      </Box>
+                    ) : (
+                      listTabs.map((tt) => {
+                        const isActive = tt.id === activeTabId;
+                        const sub =
+                          tt.kind === "table" && tt.database && tt.table
+                            ? `${tt.database}.${tt.table}`
+                            : undefined;
+                        return (
+                          <chakra.button
+                            key={tt.id}
+                            role="menuitem"
+                            display="flex"
+                            alignItems="center"
+                            gap="8px"
+                            w="100%"
+                            textAlign="left"
+                            px="10px"
+                            py="6px"
+                            border="none"
+                            bg={isActive ? "app.active" : "transparent"}
+                            color={isActive ? "app.text" : "app.textMuted"}
+                            cursor="pointer"
+                            _hover={{ bg: "app.hover", color: "app.text" }}
+                            onClick={() => {
+                              onSelect(tt.id);
+                              setListOpen(false);
+                              setListFilter("");
+                            }}
+                          >
+                            <chakra.span flexShrink={0} color={isActive ? "var(--ws-accent)" : "app.textMuted"} aria-hidden>
+                              <Icon name={tt.kind === "table" ? "table" : tt.kind === "explain" ? "explain" : "query"} size={14} />
+                            </chakra.span>
+                            <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" flex="1">
+                              {tt.title}
+                              {sub && (
+                                <chakra.span ml="6px" fontSize="2xs" color="app.textMuted">
+                                  {sub}
+                                </chakra.span>
+                              )}
+                            </chakra.span>
+                          </chakra.button>
+                        );
+                      })
+                    )}
+                  </Box>
+                </Box>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </Box>
+      )}
       <chakra.button
         display="inline-flex"
         alignItems="center"
