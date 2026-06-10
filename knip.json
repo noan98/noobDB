@@ -1,7 +1,17 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["codemirror"],
+  "ignoreDependencies": [
+    "codemirror",
+    "@wdio/globals",
+    "@wdio/local-runner",
+    "@wdio/mocha-framework",
+    "@wdio/spec-reporter",
+    "@wdio/tauri-service",
+    "@wdio/types",
+    "ts-node"
+  ],
+  "ignore": ["e2e/**"],
   "tags": ["-public"],
   "rules": {
     "duplicates": "off"
