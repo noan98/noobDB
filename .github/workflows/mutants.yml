@@ -1,0 +1,148 @@
+name: mutation-test
+
+# ミューテーションテスト (#528)
+#
+# 安全網モジュール (is_read_only_sql / apply_auto_limit / has_stacked_statements /
+# is_query_shape / with_cte_is_mutation) に変異を注入し、既存テストが変異を
+# 捕捉できるかを定量評価する。
+#
+# 実行時間が長い (全変異で数十分以上) ため、PR では走らせず手動トリガのみ。
+# 可視化 (Job Summary + アーティファクト) だけを目的とし、fail させない方針。
+# バンドルサイズ (#443)・カバレッジ (#482) と同じ漸進方針。
+on:
+  workflow_dispatch:
+    inputs:
+      list_only:
+        description: "変異候補を一覧するだけでテストは走らせない (--list)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  mutants:
+    name: cargo-mutants (安全網モジュール)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # clang + mold はビルド高速化用 (src-tauri/.cargo/config.toml の Linux 設定)。
+      # Tauri のシステム依存は tauri-build の build.rs で必要。
+      - name: System deps (Tauri 2 prerequisites)
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.5.4
+        with:
+          packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
+          version: tauri-2-mutants
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: mutants
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        with:
+          tool: cargo-mutants
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend (needed for tauri::generate_context!)
+        run: pnpm run build
+
+      # --list モード: 変異候補を一覧して Job Summary に出力するだけ。
+      # workflow_dispatch の list_only=true で選択できる。
+      - name: List mutants (--list)
+        if: inputs.list_only
+        working-directory: src-tauri
+        run: |
+          echo '### Mutation candidates (安全網モジュール)' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cargo mutants --list \
+            --file src/db/mod.rs \
+            --file src/db/mysql.rs \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # 変異テスト本体: 安全網モジュール 2 ファイルに限定して実行。
+      # --no-shuffle で再現性を確保し、失敗しても CI を落とさない (|| true)。
+      # mutants.out/ をアーティファクトとして保存し、Job Summary にサマリを出す。
+      - name: Run cargo-mutants
+        if: '!inputs.list_only'
+        working-directory: src-tauri
+        run: |
+          cargo mutants \
+            --file src/db/mod.rs \
+            --file src/db/mysql.rs \
+            --no-shuffle \
+            2>&1 | tee mutants-output.txt || true
+
+      - name: Mutation test summary
+        if: '!inputs.list_only'
+        working-directory: src-tauri
+        run: |
+          echo '### Mutation test results (安全網モジュール)' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f mutants.out/outcomes.json ]; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            # caught / missed / timeout / unviable を集計して表示する
+            python3 - << 'PYEOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, pathlib, collections
+          data = json.loads(pathlib.Path("mutants.out/outcomes.json").read_text())
+          counts = collections.Counter(o.get("summary") for o in data.get("outcomes", []))
+          total = sum(counts.values())
+          caught = counts.get("MissedTests", 0) + counts.get("Caught", 0)
+          # cargo-mutants の summary キー名を確認して集計する
+          for k, v in sorted(counts.items()):
+            print(f"  {k}: {v}")
+          print(f"  total: {total}")
+          PYEOF
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '変異テスト結果ファイルが見つかりませんでした。' >> "$GITHUB_STEP_SUMMARY"
+            if [ -f mutants-output.txt ]; then
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              tail -50 mutants-output.txt >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+      - name: Upload mutants.out artifact
+        if: '!inputs.list_only && always()'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutants-out
+          path: src-tauri/mutants.out/
+          if-no-files-found: ignore
+          retention-days: 14

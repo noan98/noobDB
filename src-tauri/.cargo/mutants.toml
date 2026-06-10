@@ -1,0 +1,27 @@
+# cargo-mutants の設定 (#528)
+#
+# ミューテーションテストのスコープを「安全網モジュール」に限定する。
+# 行カバレッジが高くても境界バグをテストが捕捉できるとは限らないため、
+# 変異注入で既存テストの有効性を定量評価することが目的。
+#
+# ローカル実行例:
+#   cd src-tauri
+#   cargo mutants --file src/db/mod.rs --file src/db/mysql.rs
+#
+# 変異候補一覧のみ確認する (テストを走らせない):
+#   cargo mutants --list --file src/db/mod.rs --file src/db/mysql.rs
+
+# 対象: 安全網ロジックを持つ 2 ファイルのみ。
+# is_read_only_sql / apply_auto_limit / has_stacked_statements (mod.rs)
+# is_query_shape / with_cte_is_mutation (mysql.rs)
+examine_globs = [
+  "src/db/mod.rs",
+  "src/db/mysql.rs",
+]
+
+# ベースラインテストが完走したときの倍率で各変異のタイムアウトを決める。
+# CI が遅い場合や mold なし環境では baseline が長くなるため余裕を持たせる。
+timeout_multiplier = 4.0
+
+# 最低でも 60 秒は待つ (短い baseline でも最低限の実行時間を保証)。
+minimum_test_timeout = 60

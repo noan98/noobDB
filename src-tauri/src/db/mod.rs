@@ -1370,6 +1370,69 @@ mod tests {
         assert!(apply_auto_limit("SELECT COUNT(*) OVER () FROM t", 1000).is_some());
         assert!(apply_auto_limit("SELECT DISTINCT count_col FROM t", 1000).is_some());
     }
+
+    // ── ミューテーションテスト (#528) で発見された生き残り変異を潰すケース ───────
+
+    /// MISSED: `apply_auto_limit` 470行目 `trim_end_matches` の述語が
+    /// `c == ';' || c.is_whitespace()` → `&&` に変異した場合、末尾セミコロンが
+    /// `body` から除去されなくなる。この結果、末尾が `; FOR UPDATE` で終わるクエリ
+    /// では `body.ends_with("for update")` が偽になりロックチェックを通過してしまう。
+    /// `FOR UPDATE;` / `FOR SHARE;` / `LOCK IN SHARE MODE;` でもスキップされること、
+    /// および通常クエリでは LIMIT がセミコロンの前に正しく挿入されることを確認する。
+    #[test]
+    fn auto_limit_skips_locking_select_with_trailing_semicolon() {
+        // FOR UPDATE の後ろにセミコロン: trim_end_matches の述語変異で
+        // body が "select * from t for update;" になり ends_with("for update") が偽になる
+        assert!(
+            apply_auto_limit("SELECT * FROM t FOR UPDATE;", 100).is_none(),
+            "FOR UPDATE; should still skip LIMIT"
+        );
+        assert!(
+            apply_auto_limit("SELECT * FROM t FOR SHARE;", 100).is_none(),
+            "FOR SHARE; should still skip LIMIT"
+        );
+        assert!(
+            apply_auto_limit("SELECT * FROM t LOCK IN SHARE MODE;", 100).is_none(),
+            "LOCK IN SHARE MODE; should still skip LIMIT"
+        );
+        // セミコロンのみ末尾 (空白なし): LIMIT はセミコロンの前に来るべき
+        let out = apply_auto_limit("SELECT * FROM t;", 100).unwrap();
+        assert_eq!(out, "SELECT * FROM t LIMIT 100;", "got: {out}");
+    }
+
+    /// MISSED: `apply_auto_limit` 492行目 locking 句チェックの `||` が `&&` に
+    /// 変異した場合、`FOR UPDATE` のみ (FOR SHARE を含まない) クエリが通り抜けて
+    /// LIMIT が付与される。`FOR UPDATE` 単体でスキップされることを個別に確認する。
+    #[test]
+    fn auto_limit_skips_for_update_individually() {
+        // FOR UPDATE のみ (FOR SHARE を含まない) — `||→&&` 変異で通り抜けを防ぐ
+        assert!(
+            apply_auto_limit("SELECT * FROM t FOR UPDATE", 100).is_none(),
+            "FOR UPDATE should skip LIMIT"
+        );
+        // FOR SHARE のみ (FOR UPDATE を含まない) — 同様に確認
+        assert!(
+            apply_auto_limit("SELECT * FROM t FOR SHARE", 100).is_none(),
+            "FOR SHARE should skip LIMIT"
+        );
+        // LOCK IN SHARE MODE も独立して確認
+        assert!(
+            apply_auto_limit("SELECT * FROM t LOCK IN SHARE MODE", 100).is_none(),
+            "LOCK IN SHARE MODE should skip LIMIT"
+        );
+    }
+
+    /// MISSED: `apply_auto_limit` 505行目 `while end > 0` が `while end >= 0` に
+    /// 変異した場合、末尾が全て意味のある文字 (trailing whitespace/semicolon なし) の
+    /// クエリでは挿入位置が正しく末尾 (= 元の文字列の末尾) になる。
+    /// 末尾に空白を持たない素の SELECT で LIMIT が末尾に付くことを確認する。
+    #[test]
+    fn auto_limit_appends_at_exact_end_without_trailing_chars() {
+        // 末尾に空白もセミコロンもない: LIMIT は元の文字列に直接連結されるべき
+        let sql = "SELECT a FROM t WHERE b=1";
+        let out = apply_auto_limit(sql, 77).unwrap();
+        assert_eq!(out, "SELECT a FROM t WHERE b=1 LIMIT 77", "got: {out}");
+    }
 }
 
 /// `is_read_only_sql` / `apply_auto_limit` のプロパティベーステスト (#355)。
