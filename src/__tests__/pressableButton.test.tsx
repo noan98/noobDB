@@ -51,22 +51,25 @@ describe("PressableButton", () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it("variant props が子 Button に伝播しレンダリングされる (danger / success / warning)", () => {
-    // variant が正しく渡るかはボタン要素が描画されることで確認する。
-    // Chakra recipe のクラス名は jsdom 環境ではハッシュになるため class 名では検査しない。
+  it("variant props が子 Button に伝播し recipe のクラスが切り替わる (danger / success / warning)", () => {
+    // Chakra recipe のクラス名は jsdom 環境ではハッシュになるため固定名では検査
+    // できないが、variant が内側の Button まで届いていれば variant ごとに異なる
+    // recipe クラスが生成される。クラス集合の差分で伝播そのものを検証する。
     const { rerender } = renderWithProviders(
-      <PressableButton variant="danger">削除</PressableButton>,
+      <PressableButton variant="danger">実行</PressableButton>,
     );
-    expect(screen.getByRole("button", { name: "削除" })).toBeInTheDocument();
+    const dangerClass = screen.getByRole("button", { name: "実行" }).className;
 
-    rerender(
-      <PressableButton variant="success">保存</PressableButton>,
-    );
-    expect(screen.getByRole("button", { name: "保存" })).toBeInTheDocument();
+    rerender(<PressableButton variant="success">実行</PressableButton>);
+    const successClass = screen.getByRole("button", { name: "実行" }).className;
 
-    rerender(
-      <PressableButton variant="warning">中止</PressableButton>,
-    );
-    expect(screen.getByRole("button", { name: "中止" })).toBeInTheDocument();
+    rerender(<PressableButton variant="warning">実行</PressableButton>);
+    const warningClass = screen.getByRole("button", { name: "実行" }).className;
+
+    expect(dangerClass).toBeTruthy();
+    expect(successClass).toBeTruthy();
+    expect(warningClass).toBeTruthy();
+    // variant が無視されていれば 3 つとも同一クラスになるため、相異なることを確認する。
+    expect(new Set([dangerClass, successClass, warningClass]).size).toBe(3);
   });
 });

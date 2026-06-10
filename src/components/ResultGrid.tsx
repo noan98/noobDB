@@ -581,8 +581,9 @@ export const GRID_CSS: SystemStyleObject = {
   //   - inset box-shadow はセル境界内に収まるため、選択範囲の輪郭が明確になる。
   //   - is-pending-edit / is-changed / is-invalid-edit も box-shadow (inset バー) を
   //     使っているが、方向 (左端バー vs 全周リング) が異なり視覚的に区別できる。
-  //     box-shadow は複数値をカンマで重ねられるため、is-pending-edit + is-active-cell の
-  //     組み合わせでもバーとリングが同時に表示される。
+  //     ただし box-shadow は別ルール間では合成されず特異性の高い方が上書きするため、
+  //     is-pending-edit + アクティブ/フォーカスの組み合わせには専用セレクタで
+  //     バーとリングをカンマ区切りで明示的に重ねる (下記)。
   "& tbody td:not(.row-index):not(.col-filler):not(.grid-empty-cell)": {
     cursor: "default",
   },
@@ -602,6 +603,14 @@ export const GRID_CSS: SystemStyleObject = {
   "& td.is-active-cell:not(:focus-within)": {
     outline: "none",
     boxShadow: "var(--focus-ring-inset)",
+  },
+  // pending edit のセルがアクティブ/フォーカス中のとき: 上記リングが is-pending-edit の
+  // 左端バーを上書きしてしまうため、専用セレクタでバー + リングを明示的に重ねる。
+  "& td.is-pending-edit.is-editable-cell:focus-within": {
+    boxShadow: "inset 2px 0 0 var(--preview-highlight), var(--focus-ring-inset)",
+  },
+  "& td.is-pending-edit.is-active-cell:not(:focus-within)": {
+    boxShadow: "inset 2px 0 0 var(--preview-highlight), var(--focus-ring-inset)",
   },
   // 矩形範囲選択の各セルにも inset リングを付与し、選択範囲の輪郭を強調する (#540)。
   // アクティブセルと区別するため透明度を下げ (--focus-ring-inset より淡い)、
