@@ -383,6 +383,9 @@ impl MySqlConn {
         let is_insert = trimmed.starts_with("insert");
         let use_pk_anchor = !is_insert && target.is_some() && !captured_pks.is_empty();
         let after_raw: Vec<MySqlRow> = if use_pk_anchor {
+            // use_pk_anchor は target.is_some() を条件に含むため、ここでは
+            // target が Some であることが構造上保証されている。
+            #[allow(clippy::unwrap_used)]
             fetch_after_by_pk(
                 &mut tx,
                 target.as_ref().unwrap(),
@@ -1595,6 +1598,8 @@ fn with_cte_is_mutation(sql: &str) -> bool {
 
         let is_word_char = matches!(next, Some(c) if c.is_alphanumeric() || c == '_' || c == '$');
         if is_word_char {
+            // is_word_char が真のときは matches! マクロにより next が Some であることが保証されている。
+            #[allow(clippy::unwrap_used)]
             word.push(next.unwrap());
             continue;
         }
