@@ -37,7 +37,7 @@ import {
   buildTruncateSql,
 } from "./components/tableMaintenance";
 import { EmptyState } from "./components/EmptyState";
-import { DisconnectedIllustration } from "./components/illustrations";
+import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -50,6 +50,7 @@ import { TitleBar } from "./components/TitleBar";
 import { Splitter } from "./components/Splitter";
 import { Icon } from "./components/Icon";
 import { Button } from "./components/ui";
+import { LoadingButton } from "./components/LoadingButton";
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { singleLine, type CommandItem } from "./components/commandPaletteSearch";
@@ -463,6 +464,8 @@ interface Tab {
    * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
    */
   lastEditAppliedAt?: number;
+  /** True while the Apply Edits transaction is in flight for this tab (#538). */
+  applyingEdits?: boolean;
   /**
    * Most recent Query Builder inputs captured on its Run / Dry Run, restored
    * when the builder is reopened in this tab. Persisted alongside the tab
@@ -1478,7 +1481,8 @@ export default function App() {
       const ok = await confirm({
         title: translate("productionConfirmTitle"),
         message: (
-          <Flex direction="column" gap="var(--space-2)" color="app.text">
+          <Flex direction="column" gap="var(--space-2)" color="app.text" alignItems="center">
+            <ProductionWarningIllustration size={80} />
             <Flex align="center" gap="var(--space-2)">
               {profile.color && (
                 <chakra.span
@@ -2837,6 +2841,7 @@ export default function App() {
     const stmts = [...updates, ...deletes, ...inserts];
     if (stmts.length === 0) return;
     const tabId = tab.id;
+    patchTab(tabId, (tt) => ({ ...tt, applyingEdits: true }));
     setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: stmts.length } });
     // All statements run in a single backend transaction: either every
     // UPDATE commits or, on any failure, the whole batch rolls back so the
@@ -2849,6 +2854,7 @@ export default function App() {
     } catch (e) {
       failure = String(e);
     }
+    patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
     // Always refresh & drop edits afterwards: the result indices no
     // longer line up with whatever the user had buffered. Row ops (#441) are
     // cleared too so the bar disappears once applied.
@@ -3914,6 +3920,7 @@ export default function App() {
                           ? () => discardEditsAndPreviewForTab(tab.id)
                           : undefined
                       }
+                      applyingEdits={tab.applyingEdits}
                     />
                   ) : (
                     <Flex direction="column" h="100%" minH={0} minW={0}>
@@ -3951,12 +3958,12 @@ export default function App() {
                           })}
                         </chakra.span>
                         <chakra.span flex="1" />
-                        <Button type="button" variant="secondary" size="sm" onClick={() => discardRowOpsForTab(tab.id)}>
+                        <Button type="button" variant="secondary" size="sm" onClick={() => discardRowOpsForTab(tab.id)} disabled={tab.applyingEdits}>
                           {t("rowOpsDiscard")}
                         </Button>
-                        <Button type="button" variant="success" size="sm" onClick={() => applyEditsForTab(tab)}>
+                        <LoadingButton type="button" variant="success" size="sm" loading={tab.applyingEdits} onClick={() => applyEditsForTab(tab)}>
                           {t("rowOpsApply")}
-                        </Button>
+                        </LoadingButton>
                       </Flex>
                     )}
                     <ResultGrid
@@ -3986,6 +3993,7 @@ export default function App() {
                       onRedoEdit={() => redoCellEditForTab(tab.id)}
                       onPreviewEdits={() => previewEditsForTab(tab)}
                       onApplyEdits={() => applyEditsForTab(tab)}
+                      applyingEdits={tab.applyingEdits}
                       autoRefreshSecs={tab.autoRefreshSecs ?? null}
                       autoRefreshAllowed={!!tab.result && isReadOnlySql(tab.lastExecutedSql)}
                       autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}

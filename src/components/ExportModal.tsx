@@ -5,6 +5,7 @@ import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input } from "./ui";
+import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
@@ -359,9 +360,11 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
             {t("exportCancel")}
           </Button>
         )}
-        <Button
+        <LoadingButton
+          pressable
           type="button"
           variant="primary"
+          loading={status.kind === "saving"}
           onClick={handleExport}
           disabled={isSaving || !path.trim()}
         >
@@ -370,7 +373,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
             : isSaving
               ? t("exportSaving")
               : t("exportExecute")}
-        </Button>
+        </LoadingButton>
       </ModalFooter>
     </Modal>
   );

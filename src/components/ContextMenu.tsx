@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
+import { useReturnFocus, useRovingFocus } from "../keyboardNav";
 
 /**
  * メニュー本体を motion 化するラッパー。`transition` を Chakra のスタイルプロップに
@@ -59,6 +60,9 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
+  // メニューが閉じたとき、開く前にフォーカスしていた要素へ戻す。
+  useReturnFocus();
+
   // Clamp into the viewport once the menu has measured itself, flipping back
   // from the anchor when it would overflow the right/bottom edge.
   useLayoutEffect(() => {
@@ -99,21 +103,8 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     item.onSelect();
   };
 
-  // Roving focus between enabled items with the arrow keys.
-  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    e.preventDefault();
-    const el = menuRef.current;
-    if (!el) return;
-    const buttons = Array.from(el.querySelectorAll<HTMLButtonElement>(ENABLED_ITEM));
-    if (buttons.length === 0) return;
-    const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    const next =
-      e.key === "ArrowDown"
-        ? buttons[(idx + 1) % buttons.length]
-        : buttons[(idx - 1 + buttons.length) % buttons.length];
-    next.focus();
-  };
+  // 共通 roving tabindex ヘルパーで ArrowUp/Down・Home/End のメニュー項目移動を実装。
+  const { onKeyDown } = useRovingFocus(menuRef, ENABLED_ITEM, { orientation: "vertical" });
 
   return createPortal(
     <Box

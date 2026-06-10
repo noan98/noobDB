@@ -1,5 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Box, chakra, Flex, Text } from "@chakra-ui/react";
+import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { api, ConnectionProfile, IndexInfo, SchemaObject, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
@@ -10,7 +10,7 @@ import { springs, transitions, variants } from "../motion";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
-import { Spinner } from "./Spinner";
+import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { Input } from "./ui";
 import {
@@ -753,11 +753,25 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
   };
 
+  // スケルトン幅: 視覚的なランダム感を演出するために固定幅サイクルを使う。
+  const SKELETON_ROW_WIDTHS = [72, 58, 85, 65, 78];
+
   const renderLoadingRow = () => (
-    <TreeEmpty display="flex" alignItems="center" gap="6px" fontStyle="normal">
-      <Spinner size={13} />
-      <span>{t("treeLoading")}</span>
-    </TreeEmpty>
+    // スケルトンノード: Spinner + テキストの代わりに、ツリー行の構造をシマーで
+    // 予兆表示する。シマー自体は内容のないプレースホルダなので `aria-hidden` で
+    // 支援技術から隠しつつ、`role="status"` + 視覚的に隠したテキストで
+    // 「ロード中」であることはスクリーンリーダーへ通知する。
+    <div role="status" aria-live="polite">
+      <VisuallyHidden>{t("treeLoading")}</VisuallyHidden>
+      <div aria-hidden>
+        {SKELETON_ROW_WIDTHS.map((w, i) => (
+          <SkeletonRow
+            key={i}
+            style={{ width: `${w}%`, animationDelay: `${i * 0.1}s`, opacity: 1 - i * 0.15 }}
+          />
+        ))}
+      </div>
+    </div>
   );
 
   // クイックアクセス (#461): アクティブ接続の databases の上に「お気に入り」「最近」を

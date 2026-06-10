@@ -37,7 +37,14 @@ import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
-import { NoResultsIllustration } from "./illustrations";
+import {
+  NoResultsIllustration,
+  ConnectionFailedIllustration,
+  TimeoutIllustration,
+  PermissionDeniedIllustration,
+  SchemaLoadFailedIllustration,
+} from "./illustrations";
+import { illustrationForError } from "../errorHints";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
   type CellKind,
@@ -59,8 +66,10 @@ import {
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
+import { Skeleton } from "./Skeleton";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
+import { LoadingButton } from "./LoadingButton";
 import {
   buildRowSql,
   countEditedCells,
@@ -558,22 +567,23 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--preview-highlight) 24%, transparent)",
   },
   "& .cell-pending-value": { color: "var(--preview-highlight)", fontWeight: 500 },
-  // ── セル状態の視覚言語 (4 段階の優先順位, #475) ──
-  // 1. selection (キーボード選択) … is-active-cell: アクセントの 2px アウトライン
-  // 2. focus/editing (フォーカス内/編集中) … focus-within: 同じく 2px アウトライン
+  // ── セル状態の視覚言語 (4 段階の優先順位, #475, #540) ──
+  // 1. selection (キーボード選択) … is-active-cell: アクセントの inset リング (#540)
+  // 2. focus/editing (フォーカス内/編集中) … focus-within: 同じく inset リング
   //    + 編集入力 (cell-edit-input) に共有フォーカスリングトークン
   // 3. pending edit (未適用の編集) … is-pending-edit: 左端のアクセントバー + 淡塗り
   // 4. invalid (検証エラー) … is-invalid-edit: 左端の危険色バー + 危険色リング
-  // いずれも --focus-ring / --accent / --error(status-error) トークンを参照し、
-  // ライト/ダーク両テーマで一貫する。outline と box-shadow を使い分けて重ねられる。
-  // セルの編集可否と選択状態の視覚フィードバック (#349)。
-  // 既定のデータセルは「編集できない」ことが伝わるよう矢印カーソルにし (読み取り
-  // 専用セッションや PK/BLOB 列・非テーブル結果では is-editable-cell が付かないため
-  // 自動的にこの見た目になる)、編集可能セルだけテキストカーソル + ホバー時の
-  // アクセントリングで「ダブルクリックで編集できる」affordance を与える。
-  // outline を使うのは、is-pending-edit / is-changed / is-invalid-edit が使う左端の
-  // box-shadow バーと競合させずに重ねるため (両者は別プロパティ)。色は --accent
-  // トークン参照なのでライト/ダーク両テーマで一貫する。
+  // いずれも --focus-ring / --focus-ring-inset / --accent / --error トークンを参照し、
+  // ライト/ダーク両テーマで一貫する。
+  //
+  // #540 の変更: グリッドセルのアクティブ/選択リングをすべて inset に統一。
+  //   - 外側 outline だと隣接セルのリングが重なり合い、矩形選択範囲の輪郭が読みづらい。
+  //   - inset box-shadow はセル境界内に収まるため、選択範囲の輪郭が明確になる。
+  //   - is-pending-edit / is-changed / is-invalid-edit も box-shadow (inset バー) を
+  //     使っているが、方向 (左端バー vs 全周リング) が異なり視覚的に区別できる。
+  //     ただし box-shadow は別ルール間では合成されず特異性の高い方が上書きするため、
+  //     is-pending-edit + アクティブ/フォーカスの組み合わせには専用セレクタで
+  //     バーとリングをカンマ区切りで明示的に重ねる (下記)。
   "& tbody td:not(.row-index):not(.col-filler):not(.grid-empty-cell)": {
     cursor: "default",
   },
@@ -582,20 +592,41 @@ export const GRID_CSS: SystemStyleObject = {
     outline: "1px solid color-mix(in srgb, var(--accent) 45%, transparent)",
     outlineOffset: "-1px",
   },
-  // 編集中 (アクティブ) のセルははっきりしたアクセントのアウトラインで強調し、
-  // どのセルを編集しているかを把握しやすくする。
+  // 編集中 (アクティブ) のセルははっきりした inset リングで強調し、
+  // どのセルを編集しているかを把握しやすくする (#540: inset で隣接セルと重ならない)。
   "& td.is-editable-cell:focus-within": {
-    outline: "2px solid var(--accent)",
-    outlineOffset: "-2px",
+    outline: "none",
+    boxShadow: "var(--focus-ring-inset)",
   },
   // キーボードナビゲーションで選択中のセル (編集モードでない場合のみ表示)
+  // inset リングで描くことで隣接セルのリングが重ならず、選択範囲の輪郭が明確 (#540)。
   "& td.is-active-cell:not(:focus-within)": {
-    outline: "2px solid var(--accent)",
-    outlineOffset: "-2px",
+    outline: "none",
+    boxShadow: "var(--focus-ring-inset)",
+  },
+  // pending edit のセルがアクティブ/フォーカス中のとき: 上記リングが is-pending-edit の
+  // 左端バーを上書きしてしまうため、専用セレクタでバー + リングを明示的に重ねる。
+  "& td.is-pending-edit.is-editable-cell:focus-within": {
+    boxShadow: "inset 2px 0 0 var(--preview-highlight), var(--focus-ring-inset)",
+  },
+  "& td.is-pending-edit.is-active-cell:not(:focus-within)": {
+    boxShadow: "inset 2px 0 0 var(--preview-highlight), var(--focus-ring-inset)",
+  },
+  // 矩形範囲選択の各セルにも inset リングを付与し、選択範囲の輪郭を強調する (#540)。
+  // アクティブセルと区別するため透明度を下げ (--focus-ring-inset より淡い)、
+  // 「選択されているが現在のカーソル位置ではない」状態を視覚的に分離する。
+  "& tbody td.is-selected-cell:not(.is-active-cell)": {
+    boxShadow:
+      "inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--accent) 45%, transparent)",
   },
   "& td.is-invalid-edit": { boxShadow: "inset 2px 0 0 var(--status-error)" },
   "& td.is-invalid-edit.is-pending-edit": {
     background: "color-mix(in srgb, var(--status-error) 12%, transparent)",
+  },
+  // アクティブセルが invalid-edit のとき: 左端エラーバー + inset エラーリングを重ねる (#540)。
+  "& td.is-invalid-edit.is-active-cell:not(:focus-within)": {
+    boxShadow:
+      "inset 2px 0 0 var(--status-error), inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--status-error) 55%, transparent)",
   },
   "& .cell-edit-wrap": { position: "relative" },
   "& .cell-edit-input": {
@@ -694,6 +725,8 @@ interface Props {
   onPreviewEdits?: () => void;
   /** Build & execute the UPDATE(s) for the pending edits, then refresh. */
   onApplyEdits?: () => void;
+  /** True while the Apply transaction is in flight — shows an inline spinner (#538). */
+  applyingEdits?: boolean;
   /** Current auto-refresh cadence (seconds), or null when polling is off. */
   autoRefreshSecs?: number | null;
   /**
@@ -3155,6 +3188,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onRequestInsertRow,
   fullExport,
   lastEditAppliedAt,
+  applyingEdits,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -3321,20 +3355,51 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }
   if (result.columns.length === 0) {
     if (streaming) {
+      // カラム情報未着のストリーミング中: 密度設定に合わせた行数ぶんのスケルトン行を
+      // 表示してレイアウトシフトを抑える。データ到着後は DataGrid に差し替わる。
+      // 行数は「表示領域の高さ / 推定行高」から概算し、空白が目立たないよう 8 行を
+      // 最大として適度な数にする。
+      const skeletonRowCount = Math.min(8, Math.max(3, Math.round(320 / DENSITY_ROW_ESTIMATE[settings.density])));
+      const skeletonColWidths = [42, 68, 55, 80, 50, 72, 60, 45];
       return (
         <Box
           flex="1 1 auto"
           minHeight={0}
           minWidth={0}
-          overflow="auto"
+          overflow="hidden"
           bg="app.surface"
-          display="flex"
-          alignItems="center"
-          justifyContent="center"
-          gap="8px"
+          role="status"
+          aria-label={t("statusRunningQuery")}
+          aria-busy="true"
+          aria-live="polite"
         >
-          <Spinner />
-          <chakra.span>{t("statusRunningQuery")}</chakra.span>
+          {/* スケルトン行: 密度ごとの行高に合わせた疑似列バーを並べる */}
+          <Box
+            px="12px"
+            pt="10px"
+            display="flex"
+            flexDirection="column"
+            gap={settings.density === "compact" ? "4px" : settings.density === "spacious" ? "8px" : "6px"}
+            aria-hidden
+          >
+            {Array.from({ length: skeletonRowCount }, (_, i) => (
+              <Box key={i} display="flex" gap="8px" opacity={1 - i * 0.1}>
+                {skeletonColWidths.slice(0, 5).map((w, ci) => (
+                  <Skeleton
+                    key={ci}
+                    height={`${DENSITY_ROW_ESTIMATE[settings.density] - 8}px`}
+                    style={{ width: `${w}px`, animationDelay: `${(i * 5 + ci) * 0.05}s` }}
+                    flexShrink={0}
+                  />
+                ))}
+                <Skeleton
+                  height={`${DENSITY_ROW_ESTIMATE[settings.density] - 8}px`}
+                  flex="1"
+                  style={{ animationDelay: `${(i * 5 + 5) * 0.05}s` }}
+                />
+              </Box>
+            ))}
+          </Box>
         </Box>
       );
     }
@@ -3621,10 +3686,11 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             >
               {t("editPreviewButton")}
             </Button>
-            <Button
+            <LoadingButton
               variant="success"
               size="sm"
               px="10px"
+              loading={applyingEdits}
               onClick={onApplyEdits}
               disabled={!canApply}
               title={
@@ -3636,7 +3702,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               }
             >
               {t("editApplyButton")}
-            </Button>
+            </LoadingButton>
             <Button
               variant="secondary"
               size="sm"
@@ -3767,7 +3833,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           emptyMessage={
             streaming ? undefined : queryError ? (
               <EmptyState
-                compact
+                illustration={(() => {
+                  const kind = illustrationForError(queryError);
+                  if (kind === "connectionFailed") return <ConnectionFailedIllustration size={72} />;
+                  if (kind === "timeout") return <TimeoutIllustration size={72} />;
+                  if (kind === "permissionDenied") return <PermissionDeniedIllustration size={72} />;
+                  if (kind === "schemaLoadFailed") return <SchemaLoadFailedIllustration size={72} />;
+                  return undefined;
+                })()}
                 icon="warning"
                 title={t("gridQueryError")}
                 description={queryError}

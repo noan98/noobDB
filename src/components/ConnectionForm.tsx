@@ -5,8 +5,8 @@ import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
-import { Spinner } from "./Spinner";
 import { Button, Input, Select, Switch } from "./ui";
+import { LoadingButton } from "./LoadingButton";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value never reaches the frontend, so this
@@ -197,6 +197,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshPassword, setSshPassword] = useState("");
 
   const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -334,6 +335,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const handleSave = async () => {
     setError(null); setMessage(null);
     if (!validatePorts()) return;
+    setSaving(true);
     try {
       await api.saveProfile({
         id: initial?.id,
@@ -372,6 +374,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       onSaved();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -636,18 +640,15 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
 
       <Flex gridColumn="span 2" gap="var(--space-2)" justify="flex-end">
-        <Button type="button" variant="secondary" onClick={onCancel}>{t("formCancel")}</Button>
-        <Button type="button" onClick={handleTest} disabled={testing} aria-busy={testing}>
-          {testing ? (
-            <Flex as="span" display="inline-flex" align="center" gap="6px">
-              <Spinner size={13} />
-              {t("formTesting")}
-            </Flex>
-          ) : (
-            t("formTest")
-          )}
+        <Button type="button" variant="secondary" onClick={onCancel} disabled={saving || testing}>
+          {t("formCancel")}
         </Button>
-        <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
+        <LoadingButton type="button" loading={testing} onClick={handleTest} disabled={saving}>
+          {testing ? t("formTesting") : t("formTest")}
+        </LoadingButton>
+        <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave} disabled={testing}>
+          {t("formSave")}
+        </LoadingButton>
       </Flex>
     </Box>
   );

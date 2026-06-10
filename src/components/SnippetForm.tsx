@@ -3,6 +3,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
 import { Button, Input, Select, Textarea } from "./ui";
+import { LoadingButton } from "./LoadingButton";
 
 interface Props {
   initial: Snippet | null;
@@ -66,6 +67,7 @@ export function SnippetForm({
   );
 
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const buildScope = (): SnippetScope => {
     if (scopeKind === "profile") return { kind: "profile", profile_id: scopeProfileId };
@@ -91,6 +93,7 @@ export function SnippetForm({
       setError(t("snippetErrorScopeGroup"));
       return;
     }
+    setSaving(true);
     try {
       await api.saveSnippet({
         id: initial?.id,
@@ -107,6 +110,8 @@ export function SnippetForm({
       onSaved();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -247,8 +252,8 @@ export function SnippetForm({
       {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
 
       <Box gridColumn="span 2" display="flex" gap="var(--space-2)" justifyContent="flex-end">
-        <Button type="button" variant="secondary" onClick={onCancel}>{t("formCancel")}</Button>
-        <Button type="button" variant="primary" onClick={handleSave}>{t("formSave")}</Button>
+        <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>{t("formCancel")}</Button>
+        <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave}>{t("formSave")}</LoadingButton>
       </Box>
     </Box>
   );
