@@ -265,6 +265,18 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
   **sccache** を `RUSTC_WRAPPER` で有効化し、コンパイル単位のキャッシュをブランチ
   跨ぎで再利用します (詳細は上の CI セクションを参照)。
 
+### unwrap / expect / panic の lint 運用 (#527)
+
+Rust 本体コードでの `unwrap()` / `expect()` / `panic!` によるクラッシュを構造的に
+抑止するため、`src-tauri/src/lib.rs` の先頭に
+`#![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` を置いています。
+CI の clippy ジョブは `-D warnings` でこれをエラーに昇格させるため、**新規に
+unwrap/expect/panic を本体コードに入れると CI が自動で fail** します。テストコードは
+`src-tauri/clippy.toml` の `allow-unwrap-in-tests = true` 等で除外済みなので、既存の
+テストには影響しません。どうしても本体コードに残す必要がある箇所 (回復不能な起動失敗など)
+には `#[allow(clippy::unwrap_used)]` / `#[allow(clippy::panic)]` + **なぜ
+panic/unwrap が妥当かの日本語根拠コメント**を必ず付けてください。
+
 JS のリンタは設定されていません。フロントエンドは `tsc` (`pnpm run build` 経由) で
 型チェックされます。`tsconfig.json` では `strict`、`noUnusedLocals`、
 `noUnusedParameters` が有効になっているため、未使用の import やパラメータがあると

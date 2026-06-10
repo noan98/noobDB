@@ -1,0 +1,6 @@
+# テストコード内の unwrap / expect / panic は clippy が自動的に許容する。
+# これにより #[cfg(test)] 内の既存テストコードへの影響なく、
+# 本体コードのみを対象に lint を適用できる。
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
