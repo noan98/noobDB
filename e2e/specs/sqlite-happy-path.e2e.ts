@@ -52,6 +52,9 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
   before(async () => {
     // SQLite インメモリ接続でも良いが、ファイルパスの方がフォーム入力が確実。
     tmpDbPath = path.join(os.tmpdir(), `noobdb-e2e-${Date.now()}.db`);
+    // 接続前に空の DB ファイルを実体として作成しておく
+    // (UI 契約上ファイルの存在を前提とする接続経路に備える)。
+    fs.writeFileSync(tmpDbPath, "");
 
     // アプリ起動後のウィンドウ描画を待機する。
     // tauri-driver は app 起動と WebDriver セッション確立を自動で行う。
