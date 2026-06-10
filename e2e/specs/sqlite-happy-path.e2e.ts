@@ -46,12 +46,17 @@ const binaryExists = fs.existsSync(binaryPath);
 const describeMaybe = binaryExists ? describe : describe.skip;
 
 describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
-  // テスト用一時 SQLite ファイルパス。終了後に削除する。
+  // テスト用一時ディレクトリと SQLite ファイルパス。終了後に削除する。
+  let tmpDir: string;
   let tmpDbPath: string;
 
   before(async () => {
     // SQLite インメモリ接続でも良いが、ファイルパスの方がフォーム入力が確実。
-    tmpDbPath = path.join(os.tmpdir(), `noobdb-e2e-${Date.now()}.db`);
+    // 予測可能な名前で共有 temp 直下にファイルを作るのは安全でない
+    // (シンボリックリンク攻撃・先回り作成のリスク) ため、mkdtemp で 0700 権限の
+    // 専用ディレクトリをアトミックに切り、その中に DB ファイルを置く。
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "noobdb-e2e-"));
+    tmpDbPath = path.join(tmpDir, "test.db");
     // 接続前に空の DB ファイルを実体として作成しておく
     // (UI 契約上ファイルの存在を前提とする接続経路に備える)。
     fs.writeFileSync(tmpDbPath, "");
@@ -63,9 +68,9 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
   });
 
   after(async () => {
-    // テスト用一時ファイルを削除。
-    if (tmpDbPath && fs.existsSync(tmpDbPath)) {
-      fs.unlinkSync(tmpDbPath);
+    // テスト用一時ディレクトリごと削除。
+    if (tmpDir && fs.existsSync(tmpDir)) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
