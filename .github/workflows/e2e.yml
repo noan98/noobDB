@@ -1,0 +1,144 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# noobDB E2E テスト (tauri-driver + WebDriverIO / #529 PoC)
+#
+# 【位置づけ】
+# この PoC ワークフローは「tauri-driver による実 webview E2E の実現可能性評価」を
+# 目的とした手動トリガ専用です。CI の必須チェック (Required status checks) には
+# 含まれていません。PR 毎の常時実行は現時点では行いません。
+#
+# 理由:
+#   1. Tauri バイナリのビルドに 10〜20 分 (クリーンビルド) かかり、PR ごとの
+#      壁時計時間を大幅に延ばす。
+#   2. WebKitWebDriver + xvfb の組み合わせは flaky になりやすく (ウィンドウ描画
+#      タイミング・GTK の初期化順序)、CI ノイズが増える懸念がある。
+#   3. tauri-driver 自体がまだ安定版機能として成熟中であり、メンテコストが高い。
+#   4. Phase 2 (#306) で既に Chromium ブラウザモードによるレンダリング検証は
+#      実施できており、E2E 追加価値の評価が先行する。
+#
+# 【将来の昇格基準】
+# 以下が揃ったタイミングで nightly または PR ゲートへの昇格を検討します:
+#   - テストが 3 回連続で安定してグリーンになること
+#   - 実行時間が 15 分以内に収まること
+#   - セレクタを data-testid で安定化させること
+#
+# 【ローカル実行手順】
+#   cargo install tauri-driver --locked
+#   sudo apt-get install -y webkit2gtk-driver xvfb   # Linux のみ
+#   cargo build                                      # src-tauri/ 配下で実行
+#   xvfb-run -a pnpm test:e2e                        # Linux ヘッドレス
+#   pnpm test:e2e                                    # Linux (ディスプレイあり) / Windows
+# ──────────────────────────────────────────────────────────────────────────────
+name: E2E (tauri-driver PoC / 手動)
+
+on:
+  # 手動トリガのみ。対象ブランチを選択して実行できる。
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: "デバッグログを有効化 (tauri-driver の詳細ログ)"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  e2e-linux:
+    name: E2E / Linux (WebKitGTK)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      # ────────────────────────────────────────────────────────────────────
+      # 1. チェックアウトと基本セットアップ
+      # ────────────────────────────────────────────────────────────────────
+      - name: コードをチェックアウト
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+
+      - name: pnpm を有効化
+        run: corepack enable
+
+      - name: pnpm ストアのキャッシュ
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-e2e-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-e2e-
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      # ────────────────────────────────────────────────────────────────────
+      # 2. Rust と Tauri システム依存の導入
+      # ────────────────────────────────────────────────────────────────────
+      - name: Rust stable をセットアップ
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Rust キャッシュ (rust-cache)
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: "src-tauri -> target"
+          key: e2e-linux
+
+      - name: linker ツール (clang, mold) をインストール
+        run: sudo apt-get install -y clang mold
+
+      - name: Tauri システム依存をインストール
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev
+
+      # ────────────────────────────────────────────────────────────────────
+      # 3. tauri-driver と WebDriver 系パッケージをインストール
+      # ────────────────────────────────────────────────────────────────────
+      - name: webkit2gtk-driver と xvfb をインストール
+        run: |
+          sudo apt-get install -y webkit2gtk-driver xvfb
+
+      - name: tauri-driver をインストール
+        run: cargo install tauri-driver --locked
+
+      # ────────────────────────────────────────────────────────────────────
+      # 4. フロントエンドビルド + Tauri デバッグバイナリのビルド
+      # ────────────────────────────────────────────────────────────────────
+      - name: フロントエンドをビルド (dist/ 生成)
+        run: pnpm run build
+
+      - name: Tauri デバッグバイナリをビルド
+        run: cargo build
+        working-directory: src-tauri
+
+      # ────────────────────────────────────────────────────────────────────
+      # 5. E2E テスト実行 (xvfb-run でヘッドレス)
+      # ────────────────────────────────────────────────────────────────────
+      - name: E2E テスト実行 (xvfb-run)
+        run: |
+          export WDIO_LOG_LEVEL=${{ github.event.inputs.debug == 'true' && 'trace' || 'info' }}
+          xvfb-run -a --server-args="-screen 0 1280x800x24" pnpm test:e2e
+        env:
+          # tauri-driver は PATH に tauri-driver バイナリがあれば自動検出する
+          PATH: "$HOME/.cargo/bin:$PATH"
+
+      # ────────────────────────────────────────────────────────────────────
+      # 6. アーティファクト保存 (失敗時のみ)
+      # ────────────────────────────────────────────────────────────────────
+      - name: テスト失敗時にスクリーンショットを保存
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-screenshots-${{ github.run_id }}
+          path: |
+            e2e/screenshots/
+            e2e/logs/
+          retention-days: 7

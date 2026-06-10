@@ -1,3 +1,8 @@
+// 本体コードでの unwrap / expect / panic を段階的に禁止するクレートレベル lint。
+// テストコードは src-tauri/clippy.toml の allow-*-in-tests で除外済み。
+// やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
+#![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 mod commands;
 mod db;
 mod error;
@@ -245,6 +250,12 @@ pub fn run() {
 
     if let Err(e) = result {
         tracing::error!(error = %e, "fatal error while running noobDB");
-        panic!("error while running noobDB: {e}");
+        // Tauri のイベントループ自体が起動失敗した場合はプロセスを即終了する以外に
+        // 回復手段がない。ここでの panic は意図的であり、OS のクラッシュレポートに
+        // 原因を残すためにも panic が最適な選択肢となる。
+        #[allow(clippy::panic)]
+        {
+            panic!("error while running noobDB: {e}");
+        }
     }
 }
