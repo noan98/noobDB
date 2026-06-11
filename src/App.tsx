@@ -119,6 +119,9 @@ const SchemaCompareView = lazy(() =>
 const ERDiagramView = lazy(() =>
   import("./components/ERDiagramView").then((m) => ({ default: m.ERDiagramView })),
 );
+const ProcessListPanel = lazy(() =>
+  import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
+);
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
@@ -720,6 +723,8 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
   const [showErd, setShowErd] = useState(false);
+  // プロセスモニタパネル (processlist / pg_stat_activity + KILL) の開閉。
+  const [showProcesses, setShowProcesses] = useState(false);
   // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
   // 状態には依存させない (#382)。
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -2709,7 +2714,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false);
+    setShowErd(false); setShowProcesses(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -2721,7 +2726,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false);
+    setShowErd(false); setShowProcesses(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3129,7 +3134,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false);
+    setShowErd(false); setShowProcesses(false);
     setShowSnippetForm(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -3140,7 +3145,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false);
+    setShowErd(false); setShowProcesses(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3153,7 +3158,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false);
+    setShowErd(false); setShowProcesses(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3310,7 +3315,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showErd || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showHelp || showCompare || showErd || showProcesses || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -3368,7 +3373,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showErd, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showErd, showProcesses, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -3417,7 +3422,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showHelp || showCompare || showErd ||
+        showForm || showSettings || showHelp || showCompare || showErd || showProcesses ||
         showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
       ) {
         return;
@@ -3457,6 +3462,7 @@ export default function App() {
     showHelp,
     showCompare,
     showErd,
+    showProcesses,
     showSnippetForm,
     showCommandPalette,
     showObjectSearch,
@@ -3544,7 +3550,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false);
+    setShowErd(false); setShowProcesses(false);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
     else if (view === "help") setShowHelp(true);
@@ -4157,21 +4163,21 @@ export default function App() {
               <Icon name={theme === "dark" ? "sun" : "moon"} />
             </IconButton>
             <IconButton
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowErd(false); setShowSettings(false); setShowHelp(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowSettings(false); setShowHelp(true); }}
               title={t("appHelp")}
               aria-label={t("appHelp")}
             >
               <Icon name="help" />
             </IconButton>
             <IconButton
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowErd(false); setShowHelp(false); setShowSettings(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowHelp(false); setShowSettings(true); }}
               title={t("appSettings")}
               aria-label={t("appSettings")}
             >
               <Icon name="settings" />
             </IconButton>
             <IconButton
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowErd(false); setShowCompare(true); }}
+              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowErd(false); setShowProcesses(false); setShowCompare(true); }}
               title={t("appSchemaCompare")}
               aria-label={t("appSchemaCompare")}
             >
@@ -4179,11 +4185,20 @@ export default function App() {
             </IconButton>
             {sessionId && (
               <IconButton
-                onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowCompare(false); setShowErd(true); }}
+                onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowCompare(false); setShowProcesses(false); setShowErd(true); }}
                 title={t("appErDiagram")}
                 aria-label={t("appErDiagram")}
               >
                 <Icon name="er-diagram" />
+              </IconButton>
+            )}
+            {sessionId && selectedProfile?.driver !== "sqlite" && (
+              <IconButton
+                onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowCompare(false); setShowErd(false); setShowProcesses(true); }}
+                title={t("appProcesses")}
+                aria-label={t("appProcesses")}
+              >
+                <Icon name="server" />
               </IconButton>
             )}
             {sidebarTab === "snippets" ? (
@@ -4194,7 +4209,7 @@ export default function App() {
                   setShowSettings(false);
                   setShowHelp(false);
                   setShowCompare(false);
-                  setShowErd(false);
+                  setShowErd(false); setShowProcesses(false);
                   setShowForm(false);
                   setShowSnippetForm(true);
                   setFormInstanceId((n) => n + 1);
@@ -4221,7 +4236,7 @@ export default function App() {
                   <Icon name="download" />
                 </IconButton>
                 <IconButton
-                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                   title={t("appNew")}
                   aria-label={t("appNew")}
                 >
@@ -4430,6 +4445,12 @@ export default function App() {
             initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
             onOpenTable={handleOpenTable}
             onClose={() => setShowErd(false)}
+          />
+        ) : showProcesses && sessionId ? (
+          <ProcessListPanel
+            sessionId={sessionId}
+            readOnly={selectedProfile?.read_only ?? false}
+            onClose={() => setShowProcesses(false)}
           />
         ) : showForm ? (
           <ConnectionForm

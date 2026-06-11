@@ -5,8 +5,8 @@ use sqlx::sqlite::{SqliteColumn, SqliteConnectOptions, SqlitePool, SqlitePoolOpt
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -342,6 +342,24 @@ impl SqliteConn {
         // SQLite uses one database per connection (ATTACH not supported here).
         // Surface the conventional "main" alias so the tree UI has a node.
         Ok(vec![DEFAULT_DB_NAME.to_string()])
+    }
+
+    /// SQLite is file-backed — there is no server and no processes to list.
+    /// The UI hides the process panel for SQLite; this error is the backstop
+    /// for direct IPC calls.
+    pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
+        Err(AppError::InvalidInput(
+            "process list is not supported for SQLite (file-backed, no server processes)".into(),
+        ))
+    }
+
+    /// See [`SqliteConn::list_processes`] — nothing to kill on a file-backed
+    /// database.
+    pub async fn kill_process(&self, _id: i64) -> Result<()> {
+        Err(AppError::InvalidInput(
+            "killing processes is not supported for SQLite (file-backed, no server processes)"
+                .into(),
+        ))
     }
 
     pub async fn tables(&self, _db: &str) -> Result<Vec<String>> {

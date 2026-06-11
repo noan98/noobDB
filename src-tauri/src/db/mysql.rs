@@ -6,8 +6,8 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -527,6 +527,69 @@ impl MySqlConn {
     pub async fn databases(&self) -> Result<Vec<String>> {
         let rows: Vec<MySqlRow> = sqlx::query("SHOW DATABASES").fetch_all(&self.pool).await?;
         rows.iter().map(|r| decode_text_col(r, 0)).collect()
+    }
+
+    /// Server connections/threads for the process monitor panel. Prefers
+    /// `performance_schema.processlist` (8.0.22+, lock-free) and falls back to
+    /// `information_schema.PROCESSLIST` (older MySQL / MariaDB), which takes a
+    /// thread-list mutex but is harmless at this panel's polling cadence.
+    pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
+        let projection =
+            "SELECT ID, USER, HOST, DB, COMMAND, STATE, TIME, INFO, ID = CONNECTION_ID() FROM";
+        let rows: Vec<MySqlRow> = match sqlx::query(sqlx::AssertSqlSafe(format!(
+            "{projection} performance_schema.processlist ORDER BY ID"
+        )))
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            // Table missing (pre-8.0.22 / MariaDB) or performance_schema off —
+            // any failure here is "this source is unavailable", so fall back.
+            Err(_) => {
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "{projection} information_schema.PROCESSLIST ORDER BY ID"
+                )))
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
+        Ok(rows
+            .into_iter()
+            .map(|r| ProcessInfo {
+                // ID is BIGINT UNSIGNED; connection ids fit i64 in practice.
+                id: r
+                    .try_get::<u64, _>(0)
+                    .map(|v| v as i64)
+                    .or_else(|_| r.try_get::<i64, _>(0))
+                    .unwrap_or_default(),
+                user: r.try_get::<Option<String>, _>(1).ok().flatten(),
+                host: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                database: r.try_get::<Option<String>, _>(3).ok().flatten(),
+                command: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                state: r.try_get::<Option<String>, _>(5).ok().flatten(),
+                time_secs: r
+                    .try_get::<i64, _>(6)
+                    .or_else(|_| r.try_get::<i32, _>(6).map(i64::from))
+                    .ok(),
+                query: r.try_get::<Option<String>, _>(7).ok().flatten(),
+                // MySQL booleans arrive as integer 0/1.
+                is_self: r
+                    .try_get::<i64, _>(8)
+                    .or_else(|_| r.try_get::<i32, _>(8).map(i64::from))
+                    .map(|v| v != 0)
+                    .unwrap_or(false),
+            })
+            .collect())
+    }
+
+    /// `KILL <id>` — terminates the whole connection (not just its current
+    /// statement). KILL takes no placeholders, but `id` is a number so the
+    /// interpolation cannot inject SQL.
+    pub async fn kill_process(&self, id: i64) -> Result<()> {
+        sqlx::query(sqlx::AssertSqlSafe(format!("KILL {id}")))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn tables(&self, db: &str) -> Result<Vec<String>> {

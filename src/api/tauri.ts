@@ -257,6 +257,29 @@ export interface TableRowEstimate {
 }
 
 /**
+ * サーバ側プロセス/接続 1 件 (プロセス監視パネル)。MySQL は processlist、
+ * PostgreSQL は pg_stat_activity に対応する。`id` をそのまま `killProcess` に渡す。
+ */
+export interface ProcessInfo {
+  id: number;
+  user: string | null;
+  host: string | null;
+  database: string | null;
+  /** 粗い活動状態: MySQL COMMAND (Query/Sleep/…) / PostgreSQL state (active/idle/…)。 */
+  command: string | null;
+  /** 詳細状態: MySQL STATE / PostgreSQL wait_event。 */
+  state: string | null;
+  time_secs: number | null;
+  query: string | null;
+  /**
+   * この行が一覧クエリを実行した接続自身 (= 本アプリのプール接続) のとき true。
+   * kill するとアプリのセッションが切断されるため、UI は警告を出す。ベスト
+   * エフォート: 同じプールの別接続までは判別できない。
+   */
+  is_self: boolean;
+}
+
+/**
  * Where a table or column sits relative to the two schemas in a comparison.
  * `source_only` would be added to the target, `target_only` would be removed,
  * `different` exists on both sides with differing definitions, `same` is
@@ -539,6 +562,14 @@ export const api = {
     invoke<IndexInfo[]>("list_indexes", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.indexInfoArray, r, "list_indexes"),
     ),
+  /** サーバ側プロセス/接続の一覧を取得する (プロセス監視パネル)。SQLite は非対応。 */
+  listProcesses: (sessionId: string) =>
+    invoke<ProcessInfo[]>("list_processes", { sessionId }).then((r) =>
+      parseResponse(schemas.processInfoArray, r, "list_processes"),
+    ),
+  /** プロセス/接続を強制終了する。read_only セッションはバックエンドで拒否される。 */
+  killProcess: (sessionId: string, processId: number) =>
+    invoke<void>("kill_process", { sessionId, processId }),
   /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する (#483)。 */
   listSchemaObjects: (sessionId: string, database: string) =>
     invoke<SchemaObject[]>("list_schema_objects", { sessionId, database }).then((r) =>

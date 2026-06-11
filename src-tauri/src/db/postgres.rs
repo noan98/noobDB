@@ -5,8 +5,8 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, Value,
+    Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
 use super::DbConnectOptions;
 use crate::error::{AppError, Result};
@@ -367,6 +367,59 @@ impl PostgresConn {
         rows.iter()
             .map(|r| r.try_get::<String, _>(0).map_err(Into::into))
             .collect()
+    }
+
+    /// Client backends from `pg_stat_activity` for the process monitor panel.
+    /// Background workers (autovacuum, WAL writer, ...) are filtered out — the
+    /// panel is about client connections, and terminating system backends is
+    /// never what the user means. The app's own pooled connections do appear,
+    /// exactly as they do in MySQL's processlist.
+    pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT pid,
+                      usename,
+                      CASE WHEN client_addr IS NULL THEN NULL
+                           ELSE host(client_addr) || ':' || client_port END,
+                      datname,
+                      state,
+                      wait_event,
+                      EXTRACT(EPOCH FROM (now() - query_start))::bigint,
+                      query,
+                      pid = pg_backend_pid()
+               FROM pg_stat_activity
+               WHERE backend_type = 'client backend'
+               ORDER BY pid"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ProcessInfo {
+                id: i64::from(r.try_get::<i32, _>(0).unwrap_or_default()),
+                user: r.try_get::<Option<String>, _>(1).ok().flatten(),
+                host: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                database: r.try_get::<Option<String>, _>(3).ok().flatten(),
+                command: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                state: r.try_get::<Option<String>, _>(5).ok().flatten(),
+                time_secs: r.try_get::<Option<i64>, _>(6).ok().flatten(),
+                query: r.try_get::<Option<String>, _>(7).ok().flatten(),
+                is_self: r.try_get::<bool, _>(8).unwrap_or(false),
+            })
+            .collect())
+    }
+
+    /// `pg_terminate_backend(pid)` — terminates the whole backend (the
+    /// connection), matching MySQL `KILL`. Returns Ok even when the pid is
+    /// already gone (the function just returns false), which is the right
+    /// behaviour for a monitor that may race the process's natural exit.
+    pub async fn kill_process(&self, id: i64) -> Result<()> {
+        let pid = i32::try_from(id)
+            .map_err(|_| AppError::InvalidInput(format!("invalid backend pid: {id}")))?;
+        sqlx::query("SELECT pg_terminate_backend($1)")
+            .bind(pid)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn tables(&self, schema: &str) -> Result<Vec<String>> {

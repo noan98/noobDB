@@ -628,3 +628,72 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
     }
     conn.close().await;
 }
+
+/// プロセス監視パネル (list_processes / kill_process) の MySQL 経路。一覧には
+/// 少なくとも自分自身のプール接続が現れること、別接続を KILL するとその接続が
+/// 一覧から消えることを確認する。
+#[tokio::test]
+async fn mysql_process_list_and_kill() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // The listing query itself runs on one of our pooled connections, so the
+    // result can never be empty.
+    let processes = conn.list_processes().await.expect("list_processes");
+    assert!(
+        !processes.is_empty(),
+        "process list must at least contain this client's own connection"
+    );
+    assert!(
+        processes.iter().all(|p| p.id > 0),
+        "every process must carry a positive id: {processes:?}"
+    );
+    assert!(
+        processes.iter().any(|p| p.is_self),
+        "the listing connection itself must be flagged is_self: {processes:?}"
+    );
+
+    // Open a second, independent connection and learn its connection id.
+    let victim = t::connect(&opts).await.expect("second connect");
+    let res = victim
+        .execute("SELECT CONNECTION_ID() AS id", None)
+        .await
+        .expect("connection id");
+    let victim_id = match &res.rows[0][0] {
+        t::Value::Int(v) => *v,
+        t::Value::UInt(v) => *v as i64,
+        other => panic!("unexpected CONNECTION_ID value: {other:?}"),
+    };
+    assert!(
+        conn.list_processes()
+            .await
+            .expect("list before kill")
+            .iter()
+            .any(|p| p.id == victim_id),
+        "the second connection must be visible before the kill"
+    );
+
+    conn.kill_process(victim_id).await.expect("kill");
+
+    // The server tears the thread down asynchronously; poll briefly.
+    let mut gone = false;
+    for _ in 0..20 {
+        let now = conn.list_processes().await.expect("list after kill");
+        if !now.iter().any(|p| p.id == victim_id) {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(
+        gone,
+        "killed connection {victim_id} still in the process list"
+    );
+
+    victim.close().await;
+    conn.close().await;
+}

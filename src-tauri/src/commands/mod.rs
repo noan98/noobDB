@@ -6,6 +6,7 @@ pub mod file;
 pub mod history;
 pub mod import;
 pub mod logs;
+pub mod process;
 pub mod profiles;
 pub mod query;
 pub mod schema;

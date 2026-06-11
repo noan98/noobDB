@@ -72,6 +72,19 @@ export const indexInfo = z.object({
   method: z.string().nullable(),
 });
 
+/** サーバ側プロセス/接続 (プロセス監視パネル)。 */
+export const processInfo = z.object({
+  id: z.number(),
+  user: z.string().nullable(),
+  host: z.string().nullable(),
+  database: z.string().nullable(),
+  command: z.string().nullable(),
+  state: z.string().nullable(),
+  time_secs: z.number().nullable(),
+  query: z.string().nullable(),
+  is_self: z.boolean(),
+});
+
 export const schemaObject = z.object({
   kind: z.string(),
   name: z.string(),
@@ -251,6 +264,7 @@ export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
 export const indexInfoArray = z.array(indexInfo);
+export const processInfoArray = z.array(processInfo);
 export const schemaObjectArray = z.array(schemaObject);
 export const connectionProfileArray = z.array(connectionProfile);
 export const snippetArray = z.array(snippet);

@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use types::{
-    ForeignKey, IndexInfo, PreviewResult, QueryResult, SchemaObject, StreamBatch, TableColumnInfo,
-    TableRowEstimate, TableSchema,
+    ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -328,6 +328,29 @@ impl Connection {
             Connection::MySql(c) => c.table_row_estimates(db).await,
             Connection::Postgres(c) => c.table_row_estimates(db).await,
             Connection::Sqlite(c) => c.table_row_estimates(db).await,
+        }
+    }
+
+    /// Server-side processes/connections for the process monitor panel.
+    /// Reads the engine's in-memory state (`processlist` / `pg_stat_activity`)
+    /// — no table I/O — so it is cheap enough to poll. SQLite has no server
+    /// processes and returns an error.
+    pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
+        match self {
+            Connection::MySql(c) => c.list_processes().await,
+            Connection::Postgres(c) => c.list_processes().await,
+            Connection::Sqlite(c) => c.list_processes().await,
+        }
+    }
+
+    /// Terminates the server-side process/connection `id` (from
+    /// [`Connection::list_processes`]): MySQL `KILL <id>`, PostgreSQL
+    /// `pg_terminate_backend(pid)`. SQLite returns an error.
+    pub async fn kill_process(&self, id: i64) -> Result<()> {
+        match self {
+            Connection::MySql(c) => c.kill_process(id).await,
+            Connection::Postgres(c) => c.kill_process(id).await,
+            Connection::Sqlite(c) => c.kill_process(id).await,
         }
     }
 

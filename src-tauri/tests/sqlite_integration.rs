@@ -1006,3 +1006,49 @@ async fn writable_session_allows_writes_via_ipc() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// プロセス監視コマンドの常時実行テスト (外部サーバ不要)。
+/// - SQLite ドライバは list/kill とも「非対応」エラーを返す。
+/// - read_only セッションでは kill コマンドのバックエンドガードがドライバ到達前に
+///   拒否する (`AppError::ReadOnly`)。MySQL/PostgreSQL でも同じガードを通る。
+#[tokio::test]
+async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_proc_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // Driver-level: SQLite has no server processes.
+    assert!(matches!(
+        conn.list_processes().await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        conn.kill_process(1).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+
+    // Command-level: a read-only session is rejected by the guard before the
+    // driver is even consulted.
+    let session = t::make_session("proc_ro", conn, opts.clone(), /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    assert!(matches!(
+        t::kill_process_via_command(&state, &sid, 1).await,
+        Err(t::AppError::ReadOnly(_))
+    ));
+
+    // A writable session passes the guard and surfaces the driver error.
+    let conn2 = t::connect(&opts).await.expect("connect 2");
+    let session2 = t::make_session("proc_rw", conn2, opts, /* read_only */ false);
+    let sid2 = state.insert(session2).await;
+    assert!(matches!(
+        t::kill_process_via_command(&state, &sid2, 1).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+
+    let _ = std::fs::remove_file(&path);
+}
