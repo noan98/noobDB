@@ -3625,7 +3625,7 @@ export default function App() {
         id: "nav:disconnect",
         group: "navigation",
         label: t("cmdkActionDisconnect"),
-        icon: "close",
+        icon: "unplug",
         keywords: "disconnect close 切断",
         run: () => void handleDisconnect(),
       });
@@ -4581,7 +4581,8 @@ export default function App() {
                 </Flex>
               )}
               {sessionId && (
-                <Button variant="danger" onClick={handleDisconnect}>
+                <Button variant="dangerOutline" size="sm" onClick={handleDisconnect}>
+                  <Icon name="unplug" size={14} />
                   {t("appDisconnect")}
                 </Button>
               )}

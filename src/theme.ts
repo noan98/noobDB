@@ -261,6 +261,10 @@ const config = defineConfig({
           dangerBg: { value: { base: "#dc2626", _dark: "#dc2626" } }, // 白文字 4.83:1
           dangerBgHover: { value: { base: "#b91c1c", _dark: "#b91c1c" } }, // 白文字 6.47:1
           dangerFg: { value: { base: "#ffffff", _dark: "#ffffff" } },
+          // アウトライン危険ボタン (dangerOutline) の文字/枠線色。透明地に載るため
+          // 背景 (--bg) とのコントラストで検証: light #b91c1c on #f5f7fa = 6.03:1 /
+          // dark #f87171 on #0d1117 = 6.84:1 (いずれも AA、枠線の 3:1 も満たす)。
+          dangerOutlineFg: { value: { base: "#b91c1c", _dark: "#f87171" } },
           infoBg: { value: { base: "#0369a1", _dark: "#38bdf8" } }, // 白 5.93 / 濃 6.48
           infoBgHover: { value: { base: "#075985", _dark: "#7dd3fc" } },
           infoFg: { value: { base: "#ffffff", _dark: "#082f49" } },
@@ -292,6 +296,7 @@ export const system = createSystem(defaultConfig, config);
  *  | ------------------------------------------ | ------------ |
  *  | 主要アクション (Save / Connect / Execute)  | `primary`    |
  *  | 破壊的アクション (削除 / Drop / Clear)     | `danger`     |
+ *  | 常駐する注意アクション (Disconnect など)   | `dangerOutline` |
  *  | 警告付き実行 (危険クエリ承認 / 中断)       | `warning`    |
  *  | 成功確定 (セル編集 Apply など)             | `success`    |
  *  | キャンセル / 閉じる (モーダル・フォーム)   | `secondary`  |
@@ -373,6 +378,16 @@ export const buttonRecipe = defineRecipe({
         color: "app.dangerFg",
         borderColor: "app.dangerBg",
         _hover: { bg: "app.dangerBgHover", borderColor: "app.dangerBgHover" },
+      },
+      // ヘッダー常駐の Disconnect のように「危険寄りだが破壊的ではない」アクション
+      // 向け。常時ベタ塗り赤だと本当に破壊的な `danger` の警告効果が薄まるため、
+      // 平常時は枠線 + 危険色文字に抑え、ホバーで `danger` と同じベタ塗りに変化
+      // させて実行時の重みを伝える。
+      dangerOutline: {
+        bg: "transparent",
+        color: "app.dangerOutlineFg",
+        borderColor: "app.dangerOutlineFg",
+        _hover: { bg: "app.dangerBg", borderColor: "app.dangerBg", color: "app.dangerFg" },
       },
       info: {
         bg: "app.infoBg",

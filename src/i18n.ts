@@ -1220,7 +1220,7 @@ type Dict = Record<Key, string>;
 const ja: Dict = {
   appConnections: "接続",
   appNew: "新規接続",
-  appDisconnect: "Disconnect",
+  appDisconnect: "切断",
   appDisconnected: "未接続",
   appLanguage: "言語",
   appThemeToLight: "ライトテーマに切替",
