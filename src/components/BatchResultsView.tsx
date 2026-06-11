@@ -3,7 +3,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import type { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
 import type { BatchStatementResult } from "../sqlScript";
-import { Button } from "./ui";
+import { Button, Switch } from "./ui";
 import { Icon } from "./Icon";
 import { Spinner } from "./Spinner";
 
@@ -36,10 +36,14 @@ export function BatchResultsView({ results, running, onRerun, onClose }: Props) 
         </chakra.span>
         {running && <Spinner size={13} />}
         <chakra.span flex="1" />
-        <chakra.label display="inline-flex" alignItems="center" gap="6px" fontSize="xs" color="app.textSecondary">
-          <input type="checkbox" checked={stopOnError} onChange={(e) => setStopOnError(e.target.checked)} />
-          {t("batchStopOnError")}
-        </chakra.label>
+        <chakra.span fontSize="xs" color="app.textSecondary">
+          <Switch
+            size="sm"
+            checked={stopOnError}
+            onChange={setStopOnError}
+            label={t("batchStopOnError")}
+          />
+        </chakra.span>
         <Button type="button" variant="secondary" size="sm" onClick={() => onRerun(stopOnError)} disabled={running}>
           {t("batchRerun")}
         </Button>

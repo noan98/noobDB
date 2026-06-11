@@ -79,11 +79,16 @@ const config = defineConfig({
         normal: { value: "var(--tracking-normal)" },
         wide: { value: "var(--tracking-wide)" },
       },
-      // 4px リズムの余白スケール。
+      // 4px リズムの余白スケール。ハーフステップ (0.5/1.5/2.5/3.5) は密度の高い
+      // UI で多用される中間値 (2/6/10/14px) のブリッジで、px 直書きを排除する。
       spacing: {
+        "0.5": { value: "var(--space-0-5)" },
         1: { value: "var(--space-1)" },
+        "1.5": { value: "var(--space-1-5)" },
         2: { value: "var(--space-2)" },
+        "2.5": { value: "var(--space-2-5)" },
         3: { value: "var(--space-3)" },
+        "3.5": { value: "var(--space-3-5)" },
         4: { value: "var(--space-4)" },
         5: { value: "var(--space-5)" },
         6: { value: "var(--space-6)" },
@@ -492,6 +497,17 @@ export const textareaRecipe = defineRecipe({
 /** チェックボックス。ネイティブ要素を使い、アクセント色へ追従させる。 */
 export const checkboxRecipe = defineRecipe({
   className: "app-checkbox",
+  base: {
+    width: "auto",
+    cursor: "pointer",
+    accentColor: "app.accent",
+    _focusVisible: { outline: "none", boxShadow: focusRing },
+  },
+});
+
+/** ラジオボタン。checkbox と同様にネイティブ要素を使い、アクセント色へ追従させる。 */
+export const radioRecipe = defineRecipe({
+  className: "app-radio",
   base: {
     width: "auto",
     cursor: "pointer",

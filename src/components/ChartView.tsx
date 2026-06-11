@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
-import { Button, Select } from "./ui";
+import { Button, Checkbox, Select } from "./ui";
 import { Icon } from "./Icon";
 import {
   buildChartModel,
@@ -112,7 +112,7 @@ export function ChartView({ result, onClose }: Props) {
             {result.columns.map((c, i) =>
               numericCols[i] && i !== config.xCol ? (
                 <chakra.label key={i} display="inline-flex" alignItems="center" gap="4px" fontSize="xs" cursor="pointer">
-                  <input type="checkbox" checked={config.yCols.includes(i)} onChange={() => toggleY(i)} />
+                  <Checkbox checked={config.yCols.includes(i)} onChange={() => toggleY(i)} />
                   {c.name}
                 </chakra.label>
               ) : null,

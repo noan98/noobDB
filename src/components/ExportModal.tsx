@@ -4,7 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api/tauri";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input } from "./ui";
+import { Button, Input, Radio } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
@@ -247,14 +247,13 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
             <chakra.div role="radiogroup" aria-label={t("exportScope")} display="flex" flexDirection="column" gap="6px">
               {(["current", "full"] as const).map((sc) => (
                 <chakra.label key={sc} display="inline-flex" alignItems="flex-start" gap="8px" cursor="pointer" userSelect="none">
-                  <input
-                    type="radio"
+                  <Radio
                     name="export-scope"
                     value={sc}
                     checked={scope === sc}
                     onChange={() => setScope(sc)}
                     disabled={isSaving}
-                    style={{ marginTop: "3px" }}
+                    mt="3px"
                   />
                   <chakra.span display="flex" flexDirection="column">
                     <chakra.span fontSize="md">{sc === "current" ? t("exportScopeCurrent") : t("exportScopeFull")}</chakra.span>
@@ -310,14 +309,13 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
                 bg={format === fmt ? "app.rowHover" : "app.surface"}
                 userSelect="none"
               >
-                <input
-                  type="radio"
+                <Radio
                   name="export-format"
                   value={fmt}
                   checked={format === fmt}
                   onChange={() => setFormat(fmt)}
                   disabled={isSaving}
-                  style={{ margin: 0 }}
+                  m={0}
                 />
                 <span>{fmt === "csv" ? t("exportFormatCsv") : t("exportFormatJson")}</span>
               </chakra.label>

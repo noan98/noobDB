@@ -9,7 +9,7 @@ import {
   type ParamType,
 } from "../queryParams";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button } from "./ui";
+import { Button, PressableButton } from "./ui";
 
 /** Per-parameter draft: the typed value and how it's rendered into SQL. */
 interface Draft {
@@ -226,13 +226,14 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
       </ModalBody>
 
       <ModalFooter>
-        <Button type="button" variant="primary" onClick={submit} disabled={hasError}>
-          {t("parameterInputRun")}
-        </Button>
+        {/* spacer → secondary (Cancel) → primary (Run) の右寄せ配置。他モーダルと統一 */}
         <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" onClick={onCancel}>
           {t("parameterInputCancel")}
         </Button>
+        <PressableButton type="button" variant="primary" onClick={submit} disabled={hasError}>
+          {t("parameterInputRun")}
+        </PressableButton>
       </ModalFooter>
     </Modal>
   );
