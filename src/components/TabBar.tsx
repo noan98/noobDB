@@ -312,7 +312,7 @@ export function TabBar({
                 // MotionConfig により即時化される。
                 value={tab.id}
                 drag={onReorder ? true : false}
-                whileDrag={{ scale: 1.04, boxShadow: "0 6px 16px rgba(0,0,0,0.28)", zIndex: 3 }}
+                whileDrag={{ scale: 1.04, boxShadow: "var(--shadow-lg)", zIndex: 3 }}
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
@@ -491,7 +491,7 @@ export function TabBar({
                 animate="animate"
                 exit="exit"
                 transition={transitions.enter}
-                style={{ position: "absolute", top: "100%", right: 0, zIndex: 30 }}
+                style={{ position: "absolute", top: "100%", right: 0, zIndex: "var(--z-dropdown)" }}
               >
                 <Box
                   mt="2px"

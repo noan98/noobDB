@@ -34,7 +34,20 @@ export const PathRow = chakra("div", {
   base: { display: "flex", gap: "var(--space-2)", alignItems: "center" },
 });
 
-/** エラー文の枠付き表示。`.export-error` 相当。 */
+/**
+ * エラー文の枠付き表示。`.export-error` 相当。
+ *
+ * ## エラー/警告表示の使い分け
+ * - **Toast** (`Toast.tsx`): コピー完了・接続失敗などの一時的な操作結果。自動で
+ *   消えるため、モーダル内の持続的なエラーには使わない。
+ * - **ErrorNote** (本コンポーネント): モーダル内のバリデーション/実行エラー。
+ *   操作を完了させるまで残り続ける必要があるエラーに使う。
+ * - **role="alert" のインライン span**: フィールド単位の軽量なバリデーションエラー
+ *   (例: ParameterInputModal の数値型チェック)。`ErrorNote` より控えめに表示したい
+ *   場面や、フィールドに隣接して表示したい場合。
+ * - **セル近傍の inline 表示**: グリッドのセル編集エラー。`ErrorNote` ではなく
+ *   セル内に直接表示して文脈を保つ。
+ */
 export const ErrorNote = chakra("div", {
   base: {
     padding: "8px 10px",

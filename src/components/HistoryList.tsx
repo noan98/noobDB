@@ -5,7 +5,7 @@ import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
-import { Button, Checkbox, Input } from "./ui";
+import { Checkbox, Input, PressableButton } from "./ui";
 import {
   MotionTreeNode,
   ScopeToggle,
@@ -133,9 +133,9 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
 
       {entries.length > 0 && (
         <TreeSearch borderTop="none" pt={0}>
-          <Button type="button" variant="danger" onClick={handleClear}>
+          <PressableButton type="button" variant="danger" onClick={handleClear}>
             {t("historyClear")}
-          </Button>
+          </PressableButton>
         </TreeSearch>
       )}
 

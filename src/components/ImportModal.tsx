@@ -15,7 +15,8 @@ import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { transitions } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, Select, Switch } from "./ui";
+import { Button, Input, PressableButton, Select, Switch } from "./ui";
+import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
@@ -401,7 +402,12 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
         )}
         {previewError && <ErrorNote>{previewError}</ErrorNote>}
         {loadingPreview && (
-          <chakra.div color="app.textMuted">{t("importLoadingPreview")}</chakra.div>
+          /* プレビュー読み込み中のインジケータ: Spinner とテキストを横並びにして
+             視覚的なフィードバックを追加する。 */
+          <chakra.div display="inline-flex" alignItems="center" gap="1.5" color="app.textMuted">
+            <Spinner size={13} />
+            {t("importLoadingPreview")}
+          </chakra.div>
         )}
 
         {preview && tableColumns && (
@@ -545,7 +551,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
       <ModalFooter>
         <div style={{ flex: 1 }} />
         {importing ? (
-          <Button type="button" variant="warning" onClick={handleCancelImport}>{t("importStop")}</Button>
+          <PressableButton type="button" variant="warning" onClick={handleCancelImport}>{t("importStop")}</PressableButton>
         ) : (
           <Button type="button" variant="secondary" onClick={onClose}>{t("importClose")}</Button>
         )}

@@ -40,7 +40,7 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
       <ModalBody display="flex" flexDirection="column" gap="var(--space-3)">
         {isProduction && (
           <chakra.div
-            p="8px 10px"
+            py="2" px="2.5"
             borderRadius="md"
             fontWeight={600}
             color="app.dangerFg"
@@ -67,8 +67,8 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
                   key={idx}
                   display="flex"
                   flexDirection="column"
-                  gap="2px"
-                  p="8px 10px"
+                  gap="0.5"
+                  py="2" px="2.5"
                   border="1px solid"
                   borderColor="app.border"
                   borderLeft="3px solid"

@@ -86,7 +86,7 @@ export function Modal({
             position: "fixed",
             inset: 0,
             zIndex: "modal",
-            bg: "rgba(0, 0, 0, 0.45)",
+            bg: "var(--overlay)",
             backdropFilter: "blur(2px)",
           }}
         />

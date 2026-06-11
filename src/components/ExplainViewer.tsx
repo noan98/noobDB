@@ -3,6 +3,7 @@ import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Button } from "./ui";
+import { Spinner } from "./Spinner";
 import {
   type Heat,
   type HintSeverity,
@@ -527,7 +528,12 @@ export function ExplainViewer({ result, streaming }: Props) {
 
   if (streaming && !root) {
     return (
-      <Box {...EXPLAIN_EMPTY_PROPS}>{t("explainLoading")}</Box>
+      /* EXPLAIN_EMPTY_PROPS は column/center 配置なので Spinner をテキストの
+         上に重ねて縦積みローディング表示にする。 */
+      <Box {...EXPLAIN_EMPTY_PROPS}>
+        <Spinner size={13} />
+        {t("explainLoading")}
+      </Box>
     );
   }
   if (!raw) {

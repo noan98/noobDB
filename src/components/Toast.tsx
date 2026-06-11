@@ -45,11 +45,13 @@ interface ToastApi {
 const ToastContext = createContext<ToastApi | null>(null);
 
 /**
- * Transient, app-wide notifications. Distinct from the footer status bar
- * (which tracks the latest in-progress / query result): toasts confirm
- * one-shot actions like export, import, dump, connect, and copy, then fade
- * out on their own. Motion drives the enter/exit; the global
- * `prefers-reduced-motion` config neutralizes it for users who opt out.
+ * アプリ全体の一時通知。フッターステータスバー (直近の進捗/クエリ結果を
+ * 追跡するもの) とは異なり、エクスポート・インポート・ダンプ・接続・コピーなど
+ * 単発操作の完了/失敗を知らせ、自動で消える用途に限定する。
+ * モーダル内のバリデーションエラーや実行失敗など**持続的に表示が必要なエラー**
+ * には `ErrorNote` (`modalForm.tsx`) を使い、Toast は使わないこと。
+ * Motion による enter/exit を持ち、`prefers-reduced-motion` ユーザには
+ * ルートの `MotionConfig` により自動的に抑制される。
  */
 export function useToast(): ToastApi {
   const ctx = useContext(ToastContext);

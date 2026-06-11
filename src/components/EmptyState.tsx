@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
-import { Button } from "./ui";
+import { PressableButton } from "./ui";
 import { Icon, type IconName } from "./Icon";
 
 /** ルートを motion 化するラッパー。`transition` を motion へ転送する
@@ -53,7 +53,7 @@ export function EmptyState({
       flexDirection="column"
       alignItems={compact ? "flex-start" : "center"}
       justifyContent="center"
-      gap={compact ? "6px" : "var(--space-2)"}
+      gap={compact ? "6px" : "2"}
       px={compact ? "16px" : "20px"}
       py={compact ? "20px" : "32px"}
       textAlign={compact ? "left" : "center"}
@@ -91,14 +91,14 @@ export function EmptyState({
       <Text
         fontWeight="600"
         color="app.text"
-        fontSize={compact ? "var(--text-sm)" : "var(--text-md)"}
+        fontSize={compact ? "sm" : "md"}
       >
         {title}
       </Text>
       {description && (
         <Text
           color="app.textMuted"
-          fontSize="var(--text-sm)"
+          fontSize="sm"
           lineHeight="1.5"
           maxW={compact ? "none" : "34ch"}
         >
@@ -106,9 +106,9 @@ export function EmptyState({
         </Text>
       )}
       {action && (
-        <Button type="button" variant="primary" onClick={action.onClick} mt="var(--space-1)">
+        <PressableButton type="button" variant="primary" onClick={action.onClick} mt="1">
           {action.label}
-        </Button>
+        </PressableButton>
       )}
     </MotionRoot>
   );

@@ -264,7 +264,7 @@ function PaneEmpty({ children }: { children: ReactNode }) {
       justify="center"
       color="app.textMuted"
       fontSize="md"
-      p="24px"
+      p="6"
       textAlign="center"
     >
       {children}
@@ -275,7 +275,7 @@ function PaneEmpty({ children }: { children: ReactNode }) {
 /** トップバーの密なアイコン専用ボタン。`Button` の既定 padding を詰めて
  *  正方形に近い当たり判定にし、アイコン文字のみを中央配置する。 */
 function IconButton(props: ComponentProps<typeof Button>) {
-  return <Button px="8px" py="4px" minW="28px" lineHeight="1" fontSize="base" {...props} />;
+  return <Button px="2" py="1" minW="28px" lineHeight="1" fontSize="base" {...props} />;
 }
 
 /** ステータスバー脇の小さな状態ドット。色付きの円 + ハロー (box-shadow) で
@@ -342,7 +342,7 @@ const SidebarTabButton = forwardRef<
       borderBottom="2px solid"
       borderBottomColor={active ? "app.accent" : "transparent"}
       borderRadius="0"
-      px="8px"
+      px="2"
       py="7px"
       fontSize="sm"
       fontWeight={600}
@@ -1502,13 +1502,13 @@ export default function App() {
               <chakra.span
                 display="inline-flex"
                 alignItems="center"
-                gap="4px"
+                gap="1"
                 fontSize="xs"
                 textTransform="uppercase"
                 letterSpacing="0.06em"
                 fontWeight={700}
-                px="8px"
-                py="2px"
+                px="2"
+                py="0.5"
                 borderRadius="pill"
                 bg="app.status.error"
                 color="#fff"
@@ -3925,7 +3925,7 @@ export default function App() {
                   ) : (
                     <Flex direction="column" h="100%" minH={0} minW={0}>
                     {tab.result && tab.result.rows.length > 0 && !tab.streaming && (
-                      <Flex justify="flex-end" px="10px" py="4px" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
+                      <Flex justify="flex-end" px="2.5" py="1" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
                         <Button
                           type="button"
                           variant="secondary"
@@ -3941,9 +3941,9 @@ export default function App() {
                       ((tab.pendingInserts?.length ?? 0) > 0 || (tab.pendingDeletes?.length ?? 0) > 0) && (
                       <Flex
                         align="center"
-                        gap="10px"
-                        px="12px"
-                        py="6px"
+                        gap="2.5"
+                        px="3"
+                        py="1.5"
                         flex="none"
                         borderBottomWidth="1px"
                         borderBottomColor="app.border"
@@ -4116,8 +4116,8 @@ export default function App() {
       >
         <Flex
           as="header"
-          px="12px"
-          py="10px"
+          px="3"
+          py="2.5"
           borderBottomWidth="1px"
           borderBottomColor="app.border"
           fontWeight={600}
@@ -4466,15 +4466,15 @@ export default function App() {
               align="center"
               gap="var(--space-3)"
               pl={sidebarCollapsed ? "46px" : "14px"}
-              pr="14px"
-              py="8px"
+              pr="3.5"
+              py="2"
               borderBottomWidth="1px"
               borderBottomColor="app.border"
               minH="42px"
               bg={`color-mix(in srgb, var(--ws-accent) ${selectedProfile?.is_production ? "9%" : "4%"}, var(--bg-elevated))`}
               boxShadow={`inset 0 ${selectedProfile?.is_production ? "3px" : "2px"} 0 var(--ws-accent)`}
               transition="background var(--dur-med) var(--ease), box-shadow var(--dur-med) var(--ease)"
-              css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "4px" } }}
+              css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
             >
               <Flex align="center" gap="var(--space-2)" overflow="hidden">
                 {selectedProfile ? (
@@ -4486,13 +4486,13 @@ export default function App() {
                         title={t("listProductionTitle")}
                         display="inline-flex"
                         alignItems="center"
-                        gap="4px"
+                        gap="1"
                         fontSize="xs"
                         textTransform="uppercase"
                         letterSpacing="0.06em"
                         fontWeight={700}
-                        px="8px"
-                        py="2px"
+                        px="2"
+                        py="0.5"
                         borderRadius="pill"
                         bg="app.status.error"
                         color="#fff"

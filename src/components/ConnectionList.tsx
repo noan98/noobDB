@@ -955,7 +955,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           _hover={{ bg: rowBg ?? "app.hover" }}
           // ホバーで控えめに拡大 + 影を出すモーション (#386, Epic #370 準拠)。
           // prefers-reduced-motion はルートの MotionConfig が自動抑制する。
-          whileHover={{ scale: 1.01, boxShadow: "0 2px 8px rgba(0, 0, 0, 0.12)" }}
+          whileHover={{ scale: 1.01, boxShadow: "var(--shadow-md)" }}
           transition={springs.gentle}
           style={{ transformOrigin: "center left" }}
           onClick={() => handleProfileClick(p)}

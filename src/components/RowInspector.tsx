@@ -96,7 +96,7 @@ export function RowInspector({
         bg="app.surface"
         borderLeft="1px solid"
         borderColor="app.borderStrong"
-        boxShadow="-8px 0 24px -12px rgba(0,0,0,0.45)"
+        boxShadow="var(--shadow-drawer)"
       >
         <Box
           display="flex"

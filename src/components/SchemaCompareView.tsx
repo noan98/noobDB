@@ -18,7 +18,7 @@ import {
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { Icon } from "./Icon";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Checkbox, Input, PressableButton, Select } from "./ui";
 
 /**
  * スキーマ比較ビューの本体スタイル。以前は `.schema-compare-*` の className +
@@ -808,9 +808,9 @@ export function SchemaCompareView({
           )}
 
           <Box css={actionsCss}>
-            <Button variant="primary" onClick={runCompare} disabled={!canCompare}>
+            <PressableButton variant="primary" onClick={runCompare} disabled={!canCompare}>
               {comparing ? t("schemaCompareComparing") : t("schemaCompareCompare")}
-            </Button>
+            </PressableButton>
           </Box>
 
           {compareError && <chakra.p css={warningCss}>{compareError}</chakra.p>}
@@ -951,7 +951,7 @@ export function SchemaCompareView({
                       </chakra.ul>
                       <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
                       <Box css={actionsCss}>
-                        <Button
+                        <PressableButton
                           variant="primary"
                           onClick={applyPlan}
                           disabled={applying || selectedCount === 0}
@@ -959,7 +959,7 @@ export function SchemaCompareView({
                           {applying
                             ? t("schemaCompareApplying")
                             : t("schemaCompareApply", { count: selectedCount })}
-                        </Button>
+                        </PressableButton>
                       </Box>
                     </>
                   )}
