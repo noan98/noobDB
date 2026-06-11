@@ -3,7 +3,7 @@ import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { ProfileImportStrategy } from "../api/tauri";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button } from "./ui";
+import { Button, PressableButton, Radio } from "./ui";
 
 /**
  * プロファイルインポート (#442) の ID 衝突解決ダイアログ。ファイル選択後に開き、
@@ -56,12 +56,11 @@ export function ProfileImportDialog({ onConfirm, onCancel }: Props) {
               key={o.value}
               borderColor={strategy === o.value ? "app.accent" : "app.border"}
             >
-              <input
-                type="radio"
+              <Radio
                 name="profile-import-strategy"
                 checked={strategy === o.value}
                 onChange={() => setStrategy(o.value)}
-                style={{ marginTop: "3px" }}
+                mt="3px"
               />
               <chakra.span display="flex" flexDirection="column">
                 <chakra.span fontWeight={600} fontSize="sm">
@@ -80,9 +79,9 @@ export function ProfileImportDialog({ onConfirm, onCancel }: Props) {
         <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel}>
           {t("confirmDefaultCancel")}
         </Button>
-        <Button type="button" variant="primary" onClick={() => onConfirm(strategy)}>
+        <PressableButton type="button" variant="primary" onClick={() => onConfirm(strategy)}>
           {t("profileImportConfirm")}
-        </Button>
+        </PressableButton>
       </ModalFooter>
     </Modal>
   );

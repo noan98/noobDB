@@ -193,6 +193,17 @@ export function ModalBody({ children, ...rest }: ModalBodyProps) {
 
 type ModalFooterProps = ComponentProps<typeof Dialog.Footer>;
 
+/**
+ * モーダルフッター。**ボタン配置は全モーダルで次の 2 パターンに統一する**:
+ *
+ * 1. 通常の操作 — 右端に主アクション (primary)、その左にキャンセル (secondary)。
+ *    左側の補助アクションとの間は spacer (`<div style={{ flex: 1 }} />`) で空ける。
+ *    例: ExportModal / RowInsertModal / RenameTableDialog。
+ * 2. 破壊的・不可逆な操作 (#323 の安全側優先) — 実行を**左**に非強調 (secondary)
+ *    で置き、spacer を挟んで**右端にキャンセルを primary + 初期フォーカス**で置く。
+ *    HIG 各種ガイドラインに倣い、破壊的アクションを視覚的に優位にしない。
+ *    例: DangerousQueryDialog / ConfirmDialog (tone: danger・warning)。
+ */
 export function ModalFooter({ children, ...rest }: ModalFooterProps) {
   return (
     <Dialog.Footer

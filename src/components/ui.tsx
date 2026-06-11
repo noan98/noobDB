@@ -5,6 +5,7 @@ import {
   buttonRecipe,
   checkboxRecipe,
   inputRecipe,
+  radioRecipe,
   selectRecipe,
   textareaRecipe,
 } from "../theme";
@@ -33,6 +34,15 @@ const CheckboxRoot = chakra("input", checkboxRecipe);
  *  など「複数項目から複数を選ぶ」場面に限定する。 */
 export function Checkbox(props: Omit<ComponentProps<typeof CheckboxRoot>, "type">) {
   return <CheckboxRoot {...props} type="checkbox" />;
+}
+
+const RadioRoot = chakra("input", radioRecipe);
+
+/** ネイティブラジオボタン。`type="radio"` を常に強制する (Checkbox と同じ方式)。
+ *  「複数の選択肢から 1 つを選ぶ」場面 (エクスポート形式・インポート戦略など) に
+ *  使う。素の `<input type="radio">` を直接書かず、必ずこちらを経由すること。 */
+export function Radio(props: Omit<ComponentProps<typeof RadioRoot>, "type">) {
+  return <RadioRoot {...props} type="radio" />;
 }
 
 /**

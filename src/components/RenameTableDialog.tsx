@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input } from "./ui";
+import { Button, Input, PressableButton } from "./ui";
 
 /**
  * テーブル名変更ダイアログ (#496)。新しい名前を入力して確定すると
@@ -47,9 +47,9 @@ export function RenameTableDialog({ table, onConfirm, onCancel }: Props) {
         <Button type="button" variant="secondary" onClick={onCancel}>
           {t("createTableClose")}
         </Button>
-        <Button type="button" variant="primary" disabled={!valid} onClick={submit}>
+        <PressableButton type="button" variant="primary" disabled={!valid} onClick={submit}>
           {t("renameTableConfirm")}
-        </Button>
+        </PressableButton>
       </ModalFooter>
     </Modal>
   );

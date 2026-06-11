@@ -62,11 +62,17 @@
      すると、フォントサイズ設定を大きく (20〜24px) したときに --text-* だけが拡大し、
      ボタン/セル/ツールバーの内側余白が相対的に縮んでテキストがはみ出す。--text-* と
      同じ係数で乗算することで、UI 全体が一様にスケールしてレイアウトの均衡を保つ。
-     theme.ts の Chakra spacing トークン (`spacing.1`〜`6`) がこれらを参照するため、
-     `gap`/`p`/`m` などトークン経由の余白も自動的に追従する。 */
+     theme.ts の Chakra spacing トークン (`spacing.0.5`〜`6`) がこれらを参照するため、
+     `gap`/`p`/`m` などトークン経由の余白も自動的に追従する。
+     ハーフステップ (2/6/10/14px) は密度の高い UI (ツールバー・グリッド・モーダル
+     フッター等) で多用される中間値で、px 直書きを排除するためスケールに含める。 */
+  --space-0-5: calc(2px * var(--font-scale));
   --space-1: calc(4px * var(--font-scale));
+  --space-1-5: calc(6px * var(--font-scale));
   --space-2: calc(8px * var(--font-scale));
+  --space-2-5: calc(10px * var(--font-scale));
   --space-3: calc(12px * var(--font-scale));
+  --space-3-5: calc(14px * var(--font-scale));
   --space-4: calc(16px * var(--font-scale));
   --space-5: calc(20px * var(--font-scale));
   --space-6: calc(24px * var(--font-scale));
@@ -106,6 +112,13 @@
   --elevation-popover: var(--shadow-md);
   --elevation-toast: var(--shadow-lg);
   --elevation-modal: var(--shadow-xl);
+
+  /* サイドドロワー (RowInspector) の左エッジ影。下方向の --shadow-* では表現
+     できない横方向の overhang なので専用トークンにする。全テーマ共通。 */
+  --shadow-drawer: -8px 0 24px -12px rgba(0, 0, 0, 0.45);
+
+  /* モーダルバックドロップの暗幕。Modal.tsx が参照する。全テーマ共通。 */
+  --overlay: rgba(0, 0, 0, 0.45);
 
   /* z-index スケール (#500): オーバーレイの重なり順を中央管理し、各所に散在する
      マジックナンバーを解消する。低→高:

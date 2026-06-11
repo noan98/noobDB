@@ -4,7 +4,7 @@ import { useT } from "../i18n";
 import type { DriverKind } from "../api/tauri";
 import { buildCreateTableSql, type ColumnDef } from "./createTable";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, Switch } from "./ui";
+import { Button, Input, PressableButton, Switch } from "./ui";
 import { Icon } from "./Icon";
 
 /**
@@ -156,9 +156,9 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
         <Button type="button" variant="secondary" disabled={!valid} onClick={() => onSendToEditor(sql)}>
           {t("createTableToEditor")}
         </Button>
-        <Button type="button" variant="primary" disabled={!valid || readOnly} onClick={() => onRun(sql)}>
+        <PressableButton type="button" variant="primary" disabled={!valid || readOnly} onClick={() => onRun(sql)}>
           {t("createTableRun")}
-        </Button>
+        </PressableButton>
       </ModalFooter>
     </Modal>
   );

@@ -4,7 +4,7 @@ import { useT } from "../i18n";
 import type { Column } from "../api/tauri";
 import type { PendingInsertRow } from "./cellEdit";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input } from "./ui";
+import { Button, Input, PressableButton } from "./ui";
 
 /**
  * 結果グリッドからの行追加 (#441) で、新規行の各カラム値を入力するモーダル。確定すると
@@ -75,9 +75,9 @@ export function RowInsertModal({ table, columns, onConfirm, onCancel }: Props) {
         <Button type="button" variant="secondary" onClick={onCancel}>
           {t("createTableClose")}
         </Button>
-        <Button type="button" variant="primary" onClick={submit}>
+        <PressableButton type="button" variant="primary" onClick={submit}>
           {t("rowOpsInsertAdd")}
-        </Button>
+        </PressableButton>
       </ModalFooter>
     </Modal>
   );

@@ -2,7 +2,7 @@ import { useCallback, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence } from "motion/react";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button } from "./ui";
+import { Button, PressableButton } from "./ui";
 
 /**
  * テーマに追従するカスタム確認ダイアログ。`window.confirm()` を置き換えるために
@@ -109,6 +109,11 @@ function ConfirmDialog({ title, message, confirmLabel, cancelLabel, tone, onConf
   // 既定フォーカスは「キャンセル」へ。stray Enter で実行が走らないようにする
   // (DangerousQueryDialog と同じ方針)。
   const cancelRef = useRef<HTMLButtonElement>(null);
+  // 破壊的/注意付き確認 (danger・warning) は #323 の安全側優先レイアウトに従い、
+  // 実行を左に非強調 (secondary) で置き、キャンセルを右端 + primary にする
+  // (DangerousQueryDialog・ModalFooter のガイドラインと同一)。通常の確認 (primary)
+  // は他モーダルと同じ「右端 = 主アクション」配置。
+  const destructive = tone !== "primary";
 
   return (
     <Modal width="440px" onClose={onCancel} initialFocusEl={() => cancelRef.current}>
@@ -117,13 +122,27 @@ function ConfirmDialog({ title, message, confirmLabel, cancelLabel, tone, onConf
       </ModalHeader>
       <ModalBody>{message}</ModalBody>
       <ModalFooter>
-        <div style={{ flex: 1 }} />
-        <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel}>
-          {cancelLabel}
-        </Button>
-        <Button type="button" variant={tone} onClick={onConfirm}>
-          {confirmLabel}
-        </Button>
+        {destructive ? (
+          <>
+            <Button type="button" variant="secondary" onClick={onConfirm}>
+              {confirmLabel}
+            </Button>
+            <div style={{ flex: 1 }} />
+            <Button ref={cancelRef} type="button" variant="primary" onClick={onCancel}>
+              {cancelLabel}
+            </Button>
+          </>
+        ) : (
+          <>
+            <div style={{ flex: 1 }} />
+            <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel}>
+              {cancelLabel}
+            </Button>
+            <PressableButton type="button" variant="primary" onClick={onConfirm}>
+              {confirmLabel}
+            </PressableButton>
+          </>
+        )}
       </ModalFooter>
     </Modal>
   );
