@@ -87,7 +87,7 @@ const cardCss: SystemStyleObject = {
 const cardHeaderCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "1.5",
   width: "100%",
   padding: "7px 10px",
   background: "var(--bg-muted)",
@@ -102,7 +102,7 @@ const cardHeaderCss: SystemStyleObject = {
 const colRowCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "1.5",
   height: "24px",
   padding: "0 10px",
   fontFamily: "var(--font-mono)",
@@ -357,8 +357,8 @@ function ERDiagramInner({
         <Button
           marginLeft="auto"
           minWidth="28px"
-          px="8px"
-          py="4px"
+          px="2"
+          py="1"
           lineHeight={1}
           onClick={onClose}
           aria-label={t("erDiagramClose")}
@@ -384,11 +384,11 @@ function ERDiagramInner({
             {t("erDiagramLoading")}
           </Box>
         ) : error ? (
-          <Box padding="16px 24px" color="var(--status-error)" fontSize="sm">
+          <Box py="4" px="6" color="var(--status-error)" fontSize="sm">
             {t("erDiagramError", { error })}
           </Box>
         ) : nodes.length === 0 ? (
-          <Box padding="16px 24px" color="app.textMuted" fontSize="sm">
+          <Box py="4" px="6" color="app.textMuted" fontSize="sm">
             {t("erDiagramEmpty")}
           </Box>
         ) : (

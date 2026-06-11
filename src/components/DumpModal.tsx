@@ -163,7 +163,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
           <chakra.div
             display="grid"
             gridTemplateColumns="repeat(auto-fill, minmax(240px, 1fr))"
-            gap="6px 16px"
+            rowGap="1.5" columnGap="4"
           >
             {visibleRows.map((row) => (
               <chakra.div
@@ -171,7 +171,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
                 display="flex"
                 alignItems="flex-start"
                 gap="var(--space-2)"
-                py="4px"
+                py="1"
                 cursor={isRunning ? "not-allowed" : "pointer"}
                 userSelect="none"
                 title={t(row.hint)}
@@ -185,7 +185,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
                   toggle(row.key);
                 }}
               >
-                <chakra.span mt="2px" flex="none">
+                <chakra.span mt="0.5" flex="none">
                   <Switch
                     checked={!!options[row.key]}
                     onChange={() => toggle(row.key)}
@@ -193,7 +193,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
                     size="sm"
                   />
                 </chakra.span>
-                <chakra.span display="flex" flexDirection="column" gap="2px" minW={0}>
+                <chakra.span display="flex" flexDirection="column" gap="0.5" minW={0}>
                   <chakra.span fontSize="md" color="app.text">
                     {t(row.label)}
                   </chakra.span>
@@ -205,7 +205,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
             ))}
           </chakra.div>
           {driver === "postgres" && (
-            <chakra.div mt="10px" display="flex" flexDirection="column" gap="4px">
+            <chakra.div mt="2.5" display="flex" flexDirection="column" gap="1">
               <FieldLabel htmlFor="dump-pg-schema">{t("dumpOptPgSchema")}</FieldLabel>
               <Input
                 id="dump-pg-schema"

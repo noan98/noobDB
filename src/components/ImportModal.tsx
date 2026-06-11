@@ -313,8 +313,8 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
           </PathRow>
         </FormSection>
 
-        <FormSection flexDirection="row" flexWrap="wrap" gap="14px" alignItems="flex-end">
-          <chakra.div display="flex" flexDirection="column" gap="6px">
+        <FormSection flexDirection="row" flexWrap="wrap" gap="3.5" alignItems="flex-end">
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-encoding">{t("importEncoding")}</FieldLabel>
             <Select
               id="import-encoding"
@@ -331,7 +331,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             </Select>
           </chakra.div>
 
-          <chakra.div display="flex" flexDirection="column" gap="6px">
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-delimiter">{t("importDelimiter")}</FieldLabel>
             <Select
               id="import-delimiter"
@@ -346,7 +346,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             </Select>
           </chakra.div>
 
-          <chakra.div display="flex" flexDirection="column" gap="6px">
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-quote">{t("importQuote")}</FieldLabel>
             <Input
               id="import-quote"
@@ -360,7 +360,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             />
           </chakra.div>
 
-          <chakra.div display="flex" flexDirection="column" gap="6px">
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-null">{t("importNull")}</FieldLabel>
             <Select
               id="import-null"
@@ -385,7 +385,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             )}
           </chakra.div>
 
-          <chakra.div display="flex" flexDirection="row" alignItems="center" gap="6px">
+          <chakra.div display="flex" flexDirection="row" alignItems="center" gap="1.5">
             <Switch
               checked={hasHeader}
               onChange={setHasHeader}
@@ -531,7 +531,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             aria-live="polite"
             display="flex"
             flexDirection="column"
-            gap="6px"
+            gap="1.5"
           >
             <chakra.div h="8px" borderRadius="sm" bg="app.surfaceMuted" overflow="hidden">
               <motion.div

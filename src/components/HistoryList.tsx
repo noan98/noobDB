@@ -140,10 +140,10 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
       )}
 
       {error ? (
-        <chakra.p color="app.textError" p="12px">{error}</chakra.p>
+        <chakra.p color="app.textError" p="3">{error}</chakra.p>
       ) : entries.length === 0 ? (
         debounced ? (
-          <chakra.p color="app.textMuted" p="12px">{t("historyNoMatches")}</chakra.p>
+          <chakra.p color="app.textMuted" p="3">{t("historyNoMatches")}</chakra.p>
         ) : (
           <EmptyState icon="clock" title={t("historyEmptyTitle")} description={t("historyEmpty")} />
         )
@@ -214,9 +214,9 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
                     bottom="0"
                     display="flex"
                     alignItems="center"
-                    gap="2px"
-                    pl="16px"
-                    pr="6px"
+                    gap="0.5"
+                    pl="4"
+                    pr="1.5"
                     background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
                     opacity={0}
                     pointerEvents="none"

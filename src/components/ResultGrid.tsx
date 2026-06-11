@@ -153,7 +153,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& th .th-label-row": {
     display: "inline-flex",
     alignItems: "center",
-    gap: "4px",
+    gap: "1",
     minWidth: 0,
   },
   "& th .th-type-icon": {
@@ -347,7 +347,7 @@ export const GRID_CSS: SystemStyleObject = {
   // バイナリだと気付きにくいので、ピル型タグで明示する (#385)。
   "& .cell-binary-tag": {
     display: "inline-block",
-    marginRight: "6px",
+    marginRight: "1.5",
     padding: "0 5px",
     fontSize: "var(--text-2xs)",
     fontWeight: 600,
@@ -371,7 +371,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& th.is-sortable .th-sort-button": {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: "1.5",
     flex: "1 1 auto",
     minWidth: 0,
     // ソート可能ヘッダのボタン余白もセルと同じ密度トークンに揃える (#327 / #410)。
@@ -415,7 +415,7 @@ export const GRID_CSS: SystemStyleObject = {
     justifyContent: "center",
     minWidth: "14px",
     height: "14px",
-    marginLeft: "2px",
+    marginLeft: "0.5",
     padding: "0 3px",
     fontSize: "9px",
     fontWeight: 700,
@@ -431,7 +431,7 @@ export const GRID_CSS: SystemStyleObject = {
     justifyContent: "center",
     flexShrink: 0,
     padding: "0 7px",
-    marginRight: "4px",
+    marginRight: "1",
     background: "transparent",
     border: "none",
     borderLeft: "1px solid var(--border)",
@@ -482,7 +482,7 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow: "-2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
   },
   "& td.grid-empty-cell": {
-    padding: "14px",
+    padding: "3.5",
     color: "var(--text-muted)",
     fontStyle: "italic",
     textAlign: "center",
@@ -502,7 +502,7 @@ export const GRID_CSS: SystemStyleObject = {
     zIndex: 4,
     display: "flex",
     alignItems: "center",
-    gap: "10px",
+    gap: "2.5",
     padding: "4px 10px",
     fontSize: "var(--text-xs)",
     color: "var(--text-secondary)",
@@ -1332,7 +1332,7 @@ function ColumnFilterMenu({
       width="240px"
       display="flex"
       flexDirection="column"
-      gap="8px"
+      gap="2"
       padding="10px"
       bg="app.surface"
       border="1px solid"
@@ -1376,7 +1376,7 @@ function ColumnFilterMenu({
       </chakra.label>
 
       {draft.op === "between" ? (
-        <Box display="flex" gap="6px">
+        <Box display="flex" gap="1.5">
           <chakra.input
             css={FILTER_FIELD_CSS}
             type="text"
@@ -1480,16 +1480,16 @@ function ColumnFilterMenu({
       )}
 
       {(onHideColumn || onShowAllColumns || onResetLayout) && (
-        <Box display="flex" flexDirection="column" gap="4px" paddingTop="2px" borderTop="1px solid" borderColor="app.borderSubtle">
-          <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="6px">
+        <Box display="flex" flexDirection="column" gap="1" paddingTop="0.5" borderTop="1px solid" borderColor="app.borderSubtle">
+          <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="1.5">
             {t("gridColumnsLabel")}
           </chakra.span>
-          <Box display="flex" flexWrap="wrap" gap="6px">
+          <Box display="flex" flexWrap="wrap" gap="1.5">
             {onHideColumn && (
               <Button
                 variant="secondary"
                 size="sm"
-                px="8px"
+                px="2"
                 onClick={() => {
                   onHideColumn();
                   onClose();
@@ -1499,7 +1499,7 @@ function ColumnFilterMenu({
               </Button>
             )}
             {onShowAllColumns && (
-              <Button variant="secondary" size="sm" px="8px" onClick={onShowAllColumns}>
+              <Button variant="secondary" size="sm" px="2" onClick={onShowAllColumns}>
                 {t("gridShowAllColumns")}
               </Button>
             )}
@@ -1507,7 +1507,7 @@ function ColumnFilterMenu({
               <Button
                 variant="secondary"
                 size="sm"
-                px="8px"
+                px="2"
                 onClick={() => {
                   onResetLayout();
                   onClose();
@@ -1520,7 +1520,7 @@ function ColumnFilterMenu({
         </Box>
       )}
 
-      <Box display="flex" justifyContent="space-between" gap="6px" paddingTop="2px">
+      <Box display="flex" justifyContent="space-between" gap="1.5" paddingTop="0.5">
         <Button
           variant="secondary"
           size="sm"

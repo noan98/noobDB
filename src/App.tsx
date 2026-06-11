@@ -4510,13 +4510,13 @@ export default function App() {
                         title={t("listReadOnlyTitle")}
                         display="inline-flex"
                         alignItems="center"
-                        gap="4px"
+                        gap="1"
                         fontSize="xs"
                         textTransform="uppercase"
                         letterSpacing="0.06em"
                         fontWeight={700}
-                        px="8px"
-                        py="2px"
+                        px="2"
+                        py="0.5"
                         borderRadius="pill"
                         bg="var(--status-info, var(--bg-muted))"
                         color="app.text"
@@ -4550,15 +4550,15 @@ export default function App() {
               </Flex>
               <Box flex="1" />
               {sessionId && (
-                <Flex align="center" gap="8px" mr="10px">
+                <Flex align="center" gap="2" mr="2.5">
                   {txActive ? (
                     <>
                       <chakra.span
                         fontSize="2xs"
                         fontWeight={700}
                         letterSpacing="0.06em"
-                        px="6px"
-                        py="2px"
+                        px="1.5"
+                        py="0.5"
                         borderRadius="4px"
                         bg="color-mix(in srgb, #f59e0b 18%, transparent)"
                         color="#f59e0b"
@@ -4651,7 +4651,7 @@ export default function App() {
             <Flex
               align="center"
               gap="var(--space-2)"
-              px="14px"
+              px="3.5"
               py="5px"
               bg={isError ? "app.bgError" : isWarning ? "app.bgWarning" : "app.surfaceMuted"}
               borderTopWidth="1px"
@@ -4686,7 +4686,7 @@ export default function App() {
                   letterSpacing="0.04em"
                   textTransform="uppercase"
                   px="7px"
-                  py="2px"
+                  py="0.5"
                   borderRadius="sm"
                   bg="app.status.error"
                   color="#fff"
@@ -4697,12 +4697,12 @@ export default function App() {
               <Box flex="1" minW="0">
                 {statusHintKey && !hintDismissed ? (
                   <Flex direction="column" gap="3px">
-                    <Flex align="baseline" gap="6px">
+                    <Flex align="baseline" gap="1.5">
                       <chakra.span
                         flex="none"
                         fontWeight={600}
                         fontSize="xs"
-                        px="6px"
+                        px="1.5"
                         py="1px"
                         borderRadius="sm"
                         bg="app.textError"
@@ -4776,7 +4776,7 @@ export default function App() {
                   display="inline-flex"
                   alignItems="center"
                   gap="5px"
-                  px="10px"
+                  px="2.5"
                   py="3px"
                   fontSize="xs"
                   fontWeight={500}

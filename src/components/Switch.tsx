@@ -136,7 +136,7 @@ export function Switch({
     <chakra.span
       display="inline-flex"
       alignItems="center"
-      gap="6px"
+      gap="1.5"
       cursor={disabled ? "not-allowed" : "pointer"}
       userSelect="none"
       onClick={(e) => {

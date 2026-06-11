@@ -42,7 +42,7 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
             return (
               <Box key={category}>
                 <Box
-                  pb="6px"
+                  pb="1.5"
                   fontSize="xs"
                   fontWeight={700}
                   textTransform="uppercase"
@@ -58,7 +58,7 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
                       align="center"
                       justify="space-between"
                       gap="var(--space-3)"
-                      py="6px"
+                      py="1.5"
                       borderBottomWidth="1px"
                       borderBottomColor="app.borderSubtle"
                     >
@@ -67,7 +67,7 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
                       </chakra.span>
                       <chakra.kbd
                         flexShrink={0}
-                        px="6px"
+                        px="1.5"
                         py="1px"
                         borderRadius="sm"
                         borderWidth="1px"

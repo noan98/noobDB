@@ -131,7 +131,7 @@ function Fieldset({ children }: { children: ReactNode }) {
 
 function Legend({ children }: { children: ReactNode }) {
   return (
-    <Box as="legend" fontWeight="600" fontSize="sm" px="6px">
+    <Box as="legend" fontWeight="600" fontSize="sm" px="1.5">
       {children}
     </Box>
   );
@@ -151,10 +151,10 @@ function CheckboxRow({
 }) {
   return (
     <Box>
-      <Flex display="inline-flex" align="center" gap="6px" fontSize="12px">
+      <Flex display="inline-flex" align="center" gap="1.5" fontSize="12px">
         <Switch checked={checked} onChange={onChange} size="sm" label={label} />
       </Flex>
-      <Text color="app.textMuted" fontSize="11px" mt="4px" mb="0">
+      <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
         {help}
       </Text>
     </Box>
@@ -421,7 +421,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               />
               <Button type="button" onClick={pickDbFile}>{t("formBrowse")}</Button>
             </Flex>
-            <Text color="app.textMuted" fontSize="11px" mt="4px" mb="0">
+            <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
               {t("formSqliteFilePathHelp")}
             </Text>
           </Box>
@@ -429,7 +429,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       ) : (
         <Fieldset>
           <Legend>{driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}</Legend>
-          <Box display="grid" gridTemplateColumns="1fr 120px" gap="12px">
+          <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
             <Box>
               <label>{t("formHost")}</label>
               <Input value={host} onChange={(e) => setHost(e.target.value)} />
@@ -444,7 +444,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               />
             </Box>
           </Box>
-          <Box display="grid" gridTemplateColumns="1fr 1fr" gap="12px" mt="8px">
+          <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3" mt="2">
             <Box>
               <label>{t("formUser")}</label>
               <Input value={user} onChange={(e) => setUser(e.target.value)} />
@@ -454,7 +454,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <Input value={database} onChange={(e) => setDatabase(e.target.value)} />
             </Box>
           </Box>
-          <Box mt="8px">
+          <Box mt="2">
             <label>{t("formDbPassword")}</label>
             <PasswordInput
               value={password}
@@ -479,7 +479,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <option key={g} value={g} />
             ))}
           </datalist>
-          <Text color="app.textMuted" fontSize="11px" mt="4px" mb="0">
+          <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
             {t("formGroupHelp")}
           </Text>
         </Box>
@@ -487,10 +487,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
       <Fieldset>
         <Legend>{t("formDisplay")}</Legend>
-        <Flex direction="column" gap="12px">
+        <Flex direction="column" gap="3">
           <Box>
             <label>{t("formColor")}</label>
-            <Flex align="center" gap="8px" flexWrap="wrap">
+            <Flex align="center" gap="2" flexWrap="wrap">
               {COLOR_PRESETS.map((c) => (
                 <chakra.button
                   key={c}
@@ -533,7 +533,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               help={t("formIsProductionHelp")}
             />
             {isProduction && (
-              <Box ml="22px" mt="8px">
+              <Box ml="22px" mt="2">
                 <CheckboxRow
                   checked={confirmWrites}
                   onChange={setConfirmWrites}

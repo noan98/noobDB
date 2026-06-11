@@ -40,8 +40,9 @@ const treePaneCss: SystemStyleObject = {
 const toolbarCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
-  gap: "6px",
-  padding: "4px 8px",
+  gap: "1.5",
+  py: "1",
+  px: "2",
   background: "var(--bg-toolbar)",
   borderBottom: "1px solid var(--border-subtle)",
   flexShrink: 0,
@@ -124,7 +125,7 @@ function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
   const base: SystemStyleObject = {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: "1.5",
     padding: "3px 10px 3px 0",
     cursor: "pointer",
     whiteSpace: "nowrap",
@@ -268,7 +269,7 @@ const hintsListCss: SystemStyleObject = {
   padding: 0,
   display: "flex",
   flexDirection: "column",
-  gap: "6px",
+  gap: "1.5",
 };
 /** 詳細パネルのヒント 1 件 (旧 `.explain-hint`)。重大度で左枠色を変える。 */
 function hintItemCss(sev: HintSeverity): SystemStyleObject {
@@ -312,7 +313,8 @@ const detailCss: SystemStyleObject = {
   overflow: "hidden",
 };
 const detailHeaderCss: SystemStyleObject = {
-  padding: "6px 12px",
+  py: "1.5",
+  px: "3",
   fontSize: "var(--text-sm)",
   fontWeight: 600,
   color: "var(--text-secondary)",

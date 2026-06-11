@@ -27,7 +27,7 @@ export function BatchResultsView({ results, running, onRerun, onClose }: Props) 
 
   return (
     <Flex direction="column" h="100%" minH={0} minW={0}>
-      <Flex align="center" gap="12px" px="12px" py="8px" flex="none" borderBottomWidth="1px" borderBottomColor="app.border" fontSize="sm" flexWrap="wrap">
+      <Flex align="center" gap="3" px="3" py="2" flex="none" borderBottomWidth="1px" borderBottomColor="app.border" fontSize="sm" flexWrap="wrap">
         <Button type="button" variant="secondary" size="sm" onClick={onClose}>
           <Icon name="query" size={14} /> {t("batchBackToResult")}
         </Button>
@@ -49,7 +49,7 @@ export function BatchResultsView({ results, running, onRerun, onClose }: Props) 
         </Button>
       </Flex>
 
-      <chakra.div flex="1" minH={0} overflow="auto" p="10px" display="flex" flexDirection="column" gap="10px">
+      <chakra.div flex="1" minH={0} overflow="auto" p="2.5" display="flex" flexDirection="column" gap="2.5">
         {results.map((r, i) => (
           <StatementCard key={i} index={i + 1} result={r} t={t} />
         ))}
@@ -71,7 +71,7 @@ function StatementCard({
     result.status === "ok" ? "#10b981" : result.status === "error" ? "var(--danger-fg, #ef4444)" : "var(--text-muted)";
   return (
     <chakra.div borderWidth="1px" borderColor="app.border" borderRadius="8px" overflow="hidden">
-      <Flex align="center" gap="8px" px="10px" py="6px" bg="app.surface" borderBottomWidth="1px" borderBottomColor="app.border">
+      <Flex align="center" gap="2" px="2.5" py="1.5" bg="app.surface" borderBottomWidth="1px" borderBottomColor="app.border">
         <chakra.span fontSize="xs" color="app.textMuted" fontFamily="mono">#{index}</chakra.span>
         <chakra.span w="9px" h="9px" borderRadius="full" bg={tone} flexShrink={0} />
         <chakra.code fontSize="xs" color="app.text" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" flex="1" title={result.sql}>
@@ -89,7 +89,7 @@ function StatementCard({
         </chakra.span>
       </Flex>
       {result.status === "error" && (
-        <chakra.div px="10px" py="6px" fontSize="xs" color="var(--danger-fg, #ef4444)" fontFamily="mono" whiteSpace="pre-wrap">
+        <chakra.div px="2.5" py="1.5" fontSize="xs" color="var(--danger-fg, #ef4444)" fontFamily="mono" whiteSpace="pre-wrap">
           {result.error}
         </chakra.div>
       )}
@@ -108,7 +108,7 @@ function MiniTable({ columns, rows }: { columns: string[]; rows: CellValue[][] }
       <chakra.thead position="sticky" top="0" bg="app.surface">
         <tr>
           {columns.map((c, i) => (
-            <chakra.th key={i} textAlign="left" px="8px" py="4px" borderBottomWidth="1px" borderColor="app.border" fontFamily="mono" color="app.textSecondary" whiteSpace="nowrap">
+            <chakra.th key={i} textAlign="left" px="2" py="1" borderBottomWidth="1px" borderColor="app.border" fontFamily="mono" color="app.textSecondary" whiteSpace="nowrap">
               {c}
             </chakra.th>
           ))}
@@ -118,7 +118,7 @@ function MiniTable({ columns, rows }: { columns: string[]; rows: CellValue[][] }
         {rows.map((row, ri) => (
           <tr key={ri}>
             {columns.map((_, ci) => (
-              <chakra.td key={ci} px="8px" py="3px" borderBottomWidth="1px" borderColor="app.border" fontFamily="mono" color="app.text" whiteSpace="nowrap">
+              <chakra.td key={ci} px="2" py="3px" borderBottomWidth="1px" borderColor="app.border" fontFamily="mono" color="app.text" whiteSpace="nowrap">
                 {cellText(row[ci])}
               </chakra.td>
             ))}
