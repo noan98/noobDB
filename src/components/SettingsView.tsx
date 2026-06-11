@@ -158,7 +158,7 @@ function FontFamilyControl(props: {
 
 // 各セクション内のレイアウト要素 (元々は App.css の `.settings-*` クラス)。
 const SettingsReset = chakra("button", {
-  base: { px: "10px", py: "4px", fontSize: "sm" },
+  base: { px: "2.5", py: "1", fontSize: "sm" },
 });
 
 const SettingsToggleRow = chakra("div", {
@@ -166,8 +166,8 @@ const SettingsToggleRow = chakra("div", {
     display: "flex",
     alignItems: "center",
     flexWrap: "wrap",
-    gap: "10px",
-    p: "8px",
+    gap: "2.5",
+    p: "2",
     border: "1px solid",
     borderColor: "app.borderSubtle",
     borderRadius: "md",
@@ -183,7 +183,7 @@ const SettingsToggleLabel = chakra("label", {
     color: "app.text",
     display: "inline-flex",
     alignItems: "center",
-    gap: "var(--space-2)",
+    gap: "2",
   },
 });
 
@@ -196,9 +196,9 @@ const SettingsNumberRow = chakra("div", {
     display: "grid",
     gridTemplateColumns: "200px 120px 1fr",
     alignItems: "center",
-    gap: "var(--space-3)",
-    px: "8px",
-    py: "6px",
+    gap: "3",
+    px: "2",
+    py: "1.5",
     border: "1px solid",
     borderColor: "app.borderSubtle",
     borderRadius: "md",
@@ -222,7 +222,7 @@ const SettingsUnlimitedBadge = chakra("span", {
   base: {
     display: "inline-flex",
     alignItems: "center",
-    px: "8px",
+    px: "2",
     py: "1px",
     fontSize: "xs",
     fontWeight: 600,
@@ -237,10 +237,10 @@ const SettingsPresetRow = chakra("div", {
     display: "grid",
     gridTemplateColumns: "120px minmax(200px, 280px) 1fr",
     alignItems: "center",
-    gap: "var(--space-3)",
-    px: "8px",
-    py: "6px",
-    mb: "8px",
+    gap: "3",
+    px: "2",
+    py: "1.5",
+    mb: "2",
     border: "1px solid",
     borderColor: "app.borderSubtle",
     borderRadius: "md",
@@ -250,7 +250,7 @@ const SettingsPresetRow = chakra("div", {
 });
 
 const SettingsColorGrid = chakra("div", {
-  base: { display: "grid", gridTemplateColumns: "1fr", gap: "6px", mt: "6px" },
+  base: { display: "grid", gridTemplateColumns: "1fr", gap: "1.5", mt: "1.5" },
 });
 
 const SettingsColorRow = chakra("div", {
@@ -258,9 +258,9 @@ const SettingsColorRow = chakra("div", {
     display: "grid",
     gridTemplateColumns: "140px 1fr",
     alignItems: "center",
-    gap: "var(--space-3)",
-    px: "8px",
-    py: "6px",
+    gap: "3",
+    px: "2",
+    py: "1.5",
     border: "1px solid",
     borderColor: "app.borderSubtle",
     borderRadius: "md",
@@ -270,7 +270,7 @@ const SettingsColorRow = chakra("div", {
 });
 
 const SettingsColorControls = chakra("div", {
-  base: { display: "flex", alignItems: "center", gap: "10px" },
+  base: { display: "flex", alignItems: "center", gap: "2.5" },
 });
 
 const SettingsColorInput = chakra("input", {
@@ -284,7 +284,7 @@ const SettingsColorInput = chakra("input", {
     bg: "app.bgInput",
     cursor: "pointer",
     flexShrink: 0,
-    "&::-webkit-color-swatch-wrapper": { padding: "2px" },
+    "&::-webkit-color-swatch-wrapper": { padding: "0.5" },
     "&::-webkit-color-swatch": { border: "none", borderRadius: "var(--radius-sm)" },
   },
 });
@@ -311,7 +311,7 @@ const SettingsSegment = chakra("div", {
 
 const SettingsSegmentButton = chakra("button", {
   base: {
-    px: "12px",
+    px: "3",
     py: "5px",
     fontSize: "sm",
     fontWeight: 500,
@@ -335,7 +335,7 @@ const SettingsSegmentButton = chakra("button", {
 
 // アクセント色のプリセットスウォッチ列 (#409)。
 const SettingsSwatchRow = chakra("div", {
-  base: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" },
+  base: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "2" },
 });
 
 const SettingsSwatch = chakra("button", {
@@ -369,7 +369,7 @@ const SettingsSwatch = chakra("button", {
 });
 
 const SettingsLogsActions = chakra("div", {
-  base: { display: "flex", alignItems: "center", gap: "var(--space-2)" },
+  base: { display: "flex", alignItems: "center", gap: "2" },
 });
 
 const SettingsLogsIconButton = chakra("button", {
@@ -393,12 +393,12 @@ const SettingsLogsIconButton = chakra("button", {
 
 const SettingsLogsView = chakra("textarea", {
   base: {
-    mt: "6px",
+    mt: "1.5",
     width: "100%",
     height: "260px",
     resize: "vertical",
-    px: "10px",
-    py: "8px",
+    px: "2.5",
+    py: "2",
     fontFamily: "mono",
     fontSize: "sm",
     lineHeight: "1.5",
@@ -1024,8 +1024,8 @@ export function SettingsView({ theme, onClose }: Props) {
               />
               <SettingsColorHex>{previewHighlight}</SettingsColorHex>
               <SettingsColorSample
-                px="10px"
-                py="4px"
+                px="2.5"
+                py="1"
                 borderRadius="sm"
                 color="app.text"
                 style={{

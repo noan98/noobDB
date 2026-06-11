@@ -115,8 +115,8 @@ const TreeChildren = chakra("div", {
   base: {
     display: "flex",
     flexDirection: "column",
-    pl: "12px",
-    ml: "14px",
+    pl: "3",
+    ml: "3.5",
     borderLeft: "1px dashed",
     borderColor: "app.border",
   },
@@ -125,9 +125,9 @@ const TreeChildren = chakra("div", {
 /** ローディング / 空表示のプレースホルダ行 (旧 .tree-empty)。 */
 const TreeEmpty = chakra("div", {
   base: {
-    pt: "4px",
-    pb: "4px",
-    pr: "10px",
+    pt: "1",
+    pb: "1",
+    pr: "2.5",
     pl: "22px",
     fontSize: "xs",
     color: "app.textMuted",
@@ -138,10 +138,10 @@ const TreeEmpty = chakra("div", {
 // クイックアクセスのセクション見出し (お気に入り / 最近)。
 const QuickAccessHeader = chakra("div", {
   base: {
-    pt: "6px",
-    pb: "2px",
-    pl: "8px",
-    pr: "10px",
+    pt: "1.5",
+    pb: "0.5",
+    pl: "2",
+    pr: "2.5",
     fontSize: "2xs",
     fontWeight: 600,
     letterSpacing: "0.04em",
@@ -781,7 +781,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     return (
       <TreeRow
         key={`${kind}:${tableKey(refItem.database, refItem.table)}`}
-        pl="4px"
+        pl="1"
         role="treeitem"
         onClick={() => onPickTable(refItem.database, refItem.table)}
         onContextMenu={(e) => handleTableContextMenu(e, refItem.database, refItem.table)}
@@ -794,7 +794,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         </TreeIcon>
         <TreeLabel fontWeight={400}>
           {refItem.table}
-          <chakra.span color="app.textMuted" fontSize="2xs" ml="6px">
+          <chakra.span color="app.textMuted" fontSize="2xs" ml="1.5">
             {refItem.database}
           </chakra.span>
         </TreeLabel>
@@ -808,7 +808,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               onToggleFavorite(refItem.database, refItem.table);
             }}
             color="app.textMuted"
-            px="4px"
+            px="1"
             _hover={{ color: "app.text" }}
           >
             <Icon name="close" size={ICON_SIZES.sm} />
@@ -856,7 +856,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               {items.map((o) => (
                 <TreeRow
                   key={`${kind}:${o.name}:${o.id ?? ""}`}
-                  pl="4px"
+                  pl="1"
                   role="treeitem"
                   onClick={() => onOpenObjectDefinition(db, o.kind, o.name, o.id)}
                   title={`${o.name} — ${labels[kind] ?? kind}`}
@@ -944,7 +944,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         <MotionTreeRow
           pt="5px"
           pb="5px"
-          pr="10px"
+          pr="2.5"
           pl="5px"
           // プロファイルカラー / 本番 / アクティブを左端のアクセントバーで示す。
           // 識別性を上げるため 4px に。全行で同一幅 (色なしは transparent) にして
@@ -955,7 +955,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           _hover={{ bg: rowBg ?? "app.hover" }}
           // ホバーで控えめに拡大 + 影を出すモーション (#386, Epic #370 準拠)。
           // prefers-reduced-motion はルートの MotionConfig が自動抑制する。
-          whileHover={{ scale: 1.01, boxShadow: "0 2px 8px rgba(0, 0, 0, 0.12)" }}
+          whileHover={{ scale: 1.01, boxShadow: "var(--shadow-md)" }}
           transition={springs.gentle}
           style={{ transformOrigin: "center left" }}
           onClick={() => handleProfileClick(p)}
@@ -1011,15 +1011,15 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             <TreeBadge
               display="inline-flex"
               alignItems="center"
-              gap="4px"
+              gap="1"
               bg="app.status.error"
               color="#fff"
               borderColor="app.status.error"
               fontSize="xs"
               fontWeight={700}
               letterSpacing="0.06em"
-              px="8px"
-              py="2px"
+              px="2"
+              py="0.5"
               title={t("listProductionTitle")}
             >
               <Icon name="warning" size={12} />
@@ -1030,15 +1030,15 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             <TreeBadge
               display="inline-flex"
               alignItems="center"
-              gap="4px"
+              gap="1"
               bg="var(--status-info, var(--bg-muted))"
               color="app.text"
               borderColor="app.borderStrong"
               fontSize="xs"
               fontWeight={700}
               letterSpacing="0.06em"
-              px="8px"
-              py="2px"
+              px="2"
+              py="0.5"
               title={t("listReadOnlyTitle")}
             >
               <Icon name="key" size={12} />
@@ -1052,7 +1052,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               display="inline-flex"
               alignItems="center"
               justifyContent="center"
-              p="2px"
+              p="0.5"
               color="app.textMuted"
               bg="transparent"
               border="none"
@@ -1108,7 +1108,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                 return (
                   <TreeNode key={db}>
                     <TreeRow
-                      pl="4px"
+                      pl="1"
                       onClick={() => toggleDb(db)}
                       onContextMenu={(e) => handleDbContextMenu(e, db)}
                       role="treeitem"
@@ -1141,7 +1141,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                             return (
                               <TreeNode key={tbl}>
                                 <TreeRow
-                                  pl="4px"
+                                  pl="1"
                                   role="treeitem"
                                   aria-expanded={tOpen}
                                   onClick={() => toggleTable(db, tbl)}
@@ -1277,7 +1277,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
   return (
     <Flex direction="column" overflow="hidden" flex="1">
-      <Box px="10px" py="8px" borderBottom="1px solid" borderColor="app.borderSubtle">
+      <Box px="2.5" py="2" borderBottom="1px solid" borderColor="app.borderSubtle">
         <Input
           ref={filterInputRef}
           type="search"
@@ -1291,8 +1291,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
       {error && (
         <Box
-          px="12px"
-          py="6px"
+          px="3"
+          py="1.5"
           fontSize="xs"
           color="app.textError"
           bg="app.bgError"
@@ -1312,9 +1312,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           action={{ label: t("listCreateFirst"), onClick: onCreate }}
         />
       ) : visibleProfiles.length === 0 ? (
-        <Text color="app.textMuted" p="12px">{t("listNoMatches")}</Text>
+        <Text color="app.textMuted" p="3">{t("listNoMatches")}</Text>
       ) : (
-        <Box flex="1" overflowY="auto" py="4px" fontSize="md" color="app.text" role="tree">
+        <Box flex="1" overflowY="auto" py="1" fontSize="md" color="app.text" role="tree">
           {grouped === null
             ? <AnimatePresence initial={false}>{visibleProfiles.map(renderProfile)}</AnimatePresence>
             : grouped.map((g) => {
@@ -1326,15 +1326,15 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                     <Box
                       display="flex"
                       alignItems="center"
-                      gap="var(--space-1)"
+                      gap="1"
                       whiteSpace="nowrap"
                       overflow="hidden"
                       userSelect="none"
                       cursor="pointer"
-                      pt="6px"
-                      pr="10px"
-                      pb="6px"
-                      pl="6px"
+                      pt="1.5"
+                      pr="2.5"
+                      pb="1.5"
+                      pl="1.5"
                       fontSize="xs"
                       textTransform="uppercase"
                       letterSpacing="0.06em"
@@ -1444,7 +1444,8 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
       borderColor="app.borderStrong"
       borderRadius="md"
       boxShadow="md"
-      p="8px 10px"
+      py="2"
+      px="2.5"
       fontSize="sm"
       color="app.text"
       pointerEvents="none"
@@ -1452,10 +1453,10 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
       top={`${pos ? pos.top : anchor.top}px`}
       visibility={pos ? "visible" : "hidden"}
     >
-      <chakra.div fontFamily="mono" fontWeight={600} mb="6px" wordBreak="break-all">
+      <chakra.div fontFamily="mono" fontWeight={600} mb="1.5" wordBreak="break-all">
         {col.name}
       </chakra.div>
-      <chakra.dl display="grid" gridTemplateColumns="auto 1fr" gap="2px 10px" m={0}>
+      <chakra.dl display="grid" gridTemplateColumns="auto 1fr" rowGap="0.5" columnGap="2.5" m={0}>
         <TooltipDt>{t("colTipType")}</TooltipDt>
         <TooltipDd>{col.data_type}</TooltipDd>
         <TooltipDt>{t("colTipNullable")}</TooltipDt>

@@ -13,7 +13,7 @@ type Key = Parameters<ReturnType<typeof useT>>[0];
 type Impact = "yes" | "no";
 
 const HelpFeatureGrid = chakra("div", {
-  base: { display: "flex", flexDirection: "column", gap: "var(--space-2)", mt: "6px" },
+  base: { display: "flex", flexDirection: "column", gap: "2", mt: "1.5" },
 });
 
 const HelpFeature = chakra("article", {
@@ -22,8 +22,8 @@ const HelpFeature = chakra("article", {
     borderColor: "app.borderSubtle",
     borderRadius: "md",
     bg: "app.surfaceMuted",
-    px: "12px",
-    py: "10px",
+    px: "3",
+    py: "2.5",
   },
 });
 
@@ -32,7 +32,7 @@ const HelpFeatureHead = chakra("div", {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "var(--space-3)",
+    gap: "3",
     flexWrap: "wrap",
     "& h4": { margin: 0, fontSize: "md", fontWeight: 600, color: "app.text" },
   },
@@ -49,7 +49,7 @@ const HelpUsageTitle = chakra("p", {
 const HelpSteps = chakra("ol", {
   base: {
     margin: 0,
-    pl: "20px",
+    pl: "5",
     fontSize: "sm",
     lineHeight: "1.55",
     color: "app.text",
@@ -151,8 +151,8 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
       display="inline-flex"
       alignItems="center"
       gap="5px"
-      px="8px"
-      py="2px"
+      px="2"
+      py="0.5"
       borderRadius="pill"
       fontSize="xs"
       fontWeight={600}

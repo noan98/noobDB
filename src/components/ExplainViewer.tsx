@@ -3,6 +3,7 @@ import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Button } from "./ui";
+import { Spinner } from "./Spinner";
 import {
   type Heat,
   type HintSeverity,
@@ -39,8 +40,9 @@ const treePaneCss: SystemStyleObject = {
 const toolbarCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
-  gap: "6px",
-  padding: "4px 8px",
+  gap: "1.5",
+  py: "1",
+  px: "2",
   background: "var(--bg-toolbar)",
   borderBottom: "1px solid var(--border-subtle)",
   flexShrink: 0,
@@ -123,7 +125,7 @@ function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
   const base: SystemStyleObject = {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: "1.5",
     padding: "3px 10px 3px 0",
     cursor: "pointer",
     whiteSpace: "nowrap",
@@ -183,7 +185,7 @@ const nodeLabelCss: SystemStyleObject = {
 const nodeBadgesCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
-  gap: "var(--space-1)",
+  gap: "1",
   flexShrink: 0,
 };
 
@@ -242,7 +244,7 @@ function hintBadgeCss(sev: "caution" | "warning"): SystemStyleObject {
     fontWeight: 700,
     minWidth: "14px",
     textAlign: "center",
-    padding: "2px 4px",
+    py: "0.5", px: "1",
   };
   if (sev === "caution") {
     return {
@@ -267,7 +269,7 @@ const hintsListCss: SystemStyleObject = {
   padding: 0,
   display: "flex",
   flexDirection: "column",
-  gap: "6px",
+  gap: "1.5",
 };
 /** 詳細パネルのヒント 1 件 (旧 `.explain-hint`)。重大度で左枠色を変える。 */
 function hintItemCss(sev: HintSeverity): SystemStyleObject {
@@ -311,7 +313,8 @@ const detailCss: SystemStyleObject = {
   overflow: "hidden",
 };
 const detailHeaderCss: SystemStyleObject = {
-  padding: "6px 12px",
+  py: "1.5",
+  px: "3",
   fontSize: "var(--text-sm)",
   fontWeight: 600,
   color: "var(--text-secondary)",
@@ -319,9 +322,9 @@ const detailHeaderCss: SystemStyleObject = {
   background: "var(--bg-toolbar)",
   flexShrink: 0,
 };
-const detailBodyCss: SystemStyleObject = { overflow: "auto", padding: "10px 12px" };
+const detailBodyCss: SystemStyleObject = { overflow: "auto", py: "2.5", px: "3" };
 const detailHintCss: SystemStyleObject = {
-  padding: "var(--space-3)",
+  padding: "3",
   color: "var(--text-muted)",
   fontSize: "var(--text-sm)",
 };
@@ -330,7 +333,7 @@ const detailLabelCss: SystemStyleObject = {
   fontSize: "var(--text-md)",
   fontWeight: 600,
   color: "var(--text)",
-  marginBottom: "8px",
+  marginBottom: "2",
   wordBreak: "break-word",
 };
 // 属性テーブルのみ `th`/`td` をタグセレクタで括る (className ではなく要素スコープ)。
@@ -362,8 +365,8 @@ const EXPLAIN_EMPTY_PROPS = {
   minWidth: 0,
   display: "flex",
   flexDirection: "column",
-  gap: "10px",
-  padding: "var(--space-5)",
+  gap: "2.5",
+  padding: "5",
   color: "app.textMuted",
   fontSize: "md",
   bg: "app.surface",
@@ -527,7 +530,12 @@ export function ExplainViewer({ result, streaming }: Props) {
 
   if (streaming && !root) {
     return (
-      <Box {...EXPLAIN_EMPTY_PROPS}>{t("explainLoading")}</Box>
+      /* EXPLAIN_EMPTY_PROPS は column/center 配置なので Spinner をテキストの
+         上に重ねて縦積みローディング表示にする。 */
+      <Box {...EXPLAIN_EMPTY_PROPS}>
+        <Spinner size={13} />
+        {t("explainLoading")}
+      </Box>
     );
   }
   if (!raw) {
@@ -543,8 +551,8 @@ export function ExplainViewer({ result, streaming }: Props) {
         minWidth={0}
         display="flex"
         flexDirection="column"
-        gap="10px"
-        padding="var(--space-5)"
+        gap="2.5"
+        padding="5"
         color="app.textMuted"
         fontSize="md"
         bg="app.surface"
@@ -555,7 +563,7 @@ export function ExplainViewer({ result, streaming }: Props) {
         </chakra.p>
         <chakra.pre
           margin={0}
-          padding="10px"
+          padding="2.5"
           fontFamily="var(--font-mono)"
           fontSize="xs"
           whiteSpace="pre-wrap"
@@ -609,7 +617,7 @@ export function ExplainViewer({ result, streaming }: Props) {
           <chakra.span flex={1} />
           <Button
             size="sm"
-            px="10px"
+            px="2.5"
             onClick={() => setCollapsed(new Set())}
             title={t("explainExpandAll")}
           >
@@ -617,7 +625,7 @@ export function ExplainViewer({ result, streaming }: Props) {
           </Button>
           <Button
             size="sm"
-            px="10px"
+            px="2.5"
             onClick={() => setCollapsed(new Set(allIds))}
             title={t("explainCollapseAll")}
           >

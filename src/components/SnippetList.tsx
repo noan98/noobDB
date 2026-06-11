@@ -165,7 +165,7 @@ export const SnippetList = memo(function SnippetList({ snippets, activeProfile, 
       {snippets.length === 0 ? (
         <EmptyState icon="snippet" title={t("snippetEmptyTitle")} description={t("snippetEmpty")} />
       ) : visibleSnippets.length === 0 ? (
-        <chakra.p color="app.textMuted" p="12px">{t("snippetNoMatches")}</chakra.p>
+        <chakra.p color="app.textMuted" p="3">{t("snippetNoMatches")}</chakra.p>
       ) : (
         <Tree role="tree">
           {grouped === null
@@ -179,15 +179,15 @@ export const SnippetList = memo(function SnippetList({ snippets, activeProfile, 
                     <Box
                       display="flex"
                       alignItems="center"
-                      gap="var(--space-1)"
+                      gap="1"
                       whiteSpace="nowrap"
                       overflow="hidden"
                       userSelect="none"
                       cursor="pointer"
-                      pt="6px"
-                      pr="10px"
-                      pb="6px"
-                      pl="6px"
+                      pt="1.5"
+                      pr="2.5"
+                      pb="1.5"
+                      pl="1.5"
                       fontSize="xs"
                       textTransform="uppercase"
                       letterSpacing="0.06em"

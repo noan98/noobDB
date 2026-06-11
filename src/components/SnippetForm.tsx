@@ -117,10 +117,10 @@ export function SnippetForm({
 
   return (
     <Box
-      p="var(--space-4)"
+      p="4"
       display="grid"
       gridTemplateColumns="1fr 1fr"
-      gap="var(--space-3)"
+      gap="3"
       overflowY="auto"
     >
       <chakra.h2 gridColumn="span 2" m={0}>
@@ -180,11 +180,11 @@ export function SnippetForm({
         gridColumn="span 2"
         border="1px solid"
         borderColor="app.border"
-        p="var(--space-3)"
+        p="3"
         borderRadius="md"
       >
-        <chakra.legend fontWeight={600} fontSize="sm" px="6px">{t("snippetScope")}</chakra.legend>
-        <Box display="grid" gridTemplateColumns="1fr 1fr" gap="12px">
+        <chakra.legend fontWeight={600} fontSize="sm" px="1.5">{t("snippetScope")}</chakra.legend>
+        <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3">
           <Box>
             <chakra.label htmlFor={`${fid}-scope-kind`}>{t("snippetScopeKind")}</chakra.label>
             <Select
@@ -251,7 +251,7 @@ export function SnippetForm({
 
       {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
 
-      <Box gridColumn="span 2" display="flex" gap="var(--space-2)" justifyContent="flex-end">
+      <Box gridColumn="span 2" display="flex" gap="2" justifyContent="flex-end">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>{t("formCancel")}</Button>
         <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave}>{t("formSave")}</LoadingButton>
       </Box>

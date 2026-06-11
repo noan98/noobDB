@@ -35,14 +35,14 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
         {t("cheatSheetTitle")}
       </ModalHeader>
       <ModalBody>
-        <Flex direction="column" gap="var(--space-4)">
+        <Flex direction="column" gap="4">
           {SHORTCUT_CATEGORY_ORDER.map((category) => {
             const items = SHORTCUTS.filter((s) => s.category === category);
             if (items.length === 0) return null;
             return (
               <Box key={category}>
                 <Box
-                  pb="6px"
+                  pb="1.5"
                   fontSize="xs"
                   fontWeight={700}
                   textTransform="uppercase"
@@ -57,8 +57,8 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
                       key={s.keysKey}
                       align="center"
                       justify="space-between"
-                      gap="var(--space-3)"
-                      py="6px"
+                      gap="3"
+                      py="1.5"
                       borderBottomWidth="1px"
                       borderBottomColor="app.borderSubtle"
                     >
@@ -67,7 +67,7 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
                       </chakra.span>
                       <chakra.kbd
                         flexShrink={0}
-                        px="6px"
+                        px="1.5"
                         py="1px"
                         borderRadius="sm"
                         borderWidth="1px"

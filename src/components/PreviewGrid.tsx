@@ -263,7 +263,7 @@ export function PreviewGrid({
         display="flex"
         alignItems="center"
         gap="2"
-        padding="6px 12px"
+        py="1.5" px="3"
         fontSize="sm"
         color="var(--preview-banner-text)"
         background="var(--preview-banner-bg)"
@@ -299,7 +299,7 @@ export function PreviewGrid({
               <LoadingButton
                 variant="success"
                 size="sm"
-                px="10px"
+                px="2.5"
                 loading={applyingEdits}
                 onClick={onApplyEdits}
                 disabled={streaming}
@@ -311,7 +311,7 @@ export function PreviewGrid({
             {onDiscardEdits && (
               <Button
                 size="sm"
-                px="10px"
+                px="2.5"
                 onClick={onDiscardEdits}
                 title={t("editCancelButtonTitle")}
               >
@@ -330,8 +330,8 @@ export function PreviewGrid({
             variant="warning"
             size="sm"
             marginLeft="8px"
-            px="12px"
-            py="2px"
+            px="3"
+            py="0.5"
             whiteSpace="nowrap"
             onClick={onStop}
             title={t("gridStopButtonTitle")}
@@ -343,8 +343,8 @@ export function PreviewGrid({
       <Box
         display="flex"
         flexWrap="wrap"
-        gap="14px"
-        padding="6px 12px"
+        gap="3.5"
+        py="1.5" px="3"
         fontSize="sm"
         color="app.textMuted"
         borderBottom="1px solid"
@@ -372,7 +372,7 @@ export function PreviewGrid({
           <chakra.label
             display="inline-flex"
             alignItems="center"
-            gap="6px"
+            gap="1.5"
             marginLeft="auto"
             color="app.textSecondary"
             cursor="pointer"
@@ -425,7 +425,7 @@ export function PreviewGrid({
               </chakra.header>
               <Box ref={beforeBodyRef} flex="1" overflow="auto" bg="app.surface" css={GRID_CSS}>
                 {filteredBeforeRows.length === 0 ? (
-                  <Box padding="14px" color="app.textMuted" fontStyle="italic">
+                  <Box padding="3.5" color="app.textMuted" fontStyle="italic">
                     {result.before_rows.length === 0
                       ? t("previewEmptyBefore")
                       : t("previewNoAffectedBefore")}
@@ -465,7 +465,7 @@ export function PreviewGrid({
               </chakra.header>
               <Box ref={afterBodyRef} flex="1" overflow="auto" bg="app.surface" css={GRID_CSS}>
                 {filteredAfterRows.length === 0 ? (
-                  <Box padding="14px" color="app.textMuted" fontStyle="italic">
+                  <Box padding="3.5" color="app.textMuted" fontStyle="italic">
                     {result.after_rows.length === 0
                       ? t("previewEmptyAfter")
                       : t("previewNoAffectedAfter")}

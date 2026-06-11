@@ -121,9 +121,9 @@ export function MultiStateBadge<S extends string>({
       aria-live="polite"
       display="inline-flex"
       alignItems="center"
-      gap="6px"
-      px="12px"
-      py="6px"
+      gap="1.5"
+      px="3"
+      py="1.5"
       border="1px solid"
       borderColor={tone.border}
       bg={tone.bg}
@@ -147,7 +147,7 @@ export function MultiStateBadge<S extends string>({
         transition={transitions.layout}
         display="inline-flex"
         alignItems="center"
-        gap="6px"
+        gap="1.5"
       >
         {current.icon !== undefined && (
           <AnimatePresence mode="wait" initial={false}>

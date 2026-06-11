@@ -5,7 +5,7 @@ import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
-import { Button, Checkbox, Input } from "./ui";
+import { Checkbox, Input, PressableButton } from "./ui";
 import {
   MotionTreeNode,
   ScopeToggle,
@@ -133,17 +133,17 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
 
       {entries.length > 0 && (
         <TreeSearch borderTop="none" pt={0}>
-          <Button type="button" variant="danger" onClick={handleClear}>
+          <PressableButton type="button" variant="danger" onClick={handleClear}>
             {t("historyClear")}
-          </Button>
+          </PressableButton>
         </TreeSearch>
       )}
 
       {error ? (
-        <chakra.p color="app.textError" p="12px">{error}</chakra.p>
+        <chakra.p color="app.textError" p="3">{error}</chakra.p>
       ) : entries.length === 0 ? (
         debounced ? (
-          <chakra.p color="app.textMuted" p="12px">{t("historyNoMatches")}</chakra.p>
+          <chakra.p color="app.textMuted" p="3">{t("historyNoMatches")}</chakra.p>
         ) : (
           <EmptyState icon="clock" title={t("historyEmptyTitle")} description={t("historyEmpty")} />
         )
@@ -214,9 +214,9 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
                     bottom="0"
                     display="flex"
                     alignItems="center"
-                    gap="2px"
-                    pl="16px"
-                    pr="6px"
+                    gap="0.5"
+                    pl="4"
+                    pr="1.5"
                     background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
                     opacity={0}
                     pointerEvents="none"
@@ -266,7 +266,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
                     </chakra.button>
                   </chakra.span>
                 </TreeRow>
-                <Box pt="0" pr="6px" pb="4px" pl="28px" fontSize="2xs" color="app.textMuted">
+                <Box pt="0" pr="1.5" pb="1" pl="28px" fontSize="2xs" color="app.textMuted">
                   {formatTime(h.executed_at)}
                 </Box>
               </MotionTreeNode>

@@ -32,16 +32,16 @@ export const TreePane = chakra("div", {
 /** 検索ボックス行。内側の入力欄はやや小さめのサイズに揃える。 */
 export const TreeSearch = chakra("div", {
   base: {
-    px: "10px",
-    py: "8px",
+    px: "2.5",
+    py: "2",
     borderBottom: "1px solid",
     borderColor: "app.borderSubtle",
-    "& input": { px: "8px", py: "5px", fontSize: "sm" },
+    "& input": { px: "2", py: "5px", fontSize: "sm" },
   },
 });
 
 export const Tree = chakra("div", {
-  base: { flex: 1, overflowY: "auto", py: "4px", fontSize: "md", color: "app.text" },
+  base: { flex: 1, overflowY: "auto", py: "1", fontSize: "md", color: "app.text" },
 });
 
 export const TreeNode = chakra("div", {
@@ -52,11 +52,11 @@ export const TreeRow = chakra("div", {
   base: {
     display: "flex",
     alignItems: "center",
-    gap: "var(--space-1)",
-    pt: "4px",
-    pb: "4px",
-    pr: "10px",
-    pl: "6px",
+    gap: "1",
+    pt: "1",
+    pb: "1",
+    pr: "2.5",
+    pl: "1.5",
     cursor: "pointer",
     userSelect: "none",
     whiteSpace: "nowrap",
@@ -83,11 +83,11 @@ export const MotionTreeRow = chakra(
     base: {
       display: "flex",
       alignItems: "center",
-      gap: "var(--space-1)",
-      pt: "4px",
-      pb: "4px",
-      pr: "10px",
-      pl: "6px",
+      gap: "1",
+      pt: "1",
+      pb: "1",
+      pr: "2.5",
+      pl: "1.5",
       cursor: "pointer",
       userSelect: "none",
       whiteSpace: "nowrap",
@@ -134,7 +134,7 @@ export const TreeBadge = chakra("span", {
     fontSize: "2xs",
     textTransform: "uppercase",
     letterSpacing: "0.04em",
-    px: "6px",
+    px: "1.5",
     py: "1px",
     borderRadius: "pill",
     bg: "app.surfaceMuted",
@@ -150,7 +150,7 @@ export const ScopeToggle = chakra("label", {
   base: {
     display: "inline-flex",
     alignItems: "center",
-    gap: "6px",
+    gap: "1.5",
     margin: "6px 0 0",
     fontSize: "xs",
     fontWeight: 400,

@@ -37,10 +37,10 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
         {t("dangerousTitle")}
       </ModalHeader>
 
-      <ModalBody display="flex" flexDirection="column" gap="var(--space-3)">
+      <ModalBody display="flex" flexDirection="column" gap="3">
         {isProduction && (
           <chakra.div
-            p="8px 10px"
+            py="2" px="2.5"
             borderRadius="md"
             fontWeight={600}
             color="app.dangerFg"
@@ -60,15 +60,15 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
               listStyleType="none"
               display="flex"
               flexDirection="column"
-              gap="var(--space-2)"
+              gap="2"
             >
               {findings.map((f, idx) => (
                 <chakra.li
                   key={idx}
                   display="flex"
                   flexDirection="column"
-                  gap="2px"
-                  p="8px 10px"
+                  gap="0.5"
+                  py="2" px="2.5"
                   border="1px solid"
                   borderColor="app.border"
                   borderLeft="3px solid"

@@ -37,12 +37,12 @@ export function RowInsertModal({ table, columns, onConfirm, onCancel }: Props) {
       <ModalHeader onClose={onCancel} closeLabel={t("createTableClose")}>
         {t("rowOpsInsertTitle", { table })}
       </ModalHeader>
-      <ModalBody display="flex" flexDirection="column" gap="8px">
+      <ModalBody display="flex" flexDirection="column" gap="2">
         <chakra.p fontSize="xs" color="app.textMuted">
           {t("rowOpsInsertHint")}
         </chakra.p>
         {columns.map((c, i) => (
-          <Flex key={c.name} align="center" gap="10px">
+          <Flex key={c.name} align="center" gap="2.5">
             <chakra.label
               minW="160px"
               fontSize="sm"
@@ -54,7 +54,7 @@ export function RowInsertModal({ table, columns, onConfirm, onCancel }: Props) {
               title={`${c.name} (${c.type_name})`}
             >
               {c.name}
-              <chakra.span color="app.textMuted" ml="6px" fontSize="2xs">
+              <chakra.span color="app.textMuted" ml="1.5" fontSize="2xs">
                 {c.type_name}
               </chakra.span>
             </chakra.label>

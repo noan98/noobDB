@@ -18,7 +18,7 @@ export const SettingsHelp = chakra("p", {
 });
 
 export const SettingsSection = chakra("section", {
-  base: { display: "flex", flexDirection: "column", gap: "var(--space-2)" },
+  base: { display: "flex", flexDirection: "column", gap: "2" },
 });
 
 export const SettingsSectionHeader = chakra("div", {
@@ -26,7 +26,7 @@ export const SettingsSectionHeader = chakra("div", {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "var(--space-3)",
+    gap: "3",
     "& h3": { margin: 0, fontSize: "md", fontWeight: 600, color: "app.text" },
   },
 });

@@ -1,5 +1,5 @@
 import { chakra } from "@chakra-ui/react";
-import { Locale, setLocale, useLocale } from "../i18n";
+import { Locale, setLocale, useLocale, useT } from "../i18n";
 
 const OPTIONS: { value: Locale; label: string }[] = [
   { value: "en", label: "EN" },
@@ -8,16 +8,17 @@ const OPTIONS: { value: Locale; label: string }[] = [
 
 export function LanguageSwitcher() {
   const locale = useLocale();
+  const t = useT();
   return (
-    <chakra.div display="inline-flex" gap="var(--space-1)" role="group" aria-label="Language">
+    <chakra.div display="inline-flex" gap="1" role="group" aria-label={t("appLanguage")}>
       {OPTIONS.map((o) => {
         const active = locale === o.value;
         return (
           <chakra.button
             key={o.value}
             type="button"
-            px="8px"
-            py="2px"
+            px="2"
+            py="0.5"
             fontSize="var(--text-xs)"
             border="1px solid"
             borderColor={active ? "app.accent" : "app.borderStrong"}

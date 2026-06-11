@@ -153,7 +153,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& th .th-label-row": {
     display: "inline-flex",
     alignItems: "center",
-    gap: "4px",
+    gap: "1",
     minWidth: 0,
   },
   "& th .th-type-icon": {
@@ -347,7 +347,7 @@ export const GRID_CSS: SystemStyleObject = {
   // バイナリだと気付きにくいので、ピル型タグで明示する (#385)。
   "& .cell-binary-tag": {
     display: "inline-block",
-    marginRight: "6px",
+    marginRight: "1.5",
     padding: "0 5px",
     fontSize: "var(--text-2xs)",
     fontWeight: 600,
@@ -371,7 +371,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& th.is-sortable .th-sort-button": {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: "1.5",
     flex: "1 1 auto",
     minWidth: 0,
     // ソート可能ヘッダのボタン余白もセルと同じ密度トークンに揃える (#327 / #410)。
@@ -415,7 +415,7 @@ export const GRID_CSS: SystemStyleObject = {
     justifyContent: "center",
     minWidth: "14px",
     height: "14px",
-    marginLeft: "2px",
+    marginLeft: "0.5",
     padding: "0 3px",
     fontSize: "9px",
     fontWeight: 700,
@@ -431,7 +431,7 @@ export const GRID_CSS: SystemStyleObject = {
     justifyContent: "center",
     flexShrink: 0,
     padding: "0 7px",
-    marginRight: "4px",
+    marginRight: "1",
     background: "transparent",
     border: "none",
     borderLeft: "1px solid var(--border)",
@@ -482,7 +482,7 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow: "-2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
   },
   "& td.grid-empty-cell": {
-    padding: "14px",
+    padding: "3.5",
     color: "var(--text-muted)",
     fontStyle: "italic",
     textAlign: "center",
@@ -502,15 +502,17 @@ export const GRID_CSS: SystemStyleObject = {
     zIndex: 4,
     display: "flex",
     alignItems: "center",
-    gap: "10px",
-    padding: "4px 10px",
+    gap: "2.5",
+    py: "1",
+    px: "2.5",
     fontSize: "var(--text-xs)",
     color: "var(--text-secondary)",
     background: "color-mix(in srgb, var(--accent) 10%, var(--bg-muted))",
     borderBottom: "1px solid var(--border)",
   },
   "& .grid-filter-clear": {
-    padding: "2px 8px",
+    py: "0.5",
+    px: "2",
     fontSize: "var(--text-xs)",
     border: "1px solid var(--border-strong)",
     background: "var(--bg-elevated)",
@@ -1206,7 +1208,8 @@ const globalIncludesFilter: FilterFn<RowShape> = (row, _columnId, filterValue) =
 /** Field styling shared by the filter popup's selects/inputs. */
 const FILTER_FIELD_CSS: SystemStyleObject = {
   width: "100%",
-  padding: "4px 6px",
+  py: "1",
+  px: "1.5",
   fontSize: "var(--text-sm)",
   fontFamily: "var(--font-mono)",
   color: "var(--text)",
@@ -1332,8 +1335,8 @@ function ColumnFilterMenu({
       width="240px"
       display="flex"
       flexDirection="column"
-      gap="8px"
-      padding="10px"
+      gap="2"
+      padding="2.5"
       bg="app.surface"
       border="1px solid"
       borderColor="app.borderStrong"
@@ -1376,7 +1379,7 @@ function ColumnFilterMenu({
       </chakra.label>
 
       {draft.op === "between" ? (
-        <Box display="flex" gap="6px">
+        <Box display="flex" gap="1.5">
           <chakra.input
             css={FILTER_FIELD_CSS}
             type="text"
@@ -1480,16 +1483,16 @@ function ColumnFilterMenu({
       )}
 
       {(onHideColumn || onShowAllColumns || onResetLayout) && (
-        <Box display="flex" flexDirection="column" gap="4px" paddingTop="2px" borderTop="1px solid" borderColor="app.borderSubtle">
-          <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="6px">
+        <Box display="flex" flexDirection="column" gap="1" paddingTop="0.5" borderTop="1px solid" borderColor="app.borderSubtle">
+          <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="1.5">
             {t("gridColumnsLabel")}
           </chakra.span>
-          <Box display="flex" flexWrap="wrap" gap="6px">
+          <Box display="flex" flexWrap="wrap" gap="1.5">
             {onHideColumn && (
               <Button
                 variant="secondary"
                 size="sm"
-                px="8px"
+                px="2"
                 onClick={() => {
                   onHideColumn();
                   onClose();
@@ -1499,7 +1502,7 @@ function ColumnFilterMenu({
               </Button>
             )}
             {onShowAllColumns && (
-              <Button variant="secondary" size="sm" px="8px" onClick={onShowAllColumns}>
+              <Button variant="secondary" size="sm" px="2" onClick={onShowAllColumns}>
                 {t("gridShowAllColumns")}
               </Button>
             )}
@@ -1507,7 +1510,7 @@ function ColumnFilterMenu({
               <Button
                 variant="secondary"
                 size="sm"
-                px="8px"
+                px="2"
                 onClick={() => {
                   onResetLayout();
                   onClose();
@@ -1520,11 +1523,11 @@ function ColumnFilterMenu({
         </Box>
       )}
 
-      <Box display="flex" justifyContent="space-between" gap="6px" paddingTop="2px">
+      <Box display="flex" justifyContent="space-between" gap="1.5" paddingTop="0.5">
         <Button
           variant="secondary"
           size="sm"
-          px="10px"
+          px="2.5"
           onClick={() => {
             apply(makeDefaultFilter(kind));
             onClose();
@@ -1532,7 +1535,7 @@ function ColumnFilterMenu({
         >
           {t("gridFilterClearColumn")}
         </Button>
-        <Button size="sm" px="10px" onClick={onClose}>
+        <Button size="sm" px="2.5" onClick={onClose}>
           {t("gridFilterCloseMenu")}
         </Button>
       </Box>
@@ -3106,7 +3109,7 @@ export function DataGrid({
             <Box
               role="status"
               aria-live="polite"
-              padding="6px 14px"
+              py="1.5" px="3.5"
               fontSize="sm"
               color="#ffffff"
               background="color-mix(in srgb, #16a34a 92%, #000000)"
@@ -3375,15 +3378,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         >
           {/* スケルトン行: 密度ごとの行高に合わせた疑似列バーを並べる */}
           <Box
-            px="12px"
-            pt="10px"
+            px="3"
+            pt="2.5"
             display="flex"
             flexDirection="column"
-            gap={settings.density === "compact" ? "4px" : settings.density === "spacious" ? "8px" : "6px"}
+            gap={settings.density === "compact" ? "1" : settings.density === "spacious" ? "2" : "1.5"}
             aria-hidden
           >
             {Array.from({ length: skeletonRowCount }, (_, i) => (
-              <Box key={i} display="flex" gap="8px" opacity={1 - i * 0.1}>
+              <Box key={i} display="flex" gap="2" opacity={1 - i * 0.1}>
                 {skeletonColWidths.slice(0, 5).map((w, ci) => (
                   <Skeleton
                     key={ci}
@@ -3448,8 +3451,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           aria-live="polite"
           display="flex"
           alignItems="center"
-          gap="6px"
-          padding="4px 10px"
+          gap="1.5"
+          py="1" px="2.5"
           fontSize="sm"
           color="app.textMuted"
           borderBottom="1px solid"
@@ -3471,8 +3474,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             <Button
               variant="warning"
               size="sm"
-              px="12px"
-              py="2px"
+              px="3"
+              py="0.5"
               whiteSpace="nowrap"
               onClick={onStopStreaming}
               title={t("gridStopButtonTitle")}
@@ -3488,7 +3491,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           aria-live="polite"
           display="flex"
           alignItems="center"
-          gap="10px"
+          gap="2.5"
           padding="5px 10px"
           fontSize="sm"
           color="app.text"
@@ -3501,7 +3504,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           </chakra.span>
           <Button
             size="sm"
-            px="10px"
+            px="2.5"
             whiteSpace="nowrap"
             onClick={onFetchAllRows}
             title={t("autoLimitFetchAllTitle")}
@@ -3513,8 +3516,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       <Box
         display="flex"
         alignItems="center"
-        gap="6px"
-        padding="4px 8px"
+        gap="1.5"
+        py="1" px="2"
         bg="app.toolbar"
         borderBottom="1px solid"
         borderColor="app.borderSubtle"
@@ -3522,7 +3525,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       >
         <Button
           size="sm"
-          px="10px"
+          px="2.5"
           onClick={() => setShowExport(true)}
           disabled={!canExport}
           title={
@@ -3539,14 +3542,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           <Box
             display="inline-flex"
             alignItems="center"
-            gap="6px"
+            gap="1.5"
             paddingLeft="2px"
             title={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}
           >
             <chakra.label
               display="inline-flex"
               alignItems="center"
-              gap="4px"
+              gap="1"
               fontSize="xs"
               whiteSpace="nowrap"
               color={autoRefreshAllowed ? "app.text" : "app.textMuted"}
@@ -3573,7 +3576,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               }}
               fontSize="xs"
               fontFamily="inherit"
-              padding="2px 4px"
+              py="0.5" px="1"
               border="1px solid var(--border)"
               background="var(--bg-input)"
               color="var(--text)"
@@ -3617,8 +3620,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             aria-label={t("editToolbarAria")}
             display="inline-flex"
             alignItems="center"
-            gap="6px"
-            padding="2px 8px"
+            gap="1.5"
+            py="0.5" px="2"
             borderLeft="1px solid var(--border-subtle)"
             borderRight="1px solid var(--border-subtle)"
             background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
@@ -3649,7 +3652,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             <Button
               variant="secondary"
               size="sm"
-              px="6px"
+              px="1.5"
               onClick={onUndoEdit}
               disabled={!canUndo}
               title={t("editUndoTitle")}
@@ -3660,7 +3663,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             <Button
               variant="secondary"
               size="sm"
-              px="6px"
+              px="1.5"
               onClick={onRedoEdit}
               disabled={!canRedo}
               title={t("editRedoTitle")}
@@ -3671,7 +3674,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             <Button
               variant="warning"
               size="sm"
-              px="10px"
+              px="2.5"
               onClick={onPreviewEdits}
               disabled={!canPreview}
               title={
@@ -3689,7 +3692,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             <LoadingButton
               variant="success"
               size="sm"
-              px="10px"
+              px="2.5"
               loading={applyingEdits}
               onClick={onApplyEdits}
               disabled={!canApply}
@@ -3706,7 +3709,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             <Button
               variant="secondary"
               size="sm"
-              px="10px"
+              px="2.5"
               onClick={() => setShowDiscardConfirm(true)}
               title={t("editCancelButtonTitle")}
             >
@@ -3865,8 +3868,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             display="flex"
             alignItems="center"
             justifyContent="center"
-            gap="6px"
-            padding="6px 10px"
+            gap="1.5"
+            py="1.5" px="2.5"
             fontSize="sm"
             color="app.textMuted"
             borderTop="1px solid"
@@ -3897,8 +3900,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               disabled={disabled}
               onClick={onClick}
               fontSize="xs"
-              px="6px"
-              py="2px"
+              px="1.5"
+              py="0.5"
               border="1px solid var(--border)"
               borderRadius="var(--radius-sm)"
               background={disabled ? "transparent" : "var(--bg-input)"}
@@ -3922,8 +3925,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               display="flex"
               alignItems="center"
               flexWrap="wrap"
-              gap="6px"
-              px="10px"
+              gap="1.5"
+              px="2.5"
               py="5px"
               fontSize="xs"
               color="app.textMuted"
@@ -3951,7 +3954,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                   : ""}
               </chakra.span>
               {loadingMore && (
-                <Box display="flex" alignItems="center" gap="4px">
+                <Box display="flex" alignItems="center" gap="1">
                   <Spinner size={12} />
                   <chakra.span>{t("paginationLoadingMore")}</chakra.span>
                 </Box>
@@ -3961,7 +3964,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                   {t("paginationCanLoadMore")}
                 </chakra.span>
               )}
-              <chakra.span marginLeft="auto" display="flex" alignItems="center" gap="4px" whiteSpace="nowrap">
+              <chakra.span marginLeft="auto" display="flex" alignItems="center" gap="1" whiteSpace="nowrap">
                 {t("paginationRowsPerPage")}
                 <chakra.select
                   aria-label={t("paginationRowsPerPage")}

@@ -96,14 +96,14 @@ export function RowInspector({
         bg="app.surface"
         borderLeft="1px solid"
         borderColor="app.borderStrong"
-        boxShadow="-8px 0 24px -12px rgba(0,0,0,0.45)"
+        boxShadow="var(--shadow-drawer)"
       >
         <Box
           display="flex"
           alignItems="center"
-          gap="6px"
-          px="12px"
-          py="8px"
+          gap="1.5"
+          px="3"
+          py="2"
           borderBottom="1px solid"
           borderColor="app.border"
           flexShrink={0}
@@ -174,7 +174,7 @@ export function RowInspector({
           </chakra.button>
         </Box>
 
-        <Box flex="1" overflowY="auto" css={{ scrollbarWidth: "thin" }} px="12px" py="8px">
+        <Box flex="1" overflowY="auto" css={{ scrollbarWidth: "thin" }} px="3" py="2">
           {columns.length === 0 ? (
             <chakra.div fontStyle="italic" color="app.textMuted" fontSize="sm">
               {t("gridInspectorEmpty")}
@@ -192,12 +192,12 @@ export function RowInspector({
                   key={`${col.name}-${i}`}
                   display="flex"
                   flexDirection="column"
-                  gap="2px"
-                  py="6px"
+                  gap="0.5"
+                  py="1.5"
                   borderBottom="1px solid"
                   borderColor="app.borderSubtle"
                 >
-                  <Box display="flex" alignItems="center" gap="6px">
+                  <Box display="flex" alignItems="center" gap="1.5">
                     <chakra.span
                       flex="1"
                       fontSize="xs"

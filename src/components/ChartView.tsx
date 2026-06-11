@@ -56,7 +56,7 @@ export function ChartView({ result, onClose }: Props) {
 
   if (!config || !model) {
     return (
-      <Flex direction="column" h="100%" align="center" justify="center" gap="12px" color="app.textMuted">
+      <Flex direction="column" h="100%" align="center" justify="center" gap="3" color="app.textMuted">
         <Icon name="query" size={28} />
         <chakra.span>{t("chartNoNumeric")}</chakra.span>
         <Button type="button" variant="secondary" onClick={onClose}>
@@ -80,7 +80,7 @@ export function ChartView({ result, onClose }: Props) {
   return (
     <Flex direction="column" h="100%" minH={0} minW={0}>
       {/* 設定バー */}
-      <Flex align="center" gap="10px" px="12px" py="8px" flex="none" borderBottomWidth="1px" borderBottomColor="app.border" flexWrap="wrap" fontSize="sm">
+      <Flex align="center" gap="2.5" px="3" py="2" flex="none" borderBottomWidth="1px" borderBottomColor="app.border" flexWrap="wrap" fontSize="sm">
         <Button type="button" variant="secondary" size="sm" onClick={onClose}>
           <Icon name="table" size={14} /> {t("chartBackToTable")}
         </Button>
@@ -108,10 +108,10 @@ export function ChartView({ result, onClose }: Props) {
           </Select>
         </Field>
         <Field label={t("chartYAxis")}>
-          <Flex gap="8px" flexWrap="wrap">
+          <Flex gap="2" flexWrap="wrap">
             {result.columns.map((c, i) =>
               numericCols[i] && i !== config.xCol ? (
-                <chakra.label key={i} display="inline-flex" alignItems="center" gap="4px" fontSize="xs" cursor="pointer">
+                <chakra.label key={i} display="inline-flex" alignItems="center" gap="1" fontSize="xs" cursor="pointer">
                   <Checkbox checked={config.yCols.includes(i)} onChange={() => toggleY(i)} />
                   {c.name}
                 </chakra.label>
@@ -122,14 +122,14 @@ export function ChartView({ result, onClose }: Props) {
       </Flex>
 
       {model.sampledFrom != null && (
-        <chakra.div px="12px" py="4px" fontSize="xs" color="app.textMuted" flex="none">
+        <chakra.div px="3" py="1" fontSize="xs" color="app.textMuted" flex="none">
           {t("chartSampled", { shown: model.labels.length, total: model.sampledFrom })}
         </chakra.div>
       )}
 
       {/* 凡例 */}
       {config.type !== "pie" && model.series.length > 0 && (
-        <Flex gap="12px" px="12px" py="4px" flex="none" flexWrap="wrap" fontSize="xs" color="app.textSecondary">
+        <Flex gap="3" px="3" py="1" flex="none" flexWrap="wrap" fontSize="xs" color="app.textSecondary">
           {model.series.map((s, i) => (
             <Flex key={s.name} align="center" gap="5px">
               <chakra.span w="10px" h="10px" borderRadius="2px" bg={SERIES_COLORS[i % SERIES_COLORS.length]} />
@@ -139,7 +139,7 @@ export function ChartView({ result, onClose }: Props) {
         </Flex>
       )}
 
-      <chakra.div flex="1" minH={0} overflow="auto" p="12px">
+      <chakra.div flex="1" minH={0} overflow="auto" p="3">
         {model.labels.length === 0 ? (
           <chakra.div color="app.textMuted" fontSize="sm">{t("chartNoData")}</chakra.div>
         ) : config.yCols.length === 0 ? (
@@ -161,7 +161,7 @@ export function ChartView({ result, onClose }: Props) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <Flex align="center" gap="6px">
+    <Flex align="center" gap="1.5">
       <chakra.span color="app.textMuted" fontSize="xs">{label}</chakra.span>
       {children}
     </Flex>

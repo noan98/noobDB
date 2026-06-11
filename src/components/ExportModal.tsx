@@ -237,16 +237,16 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
         {t("exportTitle")}
       </ModalHeader>
 
-      <ModalBody display="flex" flexDirection="column" gap="var(--space-4)">
+      <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="md" color="app.text">
           {t("exportRowCount", { rows: rows.length })}
         </chakra.div>
         {fullExport && (
           <FormSection>
             <FieldLabel as="div">{t("exportScope")}</FieldLabel>
-            <chakra.div role="radiogroup" aria-label={t("exportScope")} display="flex" flexDirection="column" gap="6px">
+            <chakra.div role="radiogroup" aria-label={t("exportScope")} display="flex" flexDirection="column" gap="1.5">
               {(["current", "full"] as const).map((sc) => (
-                <chakra.label key={sc} display="inline-flex" alignItems="flex-start" gap="8px" cursor="pointer" userSelect="none">
+                <chakra.label key={sc} display="inline-flex" alignItems="flex-start" gap="2" cursor="pointer" userSelect="none">
                   <Radio
                     name="export-scope"
                     value={sc}
@@ -274,7 +274,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
         {partial && scope === "current" && (
           <chakra.div
             role="status"
-            p="8px 10px"
+            py="2" px="2.5"
             border="1px solid"
             borderColor="color-mix(in srgb, #f59e0b 50%, var(--border))"
             bg="color-mix(in srgb, #f59e0b 14%, var(--bg-muted))"
@@ -292,15 +292,15 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
             role="radiogroup"
             aria-label={t("exportFormat")}
             display="flex"
-            gap="var(--space-2)"
+            gap="2"
           >
             {(["csv", "json"] as const).map((fmt) => (
               <chakra.label
                 key={fmt}
                 display="inline-flex"
                 alignItems="center"
-                gap="6px"
-                p="6px 12px"
+                gap="1.5"
+                py="1.5" px="3"
                 border="1px solid"
                 borderColor={format === fmt ? "app.accent" : "app.border"}
                 borderRadius="md"

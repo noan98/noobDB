@@ -116,8 +116,8 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
     <Modal open onClose={onClose} width="620px" initialFocusEl={() => inputRef.current}>
       <Flex
         align="center"
-        gap="var(--space-2)"
-        px="14px"
+        gap="2"
+        px="3.5"
         borderBottomWidth="1px"
         borderBottomColor="app.border"
         bg="app.surface"
@@ -142,7 +142,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
           spellCheck={false}
           flex="1"
           minW={0}
-          py="14px"
+          py="3.5"
           bg="transparent"
           border="none"
           outline="none"
@@ -158,19 +158,19 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
         role="listbox"
         maxH="min(420px, 60vh)"
         overflowY="auto"
-        py="6px"
+        py="1.5"
       >
         {flat.length === 0 ? (
-          <Box px="16px" py="20px" textAlign="center" color="app.textMuted" fontSize="sm">
+          <Box px="4" py="5" textAlign="center" color="app.textMuted" fontSize="sm">
             {t("cmdkNoResults")}
           </Box>
         ) : (
           grouped.map((g) => (
             <Box key={g.group}>
               <Box
-                px="16px"
-                pt="8px"
-                pb="4px"
+                px="4"
+                pt="2"
+                pb="1"
                 fontSize="xs"
                 fontWeight={700}
                 textTransform="uppercase"
@@ -206,9 +206,9 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
 
       <Flex
         align="center"
-        gap="var(--space-3)"
-        px="16px"
-        py="8px"
+        gap="3"
+        px="4"
+        py="2"
         borderTopWidth="1px"
         borderTopColor="app.border"
         bg="app.toolbar"
@@ -226,9 +226,9 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
 
 function Hint({ keys, label }: { keys: string; label: string }) {
   return (
-    <Flex align="center" gap="6px">
+    <Flex align="center" gap="1.5">
       <chakra.kbd
-        px="6px"
+        px="1.5"
         py="1px"
         borderRadius="sm"
         borderWidth="1px"
@@ -267,11 +267,11 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
       onClick={onClick}
       display="flex"
       alignItems="center"
-      gap="var(--space-2)"
+      gap="2"
       w="100%"
       textAlign="left"
-      px="16px"
-      py="8px"
+      px="4"
+      py="2"
       border="none"
       cursor="pointer"
       bg={active ? "app.active" : "transparent"}
@@ -314,7 +314,7 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
         )}
       </Flex>
       {item.badges && item.badges.length > 0 && (
-        <Flex gap="4px" flexShrink={0}>
+        <Flex gap="1" flexShrink={0}>
           {item.badges.map((badge) => (
             <Badge key={badge}>{badge}</Badge>
           ))}
@@ -328,7 +328,7 @@ function Badge({ children }: { children: ReactNode }) {
   return (
     <chakra.span
       fontSize="xs"
-      px="6px"
+      px="1.5"
       py="1px"
       borderRadius="pill"
       borderWidth="1px"

@@ -33,7 +33,7 @@ const NavButton = chakra("button", {
     justifyContent: "center",
     minW: "28px",
     h: "26px",
-    px: "6px",
+    px: "1.5",
     borderRadius: "6px",
     borderWidth: 0,
     color: "app.text",
@@ -74,8 +74,8 @@ export function PaginationBar({
   return (
     <Flex
       align="center"
-      gap="8px"
-      px="10px"
+      gap="2"
+      px="2.5"
       py="5px"
       borderTopWidth="1px"
       borderTopColor="app.border"
@@ -104,7 +104,7 @@ export function PaginationBar({
         <Icon name="chevron-left" size={ICON_SIZES.sm} />
       </NavButton>
 
-      <chakra.span display="inline-flex" alignItems="center" gap="6px" minW="0">
+      <chakra.span display="inline-flex" alignItems="center" gap="1.5" minW="0">
         {t("pageLabel", { page })}
         {totalPages != null && (
           <chakra.span color="app.textMuted">{t("pageOfTotal", { total: totalPages })}</chakra.span>
@@ -137,7 +137,7 @@ export function PaginationBar({
 
       <chakra.span flex="1" />
 
-      <chakra.label display="inline-flex" alignItems="center" gap="6px" fontSize="xs" whiteSpace="nowrap">
+      <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="xs" whiteSpace="nowrap">
         {t("pageJumpLabel")}
         <chakra.input
           type="number"
@@ -151,7 +151,7 @@ export function PaginationBar({
           disabled={loading}
           w="60px"
           h="26px"
-          px="6px"
+          px="1.5"
           borderWidth="1px"
           borderColor="app.border"
           borderRadius="6px"
@@ -160,14 +160,14 @@ export function PaginationBar({
         />
       </chakra.label>
 
-      <chakra.label display="inline-flex" alignItems="center" gap="6px" fontSize="xs" whiteSpace="nowrap">
+      <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="xs" whiteSpace="nowrap">
         {t("pageSizeLabel")}
         <chakra.select
           value={pageSize}
           onChange={(e) => onSetPageSize(Number.parseInt(e.target.value, 10))}
           disabled={loading}
           h="26px"
-          px="4px"
+          px="1"
           borderWidth="1px"
           borderColor="app.border"
           borderRadius="6px"

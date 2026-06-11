@@ -312,7 +312,7 @@ export function TabBar({
                 // MotionConfig により即時化される。
                 value={tab.id}
                 drag={onReorder ? true : false}
-                whileDrag={{ scale: 1.04, boxShadow: "0 6px 16px rgba(0,0,0,0.28)", zIndex: 3 }}
+                whileDrag={{ scale: 1.04, boxShadow: "var(--shadow-lg)", zIndex: 3 }}
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
@@ -325,10 +325,10 @@ export function TabBar({
                 position="relative"
                 display="inline-flex"
                 alignItems="center"
-                gap="6px"
-                pl="10px"
-                pr="8px"
-                py="6px"
+                gap="1.5"
+                pl="2.5"
+                pr="2"
+                py="1.5"
                 borderRight="1px solid"
                 borderRightColor="app.border"
                 borderTop="2px solid transparent"
@@ -491,10 +491,10 @@ export function TabBar({
                 animate="animate"
                 exit="exit"
                 transition={transitions.enter}
-                style={{ position: "absolute", top: "100%", right: 0, zIndex: 30 }}
+                style={{ position: "absolute", top: "100%", right: 0, zIndex: "var(--z-dropdown)" }}
               >
                 <Box
-                  mt="2px"
+                  mt="0.5"
                   w="280px"
                   maxH="60vh"
                   display="flex"
@@ -507,7 +507,7 @@ export function TabBar({
                   overflow="hidden"
                   role="menu"
                 >
-                  <Box p="6px" borderBottom="1px solid" borderColor="app.border">
+                  <Box p="1.5" borderBottom="1px solid" borderColor="app.border">
                     <Input
                       autoFocus
                       size="sm"
@@ -519,7 +519,7 @@ export function TabBar({
                   </Box>
                   <Box overflowY="auto" css={{ scrollbarWidth: "thin" }}>
                     {listTabs.length === 0 ? (
-                      <Box px="10px" py="8px" fontSize="sm" color="app.textMuted">
+                      <Box px="2.5" py="2" fontSize="sm" color="app.textMuted">
                         {t("tabListEmpty")}
                       </Box>
                     ) : (
@@ -535,11 +535,11 @@ export function TabBar({
                             role="menuitem"
                             display="flex"
                             alignItems="center"
-                            gap="8px"
+                            gap="2"
                             w="100%"
                             textAlign="left"
-                            px="10px"
-                            py="6px"
+                            px="2.5"
+                            py="1.5"
                             border="none"
                             bg={isActive ? "app.active" : "transparent"}
                             color={isActive ? "app.text" : "app.textMuted"}
@@ -557,7 +557,7 @@ export function TabBar({
                             <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" flex="1">
                               {tt.title}
                               {sub && (
-                                <chakra.span ml="6px" fontSize="2xs" color="app.textMuted">
+                                <chakra.span ml="1.5" fontSize="2xs" color="app.textMuted">
                                   {sub}
                                 </chakra.span>
                               )}
