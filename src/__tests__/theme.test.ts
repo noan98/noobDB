@@ -60,6 +60,9 @@ describe("common recipes reference real tokens", () => {
     expect(JSON.stringify(system.css(variant.success))).toContain(
       "chakra-colors-app-success-bg",
     );
+    expect(JSON.stringify(system.css(variant.dangerOutline))).toContain(
+      "chakra-colors-app-danger-outline-fg",
+    );
   });
 
   it("input / select / textarea use the bgInput token", () => {
