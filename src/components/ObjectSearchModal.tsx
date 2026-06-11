@@ -125,8 +125,8 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
     <Modal open onClose={onClose} width="640px" initialFocusEl={() => inputRef.current}>
       <Flex
         align="center"
-        gap="var(--space-2)"
-        px="14px"
+        gap="2"
+        px="3.5"
         borderBottomWidth="1px"
         borderBottomColor="app.border"
         bg="app.surface"
@@ -148,7 +148,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
           spellCheck={false}
           flex="1"
           minW={0}
-          py="14px"
+          py="3.5"
           bg="transparent"
           border="none"
           outline="none"
@@ -169,13 +169,13 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
         )}
       </Flex>
 
-      <Box id="object-search-list" role="listbox" maxH="min(440px, 62vh)" overflowY="auto" py="6px">
+      <Box id="object-search-list" role="listbox" maxH="min(440px, 62vh)" overflowY="auto" py="1.5">
         {error ? (
-          <Box px="16px" py="20px" textAlign="center" color="app.dangerFg" fontSize="sm">
+          <Box px="4" py="5" textAlign="center" color="app.dangerFg" fontSize="sm">
             {error}
           </Box>
         ) : results.length === 0 ? (
-          <Box px="16px" py="20px" textAlign="center" color="app.textMuted" fontSize="sm">
+          <Box px="4" py="5" textAlign="center" color="app.textMuted" fontSize="sm">
             {query.trim() ? t("objSearchNoResults") : t("objSearchHint")}
           </Box>
         ) : (
@@ -217,7 +217,7 @@ function ScopeButton({
     <chakra.button
       type="button"
       onClick={onClick}
-      px="8px"
+      px="2"
       py="3px"
       fontSize="xs"
       cursor="pointer"
@@ -250,10 +250,10 @@ function ResultRow({ entry, active, onMouseMove, onClick, ref }: RowProps) {
       onClick={onClick}
       display="flex"
       alignItems="center"
-      gap="var(--space-2)"
+      gap="2"
       w="100%"
       textAlign="left"
-      px="16px"
+      px="4"
       py="7px"
       border="none"
       cursor="pointer"

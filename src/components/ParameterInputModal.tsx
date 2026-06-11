@@ -131,12 +131,12 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
         {t("parameterInputTitle")}
       </ModalHeader>
 
-      <ModalBody display="flex" flexDirection="column" gap="var(--space-3)">
+      <ModalBody display="flex" flexDirection="column" gap="3">
         <chakra.p m={0} color="app.textMuted" fontSize="sm">
           {t("parameterInputIntro")}
         </chakra.p>
 
-        <chakra.div display="flex" flexDirection="column" gap="var(--space-2)">
+        <chakra.div display="flex" flexDirection="column" gap="2">
           {names.map((name, idx) => {
             const d = drafts[name];
             const err = errorKey(name);
@@ -145,7 +145,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                 key={name}
                 display="grid"
                 gridTemplateColumns="minmax(90px, 1fr) 120px minmax(0, 2fr)"
-                gap="8px"
+                gap="2"
                 alignItems="center"
               >
                 <chakra.code
@@ -168,7 +168,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                     </option>
                   ))}
                 </chakra.select>
-                <chakra.div display="flex" flexDirection="column" gap="2px" minWidth={0}>
+                <chakra.div display="flex" flexDirection="column" gap="0.5" minWidth={0}>
                   <chakra.input
                     ref={idx === 0 ? firstInputRef : undefined}
                     css={FIELD_CSS}
@@ -204,7 +204,8 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
           <Box
             as="pre"
             m={0}
-            p="8px 10px"
+            py="2"
+            px="2.5"
             maxHeight="160px"
             overflow="auto"
             fontSize="sm"

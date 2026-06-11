@@ -572,12 +572,13 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         display="flex"
         gap="2"
         alignItems="center"
-        padding="6px 10px"
+        py="1.5"
+        px="2.5"
         borderBottom="1px solid"
         borderColor="app.border"
         bg="app.toolbar"
         css={{
-          "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "6px" },
+          "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1.5" },
           "& .btn-spinner": {
             borderColor: "color-mix(in srgb, currentColor 35%, transparent)",
             borderTopColor: "currentColor",

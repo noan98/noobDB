@@ -154,7 +154,8 @@ export function ModalHeader({
         alignItems: "center",
         justifyContent: "space-between",
         gap: "3",
-        padding: "12px 16px",
+        py: "3",
+        px: "4",
         borderBottom: "1px solid",
         borderColor: "app.border",
         bg: "app.toolbar",
@@ -173,7 +174,7 @@ export function ModalHeader({
         disabled={closeDisabled}
         aria-label={closeLabel}
         title={closeLabel}
-        css={{ flex: "none", minWidth: "28px", padding: "4px 8px", fontSize: "base", lineHeight: 1 }}
+        css={{ flex: "none", minWidth: "28px", py: "1", px: "2", fontSize: "base", lineHeight: 1 }}
       >
         <Icon name="close" size={13} />
       </Button>
@@ -185,7 +186,7 @@ type ModalBodyProps = ComponentProps<typeof Dialog.Body>;
 
 export function ModalBody({ children, ...rest }: ModalBodyProps) {
   return (
-    <Dialog.Body css={{ flex: 1, overflowY: "auto", padding: "14px 16px" }} {...rest}>
+    <Dialog.Body css={{ flex: 1, overflowY: "auto", py: "3.5", px: "4" }} {...rest}>
       {children}
     </Dialog.Body>
   );
@@ -211,7 +212,8 @@ export function ModalFooter({ children, ...rest }: ModalFooterProps) {
         display: "flex",
         alignItems: "center",
         gap: "2",
-        padding: "10px 16px",
+        py: "2.5",
+        px: "4",
         borderTop: "1px solid",
         borderColor: "app.border",
         bg: "app.toolbar",

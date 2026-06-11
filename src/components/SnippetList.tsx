@@ -179,7 +179,7 @@ export const SnippetList = memo(function SnippetList({ snippets, activeProfile, 
                     <Box
                       display="flex"
                       alignItems="center"
-                      gap="var(--space-1)"
+                      gap="1"
                       whiteSpace="nowrap"
                       overflow="hidden"
                       userSelect="none"

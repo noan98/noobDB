@@ -153,7 +153,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
         {t("dumpTitle", { database })}
       </ModalHeader>
 
-      <ModalBody display="flex" flexDirection="column" gap="var(--space-4)">
+      <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
           {t("dumpNote")}
         </chakra.div>
@@ -170,7 +170,7 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
                 key={row.key}
                 display="flex"
                 alignItems="flex-start"
-                gap="var(--space-2)"
+                gap="2"
                 py="1"
                 cursor={isRunning ? "not-allowed" : "pointer"}
                 userSelect="none"

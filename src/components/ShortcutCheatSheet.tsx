@@ -35,7 +35,7 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
         {t("cheatSheetTitle")}
       </ModalHeader>
       <ModalBody>
-        <Flex direction="column" gap="var(--space-4)">
+        <Flex direction="column" gap="4">
           {SHORTCUT_CATEGORY_ORDER.map((category) => {
             const items = SHORTCUTS.filter((s) => s.category === category);
             if (items.length === 0) return null;
@@ -57,7 +57,7 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
                       key={s.keysKey}
                       align="center"
                       justify="space-between"
-                      gap="var(--space-3)"
+                      gap="3"
                       py="1.5"
                       borderBottomWidth="1px"
                       borderBottomColor="app.borderSubtle"

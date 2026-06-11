@@ -116,7 +116,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
     <Modal open onClose={onClose} width="620px" initialFocusEl={() => inputRef.current}>
       <Flex
         align="center"
-        gap="var(--space-2)"
+        gap="2"
         px="3.5"
         borderBottomWidth="1px"
         borderBottomColor="app.border"
@@ -206,7 +206,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
 
       <Flex
         align="center"
-        gap="var(--space-3)"
+        gap="3"
         px="4"
         py="2"
         borderTopWidth="1px"
@@ -267,7 +267,7 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
       onClick={onClick}
       display="flex"
       alignItems="center"
-      gap="var(--space-2)"
+      gap="2"
       w="100%"
       textAlign="left"
       px="4"

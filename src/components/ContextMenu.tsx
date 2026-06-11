@@ -127,7 +127,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
         borderColor="app.borderStrong"
         borderRadius="md"
         boxShadow="elevationPopover"
-        p="var(--space-1)"
+        p="1"
         display="flex"
         flexDirection="column"
         // 出現位置 (クリック点) を起点に伸びるよう原点を左上に。scale は控えめ
@@ -151,8 +151,8 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               key={`sep-${i}`}
               role="separator"
               h="1px"
-              my="4px"
-              mx="6px"
+              my="1"
+              mx="1.5"
               bg="app.borderSubtle"
             />
           ) : (
@@ -164,8 +164,8 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               textAlign="left"
               bg="transparent"
               border="none"
-              px="10px"
-              py="6px"
+              px="2.5"
+              py="1.5"
               fontSize="var(--text-md)"
               color={entry.danger ? "app.textError" : "app.text"}
               borderRadius="sm"

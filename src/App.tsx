@@ -1481,9 +1481,9 @@ export default function App() {
       const ok = await confirm({
         title: translate("productionConfirmTitle"),
         message: (
-          <Flex direction="column" gap="var(--space-2)" color="app.text" alignItems="center">
+          <Flex direction="column" gap="2" color="app.text" alignItems="center">
             <ProductionWarningIllustration size={80} />
-            <Flex align="center" gap="var(--space-2)">
+            <Flex align="center" gap="2">
               {profile.color && (
                 <chakra.span
                   display="inline-block"
@@ -4123,7 +4123,7 @@ export default function App() {
           fontWeight={600}
           justify="space-between"
           align="center"
-          gap="var(--space-2)"
+          gap="2"
         >
           <IconButton
             flexShrink="0"
@@ -4148,7 +4148,7 @@ export default function App() {
                 ? t("appHistory")
                 : t("appConnections")}
           </chakra.span>
-          <Flex gap="var(--space-1)" align="center">
+          <Flex gap="1" align="center">
             <IconButton
               onClick={toggleTheme}
               title={theme === "dark" ? t("appThemeToLight") : t("appThemeToDark")}
@@ -4464,7 +4464,7 @@ export default function App() {
           <>
             <Flex
               align="center"
-              gap="var(--space-3)"
+              gap="3"
               pl={sidebarCollapsed ? "46px" : "14px"}
               pr="3.5"
               py="2"
@@ -4476,7 +4476,7 @@ export default function App() {
               transition="background var(--dur-med) var(--ease), box-shadow var(--dur-med) var(--ease)"
               css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
             >
-              <Flex align="center" gap="var(--space-2)" overflow="hidden">
+              <Flex align="center" gap="2" overflow="hidden">
                 {selectedProfile ? (
                   <>
                     <StatusDot variant="connected" />
@@ -4650,7 +4650,7 @@ export default function App() {
           return (
             <Flex
               align="center"
-              gap="var(--space-2)"
+              gap="2"
               px="3.5"
               py="5px"
               bg={isError ? "app.bgError" : isWarning ? "app.bgWarning" : "app.surfaceMuted"}

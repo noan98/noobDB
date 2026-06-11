@@ -326,7 +326,7 @@ function ERDiagramInner({
         alignItems="center"
         gap="3"
         flexWrap="wrap"
-        padding="14px 24px"
+        py="3.5" px="6"
         borderBottom="1px solid"
         borderColor="app.border"
       >

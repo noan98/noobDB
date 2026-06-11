@@ -96,7 +96,7 @@ export function CellValueViewer({ columnName, value, isBinary, onClose }: Props)
             minH="80px"
             maxH="60vh"
             overflow="auto"
-            p="10px 12px"
+            py="2.5" px="3"
             fontFamily="mono"
             fontSize="sm"
             lineHeight={1.5}

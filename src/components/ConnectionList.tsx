@@ -944,7 +944,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         <MotionTreeRow
           pt="5px"
           pb="5px"
-          pr="10px"
+          pr="2.5"
           pl="5px"
           // プロファイルカラー / 本番 / アクティブを左端のアクセントバーで示す。
           // 識別性を上げるため 4px に。全行で同一幅 (色なしは transparent) にして
@@ -1108,7 +1108,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                 return (
                   <TreeNode key={db}>
                     <TreeRow
-                      pl="4px"
+                      pl="1"
                       onClick={() => toggleDb(db)}
                       onContextMenu={(e) => handleDbContextMenu(e, db)}
                       role="treeitem"
@@ -1141,7 +1141,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                             return (
                               <TreeNode key={tbl}>
                                 <TreeRow
-                                  pl="4px"
+                                  pl="1"
                                   role="treeitem"
                                   aria-expanded={tOpen}
                                   onClick={() => toggleTable(db, tbl)}
@@ -1326,15 +1326,15 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                     <Box
                       display="flex"
                       alignItems="center"
-                      gap="var(--space-1)"
+                      gap="1"
                       whiteSpace="nowrap"
                       overflow="hidden"
                       userSelect="none"
                       cursor="pointer"
-                      pt="6px"
-                      pr="10px"
-                      pb="6px"
-                      pl="6px"
+                      pt="1.5"
+                      pr="2.5"
+                      pb="1.5"
+                      pl="1.5"
                       fontSize="xs"
                       textTransform="uppercase"
                       letterSpacing="0.06em"
@@ -1444,7 +1444,8 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
       borderColor="app.borderStrong"
       borderRadius="md"
       boxShadow="md"
-      p="8px 10px"
+      py="2"
+      px="2.5"
       fontSize="sm"
       color="app.text"
       pointerEvents="none"
@@ -1452,10 +1453,10 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
       top={`${pos ? pos.top : anchor.top}px`}
       visibility={pos ? "visible" : "hidden"}
     >
-      <chakra.div fontFamily="mono" fontWeight={600} mb="6px" wordBreak="break-all">
+      <chakra.div fontFamily="mono" fontWeight={600} mb="1.5" wordBreak="break-all">
         {col.name}
       </chakra.div>
-      <chakra.dl display="grid" gridTemplateColumns="auto 1fr" gap="2px 10px" m={0}>
+      <chakra.dl display="grid" gridTemplateColumns="auto 1fr" rowGap="0.5" columnGap="2.5" m={0}>
         <TooltipDt>{t("colTipType")}</TooltipDt>
         <TooltipDd>{col.data_type}</TooltipDd>
         <TooltipDt>{t("colTipNullable")}</TooltipDt>

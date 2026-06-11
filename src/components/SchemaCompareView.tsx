@@ -31,14 +31,14 @@ import { Button, Checkbox, Input, PressableButton, Select } from "./ui";
 const sidesCss: SystemStyleObject = {
   display: "flex",
   alignItems: "flex-end",
-  gap: "12px",
+  gap: "3",
   margin: "16px 0",
   flexWrap: "wrap",
 };
 const sideCss: SystemStyleObject = {
   display: "flex",
   flexDirection: "column",
-  gap: "6px",
+  gap: "1.5",
   flex: "1 1 240px",
   minWidth: "200px",
   "& select": { width: "100%" },
@@ -66,14 +66,14 @@ const emptyCss: SystemStyleObject = {
 const summaryCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
-  gap: "8px",
+  gap: "2",
   flexWrap: "wrap",
   margin: "16px 0 10px",
 };
 const hideSameCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "1.5",
   fontSize: "var(--text-sm)",
   color: "var(--text-secondary)",
   marginLeft: "auto",
@@ -82,7 +82,7 @@ const hideSameCss: SystemStyleObject = {
 const tablesCss: SystemStyleObject = {
   display: "flex",
   flexDirection: "column",
-  gap: "4px",
+  gap: "1",
 };
 // `<details>` 本体。`<summary>` はタグセレクタ (要素スコープ) で括る。
 const tableCss: SystemStyleObject = {
@@ -93,8 +93,8 @@ const tableCss: SystemStyleObject = {
   "& > summary": {
     display: "flex",
     alignItems: "center",
-    gap: "10px",
-    padding: "8px 12px",
+    gap: "2.5",
+    py: "2", px: "3",
     cursor: "pointer",
     listStyle: "none",
     userSelect: "none",
@@ -117,12 +117,12 @@ const columnsCss: SystemStyleObject = {
   padding: "0 12px 10px 12px",
   display: "flex",
   flexDirection: "column",
-  gap: "4px",
+  gap: "1",
 };
 const columnCss: SystemStyleObject = {
   display: "flex",
   alignItems: "baseline",
-  gap: "8px",
+  gap: "2",
   fontSize: "var(--text-sm)",
   padding: "3px 0",
   borderTop: "1px solid var(--border-subtle)",
@@ -139,7 +139,7 @@ const coltypeCss: SystemStyleObject = {
 const changesCss: SystemStyleObject = {
   display: "flex",
   flexWrap: "wrap",
-  gap: "4px 12px",
+  gap: "1 3",
 };
 const changeCss: SystemStyleObject = {
   fontFamily: "var(--font-mono)",
@@ -147,22 +147,22 @@ const changeCss: SystemStyleObject = {
   color: "var(--text-secondary)",
 };
 const syncCss: SystemStyleObject = {
-  marginTop: "24px",
-  paddingTop: "16px",
+  marginTop: "6",
+  paddingTop: "4",
   borderTop: "1px solid var(--border)",
 };
 const syncTitleCss: SystemStyleObject = { margin: "0 0 4px", fontSize: "var(--text-md)" };
 const syncControlsCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
-  gap: "12px",
+  gap: "3",
   flexWrap: "wrap",
   margin: "10px 0",
 };
 const destructiveCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "1.5",
   fontSize: "var(--text-sm)",
   color: "var(--status-error)",
   cursor: "pointer",
@@ -178,14 +178,14 @@ const statementsCss: SystemStyleObject = {
   padding: 0,
   display: "flex",
   flexDirection: "column",
-  gap: "6px",
+  gap: "1.5",
 };
 const statementHeadCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
-  gap: "8px",
+  gap: "2",
   cursor: "pointer",
-  marginBottom: "6px",
+  marginBottom: "1.5",
 };
 const destructiveFlagCss: SystemStyleObject = {
   fontSize: "var(--text-xs)",
@@ -215,7 +215,7 @@ const planWarningsCss: SystemStyleObject = {
 const limitCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "1.5",
   fontSize: "var(--text-sm)",
   color: "var(--text-secondary)",
   "& input": { width: "80px" },
@@ -296,7 +296,7 @@ function statementCss(destructive: boolean): SystemStyleObject {
     border: "1px solid var(--border)",
     borderRadius: "var(--radius-md)",
     background: "var(--bg-elevated)",
-    padding: "8px 10px",
+    py: "2", px: "2.5",
   };
   return destructive ? { ...base, borderColor: "var(--status-error)" } : base;
 }
@@ -731,7 +731,7 @@ export function SchemaCompareView({
     <Box
       flex="1"
       overflowY="auto"
-      padding="20px 24px"
+      py="5" px="6"
       display="flex"
       flexDirection="column"
       gap="18px"
@@ -743,15 +743,15 @@ export function SchemaCompareView({
         gap="3"
         borderBottom="1px solid"
         borderColor="app.border"
-        paddingBottom="10px"
+        paddingBottom="2.5"
       >
         <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
           {t("schemaCompareTitle")}
         </chakra.h2>
         <Button
           minWidth="28px"
-          px="8px"
-          py="4px"
+          px="2"
+          py="1"
           fontSize="base"
           lineHeight={1}
           onClick={onClose}
@@ -781,11 +781,11 @@ export function SchemaCompareView({
             <Button
               type="button"
               minWidth="28px"
-              px="8px"
-              py="4px"
+              px="2"
+              py="1"
               fontSize="base"
               lineHeight={1}
-              marginBottom="4px"
+              marginBottom="1"
               onClick={swap}
               title={t("schemaCompareSwap")}
               aria-label={t("schemaCompareSwap")}

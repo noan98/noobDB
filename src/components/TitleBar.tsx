@@ -75,7 +75,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
       transition="box-shadow var(--dur-med) var(--ease)"
       css={{ userSelect: "none", WebkitUserSelect: "none" }}
     >
-      <Flex data-tauri-drag-region align="center" gap="8px" flex="1" minW={0} px="12px">
+      <Flex data-tauri-drag-region align="center" gap="2" flex="1" minW={0} px="3">
         <chakra.svg
           display="block"
           flexShrink={0}
@@ -112,7 +112,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
 
         {/* アクティブ接続コンテキスト (#466)。Settings/Help など作業画面以外でも常時表示。 */}
         {connection && (
-          <Flex align="center" gap="6px" minW={0} css={{ pointerEvents: "none" }}>
+          <Flex align="center" gap="1.5" minW={0} css={{ pointerEvents: "none" }}>
             <chakra.span color="app.borderStrong" flexShrink={0} aria-hidden>
               /
             </chakra.span>
@@ -150,7 +150,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
                 fontWeight={700}
                 textTransform="uppercase"
                 letterSpacing="0.06em"
-                px="6px"
+                px="1.5"
                 py="1px"
                 borderRadius="pill"
                 bg="app.status.error"

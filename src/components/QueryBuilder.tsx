@@ -22,19 +22,20 @@ import { useToast } from "./Toast";
  * タグ/要素スコープのセレクタとして残す (CodeMirror 本体のテーマは対象外)。
  */
 const errorCss: SystemStyleObject = {
-  padding: "8px 10px",
+  py: "2",
+  px: "2.5",
   border: "1px solid var(--border)",
   background: "var(--bg-error)",
   color: "var(--text-error)",
   borderRadius: "var(--radius-md)",
   fontSize: "var(--text-sm)",
-  marginBottom: "10px",
+  marginBottom: "2.5",
 };
 const sectionCss: SystemStyleObject = {
   display: "flex",
   flexDirection: "column",
-  gap: "6px",
-  marginBottom: "10px",
+  gap: "1.5",
+  marginBottom: "2.5",
 };
 const sectionTitleCss: SystemStyleObject = {
   fontSize: "var(--text-xs)",
@@ -47,25 +48,26 @@ const sectionRowCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  gap: "var(--space-2)",
+  gap: "2",
 };
 // `qb-section` + `qb-grid-2` の合成 (grid が flex を上書きする)。
 const grid2SectionCss: SystemStyleObject = {
-  marginBottom: "10px",
+  marginBottom: "2.5",
   display: "grid",
   gridTemplateColumns: "1fr 1fr",
-  gap: "var(--space-3)",
+  gap: "3",
 };
 const grid2ChildCss: SystemStyleObject = {
   display: "flex",
   flexDirection: "column",
-  gap: "var(--space-1)",
+  gap: "1",
 };
-const pillListCss: SystemStyleObject = { display: "flex", flexWrap: "wrap", gap: "var(--space-1)" };
+const pillListCss: SystemStyleObject = { display: "flex", flexWrap: "wrap", gap: "1" };
 /** クエリ種別ピル (旧 `.qb-pill`)。選択中はアクセント色。 */
 function pillCss(active: boolean): SystemStyleObject {
   const base: SystemStyleObject = {
-    padding: "4px 10px",
+    py: "1",
+    px: "2.5",
     border: "1px solid var(--border-strong)",
     background: "var(--bg-elevated)",
     color: "var(--text)",
@@ -83,13 +85,13 @@ function pillCss(active: boolean): SystemStyleObject {
 const checkboxLabelCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "1.5",
   fontSize: "var(--text-md)",
   fontWeight: 500,
   color: "var(--text)",
   margin: 0,
 };
-const rowCss: SystemStyleObject = { display: "flex", gap: "6px", alignItems: "center" };
+const rowCss: SystemStyleObject = { display: "flex", gap: "1.5", alignItems: "center" };
 // 行内の入力 (旧 `.qb-row-input` / `.qb-col-input`) は伸縮させる。
 const rowInputCss: SystemStyleObject = { flex: 1, minWidth: 0 };
 const opCss: SystemStyleObject = { width: "110px", flexShrink: 0 };
@@ -102,7 +104,8 @@ const eqCss: SystemStyleObject = {
   minWidth: "16px",
 };
 const iconBtnCss: SystemStyleObject = {
-  padding: "2px 8px",
+  py: "0.5",
+  px: "2",
   fontSize: "var(--text-sm)",
   border: "1px solid var(--border-strong)",
   background: "var(--bg-elevated)",
@@ -136,7 +139,7 @@ const selectedColsCss: SystemStyleObject = {
   },
   "& td:last-child": { borderRight: "none" },
 };
-const selectedColNameCss: SystemStyleObject = { marginRight: "6px" };
+const selectedColNameCss: SystemStyleObject = { marginRight: "1.5" };
 const chipRemoveCss: SystemStyleObject = {
   padding: "0 6px",
   fontSize: "var(--text-xs)",
@@ -155,11 +158,11 @@ const smallBtnCss: SystemStyleObject = {
 };
 // `qb-section` + `qb-limit-section` の合成。
 const limitSectionCss: SystemStyleObject = {
-  marginBottom: "10px",
+  marginBottom: "2.5",
   display: "grid",
   gridTemplateColumns: "80px 1fr",
   alignItems: "center",
-  gap: "var(--space-3)",
+  gap: "3",
 };
 const limitInputCss: SystemStyleObject = { maxWidth: "120px" };
 const previewWrapCss: SystemStyleObject = { position: "relative" };
@@ -560,7 +563,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
         {t("qbTitle")}
       </ModalHeader>
       <ModalBody>
-        <Box display="flex" flexDirection="column" gap="6px">
+        <Box display="flex" flexDirection="column" gap="1.5">
           {loadError && <Box css={errorCss}>{loadError}</Box>}
 
           <chakra.section css={sectionCss}>

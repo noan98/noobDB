@@ -13,7 +13,7 @@ import { chakra } from "@chakra-ui/react";
 
 /** モーダル内のフィールドブロック (縦積み)。`.export-section` 相当。 */
 export const FormSection = chakra("section", {
-  base: { display: "flex", flexDirection: "column", gap: "6px" },
+  base: { display: "flex", flexDirection: "column", gap: "1.5" },
 });
 
 /** 小さい大文字のフィールドラベル。`.export-label` 相当。入力に紐づく場合は
@@ -31,7 +31,7 @@ export const FieldLabel = chakra("label", {
 
 /** 入力欄 + 参照ボタンの横並び。`.export-path-row` 相当。 */
 export const PathRow = chakra("div", {
-  base: { display: "flex", gap: "var(--space-2)", alignItems: "center" },
+  base: { display: "flex", gap: "2", alignItems: "center" },
 });
 
 /**
@@ -50,7 +50,7 @@ export const PathRow = chakra("div", {
  */
 export const ErrorNote = chakra("div", {
   base: {
-    padding: "8px 10px",
+    py: "2", px: "2.5",
     border: "1px solid",
     borderColor: "app.border",
     bg: "app.bgError",

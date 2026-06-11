@@ -19,9 +19,9 @@ const Option = chakra("label", {
   base: {
     display: "flex",
     alignItems: "flex-start",
-    gap: "8px",
-    px: "10px",
-    py: "8px",
+    gap: "2",
+    px: "2.5",
+    py: "2",
     borderRadius: "8px",
     cursor: "pointer",
     borderWidth: "1px",
@@ -47,10 +47,10 @@ export function ProfileImportDialog({ onConfirm, onCancel }: Props) {
         {t("profileImportTitle")}
       </ModalHeader>
       <ModalBody>
-        <chakra.p fontSize="sm" color="app.textSecondary" mb="12px">
+        <chakra.p fontSize="sm" color="app.textSecondary" mb="3">
           {t("profileImportNote")}
         </chakra.p>
-        <chakra.div display="flex" flexDirection="column" gap="8px">
+        <chakra.div display="flex" flexDirection="column" gap="2">
           {options.map((o) => (
             <Option
               key={o.value}

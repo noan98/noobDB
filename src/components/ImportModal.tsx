@@ -293,7 +293,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
         {t("importTitle", { table })}
       </ModalHeader>
 
-      <ModalBody display="flex" flexDirection="column" gap="var(--space-4)">
+      <ModalBody display="flex" flexDirection="column" gap="4">
         <FormSection>
           <FieldLabel htmlFor="import-path">{t("importFile")}</FieldLabel>
           <PathRow>
@@ -416,13 +416,13 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             <chakra.div
               display="grid"
               gridTemplateColumns="repeat(auto-fill, minmax(280px, 1fr))"
-              gap="var(--space-2)"
+              gap="2"
             >
               {tableColumns.map((col) => (
                 <chakra.div
                   display="flex"
                   alignItems="center"
-                  gap="var(--space-2)"
+                  gap="2"
                   key={col.name}
                 >
                   <chakra.span
@@ -438,7 +438,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
                     {col.key === "PRI" && (
                       <chakra.span
                         fontSize="xs"
-                        ml="var(--space-1)"
+                        ml="1"
                         color="app.cell.date"
                         title={t("colPkTitle")}
                       >
@@ -494,7 +494,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
                 css={{
                   "& th, & td": {
                     border: "1px solid var(--border)",
-                    padding: "4px 8px",
+                    py: "1", px: "2",
                     textAlign: "left",
                     whiteSpace: "nowrap",
                     maxWidth: "240px",

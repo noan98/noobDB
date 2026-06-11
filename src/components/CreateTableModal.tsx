@@ -66,8 +66,8 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
       <ModalHeader onClose={onClose} closeLabel={t("createTableClose")}>
         {t("createTableTitle")}
       </ModalHeader>
-      <ModalBody display="flex" flexDirection="column" gap="var(--space-4)">
-        <Flex align="center" gap="var(--space-2)">
+      <ModalBody display="flex" flexDirection="column" gap="4">
+        <Flex align="center" gap="2">
           <chakra.label fontSize="sm" color="app.textSecondary" minW="90px">
             {t("createTableName")}
           </chakra.label>
@@ -85,8 +85,8 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
           ))}
         </datalist>
 
-        <chakra.div display="flex" flexDirection="column" gap="6px">
-          <chakra.div display="grid" gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto" gap="6px" fontSize="xs" color="app.textMuted" px="2px">
+        <chakra.div display="flex" flexDirection="column" gap="1.5">
+          <chakra.div display="grid" gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto" gap="1.5" fontSize="xs" color="app.textMuted" px="0.5">
             <span>{t("createTableColName")}</span>
             <span>{t("createTableColType")}</span>
             <span>{t("createTableColNotNull")}</span>
@@ -97,7 +97,7 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
             <span />
           </chakra.div>
           {columns.map((c, i) => (
-            <chakra.div key={i} display="grid" gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto" gap="6px" alignItems="center">
+            <chakra.div key={i} display="grid" gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto" gap="1.5" alignItems="center">
               <Input value={c.name} onChange={(e) => setCol(i, { name: e.target.value })} placeholder="column" />
               <Input value={c.type} onChange={(e) => setCol(i, { type: e.target.value })} list={dataListId} />
               <Switch checked={c.notNull} onChange={() => setCol(i, { notNull: !c.notNull })} />
@@ -113,7 +113,7 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
                 color="app.textMuted"
                 _hover={{ color: "app.dangerFg" }}
                 disabled={columns.length <= 1}
-                px="4px"
+                px="1"
               >
                 <Icon name="close" />
               </chakra.button>
@@ -126,7 +126,7 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
           </Flex>
         </chakra.div>
 
-        <chakra.div display="flex" flexDirection="column" gap="4px">
+        <chakra.div display="flex" flexDirection="column" gap="1">
           <chakra.span fontSize="xs" color="app.textMuted">{t("createTablePreview")}</chakra.span>
           <chakra.pre
             fontFamily="mono"
@@ -135,7 +135,7 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
             borderWidth="1px"
             borderColor="app.border"
             borderRadius="8px"
-            p="10px"
+            p="2.5"
             overflowX="auto"
             whiteSpace="pre"
             color="app.text"

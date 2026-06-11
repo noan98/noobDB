@@ -266,7 +266,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
                     </chakra.button>
                   </chakra.span>
                 </TreeRow>
-                <Box pt="0" pr="6px" pb="4px" pl="28px" fontSize="2xs" color="app.textMuted">
+                <Box pt="0" pr="1.5" pb="1" pl="28px" fontSize="2xs" color="app.textMuted">
                   {formatTime(h.executed_at)}
                 </Box>
               </MotionTreeNode>

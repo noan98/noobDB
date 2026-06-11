@@ -56,7 +56,7 @@ function PasswordInput({ value, onChange, hasStored }: PasswordInputProps) {
         display="inline-flex"
         alignItems="center"
         justifyContent="center"
-        p="4px"
+        p="1"
         border="none"
         bg="transparent"
         color="app.textMuted"
@@ -122,7 +122,7 @@ function Fieldset({ children }: { children: ReactNode }) {
       border="1px solid"
       borderColor="app.border"
       borderRadius="md"
-      p="var(--space-3)"
+      p="3"
     >
       {children}
     </Box>
@@ -383,8 +383,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     <Box
       display="grid"
       gridTemplateColumns="1fr 1fr"
-      gap="var(--space-3)"
-      p="var(--space-4)"
+      gap="3"
+      p="4"
       overflowY="auto"
     >
       <Box as="h2" gridColumn="span 2" m="0">
@@ -413,7 +413,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <Legend>{t("formSqliteLegend")}</Legend>
           <Box>
             <label>{t("formSqliteFilePath")}</label>
-            <Flex gap="var(--space-2)" align="end">
+            <Flex gap="2" align="end">
               <Input
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
@@ -561,13 +561,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       {!isFileBacked && (
         <Fieldset>
           <Legend>
-            <Flex display="inline-flex" align="center" gap="6px" fontSize="12px">
+            <Flex display="inline-flex" align="center" gap="1.5" fontSize="12px">
               <Switch checked={useSsh} onChange={setUseSsh} size="sm" label={t("formUseSsh")} />
             </Flex>
           </Legend>
           {useSsh && (
             <>
-              <Box display="grid" gridTemplateColumns="1fr 120px" gap="12px">
+              <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
                 <Box>
                   <label>{t("formSshHost")}</label>
                   <Input value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
@@ -582,11 +582,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   />
                 </Box>
               </Box>
-              <Box mt="8px">
+              <Box mt="2">
                 <label>{t("formSshUser")}</label>
                 <Input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
               </Box>
-              <Box mt="8px">
+              <Box mt="2">
                 <label>{t("formSshAuthMethod")}</label>
                 <Select
                   value={sshAuthMethod}
@@ -599,14 +599,14 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               </Box>
               {sshAuthMethod === "key" && (
                 <>
-                  <Box mt="8px">
+                  <Box mt="2">
                     <label>{t("formPrivateKeyPath")}</label>
-                    <Flex gap="var(--space-2)" align="end">
+                    <Flex gap="2" align="end">
                       <Input value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
                       <Button type="button" onClick={pickKeyFile}>{t("formBrowse")}</Button>
                     </Flex>
                   </Box>
-                  <Box mt="8px">
+                  <Box mt="2">
                     <label>{t("formSshPassphrase")}</label>
                     <PasswordInput
                       value={sshPassphrase}
@@ -617,7 +617,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 </>
               )}
               {sshAuthMethod === "password" && (
-                <Box mt="8px">
+                <Box mt="2">
                   <label>{t("formSshPassword")}</label>
                   <PasswordInput
                     value={sshPassword}
@@ -627,7 +627,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 </Box>
               )}
               {sshAuthMethod === "agent" && (
-                <Text color="app.textMuted" fontSize="11px" mt="8px" mb="0">
+                <Text color="app.textMuted" fontSize="11px" mt="2" mb="0">
                   {t("formSshAgentHelp")}
                 </Text>
               )}
@@ -639,7 +639,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       {message && <Box gridColumn="span 2" color="app.textSuccess">{message}</Box>}
       {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
 
-      <Flex gridColumn="span 2" gap="var(--space-2)" justify="flex-end">
+      <Flex gridColumn="span 2" gap="2" justify="flex-end">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={saving || testing}>
           {t("formCancel")}
         </Button>

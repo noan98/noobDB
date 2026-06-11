@@ -185,7 +185,7 @@ const nodeLabelCss: SystemStyleObject = {
 const nodeBadgesCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
-  gap: "var(--space-1)",
+  gap: "1",
   flexShrink: 0,
 };
 
@@ -244,7 +244,7 @@ function hintBadgeCss(sev: "caution" | "warning"): SystemStyleObject {
     fontWeight: 700,
     minWidth: "14px",
     textAlign: "center",
-    padding: "2px 4px",
+    py: "0.5", px: "1",
   };
   if (sev === "caution") {
     return {
@@ -322,9 +322,9 @@ const detailHeaderCss: SystemStyleObject = {
   background: "var(--bg-toolbar)",
   flexShrink: 0,
 };
-const detailBodyCss: SystemStyleObject = { overflow: "auto", padding: "10px 12px" };
+const detailBodyCss: SystemStyleObject = { overflow: "auto", py: "2.5", px: "3" };
 const detailHintCss: SystemStyleObject = {
-  padding: "var(--space-3)",
+  padding: "3",
   color: "var(--text-muted)",
   fontSize: "var(--text-sm)",
 };
@@ -333,7 +333,7 @@ const detailLabelCss: SystemStyleObject = {
   fontSize: "var(--text-md)",
   fontWeight: 600,
   color: "var(--text)",
-  marginBottom: "8px",
+  marginBottom: "2",
   wordBreak: "break-word",
 };
 // 属性テーブルのみ `th`/`td` をタグセレクタで括る (className ではなく要素スコープ)。
@@ -365,8 +365,8 @@ const EXPLAIN_EMPTY_PROPS = {
   minWidth: 0,
   display: "flex",
   flexDirection: "column",
-  gap: "10px",
-  padding: "var(--space-5)",
+  gap: "2.5",
+  padding: "5",
   color: "app.textMuted",
   fontSize: "md",
   bg: "app.surface",
@@ -551,8 +551,8 @@ export function ExplainViewer({ result, streaming }: Props) {
         minWidth={0}
         display="flex"
         flexDirection="column"
-        gap="10px"
-        padding="var(--space-5)"
+        gap="2.5"
+        padding="5"
         color="app.textMuted"
         fontSize="md"
         bg="app.surface"
@@ -563,7 +563,7 @@ export function ExplainViewer({ result, streaming }: Props) {
         </chakra.p>
         <chakra.pre
           margin={0}
-          padding="10px"
+          padding="2.5"
           fontFamily="var(--font-mono)"
           fontSize="xs"
           whiteSpace="pre-wrap"
@@ -617,7 +617,7 @@ export function ExplainViewer({ result, streaming }: Props) {
           <chakra.span flex={1} />
           <Button
             size="sm"
-            px="10px"
+            px="2.5"
             onClick={() => setCollapsed(new Set())}
             title={t("explainExpandAll")}
           >
@@ -625,7 +625,7 @@ export function ExplainViewer({ result, streaming }: Props) {
           </Button>
           <Button
             size="sm"
-            px="10px"
+            px="2.5"
             onClick={() => setCollapsed(new Set(allIds))}
             title={t("explainCollapseAll")}
           >

@@ -237,7 +237,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
         {t("exportTitle")}
       </ModalHeader>
 
-      <ModalBody display="flex" flexDirection="column" gap="var(--space-4)">
+      <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="md" color="app.text">
           {t("exportRowCount", { rows: rows.length })}
         </chakra.div>
@@ -292,7 +292,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
             role="radiogroup"
             aria-label={t("exportFormat")}
             display="flex"
-            gap="var(--space-2)"
+            gap="2"
           >
             {(["csv", "json"] as const).map((fmt) => (
               <chakra.label
