@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
+import { Icon } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Input, Select, Switch } from "./ui";
@@ -369,6 +370,25 @@ const SettingsSwatch = chakra("button", {
 
 const SettingsLogsActions = chakra("div", {
   base: { display: "flex", alignItems: "center", gap: "var(--space-2)" },
+});
+
+const SettingsLogsIconButton = chakra("button", {
+  base: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    w: "28px",
+    h: "28px",
+    p: 0,
+    color: "app.textSecondary",
+    borderRadius: "sm",
+    cursor: "pointer",
+    transitionProperty: "color, background",
+    transitionDuration: "var(--dur-fast)",
+    transitionTimingFunction: "var(--ease)",
+    _hover: { color: "app.text", bg: "app.hover" },
+    _disabled: { opacity: 0.35, cursor: "not-allowed" },
+  },
 });
 
 const SettingsLogsView = chakra("textarea", {
@@ -1027,9 +1047,15 @@ export function SettingsView({ theme, onClose }: Props) {
             <SettingsReset onClick={loadLogs} disabled={logLoading}>
               {t("settingsLogsRefresh")}
             </SettingsReset>
-            <SettingsReset onClick={copyLogs} disabled={!logText}>
-              {logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
-            </SettingsReset>
+            <SettingsLogsIconButton
+              type="button"
+              onClick={copyLogs}
+              disabled={!logText}
+              title={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
+              aria-label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
+            >
+              <Icon name={logCopied ? "check" : "copy"} size={15} />
+            </SettingsLogsIconButton>
             <SettingsReset onClick={clearLogs} disabled={!logText}>
               {t("settingsLogsClear")}
             </SettingsReset>

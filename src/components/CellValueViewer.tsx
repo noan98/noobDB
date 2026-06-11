@@ -3,6 +3,7 @@ import { chakra } from "@chakra-ui/react";
 import { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
 import { copyToClipboard } from "./clipboard";
+import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { useToast } from "./Toast";
 import { Button, Switch } from "./ui";
@@ -124,9 +125,32 @@ export function CellValueViewer({ columnName, value, isBinary, onClose }: Props)
           </chakra.span>
         )}
         <chakra.div flex="1" />
-        <Button type="button" onClick={handleCopy} disabled={isNull}>
-          {copied ? t("gridCopied") : t("cellViewerCopy")}
-        </Button>
+        <chakra.button
+          type="button"
+          onClick={handleCopy}
+          disabled={isNull}
+          title={copied ? t("gridCopied") : t("cellViewerCopy")}
+          aria-label={copied ? t("gridCopied") : t("cellViewerCopy")}
+          display="inline-flex"
+          alignItems="center"
+          justifyContent="center"
+          w="34px"
+          h="34px"
+          p={0}
+          color="app.textMuted"
+          bg="app.bgInput"
+          border="1px solid"
+          borderColor="app.border"
+          borderRadius="md"
+          cursor="pointer"
+          transitionProperty="color, background, border-color"
+          transitionDuration="var(--dur-fast)"
+          transitionTimingFunction="var(--ease)"
+          _hover={{ color: "app.text", bg: "app.hover" }}
+          _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+        >
+          <Icon name={copied ? "check" : "copy"} size={16} />
+        </chakra.button>
         <Button type="button" variant="primary" onClick={onClose}>
           {t("cellViewerClose")}
         </Button>
