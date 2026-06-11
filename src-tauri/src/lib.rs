@@ -89,6 +89,16 @@ pub mod __test_api {
         crate::commands::import::ensure_import_writable(session)
     }
 
+    /// Drives the `kill_process` IPC command's core path (session lookup +
+    /// read-only guard + driver kill) without a Tauri runtime.
+    pub async fn kill_process_via_command(
+        state: &AppState,
+        session_id: &str,
+        process_id: i64,
+    ) -> crate::error::Result<()> {
+        crate::commands::process::kill_process_inner(state, session_id, process_id).await
+    }
+
     /// Drives the full schema-comparison path (`commands::diff`) without Tauri:
     /// collects both sides' table / column metadata from live connections and
     /// runs the pure diff. Lets integration tests verify real introspection
@@ -222,6 +232,8 @@ pub fn run() {
             commands::schema::list_schema_objects,
             commands::schema::get_object_definition,
             commands::schema::table_row_estimates,
+            commands::process::list_processes,
+            commands::process::kill_process,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
             commands::sync::generate_sync_sql,

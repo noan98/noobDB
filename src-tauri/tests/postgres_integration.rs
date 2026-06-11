@@ -310,3 +310,71 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
     }
     conn.close().await;
 }
+
+/// プロセス監視パネル (list_processes / kill_process) の PostgreSQL 経路。
+/// pg_stat_activity のクライアントバックエンドが一覧に現れること、別接続を
+/// pg_terminate_backend で終了させると一覧から消えることを確認する。
+#[tokio::test]
+async fn postgres_process_list_and_kill() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // The listing query runs on one of our own pooled backends, so the result
+    // can never be empty.
+    let processes = conn.list_processes().await.expect("list_processes");
+    assert!(
+        !processes.is_empty(),
+        "process list must at least contain this client's own backend"
+    );
+    assert!(
+        processes.iter().all(|p| p.id > 0),
+        "every backend must carry a positive pid: {processes:?}"
+    );
+    assert!(
+        processes.iter().any(|p| p.is_self),
+        "the listing backend itself must be flagged is_self: {processes:?}"
+    );
+
+    // Open a second, independent connection and learn its backend pid.
+    let victim = t::connect(&opts).await.expect("second connect");
+    let res = victim
+        .execute("SELECT pg_backend_pid() AS pid", None)
+        .await
+        .expect("backend pid");
+    let victim_pid = match &res.rows[0][0] {
+        t::Value::Int(v) => *v,
+        other => panic!("unexpected pg_backend_pid value: {other:?}"),
+    };
+    assert!(
+        conn.list_processes()
+            .await
+            .expect("list before kill")
+            .iter()
+            .any(|p| p.id == victim_pid),
+        "the second connection must be visible before the kill"
+    );
+
+    conn.kill_process(victim_pid).await.expect("kill");
+
+    // Backend teardown is asynchronous; poll briefly.
+    let mut gone = false;
+    for _ in 0..20 {
+        let now = conn.list_processes().await.expect("list after kill");
+        if !now.iter().any(|p| p.id == victim_pid) {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(
+        gone,
+        "terminated backend {victim_pid} still in the process list"
+    );
+
+    victim.close().await;
+    conn.close().await;
+}

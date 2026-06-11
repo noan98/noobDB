@@ -126,6 +126,40 @@ pub struct TableRowEstimate {
     pub estimate: Option<i64>,
 }
 
+/// One server-side process/connection shown in the process monitor panel.
+/// MySQL maps rows from `processlist` (ID/USER/HOST/DB/COMMAND/STATE/TIME/
+/// INFO), PostgreSQL from `pg_stat_activity` (pid/usename/client addr/datname/
+/// state/wait_event/query age/query). SQLite is file-backed and has no server
+/// processes — its driver returns an error instead of an empty list so the
+/// frontend can tell "unsupported" from "nothing running".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessInfo {
+    /// MySQL connection id / PostgreSQL backend pid. The value passed back to
+    /// `kill_process`.
+    pub id: i64,
+    pub user: Option<String>,
+    /// Client endpoint: MySQL `HOST` (`addr:port`), PostgreSQL
+    /// `client_addr:client_port` (`None` for local/unix-socket backends).
+    pub host: Option<String>,
+    pub database: Option<String>,
+    /// Coarse activity: MySQL `COMMAND` (Query/Sleep/...), PostgreSQL `state`
+    /// (active/idle/...).
+    pub command: Option<String>,
+    /// Finer detail: MySQL `STATE`, PostgreSQL `wait_event`.
+    pub state: Option<String>,
+    /// MySQL: seconds in the current command. PostgreSQL: seconds since the
+    /// current/last query started. `None` when the engine reports none.
+    pub time_secs: Option<i64>,
+    /// The running (or last) SQL text, as the engine reports it.
+    pub query: Option<String>,
+    /// True when this row is the very connection that ran the listing query —
+    /// i.e. one of this app's own pooled connections. Killing it drops the
+    /// app's session, so the UI warns before doing that. Best-effort: the
+    /// app's *other* pooled connections (same pool, different id) are not
+    /// flagged because the engine cannot tell them apart from other clients.
+    pub is_self: bool,
+}
+
 /// One unit produced by streaming SELECT execution. Columns are reported
 /// once (before any rows) so the UI can render headers immediately, then
 /// row batches arrive as they are read off the wire.

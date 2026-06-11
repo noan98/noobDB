@@ -1181,6 +1181,41 @@ const en = {
   cmdkActionToggleTheme: "Toggle light / dark theme",
   cmdkActionDisconnect: "Disconnect",
 
+  // プロセスモニタパネル
+  appProcesses: "Process monitor",
+  processTitle: "Process monitor",
+  processClose: "Close process monitor",
+  processDesc:
+    "Server-side connections and their running statements (MySQL processlist / PostgreSQL pg_stat_activity). Listing reads in-memory server state only, so polling is cheap. Select processes and kill them to terminate the connection.",
+  processRefresh: "Refresh",
+  processUpdatedAt: "Updated {time}",
+  processKillSelected: "Kill selected ({count})",
+  processKillConfirmTitle: "Kill processes",
+  processKillConfirmMessage:
+    "Kill {count} process(es) (id: {ids})? Running statements are interrupted and the connections are terminated.",
+  processKillSelfWarning:
+    "The selection includes this app's own connection — killing it will drop this session.",
+  processKillConfirmOk: "Kill",
+  processKillDone: "Killed {count} process(es)",
+  processKillFailed: "{failed} of {count} kill(s) failed: {error}",
+  processLoadError: "Failed to load processes: {error}",
+  processEmpty: "No processes to show.",
+  processReadOnlyHint:
+    "This is a read-only session: killing processes is disabled (enforced by the backend).",
+  processSelectAll: "Select all processes",
+  processSelectRow: "Select process {id}",
+  processSelfBadge: "this app",
+  processSelfBadgeTitle:
+    "This app's own connection (the one used to fetch this list). Killing it drops this session.",
+  processColId: "ID",
+  processColUser: "User",
+  processColHost: "Host",
+  processColDb: "DB",
+  processColCommand: "Command",
+  processColState: "State",
+  processColTime: "Time",
+  processColQuery: "Query",
+
   paginationPage: "Page {page} of {pages}",
   paginationRows: "{from}–{to} of {total} rows",
   paginationFirst: "First page",
@@ -2395,6 +2430,41 @@ const ja: Dict = {
   cmdkActionErDiagram: "ER 図を開く",
   cmdkActionToggleTheme: "ライト / ダークテーマ切替",
   cmdkActionDisconnect: "切断する",
+
+  // プロセスモニタパネル
+  appProcesses: "プロセスモニタ",
+  processTitle: "プロセスモニタ",
+  processClose: "プロセスモニタを閉じる",
+  processDesc:
+    "サーバ側の接続と実行中ステートメントの一覧です (MySQL processlist / PostgreSQL pg_stat_activity)。一覧の取得はサーバのメモリ上の状態を読むだけなので、ポーリングしても負荷はごく小さいです。プロセスを選択して kill すると接続を強制終了できます。",
+  processRefresh: "更新",
+  processUpdatedAt: "{time} 更新",
+  processKillSelected: "選択を kill ({count})",
+  processKillConfirmTitle: "プロセスを強制終了",
+  processKillConfirmMessage:
+    "{count} 件のプロセス (id: {ids}) を強制終了します。実行中のステートメントは中断され、接続は切断されます。よろしいですか?",
+  processKillSelfWarning:
+    "選択にこのアプリ自身の接続が含まれています。kill するとこのセッション自体が切断されます。",
+  processKillConfirmOk: "強制終了",
+  processKillDone: "{count} 件のプロセスを強制終了しました",
+  processKillFailed: "{count} 件中 {failed} 件の kill に失敗しました: {error}",
+  processLoadError: "プロセス一覧の取得に失敗しました: {error}",
+  processEmpty: "表示するプロセスがありません。",
+  processReadOnlyHint:
+    "読み取り専用セッションのため、プロセスの kill は無効です (バックエンドで強制されます)。",
+  processSelectAll: "すべてのプロセスを選択",
+  processSelectRow: "プロセス {id} を選択",
+  processSelfBadge: "このアプリ",
+  processSelfBadgeTitle:
+    "このアプリ自身の接続 (一覧の取得に使った接続) です。kill するとこのセッションが切断されます。",
+  processColId: "ID",
+  processColUser: "ユーザ",
+  processColHost: "ホスト",
+  processColDb: "DB",
+  processColCommand: "コマンド",
+  processColState: "状態",
+  processColTime: "時間",
+  processColQuery: "クエリ",
 
   paginationPage: "{page} / {pages} ページ",
   paginationRows: "{total} 件中 {from}–{to} 件",
