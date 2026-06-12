@@ -397,7 +397,12 @@ pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableS
 /// placeholder tuples of `ncols` each. Identifiers are pre-quoted by the
 /// caller; only positional `?` placeholders are emitted here so values bind
 /// as parameters rather than being spliced into the SQL text.
-pub(crate) fn build_insert_sql(table_ident: &str, cols_sql: &str, ncols: usize, nrows: usize) -> String {
+pub(crate) fn build_insert_sql(
+    table_ident: &str,
+    cols_sql: &str,
+    ncols: usize,
+    nrows: usize,
+) -> String {
     let mut tuple = String::with_capacity(ncols * 2 + 2);
     tuple.push('(');
     for c in 0..ncols {
