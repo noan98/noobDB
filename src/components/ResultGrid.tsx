@@ -400,10 +400,12 @@ export const GRID_CSS: SystemStyleObject = {
     flexShrink: 0,
     lineHeight: 1,
   },
+  // 未ソート列の ↕ ヒントはホバー時のみ表示する。常時表示だと全列に並んで
+  // ヘッダがごちゃつくため (幅は確保したままなのでホバー時のレイアウトシフトは無い)。
   "& th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc) .th-sort-indicator::before": {
     content: '"↕"',
     color: "var(--text-muted)",
-    opacity: 0.4,
+    opacity: 0,
   },
   "& th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc):hover .th-sort-indicator::before": {
     opacity: 0.85,
@@ -425,6 +427,10 @@ export const GRID_CSS: SystemStyleObject = {
     borderRadius: "7px",
   },
   // 列ヘッダのフィルタアイコン。クリックで条件ポップアップ (ColumnFilterMenu) を開く。
+  // 常時表示だと全列にアイコンと区切り線が並んでヘッダがごちゃつくため、ドラッグ
+  // グリップと同様にホバー/キーボードフォーカス時のみ現す (幅は確保したままなので
+  // 出現時のレイアウトシフトは無い)。フィルタ設定中の列とポップアップ表示中は
+  // 見失わないよう常時表示する。
   "& th .th-filter-button": {
     display: "inline-flex",
     alignItems: "center",
@@ -434,15 +440,17 @@ export const GRID_CSS: SystemStyleObject = {
     marginRight: "1",
     background: "transparent",
     border: "none",
-    borderLeft: "1px solid var(--border)",
     color: "var(--text-muted)",
     cursor: "pointer",
+    opacity: 0,
     transition:
-      "color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease)",
+      "color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease)",
   },
+  '& th:hover .th-filter-button, & th .th-filter-button:focus-visible, & th .th-filter-button[aria-expanded="true"]':
+    { opacity: 1 },
   "& th .th-filter-button:hover": { background: "var(--bg-hover)", color: "var(--text)" },
   // フィルタが設定されている列はアイコンとヘッダ全体をアクセント色で強調する。
-  "& th .th-filter-button.is-active": { color: "var(--accent)" },
+  "& th .th-filter-button.is-active": { color: "var(--accent)", opacity: 1 },
   "& th.is-filtered-col": {
     background: "color-mix(in srgb, var(--accent) 14%, var(--bg-header))",
   },
