@@ -85,8 +85,7 @@ import {
 import { quoteIdentFor } from "./sqlDialect";
 
 /**
- * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。`App.css` の
- * `:where(.results, .preview-pane-body) …` ルール群をコンポーネント側へ移設したもの。
+ * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。
  * `ResultGrid` のスクロール枠と `PreviewGrid` の各ペイン本体に `css` で適用する
  * (両者が `DataGrid` を共有するため定義を 1 箇所に集約する)。
  *
@@ -101,7 +100,7 @@ import { quoteIdentFor } from "./sqlDialect";
  * `css` オブジェクト + 子孫セレクタを **意図的に維持** する (className 文字列の
  * 同期が不要なよう、対象は素のタグセレクタに限定している)。
  */
-/** Per-density seed height (px) for the virtualizer's first paint (#410). The
+/** Per-density seed height (px) for the virtualizer's first paint. The
  *  real height is measured afterwards; these only need to be close. Values track
  *  the `--density-row-h` tokens in App.css. */
 const DENSITY_ROW_ESTIMATE: Record<Density, number> = {
@@ -124,8 +123,8 @@ export const GRID_CSS: SystemStyleObject = {
     borderRight: "1px solid var(--border)",
     borderBottom: "1px solid var(--border)",
     // セル余白は密度トークン (--density-cell-*) に従う。これ自体が --font-scale を
-    // 内包するため、フォント拡大時に窮屈にならず (#327)、かつ表示密度の切り替え
-    // (Compact / Normal / Spacious) で行高さ・余白を統合的に調整できる (#410)。
+    // 内包するため、フォント拡大時に窮屈にならず、かつ表示密度の切り替え
+    // (Compact / Normal / Spacious) で行高さ・余白を統合的に調整できる。
     padding: "var(--density-cell-py) var(--density-cell-px)",
     textAlign: "left",
     whiteSpace: "nowrap",
@@ -149,7 +148,7 @@ export const GRID_CSS: SystemStyleObject = {
     lineHeight: 1.2,
     gap: "1px",
   },
-  // 型アイコン + 名前を横並びにする行 (#474)。
+  // 型アイコン + 名前を横並びにする行。
   "& th .th-label-row": {
     display: "inline-flex",
     alignItems: "center",
@@ -200,7 +199,7 @@ export const GRID_CSS: SystemStyleObject = {
   // pattern stays stable regardless of which rows are mounted.
   "& tbody tr.grid-row-stripe td": { background: "var(--bg-stripe)" },
   "& tbody tr:hover td": { background: "var(--bg-row-hover)" },
-  // 矩形範囲選択 (#486)。アクセント色の薄い塗りで選択範囲を示す。アクティブセルの
+  // 矩形範囲選択。アクセント色の薄い塗りで選択範囲を示す。アクティブセルの
   // フォーカスリングはそのまま重ねて表示される。ストライプ/ホバーより優先する。
   "& tbody td.is-selected-cell, & tbody tr.grid-row-stripe td.is-selected-cell, & tbody tr:hover td.is-selected-cell": {
     background: "color-mix(in srgb, var(--accent) 22%, var(--bg))",
@@ -220,14 +219,14 @@ export const GRID_CSS: SystemStyleObject = {
   "& tbody tr.grid-row-stripe td.row-index": { background: "var(--bg-stripe)" },
   "& tbody tr:hover td.row-index": { background: "var(--bg-row-hover)" },
   // 編集保留中の行は、行番号セルの左端にアクセントバーを出して「この行に未適用の
-  // 編集がある」ことを行レベルで示す (#387)。個々のセルの is-pending-edit ハイライト
+  // 編集がある」ことを行レベルで示す。個々のセルの is-pending-edit ハイライト
   // (列方向) と合わせ、行・セルの両軸で保留編集を把握できるようにする。
   "& tbody tr.grid-row-pending td.row-index": {
     boxShadow: "inset 3px 0 0 var(--preview-highlight)",
     color: "var(--preview-highlight)",
     fontWeight: 600,
   },
-  // 削除予定の行 (#441): 取り消し線 + 危険色の淡い背景で「Apply で DELETE される」
+  // 削除予定の行: 取り消し線 + 危険色の淡い背景で「Apply で DELETE される」
   // ことを行レベルで示す。
   "& tbody tr.grid-row-deleting td": {
     textDecoration: "line-through",
@@ -246,7 +245,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& tbody tr:hover td.col-filler": { background: "var(--bg-elevated)" },
   // NULL と空文字列を淡いピル型バッジで描き分ける。NULL は --text-null カラー、
   // 空文字列は --text-muted カラーで区別できる。色はトークン参照なので
-  // ライト/ダーク両テーマで一貫する (#385, #474)。
+  // ライト/ダーク両テーマで一貫する。
   "& .cell-null": {
     display: "inline-block",
     padding: "0 5px",
@@ -261,7 +260,7 @@ export const GRID_CSS: SystemStyleObject = {
     borderRadius: "var(--radius-sm)",
   },
   "& td.is-null": { backgroundImage: "linear-gradient(transparent, transparent)" },
-  // 空文字 / 空配列 / 空オブジェクトの淡色バッジ (#474)。NULL とは別トーンにして、
+  // 空文字 / 空配列 / 空オブジェクトの淡色バッジ。NULL とは別トーンにして、
   // 「NULL ではないが空」であることを区別できるようにする。
   "& .cell-empty": {
     display: "inline-block",
@@ -280,7 +279,7 @@ export const GRID_CSS: SystemStyleObject = {
     color: "var(--cell-number)",
     fontVariantNumeric: "tabular-nums",
   },
-  // 条件付き書式 (#499): データバー / ヒートマップの背景レイヤ。値テキストは前面。
+  // 条件付き書式: データバー / ヒートマップの背景レイヤ。値テキストは前面。
   "& .cell-cf-wrap": {
     position: "relative",
     display: "block",
@@ -303,7 +302,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& .cell-bool": { fontWeight: 600 },
   "& .cell-bool.is-true": { color: "var(--cell-bool-true)" },
   "& .cell-bool.is-false": { color: "var(--cell-bool-false)" },
-  // リッチ表示時の真偽値はピル型バッジで on/off を一目で示す (#451)。色は既存の
+  // リッチ表示時の真偽値はピル型バッジで on/off を一目で示す。色は既存の
   // --cell-bool-* トークン参照なのでライト/ダーク両テーマで一貫する。
   "& .cell-bool.cell-bool-badge": {
     display: "inline-block",
@@ -324,7 +323,7 @@ export const GRID_CSS: SystemStyleObject = {
   },
   "& .cell-date": { color: "var(--cell-date)" },
   "& .cell-json": { color: "var(--cell-json)" },
-  // 列挙値 (ENUM/SET) の色分けバッジ (#451)。色相はセルごとに --enum-hue で渡され、
+  // 列挙値 (ENUM/SET) の色分けバッジ。色相はセルごとに --enum-hue で渡され、
   // 彩度/明度はテーマトークン (--cell-enum-s / -l) で吸収する。
   "& .cell-enum-badge": {
     display: "inline-block",
@@ -344,7 +343,7 @@ export const GRID_CSS: SystemStyleObject = {
   },
   "& .cell-binary": { color: "var(--cell-binary)", fontStyle: "italic" },
   // BLOB セルの先頭に付ける「BLOB · <サイズ>」ラベル。16 進プレビューだけだと
-  // バイナリだと気付きにくいので、ピル型タグで明示する (#385)。
+  // バイナリだと気付きにくいので、ピル型タグで明示する。
   "& .cell-binary-tag": {
     display: "inline-block",
     marginRight: "1.5",
@@ -374,7 +373,7 @@ export const GRID_CSS: SystemStyleObject = {
     gap: "1.5",
     flex: "1 1 auto",
     minWidth: 0,
-    // ソート可能ヘッダのボタン余白もセルと同じ密度トークンに揃える (#327 / #410)。
+    // ソート可能ヘッダのボタン余白もセルと同じ密度トークンに揃える。
     padding: "var(--density-cell-py) var(--density-cell-px)",
     background: "transparent",
     border: "none",
@@ -408,7 +407,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& th.is-sortable:not(.is-sorted-asc):not(.is-sorted-desc):hover .th-sort-indicator::before": {
     opacity: 0.85,
   },
-  // 多列ソートの優先順位バッジ (#479)。方向アイコンの右に小さな順位番号を出す。
+  // 多列ソートの優先順位バッジ。方向アイコンの右に小さな順位番号を出す。
   "& th .th-sort-rank": {
     display: "inline-flex",
     alignItems: "center",
@@ -447,7 +446,7 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--accent) 14%, var(--bg-header))",
   },
   "& th.is-filtered-col .th-name": { color: "var(--accent)" },
-  // 列の並び替えグリップ (#447)。ホバーで現れ、ドラッグで列順を入れ替える。
+  // 列の並び替えグリップ。ホバーで現れ、ドラッグで列順を入れ替える。
   "& th .th-drag-grip": {
     display: "inline-flex",
     alignItems: "center",
@@ -468,7 +467,7 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow: "inset 2px 0 0 0 var(--accent)",
     background: "color-mix(in srgb, var(--accent) 12%, var(--bg-header))",
   },
-  // ピン留め列 (#463) は sticky で固定する。背景を不透明にして横スクロール時に
+  // ピン留め列は sticky で固定する。背景を不透明にして横スクロール時に
   // 下を流れる列を隠し、ストライプ/ホバーの行背景にも追従させる。
   "& th.is-pinned": { background: "var(--bg-header)" },
   "& td.is-pinned": { background: "var(--bg)" },
@@ -569,8 +568,8 @@ export const GRID_CSS: SystemStyleObject = {
     background: "color-mix(in srgb, var(--preview-highlight) 24%, transparent)",
   },
   "& .cell-pending-value": { color: "var(--preview-highlight)", fontWeight: 500 },
-  // ── セル状態の視覚言語 (4 段階の優先順位, #475, #540) ──
-  // 1. selection (キーボード選択) … is-active-cell: アクセントの inset リング (#540)
+  // ── セル状態の視覚言語 (4 段階の優先順位) ──
+  // 1. selection (キーボード選択) … is-active-cell: アクセントの inset リング
   // 2. focus/editing (フォーカス内/編集中) … focus-within: 同じく inset リング
   //    + 編集入力 (cell-edit-input) に共有フォーカスリングトークン
   // 3. pending edit (未適用の編集) … is-pending-edit: 左端のアクセントバー + 淡塗り
@@ -578,7 +577,7 @@ export const GRID_CSS: SystemStyleObject = {
   // いずれも --focus-ring / --focus-ring-inset / --accent / --error トークンを参照し、
   // ライト/ダーク両テーマで一貫する。
   //
-  // #540 の変更: グリッドセルのアクティブ/選択リングをすべて inset に統一。
+  // グリッドセルのアクティブ/選択リングはすべて inset に統一している。
   //   - 外側 outline だと隣接セルのリングが重なり合い、矩形選択範囲の輪郭が読みづらい。
   //   - inset box-shadow はセル境界内に収まるため、選択範囲の輪郭が明確になる。
   //   - is-pending-edit / is-changed / is-invalid-edit も box-shadow (inset バー) を
@@ -595,13 +594,13 @@ export const GRID_CSS: SystemStyleObject = {
     outlineOffset: "-1px",
   },
   // 編集中 (アクティブ) のセルははっきりした inset リングで強調し、
-  // どのセルを編集しているかを把握しやすくする (#540: inset で隣接セルと重ならない)。
+  // どのセルを編集しているかを把握しやすくする (inset で隣接セルと重ならない)。
   "& td.is-editable-cell:focus-within": {
     outline: "none",
     boxShadow: "var(--focus-ring-inset)",
   },
   // キーボードナビゲーションで選択中のセル (編集モードでない場合のみ表示)
-  // inset リングで描くことで隣接セルのリングが重ならず、選択範囲の輪郭が明確 (#540)。
+  // inset リングで描くことで隣接セルのリングが重ならず、選択範囲の輪郭が明確。
   "& td.is-active-cell:not(:focus-within)": {
     outline: "none",
     boxShadow: "var(--focus-ring-inset)",
@@ -614,7 +613,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& td.is-pending-edit.is-active-cell:not(:focus-within)": {
     boxShadow: "inset 2px 0 0 var(--preview-highlight), var(--focus-ring-inset)",
   },
-  // 矩形範囲選択の各セルにも inset リングを付与し、選択範囲の輪郭を強調する (#540)。
+  // 矩形範囲選択の各セルにも inset リングを付与し、選択範囲の輪郭を強調する。
   // アクティブセルと区別するため透明度を下げ (--focus-ring-inset より淡い)、
   // 「選択されているが現在のカーソル位置ではない」状態を視覚的に分離する。
   "& tbody td.is-selected-cell:not(.is-active-cell)": {
@@ -625,7 +624,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& td.is-invalid-edit.is-pending-edit": {
     background: "color-mix(in srgb, var(--status-error) 12%, transparent)",
   },
-  // アクティブセルが invalid-edit のとき: 左端エラーバー + inset エラーリングを重ねる (#540)。
+  // アクティブセルが invalid-edit のとき: 左端エラーバー + inset エラーリングを重ねる。
   "& td.is-invalid-edit.is-active-cell:not(:focus-within)": {
     boxShadow:
       "inset 2px 0 0 var(--status-error), inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--status-error) 55%, transparent)",
@@ -665,7 +664,7 @@ export const GRID_CSS: SystemStyleObject = {
     whiteSpace: "normal",
     pointerEvents: "none",
   },
-  // Apply 成功時の一時的な成功フラッシュ (#467)。App.css の @keyframes apply-flash と
+  // Apply 成功時の一時的な成功フラッシュ。App.css の @keyframes apply-flash と
   // セットで動作する。is-apply-flash クラスは ResultGrid の useEffect で付与/除去される。
   "&.is-apply-flash": {
     animation: "apply-flash 0.7s ease-out",
@@ -727,7 +726,7 @@ interface Props {
   onPreviewEdits?: () => void;
   /** Build & execute the UPDATE(s) for the pending edits, then refresh. */
   onApplyEdits?: () => void;
-  /** True while the Apply transaction is in flight — shows an inline spinner (#538). */
+  /** True while the Apply transaction is in flight — shows an inline spinner. */
   applyingEdits?: boolean;
   /** Current auto-refresh cadence (seconds), or null when polling is off. */
   autoRefreshSecs?: number | null;
@@ -750,14 +749,14 @@ interface Props {
    * callback receives the generated `SELECT … WHERE …` SQL.
    */
   onFkJump?: (sql: string) => void;
-  /** 削除予定の行 (#441): rowEditKey の集合。 */
+  /** 削除予定の行: rowEditKey の集合。 */
   pendingDeleteKeys?: Set<string>;
-  /** 行を削除予定にトグルする (#441)。 */
+  /** 行を削除予定にトグルする。 */
   onToggleRowDelete?: (rowKey: string) => void;
-  /** 新規行追加を要求する (#441)。 */
+  /** 新規行追加を要求する。 */
   onRequestInsertRow?: () => void;
   /**
-   * 全件ストリーミングエクスポート (#494) のコンテキスト。提供されると ExportModal に
+   * 全件ストリーミングエクスポートのコンテキスト。提供されると ExportModal に
    * 「全件 (再実行)」モードが現れる。
    */
   fullExport?: FullExportContext;
@@ -782,7 +781,7 @@ interface RowShape {
 }
 
 // CellKind は表示メタ (型アイコン/空値分類) と共有するため cellTypeMeta.ts に集約し、
-// ここでは import して使う (#474)。
+// ここでは import して使う。
 
 const NUMERIC_TYPES = new Set([
   "TINYINT",
@@ -1002,7 +1001,7 @@ export function writeStoredColumnSizing(
 }
 
 /**
- * Persisted per-result column layout (#447 order/visibility, #463 pinning).
+ * Persisted per-result column layout (order/visibility, pinning).
  * Stored per result shape under a key derived from the column-sizing key, so it
  * follows the same database+table+column signature and is dropped for preview
  * panes (no key). All fields are optional — absent means "default".
@@ -1257,17 +1256,17 @@ function ColumnFilterMenu({
   value: ColumnFilter | undefined;
   onChange: (next: ColumnFilter | undefined) => void;
   onClose: () => void;
-  /** 数値列のみ条件付き書式 (データバー/ヒート) を出す (#499)。 */
+  /** 数値列のみ条件付き書式 (データバー/ヒート) を出す。 */
   formatSupported: boolean;
   formatMode: CondFormatMode;
   onFormatModeChange: (mode: CondFormatMode) => void;
   paletteKey: string;
   onPaletteChange: (key: string) => void;
-  /** 列の表示/並び替え操作 (#447)。未指定なら該当セクションを出さない。 */
+  /** 列の表示/並び替え操作。未指定なら該当セクションを出さない。 */
   onHideColumn?: () => void;
   onShowAllColumns?: () => void;
   onResetLayout?: () => void;
-  /** 列のピン留め状態と切替 (#463)。未指定ならピン操作を出さない。 */
+  /** 列のピン留め状態と切替。未指定ならピン操作を出さない。 */
   pinned?: false | "left" | "right";
   onPin?: (side: false | "left" | "right") => void;
 }) {
@@ -1611,11 +1610,11 @@ export function DataGrid({
   pkIndices?: number[];
   pendingEdits?: PendingEdits;
   onSetCellEdit?: (rowKey: string, colIdx: number, value: string | null) => void;
-  /** 削除予定の行 (#441): rowEditKey の集合。該当行は取り消し線で示す。 */
+  /** 削除予定の行: rowEditKey の集合。該当行は取り消し線で示す。 */
   pendingDeleteKeys?: Set<string>;
-  /** 行を削除予定にトグルする (#441)。未指定ならメニュー項目を出さない。 */
+  /** 行を削除予定にトグルする。未指定ならメニュー項目を出さない。 */
   onToggleRowDelete?: (rowKey: string) => void;
-  /** 新規行追加を要求する (#441)。未指定ならメニュー項目を出さない。 */
+  /** 新規行追加を要求する。未指定ならメニュー項目を出さない。 */
   onRequestInsertRow?: () => void;
   /**
    * Validates a pending edit by result-column index, returning an i18n key
@@ -1680,7 +1679,7 @@ export function DataGrid({
 
   const columnKinds = useMemo<CellKind[]>(() => columns.map(classifyColumn), [columns]);
 
-  // 数値セルの条件付き書式 (#499)。列ごとの適用モードと、共有のヒートパレット。
+  // 数値セルの条件付き書式。列ごとの適用モードと、共有のヒートパレット。
   const [colFormats, setColFormats] = useState<Record<number, CondFormatMode>>({});
   const [heatPaletteKey, setHeatPaletteKey] = useState<string>(DEFAULT_HEAT_PALETTE);
   // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のみ算出。
@@ -1720,7 +1719,7 @@ export function DataGrid({
     writeStoredColumnSizing(columnSizingStorageKey, next);
   };
 
-  // --- Column order & visibility (#447), persisted per result shape ---
+  // --- Column order & visibility, persisted per result shape ---
   const colStateKey = useMemo(
     () => colStateKeyFrom(columnSizingStorageKey),
     [columnSizingStorageKey],
@@ -1743,7 +1742,7 @@ export function DataGrid({
     setColumnPinning({ left: s.pinning?.left ?? [], right: s.pinning?.right ?? [] });
   }, [colStateKey]);
 
-  // Column pinning (#463) lives alongside order/visibility in one persisted blob.
+  // Column pinning lives alongside order/visibility in one persisted blob.
   const [columnPinning, setColumnPinning] = useState<{ left: string[]; right: string[] }>(
     () => {
       const p = readStoredColumnState(colStateKey).pinning;
@@ -1777,7 +1776,7 @@ export function DataGrid({
     persistColumnState({ visibility: next });
   };
 
-  // Reset order/visibility/pinning to defaults (#447). Column widths are a
+  // Reset order/visibility/pinning to defaults. Column widths are a
   // separate concern and left untouched.
   const resetColumnLayout = useCallback(() => {
     setColumnOrder([]);
@@ -1793,7 +1792,7 @@ export function DataGrid({
     columnPinning.left.length > 0 ||
     columnPinning.right.length > 0;
 
-  // Drag-to-reorder columns (#447): track the dragged/hovered column ids for
+  // Drag-to-reorder columns: track the dragged/hovered column ids for
   // visual feedback, and commit a new order on drop.
   const [dragColId, setDragColId] = useState<string | null>(null);
   const [dragOverColId, setDragOverColId] = useState<string | null>(null);
@@ -1832,7 +1831,7 @@ export function DataGrid({
             <span className="th-label-row">
               {fkTable && <span className="th-fk-badge">FK</span>}
               <span className="th-name">{c.name}</span>
-              {/* カラム型アイコン (#474)。aria-label で SR にも型を伝える。
+              {/* カラム型アイコン。aria-label で SR にも型を伝える。
                   名前の後ろに置き、ヘッダーのアクセシブル名が列名から始まるようにする。 */}
               <span
                 className="th-type-icon"
@@ -1856,7 +1855,7 @@ export function DataGrid({
         maxSize: 800,
         cell: (info) => {
           const v = info.getValue() as CellValue;
-          // NULL / 空文字 / 空配列・空オブジェクトを描き分ける (#474)。表示専用で、
+          // NULL / 空文字 / 空配列・空オブジェクトを描き分ける。表示専用で、
           // コピー/編集/エクスポートは常に元の値 (info.getValue()) を使う。
           const emptyKind = classifyEmptyValue(v);
           if (emptyKind === "null") {
@@ -1875,7 +1874,7 @@ export function DataGrid({
             );
           }
           const effectiveKind = classifyByValue(v) ?? kind;
-          // 数値セルの条件付き書式 (#499): 列単位でオプトインされたデータバー /
+          // 数値セルの条件付き書式: 列単位でオプトインされたデータバー /
           // ヒートマップを背景に描く。NULL/非数値は対象外 (上で弾き済み or num===null)。
           const renderNumeric = (display: string, extraClass: string) => {
             const mode = colFormats[i] ?? "off";
@@ -2053,7 +2052,7 @@ export function DataGrid({
 
   // Keyboard navigation: the currently selected cell (row = original row index).
   const [activeCell, setActiveCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
-  // Rectangular range selection (#486): anchor (where Shift-extension started)
+  // Rectangular range selection: anchor (where Shift-extension started)
   // and focus (the moving end = active cell). Both are ORIGINAL row/column
   // indices; the visible rectangle is derived from the current display order so
   // it stays a contiguous block under sort/filter/reorder/hide.
@@ -2078,7 +2077,7 @@ export function DataGrid({
   // Full-value viewer target (original row index + display column index).
   const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
 
-  // Row inspector (#462): when open, shows the active cell's row vertically.
+  // Row inspector: when open, shows the active cell's row vertically.
   const [inspectorOpen, setInspectorOpen] = useState(false);
 
   // Open per-column filter popup: which column, and the anchor rect of the
@@ -2164,11 +2163,11 @@ export function DataGrid({
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
   const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter);
-  // Multi-column sort summary (#479): surface a clear-all affordance when more
+  // Multi-column sort summary: surface a clear-all affordance when more
   // than one sort key is active (single-column sort clears via its own cycle).
   const multiSortActive = enableColumnControls && sorting.length > 1;
 
-  // Resolve the range selection (#486) into the set of original row indices and
+  // Resolve the range selection into the set of original row indices and
   // column ids it covers, plus the display bounds (for copy ordering). Derived
   // from the current display order so the rectangle stays contiguous even after
   // sort/filter/reorder/hide. Returns null when there is no multi-cell range.
@@ -2260,7 +2259,7 @@ export function DataGrid({
   // the first paint. When `scrollContainerRef` is absent (preview panes) we
   // render every row, so `virtualize` gates whether the virtual items are used.
   const virtualize = !!scrollContainerRef;
-  // Seed the virtual row height from the active density preset (#410). The exact
+  // Seed the virtual row height from the active density preset. The exact
   // height is still measured via `measureElement`, but a density-matched seed
   // avoids a visible re-layout jump on the first paint and after switching
   // density (see the re-measure effect below).
@@ -2283,7 +2282,7 @@ export function DataGrid({
       ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end
       : 0;
   // Total column count (row-index + visible data columns + filler) for spacer
-  // colSpan. Uses the visible leaf count so hidden columns (#447) don't inflate
+  // colSpan. Uses the visible leaf count so hidden columns don't inflate
   // the virtual spacer span.
   const totalColCount = visibleColIds.length + 2;
 
@@ -2362,7 +2361,7 @@ export function DataGrid({
         break;
       case "Enter": {
         e.preventDefault();
-        // Alt/Option+Enter toggles the row inspector (#462) for the active row.
+        // Alt/Option+Enter toggles the row inspector for the active row.
         if (e.altKey) {
           setInspectorOpen((o) => !o);
           break;
@@ -2414,8 +2413,8 @@ export function DataGrid({
   // `measureIndex` (when virtualizing) wires the row to the virtualizer so its
   // real height is measured.
   const renderRow = (row: Row<RowShape>, rowIdx: number, measureIndex?: number) => {
-    // Does this row hold any buffered edit? Drives the row-level pending marker
-    // (#387). Looked up by the row's PK-derived identity, like the per-cell
+    // Does this row hold any buffered edit? Drives the row-level pending marker.
+    // Looked up by the row's PK-derived identity, like the per-cell
     // lookup below, so it tracks the row across pagination/sort.
     const rowPendingKey = rowEditKey(rows[row.index] ?? [], pkIndices ?? [], row.index);
     const rowHasPending =
@@ -2442,7 +2441,7 @@ export function DataGrid({
       <td className="row-index">{rowIdx + 1}</td>
       {row.getVisibleCells().map((cell) => {
         // Resolve original column index from the column id so reorder/hide
-        // (#447) and pinning (#463) don't misalign per-column lookups.
+        // and pinning don't misalign per-column lookups.
         const colIdx = Number(cell.column.id);
         const v = cell.getValue() as CellValue;
         const kind = columnKinds[colIdx] ?? "string";
@@ -2527,7 +2526,7 @@ export function DataGrid({
                   : isNull
                     ? t("resultNull")
                     : // 長文テキストは省略記号で切れて全長が分からないので、ホバーの
-                      // タイトルに文字数を添える (#385)。テキスト系の列だけが対象。
+                      // タイトルに文字数を添える。テキスト系の列だけが対象。
                       (kind === "string" || kind === "json") && String(v).length > 40
                       ? `${String(v)}\n(${t("gridCharCount", { count: String(v).length })})`
                       : String(v)
@@ -2647,7 +2646,7 @@ export function DataGrid({
                 )}
               </div>
             ) : hasPending ? (
-              // 未適用編集の値は Motion で軽くハイライトする (#498)。`key` を
+              // 未適用編集の値は Motion で軽くハイライトする。`key` を
               // pendingValue にして値が変わるたび (= 編集/Undo/Redo のたび) 再マウント
               // させ、入場アニメを再生する。reduced-motion は MotionConfig 配下で
               // 自動的に即時化される。
@@ -2731,7 +2730,7 @@ export function DataGrid({
                 const canResize = h.column.getCanResize();
                 const isResizing = h.column.getIsResizing();
                 const sortDir = h.column.getIsSorted();
-                // Multi-column sort (#479): a rank badge shows each key's
+                // Multi-column sort: a rank badge shows each key's
                 // priority when more than one column is sorted (Shift+click
                 // chains additional keys; plain click resets to single sort).
                 const multiSort = sorting.length > 1;
@@ -3007,7 +3006,7 @@ export function DataGrid({
                 setInspectorOpen(true);
               },
             },
-            // 行の追加・削除 (#441)。PK が無いテーブルでは削除を無効化 (行を一意に
+            // 行の追加・削除。PK が無いテーブルでは削除を無効化 (行を一意に
             // 特定できないため)。新規行追加は PK 有無に依らず可能。
             ...(onToggleRowDelete || onRequestInsertRow
               ? [{ separator: true as const }]
@@ -3635,7 +3634,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
             </chakra.span>
             {editedRowCount > 1 && !hasInvalidEdit && (
-              // #285: Preview only handles one row at a time; surface that
+              // Preview only handles one row at a time; surface that
               // limitation explicitly so users don't assume Apply has been
               // dry-run-validated for every edited row.
               <chakra.span

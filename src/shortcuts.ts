@@ -36,7 +36,7 @@ export const SHORTCUT_CATEGORY_ORDER: ShortcutCategory[] = ["global", "editor", 
 
 /**
  * 全ショートカット定義。`keysKey` / `descKey` は `i18n.ts` の既存
- * `helpShortcut*` キーを再利用しているため、`HelpView` の従来表記と完全に一致する。
+ * `helpShortcut*` キーを再利用しているため、`HelpView` の表記と完全に一致する。
  */
 export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutCommandPaletteTitle", descKey: "shortcutCommandPaletteDesc", category: "global" },

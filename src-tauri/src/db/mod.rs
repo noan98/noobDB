@@ -393,6 +393,52 @@ pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableS
     out
 }
 
+/// Builds `INSERT INTO tbl (c1, c2) VALUES (?,?),(?,?)...` with `nrows`
+/// placeholder tuples of `ncols` each. Identifiers are pre-quoted by the
+/// caller; only positional `?` placeholders are emitted here so values bind
+/// as parameters rather than being spliced into the SQL text.
+pub(crate) fn build_insert_sql(table_ident: &str, cols_sql: &str, ncols: usize, nrows: usize) -> String {
+    let mut tuple = String::with_capacity(ncols * 2 + 2);
+    tuple.push('(');
+    for c in 0..ncols {
+        if c > 0 {
+            tuple.push(',');
+        }
+        tuple.push('?');
+    }
+    tuple.push(')');
+    // Write the statement directly into one pre-sized buffer instead of
+    // materialising a `Vec<&str>` of the repeated tuple and joining it.
+    let mut out = String::with_capacity(
+        "INSERT INTO  () VALUES ".len()
+            + table_ident.len()
+            + cols_sql.len()
+            + nrows * (tuple.len() + 1),
+    );
+    out.push_str("INSERT INTO ");
+    out.push_str(table_ident);
+    out.push_str(" (");
+    out.push_str(cols_sql);
+    out.push_str(") VALUES ");
+    for r in 0..nrows {
+        if r > 0 {
+            out.push(',');
+        }
+        out.push_str(&tuple);
+    }
+    out
+}
+
+/// ` ORDER BY pk1, pk2` clause with each column quoted by `quote`, or an
+/// empty string when the table has no primary key.
+pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> String {
+    if pk_cols.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = pk_cols.iter().map(|c| quote(c)).collect();
+    format!(" ORDER BY {}", parts.join(", "))
+}
+
 /// Returns true when `sql` is shaped like a read-only statement that the
 /// read-only profile gate is willing to let through.
 ///

@@ -110,7 +110,7 @@ function readCollapsedGroups(): Record<string, boolean> {
   }
 }
 
-/** ネストした子ノードを包む破線インデント (旧 .tree-children)。 */
+/** ネストした子ノードを包む破線インデント。 */
 const TreeChildren = chakra("div", {
   base: {
     display: "flex",
@@ -122,7 +122,7 @@ const TreeChildren = chakra("div", {
   },
 });
 
-/** ローディング / 空表示のプレースホルダ行 (旧 .tree-empty)。 */
+/** ローディング / 空表示のプレースホルダ行。 */
 const TreeEmpty = chakra("div", {
   base: {
     pt: "1",
@@ -150,7 +150,7 @@ const QuickAccessHeader = chakra("div", {
   },
 });
 
-/** 接続状態ドットの状態別 style (旧 .status-dot.status-*)。色は動的トークンの
+/** 接続状態ドットの状態別 style。色は動的トークンの
  *  ため CSS 変数を直接参照する。`connecting` の脈動は App.css の @keyframes pulse。 */
 const STATUS_DOT_STYLE = {
   idle: {
@@ -421,7 +421,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
   }, [activeProfileId]);
 
-  // 閉じているグループだけを localStorage に保存する (#350)。展開が既定なので
+  // 閉じているグループだけを localStorage に保存する。展開が既定なので
   // false のキーのみを書き出し、ストレージを最小限に保つ。
   useEffect(() => {
     const collapsed = Object.entries(expandedGroups)
@@ -510,7 +510,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (onCopyTableName) {
       items.push({ label: t("contextMenuCopyTableName"), onSelect: () => onCopyTableName(tbl) });
     }
-    // テーブル保守操作 (#496): TRUNCATE / DROP / RENAME。破壊的なので read_only では
+    // テーブル保守操作: TRUNCATE / DROP / RENAME。破壊的なので read_only では
     // 無効化し、実行時は呼び出し側 (App) が確認ダイアログを挟む。
     if (onTruncateTable || onDropTable || onRenameTable) {
       const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
@@ -598,7 +598,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       const list = await api.listTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
       void loadRowEstimates(sessionId, db);
-      // 非テーブルのスキーマオブジェクト (#483) もベストエフォートで取得する。
+      // 非テーブルのスキーマオブジェクトもベストエフォートで取得する。
       // 接続切替中に旧セッションの結果を反映しないよう sid を確認する。
       const sid = sessionId;
       void api
@@ -774,7 +774,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     </div>
   );
 
-  // クイックアクセス (#461): アクティブ接続の databases の上に「お気に入り」「最近」を
+  // クイックアクセス: アクティブ接続の databases の上に「お気に入り」「最近」を
   // 並べ、ワンクリックで開けるようにする。各行は db.table を表示し、`onPickTable` で開く。
   const renderQuickAccessRow = (refItem: TableRef, kind: "favorite" | "recent") => {
     const star = kind === "favorite";
@@ -818,7 +818,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     );
   };
 
-  // 非テーブルのスキーマオブジェクト (#483) を種別ごとにグループ化して描画する。
+  // 非テーブルのスキーマオブジェクトを種別ごとにグループ化して描画する。
   // 選択すると onOpenObjectDefinition で定義 DDL を開く。
   const renderSchemaObjects = (db: string) => {
     if (!onOpenObjectDefinition) return null;
@@ -948,12 +948,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           pl="5px"
           // プロファイルカラー / 本番 / アクティブを左端のアクセントバーで示す。
           // 識別性を上げるため 4px に。全行で同一幅 (色なしは transparent) にして
-          // 行頭テキストの揃えを保つ (#350)。
+          // 行頭テキストの揃えを保つ。
           borderLeftWidth="4px"
           borderLeftColor={borderLeftColor}
           bg={rowBg}
           _hover={{ bg: rowBg ?? "app.hover" }}
-          // ホバーで控えめに拡大 + 影を出すモーション (#386, Epic #370 準拠)。
+          // ホバーで控えめに拡大 + 影を出すモーション。
           // prefers-reduced-motion はルートの MotionConfig が自動抑制する。
           whileHover={{ scale: 1.01, boxShadow: "var(--shadow-md)" }}
           transition={springs.gentle}
@@ -970,7 +970,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         >
           <TreeChevron transform={isOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
           {/* ドライバ別ブランドアイコン (MySQL/PostgreSQL/SQLite) でひと目で種別が
-              分かるようにする (#386)。ユーザ設定のカスタム色があればそれで着色して
+              分かるようにする。ユーザ設定のカスタム色があればそれで着色して
               個別識別性も残し、無ければドライバのブランド色を使う。プロファイルカラーは
               左端のアクセントバーにも出る。未知ドライバは汎用 server アイコン。 */}
           <TreeIcon color={accent ?? (driverIcon ? driverColor(p.driver) : "app.accent")} aria-hidden>
@@ -1217,7 +1217,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                         );
                                       })
                                     )}
-                                    {/* インデックス一覧 (#459)。展開時に列と並行取得し、
+                                    {/* インデックス一覧。展開時に列と並行取得し、
                                         列の下に小見出し付きで表示する。 */}
                                     {showAllCols && (tableIndexes[tKey]?.length ?? 0) > 0 && (
                                       <>

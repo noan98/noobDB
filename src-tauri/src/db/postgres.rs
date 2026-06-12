@@ -202,7 +202,7 @@ impl PostgresConn {
         apply_search_path(&mut conn, database).await?;
 
         let before_sql = target.as_ref().map(|t| {
-            let order = order_by_pk(&primary_key);
+            let order = super::pk_order_clause(&primary_key, pg_quote_ident);
             format!("SELECT * FROM {}{} LIMIT {}", t, order, row_limit + 1)
         });
 
@@ -1102,17 +1102,6 @@ fn pg_literal(cell: Option<&str>) -> String {
         None => "NULL".to_string(),
         Some(s) => format!("'{}'", s.replace('\'', "''")),
     }
-}
-
-fn order_by_pk(pk_cols: &[String]) -> String {
-    if pk_cols.is_empty() {
-        return String::new();
-    }
-    let parts: Vec<String> = pk_cols
-        .iter()
-        .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
-        .collect();
-    format!(" ORDER BY {}", parts.join(", "))
 }
 
 async fn fetch_capped_pg(

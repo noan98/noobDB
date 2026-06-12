@@ -36,6 +36,7 @@ import {
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
+import { quoteIdentFor } from "./components/sqlDialect";
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { Spinner } from "./components/Spinner";
@@ -518,18 +519,11 @@ function newStreamId(tabId: string): string {
   return `${tabId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function quoteIdent(driver: string, ident: string): string {
-  if (driver === "postgres" || driver === "sqlite") {
-    return `"${ident.replace(/"/g, '""')}"`;
-  }
-  return `\`${ident.replace(/`/g, "``")}\``;
-}
-
 function qualifiedTableSql(driver: string, database: string, table: string): string {
   // SQLite has a single attached namespace ("main"); leaving the
   // db.table qualification off keeps the generated SELECT portable.
-  if (driver === "sqlite") return `SELECT * FROM ${quoteIdent(driver, table)}`;
-  return `SELECT * FROM ${quoteIdent(driver, database)}.${quoteIdent(driver, table)}`;
+  if (driver === "sqlite") return `SELECT * FROM ${quoteIdentFor(driver, table)}`;
+  return `SELECT * FROM ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 
 // SQL that returns a table's definition, or null for drivers without a
@@ -537,7 +531,7 @@ function qualifiedTableSql(driver: string, database: string, table: string): str
 // the original DDL out of sqlite_master.
 function tableDefinitionSql(driver: string, database: string, table: string): string | null {
   if (driver === "mysql") {
-    return `SHOW CREATE TABLE ${quoteIdent(driver, database)}.${quoteIdent(driver, table)}`;
+    return `SHOW CREATE TABLE ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
   }
   if (driver === "sqlite") {
     return `SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = '${table.replace(/'/g, "''")}'`;
@@ -562,13 +556,12 @@ function deriveResultTabTitle(sql: string): string {
   return firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine;
 }
 
-function makeQueryTab(): Tab {
-  // 新規クエリタブは空のエディタで開く。
-  const sql = "";
+/** 共通の初期状態でタブを生成する。呼び出し側は必要なフィールドだけ上書きする。 */
+function makeTab(kind: TabKind, title: string, sql: string): Tab {
   return {
     id: newTabId(),
-    kind: "query",
-    title: translate("tabUntitledQuery"),
+    kind,
+    title,
     sql,
     lastExecutedSql: sql,
     result: null,
@@ -589,6 +582,11 @@ function makeQueryTab(): Tab {
     editRedoStack: [],
     builderSnapshot: null,
   };
+}
+
+function makeQueryTab(): Tab {
+  // 新規クエリタブは空のエディタで開く。
+  return makeTab("query", translate("tabUntitledQuery"), "");
 }
 
 function explainTabTitle(sql: string): string {
@@ -600,30 +598,7 @@ function explainTabTitle(sql: string): string {
 }
 
 function makeExplainTab(sql: string): Tab {
-  return {
-    id: newTabId(),
-    kind: "explain",
-    title: explainTabTitle(sql),
-    sql,
-    lastExecutedSql: sql,
-    result: null,
-    preview: null,
-    schemaTable: null,
-    streaming: false,
-    previewStreaming: false,
-    previewRowLimit: getSettings().defaultDisplayCount,
-    paginatable: null,
-    autoLimitApplied: null,
-    autoLimitSql: null,
-    loadingMore: false,
-    canLoadMore: false,
-    queryError: null,
-    tableColumns: null,
-    pendingEdits: {},
-    editUndoStack: [],
-    editRedoStack: [],
-    builderSnapshot: null,
-  };
+  return makeTab("explain", explainTabTitle(sql), sql);
 }
 
 /** ドラッグ&ドロップで受理するファイル種別の判定結果。 */
@@ -2017,29 +1992,11 @@ export default function App() {
             const base = qualifiedTableSql(profile.driver, s.database, s.table);
             const sql = `${base} LIMIT ${limit}`;
             return {
-              id: newTabId(),
-              kind: "table",
-              title: s.title || s.table,
+              ...makeTab("table", s.title || s.table, sql),
               database: s.database,
               table: s.table,
-              sql,
-              lastExecutedSql: sql,
-              result: null,
-              preview: null,
-              schemaTable: null,
-              streaming: false,
-              previewStreaming: false,
               previewRowLimit: limit,
               paginatable: base,
-              autoLimitApplied: null,
-              autoLimitSql: null,
-              loadingMore: false,
-              canLoadMore: false,
-              queryError: null,
-              tableColumns: null,
-              pendingEdits: {},
-              editUndoStack: [],
-              editRedoStack: [],
               builderSnapshot: restoredSnapshot,
             };
           } catch (e) {
@@ -2065,27 +2022,8 @@ export default function App() {
           };
         }
         return {
-          id: newTabId(),
-          kind: "query",
-          title: s.kind === "query" ? s.title : translate("tabUntitledQuery"),
-          sql: s.sql,
-          lastExecutedSql: s.sql,
-          result: null,
-          preview: null,
-          schemaTable: null,
-          streaming: false,
-          previewStreaming: false,
+          ...makeTab("query", s.kind === "query" ? s.title : translate("tabUntitledQuery"), s.sql),
           previewRowLimit: limit,
-          paginatable: null,
-          autoLimitApplied: null,
-          autoLimitSql: null,
-          loadingMore: false,
-          canLoadMore: false,
-          queryError: null,
-          tableColumns: null,
-          pendingEdits: {},
-          editUndoStack: [],
-          editRedoStack: [],
           builderSnapshot: restoredSnapshot,
         };
       };
@@ -2936,33 +2874,14 @@ export default function App() {
     const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
     const sql = `${base} LIMIT ${limit}`;
     const tab: Tab = {
-      id: newTabId(),
-      kind: "table",
-      title: table,
+      ...makeTab("table", table, sql),
       database,
       table,
-      sql,
-      lastExecutedSql: sql,
-      result: null,
-      preview: null,
-      schemaTable: null,
-      streaming: false,
-      previewStreaming: false,
       previewRowLimit: limit,
       paginatable: base,
-      autoLimitApplied: null,
-      autoLimitSql: null,
-      loadingMore: false,
-      canLoadMore: false,
       page: 1,
       pageSize: limit,
       rowEstimateTotal: null,
-      queryError: null,
-      tableColumns: null,
-      pendingEdits: {},
-      editUndoStack: [],
-      editRedoStack: [],
-      builderSnapshot: null,
     };
     addTab(tab);
     runQueryInTab(tab.id, sql, base);
@@ -3093,10 +3012,11 @@ export default function App() {
   const handleRenameTableSubmit = useCallback(async (newName: string) => {
     const target = renameTarget;
     setRenameTarget(null);
-    if (!target || !newName.trim() || newName.trim() === target.table) return;
+    const trimmedName = newName.trim();
+    if (!target || !trimmedName || trimmedName === target.table) return;
     const driver = selectedProfile?.driver ?? "mysql";
     const success = await runMaintenanceDdl(
-      buildRenameTableSql(driver, target.database, target.table, newName.trim()),
+      buildRenameTableSql(driver, target.database, target.table, trimmedName),
       target.database,
     );
     if (success) {

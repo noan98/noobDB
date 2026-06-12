@@ -9,7 +9,7 @@ use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
-use super::DbConnectOptions;
+use super::{build_insert_sql, DbConnectOptions};
 use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
@@ -300,7 +300,7 @@ impl MySqlConn {
             Some(t) => fetch_primary_key(&mut conn, t).await.unwrap_or_default(),
             None => Vec::new(),
         };
-        let order_clause = build_pk_order_clause(&primary_key);
+        let order_clause = super::pk_order_clause(&primary_key, quote_ident);
 
         // For UPDATE / DELETE we lift the user's WHERE clause out of the
         // statement and use it to filter the BEFORE snapshot. Without this
@@ -1219,42 +1219,6 @@ fn quote_ident(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
-/// Builds `INSERT INTO tbl (c1, c2) VALUES (?,?),(?,?)...` with `nrows`
-/// placeholder tuples of `ncols` each. Identifiers are pre-quoted by the
-/// caller; only positional `?` placeholders are emitted here so values bind
-/// as parameters rather than being spliced into the SQL text.
-fn build_insert_sql(table_ident: &str, cols_sql: &str, ncols: usize, nrows: usize) -> String {
-    let mut tuple = String::with_capacity(ncols * 2 + 2);
-    tuple.push('(');
-    for c in 0..ncols {
-        if c > 0 {
-            tuple.push(',');
-        }
-        tuple.push('?');
-    }
-    tuple.push(')');
-    // Write the statement directly into one pre-sized buffer instead of
-    // materialising a `Vec<&str>` of the repeated tuple and joining it.
-    let mut out = String::with_capacity(
-        "INSERT INTO  () VALUES ".len()
-            + table_ident.len()
-            + cols_sql.len()
-            + nrows * (tuple.len() + 1),
-    );
-    out.push_str("INSERT INTO ");
-    out.push_str(table_ident);
-    out.push_str(" (");
-    out.push_str(cols_sql);
-    out.push_str(") VALUES ");
-    for r in 0..nrows {
-        if r > 0 {
-            out.push(',');
-        }
-        out.push_str(&tuple);
-    }
-    out
-}
-
 fn skip_modifiers<I: Iterator<Item = String>>(
     iter: &mut std::iter::Peekable<I>,
     modifiers: &[&str],
@@ -1366,17 +1330,6 @@ async fn fetch_capped(
         }
     }
     Ok(rows)
-}
-
-fn build_pk_order_clause(pk_cols: &[String]) -> String {
-    if pk_cols.is_empty() {
-        return String::new();
-    }
-    let parts: Vec<String> = pk_cols
-        .iter()
-        .map(|c| format!("`{}`", c.replace('`', "``")))
-        .collect();
-    format!(" ORDER BY {}", parts.join(", "))
 }
 
 /// Refetches the AFTER snapshot using the exact PKs captured in BEFORE.
