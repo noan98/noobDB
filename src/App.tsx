@@ -895,12 +895,12 @@ export default function App() {
     [],
   );
   const [snippets, setSnippets] = useState<Snippet[]>([]);
-  // お気に入り / 最近使ったテーブル (#461)。アクティブ接続プロファイル単位で
+  // お気に入り / 最近使ったテーブル。アクティブ接続プロファイル単位で
   // localStorage に永続化する。`handleOpenTable` がテーブルを開くたびに最近へ記録。
   const [quickAccess, setQuickAccess] = useState<QuickAccessState>(EMPTY_QUICK_ACCESS);
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // 直近の実行クエリ (最新が先頭、連続重複は畳む)。QueryEditor の ↑/↓ 履歴
-  // ナビゲーション (#325) 用。接続プロファイル単位で読み込み、実行のたびに
+  // ナビゲーション用。接続プロファイル単位で読み込み、実行のたびに
   // `historyReloadKey` が増えるのを契機に再取得する。
   const [queryHistory, setQueryHistory] = useState<string[]>([]);
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
@@ -978,28 +978,28 @@ export default function App() {
   // プロセス一覧) メニューのアンカー座標。3 ボタン → 1 ボタンへの集約。
   const [toolsMenu, setToolsMenu] = useState<{ x: number; y: number } | null>(null);
   const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
-  // ドラッグ&ドロップ (#497) で .csv を落としたときに ImportModal へ渡す事前選択パス。
+  // ドラッグ&ドロップで .csv を落としたときに ImportModal へ渡す事前選択パス。
   const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
-  // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック (#497)。
+  // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック。
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
-  // プロファイルインポート (#442): ファイル選択後、衝突解決ダイアログに渡すパス。
+  // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
-  // CREATE TABLE ウィザード (#460): 対象データベース。null で閉じる。
+  // CREATE TABLE ウィザード: 対象データベース。null で閉じる。
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
-  // テーブル名変更 (#496): 対象。null で閉じる。
+  // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
-  // 新規行追加モーダル (#441): 対象タブ ID。null で閉じる。
+  // 新規行追加モーダル: 対象タブ ID。null で閉じる。
   const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
-  // 明示トランザクション (#414): 現在のセッションでトランザクションが有効か。実行経路の
+  // 明示トランザクション: 現在のセッションでトランザクションが有効か。実行経路の
   // 振り分けにコールバックから参照するため ref も併せ持つ。
   const [txActive, setTxActive] = useState(false);
   const txActiveRef = useRef(false);
   useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
   // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
   useEffect(() => { setTxActive(false); }, [sessionId]);
-  // 切断時はセッション依存のモーダル状態をリセットする (#473 の検索モーダルが
+  // 切断時はセッション依存のモーダル状態をリセットする (検索モーダルが
   // 再接続時に意図せず再表示されるのを防ぐ)。
   useEffect(() => {
     if (!sessionId) {
@@ -1027,7 +1027,7 @@ export default function App() {
     // approval for any write (no specific destructive pattern was detected).
     writeApproval: boolean;
     autoLimit: number | null;
-    /** True when this run should execute as a multi-statement batch (#495). */
+    /** True when this run should execute as a multi-statement batch. */
     batch?: boolean;
   } | null>(null);
 
@@ -1035,7 +1035,7 @@ export default function App() {
   // placeholders, the run/preview/explain action is held here while the input
   // modal collects values; on submit the substituted SQL re-enters the same
   // action (so it still passes the danger gate). `mode` records which action
-  // to resume. (#388)
+  // to resume.
   const [pendingParams, setPendingParams] = useState<{
     tab: Tab;
     sql: string;
