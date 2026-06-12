@@ -331,13 +331,13 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
   return stmts;
 }
 
-/** One pending new row (#441): column index → typed value. Unset columns are
+/** One pending new row: column index → typed value. Unset columns are
  *  omitted from the INSERT so the database applies defaults / auto-increment.
  *  A value of `"null"` (any case) becomes SQL `NULL`. */
 export type PendingInsertRow = Record<number, string>;
 
 /**
- * Builds one `INSERT INTO ... (cols) VALUES (...)` per pending new row (#441).
+ * Builds one `INSERT INTO ... (cols) VALUES (...)` per pending new row.
  * Only the columns the user filled are included; the typed value is converted
  * with the same `literalFromInput` coercion used by cell edits. Rows with no
  * filled columns are skipped.
@@ -367,7 +367,7 @@ export function buildInsertStatements(input: {
 
 /**
  * Builds one `DELETE FROM ... WHERE pk = ...` per row whose PK-derived
- * `rowEditKey` is in `deleteKeys` (#441). The original PK values come from
+ * `rowEditKey` is in `deleteKeys`. The original PK values come from
  * `rows`, so the delete targets the correct row regardless of sort/pagination.
  * Returns empty when there is no resolvable PK.
  */

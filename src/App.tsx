@@ -220,7 +220,7 @@ type Status =
   | { kind: "literal"; text: string; error?: boolean }
   | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
 
-// エラーは重大度別に区別する (#281)。`critical` は接続喪失など回復に再接続を要する
+// エラーは重大度別に区別する。`critical` は接続喪失など回復に再接続を要する
 // 致命的状態 (赤、目立つバッジ)、`warning` はタイムアウトなど接続は生きている軽度
 // 障害 (黄)、`error` は SQL 構文エラー・制約違反など個別クエリの失敗 (赤)。
 type StatusTone = "running" | "success" | "error" | "warning" | "critical" | "info";
@@ -234,15 +234,15 @@ const RUNNING_STATUS_KEYS = new Set([
 ]);
 
 // 致命的 (critical): セッションが使えなくなり再接続が必要な状態。フッターに残し、
-// 「重大」バッジ + 再接続導線で対処を促す (#281)。
+// 「重大」バッジ + 再接続導線で対処を促す。
 const CRITICAL_STATUS_KEYS = new Set(["statusConnectionLost"]);
 
 // 警告 (warning): 接続は維持されており、設定変更や再試行で回復しうる軽度の障害。
 const WARNING_STATUS_KEYS = new Set(["statusQueryTimeout"]);
 
-// Maps a status to a tone for the footer's icon + colored left border (#131).
+// Maps a status to a tone for the footer's icon + colored left border.
 // Derived from the existing `error` flag and known keys, so call sites don't
-// each have to declare a severity (#281 でエラーを critical/warning/error に細分化)。
+// each have to declare a severity.
 function statusTone(s: Status): StatusTone {
   if (s.kind === "idle") return "info";
   if (s.kind === "key") {
@@ -311,7 +311,7 @@ const sidebarTabId = (key: SidebarTab) => `sidebar-tab-${key}`;
 const sidebarPanelId = (key: SidebarTab) => `sidebar-panel-${key}`;
 
 /**
- * サイドバー上部の Connections / Snippets / History 切替タブ (#299)。
+ * サイドバー上部の Connections / Snippets / History 切替タブ。
  *
  * WAI-ARIA tabs パターンを実装している:
  *   - 各タブに `role="tab"`、`aria-selected`、`aria-controls` (対応 panel の id)、
@@ -418,7 +418,7 @@ interface Tab {
   /** True when another scroll-triggered page may yield more rows. */
   canLoadMore: boolean;
   /**
-   * 現在のページ番号 (1 始まり)。table タブのページネーション (#484) 用。
+   * 現在のページ番号 (1 始まり)。table タブのページネーション用。
    * 未指定は 1 ページ目とみなす。
    */
   page?: number;
@@ -450,9 +450,9 @@ interface Tab {
   editUndoStack: PendingEdits[];
   /** Re-applicable snapshots for Ctrl+Shift+Z redo. Cleared when a new edit is made. */
   editRedoStack: PendingEdits[];
-  /** 削除予定の行 (#441): rowEditKey のリスト。Apply で DELETE される。 */
+  /** 削除予定の行: rowEditKey のリスト。Apply で DELETE される。 */
   pendingDeletes?: string[];
-  /** 追加予定の新規行 (#441): 各要素は colIdx→値。Apply で INSERT される。 */
+  /** 追加予定の新規行: 各要素は colIdx→値。Apply で INSERT される。 */
   pendingInserts?: PendingInsertRow[];
   /** チャートビュー (#440) を表示中か。結果グリッドの代わりにチャートを描く。 */
   showChart?: boolean;
@@ -553,7 +553,7 @@ function schemaCacheKey(sessionId: string, database: string): string {
 }
 
 /**
- * 複数結果タブ (#472) で新しい結果タブのタイトルを SQL から導出する。先頭の
+ * 複数結果タブで新しい結果タブのタイトルを SQL から導出する。先頭の
  * 1 行を短く切り詰める。空なら既定の無題タイトル。
  */
 function deriveResultTabTitle(sql: string): string {
@@ -563,8 +563,7 @@ function deriveResultTabTitle(sql: string): string {
 }
 
 function makeQueryTab(): Tab {
-  // 新規クエリタブは空のエディタで開く。以前は "SELECT 1;" をプレースホルダ的に
-  // 入れていたが、用途が分からず混乱を招くため空文字にした (#283 関連)。
+  // 新規クエリタブは空のエディタで開く。
   const sql = "";
   return {
     id: newTabId(),
@@ -670,7 +669,7 @@ function toPersistedTab(tab: Tab): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
-  // #287: Carry the Query Builder snapshot through so the inputs come back on
+  // Carry the Query Builder snapshot through so the inputs come back on
   // the next reconnect — closing the tab still drops it because the tab is
   // removed from the persisted list before the next save.
   if (tab.builderSnapshot) out.builderSnapshot = tab.builderSnapshot;
@@ -680,7 +679,7 @@ function toPersistedTab(tab: Tab): PersistedTab {
 /**
  * Restore-tabs ゲート。`mode === "ask"` のときだけ呼び出し側から渡された
  * `askUser()` (Promise<boolean>) で確認する。同期的な `window.confirm` を
- * 排除するため Promise を返す形に変更している (#280)。
+ * 排除するため Promise を返す形にしている。
  */
 async function shouldRestoreSavedTabs(
   mode: TabRestoreMode,
@@ -715,7 +714,7 @@ export default function App() {
   const locale = useLocale();
   const toast = useToast();
   // テーマに追従するカスタム確認ダイアログ。`window.confirm()` の代替で、
-  // `await confirm({...})` の形で同期感覚で呼べる (#280)。
+  // `await confirm({...})` の形で同期感覚で呼べる。
   const { confirm, dialog: confirmDialogElement } = useConfirm();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();

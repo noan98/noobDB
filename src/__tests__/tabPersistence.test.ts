@@ -63,7 +63,7 @@ describe("normalizePersistedWorkspace", () => {
     expect(normalizePersistedWorkspace([]).panes).toHaveLength(0);
   });
 
-  // #287: Round-trip QueryBuilderSnapshot so tab re-open restores the inputs.
+  // Round-trip QueryBuilderSnapshot so tab re-open restores the inputs.
   it("keeps a valid builderSnapshot on a tab", () => {
     const snapshot = {
       kind: "SELECT",
