@@ -85,7 +85,7 @@ impl Connection {
         }
     }
 
-    /// Begin an explicit transaction (#414) on a dedicated held connection so
+    /// Begin an explicit transaction on a dedicated held connection so
     /// subsequent `execute_in_transaction` calls all run on the same connection
     /// (and thus the same transaction). `database` sets the connection's
     /// default schema/db context. Errs if a transaction is already active.
@@ -97,7 +97,7 @@ impl Connection {
         }
     }
 
-    /// Run one statement inside the active explicit transaction (#414). Errs if
+    /// Run one statement inside the active explicit transaction. Errs if
     /// no transaction is active.
     pub async fn execute_in_transaction(&self, sql: &str) -> Result<QueryResult> {
         match self {
@@ -108,7 +108,7 @@ impl Connection {
     }
 
     /// Commit (`true`) or roll back (`false`) the active explicit transaction
-    /// (#414) and release the held connection. Errs if none is active.
+    /// and release the held connection. Errs if none is active.
     pub async fn finish_transaction(&self, commit: bool) -> Result<()> {
         match self {
             Connection::MySql(c) => c.tx_finish(commit).await,
@@ -117,7 +117,7 @@ impl Connection {
         }
     }
 
-    /// Whether an explicit transaction (#414) is currently active.
+    /// Whether an explicit transaction is currently active.
     pub async fn transaction_active(&self) -> bool {
         match self {
             Connection::MySql(c) => c.tx_active().await,
@@ -126,7 +126,7 @@ impl Connection {
         }
     }
 
-    /// Lightweight connection liveness check (#485): runs `SELECT 1` through the
+    /// Lightweight connection liveness check: runs `SELECT 1` through the
     /// normal execute path (which dispatches per driver). Returns `Err` when the
     /// connection is dead — e.g. after an OS sleep or a dropped SSH tunnel — so
     /// callers can decide to reconnect. Cheap enough to run before a query or on
@@ -276,7 +276,7 @@ impl Connection {
         }
     }
 
-    /// Non-table schema objects in `db` (#483): views, materialized views,
+    /// Non-table schema objects in `db`: views, materialized views,
     /// routines (procedures/functions), and triggers. Dispatches per driver to
     /// `information_schema` / `pg_catalog` / `sqlite_master`. Kinds the driver
     /// doesn't support (e.g. SQLite routines) are simply absent.
@@ -288,7 +288,7 @@ impl Connection {
         }
     }
 
-    /// The DDL/definition of a non-table schema object (#483). `kind`/`name` are
+    /// The DDL/definition of a non-table schema object. `kind`/`name` are
     /// from [`schema_objects`]; `id` is the optional unique identifier (PostgreSQL
     /// oid) used to disambiguate overloaded functions / same-name triggers.
     pub async fn object_definition(
@@ -305,7 +305,7 @@ impl Connection {
         }
     }
 
-    /// Every index on `table` in `db` (#459): name, constituent columns (in
+    /// Every index on `table` in `db`: name, constituent columns (in
     /// order), and UNIQUE / PRIMARY flags. Dispatches per driver — MySQL uses
     /// `SHOW INDEX`, PostgreSQL reads `pg_index`/`pg_class`, SQLite loops
     /// `PRAGMA index_list` + `PRAGMA index_info`.
@@ -680,8 +680,7 @@ pub(crate) enum SqlFlavor {
 /// block comments collapse to a single space (so `a/*x*/b` stays two tokens).
 ///
 /// Used by the per-driver `tokenize_sql` / `extract_where_and_after` helpers
-/// on the dry-run preview path; the drivers used to carry three identical,
-/// quote-unaware copies of this.
+/// on the dry-run preview path.
 pub(crate) fn strip_sql_comments(sql: &str, flavor: SqlFlavor) -> String {
     let src: Vec<char> = sql.chars().collect();
     let n = src.len();
@@ -1008,7 +1007,7 @@ mod tests {
         assert!(!is_read_only_sql("SELECT * FROM t INTO OUTFILE '/tmp/x'"));
     }
 
-    /// Shared CTE corpus (#286): mirrors the `READ_ONLY_CTE_CORPUS` table in
+    /// Shared CTE corpus: mirrors the `READ_ONLY_CTE_CORPUS` table in
     /// `src/__tests__/dangerousSql.test.ts`. The frontend `isReadOnlySql` and
     /// this gate must agree on every entry — divergence is the integrity bug
     /// the corpus is meant to surface. When updating one side, update the other.
@@ -1131,7 +1130,6 @@ mod tests {
         assert!(!has_stacked_statements("DELETE FROM t -- drop; this\n"));
         assert!(!has_stacked_statements("UPDATE t SET a = 1 /* ; */"));
 
-        // Issue #393: the five representative cases called out in the bug report.
         // Single-quoted string with embedded semicolon.
         assert!(!has_stacked_statements("SELECT 'hello;world'"));
         // Double-quoted identifier with embedded semicolon.
@@ -1279,7 +1277,7 @@ mod tests {
             strip_sql_comments("SELECT /* a /* b */ c */ 1", SqlFlavor::MySql),
             "SELECT   c */ 1"
         );
-        // Unterminated nested comment swallows to end-of-input, like before.
+        // Unterminated nested comment swallows to end-of-input.
         assert_eq!(
             strip_sql_comments("SELECT /* a /* b */ c", SqlFlavor::Postgres),
             "SELECT  "
@@ -1394,7 +1392,7 @@ mod tests {
         assert!(apply_auto_limit("SELECT DISTINCT count_col FROM t", 1000).is_some());
     }
 
-    // ── ミューテーションテスト (#528) で発見された生き残り変異を潰すケース ───────
+    // ── ミューテーションテストで発見された生き残り変異を潰すケース ───────
 
     /// MISSED: `apply_auto_limit` 470行目 `trim_end_matches` の述語が
     /// `c == ';' || c.is_whitespace()` → `&&` に変異した場合、末尾セミコロンが
@@ -1458,7 +1456,7 @@ mod tests {
     }
 }
 
-/// `is_read_only_sql` / `apply_auto_limit` のプロパティベーステスト (#355)。
+/// `is_read_only_sql` / `apply_auto_limit` のプロパティベーステスト。
 ///
 /// 手書きサンプル (上の `mod tests`) は具体的な既知ケースを固定で検証するが、
 /// 安全網のバイパスは「想定していない入力」で起きる。ここでは proptest で入力を

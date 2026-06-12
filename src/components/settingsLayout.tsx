@@ -3,8 +3,7 @@ import { chakra } from "@chakra-ui/react";
 /**
  * 設定画面 / ヘルプ画面で共有する Chakra レイアウトプリミティブ群。
  *
- * 元々は `App.css` の `.settings*` クラスで描画していたものを style props を持つ
- * Chakra コンポーネントへ移植したもの。`SettingsView` と `HelpView` が同じセクション
+ * `SettingsView` と `HelpView` が同じセクション
  * 構造を共有するため共通化している。両画面はモーダル (`Modal`) 内に描画されるため、
  * 外枠 (スクロールペイン + ヘッダ) は `Modal` / `ModalHeader` / `ModalBody` が担い、
  * ここではセクション内のプリミティブだけを提供する。

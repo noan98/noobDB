@@ -9,13 +9,13 @@ import {
 import { Modal, ModalHeader, ModalBody } from "./Modal";
 
 /**
- * `?` キーで開くキーボードショートカット チートシート オーバーレイ (#448)。
+ * `?` キーで開くキーボードショートカット チートシート オーバーレイ。
  *
  * - ショートカット定義は `shortcuts.ts` の単一ソース (`SHORTCUTS`) を参照し、
  *   `HelpView` のショートカット節と二重管理にならない。
  * - シェルは共通 `Modal` を流用するため、フォーカストラップ・Esc クローズ・
  *   バックドロップ・開閉アニメ (Motion `variants.dialog`) を自前で持たない。
- *   `prefers-reduced-motion: reduce` の抑制も `Modal` 経由で効く (Epic #370)。
+ *   `prefers-reduced-motion: reduce` の抑制も `Modal` 経由で効く。
  * - `App.tsx` 側のグローバルキーハンドラが、入力欄/エディタにフォーカスが無い
  *   ときだけ `?` を捕捉してこれを開く (誤発火防止)。閉じるのは親のアンマウント。
  *

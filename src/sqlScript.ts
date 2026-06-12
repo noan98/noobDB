@@ -1,8 +1,8 @@
-// SQL スクリプト (複数文) のバッチ実行 (#495) の文分割 (純ロジック)。
+// SQL スクリプト (複数文) のバッチ実行の文分割 (純ロジック)。
 //
 // トップレベルの `;` で文を分割する。文字列リテラル・識別子クオート・コメント・
-// PostgreSQL のドル引用 ($tag$...$tag$) の内側にある `;` では分割しない (#393 と同じ
-// 「文字列内セミコロン誤検出」観点)。副作用が無いので Vitest でユニットテストする。
+// PostgreSQL のドル引用 ($tag$...$tag$) の内側にある `;` では分割しない
+// (文字列内セミコロンの誤検出を防ぐ)。副作用が無いので Vitest でユニットテストする。
 
 /**
  * `sql` をトップレベルの `;` で分割し、空文を除いた各文 (末尾セミコロンなし) を返す。
@@ -91,7 +91,7 @@ export function isMultiStatement(sql: string): boolean {
 
 import type { CellValue, Column } from "./api/tauri";
 
-/** バッチ実行 (#495) における 1 文の実行結果。 */
+/** バッチ実行における 1 文の実行結果。 */
 export interface BatchStatementResult {
   /** 実行した SQL 文。 */
   sql: string;

@@ -13,7 +13,7 @@ use crate::error::{AppError, Result};
 
 pub struct PostgresConn {
     pool: PgPool,
-    /// 明示トランザクション (#414) で確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
+    /// 明示トランザクションで確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
     /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Postgres>>>,
 }
@@ -62,7 +62,7 @@ impl PostgresConn {
         run_sql_on(&mut conn, sql).await
     }
 
-    // ── 明示トランザクション (#414) ──
+    // ── 明示トランザクション ──
 
     pub async fn tx_begin(&self, database: Option<&str>) -> Result<()> {
         let mut guard = self.tx.lock().await;
@@ -800,7 +800,7 @@ async fn apply_search_path(
     Ok(())
 }
 
-/// Run one statement on a specific connection and decode it (#414). Shared by
+/// Run one statement on a specific connection and decode it. Shared by
 /// `execute` (pool connection) and `tx_execute` (held transaction connection).
 async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();

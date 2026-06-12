@@ -14,7 +14,7 @@ use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
     pool: MySqlPool,
-    /// 明示トランザクション (#414) で確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
+    /// 明示トランザクションで確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
     /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::MySql>>>,
 }
@@ -63,7 +63,7 @@ impl MySqlConn {
         run_sql_on(&mut conn, sql).await
     }
 
-    // ── 明示トランザクション (#414) ──
+    // ── 明示トランザクション ──
 
     pub async fn tx_begin(&self, database: Option<&str>) -> Result<()> {
         let mut guard = self.tx.lock().await;
@@ -295,7 +295,7 @@ impl MySqlConn {
 
         // Best-effort PK lookup — falls back to an empty Vec so a missing
         // primary key, view target, or stripped privileges just degrades to
-        // the previous unordered snapshot behaviour.
+        // an unordered snapshot.
         let primary_key: Vec<String> = match target.as_deref() {
             Some(t) => fetch_primary_key(&mut conn, t).await.unwrap_or_default(),
             None => Vec::new(),
@@ -910,7 +910,7 @@ fn decode_text_col(row: &MySqlRow, i: usize) -> Result<String> {
     String::from_utf8(bytes).map_err(|e| AppError::Other(e.to_string()))
 }
 
-/// Run one statement on a specific connection and decode it (#414). Shared by
+/// Run one statement on a specific connection and decode it. Shared by
 /// `execute` (pool connection) and `tx_execute` (held transaction connection).
 /// Handles CALL (which may or may not return a result set) like `execute`.
 async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<QueryResult> {
@@ -1021,7 +1021,7 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
         // TIMESTAMP→DateTime<Utc>, DATE→NaiveDate, TIME→NaiveTime. A mismatched
         // `try_get` errors on the compatibility check, so we must try the right
         // one for each — notably TIMESTAMP and TIME are NOT decodable as
-        // NaiveDateTime and silently fell through to NULL before this.
+        // NaiveDateTime.
         if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(i) {
             return v
                 .map(|d| Value::String(d.to_string()))
@@ -1316,10 +1316,8 @@ async fn fetch_primary_key(conn: &mut PoolConnection<MySql>, target: &str) -> Re
         .filter_map(|r| {
             // SHOW KEYS reports Seq_in_index as INT UNSIGNED on MariaDB and
             // BIGINT UNSIGNED on MySQL 8 — sqlx's strict type check rejects
-            // `i64` for either, so the previous decoder silently dropped
-            // every row and PK detection always returned empty. Fall back
-            // through signed shapes too so future server versions don't
-            // re-break this without warning.
+            // `i64` for either. Fall back through signed shapes too so future
+            // server versions don't break this without warning.
             let seq = decode_seq_in_index(r)?;
             let col = r.try_get::<String, _>("Column_name").ok()?;
             Some((seq, col))
@@ -1604,8 +1602,7 @@ fn skip_leading_comments_and_ws(sql: &str) -> &str {
 /// skipped. Comments and quoted text (`'...'`, `"..."`, `` `...` ``) are
 /// ignored so a keyword inside a literal or identifier isn't mistaken for the
 /// main statement. If no decisive keyword is found (e.g. `WITH ... TABLE t`),
-/// the statement is treated as query-shaped, preserving the historical
-/// default.
+/// the statement is treated as query-shaped.
 fn with_cte_is_mutation(sql: &str) -> bool {
     let mut depth: i32 = 0;
     let mut in_single = false;
@@ -1811,9 +1808,7 @@ mod tests {
     #[test]
     fn with_cte_comment_marker_in_literal_is_preserved() {
         // The `--` lives inside a string literal, so it must not be treated as
-        // a comment that would swallow the trailing DELETE. Regression: a
-        // quote-unaware comment strip truncated the statement and misrouted
-        // the mutation to the fetch path.
+        // a comment that would swallow the trailing DELETE.
         assert!(!is_query_shape(
             "WITH c AS (SELECT '-- keep' AS note) DELETE FROM t WHERE id IN (SELECT 1)"
         ));

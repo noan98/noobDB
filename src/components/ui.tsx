@@ -13,8 +13,7 @@ import { springs } from "../motion";
 
 /**
  * `theme.ts` の共通 recipe を `chakra(...)` ファクトリでラッパーコンポーネント化
- * したもの。`App.css` の className ベースの見た目を Chakra recipe + style props で
- * 置き換えるための共通 UI プリミティブで、後続のコンポーネント移行はここから
+ * した共通 UI プリミティブ。各コンポーネントはここから
  * import して使う (素の見た目を毎回書かない)。recipe の variant / size はそのまま
  * props として受け取れる (例: `<Button variant="primary" size="sm">`)。
  */
@@ -46,7 +45,7 @@ export function Radio(props: Omit<ComponentProps<typeof RadioRoot>, "type">) {
 }
 
 /**
- * press feedback つきの CTA ボタン (`#541`)。
+ * press feedback つきの CTA ボタン。
  *
  * `Button` を `motion.span` で包み、ホバー時の微細 scale アップと押下時の
  * scale ダウンを `springs.gentle` で spring アニメーションする。

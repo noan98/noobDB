@@ -1,5 +1,5 @@
 /**
- * アクティブ接続コンテキスト (#466) の純ロジック。TitleBar は Tauri の
+ * アクティブ接続コンテキストの純ロジック。TitleBar は Tauri の
  * `getCurrentWindow()` をモジュール読み込み時に呼ぶためテスト環境で import できない。
  * 副作用のないこの部分を分離し、`connectionContext.test.ts` で単体テストする。
  */

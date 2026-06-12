@@ -4,7 +4,7 @@ import { Spinner } from "./Spinner";
 import { Button, PressableButton } from "./ui";
 
 /**
- * 非同期操作向けのインラインスピナー付きボタン (#538)。
+ * 非同期操作向けのインラインスピナー付きボタン。
  *
  * `loading` が true のとき:
  *   - ボタン内にスピナー (小サイズ) を表示しラベルを保持
@@ -18,7 +18,7 @@ import { Button, PressableButton } from "./ui";
  * 系に寄せる。secondary / ghost / default は既存の `app.borderStrong` /
  * `app.accent` で十分なため調整不要。
  *
- * `pressable` を併用すると、土台が `PressableButton` (#541) になり Motion spring の
+ * `pressable` を併用すると、土台が `PressableButton` になり Motion spring の
  * press feedback も付く。主要 CTA (保存・実行など) ではこちらを使う。
  *
  * ### 使い方

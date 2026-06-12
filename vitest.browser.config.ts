@@ -3,7 +3,7 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
 
-// Vitest ブラウザモード設定 (#306)。jsdom の純ロジック/挙動テスト (vite.config.ts)
+// Vitest ブラウザモード設定。jsdom の純ロジック/挙動テスト (vite.config.ts)
 // とは実行環境が異なるため、設定ファイルを分離している。こちらは実ブラウザ
 // (Playwright provider + headless Chromium) に主要画面をマウントし、(1) 描画の
 // スモーク (screens.browser.test.tsx)、(2) ライト/ダークのビジュアル回帰

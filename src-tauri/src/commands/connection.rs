@@ -110,7 +110,7 @@ pub async fn connect(req: ConnectRequest, state: State<'_, AppState>) -> Result<
     Ok(ConnectResponse { session_id: id })
 }
 
-/// Connection health check (#485). Returns `true` when the session's connection
+/// Connection health check. Returns `true` when the session's connection
 /// answers a lightweight `SELECT 1`, `false` when it is dead (sleep / dropped
 /// tunnel), and `Err` only when the session id is unknown. The frontend polls
 /// this (e.g. on window focus) and reconnects when it reports `false`.

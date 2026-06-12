@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { transitions } from "../motion";
 
 /**
- * テーマ切替時の控えめなクロスフェード (#465)。`themeKey` (= data-theme) が変わると、
+ * テーマ切替時の控えめなクロスフェード。`themeKey` (= data-theme) が変わると、
  * 新しいテーマの地色を一瞬全画面に重ねてからフェードアウトし、トークンの瞬時切替を
  * なめらかに見せる。初回マウント時は再生しない。`prefers-reduced-motion` 時は
  * ルートの `<MotionConfig reducedMotion="user">` により即時化される。

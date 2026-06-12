@@ -99,7 +99,7 @@ fn write_csv<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> st
     write_csv_rows(w, columns, rows)
 }
 
-/// Write just the CSV header line. Split out so the streaming export (#494) can
+/// Write just the CSV header line. Split out so the streaming export can
 /// write the header on the columns event and rows on later batches.
 fn write_csv_header<W: Write>(w: &mut W, columns: &[Column]) -> std::io::Result<()> {
     let mut line = String::new();
@@ -135,7 +135,7 @@ fn write_csv_rows<W: Write>(
 }
 
 /// Build a JSON object for one row, keyed by column name. Shared by the
-/// in-memory `write_json` and the streaming export sink (#494).
+/// in-memory `write_json` and the streaming export sink.
 fn row_to_json_object(columns: &[Column], row: &[Value]) -> serde_json::Value {
     use serde_json::{Map, Value as J};
     let mut obj = Map::with_capacity(columns.len());
@@ -166,7 +166,7 @@ fn write_json<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> R
     Ok(())
 }
 
-// ── 全件ストリーミングエクスポート (#494) ──
+// ── 全件ストリーミングエクスポート ──
 //
 // 在メモリ行に依存せず、クエリをバックエンドで再実行してストリーミングで直接ファイルへ
 // 書き出す。run_query_stream と同じ枠組み (execute_stream + register/forget_stream +
@@ -263,7 +263,7 @@ impl StreamExportSink {
     }
 }
 
-/// Re-run `sql` and stream the full result set to `path` (#494). Progress is
+/// Re-run `sql` and stream the full result set to `path`. Progress is
 /// reported via `export-stream:*` events keyed by `stream_id`; `cancel_stream`
 /// aborts it and returns the connection to the pool. Only read-only (SELECT)
 /// statements are accepted, so an export can never mutate data.

@@ -20,7 +20,7 @@ import type { Transition, Variants } from "motion/react";
  * - **CSS:** `src/App.css` 末尾の `@media (prefers-reduced-motion: reduce)` が
  *   全要素の transition / animation を実質無効化する。
  *
- * ## 「CSS のまま残す / Motion 化する」の境界 (Epic #370 で確定)
+ * ## 「CSS のまま残す / Motion 化する」の境界
  *
  * - **CSS のまま残す:** 単純な hover / focus / active の色・影・枠線などの
  *   transition。状態を 1 プロパティの補間で表現でき、要素の出入り (mount/unmount)
@@ -41,7 +41,7 @@ import type { Transition, Variants } from "motion/react";
  * - 接続ステータスドットの色/影遷移、`connecting` の脈動 (`@keyframes pulse`)、
  *   スピナー回転 (`@keyframes spinner-rotate`) などの CSS アニメーション。
  *
- * ### 具体的に Motion 化したもの (Epic #370 の対象)
+ * ### 具体的に Motion 化したもの
  *
  * - モーダル/ダイアログの開閉 (`Modal` — `variants.dialog` / `fade`)。
  * - タブの追加/削除とアクティブインジケータ (`TabBar` — `layout` / `layoutId`)。

@@ -17,7 +17,7 @@ pub const DEFAULT_DB_NAME: &str = "main";
 
 pub struct SqliteConn {
     pool: SqlitePool,
-    /// 明示トランザクション (#414) で確保した専用接続。BEGIN で取得し、COMMIT/ROLLBACK
+    /// 明示トランザクションで確保した専用接続。BEGIN で取得し、COMMIT/ROLLBACK
     /// で解放する。トランザクション中の文はこの 1 本の接続で実行され、確実に同一
     /// トランザクションに乗る (プールの別接続に散らばらない)。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>>,
@@ -63,7 +63,7 @@ impl SqliteConn {
         run_sql_on(&mut conn, sql).await
     }
 
-    // ── 明示トランザクション (#414) ──
+    // ── 明示トランザクション ──
 
     pub async fn tx_begin(&self, _database: Option<&str>) -> Result<()> {
         let mut guard = self.tx.lock().await;
@@ -637,7 +637,7 @@ fn is_query_shape(sql: &str) -> bool {
 
 /// Run one statement on a specific connection (pool-acquired or the held tx
 /// connection) and decode it into a [`QueryResult`]. Shared by `execute` and
-/// `tx_execute` (#414).
+/// `tx_execute`.
 async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
     if is_query_shape(sql) {

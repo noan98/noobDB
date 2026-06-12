@@ -7,7 +7,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton } from "./ui";
 
 /**
- * 結果グリッドからの行追加 (#441) で、新規行の各カラム値を入力するモーダル。確定すると
+ * 結果グリッドからの行追加で、新規行の各カラム値を入力するモーダル。確定すると
  * 入力済みカラムだけを持つ PendingInsertRow を返す (空欄は INSERT に含めず DB 既定値)。
  * 値の SQL リテラル化は Apply 時に cellEdit の literalFromInput が行う。
  */
@@ -24,7 +24,6 @@ export function RowInsertModal({ table, columns, onConfirm, onCancel }: Props) {
   const firstRef = useRef<HTMLInputElement>(null);
 
   const submit = () => {
-    // 入力された (空でない) カラムのみを保留行に含める。
     const row: PendingInsertRow = {};
     for (const [k, v] of Object.entries(values)) {
       if (v !== "") row[Number(k)] = v;

@@ -1,4 +1,4 @@
-//! Schema & data comparison commands (Issue #245, phases 1 & 3).
+//! Schema & data comparison commands.
 
 use tauri::State;
 
@@ -38,7 +38,7 @@ pub(crate) async fn collect_table_columns(
 /// `target_database` (on the target session) and returns a per-table /
 /// per-column diff. The two sessions may be the same — comparing two schemas on
 /// one server is a valid use — but must use the same driver: cross-driver type
-/// reconciliation is out of scope for phase 1.
+/// reconciliation is out of scope.
 #[tauri::command]
 pub async fn compare_schema(
     source_session_id: String,

@@ -4,7 +4,7 @@ import { quoteIdentFor } from "./components/sqlDialect";
 
 /**
  * Interactive query parameters: `{{name}}` placeholders typed into the editor
- * that prompt for a value before the query runs (#388). Detection and the
+ * that prompt for a value before the query runs. Detection and the
  * driver-aware, injection-safe substitution live here as pure functions so the
  * security-critical escaping is unit-testable without React. The input UI is in
  * `components/ParameterInputModal.tsx`; App wires detection into the run /

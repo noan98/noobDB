@@ -4,19 +4,17 @@ import { chakra } from "@chakra-ui/react";
  * エクスポート / ダンプ / インポートの各モーダルで共有する Chakra
  * レイアウトプリミティブ群。
  *
- * 元々は `App.css` の `.export-section` / `.export-label` / `.export-path-row` /
- * `.export-error` クラスで描画していたものを style props を持つ Chakra
- * コンポーネントへ移植したもの。3 モーダル (`ExportModal` / `DumpModal` /
+ * 3 モーダル (`ExportModal` / `DumpModal` /
  * `ImportModal`) が同じフォーム構造 (ラベル付きセクション + パス入力行 +
  * エラー表示) を共有するため共通化している。
  */
 
-/** モーダル内のフィールドブロック (縦積み)。`.export-section` 相当。 */
+/** モーダル内のフィールドブロック (縦積み)。 */
 export const FormSection = chakra("section", {
   base: { display: "flex", flexDirection: "column", gap: "1.5" },
 });
 
-/** 小さい大文字のフィールドラベル。`.export-label` 相当。入力に紐づく場合は
+/** 小さい大文字のフィールドラベル。入力に紐づく場合は
  *  `<FieldLabel htmlFor="...">`、ラジオグループ等の見出し用途では
  *  `<FieldLabel as="div">` で使う。 */
 export const FieldLabel = chakra("label", {
@@ -29,13 +27,13 @@ export const FieldLabel = chakra("label", {
   },
 });
 
-/** 入力欄 + 参照ボタンの横並び。`.export-path-row` 相当。 */
+/** 入力欄 + 参照ボタンの横並び。 */
 export const PathRow = chakra("div", {
   base: { display: "flex", gap: "2", alignItems: "center" },
 });
 
 /**
- * エラー文の枠付き表示。`.export-error` 相当。
+ * エラー文の枠付き表示。
  *
  * ## エラー/警告表示の使い分け
  * - **Toast** (`Toast.tsx`): コピー完了・接続失敗などの一時的な操作結果。自動で
