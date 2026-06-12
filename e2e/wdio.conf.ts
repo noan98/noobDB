@@ -104,6 +104,13 @@ export const config: Options.Testrunner = {
     [
       "tauri",
       {
+        // @wdio/tauri-service@1.0.0 は既定で「埋め込み WebDriver プロバイダ」
+        // (tauri-plugin-wdio-webdriver をアプリに組み込む方式) を使う。本 PoC は
+        // 従来の tauri-driver 方式 (#529) を採用しており、アプリにその plugin を
+        // 登録していないため、明示的に 'official' を指定して tauri-driver 経由に
+        // 切り替える。これを省くと埋め込みドライバ (port 4445) が起動せず
+        // SevereServiceError で onPrepare が失敗する。
+        driverProvider: "official",
         // CI では PATH に tauri-driver が必要 (cargo install tauri-driver --locked)。
         // ローカルでは `~/.cargo/bin/tauri-driver` があれば自動検出される。
         autoInstallTauriDriver: false,
