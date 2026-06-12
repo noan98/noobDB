@@ -655,7 +655,7 @@ export const api = {
       parseResponse(schemas.numberResponse, r, "export_profiles"),
     ),
   /**
-   * `path` の JSON (`exportProfiles` 出力) を取り込む (#442)。`strategy` は ID 衝突時の
+   * `path` の JSON (`exportProfiles` 出力) を取り込む。`strategy` は ID 衝突時の
    * 解決方法。秘密情報は含まれないため、取り込んだプロファイルは接続時に資格情報の
    * 再入力が要る。
    */
@@ -709,7 +709,7 @@ export const api = {
     }).then((r) => parseResponse(schemas.numberResponse, r, "export_query_result")),
 
   /**
-   * クエリを再実行し、全件をストリーミングで直接ファイルへ書き出す (#494)。結果は
+   * クエリを再実行し、全件をストリーミングで直接ファイルへ書き出す。結果は
    * `export-stream:*` イベントで通知され、`cancelStream` で中断できる。SELECT 系のみ。
    */
   exportQueryStream: (params: {
@@ -774,7 +774,7 @@ export const api = {
     }),
 
   /**
-   * ドロップされた `.sql` / `.txt` ファイルの内容を読む (#497)。フロントが fs API を
+   * ドロップされた `.sql` / `.txt` ファイルの内容を読む。フロントが fs API を
    * 直に叩かずバックエンド経由で読む (capabilities を最小に保つ)。サイズ上限を超える
    * ファイルは reject される。
    */
@@ -867,7 +867,7 @@ export interface ImportErrorEvent {
   error: string;
 }
 
-// 全件ストリーミングエクスポート (#494)。
+// 全件ストリーミングエクスポート。
 export interface ExportProgressEvent {
   streamId: string;
   rows: number;
@@ -1029,7 +1029,7 @@ export async function listenImportStream(
   return () => unlisteners.forEach((un) => un());
 }
 
-/** 全件ストリーミングエクスポート (#494) の進捗/完了/エラーイベントを購読する。 */
+/** 全件ストリーミングエクスポートの進捗/完了/エラーイベントを購読する。 */
 export async function listenExportStream(
   streamId: string,
   handlers: ExportStreamHandlers,

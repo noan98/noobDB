@@ -4,7 +4,7 @@ import { ResultGrid } from "../components/ResultGrid";
 import type { Column, QueryResult } from "../api/tauri";
 import { setLocale, getLocale } from "../i18n";
 
-// ResultGrid の行仮想化 (#403) を検証する。本体の ResultGrid.test.tsx は jsdom の
+// ResultGrid の行仮想化を検証する。本体の ResultGrid.test.tsx は jsdom の
 // ビューポート寸法が 0 なので「全行描画フォールバック」経路を通る (= 仮想化されない)。
 // ここではスクロール枠と行に実寸を与える (getBoundingClientRect / ResizeObserver を
 // モック) ことで仮想化経路を強制し、大きな結果でも可視範囲付近の行だけがマウント

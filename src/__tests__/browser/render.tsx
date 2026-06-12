@@ -1,5 +1,5 @@
 // 実ブラウザ (Vitest ブラウザモード / Playwright + headless Chromium) 用の描画
-// ヘルパ (#306)。jsdom 版の `testUtils.tsx` と同じく、アプリ本体 (`main.tsx`) と
+// ヘルパ。jsdom 版の `testUtils.tsx` と同じく、アプリ本体 (`main.tsx`) と
 // 同一の `ChakraProvider value={system}` + `ToastProvider` でラップし、Chakra の
 // recipe / トークン / Portal を実アプリと同じ条件で評価できるようにする。
 //
