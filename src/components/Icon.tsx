@@ -27,6 +27,7 @@ import { chakra } from "@chakra-ui/react";
  * | 列のピン留め               | `pin`           |
  * | データベース / サーバ      | `database` / `server` |
  * | 切断 (接続解除)            | `unplug`        |
+ * | 転送 (イン/エクスポート両方向) | `transfer`  |
  *
  * ## サイズ / ストローク規約 (#489)
  *
@@ -80,6 +81,7 @@ export type IconName =
   | "star-filled"
   | "download"
   | "upload"
+  | "transfer"
   | "hash"
   | "toggle"
   | "calendar"
@@ -378,6 +380,16 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <path d="M7 9l5-5 5 5" />
       <path d="M12 4v12" />
+    </>
+  ),
+  // 転送 (インポート/エクスポート両方向): 左右の双方向矢印。`sort` (上下矢印 =
+  // 並び替え) との意味衝突を避けるため水平方向にしている。
+  transfer: (
+    <>
+      <path d="m16 3 4 4-4 4" />
+      <path d="M20 7H4" />
+      <path d="m8 21-4-4 4-4" />
+      <path d="M4 17h16" />
     </>
   ),
   // ── カラム型ヘッダーアイコン (#474) ──

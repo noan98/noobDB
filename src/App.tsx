@@ -972,6 +972,9 @@ export default function App() {
   useEffect(() => { activePaneIdRef.current = activePaneId; }, [activePaneId]);
   // Right-click target for the tab move/close menu (viewport coords).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
+  // サイドバーヘッダの「プロファイル転送」ボタン直下に出すインポート/エクスポート
+  // メニューのアンカー座標 (viewport coords)。ヘッダのボタン過密対策 (2 ボタン → 1)。
+  const [profileTransferMenu, setProfileTransferMenu] = useState<{ x: number; y: number } | null>(null);
   const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
   // ドラッグ&ドロップ (#497) で .csv を落としたときに ImportModal へ渡す事前選択パス。
   const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
@@ -4222,18 +4225,15 @@ export default function App() {
             ) : sidebarTab === "connections" ? (
               <>
                 <IconButton
-                  onClick={handleImportProfilesPick}
-                  title={t("profileImportAria")}
-                  aria-label={t("profileImportAria")}
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setProfileTransferMenu({ x: rect.left, y: rect.bottom + 4 });
+                  }}
+                  title={t("profileTransferAria")}
+                  aria-label={t("profileTransferAria")}
+                  aria-haspopup="menu"
                 >
-                  <Icon name="upload" />
-                </IconButton>
-                <IconButton
-                  onClick={handleExportProfiles}
-                  title={t("profileExportAria")}
-                  aria-label={t("profileExportAria")}
-                >
-                  <Icon name="download" />
+                  <Icon name="transfer" />
                 </IconButton>
                 <IconButton
                   onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
@@ -4976,6 +4976,18 @@ export default function App() {
           <ContextMenu x={tabMenu.x} y={tabMenu.y} items={items} onClose={() => setTabMenu(null)} />
         );
       })()}
+
+      {profileTransferMenu && (
+        <ContextMenu
+          x={profileTransferMenu.x}
+          y={profileTransferMenu.y}
+          items={[
+            { label: t("profileImportAria"), onSelect: handleImportProfilesPick },
+            { label: t("profileExportAria"), onSelect: handleExportProfiles },
+          ]}
+          onClose={() => setProfileTransferMenu(null)}
+        />
+      )}
       </Grid>
       <Suspense fallback={null}>
         <AnimatePresence>
