@@ -198,13 +198,13 @@ interface Props {
   onRenameTable?: (database: string, table: string) => void;
   /** テーブル名をクリップボードへコピー。 */
   onCopyTableName?: (table: string) => void;
-  /** スキーマオブジェクト (#483) の定義を開く。`id` は同名衝突を避ける一意識別子。 */
+  /** スキーマオブジェクトの定義を開く。`id` は同名衝突を避ける一意識別子。 */
   onOpenObjectDefinition?: (database: string, kind: string, name: string, id: string | null) => void;
   /** Row cap shown in the "Run SELECT *" menu label. */
   selectLimit: number;
-  /** お気に入りテーブル (アクティブ接続) のクイックアクセス (#461)。 */
+  /** お気に入りテーブル (アクティブ接続) のクイックアクセス。 */
   favorites?: TableRef[];
-  /** 最近開いたテーブル (アクティブ接続) のクイックアクセス (#461)。 */
+  /** 最近開いたテーブル (アクティブ接続) のクイックアクセス。 */
   recent?: TableRef[];
   /** お気に入りのトグル (登録/解除)。未指定ならお気に入り UI を出さない。 */
   onToggleFavorite?: (database: string, table: string) => void;
@@ -217,7 +217,7 @@ interface MenuState {
 }
 
 // React.memo + forwardRef でラップし、App.tsx の再レンダリング (クエリ入力や
-// ストリーミングのたびに発生する) でツリー全体が無駄に再描画されるのを防ぐ (#403)。
+// ストリーミングのたびに発生する) でツリー全体が無駄に再描画されるのを防ぐ。
 // forwardRef は App.tsx から focusFilter() を呼ぶための ConnectionListHandle を
 // 公開するために必要。親から渡るコールバックは App 側で useCallback 安定化済みの
 // ため、接続状態が変わらない限り memo がスキップする。
@@ -253,12 +253,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
   const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
-  // グループ折りたたみ状態は localStorage に永続化し、再起動後も維持する (#350)。
+  // グループ折りたたみ状態は localStorage に永続化し、再起動後も維持する。
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(readCollapsedGroups);
   const [tableColumns, setTableColumns] = useState<Record<string, TableColumnInfo[]>>({});
-  // テーブルごとのインデックス一覧 (#459)。テーブル展開時に列と並行で遅延取得する。
+  // テーブルごとのインデックス一覧。テーブル展開時に列と並行で遅延取得する。
   const [tableIndexes, setTableIndexes] = useState<Record<string, IndexInfo[]>>({});
-  // DB ごとの非テーブルオブジェクト (#483)。DB 展開時に遅延取得する。
+  // DB ごとの非テーブルオブジェクト。DB 展開時に遅延取得する。
   const [schemaObjects, setSchemaObjects] = useState<Record<string, SchemaObject[]>>({});
   const [databases, setDatabases] = useState<string[] | null>(null);
   const [tables, setTables] = useState<Record<string, string[]>>({});
