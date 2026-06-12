@@ -454,9 +454,9 @@ interface Tab {
   pendingDeletes?: string[];
   /** 追加予定の新規行: 各要素は colIdx→値。Apply で INSERT される。 */
   pendingInserts?: PendingInsertRow[];
-  /** チャートビュー (#440) を表示中か。結果グリッドの代わりにチャートを描く。 */
+  /** チャートビューを表示中か。結果グリッドの代わりにチャートを描く。 */
   showChart?: boolean;
-  /** SQL スクリプトのバッチ実行 (#495) の文ごとの結果。設定時は結果ビューに代えて表示。 */
+  /** SQL スクリプトのバッチ実行の文ごとの結果。設定時は結果ビューに代えて表示。 */
   batchResults?: BatchStatementResult[];
   /** バッチ実行のスクリプト本文 (stop/continue 切替で再実行するため保持)。 */
   batchScript?: string;
@@ -467,12 +467,12 @@ interface Tab {
    * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
    */
   lastEditAppliedAt?: number;
-  /** True while the Apply Edits transaction is in flight for this tab (#538). */
+  /** True while the Apply Edits transaction is in flight for this tab. */
   applyingEdits?: boolean;
   /**
    * Most recent Query Builder inputs captured on its Run / Dry Run, restored
    * when the builder is reopened in this tab. Persisted alongside the tab
-   * (#287) so it survives reconnects and app restarts; cleared only when the
+   * so it survives reconnects and app restarts; cleared only when the
    * tab itself is closed. Holds the latest single snapshot — no history.
    */
   builderSnapshot: QueryBuilderSnapshot | null;
@@ -491,7 +491,7 @@ interface Tab {
  * One column of the split workspace. Tab *data* lives in the flat `tabs` array;
  * a pane only tracks which tab ids it holds (in display order) and which is
  * active. With a single pane the layout behaves exactly like the old single-tab
- * workspace; a second pane is added on demand for side-by-side viewing (#244).
+ * workspace; a second pane is added on demand for side-by-side viewing.
  */
 interface PaneState {
   id: string;
