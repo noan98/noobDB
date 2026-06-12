@@ -626,7 +626,7 @@ function makeExplainTab(sql: string): Tab {
   };
 }
 
-/** ドラッグ&ドロップ (#497) で受理するファイル種別の判定結果。 */
+/** ドラッグ&ドロップで受理するファイル種別の判定結果。 */
 type DroppedKind = "sql" | "csv" | "unsupported";
 
 /** パスの拡張子 (小文字、ドットなし)。拡張子が無ければ空文字。 */
@@ -641,7 +641,7 @@ function fileBaseName(path: string): string {
   return path.split(/[/\\]/).pop() || path;
 }
 
-/** ドロップされた 1 ファイルの種別を拡張子から判定する (#497)。 */
+/** ドロップされた 1 ファイルの種別を拡張子から判定する。 */
 function classifyDroppedFile(path: string): DroppedKind {
   const ext = fileExtension(path);
   if (ext === "sql" || ext === "txt") return "sql";
@@ -651,7 +651,7 @@ function classifyDroppedFile(path: string): DroppedKind {
 
 /**
  * ドラッグオーバー中のオーバーレイ表示用に、ドロップ予定ファイル群を 1 つの
- * フィードバック状態へ畳み込む (#497)。受理できるファイルが 1 つでもあれば
+ * フィードバック状態へ畳み込む。受理できるファイルが 1 つでもあれば
  * `accept`、種別が混在していれば `mixed`、すべて非対応なら `reject`。
  */
 type DragFeedback = { accept: boolean; kind: "sql" | "csv" | "mixed" | "reject" };
@@ -725,15 +725,15 @@ export default function App() {
   // プロセスモニタパネル (processlist / pg_stat_activity + KILL) の開閉。
   const [showProcesses, setShowProcesses] = useState(false);
   // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
-  // 状態には依存させない (#382)。
+  // 状態には依存させない。
   const [showCommandPalette, setShowCommandPalette] = useState(false);
-  // スキーマ横断のグローバルオブジェクト検索 (#473) の開閉。
+  // スキーマ横断のグローバルオブジェクト検索の開閉。
   const [showObjectSearch, setShowObjectSearch] = useState(false);
-  // `?` キーで開くショートカット チートシートの開閉 (#448)。
+  // `?` キーで開くショートカット チートシートの開閉。
   const [showCheatSheet, setShowCheatSheet] = useState(false);
 
-  // data-theme はテーマプリセット (#465) と light/dark トグルから合成する。
-  // THEME_STORAGE_KEY には従来どおり light/dark のみ保存する。
+  // data-theme はテーマプリセットと light/dark トグルから合成する。
+  // THEME_STORAGE_KEY には light/dark のみ保存する。
   const dataTheme = themePresetDataTheme(settings.themePreset, theme);
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", dataTheme);
@@ -749,7 +749,7 @@ export default function App() {
     root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
     root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
 
-    // フォントファミリ (#449): 設定があれば共有フォールバック付きのスタックを
+    // フォントファミリ: 設定があれば共有フォールバック付きのスタックを
     // --font-mono / --font-sans に注入し、未指定なら App.css の既定スタックへ戻す。
     const monoStack = monoFontStack(settings.monoFontFamily);
     if (monoStack) root.style.setProperty("--font-mono", monoStack);
@@ -759,7 +759,7 @@ export default function App() {
     else root.style.removeProperty("--font-sans");
 
     // アクセント色: ユーザー指定があれば 3 つの CSS 変数を実行時に注入し、未指定
-    // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す (#409)。前景と
+    // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す。前景と
     // hover はテーマに応じて算出するため、theme 変更時も再実行される。
     if (settings.accentColor) {
       const v = accentVars(settings.accentColor, theme);
@@ -772,7 +772,7 @@ export default function App() {
       root.style.removeProperty("--accent-text");
     }
 
-    // 表示密度: data-density 属性で App.css の `--density-*` トークンを切り替える (#410)。
+    // 表示密度: data-density 属性で App.css の `--density-*` トークンを切り替える。
     root.setAttribute("data-density", settings.density);
   }, [settings, theme]);
 
