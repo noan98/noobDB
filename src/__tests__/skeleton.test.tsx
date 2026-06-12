@@ -3,7 +3,7 @@ import { renderWithProviders } from "./testUtils";
 import { Skeleton, SkeletonRow } from "../components/Skeleton";
 
 /**
- * スケルトン UI プリミティブのユニットテスト (#537)。
+ * スケルトン UI プリミティブのユニットテスト。
  *
  * jsdom 環境での CSS アニメーション (`skeleton-shimmer`) は動かないが、
  * 要素が正しく描画されること・ARIA 属性・スタイル属性の付与を確認する。

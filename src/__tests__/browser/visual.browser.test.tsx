@@ -8,11 +8,11 @@ import type { Column, QueryResult } from "../../api/tauri";
 import type { DangerFinding } from "../../dangerousSql";
 import type { Theme } from "../../settings";
 
-// Phase 2 — ビジュアル回帰テスト (#306)。
+// Phase 2 — ビジュアル回帰テスト。
 //
 // Phase 1 の主要画面のうち見た目の退行検出価値が高いものに絞り、ライト/ダークの
-// 両テーマでスクリーンショットを撮ってベースライン PNG と比較する。Chakra UI 全面
-// 移行 (#271) で起きやすいテーマ追従 (色・余白・コントラスト) の退行を捕まえる。
+// 両テーマでスクリーンショットを撮ってベースライン PNG と比較する。
+// テーマ追従 (色・余白・コントラスト) の退行を捕まえる。
 //
 // 決定性の確保 (`setup.browser.ts` でアニメーション無効化・ロケール固定済み) に
 // 加え、ここでは:

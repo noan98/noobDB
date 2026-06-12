@@ -31,7 +31,7 @@ import { Button, Select } from "./ui";
 import { Spinner } from "./Spinner";
 
 /**
- * ER diagram (Issue #389): renders the connected database's tables and their
+ * ER diagram: renders the connected database's tables and their
  * foreign-key relationships as a draggable, zoomable graph. Data comes from two
  * bulk calls — `schema_overview` (tables + columns) and `foreign_keys` (edges)
  * — plus best-effort per-table `describe_table` to mark primary keys. The graph

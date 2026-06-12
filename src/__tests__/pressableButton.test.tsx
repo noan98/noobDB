@@ -4,7 +4,7 @@ import { renderWithProviders, screen } from "./testUtils";
 import { PressableButton } from "../components/ui";
 
 /**
- * `PressableButton` の回帰テスト (#541)。
+ * `PressableButton` の回帰テスト。
  *
  * クリックコールバック・無効化・`data-pressable` 属性の存在を検証する。
  * Motion の spring アニメーション自体は jsdom では走らないが、

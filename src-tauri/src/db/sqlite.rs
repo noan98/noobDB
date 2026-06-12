@@ -8,7 +8,7 @@ use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
-use super::DbConnectOptions;
+use super::{build_insert_sql, DbConnectOptions};
 use crate::error::{AppError, Result};
 
 /// Default "database" name reported to the UI tree. SQLite uses `main` for
@@ -17,7 +17,7 @@ pub const DEFAULT_DB_NAME: &str = "main";
 
 pub struct SqliteConn {
     pool: SqlitePool,
-    /// 明示トランザクション (#414) で確保した専用接続。BEGIN で取得し、COMMIT/ROLLBACK
+    /// 明示トランザクションで確保した専用接続。BEGIN で取得し、COMMIT/ROLLBACK
     /// で解放する。トランザクション中の文はこの 1 本の接続で実行され、確実に同一
     /// トランザクションに乗る (プールの別接続に散らばらない)。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>>,
@@ -63,7 +63,7 @@ impl SqliteConn {
         run_sql_on(&mut conn, sql).await
     }
 
-    // ── 明示トランザクション (#414) ──
+    // ── 明示トランザクション ──
 
     pub async fn tx_begin(&self, _database: Option<&str>) -> Result<()> {
         let mut guard = self.tx.lock().await;
@@ -201,7 +201,7 @@ impl SqliteConn {
         let mut conn = self.pool.acquire().await?;
 
         let before_sql = target.as_ref().map(|t| {
-            let order = order_by_pk(&primary_key);
+            let order = super::pk_order_clause(&primary_key, quote_ident);
             format!("SELECT * FROM {}{} LIMIT {}", t, order, row_limit + 1)
         });
 
@@ -637,7 +637,7 @@ fn is_query_shape(sql: &str) -> bool {
 
 /// Run one statement on a specific connection (pool-acquired or the held tx
 /// connection) and decode it into a [`QueryResult`]. Shared by `execute` and
-/// `tx_execute` (#414).
+/// `tx_execute`.
 async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
     if is_query_shape(sql) {
@@ -854,40 +854,6 @@ fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-/// Builds `INSERT INTO "tbl" ("c1", "c2") VALUES (?,?),(?,?)...` with `nrows`
-/// placeholder tuples of `ncols` each.
-fn build_insert_sql(table_ident: &str, cols_sql: &str, ncols: usize, nrows: usize) -> String {
-    let mut tuple = String::with_capacity(ncols * 2 + 2);
-    tuple.push('(');
-    for c in 0..ncols {
-        if c > 0 {
-            tuple.push(',');
-        }
-        tuple.push('?');
-    }
-    tuple.push(')');
-    // Write the statement directly into one pre-sized buffer instead of
-    // materialising a `Vec<&str>` of the repeated tuple and joining it.
-    let mut out = String::with_capacity(
-        "INSERT INTO  () VALUES ".len()
-            + table_ident.len()
-            + cols_sql.len()
-            + nrows * (tuple.len() + 1),
-    );
-    out.push_str("INSERT INTO ");
-    out.push_str(table_ident);
-    out.push_str(" (");
-    out.push_str(cols_sql);
-    out.push_str(") VALUES ");
-    for r in 0..nrows {
-        if r > 0 {
-            out.push(',');
-        }
-        out.push_str(&tuple);
-    }
-    out
-}
-
 fn strip_identifier_quotes(s: &str) -> String {
     let s = s.trim();
     if (s.starts_with('"') && s.ends_with('"') && s.len() >= 2)
@@ -897,17 +863,6 @@ fn strip_identifier_quotes(s: &str) -> String {
         return inner.replace("\"\"", "\"").replace("``", "`");
     }
     s.to_string()
-}
-
-fn order_by_pk(pk_cols: &[String]) -> String {
-    if pk_cols.is_empty() {
-        return String::new();
-    }
-    let parts: Vec<String> = pk_cols
-        .iter()
-        .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
-        .collect();
-    format!(" ORDER BY {}", parts.join(", "))
 }
 
 async fn fetch_capped_sqlite(

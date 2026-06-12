@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Zod ランタイムスキーマ — IPC レスポンスの実行時型検証 (#391)。
+ * Zod ランタイムスキーマ — IPC レスポンスの実行時型検証。
  *
  * `src/api/tauri.ts` の各 `invoke` ラッパーは Rust バックエンドの戻り値を
  * TypeScript の型に **キャスト** しているだけで、実行時の型保証がない。Rust 側の
@@ -93,7 +93,7 @@ export const schemaObject = z.object({
 
 /**
  * プレビュー結果の検証スキーマ。他の IPC スキーマと対をなす公開検証表面で、
- * 現状ランタイム検証には未配線だが API 完全性のため保持する (#391)。
+ * 現状ランタイム検証には未配線だが API 完全性のため保持する。
  * @public
  */
 export const previewResult = z.object({
@@ -250,7 +250,7 @@ export const numberResponse = z.number();
 export const booleanResponse = z.boolean();
 export const stringResponse = z.string();
 
-/** プロファイルインポート結果 (#442)。 */
+/** プロファイルインポート結果。 */
 export const profileImportResult = z.object({
   imported: z.number(),
   skipped: z.number(),
@@ -347,7 +347,7 @@ export const importErrorEvent = z.object({
   error: z.string(),
 });
 
-// 全件ストリーミングエクスポート (#494) のイベント。
+// 全件ストリーミングエクスポートのイベント。
 export const exportProgressEvent = z.object({
   streamId: z.string(),
   rows: z.number(),

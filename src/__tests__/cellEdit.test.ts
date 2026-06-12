@@ -165,8 +165,8 @@ describe("buildUpdateStatements", () => {
   it("keeps targeting the right row by PK after rows are appended (loadMore)", () => {
     // `loadMore` appends fetched rows. An edit keyed by the PK of the second
     // row (id 2) must still resolve to it, never to a row that arrived in a
-    // later page — even if the edited row's array index shifts. (Issues
-    // #330 / #352: edits now survive pagination because they are PK-keyed.)
+    // later page — even if the edited row's array index shifts. (Edits
+    // survive pagination because they are PK-keyed.)
     const rowsAfterLoadMore = [
       [1, "old"],
       [2, "foo"],

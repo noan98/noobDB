@@ -1,4 +1,4 @@
-//! Schema synchronisation commands (Issue #245, phase 2).
+//! Schema synchronisation commands.
 //!
 //! `generate_sync_sql` is a pure render of a diff into reconciling DDL;
 //! `apply_sync_sql` runs the chosen statements against a writable target
@@ -23,8 +23,7 @@ pub fn generate_sync_sql(diff: SchemaDiff, allow_destructive: bool) -> SyncPlan 
 }
 
 /// Renders the INSERT / UPDATE / DELETE that make the target table's rows match
-/// the source's (Issue #245 phase 3). Pure; `DELETE`s appear only when
-/// `allow_delete` is set.
+/// the source's. Pure; `DELETE`s appear only when `allow_delete` is set.
 #[tauri::command]
 pub fn generate_data_sync_sql(diff: DataDiff, allow_delete: bool) -> SyncPlan {
     generate_data(&diff, allow_delete)
@@ -32,9 +31,8 @@ pub fn generate_data_sync_sql(diff: DataDiff, allow_delete: bool) -> SyncPlan {
 
 /// Applies `statements` to `database` on the target session in one transaction
 /// and returns the total rows affected. Rejects read-only sessions outright
-/// (acceptance criterion: a read-only target must never be written), so the
-/// caller is expected to open a writable session for the target whose profile
-/// permits writes.
+/// (a read-only target must never be written), so the caller is expected to
+/// open a writable session for the target whose profile permits writes.
 #[tauri::command]
 pub async fn apply_sync_sql(
     session_id: String,

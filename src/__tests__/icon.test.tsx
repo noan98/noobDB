@@ -3,7 +3,7 @@ import { renderWithProviders } from "./testUtils";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "../components/Icon";
 
 /**
- * アイコンのセマンティック・レキシコン (#489) の回帰テスト。新オブジェクト種別と
+ * アイコンのセマンティック・レキシコンの回帰テスト。新オブジェクト種別と
  * グリッド操作アイコンが描画でき、サイズ/ストローク規約が一貫していることを固定する。
  */
 describe("icon lexicon (#489)", () => {

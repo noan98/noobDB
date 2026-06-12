@@ -96,7 +96,7 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
       </ModalBody>
 
       {/*
-        安全側優先レイアウト (#323): 不可逆な「実行」は非強調 (secondary) で左側に
+        安全側優先レイアウト: 不可逆な「実行」は非強調 (secondary) で左側に
         置き、安全な「キャンセル」を強調色 (primary) で右側 + デフォルトフォーカスに
         する。HIG 各種ガイドラインに倣い、破壊的アクションを視覚的に優位にしない。
       */}

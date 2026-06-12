@@ -15,7 +15,7 @@ const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)"
 // transitionProperty/Duration/TimingFunction の個別指定で表現する。
 const MotionIndicator = chakra(motion.span, {}, { forwardProps: ["transition"] });
 
-// タブのドラッグ並び替え (#446) には Motion の `Reorder.Item` を使う。既定の描画要素は
+// タブのドラッグ並び替えには Motion の `Reorder.Item` を使う。既定の描画要素は
 // `<li>` だが、タブは `role="tab"` の `<div>` 群にしたいので `as="div"` 固定の薄い
 // ラッパを噛ませてから Chakra でスタイル付与する (Chakra の `as` は描画要素を
 // 置き換えてしまい Reorder.Item のロジックを失うため、ここでは渡さない)。`value` /
@@ -44,7 +44,7 @@ interface Props {
   onClose: (id: string) => void;
   onNew: () => void;
   /**
-   * Drag/keyboard reorder (#446). Called with the full tab-id list in its new
+   * Drag/keyboard reorder. Called with the full tab-id list in its new
    * order. Omitted disables reordering (tabs render statically).
    */
   onReorder?: (orderedIds: string[]) => void;
@@ -76,7 +76,7 @@ export function TabBar({
   // Scope the sliding indicator's layoutId to this TabBar so a split view's two
   // bars don't share one indicator (which would fly between panes on select).
   const indicatorId = `tab-active-indicator-${useId()}`;
-  // Roving tabindex 用のタブ要素参照 (#307)。配列ではなく Map にすることで、
+  // Roving tabindex 用のタブ要素参照。配列ではなく Map にすることで、
   // タブの追加・削除でインデックスがずれても安全に参照できる。
   const tabRefs = useRef<Map<string, HTMLElement | null>>(new Map());
 
@@ -133,7 +133,7 @@ export function TabBar({
 
   const tabIds = tabs.map((tab) => tab.id);
 
-  // --- Overflow handling (#477): scroll arrows + "all tabs" dropdown ---
+  // --- Overflow handling: scroll arrows + "all tabs" dropdown ---
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [overflow, setOverflow] = useState({ left: false, right: false });
   const [listOpen, setListOpen] = useState(false);
@@ -141,7 +141,7 @@ export function TabBar({
   const listWrapRef = useRef<HTMLDivElement | null>(null);
   const listBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  // Most-recently-used order (#477): the dropdown surfaces recently visited tabs
+  // Most-recently-used order: the dropdown surfaces recently visited tabs
   // first so far-away tabs are quick to return to. Updated whenever the active
   // tab changes; ids no longer open are pruned lazily when the list is built.
   const mruRef = useRef<string[]>([]);
@@ -300,13 +300,13 @@ export function TabBar({
                   if (el) tabRefs.current.set(tab.id, el);
                   else tabRefs.current.delete(tab.id);
                 }}
-                // 以前は `layout="position"` で全タブを FLIP アニメーションさせて
-                // いたが、TabBar はストリーミングや入力のたびに再レンダリングされ、
-                // そのたびに全タブの bounding box を測り直すため操作が重くなる原因
-                // だった (#403)。追加/削除時の width/opacity アニメーション
+                // `layout="position"` で全タブを FLIP アニメーションさせると、
+                // TabBar はストリーミングや入力のたびに再レンダリングされ、
+                // そのたびに全タブの bounding box を測り直して操作が重くなる。
+                // 追加/削除時の width/opacity アニメーション
                 // (initial/animate/exit) とアクティブインジケータの layoutId は
-                // 維持しつつ、per-element の layout 計測のみをやめて軽量化する。
-                // ドラッグ並び替え (#446): Reorder.Item の `value`。`onReorder` が
+                // 維持しつつ、per-element の layout 計測は行わない。
+                // ドラッグ並び替え: Reorder.Item の `value`。`onReorder` が
                 // 無いときは drag を無効化して従来どおり静的に並べる。`whileDrag` で
                 // 浮き上がり (scale + 影 + 前面化) を表現し、reduced-motion 配下は
                 // MotionConfig により即時化される。

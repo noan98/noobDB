@@ -1,5 +1,5 @@
 /**
- * キーボードナビゲーション共通フック (`src/keyboardNav.ts`) のユニットテスト (#536)。
+ * キーボードナビゲーション共通フック (`src/keyboardNav.ts`) のユニットテスト。
  *
  * jsdom 環境で `useReturnFocus` / `useFocusTrap` / `useRovingFocus` の
  * 主要なキーボード操作を検証する。

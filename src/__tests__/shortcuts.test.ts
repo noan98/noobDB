@@ -6,7 +6,7 @@ import {
   SHORTCUT_CATEGORY_ORDER,
 } from "../shortcuts";
 
-// ショートカット定義の単一ソース (#448)。HelpView とチートシートが共有するため、
+// ショートカット定義の単一ソース。HelpView とチートシートが共有するため、
 // 文言の欠落やカテゴリの取りこぼしが両画面を同時に壊す。ここで整合性を担保する。
 
 afterEach(() => setLocale("en"));

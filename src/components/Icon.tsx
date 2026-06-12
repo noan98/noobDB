@@ -4,11 +4,10 @@ import { chakra } from "@chakra-ui/react";
 /**
  * Single-color SVG icon set. Every glyph shares a 24x24 viewBox, a rounded
  * stroke, and `currentColor`, so icons follow the surrounding text color and
- * stay visually consistent in size/weight across light and dark themes. This
- * replaces the previous mix of emoji (🔑 / ✅ / ☀ …) and Unicode glyphs
- * (▤ ❖ ✎ ⛁ …) that rendered differently per OS/font.
+ * stay visually consistent in size/weight across light and dark themes. Emoji
+ * and bare Unicode glyphs render differently per OS/font, so they are not used.
  *
- * ## セマンティック・レキシコン (#489)
+ * ## セマンティック・レキシコン
  *
  * アイコンは「見た目」ではなく「意味」で選ぶ。用途ごとに 1 つの glyph を割り当て、
  * アプリ全体で同じ意味には常に同じアイコンを使う。新しい用途を足すときは、まず
@@ -30,10 +29,10 @@ import { chakra } from "@chakra-ui/react";
  * | 転送 (イン/エクスポート両方向) | `transfer`  |
  * | ツール (補助ビュー集約)    | `tools`         |
  *
- * ## サイズ / ストローク規約 (#489)
+ * ## サイズ / ストローク規約
  *
  * 呼び出し側はピクセル直値ではなく `ICON_SIZES` / `ICON_STROKE` のトークンを参照し、
- * 密度・タイポグラフィ基盤 (#476/#490) と歩調を合わせる。
+ * 密度・タイポグラフィ基盤と歩調を合わせる。
  *   - `sm` (13px): 行内・ツリー行・バッジなど密な文脈。
  *   - `md` (16px): ツールバー/ボタンの既定。
  *   - `lg` (20px): 見出し・空状態など強調したい箇所。
@@ -98,7 +97,7 @@ export type IconName =
 
 /**
  * アイコンのサイズトークン (px)。呼び出し側はこの定数を参照し、密度/タイポグラフィ
- * 基盤と整合した一貫サイズで描画する (#489)。
+ * 基盤と整合した一貫サイズで描画する。
  */
 export const ICON_SIZES = { sm: 13, md: 16, lg: 20 } as const;
 /** アイコンサイズトークンのキー。呼び出し側が型安全に指定するための公開型。 @public */
@@ -296,7 +295,7 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" />
     </>
   ),
-  // ── 新オブジェクト種別 / グリッド操作 (#489) ──
+  // ── オブジェクト種別 / グリッド操作 ──
   // ビュー: テーブル枠 + 目 (参照専用のテーブル様オブジェクト)。
   view: (
     <>
@@ -361,14 +360,14 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
     </>
   ),
-  // お気に入り (#461): 星。`star` は枠線、`star-filled` は塗りつぶし。
+  // お気に入り: 星。`star` は枠線、`star-filled` は塗りつぶし。
   star: (
     <path d="M12 2.5l2.92 5.92 6.53.95-4.72 4.6 1.11 6.5L12 17.9l-5.84 3.07 1.11-6.5L2.55 9.87l6.53-.95L12 2.5z" />
   ),
   "star-filled": (
     <path d="M12 2.5l2.92 5.92 6.53.95-4.72 4.6 1.11 6.5L12 17.9l-5.84 3.07 1.11-6.5L2.55 9.87l6.53-.95L12 2.5z" />
   ),
-  // エクスポート (#442): 下向き矢印 + トレイ。
+  // エクスポート: 下向き矢印 + トレイ。
   download: (
     <>
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -376,7 +375,7 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M12 15V3" />
     </>
   ),
-  // インポート (#442): 上向き矢印 + トレイ。
+  // インポート: 上向き矢印 + トレイ。
   upload: (
     <>
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -398,7 +397,7 @@ const PATHS: Record<IconName, ReactNode> = {
   tools: (
     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
   ),
-  // ── カラム型ヘッダーアイコン (#474) ──
+  // ── カラム型ヘッダーアイコン ──
   // 数値 (整数/小数共通): ハッシュ #。
   hash: (
     <>

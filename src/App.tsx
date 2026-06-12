@@ -36,6 +36,7 @@ import {
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
+import { quoteIdentFor } from "./components/sqlDialect";
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { Spinner } from "./components/Spinner";
@@ -220,7 +221,7 @@ type Status =
   | { kind: "literal"; text: string; error?: boolean }
   | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
 
-// エラーは重大度別に区別する (#281)。`critical` は接続喪失など回復に再接続を要する
+// エラーは重大度別に区別する。`critical` は接続喪失など回復に再接続を要する
 // 致命的状態 (赤、目立つバッジ)、`warning` はタイムアウトなど接続は生きている軽度
 // 障害 (黄)、`error` は SQL 構文エラー・制約違反など個別クエリの失敗 (赤)。
 type StatusTone = "running" | "success" | "error" | "warning" | "critical" | "info";
@@ -234,15 +235,15 @@ const RUNNING_STATUS_KEYS = new Set([
 ]);
 
 // 致命的 (critical): セッションが使えなくなり再接続が必要な状態。フッターに残し、
-// 「重大」バッジ + 再接続導線で対処を促す (#281)。
+// 「重大」バッジ + 再接続導線で対処を促す。
 const CRITICAL_STATUS_KEYS = new Set(["statusConnectionLost"]);
 
 // 警告 (warning): 接続は維持されており、設定変更や再試行で回復しうる軽度の障害。
 const WARNING_STATUS_KEYS = new Set(["statusQueryTimeout"]);
 
-// Maps a status to a tone for the footer's icon + colored left border (#131).
+// Maps a status to a tone for the footer's icon + colored left border.
 // Derived from the existing `error` flag and known keys, so call sites don't
-// each have to declare a severity (#281 でエラーを critical/warning/error に細分化)。
+// each have to declare a severity.
 function statusTone(s: Status): StatusTone {
   if (s.kind === "idle") return "info";
   if (s.kind === "key") {
@@ -311,7 +312,7 @@ const sidebarTabId = (key: SidebarTab) => `sidebar-tab-${key}`;
 const sidebarPanelId = (key: SidebarTab) => `sidebar-panel-${key}`;
 
 /**
- * サイドバー上部の Connections / Snippets / History 切替タブ (#299)。
+ * サイドバー上部の Connections / Snippets / History 切替タブ。
  *
  * WAI-ARIA tabs パターンを実装している:
  *   - 各タブに `role="tab"`、`aria-selected`、`aria-controls` (対応 panel の id)、
@@ -418,7 +419,7 @@ interface Tab {
   /** True when another scroll-triggered page may yield more rows. */
   canLoadMore: boolean;
   /**
-   * 現在のページ番号 (1 始まり)。table タブのページネーション (#484) 用。
+   * 現在のページ番号 (1 始まり)。table タブのページネーション用。
    * 未指定は 1 ページ目とみなす。
    */
   page?: number;
@@ -450,13 +451,13 @@ interface Tab {
   editUndoStack: PendingEdits[];
   /** Re-applicable snapshots for Ctrl+Shift+Z redo. Cleared when a new edit is made. */
   editRedoStack: PendingEdits[];
-  /** 削除予定の行 (#441): rowEditKey のリスト。Apply で DELETE される。 */
+  /** 削除予定の行: rowEditKey のリスト。Apply で DELETE される。 */
   pendingDeletes?: string[];
-  /** 追加予定の新規行 (#441): 各要素は colIdx→値。Apply で INSERT される。 */
+  /** 追加予定の新規行: 各要素は colIdx→値。Apply で INSERT される。 */
   pendingInserts?: PendingInsertRow[];
-  /** チャートビュー (#440) を表示中か。結果グリッドの代わりにチャートを描く。 */
+  /** チャートビューを表示中か。結果グリッドの代わりにチャートを描く。 */
   showChart?: boolean;
-  /** SQL スクリプトのバッチ実行 (#495) の文ごとの結果。設定時は結果ビューに代えて表示。 */
+  /** SQL スクリプトのバッチ実行の文ごとの結果。設定時は結果ビューに代えて表示。 */
   batchResults?: BatchStatementResult[];
   /** バッチ実行のスクリプト本文 (stop/continue 切替で再実行するため保持)。 */
   batchScript?: string;
@@ -467,12 +468,12 @@ interface Tab {
    * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
    */
   lastEditAppliedAt?: number;
-  /** True while the Apply Edits transaction is in flight for this tab (#538). */
+  /** True while the Apply Edits transaction is in flight for this tab. */
   applyingEdits?: boolean;
   /**
    * Most recent Query Builder inputs captured on its Run / Dry Run, restored
    * when the builder is reopened in this tab. Persisted alongside the tab
-   * (#287) so it survives reconnects and app restarts; cleared only when the
+   * so it survives reconnects and app restarts; cleared only when the
    * tab itself is closed. Holds the latest single snapshot — no history.
    */
   builderSnapshot: QueryBuilderSnapshot | null;
@@ -491,7 +492,7 @@ interface Tab {
  * One column of the split workspace. Tab *data* lives in the flat `tabs` array;
  * a pane only tracks which tab ids it holds (in display order) and which is
  * active. With a single pane the layout behaves exactly like the old single-tab
- * workspace; a second pane is added on demand for side-by-side viewing (#244).
+ * workspace; a second pane is added on demand for side-by-side viewing.
  */
 interface PaneState {
   id: string;
@@ -518,18 +519,11 @@ function newStreamId(tabId: string): string {
   return `${tabId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function quoteIdent(driver: string, ident: string): string {
-  if (driver === "postgres" || driver === "sqlite") {
-    return `"${ident.replace(/"/g, '""')}"`;
-  }
-  return `\`${ident.replace(/`/g, "``")}\``;
-}
-
 function qualifiedTableSql(driver: string, database: string, table: string): string {
   // SQLite has a single attached namespace ("main"); leaving the
   // db.table qualification off keeps the generated SELECT portable.
-  if (driver === "sqlite") return `SELECT * FROM ${quoteIdent(driver, table)}`;
-  return `SELECT * FROM ${quoteIdent(driver, database)}.${quoteIdent(driver, table)}`;
+  if (driver === "sqlite") return `SELECT * FROM ${quoteIdentFor(driver, table)}`;
+  return `SELECT * FROM ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 
 // SQL that returns a table's definition, or null for drivers without a
@@ -537,7 +531,7 @@ function qualifiedTableSql(driver: string, database: string, table: string): str
 // the original DDL out of sqlite_master.
 function tableDefinitionSql(driver: string, database: string, table: string): string | null {
   if (driver === "mysql") {
-    return `SHOW CREATE TABLE ${quoteIdent(driver, database)}.${quoteIdent(driver, table)}`;
+    return `SHOW CREATE TABLE ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
   }
   if (driver === "sqlite") {
     return `SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = '${table.replace(/'/g, "''")}'`;
@@ -553,7 +547,7 @@ function schemaCacheKey(sessionId: string, database: string): string {
 }
 
 /**
- * 複数結果タブ (#472) で新しい結果タブのタイトルを SQL から導出する。先頭の
+ * 複数結果タブで新しい結果タブのタイトルを SQL から導出する。先頭の
  * 1 行を短く切り詰める。空なら既定の無題タイトル。
  */
 function deriveResultTabTitle(sql: string): string {
@@ -562,14 +556,12 @@ function deriveResultTabTitle(sql: string): string {
   return firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine;
 }
 
-function makeQueryTab(): Tab {
-  // 新規クエリタブは空のエディタで開く。以前は "SELECT 1;" をプレースホルダ的に
-  // 入れていたが、用途が分からず混乱を招くため空文字にした (#283 関連)。
-  const sql = "";
+/** 共通の初期状態でタブを生成する。呼び出し側は必要なフィールドだけ上書きする。 */
+function makeTab(kind: TabKind, title: string, sql: string): Tab {
   return {
     id: newTabId(),
-    kind: "query",
-    title: translate("tabUntitledQuery"),
+    kind,
+    title,
     sql,
     lastExecutedSql: sql,
     result: null,
@@ -590,6 +582,11 @@ function makeQueryTab(): Tab {
     editRedoStack: [],
     builderSnapshot: null,
   };
+}
+
+function makeQueryTab(): Tab {
+  // 新規クエリタブは空のエディタで開く。
+  return makeTab("query", translate("tabUntitledQuery"), "");
 }
 
 function explainTabTitle(sql: string): string {
@@ -601,33 +598,10 @@ function explainTabTitle(sql: string): string {
 }
 
 function makeExplainTab(sql: string): Tab {
-  return {
-    id: newTabId(),
-    kind: "explain",
-    title: explainTabTitle(sql),
-    sql,
-    lastExecutedSql: sql,
-    result: null,
-    preview: null,
-    schemaTable: null,
-    streaming: false,
-    previewStreaming: false,
-    previewRowLimit: getSettings().defaultDisplayCount,
-    paginatable: null,
-    autoLimitApplied: null,
-    autoLimitSql: null,
-    loadingMore: false,
-    canLoadMore: false,
-    queryError: null,
-    tableColumns: null,
-    pendingEdits: {},
-    editUndoStack: [],
-    editRedoStack: [],
-    builderSnapshot: null,
-  };
+  return makeTab("explain", explainTabTitle(sql), sql);
 }
 
-/** ドラッグ&ドロップ (#497) で受理するファイル種別の判定結果。 */
+/** ドラッグ&ドロップで受理するファイル種別の判定結果。 */
 type DroppedKind = "sql" | "csv" | "unsupported";
 
 /** パスの拡張子 (小文字、ドットなし)。拡張子が無ければ空文字。 */
@@ -642,7 +616,7 @@ function fileBaseName(path: string): string {
   return path.split(/[/\\]/).pop() || path;
 }
 
-/** ドロップされた 1 ファイルの種別を拡張子から判定する (#497)。 */
+/** ドロップされた 1 ファイルの種別を拡張子から判定する。 */
 function classifyDroppedFile(path: string): DroppedKind {
   const ext = fileExtension(path);
   if (ext === "sql" || ext === "txt") return "sql";
@@ -652,7 +626,7 @@ function classifyDroppedFile(path: string): DroppedKind {
 
 /**
  * ドラッグオーバー中のオーバーレイ表示用に、ドロップ予定ファイル群を 1 つの
- * フィードバック状態へ畳み込む (#497)。受理できるファイルが 1 つでもあれば
+ * フィードバック状態へ畳み込む。受理できるファイルが 1 つでもあれば
  * `accept`、種別が混在していれば `mixed`、すべて非対応なら `reject`。
  */
 type DragFeedback = { accept: boolean; kind: "sql" | "csv" | "mixed" | "reject" };
@@ -670,7 +644,7 @@ function toPersistedTab(tab: Tab): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
-  // #287: Carry the Query Builder snapshot through so the inputs come back on
+  // Carry the Query Builder snapshot through so the inputs come back on
   // the next reconnect — closing the tab still drops it because the tab is
   // removed from the persisted list before the next save.
   if (tab.builderSnapshot) out.builderSnapshot = tab.builderSnapshot;
@@ -680,7 +654,7 @@ function toPersistedTab(tab: Tab): PersistedTab {
 /**
  * Restore-tabs ゲート。`mode === "ask"` のときだけ呼び出し側から渡された
  * `askUser()` (Promise<boolean>) で確認する。同期的な `window.confirm` を
- * 排除するため Promise を返す形に変更している (#280)。
+ * 排除するため Promise を返す形にしている。
  */
 async function shouldRestoreSavedTabs(
   mode: TabRestoreMode,
@@ -715,7 +689,7 @@ export default function App() {
   const locale = useLocale();
   const toast = useToast();
   // テーマに追従するカスタム確認ダイアログ。`window.confirm()` の代替で、
-  // `await confirm({...})` の形で同期感覚で呼べる (#280)。
+  // `await confirm({...})` の形で同期感覚で呼べる。
   const { confirm, dialog: confirmDialogElement } = useConfirm();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
@@ -726,15 +700,15 @@ export default function App() {
   // プロセスモニタパネル (processlist / pg_stat_activity + KILL) の開閉。
   const [showProcesses, setShowProcesses] = useState(false);
   // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
-  // 状態には依存させない (#382)。
+  // 状態には依存させない。
   const [showCommandPalette, setShowCommandPalette] = useState(false);
-  // スキーマ横断のグローバルオブジェクト検索 (#473) の開閉。
+  // スキーマ横断のグローバルオブジェクト検索の開閉。
   const [showObjectSearch, setShowObjectSearch] = useState(false);
-  // `?` キーで開くショートカット チートシートの開閉 (#448)。
+  // `?` キーで開くショートカット チートシートの開閉。
   const [showCheatSheet, setShowCheatSheet] = useState(false);
 
-  // data-theme はテーマプリセット (#465) と light/dark トグルから合成する。
-  // THEME_STORAGE_KEY には従来どおり light/dark のみ保存する。
+  // data-theme はテーマプリセットと light/dark トグルから合成する。
+  // THEME_STORAGE_KEY には light/dark のみ保存する。
   const dataTheme = themePresetDataTheme(settings.themePreset, theme);
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", dataTheme);
@@ -750,7 +724,7 @@ export default function App() {
     root.style.setProperty("--preview-highlight", settings.previewHighlight[theme]);
     root.style.setProperty("--font-scale", String(settings.fontSizePx / BASE_FONT_SIZE_PX));
 
-    // フォントファミリ (#449): 設定があれば共有フォールバック付きのスタックを
+    // フォントファミリ: 設定があれば共有フォールバック付きのスタックを
     // --font-mono / --font-sans に注入し、未指定なら App.css の既定スタックへ戻す。
     const monoStack = monoFontStack(settings.monoFontFamily);
     if (monoStack) root.style.setProperty("--font-mono", monoStack);
@@ -760,7 +734,7 @@ export default function App() {
     else root.style.removeProperty("--font-sans");
 
     // アクセント色: ユーザー指定があれば 3 つの CSS 変数を実行時に注入し、未指定
-    // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す (#409)。前景と
+    // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す。前景と
     // hover はテーマに応じて算出するため、theme 変更時も再実行される。
     if (settings.accentColor) {
       const v = accentVars(settings.accentColor, theme);
@@ -773,7 +747,7 @@ export default function App() {
       root.style.removeProperty("--accent-text");
     }
 
-    // 表示密度: data-density 属性で App.css の `--density-*` トークンを切り替える (#410)。
+    // 表示密度: data-density 属性で App.css の `--density-*` トークンを切り替える。
     root.setAttribute("data-density", settings.density);
   }, [settings, theme]);
 
@@ -896,12 +870,12 @@ export default function App() {
     [],
   );
   const [snippets, setSnippets] = useState<Snippet[]>([]);
-  // お気に入り / 最近使ったテーブル (#461)。アクティブ接続プロファイル単位で
+  // お気に入り / 最近使ったテーブル。アクティブ接続プロファイル単位で
   // localStorage に永続化する。`handleOpenTable` がテーブルを開くたびに最近へ記録。
   const [quickAccess, setQuickAccess] = useState<QuickAccessState>(EMPTY_QUICK_ACCESS);
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // 直近の実行クエリ (最新が先頭、連続重複は畳む)。QueryEditor の ↑/↓ 履歴
-  // ナビゲーション (#325) 用。接続プロファイル単位で読み込み、実行のたびに
+  // ナビゲーション用。接続プロファイル単位で読み込み、実行のたびに
   // `historyReloadKey` が増えるのを契機に再取得する。
   const [queryHistory, setQueryHistory] = useState<string[]>([]);
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
@@ -979,28 +953,28 @@ export default function App() {
   // プロセス一覧) メニューのアンカー座標。3 ボタン → 1 ボタンへの集約。
   const [toolsMenu, setToolsMenu] = useState<{ x: number; y: number } | null>(null);
   const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
-  // ドラッグ&ドロップ (#497) で .csv を落としたときに ImportModal へ渡す事前選択パス。
+  // ドラッグ&ドロップで .csv を落としたときに ImportModal へ渡す事前選択パス。
   const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
-  // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック (#497)。
+  // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック。
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
-  // プロファイルインポート (#442): ファイル選択後、衝突解決ダイアログに渡すパス。
+  // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
-  // CREATE TABLE ウィザード (#460): 対象データベース。null で閉じる。
+  // CREATE TABLE ウィザード: 対象データベース。null で閉じる。
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
-  // テーブル名変更 (#496): 対象。null で閉じる。
+  // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
-  // 新規行追加モーダル (#441): 対象タブ ID。null で閉じる。
+  // 新規行追加モーダル: 対象タブ ID。null で閉じる。
   const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
-  // 明示トランザクション (#414): 現在のセッションでトランザクションが有効か。実行経路の
+  // 明示トランザクション: 現在のセッションでトランザクションが有効か。実行経路の
   // 振り分けにコールバックから参照するため ref も併せ持つ。
   const [txActive, setTxActive] = useState(false);
   const txActiveRef = useRef(false);
   useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
   // 接続が変わったらトランザクション状態はリセットする (切断で破棄される)。
   useEffect(() => { setTxActive(false); }, [sessionId]);
-  // 切断時はセッション依存のモーダル状態をリセットする (#473 の検索モーダルが
+  // 切断時はセッション依存のモーダル状態をリセットする (検索モーダルが
   // 再接続時に意図せず再表示されるのを防ぐ)。
   useEffect(() => {
     if (!sessionId) {
@@ -1028,7 +1002,7 @@ export default function App() {
     // approval for any write (no specific destructive pattern was detected).
     writeApproval: boolean;
     autoLimit: number | null;
-    /** True when this run should execute as a multi-statement batch (#495). */
+    /** True when this run should execute as a multi-statement batch. */
     batch?: boolean;
   } | null>(null);
 
@@ -1036,7 +1010,7 @@ export default function App() {
   // placeholders, the run/preview/explain action is held here while the input
   // modal collects values; on submit the substituted SQL re-enters the same
   // action (so it still passes the danger gate). `mode` records which action
-  // to resume. (#388)
+  // to resume.
   const [pendingParams, setPendingParams] = useState<{
     tab: Tab;
     sql: string;
@@ -1055,7 +1029,7 @@ export default function App() {
     () => tabs.find((tt) => tt.id === activeTabId) ?? null,
     [tabs, activeTabId],
   );
-  // ドラッグ&ドロップのイベント購読 (#497) を毎タブ切替で貼り直さずに済むよう、
+  // ドラッグ&ドロップのイベント購読を毎タブ切替で貼り直さずに済むよう、
   // アクティブタブを ref でも参照できるようにする (ドロップ時の最新値読み取り用)。
   const activeTabRef = useRef<Tab | null>(activeTab);
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
@@ -1258,7 +1232,7 @@ export default function App() {
     }
   }, []);
 
-  // Reorder tabs within a pane via drag/keyboard (#446). `orderedIds` is the
+  // Reorder tabs within a pane via drag/keyboard. `orderedIds` is the
   // pane's full tab-id list in its new order; we only accept a permutation of
   // the pane's current ids so a stale callback can't smuggle in foreign tabs.
   // Persistence is order-aware already (persistTabsForProfile maps tabIds in
@@ -1302,7 +1276,7 @@ export default function App() {
     refreshProfiles();
   }, [refreshProfiles]);
 
-  // 接続プロファイルのエクスポート (#442): 全プロファイルを秘密情報抜きで JSON へ。
+  // 接続プロファイルのエクスポート: 全プロファイルを秘密情報抜きで JSON へ。
   const handleExportProfiles = useCallback(async () => {
     if (profiles.length === 0) {
       toast.info(translate("profileExportEmpty"));
@@ -1322,7 +1296,7 @@ export default function App() {
     }
   }, [profiles.length, toast, translate]);
 
-  // 接続プロファイルのインポート (#442): ファイルを選び、衝突解決ダイアログを開く。
+  // 接続プロファイルのインポート: ファイルを選び、衝突解決ダイアログを開く。
   const handleImportProfilesPick = useCallback(async () => {
     try {
       const picked = await openFileDialog({
@@ -1377,7 +1351,7 @@ export default function App() {
     [],
   );
 
-  // 履歴ナビゲーション (#325) 用に直近の実行クエリを読み込む。接続中のみ取得し、
+  // 履歴ナビゲーション用に直近の実行クエリを読み込む。接続中のみ取得し、
   // プロファイル切替・実行 (`historyReloadKey`) を契機に最新化する。連続して同じ
   // SQL が並ぶと ↑/↓ で 1 件しか進まないように、隣り合う重複は畳む。
   useEffect(() => {
@@ -1406,7 +1380,7 @@ export default function App() {
     };
   }, [sessionId, selectedProfile?.id, historyReloadKey]);
 
-  // クイックアクセス (#461): アクティブ接続が変わったら、そのプロファイルの
+  // クイックアクセス: アクティブ接続が変わったら、そのプロファイルの
   // お気に入り/最近をストレージから読み込む。未接続時は空にする。
   useEffect(() => {
     const id = selectedProfile?.id ?? null;
@@ -1464,11 +1438,10 @@ export default function App() {
     savePersistedWorkspace(profileId, ws);
   }, []);
 
-  // #287: persistence used to fire only on disconnect / profile switch /
-  // connection loss, so in-session tab updates (builder snapshots, SQL edits)
-  // were lost if the user closed the app without disconnecting first. Flushing
-  // on `beforeunload` lands the current state in localStorage as the window
-  // tears down — `setItem` is synchronous so the write completes before unload.
+  // Flushing on `beforeunload` lands the current state in localStorage as the
+  // window tears down, so in-session tab updates (builder snapshots, SQL edits)
+  // survive closing the app without disconnecting first — `setItem` is
+  // synchronous so the write completes before unload.
   useEffect(() => {
     const id = selectedProfile?.id;
     if (!id) return;
@@ -1942,7 +1915,7 @@ export default function App() {
   runQueryInTabRef.current = runQueryInTab;
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
-  // 接続ヘルスチェック (#485) の同時実行を防ぐフラグ。
+  // 接続ヘルスチェックの同時実行を防ぐフラグ。
   const healthCheckBusyRef = useRef(false);
 
   // Toggle auto-refresh for a tab: `secs` enables polling at that cadence (also
@@ -2019,34 +1992,16 @@ export default function App() {
             const base = qualifiedTableSql(profile.driver, s.database, s.table);
             const sql = `${base} LIMIT ${limit}`;
             return {
-              id: newTabId(),
-              kind: "table",
-              title: s.title || s.table,
+              ...makeTab("table", s.title || s.table, sql),
               database: s.database,
               table: s.table,
-              sql,
-              lastExecutedSql: sql,
-              result: null,
-              preview: null,
-              schemaTable: null,
-              streaming: false,
-              previewStreaming: false,
               previewRowLimit: limit,
               paginatable: base,
-              autoLimitApplied: null,
-              autoLimitSql: null,
-              loadingMore: false,
-              canLoadMore: false,
-              queryError: null,
-              tableColumns: null,
-              pendingEdits: {},
-              editUndoStack: [],
-              editRedoStack: [],
               builderSnapshot: restoredSnapshot,
             };
           } catch (e) {
             // Table is gone — fall through to a query tab using the saved SQL,
-            // but record why so we can tell the user (Issue #329).
+            // but record why so we can tell the user.
             const msg = String(e);
             const reason: "missing" | "connection" | "other" =
               /table .* does(?:n't| not) exist|no such table|relation .* does not exist|unknown table/i.test(msg)
@@ -2067,27 +2022,8 @@ export default function App() {
           };
         }
         return {
-          id: newTabId(),
-          kind: "query",
-          title: s.kind === "query" ? s.title : translate("tabUntitledQuery"),
-          sql: s.sql,
-          lastExecutedSql: s.sql,
-          result: null,
-          preview: null,
-          schemaTable: null,
-          streaming: false,
-          previewStreaming: false,
+          ...makeTab("query", s.kind === "query" ? s.title : translate("tabUntitledQuery"), s.sql),
           previewRowLimit: limit,
-          paginatable: null,
-          autoLimitApplied: null,
-          autoLimitSql: null,
-          loadingMore: false,
-          canLoadMore: false,
-          queryError: null,
-          tableColumns: null,
-          pendingEdits: {},
-          editUndoStack: [],
-          editRedoStack: [],
           builderSnapshot: restoredSnapshot,
         };
       };
@@ -2293,11 +2229,11 @@ export default function App() {
     const offset = tab.result.rows.length;
     const chunkSize = Math.max(1, settings.streamPrefetchSize);
     const sql = `${tab.paginatable} LIMIT ${chunkSize} OFFSET ${offset}`;
-    // Buffered inline edits survive pagination now that they are keyed by each
+    // Buffered inline edits survive pagination because they are keyed by each
     // row's primary key (`rowEditKey`) rather than its array index. Appending a
     // page leaves existing rows in place, and even if a query without a stable
     // ORDER BY re-surfaces a row already shown, its PK identity is unchanged so
-    // the edit still targets the correct row. (Issues #330 / #352)
+    // the edit still targets the correct row.
     patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     setStatus({
       kind: "key",
@@ -2336,7 +2272,7 @@ export default function App() {
     }
   }, [sessionId, settings.streamPrefetchSize, patchTab]);
 
-  // ページネーション (#484): table タブの `paginatable` base SQL から N ページ目を
+  // ページネーション: table タブの `paginatable` base SQL から N ページ目を
   // 取得して結果を**置き換える** (loadMore は追記、こちらはページ送り)。ページング用の
   // 内部クエリは `api.runQuery` 経由なので履歴を汚さない (CLAUDE.md のクエリ履歴方針)。
   const goToPageInTab = useCallback(async (tabId: string, page: number, sizeOverride?: number) => {
@@ -2395,11 +2331,11 @@ export default function App() {
     void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
   }, [goToPageInTab]);
 
-  // SQL スクリプト (複数文) のバッチ実行 (#495)。文ごとに順次実行し、各文の結果
+  // SQL スクリプト (複数文) のバッチ実行。文ごとに順次実行し、各文の結果
   // (結果セット / 影響行数 / エラー) を集めて batchResults に積む。stopOnError なら
   // 最初のエラーで残りをスキップ、false なら続行する。読み取り専用ガードは文ごとに
   // バックエンドが強制する (api.runQuery 経由なので履歴は汚さない)。
-  // `tabOverride` は、新規結果タブ (#472) を addTab した直後に呼ぶケース用。tabsRef は
+  // `tabOverride` は、新規結果タブを addTab した直後に呼ぶケース用。tabsRef は
   // effect 経由で更新されるため直後は新タブを見つけられない。その場合はメモリ上の Tab を
   // 直接渡してレース (無実行化) を避ける。同一タブの再実行では渡さず、tabsRef の最新
   // フラグで再入ガードを効かせる。
@@ -2431,7 +2367,7 @@ export default function App() {
         continue;
       }
       try {
-        // 明示トランザクション (#414) が有効なら同一接続で実行して tx に乗せる。
+        // 明示トランザクションが有効なら同一接続で実行して tx に乗せる。
         const res = txActiveRef.current
           ? await api.runInTransaction(sessionId, stmt)
           : await api.runQuery(sessionId, stmt, db);
@@ -2465,7 +2401,7 @@ export default function App() {
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
   // independently.
-  // 明示トランザクション (#414) 内で 1 文を実行し、結果をタブへ反映する (非ストリーム)。
+  // 明示トランザクション内で 1 文を実行し、結果をタブへ反映する (非ストリーム)。
   const runTxInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) return;
     patchTab(tabId, (tt) => ({
@@ -2475,7 +2411,7 @@ export default function App() {
       showChart: false,
       batchResults: undefined,
       preview: null,
-      // 結果を置き換えるので、旧結果由来の保留編集 (#441) は破棄して整合を保つ。
+      // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。
       pendingEdits: {},
       editUndoStack: [],
       editRedoStack: [],
@@ -2499,7 +2435,7 @@ export default function App() {
     }
   }, [sessionId, patchTab]);
 
-  // トランザクション制御 (#414)。開始/確定/破棄。
+  // トランザクション制御。開始/確定/破棄。
   const handleBeginTransaction = useCallback(async () => {
     if (!sessionId) return;
     try {
@@ -2530,7 +2466,7 @@ export default function App() {
       runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
       return;
     }
-    // 複数結果タブ (#472): 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
+    // 複数結果タブ: 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
     // せず SQL を複製した新しいタブで実行して前の結果を残す。以降のゲート/実行はこの
     // ターゲットタブに対して行う。
     let target = tab;
@@ -2558,7 +2494,7 @@ export default function App() {
     // outright on the backend, so there is nothing to approve here.
     const requireWriteApproval =
       isProduction && (selectedProfile?.confirm_writes ?? false) && !sessionReadOnly;
-    // 複数文スクリプトはバッチ実行 (#495) に振り分ける。auto LIMIT は付けない。
+    // 複数文スクリプトはバッチ実行に振り分ける。auto LIMIT は付けない。
     const batch = target.kind === "query" && isMultiStatement(sql);
     const findings =
       isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
@@ -2580,7 +2516,7 @@ export default function App() {
       void runBatchInTab(target.id, sql, true, openedInNewTab ? target : undefined);
       return;
     }
-    // 明示トランザクション (#414) 中は同一接続で実行する経路に振り分ける。
+    // 明示トランザクション中は同一接続で実行する経路に振り分ける。
     if (txActiveRef.current && target.kind === "query") {
       void runTxInTab(target.id, sql);
       return;
@@ -2838,7 +2774,7 @@ export default function App() {
     const pkIndices = resolvePkIndices(result.columns, tableColumns);
     const driver = selectedProfile?.driver ?? "mysql";
     // 1 トランザクションに UPDATE (セル編集) + DELETE (削除予定行) + INSERT (新規行) を
-    // まとめる (#441)。all-or-nothing なので一部失敗で全体がロールバックする。
+    // まとめる。all-or-nothing なので一部失敗で全体がロールバックする。
     const updates = buildUpdateStatements({
       driver, database, table, columns: result.columns, rows: result.rows, pkIndices, edits: pendingEdits,
     });
@@ -2867,7 +2803,7 @@ export default function App() {
     }
     patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
     // Always refresh & drop edits afterwards: the result indices no
-    // longer line up with whatever the user had buffered. Row ops (#441) are
+    // longer line up with whatever the user had buffered. Row ops are
     // cleared too so the bar disappears once applied.
     patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
     if (paginatable) {
@@ -2900,7 +2836,7 @@ export default function App() {
     selectedProfile?.driver,
   ]);
 
-  // 行を削除予定にトグルする (#441)。
+  // 行を削除予定にトグルする。
   const toggleRowDeleteForTab = useCallback((tabId: string, rowKey: string) => {
     patchTab(tabId, (tt) => {
       const cur = tt.pendingDeletes ?? [];
@@ -2909,18 +2845,18 @@ export default function App() {
     });
   }, [patchTab]);
 
-  // 新規行追加モーダルを開く (#441)。
+  // 新規行追加モーダルを開く。
   const requestInsertRowForTab = useCallback((tabId: string) => {
     setRowInsertTabId(tabId);
   }, []);
 
-  // モーダルで確定した新規行を保留に追加する (#441)。
+  // モーダルで確定した新規行を保留に追加する。
   const addInsertRowForTab = useCallback((tabId: string, row: PendingInsertRow) => {
     setRowInsertTabId(null);
     patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
   }, [patchTab]);
 
-  // 行操作 (追加/削除) の保留を破棄する (#441)。
+  // 行操作 (追加/削除) の保留を破棄する。
   const discardRowOpsForTab = useCallback((tabId: string) => {
     patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
   }, [patchTab]);
@@ -2938,37 +2874,18 @@ export default function App() {
     const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
     const sql = `${base} LIMIT ${limit}`;
     const tab: Tab = {
-      id: newTabId(),
-      kind: "table",
-      title: table,
+      ...makeTab("table", table, sql),
       database,
       table,
-      sql,
-      lastExecutedSql: sql,
-      result: null,
-      preview: null,
-      schemaTable: null,
-      streaming: false,
-      previewStreaming: false,
       previewRowLimit: limit,
       paginatable: base,
-      autoLimitApplied: null,
-      autoLimitSql: null,
-      loadingMore: false,
-      canLoadMore: false,
       page: 1,
       pageSize: limit,
       rowEstimateTotal: null,
-      queryError: null,
-      tableColumns: null,
-      pendingEdits: {},
-      editUndoStack: [],
-      editRedoStack: [],
-      builderSnapshot: null,
     };
     addTab(tab);
     runQueryInTab(tab.id, sql, base);
-    // ページネーション (#484) の総ページ数目安に使う行数推定を取得 (ベストエフォート)。
+    // ページネーションの総ページ数目安に使う行数推定を取得 (ベストエフォート)。
     if (sessionId) {
       void api
         .tableRowEstimates(sessionId, database)
@@ -2998,14 +2915,14 @@ export default function App() {
     runQueryInTab(tab.id, sql);
   }, [sessionId, runQueryInTab, addTab]);
 
-  // SQL を実行せずに新しいクエリタブのエディタへ流し込む (#460 の「エディタへ送る」)。
+  // SQL を実行せずに新しいクエリタブのエディタへ流し込む (「エディタへ送る」)。
   const openQueryInEditor = useCallback((sql: string, title?: string) => {
     const tab: Tab = { ...makeQueryTab(), sql };
     if (title) tab.title = title;
     addTab(tab);
   }, [addTab]);
 
-  // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する (#483)。
+  // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する。
   const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string, id: string | null) => {
     if (!sessionId) return;
     try {
@@ -3016,7 +2933,7 @@ export default function App() {
     }
   }, [sessionId, openQueryInEditor, toast]);
 
-  // CREATE TABLE ウィザード (#460) の実行: DDL を新しいクエリタブで実行し、閉じる。
+  // CREATE TABLE ウィザードの実行: DDL を新しいクエリタブで実行し、閉じる。
   const handleCreateTableRun = useCallback((sql: string) => {
     setCreateTableDb(null);
     openAndRunQuery(sql);
@@ -3027,7 +2944,7 @@ export default function App() {
     openQueryInEditor(sql);
   }, [openQueryInEditor]);
 
-  // テーブル保守操作 (#496): DDL を実行し、スキーマキャッシュとツリーを更新する。
+  // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。
   const runMaintenanceDdl = useCallback(async (sql: string, database: string): Promise<boolean> => {
     if (!sessionId) return false;
     try {
@@ -3095,10 +3012,11 @@ export default function App() {
   const handleRenameTableSubmit = useCallback(async (newName: string) => {
     const target = renameTarget;
     setRenameTarget(null);
-    if (!target || !newName.trim() || newName.trim() === target.table) return;
+    const trimmedName = newName.trim();
+    if (!target || !trimmedName || trimmedName === target.table) return;
     const driver = selectedProfile?.driver ?? "mysql";
     const success = await runMaintenanceDdl(
-      buildRenameTableSql(driver, target.database, target.table, newName.trim()),
+      buildRenameTableSql(driver, target.database, target.table, trimmedName),
       target.database,
     );
     if (success) {
@@ -3133,7 +3051,7 @@ export default function App() {
   }, [openAndRunQuery, selectedProfile?.driver]);
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
-  // で渡すため useCallback で固定する (#403)。依存は useState セッター (安定) と
+  // で渡すため useCallback で固定する。依存は useState セッター (安定) と
   // モジュールレベルの `t`・`api`、useCallback 済みの refreshProfiles のみ。
   const handleOpenCreateForm = useCallback(() => {
     setEditing(null);
@@ -3192,7 +3110,7 @@ export default function App() {
   }, [addTab]);
 
   /**
-   * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する (#497)。
+   * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する。
    * - `.sql` / `.txt` … 内容を読んで新規クエリタブとして開く (複数なら複数タブ)。
    * - `.csv` / `.tsv` … アクティブなテーブルタブがあれば ImportModal を事前選択
    *   パス付きで開く (ImportModal は単一ファイルなので先頭のみ)。
@@ -3247,7 +3165,7 @@ export default function App() {
     }
   }, [addTab, toast]);
 
-  // Tauri のウィンドウ drag-drop イベントを購読する (#497)。enter でファイル群の
+  // Tauri のウィンドウ drag-drop イベントを購読する。enter でファイル群の
   // 受理可否を判定してオーバーレイ用の状態を立て、drop で実際に振り分ける。over は
   // 座標のみでパスを持たないため、enter で得た判定をそのまま維持する。`leave` /
   // `drop` でオーバーレイを畳む。`dragDropEnabled` は Tauri v2 で既定 true のため、
@@ -3316,7 +3234,7 @@ export default function App() {
   handleCloseTabRef.current = handleCloseTab;
 
   // App-wide keyboard shortcuts for the tabbed workspace: tab management
-  // (#121) and focusing the result search (#120). Editor-scoped shortcuts
+  // and focusing the result search. Editor-scoped shortcuts
   // (run/preview/format) live in QueryEditor's CodeMirror keymap so they only
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
@@ -3329,7 +3247,7 @@ export default function App() {
       // Cmd/Ctrl+F → focus the focused pane's cross-column result search (no
       // Shift so the editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
       // When focus is inside the query editor (CodeMirror), defer to its own
-      // in-editor find/replace (#464) instead of stealing the shortcut.
+      // in-editor find/replace instead of stealing the shortcut.
       if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
         if ((e.target as HTMLElement | null)?.closest?.(".cm-editor")) return;
         const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
@@ -3390,7 +3308,7 @@ export default function App() {
         e.preventDefault();
         setShowCommandPalette((v) => !v);
       }
-      // Cmd/Ctrl+Shift+O: スキーマ横断のグローバルオブジェクト検索 (#473)。接続中のみ。
+      // Cmd/Ctrl+Shift+O: スキーマ横断のグローバルオブジェクト検索。接続中のみ。
       if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
         e.preventDefault();
         if (sessionIdRef.current) setShowObjectSearch((v) => !v);
@@ -3400,7 +3318,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // 複数結果タブ (#472): Cmd/Ctrl+Shift+Enter で、アクティブなクエリタブの SQL を
+  // 複数結果タブ: Cmd/Ctrl+Shift+Enter で、アクティブなクエリタブの SQL を
   // 結果を残したまま**新しいタブ**で実行する (設定 resultsInNewTab の一回限り版)。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -3418,7 +3336,7 @@ export default function App() {
   }, [activeTab, sessionId, runInTabWithGate]);
 
   // Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z で、アクティブなテーブルタブの未適用インライン
-  // セル編集を Undo / Redo する (#498)。トーストやツールバーのボタンと同じ編集
+  // セル編集を Undo / Redo する。トーストやツールバーのボタンと同じ編集
   // スタックを操作する。テキスト入力 (セル編集の input / CodeMirror エディタ /
   // その他の input・textarea) にフォーカスがある間は介入せず、その場のネイティブ
   // undo に委ねる (フォーカス文脈での衝突を避ける受け入れ条件)。各種オーバーレイ
@@ -3477,7 +3395,7 @@ export default function App() {
     redoCellEditForTab,
   ]);
 
-  // 接続のヘルスチェックと自動再接続 (#485)。ウィンドウがフォーカスを取り戻したとき
+  // 接続のヘルスチェックと自動再接続。ウィンドウがフォーカスを取り戻したとき
   // (= OS スリープ復帰やタブ切り替え後) に SELECT 1 で接続が生きているか確認し、死んで
   // いれば現在のプロファイルで再接続する。トンネル断やスリープ復帰で「次のクエリが急に
   // 失敗する」体験を緩和する。同時実行は healthCheckBusyRef で 1 件に絞る。
@@ -3502,7 +3420,7 @@ export default function App() {
     return () => window.removeEventListener("focus", onFocus);
   }, [sessionId, selectedProfile, connectingId, handleConnect, toast]);
 
-  // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする (#487)。
+  // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする。
   // 接続タブが選択されていなければ切り替えてからフォーカスする。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -3517,7 +3435,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // `?` (Shift+/) でショートカット チートシートを開閉する (#448)。入力欄・
+  // `?` (Shift+/) でショートカット チートシートを開閉する。入力欄・
   // CodeMirror エディタにフォーカスがある間は `?` を文字入力として通し、奪わない
   // (誤発火防止)。他のモーダル/フォームが開いている間も発火させない。
   useEffect(() => {
@@ -4075,9 +3993,8 @@ export default function App() {
     <Flex
       direction="column"
       h="100vh"
-      // アクティブ接続色をルートに伝播し、タイトルバー (#466) も含め全体で参照できる
-      // ようにする。main 側 (gridColumn 2) でも個別に上書きしているため作業画面の
-      // ヘッダーは従来どおり。
+      // アクティブ接続色をルートに伝播し、タイトルバーも含め全体で参照できる
+      // ようにする。main 側 (gridColumn 2) でも個別に上書きしている。
       style={
         sessionId && selectedProfile?.color
           ? ({ "--ws-accent": selectedProfile.color } as CSSProperties)
@@ -4655,7 +4572,7 @@ export default function App() {
         {!statusDismissed && status.kind !== "idle" && (() => {
           const tone = statusTone(status);
           // critical は error と同じ赤系で描き、加えて「重大」バッジで際立たせる。
-          // warning は黄系。どちらも閉じる導線を出す (#281)。
+          // warning は黄系。どちらも閉じる導線を出す。
           const isCritical = tone === "critical";
           const isError = tone === "error" || isCritical;
           const isWarning = tone === "warning";
@@ -4779,7 +4696,7 @@ export default function App() {
                   </Flex>
                 ) : (
                   // 単一行ステータスは折り返さず省略記号で詰め、全文はホバー
-                  // (title) で確認できるようにする (#346)。フッターが複数行に
+                  // (title) で確認できるようにする。フッターが複数行に
                   // 伸びてレイアウトが崩れるのを防ぐ。
                   <chakra.span
                     display="block"
@@ -5050,7 +4967,7 @@ export default function App() {
         </AnimatePresence>
       </Suspense>
       {confirmDialogElement}
-      {/* ファイルのドラッグ&ドロップ時のオーバーレイ (#497)。受理/拒否を視覚的に
+      {/* ファイルのドラッグ&ドロップ時のオーバーレイ。受理/拒否を視覚的に
           示す。pointerEvents none で実際のドロップは webview のネイティブ経路に任せ、
           このレイヤはフィードバック表示専用。 */}
       <AnimatePresence>

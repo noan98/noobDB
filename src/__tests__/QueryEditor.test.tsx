@@ -5,7 +5,7 @@ import { QueryEditor } from "../components/QueryEditor";
 import { setLocale, t } from "../i18n";
 
 // QueryEditor の主要な実行フロー (Run ボタン / Ctrl+Enter ショートカット / 空状態
-// での無効化 / 選択範囲優先実行) の退行を検出するテスト (#354)。CodeMirror を
+// での無効化 / 選択範囲優先実行) の退行を検出するテスト。CodeMirror を
 // jsdom 上で実マウントし、エディタ本文 → onRun の結線が壊れていないことを保証する。
 //
 // 文言はロケールで変わるため i18n の `t()` から期待値を引く。CodeMirror は

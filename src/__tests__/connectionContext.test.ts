@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { connectionBandColor } from "../components/titleBarContext";
 
 /**
- * アクティブ接続コンテキストの常時可視化 (#466)。タイトルバーの帯色ロジックが、
+ * アクティブ接続コンテキストの常時可視化。タイトルバーの帯色ロジックが、
  * 本番接続を危険色で最優先し、通常接続はプロファイル色、未接続は透明にすることを
  * 固定する。
  */

@@ -13,7 +13,7 @@ use crate::error::{AppError, Result};
 
 pub struct PostgresConn {
     pool: PgPool,
-    /// 明示トランザクション (#414) で確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
+    /// 明示トランザクションで確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
     /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Postgres>>>,
 }
@@ -62,7 +62,7 @@ impl PostgresConn {
         run_sql_on(&mut conn, sql).await
     }
 
-    // ── 明示トランザクション (#414) ──
+    // ── 明示トランザクション ──
 
     pub async fn tx_begin(&self, database: Option<&str>) -> Result<()> {
         let mut guard = self.tx.lock().await;
@@ -202,7 +202,7 @@ impl PostgresConn {
         apply_search_path(&mut conn, database).await?;
 
         let before_sql = target.as_ref().map(|t| {
-            let order = order_by_pk(&primary_key);
+            let order = super::pk_order_clause(&primary_key, pg_quote_ident);
             format!("SELECT * FROM {}{} LIMIT {}", t, order, row_limit + 1)
         });
 
@@ -800,7 +800,7 @@ async fn apply_search_path(
     Ok(())
 }
 
-/// Run one statement on a specific connection and decode it (#414). Shared by
+/// Run one statement on a specific connection and decode it. Shared by
 /// `execute` (pool connection) and `tx_execute` (held transaction connection).
 async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
@@ -1102,17 +1102,6 @@ fn pg_literal(cell: Option<&str>) -> String {
         None => "NULL".to_string(),
         Some(s) => format!("'{}'", s.replace('\'', "''")),
     }
-}
-
-fn order_by_pk(pk_cols: &[String]) -> String {
-    if pk_cols.is_empty() {
-        return String::new();
-    }
-    let parts: Vec<String> = pk_cols
-        .iter()
-        .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
-        .collect();
-    format!(" ORDER BY {}", parts.join(", "))
 }
 
 async fn fetch_capped_pg(

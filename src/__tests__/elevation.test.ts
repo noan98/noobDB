@@ -5,7 +5,7 @@ import ctxSrc from "../components/ContextMenu.tsx?raw";
 import toastSrc from "../components/Toast.tsx?raw";
 
 /**
- * エレベーション/レイヤリング体系 (#500) の回帰テスト。z-index スケールの順序と
+ * エレベーション/レイヤリング体系の回帰テスト。z-index スケールの順序と
  * オーバーレイがトークンを参照することを固定し、マジックナンバーの再混入を防ぐ。
  */
 const root = css.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";

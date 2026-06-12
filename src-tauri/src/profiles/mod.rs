@@ -53,7 +53,7 @@ pub struct ConnectionProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SshAuthMethod {
-    /// Private key file plus optional passphrase (the original behavior).
+    /// Private key file plus optional passphrase.
     #[default]
     Key,
     /// Delegate signing to the running ssh-agent.

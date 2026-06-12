@@ -135,7 +135,7 @@ interface Props {
   readOnly?: boolean;
   /**
    * 直近に実行したクエリの一覧 (最新が先頭)。エディタ 1 行目での ↑ / 末尾行での ↓
-   * による履歴ナビゲーション (#325) に使う。未接続時などは空/undefined。
+   * による履歴ナビゲーションに使う。未接続時などは空/undefined。
    */
   queryHistory?: string[];
 }
@@ -278,7 +278,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onPreviewRef.current = onPreview;
   const driverRef = useRef(driver);
   driverRef.current = driver;
-  // 履歴ナビゲーション (#325) 用。エディタは初回だけ生成されキーマップ内のクロージャ
+  // 履歴ナビゲーション用。エディタは初回だけ生成されキーマップ内のクロージャ
   // から ref を読むため、props の履歴はレンダのたびに ref へ流し込む。
   const historyRef = useRef<string[]>(queryHistory ?? []);
   historyRef.current = queryHistory ?? [];
@@ -333,7 +333,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           closeBrackets(),
           syntaxHighlighting(noobDBHighlightStyle, { fallback: true }),
           autocompletion(),
-          // エディタ内検索・置換 (#464)。検索パネルはエディタ上部に出し、選択語の
+          // エディタ内検索・置換。検索パネルはエディタ上部に出し、選択語の
           // 同一語ハイライトも有効化する。キーバインドは下の keymap に searchKeymap
           // を含める (Mod-f はエディタにフォーカスがあるときだけ起動し、結果横断検索
           // の Cmd/Ctrl+F とはフォーカス文脈で住み分ける — App 側でガード)。
@@ -342,7 +342,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           sqlCompartment.of(buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase)),
           keymap.of([
             { key: "Tab", run: acceptCompletion },
-            // ↑ / ↓ による実行済みクエリの履歴ナビゲーション (#325)。1 行目での ↑ /
+            // ↑ / ↓ による実行済みクエリの履歴ナビゲーション。1 行目での ↑ /
             // 末尾行での ↓ のときだけ起動し、それ以外は false を返して通常のカーソル
             // 移動へ委ねる。補完ポップアップ表示中はその選択移動を優先する。
             {
@@ -531,7 +531,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const runIconSpinner = <Spinner size={12} />;
   const runStates: Record<"idle" | "running" | "disabled", BadgeState> = {
     // Run はエディタの主要アクションなので、アクセント色 (primary 相当) で
-    // ツールバー上で唯一際立たせる (#283 の「主要アクション = primary」)。
+    // ツールバー上で唯一際立たせる (「主要アクション = primary」)。
     idle: { label: runLabel, tone: "accent", icon: runIconPlay },
     // 実行中はスピナーのみを表示する。Run/Preview は英語ラベルのボタンであり、
     // 日本語の状態テキスト ("実行中...") を併記するとスピナーと意味が重複し、ボタン
@@ -554,7 +554,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   );
   const previewStates: Record<"idle" | "running" | "disabled", BadgeState> = {
     // Dry Run は安全なプレビュー実行 (常にロールバック) なので、Run のような
-    // 主役色は使わず中立トーンに統一し、補助アクションとして落ち着かせる (#283)。
+    // 主役色は使わず中立トーンに統一し、補助アクションとして落ち着かせる。
     idle: { label: t("editorPreview"), tone: "neutral", icon: previewIconEye },
     running: { label: "", srLabel: t("editorPreviewRunning"), tone: "neutral", icon: runIconSpinner },
     disabled: { label: t("editorPreview"), tone: "neutral", icon: previewIconEye },

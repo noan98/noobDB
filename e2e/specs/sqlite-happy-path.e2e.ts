@@ -1,5 +1,5 @@
 /**
- * E2E ハッピーパス: SQLite 接続 → クエリ実行 → ResultGrid 表示 (#529 PoC)
+ * E2E ハッピーパス: SQLite 接続 → クエリ実行 → ResultGrid 表示 (PoC)
  *
  * このスペックは tauri-driver + WebDriverIO により実 webview (Linux: WebKitGTK /
  * Windows: WebView2) 上で noobDB を駆動し、以下のフローを E2E で検証します:

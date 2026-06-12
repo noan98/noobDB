@@ -40,7 +40,7 @@ function formatTime(iso: string): string {
   return d.toLocaleString();
 }
 
-// memo 化して App.tsx の高頻度な再レンダリングから切り離す (#403)。props は親で
+// memo 化して App.tsx の高頻度な再レンダリングから切り離す。props は親で
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
 export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTab }: Props) {
   const t = useT();
@@ -151,7 +151,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
         <Tree role="tree">
           {/* 履歴は検索/スコープ変更のたびに丸ごと入れ替わり、件数も多くなりうる。
               enter/exit の AnimatePresence で全件を出入りさせると重く・うるさく
-              なるため、ここは「控えめ」方針 (Epic #370) に従い、マウント時の
+              なるため、ここは「控えめ」方針に従い、マウント時の
               opacity フェードイン (enter のみ・height 補間なし) に留める。新しい
               クエリ実行で先頭に積まれた項目が軽く出現し、削除は即時。 */}
           {entries.map((h) => {

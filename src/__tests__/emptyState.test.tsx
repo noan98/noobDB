@@ -4,7 +4,7 @@ import { EmptyState } from "../components/EmptyState";
 import { WelcomeIllustration } from "../components/illustrations";
 
 /**
- * 空状態 / オンボーディング (#450)。リッチイラスト + CTA の一貫表示と、compact 時の
+ * 空状態 / オンボーディング。リッチイラスト + CTA の一貫表示と、compact 時の
  * フォールバック挙動を固定する。
  */
 describe("EmptyState onboarding (#450)", () => {

@@ -6,10 +6,8 @@ import { Button } from "./ui";
 import { Icon } from "./Icon";
 
 /**
- * 自前のモーダル/ダイアログ実装を Chakra の `Dialog` (ポータル + バックドロップ +
- * フォーカストラップ + Esc クローズ) に統一するための共通ラッパー。`App.css` の
- * `.modal-overlay` / `.modal` / `.modal-header` / `.modal-body` / `.modal-footer`
- * の見た目を `app.*` トークンの style props で再現する。各モーダルはここから
+ * Chakra の `Dialog` (ポータル + バックドロップ +
+ * フォーカストラップ + Esc クローズ) に乗せた共通モーダルラッパー。各モーダルはここから
  * `Modal` / `ModalHeader` / `ModalBody` / `ModalFooter` を import して使い、内部の
  * フォーム要素・ボタンは `ui.tsx` の共通 recipe を使う。
  *
@@ -42,7 +40,7 @@ interface ModalProps {
   /** 制御された開閉フラグ。条件付きマウント前提で既定 true。 */
   open?: boolean;
   onClose: () => void;
-  /** コンテンツ幅。`App.css` の `.modal { width: min(N, 100%) }` を再現する。 */
+  /** コンテンツ幅。`min(width, 100%)` として適用される。 */
   width?: string;
   /** バックドロップ (外側) クリックで閉じるか。既定 true。 */
   closeOnInteractOutside?: boolean;
@@ -200,7 +198,7 @@ type ModalFooterProps = ComponentProps<typeof Dialog.Footer>;
  * 1. 通常の操作 — 右端に主アクション (primary)、その左にキャンセル (secondary)。
  *    左側の補助アクションとの間は spacer (`<div style={{ flex: 1 }} />`) で空ける。
  *    例: ExportModal / RowInsertModal / RenameTableDialog。
- * 2. 破壊的・不可逆な操作 (#323 の安全側優先) — 実行を**左**に非強調 (secondary)
+ * 2. 破壊的・不可逆な操作 (安全側優先) — 実行を**左**に非強調 (secondary)
  *    で置き、spacer を挟んで**右端にキャンセルを primary + 初期フォーカス**で置く。
  *    HIG 各種ガイドラインに倣い、破壊的アクションを視覚的に優位にしない。
  *    例: DangerousQueryDialog / ConfirmDialog (tone: danger・warning)。

@@ -29,7 +29,7 @@ interface Props {
   /** Called after a successful import so the caller can refresh the grid. */
   onImported: () => void;
   /**
-   * Pre-selected file path (#497). When the modal is opened by dropping a
+   * Pre-selected file path. When the modal is opened by dropping a
    * `.csv` onto the window, the path is filled in up front so the preview
    * loads immediately without the user re-picking the file.
    */
@@ -402,8 +402,6 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
         )}
         {previewError && <ErrorNote>{previewError}</ErrorNote>}
         {loadingPreview && (
-          /* プレビュー読み込み中のインジケータ: Spinner とテキストを横並びにして
-             視覚的なフィードバックを追加する。 */
           <chakra.div display="inline-flex" alignItems="center" gap="1.5" color="app.textMuted">
             <Spinner size={13} />
             {t("importLoadingPreview")}

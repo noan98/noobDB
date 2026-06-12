@@ -173,7 +173,7 @@ pub(crate) async fn run_query_transaction_inner(
     Ok(QueryResult::empty(affected, elapsed_ms))
 }
 
-// ── 明示トランザクションモード (#414) ──
+// ── 明示トランザクションモード ──
 //
 // BEGIN で専用接続を確保し、その接続で文を逐次実行して、COMMIT/ROLLBACK で確定/破棄
 // する。フロントはトランザクションが有効な間、エディタの実行を `run_in_transaction`

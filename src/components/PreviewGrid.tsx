@@ -45,7 +45,7 @@ interface Props {
   pendingEditsSummary?: { cells: number; rows: number };
   onApplyEdits?: () => void;
   onDiscardEdits?: () => void;
-  /** True while the Apply transaction is in flight — shows an inline spinner (#538). */
+  /** True while the Apply transaction is in flight — shows an inline spinner. */
   applyingEdits?: boolean;
 }
 

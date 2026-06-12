@@ -9,12 +9,11 @@ import { HelpView } from "../../components/HelpView";
 import type { Column, QueryResult } from "../../api/tauri";
 import type { DangerFinding } from "../../dangerousSql";
 
-// Phase 1 — 画面レンダリングのスモークテスト (#306)。
+// Phase 1 — 画面レンダリングのスモークテスト。
 //
-// 既存のフロントテストは jsdom 上の純ロジック/挙動検証 (#354/#289) のみで、
-// 「実ブラウザで本物の CSS と一緒に主要画面が描画されるか」を見る網がなかった。
-// Chakra UI 全面移行 (#271) はレイアウト/テーマ追従の退行が最も起きやすい局面の
-// ため、ここでは実 Chromium (Playwright provider) に主要画面をマウントし、
+// jsdom の純ロジック/挙動テストでは「実ブラウザで本物の CSS と一緒に主要画面が
+// 描画されるか」は検証できないため、ここでは実 Chromium (Playwright provider) に
+// 主要画面をマウントし、
 // **例外なく描画され、要のロール/テキストが可視である**ことを確認する。
 //
 // バックエンド (IPC) は `setup.browser.ts` の Tauri スタブで無害化しており、各画面は
@@ -25,7 +24,7 @@ import type { DangerFinding } from "../../dangerousSql";
 // `*.browser.test.tsx` という別 glob に分け、`vitest.browser.config.ts` でのみ
 // 実行する (jsdom スイートとは衝突させない)。
 //
-// `src/api/tauri.ts` のモックシーム (#289 と共有) の一例として、マウント時に IPC を
+// `src/api/tauri.ts` のモックシームの一例として、マウント時に IPC を
 // 呼ぶ画面 (SettingsView の `api.readLogs`) はここで差し替え、実 DB なしに状態を
 // 注入する。`setup.browser.ts` の Tauri スタブは `invoke` を解決済み null にするが、
 // api ラッパは応答を zod で検証するため、応答形を持つコマンドは個別にモックして

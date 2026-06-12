@@ -10,7 +10,7 @@ import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
 /**
- * 全件ストリーミングエクスポート (#494) に必要な情報。提供されると「全件 (再実行)」
+ * 全件ストリーミングエクスポートに必要な情報。提供されると「全件 (再実行)」
  * モードが選べるようになる。`sql` は再実行する SELECT 系クエリ。
  */
 export interface FullExportContext {
@@ -31,7 +31,7 @@ interface Props {
    * user doesn't mistake a partial export for the full set.
    */
   partial?: boolean;
-  /** 全件エクスポートのコンテキスト (#494)。未提供ならグリッドのみエクスポート。 */
+  /** 全件エクスポートのコンテキスト。未提供ならグリッドのみエクスポート。 */
   fullExport?: FullExportContext;
   onClose: () => void;
 }
@@ -91,7 +91,7 @@ type Status =
   | { kind: "streaming"; rows: number; streamId: string }
   | { kind: "error"; message: string };
 
-/** エクスポート対象: 現在のグリッドのみ / クエリを再実行して全件 (#494)。 */
+/** エクスポート対象: 現在のグリッドのみ / クエリを再実行して全件。 */
 type ExportScope = "current" | "full";
 
 export function ExportModal({ columns, rows, database, table, partial, fullExport, onClose }: Props) {
@@ -169,7 +169,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
     }
   };
 
-  // 全件モード: クエリを再実行してバックエンドでストリーミング書き出し (#494)。
+  // 全件モード: クエリを再実行してバックエンドでストリーミング書き出し。
   const handleFullExport = async (ctx: FullExportContext) => {
     const streamId = `export_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     setStatus({ kind: "streaming", rows: 0, streamId });

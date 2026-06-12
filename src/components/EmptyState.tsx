@@ -14,7 +14,7 @@ interface Props {
   /** Optional glyph shown above the title. */
   icon?: IconName;
   /**
-   * Optional richer inline-SVG illustration shown above the title (#450).
+   * Optional richer inline-SVG illustration shown above the title.
    * Takes precedence over `icon` for prominent onboarding/empty states.
    * Ignored in `compact` layout, which keeps the small icon badge.
    */
@@ -34,7 +34,7 @@ interface Props {
  * editor pane, snippet/history panels and the result grid so "nothing here yet"
  * reads consistently and points the user at the next step.
  *
- * 本コンポーネントは Chakra UI 導入の見本。スタイルは `app.*` トークン経由で
+ * スタイルは `app.*` トークン経由で
  * 既存の CSS 変数を参照するため、ライト/ダーク・アクセント色に自動追従する。
  */
 export function EmptyState({
@@ -47,7 +47,7 @@ export function EmptyState({
 }: Props) {
   return (
     // 一時表示 (空/オンボーディング) の控えめな fade-in。マウント時のみ動かす
-    // enter で、reduced-motion 時は MotionConfig により即時化される (Epic #370)。
+    // enter で、reduced-motion 時は MotionConfig により即時化される。
     <MotionRoot
       display="flex"
       flexDirection="column"

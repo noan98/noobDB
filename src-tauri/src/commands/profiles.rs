@@ -148,7 +148,7 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
     Ok(profile)
 }
 
-/// エクスポートファイルのトップレベル形 (#442)。`profiles` は `ConnectionProfile`
+/// エクスポートファイルのトップレベル形。`profiles` は `ConnectionProfile`
 /// (= profiles.json と同じ非秘密フィールドのみ) の配列。**秘密情報 (パスワード /
 /// パスフレーズ) は OS keyring に分離保存されており、この構造体にもエクスポート
 /// JSON にも一切含まれない** (CLAUDE.md の秘密分離ポリシー)。
@@ -169,7 +169,7 @@ const EXPORT_NOTE: &str =
     "This file contains connection profiles WITHOUT any secrets (passwords / passphrases). \
      Re-enter credentials after importing.";
 
-/// ID 衝突時の取り込み戦略 (#442)。
+/// ID 衝突時の取り込み戦略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImportStrategy {

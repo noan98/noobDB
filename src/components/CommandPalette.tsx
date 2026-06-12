@@ -13,13 +13,13 @@ import {
 
 /**
  * コマンドパレット (Cmd/Ctrl+K)。接続・テーブル・スニペット・履歴・画面遷移を
- * 単一の検索 UI から横断検索し、キーボード完結で実行できる (#382)。
+ * 単一の検索 UI から横断検索し、キーボード完結で実行できる。
  *
  * - 表示・絞り込み・グループ化・ハイライトのロジックは `commandPalette.ts` に分離。
  *   ここは入力状態・キーボードナビ・実行・描画のみを担う。
  * - シェルは共通 `Modal` を流用する。Chakra の `Dialog` がフォーカストラップ・
  *   Escape クローズ・バックドロップを、`Modal` 側の `AnimatePresence` + motion
- *   プリセット (`variants.dialog`) が開閉アニメを担う (Epic #370 準拠)。
+ *   プリセット (`variants.dialog`) が開閉アニメを担う。
  * - `prefers-reduced-motion` は `MotionConfig reducedMotion="user"` で自動抑制。
  *
  * 候補データと実行ハンドラは `App.tsx` が `items` として組み立てて渡す

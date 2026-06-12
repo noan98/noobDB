@@ -5,7 +5,7 @@ import {
   navigateOlder,
 } from "../components/queryHistoryNav";
 
-// 履歴ナビゲーション (#325) の純粋ロジックの回帰テスト。最新が先頭の履歴配列に対し、
+// 履歴ナビゲーションの純粋ロジックの回帰テスト。最新が先頭の履歴配列に対し、
 // ↑ で古い方向 / ↓ で新しい方向へたどり、最新位置へ戻ると下書きを復元することを固定する。
 const HISTORY = ["SELECT 3;", "SELECT 2;", "SELECT 1;"]; // 3 が最新
 

@@ -216,8 +216,8 @@ mod tests {
         assert!(!is_legacy_fingerprint_of("abc123DEF", "MD5:ab:cd:ef"));
     }
 
-    // Reproduces the russh 0.60 regression: a pre-existing legacy entry must be
-    // migrated to the SHA256 form and the host accepted, not rejected.
+    // A pre-existing legacy entry must be migrated to the SHA256 form and the
+    // host accepted, not rejected.
     #[tokio::test]
     async fn legacy_entry_is_migrated_then_accepted() {
         let key = PublicKey::from_openssh(KEY_A).unwrap();

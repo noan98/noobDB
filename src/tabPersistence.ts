@@ -9,7 +9,7 @@ export interface PersistedTab {
   table?: string;
   sql: string;
   /**
-   * Optional Query Builder snapshot (#287). Restored when the same tab is
+   * Optional Query Builder snapshot. Restored when the same tab is
    * reopened so users don't have to rebuild WHERE / ORDER BY / LIMIT inputs
    * after a reconnect. Mirrors `QueryBuilderSnapshot` — kept structural here
    * (rather than `QueryBuilderSnapshot`) so the persisted JSON shape stays

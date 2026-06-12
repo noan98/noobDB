@@ -6,7 +6,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, PressableButton, Radio } from "./ui";
 
 /**
- * プロファイルインポート (#442) の ID 衝突解決ダイアログ。ファイル選択後に開き、
+ * プロファイルインポートの ID 衝突解決ダイアログ。ファイル選択後に開き、
  * 「新規 ID で追加 / スキップ / 上書き」の 3 戦略から 1 つを選んで確定する。
  * 秘密情報がファイルに含まれないこと (接続時に資格情報の再入力が要ること) も明示する。
  */

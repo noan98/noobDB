@@ -68,7 +68,7 @@ pub async fn foreign_keys(
     session.conn.foreign_keys(&database).await
 }
 
-/// 非テーブルのスキーマオブジェクト一覧を返す (#483)。ビュー/マテビュー/ルーチン/トリガー。
+/// 非テーブルのスキーマオブジェクト一覧を返す。ビュー/マテビュー/ルーチン/トリガー。
 #[tauri::command]
 pub async fn list_schema_objects(
     session_id: String,
@@ -82,7 +82,7 @@ pub async fn list_schema_objects(
     session.conn.schema_objects(&database).await
 }
 
-/// スキーマオブジェクトの定義 (DDL) を返す (#483)。
+/// スキーマオブジェクトの定義 (DDL) を返す。
 #[tauri::command]
 pub async fn get_object_definition(
     session_id: String,
@@ -102,7 +102,7 @@ pub async fn get_object_definition(
         .await
 }
 
-/// テーブルのインデックス一覧を返す (#459)。名前・構成カラム・UNIQUE/PRIMARY/方式。
+/// テーブルのインデックス一覧を返す。名前・構成カラム・UNIQUE/PRIMARY/方式。
 #[tauri::command]
 pub async fn list_indexes(
     session_id: String,

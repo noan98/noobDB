@@ -7,7 +7,7 @@ import type { I18nKey } from "./i18n";
 
 /**
  * エラー状態に対応するイラスト種別。
- * illustrations.tsx の各コンポーネント名に対応する文字列リテラルで表す (#539)。
+ * illustrations.tsx の各コンポーネント名に対応する文字列リテラルで表す。
  * - "connectionFailed": サーバに到達できない / 接続失敗
  * - "timeout": クエリやセッションがタイムアウト
  * - "permissionDenied": 認証失敗 / アクセス拒否 / 権限不足

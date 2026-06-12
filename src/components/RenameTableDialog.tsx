@@ -5,7 +5,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton } from "./ui";
 
 /**
- * テーブル名変更ダイアログ (#496)。新しい名前を入力して確定すると
+ * テーブル名変更ダイアログ。新しい名前を入力して確定すると
  * `ALTER TABLE ... RENAME TO ...` を実行する (実行は呼び出し側 App が担当)。
  */
 interface Props {

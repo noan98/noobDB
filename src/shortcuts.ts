@@ -1,10 +1,9 @@
 import type { I18nKey } from "./i18n";
 
 /**
- * キーボードショートカット定義の単一ソース (#448)。
+ * キーボードショートカット定義の単一ソース。
  *
- * 従来 `HelpView` の中にだけ存在していたショートカット一覧を、ここへ切り出して
- * 一元管理する。`HelpView` のショートカット節と、`?` キーで開くチートシート
+ * `HelpView` のショートカット節と、`?` キーで開くチートシート
  * オーバーレイ (`ShortcutCheatSheet`) の双方がこの配列を参照するため、定義の
  * 二重管理が起きない。表示文言は i18n キー越しに引くので、英語/日本語の両方で
  * 一貫したラベルになる。
@@ -37,7 +36,7 @@ export const SHORTCUT_CATEGORY_ORDER: ShortcutCategory[] = ["global", "editor", 
 
 /**
  * 全ショートカット定義。`keysKey` / `descKey` は `i18n.ts` の既存
- * `helpShortcut*` キーを再利用しているため、`HelpView` の従来表記と完全に一致する。
+ * `helpShortcut*` キーを再利用しているため、`HelpView` の表記と完全に一致する。
  */
 export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutCommandPaletteTitle", descKey: "shortcutCommandPaletteDesc", category: "global" },

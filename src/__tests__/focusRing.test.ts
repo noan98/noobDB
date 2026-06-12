@@ -4,7 +4,7 @@ import themeSrc from "../theme.ts?raw";
 import gridSrc from "../components/ResultGrid.tsx?raw";
 
 /**
- * フォーカス/選択の視覚言語統一 (#475) の回帰テスト。フォーカスリングがトークン化
+ * フォーカス/選択の視覚言語統一の回帰テスト。フォーカスリングがトークン化
  * され、フォーム要素が :focus-visible に統一され、エラー入力が危険色リングへ分岐
  * することを固定する。
  */
@@ -46,7 +46,7 @@ describe("Chakra recipes adopt focus-visible (#475)", () => {
 });
 
 /**
- * グリッドセル / 範囲選択の inset リング (#540)。
+ * グリッドセル / 範囲選択の inset リング。
  * 矩形選択範囲では隣接セルのリングが外側で重なると輪郭が読みづらいため、
  * すべてのセルフォーカス/選択を inset box-shadow に統一する。
  */

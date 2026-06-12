@@ -25,10 +25,10 @@ async fn mysql_roundtrip_when_env_set() {
     let dbs = conn.databases().await.expect("show databases");
     assert!(!dbs.is_empty(), "expected at least one database");
 
-    // Regression: `USE` is rejected by MySQL's prepared-statement protocol
-    // on servers older than 8.0.23 and on MariaDB (error 1295). Executing a
-    // query with a `database` context exercises `apply_use_database`, which
-    // must go through the text protocol via `sqlx::raw_sql`.
+    // `USE` is rejected by MySQL's prepared-statement protocol on servers
+    // older than 8.0.23 and on MariaDB (error 1295). Executing a query with a
+    // `database` context exercises `apply_use_database`, which must go through
+    // the text protocol via `sqlx::raw_sql`.
     if let Some(db) = opts.database.as_deref() {
         let scoped = conn
             .execute("SELECT 1 AS n", Some(db))
@@ -94,12 +94,10 @@ async fn mysql_table_row_estimates_present_for_base_table() {
     conn.close().await;
 }
 
-/// Regression for the "(影響のあるレコードはありません)" bug: the preview
-/// used to snapshot only the first `row_limit` rows of the target table, so
-/// an UPDATE or DELETE that touched a row past that window showed empty
-/// before/after panes. We now lift the user's WHERE clause out of the
-/// statement and use it to filter the BEFORE snapshot, which captures the
-/// affected rows regardless of where they sit in the table.
+/// The preview lifts the user's WHERE clause out of the statement and uses it
+/// to filter the BEFORE snapshot, so an UPDATE or DELETE that touches a row
+/// past the first `row_limit` rows still shows the affected rows in the
+/// before/after panes instead of empty ones.
 #[tokio::test]
 async fn preview_captures_affected_rows_past_row_limit() {
     let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
@@ -189,10 +187,9 @@ async fn preview_captures_affected_rows_past_row_limit() {
     conn.close().await;
 }
 
-/// Regression for #188: a CTE-prefixed DELETE/UPDATE/INSERT starts with `WITH`
-/// but mutates rows. It used to take the result-set path and report an empty
-/// "0 rows" grid, hiding the fact that data changed. It must now take the
-/// execute path and return `rows_affected`.
+/// A CTE-prefixed DELETE/UPDATE/INSERT starts with `WITH` but mutates rows.
+/// It must take the execute path and return `rows_affected` — not the
+/// result-set path, whose empty "0 rows" grid would hide that data changed.
 #[tokio::test]
 async fn with_cte_dml_reports_rows_affected() {
     let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
@@ -271,9 +268,9 @@ async fn with_cte_dml_reports_rows_affected() {
     conn.close().await;
 }
 
-/// Regression for #189: `CALL proc()` used to take the execute path and only
-/// report `rows_affected`, so a stored procedure that returns a result set
-/// never surfaced its rows in the grid. It must now take the result-set path.
+/// `CALL proc()` must take the result-set path so a stored procedure that
+/// returns a result set surfaces its rows in the grid instead of only
+/// reporting `rows_affected`.
 #[tokio::test]
 async fn call_stored_procedure_returns_result_set() {
     let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
@@ -323,10 +320,9 @@ async fn call_stored_procedure_returns_result_set() {
     conn.close().await;
 }
 
-/// Regression for #196: a `CALL` whose body only runs DML (no SELECT) returns
-/// no result set. Routing every CALL through the result-set path used to report
-/// `rows_affected = 0`; runtime detection via `fetch_many` must now sum the
-/// procedure's affected-row counts and surface them instead.
+/// A `CALL` whose body only runs DML (no SELECT) returns no result set.
+/// Runtime detection via `fetch_many` must sum the procedure's affected-row
+/// counts and surface them instead of reporting `rows_affected = 0`.
 #[tokio::test]
 async fn call_dml_only_procedure_reports_rows_affected() {
     let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
@@ -394,13 +390,11 @@ async fn call_dml_only_procedure_reports_rows_affected() {
     conn.close().await;
 }
 
-/// Regression: MySQL `TIMESTAMP` and `TIME` columns used to decode to
-/// `Value::Null`. `decode_cell` only tried `NaiveDateTime`/`NaiveDate`, but in
-/// sqlx-mysql `NaiveDateTime` is compatible *only* with the DATETIME column
-/// type — TIMESTAMP needs `DateTime<Utc>` and TIME needs `NaiveTime`. The
-/// mismatched `try_get` errored on the compatibility check and the value fell
-/// through to NULL. In the dry-run preview this made columns set to `NOW()`
-/// read NULL in both panes, so they never highlighted as changed.
+/// In sqlx-mysql `NaiveDateTime` is compatible *only* with the DATETIME column
+/// type — TIMESTAMP needs `DateTime<Utc>` and TIME needs `NaiveTime`. A
+/// mismatched `try_get` errors on the compatibility check and the value falls
+/// through to NULL, which in the dry-run preview would make columns set to
+/// `NOW()` read NULL in both panes and never highlight as changed.
 #[tokio::test]
 async fn temporal_columns_decode_to_strings() {
     let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
@@ -452,7 +446,7 @@ async fn temporal_columns_decode_to_strings() {
     };
     let row = &res.rows[0];
     // The whole point: none of these are NULL, and TIME / TIMESTAMP in
-    // particular now carry a string value rather than dropping to NULL.
+    // particular carry a string value rather than dropping to NULL.
     assert!(
         matches!(&row[col("d")], t::Value::String(s) if s == "2026-05-26"),
         "DATE decoded as {:?}",
@@ -512,9 +506,9 @@ async fn temporal_columns_decode_to_strings() {
     conn.close().await;
 }
 
-/// list_indexes (#459) / schema_objects (#483) / 明示トランザクション (#414) /
-/// health_check (#485) を MySQL 上で一通り実行する。CI のサービスコンテナで実走し、
-/// 新規ドライバメソッドの動作とカバレッジを担保する。
+/// list_indexes / schema_objects / 明示トランザクション / health_check を
+/// MySQL 上で一通り実行する。CI のサービスコンテナで実走し、ドライバメソッドの
+/// 動作とカバレッジを担保する。
 #[tokio::test]
 async fn mysql_new_schema_apis_and_transaction_when_env_set() {
     let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {

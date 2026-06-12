@@ -249,7 +249,7 @@ async fn sqlite_foreign_keys_are_introspected_for_er_diagram() {
 
 #[tokio::test]
 async fn sqlite_list_indexes_reports_primary_unique_and_plain() {
-    // list_indexes (#459) must surface the implicit PK index, an explicit UNIQUE
+    // list_indexes must surface the implicit PK index, an explicit UNIQUE
     // index, and a plain multi-column index with its columns in declaration order.
     let mut path = std::env::temp_dir();
     path.push(format!("noobdb_sqlite_idx_{}.db", std::process::id()));
@@ -315,7 +315,7 @@ async fn sqlite_list_indexes_reports_primary_unique_and_plain() {
 
 #[tokio::test]
 async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
-    // schema_objects (#483) surfaces SQLite views and triggers (no routines),
+    // schema_objects surfaces SQLite views and triggers (no routines),
     // and object_definition returns the stored DDL verbatim.
     let mut path = std::env::temp_dir();
     path.push(format!("noobdb_sqlite_obj_{}.db", std::process::id()));
@@ -369,7 +369,7 @@ async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
 
 #[tokio::test]
 async fn sqlite_explicit_transaction_commits_and_rolls_back() {
-    // 明示トランザクション (#414): BEGIN→INSERT→ROLLBACK は何も残さず、
+    // 明示トランザクション: BEGIN→INSERT→ROLLBACK は何も残さず、
     // BEGIN→INSERT→COMMIT は永続化される。文は同一の保持接続で実行される。
     let mut path = std::env::temp_dir();
     path.push(format!("noobdb_sqlite_xtx_{}.db", std::process::id()));
@@ -420,7 +420,7 @@ async fn sqlite_explicit_transaction_commits_and_rolls_back() {
 
 #[tokio::test]
 async fn sqlite_health_check_succeeds_on_live_connection() {
-    // health_check (#485) runs `SELECT 1` through the driver; it must succeed on
+    // health_check runs `SELECT 1` through the driver; it must succeed on
     // a freshly opened connection.
     let mut path = std::env::temp_dir();
     path.push(format!("noobdb_sqlite_health_{}.db", std::process::id()));
@@ -819,7 +819,7 @@ async fn sqlite_missing_path_reports_invalid_input() {
 }
 
 // ---------------------------------------------------------------------------
-// read-only セッション強制 (IPC レベル) — Issue #288
+// read-only セッション強制 (IPC レベル)
 //
 // `is_read_only_sql` の単体テストは `db/mod.rs` にあるが、ここでは実際の
 // クエリコマンド経路 (`run_query` / `run_query_transaction` / `import_csv` の

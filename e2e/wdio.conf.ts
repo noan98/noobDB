@@ -1,5 +1,5 @@
 /**
- * noobDB E2E テスト設定 — tauri-driver + WebDriverIO (#529 PoC)
+ * noobDB E2E テスト設定 — tauri-driver + WebDriverIO (PoC)
  *
  * 【概要】
  * tauri-driver は WebDriver プロトコルのプロキシとして動作し、各プラットフォーム固有の
@@ -7,7 +7,7 @@
  *   - Linux : WebKitWebDriver (webkit2gtk-driver パッケージ)
  *   - Windows: msedgedriver (Edge/WebView2 付属)
  *
- * これにより、Chromium ベースの Phase 2 (#306) では検証できない「実 webview」上での
+ * これにより、Chromium ベースの Phase 2 では検証できない「実 webview」上での
  * IPC 通信・レンダリングをエンドツーエンドで検証できます。
  *
  * 【前提条件】

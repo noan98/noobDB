@@ -192,7 +192,7 @@ describe("isReadOnlySql", () => {
 });
 
 /**
- * Shared CTE corpus (#286). The frontend `isReadOnlySql` and the backend
+ * Shared CTE corpus. The frontend `isReadOnlySql` and the backend
  * `is_read_only_sql` (`src-tauri/src/db/mod.rs`) must agree on every entry in
  * this table — both names are gates that decide whether a `WITH ...` statement
  * may run on a read-only session. A duplicate of this table lives in the Rust
@@ -247,7 +247,7 @@ describe("CTE classification corpus (#286)", () => {
   }
 });
 
-// Schema-cache invalidation gate (#351). Leans toward over-detection: every
+// Schema-cache invalidation gate. Leans toward over-detection: every
 // `;`-separated statement is checked after masking comments/literals.
 const SCHEMA_MUTATING_CORPUS: { sql: string; mutates: boolean }[] = [
   // Core DDL verbs.
@@ -255,7 +255,7 @@ const SCHEMA_MUTATING_CORPUS: { sql: string; mutates: boolean }[] = [
   { sql: "DROP TABLE t", mutates: true },
   { sql: "TRUNCATE TABLE t", mutates: true },
   { sql: "RENAME TABLE a TO b", mutates: true },
-  // Compound DDL the issue called out — leading verb already covers these.
+  // Compound DDL — leading verb already covers these.
   { sql: "ALTER TABLE t RENAME COLUMN a TO b", mutates: true },
   { sql: "ALTER TABLE t RENAME TO t2", mutates: true },
   { sql: "CREATE INDEX idx ON t (a)", mutates: true },

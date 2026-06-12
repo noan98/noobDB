@@ -40,7 +40,7 @@ pub struct DumpOptions {
     /// maps to `--data-only`; for SQLite, skips schema (`CREATE` / index / trigger).
     pub no_create_info: bool,
 
-    // ── PostgreSQL-specific (#471). Ignored by other drivers. ──
+    // ── PostgreSQL-specific. Ignored by other drivers. ──
     /// `pg_dump --no-owner`: do not emit `ALTER ... OWNER TO` statements.
     #[serde(default)]
     pub no_owner: bool,
@@ -53,7 +53,7 @@ pub struct DumpOptions {
     pub pg_schema: Option<String>,
 }
 
-/// Dump `database` to `path`, dispatching on the session's driver (#471).
+/// Dump `database` to `path`, dispatching on the session's driver.
 /// Returns the number of bytes written on success.
 ///
 /// - MySQL: `mysqldump` (credentials via a temp option file).
@@ -191,7 +191,7 @@ async fn dump_mysql(
     Ok(bytes)
 }
 
-/// Run `pg_dump` for `database`, writing SQL to `path` (#471). The password is
+/// Run `pg_dump` for `database`, writing SQL to `path`. The password is
 /// passed via a temp `PGPASSFILE` (mode 0600 on unix) and `--no-password`, so it
 /// never appears in process arguments, the environment, or logs.
 async fn dump_postgres(
@@ -289,7 +289,7 @@ async fn dump_postgres(
 }
 
 /// Generate a `sqlite3 .dump`-style SQL script for the live SQLite connection and
-/// write it to `path` (#471). PATH-independent: no external `sqlite3` binary is
+/// write it to `path`. PATH-independent: no external `sqlite3` binary is
 /// needed — schema and rows are read through the existing connection.
 async fn dump_sqlite(
     conn: &crate::db::Connection,
@@ -416,8 +416,7 @@ impl DefaultsFile {
         use std::io::Write;
 
         // Unique temp file name. An 8-char slug from a 31-char alphabet is more
-        // than enough uniqueness for a short-lived per-dump option file, and lets
-        // us drop the uuid dependency (#273).
+        // than enough uniqueness for a short-lived per-dump option file.
         let name = format!("noobdb-dump-{}.cnf", crate::state::random_slug(8));
         let path = std::env::temp_dir().join(name);
 
@@ -462,7 +461,7 @@ impl Drop for DefaultsFile {
     }
 }
 
-/// A temporary PostgreSQL `.pgpass`-format file (#471) holding one line:
+/// A temporary PostgreSQL `.pgpass`-format file holding one line:
 /// `host:port:database:user:password`. Created with mode 0600 on unix and removed
 /// when dropped, so the password never reaches the process arguments, the
 /// environment, or logs (only `PGPASSFILE` pointing at the path is exported).

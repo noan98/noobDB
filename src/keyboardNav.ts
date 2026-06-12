@@ -1,5 +1,5 @@
 /**
- * キーボードナビゲーション共通ユーティリティ (#536)
+ * キーボードナビゲーション共通ユーティリティ
  *
  * フォーカストラップ・戻り先フォーカス・roving tabindex の共通ロジックを
  * 提供するフック群。メニュー・モーダル・ポップオーバーで共有できるよう、
@@ -12,8 +12,7 @@
  * - `useReturnFocus` だけは Modal を含むすべての閉じる操作に適用できる
  *   汎用フックとして設計する (マウント時にフォーカスを記憶し、アンマウント時に返す)。
  * - `useRovingFocus` はリスト/ツリー内での ArrowUp/Down・ArrowLeft/Right ナビゲーションを
- *   WAI-ARIA Listbox/Tree パターンに揃えるヘルパー。ContextMenu の既存ロジックを
- *   共通化した形。
+ *   WAI-ARIA Listbox/Tree パターンに揃えるヘルパー。
  */
 
 import { useCallback, useEffect, useRef } from "react";

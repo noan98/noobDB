@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import css from "../App.css?raw";
 
 /**
- * タイポグラフィスケールと縦リズムのトークン回帰テスト (#490)。
+ * タイポグラフィスケールと縦リズムのトークン回帰テスト。
  *
  * - タイプスケール (--text-*) が --font-scale を内包し、フォントサイズ設定で
  *   スケール全体が相対追従することを固定する。

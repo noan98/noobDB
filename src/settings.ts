@@ -38,7 +38,7 @@ export interface Settings {
    */
   confirmDangerousQueries: boolean;
   /**
-   * 複数結果タブ (#472): true のとき、エディタでのクエリ実行は現在の結果を
+   * 複数結果タブ: true のとき、エディタでのクエリ実行は現在の結果を
    * 置き換えず、SQL を複製した**新しいタブ**で実行して前の結果を残す。複数クエリの
    * 結果を別タブとして保持・比較できるようにする。
    */
@@ -88,26 +88,26 @@ export interface Settings {
   cellEditOnBlur: CellEditOnBlur;
   /**
    * Render cell values with type-aware formatting in the result grid: compact
-   * JSON, localized date/time, boolean badges and enum color badges (#451).
+   * JSON, localized date/time, boolean badges and enum color badges.
    * Display-only — copy/edit/export always keep the original value. Turn off to
    * see every cell as the raw string the driver returned.
    */
   richCellRendering: boolean;
   /**
-   * Preferred monospace font family for the editor, result grid and code views
-   * (#449). `null` keeps the App.css default mono stack. A non-null value is
+   * Preferred monospace font family for the editor, result grid and code views.
+   * `null` keeps the App.css default mono stack. A non-null value is
    * prepended to the shared fallback chain so an uninstalled font degrades
    * gracefully. Driven into the `--font-mono` CSS variable at runtime.
    */
   monoFontFamily: string | null;
   /**
-   * Preferred UI (sans-serif) font family (#449). `null` keeps the App.css
+   * Preferred UI (sans-serif) font family. `null` keeps the App.css
    * default sans stack. Prepended to the shared sans fallback chain and driven
    * into `--font-sans` at runtime.
    */
   uiFontFamily: string | null;
   /**
-   * Color theme preset (#465). `default` follows the light/dark toggle with the
+   * Color theme preset. `default` follows the light/dark toggle with the
    * stock palette; other presets are full palettes (currently `dracula`,
    * dark-only) selected via the `data-theme` attribute. Independent of accent
    * color, density and syntax colors, which still override at runtime.
@@ -115,7 +115,7 @@ export interface Settings {
   themePreset: ThemePreset;
 }
 
-/** Color theme presets (#465). `default` = stock light/dark. */
+/** Color theme presets. `default` = stock light/dark. */
 export type ThemePreset = "default" | "dracula";
 
 /** Presets offered in settings, in display order. */
@@ -144,7 +144,7 @@ export const DEFAULT_CELL_EDIT_ON_BLUR: CellEditOnBlur = "commit";
 /** Rich cell rendering is on by default; it is a display-only enhancement. */
 export const DEFAULT_RICH_CELL_RENDERING = true;
 
-/** Font family defaults: `null` means "use the App.css default stack" (#449). */
+/** Font family defaults: `null` means "use the App.css default stack". */
 export const DEFAULT_MONO_FONT_FAMILY: string | null = null;
 export const DEFAULT_UI_FONT_FAMILY: string | null = null;
 

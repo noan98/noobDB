@@ -71,12 +71,12 @@ interface Props {
   onClose: () => void;
 }
 
-/** Sentinel select values for the "default" and "custom" choices (#449). */
+/** Sentinel select values for the "default" and "custom" choices. */
 const FONT_DEFAULT = "__default__";
 const FONT_CUSTOM = "__custom__";
 
 /**
- * Font family picker (#449): a preset dropdown plus a free-form family input
+ * Font family picker: a preset dropdown plus a free-form family input
  * (shown when "custom" is chosen), with a live sample rendered in the resulting
  * stack so the user sees the font before committing.
  */
@@ -156,7 +156,7 @@ function FontFamilyControl(props: {
   );
 }
 
-// 各セクション内のレイアウト要素 (元々は App.css の `.settings-*` クラス)。
+// 各セクション内のレイアウト要素。
 const SettingsReset = chakra("button", {
   base: { px: "2.5", py: "1", fontSize: "sm" },
 });
@@ -297,7 +297,7 @@ const SettingsColorSample = chakra("span", {
   base: { fontFamily: "mono", fontSize: "md", fontWeight: 600 },
 });
 
-// 表示密度の 3 択セグメント (#410)。アクティブはアクセント地に反転。
+// 表示密度の 3 択セグメント。アクティブはアクセント地に反転。
 const SettingsSegment = chakra("div", {
   base: {
     display: "inline-flex",
@@ -333,7 +333,7 @@ const SettingsSegmentButton = chakra("button", {
   },
 });
 
-// アクセント色のプリセットスウォッチ列 (#409)。
+// アクセント色のプリセットスウォッチ列。
 const SettingsSwatchRow = chakra("div", {
   base: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "2" },
 });

@@ -59,7 +59,7 @@ const TONE_TOKENS: Record<BadgeTone, {
     border: "app.borderStrong",
   },
   // 主要アクション (Run) 用。theme.ts の Button `primary` variant と同じ
-  // アクセント色に揃え、ツールバー上で最も目立つ唯一のボタンにする (#283)。
+  // アクセント色に揃え、ツールバー上で最も目立つ唯一のボタンにする。
   accent: {
     bg: "app.accent",
     fg: "app.accentText",

@@ -11,7 +11,7 @@ import { useReturnFocus, useRovingFocus } from "../keyboardNav";
  * 出現は enter のみ (軽い fade + scale) で、閉じるのは従来どおり親のアンマウントに
  * よる即時消去 — メニューは複数箇所から `{menu && }` で
  * 条件マウントされており、exit のために各所へ `AnimatePresence` を足すコストに
- * 見合わないため (Epic #370 の「控えめ」方針)。reduced-motion 時は MotionConfig が
+ * 見合わないため。reduced-motion 時は MotionConfig が
  * enter を即時化する。
  */
 const MotionMenu = chakra(motion.div, {}, { forwardProps: ["transition"] });

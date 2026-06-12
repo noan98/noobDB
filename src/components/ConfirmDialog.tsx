@@ -109,7 +109,7 @@ function ConfirmDialog({ title, message, confirmLabel, cancelLabel, tone, onConf
   // 既定フォーカスは「キャンセル」へ。stray Enter で実行が走らないようにする
   // (DangerousQueryDialog と同じ方針)。
   const cancelRef = useRef<HTMLButtonElement>(null);
-  // 破壊的/注意付き確認 (danger・warning) は #323 の安全側優先レイアウトに従い、
+  // 破壊的/注意付き確認 (danger・warning) は安全側優先レイアウトに従い、
   // 実行を左に非強調 (secondary) で置き、キャンセルを右端 + primary にする
   // (DangerousQueryDialog・ModalFooter のガイドラインと同一)。通常の確認 (primary)
   // は他モーダルと同じ「右端 = 主アクション」配置。

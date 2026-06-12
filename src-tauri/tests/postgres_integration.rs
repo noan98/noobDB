@@ -158,9 +158,9 @@ async fn postgres_roundtrip_when_env_set() {
     conn.close().await;
 }
 
-/// list_indexes (#459) / schema_objects + object_definition (#483, oid 識別子) /
-/// 明示トランザクション (#414) / health_check (#485) を PostgreSQL 上で実行する。
-/// CI のサービスコンテナで実走し、新規ドライバメソッドの動作とカバレッジを担保する。
+/// list_indexes / schema_objects + object_definition (oid 識別子) /
+/// 明示トランザクション / health_check を PostgreSQL 上で実行する。
+/// CI のサービスコンテナで実走し、ドライバメソッドの動作とカバレッジを担保する。
 #[tokio::test]
 async fn postgres_new_schema_apis_and_transaction_when_env_set() {
     let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
