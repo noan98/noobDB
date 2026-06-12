@@ -58,7 +58,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
     return () => unlisten?.();
   }, []);
 
-  // 接続中はタイトルバー下端にアクセントの帯を常時表示する (#466)。本番接続は
+  // 接続中はタイトルバー下端にアクセントの帯を常時表示する。本番接続は
   // 危険色の帯にして全画面で「本番にいる」ことを一目で示す。色遷移は CSS transition。
   const bandColor = connectionBandColor(connection);
 
@@ -110,7 +110,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
           noobDB
         </chakra.span>
 
-        {/* アクティブ接続コンテキスト (#466)。Settings/Help など作業画面以外でも常時表示。 */}
+        {/* アクティブ接続コンテキスト。Settings/Help など作業画面以外でも常時表示。 */}
         {connection && (
           <Flex align="center" gap="1.5" minW={0} css={{ pointerEvents: "none" }}>
             <chakra.span color="app.borderStrong" flexShrink={0} aria-hidden>

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import css from "../App.css?raw";
 
 /**
- * 表示密度プリセット (#410) の CSS トークンのガード。`:root` の既定値と
+ * 表示密度プリセットの CSS トークンのガード。`:root` の既定値と
  * `data-density` 上書きブロックが揃っていること、normal (既定) が従来のグリッド
  * 余白 (5px/10px) と一致する no-op であることを固定する。
  */

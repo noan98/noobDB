@@ -4,7 +4,7 @@ import { renderWithProviders, screen } from "./testUtils";
 import { ParameterInputModal } from "../components/ParameterInputModal";
 import { setLocale, t } from "../i18n";
 
-// {{variable}} パラメータ入力モーダルの主要インタラクション (#388):
+// {{variable}} パラメータ入力モーダルの主要インタラクション:
 // 変数ごとの入力欄表示・型選択・数値バリデーション・送信値・前回値キャッシュ。
 
 describe("ParameterInputModal", () => {

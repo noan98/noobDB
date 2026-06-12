@@ -137,7 +137,7 @@ const SECTIONS: Section[] = [
     headerKey: "helpSectionShortcuts",
     descKey: "helpSectionShortcutsDesc",
     // ショートカット一覧は `shortcuts.ts` の単一ソースから生成し、`?` で開く
-    // チートシート (`ShortcutCheatSheet`) と定義を共有する (#448)。
+    // チートシート (`ShortcutCheatSheet`) と定義を共有する。
     features: SHORTCUTS.map((s) => ({ titleKey: s.keysKey, descKey: s.descKey })),
   },
 ];

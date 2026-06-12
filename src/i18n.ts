@@ -194,7 +194,7 @@ const en = {
   tabRestoreConfirmDiscard: "Discard",
   productionConfirm: '"{name}" is marked as production. Connect anyway?',
   reconnectDetected: "Connection lost — reconnecting...",
-  // 明示トランザクション (#414)。
+  // 明示トランザクション。
   txBegin: "Begin transaction",
   txBeginHelp: "Start an explicit transaction. Subsequent queries run inside it until you commit or roll back.",
   txCommit: "Commit",
@@ -562,7 +562,7 @@ const en = {
   exportError: "Export failed: {error}",
   exportNoData: "No rows to export.",
   exportPickFileTitle: "Choose export destination",
-  // 接続プロファイルのエクスポート/インポート (#442)。
+  // 接続プロファイルのエクスポート/インポート。
   profileTransferAria: "Import / export connection profiles",
   profileExportTitle: "Export connection profiles",
   profileExportAria: "Export connection profiles",
@@ -585,7 +585,7 @@ const en = {
   profileImportError: "Profile import failed: {error}",
   exportRowCount: "{rows} rows will be exported.",
   exportPartialWarning: "Only the rows currently loaded are exported. To export the full result set, run \"Fetch all rows\" first.",
-  // 全件ストリーミングエクスポート (#494)。
+  // 全件ストリーミングエクスポート。
   exportScope: "What to export",
   exportScopeCurrent: "Current grid only",
   exportScopeCurrentHint: "Export the {rows} rows currently loaded in the grid.",
@@ -595,7 +595,7 @@ const en = {
   exportFullDone: "Exported {rows} rows ({bytes} bytes) to {path}",
   exportStreamRunning: "Exporting...",
   exportStreamCancel: "Stop",
-  // クエリ結果のチャート可視化 (#440)。
+  // クエリ結果のチャート可視化。
   chartShow: "Chart",
   chartBackToTable: "Table",
   chartType: "Type",
@@ -611,7 +611,7 @@ const en = {
   chartNoData: "No data to chart.",
   chartPickY: "Pick at least one Y-axis column.",
   chartSampled: "Showing {shown} sampled points of {total} rows.",
-  // SQL スクリプトのバッチ実行 (#495)。
+  // SQL スクリプトのバッチ実行。
   statusBatchRunning: "Running script ({total} statements)...",
   statusBatchDone: "Script done: {ok} ok, {errors} error(s) of {total}",
   batchBackToResult: "Editor result",
@@ -652,7 +652,7 @@ const en = {
   dumpOptPgSchema: "Schema (optional)",
   dumpOptPgSchemaPlaceholder: "e.g. public",
   dumpOptPgSchemaHint: "pg_dump -n <schema>: restrict to one schema. Leave empty to dump all schemas.",
-  // 結果セットのページネーション (#484)。
+  // 結果セットのページネーション。
   pageFirst: "First page",
   pagePrev: "Previous page",
   pageNext: "Next page",
@@ -662,7 +662,7 @@ const en = {
   pageRowRange: "rows {from}–{to}",
   pageJumpLabel: "Go to",
   pageSizeLabel: "Per page",
-  // スキーマ横断のグローバルオブジェクト検索 (#473)。
+  // スキーマ横断のグローバルオブジェクト検索。
   objSearchPlaceholder: "Search tables and columns across the schema...",
   objSearchScopeCurrent: "Current DB",
   objSearchScopeAll: "All DBs",
@@ -698,7 +698,7 @@ const en = {
   treeNoDatabases: "(no databases)",
   treeNoTables: "(no tables)",
   treeNoColumns: "(no columns)",
-  // CREATE TABLE ウィザード (#460)。
+  // CREATE TABLE ウィザード。
   createTableTitle: "Create table",
   createTableClose: "Close",
   createTableName: "Table name",
@@ -717,7 +717,7 @@ const en = {
   createTableToEditor: "Send to editor",
   createTableReadOnly: "This connection is read-only; creation is disabled.",
   contextMenuCreateTable: "New table...",
-  // テーブル保守操作 (#496)。
+  // テーブル保守操作。
   contextMenuCopyTableName: "Copy table name",
   contextMenuRenameTable: "Rename table...",
   contextMenuTruncateTable: "Truncate table...",
@@ -733,14 +733,14 @@ const en = {
   dropConfirmOk: "Drop table",
   maintenanceProductionWarning: "This is a PRODUCTION connection. Proceed only if you are certain.",
   tableNameCopied: "Copied table name: {table}",
-  // スキーマオブジェクト閲覧 (#483)。
+  // スキーマオブジェクト閲覧。
   objGroupViews: "Views",
   objGroupMatViews: "Materialized views",
   objGroupProcedures: "Procedures",
   objGroupFunctions: "Functions",
   objGroupTriggers: "Triggers",
   objDefinitionError: "Failed to load definition: {error}",
-  // テーブルのインデックス表示 (#459)。
+  // テーブルのインデックス表示。
   indexesLabel: "Indexes",
   indexBadgePk: "PK",
   indexBadgeUnique: "Unique",
@@ -858,7 +858,7 @@ const en = {
   gridInspectorClose: "Close inspector",
   gridInspectorCopyField: "Copy field value",
   gridInspectorEmpty: "No columns to show",
-  // 結果グリッドからの行追加・削除 (#441)。
+  // 結果グリッドからの行追加・削除。
   gridAddRow: "Add new row...",
   gridMarkDelete: "Mark row for deletion",
   gridUnmarkDelete: "Unmark deletion",
@@ -895,7 +895,7 @@ const en = {
   importFilePlaceholder: "Path to the CSV file",
   importBrowse: "Browse...",
   importPickFileTitle: "Choose a CSV file",
-  // ファイルのドラッグ&ドロップ (#497)
+  // ファイルのドラッグ&ドロップ
   dropOverlayTitle: "Drop to open",
   dropOverlayReject: "Unsupported file type",
   dropOverlayHintSql: ".sql / .txt opens in a new query tab",
@@ -1165,7 +1165,7 @@ const en = {
   schemaCompareAllowDelete: "Allow deletes (DELETE rows missing from the source)",
   schemaCompareDataGenerate: "Generate data DML",
 
-  // コマンドパレット (#382)
+  // コマンドパレット
   cmdkPlaceholder: "Search connections, tables, snippets, history…",
   cmdkNoResults: "No matching commands",
   cmdkGroupNavigation: "Actions",
@@ -1449,7 +1449,7 @@ const ja: Dict = {
   tabRestoreConfirmDiscard: "破棄する",
   productionConfirm: "「{name}」は本番環境としてマークされています。本当に接続しますか？",
   reconnectDetected: "接続が切れました — 再接続しています...",
-  // 明示トランザクション (#414)。
+  // 明示トランザクション。
   txBegin: "トランザクション開始",
   txBeginHelp: "明示トランザクションを開始します。以降のクエリは確定/破棄するまでこのトランザクション内で実行されます。",
   txCommit: "コミット",
@@ -1817,7 +1817,7 @@ const ja: Dict = {
   exportError: "エクスポートに失敗しました: {error}",
   exportNoData: "出力できる行がありません。",
   exportPickFileTitle: "エクスポート先を選択",
-  // 接続プロファイルのエクスポート/インポート (#442)。
+  // 接続プロファイルのエクスポート/インポート。
   profileTransferAria: "接続プロファイルのインポート / エクスポート",
   profileExportTitle: "接続プロファイルをエクスポート",
   profileExportAria: "接続プロファイルをエクスポート",
@@ -1840,7 +1840,7 @@ const ja: Dict = {
   profileImportError: "プロファイルのインポートに失敗しました: {error}",
   exportRowCount: "{rows} 行をエクスポートします。",
   exportPartialWarning: "現在読み込み済みの行のみが対象です。全件をエクスポートするには、先に「全件取得」を実行してください。",
-  // 全件ストリーミングエクスポート (#494)。
+  // 全件ストリーミングエクスポート。
   exportScope: "エクスポート対象",
   exportScopeCurrent: "現在のグリッドのみ",
   exportScopeCurrentHint: "グリッドに読み込み済みの {rows} 行を書き出します。",
@@ -1850,7 +1850,7 @@ const ja: Dict = {
   exportFullDone: "{rows} 行 ({bytes} バイト) を {path} にエクスポートしました",
   exportStreamRunning: "エクスポート中...",
   exportStreamCancel: "中止",
-  // クエリ結果のチャート可視化 (#440)。
+  // クエリ結果のチャート可視化。
   chartShow: "チャート",
   chartBackToTable: "テーブル",
   chartType: "種類",
@@ -1866,7 +1866,7 @@ const ja: Dict = {
   chartNoData: "チャート化するデータがありません。",
   chartPickY: "Y 軸の列を 1 つ以上選んでください。",
   chartSampled: "{total} 行から {shown} 点をサンプリングして表示しています。",
-  // SQL スクリプトのバッチ実行 (#495)。
+  // SQL スクリプトのバッチ実行。
   statusBatchRunning: "スクリプトを実行中 ({total} 文)...",
   statusBatchDone: "スクリプト完了: {total} 文中 成功 {ok} / エラー {errors}",
   batchBackToResult: "エディタの結果",
@@ -1907,7 +1907,7 @@ const ja: Dict = {
   dumpOptPgSchema: "スキーマ (任意)",
   dumpOptPgSchemaPlaceholder: "例: public",
   dumpOptPgSchemaHint: "pg_dump -n <スキーマ>: 1 つのスキーマに限定します。空欄で全スキーマをダンプします。",
-  // 結果セットのページネーション (#484)。
+  // 結果セットのページネーション。
   pageFirst: "先頭ページ",
   pagePrev: "前のページ",
   pageNext: "次のページ",
@@ -1917,7 +1917,7 @@ const ja: Dict = {
   pageRowRange: "{from}–{to} 行目",
   pageJumpLabel: "移動",
   pageSizeLabel: "1 ページ",
-  // スキーマ横断のグローバルオブジェクト検索 (#473)。
+  // スキーマ横断のグローバルオブジェクト検索。
   objSearchPlaceholder: "テーブル/カラムをスキーマ横断で検索...",
   objSearchScopeCurrent: "現在の DB",
   objSearchScopeAll: "全 DB",
@@ -1953,7 +1953,7 @@ const ja: Dict = {
   treeNoDatabases: "(データベースがありません)",
   treeNoTables: "(テーブルがありません)",
   treeNoColumns: "(カラムがありません)",
-  // CREATE TABLE ウィザード (#460)。
+  // CREATE TABLE ウィザード。
   createTableTitle: "テーブルを新規作成",
   createTableClose: "閉じる",
   createTableName: "テーブル名",
@@ -1972,7 +1972,7 @@ const ja: Dict = {
   createTableToEditor: "エディタへ送る",
   createTableReadOnly: "この接続は読み取り専用のため作成できません。",
   contextMenuCreateTable: "テーブルを新規作成...",
-  // テーブル保守操作 (#496)。
+  // テーブル保守操作。
   contextMenuCopyTableName: "テーブル名をコピー",
   contextMenuRenameTable: "テーブル名を変更...",
   contextMenuTruncateTable: "テーブルを TRUNCATE...",
@@ -1988,14 +1988,14 @@ const ja: Dict = {
   dropConfirmOk: "DROP TABLE",
   maintenanceProductionWarning: "これは本番 (PRODUCTION) 接続です。確信がある場合のみ実行してください。",
   tableNameCopied: "テーブル名をコピーしました: {table}",
-  // スキーマオブジェクト閲覧 (#483)。
+  // スキーマオブジェクト閲覧。
   objGroupViews: "ビュー",
   objGroupMatViews: "マテリアライズドビュー",
   objGroupProcedures: "プロシージャ",
   objGroupFunctions: "関数",
   objGroupTriggers: "トリガー",
   objDefinitionError: "定義の取得に失敗しました: {error}",
-  // テーブルのインデックス表示 (#459)。
+  // テーブルのインデックス表示。
   indexesLabel: "インデックス",
   indexBadgePk: "PK",
   indexBadgeUnique: "ユニーク",
@@ -2113,7 +2113,7 @@ const ja: Dict = {
   gridInspectorClose: "インスペクタを閉じる",
   gridInspectorCopyField: "フィールド値をコピー",
   gridInspectorEmpty: "表示する列がありません",
-  // 結果グリッドからの行追加・削除 (#441)。
+  // 結果グリッドからの行追加・削除。
   gridAddRow: "新規行を追加...",
   gridMarkDelete: "行を削除予定にする",
   gridUnmarkDelete: "削除予定を解除",
@@ -2150,7 +2150,7 @@ const ja: Dict = {
   importFilePlaceholder: "CSV ファイルのパス",
   importBrowse: "参照...",
   importPickFileTitle: "CSV ファイルを選択",
-  // ファイルのドラッグ&ドロップ (#497)
+  // ファイルのドラッグ&ドロップ
   dropOverlayTitle: "ドロップして開く",
   dropOverlayReject: "対応していないファイル形式",
   dropOverlayHintSql: ".sql / .txt は新しいクエリタブで開きます",
@@ -2420,7 +2420,7 @@ const ja: Dict = {
   schemaCompareAllowDelete: "削除を許可する (ソースに無い行を DELETE)",
   schemaCompareDataGenerate: "データ DML を生成",
 
-  // コマンドパレット (#382)
+  // コマンドパレット
   cmdkPlaceholder: "接続・テーブル・スニペット・履歴を検索…",
   cmdkNoResults: "一致するコマンドがありません",
   cmdkGroupNavigation: "操作",
