@@ -563,6 +563,7 @@ const en = {
   exportNoData: "No rows to export.",
   exportPickFileTitle: "Choose export destination",
   // 接続プロファイルのエクスポート/インポート (#442)。
+  profileTransferAria: "Import / export connection profiles",
   profileExportTitle: "Export connection profiles",
   profileExportAria: "Export connection profiles",
   profileExportSuccess: "Exported profiles to {path} (no secrets included)",
@@ -1813,6 +1814,7 @@ const ja: Dict = {
   exportNoData: "出力できる行がありません。",
   exportPickFileTitle: "エクスポート先を選択",
   // 接続プロファイルのエクスポート/インポート (#442)。
+  profileTransferAria: "接続プロファイルのインポート / エクスポート",
   profileExportTitle: "接続プロファイルをエクスポート",
   profileExportAria: "接続プロファイルをエクスポート",
   profileExportSuccess: "{path} にプロファイルをエクスポートしました (秘密情報は含まれません)",
