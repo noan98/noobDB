@@ -28,6 +28,7 @@ import { chakra } from "@chakra-ui/react";
  * | データベース / サーバ      | `database` / `server` |
  * | 切断 (接続解除)            | `unplug`        |
  * | 転送 (イン/エクスポート両方向) | `transfer`  |
+ * | ツール (補助ビュー集約)    | `tools`         |
  *
  * ## サイズ / ストローク規約 (#489)
  *
@@ -82,6 +83,7 @@ export type IconName =
   | "download"
   | "upload"
   | "transfer"
+  | "tools"
   | "hash"
   | "toggle"
   | "calendar"
@@ -391,6 +393,10 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="m8 21-4-4 4-4" />
       <path d="M4 17h16" />
     </>
+  ),
+  // ツール (補助ビューの集約メニュー): レンチ。
+  tools: (
+    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
   ),
   // ── カラム型ヘッダーアイコン (#474) ──
   // 数値 (整数/小数共通): ハッシュ #。

@@ -1071,6 +1071,10 @@ const en = {
   cheatSheetTitle: "Keyboard shortcuts",
   cheatSheetClose: "Close",
 
+  // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
+  appTools: "Tools",
+  appToolsNeedsSession: "Available while connected",
+  appProcessesUnsupported: "Not available for SQLite connections",
   appSchemaCompare: "Compare schemas",
   appErDiagram: "ER diagram",
   erDiagramTitle: "ER diagram",
@@ -2322,6 +2326,10 @@ const ja: Dict = {
   cheatSheetTitle: "キーボードショートカット",
   cheatSheetClose: "閉じる",
 
+  // サイドバーヘッダの「ツール」メニュー (補助ビューの集約)。
+  appTools: "ツール",
+  appToolsNeedsSession: "接続中のみ使用できます",
+  appProcessesUnsupported: "SQLite 接続では使用できません",
   appSchemaCompare: "スキーマ比較",
   appErDiagram: "ER 図",
   erDiagramTitle: "ER 図",

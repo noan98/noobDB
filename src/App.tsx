@@ -975,6 +975,9 @@ export default function App() {
   // サイドバーヘッダの「プロファイル転送」ボタン直下に出すインポート/エクスポート
   // メニューのアンカー座標 (viewport coords)。ヘッダのボタン過密対策 (2 ボタン → 1)。
   const [profileTransferMenu, setProfileTransferMenu] = useState<{ x: number; y: number } | null>(null);
+  // 同じくヘッダの「ツール」ボタン直下に出す補助ビュー (スキーマ比較 / ER 図 /
+  // プロセス一覧) メニューのアンカー座標。3 ボタン → 1 ボタンへの集約。
+  const [toolsMenu, setToolsMenu] = useState<{ x: number; y: number } | null>(null);
   const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
   // ドラッグ&ドロップ (#497) で .csv を落としたときに ImportModal へ渡す事前選択パス。
   const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
@@ -3547,7 +3550,7 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
@@ -3559,6 +3562,7 @@ export default function App() {
     else if (view === "help") setShowHelp(true);
     else if (view === "compare") setShowCompare(true);
     else if (view === "erDiagram") setShowErd(true);
+    else if (view === "processes") setShowProcesses(true);
     else if (view === "newConnection") {
       setShowForm(true);
       setFormInstanceId((n) => n + 1);
@@ -4159,51 +4163,16 @@ export default function App() {
           </chakra.span>
           <Flex gap="1" align="center">
             <IconButton
-              onClick={toggleTheme}
-              title={theme === "dark" ? t("appThemeToLight") : t("appThemeToDark")}
-              aria-label={t("appThemeToggle")}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setToolsMenu({ x: rect.left, y: rect.bottom + 4 });
+              }}
+              title={t("appTools")}
+              aria-label={t("appTools")}
+              aria-haspopup="menu"
             >
-              <Icon name={theme === "dark" ? "sun" : "moon"} />
+              <Icon name="tools" />
             </IconButton>
-            <IconButton
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowSettings(false); setShowHelp(true); }}
-              title={t("appHelp")}
-              aria-label={t("appHelp")}
-            >
-              <Icon name="help" />
-            </IconButton>
-            <IconButton
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowHelp(false); setShowSettings(true); }}
-              title={t("appSettings")}
-              aria-label={t("appSettings")}
-            >
-              <Icon name="settings" />
-            </IconButton>
-            <IconButton
-              onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowErd(false); setShowProcesses(false); setShowCompare(true); }}
-              title={t("appSchemaCompare")}
-              aria-label={t("appSchemaCompare")}
-            >
-              <Icon name="diff" />
-            </IconButton>
-            {sessionId && (
-              <IconButton
-                onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowCompare(false); setShowProcesses(false); setShowErd(true); }}
-                title={t("appErDiagram")}
-                aria-label={t("appErDiagram")}
-              >
-                <Icon name="er-diagram" />
-              </IconButton>
-            )}
-            {sessionId && selectedProfile?.driver !== "sqlite" && (
-              <IconButton
-                onClick={() => { setShowForm(false); setShowSnippetForm(false); setShowHelp(false); setShowSettings(false); setShowCompare(false); setShowErd(false); setShowProcesses(true); }}
-                title={t("appProcesses")}
-                aria-label={t("appProcesses")}
-              >
-                <Icon name="server" />
-              </IconButton>
-            )}
             {sidebarTab === "snippets" ? (
               <IconButton
                 onClick={() => {
@@ -4340,6 +4309,39 @@ export default function App() {
           />
         )}
         </Box>
+        {/* グローバル操作 (テーマ / ヘルプ / 設定) のフッタ。接続先一覧とは無関係な
+            操作のため、過密になったヘッダから下部へ退避 (VSCode の下部ギアと同配置)。 */}
+        <Flex
+          as="footer"
+          px="3"
+          py="1.5"
+          borderTopWidth="1px"
+          borderTopColor="app.border"
+          gap="1"
+          align="center"
+        >
+          <IconButton
+            onClick={toggleTheme}
+            title={theme === "dark" ? t("appThemeToLight") : t("appThemeToDark")}
+            aria-label={t("appThemeToggle")}
+          >
+            <Icon name={theme === "dark" ? "sun" : "moon"} />
+          </IconButton>
+          <IconButton
+            onClick={() => openFullView("help")}
+            title={t("appHelp")}
+            aria-label={t("appHelp")}
+          >
+            <Icon name="help" />
+          </IconButton>
+          <IconButton
+            onClick={() => openFullView("settings")}
+            title={t("appSettings")}
+            aria-label={t("appSettings")}
+          >
+            <Icon name="settings" />
+          </IconButton>
+        </Flex>
       </Flex>
 
       {!sidebarCollapsed && (
@@ -4986,6 +4988,33 @@ export default function App() {
             { label: t("profileExportAria"), onSelect: handleExportProfiles },
           ]}
           onClose={() => setProfileTransferMenu(null)}
+        />
+      )}
+
+      {toolsMenu && (
+        <ContextMenu
+          x={toolsMenu.x}
+          y={toolsMenu.y}
+          items={[
+            { label: t("appSchemaCompare"), onSelect: () => openFullView("compare") },
+            {
+              label: t("appErDiagram"),
+              onSelect: () => openFullView("erDiagram"),
+              disabled: !sessionId,
+              title: !sessionId ? t("appToolsNeedsSession") : undefined,
+            },
+            {
+              label: t("appProcesses"),
+              onSelect: () => openFullView("processes"),
+              disabled: !sessionId || selectedProfile?.driver === "sqlite",
+              title: !sessionId
+                ? t("appToolsNeedsSession")
+                : selectedProfile?.driver === "sqlite"
+                  ? t("appProcessesUnsupported")
+                  : undefined,
+            },
+          ]}
+          onClose={() => setToolsMenu(null)}
         />
       )}
       </Grid>
