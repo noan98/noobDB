@@ -206,7 +206,7 @@ export interface TableSchema {
   columns: string[];
 }
 
-/** テーブル 1 つのインデックス情報 (#459)。 */
+/** テーブル 1 つのインデックス情報。 */
 export interface IndexInfo {
   name: string;
   columns: string[];
@@ -215,7 +215,7 @@ export interface IndexInfo {
   method: string | null;
 }
 
-/** 非テーブルのスキーマオブジェクト種別 (#483)。 */
+/** 非テーブルのスキーマオブジェクト種別。 */
 export type SchemaObjectKind =
   | "view"
   | "materialized_view"
@@ -223,7 +223,7 @@ export type SchemaObjectKind =
   | "function"
   | "trigger";
 
-/** 非テーブルのスキーマオブジェクト (#483)。 */
+/** 非テーブルのスキーマオブジェクト。 */
 export interface SchemaObject {
   kind: SchemaObjectKind;
   name: string;
@@ -452,19 +452,19 @@ export const api = {
   disconnect: (sessionId: string) =>
     invoke<void>("disconnect", { sessionId }),
   /**
-   * 接続のヘルスチェック (#485)。生きていれば true、死んでいれば (スリープ復帰や
+   * 接続のヘルスチェック。生きていれば true、死んでいれば (スリープ復帰や
    * トンネル断) false。セッションが見つからない場合のみ reject する。
    */
   pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
-  /** 明示トランザクション (#414) を開始する。 */
+  /** 明示トランザクションを開始する。 */
   beginTransaction: (sessionId: string, database?: string | null) =>
     invoke<void>("begin_transaction", { sessionId, database: database ?? null }),
-  /** 明示トランザクション内で 1 文を実行する (#414)。 */
+  /** 明示トランザクション内で 1 文を実行する。 */
   runInTransaction: (sessionId: string, sql: string) =>
     invoke<QueryResult>("run_in_transaction", { sessionId, sql }).then((r) =>
       parseResponse(schemas.queryResult, r, "run_in_transaction"),
     ),
-  /** 明示トランザクションを確定 (commit=true) / 破棄 (false) する (#414)。 */
+  /** 明示トランザクションを確定 (commit=true) / 破棄 (false) する。 */
   finishTransaction: (sessionId: string, commit: boolean) =>
     invoke<void>("finish_transaction", { sessionId, commit }),
 
@@ -557,7 +557,7 @@ export const api = {
     invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(
       (r) => parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
     ),
-  /** テーブルのインデックス一覧を取得する (#459)。 */
+  /** テーブルのインデックス一覧を取得する。 */
   listIndexes: (sessionId: string, database: string, table: string) =>
     invoke<IndexInfo[]>("list_indexes", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.indexInfoArray, r, "list_indexes"),
@@ -570,12 +570,12 @@ export const api = {
   /** プロセス/接続を強制終了する。read_only セッションはバックエンドで拒否される。 */
   killProcess: (sessionId: string, processId: number) =>
     invoke<void>("kill_process", { sessionId, processId }),
-  /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する (#483)。 */
+  /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する。 */
   listSchemaObjects: (sessionId: string, database: string) =>
     invoke<SchemaObject[]>("list_schema_objects", { sessionId, database }).then((r) =>
       parseResponse(schemas.schemaObjectArray, r, "list_schema_objects"),
     ),
-  /** スキーマオブジェクトの定義 (DDL) を取得する (#483)。`id` は同名衝突を避ける一意識別子。 */
+  /** スキーマオブジェクトの定義 (DDL) を取得する。`id` は同名衝突を避ける一意識別子。 */
   getObjectDefinition: (
     sessionId: string,
     database: string,
@@ -647,7 +647,7 @@ export const api = {
     ),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
   /**
-   * 接続プロファイルを **秘密情報抜きで** `path` に JSON 出力する (#442)。`ids`
+   * 接続プロファイルを **秘密情報抜きで** `path` に JSON 出力する。`ids`
    * 省略時は全件。返り値は書き込んだバイト数。
    */
   exportProfiles: (path: string, ids?: string[]) =>

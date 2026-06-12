@@ -10,7 +10,7 @@ import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 
 /**
- * 全件ストリーミングエクスポート (#494) に必要な情報。提供されると「全件 (再実行)」
+ * 全件ストリーミングエクスポートに必要な情報。提供されると「全件 (再実行)」
  * モードが選べるようになる。`sql` は再実行する SELECT 系クエリ。
  */
 export interface FullExportContext {
@@ -31,7 +31,7 @@ interface Props {
    * user doesn't mistake a partial export for the full set.
    */
   partial?: boolean;
-  /** 全件エクスポートのコンテキスト (#494)。未提供ならグリッドのみエクスポート。 */
+  /** 全件エクスポートのコンテキスト。未提供ならグリッドのみエクスポート。 */
   fullExport?: FullExportContext;
   onClose: () => void;
 }
