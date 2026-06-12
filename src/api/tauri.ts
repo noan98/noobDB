@@ -104,10 +104,10 @@ export interface SaveProfileRequest {
   file_path?: string | null;
 }
 
-/** プロファイルインポート時の ID 衝突解決戦略 (#442)。 */
+/** プロファイルインポート時の ID 衝突解決戦略。 */
 export type ProfileImportStrategy = "rename" | "skip" | "overwrite";
 
-/** `importProfiles` の結果要約 (#442)。 */
+/** `importProfiles` の結果要約。 */
 export interface ProfileImportResult {
   imported: number;
   skipped: number;
@@ -315,14 +315,14 @@ export interface TableDiff {
   columns: ColumnDiff[];
 }
 
-/** Result of comparing a source schema against a target schema (Issue #245). */
+/** Result of comparing a source schema against a target schema. */
 export interface SchemaDiff {
   source_driver: DriverKind;
   target_driver: DriverKind;
   tables: TableDiff[];
 }
 
-/** What a generated sync statement does (Issue #245 phase 2). */
+/** What a generated sync statement does. */
 export type SyncKind =
   | "create_table"
   | "add_column"
@@ -348,7 +348,7 @@ export interface SyncPlan {
   warnings: string[];
 }
 
-/** Where a row sits relative to the two tables (Issue #245 phase 3). */
+/** Where a row sits relative to the two tables. */
 export type RowStatus = "source_only" | "target_only" | "different";
 
 /** One row-level difference paired by primary key. */

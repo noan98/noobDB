@@ -6,7 +6,7 @@ import {
   substituteQueryParams,
 } from "../queryParams";
 
-// {{variable}} クエリパラメータの検出と、ドライバ別・型別の安全な展開 (#388)。
+// {{variable}} クエリパラメータの検出と、ドライバ別・型別の安全な展開。
 // SQL インジェクション防止が機能の核なので、エスケープ経路を重点的に検証する。
 
 describe("extractQueryParams", () => {

@@ -8,7 +8,7 @@ import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 
 /**
- * スキーマ横断のグローバルオブジェクト検索 (#473)。`schema_overview` を源に、テーブル名・
+ * スキーマ横断のグローバルオブジェクト検索。`schema_overview` を源に、テーブル名・
  * カラム名を全 DB (またはカレント DB) 串刺しで部分一致検索し、選択で該当テーブルを開く。
  * 既存コマンドパレット (Cmd/Ctrl+K) とは別キー (Cmd/Ctrl+Shift+O) で起動する。
  *
