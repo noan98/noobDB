@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { themePresetDataTheme, THEME_PRESET_ORDER } from "../settings";
 
 /**
- * テーマプリセット (#465) の data-theme 合成ロジック。プリセット名が
+ * テーマプリセットの data-theme 合成ロジック。プリセット名が
  * theme.ts の `conditions.dark` ([data-theme$=dark]) と整合することを固定する。
  */
 describe("themePresetDataTheme (#465)", () => {

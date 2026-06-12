@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { illustrationForError, type ErrorIllustrationKind } from "../errorHints";
 
 /**
- * illustrationForError のユニットテスト (#539)。
+ * illustrationForError のユニットテスト。
  *
  * errorHints.ts の matchErrorHint と同じエラー文言を使い、
  * エラー種別に応じた ErrorIllustrationKind が返ることを検証する。

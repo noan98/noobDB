@@ -121,8 +121,8 @@ export function Switch({
           height={`${dims.thumb}px`}
           borderRadius="full"
           // チェック時はアクセント地のトラック上に乗る「つまみ」なので、文字色
-          // (app.accentText) ではなく常に白で塗る。accentText はダークで紺色に
-          // 変更され (#348)、それを使うとつまみがトラックに埋もれてしまうため。
+          // (app.accentText) ではなく常に白で塗る。accentText はダークでは紺色に
+          // なり、それを使うとつまみがトラックに埋もれてしまうため。
           bg={checked ? "white" : "app.surface"}
           boxShadow="sm"
         />

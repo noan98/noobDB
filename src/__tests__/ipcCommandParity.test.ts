@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import libRs from "../../src-tauri/src/lib.rs?raw";
 import tauriTs from "../api/tauri.ts?raw";
 
-// IPC コマンド登録 ↔ フロント (tauri.ts) ラッパのパリティ検証 (#501)。
+// IPC コマンド登録 ↔ フロント (tauri.ts) ラッパのパリティ検証。
 //
 // CLAUDE.md が繰り返し警告するとおり、Tauri コマンドは「Rust ハンドラを追加し、
 // `lib.rs` の `generate_handler!` で登録し、`src/api/tauri.ts` に型付きラッパを

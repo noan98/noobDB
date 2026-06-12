@@ -10,7 +10,7 @@
 //! caps the rows it reads, and a table without a primary key is rejected since
 //! there is nothing to pair on.
 //!
-//! Safety mirrors phase 2: `DELETE` is emitted only when `allow_delete` is set,
+//! Safety mirrors the schema sync: `DELETE` is emitted only when `allow_delete` is set,
 //! and literals are escaped per driver (see [`sql_literal`]) so a value can
 //! never break out of its quotes.
 

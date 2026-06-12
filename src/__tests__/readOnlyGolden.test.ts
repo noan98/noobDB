@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isReadOnlySql } from "../dangerousSql";
 import vectors from "./fixtures/readOnlySqlVectors.json";
 
-// 読み取り専用判定のフロント/バック整合性ゴールデンテスト (#444)。
+// 読み取り専用判定のフロント/バック整合性ゴールデンテスト。
 //
 // フロント (`isReadOnlySql`) とバック (`is_read_only_sql`) は読み取り専用ガードを
 // 独立に二重実装している。ここでは両者が参照する共有ベクタ

@@ -494,8 +494,8 @@ mod tests {
         assert_eq!(parsed[1]["blob"], serde_json::Value::Null);
     }
 
-    // Streaming serialization must stay byte-identical to the previous
-    // "build the whole array then to_vec_pretty" approach (#274).
+    // Streaming serialization must stay byte-identical to
+    // "build the whole array then to_vec_pretty" output.
     #[test]
     fn json_matches_to_vec_pretty() {
         use serde_json::{Map, Value as J};

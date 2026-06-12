@@ -3,7 +3,7 @@ import { renderWithProviders, fireEvent } from "./testUtils";
 import { LoadingButton } from "../components/LoadingButton";
 
 /**
- * LoadingButton コンポーネントのユニットテスト (#538)。
+ * LoadingButton コンポーネントのユニットテスト。
  *
  * 検証ポイント:
  *   - loading=false のとき: 子テキストのみ表示、スピナーなし、disabled でない

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, renderWithProviders, screen } from "./testUtils";
 import { Splitter } from "../components/Splitter";
 
-// 分割ペインのセパレータ (#478)。ドラッグはポインタキャプチャを伴い jsdom では
+// 分割ペインのセパレータ。ドラッグはポインタキャプチャを伴い jsdom では
 // 再現しづらいため、キーボードによるリサイズ・リセットと a11y 属性を検証する。
 describe("Splitter (#478)", () => {
   beforeEach(() => localStorage.clear());

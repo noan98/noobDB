@@ -8,7 +8,7 @@ import { Button, Input, PressableButton, Switch } from "./ui";
 import { Icon } from "./Icon";
 
 /**
- * CREATE TABLE ウィザード (#460)。カラム定義をフォームで組み立て、方言に応じた
+ * CREATE TABLE ウィザード。カラム定義をフォームで組み立て、方言に応じた
  * CREATE TABLE 文を生成・プレビューして実行 (またはエディタへ転送) する。SQL 生成の
  * 純ロジックは `createTable.ts`、識別子/リテラルのエスケープは sqlDialect/cellEdit を流用。
  * read_only セッションでは実行ボタンを無効化する (バックエンドも write を拒否する)。

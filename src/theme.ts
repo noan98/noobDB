@@ -33,7 +33,7 @@ import {
  * まま参照する (フォーカスリングの `color-mix(... var(--accent) ...)` など)。
  */
 
-/** キーボードフォーカス時のリング (#475)。`App.css` の --focus-ring トークンを
+/** キーボードフォーカス時のリング。`App.css` の --focus-ring トークンを
  *  参照して 1 か所に集約し、太さ・色・オフセットを全要素で統一する。エラー入力は
  *  危険色リング (--focus-ring-danger) に切り替える。 */
 const focusRing = "var(--focus-ring)";
@@ -45,7 +45,7 @@ const config = defineConfig({
   // 合わせる。既定の `.dark &` ではなく `data-theme` を見るようにする。
   conditions: {
     // "dark" だけでなく、ダーク系テーマプリセット ("dracula-dark" 等) でも
-    // カラー付きボタンの _dark トークンが効くよう、末尾一致にする (#465)。
+    // カラー付きボタンの _dark トークンが効くよう、末尾一致にする。
     dark: "[data-theme$=dark] &",
   },
   theme: {
@@ -66,7 +66,7 @@ const config = defineConfig({
         lg: { value: "var(--text-lg)" },
         xl: { value: "var(--text-xl)" },
       },
-      // 縦リズム (#490)。`lineHeight="snug"` / `letterSpacing="wide"` のように
+      // 縦リズム。`lineHeight="snug"` / `letterSpacing="wide"` のように
       // 役割名で参照でき、App.css の --leading-* / --tracking-* を正とする。
       lineHeights: {
         tight: { value: "var(--leading-tight)" },
@@ -99,7 +99,7 @@ const config = defineConfig({
         lg: { value: "var(--radius-lg)" },
         pill: { value: "var(--radius-pill)" },
       },
-      // レイヤリング (#500)。`zIndex="popover"` 等の名前で参照でき、App.css の
+      // レイヤリング。`zIndex="popover"` 等の名前で参照でき、App.css の
       // --z-* を正とする。Chakra 既定の zIndex トークン名 (modal/popover/toast/
       // dropdown) を意図的に踏襲し、既存コンポーネントの記述とも揃える。
       zIndex: {
@@ -146,7 +146,7 @@ const config = defineConfig({
           accent: { value: "var(--accent)" },
           accentHover: { value: "var(--accent-hover)" },
           accentText: { value: "var(--accent-text)" },
-          // 拡張ニュートラル階調 (#476)。0=地, 950=最も濃い文字。テーマ反転は
+          // 拡張ニュートラル階調。0=地, 950=最も濃い文字。テーマ反転は
           // App.css 側で吸収するため、ここは var() ブリッジのみ。
           neutral: {
             0: { value: "var(--neutral-0)" },
@@ -162,7 +162,7 @@ const config = defineConfig({
             900: { value: "var(--neutral-900)" },
             950: { value: "var(--neutral-950)" },
           },
-          // セマンティックカラー体系 (#476)。役割別 (subtle/border/solid/text)。
+          // セマンティックカラー体系。役割別 (subtle/border/solid/text)。
           //
           // ## カラーブラインド配慮ガイド (赤緑色弱)
           // success(緑) と error(赤) は色相だけでは区別しづらいため、これらを
@@ -237,7 +237,7 @@ const config = defineConfig({
         md: { value: "var(--shadow-md)" },
         lg: { value: "var(--shadow-lg)" },
         xl: { value: "var(--shadow-xl)" },
-        // レイヤ別エレベーション (#500)。`shadow="elevationModal"` のように参照する。
+        // レイヤ別エレベーション。`shadow="elevationModal"` のように参照する。
         elevationRaised: { value: "var(--elevation-raised)" },
         elevationPopover: { value: "var(--elevation-popover)" },
         elevationToast: { value: "var(--elevation-toast)" },
@@ -247,14 +247,10 @@ const config = defineConfig({
       // 経由しない)、単純な var() ブリッジでは表現できないため、ここで `_dark` 条件付き
       // の値として定義する。
       //
-      // WCAG AA 検証 (#326): ボタン文字 (前景) と背景のコントラストが通常テキスト
-      // 基準 (4.5:1) を満たすように調整した。下記コメントの比率は前景/背景の実測値。
-      //   - success(light): 旧 #16a34a+白 は 3.30:1 で未達 → 背景を #15803d に暗くして 5.02:1。
-      //   - warning(light): #d97706+白 は 3.19:1 で、白では AA に届く暗さにすると琥珀色が
-      //     失われるため、前景を濃色 #2a1707 に変更 (琥珀の地色は維持) して 5.39:1。
-      //   - danger(dark):   旧 #ef4444+白 は 3.76:1 で未達 → 背景を #dc2626 に暗くして 4.83:1。
-      // それ以外 (success dark 6.54 / warning dark 7.99 / danger light 4.83 / info 両 >=5.9) は
-      // 既に AA を満たしていたため据え置き。hover 色も同基準を満たす値に揃えた。
+      // WCAG AA: ボタン文字 (前景) と背景のコントラストが通常テキスト基準 (4.5:1) を
+      // 満たす値を選ぶ。下記コメントの比率は前景/背景の実測値。warning(light) は背景を
+      // AA に届く暗さにすると琥珀色が失われるため、前景を濃色 #2a1707 (琥珀の地色は維持)
+      // にして 5.39:1 を確保している。hover 色も同基準を満たす値に揃える。
       colors: {
         app: {
           successBg: { value: { base: "#15803d", _dark: "#22c55e" } }, // 白文字 5.02:1 / 濃文字側 6.54:1
@@ -285,14 +281,14 @@ export const system = createSystem(defaultConfig, config);
  * 共通コンポーネント recipe。`App.css` の className ベースの見た目
  * (`button` / `input` / `select` / `textarea` など) を Chakra recipe 化したもの。
  * `src/components/ui.tsx` が `chakra(...)` ファクトリでラッパーコンポーネントへ
- * 変換し、後続のコンポーネント移行が `<Button variant="primary">` のように
+ * 変換し、各コンポーネントが `<Button variant="primary">` のように
  * 素の見た目を手書きせず使えるようにする。
  */
 
 /** ボタン。中立 (default) + primary / secondary / ghost / success / warning /
  *  danger / info と、密なツールバー向けの `sm` サイズ。
  *
- *  ## variant 使い分け規約 (#283)
+ *  ## variant 使い分け規約
  *
  *  破壊的操作と安全な操作を見た目で区別し、誤操作を視覚的に防ぐためのルール。
  *  新規ボタン追加時もこの表に従う。
@@ -317,7 +313,7 @@ export const buttonRecipe = defineRecipe({
     alignItems: "center",
     justifyContent: "center",
     // 余白はフォントスケール (--font-scale) に追従させ、大きいフォント設定でも
-    // ラベルがボタンからはみ出さず比率を保つ (#327)。
+    // ラベルがボタンからはみ出さず比率を保つ。
     gap: "calc(6px * var(--font-scale))",
     px: "calc(12px * var(--font-scale))",
     py: "calc(6px * var(--font-scale))",
@@ -404,8 +400,8 @@ export const buttonRecipe = defineRecipe({
     size: {
       // 既定サイズは base の padding をそのまま使う。
       md: {},
-      // 密なツールバー / モーダルフッタ向け (App.css の `button.btn-sm`)。余白は #327 で
-      // フォントスケール追従に変更。
+      // 密なツールバー / モーダルフッタ向け (App.css の `button.btn-sm`)。余白は
+      // フォントスケール追従。
       sm: {
         px: "calc(8px * var(--font-scale))",
         py: "calc(3px * var(--font-scale))",
@@ -424,7 +420,7 @@ export const inputRecipe = defineRecipe({
   className: "app-input",
   base: {
     font: "inherit",
-    // 余白はフォントスケール追従 (#327)。
+    // 余白はフォントスケール追従。
     px: "calc(8px * var(--font-scale))",
     py: "calc(6px * var(--font-scale))",
     border: "1px solid",
@@ -434,7 +430,7 @@ export const inputRecipe = defineRecipe({
     borderRadius: "md",
     width: "100%",
     _placeholder: { color: "app.textMuted" },
-    // :focus-visible に統一 (#475)。テキスト入力はキーボード操作中も一致する。
+    // :focus-visible に統一。テキスト入力はキーボード操作中も一致する。
     _focusVisible: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
     // aria-invalid な入力は危険色の枠線 + リングへ (セマンティックフォーカス分岐)。
     "&[aria-invalid='true']": {
@@ -449,7 +445,7 @@ export const selectRecipe = defineRecipe({
   className: "app-select",
   base: {
     font: "inherit",
-    // 余白はフォントスケール追従 (#327)。
+    // 余白はフォントスケール追従。
     px: "calc(8px * var(--font-scale))",
     py: "calc(6px * var(--font-scale))",
     border: "1px solid",
@@ -459,7 +455,7 @@ export const selectRecipe = defineRecipe({
     borderRadius: "md",
     width: "100%",
     cursor: "pointer",
-    // :focus-visible に統一 (#475)。テキスト入力はキーボード操作中も一致する。
+    // :focus-visible に統一。テキスト入力はキーボード操作中も一致する。
     _focusVisible: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
     // aria-invalid な入力は危険色の枠線 + リングへ (セマンティックフォーカス分岐)。
     "&[aria-invalid='true']": {
@@ -474,7 +470,7 @@ export const textareaRecipe = defineRecipe({
   className: "app-textarea",
   base: {
     font: "inherit",
-    // 余白はフォントスケール追従 (#327)。
+    // 余白はフォントスケール追従。
     p: "calc(8px * var(--font-scale))",
     border: "1px solid",
     borderColor: "app.borderStrong",
@@ -484,7 +480,7 @@ export const textareaRecipe = defineRecipe({
     width: "100%",
     resize: "vertical",
     _placeholder: { color: "app.textMuted" },
-    // :focus-visible に統一 (#475)。テキスト入力はキーボード操作中も一致する。
+    // :focus-visible に統一。テキスト入力はキーボード操作中も一致する。
     _focusVisible: { outline: "none", borderColor: "app.accent", boxShadow: focusRing },
     // aria-invalid な入力は危険色の枠線 + リングへ (セマンティックフォーカス分岐)。
     "&[aria-invalid='true']": {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// IPC レスポンスのランタイム型検証 (#391)。`@tauri-apps/api/core` の `invoke` を
+// IPC レスポンスのランタイム型検証。`@tauri-apps/api/core` の `invoke` を
 // モックして、Rust から返ってきたと想定する生の値を `api.*` ラッパーに流し込み、
 // (1) 正常な形なら解決する、(2) Rust 側の型がズレた壊れた形なら reject する、
 // ことを確認する。スキーマ単体の正常/異常判定も併せて検証する。
