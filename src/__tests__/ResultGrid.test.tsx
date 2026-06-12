@@ -9,8 +9,7 @@ import { setRichCellRendering } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
 
 // ResultGrid の主要インタラクション (描画・全文フィルタ・列ソート・ページ読み込み
-// トリガー・インラインセル編集) の退行を検出するテスト (#354)。1,577 行に渡る
-// 中核コンポーネントでありながらこれまで無テストだったため、リファクタリングや
+// トリガー・インラインセル編集) の退行を検出するテスト。リファクタリングや
 // 機能追加で表示・編集フローが壊れたことを CI で自動検出できるようにする。
 //
 // 文言はロケールで変わるため i18n の `t()` から期待値を引く。バックエンド (IPC) は
@@ -197,7 +196,7 @@ describe("ResultGrid", () => {
       // Enter で確定 → 親へ通知。
       await user.keyboard("{Enter}");
 
-      // 行は配列インデックスではなく主キー由来の安定キーで識別される (#352)。
+      // 行は配列インデックスではなく主キー由来の安定キーで識別される。
       expect(onSetCellEdit).toHaveBeenCalledWith(rowEditKey([1, "alice"], [0], 0), 1, "bob");
     });
 
@@ -504,7 +503,7 @@ describe("セル値のリッチ表示 (#451)", () => {
 describe("editable-cell visual affordance (#349, #540)", () => {
   it("GRID_CSS distinguishes editable cells with cursor + hover/active ring", () => {
     // 編集可能セルはテキストカーソル、ホバーで細いアクセントリング、編集中 (focus内)
-    // で inset フォーカスリング (--focus-ring-inset) を出す (#540)。
+    // で inset フォーカスリング (--focus-ring-inset) を出す。
     // 読み取り専用/非編集セルは既定カーソル。
     const css = GRID_CSS as Record<string, { cursor?: string; outline?: string; boxShadow?: string }>;
     expect(css["& td.is-editable-cell"]?.cursor).toBe("text");
@@ -512,12 +511,12 @@ describe("editable-cell visual affordance (#349, #540)", () => {
       css["& tbody td:not(.row-index):not(.col-filler):not(.grid-empty-cell)"]?.cursor,
     ).toBe("default");
     expect(css["& tbody tr td.is-editable-cell:hover"]?.outline).toContain("var(--accent)");
-    // #540: focus-within は outline ではなく inset box-shadow で描画する。
+    // focus-within は outline ではなく inset box-shadow で描画する。
     expect(css["& td.is-editable-cell:focus-within"]?.boxShadow).toContain("var(--focus-ring-inset)");
   });
 });
 
-// 列幅永続化ユーティリティのユニットテスト (#383)
+// 列幅永続化ユーティリティのユニットテスト
 describe("column sizing persistence", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -588,7 +587,7 @@ describe("column sizing persistence", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 列レイアウト永続化 (順序 / 表示 / ピン) (#447 / #463)
+// 列レイアウト永続化 (順序 / 表示 / ピン)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("列レイアウト永続化 (#447 / #463)", () => {
   beforeEach(() => {
@@ -653,7 +652,7 @@ describe("列レイアウト永続化 (#447 / #463)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 複数列ソート (#479)
+// 複数列ソート
 // ─────────────────────────────────────────────────────────────────────────────
 describe("複数列ソート (#479)", () => {
   beforeEach(() => setLocale("en"));
@@ -724,7 +723,7 @@ describe("複数列ソート (#479)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// キーボードセルナビゲーション (#406)
+// キーボードセルナビゲーション
 // ─────────────────────────────────────────────────────────────────────────────
 describe("キーボードセルナビゲーション (#406)", () => {
   beforeEach(() => {
@@ -901,7 +900,7 @@ describe("キーボードセルナビゲーション (#406)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 行インスペクタ (#462)
+// 行インスペクタ
 // ─────────────────────────────────────────────────────────────────────────────
 describe("行インスペクタ (#462)", () => {
   beforeEach(() => setLocale("en"));
