@@ -35,6 +35,11 @@ src-tauri/lcov.info
 **/__screenshots__/**/*-actual.png
 **/__screenshots__/**/*-diff.png
 
+# シナリオテスト (#564) はベースラインを持たないため、テスト失敗時に Vitest が
+# 自動保存するスクリーンショットごとコミットしない (デバッグ用の一時生成物)。
+src/__tests__/browser/__screenshots__/scenarios.browser.test.tsx/
+.vitest-attachments/
+
 # Tauri build artifacts
 src-tauri/target/
 src-tauri/gen/
