@@ -109,6 +109,9 @@ jobs:
       - name: tauri-driver をインストール
         run: cargo install tauri-driver --locked
 
+      - name: cargo bin を PATH に追加 (tauri-driver 検出用)
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       # ────────────────────────────────────────────────────────────────────
       # 4. フロントエンドビルド + Tauri デバッグバイナリのビルド
       # ────────────────────────────────────────────────────────────────────
@@ -123,12 +126,14 @@ jobs:
       # 5. E2E テスト実行 (xvfb-run でヘッドレス)
       # ────────────────────────────────────────────────────────────────────
       - name: E2E テスト実行 (xvfb-run)
+        # tauri-driver は PATH 上の tauri-driver バイナリを自動検出する。
+        # cargo bin (~/.cargo/bin) は上の専用ステップで $GITHUB_PATH に追加済み。
+        # ここで env.PATH を上書きしないこと: GitHub Actions の env 値はシェル展開
+        # されないため `$HOME`/`$PATH` がリテラル文字列になり、ランナー本来の PATH
+        # (xvfb-run のある /usr/bin など) を破壊して command not found を招く。
         run: |
           export WDIO_LOG_LEVEL=${{ github.event.inputs.debug == 'true' && 'trace' || 'info' }}
           xvfb-run -a --server-args="-screen 0 1280x800x24" pnpm test:e2e
-        env:
-          # tauri-driver は PATH に tauri-driver バイナリがあれば自動検出する
-          PATH: "$HOME/.cargo/bin:$PATH"
 
       # ────────────────────────────────────────────────────────────────────
       # 6. アーティファクト保存 (失敗時のみ)
