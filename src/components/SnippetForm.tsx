@@ -29,7 +29,7 @@ export function SnippetForm({
 }: Props) {
   const t = useT();
   // フォーム内のラベルと入力を htmlFor / id で関連付けるための一意な接頭辞。
-  // 同一画面に複数フォームがあっても衝突しないよう useId を使う (a11y, #491)。
+  // 同一画面に複数フォームがあっても衝突しないよう useId を使う (a11y)。
   const fid = useId();
 
   const folderSuggestions = useMemo(() => {

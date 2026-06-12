@@ -28,7 +28,7 @@ interface Props {
 }
 
 // Previously entered values/types persist across runs so repeating a
-// parameterized query (or a saved snippet) doesn't re-type everything (#388).
+// parameterized query (or a saved snippet) doesn't re-type everything.
 const CACHE_KEY = "noobdb.queryparams.v1";
 type Cache = Record<string, Draft>;
 

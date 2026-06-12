@@ -40,7 +40,7 @@ function tryFormatJson(s: string): string | null {
 const MotionDrawer = chakra(motion.div, {}, { forwardProps: ["transition"] });
 
 /**
- * 行インスペクタ (#462)。選択中の 1 行の全カラムを「カラム名 → 値」で縦に並べた
+ * 行インスペクタ。選択中の 1 行の全カラムを「カラム名 → 値」で縦に並べた
  * 右側ドロワー。横スクロールせずに 1 レコードを一望でき、各フィールドを個別に
  * コピーできる。表示は表示専用 (JSON 整形・BLOB の 0x・NULL 明示) で、コピーは
  * 常に元の値を使う。グリッドのキーボード行移動 (↑/↓) に追従し、Esc で閉じる。

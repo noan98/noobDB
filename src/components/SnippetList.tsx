@@ -47,7 +47,7 @@ export function scopeMatches(snippet: Snippet, profile: ConnectionProfile | null
   return false;
 }
 
-// memo 化して App.tsx の高頻度な再レンダリングから切り離す (#403)。props は親で
+// memo 化して App.tsx の高頻度な再レンダリングから切り離す。props は親で
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
 export const SnippetList = memo(function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelete }: Props) {
   const t = useT();
