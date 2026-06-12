@@ -1376,7 +1376,7 @@ export default function App() {
     [],
   );
 
-  // 履歴ナビゲーション (#325) 用に直近の実行クエリを読み込む。接続中のみ取得し、
+  // 履歴ナビゲーション用に直近の実行クエリを読み込む。接続中のみ取得し、
   // プロファイル切替・実行 (`historyReloadKey`) を契機に最新化する。連続して同じ
   // SQL が並ぶと ↑/↓ で 1 件しか進まないように、隣り合う重複は畳む。
   useEffect(() => {
@@ -1405,7 +1405,7 @@ export default function App() {
     };
   }, [sessionId, selectedProfile?.id, historyReloadKey]);
 
-  // クイックアクセス (#461): アクティブ接続が変わったら、そのプロファイルの
+  // クイックアクセス: アクティブ接続が変わったら、そのプロファイルの
   // お気に入り/最近をストレージから読み込む。未接続時は空にする。
   useEffect(() => {
     const id = selectedProfile?.id ?? null;
@@ -1463,11 +1463,10 @@ export default function App() {
     savePersistedWorkspace(profileId, ws);
   }, []);
 
-  // #287: persistence used to fire only on disconnect / profile switch /
-  // connection loss, so in-session tab updates (builder snapshots, SQL edits)
-  // were lost if the user closed the app without disconnecting first. Flushing
-  // on `beforeunload` lands the current state in localStorage as the window
-  // tears down — `setItem` is synchronous so the write completes before unload.
+  // Flushing on `beforeunload` lands the current state in localStorage as the
+  // window tears down, so in-session tab updates (builder snapshots, SQL edits)
+  // survive closing the app without disconnecting first — `setItem` is
+  // synchronous so the write completes before unload.
   useEffect(() => {
     const id = selectedProfile?.id;
     if (!id) return;
@@ -1941,7 +1940,7 @@ export default function App() {
   runQueryInTabRef.current = runQueryInTab;
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
-  // 接続ヘルスチェック (#485) の同時実行を防ぐフラグ。
+  // 接続ヘルスチェックの同時実行を防ぐフラグ。
   const healthCheckBusyRef = useRef(false);
 
   // Toggle auto-refresh for a tab: `secs` enables polling at that cadence (also
@@ -2045,7 +2044,7 @@ export default function App() {
             };
           } catch (e) {
             // Table is gone — fall through to a query tab using the saved SQL,
-            // but record why so we can tell the user (Issue #329).
+            // but record why so we can tell the user.
             const msg = String(e);
             const reason: "missing" | "connection" | "other" =
               /table .* does(?:n't| not) exist|no such table|relation .* does not exist|unknown table/i.test(msg)
@@ -2292,11 +2291,11 @@ export default function App() {
     const offset = tab.result.rows.length;
     const chunkSize = Math.max(1, settings.streamPrefetchSize);
     const sql = `${tab.paginatable} LIMIT ${chunkSize} OFFSET ${offset}`;
-    // Buffered inline edits survive pagination now that they are keyed by each
+    // Buffered inline edits survive pagination because they are keyed by each
     // row's primary key (`rowEditKey`) rather than its array index. Appending a
     // page leaves existing rows in place, and even if a query without a stable
     // ORDER BY re-surfaces a row already shown, its PK identity is unchanged so
-    // the edit still targets the correct row. (Issues #330 / #352)
+    // the edit still targets the correct row.
     patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     setStatus({
       kind: "key",
@@ -2335,7 +2334,7 @@ export default function App() {
     }
   }, [sessionId, settings.streamPrefetchSize, patchTab]);
 
-  // ページネーション (#484): table タブの `paginatable` base SQL から N ページ目を
+  // ページネーション: table タブの `paginatable` base SQL から N ページ目を
   // 取得して結果を**置き換える** (loadMore は追記、こちらはページ送り)。ページング用の
   // 内部クエリは `api.runQuery` 経由なので履歴を汚さない (CLAUDE.md のクエリ履歴方針)。
   const goToPageInTab = useCallback(async (tabId: string, page: number, sizeOverride?: number) => {
@@ -2394,11 +2393,11 @@ export default function App() {
     void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
   }, [goToPageInTab]);
 
-  // SQL スクリプト (複数文) のバッチ実行 (#495)。文ごとに順次実行し、各文の結果
+  // SQL スクリプト (複数文) のバッチ実行。文ごとに順次実行し、各文の結果
   // (結果セット / 影響行数 / エラー) を集めて batchResults に積む。stopOnError なら
   // 最初のエラーで残りをスキップ、false なら続行する。読み取り専用ガードは文ごとに
   // バックエンドが強制する (api.runQuery 経由なので履歴は汚さない)。
-  // `tabOverride` は、新規結果タブ (#472) を addTab した直後に呼ぶケース用。tabsRef は
+  // `tabOverride` は、新規結果タブを addTab した直後に呼ぶケース用。tabsRef は
   // effect 経由で更新されるため直後は新タブを見つけられない。その場合はメモリ上の Tab を
   // 直接渡してレース (無実行化) を避ける。同一タブの再実行では渡さず、tabsRef の最新
   // フラグで再入ガードを効かせる。
@@ -2430,7 +2429,7 @@ export default function App() {
         continue;
       }
       try {
-        // 明示トランザクション (#414) が有効なら同一接続で実行して tx に乗せる。
+        // 明示トランザクションが有効なら同一接続で実行して tx に乗せる。
         const res = txActiveRef.current
           ? await api.runInTransaction(sessionId, stmt)
           : await api.runQuery(sessionId, stmt, db);
@@ -2464,7 +2463,7 @@ export default function App() {
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
   // independently.
-  // 明示トランザクション (#414) 内で 1 文を実行し、結果をタブへ反映する (非ストリーム)。
+  // 明示トランザクション内で 1 文を実行し、結果をタブへ反映する (非ストリーム)。
   const runTxInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) return;
     patchTab(tabId, (tt) => ({
@@ -2474,7 +2473,7 @@ export default function App() {
       showChart: false,
       batchResults: undefined,
       preview: null,
-      // 結果を置き換えるので、旧結果由来の保留編集 (#441) は破棄して整合を保つ。
+      // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。
       pendingEdits: {},
       editUndoStack: [],
       editRedoStack: [],
@@ -2498,7 +2497,7 @@ export default function App() {
     }
   }, [sessionId, patchTab]);
 
-  // トランザクション制御 (#414)。開始/確定/破棄。
+  // トランザクション制御。開始/確定/破棄。
   const handleBeginTransaction = useCallback(async () => {
     if (!sessionId) return;
     try {
@@ -2529,7 +2528,7 @@ export default function App() {
       runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
       return;
     }
-    // 複数結果タブ (#472): 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
+    // 複数結果タブ: 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
     // せず SQL を複製した新しいタブで実行して前の結果を残す。以降のゲート/実行はこの
     // ターゲットタブに対して行う。
     let target = tab;
@@ -2557,7 +2556,7 @@ export default function App() {
     // outright on the backend, so there is nothing to approve here.
     const requireWriteApproval =
       isProduction && (selectedProfile?.confirm_writes ?? false) && !sessionReadOnly;
-    // 複数文スクリプトはバッチ実行 (#495) に振り分ける。auto LIMIT は付けない。
+    // 複数文スクリプトはバッチ実行に振り分ける。auto LIMIT は付けない。
     const batch = target.kind === "query" && isMultiStatement(sql);
     const findings =
       isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
@@ -2579,7 +2578,7 @@ export default function App() {
       void runBatchInTab(target.id, sql, true, openedInNewTab ? target : undefined);
       return;
     }
-    // 明示トランザクション (#414) 中は同一接続で実行する経路に振り分ける。
+    // 明示トランザクション中は同一接続で実行する経路に振り分ける。
     if (txActiveRef.current && target.kind === "query") {
       void runTxInTab(target.id, sql);
       return;
@@ -2837,7 +2836,7 @@ export default function App() {
     const pkIndices = resolvePkIndices(result.columns, tableColumns);
     const driver = selectedProfile?.driver ?? "mysql";
     // 1 トランザクションに UPDATE (セル編集) + DELETE (削除予定行) + INSERT (新規行) を
-    // まとめる (#441)。all-or-nothing なので一部失敗で全体がロールバックする。
+    // まとめる。all-or-nothing なので一部失敗で全体がロールバックする。
     const updates = buildUpdateStatements({
       driver, database, table, columns: result.columns, rows: result.rows, pkIndices, edits: pendingEdits,
     });
@@ -2866,7 +2865,7 @@ export default function App() {
     }
     patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
     // Always refresh & drop edits afterwards: the result indices no
-    // longer line up with whatever the user had buffered. Row ops (#441) are
+    // longer line up with whatever the user had buffered. Row ops are
     // cleared too so the bar disappears once applied.
     patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
     if (paginatable) {
@@ -2899,7 +2898,7 @@ export default function App() {
     selectedProfile?.driver,
   ]);
 
-  // 行を削除予定にトグルする (#441)。
+  // 行を削除予定にトグルする。
   const toggleRowDeleteForTab = useCallback((tabId: string, rowKey: string) => {
     patchTab(tabId, (tt) => {
       const cur = tt.pendingDeletes ?? [];
@@ -2908,18 +2907,18 @@ export default function App() {
     });
   }, [patchTab]);
 
-  // 新規行追加モーダルを開く (#441)。
+  // 新規行追加モーダルを開く。
   const requestInsertRowForTab = useCallback((tabId: string) => {
     setRowInsertTabId(tabId);
   }, []);
 
-  // モーダルで確定した新規行を保留に追加する (#441)。
+  // モーダルで確定した新規行を保留に追加する。
   const addInsertRowForTab = useCallback((tabId: string, row: PendingInsertRow) => {
     setRowInsertTabId(null);
     patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
   }, [patchTab]);
 
-  // 行操作 (追加/削除) の保留を破棄する (#441)。
+  // 行操作 (追加/削除) の保留を破棄する。
   const discardRowOpsForTab = useCallback((tabId: string) => {
     patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
   }, [patchTab]);

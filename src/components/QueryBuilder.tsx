@@ -15,9 +15,8 @@ import { Button, Checkbox, Select } from "./ui";
 import { useToast } from "./Toast";
 
 /**
- * Query Builder のフォーム部のスタイル。以前は `.qb-*` の className + 子孫セレクタで
- * `App.css` 〜コンポーネント内 `css` を当てていたが、className を撤去して各要素へ
- * 直接 `css` を適用する形へ移行した。SQL プレビューの CodeMirror 周りのレイアウト
+ * Query Builder のフォーム部のスタイル。各要素へ直接 `css` を適用する。
+ * SQL プレビューの CodeMirror 周りのレイアウト
  * (`.cm-*`) だけは CodeMirror が生成する DOM を対象にするため、`previewCss` 内で
  * タグ/要素スコープのセレクタとして残す (CodeMirror 本体のテーマは対象外)。
  */
@@ -50,7 +49,6 @@ const sectionRowCss: SystemStyleObject = {
   justifyContent: "space-between",
   gap: "2",
 };
-// `qb-section` + `qb-grid-2` の合成 (grid が flex を上書きする)。
 const grid2SectionCss: SystemStyleObject = {
   marginBottom: "2.5",
   display: "grid",
@@ -63,7 +61,7 @@ const grid2ChildCss: SystemStyleObject = {
   gap: "1",
 };
 const pillListCss: SystemStyleObject = { display: "flex", flexWrap: "wrap", gap: "1" };
-/** クエリ種別ピル (旧 `.qb-pill`)。選択中はアクセント色。 */
+/** クエリ種別ピル。選択中はアクセント色。 */
 function pillCss(active: boolean): SystemStyleObject {
   const base: SystemStyleObject = {
     py: "1",
@@ -92,7 +90,7 @@ const checkboxLabelCss: SystemStyleObject = {
   margin: 0,
 };
 const rowCss: SystemStyleObject = { display: "flex", gap: "1.5", alignItems: "center" };
-// 行内の入力 (旧 `.qb-row-input` / `.qb-col-input`) は伸縮させる。
+// 行内の入力は伸縮させる。
 const rowInputCss: SystemStyleObject = { flex: 1, minWidth: 0 };
 const opCss: SystemStyleObject = { width: "110px", flexShrink: 0 };
 const eqCss: SystemStyleObject = {
@@ -156,7 +154,6 @@ const smallBtnCss: SystemStyleObject = {
   fontSize: "var(--text-xs)",
   borderRadius: "var(--radius-sm)",
 };
-// `qb-section` + `qb-limit-section` の合成。
 const limitSectionCss: SystemStyleObject = {
   marginBottom: "2.5",
   display: "grid",

@@ -119,7 +119,7 @@ const treeCss: SystemStyleObject = {
   fontSize: "var(--text-sm)",
 };
 
-/** ツリー行 (旧 `.explain-node`)。ヒートと選択状態で背景/ホバーを切り替える。 */
+/** ツリー行。ヒートと選択状態で背景/ホバーを切り替える。 */
 function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
   const base: SystemStyleObject = {
     display: "flex",
@@ -137,7 +137,7 @@ function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
         : heat === "warm"
           ? "color-mix(in srgb, #f59e0b 22%, var(--bg-active))"
           : "var(--bg-active)";
-    // 選択行はホバーしても選択色を維持する (旧 CSS の specificity 順を踏襲)。
+    // 選択行はホバーしても選択色を維持する。
     return { ...base, background: bg, borderLeftColor: "var(--accent)", _hover: { background: bg } };
   }
   if (heat === "hot") {
@@ -270,7 +270,7 @@ const hintsListCss: SystemStyleObject = {
   flexDirection: "column",
   gap: "1.5",
 };
-/** 詳細パネルのヒント 1 件 (旧 `.explain-hint`)。重大度で左枠色を変える。 */
+/** 詳細パネルのヒント 1 件。重大度で左枠色を変える。 */
 function hintItemCss(sev: HintSeverity): SystemStyleObject {
   const borderLeftColor = sev === "info" ? "var(--accent)" : sev === "caution" ? "#f59e0b" : "#dc2626";
   return {
@@ -287,7 +287,7 @@ function hintItemCss(sev: HintSeverity): SystemStyleObject {
     lineHeight: 1.45,
   };
 }
-/** ヒントの重大度ラベル (旧 `.explain-hint-sev`)。 */
+/** ヒントの重大度ラベル。 */
 function hintSevCss(sev: HintSeverity): SystemStyleObject {
   const color = sev === "info" ? "var(--accent)" : sev === "warning" ? "var(--text-error)" : "#b45309";
   const base: SystemStyleObject = {
@@ -357,7 +357,7 @@ const detailTableCss: SystemStyleObject = {
   "& td": { color: "var(--text)" },
 };
 
-/** 空 / ローディング時のプレースホルダ枠 (`.explain-viewer-empty` 相当)。 */
+/** 空 / ローディング時のプレースホルダ枠。 */
 const EXPLAIN_EMPTY_PROPS = {
   flex: "1 1 auto",
   minHeight: 0,
