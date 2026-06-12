@@ -531,8 +531,9 @@ impl MySqlConn {
 
     /// Server connections/threads for the process monitor panel. Prefers
     /// `performance_schema.processlist` (8.0.22+, lock-free) and falls back to
-    /// `information_schema.PROCESSLIST` (older MySQL / MariaDB), which takes a
-    /// thread-list mutex but is harmless at this panel's polling cadence.
+    /// `information_schema.PROCESSLIST` (older MySQL / MariaDB, or servers
+    /// running with `performance_schema = OFF`), which takes a thread-list
+    /// mutex but is harmless at this panel's polling cadence.
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
         let projection =
             "SELECT ID, USER, HOST, DB, COMMAND, STATE, TIME, INFO, ID = CONNECTION_ID() FROM";
@@ -542,10 +543,14 @@ impl MySqlConn {
         .fetch_all(&self.pool)
         .await
         {
-            Ok(rows) => rows,
-            // Table missing (pre-8.0.22 / MariaDB) or performance_schema off —
-            // any failure here is "this source is unavailable", so fall back.
-            Err(_) => {
+            Ok(rows) if !rows.is_empty() => rows,
+            // Fall back when this source is unavailable. That is not only an
+            // error (table missing on pre-8.0.22 / MariaDB) but also an EMPTY
+            // success: with `performance_schema = OFF` the table still exists
+            // and the query succeeds, yet nothing is collected. A truly empty
+            // processlist is impossible — the connection running this very
+            // query always appears — so empty unambiguously means "disabled".
+            _ => {
                 sqlx::query(sqlx::AssertSqlSafe(format!(
                     "{projection} information_schema.PROCESSLIST ORDER BY ID"
                 )))
