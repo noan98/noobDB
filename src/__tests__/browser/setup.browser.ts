@@ -19,17 +19,9 @@ import { afterEach, beforeEach } from "vitest";
 import { cleanup } from "vitest-browser-react";
 import { setLocale } from "../../i18n";
 
-interface TauriInternals {
-  invoke: (cmd: string) => Promise<unknown>;
-  transformCallback: (cb?: (response: unknown) => void) => number;
-  metadata?: { currentWindow: { label: string }; currentWebview: { label: string } };
-}
-
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: TauriInternals;
-  }
-}
+// `window.__TAURI_INTERNALS__` のグローバル型は `tauriMock.ts` 側で宣言している
+// (シナリオテストが同じプロパティをフル機能のフェイクランタイムで上書きするため、
+// 宣言を一本化している)。ここでは最小スタブを入れるだけ。
 
 // 1. Tauri ランタイムのスタブ。`invoke` は常に解決済み Promise を返し、IPC を
 //    呼ぶコンポーネントがあってもレンダリングを妨げない。イベント購読

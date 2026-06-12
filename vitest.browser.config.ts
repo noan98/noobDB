@@ -22,6 +22,12 @@ export default defineConfig({
     include: ["src/__tests__/browser/**/*.browser.test.tsx"],
     setupFiles: ["./src/__tests__/browser/setup.browser.ts"],
     css: true,
+    // シナリオテスト (#564) は App 全体をマウントし、接続 → ツリー → タブ →
+    // ストリーミングと多段の操作を行う。lazy チャンクの初回ロードが乗る CI の
+    // コールドスタートでも完走できるよう、テスト全体と locator 自動リトライ
+    // (expect.element / expect.poll) の上限を広めに取る。
+    testTimeout: 30_000,
+    expect: { poll: { timeout: 5_000 } },
     browser: {
       provider: playwright(),
       enabled: true,
