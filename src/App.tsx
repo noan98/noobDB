@@ -3327,7 +3327,7 @@ export default function App() {
       // Cmd/Ctrl+F → focus the focused pane's cross-column result search (no
       // Shift so the editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
       // When focus is inside the query editor (CodeMirror), defer to its own
-      // in-editor find/replace (#464) instead of stealing the shortcut.
+      // in-editor find/replace instead of stealing the shortcut.
       if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
         if ((e.target as HTMLElement | null)?.closest?.(".cm-editor")) return;
         const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
@@ -3388,7 +3388,7 @@ export default function App() {
         e.preventDefault();
         setShowCommandPalette((v) => !v);
       }
-      // Cmd/Ctrl+Shift+O: スキーマ横断のグローバルオブジェクト検索 (#473)。接続中のみ。
+      // Cmd/Ctrl+Shift+O: スキーマ横断のグローバルオブジェクト検索。接続中のみ。
       if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
         e.preventDefault();
         if (sessionIdRef.current) setShowObjectSearch((v) => !v);
@@ -3398,7 +3398,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // 複数結果タブ (#472): Cmd/Ctrl+Shift+Enter で、アクティブなクエリタブの SQL を
+  // 複数結果タブ: Cmd/Ctrl+Shift+Enter で、アクティブなクエリタブの SQL を
   // 結果を残したまま**新しいタブ**で実行する (設定 resultsInNewTab の一回限り版)。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -3416,7 +3416,7 @@ export default function App() {
   }, [activeTab, sessionId, runInTabWithGate]);
 
   // Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z で、アクティブなテーブルタブの未適用インライン
-  // セル編集を Undo / Redo する (#498)。トーストやツールバーのボタンと同じ編集
+  // セル編集を Undo / Redo する。トーストやツールバーのボタンと同じ編集
   // スタックを操作する。テキスト入力 (セル編集の input / CodeMirror エディタ /
   // その他の input・textarea) にフォーカスがある間は介入せず、その場のネイティブ
   // undo に委ねる (フォーカス文脈での衝突を避ける受け入れ条件)。各種オーバーレイ
@@ -3475,7 +3475,7 @@ export default function App() {
     redoCellEditForTab,
   ]);
 
-  // 接続のヘルスチェックと自動再接続 (#485)。ウィンドウがフォーカスを取り戻したとき
+  // 接続のヘルスチェックと自動再接続。ウィンドウがフォーカスを取り戻したとき
   // (= OS スリープ復帰やタブ切り替え後) に SELECT 1 で接続が生きているか確認し、死んで
   // いれば現在のプロファイルで再接続する。トンネル断やスリープ復帰で「次のクエリが急に
   // 失敗する」体験を緩和する。同時実行は healthCheckBusyRef で 1 件に絞る。
@@ -3500,7 +3500,7 @@ export default function App() {
     return () => window.removeEventListener("focus", onFocus);
   }, [sessionId, selectedProfile, connectingId, handleConnect, toast]);
 
-  // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする (#487)。
+  // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする。
   // 接続タブが選択されていなければ切り替えてからフォーカスする。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -3515,7 +3515,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // `?` (Shift+/) でショートカット チートシートを開閉する (#448)。入力欄・
+  // `?` (Shift+/) でショートカット チートシートを開閉する。入力欄・
   // CodeMirror エディタにフォーカスがある間は `?` を文字入力として通し、奪わない
   // (誤発火防止)。他のモーダル/フォームが開いている間も発火させない。
   useEffect(() => {
@@ -4073,9 +4073,8 @@ export default function App() {
     <Flex
       direction="column"
       h="100vh"
-      // アクティブ接続色をルートに伝播し、タイトルバー (#466) も含め全体で参照できる
-      // ようにする。main 側 (gridColumn 2) でも個別に上書きしているため作業画面の
-      // ヘッダーは従来どおり。
+      // アクティブ接続色をルートに伝播し、タイトルバーも含め全体で参照できる
+      // ようにする。main 側 (gridColumn 2) でも個別に上書きしている。
       style={
         sessionId && selectedProfile?.color
           ? ({ "--ws-accent": selectedProfile.color } as CSSProperties)
@@ -4653,7 +4652,7 @@ export default function App() {
         {!statusDismissed && status.kind !== "idle" && (() => {
           const tone = statusTone(status);
           // critical は error と同じ赤系で描き、加えて「重大」バッジで際立たせる。
-          // warning は黄系。どちらも閉じる導線を出す (#281)。
+          // warning は黄系。どちらも閉じる導線を出す。
           const isCritical = tone === "critical";
           const isError = tone === "error" || isCritical;
           const isWarning = tone === "warning";
@@ -4777,7 +4776,7 @@ export default function App() {
                   </Flex>
                 ) : (
                   // 単一行ステータスは折り返さず省略記号で詰め、全文はホバー
-                  // (title) で確認できるようにする (#346)。フッターが複数行に
+                  // (title) で確認できるようにする。フッターが複数行に
                   // 伸びてレイアウトが崩れるのを防ぐ。
                   <chakra.span
                     display="block"
@@ -5048,7 +5047,7 @@ export default function App() {
         </AnimatePresence>
       </Suspense>
       {confirmDialogElement}
-      {/* ファイルのドラッグ&ドロップ時のオーバーレイ (#497)。受理/拒否を視覚的に
+      {/* ファイルのドラッグ&ドロップ時のオーバーレイ。受理/拒否を視覚的に
           示す。pointerEvents none で実際のドロップは webview のネイティブ経路に任せ、
           このレイヤはフィードバック表示専用。 */}
       <AnimatePresence>

@@ -30,7 +30,7 @@ const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
 /** サイドバーフィルタで公開するハンドル型。App.tsx が Cmd/Ctrl+P でフォーカスを当てるために使う。 */
 export interface ConnectionListHandle {
   focusFilter: () => void;
-  /** スキーマツリーをサーバーから再取得する (#496: DDL 実行後の反映に使う)。 */
+  /** スキーマツリーをサーバーから再取得する (DDL 実行後の反映に使う)。 */
   refreshSchema: () => void;
 }
 
@@ -90,7 +90,7 @@ function driverColor(driver: string): string {
   }
 }
 
-/** 接続リストのグループ折りたたみ状態を永続化する localStorage キー (#350)。
+/** 接続リストのグループ折りたたみ状態を永続化する localStorage キー。
  *  既定はすべて展開なので、明示的に「閉じている」グループ key の配列だけを保存する。 */
 const COLLAPSED_GROUPS_KEY = "noobdb.connlist.collapsedGroups";
 
@@ -190,13 +190,13 @@ interface Props {
   onInsertTableSelect: (database: string, table: string) => void;
   /** Provided only for drivers with a single-statement definition (MySQL/SQLite). */
   onShowCreateTable?: (database: string, table: string) => void;
-  /** DB ノードから新規テーブル作成ウィザード (#460) を開く。 */
+  /** DB ノードから新規テーブル作成ウィザードを開く。 */
   onCreateTable?: (database: string) => void;
-  /** テーブル保守操作 (#496): TRUNCATE / DROP / RENAME。read_only では無効化される。 */
+  /** テーブル保守操作: TRUNCATE / DROP / RENAME。read_only では無効化される。 */
   onTruncateTable?: (database: string, table: string) => void;
   onDropTable?: (database: string, table: string) => void;
   onRenameTable?: (database: string, table: string) => void;
-  /** テーブル名をクリップボードへコピー (#496 補助)。 */
+  /** テーブル名をクリップボードへコピー。 */
   onCopyTableName?: (table: string) => void;
   /** スキーマオブジェクト (#483) の定義を開く。`id` は同名衝突を避ける一意識別子。 */
   onOpenObjectDefinition?: (database: string, kind: string, name: string, id: string | null) => void;

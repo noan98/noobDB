@@ -364,7 +364,7 @@ export function SchemaCompareView({
   const [diff, setDiff] = useState<SchemaDiff | null>(null);
   const [hideSame, setHideSame] = useState(true);
 
-  // Sync (phases 2–3) state. A single plan / selection / apply path is shared
+  // Sync state. A single plan / selection / apply path is shared
   // by the schema (DDL) and data (DML) generators; `planKind` records which one
   // produced the current plan so apply can refresh the right view afterwards.
   const [allowDestructive, setAllowDestructive] = useState(false);
@@ -376,7 +376,7 @@ export function SchemaCompareView({
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<string | null>(null);
 
-  // Data sync (phase 3) state.
+  // Data sync state.
   const [dataTable, setDataTable] = useState<string>("");
   const [dataLimit, setDataLimit] = useState(1000);
   const [dataDiff, setDataDiff] = useState<DataDiff | null>(null);
