@@ -2966,7 +2966,7 @@ export default function App() {
     };
     addTab(tab);
     runQueryInTab(tab.id, sql, base);
-    // ページネーション (#484) の総ページ数目安に使う行数推定を取得 (ベストエフォート)。
+    // ページネーションの総ページ数目安に使う行数推定を取得 (ベストエフォート)。
     if (sessionId) {
       void api
         .tableRowEstimates(sessionId, database)
@@ -2996,14 +2996,14 @@ export default function App() {
     runQueryInTab(tab.id, sql);
   }, [sessionId, runQueryInTab, addTab]);
 
-  // SQL を実行せずに新しいクエリタブのエディタへ流し込む (#460 の「エディタへ送る」)。
+  // SQL を実行せずに新しいクエリタブのエディタへ流し込む (「エディタへ送る」)。
   const openQueryInEditor = useCallback((sql: string, title?: string) => {
     const tab: Tab = { ...makeQueryTab(), sql };
     if (title) tab.title = title;
     addTab(tab);
   }, [addTab]);
 
-  // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する (#483)。
+  // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する。
   const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string, id: string | null) => {
     if (!sessionId) return;
     try {
@@ -3014,7 +3014,7 @@ export default function App() {
     }
   }, [sessionId, openQueryInEditor, toast]);
 
-  // CREATE TABLE ウィザード (#460) の実行: DDL を新しいクエリタブで実行し、閉じる。
+  // CREATE TABLE ウィザードの実行: DDL を新しいクエリタブで実行し、閉じる。
   const handleCreateTableRun = useCallback((sql: string) => {
     setCreateTableDb(null);
     openAndRunQuery(sql);
@@ -3025,7 +3025,7 @@ export default function App() {
     openQueryInEditor(sql);
   }, [openQueryInEditor]);
 
-  // テーブル保守操作 (#496): DDL を実行し、スキーマキャッシュとツリーを更新する。
+  // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。
   const runMaintenanceDdl = useCallback(async (sql: string, database: string): Promise<boolean> => {
     if (!sessionId) return false;
     try {
