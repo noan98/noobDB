@@ -446,7 +446,7 @@ async fn temporal_columns_decode_to_strings() {
     };
     let row = &res.rows[0];
     // The whole point: none of these are NULL, and TIME / TIMESTAMP in
-    // particular now carry a string value rather than dropping to NULL.
+    // particular carry a string value rather than dropping to NULL.
     assert!(
         matches!(&row[col("d")], t::Value::String(s) if s == "2026-05-26"),
         "DATE decoded as {:?}",
@@ -506,9 +506,9 @@ async fn temporal_columns_decode_to_strings() {
     conn.close().await;
 }
 
-/// list_indexes (#459) / schema_objects (#483) / 明示トランザクション (#414) /
-/// health_check (#485) を MySQL 上で一通り実行する。CI のサービスコンテナで実走し、
-/// 新規ドライバメソッドの動作とカバレッジを担保する。
+/// list_indexes / schema_objects / 明示トランザクション / health_check を
+/// MySQL 上で一通り実行する。CI のサービスコンテナで実走し、ドライバメソッドの
+/// 動作とカバレッジを担保する。
 #[tokio::test]
 async fn mysql_new_schema_apis_and_transaction_when_env_set() {
     let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {

@@ -1,11 +1,10 @@
-//! スキーマ introspection のドライバ横断ゴールデン統合テスト (#493)。
+//! スキーマ introspection のドライバ横断ゴールデン統合テスト。
 //!
 //! `tables()` / `columns()` / `schema_overview()` / `foreign_keys()` の出力を、
 //! 既知スキーマに対するゴールデン (期待値固定) として検証する。introspection は
 //! `information_schema` / `pg_catalog` / `sqlite_master` を叩くドライバ依存 SQL で
-//! `db/{mysql,postgres,sqlite}.rs` に分散しており、列順・型マップ・PK/FK・NULL 可否の
-//! ズレを継続検出できる土台がなかった。ビュー/ルーチン/トリガー取得が加わる前に
-//! 現行の introspection 契約を固定する。
+//! `db/{mysql,postgres,sqlite}.rs` に分散しているため、列順・型マップ・PK/FK・
+//! NULL 可否のズレをここで継続検出する。
 //!
 //! SQLite は環境変数不要で常時実行 (CLAUDE.md)。MySQL/PostgreSQL は
 //! `NOOBDB_TEST_{MYSQL,POSTGRES}_URL` 設定時のみ実走し、CI の `rust (test)` で

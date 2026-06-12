@@ -4,8 +4,8 @@ import { describe, it, expect } from "vitest";
 import css from "../App.css?raw";
 
 /**
- * デザイントークンの WCAG AA コントラスト回帰テスト (#326) と、フォントスケール
- * 追従の余白 (#327) のガード。
+ * デザイントークンの WCAG AA コントラスト回帰テストと、フォントスケール
+ * 追従の余白のガード。
  *
  * App.css の `:root` (ライト) と `:root[data-theme="dark"]` (ダーク) で定義された
  * CSS 変数を実ファイルから読み取り、主要なテキスト/UI 色ペアのコントラスト比を
@@ -32,7 +32,7 @@ function parseVars(blockSelectorRegex: RegExp): Record<string, string> {
 
 const light = parseVars(/:root\s*\{([\s\S]*?)\n\}/);
 const dark = parseVars(/:root\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/);
-// 追加テーマプリセット (#465)。プリセットのフルトークンブロックを実ファイルから読む。
+// 追加テーマプリセット。プリセットのフルトークンブロックを実ファイルから読む。
 const dracula = parseVars(/:root\[data-theme="dracula-dark"\]\s*\{([\s\S]*?)\n\}/);
 
 function srgbToLinear(c: number): number {
@@ -116,7 +116,6 @@ describe("WCAG AA contrast for core tokens (#326)", () => {
     });
 
     it("decimal cell color meets AA on the cell surface (#348)", () => {
-      // cell-number は #326 で検証済みだが cell-decimal は未カバーだった。
       check(vars, "cell-decimal", "bg-elevated", AA_TEXT);
       check(vars, "cell-decimal", "bg-stripe", AA_TEXT);
     });
@@ -203,7 +202,7 @@ describe("WCAG AA contrast for core tokens (#326)", () => {
 
 describe("WCAG AA contrast for theme presets (#465)", () => {
   // プリセットは追加のフルトークンテーマ。ベース light/dark と同じ主要ペアが AA を
-  // 満たすことを固定する (#476 のニュートラル/セマンティック拡張トークンは
+  // 満たすことを固定する (ニュートラル/セマンティック拡張トークンは
   // プリセットでは未定義なので、ここでは中核ペアのみ検証する)。
   describe.each([["dracula", dracula]] as const)("%s preset", (_name, vars) => {
     it("primary / secondary / muted text meet AA", () => {

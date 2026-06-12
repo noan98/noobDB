@@ -1,4 +1,4 @@
-//! スキーマ/データ比較・同期のゴールデン統合テスト (#480)。
+//! スキーマ/データ比較・同期のゴールデン統合テスト。
 //!
 //! `commands::diff` / `commands::sync` がオーケストレーションする比較・同期ロジック
 //! (`compute_data_diff` / `generate_data_sync_sql` / `generate_sync_sql` /

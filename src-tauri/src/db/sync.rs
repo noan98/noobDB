@@ -1,4 +1,4 @@
-//! Schema synchronisation — reconciling DDL generation (Issue #245, phase 2).
+//! Schema synchronisation — reconciling DDL generation.
 //!
 //! Turns a [`SchemaDiff`](super::diff::SchemaDiff) (target vs. source) into the
 //! DDL that would make the *target* match the *source*: `CREATE TABLE` for
@@ -38,7 +38,7 @@ pub enum SyncKind {
     AlterColumn,
     DropColumn,
     DropTable,
-    // Data-level statements (phase 3).
+    // Data-level statements (`db::data_diff`).
     InsertRow,
     UpdateRow,
     DeleteRow,

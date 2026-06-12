@@ -1,4 +1,4 @@
-//! Data comparison & sync — row diffing and DML generation (Issue #245, phase 3).
+//! Data comparison & sync — row diffing and DML generation.
 //!
 //! Pairs the rows of one table on two connections by primary key and classifies
 //! each as source-only (→ `INSERT`), target-only (→ `DELETE`), or present on

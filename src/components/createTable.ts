@@ -1,4 +1,4 @@
-// CREATE TABLE ウィザード (#460) の SQL 生成 (純ロジック)。
+// CREATE TABLE ウィザードの SQL 生成 (純ロジック)。
 //
 // フォームのカラム定義 (CreateTableForm) から方言に応じた CREATE TABLE 文を組み立てる。
 // 識別子のクオートは sqlDialect.ts、DEFAULT のリテラルエスケープは cellEdit.ts の

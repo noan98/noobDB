@@ -1,4 +1,4 @@
-//! Schema comparison (Issue #245, phase 1).
+//! Schema comparison.
 //!
 //! Pure, driver-agnostic diffing of two schemas, each expressed as the table /
 //! column metadata the introspection layer already produces (`TableColumnInfo`).
@@ -6,9 +6,9 @@
 //! and feeds them here; keeping the computation pure makes it unit-testable
 //! without a database.
 //!
-//! Phase 1 is comparison / visualisation only: it classifies every table and
-//! column as source-only, target-only, differing, or identical. Generating the
-//! reconciling DDL (phase 2) is intentionally out of scope.
+//! This module is comparison / visualisation only: it classifies every table
+//! and column as source-only, target-only, differing, or identical. Generating
+//! the reconciling DDL is intentionally out of scope (see `super::sync`).
 
 use serde::{Deserialize, Serialize};
 
