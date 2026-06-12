@@ -1054,7 +1054,7 @@ export default function App() {
     () => tabs.find((tt) => tt.id === activeTabId) ?? null,
     [tabs, activeTabId],
   );
-  // ドラッグ&ドロップのイベント購読 (#497) を毎タブ切替で貼り直さずに済むよう、
+  // ドラッグ&ドロップのイベント購読を毎タブ切替で貼り直さずに済むよう、
   // アクティブタブを ref でも参照できるようにする (ドロップ時の最新値読み取り用)。
   const activeTabRef = useRef<Tab | null>(activeTab);
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
@@ -1257,7 +1257,7 @@ export default function App() {
     }
   }, []);
 
-  // Reorder tabs within a pane via drag/keyboard (#446). `orderedIds` is the
+  // Reorder tabs within a pane via drag/keyboard. `orderedIds` is the
   // pane's full tab-id list in its new order; we only accept a permutation of
   // the pane's current ids so a stale callback can't smuggle in foreign tabs.
   // Persistence is order-aware already (persistTabsForProfile maps tabIds in
@@ -1301,7 +1301,7 @@ export default function App() {
     refreshProfiles();
   }, [refreshProfiles]);
 
-  // 接続プロファイルのエクスポート (#442): 全プロファイルを秘密情報抜きで JSON へ。
+  // 接続プロファイルのエクスポート: 全プロファイルを秘密情報抜きで JSON へ。
   const handleExportProfiles = useCallback(async () => {
     if (profiles.length === 0) {
       toast.info(translate("profileExportEmpty"));
@@ -1321,7 +1321,7 @@ export default function App() {
     }
   }, [profiles.length, toast, translate]);
 
-  // 接続プロファイルのインポート (#442): ファイルを選び、衝突解決ダイアログを開く。
+  // 接続プロファイルのインポート: ファイルを選び、衝突解決ダイアログを開く。
   const handleImportProfilesPick = useCallback(async () => {
     try {
       const picked = await openFileDialog({

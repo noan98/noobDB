@@ -25,10 +25,9 @@ import {
 } from "./explainPlan";
 
 /**
- * EXPLAIN プラン可視化のツリー/詳細パネルのスタイル。以前は `.explain-*` の
- * className + 子孫セレクタで `App.css` 〜コンポーネント内 `css` を当てていたが、
- * className を撤去し、各要素へ直接 `css` (状態依存はヘルパで分岐) を適用する形へ
- * 移行した。ヒート (warm/hot) のハードコード色とダークテーマ上書きはそのまま維持する。
+ * EXPLAIN プラン可視化のツリー/詳細パネルのスタイル。各要素へ直接 `css`
+ * (状態依存はヘルパで分岐) を適用する。ヒート (warm/hot) はハードコード色で、
+ * ダークテーマの上書きを持つ。
  */
 const treePaneCss: SystemStyleObject = {
   flex: 1,
