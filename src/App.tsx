@@ -3131,7 +3131,7 @@ export default function App() {
   }, [openAndRunQuery, selectedProfile?.driver]);
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
-  // で渡すため useCallback で固定する (#403)。依存は useState セッター (安定) と
+  // で渡すため useCallback で固定する。依存は useState セッター (安定) と
   // モジュールレベルの `t`・`api`、useCallback 済みの refreshProfiles のみ。
   const handleOpenCreateForm = useCallback(() => {
     setEditing(null);
@@ -3190,7 +3190,7 @@ export default function App() {
   }, [addTab]);
 
   /**
-   * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する (#497)。
+   * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する。
    * - `.sql` / `.txt` … 内容を読んで新規クエリタブとして開く (複数なら複数タブ)。
    * - `.csv` / `.tsv` … アクティブなテーブルタブがあれば ImportModal を事前選択
    *   パス付きで開く (ImportModal は単一ファイルなので先頭のみ)。
@@ -3245,7 +3245,7 @@ export default function App() {
     }
   }, [addTab, toast]);
 
-  // Tauri のウィンドウ drag-drop イベントを購読する (#497)。enter でファイル群の
+  // Tauri のウィンドウ drag-drop イベントを購読する。enter でファイル群の
   // 受理可否を判定してオーバーレイ用の状態を立て、drop で実際に振り分ける。over は
   // 座標のみでパスを持たないため、enter で得た判定をそのまま維持する。`leave` /
   // `drop` でオーバーレイを畳む。`dragDropEnabled` は Tauri v2 で既定 true のため、
@@ -3314,7 +3314,7 @@ export default function App() {
   handleCloseTabRef.current = handleCloseTab;
 
   // App-wide keyboard shortcuts for the tabbed workspace: tab management
-  // (#121) and focusing the result search (#120). Editor-scoped shortcuts
+  // and focusing the result search. Editor-scoped shortcuts
   // (run/preview/format) live in QueryEditor's CodeMirror keymap so they only
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.

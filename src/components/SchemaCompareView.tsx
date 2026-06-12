@@ -21,9 +21,8 @@ import { Icon } from "./Icon";
 import { Button, Checkbox, Input, PressableButton, Select } from "./ui";
 
 /**
- * スキーマ比較ビューの本体スタイル。以前は `.schema-compare-*` の className +
- * 子孫セレクタで `App.css` 〜コンポーネント内 `css` を当てていたが、className を
- * 撤去して各要素へ直接 `css` を適用する形へ移行した。ステータス (DiffStatus) や
+ * スキーマ比較ビューの本体スタイル。各要素へ直接 `css` を適用する。
+ * ステータス (DiffStatus) や
  * 種別 (SyncKind) で色が変わる箇所はヘルパ関数で分岐する。フォーム部品を内包する
  * ラッパ (`& select` / `& input`) だけはタグセレクタ (className ではなく要素スコープ)
  * で残す。
@@ -235,7 +234,7 @@ function statusColors(status: DiffStatus): { color: string; borderColor: string 
   }
 }
 
-/** サマリ等のステータスチップ (旧 `.schema-compare-chip` + `status-*`)。 */
+/** サマリ等のステータスチップ。 */
 function chipCss(status: DiffStatus): SystemStyleObject {
   return {
     fontSize: "var(--text-xs)",
@@ -248,7 +247,7 @@ function chipCss(status: DiffStatus): SystemStyleObject {
   };
 }
 
-/** テーブル/カラム行のステータスバッジ (旧 `.schema-compare-badge` + `status-*`)。 */
+/** テーブル/カラム行のステータスバッジ。 */
 function badgeCss(status: DiffStatus): SystemStyleObject {
   return {
     fontSize: "var(--text-xs)",
@@ -278,7 +277,7 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
   }
 }
 
-/** 同期文の種別バッジ (旧 `.schema-compare-kind` + `kind-*`)。 */
+/** 同期文の種別バッジ。 */
 function kindCss(kind: SyncKind): SystemStyleObject {
   return {
     fontSize: "var(--text-xs)",
@@ -290,7 +289,7 @@ function kindCss(kind: SyncKind): SystemStyleObject {
   };
 }
 
-/** 同期文 1 件の枠 (旧 `.schema-compare-statement` + `destructive`)。 */
+/** 同期文 1 件の枠。 */
 function statementCss(destructive: boolean): SystemStyleObject {
   const base: SystemStyleObject = {
     border: "1px solid var(--border)",
@@ -339,7 +338,7 @@ const EMPTY_SIDE: SideState = {
 };
 
 /**
- * Schema comparison + sync (Issue #245, phases 1–2): pick a source and a
+ * Schema comparison + sync: pick a source and a
  * target connection + database, view how their schemas differ, then optionally
  * generate the reconciling DDL and apply it to the target. Comparison runs over
  * short-lived read-only sessions this view opens on demand (one per distinct
