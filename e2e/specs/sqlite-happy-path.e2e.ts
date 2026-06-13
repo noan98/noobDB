@@ -208,19 +208,21 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
   // ステップ 4: クエリを実行し ResultGrid に結果が表示されること
   // ──────────────────────────────────────────────────────────────────────────
   it("SELECT クエリを実行して ResultGrid に行が表示される", async () => {
-    // テーブルを作成し、データを INSERT してから SELECT する。
-    // SQLite インメモリ/ファイルDB のためテーブルは存在しないことを前提にする。
-    const createSql =
-      "CREATE TABLE IF NOT EXISTS e2e_test (id INTEGER PRIMARY KEY, name TEXT);" +
-      "INSERT INTO e2e_test (name) VALUES ('hello from e2e');";
+    // 括弧・クォートを含まない単純な SELECT を使う。
+    // CodeMirror は括弧/クォートの自動補完 (closeBrackets) が有効で、`(` や `'`
+    // をキー入力すると閉じ括弧が自動挿入されて SQL が壊れる。テーブル作成や
+    // 文字列リテラルを避け、数値の単一カラムだけを返すことで自動補完の影響を
+    // 受けずに確実に 1 行の結果を得る。期待値はグリッドに出ない桁数の値にする。
+    const marker = "987654";
+    const selectSql = `SELECT ${marker}`;
 
     // 直前のステップで開いたクエリエディタ (CodeMirror) を再利用する。
     const editor = await $(".cm-content");
     await editor.waitForExist({ timeout: 15_000 });
     await editor.click();
-    // CodeMirror はカーソルキーが必要な場合もあるが、まず Ctrl+A で全選択して上書き。
+    // Ctrl+A で全選択してから上書き入力する。
     await browser.keys(["Control", "a"]);
-    await browser.keys([createSql]);
+    await browser.keys([selectSql]);
 
     // 実行ボタン (QueryEditor の MultiStateBadge, aria-label=editorRun)。
     // editorRun は EN/JA とも "Run"。activeTable があると "Run on ..." になるため
@@ -229,24 +231,13 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
     await runBtn.waitForExist({ timeout: 5_000 });
     await runBtn.click();
 
-    // CREATE/INSERT の完了後、SELECT を実行。
-    await browser.pause(500);
+    // ResultGrid にセル (role=gridcell) が現れるまで待機。
+    const firstCell = await $('[role="gridcell"]');
+    await firstCell.waitForExist({ timeout: 30_000 });
+    await expect(firstCell).toBeDisplayed();
 
-    // エディタの内容を SELECT に切り替える。
-    await editor.click();
-    await browser.keys(["Control", "a"]);
-    await browser.keys(["SELECT * FROM e2e_test;"]);
-
-    // 再実行。
-    await runBtn.click();
-
-    // ResultGrid に行が現れるまで待機 (role=row または role=gridcell)。
-    const firstRow = await $('[role="row"]:nth-child(2), [role="gridcell"]');
-    await firstRow.waitForExist({ timeout: 30_000 });
-    await expect(firstRow).toBeDisplayed();
-
-    // "hello from e2e" が表示されていることを確認。
-    const cellText = await $(xpathContainsText("hello from e2e", "gridcell"));
+    // 期待した値のセルが表示されていることを確認。
+    const cellText = await $(xpathContainsText(marker, "gridcell"));
     await cellText.waitForExist({ timeout: 10_000 });
     await expect(cellText).toBeDisplayed();
   });
