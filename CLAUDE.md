@@ -844,6 +844,15 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
 - セル整形ユーティリティ — `cellTypeMeta.ts` (カラム型を 9 種の `CellKind` へ分類)、
   `cellFormat.ts` (JSON コンパクト表記・日時のロケール整形。**表示専用**で実値は不変)、
   `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用)。
+- 結果グリッドの分析サマリ — `gridStats.ts` (#523/#524)。`selectionSummary` が矩形範囲
+  選択セルの件数/非NULL数/数値数/合計/平均/最小/最大を集計し `ResultGrid` の
+  ステータスバーへ表示 (#523)。`columnStats` が在メモリ (取得済み行) の列値から件数/
+  NULL率/DISTINCT/数値レンジ/文字列長/代表値を計算し、ヘッダーメニューの「列の統計」
+  ポップオーバー (`ColumnStatsMenu`) へ表示 (#524)。`buildColumnStatsSql` がドライバ方言で
+  識別子をクオートした全件集計 SQL を生成し、`parseFullColumnStats` が単一行結果を位置で
+  構造化する (全件集計ボタンは `App` から `api.runQuery` を束ねた `onRunStatsQuery` が
+  渡るときだけ出る)。すべて副作用なしの純関数で `gridStats.test.ts` がテスト。数値化は
+  `cellConditionalFormat.toNumber` を共有。
 - 基盤モジュール — `shortcuts.ts` (全ショートカット定義の単一ソース)、`keyboardNav.ts`
   (`useFocusTrap` / `useRovingFocus` / `useReturnFocus` の a11y フック)、
   `tableQuickAccess.ts` (お気に入り + 最近使ったテーブルを localStorage 永続化)、
