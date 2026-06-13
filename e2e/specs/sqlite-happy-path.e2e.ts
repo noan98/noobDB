@@ -69,6 +69,20 @@ async function clickButtonByText(labels: string[]): Promise<void> {
 const NEW_CONNECTION_SELECTOR =
   '[aria-label="New connection"], [aria-label="新規接続"]';
 
+/**
+ * 任意要素の部分テキストで要素を特定する XPath を生成する。
+ *
+ * WebDriverIO の `*=text` セレクタは「partial link text」(WebDriver 上は <a>
+ * 要素限定) に展開されるため、<span>/<div> 等のテキスト (プロファイル名や
+ * 結果セルの値) にはマッチしない。任意要素にマッチさせるため XPath を使う。
+ * role を渡すとその role を持つ要素に絞り込む (例: treeitem / gridcell)。
+ */
+function xpathContainsText(text: string, role?: string): string {
+  const base = role ? `//*[@role="${role}"]` : "//*";
+  // text に二重引用符が含まれない前提 (本スペックの値はいずれも含まない)。
+  return `${base}[contains(., "${text}")]`;
+}
+
 describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
   // テスト用一時ディレクトリと SQLite ファイルパス。終了後に削除する。
   let tmpDir: string;
@@ -127,8 +141,20 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
     await nameInput.setValue("E2E Test SQLite");
 
     // ドライバを SQLite に変更 (先頭の <select> がドライバ選択)。
+    // 注意: ネイティブ <select> を WebDriver の click 経由で操作すると、
+    // WebKitGTK ではネイティブのドロップダウンポップアップが開き automation が
+    // 固まる (120s タイムアウトの原因になっていた)。クリックせずに value を直接
+    // セットして change を発火し、React (controlled component) の onChange を駆動する。
     const driverSelect = await $("select");
-    await driverSelect.selectByAttribute("value", "sqlite");
+    await driverSelect.waitForExist({ timeout: 5_000 });
+    await browser.execute((el: HTMLSelectElement) => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(el, "sqlite");
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }, driverSelect);
 
     // ファイルパスを入力 (一時ファイルパスを使用)。SQLite 選択後に現れる。
     // placeholder = formSqliteFilePathPlaceholder ("/path/to/database.db", 両ロケール共通)。
@@ -140,7 +166,7 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
     await clickButtonByText(["Save", "保存"]);
 
     // 保存後は ConnectionList に戻り、追加したプロファイル名が表示される。
-    const profileName = await $("*=E2E Test SQLite");
+    const profileName = await $(xpathContainsText("E2E Test SQLite", "treeitem"));
     await profileName.waitForExist({ timeout: 10_000 });
     await expect(profileName).toBeDisplayed();
   });
@@ -151,7 +177,7 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
   it("SQLite データベースへ接続できる", async () => {
     // ConnectionList ではプロファイル行 (role=treeitem) をクリックすると
     // onConnect が発火して接続が確立する (専用の「接続」ボタンは存在しない)。
-    const profileItem = await $("*=E2E Test SQLite");
+    const profileItem = await $(xpathContainsText("E2E Test SQLite", "treeitem"));
     await profileItem.waitForExist({ timeout: 10_000 });
     await profileItem.click();
 
@@ -206,7 +232,7 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
     await expect(firstRow).toBeDisplayed();
 
     // "hello from e2e" が表示されていることを確認。
-    const cellText = await $("*=hello from e2e");
+    const cellText = await $(xpathContainsText("hello from e2e", "gridcell"));
     await cellText.waitForExist({ timeout: 10_000 });
     await expect(cellText).toBeDisplayed();
   });
