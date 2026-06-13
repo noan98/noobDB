@@ -51,6 +51,14 @@ pub struct DumpOptions {
     /// dumps every schema in the database.
     #[serde(default)]
     pub pg_schema: Option<String>,
+
+    // ── 全ドライバ共通 (#546) ──
+    /// 書き出した SQL をバックエンドの整形ユーティリティ (`db::format::format_sql`)
+    /// で整形して保存する。既定オフで後方互換 (オフなら出力はサーバ/生成そのまま)。
+    /// 可読性向上が目的の best-effort で、MySQL の `/*!...*/` 条件付きコメントなどは
+    /// 内容は保たれるが配置が変わりうるため、再取り込み重視ならオフのままにする。
+    #[serde(default)]
+    pub format_sql: bool,
 }
 
 /// Dump `database` to `path`, dispatching on the session's driver.
@@ -76,13 +84,34 @@ pub async fn dump_database(
         return Err(AppError::InvalidInput("save path is empty".into()));
     }
 
-    match session.connect_options.driver {
-        DriverKind::Mysql => dump_mysql(&session.connect_options, &database, &path, &options).await,
-        DriverKind::Postgres => {
-            dump_postgres(&session.connect_options, &database, &path, &options).await
+    let bytes = match session.connect_options.driver {
+        DriverKind::Mysql => {
+            dump_mysql(&session.connect_options, &database, &path, &options).await?
         }
-        DriverKind::Sqlite => dump_sqlite(&session.conn, &path, &options).await,
+        DriverKind::Postgres => {
+            dump_postgres(&session.connect_options, &database, &path, &options).await?
+        }
+        DriverKind::Sqlite => dump_sqlite(&session.conn, &path, &options).await?,
+    };
+
+    // 整形オプションが有効なら、書き出した SQL を整形して保存し直す (#546)。
+    if options.format_sql && bytes > 0 {
+        return format_dump_file(path).await;
     }
+    Ok(bytes)
+}
+
+/// 書き出し済みのダンプファイルを `db::format::format_sql` で整形して書き戻し、
+/// 整形後のバイト数を返す。CPU バウンドな整形と同期 I/O は blocking スレッドで行う。
+async fn format_dump_file(path: String) -> Result<u64> {
+    tokio::task::spawn_blocking(move || -> Result<u64> {
+        let raw = std::fs::read_to_string(&path)?;
+        let formatted = crate::db::format::format_sql(&raw);
+        std::fs::write(&path, formatted.as_bytes())?;
+        Ok(std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0))
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("dump format task failed: {e}")))?
 }
 
 /// Run `mysqldump` for `database`, writing SQL to `path`.
@@ -612,6 +641,21 @@ mod tests {
         assert_eq!(my_cnf_quote("p@ss#word"), "\"p@ss#word\"");
         assert_eq!(my_cnf_quote("a\"b\\c"), "\"a\\\"b\\\\c\"");
         assert_eq!(my_cnf_quote("line\nbreak"), "\"line\\nbreak\"");
+    }
+
+    #[tokio::test]
+    async fn format_dump_file_reformats_in_place() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("noobdb_dump_fmt_{}.sql", std::process::id()));
+        std::fs::write(&path, "select a,b from t where a=1;").unwrap();
+        let bytes = format_dump_file(path.to_string_lossy().to_string())
+            .await
+            .unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        // 整形により列が 2 スペース字下げで改行されること。返り値は整形後のサイズ。
+        assert!(out.contains("\n  a,"), "got: {out}");
+        assert_eq!(bytes as usize, out.len());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

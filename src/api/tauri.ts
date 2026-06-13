@@ -411,7 +411,7 @@ export interface LogView {
   path: string | null;
 }
 
-export type ExportFormat = "csv" | "json";
+export type ExportFormat = "csv" | "json" | "ndjson";
 
 /** Checkbox-selected `mysqldump` flags for a database dump. */
 export interface DumpOptions {
@@ -439,6 +439,12 @@ export interface DumpOptions {
   noPrivileges?: boolean;
   /** PostgreSQL only — `pg_dump -n <schema>`; empty/undefined = all schemas. */
   pgSchema?: string | null;
+  /**
+   * All drivers — reformat the written SQL with the backend formatter for
+   * readability. Off by default (backward compatible: output stays as produced
+   * by the server / generator). Best-effort; intended for review/version control.
+   */
+  formatSql?: boolean;
 }
 
 /**

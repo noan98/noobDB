@@ -1,5 +1,6 @@
 pub mod data_diff;
 pub mod diff;
+pub mod format;
 pub mod mysql;
 pub mod postgres;
 pub mod sqlite;
