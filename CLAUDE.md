@@ -843,7 +843,17 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   ウィンドウクローム。色決定は `titleBarContext.ts`)。
 - セル整形ユーティリティ — `cellTypeMeta.ts` (カラム型を 9 種の `CellKind` へ分類)、
   `cellFormat.ts` (JSON コンパクト表記・日時のロケール整形。**表示専用**で実値は不変)、
-  `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用)。
+  `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用。色は下記
+  `colorScale.ts` を参照)。
+- データ可視化カラースケール (#525) — `colorScale.ts` が、データを色で符号化する表面
+  (チャート系列・ヒートマップ・データバー・将来のコスト/NULL 率ミニバー) が共有する
+  **単一のスケール体系**を純ロジックとして定義する。**sequential** (単一色相の連続、CB
+  セーフ) / **categorical** (CB 配慮の順序付き離散色、チャート系列用) / **diverging**
+  (中央が淡い発散) の 3 系統と、値 → 色の純関数 (`sampleRamp` / `categoricalColor`) ・
+  塗り面上の可読インク (`readableInk`) を公開する。`ChartView` と
+  `cellConditionalFormat.ts` はここを参照し色を二重定義しない (`colorScale.test.ts` が
+  最小/最大/NaN などの境界を固定)。`ChartView` の系列描画/出現アニメーションは
+  `motion.ts` の共有プリセットに沿い、reduced-motion で自動抑制される (#526)。
 - 基盤モジュール — `shortcuts.ts` (全ショートカット定義の単一ソース)、`keyboardNav.ts`
   (`useFocusTrap` / `useRovingFocus` / `useReturnFocus` の a11y フック)、
   `tableQuickAccess.ts` (お気に入り + 最近使ったテーブルを localStorage 永続化)、
