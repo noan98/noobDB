@@ -94,7 +94,10 @@ export const config: Options.Testrunner = {
   framework: "mocha",
   mochaOpts: {
     ui: "bdd",
-    timeout: 120_000,
+    // tauri-service は各コマンド前にウィンドウフォーカス検出 (失敗する IPC eval)
+    // を挟むため実 webview 上では 1 コマンドあたりのオーバーヘッドが大きく、
+    // 接続〜エディタ操作まで含むテストは時間がかかる。余裕を持たせる。
+    timeout: 180_000,
   },
   reporters: ["spec"],
 

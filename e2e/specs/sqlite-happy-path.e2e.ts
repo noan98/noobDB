@@ -51,16 +51,24 @@ const describeMaybe = binaryExists ? describe : describe.skip;
  * WebDriverIO の部分テキストセレクタ (`button*=...`) は CSS 属性セレクタと
  * カンマで連結できない (連結すると WebDriver に不正な CSS として渡り
  * "is not a valid selector" になる)。そこでロケール候補を 1 つずつ単独の
- * テキストセレクタとして試し、最初に存在したものをクリックする。
+ * テキストセレクタとして試す。ボタンは操作後に遅れて出現することがある
+ * (接続完了後の EmptyState など) ため、timeoutMs まで両候補をポーリングする。
  */
-async function clickButtonByText(labels: string[]): Promise<void> {
-  for (const label of labels) {
-    const el = await $(`button*=${label}`);
-    if (await el.isExisting()) {
-      await el.click();
-      return;
+async function clickButtonByText(
+  labels: string[],
+  timeoutMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    for (const label of labels) {
+      const el = await $(`button*=${label}`);
+      if (await el.isExisting()) {
+        await el.click();
+        return;
+      }
     }
-  }
+    await browser.pause(300);
+  } while (Date.now() < deadline);
   throw new Error(`ボタンが見つかりません (候補: ${labels.join(", ")})`);
 }
 
@@ -165,29 +173,35 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
     // 「保存」ボタンをクリック (formSave, EN: "Save" / JA: "保存")。
     await clickButtonByText(["Save", "保存"]);
 
-    // 保存後は ConnectionList に戻り、追加したプロファイル名が表示される。
+    // 保存処理 (プロファイル永続化 + keyring) と再描画が落ち着くのを待つ。
+    await browser.pause(1_000);
+
+    // 保存後は ConnectionList に戻り、追加したプロファイル名が
+    // プロファイル行 (role=treeitem) として表示される。
     const profileName = await $(xpathContainsText("E2E Test SQLite", "treeitem"));
-    await profileName.waitForExist({ timeout: 10_000 });
-    await expect(profileName).toBeDisplayed();
+    await profileName.waitForExist({ timeout: 15_000 });
   });
 
   // ──────────────────────────────────────────────────────────────────────────
   // ステップ 3: 接続を確立する
   // ──────────────────────────────────────────────────────────────────────────
-  it("SQLite データベースへ接続できる", async () => {
+  it("SQLite データベースへ接続し、クエリエディタを開ける", async () => {
     // ConnectionList ではプロファイル行 (role=treeitem) をクリックすると
     // onConnect が発火して接続が確立する (専用の「接続」ボタンは存在しない)。
     const profileItem = await $(xpathContainsText("E2E Test SQLite", "treeitem"));
     await profileItem.waitForExist({ timeout: 10_000 });
     await profileItem.click();
 
-    // 接続が確立されると QueryEditor またはタブが表示される。
-    // タブバー (TabBar) またはクエリエディタの textarea/div が現れるまで待機。
-    const queryArea = await $(
-      '[role="textbox"], textarea, .cm-content, [data-testid="query-editor"]',
-    );
-    await queryArea.waitForExist({ timeout: 30_000 });
-    await expect(queryArea).toBeDisplayed();
+    // 接続が確立すると、空のワークスペースに EmptyState が現れ「新規クエリ」
+    // ボタン (tabsNewQuery, EN: "New query" / JA: "新しいクエリ") が表示される。
+    // 接続直後はクエリエディタが自動表示されないため、このボタンを押して
+    // query タブ (CodeMirror) を開く。ボタンの出現自体が接続成功の合図になる。
+    await clickButtonByText(["New query", "新しいクエリ"], 30_000);
+
+    // CodeMirror エディタ (.cm-content) が表示されることを確認。
+    const editor = await $(".cm-content");
+    await editor.waitForExist({ timeout: 15_000 });
+    await expect(editor).toBeDisplayed();
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -200,9 +214,9 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
       "CREATE TABLE IF NOT EXISTS e2e_test (id INTEGER PRIMARY KEY, name TEXT);" +
       "INSERT INTO e2e_test (name) VALUES ('hello from e2e');";
 
-    // CodeMirror エディタへの入力: .cm-content に値をセット。
+    // 直前のステップで開いたクエリエディタ (CodeMirror) を再利用する。
     const editor = await $(".cm-content");
-    await editor.waitForExist({ timeout: 10_000 });
+    await editor.waitForExist({ timeout: 15_000 });
     await editor.click();
     // CodeMirror はカーソルキーが必要な場合もあるが、まず Ctrl+A で全選択して上書き。
     await browser.keys(["Control", "a"]);
