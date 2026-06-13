@@ -45,6 +45,30 @@ const binaryExists = fs.existsSync(binaryPath);
  */
 const describeMaybe = binaryExists ? describe : describe.skip;
 
+/**
+ * テキストでボタンを探してクリックするヘルパー (日本語/英語の i18n 両対応)。
+ *
+ * WebDriverIO の部分テキストセレクタ (`button*=...`) は CSS 属性セレクタと
+ * カンマで連結できない (連結すると WebDriver に不正な CSS として渡り
+ * "is not a valid selector" になる)。そこでロケール候補を 1 つずつ単独の
+ * テキストセレクタとして試し、最初に存在したものをクリックする。
+ */
+async function clickButtonByText(labels: string[]): Promise<void> {
+  for (const label of labels) {
+    const el = await $(`button*=${label}`);
+    if (await el.isExisting()) {
+      await el.click();
+      return;
+    }
+  }
+  throw new Error(`ボタンが見つかりません (候補: ${labels.join(", ")})`);
+}
+
+// 新規接続ボタンは aria-label に i18n 文字列を持つ (EN: "New connection" /
+// JA: "新規接続")。CSS 属性セレクタのカンマ連結は有効なので 1 つにまとめられる。
+const NEW_CONNECTION_SELECTOR =
+  '[aria-label="New connection"], [aria-label="新規接続"]';
+
 describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
   // テスト用一時ディレクトリと SQLite ファイルパス。終了後に削除する。
   let tmpDir: string;
@@ -78,12 +102,9 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
   // ステップ 1: アプリが起動し ConnectionList が表示されること
   // ──────────────────────────────────────────────────────────────────────────
   it("アプリ起動後に接続リストが表示される", async () => {
-    // ConnectionList の「新規接続」ボタン (role=button) を探す。
-    // セレクタは src/components/ConnectionList.tsx の aria-label に依存。
+    // ツールバーの「新規接続」ボタン (App.tsx の IconButton, aria-label=appNew)。
     // 表示されるまで最大 20 秒待機する (webview 初期化に時間がかかる場合がある)。
-    const newConnectionBtn = await $(
-      '[aria-label="New connection"], [aria-label="新規接続"], button*=New, button*=新規',
-    );
+    const newConnectionBtn = await $(NEW_CONNECTION_SELECTOR);
     await newConnectionBtn.waitForExist({ timeout: 20_000 });
     await expect(newConnectionBtn).toBeDisplayed();
   });
@@ -93,35 +114,30 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
   // ──────────────────────────────────────────────────────────────────────────
   it("SQLite 接続フォームに設定を入力して保存できる", async () => {
     // 「新規接続」ボタンをクリックしてフォームを開く。
-    const newConnectionBtn = await $(
-      '[aria-label="New connection"], [aria-label="新規接続"]',
-    );
+    const newConnectionBtn = await $(NEW_CONNECTION_SELECTOR);
     await newConnectionBtn.click();
 
     // フォームが表示されるまで待機。
-    // ConnectionForm は接続名の input を持つ。
-    const nameInput = await $('input[placeholder*="My DB"], input[placeholder*="例: My DB"]');
+    // ConnectionForm の接続名 input (placeholder = formNamePlaceholder)。
+    // EN: "My DB" / JA: "例: My DB" の両方を部分一致でカバーする。
+    const nameInput = await $('input[placeholder*="My DB"]');
     await nameInput.waitForExist({ timeout: 10_000 });
 
     // 接続名を入力。
     await nameInput.setValue("E2E Test SQLite");
 
-    // ドライバを SQLite に変更。
+    // ドライバを SQLite に変更 (先頭の <select> がドライバ選択)。
     const driverSelect = await $("select");
     await driverSelect.selectByAttribute("value", "sqlite");
 
-    // ファイルパスを入力 (一時ファイルパスを使用)。
-    // SQLite 選択後にファイルパス input が現れる。
-    const filePathInput = await $(
-      'input[placeholder*="/home"], input[placeholder*="C:\\\\"]',
-    );
+    // ファイルパスを入力 (一時ファイルパスを使用)。SQLite 選択後に現れる。
+    // placeholder = formSqliteFilePathPlaceholder ("/path/to/database.db", 両ロケール共通)。
+    const filePathInput = await $('input[placeholder="/path/to/database.db"]');
     await filePathInput.waitForExist({ timeout: 5_000 });
     await filePathInput.setValue(tmpDbPath);
 
-    // 「保存」ボタンをクリック。
-    // ConnectionForm の保存ボタンは type=submit か role=button で "Save" / "保存"。
-    const saveBtn = await $('button[type="submit"], button*=Save, button*=保存');
-    await saveBtn.click();
+    // 「保存」ボタンをクリック (formSave, EN: "Save" / JA: "保存")。
+    await clickButtonByText(["Save", "保存"]);
 
     // 保存後は ConnectionList に戻り、追加したプロファイル名が表示される。
     const profileName = await $("*=E2E Test SQLite");
@@ -133,20 +149,11 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
   // ステップ 3: 接続を確立する
   // ──────────────────────────────────────────────────────────────────────────
   it("SQLite データベースへ接続できる", async () => {
-    // プロファイルをダブルクリックまたは「接続」ボタンをクリック。
-    // ConnectionList では接続名をクリックすると「接続」アクションが発火する想定。
+    // ConnectionList ではプロファイル行 (role=treeitem) をクリックすると
+    // onConnect が発火して接続が確立する (専用の「接続」ボタンは存在しない)。
     const profileItem = await $("*=E2E Test SQLite");
+    await profileItem.waitForExist({ timeout: 10_000 });
     await profileItem.click();
-
-    // 「接続」ボタンが出れば押す (右クリックメニュー → Connect など UI により異なる)。
-    // まずは "Connect" ボタンまたは同等の要素を探す。
-    const connectBtn = await $(
-      'button*=Connect, button*=接続, [aria-label*="Connect"], [aria-label*="接続"]',
-    );
-    // connectBtn が存在すればクリック (プロファイルクリックだけで接続する場合は不要)。
-    if (await connectBtn.isExisting()) {
-      await connectBtn.click();
-    }
 
     // 接続が確立されると QueryEditor またはタブが表示される。
     // タブバー (TabBar) またはクエリエディタの textarea/div が現れるまで待機。
@@ -175,10 +182,10 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
     await browser.keys(["Control", "a"]);
     await browser.keys([createSql]);
 
-    // 実行ボタン (Run / 実行) をクリック。
-    const runBtn = await $(
-      'button[aria-label*="Run"], button[aria-label*="実行"], button*=Run, button*=実行',
-    );
+    // 実行ボタン (QueryEditor の MultiStateBadge, aria-label=editorRun)。
+    // editorRun は EN/JA とも "Run"。activeTable があると "Run on ..." になるため
+    // 前方一致で拾う。
+    const runBtn = await $('button[aria-label^="Run"]');
     await runBtn.waitForExist({ timeout: 5_000 });
     await runBtn.click();
 
@@ -219,9 +226,8 @@ describeMaybe("SQLite ハッピーパス E2E (#529 PoC)", () => {
     await editInput.clearValue();
     await editInput.setValue("updated by e2e");
 
-    // Apply ボタン (aria-label="Apply" など) をクリック。
-    const applyBtn = await $('[aria-label*="Apply"], button*=Apply, button*=適用');
-    await applyBtn.click();
+    // Apply ボタン (EN: "Apply" / JA: "適用") をクリック。
+    await clickButtonByText(["Apply", "適用"]);
 
     // 更新後の値が表示されることを確認。
     const updatedCell = await $("*=updated by e2e");
