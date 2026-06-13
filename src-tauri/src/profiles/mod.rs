@@ -62,6 +62,11 @@ pub struct ConnectionProfile {
     /// Client private key file path for mutual TLS (mTLS).
     #[serde(default)]
     pub ssl_client_key: Option<String>,
+    /// Session-initialization SQL run right after each connection is established
+    /// (e.g. `SET search_path`, `SET time_zone`, `PRAGMA`). Multiple statements
+    /// allowed. Non-secret; stored in `profiles.json`.
+    #[serde(default)]
+    pub init_sql: Option<String>,
 }
 
 /// How an SSH tunnel authenticates with the jump host.

@@ -24,7 +24,9 @@ pub mod __test_api {
     pub use crate::db::types::{
         Column, ForeignKey, QueryResult, TableColumnInfo, TableSchema, Value,
     };
-    pub use crate::db::{is_read_only_sql, Connection, DbConnectOptions, DriverKind, SslMode};
+    pub use crate::db::{
+        is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
+    };
     pub use crate::error::AppError;
     pub use crate::profiles::SshAuthMethod;
     pub use crate::ssh::{SshConfig, SshTunnel};
@@ -150,6 +152,7 @@ pub mod __test_api {
             ssl_root_cert: None,
             ssl_client_cert: None,
             ssl_client_key: None,
+            init_sql: None,
         }
     }
 
@@ -192,6 +195,7 @@ pub mod __test_api {
             ssl_root_cert: None,
             ssl_client_cert: None,
             ssl_client_key: None,
+            init_sql: None,
         })
     }
 }

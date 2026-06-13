@@ -5,7 +5,7 @@ import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod, SslMode } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
-import { Button, Input, Select, Switch } from "./ui";
+import { Button, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
@@ -194,6 +194,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sslClientCert, setSslClientCert] = useState(initial?.ssl_client_cert ?? "");
   const [sslClientKey, setSslClientKey] = useState(initial?.ssl_client_key ?? "");
 
+  // Session-initialization SQL run on every new connection (#522).
+  const [initSql, setInitSql] = useState(initial?.init_sql ?? "");
+
   const [useSsh, setUseSsh] = useState(!!initial?.ssh);
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
   const [sshPort, setSshPort] = useState(String(initial?.ssh?.port ?? 22));
@@ -299,6 +302,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         file_path: filePath || null,
         read_only: readOnly,
         skip_history: skipHistory,
+        init_sql: initSql.trim() || null,
       };
     }
     return {
@@ -324,6 +328,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       read_only: readOnly,
       skip_history: skipHistory,
       ...tlsSettings(),
+      init_sql: initSql.trim() || null,
     };
   };
 
@@ -413,6 +418,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         ssl_root_cert: isFileBacked ? null : (sslRootCert.trim() || null),
         ssl_client_cert: isFileBacked ? null : (sslClientCert.trim() || null),
         ssl_client_key: isFileBacked ? null : (sslClientKey.trim() || null),
+        // Init SQL applies to all drivers (SQLite via PRAGMA).
+        init_sql: initSql.trim() || null,
       });
       onSaved();
     } catch (e) {
@@ -753,6 +760,24 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           )}
         </Fieldset>
       )}
+
+      <Fieldset>
+        <Legend>{t("formInitSqlLegend")}</Legend>
+        <Box>
+          <Textarea
+            value={initSql}
+            onChange={(e) => setInitSql(e.target.value)}
+            placeholder={
+              isFileBacked ? t("formInitSqlPlaceholderSqlite") : t("formInitSqlPlaceholder")
+            }
+            rows={3}
+            css={{ fontFamily: "var(--font-mono)", resize: "vertical", width: "100%" }}
+          />
+          <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+            {t("formInitSqlHelp")}
+          </Text>
+        </Box>
+      </Fieldset>
 
       {message && <Box gridColumn="span 2" color="app.textSuccess">{message}</Box>}
       {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}

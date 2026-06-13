@@ -8,7 +8,7 @@ use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
-use super::{build_insert_sql, DbConnectOptions};
+use super::{build_insert_sql, init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
 
 /// Default "database" name reported to the UI tree. SQLite uses `main` for
@@ -36,18 +36,27 @@ impl SqliteConn {
             .create_if_missing(false)
             .foreign_keys(true);
 
-        let pool = SqlitePoolOptions::new()
+        let mut pool_opts = SqlitePoolOptions::new()
             .min_connections(0)
             // SQLite tolerates concurrent reads but writes serialise — keep
             // the pool small to avoid noisy SQLITE_BUSY retries.
             .max_connections(4)
-            .acquire_timeout(std::time::Duration::from_secs(15))
-            .connect_with(connect)
-            .await
-            .map_err(|e| {
-                tracing::error!(path, error = %e, "sqlite: failed to create connection pool");
-                e
-            })?;
+            .acquire_timeout(std::time::Duration::from_secs(15));
+        if let Some(sql) = init_sql_of(opts) {
+            // Run the session-init SQL (e.g. PRAGMAs) on every physical connection.
+            pool_opts = pool_opts.after_connect(move |conn, _meta| {
+                let sql = sql.clone();
+                Box::pin(async move {
+                    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
+                        .await?;
+                    Ok(())
+                })
+            });
+        }
+        let pool = pool_opts.connect_with(connect).await.map_err(|e| {
+            tracing::error!(path, error = %e, "sqlite: failed to create connection pool");
+            e
+        })?;
         Ok(Self {
             pool,
             tx: tokio::sync::Mutex::new(None),

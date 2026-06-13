@@ -8,7 +8,7 @@ use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
-use super::{DbConnectOptions, SslMode};
+use super::{init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
 
 pub struct PostgresConn {
@@ -31,22 +31,31 @@ impl PostgresConn {
             }
         }
         connect = apply_tls(connect, opts);
-        let pool = PgPoolOptions::new()
+        let mut pool_opts = PgPoolOptions::new()
             .min_connections(0)
             .max_connections(5)
-            .acquire_timeout(std::time::Duration::from_secs(15))
-            .connect_with(connect)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    host = %opts.host,
-                    port = opts.port,
-                    user = %opts.user,
-                    error = %e,
-                    "postgres: failed to create connection pool"
-                );
-                e
-            })?;
+            .acquire_timeout(std::time::Duration::from_secs(15));
+        if let Some(sql) = init_sql_of(opts) {
+            // Run the session-init SQL on every physical connection the pool opens.
+            pool_opts = pool_opts.after_connect(move |conn, _meta| {
+                let sql = sql.clone();
+                Box::pin(async move {
+                    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
+                        .await?;
+                    Ok(())
+                })
+            });
+        }
+        let pool = pool_opts.connect_with(connect).await.map_err(|e| {
+            tracing::error!(
+                host = %opts.host,
+                port = opts.port,
+                user = %opts.user,
+                error = %e,
+                "postgres: failed to create connection pool"
+            );
+            e
+        })?;
         Ok(Self {
             pool,
             tx: tokio::sync::Mutex::new(None),
@@ -1166,7 +1175,10 @@ mod tests {
         assert!(matches!(map_ssl_mode(SslMode::Disable), PgSslMode::Disable));
         assert!(matches!(map_ssl_mode(SslMode::Prefer), PgSslMode::Prefer));
         assert!(matches!(map_ssl_mode(SslMode::Require), PgSslMode::Require));
-        assert!(matches!(map_ssl_mode(SslMode::VerifyCa), PgSslMode::VerifyCa));
+        assert!(matches!(
+            map_ssl_mode(SslMode::VerifyCa),
+            PgSslMode::VerifyCa
+        ));
         assert!(matches!(
             map_ssl_mode(SslMode::VerifyFull),
             PgSslMode::VerifyFull
@@ -1178,7 +1190,10 @@ mod tests {
         // A blank form field arrives as `Some("")`; it must not be passed to
         // sqlx as a real path (which would fail to open). `non_empty` filters it.
         assert_eq!(non_empty(&Some("  ".to_string())), None);
-        assert_eq!(non_empty(&Some("/tmp/ca.pem".to_string())), Some("/tmp/ca.pem"));
+        assert_eq!(
+            non_empty(&Some("/tmp/ca.pem".to_string())),
+            Some("/tmp/ca.pem")
+        );
         assert_eq!(non_empty(&None), None);
     }
 

@@ -11,7 +11,7 @@ use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
-use super::{build_insert_sql, DbConnectOptions, SslMode};
+use super::{build_insert_sql, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
@@ -34,22 +34,31 @@ impl MySqlConn {
             }
         }
         connect = apply_tls(connect, opts);
-        let pool = MySqlPoolOptions::new()
+        let mut pool_opts = MySqlPoolOptions::new()
             .min_connections(0)
             .max_connections(5)
-            .acquire_timeout(std::time::Duration::from_secs(15))
-            .connect_with(connect)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    host = %opts.host,
-                    port = opts.port,
-                    user = %opts.user,
-                    error = %e,
-                    "mysql: failed to create connection pool"
-                );
-                e
-            })?;
+            .acquire_timeout(std::time::Duration::from_secs(15));
+        if let Some(sql) = init_sql_of(opts) {
+            // Run the session-init SQL on every physical connection the pool opens.
+            pool_opts = pool_opts.after_connect(move |conn, _meta| {
+                let sql = sql.clone();
+                Box::pin(async move {
+                    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
+                        .await?;
+                    Ok(())
+                })
+            });
+        }
+        let pool = pool_opts.connect_with(connect).await.map_err(|e| {
+            tracing::error!(
+                host = %opts.host,
+                port = opts.port,
+                user = %opts.user,
+                error = %e,
+                "mysql: failed to create connection pool"
+            );
+            e
+        })?;
         Ok(Self {
             pool,
             tx: tokio::sync::Mutex::new(None),

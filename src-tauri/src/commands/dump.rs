@@ -586,6 +586,7 @@ mod tests {
             ssl_root_cert: None,
             ssl_client_cert: None,
             ssl_client_key: None,
+            init_sql: None,
         };
         let path = {
             let f = PgPassFile::create(&opts, "testdb").expect("create");
@@ -627,6 +628,7 @@ mod tests {
             ssl_root_cert: None,
             ssl_client_cert: None,
             ssl_client_key: None,
+            init_sql: None,
         };
         let path = {
             let f = DefaultsFile::create(&opts).expect("create");

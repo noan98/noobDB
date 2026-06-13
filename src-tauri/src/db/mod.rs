@@ -43,6 +43,12 @@ pub struct DbConnectOptions {
     /// Path to the client private key (PEM) for mutual TLS (mTLS).
     #[serde(default)]
     pub ssl_client_key: Option<String>,
+    /// Session-initialization SQL run on every physical pool connection right
+    /// after it is established (via sqlx `after_connect`). May contain multiple
+    /// `;`-separated statements. `None`/empty runs nothing. Must pass
+    /// [`is_session_init_sql`] (SET / PRAGMA / read-only only). Non-secret.
+    #[serde(default)]
+    pub init_sql: Option<String>,
 }
 
 /// Driver-neutral TLS requirement level. Each driver's `connect` maps this to
@@ -82,6 +88,16 @@ impl DriverKind {
             DriverKind::Sqlite => "sqlite",
         }
     }
+}
+
+/// Returns the trimmed session-init SQL when present and non-empty, so drivers
+/// only attach an `after_connect` hook when there is something to run.
+pub(crate) fn init_sql_of(opts: &DbConnectOptions) -> Option<String> {
+    opts.init_sql
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Dispatch enum. Adding a new DB is a new variant + a new module.
@@ -643,6 +659,36 @@ pub(crate) fn has_stacked_statements(sql: &str) -> bool {
     body.contains(';')
 }
 
+/// Best-effort safety net for **session-initialization SQL** (#522), run on every
+/// physical pool connection right after it is established. To keep init SQL from
+/// becoming a data-mutation or DDL backdoor — and to stay consistent with
+/// read-only sessions — **every** statement must be a non-mutating session
+/// setting: it starts with `SET` (search_path / time_zone / sql_mode / NAMES /
+/// ROLE / statement_timeout, ...) or `PRAGMA` (the SQLite analog), or it is a
+/// read-only query per [`is_read_only_sql`]. A `USE`, `INSERT`, `CREATE`, etc.
+/// makes the whole string invalid. Empty input (only whitespace / comments / bare
+/// `;`) is allowed and runs nothing.
+///
+/// Comments and string / quoted-identifier literals are masked first (reusing
+/// `mask_for_analysis`), so a `;` inside `'a;b'` is not mistaken for a separator.
+pub fn is_session_init_sql(sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_analysis(&orig);
+    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+    for stmt in masked_lower.split(';') {
+        let s = stmt.trim();
+        if s.is_empty() {
+            continue;
+        }
+        let allowed =
+            starts_with_word(s, "set") || starts_with_word(s, "pragma") || is_read_only_sql(s);
+        if !allowed {
+            return false;
+        }
+    }
+    true
+}
+
 /// Replaces every comment and the interior of every string / quoted-identifier
 /// literal with spaces, preserving the original char count so positions still
 /// line up with the source. Newlines inside comments are kept so line-comment
@@ -1027,7 +1073,43 @@ fn is_aggregate_expr(item: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_auto_limit, has_stacked_statements, is_read_only_sql, SslMode};
+    use super::{
+        apply_auto_limit, has_stacked_statements, is_read_only_sql, is_session_init_sql, SslMode,
+    };
+
+    #[test]
+    fn session_init_allows_set_pragma_and_read_only() {
+        assert!(is_session_init_sql("SET search_path TO app, public"));
+        assert!(is_session_init_sql("set time_zone = '+00:00'"));
+        assert!(is_session_init_sql("SET sql_mode = 'STRICT_ALL_TABLES'"));
+        assert!(is_session_init_sql("SET ROLE readonly"));
+        assert!(is_session_init_sql("PRAGMA foreign_keys = ON"));
+        // Multiple statements, each a setting, with trailing/blank separators.
+        assert!(is_session_init_sql(
+            "SET TIME ZONE 'UTC'; SET statement_timeout = 5000;"
+        ));
+        // Read-only queries are permitted (e.g. priming a cache / sanity probe).
+        assert!(is_session_init_sql("SELECT set_config('x', 'y', false)"));
+        // Empty / comment-only input runs nothing and is allowed.
+        assert!(is_session_init_sql(""));
+        assert!(is_session_init_sql("  ;  ;\n"));
+        assert!(is_session_init_sql("-- just a comment"));
+    }
+
+    #[test]
+    fn session_init_rejects_mutations_and_ddl() {
+        assert!(!is_session_init_sql("INSERT INTO t VALUES (1)"));
+        assert!(!is_session_init_sql("UPDATE t SET x = 1"));
+        assert!(!is_session_init_sql("DELETE FROM t"));
+        assert!(!is_session_init_sql("CREATE TABLE t (id int)"));
+        assert!(!is_session_init_sql("DROP TABLE t"));
+        assert!(!is_session_init_sql("USE other_db"));
+        // One bad statement taints the whole multi-statement string.
+        assert!(!is_session_init_sql("SET time_zone = 'UTC'; DELETE FROM t"));
+        // A `;` hidden inside a string literal is not a statement boundary, so
+        // this remains a single (allowed) SET statement.
+        assert!(is_session_init_sql("SET application_name = 'a;b'"));
+    }
 
     #[test]
     fn ssl_mode_serializes_to_snake_case_wire_names() {

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::db::{Connection, DbConnectOptions, DriverKind, SslMode};
+use crate::db::{is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
 use crate::profiles::{secrets, SshAuthMethod};
 use crate::ssh::{SshConfig, SshTunnel};
@@ -40,6 +40,10 @@ pub struct ConnectRequest {
     /// Client private key path for mutual TLS (mTLS).
     #[serde(default)]
     pub ssl_client_key: Option<String>,
+    /// Session-initialization SQL run right after each connection is established.
+    /// Validated with `is_session_init_sql` (SET / PRAGMA / read-only only).
+    #[serde(default)]
+    pub init_sql: Option<String>,
     /// When true the resulting session refuses to execute non-read-only SQL.
     #[serde(default)]
     pub read_only: bool,
@@ -179,6 +183,23 @@ async fn open_connection(
 /// Build DB options and (if requested) open an SSH tunnel.
 /// Returns the optional tunnel guard that must outlive the DB connection.
 async fn build_options(req: &ConnectRequest) -> Result<(Option<SshTunnel>, DbConnectOptions)> {
+    // Reject session-init SQL that isn't a non-mutating session setting before we
+    // open anything, so the failure is a clear validation error rather than a
+    // surprise on the first pooled connection. Applies to all drivers.
+    let init_sql = req
+        .init_sql
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(sql) = &init_sql {
+        if !is_session_init_sql(sql) {
+            return Err(AppError::InvalidInput(
+                "session-init SQL may only contain SET / PRAGMA or read-only statements".into(),
+            ));
+        }
+    }
+
     // File-backed drivers don't have a host/port/user/password and can't
     // be tunneled, so short-circuit before touching credentials or SSH.
     if matches!(req.driver, DriverKind::Sqlite) {
@@ -201,6 +222,7 @@ async fn build_options(req: &ConnectRequest) -> Result<(Option<SshTunnel>, DbCon
             ssl_root_cert: None,
             ssl_client_cert: None,
             ssl_client_key: None,
+            init_sql,
         };
         return Ok((None, opts));
     }
@@ -240,6 +262,7 @@ async fn build_options(req: &ConnectRequest) -> Result<(Option<SshTunnel>, DbCon
         ssl_root_cert: req.ssl_root_cert.clone(),
         ssl_client_cert: req.ssl_client_cert.clone(),
         ssl_client_key: req.ssl_client_key.clone(),
+        init_sql,
     };
     Ok((tunnel, opts))
 }

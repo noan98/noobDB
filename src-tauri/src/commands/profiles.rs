@@ -58,6 +58,9 @@ pub struct SaveProfileRequest {
     /// Client private key file path for mutual TLS.
     #[serde(default)]
     pub ssl_client_key: Option<String>,
+    /// Session-initialization SQL run right after each connection is established.
+    #[serde(default)]
+    pub init_sql: Option<String>,
 }
 
 /// A stored profile plus flags telling the UI which secrets already exist in the
@@ -131,6 +134,7 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
         ssl_root_cert: req.ssl_root_cert.filter(|s| !s.is_empty()),
         ssl_client_cert: req.ssl_client_cert.filter(|s| !s.is_empty()),
         ssl_client_key: req.ssl_client_key.filter(|s| !s.is_empty()),
+        init_sql: req.init_sql.filter(|s| !s.trim().is_empty()),
     };
     store::upsert(profile.clone())?;
 
@@ -357,6 +361,7 @@ mod tests {
             ssl_root_cert: None,
             ssl_client_cert: None,
             ssl_client_key: None,
+            init_sql: None,
         }
     }
 

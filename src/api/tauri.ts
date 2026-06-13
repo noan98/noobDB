@@ -26,6 +26,17 @@ export interface TlsSettings {
   ssl_client_key?: string | null;
 }
 
+/** Non-secret session-initialization settings shared by request and profile. */
+export interface SessionInitSettings {
+  /**
+   * Session-initialization SQL run right after each connection is established
+   * (e.g. `SET search_path`, `SET time_zone`, `PRAGMA`). Multiple statements
+   * may be separated by `;`. Validated on the backend: only SET / PRAGMA or
+   * read-only statements are allowed. `null`/omitted runs nothing.
+   */
+  init_sql?: string | null;
+}
+
 export interface SshProfile {
   host: string;
   port: number;
@@ -34,7 +45,7 @@ export interface SshProfile {
   private_key_path: string;
 }
 
-export interface ConnectionProfile extends TlsSettings {
+export interface ConnectionProfile extends TlsSettings, SessionInitSettings {
   id: string;
   name: string;
   driver: string;
@@ -81,7 +92,7 @@ export interface SshRequest extends SshProfile {
   password?: string;
 }
 
-export interface ConnectRequest extends TlsSettings {
+export interface ConnectRequest extends TlsSettings, SessionInitSettings {
   profile_id?: string;
   driver: DriverKind;
   host: string;
@@ -101,7 +112,7 @@ export interface ConnectRequest extends TlsSettings {
   skip_history?: boolean;
 }
 
-export interface SaveProfileRequest extends TlsSettings {
+export interface SaveProfileRequest extends TlsSettings, SessionInitSettings {
   id?: string;
   name: string;
   driver: string;

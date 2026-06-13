@@ -465,7 +465,12 @@ async fn spawn_import(
         ImportFormat::Json => "JSON",
         ImportFormat::Ndjson => "NDJSON",
     };
-    let summary = format!("-- {} import into {} ({} columns)", fmt, table, mapping.len());
+    let summary = format!(
+        "-- {} import into {} ({} columns)",
+        fmt,
+        table,
+        mapping.len()
+    );
     let result = run_import(
         &app, &session, &stream_id, database, table, path, options, mapping, batch_size,
     )
@@ -694,7 +699,10 @@ mod tests {
         let rows = parse_rows(data, &json_opts(ImportFormat::Ndjson, None), &mapping).unwrap();
         assert_eq!(
             rows,
-            vec![vec![Some("Alice".to_string())], vec![Some("Bob".to_string())]]
+            vec![
+                vec![Some("Alice".to_string())],
+                vec![Some("Bob".to_string())]
+            ]
         );
     }
 

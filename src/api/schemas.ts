@@ -140,6 +140,8 @@ export const connectionProfile = z.object({
   ssl_root_cert: z.string().nullable().optional(),
   ssl_client_cert: z.string().nullable().optional(),
   ssl_client_key: z.string().nullable().optional(),
+  // セッション初期化 SQL (非秘密)。未設定の旧プロファイルでは欠落。
+  init_sql: z.string().nullable().optional(),
   // 以下は list_profiles の戻り値にのみ含まれる「秘密が設定済みか」の表示用フラグ。
   has_db_password: z.boolean().optional(),
   has_ssh_passphrase: z.boolean().optional(),

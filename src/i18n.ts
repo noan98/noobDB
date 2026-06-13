@@ -382,6 +382,11 @@ const en = {
     "Optional client certificate and key for servers that require mutual TLS (mTLS). Leave blank otherwise. Only the file paths are stored — the file contents are read at connect time and never saved.",
   formTlsSshHint:
     "Over an SSH tunnel the driver connects to 127.0.0.1, so Verify full (hostname check) may fail against a certificate issued for the real host. Use Verify CA, or set the database host to match the certificate.",
+  formInitSqlLegend: "Session init SQL",
+  formInitSqlPlaceholder: "SET search_path TO app, public;\nSET time_zone = '+00:00';",
+  formInitSqlPlaceholderSqlite: "PRAGMA foreign_keys = ON;\nPRAGMA busy_timeout = 5000;",
+  formInitSqlHelp:
+    "Run automatically right after each connection is established (on every pooled connection), so results are reproducible without re-running setup in each tab. Separate multiple statements with ';'. Only SET / PRAGMA or read-only statements are allowed — writes and DDL are rejected, and a failure surfaces as a connection error.",
   formConnectionOk: "Connection OK.",
   formInvalidPort: "Enter a port number between 1 and 65535.",
   formInvalidSshPort: "Enter an SSH port number between 1 and 65535.",
@@ -1669,6 +1674,11 @@ const ja: Dict = {
     "相互 TLS (mTLS) を要求するサーバ向けの任意のクライアント証明書と鍵です。不要なら空のままにします。保存されるのはファイルパスのみで、ファイルの中身は接続時に読み込むだけで保存しません。",
   formTlsSshHint:
     "SSH トンネル経由ではドライバは 127.0.0.1 に接続するため、「完全検証」(ホスト名検証) は実ホスト向けに発行された証明書に対して失敗することがあります。「CA 検証」を使うか、DB ホスト名を証明書に合わせてください。",
+  formInitSqlLegend: "セッション初期化 SQL",
+  formInitSqlPlaceholder: "SET search_path TO app, public;\nSET time_zone = '+00:00';",
+  formInitSqlPlaceholderSqlite: "PRAGMA foreign_keys = ON;\nPRAGMA busy_timeout = 5000;",
+  formInitSqlHelp:
+    "接続が確立した直後 (プールの各物理接続) に毎回自動実行します。タブごとに準備 SQL を流し直さなくても結果が再現できます。複数文は ';' で区切ります。許可されるのは SET / PRAGMA または読み取り専用の文のみで、書き込みや DDL は拒否されます。失敗は接続エラーとして表面化します。",
   formConnectionOk: "接続に成功しました。",
   formInvalidPort: "ポート番号は 1〜65535 の範囲で入力してください。",
   formInvalidSshPort: "SSH ポート番号は 1〜65535 の範囲で入力してください。",
