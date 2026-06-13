@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
-import { api, ConnectionProfile, DriverKind, SshAuthMethod } from "../api/tauri";
+import { api, ConnectionProfile, DriverKind, SshAuthMethod, SslMode } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { Button, Input, Select, Switch } from "./ui";
@@ -187,6 +187,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [readOnly, setReadOnly] = useState<boolean>(initial?.read_only ?? false);
   const [skipHistory, setSkipHistory] = useState<boolean>(initial?.skip_history ?? false);
 
+  // TLS / SSL. `prefer` matches the sqlx default (TLS when offered, no
+  // verification), so an untouched form keeps the pre-TLS connection behavior.
+  const [sslMode, setSslMode] = useState<SslMode>(initial?.ssl_mode ?? "prefer");
+  const [sslRootCert, setSslRootCert] = useState(initial?.ssl_root_cert ?? "");
+  const [sslClientCert, setSslClientCert] = useState(initial?.ssl_client_cert ?? "");
+  const [sslClientKey, setSslClientKey] = useState(initial?.ssl_client_key ?? "");
+
   const [useSsh, setUseSsh] = useState(!!initial?.ssh);
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
   const [sshPort, setSshPort] = useState(String(initial?.ssh?.port ?? 22));
@@ -235,6 +242,35 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     });
     if (typeof selected === "string") setSshKeyPath(selected);
   };
+
+  const pickCertFile = async (set: (path: string) => void, current: string) => {
+    let defaultPath: string | undefined;
+    try {
+      defaultPath = current.trim() ? await dirname(current) : undefined;
+    } catch {
+      defaultPath = undefined;
+    }
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: t("formPickCertTitle"),
+      defaultPath,
+      filters: [
+        { name: t("formCertFileFilter"), extensions: ["pem", "crt", "cert", "key", "ca"] },
+        { name: t("formAnyFileFilter"), extensions: ["*"] },
+      ],
+    });
+    if (typeof selected === "string") set(selected);
+  };
+
+  // Non-secret TLS fields included in both connect and save requests. Empty
+  // paths are sent as null so the backend treats them as unset.
+  const tlsSettings = () => ({
+    ssl_mode: sslMode,
+    ssl_root_cert: sslRootCert.trim() || null,
+    ssl_client_cert: sslClientCert.trim() || null,
+    ssl_client_key: sslClientKey.trim() || null,
+  });
 
   const pickDbFile = async () => {
     const selected = await open({
@@ -287,6 +323,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       file_path: null,
       read_only: readOnly,
       skip_history: skipHistory,
+      ...tlsSettings(),
     };
   };
 
@@ -370,6 +407,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         read_only: readOnly,
         skip_history: skipHistory,
         file_path: isFileBacked ? (filePath || null) : null,
+        // SQLite is file-backed and never negotiates TLS; persist null so a
+        // driver switch can't leave stale TLS settings on the profile.
+        ssl_mode: isFileBacked ? null : sslMode,
+        ssl_root_cert: isFileBacked ? null : (sslRootCert.trim() || null),
+        ssl_client_cert: isFileBacked ? null : (sslClientCert.trim() || null),
+        ssl_client_key: isFileBacked ? null : (sslClientKey.trim() || null),
       });
       onSaved();
     } catch (e) {
@@ -462,6 +505,81 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               hasStored={!!initial?.has_db_password}
             />
           </Box>
+        </Fieldset>
+      )}
+
+      {!isFileBacked && (
+        <Fieldset>
+          <Legend>{t("formTlsLegend")}</Legend>
+          <Box>
+            <label>{t("formTlsMode")}</label>
+            <Select value={sslMode} onChange={(e) => setSslMode(e.target.value as SslMode)}>
+              <option value="disable">{t("formTlsModeDisable")}</option>
+              <option value="prefer">{t("formTlsModePrefer")}</option>
+              <option value="require">{t("formTlsModeRequire")}</option>
+              <option value="verify_ca">{t("formTlsModeVerifyCa")}</option>
+              <option value="verify_full">{t("formTlsModeVerifyFull")}</option>
+            </Select>
+            <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+              {t("formTlsModeHelp")}
+            </Text>
+          </Box>
+          {isProduction &&
+            (sslMode === "disable" || sslMode === "prefer" || sslMode === "require") && (
+              <Text color="app.textWarning" fontSize="11px" mt="2" mb="0">
+                {t("formTlsProductionHint")}
+              </Text>
+            )}
+          <Box mt="2">
+            <label>{t("formTlsRootCert")}</label>
+            <Flex gap="2" align="end">
+              <Input
+                value={sslRootCert}
+                onChange={(e) => setSslRootCert(e.target.value)}
+                placeholder={t("formTlsRootCertPlaceholder")}
+              />
+              <Button type="button" onClick={() => pickCertFile(setSslRootCert, sslRootCert)}>
+                {t("formBrowse")}
+              </Button>
+            </Flex>
+            <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+              {t("formTlsRootCertHelp")}
+            </Text>
+          </Box>
+          <Box mt="2">
+            <label>{t("formTlsClientCert")}</label>
+            <Flex gap="2" align="end">
+              <Input
+                value={sslClientCert}
+                onChange={(e) => setSslClientCert(e.target.value)}
+                placeholder={t("formTlsClientCertPlaceholder")}
+              />
+              <Button type="button" onClick={() => pickCertFile(setSslClientCert, sslClientCert)}>
+                {t("formBrowse")}
+              </Button>
+            </Flex>
+          </Box>
+          <Box mt="2">
+            <label>{t("formTlsClientKey")}</label>
+            <Flex gap="2" align="end">
+              <Input
+                value={sslClientKey}
+                onChange={(e) => setSslClientKey(e.target.value)}
+                placeholder={t("formTlsClientKeyPlaceholder")}
+              />
+              <Button type="button" onClick={() => pickCertFile(setSslClientKey, sslClientKey)}>
+                {t("formBrowse")}
+              </Button>
+            </Flex>
+            <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+              {t("formTlsClientHelp")}
+            </Text>
+          </Box>
+          {useSsh && (
+            <Text color="app.textMuted" fontSize="11px" mt="2" mb="0">
+              {t("formTlsSshHint")}
+            </Text>
+          )}
         </Fieldset>
       )}
 

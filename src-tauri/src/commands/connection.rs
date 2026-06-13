@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::db::{Connection, DbConnectOptions, DriverKind};
+use crate::db::{Connection, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
 use crate::profiles::{secrets, SshAuthMethod};
 use crate::ssh::{SshConfig, SshTunnel};
@@ -28,6 +28,18 @@ pub struct ConnectRequest {
     /// Required for file-backed drivers (SQLite); ignored otherwise.
     #[serde(default)]
     pub file_path: Option<String>,
+    /// TLS requirement level. `None` keeps the driver default. Ignored by SQLite.
+    #[serde(default)]
+    pub ssl_mode: Option<SslMode>,
+    /// CA (root) certificate path used to verify the server certificate.
+    #[serde(default)]
+    pub ssl_root_cert: Option<String>,
+    /// Client certificate path for mutual TLS (mTLS).
+    #[serde(default)]
+    pub ssl_client_cert: Option<String>,
+    /// Client private key path for mutual TLS (mTLS).
+    #[serde(default)]
+    pub ssl_client_key: Option<String>,
     /// When true the resulting session refuses to execute non-read-only SQL.
     #[serde(default)]
     pub read_only: bool,
@@ -184,6 +196,11 @@ async fn build_options(req: &ConnectRequest) -> Result<(Option<SshTunnel>, DbCon
             database: None,
             driver: req.driver,
             file_path: Some(file_path.to_string()),
+            // File-backed drivers don't negotiate TLS.
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
         };
         return Ok((None, opts));
     }
@@ -219,6 +236,10 @@ async fn build_options(req: &ConnectRequest) -> Result<(Option<SshTunnel>, DbCon
         database: req.database.clone(),
         driver: req.driver,
         file_path: None,
+        ssl_mode: req.ssl_mode,
+        ssl_root_cert: req.ssl_root_cert.clone(),
+        ssl_client_cert: req.ssl_client_cert.clone(),
+        ssl_client_key: req.ssl_client_key.clone(),
     };
     Ok((tunnel, opts))
 }

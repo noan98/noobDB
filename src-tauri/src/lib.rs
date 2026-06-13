@@ -24,7 +24,7 @@ pub mod __test_api {
     pub use crate::db::types::{
         Column, ForeignKey, QueryResult, TableColumnInfo, TableSchema, Value,
     };
-    pub use crate::db::{is_read_only_sql, Connection, DbConnectOptions, DriverKind};
+    pub use crate::db::{is_read_only_sql, Connection, DbConnectOptions, DriverKind, SslMode};
     pub use crate::error::AppError;
     pub use crate::profiles::SshAuthMethod;
     pub use crate::ssh::{SshConfig, SshTunnel};
@@ -146,6 +146,10 @@ pub mod __test_api {
             database: None,
             driver: DriverKind::Sqlite,
             file_path: Some(path.to_string()),
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
         }
     }
 
@@ -184,6 +188,10 @@ pub mod __test_api {
             database,
             driver,
             file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
         })
     }
 }

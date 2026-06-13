@@ -7,6 +7,25 @@ export type DriverKind = "mysql" | "postgres" | "sqlite";
 
 export type SshAuthMethod = "key" | "agent" | "password";
 
+/**
+ * Driver-neutral TLS requirement level, mapped on the backend to each driver's
+ * native SSL mode (`PgSslMode` / `MySqlSslMode`). Ordered from least to most
+ * strict. `prefer` matches the sqlx default (TLS when offered, no verification).
+ */
+export type SslMode = "disable" | "prefer" | "require" | "verify_ca" | "verify_full";
+
+/** Non-secret TLS settings shared by the connect request and the saved profile. */
+export interface TlsSettings {
+  /** TLS requirement level. `null`/omitted keeps the driver default. */
+  ssl_mode?: SslMode | null;
+  /** CA (root) certificate file path used to verify the server certificate. */
+  ssl_root_cert?: string | null;
+  /** Client certificate file path for mutual TLS (mTLS). */
+  ssl_client_cert?: string | null;
+  /** Client private key file path for mutual TLS (mTLS). */
+  ssl_client_key?: string | null;
+}
+
 export interface SshProfile {
   host: string;
   port: number;
@@ -15,7 +34,7 @@ export interface SshProfile {
   private_key_path: string;
 }
 
-export interface ConnectionProfile {
+export interface ConnectionProfile extends TlsSettings {
   id: string;
   name: string;
   driver: string;
@@ -62,7 +81,7 @@ export interface SshRequest extends SshProfile {
   password?: string;
 }
 
-export interface ConnectRequest {
+export interface ConnectRequest extends TlsSettings {
   profile_id?: string;
   driver: DriverKind;
   host: string;
@@ -82,7 +101,7 @@ export interface ConnectRequest {
   skip_history?: boolean;
 }
 
-export interface SaveProfileRequest {
+export interface SaveProfileRequest extends TlsSettings {
   id?: string;
   name: string;
   driver: string;

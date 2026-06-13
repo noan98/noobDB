@@ -355,8 +355,33 @@ const en = {
 
   formPickKeyTitle: "Select SSH private key",
   formPickDbFileTitle: "Select SQLite database file",
+  formPickCertTitle: "Select certificate / key file",
   formSqliteFileFilter: "SQLite databases",
+  formCertFileFilter: "Certificates & keys",
   formAnyFileFilter: "All files",
+  formTlsLegend: "TLS / SSL",
+  formTlsMode: "TLS mode",
+  formTlsModeDisable: "Disable — never use TLS",
+  formTlsModePrefer: "Prefer — TLS when available, no verification (default)",
+  formTlsModeRequire: "Require — TLS required, no certificate verification",
+  formTlsModeVerifyCa: "Verify CA — require TLS and verify the server certificate",
+  formTlsModeVerifyFull: "Verify full — verify CA and the server hostname",
+  formTlsModeHelp:
+    "Controls whether the connection is encrypted and how strictly the server certificate is checked. Prefer matches the previous default. Verify CA / Verify full need a CA certificate below when the server uses a private CA.",
+  formTlsProductionHint:
+    "This is a production connection — consider Verify CA or Verify full so the server identity is validated.",
+  formTlsRootCert: "CA certificate (root)",
+  formTlsRootCertPlaceholder: "/path/to/ca.pem",
+  formTlsRootCertHelp:
+    "PEM file used to verify the server certificate. Required for Verify CA / Verify full against a private CA (e.g. Amazon RDS / Cloud SQL bundles).",
+  formTlsClientCert: "Client certificate (mTLS)",
+  formTlsClientCertPlaceholder: "/path/to/client-cert.pem",
+  formTlsClientKey: "Client key (mTLS)",
+  formTlsClientKeyPlaceholder: "/path/to/client-key.pem",
+  formTlsClientHelp:
+    "Optional client certificate and key for servers that require mutual TLS (mTLS). Leave blank otherwise. Only the file paths are stored — the file contents are read at connect time and never saved.",
+  formTlsSshHint:
+    "Over an SSH tunnel the driver connects to 127.0.0.1, so Verify full (hostname check) may fail against a certificate issued for the real host. Use Verify CA, or set the database host to match the certificate.",
   formConnectionOk: "Connection OK.",
   formInvalidPort: "Enter a port number between 1 and 65535.",
   formInvalidSshPort: "Enter an SSH port number between 1 and 65535.",
@@ -1610,8 +1635,33 @@ const ja: Dict = {
 
   formPickKeyTitle: "SSH秘密鍵を選択",
   formPickDbFileTitle: "SQLite データベースファイルを選択",
+  formPickCertTitle: "証明書 / 鍵ファイルを選択",
   formSqliteFileFilter: "SQLite データベース",
+  formCertFileFilter: "証明書・鍵",
   formAnyFileFilter: "すべてのファイル",
+  formTlsLegend: "TLS / SSL",
+  formTlsMode: "TLS モード",
+  formTlsModeDisable: "無効 — TLS を使用しない",
+  formTlsModePrefer: "優先 — 可能なら TLS、検証なし (既定)",
+  formTlsModeRequire: "必須 — TLS 必須、証明書検証なし",
+  formTlsModeVerifyCa: "CA 検証 — TLS 必須 + サーバ証明書を検証",
+  formTlsModeVerifyFull: "完全検証 — CA とサーバのホスト名を検証",
+  formTlsModeHelp:
+    "接続を暗号化するか、サーバ証明書をどこまで厳密に検証するかを指定します。「優先」は従来の既定動作です。プライベート CA を使うサーバで「CA 検証」「完全検証」を選ぶ場合は、下の CA 証明書を指定してください。",
+  formTlsProductionHint:
+    "本番接続です。サーバの正当性を検証するため「CA 検証」または「完全検証」の利用を検討してください。",
+  formTlsRootCert: "CA 証明書 (ルート)",
+  formTlsRootCertPlaceholder: "/path/to/ca.pem",
+  formTlsRootCertHelp:
+    "サーバ証明書の検証に使う PEM ファイルです。プライベート CA に対して「CA 検証」「完全検証」を行う場合に必要です (Amazon RDS / Cloud SQL のバンドル等)。",
+  formTlsClientCert: "クライアント証明書 (mTLS)",
+  formTlsClientCertPlaceholder: "/path/to/client-cert.pem",
+  formTlsClientKey: "クライアント鍵 (mTLS)",
+  formTlsClientKeyPlaceholder: "/path/to/client-key.pem",
+  formTlsClientHelp:
+    "相互 TLS (mTLS) を要求するサーバ向けの任意のクライアント証明書と鍵です。不要なら空のままにします。保存されるのはファイルパスのみで、ファイルの中身は接続時に読み込むだけで保存しません。",
+  formTlsSshHint:
+    "SSH トンネル経由ではドライバは 127.0.0.1 に接続するため、「完全検証」(ホスト名検証) は実ホスト向けに発行された証明書に対して失敗することがあります。「CA 検証」を使うか、DB ホスト名を証明書に合わせてください。",
   formConnectionOk: "接続に成功しました。",
   formInvalidPort: "ポート番号は 1〜65535 の範囲で入力してください。",
   formInvalidSshPort: "SSH ポート番号は 1〜65535 の範囲で入力してください。",

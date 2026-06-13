@@ -47,6 +47,21 @@ pub struct ConnectionProfile {
     /// network-backed drivers (MySQL, PostgreSQL).
     #[serde(default)]
     pub file_path: Option<String>,
+    /// TLS requirement level (`disable` / `prefer` / `require` / `verify_ca` /
+    /// `verify_full`). `None` keeps the driver default for profiles saved before
+    /// TLS settings existed. These are non-secret and live in `profiles.json`.
+    #[serde(default)]
+    pub ssl_mode: Option<crate::db::SslMode>,
+    /// CA (root) certificate file path for verifying the server certificate.
+    /// The path is non-secret; the file contents are read at connect time only.
+    #[serde(default)]
+    pub ssl_root_cert: Option<String>,
+    /// Client certificate file path for mutual TLS (mTLS).
+    #[serde(default)]
+    pub ssl_client_cert: Option<String>,
+    /// Client private key file path for mutual TLS (mTLS).
+    #[serde(default)]
+    pub ssl_client_key: Option<String>,
 }
 
 /// How an SSH tunnel authenticates with the jump host.

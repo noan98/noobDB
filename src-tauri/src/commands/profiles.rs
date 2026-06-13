@@ -46,6 +46,18 @@ pub struct SaveProfileRequest {
     /// Required for file-backed drivers (SQLite); ignored otherwise.
     #[serde(default)]
     pub file_path: Option<String>,
+    /// TLS requirement level. `None` keeps the driver default.
+    #[serde(default)]
+    pub ssl_mode: Option<crate::db::SslMode>,
+    /// CA (root) certificate file path. Non-secret; stored in profiles.json.
+    #[serde(default)]
+    pub ssl_root_cert: Option<String>,
+    /// Client certificate file path for mutual TLS.
+    #[serde(default)]
+    pub ssl_client_cert: Option<String>,
+    /// Client private key file path for mutual TLS.
+    #[serde(default)]
+    pub ssl_client_key: Option<String>,
 }
 
 /// A stored profile plus flags telling the UI which secrets already exist in the
@@ -115,6 +127,10 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
         read_only: req.read_only,
         skip_history: req.skip_history,
         file_path: req.file_path.filter(|s| !s.is_empty()),
+        ssl_mode: req.ssl_mode,
+        ssl_root_cert: req.ssl_root_cert.filter(|s| !s.is_empty()),
+        ssl_client_cert: req.ssl_client_cert.filter(|s| !s.is_empty()),
+        ssl_client_key: req.ssl_client_key.filter(|s| !s.is_empty()),
     };
     store::upsert(profile.clone())?;
 
@@ -337,6 +353,10 @@ mod tests {
             read_only: false,
             skip_history: false,
             file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
         }
     }
 

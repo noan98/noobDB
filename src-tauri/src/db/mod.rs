@@ -28,6 +28,40 @@ pub struct DbConnectOptions {
     /// by drivers that connect over TCP.
     #[serde(default)]
     pub file_path: Option<String>,
+    /// TLS requirement level. `None` leaves the driver default untouched
+    /// (sqlx defaults to `prefer`/`preferred`), preserving the behavior of
+    /// profiles saved before TLS settings existed. Ignored by SQLite.
+    #[serde(default)]
+    pub ssl_mode: Option<SslMode>,
+    /// Path to a CA (root) certificate used to verify the server certificate
+    /// (PEM). Required for `verify_ca` / `verify_full` against a private CA.
+    #[serde(default)]
+    pub ssl_root_cert: Option<String>,
+    /// Path to the client certificate (PEM) for mutual TLS (mTLS).
+    #[serde(default)]
+    pub ssl_client_cert: Option<String>,
+    /// Path to the client private key (PEM) for mutual TLS (mTLS).
+    #[serde(default)]
+    pub ssl_client_key: Option<String>,
+}
+
+/// Driver-neutral TLS requirement level. Each driver's `connect` maps this to
+/// its own sqlx enum (`PgSslMode` / `MySqlSslMode`). The variants are ordered
+/// from least to most strict.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SslMode {
+    /// Never use TLS (plaintext only).
+    Disable,
+    /// Use TLS when the server offers it, fall back to plaintext otherwise.
+    /// No certificate verification. Matches the sqlx default.
+    Prefer,
+    /// Require TLS but do not verify the server certificate.
+    Require,
+    /// Require TLS and verify the server certificate against the CA.
+    VerifyCa,
+    /// Require TLS, verify the CA, and verify the server hostname (SAN).
+    VerifyFull,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -993,7 +1027,37 @@ fn is_aggregate_expr(item: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_auto_limit, has_stacked_statements, is_read_only_sql};
+    use super::{apply_auto_limit, has_stacked_statements, is_read_only_sql, SslMode};
+
+    #[test]
+    fn ssl_mode_serializes_to_snake_case_wire_names() {
+        // The wire names must match the frontend union and the values the
+        // connection form sends, so a rename here is a breaking change.
+        let cases = [
+            (SslMode::Disable, "\"disable\""),
+            (SslMode::Prefer, "\"prefer\""),
+            (SslMode::Require, "\"require\""),
+            (SslMode::VerifyCa, "\"verify_ca\""),
+            (SslMode::VerifyFull, "\"verify_full\""),
+        ];
+        for (mode, wire) in cases {
+            assert_eq!(serde_json::to_string(&mode).unwrap(), wire);
+            assert_eq!(serde_json::from_str::<SslMode>(wire).unwrap(), mode);
+        }
+    }
+
+    #[test]
+    fn db_options_default_to_no_tls_fields() {
+        // Profiles saved before TLS settings existed omit the fields entirely;
+        // they must deserialize to `None` so the driver default is preserved.
+        let json = r#"{"host":"h","port":5432,"user":"u","password":"p",
+            "database":null,"driver":"postgres"}"#;
+        let opts: super::DbConnectOptions = serde_json::from_str(json).unwrap();
+        assert!(opts.ssl_mode.is_none());
+        assert!(opts.ssl_root_cert.is_none());
+        assert!(opts.ssl_client_cert.is_none());
+        assert!(opts.ssl_client_key.is_none());
+    }
 
     #[test]
     fn allows_basic_selects_and_metadata_queries() {

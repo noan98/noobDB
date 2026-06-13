@@ -582,6 +582,10 @@ mod tests {
             database: None,
             driver: DriverKind::Postgres,
             file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
         };
         let path = {
             let f = PgPassFile::create(&opts, "testdb").expect("create");
@@ -619,6 +623,10 @@ mod tests {
             database: None,
             driver: DriverKind::Mysql,
             file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
         };
         let path = {
             let f = DefaultsFile::create(&opts).expect("create");
