@@ -6,6 +6,7 @@ import {
   listenImportStream,
   type ColumnMapping,
   type CsvPreview,
+  type ImportFormat,
   type ImportOptions,
   type TableColumnInfo,
 } from "../api/tauri";
@@ -45,6 +46,14 @@ type Status =
   | { kind: "error"; message: string };
 
 const ENCODINGS = ["utf-8", "shift_jis", "euc-jp", "utf-16le", "windows-1252"];
+
+/** Guesses the import format from a file path's extension. */
+function formatFromPath(path: string): ImportFormat {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".ndjson") || lower.endsWith(".jsonl")) return "ndjson";
+  if (lower.endsWith(".json")) return "json";
+  return "csv";
+}
 
 function newStreamId(): string {
   return `import_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -90,6 +99,9 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
   const t = useT();
   const toast = useToast();
   const [path, setPath] = useState(initialPath ?? "");
+  const [format, setFormat] = useState<ImportFormat>(
+    initialPath ? formatFromPath(initialPath) : "csv",
+  );
   const [encoding, setEncoding] = useState("utf-8");
   const [delimiter, setDelimiter] = useState<DelimiterChoice>(",");
   const [quote, setQuote] = useState('"');
@@ -112,12 +124,15 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
   const disposedRef = useRef(false);
 
   const importing = status.kind === "importing";
-  const quoteValid = isValidSingleByteChar(quote);
+  const isCsv = format === "csv";
+  // The quote character only matters for CSV; JSON/NDJSON ignore it, so don't
+  // let a stale invalid quote block the JSON preview/import.
+  const quoteValid = !isCsv || isValidSingleByteChar(quote);
 
   const buildOptions = useCallback((): ImportOptions => {
     const nullToken = nullMode === "none" ? null : nullMode === "empty" ? "" : nullCustom;
-    return { delimiter, quote, hasHeader, nullToken, encoding };
-  }, [delimiter, quote, hasHeader, nullMode, nullCustom, encoding]);
+    return { format, delimiter, quote, hasHeader, nullToken, encoding };
+  }, [format, delimiter, quote, hasHeader, nullMode, nullCustom, encoding]);
 
   // Fetch destination columns once for the mapping UI.
   useEffect(() => {
@@ -152,7 +167,9 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
       .then((p) => {
         if (cancelled) return;
         setPreview(p);
-        if (tableColumns) setMapping(autoMap(tableColumns, p.headers, hasHeader));
+        // JSON/NDJSON always expose named fields, so map by name regardless of
+        // the (CSV-only) header toggle.
+        if (tableColumns) setMapping(autoMap(tableColumns, p.headers, isCsv ? hasHeader : true));
       })
       .catch((e) => {
         if (!cancelled) {
@@ -181,22 +198,30 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
     const selected = await open({
       multiple: false,
       title: t("importPickFileTitle"),
-      filters: [{ name: "CSV", extensions: ["csv", "tsv", "txt"] }],
+      filters: [
+        { name: t("importFileFilterData"), extensions: ["csv", "tsv", "txt", "json", "ndjson", "jsonl"] },
+        { name: "CSV", extensions: ["csv", "tsv", "txt"] },
+        { name: "JSON / NDJSON", extensions: ["json", "ndjson", "jsonl"] },
+      ],
     });
     if (typeof selected === "string" && selected) {
       setPath(selected);
+      // Auto-select the format from the extension; the user can still override.
+      setFormat(formatFromPath(selected));
       setStatus({ kind: "idle" });
     }
   };
 
   const csvColumnLabel = useCallback(
     (index: number): string => {
-      if (hasHeader && preview?.headers[index]) {
+      // JSON/NDJSON always have named fields; CSV only when the header toggle is on.
+      const named = isCsv ? hasHeader : true;
+      if (named && preview?.headers[index]) {
         return `${index + 1}. ${preview.headers[index]}`;
       }
       return t("importColumnNumbered", { n: index + 1 });
     },
-    [hasHeader, preview, t],
+    [isCsv, hasHeader, preview, t],
   );
 
   const mappingEntries = useMemo<ColumnMapping[]>(() => {
@@ -315,6 +340,21 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
 
         <FormSection flexDirection="row" flexWrap="wrap" gap="3.5" alignItems="flex-end">
           <chakra.div display="flex" flexDirection="column" gap="1.5">
+            <FieldLabel htmlFor="import-format">{t("importFormat")}</FieldLabel>
+            <Select
+              id="import-format"
+              minW="140px"
+              value={format}
+              onChange={(e) => setFormat(e.target.value as ImportFormat)}
+              disabled={importing}
+            >
+              <option value="csv">{t("importFormatCsv")}</option>
+              <option value="json">{t("importFormatJson")}</option>
+              <option value="ndjson">{t("importFormatNdjson")}</option>
+            </Select>
+          </chakra.div>
+
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-encoding">{t("importEncoding")}</FieldLabel>
             <Select
               id="import-encoding"
@@ -331,34 +371,38 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             </Select>
           </chakra.div>
 
-          <chakra.div display="flex" flexDirection="column" gap="1.5">
-            <FieldLabel htmlFor="import-delimiter">{t("importDelimiter")}</FieldLabel>
-            <Select
-              id="import-delimiter"
-              minW="140px"
-              value={delimiter}
-              onChange={(e) => setDelimiter(e.target.value as DelimiterChoice)}
-              disabled={importing}
-            >
-              <option value=",">{t("importDelimiterComma")}</option>
-              <option value={"\t"}>{t("importDelimiterTab")}</option>
-              <option value=";">{t("importDelimiterSemicolon")}</option>
-            </Select>
-          </chakra.div>
+          {isCsv && (
+            <chakra.div display="flex" flexDirection="column" gap="1.5">
+              <FieldLabel htmlFor="import-delimiter">{t("importDelimiter")}</FieldLabel>
+              <Select
+                id="import-delimiter"
+                minW="140px"
+                value={delimiter}
+                onChange={(e) => setDelimiter(e.target.value as DelimiterChoice)}
+                disabled={importing}
+              >
+                <option value=",">{t("importDelimiterComma")}</option>
+                <option value={"\t"}>{t("importDelimiterTab")}</option>
+                <option value=";">{t("importDelimiterSemicolon")}</option>
+              </Select>
+            </chakra.div>
+          )}
 
-          <chakra.div display="flex" flexDirection="column" gap="1.5">
-            <FieldLabel htmlFor="import-quote">{t("importQuote")}</FieldLabel>
-            <Input
-              id="import-quote"
-              css={{ width: "64px" }}
-              type="text"
-              value={quote}
-              onChange={(e) => setQuote(e.target.value)}
-              disabled={importing}
-              aria-invalid={!quoteValid}
-              aria-describedby={quoteValid ? undefined : "import-quote-error"}
-            />
-          </chakra.div>
+          {isCsv && (
+            <chakra.div display="flex" flexDirection="column" gap="1.5">
+              <FieldLabel htmlFor="import-quote">{t("importQuote")}</FieldLabel>
+              <Input
+                id="import-quote"
+                css={{ width: "64px" }}
+                type="text"
+                value={quote}
+                onChange={(e) => setQuote(e.target.value)}
+                disabled={importing}
+                aria-invalid={!quoteValid}
+                aria-describedby={quoteValid ? undefined : "import-quote-error"}
+              />
+            </chakra.div>
+          )}
 
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-null">{t("importNull")}</FieldLabel>
@@ -385,15 +429,23 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             )}
           </chakra.div>
 
-          <chakra.div display="flex" flexDirection="row" alignItems="center" gap="1.5">
-            <Switch
-              checked={hasHeader}
-              onChange={setHasHeader}
-              disabled={importing}
-              label={t("importHasHeader")}
-            />
-          </chakra.div>
+          {isCsv && (
+            <chakra.div display="flex" flexDirection="row" alignItems="center" gap="1.5">
+              <Switch
+                checked={hasHeader}
+                onChange={setHasHeader}
+                disabled={importing}
+                label={t("importHasHeader")}
+              />
+            </chakra.div>
+          )}
         </FormSection>
+
+        {!isCsv && (
+          <chakra.div fontSize="xs" color="app.textMuted">
+            {t("importJsonHelp")}
+          </chakra.div>
+        )}
 
         {!quoteValid && (
           <ErrorNote id="import-quote-error">
@@ -505,7 +557,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
                 <thead>
                   <tr>
                     {preview.headers.map((h, idx) => (
-                      <th key={idx}>{hasHeader ? h : csvColumnLabel(idx)}</th>
+                      <th key={idx}>{(isCsv ? hasHeader : true) ? h : csvColumnLabel(idx)}</th>
                     ))}
                   </tr>
                 </thead>

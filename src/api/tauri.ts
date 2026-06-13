@@ -430,7 +430,16 @@ export interface DumpOptions {
   pgSchema?: string | null;
 }
 
+/**
+ * Source data format for an import. CSV uses the delimiter/quote/header options;
+ * JSON (array of objects) and NDJSON (one object per line) key rows by field
+ * name and ignore those options. Defaults to "csv" on the backend if omitted.
+ */
+export type ImportFormat = "csv" | "json" | "ndjson";
+
 export interface ImportOptions {
+  /** Source format. Omit/`"csv"` for the classic CSV path. */
+  format?: ImportFormat;
   /** Field delimiter — a single character (e.g. ",", "\t", ";"). */
   delimiter: string;
   /** Quote character — a single character. */

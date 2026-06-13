@@ -713,9 +713,20 @@ LIKE ワイルドカードはエスケープされます。
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
   経由で渡し、終了後に削除します。`mysqldump` が PATH にない場合は分かりやすい
   エラーを返します。
-- `commands/import.rs`: CSV を `import_rows` でテーブルへ一括投入します
-  (`encoding_rs` でエンコーディング指定可、NULL トークン・列マッピング対応)。読み取り
-  専用セッションでは拒否されます。進捗は `csv-import:*` イベントで通知します。
+- `commands/import.rs`: CSV / JSON / NDJSON を `import_rows` でテーブルへ一括投入
+  します (`encoding_rs` でエンコーディング指定可、NULL トークン・列マッピング対応)。
+  読み取り専用セッションでは拒否されます。進捗は `csv-import:*` イベントで通知します。
+  フォーマットは `ImportOptions.format` (`ImportFormat`: `csv` / `json` / `ndjson`、
+  既定 `csv` で後方互換) で選択し、`parse_preview` / `parse_rows` がフォーマットで
+  分岐します (#521)。JSON はトップレベル配列のオブジェクト (単一オブジェクトは 1 行)、
+  NDJSON は 1 行 1 オブジェクトをパースし、`csv_index` は全レコードのキー和集合から
+  作る**ヘッダ列 (first-seen 順、各オブジェクト内は BTreeMap でソート)** を指します
+  (プレビューとインポートで同じ順序になり列対応がズレない)。ネスト値 (オブジェクト/
+  配列) はコンパクトな JSON テキストに文字列化、`null`・欠損キーは SQL NULL、NULL
+  トークンも CSV と同じく適用します。コマンド名 (`parse_csv_preview` / `import_csv`) と
+  `CsvPreview` 型名は IPC 安定のため CSV 時代のまま据え置き、全フォーマットを扱います。
+  `ImportModal` はフォーマット選択 (拡張子から既定推定) を持ち、JSON/NDJSON では
+  CSV 専用フィールド (区切り/クオート/ヘッダ行) を隠します。
 
 ### 明示的トランザクション
 
