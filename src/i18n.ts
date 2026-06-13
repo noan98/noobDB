@@ -552,6 +552,7 @@ const en = {
   exportFormat: "Output format",
   exportFormatCsv: "CSV",
   exportFormatJson: "JSON",
+  exportFormatNdjson: "NDJSON",
   exportSavePath: "Save to",
   exportSavePathPlaceholder: "Path to the output file",
   exportBrowse: "Browse...",
@@ -652,6 +653,9 @@ const en = {
   dumpOptPgSchema: "Schema (optional)",
   dumpOptPgSchemaPlaceholder: "e.g. public",
   dumpOptPgSchemaHint: "pg_dump -n <schema>: restrict to one schema. Leave empty to dump all schemas.",
+  dumpOptFormatSql: "Format SQL",
+  dumpOptFormatSqlHint:
+    "Reformat the saved SQL for readability (2-space indent, keyword case preserved), matching the editor's formatter. Best-effort; for review/version control. Off keeps the raw output.",
   // 結果セットのページネーション。
   pageFirst: "First page",
   pagePrev: "Previous page",
@@ -966,7 +970,7 @@ const en = {
 
   helpFormatTitle: "Format",
   helpFormatDesc:
-    "Reformats the SQL in the editor for readability. Touches the editor text only.",
+    "Reformats the SQL in the editor for readability. Touches the editor text only. The dump dialog's \"Format SQL\" option applies the same policy (2-space indent, keyword case preserved) to the saved file on the backend; minor dialect differences may remain since the backend uses a generic formatter.",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
@@ -1807,6 +1811,7 @@ const ja: Dict = {
   exportFormat: "出力形式",
   exportFormatCsv: "CSV",
   exportFormatJson: "JSON",
+  exportFormatNdjson: "NDJSON",
   exportSavePath: "保存先",
   exportSavePathPlaceholder: "保存するファイルのパス",
   exportBrowse: "参照...",
@@ -1907,6 +1912,9 @@ const ja: Dict = {
   dumpOptPgSchema: "スキーマ (任意)",
   dumpOptPgSchemaPlaceholder: "例: public",
   dumpOptPgSchemaHint: "pg_dump -n <スキーマ>: 1 つのスキーマに限定します。空欄で全スキーマをダンプします。",
+  dumpOptFormatSql: "SQL を整形",
+  dumpOptFormatSqlHint:
+    "保存する SQL を可読性向上のため整形します (2 スペース字下げ・キーワードのケースは保持) — エディタの整形と方針を揃えています。best-effort でレビュー/バージョン管理向け。オフなら出力そのままです。",
   // 結果セットのページネーション。
   pageFirst: "先頭ページ",
   pagePrev: "前のページ",
@@ -2221,7 +2229,7 @@ const ja: Dict = {
 
   helpFormatTitle: "整形 (Format)",
   helpFormatDesc:
-    "エディタ内の SQL を読みやすく整形します。エディタのテキストを変更するだけです。",
+    "エディタ内の SQL を読みやすく整形します。エディタのテキストを変更するだけです。ダンプダイアログの「SQL を整形」オプションは、保存ファイルにバックエンドで同じ方針 (2 スペース字下げ・キーワードのケースは保持) を適用します。バックエンドは汎用の整形器を使うため、方言差が一部残ることがあります。",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:

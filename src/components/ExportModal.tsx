@@ -72,7 +72,14 @@ function defaultBasename(database: string | null, table: string | null): string 
 }
 
 function extensionFor(format: ExportFormat): string {
-  return format === "csv" ? ".csv" : ".json";
+  switch (format) {
+    case "csv":
+      return ".csv";
+    case "ndjson":
+      return ".ndjson";
+    default:
+      return ".json";
+  }
 }
 
 function replaceExtension(path: string, newExt: string): string {
@@ -140,7 +147,9 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
       filters: [
         format === "csv"
           ? { name: "CSV", extensions: ["csv"] }
-          : { name: "JSON", extensions: ["json"] },
+          : format === "ndjson"
+            ? { name: "NDJSON", extensions: ["ndjson", "jsonl"] }
+            : { name: "JSON", extensions: ["json"] },
       ],
     });
     if (typeof selected === "string" && selected) {
@@ -294,7 +303,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
             display="flex"
             gap="2"
           >
-            {(["csv", "json"] as const).map((fmt) => (
+            {(["csv", "json", "ndjson"] as const).map((fmt) => (
               <chakra.label
                 key={fmt}
                 display="inline-flex"
@@ -317,7 +326,13 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
                   disabled={isSaving}
                   m={0}
                 />
-                <span>{fmt === "csv" ? t("exportFormatCsv") : t("exportFormatJson")}</span>
+                <span>
+                  {fmt === "csv"
+                    ? t("exportFormatCsv")
+                    : fmt === "ndjson"
+                      ? t("exportFormatNdjson")
+                      : t("exportFormatJson")}
+                </span>
               </chakra.label>
             ))}
           </chakra.div>

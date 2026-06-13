@@ -16,6 +16,9 @@ use crate::state::AppState;
 pub enum ExportFormat {
     Csv,
     Json,
+    /// NDJSON (改行区切り JSON、1 行 1 オブジェクト)。JSON 配列と違い先頭/末尾の
+    /// 括弧・行間カンマを持たず、行単位で独立しているためストリーミング処理向き。
+    Ndjson,
 }
 
 #[tauri::command]
@@ -58,6 +61,7 @@ async fn write_export(
         match format {
             ExportFormat::Csv => write_csv(&mut writer, &columns, &rows)?,
             ExportFormat::Json => write_json(&mut writer, &columns, &rows)?,
+            ExportFormat::Ndjson => write_ndjson(&mut writer, &columns, &rows)?,
         }
         // `into_inner` flushes the buffer; surface any flush error as I/O.
         let file = writer
@@ -166,6 +170,20 @@ fn write_json<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> R
     Ok(())
 }
 
+/// NDJSON (改行区切り JSON): 各行を 1 つの JSON オブジェクトとして 1 行ずつ書き、
+/// 各行を `\n` で終端する。JSON 配列のような先頭/末尾の括弧・行間カンマは無い。
+/// 値のエンコード (BLOB の 16 進・NULL・数値) は `write_json` と共有する
+/// `row_to_json_object` を使うため JSON 配列経路と一致する。空結果なら何も書かない。
+fn write_ndjson<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
+    for row in rows {
+        let obj = row_to_json_object(columns, row);
+        let s = serde_json::to_string(&obj)?;
+        w.write_all(s.as_bytes())?;
+        w.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
 // ── 全件ストリーミングエクスポート ──
 //
 // 在メモリ行に依存せず、クエリをバックエンドで再実行してストリーミングで直接ファイルへ
@@ -224,6 +242,8 @@ impl StreamExportSink {
         match self.format {
             ExportFormat::Csv => write_csv_header(&mut self.writer, &self.columns)?,
             ExportFormat::Json => self.writer.write_all(b"[")?,
+            // NDJSON にはヘッダも開き括弧も無いので columns イベントでは何も書かない。
+            ExportFormat::Ndjson => {}
         }
         Ok(())
     }
@@ -244,6 +264,8 @@ impl StreamExportSink {
                     self.json_count += 1;
                 }
             }
+            // 1 行 1 オブジェクト + `\n`。in-memory の write_ndjson と同じ書式。
+            ExportFormat::Ndjson => write_ndjson(&mut self.writer, &self.columns, rows)?,
         }
         Ok(rows.len())
     }
@@ -255,6 +277,7 @@ impl StreamExportSink {
             self.writer
                 .write_all(if self.json_count == 0 { b"]" } else { b"\n]" })?;
         }
+        // NDJSON は行ごとに完結しており、終端処理は不要 (各行末の `\n` のみ)。
         let file = self
             .writer
             .into_inner()
@@ -455,6 +478,12 @@ mod tests {
         buf
     }
 
+    fn ndjson_bytes(columns: &[Column], rows: &[Vec<Value>]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_ndjson(&mut buf, columns, rows).unwrap();
+        buf
+    }
+
     #[test]
     fn csv_escapes_special_chars() {
         let columns = vec![col("id"), col("name"), col("note")];
@@ -589,5 +618,67 @@ mod tests {
         let rows: Vec<Vec<Value>> = vec![];
         let reference = serde_json::to_vec_pretty(&Vec::<serde_json::Value>::new()).unwrap();
         assert_eq!(json_bytes(&columns, &rows), reference);
+    }
+
+    // NDJSON: 1 行 1 オブジェクトで `\n` 区切り。先頭/末尾の括弧・行間カンマは無く、
+    // 各行は独立した JSON としてパースできる。値エンコードは JSON 配列経路と一致する。
+    #[test]
+    fn ndjson_writes_one_object_per_line() {
+        let columns = vec![col("id"), col("name"), col("blob")];
+        let rows = vec![
+            vec![
+                Value::Int(1),
+                Value::String("Alice".into()),
+                Value::Bytes("00ff".into()),
+            ],
+            vec![Value::Null, Value::String("x\"y".into()), Value::Null],
+        ];
+        let out = String::from_utf8(ndjson_bytes(&columns, &rows)).unwrap();
+        // 末尾の改行を含め 2 行 + 空末尾。括弧・カンマで囲まれていないこと。
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(out.ends_with('\n'));
+        assert!(!out.starts_with('['));
+        // 各行が独立した JSON オブジェクトとしてパースでき、JSON 配列経路と同じ
+        // 値エンコード (BLOB の 16 進・NULL) になっていること。
+        let r0: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        let r1: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(r0["id"], serde_json::json!(1));
+        assert_eq!(r0["name"], serde_json::json!("Alice"));
+        assert_eq!(r0["blob"], serde_json::json!("0x00ff"));
+        assert_eq!(r1["id"], serde_json::Value::Null);
+        assert_eq!(r1["name"], serde_json::json!("x\"y"));
+        assert_eq!(r1["blob"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn ndjson_empty_rows_is_empty_output() {
+        let columns = vec![col("id")];
+        let rows: Vec<Vec<Value>> = vec![];
+        assert!(ndjson_bytes(&columns, &rows).is_empty());
+    }
+
+    #[test]
+    fn stream_sink_ndjson_matches_in_memory() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "noobdb_export_ndjson_{}.ndjson",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let columns = vec![col("id"), col("blob")];
+        let rows = vec![
+            vec![Value::Int(7), Value::Bytes("deadbeef".into())],
+            vec![Value::Null, Value::Null],
+        ];
+        let mut sink = StreamExportSink::new(path.to_str().unwrap(), ExportFormat::Ndjson).unwrap();
+        sink.on_columns(columns.clone()).unwrap();
+        // バッチを分けても in-memory の一括書き出しと同じバイト列になること。
+        sink.on_rows(&rows[0..1]).unwrap();
+        sink.on_rows(&rows[1..2]).unwrap();
+        sink.finish().unwrap();
+        let out = std::fs::read(&path).unwrap();
+        assert_eq!(out, ndjson_bytes(&columns, &rows));
+        let _ = std::fs::remove_file(&path);
     }
 }

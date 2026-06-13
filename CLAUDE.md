@@ -681,15 +681,20 @@ LIKE ワイルドカードはエスケープされます。
 
 ### エクスポート / ダンプ / インポート
 
-- `commands/export.rs`: 結果グリッドの内容を CSV / JSON へ書き出します
+- `commands/export.rs`: 結果グリッドの内容を CSV / JSON / NDJSON へ書き出します
   (`export_query_result`)。CSV は RFC4180 風のクオート、BLOB は `0x...` で出力。
+  NDJSON (`ExportFormat::Ndjson`) は 1 行 1 オブジェクトの改行区切り JSON で、値
+  エンコードは JSON 配列経路 (`row_to_json_object`) と共有します。
   加えて `export_query_stream` は、グリッドに載っていない大きな結果セットを
   メモリに溜めず**ストリーミングで直接ファイルへ書き出す**経路です (`run_query_stream`
-  と同じバッチ列を消費)。
+  と同じバッチ列を消費)。3 形式とも通常 / ストリーミングの両経路に対応します。
 - `commands/dump.rs`: `mysqldump` を呼ぶ DB ダンプ (MySQL 専用)。資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
   経由で渡し、終了後に削除します。`mysqldump` が PATH にない場合は分かりやすい
-  エラーを返します。
+  エラーを返します。`DumpOptions.format_sql` (既定オフ) を立てると、書き出した
+  SQL を `db::format::format_sql` (`sqlformat` クレートの薄いラッパ) で整形して
+  保存し直します — フロントの sql-formatter と方針 (2 スペース字下げ・キーワードの
+  ケース保持) を揃えた可読性向上オプションです。
 - `commands/import.rs`: CSV を `import_rows` でテーブルへ一括投入します
   (`encoding_rs` でエンコーディング指定可、NULL トークン・列マッピング対応)。読み取り
   専用セッションでは拒否されます。進捗は `csv-import:*` イベントで通知します。
