@@ -4593,8 +4593,7 @@ export default function App() {
               borderBottomColor="app.border"
               minH="42px"
               bg={`color-mix(in srgb, var(--ws-accent) ${selectedProfile?.is_production ? "9%" : "4%"}, var(--bg-elevated))`}
-              boxShadow={`inset 0 ${selectedProfile?.is_production ? "3px" : "2px"} 0 var(--ws-accent)`}
-              transition="background var(--dur-med) var(--ease), box-shadow var(--dur-med) var(--ease)"
+              transition="background var(--dur-med) var(--ease)"
               css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
             >
               <Flex align="center" gap="2" overflow="hidden">
