@@ -3995,6 +3995,9 @@ export default function App() {
                           : undefined
                       }
                       onFkJump={(sql) => openAndRunQuery(sql)}
+                      onRunStatsQuery={
+                        sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
+                      }
                       fullExport={
                         sessionId && (tab.kind === "table" ? tab.paginatable : tab.lastExecutedSql)
                           ? {

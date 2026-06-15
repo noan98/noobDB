@@ -85,6 +85,17 @@ import {
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
 import { diffResultRows } from "../resultDiff";
 import { quoteIdentFor } from "./sqlDialect";
+import {
+  type SelectionSummary,
+  type ColumnStats,
+  type FullColumnStats,
+  type FullStatsRequest,
+  selectionSummary as computeSelectionSummary,
+  columnStats as computeColumnStats,
+  buildColumnStatsSql,
+  parseFullColumnStats,
+  isNumericStatsKind,
+} from "./gridStats";
 
 /**
  * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。
@@ -810,6 +821,12 @@ interface Props {
    * success-flash animation on the grid container.
    */
   lastEditAppliedAt?: number;
+  /**
+   * Runs an ad-hoc SELECT for the column quick-stats popover's "aggregate all
+   * rows" action (#524). App binds this to the active session; omit to offer
+   * only in-memory stats.
+   */
+  onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
 }
 
 export interface ResultGridHandle {
@@ -1293,6 +1310,7 @@ function ColumnFilterMenu({
   onResetLayout,
   pinned,
   onPin,
+  onShowStats,
 }: {
   columnName: string;
   kind: CellKind;
@@ -1313,6 +1331,8 @@ function ColumnFilterMenu({
   /** 列のピン留め状態と切替。未指定ならピン操作を出さない。 */
   pinned?: false | "left" | "right";
   onPin?: (side: false | "left" | "right") => void;
+  /** 「列の統計」ポップオーバーを開く。未指定なら項目を出さない (#524)。 */
+  onShowStats?: () => void;
 }) {
   const t = useT();
   const numeric = isNumericFilterKind(kind);
@@ -1525,12 +1545,25 @@ function ColumnFilterMenu({
         </chakra.label>
       )}
 
-      {(onHideColumn || onShowAllColumns || onResetLayout) && (
+      {(onHideColumn || onShowAllColumns || onResetLayout || onShowStats) && (
         <Box display="flex" flexDirection="column" gap="1" paddingTop="0.5" borderTop="1px solid" borderColor="app.borderSubtle">
           <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="1.5">
             {t("gridColumnsLabel")}
           </chakra.span>
           <Box display="flex" flexWrap="wrap" gap="1.5">
+            {onShowStats && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => {
+                  onShowStats();
+                  onClose();
+                }}
+              >
+                {t("gridColumnStats")}
+              </Button>
+            )}
             {onHideColumn && (
               <Button
                 variant="secondary"
@@ -1587,6 +1620,302 @@ function ColumnFilterMenu({
   );
 }
 
+/** 統計ポップオーバーの 1 行 (ラベル + 値)。 */
+function StatRow({ label, value, title }: { label: string; value: ReactNode; title?: string }) {
+  return (
+    <Box display="flex" alignItems="baseline" justifyContent="space-between" gap="2">
+      <chakra.span fontSize="var(--text-xs)" color="app.textMuted" whiteSpace="nowrap">
+        {label}
+      </chakra.span>
+      <chakra.span
+        fontSize="var(--text-sm)"
+        fontFamily="mono"
+        color="app.text"
+        fontWeight={600}
+        textAlign="right"
+        overflow="hidden"
+        textOverflow="ellipsis"
+        whiteSpace="nowrap"
+        title={title}
+      >
+        {value}
+      </chakra.span>
+    </Box>
+  );
+}
+
+/** 数値統計の整形 (整数はロケール区切り、小数は最大 4 桁)。null は em ダッシュ。 */
+function fmtStatNum(n: number | null): string {
+  if (n === null) return "—";
+  if (!Number.isFinite(n)) return String(n);
+  return Number.isInteger(n)
+    ? n.toLocaleString()
+    : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+/** 任意のセル値を統計表示用テキストへ (NULL は em ダッシュ)。 */
+function fmtStatCell(v: CellValue): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number") return fmtStatNum(v);
+  return String(v);
+}
+
+/**
+ * 列のクイック統計ポップオーバー (#524)。ヘッダーメニューの「列の統計」から開く。
+ * `ColumnFilterMenu` と同じく <body> へポータルし、アンカー直下にクランプ表示する。
+ *
+ * - 在メモリ (取得済み行) の統計は `columnStats` で即時計算して表示する。
+ * - `statsRequest` と `onRunStatsQuery` が揃うときだけ「全件集計」ボタンを出し、
+ *   ドライバ方言の集計 SQL (`buildColumnStatsSql`) を実行して正確値を取得する。
+ */
+function ColumnStatsMenu({
+  columnName,
+  kind,
+  anchor,
+  values,
+  onClose,
+  statsRequest,
+  onRunStatsQuery,
+}: {
+  columnName: string;
+  kind: CellKind;
+  anchor: DOMRect;
+  /** 取得済み (在メモリ) のこの列の全値。 */
+  values: CellValue[];
+  onClose: () => void;
+  /** 全件集計に必要な情報。未指定なら「全件集計」を出さない。 */
+  statsRequest?: FullStatsRequest;
+  /** 集計 SQL を実行する (App から api.runQuery を束ねて渡す)。 */
+  onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
+}) {
+  const t = useT();
+  const numeric = isNumericStatsKind(kind);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [full, setFull] = useState<FullColumnStats | null>(null);
+  const [loadingFull, setLoadingFull] = useState(false);
+  const [fullError, setFullError] = useState<string | null>(null);
+
+  const stats: ColumnStats = useMemo(() => computeColumnStats(values, kind), [values, kind]);
+  const nullPct = stats.count > 0 ? (stats.nullCount / stats.count) * 100 : 0;
+
+  // Clamp into the viewport once measured (mirrors ColumnFilterMenu). Re-runs on
+  // `full`/`loadingFull` since the panel grows when the all-rows section appears.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const margin = 6;
+    let left = anchor.right - width;
+    if (left < margin) left = anchor.left;
+    let top = anchor.bottom + 4;
+    if (top + height + margin > window.innerHeight) top = anchor.top - height - 4;
+    left = Math.min(Math.max(margin, left), window.innerWidth - width - margin);
+    top = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
+    setPos({ left, top });
+  }, [anchor, full, loadingFull, fullError]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onDown, true);
+    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  const runFull = async () => {
+    if (!statsRequest || !onRunStatsQuery || loadingFull) return;
+    setLoadingFull(true);
+    setFullError(null);
+    try {
+      const res = await onRunStatsQuery(buildColumnStatsSql(statsRequest));
+      const row = res.rows[0];
+      if (!row) {
+        setFullError(t("gridStatsError"));
+        return;
+      }
+      setFull(parseFullColumnStats(row, numeric));
+    } catch (e) {
+      setFullError(typeof e === "string" ? e : e instanceof Error ? e.message : t("gridStatsError"));
+    } finally {
+      setLoadingFull(false);
+    }
+  };
+
+  // NULL 率ミニバー (条件付き書式 #499 と同じアクセント系トーン)。
+  const nullBar = (
+    <Box
+      role="img"
+      aria-label={`${t("gridStatsNullRate")}: ${nullPct.toFixed(1)}%`}
+      title={`${nullPct.toFixed(1)}%`}
+      height="6px"
+      borderRadius="full"
+      overflow="hidden"
+      background="color-mix(in srgb, var(--text-muted) 18%, transparent)"
+    >
+      <Box
+        height="100%"
+        width={`${nullPct}%`}
+        background="color-mix(in srgb, var(--accent) 55%, transparent)"
+        transition="width var(--dur-med) var(--ease-out)"
+      />
+    </Box>
+  );
+
+  return createPortal(
+    <Box
+      ref={menuRef}
+      role="dialog"
+      aria-label={t("gridStatsAria", { column: columnName })}
+      position="fixed"
+      zIndex="popover"
+      width="248px"
+      display="flex"
+      flexDirection="column"
+      gap="2"
+      padding="2.5"
+      bg="app.surface"
+      border="1px solid"
+      borderColor="app.borderStrong"
+      borderRadius="md"
+      boxShadow="md"
+      style={{
+        left: pos?.left ?? anchor.left,
+        top: pos?.top ?? anchor.bottom,
+        visibility: pos ? "visible" : "hidden",
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <Box display="flex" alignItems="center" gap="1.5" minWidth={0}>
+        <Icon name={CELL_KIND_META[kind].icon} size={13} />
+        <chakra.div
+          fontSize="var(--text-sm)"
+          fontWeight={600}
+          color="app.text"
+          whiteSpace="nowrap"
+          overflow="hidden"
+          textOverflow="ellipsis"
+          title={columnName}
+        >
+          {columnName}
+        </chakra.div>
+      </Box>
+
+      <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+        {t("gridStatsInMemory", { count: stats.count })}
+      </chakra.span>
+
+      <Box display="flex" flexDirection="column" gap="1">
+        <StatRow
+          label={t("gridCountLabel")}
+          value={`${stats.nonNullCount.toLocaleString()} / ${stats.count.toLocaleString()}`}
+        />
+        <Box display="flex" flexDirection="column" gap="0.5">
+          <StatRow
+            label={t("gridNullLabel")}
+            value={`${stats.nullCount.toLocaleString()} (${nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0)}%)`}
+          />
+          {nullBar}
+        </Box>
+        <StatRow label={t("gridDistinctLabel")} value={stats.distinctCount.toLocaleString()} />
+        {numeric ? (
+          <>
+            <StatRow label={t("gridMinLabel")} value={fmtStatNum(stats.min)} />
+            <StatRow label={t("gridMaxLabel")} value={fmtStatNum(stats.max)} />
+            <StatRow label={t("gridAvgLabel")} value={fmtStatNum(stats.avg)} />
+            <StatRow label={t("gridSumLabel")} value={fmtStatNum(stats.sum)} />
+          </>
+        ) : (
+          <>
+            <StatRow label={t("gridMinLenLabel")} value={fmtStatNum(stats.minLen)} />
+            <StatRow label={t("gridMaxLenLabel")} value={fmtStatNum(stats.maxLen)} />
+            {stats.mode && (
+              <StatRow
+                label={t("gridModeLabel")}
+                value={`${stats.mode.value} (${stats.mode.count})`}
+                title={stats.mode.value}
+              />
+            )}
+          </>
+        )}
+      </Box>
+
+      {statsRequest && onRunStatsQuery && (
+        <Box
+          display="flex"
+          flexDirection="column"
+          gap="1.5"
+          paddingTop="1"
+          borderTop="1px solid"
+          borderColor="app.borderSubtle"
+        >
+          {full ? (
+            <>
+              <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+                {t("gridStatsFullSection")}
+              </chakra.span>
+              <StatRow
+                label={t("gridCountLabel")}
+                value={`${full.nonNull.toLocaleString()} / ${full.total.toLocaleString()}`}
+              />
+              <StatRow
+                label={t("gridNullLabel")}
+                value={full.nullCount.toLocaleString()}
+              />
+              <StatRow label={t("gridDistinctLabel")} value={full.distinct.toLocaleString()} />
+              <StatRow label={t("gridMinLabel")} value={fmtStatCell(full.min)} title={fmtStatCell(full.min)} />
+              <StatRow label={t("gridMaxLabel")} value={fmtStatCell(full.max)} title={fmtStatCell(full.max)} />
+              {numeric && (
+                <>
+                  <StatRow label={t("gridAvgLabel")} value={fmtStatNum(full.avg)} />
+                  <StatRow label={t("gridSumLabel")} value={fmtStatNum(full.sum)} />
+                </>
+              )}
+            </>
+          ) : (
+            <LoadingButton
+              variant="secondary"
+              size="sm"
+              loading={loadingFull}
+              onClick={() => void runFull()}
+            >
+              {loadingFull ? t("gridStatsLoading") : t("gridStatsFullButton")}
+            </LoadingButton>
+          )}
+          {fullError && (
+            <chakra.span
+              role="alert"
+              fontSize="var(--text-xs)"
+              color="var(--status-error)"
+              whiteSpace="normal"
+            >
+              {fullError}
+            </chakra.span>
+          )}
+        </Box>
+      )}
+
+      <Box display="flex" justifyContent="flex-end" paddingTop="0.5">
+        <Button size="sm" px="2.5" onClick={onClose}>
+          {t("gridStatsClose")}
+        </Button>
+      </Box>
+    </Box>,
+    document.body,
+  );
+}
+
 /**
  * Render a column/row pair as a TanStack-backed HTML table. Used by both
  * `ResultGrid` (single result) and the preview view (before/after).
@@ -1633,6 +1962,8 @@ export function DataGrid({
   onPaginationChange,
   onUndoEdit,
   onRedoEdit,
+  onSelectionSummary,
+  onRunStatsQuery,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -1728,6 +2059,18 @@ export function DataGrid({
   onPaginationChange?: OnChangeFn<PaginationState>;
   onUndoEdit?: () => void;
   onRedoEdit?: () => void;
+  /**
+   * Called whenever the rectangular range selection changes, with the live
+   * aggregate of the selected cells (or null when nothing multi-cell is
+   * selected). Lets `ResultGrid` surface the summary in its status bar (#523).
+   */
+  onSelectionSummary?: (summary: SelectionSummary | null) => void;
+  /**
+   * Runs an ad-hoc SELECT for the column quick-stats popover's "aggregate all
+   * rows" action (#524). Provided by App bound to the active session; omit to
+   * hide the full-aggregate button (in-memory stats still show).
+   */
+  onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -2148,6 +2491,10 @@ export function DataGrid({
   // header's filter icon (captured at click for portal positioning).
   const [filterMenu, setFilterMenu] = useState<{ colIdx: number; anchor: DOMRect } | null>(null);
 
+  // Column quick-stats popover (#524): which column + the anchor rect of the
+  // header control that opened it (reuses the filter icon's rect).
+  const [statsMenu, setStatsMenu] = useState<{ colIdx: number; anchor: DOMRect } | null>(null);
+
   useEffect(
     () => () => {
       if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
@@ -2286,6 +2633,41 @@ export function DataGrid({
     const colIdSet = new Set(visibleColIds.slice(c0, c1 + 1));
     return { r0, r1, c0, c1, rowIndexSet, colIdSet };
   }, [selection, visibleRows, visibleColIds]);
+
+  // Live aggregate of the selected rectangle, surfaced to the parent's status
+  // bar (#523). Null when there is no multi-cell range so the summary hides.
+  const selectionStats = useMemo<SelectionSummary | null>(() => {
+    if (!selectionRect) return null;
+    const cells: CellValue[] = [];
+    for (const ri of selectionRect.rowIndexSet) {
+      for (const ci of selectionRect.colIdSet) {
+        cells.push(rows[ri]?.[ci] ?? null);
+      }
+    }
+    return computeSelectionSummary(cells);
+  }, [selectionRect, rows]);
+  // Push the summary up only when its *value* changes. The effect must key off a
+  // primitive — `selectionStats` is a fresh object each render (its memo deps
+  // churn under TanStack's row/column models), so depending on its identity would
+  // fire the effect every render and the parent setState would loop infinitely.
+  const selectionStatsKey = selectionStats
+    ? [
+        selectionStats.count,
+        selectionStats.nonNullCount,
+        selectionStats.numericCount,
+        selectionStats.sum,
+        selectionStats.avg,
+        selectionStats.min,
+        selectionStats.max,
+      ].join("|")
+    : null;
+  const selectionStatsRef = useRef(selectionStats);
+  selectionStatsRef.current = selectionStats;
+  useEffect(() => {
+    onSelectionSummary?.(selectionStatsRef.current);
+  }, [selectionStatsKey, onSelectionSummary]);
+  // Clear the parent's summary when this grid unmounts (e.g. tab switch).
+  useEffect(() => () => onSelectionSummary?.(null), [onSelectionSummary]);
 
   // After every render, attempt to focus the pending cell (the element may not
   // have been in the DOM on the previous cycle if the virtualizer needed to
@@ -3274,8 +3656,46 @@ export function DataGrid({
               ? (side) => table.getColumn(String(filterMenu.colIdx))?.pin(side)
               : undefined
           }
+          onShowStats={
+            enableColumnControls
+              ? () => {
+                  const { colIdx, anchor } = filterMenu;
+                  setFilterMenu(null);
+                  setStatsMenu({ colIdx, anchor });
+                }
+              : undefined
+          }
         />
       )}
+      {statsMenu && (() => {
+        const colIdx = statsMenu.colIdx;
+        const kind = columnKinds[colIdx] ?? "string";
+        const colName = columns[colIdx]?.name ?? "";
+        const colValues = rows.map((r) => r[colIdx] ?? null);
+        // 全件集計は具体的なターゲットテーブルと実行系が揃うときだけ提供する。
+        const statsRequest: FullStatsRequest | undefined =
+          rowSqlTable && onRunStatsQuery
+            ? {
+                driver: rowSqlDriver ?? "mysql",
+                database: rowSqlDatabase ?? null,
+                table: rowSqlTable,
+                column: colName,
+                kind,
+              }
+            : undefined;
+        return (
+          <ColumnStatsMenu
+            key={colIdx}
+            columnName={colName}
+            kind={kind}
+            anchor={statsMenu.anchor}
+            values={colValues}
+            statsRequest={statsRequest}
+            onRunStatsQuery={statsRequest ? onRunStatsQuery : undefined}
+            onClose={() => setStatsMenu(null)}
+          />
+        );
+      })()}
       <AnimatePresence>
         {copied && (
           <motion.div
@@ -3387,9 +3807,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   fullExport,
   lastEditAppliedAt,
   applyingEdits,
+  onRunStatsQuery,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  // Live range-selection summary lifted from the inner DataGrid (#523).
+  const [selSummary, setSelSummary] = useState<SelectionSummary | null>(null);
   const settings = useSettings();
   const paginateMode = settings.resultGridMode === "paginate";
   const [pagination, setPagination] = useState<PaginationState>({
@@ -4016,9 +4439,46 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             </Modal>
           )}
         </AnimatePresence>
-        {!streaming && result.elapsed_ms != null && result.columns.length > 0 && (
+        {selSummary && (
           <chakra.span
             marginLeft="auto"
+            display="inline-flex"
+            alignItems="center"
+            gap="2.5"
+            fontSize="xs"
+            color="app.text"
+            whiteSpace="nowrap"
+            fontFamily="mono"
+            aria-live="polite"
+            aria-label={t("gridSelectionAria")}
+            py="0.5"
+            px="2"
+            borderRadius="var(--radius-sm)"
+            background="color-mix(in srgb, var(--accent) 10%, transparent)"
+          >
+            <chakra.span color="app.textMuted">
+              {t("gridSelectionCells", { count: selSummary.count })}
+            </chakra.span>
+            {selSummary.numericCount > 0 ? (
+              <>
+                <span>{t("gridSumLabel")} {fmtStatNum(selSummary.sum)}</span>
+                <span>{t("gridAvgLabel")} {fmtStatNum(selSummary.avg)}</span>
+                <span>{t("gridMinLabel")} {fmtStatNum(selSummary.min)}</span>
+                <span>{t("gridMaxLabel")} {fmtStatNum(selSummary.max)}</span>
+                <chakra.span color="app.textMuted">
+                  {t("gridCountLabel")} {selSummary.numericCount.toLocaleString()}
+                </chakra.span>
+              </>
+            ) : (
+              <chakra.span color="app.textMuted">
+                {t("gridSelectionNonNull", { n: selSummary.nonNullCount })}
+              </chakra.span>
+            )}
+          </chakra.span>
+        )}
+        {!streaming && result.elapsed_ms != null && result.columns.length > 0 && (
+          <chakra.span
+            marginLeft={selSummary ? "4" : "auto"}
             fontSize="xs"
             color="app.textMuted"
             whiteSpace="nowrap"
@@ -4036,7 +4496,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         <chakra.input
           ref={searchInputRef}
           type="search"
-          marginLeft={!streaming && result.elapsed_ms != null && result.columns.length > 0 ? "8px" : "auto"}
+          marginLeft={selSummary || (!streaming && result.elapsed_ms != null && result.columns.length > 0) ? "8px" : "auto"}
           width="220px"
           padding="3px 8px"
           fontSize="sm"
@@ -4099,6 +4559,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           onFkJump={onFkJump}
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}
+          onSelectionSummary={setSelSummary}
+          onRunStatsQuery={onRunStatsQuery}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}
           emptyMessage={
