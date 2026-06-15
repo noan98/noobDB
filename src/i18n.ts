@@ -866,6 +866,26 @@ const en = {
   gridAddRow: "Add new row...",
   gridMarkDelete: "Mark row for deletion",
   gridUnmarkDelete: "Unmark deletion",
+  // 一括セル編集 (#596)
+  gridBulkEditSelection: "Set value for {count} selected cells...",
+  gridBulkEditSelectionTitle:
+    "Apply a single value (or NULL) to every cell in the selection",
+  gridBulkEditTitle: "Set value for selected cells",
+  gridBulkEditBody:
+    "The value below is applied to all {count} selected cells. Type NULL (uppercase) to clear. Cells whose column is read-only or whose value is invalid for the column type are skipped.",
+  gridBulkEditPlaceholder: "Value to apply (or NULL)",
+  gridBulkEditSetNull: "Set to NULL",
+  gridBulkEditApply: "Set cells",
+  gridBulkEditApplied: "Buffered {cells} cell edits — Apply to commit",
+  gridBulkEditAppliedSkipped:
+    "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
+  gridBulkEditNoneApplied: "No cells were edited (read-only columns or invalid value)",
+  // 結果差分ハイライト (#597)
+  diffHighlightLabel: "Diff",
+  diffHighlightAria: "Highlight changes from the previous run of this query",
+  diffHighlightTitle:
+    "When the same query is re-run, highlight cells that changed and rows that were added (needs a primary key)",
+  diffHighlightSummary: "+{added} / -{removed}",
   rowOpsInsertTitle: "Add a new row to {table}",
   rowOpsInsertHint: "Leave a field empty to use the column default. Type \"null\" for SQL NULL.",
   rowOpsInsertAdd: "Add to pending",
@@ -2125,6 +2145,25 @@ const ja: Dict = {
   gridAddRow: "新規行を追加...",
   gridMarkDelete: "行を削除予定にする",
   gridUnmarkDelete: "削除予定を解除",
+  // 一括セル編集 (#596)
+  gridBulkEditSelection: "選択した {count} セルに値を設定...",
+  gridBulkEditSelectionTitle: "選択範囲のすべてのセルに単一値 (または NULL) を適用",
+  gridBulkEditTitle: "選択セルに値を設定",
+  gridBulkEditBody:
+    "下の値を選択した {count} セルすべてに適用します。NULL (大文字) でクリアします。列が編集不可、または値が列型に対して不正なセルはスキップします。",
+  gridBulkEditPlaceholder: "適用する値 (または NULL)",
+  gridBulkEditSetNull: "NULL にする",
+  gridBulkEditApply: "セルに設定",
+  gridBulkEditApplied: "{cells} セルの編集を保留しました — Apply で確定します",
+  gridBulkEditAppliedSkipped:
+    "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
+  gridBulkEditNoneApplied: "編集されたセルはありません (編集不可列または不正な値)",
+  // 結果差分ハイライト (#597)
+  diffHighlightLabel: "差分",
+  diffHighlightAria: "このクエリの前回実行からの変化をハイライト",
+  diffHighlightTitle:
+    "同じクエリを再実行したとき、変化したセルと追加された行をハイライトします (主キーが必要)",
+  diffHighlightSummary: "+{added} / -{removed}",
   rowOpsInsertTitle: "{table} に新規行を追加",
   rowOpsInsertHint: "空欄の列は既定値を使います。SQL の NULL にするには \"null\" と入力します。",
   rowOpsInsertAdd: "保留に追加",
