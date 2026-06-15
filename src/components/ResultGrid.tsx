@@ -82,6 +82,8 @@ import {
   type PendingEdits,
   type RowSqlKind,
 } from "./cellEdit";
+import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
+import { diffResultRows } from "../resultDiff";
 import { quoteIdentFor } from "./sqlDialect";
 import {
   type SelectionSummary,
@@ -575,6 +577,21 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow: "inset 0 -2px 0 var(--preview-highlight)",
   },
   "& th.is-changed-col .th-name": { color: "var(--preview-highlight)" },
+  // 再実行差分の追加行 (#597, ResultGrid のみ)。変更セルは上の is-changed (黄) を
+  // 流用し、追加行は緑で示す (削除行は今回結果に無いためツールバーの件数で示す)。
+  // 緑は色覚に配慮しつつ「追加=増加」の直感に沿う。reduced-motion 時も色は残る。
+  "& tbody tr.grid-row-added td.row-index": {
+    boxShadow: "inset 3px 0 0 #16a34a",
+  },
+  "& tbody tr.grid-row-added td": {
+    background: "color-mix(in srgb, #16a34a 12%, transparent)",
+  },
+  "& tbody tr.grid-row-added.grid-row-stripe td": {
+    background: "color-mix(in srgb, #16a34a 16%, transparent)",
+  },
+  "& tbody tr.grid-row-added:hover td": {
+    background: "color-mix(in srgb, #16a34a 20%, transparent)",
+  },
   // インラインセル編集 (ResultGrid のみ出現)
   "& td.is-pending-edit": {
     background: "color-mix(in srgb, var(--preview-highlight) 14%, transparent)",
@@ -774,6 +791,25 @@ interface Props {
   onToggleRowDelete?: (rowKey: string) => void;
   /** 新規行追加を要求する。 */
   onRequestInsertRow?: () => void;
+  /**
+   * Apply a single value (or NULL) to every cell of the current rectangular
+   * selection in one batch (#596). Set by App for editable table tabs.
+   */
+  onBulkEdit?: (edits: BulkEditTarget[]) => void;
+  /**
+   * 結果差分ハイライト (#597) のための前回結果の行スナップショット。同一クエリの
+   * 再実行のときだけ App が前回結果を渡す。null なら差分なし。
+   */
+  diffPrevRows?: CellValue[][] | null;
+  /**
+   * 前回スナップショットと今回の結果が同一クエリ由来で比較可能か。App が
+   * 「前回 SQL === 今回 SQL」を判定して渡す。false なら差分を出さず通常描画。
+   */
+  diffComparable?: boolean;
+  /** 差分ハイライトのトグル状態 (ON/OFF)。 */
+  diffHighlightEnabled?: boolean;
+  /** 差分ハイライトのトグル切替。未指定ならトグル UI を出さない。 */
+  onToggleDiffHighlight?: () => void;
   /**
    * 全件ストリーミングエクスポートのコンテキスト。提供されると ExportModal に
    * 「全件 (再実行)」モードが現れる。
@@ -1901,12 +1937,14 @@ export function DataGrid({
   enableColumnControls = true,
   changedCells,
   changedColumns,
+  addedRowIndices,
   globalFilter,
   editable = false,
   editableColumns,
   pkIndices,
   pendingEdits,
   onSetCellEdit,
+  onBulkEdit,
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
@@ -1932,6 +1970,12 @@ export function DataGrid({
   enableColumnControls?: boolean;
   changedCells?: boolean[][];
   changedColumns?: boolean[];
+  /**
+   * Original row positions that are "added" relative to the previous run of the
+   * same query (#597). Highlighted with a green row marker. Indexed by
+   * `rows[i]` and resolved through `row.index`, like `changedCells`.
+   */
+  addedRowIndices?: Set<number>;
   /** Optional global filter string applied across all visible columns. */
   globalFilter?: string;
   /**
@@ -1949,6 +1993,12 @@ export function DataGrid({
   pkIndices?: number[];
   pendingEdits?: PendingEdits;
   onSetCellEdit?: (rowKey: string, colIdx: number, value: string | null) => void;
+  /**
+   * Apply a single value (or NULL) to every cell of the current rectangular
+   * selection in one batch (#596). Receives the resolved per-cell targets from
+   * `planBulkCellEdit`. Omit to hide the "set selected cells" menu item.
+   */
+  onBulkEdit?: (edits: BulkEditTarget[]) => void;
   /** 削除予定の行: rowEditKey の集合。該当行は取り消し線で示す。 */
   pendingDeleteKeys?: Set<string>;
   /** 行を削除予定にトグルする。未指定ならメニュー項目を出さない。 */
@@ -2428,6 +2478,12 @@ export function DataGrid({
   // Full-value viewer target (original row index + display column index).
   const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
 
+  // Bulk-edit dialog (#596): when open, snapshots the selection rectangle's
+  // original row indices and column indices, plus the value being typed.
+  const [bulkEdit, setBulkEdit] = useState<
+    { rowIndices: number[]; colIndices: number[]; value: string } | null
+  >(null);
+
   // Row inspector: when open, shows the active cell's row vertically.
   const [inspectorOpen, setInspectorOpen] = useState(false);
 
@@ -2506,6 +2562,40 @@ export function DataGrid({
       onSetCellEdit(rowKey, colIdx, null);
     } else {
       onSetCellEdit(rowKey, colIdx, value);
+    }
+  };
+
+  // Apply the bulk-edit dialog's single value to every selected cell (#596).
+  // Editability and per-cell type validity are decided by `planBulkCellEdit`;
+  // skipped cells (read-only column or invalid value) are surfaced via a toast.
+  const applyBulkEdit = () => {
+    if (!bulkEdit || !onBulkEdit) {
+      setBulkEdit(null);
+      return;
+    }
+    const plan = planBulkCellEdit({
+      rows,
+      columns,
+      pkIndices: pkIndices ?? [],
+      rowIndices: bulkEdit.rowIndices,
+      colIndices: bulkEdit.colIndices,
+      value: bulkEdit.value,
+      isColEditable: (c) => editableColumns?.[c] ?? false,
+      validate: (c, v) => validateEdit?.(c, v) ?? null,
+    });
+    setBulkEdit(null);
+    if (plan.applied.length === 0) {
+      toast.error(t("gridBulkEditNoneApplied"));
+      return;
+    }
+    onBulkEdit(plan.applied);
+    const skipped = plan.skippedReadonly + plan.skippedInvalid;
+    if (skipped > 0) {
+      toast.info(
+        t("gridBulkEditAppliedSkipped", { cells: plan.applied.length, skipped }),
+      );
+    } else {
+      toast.success(t("gridBulkEditApplied", { cells: plan.applied.length }));
     }
   };
 
@@ -2810,6 +2900,8 @@ export function DataGrid({
     const rowHasPending =
       !!pendingEdits?.[rowPendingKey] && Object.keys(pendingEdits[rowPendingKey]).length > 0;
     const rowMarkedDelete = !!pendingDeleteKeys?.has(rowPendingKey);
+    // Re-run diff (#597): a row present in this result but not the previous one.
+    const rowAdded = !!addedRowIndices?.has(row.index);
     const rowClass = [
       // Zebra striping by visible position. Class-based (not `:nth-of-type`)
       // because the virtualized body inserts spacer `<tr>` that would otherwise
@@ -2817,6 +2909,7 @@ export function DataGrid({
       rowIdx % 2 === 1 ? "grid-row-stripe" : "",
       rowHasPending ? "grid-row-pending" : "",
       rowMarkedDelete ? "grid-row-deleting" : "",
+      rowAdded ? "grid-row-added" : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -2922,6 +3015,9 @@ export function DataGrid({
                       : String(v)
             }
             onMouseDown={(e) => {
+              // Right-click opens the context menu (which can act on the current
+              // selection, e.g. bulk edit) — never clear the selection here.
+              if (e.button !== 0) return;
               // Shift+click extends a rectangular selection from the active
               // cell; a plain click clears any selection (focus sets active).
               if (e.shiftKey && activeCell) {
@@ -3354,6 +3450,31 @@ export function DataGrid({
                   },
                 ]
               : []),
+            // 一括編集 (#596): 矩形選択がある編集可能なテーブルでのみ、
+            // 「選択セルに値を設定」を出す。PK が無いテーブルは行を特定できないため非表示。
+            ...(onBulkEdit && editable && selectionRect && (pkIndices?.length ?? 0) > 0
+              ? [
+                  { separator: true as const },
+                  {
+                    label: t("gridBulkEditSelection", {
+                      count:
+                        selectionRect.rowIndexSet.size * selectionRect.colIdSet.size,
+                    }),
+                    title: t("gridBulkEditSelectionTitle"),
+                    onSelect: () => {
+                      const rowIndices = visibleRows
+                        .slice(selectionRect.r0, selectionRect.r1 + 1)
+                        .map((r) => r.index);
+                      const colIndices = visibleColIds.slice(
+                        selectionRect.c0,
+                        selectionRect.c1 + 1,
+                      );
+                      setCopyMenu(null);
+                      setBulkEdit({ rowIndices, colIndices, value: "" });
+                    },
+                  },
+                ]
+              : []),
             ...(() => {
               const fkMeta = columnMeta?.find(
                 (m) => m.name === columns[copyMenu.colIdx]?.name,
@@ -3427,6 +3548,68 @@ export function DataGrid({
           ]}
         />
       )}
+      <AnimatePresence>
+        {bulkEdit && (
+          <Modal width="420px" onClose={() => setBulkEdit(null)}>
+            <ModalHeader onClose={() => setBulkEdit(null)} closeLabel={t("dangerousCancel")}>
+              {t("gridBulkEditTitle")}
+            </ModalHeader>
+            <ModalBody>
+              <chakra.p fontSize="sm" color="app.textMuted" marginBottom="2">
+                {t("gridBulkEditBody", {
+                  count: bulkEdit.rowIndices.length * bulkEdit.colIndices.length,
+                })}
+              </chakra.p>
+              <chakra.input
+                autoFocus
+                value={bulkEdit.value}
+                onChange={(e) => setBulkEdit({ ...bulkEdit, value: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    applyBulkEdit();
+                  }
+                }}
+                placeholder={t("gridBulkEditPlaceholder")}
+                aria-label={t("gridBulkEditTitle")}
+                width="100%"
+                fontFamily="var(--font-mono)"
+                fontSize="sm"
+                py="1" px="2"
+                border="1px solid var(--border)"
+                background="var(--bg-input)"
+                color="var(--text)"
+                borderRadius="var(--radius-sm)"
+                _focus={{
+                  outline: "none",
+                  borderColor: "var(--accent)",
+                  boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+                }}
+              />
+              <chakra.button
+                type="button"
+                onClick={() => setBulkEdit({ ...bulkEdit, value: "NULL" })}
+                marginTop="1.5"
+                fontSize="xs"
+                color="app.textMuted"
+                textDecoration="underline"
+                cursor="pointer"
+                background="transparent"
+              >
+                {t("gridBulkEditSetNull")}
+              </chakra.button>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="secondary" size="sm" onClick={() => setBulkEdit(null)}>
+                {t("dangerousCancel")}
+              </Button>
+              <Button variant="primary" size="sm" onClick={applyBulkEdit}>
+                {t("gridBulkEditApply")}
+              </Button>
+            </ModalFooter>
+          </Modal>
+        )}
+      </AnimatePresence>
       {filterMenu && (
         <ColumnFilterMenu
           key={filterMenu.colIdx}
@@ -3616,6 +3799,11 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
+  onBulkEdit,
+  diffPrevRows,
+  diffComparable,
+  diffHighlightEnabled,
+  onToggleDiffHighlight,
   fullExport,
   lastEditAppliedAt,
   applyingEdits,
@@ -3738,6 +3926,35 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       !pkSet.has(i) && isEditableColumnType(c.type_name),
     );
   }, [editable, columns, pkIndices]);
+
+  // Re-run diff (#597): compare the previous snapshot against the current
+  // result and surface changed cells / added rows / removed count. Computed only
+  // when the toggle is on, the two results came from the same query
+  // (`diffComparable`), streaming has settled, a PK is resolvable, and a
+  // snapshot exists — otherwise we fall back to normal rendering (no highlight).
+  const resultRows = result?.rows;
+  const diff = useMemo(() => {
+    if (
+      !diffHighlightEnabled ||
+      !diffComparable ||
+      streaming ||
+      !diffPrevRows ||
+      !resultRows ||
+      !columns ||
+      pkIndices.length === 0
+    ) {
+      return null;
+    }
+    return diffResultRows(diffPrevRows, resultRows, pkIndices, columns.length);
+  }, [
+    diffHighlightEnabled,
+    diffComparable,
+    streaming,
+    diffPrevRows,
+    resultRows,
+    columns,
+    pkIndices,
+  ]);
 
   // Persist column widths per result shape: same database+table+column set
   // restores saved widths, a different shape falls back to defaults. The
@@ -4033,6 +4250,47 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             )}
           </Box>
         )}
+        {onToggleDiffHighlight && pkIndices.length > 0 && (
+          <Box
+            display="inline-flex"
+            alignItems="center"
+            gap="1.5"
+            paddingLeft="2px"
+            title={t("diffHighlightTitle")}
+          >
+            <chakra.label
+              display="inline-flex"
+              alignItems="center"
+              gap="1"
+              fontSize="xs"
+              whiteSpace="nowrap"
+              color="app.text"
+              cursor="pointer"
+            >
+              <chakra.input
+                type="checkbox"
+                checked={!!diffHighlightEnabled}
+                aria-label={t("diffHighlightAria")}
+                onChange={onToggleDiffHighlight}
+              />
+              {t("diffHighlightLabel")}
+            </chakra.label>
+            {diff?.hasChanges && (
+              <chakra.span
+                role="status"
+                aria-live="polite"
+                fontSize="xs"
+                color="app.textMuted"
+                whiteSpace="nowrap"
+              >
+                {t("diffHighlightSummary", {
+                  added: diff.addedRows.size,
+                  removed: diff.removedCount,
+                })}
+              </chakra.span>
+            )}
+          </Box>
+        )}
         {editable && tableColumns && pkIndices.length === 0 && (
           <chakra.span
             fontSize="xs"
@@ -4285,6 +4543,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           pkIndices={pkIndices}
           pendingEdits={pendingEdits}
           onSetCellEdit={onSetCellEdit}
+          onBulkEdit={editableActive ? onBulkEdit : undefined}
+          changedCells={diff?.changedCells}
+          addedRowIndices={diff?.addedRows}
           pendingDeleteKeys={pendingDeleteKeys}
           onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
           onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}

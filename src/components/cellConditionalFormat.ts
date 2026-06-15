@@ -5,9 +5,15 @@
  * 「ヒート色」を算出するだけで、コピー・編集・エクスポートの実値には一切影響
  * しない。NULL / 非数値は対象外 (無着色) として明示的に弾く。
  *
+ * ヒート色のランプ定義と値 → 色のサンプリングは、可視化全体で共有する
+ * カラースケール体系 (`src/colorScale.ts`、#525) を参照する (色を二重定義しない)。
+ *
  * すべて副作用のない純関数として切り出し、`cellConditionalFormat.test.ts` で
  * 単体テストする。色/幅マッピングと正規化のリグレッションをここで固定する。
  */
+
+import { SEQUENTIAL_RAMPS, DIVERGING_RAMPS, sampleRamp } from "../colorScale";
+import type { ColorRamp } from "../colorScale";
 
 /** 列ごとの適用モード。 */
 export type CondFormatMode = "off" | "bar" | "heat";
@@ -61,52 +67,31 @@ export function dataBarPercent(value: number, stats: NumericStats): number {
   return normalize(value, stats) * 100;
 }
 
-/** ヒートマップのパレット定義 (明→濃の hex ストップ列)。 */
-export interface HeatPalette {
-  key: string;
-  /** カラーブラインド (赤緑) に配慮した単色相系か。 */
-  colorBlindSafe: boolean;
-  stops: string[];
-}
+/**
+ * ヒートマップのパレット定義。共有カラースケール (`colorScale.ts`) の `ColorRamp` を
+ * そのまま使う (key / colorBlindSafe / stops を持つ)。
+ */
+export type HeatPalette = ColorRamp;
 
 /**
- * 既定で用意するパレット。`blue` / `teal` は単一色相の連続スケールで赤緑色弱でも
- * 明度差で読めるため CB セーフ。`warmCool` は青→赤の発散系で直感的だが赤緑が
- * 同居するため CB セーフではない (選択は任意)。
+ * ヒートマップで選べるパレット。共有スケール体系 (#525) から引く:
+ * `blue` / `teal` は単一色相の連続スケールで赤緑色弱でも明度差で読めるため CB セーフ。
+ * `warmCool` は青→赤の発散スケールで直感的だが赤緑が同居するため CB セーフではない
+ * (選択は任意)。i18n キー `gridPalette_warmCool` との互換のため発散ランプ `coolWarm` を
+ * `warmCool` キーで公開する。
  */
 export const HEAT_PALETTES: Record<string, HeatPalette> = {
-  blue: { key: "blue", colorBlindSafe: true, stops: ["#eff6ff", "#93c5fd", "#1d4ed8"] },
-  teal: { key: "teal", colorBlindSafe: true, stops: ["#effcf6", "#7edcc0", "#0f766e"] },
-  warmCool: { key: "warmCool", colorBlindSafe: false, stops: ["#2563eb", "#f8fafc", "#dc2626"] },
+  blue: SEQUENTIAL_RAMPS.blue,
+  teal: SEQUENTIAL_RAMPS.teal,
+  warmCool: { ...DIVERGING_RAMPS.coolWarm, key: "warmCool" },
 };
 
 export const DEFAULT_HEAT_PALETTE = "blue";
 
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace("#", "");
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ];
-}
-
 /**
  * 正規化値 `t` (0–1) をパレット上の色へ写像し `rgb(...)` 文字列で返す。隣接ストップ
- * を線形補間する。`t` はクランプする。
+ * を線形補間する。`t` はクランプする。実体は共有スケールの `sampleRamp`。
  */
 export function heatmapColor(t: number, palette: HeatPalette): string {
-  const stops = palette.stops;
-  const clamped = t < 0 ? 0 : t > 1 ? 1 : t;
-  if (stops.length === 1) {
-    const [r, g, b] = hexToRgb(stops[0]);
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  const scaled = clamped * (stops.length - 1);
-  const i = Math.min(Math.floor(scaled), stops.length - 2);
-  const frac = scaled - i;
-  const [r1, g1, b1] = hexToRgb(stops[i]);
-  const [r2, g2, b2] = hexToRgb(stops[i + 1]);
-  const mix = (a: number, b: number) => Math.round(a + (b - a) * frac);
-  return `rgb(${mix(r1, r2)}, ${mix(g1, g2)}, ${mix(b1, b2)})`;
+  return sampleRamp(t, palette.stops);
 }

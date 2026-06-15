@@ -89,6 +89,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 data-encoding = "2"
 csv = "1"
 encoding_rs = "0.8"
+# SQL 整形 (#546)。ダンプ DDL / 出力 SQL の可読性向上に使う薄いラッパ。default 構成
+# のみ (CLI 着色用の optional "debug" feature は使わない) で依存は unicode_categories /
+# winnow (いずれも MIT/Apache) に閉じ、cargo deny の許可リストを通る。
+sqlformat = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.10"

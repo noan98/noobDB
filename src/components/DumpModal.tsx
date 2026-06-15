@@ -57,6 +57,7 @@ const DEFAULT_OPTIONS: DumpOptions = {
   noOwner: true,
   noPrivileges: false,
   pgSchema: null,
+  formatSql: false,
 };
 
 type BoolOptionKey = {
@@ -76,6 +77,7 @@ const OPTION_ROWS: { key: BoolOptionKey; label: I18nKey; hint: I18nKey }[] = [
   { key: "noCreateInfo", label: "dumpOptNoCreateInfo", hint: "dumpOptNoCreateInfoHint" },
   { key: "noOwner", label: "dumpOptNoOwner", hint: "dumpOptNoOwnerHint" },
   { key: "noPrivileges", label: "dumpOptNoPrivileges", hint: "dumpOptNoPrivilegesHint" },
+  { key: "formatSql", label: "dumpOptFormatSql", hint: "dumpOptFormatSqlHint" },
 ];
 
 /** Which toggle keys each driver shows. Omitted fields are sent at their default
@@ -91,9 +93,10 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
     "completeInsert",
     "noData",
     "noCreateInfo",
+    "formatSql",
   ],
-  postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges"],
-  sqlite: ["addDropTable", "noData", "noCreateInfo"],
+  postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges", "formatSql"],
+  sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql"],
 };
 
 type Status =

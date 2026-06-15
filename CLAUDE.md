@@ -681,15 +681,20 @@ LIKE ワイルドカードはエスケープされます。
 
 ### エクスポート / ダンプ / インポート
 
-- `commands/export.rs`: 結果グリッドの内容を CSV / JSON へ書き出します
+- `commands/export.rs`: 結果グリッドの内容を CSV / JSON / NDJSON へ書き出します
   (`export_query_result`)。CSV は RFC4180 風のクオート、BLOB は `0x...` で出力。
+  NDJSON (`ExportFormat::Ndjson`) は 1 行 1 オブジェクトの改行区切り JSON で、値
+  エンコードは JSON 配列経路 (`row_to_json_object`) と共有します。
   加えて `export_query_stream` は、グリッドに載っていない大きな結果セットを
   メモリに溜めず**ストリーミングで直接ファイルへ書き出す**経路です (`run_query_stream`
-  と同じバッチ列を消費)。
+  と同じバッチ列を消費)。3 形式とも通常 / ストリーミングの両経路に対応します。
 - `commands/dump.rs`: `mysqldump` を呼ぶ DB ダンプ (MySQL 専用)。資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
   経由で渡し、終了後に削除します。`mysqldump` が PATH にない場合は分かりやすい
-  エラーを返します。
+  エラーを返します。`DumpOptions.format_sql` (既定オフ) を立てると、書き出した
+  SQL を `db::format::format_sql` (`sqlformat` クレートの薄いラッパ) で整形して
+  保存し直します — フロントの sql-formatter と方針 (2 スペース字下げ・キーワードの
+  ケース保持) を揃えた可読性向上オプションです。
 - `commands/import.rs`: CSV を `import_rows` でテーブルへ一括投入します
   (`encoding_rs` でエンコーディング指定可、NULL トークン・列マッピング対応)。読み取り
   専用セッションでは拒否されます。進捗は `csv-import:*` イベントで通知します。
@@ -843,7 +848,17 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   ウィンドウクローム。色決定は `titleBarContext.ts`)。
 - セル整形ユーティリティ — `cellTypeMeta.ts` (カラム型を 9 種の `CellKind` へ分類)、
   `cellFormat.ts` (JSON コンパクト表記・日時のロケール整形。**表示専用**で実値は不変)、
-  `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用)。
+  `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用。色は下記
+  `colorScale.ts` を参照)。
+- データ可視化カラースケール (#525) — `colorScale.ts` が、データを色で符号化する表面
+  (チャート系列・ヒートマップ・データバー・将来のコスト/NULL 率ミニバー) が共有する
+  **単一のスケール体系**を純ロジックとして定義する。**sequential** (単一色相の連続、CB
+  セーフ) / **categorical** (CB 配慮の順序付き離散色、チャート系列用) / **diverging**
+  (中央が淡い発散) の 3 系統と、値 → 色の純関数 (`sampleRamp` / `categoricalColor`) ・
+  塗り面上の可読インク (`readableInk`) を公開する。`ChartView` と
+  `cellConditionalFormat.ts` はここを参照し色を二重定義しない (`colorScale.test.ts` が
+  最小/最大/NaN などの境界を固定)。`ChartView` の系列描画/出現アニメーションは
+  `motion.ts` の共有プリセットに沿い、reduced-motion で自動抑制される (#526)。
 - 結果グリッドの分析サマリ — `gridStats.ts` (#523/#524)。`selectionSummary` が矩形範囲
   選択セルの件数/非NULL数/数値数/合計/平均/最小/最大を集計し `ResultGrid` の
   ステータスバーへ表示 (#523)。`columnStats` が在メモリ (取得済み行) の列値から件数/

@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
+import { motion } from "motion/react";
 import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
+import { CATEGORICAL, readableInk } from "../colorScale";
+import { durations, easings } from "../motion";
 import { Button, Checkbox, Select } from "./ui";
 import { Icon } from "./Icon";
 import {
@@ -19,7 +22,10 @@ import {
 /**
  * クエリ結果のチャート可視化。取得済みの結果セットを入力に、棒/折れ線/面/円
  * グラフを SVG で描画する (チャートライブラリ非依存でバンドル増を避ける)。X/Y 軸と
- * 集計はユーザが選べる。色は CSS 変数 (--accent ほか) を参照しテーマに追従する。
+ * 集計はユーザが選べる。軸/グリッド/凡例/ツールチップの色は CSS 変数 (--text-muted /
+ * --border ほか) を参照しテーマに追従し、系列色は可視化共通のカテゴリスケール
+ * (`colorScale.ts`、#525) を参照する。描画・系列の出現アニメーションは共有モーション
+ * プリセット (`motion.ts`、#526) に沿い、reduced-motion では自動抑制される。
  * データ整形の純ロジックは chartData.ts に分離してテスト済み。
  */
 interface Props {
@@ -27,17 +33,13 @@ interface Props {
   onClose: () => void;
 }
 
-// 系列の配色 (アクセント + 区別しやすい固定パレット)。テーマ非依存に視認できる色。
-const SERIES_COLORS = [
-  "var(--accent)",
-  "#10b981",
-  "#f59e0b",
-  "#6366f1",
-  "#ec4899",
-  "#14b8a6",
-  "#ef4444",
-  "#8b5cf6",
-];
+// 系列の配色は可視化共通のカテゴリスケール (CB セーフな順序付き離散色)。系列数が
+// パレット長を超えたら呼び出し側で `% length` により循環させる。
+const SERIES_COLORS = CATEGORICAL;
+
+// 系列の出現アニメーションを行う要素数の上限。これを超えると数百〜数千の要素を
+// 同時にアニメートすることになり描画コストが嵩むため、静的描画に切り替える。
+const ANIM_MAX_ELEMENTS = 200;
 
 export function ChartView({ result, onClose }: Props) {
   const t = useT();
@@ -201,6 +203,10 @@ function CartesianChart({
   const labelStep = Math.ceil(n / 16);
   // 点が少ないときだけマーカーを描く (多いとつぶれて逆に読みにくい)。
   const showMarkers = type !== "bar" && n <= 60;
+  // 出現アニメーションは要素数が一定以下のときだけ行う (大量要素の同時アニメは
+  // 描画コストが嵩むため静的描画にフォールバック)。reduced-motion 時はルートの
+  // MotionConfig が自動的に即時化するため、ここでは分岐不要。
+  const animate = model.series.length * n <= ANIM_MAX_ELEMENTS;
 
   // ポインタの X からバンドインデックスを逆算する (viewBox スケールに依存しないよう
   // 実ピクセル幅で正規化してから W 座標へ写す)。
@@ -295,15 +301,21 @@ function CartesianChart({
                 const x = PAD.left + bandW * i + bandW * 0.15 + barW * si;
                 const y = Math.min(yAt(v), zeroY);
                 const h = Math.abs(yAt(v) - zeroY);
+                // 棒は 0 基線から伸びるように出現させる (y/height を基線 → 値へ補間)。
                 return (
-                  <rect
+                  <motion.rect
                     key={i}
                     x={x}
-                    y={y}
                     width={Math.max(1, barW)}
-                    height={Math.max(0, h)}
                     fill={color}
                     fillOpacity={hover == null || hover === i ? 1 : 0.5}
+                    initial={animate ? { y: zeroY, height: 0 } : false}
+                    animate={{ y, height: Math.max(0, h) }}
+                    transition={
+                      animate
+                        ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
+                        : { duration: 0 }
+                    }
                   />
                 );
               })}
@@ -315,8 +327,26 @@ function CartesianChart({
         const areaPath = `M ${xAt(0)},${zeroY} L ${s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" L ")} L ${xAt(n - 1)},${zeroY} Z`;
         return (
           <g key={si}>
-            {type === "area" && <path d={areaPath} fill={color} fillOpacity={0.18} />}
-            <polyline points={pts} fill="none" stroke={color} strokeWidth={2} />
+            {type === "area" && (
+              <motion.path
+                d={areaPath}
+                fill={color}
+                fillOpacity={0.18}
+                initial={animate ? { opacity: 0 } : false}
+                animate={{ opacity: 1 }}
+                transition={animate ? { duration: durations.slow, ease: easings.out } : { duration: 0 }}
+              />
+            )}
+            {/* 折れ線は左から描き進むように pathLength を 0 → 1 へ補間する。 */}
+            <motion.polyline
+              points={pts}
+              fill="none"
+              stroke={color}
+              strokeWidth={2}
+              initial={animate ? { pathLength: 0 } : false}
+              animate={{ pathLength: 1 }}
+              transition={animate ? { duration: durations.slow, ease: easings.out } : { duration: 0 }}
+            />
             {showMarkers &&
               s.values.map((v, i) => (
                 <circle
@@ -408,6 +438,9 @@ function PieChart({ model, colors }: { model: ChartModel; colors: string[] }) {
   const series = model.series[0];
   const values = series.values.map((v) => Math.max(0, v));
   const total = values.reduce((a, b) => a + b, 0);
+  // スライスは数が限られるため常に出現アニメーション可。reduced-motion は
+  // ルートの MotionConfig が自動抑制する。
+  const animate = values.length <= ANIM_MAX_ELEMENTS;
   const cx = 220;
   const cy = 210;
   const r = 170;
@@ -439,16 +472,23 @@ function PieChart({ model, colors }: { model: ChartModel; colors: string[] }) {
           const ly = cy + oy + r * 0.62 * Math.sin(mid);
           return (
             <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} style={{ cursor: "default" }}>
-              <path
+              <motion.path
                 d={`M ${cx + ox} ${cy + oy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`}
                 fill={color}
                 stroke="var(--bg-surface)"
                 strokeWidth={1}
+                initial={animate ? { opacity: 0 } : false}
+                animate={{ opacity: 1 }}
+                transition={
+                  animate
+                    ? { duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.02 }
+                    : { duration: 0 }
+                }
               >
                 <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
-              </path>
+              </motion.path>
               {frac >= 0.05 && (
-                <text x={lx} y={ly} textAnchor="middle" fontSize="12" fontWeight={700} fill="#fff" pointerEvents="none">
+                <text x={lx} y={ly} textAnchor="middle" fontSize="12" fontWeight={700} fill={readableInk(color)} pointerEvents="none">
                   {pct.toFixed(0)}%
                 </text>
               )}

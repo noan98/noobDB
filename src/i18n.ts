@@ -552,6 +552,7 @@ const en = {
   exportFormat: "Output format",
   exportFormatCsv: "CSV",
   exportFormatJson: "JSON",
+  exportFormatNdjson: "NDJSON",
   exportSavePath: "Save to",
   exportSavePathPlaceholder: "Path to the output file",
   exportBrowse: "Browse...",
@@ -652,6 +653,9 @@ const en = {
   dumpOptPgSchema: "Schema (optional)",
   dumpOptPgSchemaPlaceholder: "e.g. public",
   dumpOptPgSchemaHint: "pg_dump -n <schema>: restrict to one schema. Leave empty to dump all schemas.",
+  dumpOptFormatSql: "Format SQL",
+  dumpOptFormatSqlHint:
+    "Reformat the saved SQL for readability (2-space indent, keyword case preserved), matching the editor's formatter. Best-effort; for review/version control. Off keeps the raw output.",
   // 結果セットのページネーション。
   pageFirst: "First page",
   pagePrev: "Previous page",
@@ -886,6 +890,26 @@ const en = {
   gridAddRow: "Add new row...",
   gridMarkDelete: "Mark row for deletion",
   gridUnmarkDelete: "Unmark deletion",
+  // 一括セル編集 (#596)
+  gridBulkEditSelection: "Set value for {count} selected cells...",
+  gridBulkEditSelectionTitle:
+    "Apply a single value (or NULL) to every cell in the selection",
+  gridBulkEditTitle: "Set value for selected cells",
+  gridBulkEditBody:
+    "The value below is applied to all {count} selected cells. Type NULL (uppercase) to clear. Cells whose column is read-only or whose value is invalid for the column type are skipped.",
+  gridBulkEditPlaceholder: "Value to apply (or NULL)",
+  gridBulkEditSetNull: "Set to NULL",
+  gridBulkEditApply: "Set cells",
+  gridBulkEditApplied: "Buffered {cells} cell edits — Apply to commit",
+  gridBulkEditAppliedSkipped:
+    "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
+  gridBulkEditNoneApplied: "No cells were edited (read-only columns or invalid value)",
+  // 結果差分ハイライト (#597)
+  diffHighlightLabel: "Diff",
+  diffHighlightAria: "Highlight changes from the previous run of this query",
+  diffHighlightTitle:
+    "When the same query is re-run, highlight cells that changed and rows that were added (needs a primary key)",
+  diffHighlightSummary: "+{added} / -{removed}",
   rowOpsInsertTitle: "Add a new row to {table}",
   rowOpsInsertHint: "Leave a field empty to use the column default. Type \"null\" for SQL NULL.",
   rowOpsInsertAdd: "Add to pending",
@@ -990,7 +1014,7 @@ const en = {
 
   helpFormatTitle: "Format",
   helpFormatDesc:
-    "Reformats the SQL in the editor for readability. Touches the editor text only.",
+    "Reformats the SQL in the editor for readability. Touches the editor text only. The dump dialog's \"Format SQL\" option applies the same policy (2-space indent, keyword case preserved) to the saved file on the backend; minor dialect differences may remain since the backend uses a generic formatter.",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
@@ -1831,6 +1855,7 @@ const ja: Dict = {
   exportFormat: "出力形式",
   exportFormatCsv: "CSV",
   exportFormatJson: "JSON",
+  exportFormatNdjson: "NDJSON",
   exportSavePath: "保存先",
   exportSavePathPlaceholder: "保存するファイルのパス",
   exportBrowse: "参照...",
@@ -1931,6 +1956,9 @@ const ja: Dict = {
   dumpOptPgSchema: "スキーマ (任意)",
   dumpOptPgSchemaPlaceholder: "例: public",
   dumpOptPgSchemaHint: "pg_dump -n <スキーマ>: 1 つのスキーマに限定します。空欄で全スキーマをダンプします。",
+  dumpOptFormatSql: "SQL を整形",
+  dumpOptFormatSqlHint:
+    "保存する SQL を可読性向上のため整形します (2 スペース字下げ・キーワードのケースは保持) — エディタの整形と方針を揃えています。best-effort でレビュー/バージョン管理向け。オフなら出力そのままです。",
   // 結果セットのページネーション。
   pageFirst: "先頭ページ",
   pagePrev: "前のページ",
@@ -2165,6 +2193,25 @@ const ja: Dict = {
   gridAddRow: "新規行を追加...",
   gridMarkDelete: "行を削除予定にする",
   gridUnmarkDelete: "削除予定を解除",
+  // 一括セル編集 (#596)
+  gridBulkEditSelection: "選択した {count} セルに値を設定...",
+  gridBulkEditSelectionTitle: "選択範囲のすべてのセルに単一値 (または NULL) を適用",
+  gridBulkEditTitle: "選択セルに値を設定",
+  gridBulkEditBody:
+    "下の値を選択した {count} セルすべてに適用します。NULL (大文字) でクリアします。列が編集不可、または値が列型に対して不正なセルはスキップします。",
+  gridBulkEditPlaceholder: "適用する値 (または NULL)",
+  gridBulkEditSetNull: "NULL にする",
+  gridBulkEditApply: "セルに設定",
+  gridBulkEditApplied: "{cells} セルの編集を保留しました — Apply で確定します",
+  gridBulkEditAppliedSkipped:
+    "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
+  gridBulkEditNoneApplied: "編集されたセルはありません (編集不可列または不正な値)",
+  // 結果差分ハイライト (#597)
+  diffHighlightLabel: "差分",
+  diffHighlightAria: "このクエリの前回実行からの変化をハイライト",
+  diffHighlightTitle:
+    "同じクエリを再実行したとき、変化したセルと追加された行をハイライトします (主キーが必要)",
+  diffHighlightSummary: "+{added} / -{removed}",
   rowOpsInsertTitle: "{table} に新規行を追加",
   rowOpsInsertHint: "空欄の列は既定値を使います。SQL の NULL にするには \"null\" と入力します。",
   rowOpsInsertAdd: "保留に追加",
@@ -2269,7 +2316,7 @@ const ja: Dict = {
 
   helpFormatTitle: "整形 (Format)",
   helpFormatDesc:
-    "エディタ内の SQL を読みやすく整形します。エディタのテキストを変更するだけです。",
+    "エディタ内の SQL を読みやすく整形します。エディタのテキストを変更するだけです。ダンプダイアログの「SQL を整形」オプションは、保存ファイルにバックエンドで同じ方針 (2 スペース字下げ・キーワードのケースは保持) を適用します。バックエンドは汎用の整形器を使うため、方言差が一部残ることがあります。",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
