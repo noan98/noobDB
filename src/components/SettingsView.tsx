@@ -15,10 +15,13 @@ import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
 import {
   DEFAULT_AUTO_LIMIT_COUNT,
+  DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   DEFAULT_DISPLAY_COUNT,
   DEFAULT_FONT_SIZE_PX,
   DEFAULT_QUERY_TIMEOUT_SECS,
   DEFAULT_STREAM_PREFETCH_SIZE,
+  MAX_AUTO_RECONNECT_RETRIES,
+  MIN_AUTO_RECONNECT_RETRIES,
   DENSITY_ORDER,
   MAX_FONT_SIZE_PX,
   MIN_FONT_SIZE_PX,
@@ -47,6 +50,8 @@ import {
   setAccentColor,
   setAutoLimitCount,
   setAutoLimitEnabled,
+  setAutoReconnectEnabled,
+  setAutoReconnectMaxRetries,
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
   setResultsInNewTab,
@@ -483,11 +488,18 @@ export function SettingsView({ theme, onClose }: Props) {
   const [prefetchInput, setPrefetchInput] = useState(String(settings.streamPrefetchSize));
   const [autoLimitInput, setAutoLimitInput] = useState(String(settings.autoLimitCount));
   const [timeoutInput, setTimeoutInput] = useState(String(settings.queryTimeoutSecs));
+  const [reconnectRetriesInput, setReconnectRetriesInput] = useState(
+    String(settings.autoReconnectMaxRetries),
+  );
   const [fontSizeInput, setFontSizeInput] = useState(String(settings.fontSizePx));
   useEffect(() => setDisplayInput(String(settings.defaultDisplayCount)), [settings.defaultDisplayCount]);
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
   useEffect(() => setTimeoutInput(String(settings.queryTimeoutSecs)), [settings.queryTimeoutSecs]);
+  useEffect(
+    () => setReconnectRetriesInput(String(settings.autoReconnectMaxRetries)),
+    [settings.autoReconnectMaxRetries],
+  );
   useEffect(() => setFontSizeInput(String(settings.fontSizePx)), [settings.fontSizePx]);
 
   const commitDisplay = () => {
@@ -509,6 +521,11 @@ export function SettingsView({ theme, onClose }: Props) {
     const n = Number.parseInt(timeoutInput, 10);
     if (Number.isFinite(n) && n >= 0) setQueryTimeoutSecs(n);
     else setTimeoutInput(String(settings.queryTimeoutSecs));
+  };
+  const commitReconnectRetries = () => {
+    const n = Number.parseInt(reconnectRetriesInput, 10);
+    if (Number.isFinite(n)) setAutoReconnectMaxRetries(n);
+    else setReconnectRetriesInput(String(settings.autoReconnectMaxRetries));
   };
   const commitFontSize = () => {
     const n = Number.parseInt(fontSizeInput, 10);
@@ -921,6 +938,42 @@ export function SettingsView({ theme, onClose }: Props) {
               {t("settingsQueryTimeoutHelp")}
             </SettingsHelpInline>
           </SettingsTimeoutAux>
+        </SettingsNumberRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-auto-reconnect">
+            <Switch
+              id="settings-auto-reconnect"
+              checked={settings.autoReconnectEnabled}
+              onChange={setAutoReconnectEnabled}
+            />
+            {t("settingsAutoReconnect")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsAutoReconnectHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-auto-reconnect-retries">
+            {t("settingsAutoReconnectMaxRetries")}
+          </chakra.label>
+          <Input
+            id="settings-auto-reconnect-retries"
+            type="number"
+            min={MIN_AUTO_RECONNECT_RETRIES}
+            max={MAX_AUTO_RECONNECT_RETRIES}
+            step={1}
+            value={reconnectRetriesInput}
+            placeholder={String(DEFAULT_AUTO_RECONNECT_MAX_RETRIES)}
+            disabled={!settings.autoReconnectEnabled}
+            onChange={(e) => setReconnectRetriesInput(e.target.value)}
+            onBlur={commitReconnectRetries}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsHelpInline>
+            {t("settingsAutoReconnectMaxRetriesHelp")}
+          </SettingsHelpInline>
         </SettingsNumberRow>
       </SettingsSection>
 

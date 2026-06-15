@@ -160,6 +160,28 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
                 {t("listProduction")}
               </chakra.span>
             )}
+            {/* 自動再接続中はアンビエントなバッジで状態を示す (#600)。帯色も警告色になる。 */}
+            {connection.status === "reconnecting" && (
+              <chakra.span
+                title={t("statusReconnecting")}
+                display="inline-flex"
+                alignItems="center"
+                gap="3px"
+                flexShrink={0}
+                fontSize="var(--text-2xs)"
+                fontWeight={700}
+                textTransform="uppercase"
+                letterSpacing="0.06em"
+                px="1.5"
+                py="1px"
+                borderRadius="pill"
+                bg="app.status.warning"
+                color="#fff"
+              >
+                <Icon name="refresh" size={11} />
+                {t("statusReconnecting")}
+              </chakra.span>
+            )}
           </Flex>
         )}
       </Flex>

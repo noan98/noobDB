@@ -113,6 +113,15 @@ export interface Settings {
    * color, density and syntax colors, which still override at runtime.
    */
   themePreset: ThemePreset;
+  /**
+   * Automatically re-establish a dropped connection (idle timeout, network /
+   * VPN drop, SSH tunnel loss) using the same profile, with exponential
+   * backoff. When off, a dropped connection surfaces a manual Reconnect button
+   * instead. A drop detected mid (explicit) transaction never auto-reconnects.
+   */
+  autoReconnectEnabled: boolean;
+  /** Maximum number of auto-reconnect attempts before giving up (clamped 1..20). */
+  autoReconnectMaxRetries: number;
 }
 
 /** Color theme presets. `default` = stock light/dark. */
@@ -356,6 +365,11 @@ const AUTO_REFRESH_MAX_SECS = 3_600;
 export const AUTO_REFRESH_INTERVAL_OPTIONS = [5, 10, 30, 60, 300] as const;
 export const DEFAULT_AUTO_REFRESH_SECS = 10;
 
+export const DEFAULT_AUTO_RECONNECT_ENABLED = true;
+export const DEFAULT_AUTO_RECONNECT_MAX_RETRIES = 5;
+export const MIN_AUTO_RECONNECT_RETRIES = 1;
+export const MAX_AUTO_RECONNECT_RETRIES = 20;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -382,7 +396,18 @@ export const DEFAULT_SETTINGS: Settings = {
   monoFontFamily: DEFAULT_MONO_FONT_FAMILY,
   uiFontFamily: DEFAULT_UI_FONT_FAMILY,
   themePreset: DEFAULT_THEME_PRESET,
+  autoReconnectEnabled: DEFAULT_AUTO_RECONNECT_ENABLED,
+  autoReconnectMaxRetries: DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
 };
+
+/** Clamps the auto-reconnect retry count to the allowed range. */
+export function sanitizeAutoReconnectRetries(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.floor(input);
+  if (n < MIN_AUTO_RECONNECT_RETRIES) return MIN_AUTO_RECONNECT_RETRIES;
+  if (n > MAX_AUTO_RECONNECT_RETRIES) return MAX_AUTO_RECONNECT_RETRIES;
+  return n;
+}
 
 /** Clamps an auto-refresh cadence (seconds) to the allowed range. */
 export function sanitizeAutoRefreshSecs(input: unknown, fallback: number): number {
@@ -513,6 +538,8 @@ function loadInitial(): Settings {
       monoFontFamily?: unknown;
       uiFontFamily?: unknown;
       themePreset?: unknown;
+      autoReconnectEnabled?: unknown;
+      autoReconnectMaxRetries?: unknown;
     };
     return {
       syntaxColors: {
@@ -562,6 +589,14 @@ function loadInitial(): Settings {
       monoFontFamily: sanitizeFontFamily(parsed.monoFontFamily, DEFAULT_MONO_FONT_FAMILY),
       uiFontFamily: sanitizeFontFamily(parsed.uiFontFamily, DEFAULT_UI_FONT_FAMILY),
       themePreset: sanitizeThemePreset(parsed.themePreset, DEFAULT_THEME_PRESET),
+      autoReconnectEnabled:
+        typeof parsed.autoReconnectEnabled === "boolean"
+          ? parsed.autoReconnectEnabled
+          : DEFAULT_AUTO_RECONNECT_ENABLED,
+      autoReconnectMaxRetries: sanitizeAutoReconnectRetries(
+        parsed.autoReconnectMaxRetries,
+        DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
+      ),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -795,6 +830,21 @@ export function setThemePreset(value: ThemePreset): void {
   const next = sanitizeThemePreset(value, current.themePreset);
   if (current.themePreset === next) return;
   current = { ...current, themePreset: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setAutoReconnectEnabled(value: boolean): void {
+  if (current.autoReconnectEnabled === value) return;
+  current = { ...current, autoReconnectEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setAutoReconnectMaxRetries(value: number): void {
+  const next = sanitizeAutoReconnectRetries(value, current.autoReconnectMaxRetries);
+  if (current.autoReconnectMaxRetries === next) return;
+  current = { ...current, autoReconnectMaxRetries: next };
   persist();
   listeners.forEach((cb) => cb());
 }
