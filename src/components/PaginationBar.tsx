@@ -167,7 +167,11 @@ export function PaginationBar({
           onChange={(e) => onSetPageSize(Number.parseInt(e.target.value, 10))}
           disabled={loading}
           h="26px"
-          px="1"
+          // ネイティブ select の右側に描かれるドロップダウン矢印と数値が重なって
+          // 見切れないよう、右パディングを広めに取り、最小幅も確保する。
+          minW="60px"
+          pl="1.5"
+          pr="5"
           borderWidth="1px"
           borderColor="app.border"
           borderRadius="6px"

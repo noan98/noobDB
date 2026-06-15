@@ -717,6 +717,10 @@ export default function App() {
   const [showObjectSearch, setShowObjectSearch] = useState(false);
   // `?` キーで開くショートカット チートシートの開閉。
   const [showCheatSheet, setShowCheatSheet] = useState(false);
+  // 結果パネルの全画面モーダル表示の開閉 (Cmd/Ctrl+Shift+M / 結果ツールバーの
+  // トグル / Esc)。フォーカス中ペインのアクティブタブの結果セクションを画面いっぱいに
+  // 広げて閲覧できるようにする。
+  const [resultMaximized, setResultMaximized] = useState(false);
 
   // data-theme はテーマプリセットと light/dark トグルから合成する。
   // THEME_STORAGE_KEY には light/dark のみ保存する。
@@ -3509,6 +3513,64 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [showForm, showSettings, showHelp, showCompare, showSnippetForm, showCommandPalette]);
 
+  // 結果パネルの最大化トグル (Cmd/Ctrl+Shift+M) と、最大化中の Esc での復元。
+  // 他のオーバーレイ表示中は介入しない。Esc は入力欄/エディタにフォーカスがある間は
+  // その場のローカル Esc 処理 (検索クリア等) を優先し、奪わない。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "m") {
+        if (
+          showForm || showSettings || showHelp || showCompare || showErd || showProcesses ||
+          showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
+        ) {
+          return;
+        }
+        if (!sessionIdRef.current) return;
+        e.preventDefault();
+        setResultMaximized((v) => !v);
+        return;
+      }
+      if (e.key === "Escape" && resultMaximized) {
+        const el = document.activeElement as HTMLElement | null;
+        if (el) {
+          const tag = el.tagName;
+          if (
+            tag === "INPUT" ||
+            tag === "TEXTAREA" ||
+            tag === "SELECT" ||
+            el.isContentEditable ||
+            el.closest(".cm-editor")
+          ) {
+            return;
+          }
+        }
+        e.preventDefault();
+        setResultMaximized(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [
+    resultMaximized,
+    showForm,
+    showSettings,
+    showHelp,
+    showCompare,
+    showErd,
+    showProcesses,
+    showSnippetForm,
+    showCommandPalette,
+    showObjectSearch,
+    showCheatSheet,
+  ]);
+
+  // 接続が切れたら結果パネルの最大化を解除し、再接続時に意図せず全画面のまま
+  // 始まらないようにする。
+  useEffect(() => {
+    if (!sessionId) setResultMaximized(false);
+  }, [sessionId]);
+
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
@@ -3751,6 +3813,10 @@ export default function App() {
     const summary = tab
       ? { cells: countEditedCells(tab.pendingEdits), rows: countEditedRows(tab.pendingEdits) }
       : { cells: 0, rows: 0 };
+    // フォーカス中ペインのアクティブタブの結果セクションをモーダル全画面化するか。
+    // CSS で結果セクションのラッパを position: fixed の全画面オーバーレイに切り替える
+    // ため、React の要素ツリーは保たれグリッドの状態 (スクロール/選択) も維持される。
+    const maximized = resultMaximized && isFocused && tab != null;
     return (
       <Flex
         key={pane.id}
@@ -3859,6 +3925,61 @@ export default function App() {
                 </Suspense>
               }
               second={
+                <Box
+                  display="flex"
+                  flexDirection="column"
+                  minH={0}
+                  minW={0}
+                  {...(maximized
+                    ? {
+                        // 結果セクションを全画面オーバーレイ化する。タイトルバー
+                        // (高さ 38px) は覆わず、ウィンドウ操作を残す。
+                        position: "fixed" as const,
+                        top: "38px",
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        zIndex: "modal" as const,
+                        bg: "app.surface",
+                        boxShadow: "lg",
+                      }
+                    : { flex: "1", position: "relative" as const })}
+                >
+                  {maximized && (
+                    <Flex
+                      align="center"
+                      gap="2"
+                      px="3"
+                      py="1.5"
+                      flex="none"
+                      borderBottomWidth="1px"
+                      borderBottomColor="app.border"
+                      bg="app.toolbar"
+                    >
+                      <Icon name="maximize" size={14} />
+                      <chakra.span
+                        fontSize="sm"
+                        color="app.text"
+                        fontWeight={500}
+                        overflow="hidden"
+                        textOverflow="ellipsis"
+                        whiteSpace="nowrap"
+                      >
+                        {tab.title}
+                      </chakra.span>
+                      <chakra.span flex="1" />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setResultMaximized(false)}
+                        title={t("resultRestoreTitle")}
+                      >
+                        <Icon name="minimize" size={14} /> {t("resultMaximizedLabel")}
+                      </Button>
+                    </Flex>
+                  )}
+                  <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   {tab.kind === "explain" ? (
                     <ExplainViewer result={tab.result} streaming={tab.streaming} />
@@ -4010,6 +4131,8 @@ export default function App() {
                           : undefined
                       }
                       lastEditAppliedAt={tab.lastEditAppliedAt}
+                      maximized={maximized}
+                      onToggleMaximize={() => setResultMaximized((v) => !v)}
                     />
                     {tab.kind === "table" && tab.paginatable && tab.result && !tab.streaming && (
                       <PaginationBar
@@ -4028,6 +4151,8 @@ export default function App() {
                     </Flex>
                   )}
                 </Suspense>
+                  </Box>
+                </Box>
               }
             />
           ) : (

@@ -827,6 +827,12 @@ interface Props {
    * only in-memory stats.
    */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
+  /**
+   * 結果パネルの全画面モーダル表示の現在状態。`onToggleMaximize` が渡されたときだけ
+   * ツールバーに最大化/復元トグルを出し、`maximized` でアイコンとツールチップを切り替える。
+   */
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
 }
 
 export interface ResultGridHandle {
@@ -3808,6 +3814,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   lastEditAppliedAt,
   applyingEdits,
   onRunStatsQuery,
+  maximized,
+  onToggleMaximize,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -4523,6 +4531,21 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           placeholder={t("gridSearchPlaceholder")}
           aria-label={t("gridSearchAria")}
         />
+        {onToggleMaximize && (
+          <Button
+            variant="secondary"
+            size="sm"
+            px="1.5"
+            marginLeft="1.5"
+            flexShrink={0}
+            onClick={onToggleMaximize}
+            title={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
+            aria-label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
+            aria-pressed={!!maximized}
+          >
+            <Icon name={maximized ? "minimize" : "maximize"} />
+          </Button>
+        )}
       </Box>
       <Box
         ref={containerRef}
