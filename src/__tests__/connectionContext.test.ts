@@ -29,4 +29,23 @@ describe("connectionBandColor (#466)", () => {
       connectionBandColor({ name: "prod", color: "#22c55e", isProduction: true }),
     ).toBe("var(--status-error)");
   });
+
+  it("uses the warning color while reconnecting, overriding production (#600)", () => {
+    expect(
+      connectionBandColor({ name: "dev", color: "#22c55e", isProduction: false, status: "reconnecting" }),
+    ).toBe("var(--status-warning)");
+    // 再接続中は本番の危険色より優先して状態を伝える。
+    expect(
+      connectionBandColor({ name: "prod", color: null, isProduction: true, status: "reconnecting" }),
+    ).toBe("var(--status-warning)");
+  });
+
+  it("treats connected / disconnected status like the status-less cases", () => {
+    expect(
+      connectionBandColor({ name: "dev", color: "#22c55e", isProduction: false, status: "connected" }),
+    ).toBe("#22c55e");
+    expect(
+      connectionBandColor({ name: "prod", color: null, isProduction: true, status: "disconnected" }),
+    ).toBe("var(--status-error)");
+  });
 });

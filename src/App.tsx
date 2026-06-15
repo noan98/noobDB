@@ -144,6 +144,11 @@ import {
 } from "./dangerousSql";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
 import { matchErrorHint } from "./errorHints";
+import {
+  backoffDelayMs,
+  shouldAutoReconnect,
+  type ConnectionStatus,
+} from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
 import { transitions, variants } from "./motion";
 import {
@@ -939,6 +944,14 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
+  // ライブ接続の状態 (#600)。`reconnecting` の間は TitleBar に警告帯/バッジを出し、
+  // 新規クエリは明示的に弾く。`connected` 以外への遷移は自動再接続オーケストレータが司る。
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connected");
+  const connectionStatusRef = useRef<ConnectionStatus>("connected");
+  useEffect(() => { connectionStatusRef.current = connectionStatus; }, [connectionStatus]);
+  // 自動再接続ループの二重起動防止と、手動操作 (接続/切断) でループを中断するフラグ。
+  const reconnectingRef = useRef(false);
+  const reconnectAbortRef = useRef(false);
   const [status, setStatus] = useState<Status>({ kind: "key", key: "appDisconnected" });
   // Lets the user dismiss the error-hint banner. Reset whenever the status
   // changes (a new query result, connect/disconnect, connection switch, etc.)
@@ -1528,8 +1541,12 @@ export default function App() {
       });
       if (!ok) return;
     }
+    // 手動接続は進行中の自動再接続ループより優先する: ループを中断させる。
+    reconnectAbortRef.current = true;
+    reconnectingRef.current = false;
     setConnectingId(profile.id);
     setErrorProfileId(null);
+    setConnectionStatus("connected");
     setStatus({ kind: "key", key: "statusConnecting", vars: { name: profile.name } });
     if (sessionId) {
       // Persist the outgoing profile's tabs before we tear them down.
@@ -1604,6 +1621,10 @@ export default function App() {
 
   const handleDisconnect = useCallback(async () => {
     if (!sessionId) return;
+    // 明示切断は進行中の自動再接続ループを中断させる。
+    reconnectAbortRef.current = true;
+    reconnectingRef.current = false;
+    setConnectionStatus("connected");
     // Persist before tearing down — closeAllTabs clears the in-memory list.
     if (selectedProfile) persistTabsForProfile(selectedProfile.id);
     await closeAllTabs();
@@ -1624,23 +1645,132 @@ export default function App() {
   // an explicit Disconnect would — close tabs and release the backend session
   // and its SSH tunnel — then surface a clear reconnect message. The dropped
   // profile is flagged in the connection list so reconnecting is one click.
+  //
+  // 死んだセッションを完全に破棄して手動再接続 UI に倒す。自動再接続を行わない
+  // (無効設定・トランザクション中・リトライ上限到達) ときの共通後始末。
+  // `inTransaction` のときは「中途半端なコミットを避けて再接続しなかった」旨を示す。
+  const tearDownLostSession = useCallback(
+    async (profile: ConnectionProfile | null, oldSessionId: string | null, opts?: {
+      inTransaction?: boolean;
+      gaveUpAfter?: number;
+    }) => {
+      const lostProfileId = profile?.id ?? null;
+      if (profile) persistTabsForProfile(profile.id);
+      await closeAllTabs();
+      if (oldSessionId) {
+        try { await api.disconnect(oldSessionId); } catch (e) { console.warn(e); }
+      }
+      setSessionId(null);
+      setSelectedProfile(null);
+      setImportTarget(null);
+      setDumpTarget(null);
+      setConnectionStatus("connected");
+      setErrorProfileId(lostProfileId);
+      if (opts?.inTransaction) {
+        setStatus({ kind: "key", key: "statusReconnectTx", error: true });
+      } else if (opts?.gaveUpAfter != null && profile) {
+        setStatus({
+          kind: "key",
+          key: "statusReconnectGaveUp",
+          vars: { name: profile.name, max: opts.gaveUpAfter },
+          error: true,
+        });
+      } else {
+        setStatus({ kind: "key", key: "statusConnectionLost", error: true });
+      }
+    },
+    [closeAllTabs, persistTabsForProfile],
+  );
+
+  // 指数バックオフで自動再接続を試みるループ。成功したら同じプロファイルで張り直した
+  // 新セッションへ差し替え (開いているタブはそのまま維持)、上限まで失敗したら
+  // `tearDownLostSession` で手動再接続 UI に倒す。SSH トンネルの張り直しは
+  // `api.connect` → バックエンドの `build_options` が担い、ライフタイム規約を守る。
+  const runReconnectLoop = useCallback(
+    async (profile: ConnectionProfile, oldSessionId: string, maxRetries: number) => {
+      if (reconnectingRef.current) return;
+      reconnectingRef.current = true;
+      reconnectAbortRef.current = false;
+      setConnectionStatus("reconnecting");
+      // 再接続が最終的に失敗してもタブが失われないよう先に退避しておく。
+      persistTabsForProfile(profile.id);
+      // 死んだバックエンドセッションを落としてリークを防ぐ (ベストエフォート)。
+      try { await api.disconnect(oldSessionId); } catch { /* already gone */ }
+
+      const driver: DriverKind =
+        profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
+          ? profile.driver
+          : "mysql";
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
+        setStatus({
+          kind: "key",
+          key: "statusReconnectingAttempt",
+          vars: { name: profile.name, attempt: attempt + 1, max: maxRetries },
+        });
+        await new Promise((resolve) => setTimeout(resolve, backoffDelayMs(attempt)));
+        if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
+        try {
+          const res = await api.connect({
+            profile_id: profile.id,
+            driver,
+            host: profile.host,
+            port: profile.port,
+            user: profile.user,
+            password: "",
+            database: profile.database,
+            ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
+            file_path: profile.file_path,
+            read_only: profile.read_only,
+            skip_history: profile.skip_history,
+          });
+          // 成功: タブを維持したままセッションだけ差し替える。
+          setSessionId(res.session_id);
+          setSelectedProfile(profile);
+          setErrorProfileId(null);
+          setConnectionStatus("connected");
+          setStatus({ kind: "idle" });
+          toast.success(translate("statusReconnected", { name: profile.name }));
+          reconnectingRef.current = false;
+          return;
+        } catch (e) {
+          // 次の試行へ。最終試行で抜けたら下の give-up 処理に落ちる。
+          console.warn("reconnect attempt failed", e);
+        }
+      }
+      // 上限到達: 諦めて手動再接続 UI へ。
+      reconnectingRef.current = false;
+      if (reconnectAbortRef.current) return;
+      await tearDownLostSession(profile, null, { gaveUpAfter: maxRetries });
+    },
+    [persistTabsForProfile, tearDownLostSession, toast],
+  );
+
+  // 接続断 (クエリ失敗 / フォーカス時のヘルスチェック失敗) の統一ハンドラ。設定と
+  // トランザクション状態に応じて、自動再接続ループを起動するか手動再接続へ倒すかを
+  // 振り分ける。トランザクション中の断は再接続せず明示エラーにする (#600)。
   const handleConnectionLost = useCallback(async () => {
-    if (!sessionId) return;
-    const lostProfileId = selectedProfile?.id ?? null;
-    if (selectedProfile) persistTabsForProfile(selectedProfile.id);
-    await closeAllTabs();
-    try {
-      await api.disconnect(sessionId);
-    } catch (e) {
-      console.warn(e);
+    const oldSessionId = sessionId;
+    const profile = selectedProfile;
+    if (!oldSessionId) return;
+    if (reconnectingRef.current) return; // 既にループ実行中。
+    const inTransaction = txActiveRef.current;
+    const cfg = getSettings();
+    if (
+      !profile ||
+      !shouldAutoReconnect({
+        enabled: cfg.autoReconnectEnabled,
+        inTransaction,
+        attempt: 0,
+        maxRetries: cfg.autoReconnectMaxRetries,
+      })
+    ) {
+      await tearDownLostSession(profile, oldSessionId, { inTransaction });
+      return;
     }
-    setSessionId(null);
-    setSelectedProfile(null);
-    setImportTarget(null);
-    setDumpTarget(null);
-    setErrorProfileId(lostProfileId);
-    setStatus({ kind: "key", key: "statusConnectionLost", error: true });
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile]);
+    await runReconnectLoop(profile, oldSessionId, cfg.autoReconnectMaxRetries);
+  }, [sessionId, selectedProfile, tearDownLostSession, runReconnectLoop]);
 
   // Held in a ref so the streaming callbacks below (created before this
   // handler) can invoke the latest version without re-subscribing on every
@@ -1740,6 +1870,11 @@ export default function App() {
   ) => {
     if (!sessionId) {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
+      return;
+    }
+    // 自動再接続中は接続が無効。キューイングはせず明示的に弾く (#600)。
+    if (connectionStatusRef.current === "reconnecting") {
+      setStatus({ kind: "key", key: "statusReconnectBusy", error: true });
       return;
     }
     const tab = tabs.find((tt) => tt.id === tabId);
@@ -3445,18 +3580,19 @@ export default function App() {
 
   // 接続のヘルスチェックと自動再接続。ウィンドウがフォーカスを取り戻したとき
   // (= OS スリープ復帰やタブ切り替え後) に SELECT 1 で接続が生きているか確認し、死んで
-  // いれば現在のプロファイルで再接続する。トンネル断やスリープ復帰で「次のクエリが急に
-  // 失敗する」体験を緩和する。同時実行は healthCheckBusyRef で 1 件に絞る。
+  // いれば統一ハンドラ (自動再接続 or 手動フォールバック) に倒す。トンネル断やスリープ
+  // 復帰で「次のクエリが急に失敗する」体験を緩和する。同時実行は healthCheckBusyRef で
+  // 1 件に絞り、再接続ループ実行中・非接続状態では走らせない (#600)。
   useEffect(() => {
     if (!sessionId || !selectedProfile) return;
     const onFocus = async () => {
-      if (healthCheckBusyRef.current || connectingId) return;
+      if (healthCheckBusyRef.current || connectingId || reconnectingRef.current) return;
+      if (connectionStatusRef.current !== "connected") return;
       healthCheckBusyRef.current = true;
       try {
         const alive = await api.pingSession(sessionId);
         if (!alive) {
-          toast.info(translate("reconnectDetected"));
-          await handleConnect(selectedProfile);
+          await handleConnectionLostRef.current();
         }
       } catch {
         // セッションが既に消えている等は無視 (UI 側で切断扱い)。
@@ -3466,7 +3602,7 @@ export default function App() {
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [sessionId, selectedProfile, connectingId, handleConnect, toast]);
+  }, [sessionId, selectedProfile, connectingId]);
 
   // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする。
   // 接続タブが選択されていなければ切り替えてからフォーカスする。
@@ -4190,6 +4326,7 @@ export default function App() {
                 name: selectedProfile.name,
                 color: selectedProfile.color ?? null,
                 isProduction: selectedProfile.is_production,
+                status: connectionStatus,
               }
             : null
         }
