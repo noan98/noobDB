@@ -2271,6 +2271,10 @@ export default function App() {
           },
           loadingMore: false,
           canLoadMore: more.rows.length >= chunkSize,
+          // load-more は結果行を伸ばすが SQL の再実行ではない。差分スナップショット
+          // (#597) を無効化し、伸びた行が「追加」として誤ハイライトされるのを防ぐ。
+          prevResultRows: null,
+          prevResultSql: null,
         };
       });
       setStatus({
@@ -2320,6 +2324,10 @@ export default function App() {
         loadingMore: false,
         // ページングは置換なので、無限スクロールの load-more は無効化する。
         canLoadMore: false,
+        // ページ送りは別ページへの置換であり SQL の再実行ではない。差分
+        // スナップショット (#597) を無効化し、旧ページとの誤比較を防ぐ。
+        prevResultRows: null,
+        prevResultSql: null,
         // 別ページに切り替えたら旧ページ由来の保留編集は孤立するため破棄する。
         pendingEdits: {},
         editUndoStack: [],
