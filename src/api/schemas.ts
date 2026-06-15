@@ -131,6 +131,17 @@ export const connectionProfile = z.object({
   read_only: z.boolean(),
   skip_history: z.boolean(),
   file_path: z.string().nullable(),
+  // TLS 設定 (非秘密)。TLS 未設定で保存された旧プロファイルではフィールドごと
+  // 欠落するため optional + nullable。証明書はパスのみで値は保存しない。
+  ssl_mode: z
+    .enum(["disable", "prefer", "require", "verify_ca", "verify_full"])
+    .nullable()
+    .optional(),
+  ssl_root_cert: z.string().nullable().optional(),
+  ssl_client_cert: z.string().nullable().optional(),
+  ssl_client_key: z.string().nullable().optional(),
+  // セッション初期化 SQL (非秘密)。未設定の旧プロファイルでは欠落。
+  init_sql: z.string().nullable().optional(),
   // 以下は list_profiles の戻り値にのみ含まれる「秘密が設定済みか」の表示用フラグ。
   has_db_password: z.boolean().optional(),
   has_ssh_passphrase: z.boolean().optional(),

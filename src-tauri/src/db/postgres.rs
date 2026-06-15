@@ -1,14 +1,14 @@
 use std::time::Instant;
 
 use futures_util::StreamExt;
-use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
+use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode};
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
-use super::DbConnectOptions;
+use super::{init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
 
 pub struct PostgresConn {
@@ -30,22 +30,32 @@ impl PostgresConn {
                 connect = connect.database(db);
             }
         }
-        let pool = PgPoolOptions::new()
+        connect = apply_tls(connect, opts);
+        let mut pool_opts = PgPoolOptions::new()
             .min_connections(0)
             .max_connections(5)
-            .acquire_timeout(std::time::Duration::from_secs(15))
-            .connect_with(connect)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    host = %opts.host,
-                    port = opts.port,
-                    user = %opts.user,
-                    error = %e,
-                    "postgres: failed to create connection pool"
-                );
-                e
-            })?;
+            .acquire_timeout(std::time::Duration::from_secs(15));
+        if let Some(sql) = init_sql_of(opts) {
+            // Run the session-init SQL on every physical connection the pool opens.
+            pool_opts = pool_opts.after_connect(move |conn, _meta| {
+                let sql = sql.clone();
+                Box::pin(async move {
+                    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
+                        .await?;
+                    Ok(())
+                })
+            });
+        }
+        let pool = pool_opts.connect_with(connect).await.map_err(|e| {
+            tracing::error!(
+                host = %opts.host,
+                port = opts.port,
+                user = %opts.user,
+                error = %e,
+                "postgres: failed to create connection pool"
+            );
+            e
+        })?;
         Ok(Self {
             pool,
             tx: tokio::sync::Mutex::new(None),
@@ -783,6 +793,42 @@ fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("table ")
 }
 
+/// Maps the driver-neutral [`SslMode`] to PostgreSQL's `PgSslMode`.
+fn map_ssl_mode(mode: SslMode) -> PgSslMode {
+    match mode {
+        SslMode::Disable => PgSslMode::Disable,
+        SslMode::Prefer => PgSslMode::Prefer,
+        SslMode::Require => PgSslMode::Require,
+        SslMode::VerifyCa => PgSslMode::VerifyCa,
+        SslMode::VerifyFull => PgSslMode::VerifyFull,
+    }
+}
+
+/// Applies the TLS settings from `opts` to the connect options. `ssl_mode` is
+/// left untouched when `None` (sqlx defaults to `prefer`); empty certificate
+/// paths are ignored so a blank field behaves like "unset".
+fn apply_tls(mut connect: PgConnectOptions, opts: &DbConnectOptions) -> PgConnectOptions {
+    if let Some(mode) = opts.ssl_mode {
+        connect = connect.ssl_mode(map_ssl_mode(mode));
+    }
+    if let Some(ca) = non_empty(&opts.ssl_root_cert) {
+        connect = connect.ssl_root_cert(ca);
+    }
+    if let Some(cert) = non_empty(&opts.ssl_client_cert) {
+        connect = connect.ssl_client_cert(cert);
+    }
+    if let Some(key) = non_empty(&opts.ssl_client_key) {
+        connect = connect.ssl_client_key(key);
+    }
+    connect
+}
+
+/// Returns the trimmed path only when it is non-empty, so a blank form field
+/// (serialized as `Some("")`) is treated as unset.
+fn non_empty(value: &Option<String>) -> Option<&str> {
+    value.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
 async fn apply_search_path(
     conn: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
     schema: Option<&str>,
@@ -1123,6 +1169,33 @@ async fn fetch_capped_pg(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_ssl_mode_to_pg_equivalents() {
+        assert!(matches!(map_ssl_mode(SslMode::Disable), PgSslMode::Disable));
+        assert!(matches!(map_ssl_mode(SslMode::Prefer), PgSslMode::Prefer));
+        assert!(matches!(map_ssl_mode(SslMode::Require), PgSslMode::Require));
+        assert!(matches!(
+            map_ssl_mode(SslMode::VerifyCa),
+            PgSslMode::VerifyCa
+        ));
+        assert!(matches!(
+            map_ssl_mode(SslMode::VerifyFull),
+            PgSslMode::VerifyFull
+        ));
+    }
+
+    #[test]
+    fn apply_tls_treats_blank_cert_paths_as_unset() {
+        // A blank form field arrives as `Some("")`; it must not be passed to
+        // sqlx as a real path (which would fail to open). `non_empty` filters it.
+        assert_eq!(non_empty(&Some("  ".to_string())), None);
+        assert_eq!(
+            non_empty(&Some("/tmp/ca.pem".to_string())),
+            Some("/tmp/ca.pem")
+        );
+        assert_eq!(non_empty(&None), None);
+    }
 
     #[test]
     fn parses_basic_update() {

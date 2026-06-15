@@ -14,9 +14,26 @@ const PREVIEW_ROW_LIMIT: usize = 50;
 /// this further to respect their own placeholder / statement-size limits.
 const DEFAULT_BATCH_SIZE: usize = 500;
 
+/// Source data format for an import. Defaults to `Csv` so requests sent before
+/// this field existed (and any caller that omits it) keep the CSV behavior.
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportFormat {
+    #[default]
+    Csv,
+    /// A top-level JSON array of objects (a bare object is treated as one row).
+    Json,
+    /// Newline-delimited JSON — one object per line.
+    Ndjson,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportOptions {
+    /// Source format. CSV uses the delimiter/quote/header fields below; JSON and
+    /// NDJSON ignore them and key rows by object field name.
+    #[serde(default)]
+    pub format: ImportFormat,
     /// Field delimiter — a single ASCII character (`,`, `\t`, `;`, ...).
     pub delimiter: char,
     /// Quote character — a single ASCII character.
@@ -92,6 +109,9 @@ fn csv_err(e: csv::Error) -> AppError {
 }
 
 fn parse_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
+    if opts.format != ImportFormat::Csv {
+        return parse_json_preview(data, opts.format);
+    }
     let mut rdr = build_reader(data, opts);
     let mut records = rdr.records();
 
@@ -126,12 +146,164 @@ fn parse_preview(data: &[u8], opts: &ImportOptions) -> Result<CsvPreview> {
 }
 
 /// Reads the file and returns the header + first rows for the mapping UI.
+/// Despite the `csv` name (kept for IPC stability) this handles CSV, JSON, and
+/// NDJSON; the format is selected by `options.format`.
 #[tauri::command]
 pub async fn parse_csv_preview(path: String, options: ImportOptions) -> Result<CsvPreview> {
-    validate_chars(&options)?;
+    if options.format == ImportFormat::Csv {
+        validate_chars(&options)?;
+    }
     let bytes = tokio::fs::read(&path).await?;
     let text = decode_bytes(&bytes, &options.encoding);
     parse_preview(text.as_bytes(), &options)
+}
+
+fn json_err(e: serde_json::Error) -> AppError {
+    AppError::Other(format!("JSON parse error: {e}"))
+}
+
+/// Parses the source into a list of objects. JSON expects a top-level array of
+/// objects (a bare object becomes a single row); NDJSON expects one object per
+/// non-blank line. Non-object elements are rejected with a clear error.
+fn parse_json_records(
+    text: &str,
+    format: ImportFormat,
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+    use serde_json::Value;
+    match format {
+        ImportFormat::Json => {
+            let value: Value = serde_json::from_str(text).map_err(json_err)?;
+            match value {
+                Value::Array(items) => items.into_iter().map(json_object).collect(),
+                Value::Object(_) => Ok(vec![json_object(value)?]),
+                _ => Err(AppError::InvalidInput(
+                    "JSON import expects an array of objects (or a single object)".into(),
+                )),
+            }
+        }
+        ImportFormat::Ndjson => {
+            let mut out = Vec::new();
+            for (i, line) in text.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let value: Value = serde_json::from_str(trimmed).map_err(|e| {
+                    AppError::Other(format!("NDJSON parse error on line {}: {e}", i + 1))
+                })?;
+                out.push(json_object(value)?);
+            }
+            Ok(out)
+        }
+        // The dispatcher only calls this for JSON/NDJSON.
+        ImportFormat::Csv => Ok(Vec::new()),
+    }
+}
+
+/// Ensures a JSON value is an object (one import row). Arrays/scalars at the row
+/// level are rejected so the column mapping stays meaningful.
+fn json_object(value: serde_json::Value) -> Result<serde_json::Map<String, serde_json::Value>> {
+    match value {
+        serde_json::Value::Object(map) => Ok(map),
+        _ => Err(AppError::InvalidInput(
+            "JSON import expects each element to be an object".into(),
+        )),
+    }
+}
+
+/// Union of object keys across all records, in first-seen order so the preview
+/// and the import agree on column positions even when objects have heterogeneous
+/// keys. `serde_json::Map` is a `BTreeMap` here, so each object's keys iterate
+/// sorted; the union is deterministic regardless, because the same parse feeds
+/// both the preview and the import.
+fn collect_json_headers(records: &[serde_json::Map<String, serde_json::Value>]) -> Vec<String> {
+    let mut headers: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for record in records {
+        for key in record.keys() {
+            if seen.insert(key.as_str().to_string()) {
+                headers.push(key.clone());
+            }
+        }
+    }
+    headers
+}
+
+/// Converts a JSON value to its imported cell text. `null` → SQL NULL (`None`);
+/// scalars use their textual form; nested objects/arrays are stringified to
+/// compact JSON text so structured fields land in the table verbatim.
+fn json_value_to_cell(value: &serde_json::Value) -> Option<String> {
+    use serde_json::Value;
+    match value {
+        Value::Null => None,
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    }
+}
+
+/// Header + first rows for the JSON/NDJSON mapping UI. Mirrors `parse_preview`'s
+/// CSV branch: NULL/missing cells show as empty text in the verbatim preview.
+fn parse_json_preview(data: &[u8], format: ImportFormat) -> Result<CsvPreview> {
+    let text = std::str::from_utf8(data)
+        .map_err(|e| AppError::Other(format!("invalid UTF-8 in import file: {e}")))?;
+    let records = parse_json_records(text, format)?;
+    let headers = collect_json_headers(&records);
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut truncated = false;
+    for record in &records {
+        if rows.len() >= PREVIEW_ROW_LIMIT {
+            truncated = true;
+            break;
+        }
+        let row = headers
+            .iter()
+            .map(|h| match record.get(h) {
+                Some(v) => json_value_to_cell(v).unwrap_or_default(),
+                None => String::new(),
+            })
+            .collect();
+        rows.push(row);
+    }
+
+    Ok(CsvPreview {
+        headers,
+        rows,
+        truncated,
+    })
+}
+
+/// Parses JSON/NDJSON records into target-column order via `mapping`. Each
+/// `csv_index` indexes into the same header list `parse_json_preview` produced,
+/// so the mapping the user picked in the preview stays aligned. The NULL token
+/// is applied to resolved cell text for parity with the CSV path.
+fn parse_json_rows(
+    data: &[u8],
+    opts: &ImportOptions,
+    mapping: &[ColumnMapping],
+) -> Result<Vec<Vec<Option<String>>>> {
+    let text = std::str::from_utf8(data)
+        .map_err(|e| AppError::Other(format!("invalid UTF-8 in import file: {e}")))?;
+    let records = parse_json_records(text, opts.format)?;
+    let headers = collect_json_headers(&records);
+
+    let mut out: Vec<Vec<Option<String>>> = Vec::new();
+    for record in &records {
+        let row = mapping
+            .iter()
+            .map(|m| match headers.get(m.csv_index) {
+                Some(key) => match record.get(key) {
+                    Some(value) => json_value_to_cell(value).and_then(|s| apply_null(&s, opts)),
+                    None => None,
+                },
+                None => None,
+            })
+            .collect();
+        out.push(row);
+    }
+    Ok(out)
 }
 
 fn apply_null(s: &str, opts: &ImportOptions) -> Option<String> {
@@ -149,6 +321,9 @@ fn parse_rows(
     opts: &ImportOptions,
     mapping: &[ColumnMapping],
 ) -> Result<Vec<Vec<Option<String>>>> {
+    if opts.format != ImportFormat::Csv {
+        return parse_json_rows(data, opts, mapping);
+    }
     let mut rdr = build_reader(data, opts);
     let mut records = rdr.records();
     if opts.has_header {
@@ -245,7 +420,9 @@ pub async fn import_csv(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     ensure_import_writable(&session)?;
-    validate_chars(&options)?;
+    if options.format == ImportFormat::Csv {
+        validate_chars(&options)?;
+    }
     if mapping.is_empty() {
         return Err(AppError::InvalidInput(
             "no columns mapped for import".into(),
@@ -283,7 +460,17 @@ async fn spawn_import(
 ) {
     // Kept for the history summary after `run_import` consumes the originals.
     let summary_db = database.clone();
-    let summary = format!("-- CSV import into {} ({} columns)", table, mapping.len());
+    let fmt = match options.format {
+        ImportFormat::Csv => "CSV",
+        ImportFormat::Json => "JSON",
+        ImportFormat::Ndjson => "NDJSON",
+    };
+    let summary = format!(
+        "-- {} import into {} ({} columns)",
+        fmt,
+        table,
+        mapping.len()
+    );
     let result = run_import(
         &app, &session, &stream_id, database, table, path, options, mapping, batch_size,
     )
@@ -434,12 +621,111 @@ mod tests {
 
     fn opts(has_header: bool, null_token: Option<&str>) -> ImportOptions {
         ImportOptions {
+            format: ImportFormat::Csv,
             delimiter: ',',
             quote: '"',
             has_header,
             null_token: null_token.map(|s| s.to_string()),
             encoding: "utf-8".into(),
         }
+    }
+
+    /// Options for a JSON/NDJSON import. Delimiter/quote/header are unused by the
+    /// JSON path but the struct still requires them.
+    fn json_opts(format: ImportFormat, null_token: Option<&str>) -> ImportOptions {
+        ImportOptions {
+            format,
+            delimiter: ',',
+            quote: '"',
+            has_header: true,
+            null_token: null_token.map(|s| s.to_string()),
+            encoding: "utf-8".into(),
+        }
+    }
+
+    fn map(column: &str, idx: usize) -> ColumnMapping {
+        ColumnMapping {
+            column: column.into(),
+            csv_index: idx,
+        }
+    }
+
+    #[test]
+    fn json_preview_collects_union_of_keys() {
+        let data = br#"[{"id":1,"name":"Alice"},{"id":2,"email":"b@x.io"}]"#;
+        let p = parse_preview(data, &json_opts(ImportFormat::Json, None)).unwrap();
+        // First-seen union across objects; each object's keys iterate sorted
+        // (BTreeMap): id, name from the first object, then email from the second.
+        // Missing keys render as empty text in the verbatim preview.
+        assert_eq!(p.headers, vec!["id", "name", "email"]);
+        assert_eq!(p.rows[0], vec!["1", "Alice", ""]);
+        assert_eq!(p.rows[1], vec!["2", "", "b@x.io"]);
+        assert!(!p.truncated);
+    }
+
+    #[test]
+    fn json_preview_accepts_single_object() {
+        let data = br#"{"a":1,"b":2}"#;
+        let p = parse_preview(data, &json_opts(ImportFormat::Json, None)).unwrap();
+        assert_eq!(p.headers, vec!["a", "b"]);
+        assert_eq!(p.rows, vec![vec!["1", "2"]]);
+    }
+
+    #[test]
+    fn json_rows_stringify_nested_and_null_to_sql_null() {
+        let data = br#"[{"id":1,"meta":{"k":"v"},"tags":[1,2],"opt":null}]"#;
+        let opts = json_opts(ImportFormat::Json, None);
+        // Keys iterate sorted (BTreeMap): id, meta, opt, tags.
+        let mapping = vec![map("id", 0), map("meta", 1), map("opt", 2), map("tags", 3)];
+        let rows = parse_rows(data, &opts, &mapping).unwrap();
+        assert_eq!(
+            rows,
+            vec![vec![
+                Some("1".to_string()),
+                Some("{\"k\":\"v\"}".to_string()),
+                None,
+                Some("[1,2]".to_string()),
+            ]]
+        );
+    }
+
+    #[test]
+    fn ndjson_parses_one_object_per_line_skipping_blanks() {
+        let data = b"{\"id\":1,\"name\":\"Alice\"}\n\n{\"id\":2,\"name\":\"Bob\"}\n";
+        let p = parse_preview(data, &json_opts(ImportFormat::Ndjson, None)).unwrap();
+        assert_eq!(p.headers, vec!["id", "name"]);
+        assert_eq!(p.rows.len(), 2);
+        let mapping = vec![map("name", 1)];
+        let rows = parse_rows(data, &json_opts(ImportFormat::Ndjson, None), &mapping).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                vec![Some("Alice".to_string())],
+                vec![Some("Bob".to_string())]
+            ]
+        );
+    }
+
+    #[test]
+    fn json_rows_apply_null_token_for_csv_parity() {
+        // An explicit empty-string value becomes NULL when the null token is "".
+        let data = br#"[{"name":""},{"name":"x"}]"#;
+        let mapping = vec![map("name", 0)];
+        let rows = parse_rows(data, &json_opts(ImportFormat::Json, Some("")), &mapping).unwrap();
+        assert_eq!(rows, vec![vec![None], vec![Some("x".to_string())]]);
+    }
+
+    #[test]
+    fn json_rejects_non_object_elements() {
+        let data = br#"[{"a":1}, 42]"#;
+        let err = parse_preview(data, &json_opts(ImportFormat::Json, None));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn json_rejects_top_level_scalar() {
+        let data = br#"42"#;
+        assert!(parse_preview(data, &json_opts(ImportFormat::Json, None)).is_err());
     }
 
     #[test]

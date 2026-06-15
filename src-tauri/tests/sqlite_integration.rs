@@ -806,6 +806,11 @@ async fn sqlite_missing_path_reports_invalid_input() {
         database: None,
         driver: noobdb_lib::__test_api::DriverKind::Sqlite,
         file_path: None,
+        ssl_mode: None,
+        ssl_root_cert: None,
+        ssl_client_cert: None,
+        ssl_client_key: None,
+        init_sql: None,
     };
     let err = noobdb_lib::__test_api::connect(&opts)
         .await
@@ -1050,5 +1055,40 @@ async fn sqlite_process_commands_unsupported_and_read_only_guarded() {
         Err(t::AppError::InvalidInput(_))
     ));
 
+    let _ = std::fs::remove_file(&path);
+}
+
+/// Session-init SQL (#522) runs on every physical pool connection via the
+/// driver's `after_connect` hook. We connect with an init `PRAGMA` that sets a
+/// distinctive, connection-scoped value, then read it back through the normal
+/// query path (which acquires a pooled connection) to prove the hook fired.
+#[tokio::test]
+async fn sqlite_init_sql_runs_on_each_connection() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_init_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let mut opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    // `cache_size` is per-connection and easy to observe. The default differs
+    // from 4321, so reading it back confirms the init SQL ran on the connection
+    // serving the query.
+    opts.init_sql = Some("PRAGMA cache_size = 4321".into());
+
+    let conn = t::connect(&opts).await.expect("connect");
+    let res = conn
+        .execute("PRAGMA cache_size", None)
+        .await
+        .expect("read pragma");
+    assert_eq!(res.rows.len(), 1);
+    assert!(
+        matches!(&res.rows[0][0], t::Value::Int(4321)),
+        "init SQL PRAGMA should have applied to the pooled connection, got {:?}",
+        res.rows[0][0]
+    );
+
+    // Close the pool before deleting the file so the removal is reliable across
+    // platforms (Windows refuses to delete a file with open handles).
+    conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

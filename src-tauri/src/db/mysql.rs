@@ -1,7 +1,9 @@
 use std::time::Instant;
 
 use futures_util::StreamExt;
-use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow};
+use sqlx::mysql::{
+    MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode,
+};
 use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
@@ -9,7 +11,7 @@ use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
 };
-use super::{build_insert_sql, DbConnectOptions};
+use super::{build_insert_sql, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
@@ -31,22 +33,32 @@ impl MySqlConn {
                 connect = connect.database(db);
             }
         }
-        let pool = MySqlPoolOptions::new()
+        connect = apply_tls(connect, opts);
+        let mut pool_opts = MySqlPoolOptions::new()
             .min_connections(0)
             .max_connections(5)
-            .acquire_timeout(std::time::Duration::from_secs(15))
-            .connect_with(connect)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    host = %opts.host,
-                    port = opts.port,
-                    user = %opts.user,
-                    error = %e,
-                    "mysql: failed to create connection pool"
-                );
-                e
-            })?;
+            .acquire_timeout(std::time::Duration::from_secs(15));
+        if let Some(sql) = init_sql_of(opts) {
+            // Run the session-init SQL on every physical connection the pool opens.
+            pool_opts = pool_opts.after_connect(move |conn, _meta| {
+                let sql = sql.clone();
+                Box::pin(async move {
+                    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
+                        .await?;
+                    Ok(())
+                })
+            });
+        }
+        let pool = pool_opts.connect_with(connect).await.map_err(|e| {
+            tracing::error!(
+                host = %opts.host,
+                port = opts.port,
+                user = %opts.user,
+                error = %e,
+                "mysql: failed to create connection pool"
+            );
+            e
+        })?;
         Ok(Self {
             pool,
             tx: tokio::sync::Mutex::new(None),
@@ -884,6 +896,43 @@ pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()
     Ok(())
 }
 
+/// Maps the driver-neutral [`SslMode`] to MySQL's `MySqlSslMode`. `VerifyFull`
+/// maps to `VerifyIdentity` (the MySQL equivalent of full hostname verification).
+fn map_ssl_mode(mode: SslMode) -> MySqlSslMode {
+    match mode {
+        SslMode::Disable => MySqlSslMode::Disabled,
+        SslMode::Prefer => MySqlSslMode::Preferred,
+        SslMode::Require => MySqlSslMode::Required,
+        SslMode::VerifyCa => MySqlSslMode::VerifyCa,
+        SslMode::VerifyFull => MySqlSslMode::VerifyIdentity,
+    }
+}
+
+/// Applies the TLS settings from `opts` to the connect options. `ssl_mode` is
+/// left untouched when `None` (sqlx defaults to `preferred`); empty certificate
+/// paths are ignored so a blank field behaves like "unset".
+fn apply_tls(mut connect: MySqlConnectOptions, opts: &DbConnectOptions) -> MySqlConnectOptions {
+    if let Some(mode) = opts.ssl_mode {
+        connect = connect.ssl_mode(map_ssl_mode(mode));
+    }
+    if let Some(ca) = non_empty(&opts.ssl_root_cert) {
+        connect = connect.ssl_ca(ca);
+    }
+    if let Some(cert) = non_empty(&opts.ssl_client_cert) {
+        connect = connect.ssl_client_cert(cert);
+    }
+    if let Some(key) = non_empty(&opts.ssl_client_key) {
+        connect = connect.ssl_client_key(key);
+    }
+    connect
+}
+
+/// Returns the trimmed path only when it is non-empty, so a blank form field
+/// (serialized as `Some("")`) is treated as unset.
+fn non_empty(value: &Option<String>) -> Option<&str> {
+    value.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
 async fn apply_use_database(
     conn: &mut PoolConnection<MySql>,
     database: Option<&str>,
@@ -1684,6 +1733,38 @@ fn with_cte_is_mutation(sql: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_ssl_mode_to_mysql_equivalents() {
+        assert!(matches!(
+            map_ssl_mode(SslMode::Disable),
+            MySqlSslMode::Disabled
+        ));
+        assert!(matches!(
+            map_ssl_mode(SslMode::Prefer),
+            MySqlSslMode::Preferred
+        ));
+        assert!(matches!(
+            map_ssl_mode(SslMode::Require),
+            MySqlSslMode::Required
+        ));
+        assert!(matches!(
+            map_ssl_mode(SslMode::VerifyCa),
+            MySqlSslMode::VerifyCa
+        ));
+        // MySQL's full-identity verification is the equivalent of `verify_full`.
+        assert!(matches!(
+            map_ssl_mode(SslMode::VerifyFull),
+            MySqlSslMode::VerifyIdentity
+        ));
+    }
+
+    #[test]
+    fn apply_tls_treats_blank_cert_paths_as_unset() {
+        assert_eq!(non_empty(&Some(String::new())), None);
+        assert_eq!(non_empty(&Some(" /k.pem ".to_string())), Some("/k.pem"));
+        assert_eq!(non_empty(&None), None);
+    }
 
     #[test]
     fn query_shape_recognises_plain_selects() {
