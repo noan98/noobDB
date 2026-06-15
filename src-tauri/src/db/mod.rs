@@ -91,14 +91,27 @@ impl DriverKind {
     }
 }
 
-/// Returns the trimmed session-init SQL when present and non-empty, so drivers
-/// only attach an `after_connect` hook when there is something to run.
+/// Returns the trimmed session-init SQL when present and it contains at least
+/// one real statement, so drivers only attach an `after_connect` hook when there
+/// is something to run. Comment-only / separator-only input (e.g. `-- note` or
+/// `  ;  ;`) — which [`is_session_init_sql`] accepts as "runs nothing" — is
+/// normalized to `None` here, so no empty statement is ever sent (MySQL rejects
+/// an empty query with "Query was empty").
 pub(crate) fn init_sql_of(opts: &DbConnectOptions) -> Option<String> {
-    opts.init_sql
+    let sql = opts
+        .init_sql
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+        .filter(|s| !s.is_empty())?;
+    // Mask comments / string literals, then require a non-empty statement
+    // between the `;` separators.
+    let masked = mask_for_analysis(&sql.chars().collect::<Vec<_>>());
+    let has_statement = masked
+        .iter()
+        .collect::<String>()
+        .split(';')
+        .any(|stmt| !stmt.trim().is_empty());
+    has_statement.then(|| sql.to_string())
 }
 
 /// Dispatch enum. Adding a new DB is a new variant + a new module.
@@ -1095,6 +1108,41 @@ mod tests {
         assert!(is_session_init_sql(""));
         assert!(is_session_init_sql("  ;  ;\n"));
         assert!(is_session_init_sql("-- just a comment"));
+    }
+
+    #[test]
+    fn init_sql_of_normalizes_comment_or_separator_only_to_none() {
+        fn opts(init: Option<&str>) -> super::DbConnectOptions {
+            super::DbConnectOptions {
+                host: "h".into(),
+                port: 1,
+                user: "u".into(),
+                password: String::new(),
+                database: None,
+                driver: super::DriverKind::Postgres,
+                file_path: None,
+                ssl_mode: None,
+                ssl_root_cert: None,
+                ssl_client_cert: None,
+                ssl_client_key: None,
+                init_sql: init.map(str::to_string),
+            }
+        }
+        // No statement to run → None (so no after_connect hook runs an empty query).
+        assert_eq!(super::init_sql_of(&opts(None)), None);
+        assert_eq!(super::init_sql_of(&opts(Some("   "))), None);
+        assert_eq!(super::init_sql_of(&opts(Some("  ;  ;\n"))), None);
+        assert_eq!(super::init_sql_of(&opts(Some("-- just a comment"))), None);
+        // A real statement is preserved (trimmed).
+        assert_eq!(
+            super::init_sql_of(&opts(Some("  SET time_zone = 'UTC'  "))).as_deref(),
+            Some("SET time_zone = 'UTC'")
+        );
+        // A `;` inside a string literal is not a separator, so the statement counts.
+        assert_eq!(
+            super::init_sql_of(&opts(Some("SET application_name = 'a;b'"))).as_deref(),
+            Some("SET application_name = 'a;b'")
+        );
     }
 
     #[test]

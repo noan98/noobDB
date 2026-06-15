@@ -1087,5 +1087,8 @@ async fn sqlite_init_sql_runs_on_each_connection() {
         res.rows[0][0]
     );
 
+    // Close the pool before deleting the file so the removal is reliable across
+    // platforms (Windows refuses to delete a file with open handles).
+    conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
