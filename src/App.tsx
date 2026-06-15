@@ -29,6 +29,7 @@ import {
   type PendingEdits,
   type PendingInsertRow,
 } from "./components/cellEdit";
+import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { copyToClipboard } from "./components/clipboard";
 import {
@@ -486,6 +487,16 @@ interface Tab {
   autoRefreshSecs?: number | null;
   /** Wall-clock time (ms) of the last completed auto-refresh tick, for the badge. */
   autoRefreshLastRunAt?: number | null;
+  /**
+   * 結果差分ハイライト (#597) 用に保持する、前回実行時の結果行スナップショット。
+   * 新しい実行のたびに「直前の結果行」を退避し、同一クエリの再実行のときだけ
+   * 今回結果との差分計算に使う。In-memory only。
+   */
+  prevResultRows?: CellValue[][] | null;
+  /** `prevResultRows` を生成した SQL。今回 SQL と一致するときだけ差分を出す。 */
+  prevResultSql?: string | null;
+  /** 結果差分ハイライトのトグル (ON/OFF)。既定 OFF。In-memory only。 */
+  diffHighlight?: boolean;
 }
 
 /**
@@ -1735,10 +1746,16 @@ export default function App() {
     streamIdRef.current.set(tabId, streamId);
     const startedAt = Date.now();
     setStatus({ kind: "key", key: "statusRunningQuery" });
+    // 結果差分ハイライト (#597): 直前の結果行とその SQL を退避しておき、同一クエリの
+    // 再実行 (prevResultSql === 今回 sql) のときだけ ResultGrid 側で差分計算に使う。
+    const prevRowsSnapshot = tab?.result?.rows ?? null;
+    const prevSqlSnapshot = tab?.lastExecutedSql ?? null;
     updateTab(tabId, {
       lastExecutedSql: sql,
       result: emptyResult([]),
       preview: null,
+      prevResultRows: prevRowsSnapshot,
+      prevResultSql: prevSqlSnapshot,
       streaming: true,
       paginatable: paginatableBase,
       autoLimitApplied: null,
@@ -2694,6 +2711,25 @@ export default function App() {
           delete next[rowKey];
         } else {
           next[rowKey] = row;
+        }
+        const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+        return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: [] };
+      });
+    },
+    [patchTab],
+  );
+
+  // 複数セル一括編集 (#596): 選択範囲へ展開された複数の pending edit を **1 回の
+  // patch** で適用し、Undo スナップショットも 1 つだけ積む (1 セルずつ
+  // setCellEditForTab を呼ぶと N 個のスナップショットが積まれてしまうため)。
+  const setBulkCellEditsForTab = useCallback(
+    (tabId: string, edits: BulkEditTarget[]) => {
+      if (edits.length === 0) return;
+      patchTab(tabId, (tt) => {
+        const next: PendingEdits = {};
+        for (const k of Object.keys(tt.pendingEdits)) next[k] = { ...tt.pendingEdits[k] };
+        for (const e of edits) {
+          next[e.rowKey] = { ...(next[e.rowKey] ?? {}), [e.colIdx]: e.value };
         }
         const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
         return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: [] };
@@ -3919,6 +3955,15 @@ export default function App() {
                       canUndo={(tab.editUndoStack?.length ?? 0) > 0}
                       canRedo={(tab.editRedoStack?.length ?? 0) > 0}
                       onSetCellEdit={(r, c, v) => setCellEditForTab(tab.id, r, c, v)}
+                      onBulkEdit={(edits) => setBulkCellEditsForTab(tab.id, edits)}
+                      diffPrevRows={tab.prevResultRows ?? null}
+                      diffComparable={
+                        !!tab.prevResultSql && tab.prevResultSql === tab.lastExecutedSql
+                      }
+                      diffHighlightEnabled={tab.diffHighlight ?? false}
+                      onToggleDiffHighlight={() =>
+                        patchTab(tab.id, (tt) => ({ ...tt, diffHighlight: !tt.diffHighlight }))
+                      }
                       onClearEdits={() => clearEditsForTab(tab.id)}
                       onUndoEdit={() => undoCellEditForTab(tab.id)}
                       onRedoEdit={() => redoCellEditForTab(tab.id)}
