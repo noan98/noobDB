@@ -56,6 +56,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutGridCopyHeadersTitle", descKey: "shortcutGridCopyHeadersDesc", category: "grid" },
   { keysKey: "shortcutGridInspectorTitle", descKey: "shortcutGridInspectorDesc", category: "grid" },
   { keysKey: "shortcutEditUndoTitle", descKey: "shortcutEditUndoDesc", category: "grid" },
+  { keysKey: "shortcutMaximizeResultTitle", descKey: "shortcutMaximizeResultDesc", category: "grid" },
   { keysKey: "helpShortcutNewTabTitle", descKey: "helpShortcutNewTabDesc", category: "tabs" },
   { keysKey: "helpShortcutCloseTabTitle", descKey: "helpShortcutCloseTabDesc", category: "tabs" },
   { keysKey: "helpShortcutCycleTabTitle", descKey: "helpShortcutCycleTabDesc", category: "tabs" },

@@ -91,6 +91,8 @@ export type IconName =
   | "binary"
   | "text"
   | "unplug"
+  | "maximize"
+  | "minimize"
   | "mysql"
   | "postgres"
   | "sqlite";
@@ -469,6 +471,24 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M7.5 13.5 10 11" />
       <path d="M10.5 16.5 13 14" />
       <path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z" />
+    </>
+  ),
+  // 最大化: 四隅に開く矢印 (結果パネルをモーダル全画面へ広げる)。
+  maximize: (
+    <>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+      <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    </>
+  ),
+  // 最小化 (元に戻す): 四隅に閉じる矢印。
+  minimize: (
+    <>
+      <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+      <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+      <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+      <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
     </>
   ),
   // ドライバのブランドロゴ (simple-icons, CC0 / 単一パスの塗り)。FILLED_ICONS 経由で
