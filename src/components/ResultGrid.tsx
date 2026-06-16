@@ -3738,14 +3738,37 @@ export function DataGrid({
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {viewer && (
-          <CellValueViewer
-            columnName={columns[viewer.colIdx]?.name ?? ""}
-            value={rows[viewer.rowIdx]?.[viewer.colIdx] ?? null}
-            isBinary={columnKinds[viewer.colIdx] === "binary"}
-            onClose={() => setViewer(null)}
-          />
-        )}
+        {viewer && (() => {
+          // 大きな TEXT / JSON 値の直接編集 (#556)。インライン編集と同じ条件
+          // (編集可・PK あり・列が編集対象) を満たすときだけ編集モードを許可し、
+          // 保存は既存のセル編集経路 (commitEdit → onSetCellEdit) に合流させる。
+          const vRow = rows[viewer.rowIdx];
+          const vVal = vRow?.[viewer.colIdx] ?? null;
+          const cellEditable =
+            !!editable &&
+            (pkIndices?.length ?? 0) > 0 &&
+            (editableColumns?.[viewer.colIdx] ?? false) &&
+            !!onSetCellEdit;
+          const rowKey = rowEditKey(vRow ?? [], pkIndices ?? [], viewer.rowIdx);
+          const originalDisplay = vVal === null || vVal === undefined ? "" : String(vVal);
+          return (
+            <CellValueViewer
+              columnName={columns[viewer.colIdx]?.name ?? ""}
+              value={vVal}
+              isBinary={columnKinds[viewer.colIdx] === "binary"}
+              editable={cellEditable}
+              isJson={columnKinds[viewer.colIdx] === "json"}
+              validate={validateEdit ? (v) => validateEdit(viewer.colIdx, v) : undefined}
+              pendingValue={pendingEdits?.[rowKey]?.[viewer.colIdx] ?? null}
+              onSave={
+                cellEditable
+                  ? (value) => commitEdit(viewer.rowIdx, viewer.colIdx, value, originalDisplay)
+                  : undefined
+              }
+              onClose={() => setViewer(null)}
+            />
+          );
+        })()}
       </AnimatePresence>
       {inspectorOpen && activeCell && rows[activeCell.rowIdx] && (() => {
         const inspVis = visibleRows.findIndex((r) => r.index === activeCell.rowIdx);

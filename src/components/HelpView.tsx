@@ -1,6 +1,8 @@
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { SHORTCUTS } from "../shortcuts";
+import { resolveShortcutBindings, SHORTCUTS, type ShortcutId } from "../shortcuts";
+import { formatCombo } from "../shortcutKeys";
+import { useSettings } from "../settings";
 import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import {
@@ -73,6 +75,8 @@ interface Feature {
   impact?: Impact;
   stepKeys?: Key[];
   noteKey?: Key;
+  /** 再割り当て可能なショートカット。見出しを解決済みコンボで表示する (#557)。 */
+  shortcutId?: ShortcutId;
 }
 
 interface Section {
@@ -138,7 +142,11 @@ const SECTIONS: Section[] = [
     descKey: "helpSectionShortcutsDesc",
     // ショートカット一覧は `shortcuts.ts` の単一ソースから生成し、`?` で開く
     // チートシート (`ShortcutCheatSheet`) と定義を共有する。
-    features: SHORTCUTS.map((s) => ({ titleKey: s.keysKey, descKey: s.descKey })),
+    features: SHORTCUTS.map((s) => ({
+      titleKey: s.keysKey,
+      descKey: s.descKey,
+      ...(s.id ? { shortcutId: s.id } : {}),
+    })),
   },
 ];
 
@@ -172,6 +180,8 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
 
 export function HelpView({ onClose }: { onClose: () => void }) {
   const t = useT();
+  const settings = useSettings();
+  const resolved = resolveShortcutBindings(settings.shortcutOverrides);
   return (
     <Modal onClose={onClose} width="760px">
       <ModalHeader onClose={onClose} closeLabel={t("helpClose")}>
@@ -192,7 +202,9 @@ export function HelpView({ onClose }: { onClose: () => void }) {
             {section.features.map((f) => (
               <HelpFeature key={f.titleKey}>
                 <HelpFeatureHead>
-                  <chakra.h4>{t(f.titleKey)}</chakra.h4>
+                  <chakra.h4>
+                    {f.shortcutId ? formatCombo(resolved[f.shortcutId]) : t(f.titleKey)}
+                  </chakra.h4>
                   {f.impact && <DbImpactBadge impact={f.impact} />}
                 </HelpFeatureHead>
                 <HelpFeatureDesc>{t(f.descKey)}</HelpFeatureDesc>

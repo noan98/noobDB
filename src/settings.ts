@@ -122,6 +122,13 @@ export interface Settings {
   autoReconnectEnabled: boolean;
   /** Maximum number of auto-reconnect attempts before giving up (clamped 1..20). */
   autoReconnectMaxRetries: number;
+  /**
+   * ユーザによるキーボードショートカットの上書き (#557)。`ShortcutId` →
+   * コンボ文字列 (`shortcutKeys.ts` の正規化形式)。未設定の id は
+   * `shortcuts.ts` の既定にフォールバックする。`resolveShortcutBindings` で
+   * 既定にマージして利用する。
+   */
+  shortcutOverrides: Record<string, string>;
 }
 
 /** Color theme presets. `default` = stock light/dark. */
@@ -398,6 +405,7 @@ export const DEFAULT_SETTINGS: Settings = {
   themePreset: DEFAULT_THEME_PRESET,
   autoReconnectEnabled: DEFAULT_AUTO_RECONNECT_ENABLED,
   autoReconnectMaxRetries: DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
+  shortcutOverrides: {},
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -482,6 +490,21 @@ function sanitizeThemePreset(input: unknown, fallback: ThemePreset): ThemePreset
   return THEME_PRESET_ORDER.includes(input as ThemePreset) ? (input as ThemePreset) : fallback;
 }
 
+/**
+ * 永続化されたショートカット上書きマップを検証する。文字列値のエントリのみ
+ * 受け入れ、空文字や非文字列は捨てる (壊れた localStorage 耐性)。id の妥当性は
+ * `resolveShortcutBindings` 側で既知 id のみ採用するため、ここでは形だけ整える。
+ */
+function sanitizeShortcutOverrides(input: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (input && typeof input === "object") {
+    for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim().length > 0) out[k] = v;
+    }
+  }
+  return out;
+}
+
 const STORAGE_KEY = "noobdb.settings";
 
 function isHexColor(v: unknown): v is string {
@@ -540,6 +563,7 @@ function loadInitial(): Settings {
       themePreset?: unknown;
       autoReconnectEnabled?: unknown;
       autoReconnectMaxRetries?: unknown;
+      shortcutOverrides?: unknown;
     };
     return {
       syntaxColors: {
@@ -597,6 +621,7 @@ function loadInitial(): Settings {
         parsed.autoReconnectMaxRetries,
         DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
       ),
+      shortcutOverrides: sanitizeShortcutOverrides(parsed.shortcutOverrides),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -845,6 +870,32 @@ export function setAutoReconnectMaxRetries(value: number): void {
   const next = sanitizeAutoReconnectRetries(value, current.autoReconnectMaxRetries);
   if (current.autoReconnectMaxRetries === next) return;
   current = { ...current, autoReconnectMaxRetries: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * 1 つのショートカットの上書きを設定/解除する (#557)。`combo` が null または
+ * 空文字なら既定へ戻す (= マップから削除)。`combo` を与えるとその id を上書きする。
+ */
+export function setShortcutBinding(id: string, combo: string | null): void {
+  const next = { ...current.shortcutOverrides };
+  if (combo === null || combo.trim().length === 0) {
+    if (!(id in next)) return;
+    delete next[id];
+  } else {
+    if (next[id] === combo) return;
+    next[id] = combo;
+  }
+  current = { ...current, shortcutOverrides: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** すべてのショートカット上書きをクリアして既定へ戻す。 */
+export function resetShortcutBindings(): void {
+  if (Object.keys(current.shortcutOverrides).length === 0) return;
+  current = { ...current, shortcutOverrides: {} };
   persist();
   listeners.forEach((cb) => cb());
 }

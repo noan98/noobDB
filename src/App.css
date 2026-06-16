@@ -692,6 +692,21 @@ html, body, #root {
 .cm-editor .cm-cursor,
 .cm-editor .cm-dropCursor { border-left-color: var(--accent); }
 
+/* 「カーソル位置の文を実行」(#555) のとき、走った文を一瞬ハイライトする。
+   装飾は時間差で除去されるが、加えてフェードで柔らかく消す。 */
+.cm-editor .cm-stmt-flash {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-radius: 2px;
+  animation: cm-stmt-flash-fade 0.65s var(--ease, ease) both;
+}
+@keyframes cm-stmt-flash-fade {
+  from { background: color-mix(in srgb, var(--accent) 42%, transparent); }
+  to { background: color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-editor .cm-stmt-flash { animation: none; }
+}
+
 .cm-tooltip.cm-tooltip-autocomplete {
   background: var(--bg-elevated);
   color: var(--text);
