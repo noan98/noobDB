@@ -5,22 +5,38 @@
 // (文字列内セミコロンの誤検出を防ぐ)。副作用が無いので Vitest でユニットテストする。
 
 /**
- * `sql` をトップレベルの `;` で分割し、空文を除いた各文 (末尾セミコロンなし) を返す。
- * 文字列 (`'...'` / `"..."` / `` `...` ``)・行/ブロックコメント・ドル引用の内側の
- * セミコロンでは分割しない。
+ * 1 文の範囲。`from` / `to` は元の `sql` 内における**トリム済み本文**の絶対
+ * オフセット (先頭/末尾の空白・改行を除いた位置) で、`text` はその本文 (末尾
+ * セミコロンなし)。カーソル位置の文を一瞬ハイライトする (#555) のに `from`/`to`
+ * を使う。
  */
-export function splitSqlStatements(sql: string): string[] {
-  const statements: string[] = [];
-  let current = "";
+export interface StatementRange {
+  from: number;
+  to: number;
+  text: string;
+}
+
+/**
+ * `sql` をトップレベルの `;` で分割し、空文・コメントのみの断片を除いた各文を
+ * **範囲付き**で返す。文字列 (`'...'` / `"..."` / `` `...` ``)・行/ブロック
+ * コメント・ドル引用の内側のセミコロンでは分割しない。
+ */
+export function splitSqlStatementRanges(sql: string): StatementRange[] {
+  const ranges: StatementRange[] = [];
+  let segStart = 0;
   let i = 0;
   const n = sql.length;
 
-  const pushCurrent = () => {
-    const trimmed = current.trim();
+  const pushSegment = (end: number) => {
+    const raw = sql.slice(segStart, end);
+    const trimmed = raw.trim();
     // コメントだけの断片 (例: `SELECT 1; -- note` の `-- note`) は実行文ではないので
     // 数えない。複数文判定 (isMultiStatement) が誤って true にならないようにする。
-    if (trimmed.length > 0 && hasExecutableSql(trimmed)) statements.push(trimmed);
-    current = "";
+    if (trimmed.length > 0 && hasExecutableSql(trimmed)) {
+      const leading = raw.length - raw.trimStart().length;
+      const trailing = raw.length - raw.trimEnd().length;
+      ranges.push({ from: segStart + leading, to: end - trailing, text: trimmed });
+    }
   };
 
   while (i < n) {
@@ -30,24 +46,18 @@ export function splitSqlStatements(sql: string): string[] {
     // 行コメント -- ... 改行まで
     if (ch === "-" && next === "-") {
       const end = sql.indexOf("\n", i);
-      const stop = end === -1 ? n : end;
-      current += sql.slice(i, stop);
-      i = stop;
+      i = end === -1 ? n : end;
       continue;
     }
     // ブロックコメント /* ... */
     if (ch === "/" && next === "*") {
       const end = sql.indexOf("*/", i + 2);
-      const stop = end === -1 ? n : end + 2;
-      current += sql.slice(i, stop);
-      i = stop;
+      i = end === -1 ? n : end + 2;
       continue;
     }
     // 文字列 / 識別子クオート: ' " `
     if (ch === "'" || ch === '"' || ch === "`") {
-      const closeIdx = scanQuoted(sql, i, ch);
-      current += sql.slice(i, closeIdx);
-      i = closeIdx;
+      i = scanQuoted(sql, i, ch);
       continue;
     }
     // ドル引用 $tag$ ... $tag$ (PostgreSQL)。tag は省略可 ($$)。直前が単語文字の
@@ -56,23 +66,48 @@ export function splitSqlStatements(sql: string): string[] {
       const open = matchDollarTag(sql, i);
       if (open) {
         const closeIdx = sql.indexOf(open, i + open.length);
-        const stop = closeIdx === -1 ? n : closeIdx + open.length;
-        current += sql.slice(i, stop);
-        i = stop;
+        i = closeIdx === -1 ? n : closeIdx + open.length;
         continue;
       }
     }
     // トップレベルのセミコロン → 文の区切り
     if (ch === ";") {
-      pushCurrent();
+      pushSegment(i);
+      segStart = i + 1;
       i++;
       continue;
     }
-    current += ch;
     i++;
   }
-  pushCurrent();
-  return statements;
+  pushSegment(n);
+  return ranges;
+}
+
+/**
+ * `sql` をトップレベルの `;` で分割し、空文を除いた各文 (末尾セミコロンなし) を返す。
+ * 文字列 (`'...'` / `"..."` / `` `...` ``)・行/ブロックコメント・ドル引用の内側の
+ * セミコロンでは分割しない。
+ */
+export function splitSqlStatements(sql: string): string[] {
+  return splitSqlStatementRanges(sql).map((r) => r.text);
+}
+
+/**
+ * カーソル (オフセット `offset`) が乗っている単一ステートメントを返す。選択が無い
+ * ときに「いま編集している 1 文だけ」を実行する (#555) ための判定。
+ *
+ * カーソルはトリム前の文セグメント (前後の空白・コメント込み) に属するものとして
+ * 帰属させる: 「`offset <= 文の末尾` を満たす最初の文」を選び、どれにも満たない
+ * (= 末尾の空白/コメント上) ときは最後の文へフォールバックする。実行可能な文が
+ * 一つも無ければ `null`。
+ */
+export function statementAtOffset(sql: string, offset: number): StatementRange | null {
+  const ranges = splitSqlStatementRanges(sql);
+  if (ranges.length === 0) return null;
+  for (const r of ranges) {
+    if (offset <= r.to) return r;
+  }
+  return ranges[ranges.length - 1];
 }
 
 /** コメント (行 `--` / ブロック `/* *​/`) を除いて実行可能な SQL が残るか。 */

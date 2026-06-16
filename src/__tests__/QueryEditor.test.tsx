@@ -41,6 +41,21 @@ describe("QueryEditor", () => {
     await waitFor(() => expect(onRun).toHaveBeenCalledWith("SELECT 42"));
   });
 
+  it("Ctrl+Alt+Enter でカーソル位置の単一文だけを実行する (#555)", async () => {
+    const onRun = vi.fn();
+    renderWithProviders(
+      <QueryEditor onRun={onRun} initialSql={"SELECT 1;\nSELECT 2"} />,
+    );
+    const editable = document.querySelector(".cm-content") as HTMLElement;
+    expect(editable).toBeTruthy();
+    editable.focus();
+    const user = userEvent.setup();
+    // カーソルは初期位置 (先頭) なので 1 文目だけが走る。
+    await user.keyboard("{Control>}{Alt>}{Enter}{/Alt}{/Control}");
+
+    await waitFor(() => expect(onRun).toHaveBeenCalledWith("SELECT 1"));
+  });
+
   it("本文が空のときは Run が無効化されクリックしても実行されない", async () => {
     const user = userEvent.setup();
     const onRun = vi.fn();

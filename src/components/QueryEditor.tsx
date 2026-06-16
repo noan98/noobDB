@@ -10,8 +10,15 @@ import {
 } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
-import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
+import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
+import {
+  Decoration,
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  type DecorationSet,
+} from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { sql, type SQLNamespace } from "@codemirror/lang-sql";
@@ -34,6 +41,9 @@ import { format as formatSql } from "sql-formatter";
 import type { TableSchema } from "../api/tauri";
 import { useT } from "../i18n";
 import { springs } from "../motion";
+import { statementAtOffset } from "../sqlScript";
+import { comboToCodeMirror } from "../shortcutKeys";
+import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
@@ -78,6 +88,36 @@ const noobDBHighlightStyle = HighlightStyle.define([
   },
   { tag: tags.operator, color: "var(--syntax-operator)" },
 ]);
+
+// 「カーソル位置の文を実行」(#555) したとき、走った文を一瞬ハイライトするための
+// 装飾。`stmtFlashEffect` で範囲をセット/クリアし、エディタは時間差でクリアする。
+// 見た目のフェードは App.css の `.cm-stmt-flash` (reduced-motion 対応) が司る。
+const stmtFlashEffect = StateEffect.define<{ from: number; to: number } | null>();
+const stmtFlashMark = Decoration.mark({ class: "cm-stmt-flash" });
+const stmtFlashField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(stmtFlashEffect)) {
+        deco =
+          e.value && e.value.to > e.value.from
+            ? Decoration.set([stmtFlashMark.range(e.value.from, e.value.to)])
+            : Decoration.none;
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** エディタの再割り当て可能なアクション (#557) の解決済みコンボ。 */
+export interface EditorKeyBindings {
+  run: string;
+  runStatement: string;
+  preview: string;
+  format: string;
+}
 
 export interface SchemaTable {
   database: string;
@@ -138,6 +178,12 @@ interface Props {
    * による履歴ナビゲーションに使う。未接続時などは空/undefined。
    */
   queryHistory?: string[];
+  /**
+   * エディタ系ショートカット (Run / Run statement / Preview / Format) の解決済み
+   * コンボ (#557)。未指定の項目は既定にフォールバックする。バインドが変わると
+   * CodeMirror のキーマップを Compartment 経由で再構成する。
+   */
+  editorBindings?: Partial<EditorKeyBindings>;
 }
 
 export interface QueryEditorHandle {
@@ -261,11 +307,31 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onBuilderPersist,
   readOnly,
   queryHistory,
+  editorBindings,
 }: Props, ref) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const sqlCompartment = useMemo(() => new Compartment(), []);
+  const actionKeymapCompartment = useMemo(() => new Compartment(), []);
+
+  // エディタ系ショートカットの解決済みコンボ。未指定は既定へフォールバック。
+  const runCombo = editorBindings?.run ?? DEFAULT_SHORTCUT_COMBOS.run;
+  const runStatementCombo = editorBindings?.runStatement ?? DEFAULT_SHORTCUT_COMBOS.runStatement;
+  const previewCombo = editorBindings?.preview ?? DEFAULT_SHORTCUT_COMBOS.preview;
+  const formatCombo = editorBindings?.format ?? DEFAULT_SHORTCUT_COMBOS.format;
+  const bindingsRef = useRef<EditorKeyBindings>({
+    run: runCombo,
+    runStatement: runStatementCombo,
+    preview: previewCombo,
+    format: formatCombo,
+  });
+  bindingsRef.current = {
+    run: runCombo,
+    runStatement: runStatementCombo,
+    preview: previewCombo,
+    format: formatCombo,
+  };
   const [hasContent, setHasContent] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
   const onChangeRef = useRef(onChange);
@@ -293,6 +359,76 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const resetHistoryNav = () => {
     navStateRef.current = initialHistoryNav;
   };
+
+  // 走った文を一瞬ハイライトし、少し後にクリアする (#555)。view が破棄済みでも
+  // 落ちないよう dispatch は防御的に包む。
+  const flashStatement = (view: EditorView, from: number, to: number) => {
+    view.dispatch({ effects: stmtFlashEffect.of({ from, to }) });
+    window.setTimeout(() => {
+      const v = viewRef.current;
+      if (!v) return;
+      try {
+        v.dispatch({ effects: stmtFlashEffect.of(null) });
+      } catch {
+        // view が破棄済みなら無視。
+      }
+    }, 650);
+  };
+
+  // 「カーソル位置の文だけ実行」(#555)。選択があれば従来どおり選択を優先し、
+  // 無ければ `;` 区切りでカーソルが乗る単一文を検出して実行、その範囲をハイライト。
+  const runStatementUnderCursor = (view: EditorView): boolean => {
+    const sel = view.state.selection.main;
+    if (!sel.empty) {
+      const text = view.state.sliceDoc(sel.from, sel.to);
+      if (text.trim().length === 0) return true;
+      resetHistoryNav();
+      onRunRef.current(text);
+      flashStatement(view, sel.from, sel.to);
+      return true;
+    }
+    const range = statementAtOffset(view.state.doc.toString(), sel.head);
+    if (!range) return true;
+    resetHistoryNav();
+    onRunRef.current(range.text);
+    flashStatement(view, range.from, range.to);
+    return true;
+  };
+
+  // 再割り当て可能なエディタアクション (#557) のキーマップを、解決済みコンボから
+  // 組み立てる。Compartment 経由で初回構築と変更時の再構成の両方に使う。
+  const buildActionKeymap = (bindings: EditorKeyBindings) => [
+    {
+      key: comboToCodeMirror(bindings.run),
+      run: (v: EditorView) => {
+        const text = selectionOrAllText(v);
+        if (text !== null) {
+          resetHistoryNav();
+          onRunRef.current(text);
+        }
+        return true;
+      },
+    },
+    {
+      key: comboToCodeMirror(bindings.runStatement),
+      run: runStatementUnderCursor,
+    },
+    {
+      key: comboToCodeMirror(bindings.preview),
+      run: (v: EditorView) => {
+        const preview = onPreviewRef.current;
+        if (!preview) return false;
+        const text = selectionOrAllText(v);
+        if (text !== null) preview(text);
+        return true;
+      },
+    },
+    {
+      key: comboToCodeMirror(bindings.format),
+      preventDefault: true,
+      run: (v: EditorView) => formatEditorContent(v, driverRef.current, onFormatErrorRef.current),
+    },
+  ];
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -339,7 +475,12 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           // の Cmd/Ctrl+F とはフォーカス文脈で住み分ける — App 側でガード)。
           search({ top: true }),
           highlightSelectionMatches(),
+          stmtFlashField,
           sqlCompartment.of(buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase)),
+          // 再割り当て可能なアクション (Run / Run statement / Preview / Format) は
+          // Compartment 越しのキーマップにして、設定変更時に再構成できるようにする。
+          // 静的キーマップより前に置き優先させる。
+          actionKeymapCompartment.of(keymap.of(buildActionKeymap(bindingsRef.current))),
           keymap.of([
             { key: "Tab", run: acceptCompletion },
             // ↑ / ↓ による実行済みクエリの履歴ナビゲーション。1 行目での ↑ /
@@ -367,32 +508,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
                 if (v.state.doc.lineAt(sel.head).number !== v.state.doc.lines) return false;
                 return applyHistoryNav(v, navigateNewer(historyRef.current, navStateRef.current));
               },
-            },
-            {
-              key: "Mod-Enter",
-              run: (v) => {
-                const text = selectionOrAllText(v);
-                if (text !== null) {
-                  resetHistoryNav();
-                  onRunRef.current(text);
-                }
-                return true;
-              },
-            },
-            {
-              key: "Shift-Mod-Enter",
-              run: (v) => {
-                const preview = onPreviewRef.current;
-                if (!preview) return false;
-                const text = selectionOrAllText(v);
-                if (text !== null) preview(text);
-                return true;
-              },
-            },
-            {
-              key: "Mod-Shift-f",
-              preventDefault: true,
-              run: (v) => formatEditorContent(v, driverRef.current, onFormatErrorRef.current),
             },
             ...searchKeymap,
             ...defaultKeymap,
@@ -436,6 +551,19 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     // depending on it directly is both correct and cheap.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schemaKey, driver, databaseSchema, defaultDatabase]);
+
+  // ショートカットの上書きが変わったら、アクションキーマップを再構成する (#557)。
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: actionKeymapCompartment.reconfigure(
+        keymap.of(buildActionKeymap(bindingsRef.current)),
+      ),
+    });
+    // bindingsRef は毎レンダ更新されるため、コンボ文字列の変化を依存に使う。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runCombo, runStatementCombo, previewCombo, formatCombo]);
 
   useImperativeHandle(ref, () => ({
     insertText: (text: string) => {

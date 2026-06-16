@@ -12,6 +12,7 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { copyToClipboard } from "./clipboard";
+import { KeybindingSettings } from "./KeybindingSettings";
 import { useToast } from "./Toast";
 import {
   DEFAULT_AUTO_LIMIT_COUNT,
@@ -1094,6 +1095,8 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsColorRow>
         </SettingsColorGrid>
       </SettingsSection>
+
+      <KeybindingSettings />
 
       <SettingsSection>
         <SettingsSectionHeader>

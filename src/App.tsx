@@ -151,6 +151,8 @@ import {
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
 import { transitions, variants } from "./motion";
+import { resolveShortcutBindings } from "./shortcuts";
+import { comboMatchesEvent } from "./shortcutKeys";
 import {
   useSettings,
   getSettings,
@@ -709,6 +711,28 @@ export default function App() {
   const { confirm, dialog: confirmDialogElement } = useConfirm();
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
+  // 解決済みショートカットバインド (既定 + ユーザ上書き、#557)。グローバルキー
+  // ハンドラは `bindingsRef` 経由で参照し、エディタには `editorBindings` で渡す。
+  const shortcutBindings = useMemo(
+    () => resolveShortcutBindings(settings.shortcutOverrides),
+    [settings.shortcutOverrides],
+  );
+  const bindingsRef = useRef(shortcutBindings);
+  bindingsRef.current = shortcutBindings;
+  const editorBindings = useMemo(
+    () => ({
+      run: shortcutBindings.run,
+      runStatement: shortcutBindings.runStatement,
+      preview: shortcutBindings.preview,
+      format: shortcutBindings.format,
+    }),
+    [
+      shortcutBindings.run,
+      shortcutBindings.runStatement,
+      shortcutBindings.preview,
+      shortcutBindings.format,
+    ],
+  );
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
@@ -3431,7 +3455,7 @@ export default function App() {
       // Shift so the editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
       // When focus is inside the query editor (CodeMirror), defer to its own
       // in-editor find/replace instead of stealing the shortcut.
-      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+      if (comboMatchesEvent(bindingsRef.current.resultSearch, e)) {
         if ((e.target as HTMLElement | null)?.closest?.(".cm-editor")) return;
         const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
         if (grid) {
@@ -3453,21 +3477,21 @@ export default function App() {
         selectTab(pane.id, pane.tabIds[nextIdx]);
         return;
       }
-      if (!mod || e.altKey || e.shiftKey) return;
-      const key = e.key.toLowerCase();
-      if (key === "t") {
+      if (comboMatchesEvent(bindingsRef.current.newTab, e)) {
         e.preventDefault();
         handleNewTab();
         return;
       }
-      if (key === "w") {
-        // Always suppress the webview's default "close window" on Ctrl/Cmd+W
-        // while in the tabbed workspace.
+      if (comboMatchesEvent(bindingsRef.current.closeTab, e)) {
+        // Always suppress the webview's default "close window" while in the
+        // tabbed workspace.
         e.preventDefault();
         const active = focusedPane()?.activeTabId;
         if (active) handleCloseTabRef.current(active);
         return;
       }
+      // n 番目のタブへのジャンプ (Cmd/Ctrl+1〜9) は再割り当て対象外。
+      if (!mod || e.altKey || e.shiftKey) return;
       if (e.key >= "1" && e.key <= "9") {
         const pane = focusedPane();
         if (!pane) return;
@@ -3486,13 +3510,12 @@ export default function App() {
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+      if (comboMatchesEvent(bindingsRef.current.commandPalette, e)) {
         e.preventDefault();
         setShowCommandPalette((v) => !v);
       }
-      // Cmd/Ctrl+Shift+O: スキーマ横断のグローバルオブジェクト検索。接続中のみ。
-      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
+      // スキーマ横断のグローバルオブジェクト検索。接続中のみ。
+      if (comboMatchesEvent(bindingsRef.current.objectSearch, e)) {
         e.preventDefault();
         if (sessionIdRef.current) setShowObjectSearch((v) => !v);
       }
@@ -3505,8 +3528,7 @@ export default function App() {
   // 結果を残したまま**新しいタブ**で実行する (設定 resultsInNewTab の一回限り版)。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.shiftKey && !e.altKey && e.key === "Enter") {
+      if (comboMatchesEvent(bindingsRef.current.runNewTab, e)) {
         const t = activeTab;
         if (t && t.kind === "query" && t.sql.trim() && sessionId) {
           e.preventDefault();
@@ -3608,8 +3630,7 @@ export default function App() {
   // 接続タブが選択されていなければ切り替えてからフォーカスする。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") {
+      if (comboMatchesEvent(bindingsRef.current.sidebarFilter, e)) {
         e.preventDefault();
         setSidebarTab("connections");
         requestAnimationFrame(() => connectionListRef.current?.focusFilter());
@@ -3654,8 +3675,7 @@ export default function App() {
   // その場のローカル Esc 処理 (検索クリア等) を優先し、奪わない。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === "m") {
+      if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (
           showForm || showSettings || showHelp || showCompare || showErd || showProcesses ||
           showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
@@ -4057,6 +4077,7 @@ export default function App() {
                     onBuilderPersist={(snapshot) => updateTab(tab.id, { builderSnapshot: snapshot })}
                     readOnly={readOnly}
                     queryHistory={queryHistory}
+                    editorBindings={editorBindings}
                   />
                 </Suspense>
               }

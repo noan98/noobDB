@@ -1,11 +1,14 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import {
+  resolveShortcutBindings,
   SHORTCUTS,
   SHORTCUT_CATEGORY_LABEL,
   SHORTCUT_CATEGORY_ORDER,
   type ShortcutCategory,
 } from "../shortcuts";
+import { formatCombo } from "../shortcutKeys";
+import { useSettings } from "../settings";
 import { Modal, ModalHeader, ModalBody } from "./Modal";
 
 /**
@@ -28,6 +31,9 @@ interface ShortcutCheatSheetProps {
 
 export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
   const t = useT();
+  // 再割り当て可能なショートカットは解決済みコンボを表示する (#557)。
+  const settings = useSettings();
+  const resolved = resolveShortcutBindings(settings.shortcutOverrides);
 
   return (
     <Modal onClose={onClose} width="560px">
@@ -78,7 +84,7 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
                         color="app.textSecondary"
                         whiteSpace="nowrap"
                       >
-                        {t(s.keysKey)}
+                        {s.id ? formatCombo(resolved[s.id]) : t(s.keysKey)}
                       </chakra.kbd>
                     </Flex>
                   ))}
