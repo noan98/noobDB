@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   Background,
@@ -12,18 +12,23 @@ import {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Edge,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import { useReducedMotion } from "motion/react";
+
 import { api, type DriverKind } from "../api/tauri";
 import { useT } from "../i18n";
 import {
   buildErGraph,
   layoutErGraph,
-  ER_NODE_WIDTH,
+  type ErGraph,
+  type ErLayoutDensity,
+  type ErLayoutDirection,
   type ErTableData,
 } from "./erDiagram";
 import { Icon } from "./Icon";
@@ -52,6 +57,8 @@ interface ErNodeData extends ErTableData {
   openTitle: string;
   pkTitle: string;
   fkTitle: string;
+  /** Rank direction, so handles anchor on the correct edges (#560). */
+  direction: ErLayoutDirection;
   [key: string]: unknown;
 }
 type ErFlowNode = Node<ErNodeData, "erTable">;
@@ -76,7 +83,9 @@ async function mapLimited<T, R>(
 }
 
 const cardCss: SystemStyleObject = {
-  width: `${ER_NODE_WIDTH}px`,
+  // Width comes from the React Flow node (variable per table; see nodeWidth in
+  // erDiagram.ts) so long names aren't clipped (#560).
+  width: "100%",
   background: "var(--bg-elevated)",
   border: "1px solid var(--border)",
   borderRadius: "var(--radius-md)",
@@ -122,11 +131,15 @@ const moreRowCss: SystemStyleObject = {
 
 /** One table card. React Flow drags it; the header opens the table tab. */
 function ErTableNode({ data }: NodeProps<ErFlowNode>) {
+  // Anchor handles on the edges the rank flows along so connectors stay tidy
+  // when the layout direction changes (#560): LR → left/right, TB → top/bottom.
+  const targetPos = data.direction === "TB" ? Position.Top : Position.Left;
+  const sourcePos = data.direction === "TB" ? Position.Bottom : Position.Right;
   return (
     <Box css={cardCss}>
-      {/* Handles are invisible anchors edges attach to (LR layout). */}
-      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+      {/* Handles are invisible anchors edges attach to. */}
+      <Handle type="target" position={targetPos} style={{ opacity: 0 }} />
+      <Handle type="source" position={sourcePos} style={{ opacity: 0 }} />
       <chakra.button
         type="button"
         css={cardHeaderCss}
@@ -188,6 +201,8 @@ function ERDiagramInner({
   onClose,
 }: ERDiagramViewProps) {
   const t = useT();
+  const reduceMotion = useReducedMotion();
+  const { fitView } = useReactFlow();
   const [databases, setDatabases] = useState<string[]>(
     initialDatabase ? [initialDatabase] : [],
   );
@@ -197,8 +212,17 @@ function ERDiagramInner({
   const [summary, setSummary] = useState<{ shown: number; total: number; rels: number } | null>(
     null,
   );
+  // The built (un-positioned) graph is fetched once per database; the layout
+  // (positions) is recomputed whenever direction/density change without a
+  // refetch (#560).
+  const [graph, setGraph] = useState<ErGraph | null>(null);
+  const [direction, setDirection] = useState<ErLayoutDirection>("LR");
+  const [density, setDensity] = useState<ErLayoutDensity>("comfortable");
   const [nodes, setNodes, onNodesChange] = useNodesState<ErFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  // Skip the fit-view animation on the first layout (initial mount already
+  // fits via the `fitView` prop); animate only subsequent relayouts.
+  const didLayoutOnce = useRef(false);
 
   // SQLite has the single "main" namespace; offering a picker would be noise.
   const showDbPicker = driver !== "sqlite" && databases.length > 1;
@@ -236,11 +260,14 @@ function ERDiagramInner({
     [onOpenTable, onClose],
   );
 
+  // Fetch + build the graph for the chosen database. Layout (positions) is a
+  // separate effect so direction/density changes re-layout without refetching.
   useEffect(() => {
     if (!database) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
+    didLayoutOnce.current = false;
     (async () => {
       const [tables, foreignKeys] = await Promise.all([
         api.schemaOverview(sessionId, database),
@@ -266,44 +293,22 @@ function ERDiagramInner({
       if (cancelled) return;
       const pkByTable = Object.fromEntries(pkPairs);
 
-      const graph = buildErGraph({
+      const built = buildErGraph({
         tables: tables.map((tb) => ({ name: tb.name, columns: tb.columns })),
         foreignKeys,
         pkByTable,
       });
-      const positioned = layoutErGraph(graph);
-
-      setNodes(
-        positioned.nodes.map((n) => ({
-          id: n.id,
-          type: "erTable" as const,
-          position: { x: n.x, y: n.y },
-          width: n.width,
-          data: {
-            ...n.data,
-            onOpen: () => handleOpen(database, n.data.table),
-            openTitle: t("erDiagramOpenTable", { table: n.data.table }),
-            pkTitle: t("erDiagramPk"),
-            fkTitle: t("erDiagramFk"),
-          },
-        })),
-      );
-      setEdges(
-        positioned.edges.map((e) => ({
-          id: e.id,
-          source: e.source,
-          target: e.target,
-        })),
-      );
+      setGraph(built);
       setSummary({
-        shown: graph.nodes.length,
-        total: graph.totalTables,
-        rels: graph.edges.length,
+        shown: built.nodes.length,
+        total: built.totalTables,
+        rels: built.edges.length,
       });
     })()
       .catch((e) => {
         if (!cancelled) {
           setError(String(e));
+          setGraph(null);
           setNodes([]);
           setEdges([]);
           setSummary(null);
@@ -315,7 +320,47 @@ function ERDiagramInner({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, database, handleOpen, setNodes, setEdges, t]);
+  }, [sessionId, database, setNodes, setEdges]);
+
+  // Position the graph and feed React Flow. Re-runs when the layout direction or
+  // density changes (cheap, no DB round-trip) and animates the viewport to the
+  // new layout — unless the user prefers reduced motion (#560).
+  useEffect(() => {
+    if (!graph || !database) return;
+    const positioned = layoutErGraph(graph, { direction, density });
+    setNodes(
+      positioned.nodes.map((n) => ({
+        id: n.id,
+        type: "erTable" as const,
+        position: { x: n.x, y: n.y },
+        width: n.width,
+        data: {
+          ...n.data,
+          direction,
+          onOpen: () => handleOpen(database, n.data.table),
+          openTitle: t("erDiagramOpenTable", { table: n.data.table }),
+          pkTitle: t("erDiagramPk"),
+          fkTitle: t("erDiagramFk"),
+        },
+      })),
+    );
+    setEdges(
+      positioned.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+      })),
+    );
+    // Animate the fit only on relayout, not the initial render (the `fitView`
+    // prop already frames the first layout). Defer so React Flow has the new
+    // nodes before fitting.
+    const animate = didLayoutOnce.current && !reduceMotion;
+    didLayoutOnce.current = true;
+    const id = window.setTimeout(() => {
+      fitView({ duration: animate ? 400 : 0 });
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [graph, direction, density, database, handleOpen, t, reduceMotion, fitView, setNodes, setEdges]);
 
   const truncated = summary != null && summary.shown < summary.total;
 
@@ -349,6 +394,30 @@ function ERDiagramInner({
             </Select>
           </chakra.label>
         )}
+        <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+          {t("erDiagramLayout")}
+          <Select
+            value={direction}
+            onChange={(e) => setDirection(e.target.value as ErLayoutDirection)}
+            minWidth="130px"
+            aria-label={t("erDiagramLayout")}
+          >
+            <option value="LR">{t("erDiagramLayoutLR")}</option>
+            <option value="TB">{t("erDiagramLayoutTB")}</option>
+          </Select>
+        </chakra.label>
+        <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+          {t("erDiagramDensity")}
+          <Select
+            value={density}
+            onChange={(e) => setDensity(e.target.value as ErLayoutDensity)}
+            minWidth="130px"
+            aria-label={t("erDiagramDensity")}
+          >
+            <option value="comfortable">{t("erDiagramDensityComfortable")}</option>
+            <option value="compact">{t("erDiagramDensityCompact")}</option>
+          </Select>
+        </chakra.label>
         {summary && !loading && !error && (
           <chakra.span fontSize="sm" color="app.textMuted">
             {t("erDiagramSummary", { tables: summary.shown, relationships: summary.rels })}

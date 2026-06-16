@@ -505,6 +505,315 @@
   color-scheme: dark;
 }
 
+/* ── Theme preset: High contrast (#558) ───────────────────────────────────
+   アクセシビリティ重視の高コントラストプリセット。light/dark トグルに追従し
+   (`hc-light` / `hc-dark`)、純黒/純白の本文を地に近い背景へ乗せ、境界線を強める。
+   主要前景/背景は WCAG AAA (7:1) を狙う (themeContrast.test.ts がプリセットを
+   自動検出して AA、さらに hc-* には AAA を強制)。アクセント色・密度・シンタックス
+   配色のユーザ設定とは直交し、それらは引き続き実行時に上書きできる。 */
+:root[data-theme="hc-light"] {
+  --shadow-sm: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-xl: 0 24px 60px rgba(0, 0, 0, 0.45);
+
+  --bg: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-muted: #f2f2f2;
+  --bg-hover: #e6e6e6;
+  --bg-active: #cfe0ff;
+  --bg-active-strong: #b3ccff;
+  --bg-toolbar: #ffffff;
+  --bg-header: #f2f2f2;
+  --bg-error: #fff0f0;
+  --bg-warning: #fff8e6;
+  --bg-input: #ffffff;
+  --bg-stripe: #f5f5f5;
+  --bg-row-hover: #e6f0ff;
+
+  --text: #000000;
+  --text-secondary: #1a1a1a;
+  --text-muted: #333333;
+  --text-null: #404040;
+  --text-error: #a30000;
+  --text-warning: #7a4100;
+  --text-success: #005f1f;
+
+  --border: #767676;
+  --border-strong: #000000;
+  --border-subtle: #cccccc;
+
+  --scrollbar-thumb: #767676;
+  --scrollbar-thumb-hover: #4d4d4d;
+
+  --accent: #0033cc;
+  --accent-hover: #0029a3;
+  --accent-text: #ffffff;
+
+  --cm-selection: #b3ccff;
+
+  --cell-number: #005f1f;
+  --cell-decimal: #005f1f;
+  --cell-bool-true: #0033cc;
+  --cell-bool-false: #6a0dad;
+  --cell-date: #7a4100;
+  --cell-json: #6a0dad;
+  --cell-enum-s: 70%;
+  --cell-enum-l: 30%;
+  --cell-binary: #333333;
+
+  --status-connected: #005f1f;
+  --status-connecting: #7a4100;
+  --status-error: #a30000;
+  --status-warning: #7a4100;
+  --status-success: #005f1f;
+  --status-info: #0033cc;
+  --status-idle: #595959;
+
+  --syntax-keyword: #0000cc;
+  --syntax-string: #a30000;
+  --syntax-number: #005f1f;
+  --syntax-comment: #595959;
+  --syntax-function: #0033cc;
+  --syntax-operator: #1a1a1a;
+
+  --preview-highlight: #0033cc;
+  --preview-banner-bg: #fff8e6;
+  --preview-banner-border: #e6c200;
+  --preview-banner-text: #5c3d00;
+  --preview-banner-dot: #7a4100;
+
+  color-scheme: light;
+}
+
+:root[data-theme="hc-dark"] {
+  --shadow-sm: 0 0 0 1px rgba(255, 255, 255, 0.5);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.7);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.75);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.85);
+
+  --bg: #000000;
+  --bg-elevated: #121212;
+  --bg-muted: #1a1a1a;
+  --bg-hover: #262626;
+  --bg-active: #1e3a6b;
+  --bg-active-strong: #2b4d8a;
+  --bg-toolbar: #0a0a0a;
+  --bg-header: #1a1a1a;
+  --bg-error: #2a0000;
+  --bg-warning: #2a1f00;
+  --bg-input: #0d0d0d;
+  --bg-stripe: #0a0a0a;
+  --bg-row-hover: #16335c;
+
+  --text: #ffffff;
+  --text-secondary: #e6e6e6;
+  --text-muted: #cccccc;
+  --text-null: #b3b3b3;
+  --text-error: #ff6666;
+  --text-warning: #ffb84d;
+  --text-success: #5cff5c;
+
+  --border: #808080;
+  --border-strong: #ffffff;
+  --border-subtle: #333333;
+
+  --scrollbar-thumb: #808080;
+  --scrollbar-thumb-hover: #b3b3b3;
+
+  --accent: #66a3ff;
+  --accent-hover: #85b8ff;
+  --accent-text: #000000;
+
+  --cm-selection: #1e3a6b;
+
+  --cell-number: #5cff5c;
+  --cell-decimal: #5cff5c;
+  --cell-bool-true: #66a3ff;
+  --cell-bool-false: #d98cff;
+  --cell-date: #ffb84d;
+  --cell-json: #d98cff;
+  --cell-enum-s: 65%;
+  --cell-enum-l: 75%;
+  --cell-binary: #cccccc;
+
+  --status-connected: #5cff5c;
+  --status-connecting: #ffb84d;
+  --status-error: #ff6666;
+  --status-warning: #ffb84d;
+  --status-success: #5cff5c;
+  --status-info: #66a3ff;
+  --status-idle: #999999;
+
+  --syntax-keyword: #d98cff;
+  --syntax-string: #ff9999;
+  --syntax-number: #5cff5c;
+  --syntax-comment: #b3b3b3;
+  --syntax-function: #99c2ff;
+  --syntax-operator: #e6e6e6;
+
+  --preview-highlight: #66a3ff;
+  --preview-banner-bg: #2a1f00;
+  --preview-banner-border: #806000;
+  --preview-banner-text: #ffd699;
+  --preview-banner-dot: #ffb84d;
+
+  color-scheme: dark;
+}
+
+/* ── Theme preset: Colorblind-safe (Okabe-Ito) (#558) ──────────────────────
+   色覚多様性に配慮したプリセット。light/dark トグルに追従し (`cb-light` /
+   `cb-dark`)、状態色・型別セル色・シンタックス色を**赤↔緑の軸に依存させず**、
+   青 (#005b8f/#56b4e9)・橙 (#b34700/#ff9e5e)・青緑 (#00674a/#5ad6a0)・黄
+   (#8a5a00/#f0c050) など Okabe-Ito 系の色相で構成する。成功=緑/失敗=赤の代わりに
+   緑↔橙で対比するため、第一/第二色覚 (protan/deutan)・第三色覚 (tritan) でも状態を
+   弁別できる。色だけに頼らずアイコン/ラベル併用は従来どおり (theme.ts の CB ガイド
+   参照)。すべての前景/背景ペアは WCAG AA を満たす (themeContrast.test.ts が自動検証)。 */
+:root[data-theme="cb-light"] {
+  --bg: #f5f7fa;
+  --bg-elevated: #ffffff;
+  --bg-muted: #eef1f5;
+  --bg-hover: #e9edf2;
+  --bg-active: #e0ecf7;
+  --bg-active-strong: #c7ddf0;
+  --bg-toolbar: #fafbfc;
+  --bg-header: #eef1f5;
+  --bg-error: #fdf0e8;
+  --bg-warning: #fbf3df;
+  --bg-input: #ffffff;
+  --bg-stripe: #f8fafc;
+  --bg-row-hover: #eaf2fa;
+
+  --text: #1a2330;
+  --text-secondary: #475569;
+  --text-muted: #5c6776;
+  --text-null: #66707d;
+  --text-error: #b34700;
+  --text-warning: #8a5a00;
+  --text-success: #00674a;
+
+  --border: #cdd4df;
+  --border-strong: #b3bdcc;
+  --border-subtle: #eef1f5;
+
+  --scrollbar-thumb: #c2cad6;
+  --scrollbar-thumb-hover: #a8b2c0;
+
+  --accent: #005b8f;
+  --accent-hover: #00496f;
+  --accent-text: #ffffff;
+
+  --cm-selection: #b9dcf5;
+
+  --cell-number: #00674a;
+  --cell-decimal: #00674a;
+  --cell-bool-true: #005b8f;
+  --cell-bool-false: #9a3f82;
+  --cell-date: #8a5a00;
+  --cell-json: #6f3a9e;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 38%;
+  --cell-binary: #4b5563;
+
+  --status-connected: #00674a;
+  --status-connecting: #8a5a00;
+  --status-error: #b34700;
+  --status-warning: #8a5a00;
+  --status-success: #00674a;
+  --status-info: #005b8f;
+  --status-idle: #7d8693;
+
+  --syntax-keyword: #6f3a9e;
+  --syntax-string: #b34700;
+  --syntax-number: #00674a;
+  --syntax-comment: #5c6776;
+  --syntax-function: #005b8f;
+  --syntax-operator: #4b5563;
+
+  --preview-highlight: #005b8f;
+  --preview-banner-bg: #fbf3df;
+  --preview-banner-border: #e0b95a;
+  --preview-banner-text: #6b4500;
+  --preview-banner-dot: #8a5a00;
+
+  color-scheme: light;
+}
+
+:root[data-theme="cb-dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.7);
+
+  --bg: #0d1117;
+  --bg-elevated: #161b22;
+  --bg-muted: #1a212b;
+  --bg-hover: #222b37;
+  --bg-active: #16335c;
+  --bg-active-strong: #1f4d7a;
+  --bg-toolbar: #1a212b;
+  --bg-header: #1a212b;
+  --bg-error: #2e1a0d;
+  --bg-warning: #2e240d;
+  --bg-input: #1a212b;
+  --bg-stripe: #12171f;
+  --bg-row-hover: #16335c;
+
+  --text: #e6edf3;
+  --text-secondary: #aeb9c7;
+  --text-muted: #8794a3;
+  --text-null: #8b97a7;
+  --text-error: #ff9e5e;
+  --text-warning: #f0d050;
+  --text-success: #5ad6a0;
+
+  --border: #2a323d;
+  --border-strong: #3c4553;
+  --border-subtle: #222b37;
+
+  --scrollbar-thumb: #3a4453;
+  --scrollbar-thumb-hover: #515d6e;
+
+  --accent: #56b4e9;
+  --accent-hover: #7cc6ef;
+  --accent-text: #08263a;
+
+  --cm-selection: #1f4d7a;
+
+  --cell-number: #5ad6a0;
+  --cell-decimal: #5ad6a0;
+  --cell-bool-true: #56b4e9;
+  --cell-bool-false: #e69ac7;
+  --cell-date: #f0c050;
+  --cell-json: #c79af0;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 72%;
+  --cell-binary: #9ca3af;
+
+  --status-connected: #5ad6a0;
+  --status-connecting: #f0c050;
+  --status-error: #ff9e5e;
+  --status-warning: #f0c050;
+  --status-success: #5ad6a0;
+  --status-info: #56b4e9;
+  --status-idle: #6b7280;
+
+  --syntax-keyword: #c79af0;
+  --syntax-string: #ff9e5e;
+  --syntax-number: #5ad6a0;
+  --syntax-comment: #8b97a7;
+  --syntax-function: #56b4e9;
+  --syntax-operator: #cbd5e1;
+
+  --preview-highlight: #56b4e9;
+  --preview-banner-bg: #2e240d;
+  --preview-banner-border: #6b5520;
+  --preview-banner-text: #f0d050;
+  --preview-banner-dot: #f0c050;
+
+  color-scheme: dark;
+}
+
 /* Density overrides (#410). Only the grid-facing tokens change; everything else
    keeps tracking --font-scale. Compact trims vertical padding for more rows on
    screen; spacious loosens it for comfort on large displays. */

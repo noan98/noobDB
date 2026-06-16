@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 // Vite の `?raw` インポートで App.css の中身を文字列として取り込む (node の fs に
 // 依存せず、vite build / vitest 双方で同じ経路で読める)。型は vite/client が提供。
 import css from "../App.css?raw";
+// コントラスト比の計算はアクセント色ロジック (accent.ts) と共有する (#559)。
+// 二重実装を避け、accent.test.ts と同じ式で全テーマ/プリセットを検証する。
+import { contrastRatio } from "../accent";
 
 /**
  * デザイントークンの WCAG AA コントラスト回帰テストと、フォントスケール
@@ -32,8 +35,42 @@ function parseVars(blockSelectorRegex: RegExp): Record<string, string> {
 
 const light = parseVars(/:root\s*\{([\s\S]*?)\n\}/);
 const dark = parseVars(/:root\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/);
-// 追加テーマプリセット。プリセットのフルトークンブロックを実ファイルから読む。
-const dracula = parseVars(/:root\[data-theme="dracula-dark"\]\s*\{([\s\S]*?)\n\}/);
+
+/**
+ * 追加テーマプリセットを App.css から**自動検出**する (#559)。
+ *
+ * `:root[data-theme="<name>"]` ブロックを名前ごとに収集し、ベースの `dark`
+ * (light/dark の基準テーマで別 describe が検証する) を除いたものをプリセットと
+ * みなす。これにより、新しいプリセットを App.css に足すだけで下の AA 検証へ
+ * 自動的に乗る (プリセットごとに describe を書き足す必要がない)。
+ *
+ * light 系プリセット (`hc-light`/`cb-light` のように名前が "light" で終わる) は
+ * ベース `:root` (light) を、dark 系はベース `dark` をフォールバックにマージする。
+ * 実行時のカスケード (`:root` が常に効き、`[data-theme=...]` が上書き) を再現し、
+ * プリセットが一部トークンを省略してもベース値を継ぐ。
+ */
+function discoverPresets(): { name: string; vars: Record<string, string>; isHighContrast: boolean }[] {
+  const re = /:root\[data-theme="([^"]+)"\]\s*\{([\s\S]*?)\n\}/g;
+  const out: { name: string; vars: Record<string, string>; isHighContrast: boolean }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(css))) {
+    const name = m[1];
+    if (name === "dark") continue; // ベースのダークテーマは別 describe で検証する
+    const ownVars = parseVars(
+      new RegExp(`:root\\[data-theme="${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`),
+    );
+    const fallback = name.endsWith("light") ? light : dark;
+    out.push({
+      name,
+      vars: { ...fallback, ...ownVars },
+      // 高コントラストプリセットは AAA (7:1) を狙う (#558)。
+      isHighContrast: name.startsWith("hc-"),
+    });
+  }
+  return out;
+}
+
+const presets = discoverPresets();
 
 function srgbToLinear(c: number): number {
   const cs = c / 255;
@@ -48,14 +85,6 @@ function luminance(hex: string): number {
   return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
 }
 
-function contrast(fg: string, bg: string): number {
-  const lf = luminance(fg);
-  const lb = luminance(bg);
-  const hi = Math.max(lf, lb);
-  const lo = Math.min(lf, lb);
-  return (hi + 0.05) / (lo + 0.05);
-}
-
 function check(
   vars: Record<string, string>,
   fgVar: string,
@@ -66,7 +95,8 @@ function check(
   const bg = vars[bgVar];
   expect(fg, `--${fgVar} must be a hex color`).toBeTruthy();
   expect(bg, `--${bgVar} must be a hex color`).toBeTruthy();
-  const ratio = contrast(fg, bg);
+  // accent.ts と共有のコントラスト計算 (#559)。
+  const ratio = contrastRatio(fg, bg);
   expect(
     ratio,
     `--${fgVar} (${fg}) on --${bgVar} (${bg}) = ${ratio.toFixed(2)}:1, need >= ${min}:1`,
@@ -75,6 +105,8 @@ function check(
 
 const AA_TEXT = 4.5;
 const AA_UI = 3;
+/** 高コントラストプリセットの主要前景/背景に課す AAA 閾値 (#558)。 */
+const AAA_TEXT = 7;
 
 describe("WCAG AA contrast for core tokens (#326)", () => {
   describe.each([
@@ -200,14 +232,25 @@ describe("WCAG AA contrast for core tokens (#326)", () => {
   });
 });
 
-describe("WCAG AA contrast for theme presets (#465)", () => {
-  // プリセットは追加のフルトークンテーマ。ベース light/dark と同じ主要ペアが AA を
-  // 満たすことを固定する (ニュートラル/セマンティック拡張トークンは
-  // プリセットでは未定義なので、ここでは中核ペアのみ検証する)。
-  describe.each([["dracula", dracula]] as const)("%s preset", (_name, vars) => {
-    it("primary / secondary / muted text meet AA", () => {
-      check(vars, "text", "bg", AA_TEXT);
-      check(vars, "text", "bg-elevated", AA_TEXT);
+describe("WCAG AA contrast for theme presets (#465, #558)", () => {
+  // プリセットは追加のフルトークンテーマ。App.css から自動検出した全プリセット
+  // (dracula / high-contrast / colorblind / 今後追加されるもの) について、ベース
+  // light/dark と同じ主要ペアが AA を満たすことを固定する。新規プリセットは
+  // App.css にブロックを足すだけでこの検証へ自動的に乗る (#559)。
+  it("at least the known presets are discovered", () => {
+    // 退行検知: regex 変更などで自動検出が 0 件になっても素通りしないようにする。
+    const names = presets.map((p) => p.name);
+    expect(names).toEqual(expect.arrayContaining(["dracula-dark", "hc-light", "hc-dark", "cb-light", "cb-dark"]));
+  });
+
+  describe.each(presets.map((p) => [p.name, p] as const))("%s preset", (_name, preset) => {
+    const vars = preset.vars;
+    // 高コントラストプリセットは主要本文に AAA、それ以外は AA。
+    const primaryMin = preset.isHighContrast ? AAA_TEXT : AA_TEXT;
+
+    it(`primary / secondary / muted text meet ${preset.isHighContrast ? "AAA" : "AA"}`, () => {
+      check(vars, "text", "bg", primaryMin);
+      check(vars, "text", "bg-elevated", primaryMin);
       check(vars, "text-secondary", "bg", AA_TEXT);
       check(vars, "text-muted", "bg", AA_TEXT);
       check(vars, "text-muted", "bg-header", AA_TEXT);
