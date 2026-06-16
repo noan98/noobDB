@@ -942,7 +942,8 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   (`density`)・自動リフレッシュ間隔 (`autoRefreshDefaultSecs`)・グリッド表示モード
   (`resultGridMode` scroll/paginate, `resultGridPageSize`)・セル編集の blur 挙動
   (`cellEditOnBlur`)・リッチセル描画 (`richCellRendering`)・テーマプリセット
-  (`themePreset` default/dracula) などを保持します。
+  (`themePreset` default/dracula/high-contrast/colorblind。後者 2 つは light/dark
+  追従でアクセシビリティ向け。#558) などを保持します。
 - `dangerousSql.ts` — WHERE なし UPDATE/DELETE・DROP・TRUNCATE を検出する
   フロント側の安全網 (バックエンド `is_read_only_sql` と同じくリテラル/コメントを
   マスクするベストエフォート判定)。`DangerousQueryDialog` の確認に使われます。

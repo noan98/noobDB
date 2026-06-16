@@ -5,10 +5,14 @@ import {
   buildErGraph,
   layoutErGraph,
   nodeHeight,
+  nodeWidth,
   MAX_TABLES,
   MAX_VISIBLE_COLUMNS,
   ER_HEADER_HEIGHT,
   ER_ROW_HEIGHT,
+  ER_NODE_MIN_WIDTH,
+  ER_NODE_MAX_WIDTH,
+  type ErTableData,
 } from "../components/erDiagram";
 
 function fk(
@@ -147,16 +151,43 @@ describe("nodeHeight", () => {
   });
 });
 
+describe("nodeWidth", () => {
+  const data = (table: string, columns: string[]): ErTableData => ({
+    table,
+    columns: columns.map((name) => ({ name, isPk: false, isFk: false })),
+    hiddenColumns: 0,
+  });
+
+  it("clamps short tables to the minimum width", () => {
+    expect(nodeWidth(data("t", ["id"]))).toBe(ER_NODE_MIN_WIDTH);
+  });
+
+  it("grows with the longest of the table name or its columns", () => {
+    const short = nodeWidth(data("orders", ["id", "qty"]));
+    const wide = nodeWidth(data("orders", ["id", "a_very_long_descriptive_column_name"]));
+    expect(wide).toBeGreaterThan(short);
+    // A long table name widens the card just like a long column does.
+    const longTable = nodeWidth(data("a_table_with_a_very_long_name_indeed", ["id"]));
+    expect(longTable).toBeGreaterThan(short);
+  });
+
+  it("clamps absurdly long names to the maximum width", () => {
+    expect(nodeWidth(data("x".repeat(200), ["y".repeat(200)]))).toBe(ER_NODE_MAX_WIDTH);
+  });
+});
+
 describe("layoutErGraph", () => {
-  it("assigns a finite position and size to every node", () => {
-    const graph = buildErGraph({
+  const graph = () =>
+    buildErGraph({
       tables: [
         { name: "authors", columns: ["id", "name"] },
         { name: "books", columns: ["id", "author_id"] },
       ],
       foreignKeys: [fk("books", "author_id", "authors", "id")],
     });
-    const positioned = layoutErGraph(graph);
+
+  it("assigns a finite position and size to every node", () => {
+    const positioned = layoutErGraph(graph());
     expect(positioned.nodes).toHaveLength(2);
     for (const n of positioned.nodes) {
       expect(Number.isFinite(n.x)).toBe(true);
@@ -170,5 +201,38 @@ describe("layoutErGraph", () => {
     const books = positioned.nodes.find((n) => n.id === "books")!;
     expect(books.x).toBeLessThan(authors.x);
     expect(positioned.edges).toHaveLength(1);
+  });
+
+  it("flows top-to-bottom in the TB direction (source above target)", () => {
+    const positioned = layoutErGraph(graph(), { direction: "TB" });
+    const authors = positioned.nodes.find((n) => n.id === "authors")!;
+    const books = positioned.nodes.find((n) => n.id === "books")!;
+    // In TB the referencing table ranks above the referenced one.
+    expect(books.y).toBeLessThan(authors.y);
+  });
+
+  it("packs nodes tighter at the compact density", () => {
+    // A pair of unrelated tables sit in the same rank, so nodesep drives their
+    // gap; compact should place them closer than comfortable.
+    const isolated = () =>
+      buildErGraph({
+        tables: [
+          { name: "alpha", columns: ["id"] },
+          { name: "beta", columns: ["id"] },
+        ],
+        foreignKeys: [],
+      });
+    const spread = (g: ReturnType<typeof isolated>, density: "comfortable" | "compact") => {
+      const p = layoutErGraph(g, { density });
+      const ys = p.nodes.map((n) => n.y);
+      return Math.max(...ys) - Math.min(...ys);
+    };
+    expect(spread(isolated(), "compact")).toBeLessThan(spread(isolated(), "comfortable"));
+  });
+
+  it("defaults to LR + comfortable when no options are given", () => {
+    const a = layoutErGraph(graph());
+    const b = layoutErGraph(graph(), { direction: "LR", density: "comfortable" });
+    expect(a.nodes.map((n) => [n.x, n.y])).toEqual(b.nodes.map((n) => [n.x, n.y]));
   });
 });

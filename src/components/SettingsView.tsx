@@ -461,6 +461,8 @@ const DENSITY_LABEL_KEYS: Record<Density, Parameters<ReturnType<typeof useT>>[0]
 const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof useT>>[0]> = {
   default: "themePresetDefault",
   dracula: "themePresetDracula",
+  "high-contrast": "themePresetHighContrast",
+  colorblind: "themePresetColorblind",
 };
 
 const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> = {

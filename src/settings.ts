@@ -124,11 +124,28 @@ export interface Settings {
   autoReconnectMaxRetries: number;
 }
 
-/** Color theme presets. `default` = stock light/dark. */
-export type ThemePreset = "default" | "dracula";
+/**
+ * Color theme presets. `default` = stock light/dark.
+ *
+ * - `dracula` — dark-only Dracula palette (#465).
+ * - `high-contrast` — WCAG AAA-leaning palette that follows the light/dark
+ *   toggle (`hc-light` / `hc-dark`). Pure black/white text on near-pure
+ *   backgrounds with strong borders (#558).
+ * - `colorblind` — colorblind-safe (Okabe-Ito based) palette that follows the
+ *   light/dark toggle (`cb-light` / `cb-dark`). Status / cell / syntax colors
+ *   avoid the red↔green axis, using blue / orange / bluish-green / yellow so
+ *   states stay distinguishable under red-green (protan/deutan) and blue-yellow
+ *   (tritan) color vision (#558).
+ */
+export type ThemePreset = "default" | "dracula" | "high-contrast" | "colorblind";
 
 /** Presets offered in settings, in display order. */
-export const THEME_PRESET_ORDER: ThemePreset[] = ["default", "dracula"];
+export const THEME_PRESET_ORDER: ThemePreset[] = [
+  "default",
+  "dracula",
+  "high-contrast",
+  "colorblind",
+];
 export const DEFAULT_THEME_PRESET: ThemePreset = "default";
 
 /**
@@ -139,6 +156,11 @@ export const DEFAULT_THEME_PRESET: ThemePreset = "default";
  */
 export function themePresetDataTheme(preset: ThemePreset, theme: Theme): string {
   if (preset === "dracula") return "dracula-dark";
+  // high-contrast / colorblind keep the light/dark axis: the matching App.css
+  // block (`hc-light`/`hc-dark`, `cb-light`/`cb-dark`) fully overrides the
+  // palette while inheriting layout/spacing tokens from `:root`.
+  if (preset === "high-contrast") return theme === "dark" ? "hc-dark" : "hc-light";
+  if (preset === "colorblind") return theme === "dark" ? "cb-dark" : "cb-light";
   return theme;
 }
 
