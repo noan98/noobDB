@@ -3,7 +3,7 @@ import { page, userEvent } from "vitest/browser";
 import { renderInBrowser } from "./render";
 import App from "../../App";
 import { t } from "../../i18n";
-import { setTabRestoreMode } from "../../settings";
+import { setQueryTimeoutSecs, setTabRestoreMode } from "../../settings";
 import {
   emitTauriEvent,
   installTauriMock,
@@ -247,6 +247,57 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     // (cancel はリスナーを同期的に外すので、この emit の時点で配送先はない)。
     emitTauriEvent("query-stream:rows", { streamId, rows: [[2, "banana", 3]] });
     expect(screen.getByRole("gridcell", { name: "banana", exact: true }).query()).toBeNull();
+  });
+
+  it("カラム到着前のスケルトン段階でも停止ボタン (キャンセル導線) が出る", async () => {
+    let capturedStreamId: string | null = null;
+    onCommand("run_query_stream", (args) => {
+      capturedStreamId = args.streamId as string;
+      return null; // 列イベントは送らず、スケルトン段階に留める
+    });
+
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+
+    await vi.waitFor(() => {
+      if (!capturedStreamId) throw new Error("run_query_stream not invoked yet");
+    }, { timeout: 5000 });
+
+    // 列未着の「無の時間」でもバナーの停止ボタンが出ており、すぐにキャンセルできる。
+    await expect
+      .element(screen.getByRole("button", { name: t("gridStopButton") }))
+      .toBeVisible();
+    // グリッド (gridcell) はまだ描画されていない (スケルトン段階)。
+    expect(screen.getByRole("gridcell", { name: "apple", exact: true }).query()).toBeNull();
+
+    // 列 + 行が届くとスケルトンからグリッドへ切り替わり、停止ボタンは残る。
+    const streamId = capturedStreamId!;
+    emitTauriEvent("query-stream:columns", { streamId, columns: FRUIT_COLUMNS });
+    emitTauriEvent("query-stream:rows", { streamId, rows: [[1, "apple", 5]] });
+    await expect
+      .element(screen.getByRole("gridcell", { name: "apple", exact: true }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: t("gridStopButton") }))
+      .toBeVisible();
+  });
+
+  it("タイムアウト間際になると警告 (残り秒数) が表示される", async () => {
+    // タイムアウトを 1 秒に絞り、ライブ経過がその 8 割を超えたら間際警告が出る。
+    setQueryTimeoutSecs(1);
+    onCommand("run_query_stream", () => null); // 応答を返さず実行中のまま留める
+
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+
+    // 経過時間はバナー側が実時間で刻む。8 割 (0.8s) を越えると警告が出る。
+    // setup.browser.ts はロケールを en に固定しているため、可変の残り秒数を避けて
+    // 文言の静的部分 (Timing out in Ns) で照合する。
+    await expect
+      .element(screen.getByText(/Timing out in \d+s/), { timeout: 5000 })
+      .toBeVisible();
   });
 });
 

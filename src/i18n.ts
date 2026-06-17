@@ -279,6 +279,8 @@ const en = {
 
   statusStreaming: "Streaming... {rows} rows loaded ({ms} ms)",
   statusStreamingDone: "{rows} rows in {ms} ms",
+  statusRunningElapsed: "Running query... ({ms} ms)",
+  statusTimeoutApproaching: "Timing out in {secs}s",
   statusQueryCancelled: "Query cancelled — the rows already loaded are kept.",
   statusLoadingMore: "Loading more rows... ({rows} loaded)",
   statusPreviewStreaming: "Streaming preview... ({ms} ms)",
@@ -1662,6 +1664,8 @@ const ja: Dict = {
 
   statusStreaming: "ストリーミング中... {rows} 件取得 ({ms} ms)",
   statusStreamingDone: "{rows} 件取得 ({ms} ms)",
+  statusRunningElapsed: "クエリを実行中... ({ms} ms)",
+  statusTimeoutApproaching: "まもなくタイムアウト (残り {secs} 秒)",
   statusQueryCancelled: "クエリをキャンセルしました — 取得済みの行はそのまま保持されます。",
   statusLoadingMore: "追加レコードを読み込み中... ({rows} 件取得済み)",
   statusPreviewStreaming: "プレビューをストリーミング中... ({ms} ms)",
