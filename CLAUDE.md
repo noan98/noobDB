@@ -744,6 +744,13 @@ LIKE ワイルドカードはエスケープされます。
   加えて `export_query_stream` は、グリッドに載っていない大きな結果セットを
   メモリに溜めず**ストリーミングで直接ファイルへ書き出す**経路です (`run_query_stream`
   と同じバッチ列を消費)。3 形式とも通常 / ストリーミングの両経路に対応します。
+  **JSON 形式のときは実行クエリを出力に同梱**できます (`export_query_result` の
+  `query` 引数 / `export_query_stream` は `sql` を流用)。同梱時は配列ではなく
+  `{ "query": <sql>, "rows": [...] }` でラップします (キーは serde_json 既定の
+  `BTreeMap` 出力に従いアルファベット順)。`query` が None/空、または CSV/NDJSON では
+  従来どおり配列のまま (後方互換)。`ExportModal` (フロント) は出力内容のプレビュー欄
+  (純ロジックは `components/exportPreview.ts` がバックエンドの書式をミラー) と、在
+  グリッド全行を全文コピーするコピーアイコンを備えます。
 - `commands/dump.rs`: `mysqldump` を呼ぶ DB ダンプ (MySQL 専用)。資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
   経由で渡し、終了後に削除します。`mysqldump` が PATH にない場合は分かりやすい
