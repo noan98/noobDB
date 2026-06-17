@@ -117,3 +117,43 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # 出荷バイナリ (インストーラ / 実行ファイル) のサイズを Job Summary に可視化する
+      # (#549)。バンドルサイズ可視化 (#443) のアプリ本体版で、方針も同じ:
+      # 当面は閾値で fail させず可視化のみ、追加ツールは増やさずシェル標準機能だけで
+      # 集計する。cache-warm ビルド (pnpm tauri build) でもリリースビルド
+      # (tauri-action) でも成果物は同じ target/release/bundle 配下に出るため、両経路の
+      # 後に always() で 1 回測る。macOS/Linux バンドル追加後 (本 Epic の別 Issue) は
+      # .dmg / .AppImage / .deb のグロブが自動的に対象に含まれる。起動時間の監視は
+      # 計測の安定性が難しいため本 Issue のスコープ外 (任意/将来拡張) とする。
+      - name: Report bundle artifact sizes
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+          files=(
+            src-tauri/target/release/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+          )
+          {
+            echo "### 出荷バイナリサイズ (${{ matrix.platform }})"
+            echo ""
+            echo "| 成果物 | サイズ |"
+            echo "| --- | ---: |"
+          } >> "$summary"
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "| (成果物が見つかりませんでした) | — |" >> "$summary"
+          else
+            for f in "${files[@]}"; do
+              bytes=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null || echo 0)
+              human=$(awk -v b="$bytes" 'BEGIN { printf "%.2f MiB", b/1048576 }')
+              printf '| `%s` | %s |\n' "$(basename "$f")" "$human" >> "$summary"
+            done
+          fi

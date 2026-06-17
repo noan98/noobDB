@@ -241,7 +241,16 @@ CI は 2 つのワークフローに分かれています:
   指定してください** (ジョブ分割でチェック名が変わったため)。
 - `.github/workflows/release.yml` — `v*` タグまたは `workflow_dispatch` を
   トリガに、`windows-latest` 上で `tauri-action` 経由の NSIS バンドルを生成します。
-  `main` への push でもキャッシュ温め目的でビルドが走ります。
+  `main` への push でもキャッシュ温め目的でビルドが走ります。ビルド後の
+  `Report bundle artifact sizes` ステップが、出荷バイナリ (NSIS インストーラ・
+  `.exe`、将来の `.dmg` / `.AppImage` / `.deb`) のサイズを Job Summary に出力します
+  (#549)。これは JS/CSS を測るバンドルサイズ可視化 (#443) の**アプリ本体版**で、方針も
+  同じく**当面は閾値で fail させず可視化のみ** (カバレッジ #482 と同じ漸進方針)。
+  追加ツールは増やさず `stat` + `awk` のシェル標準機能だけで集計し、cache-warm /
+  リリースの両ビルド経路の後に `if: always()` で 1 回測ります。macOS/Linux バンドルを
+  追加したら (本 Epic の別 Issue) `.dmg` / `.AppImage` / `.deb` のグロブが自動的に
+  対象へ含まれます。起動時間の監視は計測の安定性が難しいため本 Issue のスコープ外
+  (任意/将来拡張) としています。
 
 Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`, `libxdo-dev`,

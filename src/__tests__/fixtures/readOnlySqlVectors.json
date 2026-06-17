@@ -50,6 +50,22 @@
     { "sql": "SELECT $$; DELETE FROM users", "readOnly": false, "note": "未終端のドル引用は文字列とみなさずフェイルクローズ" },
     { "sql": "SELECT $1; DELETE FROM users WHERE id = $1", "readOnly": false, "note": "$1 はパラメータプレースホルダでありドル引用の開始タグでない" },
     { "sql": "SELECT a$b FROM t", "readOnly": true, "note": "識別子内の $ (MySQL) はドル引用と誤認しない" },
-    { "sql": "SELECT $a$ delete from users $b$", "readOnly": false, "note": "開始タグと不一致の閉じタグでは文字列にならずフェイルクローズ" }
+    { "sql": "SELECT $a$ delete from users $b$", "readOnly": false, "note": "開始タグと不一致の閉じタグでは文字列にならずフェイルクローズ" },
+
+    { "sql": "SELECT $$ outer $inner$ delete from users $inner$ outer $$ AS s", "readOnly": true, "note": "ネストしたドル引用: 外側 $$...$$ 全体が文字列で内側の write はマスクされる" },
+    { "sql": "SELECT $outer$ a $inner$ drop table x $inner$ b $outer$ AS s", "readOnly": true, "note": "ネストしたタグ付きドル引用: 内側タグは外側の閉じと不一致なので外側全体が 1 文字列" },
+    { "sql": "SELECT $outer$ a $inner$ ; $inner$ b $outer$ AS s", "readOnly": true, "note": "ネストドル引用内のセミコロンは文区切りでない" },
+
+    { "sql": "SELECT id FROM a UNION SELECT id FROM b", "readOnly": true, "note": "集合演算 UNION: 両枝とも SELECT で読み取り" },
+    { "sql": "SELECT id FROM a UNION ALL SELECT id FROM b", "readOnly": true, "note": "UNION ALL" },
+    { "sql": "SELECT id FROM a EXCEPT SELECT id FROM b", "readOnly": true, "note": "EXCEPT は読み取り (write キーワードでない)" },
+    { "sql": "SELECT id FROM a INTERSECT SELECT id FROM b", "readOnly": true, "note": "INTERSECT は読み取り" },
+    { "sql": "SELECT 1 UNION DELETE FROM users", "readOnly": false, "note": "集合演算の枝に write を混ぜた病的入力は write キーワード検出で弾く" },
+    { "sql": "SELECT id FROM a UNION SELECT id FROM b; DROP TABLE a", "readOnly": false, "note": "集合演算の後ろに隠れた DDL を弾く (スタック)" },
+
+    { "sql": "WITH x AS (WITH y AS (SELECT 1) SELECT * FROM y) SELECT * FROM x", "readOnly": true, "note": "ネスト CTE で全枝 SELECT は読み取り" },
+    { "sql": "WITH x AS (WITH y AS (DELETE FROM users RETURNING *) SELECT * FROM y) SELECT * FROM x", "readOnly": false, "note": "ネスト CTE 内のデータ変更 (DELETE) を弾く" },
+    { "sql": "WITH x AS (WITH y AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM y) SELECT * FROM x", "readOnly": false, "note": "ネスト CTE 内の INSERT を弾く" },
+    { "sql": "WITH x AS (WITH y AS (UPDATE t SET c = 1 RETURNING *) SELECT * FROM y) SELECT * FROM x", "readOnly": false, "note": "ネスト CTE 内の UPDATE を弾く" }
   ]
 }
