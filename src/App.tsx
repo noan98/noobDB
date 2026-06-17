@@ -20,6 +20,7 @@ import {
   listenQueryStream,
 } from "./api/tauri";
 import {
+  applyEditsToRows,
   buildDeleteStatements,
   buildInsertStatements,
   buildUpdateStatements,
@@ -3009,32 +3010,68 @@ export default function App() {
       failure = String(e);
     }
     patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
-    // Always refresh & drop edits afterwards: the result indices no
-    // longer line up with whatever the user had buffered. Row ops are
-    // cleared too so the bar disappears once applied.
-    patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
-    if (paginatable) {
-      const limit = Math.max(1, settings.defaultDisplayCount);
-      const refresh = `${paginatable} LIMIT ${limit}`;
-      runQueryInTab(tabId, refresh, paginatable);
-    } else {
-      patchTab(tabId, (tt) => ({ ...tt, pendingEdits: {}, editUndoStack: [], editRedoStack: [], preview: null }));
-    }
     if (failure) {
+      // トランザクションはロールバックされ DB は未変更。保留中の編集と行操作は
+      // そのまま残し、ユーザが原因を直して再適用できるようにする (以前はここで
+      // 1 ページ目を取り直して編集を破棄していた)。
       setStatus({
         kind: "key",
         key: "statusApplyEditsPartial",
         vars: { total: stmts.length, error: failure },
         error: true,
       });
+      return;
+    }
+    // 成功時はコミット済みの変更を、取得済みの結果行へその場で反映する。これにより
+    // 編集セルが新しい値を表示し、ユーザのスクロール/ページ位置も保たれる。以前は
+    // 常に 1 ページ目 (`LIMIT 既定件数`) を取り直していたため、2 ページ目以降や
+    // 「さらに読み込む」で表示した行を編集すると、Apply 後に表示が先頭ページへ戻り、
+    // 編集対象の行が消えたり編集前の値に見えたりしていた。
+    const hasInserts = (tab.pendingInserts ?? []).length > 0;
+    if (hasInserts && paginatable) {
+      // 新規行はサーバが採番する PK (AUTO_INCREMENT など) を取り込む必要があるため、
+      // ここだけは再取得して反映する。
+      const limit = Math.max(1, settings.defaultDisplayCount);
+      patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
+      runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
     } else {
-      patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
-      setStatus({
-        kind: "key",
-        key: "statusAppliedEdits",
-        vars: { rows: totalAffected, count: stmts.length },
+      patchTab(tabId, (tt) => {
+        if (!tt.result) {
+          return {
+            ...tt,
+            pendingEdits: {},
+            editUndoStack: [],
+            editRedoStack: [],
+            preview: null,
+            pendingDeletes: [],
+            pendingInserts: [],
+          };
+        }
+        const nextRows = applyEditsToRows({
+          columns: tt.result.columns,
+          rows: tt.result.rows,
+          pkIndices,
+          edits: tt.pendingEdits,
+          deleteKeys: new Set(tt.pendingDeletes ?? []),
+        });
+        return {
+          ...tt,
+          result: { ...tt.result, rows: nextRows, rows_affected: nextRows.length },
+          pendingEdits: {},
+          editUndoStack: [],
+          editRedoStack: [],
+          preview: null,
+          pendingDeletes: [],
+          pendingInserts: [],
+        };
       });
     }
+    patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
+    setStatus({
+      kind: "key",
+      key: "statusAppliedEdits",
+      vars: { rows: totalAffected, count: stmts.length },
+    });
   }, [
     sessionId,
     patchTab,

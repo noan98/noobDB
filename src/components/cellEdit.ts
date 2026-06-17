@@ -273,6 +273,83 @@ function literalFromInput(driver: string, raw: string, col: Column): string {
   return quoteString(driver, raw);
 }
 
+/**
+ * Converts raw input text from the edit box into the `CellValue` it will
+ * display as once committed, loosely typed by the destination column. Mirrors
+ * `literalFromInput`'s coercion exactly so the optimistic in-grid value matches
+ * what the database actually stores:
+ *   - "NULL" (case-insensitive, after trim) → SQL NULL (`null`)
+ *   - numeric column + numeric-looking input → a `number` (kept as the trimmed
+ *     string when it exceeds JS safe-integer range, matching how the backend's
+ *     `decode_cell` returns huge BIGINT/DECIMAL values as text to keep precision)
+ *   - boolean column + true/false/0/1 → `true` / `false`
+ *   - otherwise → the raw string (untrimmed, like the quoted string literal)
+ *
+ * Used to reflect an applied edit in the result grid in place, without a full
+ * refetch, so the edited cell shows its new value and the user keeps their
+ * scroll/page position.
+ */
+export function cellValueFromInput(raw: string, col: Column): CellValue {
+  const trimmed = raw.trim();
+  if (/^null$/i.test(trimmed)) return null;
+  const t = col.type_name.toUpperCase();
+  if (NUMERIC_TYPES.has(t) && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(trimmed)) {
+    const n = Number(trimmed);
+    if (Number.isFinite(n) && (Number.isSafeInteger(n) || !Number.isInteger(n))) {
+      return n;
+    }
+    return trimmed;
+  }
+  if (t === "BOOLEAN" || t === "BOOL") {
+    const lc = trimmed.toLowerCase();
+    if (lc === "true" || lc === "1") return true;
+    if (lc === "false" || lc === "0") return false;
+  }
+  return raw;
+}
+
+/**
+ * Applies buffered edits (and optional pending-delete keys) to a copy of the
+ * result rows, returning a new rows array. Used after a successful Apply to
+ * reflect committed changes in place — edited cells take their new value (via
+ * `cellValueFromInput`) and rows flagged for deletion are dropped — without a
+ * refetch, so the grid keeps its current position.
+ *
+ * Edits/deletes are matched by `rowEditKey` (primary-key identity), exactly as
+ * the grid buffers them. A row with no matching edit is passed through
+ * unchanged (same reference).
+ */
+export function applyEditsToRows(input: {
+  columns: Column[];
+  rows: CellValue[][];
+  pkIndices: number[];
+  edits: PendingEdits;
+  deleteKeys?: Set<string>;
+}): CellValue[][] {
+  const { columns, rows, pkIndices, edits, deleteKeys } = input;
+  const out: CellValue[][] = [];
+  for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+    const row = rows[rowIdx];
+    if (!row) continue;
+    const key = rowEditKey(row, pkIndices, rowIdx);
+    if (deleteKeys?.has(key)) continue;
+    const rowEdits = edits[key];
+    if (!rowEdits) {
+      out.push(row);
+      continue;
+    }
+    const next = [...row];
+    for (const colKey of Object.keys(rowEdits)) {
+      const colIdx = Number(colKey);
+      const c = columns[colIdx];
+      if (!c) continue;
+      next[colIdx] = cellValueFromInput(rowEdits[colIdx], c);
+    }
+    out.push(next);
+  }
+  return out;
+}
+
 export interface BuildUpdateInput {
   driver: string;
   database: string;

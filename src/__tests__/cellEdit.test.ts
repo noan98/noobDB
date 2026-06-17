@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { CellValue, Column, TableColumnInfo } from "../api/tauri";
 import {
+  applyEditsToRows,
   buildDeleteStatements,
   buildInsertStatements,
   buildRowSql,
   buildUpdateStatements,
+  cellValueFromInput,
   countEditedCells,
   countEditedRows,
   isEditableColumnType,
@@ -489,5 +491,84 @@ describe("buildDeleteStatements", () => {
     expect(
       buildDeleteStatements({ driver: "mysql", database: "d", table: "t", columns, rows, pkIndices, deleteKeys: new Set() }),
     ).toEqual([]);
+  });
+});
+
+describe("cellValueFromInput", () => {
+  it("maps the NULL keyword to null (case-insensitive, trimmed)", () => {
+    expect(cellValueFromInput("null", col("c", "VARCHAR"))).toBe(null);
+    expect(cellValueFromInput("  NULL  ", col("c", "INT"))).toBe(null);
+  });
+
+  it("coerces numeric columns to numbers", () => {
+    expect(cellValueFromInput("42", col("qty", "INT"))).toBe(42);
+    expect(cellValueFromInput(" -3.5 ", col("p", "DECIMAL"))).toBe(-3.5);
+  });
+
+  it("keeps oversized integers as a string to preserve precision", () => {
+    const big = "99999999999999999999";
+    expect(cellValueFromInput(big, col("id", "BIGINT"))).toBe(big);
+  });
+
+  it("coerces boolean columns to true/false", () => {
+    expect(cellValueFromInput("true", col("ok", "BOOLEAN"))).toBe(true);
+    expect(cellValueFromInput("1", col("ok", "BOOL"))).toBe(true);
+    expect(cellValueFromInput("false", col("ok", "BOOLEAN"))).toBe(false);
+    expect(cellValueFromInput("0", col("ok", "BOOL"))).toBe(false);
+  });
+
+  it("passes string-like input through unchanged (untrimmed)", () => {
+    expect(cellValueFromInput("  hello  ", col("name", "VARCHAR"))).toBe("  hello  ");
+    // A non-numeric value in a numeric column is left as a string (server decides).
+    expect(cellValueFromInput("abc", col("qty", "INT"))).toBe("abc");
+  });
+});
+
+describe("applyEditsToRows", () => {
+  const columns = [col("id", "INT"), col("name", "VARCHAR"), col("qty", "INT")];
+  const pkIndices = [0];
+  const rows: CellValue[][] = [
+    [1, "apple", 5],
+    [2, "banana", 3],
+    [3, "cherry", 7],
+  ];
+
+  it("applies an edit to the matching row by PK identity, leaving others untouched", () => {
+    const edits: PendingEdits = { [k(2)]: { 2: "42" } };
+    const out = applyEditsToRows({ columns, rows, pkIndices, edits });
+    expect(out).toEqual([
+      [1, "apple", 5],
+      [2, "banana", 42],
+      [3, "cherry", 7],
+    ]);
+    // Untouched rows keep their identity (no needless re-render churn).
+    expect(out[0]).toBe(rows[0]);
+    expect(out[1]).not.toBe(rows[1]);
+  });
+
+  it("drops rows flagged for deletion", () => {
+    const out = applyEditsToRows({
+      columns,
+      rows,
+      pkIndices,
+      edits: {},
+      deleteKeys: new Set([k(1), k(3)]),
+    });
+    expect(out).toEqual([[2, "banana", 3]]);
+  });
+
+  it("applies edits and deletes together, matched by PK regardless of position", () => {
+    const edits: PendingEdits = { [k(3)]: { 1: "CHERRY" } };
+    const out = applyEditsToRows({
+      columns,
+      rows,
+      pkIndices,
+      edits,
+      deleteKeys: new Set([k(1)]),
+    });
+    expect(out).toEqual([
+      [2, "banana", 3],
+      [3, "CHERRY", 7],
+    ]);
   });
 });
