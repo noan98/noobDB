@@ -969,6 +969,29 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
+  // 同時に開いている接続のレジストリ (#複数同時接続)。別プロファイルへ接続しても
+  // 既存セッションを切断せず背景で生かしておき、クリックで即座に切り替えられる
+  // ようにする。各エントリは生存中のバックエンドセッション 1 本に対応する。
+  // 「アクティブな接続」もここに含まれる (active = この中の sessionId のいずれか)。
+  type OpenConnection = { sessionId: string; profile: ConnectionProfile };
+  const [openConnections, setOpenConnections] = useState<OpenConnection[]>([]);
+  const openConnectionsRef = useRef<OpenConnection[]>([]);
+  useEffect(() => { openConnectionsRef.current = openConnections; }, [openConnections]);
+  // プロファイル id の集合 (ConnectionList の接続済み表示・切替/切断 UI 用)。
+  const openProfileIds = useMemo(
+    () => new Set(openConnections.map((c) => c.profile.id)),
+    [openConnections],
+  );
+  // レジストリへの登録/差し替え (同一プロファイルは最新セッションで上書き)。
+  const upsertOpenConnection = useCallback((sid: string, profile: ConnectionProfile) => {
+    setOpenConnections((prev) => [
+      ...prev.filter((c) => c.profile.id !== profile.id),
+      { sessionId: sid, profile },
+    ]);
+  }, []);
+  const removeOpenConnection = useCallback((profileId: string) => {
+    setOpenConnections((prev) => prev.filter((c) => c.profile.id !== profileId));
+  }, []);
   // ライブ接続の状態 (#600)。`reconnecting` の間は TitleBar に警告帯/バッジを出し、
   // 新規クエリは明示的に弾く。`connected` 以外への遷移は自動再接続オーケストレータが司る。
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connected");
@@ -1513,7 +1536,44 @@ export default function App() {
     setActivePaneId(null);
   }, [cancelStreamForTab]);
 
+  // 既に開いている接続へ即座に切り替える (#複数同時接続)。再接続せず、生存中の
+  // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
+  // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
+  // sessionId prop の変化を検知して自動で再ロードする。
+  const switchToOpenConnection = useCallback(async (target: OpenConnection) => {
+    if (target.sessionId === sessionId) return;
+    // 進行中の自動再接続ループは手動切替で中断する。
+    reconnectAbortRef.current = true;
+    reconnectingRef.current = false;
+    // 現在の接続のタブを退避してから片付ける (背景セッションは生かしたまま)。
+    if (selectedProfile) persistTabsForProfile(selectedProfile.id);
+    await closeAllTabs();
+    setErrorProfileId(null);
+    setConnectionStatus("connected");
+    setSessionId(target.sessionId);
+    setSelectedProfile(target.profile);
+    const savedWs = loadPersistedWorkspace(target.profile.id);
+    const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
+    if (savedCount > 0 && restoreSavedTabsRef.current) {
+      await restoreSavedTabsRef.current(target.sessionId, target.profile, savedWs);
+    } else {
+      setTabs([]);
+      setPanes([]);
+      setActivePaneId(null);
+    }
+    setStatus({ kind: "idle" });
+    toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast]);
+
   const handleConnect = useCallback(async (profile: ConnectionProfile) => {
+    // 既にアクティブな接続なら何もしない (誤クリックで張り直さない)。
+    if (sessionId && selectedProfile?.id === profile.id) return;
+    // 背景で開いたままの接続をクリックしたら、再接続せず即座に切り替える。
+    const alreadyOpen = openConnectionsRef.current.find((c) => c.profile.id === profile.id);
+    if (alreadyOpen) {
+      await switchToOpenConnection(alreadyOpen);
+      return;
+    }
     if (profile.is_production && settings.confirmProductionConnect) {
       const ok = await confirm({
         title: translate("productionConfirmTitle"),
@@ -1574,9 +1634,9 @@ export default function App() {
     setConnectionStatus("connected");
     setStatus({ kind: "key", key: "statusConnecting", vars: { name: profile.name } });
     if (sessionId) {
-      // Persist the outgoing profile's tabs before we tear them down.
+      // 別プロファイルへ接続するときは現在の接続を切断せず背景で生かしたまま残す
+      // (#複数同時接続)。タブだけ退避し、レジストリのエントリはそのまま保持する。
       if (selectedProfile) persistTabsForProfile(selectedProfile.id);
-      try { await api.disconnect(sessionId); } catch (e) { console.warn(e); }
       setSessionId(null);
       await closeAllTabs();
     }
@@ -1600,6 +1660,8 @@ export default function App() {
       });
       setSessionId(res.session_id);
       setSelectedProfile(profile);
+      // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
+      upsertOpenConnection(res.session_id, profile);
 
       const savedWs = loadPersistedWorkspace(profile.id);
       const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
@@ -1638,6 +1700,8 @@ export default function App() {
     selectedProfile,
     closeAllTabs,
     persistTabsForProfile,
+    switchToOpenConnection,
+    upsertOpenConnection,
     settings.confirmProductionConnect,
     settings.tabRestoreMode,
     toast,
@@ -1653,6 +1717,9 @@ export default function App() {
     // Persist before tearing down — closeAllTabs clears the in-memory list.
     if (selectedProfile) persistTabsForProfile(selectedProfile.id);
     await closeAllTabs();
+    // アクティブな接続をレジストリから外す (#複数同時接続)。
+    const closingId = selectedProfile?.id ?? null;
+    if (closingId) removeOpenConnection(closingId);
     try {
       await api.disconnect(sessionId);
     } catch (e) {
@@ -1662,8 +1729,35 @@ export default function App() {
     setSelectedProfile(null);
     setImportTarget(null);
     setDumpTarget(null);
-    setStatus({ kind: "key", key: "appDisconnected" });
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile]);
+    // 他に開いている接続が残っていれば、そのうち最後に開いたものへ切り替える。
+    // 残っていなければ未接続状態へ。
+    const remaining = openConnectionsRef.current.filter((c) => c.profile.id !== closingId);
+    if (remaining.length > 0) {
+      await switchToOpenConnection(remaining[remaining.length - 1]);
+    } else {
+      setStatus({ kind: "key", key: "appDisconnected" });
+    }
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection]);
+
+  // 特定の接続 (背景またはアクティブ) を再接続せずに閉じる (#複数同時接続)。
+  // 背景接続ならアクティブなワークスペースには触れずバックエンドセッションだけ
+  // 落とす。アクティブ接続を閉じる場合は handleDisconnect と同じ後始末を行う。
+  const handleDisconnectProfile = useCallback(async (profileId: string) => {
+    const entry = openConnectionsRef.current.find((c) => c.profile.id === profileId);
+    if (!entry) return;
+    if (entry.profile.id === selectedProfile?.id) {
+      await handleDisconnect();
+      return;
+    }
+    // 背景接続: タブは退避済みなので、セッションを落としてレジストリから外すだけ。
+    removeOpenConnection(profileId);
+    try {
+      await api.disconnect(entry.sessionId);
+    } catch (e) {
+      console.warn(e);
+    }
+    toast.info(translate("toastDisconnected", { name: entry.profile.name }));
+  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast]);
 
   // A query or preview failed because the connection dropped (server idle
   // timeout, network or VPN loss). Tear the now-dead session down the same way
@@ -1682,6 +1776,8 @@ export default function App() {
       const lostProfileId = profile?.id ?? null;
       if (profile) persistTabsForProfile(profile.id);
       await closeAllTabs();
+      // 死んだ接続をレジストリから外す (#複数同時接続)。
+      if (lostProfileId) removeOpenConnection(lostProfileId);
       if (oldSessionId) {
         try { await api.disconnect(oldSessionId); } catch (e) { console.warn(e); }
       }
@@ -1704,7 +1800,7 @@ export default function App() {
         setStatus({ kind: "key", key: "statusConnectionLost", error: true });
       }
     },
-    [closeAllTabs, persistTabsForProfile],
+    [closeAllTabs, persistTabsForProfile, removeOpenConnection],
   );
 
   // 指数バックオフで自動再接続を試みるループ。成功したら同じプロファイルで張り直した
@@ -1753,6 +1849,8 @@ export default function App() {
           // 成功: タブを維持したままセッションだけ差し替える。
           setSessionId(res.session_id);
           setSelectedProfile(profile);
+          // レジストリの該当エントリを新セッション id へ差し替える (#複数同時接続)。
+          upsertOpenConnection(res.session_id, profile);
           setErrorProfileId(null);
           setConnectionStatus("connected");
           setStatus({ kind: "idle" });
@@ -1769,7 +1867,7 @@ export default function App() {
       if (reconnectAbortRef.current) return;
       await tearDownLostSession(profile, null, { gaveUpAfter: maxRetries });
     },
-    [persistTabsForProfile, tearDownLostSession, toast],
+    [persistTabsForProfile, tearDownLostSession, upsertOpenConnection, toast],
   );
 
   // 接続断 (クエリ失敗 / フォーカス時のヘルスチェック失敗) の統一ハンドラ。設定と
@@ -4559,7 +4657,9 @@ export default function App() {
             sessionId={sessionId}
             connectingId={connectingId}
             errorProfileId={errorProfileId}
+            openProfileIds={openProfileIds}
             onConnect={handleConnect}
+            onDisconnectProfile={handleDisconnectProfile}
             onCreate={handleOpenCreateForm}
             onEdit={handleOpenEditForm}
             onDuplicate={handleDuplicateProfile}

@@ -178,7 +178,15 @@ interface Props {
   sessionId: string | null;
   connectingId: string | null;
   errorProfileId: string | null;
+  /**
+   * Profile ids that currently have a live backend session (the active one and
+   * any others kept open in the background). Used to mark them as connected and
+   * to switch to them instantly instead of reconnecting. (#複数同時接続)
+   */
+  openProfileIds?: ReadonlySet<string>;
   onConnect: (profile: ConnectionProfile) => void;
+  /** Close a specific background (or active) connection without reconnecting. */
+  onDisconnectProfile?: (profileId: string) => void;
   onCreate: () => void;
   onEdit: (profile: ConnectionProfile) => void;
   onDuplicate: (profile: ConnectionProfile) => void;
@@ -227,7 +235,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   sessionId,
   connectingId,
   errorProfileId,
+  openProfileIds,
   onConnect,
+  onDisconnectProfile,
   onCreate,
   onEdit,
   onDuplicate,
@@ -467,6 +477,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       x: e.clientX,
       y: e.clientY,
       items: [
+        ...(onDisconnectProfile && openProfileIds?.has(p.id)
+          ? [
+              {
+                label: t("contextMenuDisconnect"),
+                onSelect: () => onDisconnectProfile(p.id),
+              },
+            ]
+          : []),
         { label: t("contextMenuEdit"), onSelect: () => onEdit(p) },
         { label: t("contextMenuDuplicate"), onSelect: () => onDuplicate(p) },
         {
@@ -741,6 +759,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (connectingId === p.id) return "connecting";
     if (errorProfileId === p.id && activeProfileId !== p.id) return "error";
     if (activeProfileId === p.id && sessionId) return "connected";
+    // 背景で開いたままの接続 (アクティブではないがセッション生存) も接続済み表示。
+    if (openProfileIds?.has(p.id)) return "connected";
     return "idle";
   };
 
@@ -1045,7 +1065,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               {t("listReadOnly")}
             </TreeBadge>
           )}
-          {status === "connected" && (
+          {/* スキーマ更新ボタンはアクティブ接続でのみ表示する。refreshSchema は
+              アクティブな sessionId を対象にするため、背景接続の行に出すと別接続を
+              更新してしまい紛らわしい (#複数同時接続)。背景接続は接続済みドットのみ。 */}
+          {status === "connected" && isActive && (
             <chakra.button
               type="button"
               flexShrink={0}
