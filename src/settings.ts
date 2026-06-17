@@ -62,8 +62,11 @@ export interface Settings {
    */
   accentColor: string | null;
   /**
-   * UI density preset. Drives row height / cell padding independently of the
-   * font size, via the `data-density` attribute and `--density-*` CSS vars.
+   * UI density preset. Drives row height / cell padding *and* the vertical
+   * padding of interactive controls (buttons / inputs / select / textarea)
+   * independently of the font size, via the `data-density` attribute and the
+   * `--density-*` / `--control-*` CSS vars (#410, #620). So the same preset
+   * tightens or loosens the grid, forms, sidebar and modal footers uniformly.
    */
   density: Density;
   /**
