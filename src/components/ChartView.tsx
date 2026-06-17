@@ -208,12 +208,19 @@ function CartesianChart({
   // MotionConfig が自動的に即時化するため、ここでは分岐不要。
   const animate = model.series.length * n <= ANIM_MAX_ELEMENTS;
 
-  // ポインタの X からバンドインデックスを逆算する (viewBox スケールに依存しないよう
-  // 実ピクセル幅で正規化してから W 座標へ写す)。
+  // ポインタの X からバンドインデックスを逆算する。SVG は viewBox + width:100% +
+  // maxHeight:100% のため、高さ制約時は preserveAspectRatio (既定 xMidYMid meet) で
+  // 内容が縮小・水平方向にレターボックスされる。getBoundingClientRect().width は
+  // 余白を含む要素幅で実際の描画幅と一致しないため、CTM の逆変換でスクリーン座標を
+  // SVG ユーザ座標へ写し、スケール/オフセットを正しく吸収する。
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    if (rect.width === 0) return;
-    const svgX = ((e.clientX - rect.left) / rect.width) * W;
+    const svg = e.currentTarget;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const svgX = pt.matrixTransform(ctm.inverse()).x;
     const idx = Math.floor((svgX - PAD.left) / bandW);
     setHover(idx >= 0 && idx < n ? idx : null);
   };

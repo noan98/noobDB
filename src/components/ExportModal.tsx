@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { save } from "@tauri-apps/plugin-dialog";
+import { downloadDir, join } from "@tauri-apps/api/path";
 import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api/tauri";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -119,6 +120,9 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | null>(null);
+  // ユーザがパスを手で編集 / ブラウズで選択したら true。既定の保存先 (ダウンロード
+  // フォルダ) の後付けでユーザの入力を上書きしないためのガード。
+  const userEditedPathRef = useRef(false);
   const unlistenRef = useRef<(() => void) | null>(null);
 
   // JSON 形式のときだけ実行クエリを出力に同梱する。クエリは全件モードの
@@ -160,6 +164,30 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
     copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
   };
 
+  // 既定の保存先を OS のダウンロードフォルダにする。初期パスはファイル名のみ
+  // (相対パス) なので、ネイティブの保存ダイアログが任意の場所に着地しないよう、
+  // マウント時に一度だけダウンロードディレクトリを前置きする。ユーザが手で編集
+  // 済みのとき、またはディレクトリ取得に失敗したときはファイル名のまま据え置く。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const dir = await downloadDir();
+        if (cancelled || userEditedPathRef.current) return;
+        const full = await join(dir, `${initialBasename}${extensionFor(format)}`);
+        if (cancelled || userEditedPathRef.current) return;
+        setPath(full);
+      } catch {
+        // ダウンロードフォルダが解決できない環境ではファイル名のままにする。
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // マウント時に一度だけ実行する (format/basename はマウント直後の値を使う)。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const isSaving = status.kind === "saving" || status.kind === "streaming";
 
   // When the format changes, swap the extension on the current path. This
@@ -188,6 +216,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
       ],
     });
     if (typeof selected === "string" && selected) {
+      userEditedPathRef.current = true;
       setPath(selected);
     }
   };
@@ -389,7 +418,10 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
               minW={0}
               type="text"
               value={path}
-              onChange={(e) => setPath(e.target.value)}
+              onChange={(e) => {
+                userEditedPathRef.current = true;
+                setPath(e.target.value);
+              }}
               placeholder={t("exportSavePathPlaceholder")}
               disabled={isSaving}
             />
