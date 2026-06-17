@@ -3795,6 +3795,115 @@ export function DataGrid({
   );
 }
 
+/**
+ * ストリーミング実行中の経過時間 (ms) を実時間でライブに刻む。
+ *
+ * バックエンドの `elapsed_ms` はバッチ到着時にしか更新されないため、カラム未着の
+ * 「無の時間」やバッチ間では値が固まって見える。ここで `streaming` が真の間だけ
+ * 200ms ごとに自前で計時し、経過時間が常に進んでいることを示す。reduced-motion とは
+ * 無関係 (時間表示であってアニメーションではない) なので常時刻む。
+ */
+function useStreamingElapsed(active: boolean): number {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const start = Date.now();
+    setElapsed(0);
+    const id = window.setInterval(() => setElapsed(Date.now() - start), 200);
+    return () => window.clearInterval(id);
+  }, [active]);
+  return elapsed;
+}
+
+/**
+ * ストリーミング実行中のステータスバナー。カラム未着のスケルトン段階と、行が
+ * 流入している段階の両方で同じ見た目を共有する。
+ *
+ * - ライブな経過時間 (`elapsedMs`) と行数 (`rows`) を表示。
+ * - 行数の変化に合わせて文言を `motion.span` の `key` 差し替えで控えめに slide-up
+ *   させ、行が積み上がる様子を可視化する (reduced-motion は `MotionConfig` が自動抑制)。
+ * - クエリタイムアウト (`timeoutSecs`) の 8 割を超えたら警告トーンへ切り替え、残り
+ *   秒数を表示して「間際」であることを伝える。
+ * - `onStop` があれば停止ボタン (`cancel_stream` 導線) を常に出す。
+ */
+function StreamingBanner({
+  rows,
+  elapsedMs,
+  hasColumns,
+  onStop,
+  timeoutSecs,
+}: {
+  rows: number;
+  elapsedMs: number;
+  hasColumns: boolean;
+  onStop?: () => void;
+  timeoutSecs: number;
+}) {
+  const t = useT();
+  const timeoutMs = timeoutSecs > 0 ? timeoutSecs * 1000 : 0;
+  const approaching = timeoutMs > 0 && elapsedMs >= timeoutMs * 0.8;
+  const remainingSecs = Math.max(0, Math.ceil((timeoutMs - elapsedMs) / 1000));
+  const statusText = hasColumns
+    ? t("statusStreaming", { rows, ms: elapsedMs })
+    : t("statusRunningElapsed", { ms: elapsedMs });
+  return (
+    <Box
+      role="status"
+      aria-live="polite"
+      display="flex"
+      alignItems="center"
+      gap="1.5"
+      py="1"
+      px="2.5"
+      fontSize="sm"
+      color="app.textMuted"
+      flexShrink={0}
+      borderBottom="1px solid"
+      borderColor={approaching ? "color-mix(in srgb, #f59e0b 45%, var(--border))" : "app.borderSubtle"}
+      bg={approaching ? "color-mix(in srgb, #f59e0b 12%, var(--bg-muted))" : "app.surfaceMuted"}
+    >
+      <chakra.span
+        aria-hidden
+        width="8px"
+        height="8px"
+        borderRadius="50%"
+        flexShrink={0}
+        background={approaching ? "#ef4444" : "#f59e0b"}
+        animation="streaming-pulse 1s ease-in-out infinite"
+      />
+      <chakra.span flex="1" display="inline-flex" alignItems="center" gap="2" minW={0} overflow="hidden">
+        <motion.span
+          key={rows}
+          initial={{ opacity: 0, y: 3 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={transitions.enter}
+          style={{ whiteSpace: "nowrap" }}
+        >
+          {statusText}
+        </motion.span>
+        {approaching && (
+          <chakra.span color="#b45309" fontWeight={600} whiteSpace="nowrap">
+            {t("statusTimeoutApproaching", { secs: remainingSecs })}
+          </chakra.span>
+        )}
+      </chakra.span>
+      {onStop && (
+        <Button
+          variant="warning"
+          size="sm"
+          px="3"
+          py="0.5"
+          whiteSpace="nowrap"
+          onClick={onStop}
+          title={t("gridStopButtonTitle")}
+        >
+          {t("gridStopButton")}
+        </Button>
+      )}
+    </Box>
+  );
+}
+
 export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGrid({
   result,
   streaming,
@@ -3845,6 +3954,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // Live range-selection summary lifted from the inner DataGrid (#523).
   const [selSummary, setSelSummary] = useState<SelectionSummary | null>(null);
   const settings = useSettings();
+  // ストリーミング中はバックエンドのバッチ更新を待たず実時間で経過を刻む。
+  const streamElapsedMs = useStreamingElapsed(!!streaming);
   const paginateMode = settings.resultGridMode === "paginate";
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -4044,6 +4155,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       const skeletonColWidths = [42, 68, 55, 80, 50, 72, 60, 45];
       return (
         <Box
+          display="flex"
+          flexDirection="column"
           flex="1 1 auto"
           minHeight={0}
           minWidth={0}
@@ -4054,6 +4167,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           aria-busy="true"
           aria-live="polite"
         >
+          {/* カラム未着の段階でも経過時間・キャンセル導線を出し、「無の時間」を埋める */}
+          <StreamingBanner
+            rows={0}
+            elapsedMs={streamElapsedMs}
+            hasColumns={false}
+            onStop={onStopStreaming}
+            timeoutSecs={settings.queryTimeoutSecs}
+          />
           {/* スケルトン行: 密度ごとの行高に合わせた疑似列バーを並べる */}
           <Box
             px="3"
@@ -4124,44 +4245,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       position={streaming ? "relative" : undefined}
     >
       {streaming && (
-        <Box
-          role="status"
-          aria-live="polite"
-          display="flex"
-          alignItems="center"
-          gap="1.5"
-          py="1" px="2.5"
-          fontSize="sm"
-          color="app.textMuted"
-          borderBottom="1px solid"
-          borderColor="app.borderSubtle"
-          bg="app.surfaceMuted"
-        >
-          <chakra.span
-            aria-hidden
-            width="8px"
-            height="8px"
-            borderRadius="50%"
-            background="#f59e0b"
-            animation="streaming-pulse 1s ease-in-out infinite"
-          />
-          <chakra.span flex="1">
-            {t("statusStreaming", { rows: result.rows.length, ms: result.elapsed_ms })}
-          </chakra.span>
-          {onStopStreaming && (
-            <Button
-              variant="warning"
-              size="sm"
-              px="3"
-              py="0.5"
-              whiteSpace="nowrap"
-              onClick={onStopStreaming}
-              title={t("gridStopButtonTitle")}
-            >
-              {t("gridStopButton")}
-            </Button>
-          )}
-        </Box>
+        <StreamingBanner
+          rows={result.rows.length}
+          elapsedMs={streamElapsedMs}
+          hasColumns
+          onStop={onStopStreaming}
+          timeoutSecs={settings.queryTimeoutSecs}
+        />
       )}
       {showAutoLimitBadge && (
         <Box
