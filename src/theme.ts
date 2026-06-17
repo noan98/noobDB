@@ -312,11 +312,13 @@ export const buttonRecipe = defineRecipe({
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    // 余白はフォントスケール (--font-scale) に追従させ、大きいフォント設定でも
-    // ラベルがボタンからはみ出さず比率を保つ。
-    gap: "calc(6px * var(--font-scale))",
-    px: "calc(12px * var(--font-scale))",
-    py: "calc(6px * var(--font-scale))",
+    // 余白は密度対応のコントロールトークン (App.css の --control-*) を参照する。
+    // これらは --font-scale に追従しつつ縦余白が密度軸 (--density-control-scale)
+    // にも従うため、大きいフォント設定でもラベルがはみ出さず、密度切替でボタン
+    // 高さがフォーム/グリッドと一貫して変わる (#620)。
+    gap: "var(--control-gap)",
+    px: "var(--control-px)",
+    py: "var(--control-py)",
     border: "1px solid",
     borderColor: "app.borderStrong",
     bg: "app.surface",
@@ -401,10 +403,10 @@ export const buttonRecipe = defineRecipe({
       // 既定サイズは base の padding をそのまま使う。
       md: {},
       // 密なツールバー / モーダルフッタ向け (App.css の `button.btn-sm`)。余白は
-      // フォントスケール追従。
+      // 密度対応のコントロールトークンに追従。
       sm: {
-        px: "calc(8px * var(--font-scale))",
-        py: "calc(3px * var(--font-scale))",
+        px: "var(--control-sm-px)",
+        py: "var(--control-sm-py)",
         fontSize: "sm",
       },
     },
@@ -420,9 +422,10 @@ export const inputRecipe = defineRecipe({
   className: "app-input",
   base: {
     font: "inherit",
-    // 余白はフォントスケール追従。
-    px: "calc(8px * var(--font-scale))",
-    py: "calc(6px * var(--font-scale))",
+    // 余白は密度対応のフィールド/コントロールトークン (#620)。縦は --control-py で
+    // ボタンと高さを揃え、横は --field-px。
+    px: "var(--field-px)",
+    py: "var(--control-py)",
     border: "1px solid",
     borderColor: "app.borderStrong",
     bg: "app.bgInput",
@@ -445,9 +448,9 @@ export const selectRecipe = defineRecipe({
   className: "app-select",
   base: {
     font: "inherit",
-    // 余白はフォントスケール追従。
-    px: "calc(8px * var(--font-scale))",
-    py: "calc(6px * var(--font-scale))",
+    // 余白は入力欄と同じ密度対応トークン (#620)。
+    px: "var(--field-px)",
+    py: "var(--control-py)",
     border: "1px solid",
     borderColor: "app.borderStrong",
     bg: "app.bgInput",
@@ -470,8 +473,10 @@ export const textareaRecipe = defineRecipe({
   className: "app-textarea",
   base: {
     font: "inherit",
-    // 余白はフォントスケール追従。
-    p: "calc(8px * var(--font-scale))",
+    // 余白は密度対応のフィールドトークン (#620)。複数行なので縦横とも 8px 基準の
+    // --field-py / --field-px を使い、縦は密度軸に追従させる。
+    px: "var(--field-px)",
+    py: "var(--field-py)",
     border: "1px solid",
     borderColor: "app.borderStrong",
     bg: "app.bgInput",

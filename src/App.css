@@ -77,16 +77,42 @@
   --space-5: calc(20px * var(--font-scale));
   --space-6: calc(24px * var(--font-scale));
 
-  /* Display density (#410). An axis independent of the font scale: it tunes the
-     result grid's cell padding / row height so the same font can be packed
-     tighter (4K screens) or loosened (small screens). The `normal` values below
-     match the historical grid padding (5px/10px) exactly so the default is a
-     no-op; `data-density="compact|spacious"` overrides them (App.tsx writes the
-     attribute from the density setting). Still multiplied by --font-scale so the
-     two axes compose. */
+  /* Display density (#410, #620). An axis independent of the font scale: it
+     tunes the result grid's cell padding / row height so the same font can be
+     packed tighter (4K screens) or loosened (small screens). The `normal`
+     values below match the historical grid padding (5px/10px) exactly so the
+     default is a no-op; `data-density="compact|spacious"` overrides them
+     (App.tsx writes the attribute from the density setting). Still multiplied by
+     --font-scale so the two axes compose.
+
+     --density-control-scale extends the density axis beyond the grid: it is a
+     *vertical padding multiplier* for interactive controls (buttons / inputs /
+     select / textarea) so the same density preset that tightens the grid also
+     tightens forms, the sidebar and modal footers. `normal` = 1 keeps every
+     control padding byte-identical to the historical value (a true no-op);
+     compact / spacious override it below. The control padding tokens that
+     follow consume it so the recipes in theme.ts reference one source of truth
+     instead of hard-coding calc(...). */
   --density-cell-py: calc(5px * var(--font-scale));
   --density-cell-px: calc(10px * var(--font-scale));
   --density-row-h: 30px;
+  --density-control-scale: 1;
+
+  /* Control padding tokens (#620). Vertical padding follows the density axis
+     (--density-control-scale); horizontal padding tracks only --font-scale so
+     labels keep breathing room at every density. buttonRecipe / inputRecipe /
+     selectRecipe / textareaRecipe in theme.ts reference these so all
+     interactive controls share one scale and follow density uniformly.
+       --control-*    : buttons (py/px/gap + the dense `sm` size)
+       --field-*      : text fields (input / select share --control-py for
+                        height; textarea uses the uniform --field-py) */
+  --control-py: calc(6px * var(--font-scale) * var(--density-control-scale));
+  --control-px: calc(12px * var(--font-scale));
+  --control-gap: calc(6px * var(--font-scale));
+  --control-sm-py: calc(3px * var(--font-scale) * var(--density-control-scale));
+  --control-sm-px: calc(8px * var(--font-scale));
+  --field-px: calc(8px * var(--font-scale));
+  --field-py: calc(8px * var(--font-scale) * var(--density-control-scale));
 
   /* Radius scale */
   --radius-sm: 4px;
@@ -814,18 +840,23 @@
   color-scheme: dark;
 }
 
-/* Density overrides (#410). Only the grid-facing tokens change; everything else
-   keeps tracking --font-scale. Compact trims vertical padding for more rows on
-   screen; spacious loosens it for comfort on large displays. */
+/* Density overrides (#410, #620). The grid-facing tokens and the control
+   padding multiplier (--density-control-scale) shift together so the same
+   preset tunes the grid *and* every form / button / field; horizontal padding
+   and radii keep tracking only --font-scale. Compact trims vertical padding for
+   more rows / shorter controls; spacious loosens it for comfort on large
+   displays. */
 :root[data-density="compact"] {
   --density-cell-py: calc(2px * var(--font-scale));
   --density-cell-px: calc(8px * var(--font-scale));
   --density-row-h: 24px;
+  --density-control-scale: 0.6;
 }
 :root[data-density="spacious"] {
   --density-cell-py: calc(9px * var(--font-scale));
   --density-cell-px: calc(12px * var(--font-scale));
   --density-row-h: 40px;
+  --density-control-scale: 1.35;
 }
 
 * { box-sizing: border-box; }
@@ -898,8 +929,10 @@ html, body, #root {
 @layer reset {
   button {
     font: inherit;
-    /* フォントスケール追従の余白 (#327)。12px は --space-3、縦は 6px 相当を乗算。 */
-    padding: calc(6px * var(--font-scale)) var(--space-3);
+    /* 密度対応のコントロールトークン (#327, #620)。縦は --control-py で密度軸に
+       追従、横は --control-px (12px 相当)。Chakra recipe を使う要素では recipe が
+       同じトークンを参照するので見た目が一致する。 */
+    padding: var(--control-py) var(--control-px);
     border: 1px solid var(--border-strong);
     background: var(--bg-elevated);
     color: var(--text);
@@ -921,8 +954,9 @@ html, body, #root {
 
   input, select {
     font: inherit;
-    /* フォントスケール追従の余白 (#327)。8px は --space-2、縦は 6px 相当を乗算。 */
-    padding: calc(6px * var(--font-scale)) var(--space-2);
+    /* 密度対応のフィールド/コントロールトークン (#327, #620)。縦は --control-py で
+       ボタンと高さを揃え、横は --field-px (8px 相当)。 */
+    padding: var(--control-py) var(--field-px);
     border: 1px solid var(--border-strong);
     background: var(--bg-input);
     color: var(--text);
