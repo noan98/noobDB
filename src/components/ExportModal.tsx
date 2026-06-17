@@ -9,6 +9,12 @@ import { Button, Input, Radio } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
+import { Icon } from "./Icon";
+import { copyToClipboard } from "./clipboard";
+import { buildExportContent } from "./exportPreview";
+
+/** プレビュー欄に表示する最大行数 (コピーは全行が対象)。 */
+const PREVIEW_ROWS = 50;
 
 /**
  * 全件ストリーミングエクスポートに必要な情報。提供されると「全件 (再実行)」
@@ -112,10 +118,24 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
   const initialBasename = useMemo(() => defaultBasename(database, table), [database, table]);
   const [path, setPath] = useState<string>(`${initialBasename}${extensionFor("csv")}`);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
   // ユーザがパスを手で編集 / ブラウズで選択したら true。既定の保存先 (ダウンロード
   // フォルダ) の後付けでユーザの入力を上書きしないためのガード。
   const userEditedPathRef = useRef(false);
   const unlistenRef = useRef<(() => void) | null>(null);
+
+  // JSON 形式のときだけ実行クエリを出力に同梱する。クエリは全件モードの
+  // コンテキスト (`fullExport.sql`) から取得し、無ければ含めない。
+  const queryForJson = fullExport?.sql ?? null;
+
+  // プレビューは先頭 PREVIEW_ROWS 行のみ生成して表示負荷を抑える。実際の出力書式
+  // (CSV のクオート・JSON の整形・実行クエリ同梱) はバックエンドと同じ。
+  const previewContent = useMemo(
+    () => buildExportContent(format, columns, rows.slice(0, PREVIEW_ROWS), queryForJson),
+    [format, columns, rows, queryForJson],
+  );
+  const previewTruncated = rows.length > PREVIEW_ROWS;
   // Set on unmount so an in-flight `listenExportStream` (awaited below) can
   // tell its registration arrived too late and must self-unlisten — otherwise
   // the listener would be orphaned (the cleanup below has already run).
@@ -125,9 +145,24 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
     () => () => {
       disposedRef.current = true;
       unlistenRef.current?.();
+      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
     },
     [],
   );
+
+  // 全文 (在グリッドの全行) を生成してクリップボードへコピーする。プレビューと違い
+  // 行数を絞らないため、グリッドに読み込まれている全行が対象。
+  const handleCopy = async () => {
+    const content = buildExportContent(format, columns, rows, queryForJson);
+    const ok = await copyToClipboard(content);
+    if (!ok) {
+      toast.error(t("clipboardCopyFailed"));
+      return;
+    }
+    setCopied(true);
+    if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+  };
 
   // 既定の保存先を OS のダウンロードフォルダにする。初期パスはファイル名のみ
   // (相対パス) なので、ネイティブの保存ダイアログが任意の場所に着地しないよう、
@@ -198,7 +233,14 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
     }
     setStatus({ kind: "saving" });
     try {
-      const bytes = await api.exportQueryResult({ path, format, columns, rows });
+      const bytes = await api.exportQueryResult({
+        path,
+        format,
+        columns,
+        rows,
+        // JSON 形式のときだけ実行クエリを同梱する (バックエンドが判定)。
+        query: queryForJson,
+      });
       toast.success(t("exportSuccess", { bytes, path }));
       setStatus({ kind: "idle" });
     } catch (e) {
@@ -387,6 +429,63 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
               {t("exportBrowse")}
             </Button>
           </PathRow>
+        </FormSection>
+
+        <FormSection>
+          <chakra.div display="flex" alignItems="center" gap="2">
+            <FieldLabel as="div" mb={0}>{t("exportPreview")}</FieldLabel>
+            <chakra.div flex="1" />
+            <chakra.button
+              type="button"
+              onClick={handleCopy}
+              disabled={rows.length === 0}
+              title={copied ? t("gridCopied") : t("exportCopyAll")}
+              aria-label={copied ? t("gridCopied") : t("exportCopyAll")}
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              gap="1.5"
+              py="1" px="2"
+              color="app.textMuted"
+              bg="app.bgInput"
+              border="1px solid"
+              borderColor="app.border"
+              borderRadius="md"
+              fontSize="xs"
+              cursor="pointer"
+              transitionProperty="color, background, border-color"
+              transitionDuration="var(--dur-fast)"
+              transitionTimingFunction="var(--ease)"
+              _hover={{ color: "app.text", bg: "app.hover" }}
+              _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+            >
+              <Icon name={copied ? "check" : "copy"} size={14} />
+              <span>{copied ? t("gridCopied") : t("exportCopyAll")}</span>
+            </chakra.button>
+          </chakra.div>
+          <chakra.pre
+            aria-label={t("exportPreview")}
+            m={0}
+            maxH="180px"
+            overflow="auto"
+            p="2.5"
+            bg="app.bgInput"
+            border="1px solid"
+            borderColor="app.border"
+            borderRadius="md"
+            fontFamily="mono"
+            fontSize="xs"
+            lineHeight={1.5}
+            color="app.text"
+            whiteSpace="pre"
+          >
+            {previewContent || t("exportNoData")}
+          </chakra.pre>
+          {previewTruncated && (
+            <chakra.div fontSize="xs" color="app.textMuted">
+              {t("exportPreviewTruncated", { shown: PREVIEW_ROWS, total: rows.length })}
+            </chakra.div>
+          )}
         </FormSection>
 
         {status.kind === "error" && (

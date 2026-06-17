@@ -648,6 +648,9 @@ const en = {
   exportFullDone: "Exported {rows} rows ({bytes} bytes) to {path}",
   exportStreamRunning: "Exporting...",
   exportStreamCancel: "Stop",
+  exportPreview: "Preview",
+  exportCopyAll: "Copy all",
+  exportPreviewTruncated: "Showing the first {shown} of {total} rows.",
   // クエリ結果のチャート可視化。
   chartShow: "Chart",
   chartBackToTable: "Table",
@@ -2028,6 +2031,9 @@ const ja: Dict = {
   exportFullDone: "{rows} 行 ({bytes} バイト) を {path} にエクスポートしました",
   exportStreamRunning: "エクスポート中...",
   exportStreamCancel: "中止",
+  exportPreview: "プレビュー",
+  exportCopyAll: "全文コピー",
+  exportPreviewTruncated: "{total} 行中 先頭 {shown} 行を表示しています。",
   // クエリ結果のチャート可視化。
   chartShow: "チャート",
   chartBackToTable: "テーブル",

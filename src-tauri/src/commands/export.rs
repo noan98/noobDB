@@ -27,12 +27,15 @@ pub async fn export_query_result(
     format: ExportFormat,
     columns: Vec<Column>,
     rows: Vec<Vec<Value>>,
+    // JSON 形式のとき出力に同梱する実行クエリ。None / 空なら同梱しない。
+    // CSV / NDJSON では無視する。
+    query: Option<String>,
 ) -> Result<u64> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("save path is empty".into()));
     }
     let row_count = rows.len();
-    let result = write_export(path, format, columns, rows).await;
+    let result = write_export(path, format, columns, rows, query).await;
     match &result {
         Ok(bytes) => tracing::info!(
             format = ?format,
@@ -54,13 +57,14 @@ async fn write_export(
     format: ExportFormat,
     columns: Vec<Column>,
     rows: Vec<Vec<Value>>,
+    query: Option<String>,
 ) -> Result<u64> {
     tokio::task::spawn_blocking(move || -> Result<u64> {
         let file = std::fs::File::create(&path)?;
         let mut writer = std::io::BufWriter::new(file);
         match format {
             ExportFormat::Csv => write_csv(&mut writer, &columns, &rows)?,
-            ExportFormat::Json => write_json(&mut writer, &columns, &rows)?,
+            ExportFormat::Json => write_json(&mut writer, &columns, &rows, query.as_deref())?,
             ExportFormat::Ndjson => write_ndjson(&mut writer, &columns, &rows)?,
         }
         // `into_inner` flushes the buffer; surface any flush error as I/O.
@@ -153,13 +157,36 @@ fn row_to_json_object(columns: &[Column], row: &[Value]) -> serde_json::Value {
     J::Object(obj)
 }
 
-/// Pretty JSON array of row objects, serialized directly to the writer. Each row
-/// object is built and serialized individually via `SerializeSeq`, so the full
+/// Pretty JSON of the result set, serialized directly to the writer.
+///
+/// When `query` is `None`/empty the output is a top-level array of row objects,
+/// built and serialized one element at a time via `SerializeSeq` so the full
 /// `Vec`-of-objects tree is never materialized. The output is byte-identical to
-/// `serde_json::to_vec_pretty` of the equivalent array (serde drives a `Vec`
-/// through the same `serialize_seq`/`serialize_element` path).
-fn write_json<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
+/// `serde_json::to_vec_pretty` of the equivalent array.
+///
+/// When `query` is `Some(non-empty)` the output is wrapped as
+/// `{ "query": <sql>, "rows": [ ... ] }` so the executed query travels with the
+/// data (JSON 形式のみの追加機能)。キーは serde_json 既定の `BTreeMap` 出力に従い
+/// アルファベット順 (`query` → `rows`) になる。
+fn write_json<W: Write>(
+    w: &mut W,
+    columns: &[Column],
+    rows: &[Vec<Value>],
+    query: Option<&str>,
+) -> Result<()> {
     use serde::ser::{SerializeSeq, Serializer};
+
+    if let Some(q) = query.filter(|q| !q.is_empty()) {
+        // 行オブジェクトを材料化してラッパオブジェクトとして整形出力する。
+        // 在グリッドのエクスポートは既に全行をメモリに持つため材料化で問題ない。
+        let rows_json: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|row| row_to_json_object(columns, row))
+            .collect();
+        let wrapper = serde_json::json!({ "query": q, "rows": rows_json });
+        serde_json::to_writer_pretty(w, &wrapper)?;
+        return Ok(());
+    }
 
     let mut ser = serde_json::Serializer::pretty(w);
     let mut seq = ser.serialize_seq(Some(rows.len()))?;
@@ -224,16 +251,25 @@ struct StreamExportSink {
     format: ExportFormat,
     columns: Vec<Column>,
     json_count: usize,
+    /// JSON 形式のとき出力に同梱する実行クエリ。`Some(non-empty)` のときは配列
+    /// ではなく `{ "query": ..., "rows": [...] }` でラップする。
+    json_query: Option<String>,
 }
 
 impl StreamExportSink {
-    fn new(path: &str, format: ExportFormat) -> Result<Self> {
+    fn with_query(path: &str, format: ExportFormat, query: Option<String>) -> Result<Self> {
         let file = std::fs::File::create(path)?;
+        // クエリ同梱は JSON 形式のみ。空文字列は同梱しない。
+        let json_query = match format {
+            ExportFormat::Json => query.filter(|q| !q.is_empty()),
+            _ => None,
+        };
         Ok(Self {
             writer: BufWriter::new(file),
             format,
             columns: Vec::new(),
             json_count: 0,
+            json_query,
         })
     }
 
@@ -241,7 +277,17 @@ impl StreamExportSink {
         self.columns = columns;
         match self.format {
             ExportFormat::Csv => write_csv_header(&mut self.writer, &self.columns)?,
-            ExportFormat::Json => self.writer.write_all(b"[")?,
+            ExportFormat::Json => {
+                if let Some(q) = &self.json_query {
+                    // `{ "query": <sql>, "rows": [` まで書き、行は後続バッチで足す。
+                    let q_str = serde_json::to_string(q)?;
+                    self.writer.write_all(b"{\n  \"query\": ")?;
+                    self.writer.write_all(q_str.as_bytes())?;
+                    self.writer.write_all(b",\n  \"rows\": [")?;
+                } else {
+                    self.writer.write_all(b"[")?;
+                }
+            }
             // NDJSON にはヘッダも開き括弧も無いので columns イベントでは何も書かない。
             ExportFormat::Ndjson => {}
         }
@@ -252,12 +298,15 @@ impl StreamExportSink {
         match self.format {
             ExportFormat::Csv => write_csv_rows(&mut self.writer, &self.columns, rows)?,
             ExportFormat::Json => {
+                // クエリ同梱時は rows が 1 段深いので字下げを増やす。
+                let (first, rest): (&[u8], &[u8]) = if self.json_query.is_some() {
+                    (b"\n    ", b",\n    ")
+                } else {
+                    (b"\n  ", b",\n  ")
+                };
                 for row in rows {
-                    self.writer.write_all(if self.json_count == 0 {
-                        b"\n  "
-                    } else {
-                        b",\n  "
-                    })?;
+                    self.writer
+                        .write_all(if self.json_count == 0 { first } else { rest })?;
                     let obj = row_to_json_object(&self.columns, row);
                     let s = serde_json::to_string(&obj)?;
                     self.writer.write_all(s.as_bytes())?;
@@ -272,10 +321,19 @@ impl StreamExportSink {
 
     fn finish(mut self) -> Result<u64> {
         if let ExportFormat::Json = self.format {
-            // Close the array. `[` was written on the columns event; for an empty
-            // result that yields `[]`, otherwise `[ ... \n]`.
-            self.writer
-                .write_all(if self.json_count == 0 { b"]" } else { b"\n]" })?;
+            if self.json_query.is_some() {
+                // rows 配列を閉じてラッパオブジェクトも閉じる。
+                self.writer.write_all(if self.json_count == 0 {
+                    b"]\n}"
+                } else {
+                    b"\n  ]\n}"
+                })?;
+            } else {
+                // Close the array. `[` was written on the columns event; for an empty
+                // result that yields `[]`, otherwise `[ ... \n]`.
+                self.writer
+                    .write_all(if self.json_count == 0 { b"]" } else { b"\n]" })?;
+            }
         }
         // NDJSON は行ごとに完結しており、終端処理は不要 (各行末の `\n` のみ)。
         let file = self
@@ -323,7 +381,8 @@ pub async fn export_query_stream(
     }
 
     // Create the file up front so a bad path surfaces synchronously to the caller.
-    let sink = StreamExportSink::new(&path, format)?;
+    // JSON 形式では実行クエリを出力に同梱する (sink 側で JSON のときだけ反映)。
+    let sink = StreamExportSink::with_query(&path, format, Some(sql.clone()))?;
     let shared = Arc::new(Mutex::new(Some(sink)));
 
     let handle = tokio::spawn(spawn_export_stream(
@@ -474,7 +533,13 @@ mod tests {
 
     fn json_bytes(columns: &[Column], rows: &[Vec<Value>]) -> Vec<u8> {
         let mut buf = Vec::new();
-        write_json(&mut buf, columns, rows).unwrap();
+        write_json(&mut buf, columns, rows, None).unwrap();
+        buf
+    }
+
+    fn json_bytes_with_query(columns: &[Column], rows: &[Vec<Value>], query: &str) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_json(&mut buf, columns, rows, Some(query)).unwrap();
         buf
     }
 
@@ -557,13 +622,102 @@ mod tests {
         assert_eq!(json_bytes(&columns, &rows), reference);
     }
 
+    // JSON 形式で query を渡すと `{ "query": ..., "rows": [...] }` でラップされる。
+    #[test]
+    fn json_with_query_wraps_rows() {
+        let columns = vec![col("id"), col("name")];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("Alice".into())],
+            vec![Value::Int(2), Value::String("Bob".into())],
+        ];
+        let out = json_bytes_with_query(&columns, &rows, "SELECT * FROM users");
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(parsed["query"], serde_json::json!("SELECT * FROM users"));
+        let arr = parsed["rows"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["id"], serde_json::json!(1));
+        assert_eq!(arr[0]["name"], serde_json::json!("Alice"));
+    }
+
+    // 空クエリ文字列ではラップせず従来どおり配列を出力する (後方互換)。
+    #[test]
+    fn json_with_empty_query_stays_array() {
+        let columns = vec![col("id")];
+        let rows = vec![vec![Value::Int(1)]];
+        assert_eq!(
+            json_bytes_with_query(&columns, &rows, ""),
+            json_bytes(&columns, &rows),
+        );
+    }
+
+    // 0 行でも query 同梱なら空配列を持つラッパオブジェクトになる。
+    #[test]
+    fn json_with_query_empty_rows() {
+        let columns = vec![col("id")];
+        let rows: Vec<Vec<Value>> = vec![];
+        let out = json_bytes_with_query(&columns, &rows, "SELECT 1");
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(parsed["query"], serde_json::json!("SELECT 1"));
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 0);
+    }
+
+    // ストリーミング sink も query 同梱でラップされ、有効な JSON になること。
+    #[test]
+    fn stream_sink_json_with_query_wraps_rows() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("noobdb_export_jsonq_{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let columns = vec![col("id"), col("name")];
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Json,
+            Some("SELECT * FROM t".into()),
+        )
+        .unwrap();
+        sink.on_columns(columns.clone()).unwrap();
+        sink.on_rows(&[vec![Value::Int(1), Value::String("a".into())]])
+            .unwrap();
+        sink.on_rows(&[vec![Value::Int(2), Value::String("b".into())]])
+            .unwrap();
+        sink.finish().unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(parsed["query"], serde_json::json!("SELECT * FROM t"));
+        let arr = parsed["rows"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[1]["name"], serde_json::json!("b"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ストリーミング sink: query 同梱 + 0 行でも有効な空配列ラッパになる。
+    #[test]
+    fn stream_sink_json_with_query_empty() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("noobdb_export_jsonqe_{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Json,
+            Some("SELECT 1".into()),
+        )
+        .unwrap();
+        sink.on_columns(vec![col("id")]).unwrap();
+        sink.finish().unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(parsed["query"], serde_json::json!("SELECT 1"));
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 0);
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn stream_sink_csv_writes_header_then_rows() {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("noobdb_export_csv_{}.csv", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let columns = vec![col("id"), col("name")];
-        let mut sink = StreamExportSink::new(path.to_str().unwrap(), ExportFormat::Csv).unwrap();
+        let mut sink =
+            StreamExportSink::with_query(path.to_str().unwrap(), ExportFormat::Csv, None).unwrap();
         sink.on_columns(columns.clone()).unwrap();
         sink.on_rows(&[vec![Value::Int(1), Value::String("a".into())]])
             .unwrap();
@@ -582,7 +736,8 @@ mod tests {
         let path = dir.join(format!("noobdb_export_json_{}.json", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let columns = vec![col("id"), col("blob")];
-        let mut sink = StreamExportSink::new(path.to_str().unwrap(), ExportFormat::Json).unwrap();
+        let mut sink =
+            StreamExportSink::with_query(path.to_str().unwrap(), ExportFormat::Json, None).unwrap();
         sink.on_columns(columns.clone()).unwrap();
         sink.on_rows(&[
             vec![Value::Int(7), Value::Bytes("deadbeef".into())],
@@ -604,7 +759,8 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("noobdb_export_jsone_{}.json", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let mut sink = StreamExportSink::new(path.to_str().unwrap(), ExportFormat::Json).unwrap();
+        let mut sink =
+            StreamExportSink::with_query(path.to_str().unwrap(), ExportFormat::Json, None).unwrap();
         sink.on_columns(vec![col("id")]).unwrap();
         sink.finish().unwrap();
         let out = std::fs::read_to_string(&path).unwrap();
@@ -671,7 +827,9 @@ mod tests {
             vec![Value::Int(7), Value::Bytes("deadbeef".into())],
             vec![Value::Null, Value::Null],
         ];
-        let mut sink = StreamExportSink::new(path.to_str().unwrap(), ExportFormat::Ndjson).unwrap();
+        let mut sink =
+            StreamExportSink::with_query(path.to_str().unwrap(), ExportFormat::Ndjson, None)
+                .unwrap();
         sink.on_columns(columns.clone()).unwrap();
         // バッチを分けても in-memory の一括書き出しと同じバイト列になること。
         sink.on_rows(&rows[0..1]).unwrap();

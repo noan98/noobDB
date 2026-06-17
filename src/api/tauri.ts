@@ -745,12 +745,15 @@ export const api = {
     format: ExportFormat;
     columns: Column[];
     rows: CellValue[][];
+    /** JSON 形式のとき出力に同梱する実行クエリ。null/未指定なら同梱しない。 */
+    query?: string | null;
   }) =>
     invoke<number>("export_query_result", {
       path: params.path,
       format: params.format,
       columns: params.columns,
       rows: params.rows,
+      query: params.query ?? null,
     }).then((r) => parseResponse(schemas.numberResponse, r, "export_query_result")),
 
   /**
