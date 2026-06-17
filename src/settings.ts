@@ -556,95 +556,108 @@ function sanitizeHighlight(input: unknown, fallback: string): string {
   return isHexColor(input) ? input : fallback;
 }
 
+/**
+ * Coerces already-parsed JSON (of unknown shape) into a fully-valid `Settings`,
+ * field by field. Pure (no storage access) so it can be unit-tested directly
+ * against legacy formats, missing keys, and type mismatches. Each field falls
+ * back to its default when absent or malformed, so a partially-corrupt blob
+ * never crashes the store or surfaces an out-of-range value. A non-object input
+ * (number, string, array, null) collapses to `DEFAULT_SETTINGS`.
+ */
+export function normalizeSettings(input: unknown): Settings {
+  if (!input || typeof input !== "object") return DEFAULT_SETTINGS;
+  const parsed = input as {
+    syntaxColors?: { light?: unknown; dark?: unknown };
+    previewHighlight?: { light?: unknown; dark?: unknown };
+    defaultDisplayCount?: unknown;
+    streamPrefetchSize?: unknown;
+    autoLimitEnabled?: unknown;
+    autoLimitCount?: unknown;
+    confirmProductionConnect?: unknown;
+    confirmDangerousQueries?: unknown;
+    resultsInNewTab?: unknown;
+    tabRestoreMode?: unknown;
+    queryTimeoutSecs?: unknown;
+    fontSizePx?: unknown;
+    accentColor?: unknown;
+    density?: unknown;
+    autoRefreshDefaultSecs?: unknown;
+    resultGridMode?: unknown;
+    resultGridPageSize?: unknown;
+    cellEditOnBlur?: unknown;
+    richCellRendering?: unknown;
+    monoFontFamily?: unknown;
+    uiFontFamily?: unknown;
+    themePreset?: unknown;
+    autoReconnectEnabled?: unknown;
+    autoReconnectMaxRetries?: unknown;
+    shortcutOverrides?: unknown;
+  };
+  return {
+    syntaxColors: {
+      light: sanitizeColors(parsed.syntaxColors?.light, DEFAULT_SYNTAX_COLORS.light),
+      dark: sanitizeColors(parsed.syntaxColors?.dark, DEFAULT_SYNTAX_COLORS.dark),
+    },
+    previewHighlight: {
+      light: sanitizeHighlight(parsed.previewHighlight?.light, DEFAULT_PREVIEW_HIGHLIGHT.light),
+      dark: sanitizeHighlight(parsed.previewHighlight?.dark, DEFAULT_PREVIEW_HIGHLIGHT.dark),
+    },
+    defaultDisplayCount: sanitizeCount(parsed.defaultDisplayCount, DEFAULT_DISPLAY_COUNT),
+    streamPrefetchSize: sanitizeCount(parsed.streamPrefetchSize, DEFAULT_STREAM_PREFETCH_SIZE),
+    autoLimitEnabled:
+      typeof parsed.autoLimitEnabled === "boolean"
+        ? parsed.autoLimitEnabled
+        : DEFAULT_AUTO_LIMIT_ENABLED,
+    autoLimitCount: sanitizeCount(parsed.autoLimitCount, DEFAULT_AUTO_LIMIT_COUNT),
+    confirmProductionConnect:
+      typeof parsed.confirmProductionConnect === "boolean"
+        ? parsed.confirmProductionConnect
+        : DEFAULT_CONFIRM_PRODUCTION_CONNECT,
+    confirmDangerousQueries:
+      typeof parsed.confirmDangerousQueries === "boolean"
+        ? parsed.confirmDangerousQueries
+        : DEFAULT_CONFIRM_DANGEROUS_QUERIES,
+    resultsInNewTab:
+      typeof parsed.resultsInNewTab === "boolean" ? parsed.resultsInNewTab : false,
+    tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
+    queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
+    fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
+    accentColor: sanitizeAccentColor(parsed.accentColor, DEFAULT_ACCENT_COLOR),
+    density: sanitizeDensity(parsed.density, DEFAULT_DENSITY),
+    autoRefreshDefaultSecs: sanitizeAutoRefreshSecs(
+      parsed.autoRefreshDefaultSecs,
+      DEFAULT_AUTO_REFRESH_SECS,
+    ),
+    resultGridMode: sanitizeResultGridMode(parsed.resultGridMode, DEFAULT_RESULT_GRID_MODE),
+    resultGridPageSize: sanitizePageSize(parsed.resultGridPageSize, DEFAULT_RESULT_GRID_PAGE_SIZE),
+    cellEditOnBlur:
+      parsed.cellEditOnBlur === "commit" || parsed.cellEditOnBlur === "confirm"
+        ? parsed.cellEditOnBlur
+        : DEFAULT_CELL_EDIT_ON_BLUR,
+    richCellRendering:
+      typeof parsed.richCellRendering === "boolean"
+        ? parsed.richCellRendering
+        : DEFAULT_RICH_CELL_RENDERING,
+    monoFontFamily: sanitizeFontFamily(parsed.monoFontFamily, DEFAULT_MONO_FONT_FAMILY),
+    uiFontFamily: sanitizeFontFamily(parsed.uiFontFamily, DEFAULT_UI_FONT_FAMILY),
+    themePreset: sanitizeThemePreset(parsed.themePreset, DEFAULT_THEME_PRESET),
+    autoReconnectEnabled:
+      typeof parsed.autoReconnectEnabled === "boolean"
+        ? parsed.autoReconnectEnabled
+        : DEFAULT_AUTO_RECONNECT_ENABLED,
+    autoReconnectMaxRetries: sanitizeAutoReconnectRetries(
+      parsed.autoReconnectMaxRetries,
+      DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
+    ),
+    shortcutOverrides: sanitizeShortcutOverrides(parsed.shortcutOverrides),
+  };
+}
+
 function loadInitial(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(raw) as {
-      syntaxColors?: { light?: unknown; dark?: unknown };
-      previewHighlight?: { light?: unknown; dark?: unknown };
-      defaultDisplayCount?: unknown;
-      streamPrefetchSize?: unknown;
-      autoLimitEnabled?: unknown;
-      autoLimitCount?: unknown;
-      confirmProductionConnect?: unknown;
-      confirmDangerousQueries?: unknown;
-      resultsInNewTab?: unknown;
-      tabRestoreMode?: unknown;
-      queryTimeoutSecs?: unknown;
-      fontSizePx?: unknown;
-      accentColor?: unknown;
-      density?: unknown;
-      autoRefreshDefaultSecs?: unknown;
-      resultGridMode?: unknown;
-      resultGridPageSize?: unknown;
-      cellEditOnBlur?: unknown;
-      richCellRendering?: unknown;
-      monoFontFamily?: unknown;
-      uiFontFamily?: unknown;
-      themePreset?: unknown;
-      autoReconnectEnabled?: unknown;
-      autoReconnectMaxRetries?: unknown;
-      shortcutOverrides?: unknown;
-    };
-    return {
-      syntaxColors: {
-        light: sanitizeColors(parsed.syntaxColors?.light, DEFAULT_SYNTAX_COLORS.light),
-        dark: sanitizeColors(parsed.syntaxColors?.dark, DEFAULT_SYNTAX_COLORS.dark),
-      },
-      previewHighlight: {
-        light: sanitizeHighlight(parsed.previewHighlight?.light, DEFAULT_PREVIEW_HIGHLIGHT.light),
-        dark: sanitizeHighlight(parsed.previewHighlight?.dark, DEFAULT_PREVIEW_HIGHLIGHT.dark),
-      },
-      defaultDisplayCount: sanitizeCount(parsed.defaultDisplayCount, DEFAULT_DISPLAY_COUNT),
-      streamPrefetchSize: sanitizeCount(parsed.streamPrefetchSize, DEFAULT_STREAM_PREFETCH_SIZE),
-      autoLimitEnabled:
-        typeof parsed.autoLimitEnabled === "boolean"
-          ? parsed.autoLimitEnabled
-          : DEFAULT_AUTO_LIMIT_ENABLED,
-      autoLimitCount: sanitizeCount(parsed.autoLimitCount, DEFAULT_AUTO_LIMIT_COUNT),
-      confirmProductionConnect:
-        typeof parsed.confirmProductionConnect === "boolean"
-          ? parsed.confirmProductionConnect
-          : DEFAULT_CONFIRM_PRODUCTION_CONNECT,
-      confirmDangerousQueries:
-        typeof parsed.confirmDangerousQueries === "boolean"
-          ? parsed.confirmDangerousQueries
-          : DEFAULT_CONFIRM_DANGEROUS_QUERIES,
-      resultsInNewTab:
-        typeof parsed.resultsInNewTab === "boolean" ? parsed.resultsInNewTab : false,
-      tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
-      queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
-      fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
-      accentColor: sanitizeAccentColor(parsed.accentColor, DEFAULT_ACCENT_COLOR),
-      density: sanitizeDensity(parsed.density, DEFAULT_DENSITY),
-      autoRefreshDefaultSecs: sanitizeAutoRefreshSecs(
-        parsed.autoRefreshDefaultSecs,
-        DEFAULT_AUTO_REFRESH_SECS,
-      ),
-      resultGridMode: sanitizeResultGridMode(parsed.resultGridMode, DEFAULT_RESULT_GRID_MODE),
-      resultGridPageSize: sanitizePageSize(parsed.resultGridPageSize, DEFAULT_RESULT_GRID_PAGE_SIZE),
-      cellEditOnBlur:
-        parsed.cellEditOnBlur === "commit" || parsed.cellEditOnBlur === "confirm"
-          ? parsed.cellEditOnBlur
-          : DEFAULT_CELL_EDIT_ON_BLUR,
-      richCellRendering:
-        typeof parsed.richCellRendering === "boolean"
-          ? parsed.richCellRendering
-          : DEFAULT_RICH_CELL_RENDERING,
-      monoFontFamily: sanitizeFontFamily(parsed.monoFontFamily, DEFAULT_MONO_FONT_FAMILY),
-      uiFontFamily: sanitizeFontFamily(parsed.uiFontFamily, DEFAULT_UI_FONT_FAMILY),
-      themePreset: sanitizeThemePreset(parsed.themePreset, DEFAULT_THEME_PRESET),
-      autoReconnectEnabled:
-        typeof parsed.autoReconnectEnabled === "boolean"
-          ? parsed.autoReconnectEnabled
-          : DEFAULT_AUTO_RECONNECT_ENABLED,
-      autoReconnectMaxRetries: sanitizeAutoReconnectRetries(
-        parsed.autoReconnectMaxRetries,
-        DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
-      ),
-      shortcutOverrides: sanitizeShortcutOverrides(parsed.shortcutOverrides),
-    };
+    return normalizeSettings(JSON.parse(raw));
   } catch {
     return DEFAULT_SETTINGS;
   }
