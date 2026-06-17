@@ -403,7 +403,7 @@ describe("シナリオ: タブ復元と複数接続の切替 (実ブラウザ)",
     await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();
   });
 
-  it("接続を切り替えると前のタブは退避され、元の接続に戻すと復元される", async () => {
+  it("接続を切り替えても前の接続は切断されず、戻すと再接続せず即復元される (同時接続)", async () => {
     registerAutoStream();
     const screen = await renderInBrowser(<App />);
 
@@ -419,19 +419,23 @@ describe("シナリオ: タブ復元と複数接続の切替 (実ブラウザ)",
       .toBeVisible();
     expect(screen.getByRole("tab", { name: /fruits/ }).query()).toBeNull();
 
-    // 前のセッションは切断され、Alpha のタブは localStorage に退避されている。
-    expect(invocationsOf("disconnect")).toEqual([{ sessionId: `sess-${ALPHA.id}-1` }]);
+    // 前の接続 (Alpha) は切断されず背景で生存している (#複数同時接続)。
+    // Alpha のタブは localStorage に退避され、戻ったときに復元できる。
+    expect(invocationsOf("disconnect")).toEqual([]);
     const saved = JSON.parse(localStorage.getItem(`noobdb.tabs.${ALPHA.id}`) ?? "null") as {
       panes?: { tabs?: { kind?: string; table?: string }[] }[];
     } | null;
     expect(saved?.panes?.[0]?.tabs?.[0]).toMatchObject({ kind: "table", table: "fruits" });
 
-    // Alpha に戻ると fruits タブが復元され、データも再取得される。
+    // Alpha に戻ると、生存中のセッションへ即時切替され (再接続しない)、
+    // fruits タブが復元されてデータも再取得される。
     await connectToProfile(screen, /Alpha DB/, "appdb");
     await expect.element(screen.getByRole("tab", { name: /fruits/ })).toBeVisible();
     await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();
 
-    // connect は Alpha → Beta → Alpha の 3 回。
-    expect(invocationsOf("connect")).toHaveLength(3);
+    // connect は Alpha → Beta の 2 回のみ (Alpha への復帰は live セッションを再利用)。
+    expect(invocationsOf("connect")).toHaveLength(2);
+    // 切替を通じて一度も切断していない (両接続が同時に開いたまま)。
+    expect(invocationsOf("disconnect")).toEqual([]);
   });
 });
