@@ -194,6 +194,17 @@
      the environment color. */
   --ws-accent: var(--accent);
 
+  /* ── Brand identity (#619) ────────────────────────────────────────────
+     プロダクトのブランドカラー。アプリアイコン (src-tauri/icons) の青→紫
+     グラデーションと一致させ、ロゴマーク (brand.tsx の BrandMark) ・スプラッシュ
+     (SplashScreen) ・タイトルバーが参照する単一の出所。アクセント色 (--accent,
+     接続ごとに動的) とは別物で、テーマ (light/dark) を跨いで**固定**する —
+     ブランドの第一印象を環境差で揺らさないため。値は brand.tsx の定数とも一致。 */
+  --brand-blue: #3b82f6;
+  --brand-indigo: #4f6bf6;
+  --brand-violet: #8b5cf6;
+  --brand-gradient: linear-gradient(135deg, var(--brand-blue), var(--brand-violet));
+
   --bg: #f5f7fa;
   --bg-elevated: #ffffff;
   --bg-muted: #eef1f5;

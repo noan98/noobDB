@@ -21,6 +21,8 @@ const en = {
   titleBarRestore: "Restore down",
   titleBarClose: "Close",
 
+  splashTagline: "Lightweight SQL client",
+
   sidebarTabConnections: "Connections",
   sidebarTabSnippets: "Snippets",
   sidebarTabHistory: "History",
@@ -1408,6 +1410,8 @@ const ja: Dict = {
   titleBarMaximize: "最大化",
   titleBarRestore: "元のサイズに戻す",
   titleBarClose: "閉じる",
+
+  splashTagline: "軽量 SQL クライアント",
 
   sidebarTabConnections: "接続",
   sidebarTabSnippets: "スニペット",

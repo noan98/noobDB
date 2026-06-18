@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { chakra, Flex, type HTMLChakraProps } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { BrandMark } from "../brand";
 import { connectionBandColor, type TitleBarConnection } from "./titleBarContext";
 
 export type { TitleBarConnection } from "./titleBarContext";
@@ -76,30 +77,9 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
       css={{ userSelect: "none", WebkitUserSelect: "none" }}
     >
       <Flex data-tauri-drag-region align="center" gap="2" flex="1" minW={0} px="3">
-        <chakra.svg
-          display="block"
-          flexShrink={0}
-          borderRadius="4px"
-          viewBox="0 0 1024 1024"
-          width="16px"
-          height="16px"
-          aria-hidden
-        >
-          <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#2f7df6" />
-          <path d="M282 300 L282 724 A230 84 0 0 0 742 724 L742 300 Z" fill="#ffffff" />
-          <ellipse cx="512" cy="300" rx="230" ry="84" fill="#ffffff" />
-          <g fill="#1e3a8a">
-            <circle cx="438" cy="556" r="30" />
-            <circle cx="586" cy="556" r="30" />
-          </g>
-          <path
-            d="M430 628 Q512 696 594 628"
-            fill="none"
-            stroke="#1e3a8a"
-            strokeWidth="26"
-            strokeLinecap="round"
-          />
-        </chakra.svg>
+        {/* インストール済みアプリアイコンと同じブランドマーク (#619)。マークの
+            出所は brand.tsx に一元化し、ここはサイズ指定だけする。 */}
+        <BrandMark size={18} />
         <chakra.span
           fontSize="var(--text-sm)"
           fontWeight="600"
