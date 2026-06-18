@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type TableSizeInfo } from "../api/tauri";
@@ -71,21 +71,23 @@ export function TableStatisticsPanel({
   const [loading, setLoading] = useState(false);
   const [sortKey, setSortKey] = useState<TableSizeSortKey>("total_bytes");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
-  const busyRef = useRef(false);
+  // リクエスト世代カウンタ: セッション/DB 切替や連打で複数の取得が走っても、最新の
+  // 要求の応答だけを反映する (in-flight ブロックだと旧対象の結果が残りうる)。
+  const requestSeqRef = useRef(0);
 
   const load = useCallback(async () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
+    const seq = ++requestSeqRef.current;
     setLoading(true);
     try {
       const list = await api.tableSizes(sessionId, database);
+      if (seq !== requestSeqRef.current) return;
       setRows(list);
       setError(null);
     } catch (e) {
+      if (seq !== requestSeqRef.current) return;
       setError(String(e));
     } finally {
-      busyRef.current = false;
-      setLoading(false);
+      if (seq === requestSeqRef.current) setLoading(false);
     }
   }, [sessionId, database]);
 
@@ -117,6 +119,24 @@ export function TableStatisticsPanel({
   const maxTotal = rows.reduce((m, r) => Math.max(m, r.total_bytes ?? 0), 0);
   const arrow = (key: TableSizeSortKey) =>
     sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+  // 現在のソート状態を支援技術へ伝える aria-sort 値。
+  const ariaSort = (key: TableSizeSortKey): "ascending" | "descending" | "none" =>
+    sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none";
+  // ヘッダはキーボードでも並び替えできるように Enter / Space を拾う。
+  const onHeaderKey = (e: ReactKeyboardEvent, key: TableSizeSortKey) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onSort(key);
+    }
+  };
+  // 各ソートヘッダ共通の a11y プロパティ (フォーカス可能 + role + aria-sort + キー操作)。
+  const headerProps = (key: TableSizeSortKey) => ({
+    role: "button" as const,
+    tabIndex: 0,
+    "aria-sort": ariaSort(key),
+    onClick: () => onSort(key),
+    onKeyDown: (e: ReactKeyboardEvent) => onHeaderKey(e, key),
+  });
 
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="14px">
@@ -170,23 +190,23 @@ export function TableStatisticsPanel({
           <chakra.table width="100%" borderCollapse="collapse">
             <thead>
               <tr>
-                <chakra.th css={{ ...thBase, textAlign: "left" }} onClick={() => onSort("name")}>
+                <chakra.th css={{ ...thBase, textAlign: "left" }} {...headerProps("name")}>
                   {t("sizeColName")}
                   {arrow("name")}
                 </chakra.th>
-                <chakra.th css={{ ...thBase, textAlign: "right" }} onClick={() => onSort("row_estimate")}>
+                <chakra.th css={{ ...thBase, textAlign: "right" }} {...headerProps("row_estimate")}>
                   {t("sizeColRows")}
                   {arrow("row_estimate")}
                 </chakra.th>
-                <chakra.th css={{ ...thBase, textAlign: "right" }} onClick={() => onSort("data_bytes")}>
+                <chakra.th css={{ ...thBase, textAlign: "right" }} {...headerProps("data_bytes")}>
                   {t("sizeColData")}
                   {arrow("data_bytes")}
                 </chakra.th>
-                <chakra.th css={{ ...thBase, textAlign: "right" }} onClick={() => onSort("index_bytes")}>
+                <chakra.th css={{ ...thBase, textAlign: "right" }} {...headerProps("index_bytes")}>
                   {t("sizeColIndex")}
                   {arrow("index_bytes")}
                 </chakra.th>
-                <chakra.th css={{ ...thBase, textAlign: "right" }} onClick={() => onSort("total_bytes")}>
+                <chakra.th css={{ ...thBase, textAlign: "right" }} {...headerProps("total_bytes")}>
                   {t("sizeColTotal")}
                   {arrow("total_bytes")}
                 </chakra.th>

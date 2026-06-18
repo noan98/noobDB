@@ -481,6 +481,24 @@ pub(crate) fn sum_size_parts(data: Option<i64>, index: Option<i64>) -> Option<i6
     }
 }
 
+/// Masks the value of a server variable whose name looks like it could hold a
+/// secret, so the server-info panel (#563) never surfaces credentials even on a
+/// server that exposes such a variable. `SHOW VARIABLES` / `pg_settings` do not
+/// carry the connection password or a connection string in practice, so this is
+/// defense-in-depth for custom/derived variables. The match is a case-insensitive
+/// substring on the name; empty values are left untouched.
+pub(crate) fn mask_sensitive_var(name: &str, value: String) -> String {
+    if value.is_empty() {
+        return value;
+    }
+    const SECRET_HINTS: &[&str] = &["password", "passwd", "secret", "private_key"];
+    let lower = name.to_ascii_lowercase();
+    if SECRET_HINTS.iter().any(|hint| lower.contains(hint)) {
+        return "********".to_string();
+    }
+    value
+}
+
 pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableSchema> {
     let mut out: Vec<TableSchema> = Vec::new();
     for (table, column) in pairs {
@@ -1126,8 +1144,32 @@ fn is_aggregate_expr(item: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_auto_limit, has_stacked_statements, is_read_only_sql, is_session_init_sql, SslMode,
+        apply_auto_limit, has_stacked_statements, is_read_only_sql, is_session_init_sql,
+        mask_sensitive_var, sum_size_parts, SslMode,
     };
+
+    #[test]
+    fn sum_size_parts_treats_missing_part_as_zero() {
+        assert_eq!(sum_size_parts(None, None), None);
+        assert_eq!(sum_size_parts(Some(100), None), Some(100));
+        assert_eq!(sum_size_parts(None, Some(40)), Some(40));
+        assert_eq!(sum_size_parts(Some(100), Some(40)), Some(140));
+    }
+
+    #[test]
+    fn mask_sensitive_var_masks_only_secret_named_nonempty_values() {
+        assert_eq!(mask_sensitive_var("max_connections", "151".into()), "151");
+        assert_eq!(
+            mask_sensitive_var("master_password", "hunter2".into()),
+            "********"
+        );
+        assert_eq!(
+            mask_sensitive_var("SSL_PRIVATE_KEY", "----".into()),
+            "********"
+        );
+        // Empty values are never masked (nothing to hide; keeps NULL display).
+        assert_eq!(mask_sensitive_var("admin_password", String::new()), "");
+    }
 
     #[test]
     fn session_init_allows_set_pragma_and_read_only() {

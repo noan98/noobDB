@@ -207,6 +207,10 @@ async fn sqlite_table_sizes_list_every_base_table() {
     conn.execute("CREATE INDEX size_a_label ON size_a(label)", None)
         .await
         .expect("create index");
+    // A view must never appear in table_sizes (base tables only).
+    conn.execute("CREATE VIEW size_v AS SELECT id FROM size_a", None)
+        .await
+        .expect("create view");
     for i in 0..50 {
         conn.execute(
             &format!("INSERT INTO size_a (id, label) VALUES ({i}, 'row-{i}')"),
@@ -224,6 +228,10 @@ async fn sqlite_table_sizes_list_every_base_table() {
     assert!(
         names.contains(&"size_a") && names.contains(&"size_b"),
         "expected both base tables, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"size_v"),
+        "views must be excluded from table_sizes, got: {names:?}"
     );
     // SQLite reports no cheap row estimate.
     assert!(

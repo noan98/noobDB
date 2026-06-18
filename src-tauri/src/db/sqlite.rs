@@ -635,7 +635,7 @@ impl SqliteConn {
         Ok(Vec::new())
     }
 
-    pub async fn table_sizes(&self, db: &str) -> Result<Vec<TableSizeInfo>> {
+    pub async fn table_sizes(&self, _db: &str) -> Result<Vec<TableSizeInfo>> {
         // `dbstat` is a virtual table that reports a page row per b-tree, so
         // SUM(pgsize) grouped through sqlite_master gives real on-disk bytes for
         // each table and (separately) its indexes — no scan of user data. It is
@@ -657,28 +657,49 @@ impl SqliteConn {
         .fetch_all(&self.pool)
         .await;
 
-        if let Ok(rows) = dbstat {
-            return Ok(rows
-                .into_iter()
-                .map(|r| {
-                    let data = r.try_get::<Option<i64>, _>(1).ok().flatten();
-                    let index = r.try_get::<Option<i64>, _>(2).ok().flatten();
-                    TableSizeInfo {
-                        name: r.try_get::<String, _>(0).unwrap_or_default(),
-                        row_estimate: None,
-                        data_bytes: data,
-                        index_bytes: index,
-                        total_bytes: super::sum_size_parts(data, index),
-                    }
-                })
-                .collect());
+        let err = match dbstat {
+            Ok(rows) => {
+                return Ok(rows
+                    .into_iter()
+                    .map(|r| {
+                        let data = r.try_get::<Option<i64>, _>(1).ok().flatten();
+                        let index = r.try_get::<Option<i64>, _>(2).ok().flatten();
+                        TableSizeInfo {
+                            name: r.try_get::<String, _>(0).unwrap_or_default(),
+                            row_estimate: None,
+                            data_bytes: data,
+                            index_bytes: index,
+                            total_bytes: super::sum_size_parts(data, index),
+                        }
+                    })
+                    .collect());
+            }
+            Err(e) => e,
+        };
+
+        // Only treat a *missing* dbstat (build without SQLITE_ENABLE_DBSTAT_VTAB)
+        // as the "no cheap sizes" case and fall back. Any other error (I/O,
+        // corruption, …) is propagated so we don't silently mask a real failure.
+        let msg = err.to_string().to_ascii_lowercase();
+        let dbstat_unavailable = msg.contains("dbstat") || msg.contains("no such table");
+        if !dbstat_unavailable {
+            return Err(err.into());
         }
 
         // dbstat unavailable: still return one row per base table so the panel
-        // lists them, just without byte figures.
-        let tables = self.tables(db).await?;
-        Ok(tables
+        // lists them, just without byte figures. Restrict to base tables (no
+        // views) to honour the table_sizes contract.
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'table'
+               AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+             ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
             .into_iter()
+            .filter_map(|r| r.try_get::<String, _>(0).ok())
             .map(|name| TableSizeInfo {
                 name,
                 row_estimate: None,

@@ -51,21 +51,23 @@ export function ServerInfoPanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("");
-  const busyRef = useRef(false);
+  // リクエスト世代カウンタ: セッション切替や連打で複数の取得が走っても、最新の
+  // 要求の応答だけを反映する (in-flight ブロックだと旧セッションの結果が残りうる)。
+  const requestSeqRef = useRef(0);
 
   const load = useCallback(async () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
+    const seq = ++requestSeqRef.current;
     setLoading(true);
     try {
       const result = await api.serverInfo(sessionId);
+      if (seq !== requestSeqRef.current) return;
       setInfo(result);
       setError(null);
     } catch (e) {
+      if (seq !== requestSeqRef.current) return;
       setError(String(e));
     } finally {
-      busyRef.current = false;
-      setLoading(false);
+      if (seq === requestSeqRef.current) setLoading(false);
     }
   }, [sessionId]);
 
