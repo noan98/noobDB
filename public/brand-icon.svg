@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="noobDB">
+  <defs>
+    <linearGradient id="arch" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <!-- noobDB のブランドマーク (brand.tsx の BrandMark と同一形状)。favicon は CSS 変数を
+       使えないためグラデーションを直書きする。 -->
+  <path d="M11 41 L11 23 A13 13 0 0 1 37 23 L37 41" fill="none" stroke="url(#arch)"
+        stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <g stroke="#1e3a8a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M17 21 L17 33 A7 3.2 0 0 0 31 33 L31 21" fill="#eaf2ff"/>
+    <ellipse cx="24" cy="21" rx="7" ry="3.2" fill="#eaf2ff"/>
+    <path d="M17 25 A7 3.2 0 0 0 31 25" fill="none"/>
+    <path d="M17 29 A7 3.2 0 0 0 31 29" fill="none"/>
+  </g>
+  <path d="M12 9 L13.4 12.6 L17 14 L13.4 15.4 L12 19 L10.6 15.4 L7 14 L10.6 12.6 Z" fill="#3b82f6"/>
+</svg>

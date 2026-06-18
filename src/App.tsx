@@ -50,6 +50,7 @@ import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
+import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
 import { Icon } from "./components/Icon";
 import { Button } from "./components/ui";
@@ -878,6 +879,8 @@ export default function App() {
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  // 起動スプラッシュ (#619)。初回プロファイル読み込みが終わるまで true のまま。
+  const [booted, setBooted] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState<ConnectionProfile | null>(null);
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -1349,7 +1352,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshProfiles();
+    // 初回ロード: プロファイル取得とスプラッシュの最小表示時間 (350ms) を
+    // 競わせ、両方終わったらスプラッシュを畳む。瞬間表示によるちらつきを防ぐ。
+    let alive = true;
+    const minVisible = new Promise<void>((resolve) => setTimeout(resolve, 350));
+    Promise.all([refreshProfiles(), minVisible]).finally(() => {
+      if (alive) setBooted(true);
+    });
+    return () => {
+      alive = false;
+    };
   }, [refreshProfiles]);
 
   // 接続プロファイルのエクスポート: 全プロファイルを秘密情報抜きで JSON へ。
@@ -4475,6 +4487,8 @@ export default function App() {
       }
     >
       <ThemeTransition themeKey={dataTheme} />
+      {/* 起動スプラッシュ (#619)。ブート完了でアンマウントしフェードアウトする。 */}
+      <AnimatePresence>{!booted && <SplashScreen />}</AnimatePresence>
       <TitleBar
         connection={
           sessionId && selectedProfile
