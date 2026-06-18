@@ -155,6 +155,7 @@ import { t as translate, useT, useLocale } from "./i18n";
 import { transitions, variants } from "./motion";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent } from "./shortcutKeys";
+import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
 import {
   useSettings,
   getSettings,
@@ -196,6 +197,8 @@ import {
 type Theme = "light" | "dark";
 
 const THEME_STORAGE_KEY = "noobdb.theme";
+// エディタ/結果のレイアウトモード (#618) の永続化キー。ワークスペース単位で 1 つ。
+const LAYOUT_MODE_STORAGE_KEY = "noobdb.layout.mode";
 
 function readInitialTheme(): Theme {
   const saved = localStorage.getItem(THEME_STORAGE_KEY);
@@ -748,10 +751,27 @@ export default function App() {
   const [showObjectSearch, setShowObjectSearch] = useState(false);
   // `?` キーで開くショートカット チートシートの開閉。
   const [showCheatSheet, setShowCheatSheet] = useState(false);
-  // 結果パネルの全画面モーダル表示の開閉 (Cmd/Ctrl+Shift+M / 結果ツールバーの
-  // トグル / Esc)。フォーカス中ペインのアクティブタブの結果セクションを画面いっぱいに
-  // 広げて閲覧できるようにする。
-  const [resultMaximized, setResultMaximized] = useState(false);
+  // エディタ/結果のレイアウトモード (#618)。`result` は結果パネルの全画面化
+  // (Cmd/Ctrl+Shift+M / 結果ツールバーのトグル / Esc)、`editor` はエディタ集中表示
+  // (Cmd/Ctrl+Shift+E / エディタツールバーのトグル / Esc)。フォーカス中ペインの
+  // アクティブタブにのみ適用する。ワークスペース単位で localStorage に永続化し、
+  // 再起動でも復元する (タブ ID は再起動を跨いで安定しないため、タブ個別ではなく
+  // ワークスペース全体のモードとして保持する — 既定スプリット比率と同じ方針)。
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => {
+    try {
+      return parseLayoutMode(localStorage.getItem(LAYOUT_MODE_STORAGE_KEY));
+    } catch {
+      return "normal";
+    }
+  });
+  useEffect(() => {
+    try {
+      if (layoutMode === "normal") localStorage.removeItem(LAYOUT_MODE_STORAGE_KEY);
+      else localStorage.setItem(LAYOUT_MODE_STORAGE_KEY, layoutMode);
+    } catch {
+      // ignore (private mode / quota)
+    }
+  }, [layoutMode]);
 
   // data-theme はテーマプリセットと light/dark トグルから合成する。
   // THEME_STORAGE_KEY には light/dark のみ保存する。
@@ -3817,24 +3837,28 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [showForm, showSettings, showHelp, showCompare, showSnippetForm, showCommandPalette]);
 
-  // 結果パネルの最大化トグル (Cmd/Ctrl+Shift+M) と、最大化中の Esc での復元。
-  // 他のオーバーレイ表示中は介入しない。Esc は入力欄/エディタにフォーカスがある間は
-  // その場のローカル Esc 処理 (検索クリア等) を優先し、奪わない。
+  // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
+  // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。
+  // Esc は入力欄/エディタにフォーカスがある間はその場のローカル Esc 処理
+  // (検索クリア等) を優先し、奪わない。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const overlayOpen =
+        showForm || showSettings || showHelp || showCompare || showErd || showProcesses ||
+        showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
-        if (
-          showForm || showSettings || showHelp || showCompare || showErd || showProcesses ||
-          showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
-        ) {
-          return;
-        }
-        if (!sessionIdRef.current) return;
+        if (overlayOpen || !sessionIdRef.current) return;
         e.preventDefault();
-        setResultMaximized((v) => !v);
+        setLayoutMode((m) => toggleLayoutMode(m, "result"));
         return;
       }
-      if (e.key === "Escape" && resultMaximized) {
+      if (comboMatchesEvent(bindingsRef.current.focusEditor, e)) {
+        if (overlayOpen || !sessionIdRef.current) return;
+        e.preventDefault();
+        setLayoutMode((m) => toggleLayoutMode(m, "editor"));
+        return;
+      }
+      if (e.key === "Escape" && layoutMode !== "normal") {
         const el = document.activeElement as HTMLElement | null;
         if (el) {
           const tag = el.tagName;
@@ -3849,13 +3873,13 @@ export default function App() {
           }
         }
         e.preventDefault();
-        setResultMaximized(false);
+        setLayoutMode("normal");
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [
-    resultMaximized,
+    layoutMode,
     showForm,
     showSettings,
     showHelp,
@@ -3868,11 +3892,11 @@ export default function App() {
     showCheatSheet,
   ]);
 
-  // 接続が切れたら結果パネルの最大化を解除し、再接続時に意図せず全画面のまま
-  // 始まらないようにする。
-  useEffect(() => {
-    if (!sessionId) setResultMaximized(false);
-  }, [sessionId]);
+  // レイアウトモードは接続状態に依らず保持し、再起動・再接続でも復元する (#618)。
+  // 全画面オーバーレイはフォーカス中ペインにアクティブタブがあるときだけ描画される
+  // (renderPane の `maximized` / `editorFocused` ガード) ため、未接続・タブなしの
+  // 状態では自動的に通常表示になり、「全画面のまま始まる」ことはない。復元を妨げない
+  // よう、ここで明示的に normal へ戻すことはしない。
 
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
@@ -4116,10 +4140,11 @@ export default function App() {
     const summary = tab
       ? { cells: countEditedCells(tab.pendingEdits), rows: countEditedRows(tab.pendingEdits) }
       : { cells: 0, rows: 0 };
-    // フォーカス中ペインのアクティブタブの結果セクションをモーダル全画面化するか。
-    // CSS で結果セクションのラッパを position: fixed の全画面オーバーレイに切り替える
-    // ため、React の要素ツリーは保たれグリッドの状態 (スクロール/選択) も維持される。
-    const maximized = resultMaximized && isFocused && tab != null;
+    // フォーカス中ペインのアクティブタブの結果/エディタをモーダル全画面化するか。
+    // CSS でラッパを position: fixed の全画面オーバーレイに切り替えるため、React の
+    // 要素ツリーは保たれグリッドの状態 (スクロール/選択) やエディタの内容も維持される。
+    const maximized = layoutMode === "result" && isFocused && tab != null;
+    const editorFocused = layoutMode === "editor" && isFocused && tab != null;
     return (
       <Flex
         key={pane.id}
@@ -4188,6 +4213,62 @@ export default function App() {
               minSize={120}
               ariaLabel={t("splitterEditorAria")}
               first={
+                <Box
+                  display="flex"
+                  flexDirection="column"
+                  minH={0}
+                  minW={0}
+                  className={editorFocused ? "pane-overlay" : undefined}
+                  {...(editorFocused
+                    ? {
+                        // エディタ集中モード: エディタを全画面オーバーレイ化する。
+                        // タイトルバー (高さ 38px) は覆わずウィンドウ操作を残す。
+                        position: "fixed" as const,
+                        top: "38px",
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        zIndex: "modal" as const,
+                        bg: "app.surface",
+                        boxShadow: "lg",
+                      }
+                    : { flex: "1", position: "relative" as const })}
+                >
+                  {editorFocused && (
+                    <Flex
+                      align="center"
+                      gap="2"
+                      px="3"
+                      py="1.5"
+                      flex="none"
+                      borderBottomWidth="1px"
+                      borderBottomColor="app.border"
+                      bg="app.toolbar"
+                    >
+                      <Icon name="maximize" size={14} />
+                      <chakra.span
+                        fontSize="sm"
+                        color="app.text"
+                        fontWeight={500}
+                        overflow="hidden"
+                        textOverflow="ellipsis"
+                        whiteSpace="nowrap"
+                      >
+                        {tab.title}
+                      </chakra.span>
+                      <chakra.span flex="1" />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setLayoutMode("normal")}
+                        title={t("editorRestoreTitle")}
+                      >
+                        <Icon name="minimize" size={14} /> {t("editorFocusedLabel")}
+                      </Button>
+                    </Flex>
+                  )}
+                  <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   <QueryEditor
                     key={tab.id}
@@ -4225,8 +4306,14 @@ export default function App() {
                     readOnly={readOnly}
                     queryHistory={queryHistory}
                     editorBindings={editorBindings}
+                    focusMode={editorFocused}
+                    onToggleFocus={
+                      sessionId ? () => setLayoutMode((m) => toggleLayoutMode(m, "editor")) : undefined
+                    }
                   />
                 </Suspense>
+                  </Box>
+                </Box>
               }
               second={
                 <Box
@@ -4234,6 +4321,7 @@ export default function App() {
                   flexDirection="column"
                   minH={0}
                   minW={0}
+                  className={maximized ? "pane-overlay" : undefined}
                   {...(maximized
                     ? {
                         // 結果セクションを全画面オーバーレイ化する。タイトルバー
@@ -4276,7 +4364,7 @@ export default function App() {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        onClick={() => setResultMaximized(false)}
+                        onClick={() => setLayoutMode("normal")}
                         title={t("resultRestoreTitle")}
                       >
                         <Icon name="minimize" size={14} /> {t("resultMaximizedLabel")}
@@ -4436,7 +4524,7 @@ export default function App() {
                       }
                       lastEditAppliedAt={tab.lastEditAppliedAt}
                       maximized={maximized}
-                      onToggleMaximize={() => setResultMaximized((v) => !v)}
+                      onToggleMaximize={() => setLayoutMode((m) => toggleLayoutMode(m, "result"))}
                     />
                     {tab.kind === "table" && tab.paginatable && tab.result && !tab.streaming && (
                       <PaginationBar

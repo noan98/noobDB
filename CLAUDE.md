@@ -947,7 +947,12 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `tableQuickAccess.ts` (お気に入り + 最近使ったテーブルを localStorage 永続化)、
   `queryHistoryNav.ts` (エディタの ↑/↓ 履歴ナビ)、`clipboard.ts`、
   `tableMaintenance.ts` (TRUNCATE/DROP/RENAME の方言別 SQL 生成)、`rowEstimate.ts`
-  (`~1.2K` 形式の概算行数表示)。
+  (`~1.2K` 形式の概算行数表示)、`components/paneLayout.ts` (エディタ⇔結果スプリット
+  ペインの配分クランプ/正規化と、レイアウトモード `normal`/`result`/`editor` の
+  正規化・トグルの純ロジック。#618。`Splitter` と `App` が共有し `paneLayout.test.ts`
+  が境界を固定)。エディタ集中/結果最大化はワークスペース単位 (`noobdb.layout.mode`) で
+  永続化し、全画面オーバーレイは `App.css` の `pane-overlay-in` で出現させ
+  reduced-motion で静止化する。
 - `settings.ts` — `useSyncExternalStore` ベースの設定ストア。シンタックスカラー
   (`syntaxColors` light/dark)・プレビューハイライト色・表示行数 (`defaultDisplayCount` /
   `streamPrefetchSize`)・自動 LIMIT (`autoLimitEnabled` / `autoLimitCount`)・本番接続確認
