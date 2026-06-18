@@ -10,6 +10,7 @@ import {
   Column,
   ConnectionProfile,
   DriverKind,
+  ForeignKey,
   type ProfileImportStrategy,
   PreviewResult,
   QueryResult,
@@ -123,6 +124,9 @@ const SchemaCompareView = lazy(() =>
 const ERDiagramView = lazy(() =>
   import("./components/ERDiagramView").then((m) => ({ default: m.ERDiagramView })),
 );
+const PinnedComparisonView = lazy(() =>
+  import("./components/PinnedComparisonView").then((m) => ({ default: m.PinnedComparisonView })),
+);
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
@@ -152,6 +156,8 @@ import {
   type ConnectionStatus,
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
+import { incomingForeignKeys } from "./fkNavigation";
+import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent } from "./shortcutKeys";
@@ -381,7 +387,13 @@ const SidebarTabButton = forwardRef<
 
 type TabKind = "table" | "query" | "explain";
 
-const EXPLAIN_PREFIX = "EXPLAIN FORMAT=JSON ";
+// EXPLAIN の方言別プレフィックス。MySQL/PostgreSQL は JSON プラン、SQLite は
+// `EXPLAIN QUERY PLAN` (行ベース)。ExplainViewer が driver でパーサを切り替える。
+function explainPrefixFor(driver: string | undefined): string {
+  if (driver === "postgres") return "EXPLAIN (FORMAT JSON) ";
+  if (driver === "sqlite") return "EXPLAIN QUERY PLAN ";
+  return "EXPLAIN FORMAT=JSON ";
+}
 
 interface Tab {
   id: string;
@@ -742,6 +754,9 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
   const [showErd, setShowErd] = useState(false);
+  // ピン留め結果の比較ビュー (#622)。保持はメモリのみ・上限あり (addPinned)。
+  const [showCompareResults, setShowCompareResults] = useState(false);
+  const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
   // プロセスモニタパネル (processlist / pg_stat_activity + KILL) の開閉。
   const [showProcesses, setShowProcesses] = useState(false);
   // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
@@ -1090,6 +1105,10 @@ export default function App() {
   // Keys with a schemaOverview request in flight, so the fetch effect doesn't
   // fire a duplicate while one is pending.
   const schemaInFlightRef = useRef<Set<string>>(new Set());
+  // Foreign keys per database (keyed by schemaCacheKey), used to offer reverse
+  // FK navigation ("show rows referencing this row"). #621
+  const [fkCache, setFkCache] = useState<Record<string, ForeignKey[]>>({});
+  const fkInFlightRef = useRef<Set<string>>(new Set());
   // Set while a destructive query awaits confirmation; holds everything needed
   // to run it once the user accepts the warning dialog.
   const [pendingDangerous, setPendingDangerous] = useState<{
@@ -1954,11 +1973,35 @@ export default function App() {
     return () => { cancelled = true; };
   }, [sessionId, paneActiveTabs, updateTab]);
 
+  // Fetch the database's foreign keys for each active table tab so the result
+  // grid can offer reverse FK navigation (rows referencing the current row).
+  // Cached per database and reused across tabs. #621
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    for (const tt of paneActiveTabs) {
+      if (!tt || tt.kind !== "table" || !tt.database) continue;
+      const key = schemaCacheKey(sessionId, tt.database);
+      if (key in fkCache || fkInFlightRef.current.has(key)) continue;
+      fkInFlightRef.current.add(key);
+      const database = tt.database;
+      api.foreignKeys(sessionId, database)
+        .then((fks) => {
+          if (!cancelled) setFkCache((prev) => ({ ...prev, [key]: fks }));
+        })
+        .catch(() => { /* ignore: reverse FK nav is best-effort */ })
+        .finally(() => { fkInFlightRef.current.delete(key); });
+    }
+    return () => { cancelled = true; };
+  }, [sessionId, paneActiveTabs, fkCache]);
+
   // Drop every cached schema when the session changes so a new connection
   // never autocompletes against the previous database's tables.
   useEffect(() => {
     setSchemaCache({});
     schemaInFlightRef.current.clear();
+    setFkCache({});
+    fkInFlightRef.current.clear();
   }, [sessionId]);
 
   // Fetch the whole-schema snapshot for each pane's database on demand and
@@ -2782,7 +2825,7 @@ export default function App() {
     // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
     // it never trips the destructive-query gate or auto LIMIT.
     if (tab.kind === "explain") {
-      runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
+      runQueryInTab(tab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
       return;
     }
     // 複数結果タブ: 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
@@ -2853,6 +2896,7 @@ export default function App() {
     settings.autoLimitEnabled,
     settings.autoLimitCount,
     settings.resultsInNewTab,
+    selectedProfile?.driver,
   ]);
 
   const handleConfirmDangerous = useCallback(() => {
@@ -2885,14 +2929,31 @@ export default function App() {
     // Re-explain in place when already on an explain tab; otherwise open a
     // dedicated explain tab in the same pane so the source is left untouched.
     if (sourceTab.kind === "explain") {
-      runQueryInTab(sourceTab.id, `${EXPLAIN_PREFIX}${sql}`);
+      runQueryInTab(sourceTab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
       return;
     }
     const owner = panesRef.current.find((p) => p.tabIds.includes(sourceTab.id));
     const tab = makeExplainTab(sql);
     addTab(tab, owner?.id);
-    runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
-  }, [runQueryInTab, addTab]);
+    runQueryInTab(tab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
+  }, [runQueryInTab, addTab, selectedProfile?.driver]);
+
+  // 現在のタブの結果セットをピン留めして保持する (#622)。スナップショットなので
+  // 以降タブを再実行・破棄しても比較ビューに残る。上限超過時は古い順に破棄。
+  const pinCurrentResult = useCallback((tab: Tab) => {
+    if (!tab.result) return;
+    const item: PinnedResult = {
+      id: `pin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title: tab.title || deriveResultTabTitle(tab.lastExecutedSql) || "result",
+      sql: tab.lastExecutedSql,
+      columns: tab.result.columns,
+      rows: tab.result.rows,
+      rowsAffected: tab.result.rows_affected,
+      elapsedMs: tab.result.elapsed_ms,
+      pinnedAt: Date.now(),
+    };
+    setPinnedResults((prev) => addPinned(prev, item));
+  }, []);
 
   // Run the resolved SQL through whichever action the user triggered. Used both
   // directly (no parameters) and after the parameter modal substitutes values.
@@ -2975,7 +3036,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -2987,7 +3048,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3432,7 +3493,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowSnippetForm(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -3443,7 +3504,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3456,7 +3517,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3613,7 +3674,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showErd || showProcesses || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -3671,7 +3732,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showErd, showProcesses, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -3718,7 +3779,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showHelp || showCompare || showErd || showProcesses ||
+        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses ||
         showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
       ) {
         return;
@@ -3757,6 +3818,7 @@ export default function App() {
     showSettings,
     showHelp,
     showCompare,
+    showCompareResults,
     showErd,
     showProcesses,
     showSnippetForm,
@@ -3827,7 +3889,7 @@ export default function App() {
         }
       }
       // チートシート以外のオーバーレイが開いているときは介入しない。
-      if (showForm || showSettings || showHelp || showCompare || showSnippetForm || showCommandPalette) {
+      if (showForm || showSettings || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
         return;
       }
       e.preventDefault();
@@ -3835,7 +3897,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showForm, showSettings, showHelp, showCompare, showSnippetForm, showCommandPalette]);
+  }, [showForm, showSettings, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
 
   // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
   // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。
@@ -3844,7 +3906,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
-        showForm || showSettings || showHelp || showCompare || showErd || showProcesses ||
+        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses ||
         showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
@@ -3884,6 +3946,7 @@ export default function App() {
     showSettings,
     showHelp,
     showCompare,
+    showCompareResults,
     showErd,
     showProcesses,
     showSnippetForm,
@@ -3901,19 +3964,20 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "compareResults" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
     else if (view === "help") setShowHelp(true);
     else if (view === "compare") setShowCompare(true);
     else if (view === "erDiagram") setShowErd(true);
     else if (view === "processes") setShowProcesses(true);
+    else if (view === "compareResults") setShowCompareResults(true);
     else if (view === "newConnection") {
       setShowForm(true);
       setFormInstanceId((n) => n + 1);
@@ -3974,6 +4038,14 @@ export default function App() {
         icon: "diff",
         keywords: "schema compare diff スキーマ 比較",
         run: () => openFullView("compare"),
+      },
+      {
+        id: "nav:compare-results",
+        group: "navigation",
+        label: t("appPinCompare", { count: pinnedResults.length }),
+        icon: "pin",
+        keywords: "pin pinned result compare diff ピン 結果 比較 差分",
+        run: () => openFullView("compareResults"),
       },
       {
         id: "nav:toggle-theme",
@@ -4081,6 +4153,7 @@ export default function App() {
     handleRestoreHistory,
     openFullView,
     toggleTheme,
+    pinnedResults.length,
   ]);
 
   // Clean up any active listeners when the app unmounts.
@@ -4374,7 +4447,11 @@ export default function App() {
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   {tab.kind === "explain" ? (
-                    <ExplainViewer result={tab.result} streaming={tab.streaming} />
+                    <ExplainViewer
+                      result={tab.result}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                      streaming={tab.streaming}
+                    />
                   ) : tab.batchResults ? (
                     <BatchResultsView
                       results={tab.batchResults}
@@ -4508,6 +4585,14 @@ export default function App() {
                           : undefined
                       }
                       onFkJump={(sql) => openAndRunQuery(sql)}
+                      incomingFks={
+                        tab.kind === "table" && tab.table && tab.database && sessionId
+                          ? incomingForeignKeys(
+                              fkCache[schemaCacheKey(sessionId, tab.database)] ?? [],
+                              tab.table,
+                            )
+                          : undefined
+                      }
                       onRunStatsQuery={
                         sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
                       }
@@ -4525,6 +4610,8 @@ export default function App() {
                       lastEditAppliedAt={tab.lastEditAppliedAt}
                       maximized={maximized}
                       onToggleMaximize={() => setLayoutMode((m) => toggleLayoutMode(m, "result"))}
+                      onPinResult={() => pinCurrentResult(tab)}
+                      canPinResult={!!tab.result && !tab.streaming}
                     />
                     {tab.kind === "table" && tab.paginatable && tab.result && !tab.streaming && (
                       <PaginationBar
@@ -4674,7 +4761,7 @@ export default function App() {
                   setShowSettings(false);
                   setShowHelp(false);
                   setShowCompare(false);
-                  setShowErd(false); setShowProcesses(false);
+                  setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
                   setShowForm(false);
                   setShowSnippetForm(true);
                   setFormInstanceId((n) => n + 1);
@@ -4698,7 +4785,7 @@ export default function App() {
                   <Icon name="transfer" />
                 </IconButton>
                 <IconButton
-                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowCompareResults(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                   title={t("appNew")}
                   aria-label={t("appNew")}
                 >
@@ -4948,6 +5035,14 @@ export default function App() {
             sessionId={sessionId}
             readOnly={selectedProfile?.read_only ?? false}
             onClose={() => setShowProcesses(false)}
+          />
+        ) : showCompareResults ? (
+          <PinnedComparisonView
+            pinned={pinnedResults}
+            driver={selectedProfile?.driver ?? "mysql"}
+            onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
+            onClear={() => setPinnedResults([])}
+            onClose={() => setShowCompareResults(false)}
           />
         ) : showForm ? (
           <ConnectionForm
@@ -5506,6 +5601,12 @@ export default function App() {
                 : selectedProfile?.driver === "sqlite"
                   ? t("appProcessesUnsupported")
                   : undefined,
+            },
+            {
+              label: t("appPinCompare", { count: pinnedResults.length }),
+              onSelect: () => openFullView("compareResults"),
+              disabled: pinnedResults.length === 0,
+              title: pinnedResults.length === 0 ? t("pinCompareEmptyHint") : undefined,
             },
           ]}
           onClose={() => setToolsMenu(null)}

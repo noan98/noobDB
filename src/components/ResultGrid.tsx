@@ -75,7 +75,6 @@ import {
   countEditedCells,
   countEditedRows,
   isEditableColumnType,
-  literalFromCellValue,
   resolvePkIndices,
   rowEditKey,
   validateCellInput,
@@ -84,7 +83,11 @@ import {
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
 import { diffResultRows } from "../resultDiff";
-import { quoteIdentFor } from "./sqlDialect";
+import {
+  buildFkJumpSql,
+  buildReverseRefSql,
+  type IncomingFk,
+} from "../fkNavigation";
 import {
   type SelectionSummary,
   type ColumnStats,
@@ -785,6 +788,11 @@ interface Props {
    * callback receives the generated `SELECT … WHERE …` SQL.
    */
   onFkJump?: (sql: string) => void;
+  /**
+   * Foreign keys pointing at the current table (reverse references). Forwarded
+   * to the grid so the right-click menu can offer "show referencing rows".
+   */
+  incomingFks?: IncomingFk[];
   /** 削除予定の行: rowEditKey の集合。 */
   pendingDeleteKeys?: Set<string>;
   /** 行を削除予定にトグルする。 */
@@ -833,6 +841,13 @@ interface Props {
    */
   maximized?: boolean;
   onToggleMaximize?: () => void;
+  /**
+   * When provided, a "pin result" button appears in the toolbar so the current
+   * result set can be kept for side-by-side comparison (#622). Disabled while
+   * there is no settled result.
+   */
+  onPinResult?: () => void;
+  canPinResult?: boolean;
 }
 
 export interface ResultGridHandle {
@@ -1963,6 +1978,7 @@ export function DataGrid({
   rowSqlDatabase,
   rowSqlTable,
   columnMeta,
+  incomingFks,
   onFkJump,
   paginationState,
   onPaginationChange,
@@ -2058,6 +2074,12 @@ export function DataGrid({
    * right-click menu and an FK badge appears in the column header.
    */
   columnMeta?: TableColumnInfo[];
+  /**
+   * Foreign keys pointing AT the current table (reverse references). When
+   * provided, the right-click menu offers "show referencing rows" items that
+   * open the child tables filtered to the clicked row's key value.
+   */
+  incomingFks?: IncomingFk[];
   /** Called when the user triggers a FK jump with the generated SELECT SQL. */
   onFkJump?: (sql: string) => void;
   /** When set, TanStack pagination is activated and only this page of rows is rendered. */
@@ -3482,31 +3504,52 @@ export function DataGrid({
                 ]
               : []),
             ...(() => {
+              if (!onFkJump) return [];
+              const driver = rowSqlDriver ?? "mysql";
+              const items: { label: string; title: string; onSelect: () => void }[] = [];
+
+              // 順方向: クリックしたセルが FK なら参照先テーブルへジャンプ。
               const fkMeta = columnMeta?.find(
                 (m) => m.name === columns[copyMenu.colIdx]?.name,
               );
-              if (!fkMeta?.referenced_table || !fkMeta.referenced_column || !onFkJump) return [];
-              const driver = rowSqlDriver ?? "mysql";
-              const refTable = fkMeta.referenced_table;
-              const refColumn = fkMeta.referenced_column;
-              const cellValue = rows[copyMenu.rowIdx]?.[copyMenu.colIdx] ?? null;
-              const fromRef =
-                driver === "sqlite" || !rowSqlDatabase
-                  ? quoteIdentFor(driver, refTable)
-                  : `${quoteIdentFor(driver, rowSqlDatabase)}.${quoteIdentFor(driver, refTable)}`;
-              const predicate =
-                cellValue === null || cellValue === undefined
-                  ? `${quoteIdentFor(driver, refColumn)} IS NULL`
-                  : `${quoteIdentFor(driver, refColumn)} = ${literalFromCellValue(driver, cellValue)}`;
-              const sql = `SELECT * FROM ${fromRef} WHERE ${predicate}`;
-              return [
-                { separator: true as const },
-                {
+              if (fkMeta?.referenced_table && fkMeta.referenced_column) {
+                const refTable = fkMeta.referenced_table;
+                const sql = buildFkJumpSql({
+                  driver,
+                  database: rowSqlDatabase,
+                  refTable,
+                  refColumn: fkMeta.referenced_column,
+                  value: rows[copyMenu.rowIdx]?.[copyMenu.colIdx] ?? null,
+                });
+                items.push({
                   label: t("gridFkJump", { table: refTable }),
                   title: t("gridFkJumpTitle"),
                   onSelect: () => { setCopyMenu(null); onFkJump(sql); },
-                },
-              ];
+                });
+              }
+
+              // 逆方向: この行を参照している子テーブルの行一覧を辿る。参照先カラムが
+              // 結果に含まれていない場合 (キー値を取れない) は対象から外す。
+              for (const inc of incomingFks ?? []) {
+                const refColIdx = columns.findIndex((c) => c.name === inc.referencedColumn);
+                if (refColIdx < 0) continue;
+                const value = rows[copyMenu.rowIdx]?.[refColIdx] ?? null;
+                const sql = buildReverseRefSql({
+                  driver,
+                  database: rowSqlDatabase,
+                  childTable: inc.table,
+                  childColumn: inc.column,
+                  value,
+                });
+                items.push({
+                  label: t("gridFkReverse", { table: inc.table, column: inc.column }),
+                  title: t("gridFkReverseTitle"),
+                  onSelect: () => { setCopyMenu(null); onFkJump(sql); },
+                });
+              }
+
+              if (items.length === 0) return [];
+              return [{ separator: true as const }, ...items];
             })(),
             { separator: true as const },
             {
@@ -3934,6 +3977,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   queryError,
   onRetry,
   onFkJump,
+  incomingFks,
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
@@ -3948,6 +3992,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onRunStatsQuery,
   maximized,
   onToggleMaximize,
+  onPinResult,
+  canPinResult,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -4644,6 +4690,21 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           placeholder={t("gridSearchPlaceholder")}
           aria-label={t("gridSearchAria")}
         />
+        {onPinResult && (
+          <Button
+            variant="secondary"
+            size="sm"
+            px="1.5"
+            marginLeft="1.5"
+            flexShrink={0}
+            onClick={onPinResult}
+            disabled={!canPinResult}
+            title={t("pinResultTitle")}
+            aria-label={t("pinResultTitle")}
+          >
+            <Icon name="pin" />
+          </Button>
+        )}
         {onToggleMaximize && (
           <Button
             variant="secondary"
@@ -4692,6 +4753,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           rowSqlDatabase={database}
           rowSqlTable={table}
           columnMeta={tableColumns ?? undefined}
+          incomingFks={incomingFks}
           onFkJump={onFkJump}
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}

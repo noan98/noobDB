@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
@@ -9,6 +9,7 @@ import {
   type HintSeverity,
   type PlanNode,
   type ScoreBand,
+  type SqlitePlanRow,
   attrVal,
   collectIds,
   computeHints,
@@ -19,10 +20,44 @@ import {
   maxCost,
   parseNum,
   parsePlan,
+  parsePostgresPlan,
+  parseSqlitePlan,
   scorePlan,
   severityLabelKey,
   worstSeverity,
 } from "./explainPlan";
+
+const ExplainGraphView = lazy(() =>
+  import("./ExplainGraphView").then((m) => ({ default: m.ExplainGraphView })),
+);
+
+/**
+ * EXPLAIN 結果をドライバ別にパースする。MySQL/PostgreSQL は単一セルの JSON、
+ * SQLite は `EXPLAIN QUERY PLAN` の行 (id, parent, _, detail) を木に組む。`raw` は
+ * パース失敗時/空時に生表示するテキスト。
+ */
+function parseExplainForDriver(
+  driver: string,
+  result: QueryResult | null,
+): { raw: string | null; root: PlanNode | null; error: string | null } {
+  if (!result || result.rows.length === 0) return { raw: null, root: null, error: null };
+  if (driver === "sqlite") {
+    const rows: SqlitePlanRow[] = result.rows.map((r) => ({
+      id: Number(r[0]) || 0,
+      parent: Number(r[1]) || 0,
+      detail: String(r[3] ?? r[r.length - 1] ?? ""),
+    }));
+    const { root, error } = parseSqlitePlan(rows);
+    const raw = rows.map((r) => r.detail).join("\n");
+    return { raw: raw || null, root, error };
+  }
+  const cell = result.rows[0] && result.rows[0].length > 0 ? result.rows[0][0] : null;
+  const raw = cell === null || cell === undefined ? null : String(cell);
+  if (!raw) return { raw: null, root: null, error: null };
+  const { root, error } =
+    driver === "postgres" ? parsePostgresPlan(raw) : parsePlan(raw);
+  return { raw, root, error };
+}
 
 /**
  * EXPLAIN プラン可視化のツリー/詳細パネルのスタイル。各要素へ直接 `css`
@@ -376,8 +411,10 @@ const EXPLAIN_EMPTY_PROPS = {
 } as const;
 
 interface Props {
-  /** EXPLAIN FORMAT=JSON result — a single row / single column JSON string. */
+  /** EXPLAIN result. MySQL/PostgreSQL: single JSON cell. SQLite: plan rows. */
   result: QueryResult | null;
+  /** Driver, selects the EXPLAIN output parser. */
+  driver: string;
   /** True while the EXPLAIN command is still streaming its (single) row. */
   streaming?: boolean;
 }
@@ -483,17 +520,13 @@ function NodeRow({
   );
 }
 
-export function ExplainViewer({ result, streaming }: Props) {
+export function ExplainViewer({ result, driver, streaming }: Props) {
   const t = useT();
-  const raw =
-    result && result.rows.length > 0 && result.rows[0].length > 0
-      ? String(result.rows[0][0] ?? "")
-      : null;
-
-  const { root, error } = useMemo(
-    () => (raw ? parsePlan(raw) : { root: null, error: null }),
-    [raw],
+  const { raw, root, error } = useMemo(
+    () => parseExplainForDriver(driver, result),
+    [driver, result],
   );
+  const [view, setView] = useState<"tree" | "graph">("tree");
   const max = useMemo(() => (root ? maxCost(root) : 0), [root]);
   const score = useMemo(() => (root ? scorePlan(root) : null), [root]);
   const allIds = useMemo(() => {
@@ -617,34 +650,75 @@ export function ExplainViewer({ result, streaming }: Props) {
           <Button
             size="sm"
             px="2.5"
-            onClick={() => setCollapsed(new Set())}
-            title={t("explainExpandAll")}
+            variant={view === "tree" ? "primary" : "secondary"}
+            onClick={() => setView("tree")}
+            title={t("explainViewTree")}
           >
-            {t("explainExpandAll")}
+            {t("explainViewTree")}
           </Button>
           <Button
             size="sm"
             px="2.5"
-            onClick={() => setCollapsed(new Set(allIds))}
-            title={t("explainCollapseAll")}
+            variant={view === "graph" ? "primary" : "secondary"}
+            onClick={() => setView("graph")}
+            title={t("explainViewGraph")}
           >
-            {t("explainCollapseAll")}
+            {t("explainViewGraph")}
           </Button>
+          {view === "tree" && (
+            <>
+              <Button
+                size="sm"
+                px="2.5"
+                onClick={() => setCollapsed(new Set())}
+                title={t("explainExpandAll")}
+              >
+                {t("explainExpandAll")}
+              </Button>
+              <Button
+                size="sm"
+                px="2.5"
+                onClick={() => setCollapsed(new Set(allIds))}
+                title={t("explainCollapseAll")}
+              >
+                {t("explainCollapseAll")}
+              </Button>
+            </>
+          )}
         </Box>
-        <Box css={treeCss} role="tree">
-          <NodeRow
-            node={root}
-            depth={0}
-            max={max}
-            collapsed={collapsed}
-            selectedId={selectedId}
-            onToggle={toggle}
-            onSelect={setSelectedId}
-            expandLabel={t("explainExpandNode")}
-            collapseLabel={t("explainCollapseNode")}
-            hintsLabel={t("explainHintsTitle")}
-          />
-        </Box>
+        {view === "graph" ? (
+          <Box flex="1" minHeight={0} position="relative">
+            <Suspense
+              fallback={
+                <Box position="absolute" inset={0} display="flex" alignItems="center" justifyContent="center" color="app.textMuted">
+                  <Spinner size={18} />
+                </Box>
+              }
+            >
+              <ExplainGraphView
+                root={root}
+                maxCost={max}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+              />
+            </Suspense>
+          </Box>
+        ) : (
+          <Box css={treeCss} role="tree">
+            <NodeRow
+              node={root}
+              depth={0}
+              max={max}
+              collapsed={collapsed}
+              selectedId={selectedId}
+              onToggle={toggle}
+              onSelect={setSelectedId}
+              expandLabel={t("explainExpandNode")}
+              collapseLabel={t("explainCollapseNode")}
+              hintsLabel={t("explainHintsTitle")}
+            />
+          </Box>
+        )}
       </Box>
       <Box css={detailCss}>
         <Box css={detailHeaderCss}>{t("explainDetailTitle")}</Box>
