@@ -146,6 +146,14 @@ const config = defineConfig({
           accent: { value: "var(--accent)" },
           accentHover: { value: "var(--accent-hover)" },
           accentText: { value: "var(--accent-text)" },
+          // ブランド基調色 (#619)。アクセントと違いテーマ/接続で変わらず固定。
+          // ロゴマーク・スプラッシュ・ブランド面が参照する。値は App.css の
+          // --brand-* と brand.tsx の定数に一致。
+          brand: {
+            blue: { value: "var(--brand-blue)" },
+            indigo: { value: "var(--brand-indigo)" },
+            violet: { value: "var(--brand-violet)" },
+          },
           // 拡張ニュートラル階調。0=地, 950=最も濃い文字。テーマ反転は
           // App.css 側で吸収するため、ここは var() ブリッジのみ。
           neutral: {

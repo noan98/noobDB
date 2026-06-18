@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Box } from "@chakra-ui/react";
 import { animate, useReducedMotion } from "motion/react";
 import { durations, easings } from "../motion";
+import { clamp, fractionBounds as boundsFor, normalizeFraction } from "./paneLayout";
 
 type Direction = "row" | "column";
 
@@ -20,18 +21,11 @@ interface Props {
   ariaLabel?: string;
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
 function readStoredFraction(storageKey: string | undefined, fallback: number): number {
   if (!storageKey) return fallback;
   try {
     const stored = localStorage.getItem(storageKey);
-    if (stored !== null) {
-      const f = Number(stored);
-      if (Number.isFinite(f) && f > 0 && f < 1) return f;
-    }
+    if (stored !== null) return normalizeFraction(stored, fallback);
   } catch {
     // ignore
   }
@@ -75,11 +69,9 @@ export function Splitter({
 
   // Min/max fraction the divider may take, leaving at least `minSize` px on each
   // side. Shared by pointer drag and keyboard nudge so the clamp stays identical.
+  // Delegates to the pure `fractionBounds` so the rule is unit-tested in one place.
   const fractionBounds = useCallback(
-    (total: number) => ({
-      minF: total > 2 * minSize ? minSize / total : 0,
-      maxF: total > 2 * minSize ? 1 - minSize / total : 1,
-    }),
+    (total: number) => boundsFor(total, minSize),
     [minSize],
   );
 
