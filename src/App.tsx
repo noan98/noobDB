@@ -10,6 +10,7 @@ import {
   Column,
   ConnectionProfile,
   DriverKind,
+  ForeignKey,
   type ProfileImportStrategy,
   PreviewResult,
   QueryResult,
@@ -151,6 +152,7 @@ import {
   type ConnectionStatus,
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
+import { incomingForeignKeys } from "./fkNavigation";
 import { transitions, variants } from "./motion";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent } from "./shortcutKeys";
@@ -1067,6 +1069,10 @@ export default function App() {
   // Keys with a schemaOverview request in flight, so the fetch effect doesn't
   // fire a duplicate while one is pending.
   const schemaInFlightRef = useRef<Set<string>>(new Set());
+  // Foreign keys per database (keyed by schemaCacheKey), used to offer reverse
+  // FK navigation ("show rows referencing this row"). #621
+  const [fkCache, setFkCache] = useState<Record<string, ForeignKey[]>>({});
+  const fkInFlightRef = useRef<Set<string>>(new Set());
   // Set while a destructive query awaits confirmation; holds everything needed
   // to run it once the user accepts the warning dialog.
   const [pendingDangerous, setPendingDangerous] = useState<{
@@ -1922,11 +1928,35 @@ export default function App() {
     return () => { cancelled = true; };
   }, [sessionId, paneActiveTabs, updateTab]);
 
+  // Fetch the database's foreign keys for each active table tab so the result
+  // grid can offer reverse FK navigation (rows referencing the current row).
+  // Cached per database and reused across tabs. #621
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    for (const tt of paneActiveTabs) {
+      if (!tt || tt.kind !== "table" || !tt.database) continue;
+      const key = schemaCacheKey(sessionId, tt.database);
+      if (key in fkCache || fkInFlightRef.current.has(key)) continue;
+      fkInFlightRef.current.add(key);
+      const database = tt.database;
+      api.foreignKeys(sessionId, database)
+        .then((fks) => {
+          if (!cancelled) setFkCache((prev) => ({ ...prev, [key]: fks }));
+        })
+        .catch(() => { /* ignore: reverse FK nav is best-effort */ })
+        .finally(() => { fkInFlightRef.current.delete(key); });
+    }
+    return () => { cancelled = true; };
+  }, [sessionId, paneActiveTabs, fkCache]);
+
   // Drop every cached schema when the session changes so a new connection
   // never autocompletes against the previous database's tables.
   useEffect(() => {
     setSchemaCache({});
     schemaInFlightRef.current.clear();
+    setFkCache({});
+    fkInFlightRef.current.clear();
   }, [sessionId]);
 
   // Fetch the whole-schema snapshot for each pane's database on demand and
@@ -4408,6 +4438,14 @@ export default function App() {
                           : undefined
                       }
                       onFkJump={(sql) => openAndRunQuery(sql)}
+                      incomingFks={
+                        tab.kind === "table" && tab.table && tab.database && sessionId
+                          ? incomingForeignKeys(
+                              fkCache[schemaCacheKey(sessionId, tab.database)] ?? [],
+                              tab.table,
+                            )
+                          : undefined
+                      }
                       onRunStatsQuery={
                         sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
                       }
