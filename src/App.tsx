@@ -3674,7 +3674,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showErd || showProcesses || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -3732,7 +3732,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showErd, showProcesses, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -3779,7 +3779,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showHelp || showCompare || showErd || showProcesses ||
+        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses ||
         showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
       ) {
         return;
@@ -3818,6 +3818,7 @@ export default function App() {
     showSettings,
     showHelp,
     showCompare,
+    showCompareResults,
     showErd,
     showProcesses,
     showSnippetForm,
@@ -3888,7 +3889,7 @@ export default function App() {
         }
       }
       // チートシート以外のオーバーレイが開いているときは介入しない。
-      if (showForm || showSettings || showHelp || showCompare || showSnippetForm || showCommandPalette) {
+      if (showForm || showSettings || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
         return;
       }
       e.preventDefault();
@@ -3896,7 +3897,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showForm, showSettings, showHelp, showCompare, showSnippetForm, showCommandPalette]);
+  }, [showForm, showSettings, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
 
   // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
   // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。
@@ -3905,7 +3906,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
-        showForm || showSettings || showHelp || showCompare || showErd || showProcesses ||
+        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses ||
         showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
@@ -3945,6 +3946,7 @@ export default function App() {
     showSettings,
     showHelp,
     showCompare,
+    showCompareResults,
     showErd,
     showProcesses,
     showSnippetForm,

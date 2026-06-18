@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Box, Flex, chakra } from "@chakra-ui/react";
 
 import type { QueryResult, TableColumnInfo } from "../api/tauri";
@@ -63,6 +63,21 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
 
   const left = useMemo(() => pinned.find((p) => p.id === leftId) ?? null, [pinned, leftId]);
   const right = useMemo(() => pinned.find((p) => p.id === rightId) ?? null, [pinned, rightId]);
+
+  // ピン解除などで一覧が変わったとき、存在しない ID を選んだままにしない。
+  // 失われた側は既定 (左=末尾から 2 番目、右=末尾) に戻す。
+  useEffect(() => {
+    const ids = new Set(pinned.map((p) => p.id));
+    if (!ids.has(leftId)) setLeftId(pinned[pinned.length - 2]?.id ?? pinned[0]?.id ?? "");
+    if (!ids.has(rightId)) setRightId(pinned[pinned.length - 1]?.id ?? "");
+  }, [pinned, leftId, rightId]);
+
+  // 選択中のキー列が左結果のカラムに無くなったら未選択へ戻す (先頭列に既定化)。
+  useEffect(() => {
+    if (keyColumn && !(left?.columns.some((c) => c.name === keyColumn) ?? false)) {
+      setKeyColumn(null);
+    }
+  }, [left, keyColumn]);
 
   const comparable = left && right ? resultsComparable(left, right) : false;
   // 既定のキー列は左の先頭列。比較不能なら差分は出さない。
