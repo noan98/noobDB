@@ -33,6 +33,7 @@ export type ShortcutId =
   | "sidebarFilter"
   | "resultSearch"
   | "maximizeResult"
+  | "focusEditor"
   | "runNewTab"
   | "newTab"
   | "closeTab"
@@ -87,6 +88,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutRunNewTabTitle", descKey: "shortcutRunNewTabDesc", category: "editor", id: "runNewTab", scope: "global", defaultCombo: "Mod+Shift+Enter" },
   { keysKey: "helpShortcutPreviewTitle", descKey: "helpShortcutPreviewDesc", category: "editor", id: "preview", scope: "editor", defaultCombo: "Mod+Shift+Enter" },
   { keysKey: "helpShortcutFormatTitle", descKey: "helpShortcutFormatDesc", category: "editor", id: "format", scope: "editor", defaultCombo: "Mod+Shift+F" },
+  { keysKey: "shortcutFocusEditorTitle", descKey: "shortcutFocusEditorDesc", category: "editor", id: "focusEditor", scope: "global", defaultCombo: "Mod+Shift+E" },
   { keysKey: "helpShortcutCompleteTitle", descKey: "helpShortcutCompleteDesc", category: "editor" },
   { keysKey: "shortcutEditorFindTitle", descKey: "shortcutEditorFindDesc", category: "editor" },
   { keysKey: "helpShortcutSearchTitle", descKey: "helpShortcutSearchDesc", category: "grid", id: "resultSearch", scope: "global", defaultCombo: "Mod+F" },

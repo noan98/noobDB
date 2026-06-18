@@ -184,6 +184,12 @@ interface Props {
    * CodeMirror のキーマップを Compartment 経由で再構成する。
    */
   editorBindings?: Partial<EditorKeyBindings>;
+  /**
+   * エディタ集中モード (#618) の現在状態。`onToggleFocus` が渡されたときだけ
+   * ツールバーに集中/復元トグルを出し、`focusMode` でアイコン/ツールチップを切り替える。
+   */
+  focusMode?: boolean;
+  onToggleFocus?: () => void;
 }
 
 export interface QueryEditorHandle {
@@ -308,6 +314,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   readOnly,
   queryHistory,
   editorBindings,
+  focusMode,
+  onToggleFocus,
 }: Props, ref) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -790,6 +798,29 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             </chakra.span>
             {t("editorBuilder")}
           </ToolbarButton>
+        )}
+        {onToggleFocus && (
+          <>
+            <chakra.span flex="1" minWidth="2" aria-hidden />
+            <ToolbarButton
+              onClick={onToggleFocus}
+              title={focusMode ? t("editorRestoreTitle") : t("editorFocusTitle")}
+              aria-label={focusMode ? t("editorRestoreTitle") : t("editorFocusTitle")}
+              aria-pressed={!!focusMode}
+            >
+              <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+                {focusMode ? (
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6 2v4H2M14 6h-4V2M6 14v-4H2M10 14v-4h4" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" />
+                  </svg>
+                )}
+              </chakra.span>
+            </ToolbarButton>
+          </>
         )}
       </Box>
       <Box ref={hostRef} flex="1" overflow="auto" bg="app.surface" />
