@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use types::{
-    ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema,
+    ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject, ServerInfo,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -395,6 +395,33 @@ impl Connection {
         }
     }
 
+    /// Size and row statistics for every base table in `db`, read from the
+    /// engine's catalogs (no `COUNT(*)` / table scan) so it stays cheap on
+    /// large schemas. MySQL reads `information_schema.TABLES`, PostgreSQL the
+    /// `pg_*_size` functions, SQLite aggregates `dbstat` when available. Byte
+    /// and row fields are best-effort and may be absent (see [`TableSizeInfo`]).
+    /// Views are omitted.
+    pub async fn table_sizes(&self, db: &str) -> Result<Vec<TableSizeInfo>> {
+        match self {
+            Connection::MySql(c) => c.table_sizes(db).await,
+            Connection::Postgres(c) => c.table_sizes(db).await,
+            Connection::Sqlite(c) => c.table_sizes(db).await,
+        }
+    }
+
+    /// Read-only server information (version + configuration variables) for the
+    /// server-info panel. MySQL uses `SELECT VERSION()` + `SHOW VARIABLES`,
+    /// PostgreSQL `version()` + `pg_settings`, SQLite `sqlite_version()` + a
+    /// curated set of `PRAGMA`s. No write is performed, so it is allowed on
+    /// read-only sessions.
+    pub async fn server_info(&self) -> Result<ServerInfo> {
+        match self {
+            Connection::MySql(c) => c.server_info().await,
+            Connection::Postgres(c) => c.server_info().await,
+            Connection::Sqlite(c) => c.server_info().await,
+        }
+    }
+
     /// Server-side processes/connections for the process monitor panel.
     /// Reads the engine's in-memory state (`processlist` / `pg_stat_activity`)
     /// — no table I/O — so it is cheap enough to poll. SQLite has no server
@@ -441,6 +468,17 @@ impl Connection {
 /// SQLite as declared), so the candidate literals stay uppercase.
 pub(crate) fn type_name_matches(name: &str, candidates: &[&str]) -> bool {
     candidates.iter().any(|c| name.eq_ignore_ascii_case(c))
+}
+
+/// Combines the data and index byte parts a driver resolved into a `total`.
+/// Returns `Some(sum)` when at least one part is present (treating an absent
+/// part as 0), and `None` only when both are unknown — so a table with just one
+/// measured part still reports a total rather than dropping to "unknown".
+pub(crate) fn sum_size_parts(data: Option<i64>, index: Option<i64>) -> Option<i64> {
+    match (data, index) {
+        (None, None) => None,
+        (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+    }
 }
 
 pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableSchema> {

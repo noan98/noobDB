@@ -287,6 +287,37 @@ export interface TableRowEstimate {
 }
 
 /**
+ * テーブルのサイズ・統計 (サイズダッシュボード #562)。すべてエンジンのカタログ
+ * 由来でテーブルスキャンを伴わない。各フィールドはエンジンが報告しないことが
+ * あるため `null` 許容 (SQLite は概算行数を持たず、dbstat 非搭載ビルドでは
+ * サイズも `null`)。`total_bytes` はエンジンの報告値、無ければドライバが解決
+ * できたデータ + インデックスの和。
+ */
+export interface TableSizeInfo {
+  name: string;
+  row_estimate: number | null;
+  data_bytes: number | null;
+  index_bytes: number | null;
+  total_bytes: number | null;
+}
+
+/** サーバ設定/状態の 1 変数 (サーバ情報パネル #563)。値は常に文字列で表示。 */
+export interface ServerVariable {
+  name: string;
+  value: string;
+}
+
+/**
+ * 接続中サーバの読み取り専用スナップショット (サーバ情報パネル #563)。
+ * バージョン文字列と検索可能な設定変数の一覧。アクティブ接続はプロセスモニタ
+ * (`ProcessInfo`) が担うためここには含めない。秘密情報・接続文字列は含まない。
+ */
+export interface ServerInfo {
+  version: string;
+  variables: ServerVariable[];
+}
+
+/**
  * サーバ側プロセス/接続 1 件 (プロセス監視パネル)。MySQL は processlist、
  * PostgreSQL は pg_stat_activity に対応する。`id` をそのまま `killProcess` に渡す。
  */
@@ -601,6 +632,16 @@ export const api = {
   tableRowEstimates: (sessionId: string, database: string) =>
     invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(
       (r) => parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
+    ),
+  /** テーブルごとのサイズ・統計を取得する (サイズダッシュボード #562)。 */
+  tableSizes: (sessionId: string, database: string) =>
+    invoke<TableSizeInfo[]>("table_sizes", { sessionId, database }).then((r) =>
+      parseResponse(schemas.tableSizeInfoArray, r, "table_sizes"),
+    ),
+  /** 接続中サーバの情報 (バージョン + 設定変数) を取得する (サーバ情報パネル #563)。 */
+  serverInfo: (sessionId: string) =>
+    invoke<ServerInfo>("server_info", { sessionId }).then((r) =>
+      parseResponse(schemas.serverInfo, r, "server_info"),
     ),
   /** テーブルのインデックス一覧を取得する。 */
   listIndexes: (sessionId: string, database: string, table: string) =>

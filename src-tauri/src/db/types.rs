@@ -126,6 +126,49 @@ pub struct TableRowEstimate {
     pub estimate: Option<i64>,
 }
 
+/// Size and row statistics for one base table, used by the size/statistics
+/// dashboard (#562). All byte counts come from the engine's own catalogs (no
+/// table scan): MySQL `information_schema.TABLES` (`DATA_LENGTH` /
+/// `INDEX_LENGTH`), PostgreSQL `pg_table_size` / `pg_indexes_size` /
+/// `pg_total_relation_size`, SQLite `dbstat` aggregated per table (when the
+/// build exposes it).
+///
+/// Every byte/row field is `Option` because an engine may not report it: SQLite
+/// keeps no cheap row estimate (`row_estimate` stays `None`, mirroring
+/// [`TableRowEstimate`]), and `dbstat` is absent on SQLite builds without
+/// `SQLITE_ENABLE_DBSTAT_VTAB` (all size fields stay `None`). `total_bytes` is
+/// the engine's reported total when available, otherwise the sum of the data
+/// and index parts the driver could resolve.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableSizeInfo {
+    pub name: String,
+    pub row_estimate: Option<i64>,
+    pub data_bytes: Option<i64>,
+    pub index_bytes: Option<i64>,
+    pub total_bytes: Option<i64>,
+}
+
+/// One name/value pair from a server's configuration or status catalogs, shown
+/// in the server-info panel (#563). MySQL maps `SHOW VARIABLES`, PostgreSQL
+/// `pg_settings` (name/setting), SQLite a curated set of `PRAGMA` results. The
+/// value is always rendered as text — the panel is read-only and never edits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerVariable {
+    pub name: String,
+    pub value: String,
+}
+
+/// Read-only snapshot of the connected server for the server-info panel (#563):
+/// its version string and a searchable list of configuration variables. Active
+/// connections are not duplicated here — the process monitor
+/// ([`ProcessInfo`]) already covers them. Gathered purely with read-only
+/// queries; no secret or connection-string material is included.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerInfo {
+    pub version: String,
+    pub variables: Vec<ServerVariable>,
+}
+
 /// One server-side process/connection shown in the process monitor panel.
 /// MySQL maps rows from `processlist` (ID/USER/HOST/DB/COMMAND/STATE/TIME/
 /// INFO), PostgreSQL from `pg_stat_activity` (pid/usename/client addr/datname/

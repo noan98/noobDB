@@ -6,7 +6,8 @@ use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
+    ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
+    TableSizeInfo, Value,
 };
 use super::{build_insert_sql, init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
@@ -632,6 +633,108 @@ impl SqliteConn {
         // runs. A COUNT(*) per table would be a full scan — exactly what this
         // feature avoids — so we report no estimates and the UI shows none.
         Ok(Vec::new())
+    }
+
+    pub async fn table_sizes(&self, db: &str) -> Result<Vec<TableSizeInfo>> {
+        // `dbstat` is a virtual table that reports a page row per b-tree, so
+        // SUM(pgsize) grouped through sqlite_master gives real on-disk bytes for
+        // each table and (separately) its indexes — no scan of user data. It is
+        // only present when SQLite was built with SQLITE_ENABLE_DBSTAT_VTAB; if
+        // not, the query errors and we fall back to listing tables with no
+        // sizes (mirroring `table_row_estimates`' "no cheap stat" behaviour).
+        // SQLite keeps no cheap row estimate, so `row_estimate` is always None.
+        let dbstat: std::result::Result<Vec<SqliteRow>, _> = sqlx::query(
+            r#"SELECT m.tbl_name,
+                      SUM(CASE WHEN m.type = 'table' THEN s.pgsize ELSE 0 END) AS data_bytes,
+                      SUM(CASE WHEN m.type = 'index' THEN s.pgsize ELSE 0 END) AS index_bytes
+               FROM dbstat s
+               JOIN sqlite_master m ON m.name = s.name
+               WHERE m.type IN ('table', 'index')
+                 AND m.tbl_name NOT LIKE 'sqlite\_%' ESCAPE '\'
+               GROUP BY m.tbl_name
+               ORDER BY m.tbl_name"#,
+        )
+        .fetch_all(&self.pool)
+        .await;
+
+        if let Ok(rows) = dbstat {
+            return Ok(rows
+                .into_iter()
+                .map(|r| {
+                    let data = r.try_get::<Option<i64>, _>(1).ok().flatten();
+                    let index = r.try_get::<Option<i64>, _>(2).ok().flatten();
+                    TableSizeInfo {
+                        name: r.try_get::<String, _>(0).unwrap_or_default(),
+                        row_estimate: None,
+                        data_bytes: data,
+                        index_bytes: index,
+                        total_bytes: super::sum_size_parts(data, index),
+                    }
+                })
+                .collect());
+        }
+
+        // dbstat unavailable: still return one row per base table so the panel
+        // lists them, just without byte figures.
+        let tables = self.tables(db).await?;
+        Ok(tables
+            .into_iter()
+            .map(|name| TableSizeInfo {
+                name,
+                row_estimate: None,
+                data_bytes: None,
+                index_bytes: None,
+                total_bytes: None,
+            })
+            .collect())
+    }
+
+    pub async fn server_info(&self) -> Result<ServerInfo> {
+        let version: String = sqlx::query_scalar("SELECT sqlite_version()")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or_default();
+        // SQLite has no SHOW VARIABLES; expose a curated set of PRAGMAs that
+        // describe the file/connection. Each `PRAGMA x` returns a single scalar.
+        // Skipped silently when a PRAGMA is unsupported on the running build.
+        const PRAGMAS: &[&str] = &[
+            "page_size",
+            "page_count",
+            "freelist_count",
+            "cache_size",
+            "journal_mode",
+            "synchronous",
+            "foreign_keys",
+            "encoding",
+            "auto_vacuum",
+            "wal_autocheckpoint",
+            "user_version",
+            "application_id",
+            "busy_timeout",
+            "temp_store",
+        ];
+        let mut variables = Vec::with_capacity(PRAGMAS.len());
+        for name in PRAGMAS {
+            // PRAGMA names come from the fixed allow-list above, never user
+            // input, so the formatted query is safe.
+            let row: Option<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA {name}")))
+                .fetch_optional(&self.pool)
+                .await
+                .unwrap_or(None);
+            if let Some(r) = row {
+                // PRAGMA results may be integer or text depending on the pragma.
+                let value = r
+                    .try_get::<i64, _>(0)
+                    .map(|v| v.to_string())
+                    .or_else(|_| r.try_get::<String, _>(0))
+                    .unwrap_or_default();
+                variables.push(ServerVariable {
+                    name: (*name).to_string(),
+                    value,
+                });
+            }
+        }
+        Ok(ServerInfo { version, variables })
     }
 }
 

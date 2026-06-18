@@ -158,6 +158,71 @@ async fn postgres_roundtrip_when_env_set() {
     conn.close().await;
 }
 
+/// `table_sizes` must report a base table with byte figures from the
+/// `pg_*_size` functions, and `total == data + index`-ish (pg_total_relation_size
+/// also includes TOAST/FSM/VM, so we only assert total >= indexes and >= 0).
+/// `server_info` must return a version and a non-empty pg_settings list.
+#[tokio::test]
+async fn postgres_table_sizes_and_server_info() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_sizes", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE public.noobdb_pg_sizes (id INT PRIMARY KEY, label TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "CREATE INDEX noobdb_pg_sizes_label ON public.noobdb_pg_sizes(label)",
+        None,
+    )
+    .await
+    .expect("index");
+    conn.execute(
+        "INSERT INTO public.noobdb_pg_sizes SELECT g, 'row-' || g FROM generate_series(1, 200) g",
+        None,
+    )
+    .await
+    .expect("seed");
+    conn.execute("ANALYZE public.noobdb_pg_sizes", None)
+        .await
+        .expect("analyze");
+
+    let sizes = conn.table_sizes("public").await.expect("table_sizes");
+    let row = sizes
+        .iter()
+        .find(|s| s.name == "noobdb_pg_sizes")
+        .expect("table must appear in sizes");
+    assert!(
+        row.row_estimate.unwrap_or(0) > 0,
+        "reltuples after ANALYZE should be positive: {row:?}"
+    );
+    let total = row.total_bytes.expect("total bytes present");
+    let index = row.index_bytes.expect("index bytes present");
+    assert!(total >= index, "total must be >= index size: {row:?}");
+    assert!(total > 0, "a seeded table must use storage: {row:?}");
+
+    let info = conn.server_info().await.expect("server_info");
+    assert!(!info.version.is_empty(), "version must be reported");
+    assert!(
+        info.variables.iter().any(|v| v.name == "server_version"),
+        "pg_settings must include server_version"
+    );
+
+    conn.execute("DROP TABLE public.noobdb_pg_sizes", None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
+
 /// list_indexes / schema_objects + object_definition (oid 識別子) /
 /// 明示トランザクション / health_check を PostgreSQL 上で実行する。
 /// CI のサービスコンテナで実走し、ドライバメソッドの動作とカバレッジを担保する。

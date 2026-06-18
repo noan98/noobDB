@@ -39,6 +39,7 @@ import {
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
+import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import { quoteIdentFor } from "./components/sqlDialect";
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
@@ -129,6 +130,12 @@ const PinnedComparisonView = lazy(() =>
 );
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
+);
+const TableStatisticsPanel = lazy(() =>
+  import("./components/TableStatisticsPanel").then((m) => ({ default: m.TableStatisticsPanel })),
+);
+const ServerInfoPanel = lazy(() =>
+  import("./components/ServerInfoPanel").then((m) => ({ default: m.ServerInfoPanel })),
 );
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
@@ -759,6 +766,11 @@ export default function App() {
   const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
   // プロセスモニタパネル (processlist / pg_stat_activity + KILL) の開閉。
   const [showProcesses, setShowProcesses] = useState(false);
+  // サーバ情報パネル (バージョン・設定変数) の開閉。#563。
+  const [showServerInfo, setShowServerInfo] = useState(false);
+  // サイズ・統計ダッシュボードの対象データベース (null = 非表示)。#562。
+  const [sizesTarget, setSizesTarget] = useState<string | null>(null);
+  const showSizes = sizesTarget !== null;
   // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
   // 状態には依存させない。
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -3037,6 +3049,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3049,6 +3062,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3400,7 +3414,7 @@ export default function App() {
   }, [toast]);
 
   // 破壊的操作の確認メッセージ。本番接続では追加警告を添える。
-  const maintenanceMessage = useCallback((body: string): ReactNode => {
+  const maintenanceMessage = useCallback((body: ReactNode): ReactNode => {
     if (selectedProfile?.is_production) {
       return (
         <>
@@ -3462,6 +3476,81 @@ export default function App() {
     }
   }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl]);
 
+  // テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
+  // 生成済み SQL を確認ダイアログで提示し、承認後に既存のクエリ経路で実行する。
+  // データは消さないが書き込み/ロックを伴うため、本番接続では追加警告を出す。
+  const handleRunTableMaintenance = useCallback(
+    async (database: string, table: string, command: MaintenanceCommand) => {
+      const ok = await confirm({
+        title: translate("maintenanceConfirmTitle", { table }),
+        message: maintenanceMessage(
+          <>
+            {translate("maintenanceConfirmBody", { target: table })}
+            <br />
+            <br />
+            <chakra.code
+              display="block"
+              fontFamily="var(--font-mono)"
+              fontSize="sm"
+              whiteSpace="pre-wrap"
+              wordBreak="break-all"
+            >
+              {command.sql}
+            </chakra.code>
+          </>,
+        ),
+        confirmLabel: translate("maintenanceConfirmOk"),
+      });
+      if (!ok) return;
+      const success = await runMaintenanceDdl(command.sql, database);
+      if (success) toast.success(translate("maintenanceDone", { target: table }));
+    },
+    [confirm, maintenanceMessage, runMaintenanceDdl, toast],
+  );
+
+  // DB 全体の保守コマンド (SQLite VACUUM / PostgreSQL VACUUM・ANALYZE 等)。#561。
+  const handleRunDatabaseMaintenance = useCallback(
+    async (database: string, command: MaintenanceCommand) => {
+      const ok = await confirm({
+        title: translate("maintenanceConfirmDbTitle", { database }),
+        message: maintenanceMessage(
+          <>
+            {translate("maintenanceConfirmBody", { target: database })}
+            <br />
+            <br />
+            <chakra.code
+              display="block"
+              fontFamily="var(--font-mono)"
+              fontSize="sm"
+              whiteSpace="pre-wrap"
+              wordBreak="break-all"
+            >
+              {command.sql}
+            </chakra.code>
+          </>,
+        ),
+        confirmLabel: translate("maintenanceConfirmOk"),
+      });
+      if (!ok) return;
+      const success = await runMaintenanceDdl(command.sql, database);
+      if (success) toast.success(translate("maintenanceDone", { target: database }));
+    },
+    [confirm, maintenanceMessage, runMaintenanceDdl, toast],
+  );
+
+  // サイズ・統計ダッシュボードを対象 DB で開く。#562。他の全画面ビューは閉じる。
+  const handleShowDatabaseSizes = useCallback((database: string) => {
+    setEditing(null);
+    setShowForm(false);
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false);
+    setShowSnippetForm(false);
+    setSizesTarget(database);
+  }, []);
+
   const handleRunTableSelect = useCallback((database: string, table: string) => {
     const limit = Math.max(1, settings.defaultDisplayCount);
     const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
@@ -3494,6 +3583,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowSnippetForm(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -3505,6 +3595,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3518,6 +3609,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3674,7 +3766,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -3732,7 +3824,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -3779,7 +3871,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses ||
+        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
       ) {
         return;
@@ -3821,6 +3913,8 @@ export default function App() {
     showCompareResults,
     showErd,
     showProcesses,
+    showServerInfo,
+    showSizes,
     showSnippetForm,
     showCommandPalette,
     showObjectSearch,
@@ -3906,7 +4000,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses ||
+        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
@@ -3949,6 +4043,8 @@ export default function App() {
     showCompareResults,
     showErd,
     showProcesses,
+    showServerInfo,
+    showSizes,
     showSnippetForm,
     showCommandPalette,
     showObjectSearch,
@@ -3964,19 +4060,21 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "compareResults" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "compareResults" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
     else if (view === "help") setShowHelp(true);
     else if (view === "compare") setShowCompare(true);
     else if (view === "erDiagram") setShowErd(true);
     else if (view === "processes") setShowProcesses(true);
+    else if (view === "serverInfo") setShowServerInfo(true);
     else if (view === "compareResults") setShowCompareResults(true);
     else if (view === "newConnection") {
       setShowForm(true);
@@ -4762,6 +4860,7 @@ export default function App() {
                   setShowHelp(false);
                   setShowCompare(false);
                   setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
                   setShowForm(false);
                   setShowSnippetForm(true);
                   setFormInstanceId((n) => n + 1);
@@ -4785,7 +4884,7 @@ export default function App() {
                   <Icon name="transfer" />
                 </IconButton>
                 <IconButton
-                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowCompareResults(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowCompareResults(false); setShowServerInfo(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                   title={t("appNew")}
                   aria-label={t("appNew")}
                 >
@@ -4871,6 +4970,9 @@ export default function App() {
             onTruncateTable={handleTruncateTable}
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
+            onRunTableMaintenance={handleRunTableMaintenance}
+            onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
+            onShowDatabaseSizes={handleShowDatabaseSizes}
             onCopyTableName={handleCopyTableName}
             onOpenObjectDefinition={handleOpenObjectDefinition}
           />
@@ -5035,6 +5137,14 @@ export default function App() {
             sessionId={sessionId}
             readOnly={selectedProfile?.read_only ?? false}
             onClose={() => setShowProcesses(false)}
+          />
+        ) : showServerInfo && sessionId ? (
+          <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
+        ) : showSizes && sizesTarget && sessionId ? (
+          <TableStatisticsPanel
+            sessionId={sessionId}
+            database={sizesTarget}
+            onClose={() => setSizesTarget(null)}
           />
         ) : showCompareResults ? (
           <PinnedComparisonView
@@ -5601,6 +5711,21 @@ export default function App() {
                 : selectedProfile?.driver === "sqlite"
                   ? t("appProcessesUnsupported")
                   : undefined,
+            },
+            {
+              label: t("serverInfoMenuLabel"),
+              onSelect: () => openFullView("serverInfo"),
+              disabled: !sessionId,
+              title: !sessionId ? t("appToolsNeedsSession") : undefined,
+            },
+            {
+              label: t("sizeMenuLabel"),
+              onSelect: () => {
+                const db = activeTab?.database ?? selectedProfile?.database ?? null;
+                if (db) handleShowDatabaseSizes(db);
+              },
+              disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
+              title: !sessionId ? t("appToolsNeedsSession") : undefined,
             },
             {
               label: t("appPinCompare", { count: pinnedResults.length }),

@@ -12,7 +12,14 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import {
+  databaseMaintenanceCommands,
+  tableMaintenanceCommands,
+  type MaintenanceCommand,
+  type MaintenanceKind,
+} from "./maintenanceCommands";
 import { Input } from "./ui";
+import type { I18nKey } from "../i18n";
 import {
   MotionTreeNode,
   MotionTreeRow,
@@ -89,6 +96,17 @@ function driverColor(driver: string): string {
       return "var(--accent)";
   }
 }
+
+/** 保守コマンド種別ごとのメニューラベル i18n キー。#561。 */
+const MAINTENANCE_LABEL_KEYS: Record<MaintenanceKind, I18nKey> = {
+  analyze: "maintenanceAnalyze",
+  optimize: "maintenanceOptimize",
+  check: "maintenanceCheck",
+  repair: "maintenanceRepair",
+  vacuum: "maintenanceVacuum",
+  vacuumAnalyze: "maintenanceVacuumAnalyze",
+  reindex: "maintenanceReindex",
+};
 
 /** 接続リストのグループ折りたたみ状態を永続化する localStorage キー。
  *  既定はすべて展開なので、明示的に「閉じている」グループ key の配列だけを保存する。 */
@@ -204,6 +222,13 @@ interface Props {
   onTruncateTable?: (database: string, table: string) => void;
   onDropTable?: (database: string, table: string) => void;
   onRenameTable?: (database: string, table: string) => void;
+  /** テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
+   *  生成済み SQL を渡し、確認 + 実行は呼び出し側 (App) が担う。read_only では無効化。 */
+  onRunTableMaintenance?: (database: string, table: string, command: MaintenanceCommand) => void;
+  /** DB 全体の保守コマンド (SQLite VACUUM / PostgreSQL VACUUM・ANALYZE 等)。#561。 */
+  onRunDatabaseMaintenance?: (database: string, command: MaintenanceCommand) => void;
+  /** DB ノードからサイズ・統計ダッシュボードを開く。#562。 */
+  onShowDatabaseSizes?: (database: string) => void;
   /** テーブル名をクリップボードへコピー。 */
   onCopyTableName?: (table: string) => void;
   /** スキーマオブジェクトの定義を開く。`id` は同名衝突を避ける一意識別子。 */
@@ -252,6 +277,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onTruncateTable,
   onDropTable,
   onRenameTable,
+  onRunTableMaintenance,
+  onRunDatabaseMaintenance,
+  onShowDatabaseSizes,
   onCopyTableName,
   onOpenObjectDefinition,
   selectLimit,
@@ -560,6 +588,24 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         });
       }
     }
+    // テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
+    // ドライバ別に利用可能なものだけを提示する。データは消さないが書き込み/ロックを
+    // 伴うため read_only では無効化し、実行時は App が確認ダイアログを挟む。
+    if (onRunTableMaintenance) {
+      const commands = tableMaintenanceCommands(activeDriver, db, tbl);
+      if (commands.length > 0) {
+        const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
+        items.push({ separator: true });
+        for (const command of commands) {
+          items.push({
+            label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
+            onSelect: () => onRunTableMaintenance(db, tbl, command),
+            disabled: activeReadOnly,
+            title: roTitle,
+          });
+        }
+      }
+    }
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
@@ -576,6 +622,26 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       });
     }
     items.push({ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) });
+    if (onShowDatabaseSizes) {
+      items.push({ label: t("sizeMenuLabel"), onSelect: () => onShowDatabaseSizes(db) });
+    }
+    // DB 全体の保守コマンド (#561)。SQLite/PostgreSQL のみ対象 (MySQL はグローバル
+    // 保守文が無いため空)。データは消さないが書き込み/ロックを伴うため read_only で無効化。
+    if (onRunDatabaseMaintenance) {
+      const commands = databaseMaintenanceCommands(activeDriver);
+      if (commands.length > 0) {
+        const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
+        items.push({ separator: true });
+        for (const command of commands) {
+          items.push({
+            label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
+            onSelect: () => onRunDatabaseMaintenance(db, command),
+            disabled: activeReadOnly,
+            title: roTitle,
+          });
+        }
+      }
+    }
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
@@ -673,6 +739,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // The schema tree only shows the active connection, so its read-only flag
   // governs whether write-y table actions (Import CSV) are offered.
   const activeReadOnly = !!profiles.find((p) => p.id === activeProfileId)?.read_only;
+  // 保守コマンドの SQL 方言はアクティブ接続のドライバで決まる (ツリーは
+  // アクティブ接続のみを表示する)。
+  const activeDriver = profiles.find((p) => p.id === activeProfileId)?.driver ?? "mysql";
 
   const profileMetaMatches = useCallback(
     (p: ConnectionProfile) =>

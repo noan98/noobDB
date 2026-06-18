@@ -6,7 +6,8 @@ use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
+    ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
+    TableSizeInfo, Value,
 };
 use super::{init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
@@ -780,6 +781,68 @@ impl PostgresConn {
                 }
             })
             .collect())
+    }
+
+    pub async fn table_sizes(&self, schema: &str) -> Result<Vec<TableSizeInfo>> {
+        // pg_total_relation_size = table + all indexes + TOAST; pg_indexes_size
+        // = just the indexes; pg_table_size = total minus indexes (heap + TOAST
+        // + FSM/VM). These read catalog bookkeeping, not the heap, so no scan.
+        // reltuples is the planner's cached estimate (-1 == never analyzed,
+        // surfaced as None). relkind 'r'/'p' covers ordinary + partitioned
+        // tables; views/indexes are excluded.
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT c.relname,
+                      c.reltuples::bigint,
+                      pg_table_size(c.oid)::bigint,
+                      pg_indexes_size(c.oid)::bigint,
+                      pg_total_relation_size(c.oid)::bigint
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')
+               ORDER BY c.relname"#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let raw = r.try_get::<i64, _>(1).unwrap_or(-1);
+                TableSizeInfo {
+                    name: r.try_get::<String, _>(0).unwrap_or_default(),
+                    row_estimate: (raw >= 0).then_some(raw),
+                    data_bytes: r.try_get::<Option<i64>, _>(2).ok().flatten(),
+                    index_bytes: r.try_get::<Option<i64>, _>(3).ok().flatten(),
+                    total_bytes: r.try_get::<Option<i64>, _>(4).ok().flatten(),
+                }
+            })
+            .collect())
+    }
+
+    pub async fn server_info(&self) -> Result<ServerInfo> {
+        // current_setting('server_version') is the bare "16.2"; version() adds
+        // the build banner. The short form reads better as the headline; the
+        // full banner is still available as the `server_version` row below.
+        let version: String = sqlx::query_scalar("SELECT current_setting('server_version')")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or_default();
+        // pg_settings exposes every GUC as (name, setting). Read-only.
+        let rows: Vec<PgRow> = sqlx::query("SELECT name, setting FROM pg_settings ORDER BY name")
+            .fetch_all(&self.pool)
+            .await?;
+        let variables = rows
+            .into_iter()
+            .map(|r| ServerVariable {
+                name: r.try_get::<String, _>(0).unwrap_or_default(),
+                value: r
+                    .try_get::<Option<String>, _>(1)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+            })
+            .collect();
+        Ok(ServerInfo { version, variables })
     }
 }
 
