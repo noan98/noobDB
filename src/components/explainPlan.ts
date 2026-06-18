@@ -1,3 +1,5 @@
+import dagre from "@dagrejs/dagre";
+
 import type { I18nKey } from "../i18n";
 
 /**
@@ -154,6 +156,118 @@ export function parsePlan(json: string): { root: PlanNode | null; error: string 
   return { root: buildNode("plan", data, "plan"), error: null };
 }
 
+// --- PostgreSQL `EXPLAIN (FORMAT JSON)` -------------------------------------
+//
+// PostgreSQL は配列で `[{ "Plan": { "Node Type": ..., "Total Cost": ...,
+// "Plans": [ ... ] }, ... }]` を返す。各プランノードは "Node Type" を持ち、
+// "Plans" に子プランをぶら下げる (MySQL の構造的子と違い 1 つの配列キーで統一)。
+
+/** Postgres プランノードの代表ラベル: ノード種別 + 対象リレーション/インデックス。 */
+function pgLabel(obj: Record<string, unknown>): string {
+  const type = typeof obj["Node Type"] === "string" ? (obj["Node Type"] as string) : "Plan";
+  const rel = obj["Relation Name"];
+  const idx = obj["Index Name"];
+  if (typeof rel === "string") return `${type} on ${rel}`;
+  if (typeof idx === "string") return `${type} using ${idx}`;
+  return type;
+}
+
+function buildPgNode(obj: Record<string, unknown>, path: string): PlanNode {
+  const attrs: [string, unknown][] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === "Plans") continue; // structural children
+    if (isPlainObject(v)) continue;
+    if (Array.isArray(v)) {
+      if (isScalarArray(v)) attrs.push([k, v]);
+      continue;
+    }
+    attrs.push([k, v]);
+  }
+  const children: PlanNode[] = [];
+  const plans = obj["Plans"];
+  if (Array.isArray(plans)) {
+    plans.forEach((p, i) => {
+      if (isPlainObject(p)) children.push(buildPgNode(p, `${path}/${i}`));
+    });
+  }
+  const nodeType = typeof obj["Node Type"] === "string" ? (obj["Node Type"] as string) : "plan";
+  return {
+    id: path,
+    kind: nodeType,
+    label: pgLabel(obj),
+    cost: parseNum(obj["Total Cost"]),
+    attrs,
+    children,
+  };
+}
+
+export function parsePostgresPlan(
+  json: string,
+): { root: PlanNode | null; error: string | null } {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch (e) {
+    return { root: null, error: e instanceof Error ? e.message : String(e) };
+  }
+  // 通常は配列。最初の要素の `Plan` がルート。単一オブジェクトでの返却にも備える。
+  const first = Array.isArray(data) ? data[0] : data;
+  if (!isPlainObject(first)) return { root: null, error: "unexpected plan shape" };
+  const plan = isPlainObject(first.Plan) ? first.Plan : first;
+  if (!isPlainObject(plan)) return { root: null, error: "unexpected plan shape" };
+  return { root: buildPgNode(plan, "plan"), error: null };
+}
+
+// --- SQLite `EXPLAIN QUERY PLAN` -------------------------------------------
+//
+// SQLite はコスト情報を持たず、行ベースで `(id, parent, notused, detail)` を
+// 返す。`parent` リンクで木を組み立てる (深さは概して浅い)。`detail` が各ステップの
+// 説明 (例: "SCAN t", "SEARCH t USING INDEX ix (a=?)") で、ラベル兼ヒント判定対象。
+
+/** SQLite EXPLAIN QUERY PLAN の 1 行 (位置: id, parent, _, detail)。 */
+export interface SqlitePlanRow {
+  id: number;
+  parent: number;
+  detail: string;
+}
+
+export function parseSqlitePlan(
+  rows: SqlitePlanRow[],
+): { root: PlanNode | null; error: string | null } {
+  const byParent = new Map<number, SqlitePlanRow[]>();
+  for (const r of rows) {
+    const list = byParent.get(r.parent) ?? [];
+    list.push(r);
+    byParent.set(r.parent, list);
+  }
+  const build = (row: SqlitePlanRow, path: string): PlanNode => {
+    const kids = byParent.get(row.id) ?? [];
+    return {
+      id: path,
+      kind: "sqliteStep",
+      label: row.detail,
+      cost: null,
+      attrs: [["detail", row.detail]],
+      children: kids.map((k, i) => build(k, `${path}/${i}`)),
+    };
+  };
+  // SQLite のトップレベル行は parent 0 を指す。複数あれば合成ルートでまとめる。
+  const tops = byParent.get(0) ?? [];
+  if (tops.length === 0) return { root: null, error: null };
+  if (tops.length === 1) return { root: build(tops[0], "plan"), error: null };
+  return {
+    root: {
+      id: "plan",
+      kind: "queryPlan",
+      label: "QUERY PLAN",
+      cost: null,
+      attrs: [],
+      children: tops.map((tp, i) => build(tp, `plan/${i}`)),
+    },
+    error: null,
+  };
+}
+
 export function maxCost(node: PlanNode): number {
   let m = node.cost ?? 0;
   for (const c of node.children) m = Math.max(m, maxCost(c));
@@ -253,6 +367,35 @@ export function computeHints(node: PlanNode): PlanHint[] {
     hints.push({ severity: "caution", key: "explainHintFilesort" });
   }
 
+  // PostgreSQL: nodes carry a "Node Type" attribute. A sequential scan is the
+  // headline anti-pattern; very large estimated row counts scale poorly.
+  const pgType = attrVal(node, "Node Type");
+  if (typeof pgType === "string") {
+    if (pgType === "Seq Scan") {
+      hints.push({ severity: "warning", key: "explainHintFullScan" });
+    }
+    if (typeof attrVal(node, "Index Name") === "string" && pgType.includes("Index Only")) {
+      hints.push({ severity: "info", key: "explainHintCoveringIndex" });
+    }
+    const pgRows = parseNum(attrVal(node, "Plan Rows"));
+    if (pgRows !== null && pgRows >= ROWS_WARNING_THRESHOLD) {
+      hints.push({ severity: "warning", key: "explainHintManyRows" });
+    } else if (pgRows !== null && pgRows >= ROWS_CAUTION_THRESHOLD) {
+      hints.push({ severity: "caution", key: "explainHintManyRows" });
+    }
+  }
+
+  // SQLite: the step `detail` text encodes the access path. A bare table SCAN is
+  // a full scan; a covering index is a positive signal.
+  const detail = attrVal(node, "detail");
+  if (typeof detail === "string") {
+    if (/USING COVERING INDEX/i.test(detail)) {
+      hints.push({ severity: "info", key: "explainHintCoveringIndex" });
+    } else if (/^\s*SCAN\b/i.test(detail) && !/USING (COVERING )?INDEX/i.test(detail)) {
+      hints.push({ severity: "caution", key: "explainHintFullScan" });
+    }
+  }
+
   return hints;
 }
 
@@ -347,4 +490,119 @@ export function scorePlan(root: PlanNode): PlanScore {
     riskScore: Math.round(riskScore),
     costMissing: missing,
   };
+}
+
+// --- ノードツリーのグラフレイアウト (#623) ---------------------------------
+//
+// PlanNode の木を @xyflow/react + @dagrejs/dagre で描く node-link 図に変換する
+// 純ロジック。ER 図 (`erDiagram.ts`) のレイアウト作法を踏襲し、React/React Flow
+// 非依存で単体テストできる。`ExplainGraphView.tsx` が位置付きノード/エッジを描画。
+
+/** プラングラフの 1 ノード (PlanNode をそのまま data として運ぶ)。 */
+export interface PlanGraphNode {
+  id: string;
+  node: PlanNode;
+}
+
+/** 親 → 子のツリーエッジ 1 本。 */
+export interface PlanGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+export interface PlanGraph {
+  nodes: PlanGraphNode[];
+  edges: PlanGraphEdge[];
+}
+
+export interface PositionedPlanNode extends PlanGraphNode {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PositionedPlanGraph {
+  nodes: PositionedPlanNode[];
+  edges: PlanGraphEdge[];
+}
+
+/** Plan ノードカードの寸法。dagre が実寸でレイアウトできるよう view と共有する。 */
+export const PLAN_NODE_MIN_WIDTH = 160;
+export const PLAN_NODE_MAX_WIDTH = 320;
+export const PLAN_NODE_HEIGHT = 64;
+const PLAN_CHAR_WIDTH = 7.3;
+const PLAN_NODE_HPAD = 28;
+
+/** ラベル長に応じた可変ノード幅 (min/max でクランプ)。長名はビューで省略。 */
+export function planNodeWidth(node: PlanNode): number {
+  const raw = PLAN_NODE_HPAD + node.label.length * PLAN_CHAR_WIDTH;
+  return Math.round(Math.max(PLAN_NODE_MIN_WIDTH, Math.min(PLAN_NODE_MAX_WIDTH, raw)));
+}
+
+/** PlanNode ツリーを (未配置の) ノード/エッジ列に平坦化する。 */
+export function buildPlanGraph(root: PlanNode | null): PlanGraph {
+  const nodes: PlanGraphNode[] = [];
+  const edges: PlanGraphEdge[] = [];
+  if (!root) return { nodes, edges };
+  const walk = (n: PlanNode) => {
+    nodes.push({ id: n.id, node: n });
+    for (const c of n.children) {
+      edges.push({ id: `${n.id}->${c.id}`, source: n.id, target: c.id });
+      walk(c);
+    }
+  };
+  walk(root);
+  return { nodes, edges };
+}
+
+/**
+ * dagre でプラングラフを配置する。プランは上から下へ実行木を読むのが自然なので
+ * 既定は TB (top-to-bottom)。dagre はノード中心を返すので React Flow 用に左上へ
+ * シフトする (`layoutErGraph` と同じ作法)。
+ */
+export function layoutPlanGraph(graph: PlanGraph): PositionedPlanGraph {
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "TB", nodesep: 28, ranksep: 56, marginx: 24, marginy: 24 });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  const sizes = new Map<string, { width: number; height: number }>();
+  for (const n of graph.nodes) {
+    const width = planNodeWidth(n.node);
+    const height = PLAN_NODE_HEIGHT;
+    sizes.set(n.id, { width, height });
+    g.setNode(n.id, { width, height });
+  }
+  for (const e of graph.edges) {
+    if (g.hasNode(e.source) && g.hasNode(e.target)) g.setEdge(e.source, e.target);
+  }
+
+  dagre.layout(g);
+
+  const nodes: PositionedPlanNode[] = graph.nodes.map((n) => {
+    const size = sizes.get(n.id)!;
+    const pos = g.node(n.id) as { x?: number; y?: number } | undefined;
+    const cx = pos?.x ?? 0;
+    const cy = pos?.y ?? 0;
+    return {
+      ...n,
+      x: cx - size.width / 2,
+      y: cy - size.height / 2,
+      width: size.width,
+      height: size.height,
+    };
+  });
+  return { nodes, edges: graph.edges };
+}
+
+/**
+ * ノードコストを最大コストに対する 0–1 のヒート値へ正規化する。コストが無い
+ * (null) か最大が 0 以下なら null (中立色) を返す。`heatFor` の帯と整合する線形
+ * 比率で、`colorScale` の sequential ランプに渡してヒートマップ着色に使う。
+ */
+export function heatT(cost: number | null, max: number): number | null {
+  if (cost === null || max <= 0) return null;
+  const r = cost / max;
+  return r < 0 ? 0 : r > 1 ? 1 : r;
 }

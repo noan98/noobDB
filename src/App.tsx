@@ -379,7 +379,13 @@ const SidebarTabButton = forwardRef<
 
 type TabKind = "table" | "query" | "explain";
 
-const EXPLAIN_PREFIX = "EXPLAIN FORMAT=JSON ";
+// EXPLAIN の方言別プレフィックス。MySQL/PostgreSQL は JSON プラン、SQLite は
+// `EXPLAIN QUERY PLAN` (行ベース)。ExplainViewer が driver でパーサを切り替える。
+function explainPrefixFor(driver: string | undefined): string {
+  if (driver === "postgres") return "EXPLAIN (FORMAT JSON) ";
+  if (driver === "sqlite") return "EXPLAIN QUERY PLAN ";
+  return "EXPLAIN FORMAT=JSON ";
+}
 
 interface Tab {
   id: string;
@@ -2780,7 +2786,7 @@ export default function App() {
     // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
     // it never trips the destructive-query gate or auto LIMIT.
     if (tab.kind === "explain") {
-      runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
+      runQueryInTab(tab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
       return;
     }
     // 複数結果タブ: 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
@@ -2851,6 +2857,7 @@ export default function App() {
     settings.autoLimitEnabled,
     settings.autoLimitCount,
     settings.resultsInNewTab,
+    selectedProfile?.driver,
   ]);
 
   const handleConfirmDangerous = useCallback(() => {
@@ -2883,14 +2890,14 @@ export default function App() {
     // Re-explain in place when already on an explain tab; otherwise open a
     // dedicated explain tab in the same pane so the source is left untouched.
     if (sourceTab.kind === "explain") {
-      runQueryInTab(sourceTab.id, `${EXPLAIN_PREFIX}${sql}`);
+      runQueryInTab(sourceTab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
       return;
     }
     const owner = panesRef.current.find((p) => p.tabIds.includes(sourceTab.id));
     const tab = makeExplainTab(sql);
     addTab(tab, owner?.id);
-    runQueryInTab(tab.id, `${EXPLAIN_PREFIX}${sql}`);
-  }, [runQueryInTab, addTab]);
+    runQueryInTab(tab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
+  }, [runQueryInTab, addTab, selectedProfile?.driver]);
 
   // Run the resolved SQL through whichever action the user triggered. Used both
   // directly (no parameters) and after the parameter modal substitutes values.
@@ -4304,7 +4311,11 @@ export default function App() {
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   {tab.kind === "explain" ? (
-                    <ExplainViewer result={tab.result} streaming={tab.streaming} />
+                    <ExplainViewer
+                      result={tab.result}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                      streaming={tab.streaming}
+                    />
                   ) : tab.batchResults ? (
                     <BatchResultsView
                       results={tab.batchResults}
