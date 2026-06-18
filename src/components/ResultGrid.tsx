@@ -841,6 +841,13 @@ interface Props {
    */
   maximized?: boolean;
   onToggleMaximize?: () => void;
+  /**
+   * When provided, a "pin result" button appears in the toolbar so the current
+   * result set can be kept for side-by-side comparison (#622). Disabled while
+   * there is no settled result.
+   */
+  onPinResult?: () => void;
+  canPinResult?: boolean;
 }
 
 export interface ResultGridHandle {
@@ -3985,6 +3992,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onRunStatsQuery,
   maximized,
   onToggleMaximize,
+  onPinResult,
+  canPinResult,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -4681,6 +4690,21 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           placeholder={t("gridSearchPlaceholder")}
           aria-label={t("gridSearchAria")}
         />
+        {onPinResult && (
+          <Button
+            variant="secondary"
+            size="sm"
+            px="1.5"
+            marginLeft="1.5"
+            flexShrink={0}
+            onClick={onPinResult}
+            disabled={!canPinResult}
+            title={t("pinResultTitle")}
+            aria-label={t("pinResultTitle")}
+          >
+            <Icon name="pin" />
+          </Button>
+        )}
         {onToggleMaximize && (
           <Button
             variant="secondary"

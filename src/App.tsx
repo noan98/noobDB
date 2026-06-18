@@ -123,6 +123,9 @@ const SchemaCompareView = lazy(() =>
 const ERDiagramView = lazy(() =>
   import("./components/ERDiagramView").then((m) => ({ default: m.ERDiagramView })),
 );
+const PinnedComparisonView = lazy(() =>
+  import("./components/PinnedComparisonView").then((m) => ({ default: m.PinnedComparisonView })),
+);
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
@@ -153,6 +156,7 @@ import {
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
 import { incomingForeignKeys } from "./fkNavigation";
+import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent } from "./shortcutKeys";
@@ -746,6 +750,9 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
   const [showErd, setShowErd] = useState(false);
+  // ピン留め結果の比較ビュー (#622)。保持はメモリのみ・上限あり (addPinned)。
+  const [showCompareResults, setShowCompareResults] = useState(false);
+  const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
   // プロセスモニタパネル (processlist / pg_stat_activity + KILL) の開閉。
   const [showProcesses, setShowProcesses] = useState(false);
   // コマンドパレット (Cmd/Ctrl+K) の開閉。接続前でも開けるよう、他ビューの
@@ -2899,6 +2906,23 @@ export default function App() {
     runQueryInTab(tab.id, `${explainPrefixFor(selectedProfile?.driver)}${sql}`);
   }, [runQueryInTab, addTab, selectedProfile?.driver]);
 
+  // 現在のタブの結果セットをピン留めして保持する (#622)。スナップショットなので
+  // 以降タブを再実行・破棄しても比較ビューに残る。上限超過時は古い順に破棄。
+  const pinCurrentResult = useCallback((tab: Tab) => {
+    if (!tab.result) return;
+    const item: PinnedResult = {
+      id: `pin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title: tab.title || deriveResultTabTitle(tab.lastExecutedSql) || "result",
+      sql: tab.lastExecutedSql,
+      columns: tab.result.columns,
+      rows: tab.result.rows,
+      rowsAffected: tab.result.rows_affected,
+      elapsedMs: tab.result.elapsed_ms,
+      pinnedAt: Date.now(),
+    };
+    setPinnedResults((prev) => addPinned(prev, item));
+  }, []);
+
   // Run the resolved SQL through whichever action the user triggered. Used both
   // directly (no parameters) and after the parameter modal substitutes values.
   const dispatchEditorAction = useCallback(
@@ -2980,7 +3004,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -2992,7 +3016,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3437,7 +3461,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowSnippetForm(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -3448,7 +3472,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3461,7 +3485,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3902,19 +3926,20 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "compareResults" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
     else if (view === "help") setShowHelp(true);
     else if (view === "compare") setShowCompare(true);
     else if (view === "erDiagram") setShowErd(true);
     else if (view === "processes") setShowProcesses(true);
+    else if (view === "compareResults") setShowCompareResults(true);
     else if (view === "newConnection") {
       setShowForm(true);
       setFormInstanceId((n) => n + 1);
@@ -3975,6 +4000,14 @@ export default function App() {
         icon: "diff",
         keywords: "schema compare diff スキーマ 比較",
         run: () => openFullView("compare"),
+      },
+      {
+        id: "nav:compare-results",
+        group: "navigation",
+        label: t("appPinCompare", { count: pinnedResults.length }),
+        icon: "pin",
+        keywords: "pin pinned result compare diff ピン 結果 比較 差分",
+        run: () => openFullView("compareResults"),
       },
       {
         id: "nav:toggle-theme",
@@ -4082,6 +4115,7 @@ export default function App() {
     handleRestoreHistory,
     openFullView,
     toggleTheme,
+    pinnedResults.length,
   ]);
 
   // Clean up any active listeners when the app unmounts.
@@ -4474,6 +4508,8 @@ export default function App() {
                       lastEditAppliedAt={tab.lastEditAppliedAt}
                       maximized={maximized}
                       onToggleMaximize={() => setResultMaximized((v) => !v)}
+                      onPinResult={() => pinCurrentResult(tab)}
+                      canPinResult={!!tab.result && !tab.streaming}
                     />
                     {tab.kind === "table" && tab.paginatable && tab.result && !tab.streaming && (
                       <PaginationBar
@@ -4621,7 +4657,7 @@ export default function App() {
                   setShowSettings(false);
                   setShowHelp(false);
                   setShowCompare(false);
-                  setShowErd(false); setShowProcesses(false);
+                  setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
                   setShowForm(false);
                   setShowSnippetForm(true);
                   setFormInstanceId((n) => n + 1);
@@ -4645,7 +4681,7 @@ export default function App() {
                   <Icon name="transfer" />
                 </IconButton>
                 <IconButton
-                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowCompareResults(false); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                   title={t("appNew")}
                   aria-label={t("appNew")}
                 >
@@ -4895,6 +4931,14 @@ export default function App() {
             sessionId={sessionId}
             readOnly={selectedProfile?.read_only ?? false}
             onClose={() => setShowProcesses(false)}
+          />
+        ) : showCompareResults ? (
+          <PinnedComparisonView
+            pinned={pinnedResults}
+            driver={selectedProfile?.driver ?? "mysql"}
+            onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
+            onClear={() => setPinnedResults([])}
+            onClose={() => setShowCompareResults(false)}
           />
         ) : showForm ? (
           <ConnectionForm
@@ -5453,6 +5497,12 @@ export default function App() {
                 : selectedProfile?.driver === "sqlite"
                   ? t("appProcessesUnsupported")
                   : undefined,
+            },
+            {
+              label: t("appPinCompare", { count: pinnedResults.length }),
+              onSelect: () => openFullView("compareResults"),
+              disabled: pinnedResults.length === 0,
+              title: pinnedResults.length === 0 ? t("pinCompareEmptyHint") : undefined,
             },
           ]}
           onClose={() => setToolsMenu(null)}
