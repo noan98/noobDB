@@ -179,6 +179,115 @@ async fn sqlite_table_row_estimates_are_empty() {
 }
 
 #[tokio::test]
+async fn sqlite_table_sizes_list_every_base_table() {
+    // The size dashboard (#562) must list one row per base table. Byte figures
+    // come from `dbstat` when the SQLite build exposes it; if not, sizes are
+    // None but the table list itself is still complete. Either way SQLite keeps
+    // no cheap row estimate, so `row_estimate` is always None.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_sizes_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute(
+        "CREATE TABLE size_a (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create a");
+    conn.execute(
+        "CREATE TABLE size_b (id INTEGER PRIMARY KEY, note TEXT)",
+        None,
+    )
+    .await
+    .expect("create b");
+    conn.execute("CREATE INDEX size_a_label ON size_a(label)", None)
+        .await
+        .expect("create index");
+    // A view must never appear in table_sizes (base tables only).
+    conn.execute("CREATE VIEW size_v AS SELECT id FROM size_a", None)
+        .await
+        .expect("create view");
+    for i in 0..50 {
+        conn.execute(
+            &format!("INSERT INTO size_a (id, label) VALUES ({i}, 'row-{i}')"),
+            None,
+        )
+        .await
+        .expect("seed");
+    }
+
+    let sizes = conn
+        .table_sizes("main")
+        .await
+        .expect("table_sizes must not error");
+    let names: Vec<&str> = sizes.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        names.contains(&"size_a") && names.contains(&"size_b"),
+        "expected both base tables, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"size_v"),
+        "views must be excluded from table_sizes, got: {names:?}"
+    );
+    // SQLite reports no cheap row estimate.
+    assert!(
+        sizes.iter().all(|s| s.row_estimate.is_none()),
+        "SQLite row estimates must be None, got: {sizes:?}"
+    );
+    // When dbstat is available, the seeded table must show non-zero bytes; when
+    // it is not, sizes are uniformly None. Both are valid — just not a mix where
+    // size_a has data but the total disagrees.
+    for s in &sizes {
+        if let (Some(d), Some(i)) = (s.data_bytes, s.index_bytes) {
+            assert_eq!(
+                s.total_bytes,
+                Some(d + i),
+                "total must equal data + index when both present: {s:?}"
+            );
+        }
+    }
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn sqlite_server_info_reports_version_and_pragmas() {
+    // The server-info panel (#563) needs a version string and a non-empty set
+    // of configuration variables. For SQLite these come from sqlite_version()
+    // and a curated list of PRAGMAs.
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_srvinfo_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let info = conn.server_info().await.expect("server_info");
+    assert!(
+        !info.version.is_empty(),
+        "version string must be reported, got empty"
+    );
+    assert!(
+        info.variables.iter().any(|v| v.name == "page_size"),
+        "expected a page_size PRAGMA row, got: {:?}",
+        info.variables
+    );
+    assert!(
+        info.variables.iter().all(|v| !v.name.is_empty()),
+        "no variable name may be empty"
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_foreign_keys_are_introspected_for_er_diagram() {
     // The ER diagram is fed by `foreign_keys`: it must surface every FK in the
     // database (across all tables) with the referencing and referenced sides,

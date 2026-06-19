@@ -2,6 +2,7 @@ use tauri::State;
 
 use crate::db::types::{
     ForeignKey, IndexInfo, SchemaObject, TableColumnInfo, TableRowEstimate, TableSchema,
+    TableSizeInfo,
 };
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -128,4 +129,19 @@ pub async fn table_row_estimates(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session.conn.table_row_estimates(&database).await
+}
+
+/// テーブルごとのサイズ・統計 (行数・データ/インデックス/合計サイズ) を返す。
+/// エンジンのカタログを読むだけで、読み取り操作なので read_only でも許可する。
+#[tauri::command]
+pub async fn table_sizes(
+    session_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TableSizeInfo>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.table_sizes(&database).await
 }

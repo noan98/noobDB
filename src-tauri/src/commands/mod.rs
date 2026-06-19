@@ -10,5 +10,6 @@ pub mod process;
 pub mod profiles;
 pub mod query;
 pub mod schema;
+pub mod server;
 pub mod snippets;
 pub mod sync;

@@ -9,7 +9,8 @@ use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef}
 
 use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, Value,
+    ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
+    TableSizeInfo, Value,
 };
 use super::{build_insert_sql, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
@@ -878,6 +879,75 @@ impl MySqlConn {
                     .map(|v| v as i64),
             })
             .collect())
+    }
+
+    pub async fn table_sizes(&self, db: &str) -> Result<Vec<TableSizeInfo>> {
+        // information_schema.TABLES carries the engine's own size accounting:
+        // DATA_LENGTH / INDEX_LENGTH are BIGINT UNSIGNED byte counts maintained
+        // by the storage engine (approximate for InnoDB), so no table scan is
+        // needed. TABLE_ROWS is the same estimate `table_row_estimates` uses.
+        // Restricting to BASE TABLE skips views (whose lengths are NULL).
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT TABLE_NAME, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH
+               FROM information_schema.TABLES
+               WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
+               ORDER BY TABLE_NAME"#,
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let data = r
+                    .try_get::<Option<u64>, _>(2)
+                    .ok()
+                    .flatten()
+                    .map(|v| v as i64);
+                let index = r
+                    .try_get::<Option<u64>, _>(3)
+                    .ok()
+                    .flatten()
+                    .map(|v| v as i64);
+                TableSizeInfo {
+                    name: r.try_get::<String, _>(0).unwrap_or_default(),
+                    row_estimate: r
+                        .try_get::<Option<u64>, _>(1)
+                        .ok()
+                        .flatten()
+                        .map(|v| v as i64),
+                    data_bytes: data,
+                    index_bytes: index,
+                    total_bytes: super::sum_size_parts(data, index),
+                }
+            })
+            .collect())
+    }
+
+    pub async fn server_info(&self) -> Result<ServerInfo> {
+        let version: String = sqlx::query_scalar("SELECT VERSION()")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or_default();
+        // SHOW VARIABLES returns every server variable as (Variable_name, Value);
+        // the panel makes the full set searchable. Values can be NULL for a few
+        // variables, which we render as an empty string. Secret-named variables
+        // are masked as defense-in-depth (#563).
+        let rows: Vec<MySqlRow> = sqlx::query("SHOW VARIABLES").fetch_all(&self.pool).await?;
+        let variables = rows
+            .into_iter()
+            .map(|r| {
+                let name = r.try_get::<String, _>(0).unwrap_or_default();
+                let value = r
+                    .try_get::<Option<String>, _>(1)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                let value = super::mask_sensitive_var(&name, value);
+                ServerVariable { name, value }
+            })
+            .collect();
+        Ok(ServerInfo { version, variables })
     }
 }
 

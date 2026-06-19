@@ -244,6 +244,8 @@ pub fn run() {
             commands::schema::list_schema_objects,
             commands::schema::get_object_definition,
             commands::schema::table_row_estimates,
+            commands::schema::table_sizes,
+            commands::server::server_info,
             commands::process::list_processes,
             commands::process::kill_process,
             commands::diff::compare_schema,

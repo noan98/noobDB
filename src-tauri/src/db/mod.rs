@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use types::{
-    ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema,
+    ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject, ServerInfo,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -395,6 +395,33 @@ impl Connection {
         }
     }
 
+    /// Size and row statistics for every base table in `db`, read from the
+    /// engine's catalogs (no `COUNT(*)` / table scan) so it stays cheap on
+    /// large schemas. MySQL reads `information_schema.TABLES`, PostgreSQL the
+    /// `pg_*_size` functions, SQLite aggregates `dbstat` when available. Byte
+    /// and row fields are best-effort and may be absent (see [`TableSizeInfo`]).
+    /// Views are omitted.
+    pub async fn table_sizes(&self, db: &str) -> Result<Vec<TableSizeInfo>> {
+        match self {
+            Connection::MySql(c) => c.table_sizes(db).await,
+            Connection::Postgres(c) => c.table_sizes(db).await,
+            Connection::Sqlite(c) => c.table_sizes(db).await,
+        }
+    }
+
+    /// Read-only server information (version + configuration variables) for the
+    /// server-info panel. MySQL uses `SELECT VERSION()` + `SHOW VARIABLES`,
+    /// PostgreSQL `version()` + `pg_settings`, SQLite `sqlite_version()` + a
+    /// curated set of `PRAGMA`s. No write is performed, so it is allowed on
+    /// read-only sessions.
+    pub async fn server_info(&self) -> Result<ServerInfo> {
+        match self {
+            Connection::MySql(c) => c.server_info().await,
+            Connection::Postgres(c) => c.server_info().await,
+            Connection::Sqlite(c) => c.server_info().await,
+        }
+    }
+
     /// Server-side processes/connections for the process monitor panel.
     /// Reads the engine's in-memory state (`processlist` / `pg_stat_activity`)
     /// — no table I/O — so it is cheap enough to poll. SQLite has no server
@@ -441,6 +468,35 @@ impl Connection {
 /// SQLite as declared), so the candidate literals stay uppercase.
 pub(crate) fn type_name_matches(name: &str, candidates: &[&str]) -> bool {
     candidates.iter().any(|c| name.eq_ignore_ascii_case(c))
+}
+
+/// Combines the data and index byte parts a driver resolved into a `total`.
+/// Returns `Some(sum)` when at least one part is present (treating an absent
+/// part as 0), and `None` only when both are unknown — so a table with just one
+/// measured part still reports a total rather than dropping to "unknown".
+pub(crate) fn sum_size_parts(data: Option<i64>, index: Option<i64>) -> Option<i64> {
+    match (data, index) {
+        (None, None) => None,
+        (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+    }
+}
+
+/// Masks the value of a server variable whose name looks like it could hold a
+/// secret, so the server-info panel (#563) never surfaces credentials even on a
+/// server that exposes such a variable. `SHOW VARIABLES` / `pg_settings` do not
+/// carry the connection password or a connection string in practice, so this is
+/// defense-in-depth for custom/derived variables. The match is a case-insensitive
+/// substring on the name; empty values are left untouched.
+pub(crate) fn mask_sensitive_var(name: &str, value: String) -> String {
+    if value.is_empty() {
+        return value;
+    }
+    const SECRET_HINTS: &[&str] = &["password", "passwd", "secret", "private_key"];
+    let lower = name.to_ascii_lowercase();
+    if SECRET_HINTS.iter().any(|hint| lower.contains(hint)) {
+        return "********".to_string();
+    }
+    value
 }
 
 pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableSchema> {
@@ -1088,8 +1144,32 @@ fn is_aggregate_expr(item: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_auto_limit, has_stacked_statements, is_read_only_sql, is_session_init_sql, SslMode,
+        apply_auto_limit, has_stacked_statements, is_read_only_sql, is_session_init_sql,
+        mask_sensitive_var, sum_size_parts, SslMode,
     };
+
+    #[test]
+    fn sum_size_parts_treats_missing_part_as_zero() {
+        assert_eq!(sum_size_parts(None, None), None);
+        assert_eq!(sum_size_parts(Some(100), None), Some(100));
+        assert_eq!(sum_size_parts(None, Some(40)), Some(40));
+        assert_eq!(sum_size_parts(Some(100), Some(40)), Some(140));
+    }
+
+    #[test]
+    fn mask_sensitive_var_masks_only_secret_named_nonempty_values() {
+        assert_eq!(mask_sensitive_var("max_connections", "151".into()), "151");
+        assert_eq!(
+            mask_sensitive_var("master_password", "hunter2".into()),
+            "********"
+        );
+        assert_eq!(
+            mask_sensitive_var("SSL_PRIVATE_KEY", "----".into()),
+            "********"
+        );
+        // Empty values are never masked (nothing to hide; keeps NULL display).
+        assert_eq!(mask_sensitive_var("admin_password", String::new()), "");
+    }
 
     #[test]
     fn session_init_allows_set_pragma_and_read_only() {

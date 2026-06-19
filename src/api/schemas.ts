@@ -64,6 +64,27 @@ export const tableRowEstimate = z.object({
   estimate: z.number().nullable(),
 });
 
+/** テーブルのサイズ・統計 (サイズダッシュボード #562)。 */
+export const tableSizeInfo = z.object({
+  name: z.string(),
+  row_estimate: z.number().nullable(),
+  data_bytes: z.number().nullable(),
+  index_bytes: z.number().nullable(),
+  total_bytes: z.number().nullable(),
+});
+
+/** サーバ設定/状態の 1 変数 (サーバ情報パネル #563)。 */
+export const serverVariable = z.object({
+  name: z.string(),
+  value: z.string(),
+});
+
+/** サーバ情報 (バージョン + 設定変数一覧)。 */
+export const serverInfo = z.object({
+  version: z.string(),
+  variables: z.array(serverVariable),
+});
+
 export const indexInfo = z.object({
   name: z.string(),
   columns: z.array(z.string()),
@@ -274,6 +295,7 @@ export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
+export const tableSizeInfoArray = z.array(tableSizeInfo);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
 export const schemaObjectArray = z.array(schemaObject);

@@ -94,6 +94,86 @@ async fn mysql_table_row_estimates_present_for_base_table() {
     conn.close().await;
 }
 
+/// `table_sizes` must report a real base table with byte figures from
+/// information_schema.TABLES (DATA_LENGTH / INDEX_LENGTH). InnoDB's lengths are
+/// approximate, so we only assert the table appears with a non-negative total
+/// and that total == data + index when both are present.
+#[tokio::test]
+async fn mysql_table_sizes_present_for_base_table() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS size_t", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE size_t (id INT PRIMARY KEY, label VARCHAR(64) NOT NULL, KEY label_idx (label))",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO size_t (id, label) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+        Some(&db),
+    )
+    .await
+    .expect("insert");
+    conn.execute("ANALYZE TABLE size_t", Some(&db))
+        .await
+        .expect("analyze");
+
+    let sizes = conn.table_sizes(&db).await.expect("table_sizes");
+    let row = sizes
+        .iter()
+        .find(|s| s.name == "size_t")
+        .expect("base table must appear in sizes");
+    if let (Some(d), Some(i)) = (row.data_bytes, row.index_bytes) {
+        assert_eq!(
+            row.total_bytes,
+            Some(d + i),
+            "total must equal data + index: {row:?}"
+        );
+    }
+    assert!(
+        row.total_bytes.unwrap_or(0) >= 0,
+        "size must be non-negative: {row:?}"
+    );
+
+    conn.execute("DROP TABLE size_t", Some(&db))
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
+
+/// `server_info` must report a MySQL version and a non-empty variable set from
+/// `SHOW VARIABLES` (e.g. the always-present `version` variable).
+#[tokio::test]
+async fn mysql_server_info_reports_version_and_variables() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let info = conn.server_info().await.expect("server_info");
+    assert!(!info.version.is_empty(), "version must be reported");
+    assert!(
+        info.variables.iter().any(|v| v.name == "version"),
+        "SHOW VARIABLES must include `version`"
+    );
+
+    conn.close().await;
+}
+
 /// The preview lifts the user's WHERE clause out of the statement and uses it
 /// to filter the BEFORE snapshot, so an UPDATE or DELETE that touches a row
 /// past the first `row_limit` rows still shows the affected rows in the
