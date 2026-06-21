@@ -267,10 +267,13 @@ fn write_ndjson<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) ->
 // ── Markdown テーブル ──
 
 /// Markdown テーブルのセル文字列をエスケープする。GFM ではセル区切りの `|` を
-/// `\|` でエスケープし、セル内改行はテーブルを壊すため `<br>` に置換する。フロントの
+/// `\|` でエスケープし、セル内改行はテーブルを壊すため `<br>` に置換する。まず
+/// バックスラッシュ `\` を `\\` に置換する (これを最初にしないと、後段で `|` を `\|`
+/// にしたときに既存の `\` が誤って区切りをエスケープしてしまう)。フロントの
 /// `exportPreview.ts` の `mdEscape` と完全に一致させる。
 fn md_escape(s: &str) -> String {
-    s.replace('|', "\\|")
+    s.replace('\\', "\\\\")
+        .replace('|', "\\|")
         .replace('\r', "")
         .replace('\n', "<br>")
 }
@@ -1098,6 +1101,16 @@ mod tests {
         let out = String::from_utf8(markdown_bytes(&columns, &rows)).unwrap();
         // パイプは `\|`、改行は `<br>`、BLOB は `0x` 接頭辞付き。
         assert!(out.contains("| a\\|b<br>c | 0x00ff |"), "got: {out}");
+    }
+
+    // バックスラッシュを先にエスケープしないと、後段の `|` → `\|` で既存の `\` が
+    // 区切りを誤ってエスケープしてしまう。入力 `a\|b` は `a\\\|b` になること。
+    #[test]
+    fn markdown_escapes_backslash_before_pipe() {
+        let columns = vec![col("note")];
+        let rows = vec![vec![Value::String("a\\|b".into())]];
+        let out = String::from_utf8(markdown_bytes(&columns, &rows)).unwrap();
+        assert!(out.contains("| a\\\\\\|b |"), "got: {out}");
     }
 
     // 空結果でもヘッダ + 区切り行は出力する (列構造が分かるように)。

@@ -96,6 +96,12 @@ describe("buildMarkdownTable", () => {
     expect(out.includes("| a\\|b<br>c |")).toBe(true);
   });
 
+  it("バックスラッシュを先にエスケープする", () => {
+    // 入力 "a\\|b" (a, \, |, b) は "a\\\|b" (a, \\, \|, b) になる。
+    const out = buildMarkdownTable([{ name: "note", type_name: "VARCHAR" }], [["a\\|b"]]);
+    expect(out.includes("| a\\\\\\|b |")).toBe(true);
+  });
+
   it("空でもヘッダ + 区切りは出る", () => {
     expect(buildMarkdownTable(columns, [])).toBe("| id | name |\n| --- | --- |\n");
   });

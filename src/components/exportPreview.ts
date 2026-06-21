@@ -84,10 +84,16 @@ export function buildNdjson(columns: Column[], rows: CellValue[][]): string {
 
 /**
  * Markdown テーブルのセルをエスケープする。バックエンド (`export.rs` の `md_escape`)
- * と完全に一致させる: 区切りの `|` を `\|` に、CR を除去、LF を `<br>` に置換する。
+ * と完全に一致させる: まずバックスラッシュ `\` を `\\` に (これを最初にしないと、
+ * 後段で `|` を `\|` にしたときに既存の `\` が誤って区切りをエスケープしてしまう)、
+ * 次に区切りの `|` を `\|` に、CR を除去、LF を `<br>` に置換する。
  */
 function mdEscape(s: string): string {
-  return s.replace(/\|/g, "\\|").replace(/\r/g, "").replace(/\n/g, "<br>");
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r/g, "")
+    .replace(/\n/g, "<br>");
 }
 
 function valueToMarkdown(v: CellValue): string {
