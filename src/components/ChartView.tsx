@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import type { QueryResult } from "../api/tauri";
@@ -7,6 +7,8 @@ import { CATEGORICAL, readableInk } from "../colorScale";
 import { durations, easings } from "../motion";
 import { Button, Checkbox, Select } from "./ui";
 import { Icon } from "./Icon";
+import { ImageExportButton } from "./ImageExportButton";
+import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import {
   buildChartModel,
   defaultChartConfig,
@@ -56,6 +58,18 @@ export function ChartView({ result, onClose }: Props) {
     [config, result.columns, result.rows],
   );
 
+  // 描画中の SVG を画像エクスポート (#643) で捕捉するためのコンテナ参照。
+  const chartRef = useRef<HTMLDivElement>(null);
+  const getSvgForExport = (): SVGSVGElement => {
+    const svg = chartRef.current?.querySelector("svg");
+    if (!svg) throw new Error("chart is not rendered");
+    return svg as SVGSVGElement;
+  };
+  const svgExportSize = (svg: SVGSVGElement) => {
+    const vb = svg.viewBox.baseVal;
+    return vb && vb.width > 0 ? { width: vb.width, height: vb.height } : {};
+  };
+
   if (!config || !model) {
     return (
       <Flex direction="column" h="100%" align="center" justify="center" gap="3" color="app.textMuted">
@@ -86,6 +100,17 @@ export function ChartView({ result, onClose }: Props) {
         <Button type="button" variant="secondary" size="sm" onClick={onClose}>
           <Icon name="table" size={14} /> {t("chartBackToTable")}
         </Button>
+        <ImageExportButton
+          filenameBase="chart"
+          makePng={() => {
+            const svg = getSvgForExport();
+            return elementToPngBlob(svg as unknown as HTMLElement, svgExportSize(svg));
+          }}
+          makeSvg={() => {
+            const svg = getSvgForExport();
+            return elementToSvgBytes(svg as unknown as HTMLElement, svgExportSize(svg));
+          }}
+        />
         <Field label={t("chartType")}>
           <Select value={config.type} onChange={(e) => setType(e.target.value as ChartType)} width="auto">
             <option value="bar">{t("chartTypeBar")}</option>
@@ -141,7 +166,7 @@ export function ChartView({ result, onClose }: Props) {
         </Flex>
       )}
 
-      <chakra.div flex="1" minH={0} overflow="auto" p="3">
+      <chakra.div ref={chartRef} flex="1" minH={0} overflow="auto" p="3">
         {model.labels.length === 0 ? (
           <chakra.div color="app.textMuted" fontSize="sm">{t("chartNoData")}</chakra.div>
         ) : config.yCols.length === 0 ? (

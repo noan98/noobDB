@@ -10,6 +10,7 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getNodesBounds,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -34,6 +35,13 @@ import {
 import { Icon } from "./Icon";
 import { Button, Select } from "./ui";
 import { Spinner } from "./Spinner";
+import { ImageExportButton } from "./ImageExportButton";
+import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
+
+/** ER 図の全景エクスポート時に内容の周囲へ取る余白 (px)。 */
+const ER_EXPORT_PADDING = 40;
+/** 出力画像の 1 辺の上限 (px)。巨大スキーマで過大なキャンバスを避ける。 */
+const ER_EXPORT_MAX_DIM = 8000;
 
 /**
  * ER diagram: renders the connected database's tables and their
@@ -223,6 +231,31 @@ function ERDiagramInner({
   // Skip the fit-view animation on the first layout (initial mount already
   // fits via the `fitView` prop); animate only subsequent relayouts.
   const didLayoutOnce = useRef(false);
+  // ReactFlow のラッパ参照 — 画像エクスポート (#643) でビューポート要素を取得する。
+  const flowWrapRef = useRef<HTMLDivElement>(null);
+
+  // 全景エクスポート用に、現在のズーム/パンに依存しないビューポート変換を組み立てる。
+  // ノードの外接矩形を求め、scale(1) で内容全体が収まるよう平行移動 + 出力サイズを返す。
+  const buildExportCapture = useCallback(() => {
+    const viewport = flowWrapRef.current?.querySelector(
+      ".react-flow__viewport",
+    ) as HTMLElement | null;
+    if (!viewport || nodes.length === 0) {
+      throw new Error("diagram is not rendered");
+    }
+    const bounds = getNodesBounds(nodes);
+    const pad = ER_EXPORT_PADDING;
+    const width = Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(bounds.width + pad * 2)));
+    const height = Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(bounds.height + pad * 2)));
+    const tx = -bounds.x + pad;
+    const ty = -bounds.y + pad;
+    const style: Partial<CSSStyleDeclaration> = {
+      width: `${width}px`,
+      height: `${height}px`,
+      transform: `translate(${tx}px, ${ty}px) scale(1)`,
+    };
+    return { viewport, width, height, style };
+  }, [nodes]);
 
   // SQLite has the single "main" namespace; offering a picker would be noise.
   const showDbPicker = driver !== "sqlite" && databases.length > 1;
@@ -423,8 +456,31 @@ function ERDiagramInner({
             {t("erDiagramSummary", { tables: summary.shown, relationships: summary.rels })}
           </chakra.span>
         )}
+        {!loading && !error && nodes.length > 0 && (
+          <chakra.span marginLeft="auto">
+            <ImageExportButton
+              filenameBase={`er_${database ?? "diagram"}`}
+              makePng={() => {
+                const c = buildExportCapture();
+                return elementToPngBlob(c.viewport, {
+                  width: c.width,
+                  height: c.height,
+                  style: c.style,
+                });
+              }}
+              makeSvg={() => {
+                const c = buildExportCapture();
+                return elementToSvgBytes(c.viewport, {
+                  width: c.width,
+                  height: c.height,
+                  style: c.style,
+                });
+              }}
+            />
+          </chakra.span>
+        )}
         <Button
-          marginLeft="auto"
+          marginLeft={!loading && !error && nodes.length > 0 ? undefined : "auto"}
           minWidth="28px"
           px="2"
           py="1"
@@ -446,7 +502,7 @@ function ERDiagramInner({
         </chakra.p>
       )}
 
-      <Box flex="1" position="relative" minHeight={0} margin="12px 0 0">
+      <Box ref={flowWrapRef} flex="1" position="relative" minHeight={0} margin="12px 0 0">
         {loading ? (
           <Box position="absolute" inset={0} display="flex" alignItems="center" justifyContent="center" gap="3" color="app.textMuted">
             <Spinner size={18} />
