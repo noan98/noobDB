@@ -271,6 +271,7 @@ pub fn run() {
             commands::import::parse_csv_preview,
             commands::import::import_csv,
             commands::file::read_text_file,
+            commands::file::write_binary_file,
         ])
         .run(tauri::generate_context!());
 

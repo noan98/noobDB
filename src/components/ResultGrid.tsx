@@ -4925,6 +4925,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             rows={result.rows}
             database={database ?? null}
             table={table ?? null}
+            driver={driver}
             partial={showAutoLimitBadge || !!canLoadMore}
             fullExport={fullExport}
             onClose={() => setShowExport(false)}

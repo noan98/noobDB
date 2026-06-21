@@ -11,7 +11,7 @@ import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 import { Icon } from "./Icon";
 import { copyToClipboard } from "./clipboard";
-import { buildExportContent } from "./exportPreview";
+import { buildExportContent, DEFAULT_SQL_BATCH } from "./exportPreview";
 
 /** プレビュー欄に表示する最大行数 (コピーは全行が対象)。 */
 const PREVIEW_ROWS = 50;
@@ -32,6 +32,8 @@ interface Props {
   rows: CellValue[][];
   database: string | null;
   table: string | null;
+  /** 接続中のドライバ。SQL INSERT 形式のリテラル/識別子クオートに使う。 */
+  driver?: string;
   /**
    * True when the grid holds only part of the result set (an auto LIMIT is
    * binding, or more pages can still be loaded). Surfaces a warning so the
@@ -84,6 +86,10 @@ function extensionFor(format: ExportFormat): string {
       return ".csv";
     case "ndjson":
       return ".ndjson";
+    case "markdown":
+      return ".md";
+    case "sql":
+      return ".sql";
     default:
       return ".json";
   }
@@ -108,10 +114,15 @@ type Status =
 /** エクスポート対象: 現在のグリッドのみ / クエリを再実行して全件。 */
 type ExportScope = "current" | "full";
 
-export function ExportModal({ columns, rows, database, table, partial, fullExport, onClose }: Props) {
+export function ExportModal({ columns, rows, database, table, driver, partial, fullExport, onClose }: Props) {
   const t = useT();
   const toast = useToast();
   const [format, setFormat] = useState<ExportFormat>("csv");
+  // SQL INSERT 形式の対象テーブル名 (既定は結果元テーブル、JOIN 等で不明なら空入力可)
+  // とバッチサイズ (1 文へまとめる行数の上限)。
+  const [sqlTable, setSqlTable] = useState<string>(table ?? "");
+  const [sqlBatch, setSqlBatch] = useState<number>(DEFAULT_SQL_BATCH);
+  const sqlDriver = driver ?? "mysql";
   // 部分結果かつ全件モードが使えるときは「全件」を初期選択にし、誤って部分だけ
   // 書き出すのを防ぐ。それ以外は従来どおりグリッドのみ。
   const [scope, setScope] = useState<ExportScope>(fullExport && partial ? "full" : "current");
@@ -131,9 +142,13 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
 
   // プレビューは先頭 PREVIEW_ROWS 行のみ生成して表示負荷を抑える。実際の出力書式
   // (CSV のクオート・JSON の整形・実行クエリ同梱) はバックエンドと同じ。
+  const exportCtx = useMemo(
+    () => ({ driver: sqlDriver, table: sqlTable, sqlBatchSize: sqlBatch }),
+    [sqlDriver, sqlTable, sqlBatch],
+  );
   const previewContent = useMemo(
-    () => buildExportContent(format, columns, rows.slice(0, PREVIEW_ROWS), queryForJson),
-    [format, columns, rows, queryForJson],
+    () => buildExportContent(format, columns, rows.slice(0, PREVIEW_ROWS), queryForJson, exportCtx),
+    [format, columns, rows, queryForJson, exportCtx],
   );
   const previewTruncated = rows.length > PREVIEW_ROWS;
   // Set on unmount so an in-flight `listenExportStream` (awaited below) can
@@ -153,7 +168,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
   // 全文 (在グリッドの全行) を生成してクリップボードへコピーする。プレビューと違い
   // 行数を絞らないため、グリッドに読み込まれている全行が対象。
   const handleCopy = async () => {
-    const content = buildExportContent(format, columns, rows, queryForJson);
+    const content = buildExportContent(format, columns, rows, queryForJson, exportCtx);
     const ok = await copyToClipboard(content);
     if (!ok) {
       toast.error(t("clipboardCopyFailed"));
@@ -212,7 +227,11 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
           ? { name: "CSV", extensions: ["csv"] }
           : format === "ndjson"
             ? { name: "NDJSON", extensions: ["ndjson", "jsonl"] }
-            : { name: "JSON", extensions: ["json"] },
+            : format === "markdown"
+              ? { name: "Markdown", extensions: ["md", "markdown"] }
+              : format === "sql"
+                ? { name: "SQL", extensions: ["sql"] }
+                : { name: "JSON", extensions: ["json"] },
       ],
     });
     if (typeof selected === "string" && selected) {
@@ -240,6 +259,10 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
         rows,
         // JSON 形式のときだけ実行クエリを同梱する (バックエンドが判定)。
         query: queryForJson,
+        // SQL 形式のときだけ使われる (バックエンドが形式で判定)。
+        table: sqlTable,
+        driver: sqlDriver,
+        batchSize: sqlBatch,
       });
       toast.success(t("exportSuccess", { bytes, path }));
       setStatus({ kind: "idle" });
@@ -289,6 +312,9 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
         chunkSize: ctx.chunkSize,
         // 大量出力が途中で打ち切られないよう、エクスポートにはタイムアウトを掛けない。
         queryTimeoutSecs: null,
+        // SQL 形式のときだけ使われる (ドライバはセッションから取得)。
+        table: sqlTable,
+        batchSize: sqlBatch,
       });
     } catch (e) {
       unlisten();
@@ -374,7 +400,7 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
             display="flex"
             gap="2"
           >
-            {(["csv", "json", "ndjson"] as const).map((fmt) => (
+            {(["csv", "json", "ndjson", "markdown", "sql"] as const).map((fmt) => (
               <chakra.label
                 key={fmt}
                 display="inline-flex"
@@ -402,12 +428,51 @@ export function ExportModal({ columns, rows, database, table, partial, fullExpor
                     ? t("exportFormatCsv")
                     : fmt === "ndjson"
                       ? t("exportFormatNdjson")
-                      : t("exportFormatJson")}
+                      : fmt === "markdown"
+                        ? t("exportFormatMarkdown")
+                        : fmt === "sql"
+                          ? t("exportFormatSql")
+                          : t("exportFormatJson")}
                 </span>
               </chakra.label>
             ))}
           </chakra.div>
         </FormSection>
+
+        {format === "sql" && (
+          <FormSection>
+            <chakra.div display="flex" gap="3" flexWrap="wrap">
+              <chakra.div flex="1" minW="200px">
+                <FieldLabel htmlFor="export-sql-table">{t("exportSqlTable")}</FieldLabel>
+                <Input
+                  id="export-sql-table"
+                  type="text"
+                  value={sqlTable}
+                  onChange={(e) => setSqlTable(e.target.value)}
+                  placeholder={t("exportSqlTablePlaceholder")}
+                  disabled={isSaving}
+                />
+              </chakra.div>
+              <chakra.div w="140px">
+                <FieldLabel htmlFor="export-sql-batch">{t("exportSqlBatch")}</FieldLabel>
+                <Input
+                  id="export-sql-batch"
+                  type="number"
+                  min={1}
+                  value={sqlBatch}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    setSqlBatch(Number.isFinite(n) && n > 0 ? n : DEFAULT_SQL_BATCH);
+                  }}
+                  disabled={isSaving}
+                />
+              </chakra.div>
+            </chakra.div>
+            <chakra.div fontSize="xs" color="app.textMuted" mt="1">
+              {t("exportSqlHint")}
+            </chakra.div>
+          </FormSection>
+        )}
 
         <FormSection>
           <FieldLabel htmlFor="export-path">{t("exportSavePath")}</FieldLabel>

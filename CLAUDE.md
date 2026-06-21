@@ -737,13 +737,21 @@ LIKE ワイルドカードはエスケープされます。
 
 ### エクスポート / ダンプ / インポート
 
-- `commands/export.rs`: 結果グリッドの内容を CSV / JSON / NDJSON へ書き出します
-  (`export_query_result`)。CSV は RFC4180 風のクオート、BLOB は `0x...` で出力。
-  NDJSON (`ExportFormat::Ndjson`) は 1 行 1 オブジェクトの改行区切り JSON で、値
-  エンコードは JSON 配列経路 (`row_to_json_object`) と共有します。
+- `commands/export.rs`: 結果グリッドの内容を CSV / JSON / NDJSON / Markdown /
+  SQL INSERT へ書き出します (`export_query_result`)。CSV は RFC4180 風のクオート、
+  BLOB は `0x...` で出力。NDJSON (`ExportFormat::Ndjson`) は 1 行 1 オブジェクトの
+  改行区切り JSON で、値エンコードは JSON 配列経路 (`row_to_json_object`) と共有します。
+  **Markdown** (`ExportFormat::Markdown`) は GFM テーブル (ヘッダ + 区切り行 +
+  データ行) で、セル内の `|` を `\|`・改行を `<br>` にエスケープします (空結果でも
+  ヘッダは出力)。**SQL INSERT** (`ExportFormat::Sql`) は対象テーブル・ドライバ・
+  バッチサイズ (`SqlExportOpts`) を受け取り、`db::data_diff::sql_literal` と
+  `db::sync::quote_ident` を共有したドライバ別エスケープで
+  `INSERT INTO ... VALUES (...), (...);` を生成します (バッチサイズ単位で 1 文へ
+  まとめ、空テーブル名は `exported_table` にフォールバック。在グリッド経路は
+  ドライバを引数で受け取り、ストリーミング経路はセッションの方言を使う)。
   加えて `export_query_stream` は、グリッドに載っていない大きな結果セットを
   メモリに溜めず**ストリーミングで直接ファイルへ書き出す**経路です (`run_query_stream`
-  と同じバッチ列を消費)。3 形式とも通常 / ストリーミングの両経路に対応します。
+  と同じバッチ列を消費)。5 形式とも通常 / ストリーミングの両経路に対応します。
   **JSON 形式のときは実行クエリを出力に同梱**できます (`export_query_result` の
   `query` 引数 / `export_query_stream` は `sql` を流用)。同梱時は配列ではなく
   `{ "query": <sql>, "rows": [...] }` でラップします (キーは serde_json 既定の
@@ -836,7 +844,16 @@ fallback します。`commands/logs.rs` の `read_logs` / `clear_logs` が設定
 `commands/file.rs` の `read_text_file` は、エディタへドラッグ&ドロップされた `.sql` /
 `.txt` ファイルをバックエンド経由で読み込むコマンドです。フロントから fs プラグインを
 直接叩かず capabilities を最小に保つのが目的で、サイズ上限 8 MiB (`MAX_TEXT_FILE_BYTES`)、
-不正 UTF-8 はロッシーデコード、空パス/不存在は拒否します。
+不正 UTF-8 はロッシーデコード、空パス/不存在は拒否します。同ファイルの
+`write_binary_file` は逆方向で、フロントが生成したバイト列 (チャート/ER 図の PNG・SVG
+など。#643) を保存ダイアログ (`dialog:allow-save`) で選んだパスへ書き出します。同じく
+fs プラグインを使わず capabilities を増やさないための経路で、サイズ上限 32 MiB
+(`MAX_WRITE_FILE_BYTES`)・空パスを拒否します。チャート (`ChartView`) と ER 図
+(`ERDiagramView`) の画像エクスポートは `components/imageExport.ts` (`html-to-image`
+で計算済みスタイルを焼き込み、テーマ色をライト/ダーク両対応で反映) と
+`components/ImageExportButton.tsx` (PNG 保存 / SVG 保存 / クリップボードコピーの
+メニュー) が担い、ER 図は `getNodesBounds` で全景を `scale(1)` で書き出すため現在の
+ズーム/パンに依存しません。
 
 ### IPC 表面
 
@@ -861,7 +878,7 @@ fallback します。`commands/logs.rs` の `read_logs` / `clear_logs` が設定
 - ログ: `read_logs` / `clear_logs`
 - エクスポート/ダンプ/インポート: `export_query_result` / `export_query_stream` /
   `dump_database` / `parse_csv_preview` / `import_csv`
-- ファイル: `read_text_file`
+- ファイル: `read_text_file` / `write_binary_file`
 
 完全なリストは
 `src/api/tauri.ts` の `api` オブジェクトにミラーされています (`src/__tests__/

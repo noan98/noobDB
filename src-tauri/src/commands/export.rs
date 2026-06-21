@@ -6,10 +6,20 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::query::ensure_allowed_for_session;
-use crate::db::is_read_only_sql;
+use crate::db::data_diff::sql_literal;
+use crate::db::sync::quote_ident;
 use crate::db::types::{Column, StreamBatch, Value};
+use crate::db::{is_read_only_sql, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
+
+/// SQL INSERT 形式で出力するときの対象テーブル名が空のときに使うプレースホルダ。
+/// JOIN など結果元テーブルが特定できないケースでも有効な SQL になるようにする。
+/// フロントの `exportPreview.ts` も同じ既定を使ってプレビューをミラーする。
+const DEFAULT_SQL_TABLE: &str = "exported_table";
+
+/// 1 つの `INSERT` 文へまとめる行数の既定上限。`batch_size` が未指定/0 のときに使う。
+const DEFAULT_SQL_BATCH: usize = 100;
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -19,23 +29,63 @@ pub enum ExportFormat {
     /// NDJSON (改行区切り JSON、1 行 1 オブジェクト)。JSON 配列と違い先頭/末尾の
     /// 括弧・行間カンマを持たず、行単位で独立しているためストリーミング処理向き。
     Ndjson,
+    /// Markdown テーブル (GFM)。ヘッダ行 + 区切り行 + データ行。GitHub の Issue/PR や
+    /// ドキュメントにそのまま貼れる。セル内のパイプ `|` と改行はエスケープする。
+    Markdown,
+    /// SQL INSERT 文。対象テーブルと列を指定し、ドライバ別リテラルエスケープで
+    /// `INSERT INTO ... VALUES (...), (...);` を生成する。複数行はバッチサイズ単位で
+    /// 1 文へまとめる。
+    Sql,
+}
+
+/// SQL INSERT 形式の出力に必要なパラメータ (対象テーブル・ドライバ・バッチサイズ)。
+/// CSV/JSON/NDJSON/Markdown では使われない。
+#[derive(Debug, Clone)]
+struct SqlExportOpts {
+    driver: DriverKind,
+    table: String,
+    batch_size: usize,
+}
+
+impl SqlExportOpts {
+    /// コマンド引数から SQL 出力用パラメータを組み立てる。空テーブル名は
+    /// `DEFAULT_SQL_TABLE`、0/未指定のバッチは `DEFAULT_SQL_BATCH` にフォールバックする。
+    fn build(driver: Option<DriverKind>, table: Option<String>, batch_size: Option<usize>) -> Self {
+        let table = table
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| DEFAULT_SQL_TABLE.to_string());
+        let batch_size = batch_size.filter(|n| *n > 0).unwrap_or(DEFAULT_SQL_BATCH);
+        Self {
+            // ドライバ未指定 (在グリッドで取得できない等) は MySQL 方言にフォールバック。
+            driver: driver.unwrap_or(DriverKind::Mysql),
+            table,
+            batch_size,
+        }
+    }
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn export_query_result(
     path: String,
     format: ExportFormat,
     columns: Vec<Column>,
     rows: Vec<Vec<Value>>,
     // JSON 形式のとき出力に同梱する実行クエリ。None / 空なら同梱しない。
-    // CSV / NDJSON では無視する。
+    // CSV / NDJSON / Markdown / SQL では無視する。
     query: Option<String>,
+    // SQL INSERT 形式のときの対象テーブル名・ドライバ・バッチサイズ。他形式では無視。
+    table: Option<String>,
+    driver: Option<DriverKind>,
+    batch_size: Option<usize>,
 ) -> Result<u64> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("save path is empty".into()));
     }
     let row_count = rows.len();
-    let result = write_export(path, format, columns, rows, query).await;
+    let sql_opts = SqlExportOpts::build(driver, table, batch_size);
+    let result = write_export(path, format, columns, rows, query, sql_opts).await;
     match &result {
         Ok(bytes) => tracing::info!(
             format = ?format,
@@ -58,6 +108,7 @@ async fn write_export(
     columns: Vec<Column>,
     rows: Vec<Vec<Value>>,
     query: Option<String>,
+    sql_opts: SqlExportOpts,
 ) -> Result<u64> {
     tokio::task::spawn_blocking(move || -> Result<u64> {
         let file = std::fs::File::create(&path)?;
@@ -66,6 +117,8 @@ async fn write_export(
             ExportFormat::Csv => write_csv(&mut writer, &columns, &rows)?,
             ExportFormat::Json => write_json(&mut writer, &columns, &rows, query.as_deref())?,
             ExportFormat::Ndjson => write_ndjson(&mut writer, &columns, &rows)?,
+            ExportFormat::Markdown => write_markdown(&mut writer, &columns, &rows)?,
+            ExportFormat::Sql => write_sql_insert(&mut writer, &columns, &rows, &sql_opts)?,
         }
         // `into_inner` flushes the buffer; surface any flush error as I/O.
         let file = writer
@@ -211,6 +264,123 @@ fn write_ndjson<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) ->
     Ok(())
 }
 
+// ── Markdown テーブル ──
+
+/// Markdown テーブルのセル文字列をエスケープする。GFM ではセル区切りの `|` を
+/// `\|` でエスケープし、セル内改行はテーブルを壊すため `<br>` に置換する。フロントの
+/// `exportPreview.ts` の `mdEscape` と完全に一致させる。
+fn md_escape(s: &str) -> String {
+    s.replace('|', "\\|")
+        .replace('\r', "")
+        .replace('\n', "<br>")
+}
+
+fn value_to_markdown(v: &Value) -> String {
+    match v {
+        Value::Null => String::new(),
+        Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+        Value::Int(i) => i.to_string(),
+        Value::UInt(u) => u.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::String(s) => md_escape(s),
+        Value::Bytes(hex) => md_escape(&format!("0x{}", hex)),
+    }
+}
+
+/// GFM テーブル: ヘッダ行 + 区切り行 (`| --- | ... |`) + データ行。各セルは
+/// 前後にスペースを 1 つ置き、`|` を区切りとする。空結果でもヘッダ + 区切りは出力する
+/// (列構造が分かるように)。
+fn write_markdown<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
+    write_markdown_header(w, columns)?;
+    write_markdown_rows(w, columns, rows)
+}
+
+/// ヘッダ行と区切り行だけを書く。ストリーミング経路が columns イベントで使う。
+fn write_markdown_header<W: Write>(w: &mut W, columns: &[Column]) -> Result<()> {
+    let mut line = String::from("|");
+    for col in columns {
+        line.push(' ');
+        line.push_str(&md_escape(&col.name));
+        line.push_str(" |");
+    }
+    line.push('\n');
+    // 区切り行は列ごとに `---`。
+    line.push('|');
+    for _ in columns {
+        line.push_str(" --- |");
+    }
+    line.push('\n');
+    w.write_all(line.as_bytes())?;
+    Ok(())
+}
+
+/// データ行のみ書く (ヘッダ無し)。ストリーミングのバッチ書き出しで使う。
+fn write_markdown_rows<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
+    let mut line = String::new();
+    for row in rows {
+        line.clear();
+        line.push('|');
+        for i in 0..columns.len() {
+            line.push(' ');
+            line.push_str(&value_to_markdown(row.get(i).unwrap_or(&Value::Null)));
+            line.push_str(" |");
+        }
+        line.push('\n');
+        w.write_all(line.as_bytes())?;
+    }
+    Ok(())
+}
+
+// ── SQL INSERT 文 ──
+
+/// 列名リスト `(c1, c2, ...)` をドライバ別の識別子クオートで生成する。
+fn sql_columns_clause(driver: DriverKind, columns: &[Column]) -> String {
+    columns
+        .iter()
+        .map(|c| quote_ident(driver, &c.name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// 1 行を `(v1, v2, ...)` の VALUES タプルへ変換する。リテラルエスケープは
+/// `data_diff::sql_literal` を共有 (ドライバ別の文字列/BLOB/真偽値エスケープ)。
+fn sql_values_tuple(driver: DriverKind, columns: &[Column], row: &[Value]) -> String {
+    let vals = (0..columns.len())
+        .map(|i| sql_literal(driver, row.get(i).unwrap_or(&Value::Null)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("({})", vals)
+}
+
+/// SQL INSERT 文を書き出す。`batch_size` 行ごとに 1 文へまとめ、各文は
+/// `INSERT INTO <table> (cols) VALUES\n  (...),\n  (...);` の形にする。空結果なら
+/// 何も書かない。ストリーミング経路でも同じ関数でバッチ単位の自己完結した文を書く。
+fn write_sql_insert<W: Write>(
+    w: &mut W,
+    columns: &[Column],
+    rows: &[Vec<Value>],
+    opts: &SqlExportOpts,
+) -> Result<()> {
+    if columns.is_empty() || rows.is_empty() {
+        return Ok(());
+    }
+    let table = quote_ident(opts.driver, &opts.table);
+    let cols = sql_columns_clause(opts.driver, columns);
+    for chunk in rows.chunks(opts.batch_size.max(1)) {
+        let mut stmt = format!("INSERT INTO {} ({}) VALUES\n", table, cols);
+        for (i, row) in chunk.iter().enumerate() {
+            if i > 0 {
+                stmt.push_str(",\n");
+            }
+            stmt.push_str("  ");
+            stmt.push_str(&sql_values_tuple(opts.driver, columns, row));
+        }
+        stmt.push_str(";\n");
+        w.write_all(stmt.as_bytes())?;
+    }
+    Ok(())
+}
+
 // ── 全件ストリーミングエクスポート ──
 //
 // 在メモリ行に依存せず、クエリをバックエンドで再実行してストリーミングで直接ファイルへ
@@ -254,10 +424,17 @@ struct StreamExportSink {
     /// JSON 形式のとき出力に同梱する実行クエリ。`Some(non-empty)` のときは配列
     /// ではなく `{ "query": ..., "rows": [...] }` でラップする。
     json_query: Option<String>,
+    /// SQL INSERT 形式のときの対象テーブル・ドライバ・バッチサイズ。他形式では未使用。
+    sql_opts: SqlExportOpts,
 }
 
 impl StreamExportSink {
-    fn with_query(path: &str, format: ExportFormat, query: Option<String>) -> Result<Self> {
+    fn with_query(
+        path: &str,
+        format: ExportFormat,
+        query: Option<String>,
+        sql_opts: SqlExportOpts,
+    ) -> Result<Self> {
         let file = std::fs::File::create(path)?;
         // クエリ同梱は JSON 形式のみ。空文字列は同梱しない。
         let json_query = match format {
@@ -270,6 +447,7 @@ impl StreamExportSink {
             columns: Vec::new(),
             json_count: 0,
             json_query,
+            sql_opts,
         })
     }
 
@@ -288,8 +466,11 @@ impl StreamExportSink {
                     self.writer.write_all(b"[")?;
                 }
             }
-            // NDJSON にはヘッダも開き括弧も無いので columns イベントでは何も書かない。
-            ExportFormat::Ndjson => {}
+            // Markdown はヘッダ + 区切り行を columns イベントで書く。
+            ExportFormat::Markdown => write_markdown_header(&mut self.writer, &self.columns)?,
+            // NDJSON / SQL にはヘッダも開き括弧も無いので columns イベントでは何も書かない
+            // (SQL は各バッチで自己完結した INSERT 文を書く)。
+            ExportFormat::Ndjson | ExportFormat::Sql => {}
         }
         Ok(())
     }
@@ -297,6 +478,11 @@ impl StreamExportSink {
     fn on_rows(&mut self, rows: &[Vec<Value>]) -> Result<usize> {
         match self.format {
             ExportFormat::Csv => write_csv_rows(&mut self.writer, &self.columns, rows)?,
+            ExportFormat::Markdown => write_markdown_rows(&mut self.writer, &self.columns, rows)?,
+            // SQL は各 on_rows でバッチサイズ単位の自己完結した INSERT 文を書く。
+            ExportFormat::Sql => {
+                write_sql_insert(&mut self.writer, &self.columns, rows, &self.sql_opts)?
+            }
             ExportFormat::Json => {
                 // クエリ同梱時は rows が 1 段深いので字下げを増やす。
                 let (first, rest): (&[u8], &[u8]) = if self.json_query.is_some() {
@@ -361,6 +547,9 @@ pub async fn export_query_stream(
     initial_batch: usize,
     chunk_size: usize,
     query_timeout_secs: Option<u64>,
+    // SQL INSERT 形式のときの対象テーブル名・バッチサイズ。ドライバはセッションから取る。
+    table: Option<String>,
+    batch_size: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     if path.trim().is_empty() {
@@ -380,9 +569,12 @@ pub async fn export_query_stream(
         ));
     }
 
+    // SQL 形式のドライバはセッション (実接続) の方言を使う。
+    let sql_opts = SqlExportOpts::build(Some(session.conn.driver_kind()), table, batch_size);
+
     // Create the file up front so a bad path surfaces synchronously to the caller.
     // JSON 形式では実行クエリを出力に同梱する (sink 側で JSON のときだけ反映)。
-    let sink = StreamExportSink::with_query(&path, format, Some(sql.clone()))?;
+    let sink = StreamExportSink::with_query(&path, format, Some(sql.clone()), sql_opts)?;
     let shared = Arc::new(Mutex::new(Some(sink)));
 
     let handle = tokio::spawn(spawn_export_stream(
@@ -549,6 +741,24 @@ mod tests {
         buf
     }
 
+    fn markdown_bytes(columns: &[Column], rows: &[Vec<Value>]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_markdown(&mut buf, columns, rows).unwrap();
+        buf
+    }
+
+    fn sql_bytes(columns: &[Column], rows: &[Vec<Value>], opts: &SqlExportOpts) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_sql_insert(&mut buf, columns, rows, opts).unwrap();
+        buf
+    }
+
+    /// CSV/JSON/NDJSON/Markdown のテストで SQL 用パラメータは使われないが、
+    /// `with_query` の引数として必要なのでデフォルトを用意する。
+    fn test_sql_opts() -> SqlExportOpts {
+        SqlExportOpts::build(Some(DriverKind::Mysql), Some("t".into()), Some(100))
+    }
+
     #[test]
     fn csv_escapes_special_chars() {
         let columns = vec![col("id"), col("name"), col("note")];
@@ -672,6 +882,7 @@ mod tests {
             path.to_str().unwrap(),
             ExportFormat::Json,
             Some("SELECT * FROM t".into()),
+            test_sql_opts(),
         )
         .unwrap();
         sink.on_columns(columns.clone()).unwrap();
@@ -699,6 +910,7 @@ mod tests {
             path.to_str().unwrap(),
             ExportFormat::Json,
             Some("SELECT 1".into()),
+            test_sql_opts(),
         )
         .unwrap();
         sink.on_columns(vec![col("id")]).unwrap();
@@ -716,8 +928,13 @@ mod tests {
         let path = dir.join(format!("noobdb_export_csv_{}.csv", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let columns = vec![col("id"), col("name")];
-        let mut sink =
-            StreamExportSink::with_query(path.to_str().unwrap(), ExportFormat::Csv, None).unwrap();
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Csv,
+            None,
+            test_sql_opts(),
+        )
+        .unwrap();
         sink.on_columns(columns.clone()).unwrap();
         sink.on_rows(&[vec![Value::Int(1), Value::String("a".into())]])
             .unwrap();
@@ -736,8 +953,13 @@ mod tests {
         let path = dir.join(format!("noobdb_export_json_{}.json", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let columns = vec![col("id"), col("blob")];
-        let mut sink =
-            StreamExportSink::with_query(path.to_str().unwrap(), ExportFormat::Json, None).unwrap();
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Json,
+            None,
+            test_sql_opts(),
+        )
+        .unwrap();
         sink.on_columns(columns.clone()).unwrap();
         sink.on_rows(&[
             vec![Value::Int(7), Value::Bytes("deadbeef".into())],
@@ -759,8 +981,13 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("noobdb_export_jsone_{}.json", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let mut sink =
-            StreamExportSink::with_query(path.to_str().unwrap(), ExportFormat::Json, None).unwrap();
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Json,
+            None,
+            test_sql_opts(),
+        )
+        .unwrap();
         sink.on_columns(vec![col("id")]).unwrap();
         sink.finish().unwrap();
         let out = std::fs::read_to_string(&path).unwrap();
@@ -827,9 +1054,13 @@ mod tests {
             vec![Value::Int(7), Value::Bytes("deadbeef".into())],
             vec![Value::Null, Value::Null],
         ];
-        let mut sink =
-            StreamExportSink::with_query(path.to_str().unwrap(), ExportFormat::Ndjson, None)
-                .unwrap();
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Ndjson,
+            None,
+            test_sql_opts(),
+        )
+        .unwrap();
         sink.on_columns(columns.clone()).unwrap();
         // バッチを分けても in-memory の一括書き出しと同じバイト列になること。
         sink.on_rows(&rows[0..1]).unwrap();
@@ -837,6 +1068,192 @@ mod tests {
         sink.finish().unwrap();
         let out = std::fs::read(&path).unwrap();
         assert_eq!(out, ndjson_bytes(&columns, &rows));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── Markdown テーブル ──
+
+    #[test]
+    fn markdown_writes_header_separator_and_rows() {
+        let columns = vec![col("id"), col("name")];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("Alice".into())],
+            vec![Value::Int(2), Value::Null],
+        ];
+        let out = String::from_utf8(markdown_bytes(&columns, &rows)).unwrap();
+        let expected = "| id | name |\n\
+                        | --- | --- |\n\
+                        | 1 | Alice |\n\
+                        | 2 |  |\n";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn markdown_escapes_pipe_and_newline_and_blob() {
+        let columns = vec![col("note"), col("blob")];
+        let rows = vec![vec![
+            Value::String("a|b\nc".into()),
+            Value::Bytes("00ff".into()),
+        ]];
+        let out = String::from_utf8(markdown_bytes(&columns, &rows)).unwrap();
+        // パイプは `\|`、改行は `<br>`、BLOB は `0x` 接頭辞付き。
+        assert!(out.contains("| a\\|b<br>c | 0x00ff |"), "got: {out}");
+    }
+
+    // 空結果でもヘッダ + 区切り行は出力する (列構造が分かるように)。
+    #[test]
+    fn markdown_empty_rows_keeps_header() {
+        let columns = vec![col("id"), col("name")];
+        let rows: Vec<Vec<Value>> = vec![];
+        let out = String::from_utf8(markdown_bytes(&columns, &rows)).unwrap();
+        assert_eq!(out, "| id | name |\n| --- | --- |\n");
+    }
+
+    #[test]
+    fn stream_sink_markdown_matches_in_memory() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("noobdb_export_md_{}.md", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let columns = vec![col("id"), col("name")];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("a|b".into())],
+            vec![Value::Int(2), Value::String("c".into())],
+        ];
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Markdown,
+            None,
+            test_sql_opts(),
+        )
+        .unwrap();
+        sink.on_columns(columns.clone()).unwrap();
+        sink.on_rows(&rows[0..1]).unwrap();
+        sink.on_rows(&rows[1..2]).unwrap();
+        sink.finish().unwrap();
+        let out = std::fs::read(&path).unwrap();
+        assert_eq!(out, markdown_bytes(&columns, &rows));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── SQL INSERT 文 ──
+
+    #[test]
+    fn sql_insert_groups_rows_and_quotes_idents() {
+        let columns = vec![col("id"), col("name")];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("Alice".into())],
+            vec![Value::Int(2), Value::String("Bob".into())],
+        ];
+        let opts = SqlExportOpts::build(Some(DriverKind::Mysql), Some("users".into()), Some(100));
+        let out = String::from_utf8(sql_bytes(&columns, &rows, &opts)).unwrap();
+        let expected = "INSERT INTO `users` (`id`, `name`) VALUES\n\
+                        \u{20}\u{20}(1, 'Alice'),\n\
+                        \u{20}\u{20}(2, 'Bob');\n";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn sql_insert_respects_batch_size() {
+        let columns = vec![col("id")];
+        let rows = vec![
+            vec![Value::Int(1)],
+            vec![Value::Int(2)],
+            vec![Value::Int(3)],
+        ];
+        let opts = SqlExportOpts::build(Some(DriverKind::Postgres), Some("t".into()), Some(2));
+        let out = String::from_utf8(sql_bytes(&columns, &rows, &opts)).unwrap();
+        // バッチ 2 行なので 2 文に分かれる (2 行 + 1 行)。Postgres は識別子をダブルクオート。
+        let stmts: Vec<&str> = out
+            .trim_end()
+            .split(";\n")
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].starts_with("INSERT INTO \"t\" (\"id\") VALUES"));
+        assert!(stmts[0].contains("(1)") && stmts[0].contains("(2)"));
+        assert!(stmts[1].contains("(3)"));
+    }
+
+    // ドライバ別リテラルエスケープ: 文字列のバックスラッシュ/クオート・BLOB・真偽値。
+    #[test]
+    fn sql_insert_driver_specific_literals() {
+        let columns = vec![col("s"), col("b"), col("flag")];
+        let rows = vec![vec![
+            Value::String("a'b\\c".into()),
+            Value::Bytes("00ff".into()),
+            Value::Bool(true),
+        ]];
+        // MySQL: バックスラッシュ二重化 + X'..' BLOB + 1/0 真偽値。
+        let my = String::from_utf8(sql_bytes(
+            &columns,
+            &rows,
+            &SqlExportOpts::build(Some(DriverKind::Mysql), Some("t".into()), Some(100)),
+        ))
+        .unwrap();
+        assert!(my.contains("'a''b\\\\c'"), "mysql string: {my}");
+        assert!(my.contains("X'00ff'"), "mysql blob: {my}");
+        assert!(my.contains(", 1)"), "mysql bool: {my}");
+        // Postgres: クオートのみ二重化 + '\\x..' BLOB + TRUE/FALSE。
+        let pg = String::from_utf8(sql_bytes(
+            &columns,
+            &rows,
+            &SqlExportOpts::build(Some(DriverKind::Postgres), Some("t".into()), Some(100)),
+        ))
+        .unwrap();
+        assert!(pg.contains("'a''b\\c'"), "pg string: {pg}");
+        assert!(pg.contains("'\\x00ff'"), "pg blob: {pg}");
+        assert!(pg.contains(", TRUE)"), "pg bool: {pg}");
+    }
+
+    #[test]
+    fn sql_insert_empty_rows_is_empty() {
+        let columns = vec![col("id")];
+        let rows: Vec<Vec<Value>> = vec![];
+        let opts = SqlExportOpts::build(Some(DriverKind::Sqlite), Some("t".into()), Some(100));
+        assert!(sql_bytes(&columns, &rows, &opts).is_empty());
+    }
+
+    // 空テーブル名はプレースホルダ (`exported_table`) にフォールバックする。
+    #[test]
+    fn sql_insert_blank_table_falls_back_to_placeholder() {
+        let columns = vec![col("id")];
+        let rows = vec![vec![Value::Int(1)]];
+        let opts = SqlExportOpts::build(Some(DriverKind::Mysql), Some("   ".into()), None);
+        let out = String::from_utf8(sql_bytes(&columns, &rows, &opts)).unwrap();
+        assert!(
+            out.starts_with("INSERT INTO `exported_table`"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn stream_sink_sql_matches_in_memory() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("noobdb_export_sql_{}.sql", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let columns = vec![col("id"), col("name")];
+        let rows = [
+            vec![Value::Int(1), Value::String("a".into())],
+            vec![Value::Int(2), Value::String("b".into())],
+        ];
+        let opts = SqlExportOpts::build(Some(DriverKind::Mysql), Some("users".into()), Some(100));
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Sql,
+            None,
+            opts.clone(),
+        )
+        .unwrap();
+        sink.on_columns(columns.clone()).unwrap();
+        // ストリーミングはバッチごとに自己完結した INSERT 文を書く。
+        sink.on_rows(&rows[0..1]).unwrap();
+        sink.on_rows(&rows[1..2]).unwrap();
+        sink.finish().unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        // 2 バッチ = 2 文 (各 1 行)。
+        assert_eq!(out.matches("INSERT INTO `users`").count(), 2);
+        assert!(out.contains("(1, 'a')"));
+        assert!(out.contains("(2, 'b')"));
         let _ = std::fs::remove_file(&path);
     }
 }

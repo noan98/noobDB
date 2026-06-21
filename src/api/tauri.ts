@@ -442,7 +442,7 @@ export interface LogView {
   path: string | null;
 }
 
-export type ExportFormat = "csv" | "json" | "ndjson";
+export type ExportFormat = "csv" | "json" | "ndjson" | "markdown" | "sql";
 
 /** Checkbox-selected `mysqldump` flags for a database dump. */
 export interface DumpOptions {
@@ -788,6 +788,10 @@ export const api = {
     rows: CellValue[][];
     /** JSON 形式のとき出力に同梱する実行クエリ。null/未指定なら同梱しない。 */
     query?: string | null;
+    /** SQL 形式のときの対象テーブル名・ドライバ・バッチサイズ。他形式では無視。 */
+    table?: string | null;
+    driver?: string | null;
+    batchSize?: number | null;
   }) =>
     invoke<number>("export_query_result", {
       path: params.path,
@@ -795,6 +799,9 @@ export const api = {
       columns: params.columns,
       rows: params.rows,
       query: params.query ?? null,
+      table: params.table ?? null,
+      driver: params.driver ?? null,
+      batchSize: params.batchSize ?? null,
     }).then((r) => parseResponse(schemas.numberResponse, r, "export_query_result")),
 
   /**
@@ -811,6 +818,9 @@ export const api = {
     initialBatch: number;
     chunkSize: number;
     queryTimeoutSecs: number | null;
+    /** SQL 形式のときの対象テーブル名・バッチサイズ。ドライバはセッションから取る。 */
+    table?: string | null;
+    batchSize?: number | null;
   }) =>
     invoke<void>("export_query_stream", {
       sessionId: params.sessionId,
@@ -822,6 +832,8 @@ export const api = {
       initialBatch: params.initialBatch,
       chunkSize: params.chunkSize,
       queryTimeoutSecs: params.queryTimeoutSecs,
+      table: params.table ?? null,
+      batchSize: params.batchSize ?? null,
     }),
 
   dumpDatabase: (params: {
@@ -870,6 +882,16 @@ export const api = {
   readTextFile: (path: string) =>
     invoke<string>("read_text_file", { path }).then((r) =>
       parseResponse(schemas.stringResponse, r, "read_text_file"),
+    ),
+
+  /**
+   * フロントで生成したバイト列 (チャート/ER 図の PNG・SVG など) を、保存ダイアログで
+   * 選んだパスへバックエンド経由で書き出す (capabilities を最小に保つため。#643)。
+   * 書き込んだバイト数を返す。
+   */
+  writeBinaryFile: (path: string, data: Uint8Array) =>
+    invoke<number>("write_binary_file", { path, data: Array.from(data) }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "write_binary_file"),
     ),
 };
 

@@ -5,6 +5,32 @@ use crate::error::{AppError, Result};
 /// 固めてしまうのを防ぐためのガード。
 const MAX_TEXT_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
+/// `write_binary_file` が一度に書き出せるサイズの上限 (32 MiB)。チャート/ER 図の
+/// 画像エクスポート (#643) など、フロントで生成したバイト列をユーザが選んだパスへ
+/// 保存するためのガード。巨大な誤データでディスクを埋めないようにする。
+const MAX_WRITE_FILE_BYTES: usize = 32 * 1024 * 1024;
+
+/// フロントで生成したバイト列 (チャート/ER 図の PNG・SVG など) を、ユーザが保存
+/// ダイアログ (`dialog:allow-save`) で選んだ `path` へ書き出すコマンド。フロントが
+/// fs プラグインを直に叩かず、バックエンド経由で書く (capabilities を最小に保つ方針。
+/// #643)。空パスとサイズ超過は拒否する。書き込んだバイト数を返す。
+#[tauri::command]
+pub async fn write_binary_file(path: String, data: Vec<u8>) -> Result<u64> {
+    if path.trim().is_empty() {
+        return Err(AppError::InvalidInput("save path is empty".into()));
+    }
+    if data.len() > MAX_WRITE_FILE_BYTES {
+        return Err(AppError::InvalidInput(format!(
+            "data too large to write ({} bytes, limit {} bytes)",
+            data.len(),
+            MAX_WRITE_FILE_BYTES
+        )));
+    }
+    let len = data.len() as u64;
+    tokio::fs::write(&path, &data).await?;
+    Ok(len)
+}
+
 /// ドロップされた `.sql` / `.txt` の内容を読んでエディタへ流し込むための読み取り
 /// コマンド。フロントが fs プラグインを直に叩かず、バックエンド経由で読む
 /// (capabilities を最小に保つ方針)。UTF-8 として不正なバイトは置換文字へ
@@ -56,6 +82,26 @@ mod tests {
     #[tokio::test]
     async fn rejects_empty_path() {
         let err = read_text_file("   ".into()).await.unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn write_binary_file_writes_bytes() {
+        let path = std::env::temp_dir().join(format!("noobdb_write_{}.bin", std::process::id()));
+        let data = vec![0u8, 1, 2, 3, 255];
+        let n = write_binary_file(path.to_string_lossy().into_owned(), data.clone())
+            .await
+            .unwrap();
+        assert_eq!(n, data.len() as u64);
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), data);
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn write_binary_file_rejects_empty_path() {
+        let err = write_binary_file("  ".into(), vec![1, 2, 3])
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
     }
 
