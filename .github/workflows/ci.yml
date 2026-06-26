@@ -219,7 +219,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップ
       # (rust-cache のツールチェーン情報取得など) より前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: sccache
 
@@ -312,7 +312,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: cargo-deny
 
@@ -365,7 +365,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: sccache
 
@@ -428,12 +428,12 @@ jobs:
             sccache-${{ runner.os }}-test-
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: cargo-nextest
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: cargo-llvm-cov
 
@@ -522,7 +522,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: sccache
 
@@ -598,7 +598,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: sccache
 
@@ -642,7 +642,7 @@ jobs:
             sccache-${{ runner.os }}-windows-test-
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
         with:
           tool: cargo-nextest
 
