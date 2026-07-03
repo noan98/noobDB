@@ -212,6 +212,8 @@ interface Props {
   onPickTable: (database: string, table: string) => void;
   onImportTable: (database: string, table: string) => void;
   onDumpDatabase: (database: string) => void;
+  /** DB スキーマを AI 向け Markdown としてエクスポートするモーダルを開く。 */
+  onSchemaExport?: (database: string) => void;
   onRunTableSelect: (database: string, table: string) => void;
   onInsertTableSelect: (database: string, table: string) => void;
   /** Provided only for drivers with a single-statement definition (MySQL/SQLite). */
@@ -270,6 +272,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onPickTable,
   onImportTable,
   onDumpDatabase,
+  onSchemaExport,
   onRunTableSelect,
   onInsertTableSelect,
   onShowCreateTable,
@@ -622,6 +625,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       });
     }
     items.push({ label: t("contextMenuDump"), onSelect: () => onDumpDatabase(db) });
+    if (onSchemaExport) {
+      items.push({ label: t("contextMenuSchemaExport"), onSelect: () => onSchemaExport(db) });
+    }
     if (onShowDatabaseSizes) {
       items.push({ label: t("sizeMenuLabel"), onSelect: () => onShowDatabaseSizes(db) });
     }
