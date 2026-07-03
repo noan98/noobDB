@@ -35,7 +35,7 @@ jobs:
       # clang + mold はビルド高速化用 (src-tauri/.cargo/config.toml の Linux 設定)。
       # Tauri のシステム依存は tauri-build の build.rs で必要。
       - name: System deps (Tauri 2 prerequisites)
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1
+        uses: awalsh128/cache-apt-pkgs-action@5513791f75b039e2a79653b1a92238d3fb8d99b4 # v1.6.2
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
           version: tauri-2-mutants
