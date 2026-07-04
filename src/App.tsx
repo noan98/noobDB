@@ -89,6 +89,9 @@ const ImportModal = lazy(() =>
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
 );
+const SchemaExportModal = lazy(() =>
+  import("./components/SchemaExportModal").then((m) => ({ default: m.SchemaExportModal })),
+);
 const ProfileImportDialog = lazy(() =>
   import("./components/ProfileImportDialog").then((m) => ({ default: m.ProfileImportDialog })),
 );
@@ -1085,6 +1088,8 @@ export default function App() {
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
+  // AI 向けスキーマ Markdown エクスポートの対象 DB (null で閉じる)。
+  const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
   // CREATE TABLE ウィザード: 対象データベース。null で閉じる。
@@ -1611,6 +1616,11 @@ export default function App() {
     // 現在の接続のタブを退避してから片付ける (背景セッションは生かしたまま)。
     if (selectedProfile) persistTabsForProfile(selectedProfile.id);
     await closeAllTabs();
+    // 旧セッションの DB 名を持ったまま各モーダルが新しい sessionId で開き続けない
+    // よう、切替時も handleDisconnect / tearDownLostSession と同じく閉じる。
+    setImportTarget(null);
+    setDumpTarget(null);
+    setSchemaExportTarget(null);
     setErrorProfileId(null);
     setConnectionStatus("connected");
     setSessionId(target.sessionId);
@@ -1792,6 +1802,7 @@ export default function App() {
     setSelectedProfile(null);
     setImportTarget(null);
     setDumpTarget(null);
+    setSchemaExportTarget(null);
     // 他に開いている接続が残っていれば、そのうち最後に開いたものへ切り替える。
     // 残っていなければ未接続状態へ。
     const remaining = openConnectionsRef.current.filter((c) => c.profile.id !== closingId);
@@ -1848,6 +1859,7 @@ export default function App() {
       setSelectedProfile(null);
       setImportTarget(null);
       setDumpTarget(null);
+      setSchemaExportTarget(null);
       setConnectionStatus("connected");
       setErrorProfileId(lostProfileId);
       if (opts?.inTransaction) {
@@ -3354,6 +3366,10 @@ export default function App() {
     setDumpTarget(database);
   }, []);
 
+  const handleSchemaExport = useCallback((database: string) => {
+    setSchemaExportTarget(database);
+  }, []);
+
   // Open a fresh query tab holding `sql` and run it immediately. Shared by the
   // schema-tree table context-menu actions (run SELECT, show definition).
   const openAndRunQuery = useCallback((sql: string, title?: string) => {
@@ -4082,6 +4098,9 @@ export default function App() {
     }
   }, []);
 
+  // パレットの「現在の DB」を要する項目 (スキーマエクスポート等) の対象 DB。
+  const paletteDatabase = activeTab?.database ?? selectedProfile?.database ?? null;
+
   const commandItems = useMemo<CommandItem[]>(() => {
     const items: CommandItem[] = [];
 
@@ -4103,6 +4122,16 @@ export default function App() {
         keywords: "er diagram schema relations foreign key 図 スキーマ 関係 外部キー",
         run: () => openFullView("erDiagram"),
       });
+      if (paletteDatabase) {
+        items.push({
+          id: "nav:schema-export",
+          group: "navigation",
+          label: t("cmdkActionSchemaExport"),
+          icon: "database",
+          keywords: "schema export ai markdown claude llm スキーマ 出力 エクスポート",
+          run: () => setSchemaExportTarget(paletteDatabase),
+        });
+      }
     }
     items.push(
       {
@@ -4236,6 +4265,7 @@ export default function App() {
   }, [
     sessionId,
     selectedProfile?.id,
+    paletteDatabase,
     profiles,
     schemaCache,
     snippets,
@@ -4955,6 +4985,7 @@ export default function App() {
             onPickTable={handleOpenTable}
             onImportTable={handleImportTable}
             onDumpDatabase={handleDumpDatabase}
+            onSchemaExport={handleSchemaExport}
             onRunTableSelect={handleRunTableSelect}
             onInsertTableSelect={handleInsertTableSelect}
             onShowCreateTable={
@@ -5586,6 +5617,18 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {schemaExportTarget && sessionId && (
+          <SchemaExportModal
+            key={schemaExportTarget}
+            sessionId={sessionId}
+            database={schemaExportTarget}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            onClose={() => setSchemaExportTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {importProfilesPath && (
           <ProfileImportDialog
             onConfirm={handleImportProfilesConfirm}
@@ -5723,6 +5766,15 @@ export default function App() {
               onSelect: () => {
                 const db = activeTab?.database ?? selectedProfile?.database ?? null;
                 if (db) handleShowDatabaseSizes(db);
+              },
+              disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
+              title: !sessionId ? t("appToolsNeedsSession") : undefined,
+            },
+            {
+              label: t("appSchemaExportMenu"),
+              onSelect: () => {
+                const db = activeTab?.database ?? selectedProfile?.database ?? null;
+                if (db) setSchemaExportTarget(db);
               },
               disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
               title: !sessionId ? t("appToolsNeedsSession") : undefined,

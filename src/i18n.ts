@@ -761,6 +761,25 @@ const en = {
   dumpSuccess: "Wrote {bytes} bytes to {path}",
   dumpError: "Dump failed: {error}",
 
+  // AI 向けスキーマ Markdown エクスポート。
+  schemaExportTitle: "Export schema \"{database}\" for AI",
+  schemaExportNote:
+    "Generates a Markdown summary of tables, columns and foreign keys. Paste it into an AI chat (Claude, etc.) so it can write SQL against your schema. The output itself is always in English.",
+  schemaExportLoading: "Loading column details... ({done}/{total})",
+  schemaExportNoTables: "This database has no tables.",
+  schemaExportScope: "Tables to include",
+  schemaExportScopeAll: "Whole database",
+  schemaExportScopeSelected: "Selected tables",
+  schemaExportIncludeRelated: "Include tables related via foreign keys",
+  schemaExportIncludeRelatedHint:
+    "Also adds every table reachable from the selection through foreign keys (marked FK below).",
+  schemaExportFilterPlaceholder: "Filter tables...",
+  schemaExportNoFilterMatch: "No tables match the filter.",
+  schemaExportAutoAdded: "Added automatically via foreign keys",
+  schemaExportSelectedCount: "{selected} selected → {effective} tables in the output",
+  schemaExportNoSelection: "Check at least one table.",
+  schemaExportPreviewTruncated: "Showing the first {shown} of {total} lines.",
+
   previewBanner: "Preview — changes were rolled back. The database is unchanged.",
   previewTargetTable: "Target table: {table}",
   previewNoTarget: "Could not auto-detect the target table — showing affected row count only.",
@@ -1022,6 +1041,7 @@ const en = {
   contextMenuRemoveFavorite: "Remove from favorites",
   contextMenuImportCsv: "Import CSV...",
   contextMenuDump: "Dump database...",
+  contextMenuSchemaExport: "Export schema for AI...",
   quickAccessFavorites: "Favorites",
   quickAccessRecent: "Recent",
   quickAccessRemoveTitle: "Remove from favorites",
@@ -1230,6 +1250,7 @@ const en = {
   appProcessesUnsupported: "Not available for SQLite connections",
   appSchemaCompare: "Compare schemas",
   appErDiagram: "ER diagram",
+  appSchemaExportMenu: "Export schema for AI…",
   appPinCompare: "Compare pinned results ({count})",
   pinResultTitle: "Pin this result for comparison",
   pinCompareTitle: "Compare pinned results",
@@ -1356,6 +1377,7 @@ const en = {
   cmdkActionHelp: "Open help",
   cmdkActionCompare: "Open schema compare",
   cmdkActionErDiagram: "Open ER diagram",
+  cmdkActionSchemaExport: "Export schema for AI (Markdown)",
   cmdkActionToggleTheme: "Toggle light / dark theme",
   cmdkActionDisconnect: "Disconnect",
 
@@ -2237,6 +2259,25 @@ const ja: Dict = {
   dumpSuccess: "{path} に {bytes} バイトを書き出しました",
   dumpError: "ダンプに失敗しました: {error}",
 
+  // AI 向けスキーマ Markdown エクスポート。
+  schemaExportTitle: "スキーマ「{database}」を AI 向けにエクスポート",
+  schemaExportNote:
+    "テーブル・カラム・外部キーを Markdown にまとめます。Claude などの AI チャットに貼り付けると、スキーマを踏まえた SQL を書かせられます。出力自体は常に英語です。",
+  schemaExportLoading: "列情報を取得中... ({done}/{total})",
+  schemaExportNoTables: "このデータベースにテーブルがありません。",
+  schemaExportScope: "対象テーブル",
+  schemaExportScopeAll: "DB 全体",
+  schemaExportScopeSelected: "選択したテーブル",
+  schemaExportIncludeRelated: "外部キーで関連するテーブルも含める",
+  schemaExportIncludeRelatedHint:
+    "選択テーブルから外部キーを辿って到達できるテーブルも自動で追加します (一覧に FK と表示)。",
+  schemaExportFilterPlaceholder: "テーブルを絞り込み...",
+  schemaExportNoFilterMatch: "絞り込みに一致するテーブルがありません。",
+  schemaExportAutoAdded: "外部キー関連で自動追加",
+  schemaExportSelectedCount: "{selected} 件選択 → 出力対象 {effective} テーブル",
+  schemaExportNoSelection: "テーブルを 1 つ以上選択してください。",
+  schemaExportPreviewTruncated: "全 {total} 行のうち先頭 {shown} 行を表示しています。",
+
   previewBanner: "Preview",
   previewTargetTable: "対象テーブル: {table}",
   previewNoTarget: "対象テーブルを自動検出できませんでした — 影響行数のみ表示しています。",
@@ -2497,6 +2538,7 @@ const ja: Dict = {
   contextMenuRemoveFavorite: "お気に入りから削除",
   contextMenuImportCsv: "CSV をインポート...",
   contextMenuDump: "ダンプを取得...",
+  contextMenuSchemaExport: "スキーマを AI 向けに出力...",
   quickAccessFavorites: "お気に入り",
   quickAccessRecent: "最近",
   quickAccessRemoveTitle: "お気に入りから外す",
@@ -2705,6 +2747,7 @@ const ja: Dict = {
   appProcessesUnsupported: "SQLite 接続では使用できません",
   appSchemaCompare: "スキーマ比較",
   appErDiagram: "ER 図",
+  appSchemaExportMenu: "スキーマを AI 向けに出力…",
   appPinCompare: "ピン留め結果を比較 ({count})",
   pinResultTitle: "この結果を比較用にピン留め",
   pinCompareTitle: "ピン留め結果の比較",
@@ -2831,6 +2874,7 @@ const ja: Dict = {
   cmdkActionHelp: "ヘルプを開く",
   cmdkActionCompare: "スキーマ比較を開く",
   cmdkActionErDiagram: "ER 図を開く",
+  cmdkActionSchemaExport: "スキーマを AI 向けに出力 (Markdown)",
   cmdkActionToggleTheme: "ライト / ダークテーマ切替",
   cmdkActionDisconnect: "切断する",
 

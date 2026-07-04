@@ -923,7 +923,11 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `ExportModal`/`DumpModal`/`ImportModal`、`ExplainViewer`、`SettingsView`、
   `HelpView`、`DangerousQueryDialog`、`CellValueViewer`、`ERDiagramView`
   (`@xyflow/react` + `@dagrejs/dagre` による ER 図。レイアウト/グラフ構築の純ロジックは
-  `erDiagram.ts` に分離してテスト)。
+  `erDiagram.ts` に分離してテスト)、`SchemaExportModal` (DB スキーマを AI に貼れる
+  Markdown としてコピー/保存。既定は DB 全体で、テーブル選択時は FK で紐付く関連
+  テーブルを推移的に自動追加できる。Markdown 生成と FK 閉包の純ロジックは
+  `schemaExport.ts` に分離してテスト。出力はロケール非依存の英語固定で、既存 IPC
+  のみで完結しバックエンド変更なし)。
 - `components/` (発展機能) — `ChartView` (結果のグラフ化。チャートライブラリ非依存で
   SVG 描画、純ロジックは `chartData.ts`)、`CommandPalette` (Cmd/Ctrl+K の横断検索。
   `commandPaletteSearch.ts`)、`ObjectSearchModal` (スキーマ全体のオブジェクト検索。

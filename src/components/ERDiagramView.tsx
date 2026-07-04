@@ -33,6 +33,7 @@ import {
   type ErTableData,
 } from "./erDiagram";
 import { Icon } from "./Icon";
+import { mapLimited } from "./mapLimited";
 import { Button, Select } from "./ui";
 import { Spinner } from "./Spinner";
 import { ImageExportButton } from "./ImageExportButton";
@@ -70,25 +71,6 @@ interface ErNodeData extends ErTableData {
   [key: string]: unknown;
 }
 type ErFlowNode = Node<ErNodeData, "erTable">;
-
-// Concurrency-bounded map so PK lookups don't open dozens of simultaneous
-// queries on large schemas. Order of results matches `items`.
-async function mapLimited<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
-    }
-  });
-  await Promise.all(workers);
-  return out;
-}
 
 const cardCss: SystemStyleObject = {
   // Width comes from the React Flow node (variable per table; see nodeWidth in
