@@ -10,7 +10,9 @@ export async function mapLimited<T, R>(
 ): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+  // limit <= 0 だとワーカーが 1 つも生まれず undefined 埋めの配列が黙って返る
+  // ため、最低 1 ワーカーへ正規化する。
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
     while (next < items.length) {
       const i = next++;
       out[i] = await fn(items[i]);
