@@ -237,16 +237,39 @@ fn modify_column(
     let cident = quote_ident(driver, &src.name);
     match driver {
         DriverKind::Mysql => {
-            statements.push(SyncStatement {
-                sql: format!(
-                    "ALTER TABLE {} MODIFY COLUMN {}",
-                    tident,
-                    column_def(driver, src)
-                ),
-                table: table.to_string(),
-                kind: SyncKind::AlterColumn,
-                destructive: false,
-            });
+            // 修正 L3: key / foreign_key の差分は `MODIFY COLUMN` では反映され
+            // ない (キー制約自体は変更されないため)。それだけの差分に対して
+            // MODIFY を出しても差分は永遠に解消されない — それどころか、
+            // source 側が auto_increment で target 側にキーが無いケースでは
+            // 「Incorrect table definition; there can be only one auto column
+            // and it must be defined as a key」で失敗するだけになる。
+            // PostgreSQL 分岐と同じ方針で警告に落とす。
+            let key_or_fk_changed = changed_fields
+                .iter()
+                .any(|f| f == "key" || f == "foreign_key");
+            let other_changed = changed_fields
+                .iter()
+                .any(|f| f != "key" && f != "foreign_key");
+            if other_changed {
+                statements.push(SyncStatement {
+                    sql: format!(
+                        "ALTER TABLE {} MODIFY COLUMN {}",
+                        tident,
+                        column_def(driver, src)
+                    ),
+                    table: table.to_string(),
+                    kind: SyncKind::AlterColumn,
+                    destructive: false,
+                });
+            }
+            if key_or_fk_changed {
+                warnings.push(format!(
+                    "{}.{}: キー / 外部キーの差分は自動生成の対象外です。MODIFY COLUMN では \
+                     キー制約が変更されないため、必要に応じて手動で ALTER TABLE ... ADD/DROP \
+                     {{PRIMARY KEY|INDEX|FOREIGN KEY}} を実行してください。",
+                    table, src.name
+                ));
+            }
         }
         DriverKind::Postgres => {
             let mut emitted = false;
@@ -320,23 +343,84 @@ fn pg_alter(table: &str, sql: String) -> SyncStatement {
 }
 
 /// Renders a single column definition (`<ident> <type> [NOT NULL] [DEFAULT x]
-/// [extra]`). `data_type` and `default` come verbatim from introspection;
-/// `extra` (e.g. `auto_increment`) is MySQL-only.
+/// [extra]`). `data_type` comes verbatim from introspection (including any
+/// length/precision, e.g. `varchar(50)` / `character varying(50)`); the
+/// `DEFAULT` clause is built by [`default_clause`]. `extra` (e.g.
+/// `auto_increment`) is MySQL-only.
 fn column_def(driver: DriverKind, col: &TableColumnInfo) -> String {
     let mut def = format!("{} {}", quote_ident(driver, &col.name), col.data_type);
     if !col.nullable {
         def.push_str(" NOT NULL");
     }
-    if let Some(d) = &col.default {
-        if !d.is_empty() {
-            def.push_str(&format!(" DEFAULT {d}"));
-        }
+    if let Some(clause) = default_clause(driver, col) {
+        def.push(' ');
+        def.push_str(&clause);
     }
     if driver == DriverKind::Mysql && !col.extra.is_empty() {
         def.push(' ');
         def.push_str(&col.extra);
     }
     def
+}
+
+/// 修正 L2: `DEFAULT ...` 句を組み立てる。デフォルトが無ければ `None`。
+///
+/// MySQL の `information_schema.COLUMNS.COLUMN_DEFAULT` は文字列リテラルを
+/// **クオートなし**で返す (列定義が `DEFAULT 'pending'` でも `COLUMN_DEFAULT`
+/// は `pending` になる)。これを旧実装のように `DEFAULT {d}` で逐語埋め込む
+/// と `DEFAULT pending` という不正な DDL になってしまう。加えて空文字
+/// デフォルト (`DEFAULT ''`) は旧実装の `!d.is_empty()` ガードにより無音で
+/// 消えていた (MODIFY 時にデフォルトが消失する)。ここでは MySQL のみ、型と
+/// `extra` を見てクオートするかどうかを切り替える:
+///
+/// - `extra` に `DEFAULT_GENERATED` を含む場合 (`CURRENT_TIMESTAMP` や
+///   MySQL 8.0 の式デフォルト `(expr)`) はクオートすると壊れるため逐語のまま
+///   出す。
+/// - 文字列系の型 (`char`/`varchar`/`*text`/`enum`/`set`。長さ付きも判定可)
+///   はクオートし直す — 空文字も `DEFAULT ''` として (消さずに) 出力する。
+/// - それ以外 (数値・真偽値・日時のキーワードデフォルトなど) は従来どおり
+///   逐語で出す。
+///
+/// PostgreSQL / SQLite の `column_default` は introspection が既に
+/// クオート/キャスト済みの式 (`'x'::character varying` 等) を返すため、
+/// これらは常に逐語でよい (現状維持)。
+fn default_clause(driver: DriverKind, col: &TableColumnInfo) -> Option<String> {
+    let d = col.default.as_ref()?;
+    if driver != DriverKind::Mysql {
+        return Some(format!("DEFAULT {d}"));
+    }
+    if col.extra.to_ascii_uppercase().contains("DEFAULT_GENERATED") {
+        return Some(format!("DEFAULT {d}"));
+    }
+    if is_mysql_string_default_type(&col.data_type) {
+        return Some(format!("DEFAULT {}", mysql_quote_default(d)));
+    }
+    Some(format!("DEFAULT {d}"))
+}
+
+/// True if `data_type` (MySQL 表記。`varchar(50)` のように長さ付きでもよい)
+/// が、デフォルト値を文字列リテラルとしてクオートすべき型かどうか。
+fn is_mysql_string_default_type(data_type: &str) -> bool {
+    const STRING_PREFIXES: [&str; 7] = [
+        "char",
+        "varchar",
+        "tinytext",
+        "mediumtext",
+        "longtext",
+        "text",
+        "enum",
+    ];
+    let lower = data_type.to_ascii_lowercase();
+    // "set('a','b')" も文字列扱い。
+    lower.starts_with("set") || STRING_PREFIXES.iter().any(|p| lower.starts_with(p))
+}
+
+/// MySQL の文字列デフォルトをクオートする。シングルクオートを二重化し、
+/// MySQL の既定モード (`\` をエスケープ文字として扱う) に合わせてバック
+/// スラッシュも二重化する (`db::data_diff::sql_literal` の MySQL 分岐と同じ
+/// 規則)。
+fn mysql_quote_default(d: &str) -> String {
+    format!("'{}'", d.replace('\\', "\\\\").replace('\'', "''"))
 }
 
 /// Quotes an identifier for `driver`, doubling the embedded quote char. Shared
@@ -551,5 +635,181 @@ mod tests {
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), true);
         assert!(plan.statements.is_empty());
         assert!(plan.warnings.is_empty());
+    }
+
+    // --- 修正 L2: MySQL の DEFAULT クオート ---------------------------------
+
+    #[test]
+    fn mysql_string_default_is_quoted() {
+        // COLUMN_DEFAULT は 'pending' に対し `pending` (クオートなし) を返す。
+        let mut c = col("status", "varchar(20)");
+        c.default = Some("pending".to_string());
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(
+            sql.contains("DEFAULT 'pending'"),
+            "文字列デフォルトはクオートされるはず: {sql}"
+        );
+    }
+
+    #[test]
+    fn mysql_empty_string_default_is_preserved_quoted() {
+        // 旧実装は `!d.is_empty()` で空文字デフォルトを無音に落としていた。
+        let mut c = col("note", "varchar(255)");
+        c.default = Some(String::new());
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(
+            sql.contains("DEFAULT ''"),
+            "空文字デフォルトは消さずに DEFAULT '' として出すべき: {sql}"
+        );
+    }
+
+    #[test]
+    fn mysql_default_generated_expression_stays_verbatim() {
+        // CURRENT_TIMESTAMP のような式デフォルトはクオートすると壊れる。
+        let mut c = col("created_at", "timestamp");
+        c.default = Some("CURRENT_TIMESTAMP".to_string());
+        c.extra = "DEFAULT_GENERATED".to_string();
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(
+            sql.contains("DEFAULT CURRENT_TIMESTAMP") && !sql.contains("'CURRENT_TIMESTAMP'"),
+            "DEFAULT_GENERATED は逐語のまま出すべき: {sql}"
+        );
+    }
+
+    #[test]
+    fn mysql_numeric_default_stays_unquoted() {
+        let mut c = col("amount", "int");
+        c.default = Some("0".to_string());
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(
+            sql.contains("DEFAULT 0") && !sql.contains("'0'"),
+            "got: {sql}"
+        );
+    }
+
+    #[test]
+    fn mysql_string_default_with_quote_is_escaped() {
+        let mut c = col("name", "varchar(50)");
+        c.default = Some("O'Brien".to_string());
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(sql.contains("DEFAULT 'O''Brien'"), "got: {sql}");
+    }
+
+    #[test]
+    fn postgres_default_stays_verbatim() {
+        // PostgreSQL の column_default は introspection が既にクオート/
+        // キャスト済みの式を返すので、この層では変更しない (現状維持)。
+        let mut c = col("status", "character varying(20)");
+        c.default = Some("'pending'::character varying".to_string());
+        let sql = column_def(DriverKind::Postgres, &c);
+        assert!(
+            sql.contains("DEFAULT 'pending'::character varying"),
+            "got: {sql}"
+        );
+    }
+
+    // --- 修正 L3: MySQL の key/FK のみの差分は MODIFY を出さず警告に -------
+
+    #[test]
+    fn mysql_key_only_diff_warns_without_modify() {
+        let mut src = col("id", "int");
+        src.key = "PRI".to_string();
+        let table = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::Different,
+            columns: vec![cdiff("id", DiffStatus::Different, Some(src), &["key"])],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
+        assert!(
+            plan.statements.is_empty(),
+            "key のみの差分では MODIFY を出してはいけない: {plan:?}"
+        );
+        assert_eq!(plan.warnings.len(), 1);
+        assert!(plan.warnings[0].contains("キー"));
+    }
+
+    #[test]
+    fn mysql_foreign_key_only_diff_warns_without_modify() {
+        let src = col("user_id", "int");
+        let table = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::Different,
+            columns: vec![cdiff(
+                "user_id",
+                DiffStatus::Different,
+                Some(src),
+                &["foreign_key"],
+            )],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
+        assert!(plan.statements.is_empty());
+        assert_eq!(plan.warnings.len(), 1);
+    }
+
+    #[test]
+    fn mysql_mixed_key_and_type_diff_still_modifies_and_warns() {
+        // data_type と key の両方が変わっているケース: MODIFY は出す (型部分は
+        // 直る) が、key 部分は反映されないことを警告で補足する。
+        let mut src = col("v", "bigint");
+        src.key = "PRI".to_string();
+        let table = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::Different,
+            columns: vec![cdiff(
+                "v",
+                DiffStatus::Different,
+                Some(src),
+                &["data_type", "key"],
+            )],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
+        assert_eq!(plan.statements.len(), 1);
+        assert_eq!(plan.statements[0].kind, SyncKind::AlterColumn);
+        assert!(plan.statements[0].sql.contains("MODIFY COLUMN"));
+        assert_eq!(plan.warnings.len(), 1);
+        assert!(plan.warnings[0].contains("キー"));
+    }
+
+    // --- 修正 L4: 長さ/精度付き data_type がそのまま比較・出力に使われる ----
+
+    #[test]
+    fn mysql_create_table_preserves_length_and_precision() {
+        let mut price = col("price", "numeric(10,2)");
+        price.nullable = false;
+        let table = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![cdiff("price", DiffStatus::SourceOnly, Some(price), &[])],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
+        assert!(
+            plan.statements[0].sql.contains("numeric(10,2)"),
+            "長さ/精度付きの型が verbatim で出力されるべき: {}",
+            plan.statements[0].sql
+        );
+    }
+
+    #[test]
+    fn postgres_varchar_length_change_generates_alter_type() {
+        // K の introspection 変更後、data_type は `character varying(50)` の
+        // ような完全型文字列になる。長さ違いが ALTER COLUMN ... TYPE に
+        // そのまま反映されることを確認する。
+        let src = col("name", "character varying(255)");
+        let table = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::Different,
+            columns: vec![cdiff(
+                "name",
+                DiffStatus::Different,
+                Some(src),
+                &["data_type"],
+            )],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
+        assert_eq!(plan.statements.len(), 1);
+        assert_eq!(
+            plan.statements[0].sql,
+            "ALTER TABLE \"t\" ALTER COLUMN \"name\" TYPE character varying(255)"
+        );
     }
 }

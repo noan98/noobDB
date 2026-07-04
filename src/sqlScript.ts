@@ -1,8 +1,16 @@
 // SQL スクリプト (複数文) のバッチ実行の文分割 (純ロジック)。
 //
-// トップレベルの `;` で文を分割する。文字列リテラル・識別子クオート・コメント・
-// PostgreSQL のドル引用 ($tag$...$tag$) の内側にある `;` では分割しない
-// (文字列内セミコロンの誤検出を防ぐ)。副作用が無いので Vitest でユニットテストする。
+// トップレベルの `;` で文を分割する。文字列リテラル・識別子クオート・コメント
+// (`--` / `#` の行コメント、`/* */` のブロックコメント)・PostgreSQL のドル引用
+// ($tag$...$tag$) の内側にある `;` では分割しない (文字列内セミコロンの誤検出を
+// 防ぐ)。`#` を行コメント扱いするのは `src/dangerousSql.ts` の maskLiterals /
+// バックエンド `mask_for_analysis` (src-tauri/src/db/mod.rs) と揃えるためで、
+// これにより「文分割 (バッチ実行の単位)」と「危険 SQL 判定 (analyzeDangerousSql /
+// isReadOnlySql)」が同じ文字を同じ意味 (コメント) として扱い、`SELECT data #>>
+// '{a}' FROM t; DELETE FROM t` のような入力で両者の判定が食い違って危険な DELETE
+// を見逃す事故を防ぐ (#J3)。PostgreSQL では `#`/`#>>` は実際には演算子であり、
+// 実行結果とは乖離する既知の限界だが、安全側 (見逃さない) を優先する。
+// 副作用が無いので Vitest でユニットテストする。
 
 /**
  * 1 文の範囲。`from` / `to` は元の `sql` 内における**トリム済み本文**の絶対
@@ -45,6 +53,17 @@ export function splitSqlStatementRanges(sql: string): StatementRange[] {
 
     // 行コメント -- ... 改行まで
     if (ch === "-" && next === "-") {
+      const end = sql.indexOf("\n", i);
+      i = end === -1 ? n : end;
+      continue;
+    }
+    // 行コメント # ... 改行まで (MySQL の # コメント。バックエンド
+    // mask_for_analysis / フロント dangerousSql.ts の maskLiterals と # の扱いを
+    // 揃えることで、危険クエリ判定 (isReadOnlySql/analyzeDangerousSql は # 以降を
+    // コメントとしてマスクする) と文分割の結果が一致するようにする (#J3)。
+    // PostgreSQL では `#`/`#>>` は演算子として実行され得るため、実 PostgreSQL の
+    // 挙動とは乖離が残る既知の限界だが、危険 SQL の見逃しを防ぐことを優先する。
+    if (ch === "#") {
       const end = sql.indexOf("\n", i);
       i = end === -1 ? n : end;
       continue;
@@ -110,11 +129,12 @@ export function statementAtOffset(sql: string, offset: number): StatementRange |
   return ranges[ranges.length - 1];
 }
 
-/** コメント (行 `--` / ブロック `/* *​/`) を除いて実行可能な SQL が残るか。 */
+/** コメント (行 `--` / `#` / ブロック `/* *​/`) を除いて実行可能な SQL が残るか。 */
 function hasExecutableSql(fragment: string): boolean {
   const stripped = fragment
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/--[^\n\r]*/g, "")
+    .replace(/#[^\n\r]*/g, "")
     .trim();
   return stripped.length > 0;
 }

@@ -51,6 +51,14 @@ describe("isEditableColumnType", () => {
     expect(isEditableColumnType("longblob")).toBe(false);
     expect(isEditableColumnType("VarBinary")).toBe(false);
   });
+
+  it("rejects PostgreSQL BYTEA case-insensitively (regression: #修正4)", () => {
+    // db/postgres.rs は bytea 列を type_name = "BYTEA" として報告する。ここが
+    // false を返さないと編集不可の防御をすり抜け、hex 文字列がテキストとして
+    // 書き込まれて元のバイナリ値を破壊してしまう。
+    expect(isEditableColumnType("BYTEA")).toBe(false);
+    expect(isEditableColumnType("bytea")).toBe(false);
+  });
 });
 
 describe("resolvePkIndices", () => {
@@ -344,6 +352,14 @@ describe("buildRowSql", () => {
       expect(
         buildRowSql(baseRowSql({ driver: "sqlite", columns, rows }), "insert"),
       ).toEqual(['INSERT INTO "tbl" ("id", "data") VALUES (1, X\'deadbeef\');']);
+    });
+
+    it("treats PostgreSQL BYTEA as a BLOB-family column (regression: #修正4)", () => {
+      const columns = [col("id", "INT"), col("data", "BYTEA")];
+      const rows: CellValue[][] = [[1, "deadbeef"]];
+      expect(
+        buildRowSql(baseRowSql({ driver: "postgres", columns, rows }), "insert"),
+      ).toEqual(['INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xdeadbeef\');']);
     });
 
     it("emits one statement per row", () => {

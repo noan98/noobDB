@@ -865,6 +865,8 @@ async fn sqlite_data_sync_plan_applied_makes_rows_converge() {
     let diff = t::DataDiff {
         target_driver: t::DriverKind::Sqlite,
         table: "scores".to_string(),
+        // 非バイナリ列のみのテスト。型は TEXT 固定で十分 (バイナリ補正は走らない)。
+        column_types: vec!["TEXT".to_string(); columns.len()],
         columns: columns.clone(),
         primary_key: vec!["id".to_string()],
         rows: row_diffs,

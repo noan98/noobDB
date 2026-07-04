@@ -428,6 +428,8 @@ export interface DataDiff {
   target_driver: DriverKind;
   table: string;
   columns: string[];
+  /** `columns` と同じ並びの型名。BLOB 列を復元して sql_literal の補正に使う (修正3)。 */
+  column_types: string[];
   primary_key: string[];
   rows: RowDiff[];
   /** True if either side hit the row cap, so the diff is partial. */

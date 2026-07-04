@@ -102,7 +102,20 @@ impl SqliteConn {
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
-        sqlx::query(stmt).execute(&mut *conn).await?;
+        let result = sqlx::query(stmt).execute(&mut *conn).await;
+        if let Err(e) = result {
+            // COMMIT/ROLLBACK 自体が失敗すると、この接続は BEGIN したままの
+            // 不定状態になり得る。`guard` は既に None にしてあるので復旧の
+            // 余地はなく、そのままプールに返すと次の利用者がトランザクション
+            // 状態を引き継いでしまう。COMMIT 失敗時はベストエフォートで
+            // ROLLBACK を試み (失敗しても無視)、最後にこの接続を `detach`
+            // してプール管理から切り離してから破棄する — プールへは返さない。
+            if commit {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            }
+            drop(conn.detach());
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -759,11 +772,30 @@ impl SqliteConn {
     }
 }
 
+/// Decides whether `sql` should run through the result-set path
+/// (`fetch`/`fetch_all`) or the `execute` path that only reports
+/// `rows_affected`.
+///
+/// Leading comments (`-- ...`, `/* ... */`) must be skipped before the
+/// keyword check, or a perfectly normal `-- note\nSELECT ...` would miss the
+/// prefix match and get misrouted to the execute path, silently returning an
+/// empty result instead of the query's rows (#K1). `strip_sql_comments`
+/// already understands SQLite's dialect (no `#` line comments), so it
+/// doubles as the leading-comment skipper here.
+///
+/// `WITH` (CTE) is not SELECT-only: a CTE can prefix an INSERT/UPDATE/DELETE
+/// that mutates rows. Treating every `WITH` as a query hides those mutations
+/// behind an empty "0 rows" grid (rows_affected always reported as 0), so we
+/// inspect the statement that follows the CTE definitions via the
+/// (dialect-agnostic) `with_cte_is_mutation` shared from `db::mysql` (#K2).
 fn is_query_shape(sql: &str) -> bool {
-    let trimmed = sql.trim_start().to_ascii_lowercase();
+    let cleaned = strip_sql_comments(sql);
+    let trimmed = cleaned.trim_start().to_ascii_lowercase();
+    if trimmed.starts_with("with") {
+        return !super::mysql::with_cte_is_mutation(sql);
+    }
     trimmed.starts_with("select")
         || trimmed.starts_with("explain")
-        || trimmed.starts_with("with")
         || trimmed.starts_with("values")
         || trimmed.starts_with("pragma")
 }
@@ -1083,5 +1115,61 @@ mod tests {
         assert_eq!(strip_identifier_quotes("users"), "users");
         assert_eq!(strip_identifier_quotes("  users  "), "users");
         assert_eq!(strip_identifier_quotes("\"with\"\"quote\""), "with\"quote");
+    }
+
+    #[test]
+    fn query_shape_recognises_plain_selects() {
+        assert!(is_query_shape("SELECT * FROM users"));
+        assert!(is_query_shape("  explain query plan select 1"));
+        assert!(is_query_shape("VALUES (1), (2)"));
+        assert!(is_query_shape("PRAGMA table_info(users)"));
+    }
+
+    #[test]
+    fn query_shape_treats_plain_dml_as_execute() {
+        assert!(!is_query_shape("INSERT INTO t VALUES (1)"));
+        assert!(!is_query_shape("UPDATE t SET x = 1"));
+        assert!(!is_query_shape("DELETE FROM t WHERE id = 1"));
+    }
+
+    #[test]
+    fn query_shape_skips_leading_comments() {
+        // #K1: a leading comment must not hide the real keyword and get the
+        // statement misrouted to the execute path (which would silently
+        // return an empty result instead of the SELECT's rows).
+        assert!(is_query_shape("-- monthly report\nSELECT * FROM orders"));
+        assert!(is_query_shape("/* hint */ SELECT 1"));
+        assert!(is_query_shape("  /* a */ -- b\n  PRAGMA user_version"));
+        // SQLite has no `#` line comment, so a statement genuinely starting
+        // with `#` must NOT be treated as a comment — it falls through to
+        // the (correct) execute path instead.
+        assert!(!is_query_shape("# not a comment\nSELECT 1"));
+        // Leading comment before a CTE-prefixed mutation still routes to execute.
+        assert!(!is_query_shape(
+            "-- delete dups\nWITH c AS (SELECT 1) DELETE FROM t"
+        ));
+        assert!(!is_query_shape("/* c */ INSERT INTO t VALUES (1)"));
+    }
+
+    #[test]
+    fn query_shape_keeps_with_select_as_query() {
+        assert!(is_query_shape(
+            "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte"
+        ));
+    }
+
+    #[test]
+    fn query_shape_routes_with_dml_to_execute() {
+        // #K2: CTE-prefixed DML must report rows_affected via the execute
+        // path, not silently show an empty result grid.
+        assert!(!is_query_shape(
+            "WITH ranked AS (SELECT id FROM orders) DELETE FROM orders WHERE id IN (SELECT id FROM ranked)"
+        ));
+        assert!(!is_query_shape(
+            "WITH src AS (SELECT 1 AS id) INSERT INTO t SELECT * FROM src"
+        ));
+        assert!(!is_query_shape(
+            "WITH c AS (SELECT 1) UPDATE t SET x = 1 WHERE id IN (SELECT * FROM c)"
+        ));
     }
 }

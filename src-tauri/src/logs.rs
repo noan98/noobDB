@@ -94,10 +94,28 @@ impl LogStore {
 
     fn clear(&self) -> io::Result<()> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = std::fs::remove_file(self.prev_path());
-        let _ = std::fs::remove_file(self.current_path());
-        inner.file = open_append(&self.current_path())?;
+        // アクティブファイルを空にする。新しいハンドルを開いて**成功したときだけ**
+        // 既存の `inner.file` を差し替えるので、途中で失敗しても既存ハンドルは
+        // 有効なまま残る (#H7: remove → 再オープンの順だと、再オープン失敗時に
+        // `inner.file` が「削除済みで以後パスから見えないファイル」を指したままに
+        // なり、以後の write は成功に見えても実体は次回起動までどこからも読めない
+        // = 黙ってログが消える)。
+        //
+        // in-place の `set_len(0)` は使わない: Windows の SetEndOfFile は
+        // write-data 権限を要求し、`open_append` の append 専用ハンドルでは
+        // `Access Denied` になる (Unix の ftruncate は append fd でも成功するため
+        // OS 差が出る)。代わりに `truncate(true)` で開き直す — 既存ファイルを
+        // O_TRUNC で空にするだけなのでパスも inode も変わらず、全 OS で動く。
+        let fresh = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(self.current_path())?;
+        inner.file = fresh;
         inner.size = 0;
+        // バックアップセグメントはアクティブハンドルに影響しないので、削除に
+        // 失敗してもベストエフォートで無視してよい。
+        let _ = std::fs::remove_file(self.prev_path());
         Ok(())
     }
 }
@@ -217,6 +235,32 @@ mod tests {
         store.clear().unwrap();
         assert_eq!(store.read(), "");
         // Writing still works after a clear.
+        store.write_bytes(b"after\n").unwrap();
+        assert_eq!(store.read(), "after\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // H7: clear() はアクティブファイルを remove+再作成ではなく、同じパスを
+    // O_TRUNC で開き直して空にするので、ファイルは再作成されず inode が保たれる。
+    // Unix では inode 番号が変わらないことで検証できる。
+    #[cfg(unix)]
+    #[test]
+    fn clear_truncates_active_file_preserving_inode() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = scratch_dir("clear_inplace");
+        let store = LogStore::open(dir.clone()).unwrap();
+        store.write_bytes(b"before\n").unwrap();
+        let ino_before = std::fs::metadata(store.current_path()).unwrap().ino();
+
+        store.clear().unwrap();
+
+        // The active log file still exists at the same path with the same
+        // inode (truncated in place), not recreated from scratch.
+        let meta_after = std::fs::metadata(store.current_path()).unwrap();
+        assert_eq!(meta_after.ino(), ino_before, "active file was recreated");
+        assert_eq!(meta_after.len(), 0);
+
         store.write_bytes(b"after\n").unwrap();
         assert_eq!(store.read(), "after\n");
         let _ = std::fs::remove_dir_all(&dir);

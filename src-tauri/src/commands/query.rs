@@ -306,21 +306,38 @@ pub async fn run_query_stream(
     if auto_refresh {
         ensure_auto_refresh_read_only(&sql)?;
     }
-    let handle = tokio::spawn(spawn_query_stream(
-        app,
-        session,
-        stream_id.clone(),
-        sql,
-        database,
-        initial_batch,
-        chunk_size,
-        auto_limit,
-        query_timeout_secs,
-        auto_refresh,
-    ));
+    // `register_stream` をタスク本体の実行より前に完了させるためのゲート。
+    // `tokio::spawn` は返り値の `JoinHandle` からしか `AbortHandle` を得られないため
+    // 文字通り「spawn より前に register」することはできないが、タスク本体を
+    // oneshot の受信待ちから始めれば、`register_stream` が完了するまでタスクの
+    // 実処理 (延いては末尾の `forget_stream`) が走らないことを保証できる。これが
+    // 無いと、SQL 即エラーのような速いタスクが `register_stream` より先に
+    // `forget_stream` してしまい、既に完了したタスクの `AbortHandle` がマップに
+    // 残り続け、以後その `stream_id` への `cancel_stream` が誤って `true` を返す
+    // (逆に登録前に forget されると後続の同 stream_id 登録を消してしまう競合窓もある)。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let stream_id_for_task = stream_id.clone();
+    let handle = tokio::spawn(async move {
+        let _ = ready_rx.await;
+        spawn_query_stream(
+            app,
+            session,
+            stream_id_for_task,
+            sql,
+            database,
+            initial_batch,
+            chunk_size,
+            auto_limit,
+            query_timeout_secs,
+            auto_refresh,
+        )
+        .await;
+    });
     state
         .register_stream(stream_id, handle.abort_handle())
         .await;
+    // タスク本体の実行を許可する。register_stream が確実に先に完了している。
+    let _ = ready_tx.send(());
     Ok(())
 }
 
@@ -633,18 +650,29 @@ pub async fn preview_query_stream(
     // INSERT/UPDATE/DELETE/REPLACE and rejects DDL (which would implicit-commit
     // and so can't be rolled back), keeping the read-only guarantee intact while
     // letting a read-only session dry-run a write to inspect its effect.
-    let handle = tokio::spawn(spawn_preview_stream(
-        app,
-        session,
-        stream_id.clone(),
-        sql,
-        database,
-        row_limit,
-        chunk_size,
-    ));
+    //
+    // register_stream をタスク本体より前に完了させるためのゲート。理由は
+    // run_query_stream 側の同種コメントを参照 (register/forget の順序が逆転すると
+    // AbortHandle がマップに残り続けたり、後続の同 stream_id 登録を消してしまう)。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let stream_id_for_task = stream_id.clone();
+    let handle = tokio::spawn(async move {
+        let _ = ready_rx.await;
+        spawn_preview_stream(
+            app,
+            session,
+            stream_id_for_task,
+            sql,
+            database,
+            row_limit,
+            chunk_size,
+        )
+        .await;
+    });
     state
         .register_stream(stream_id, handle.abort_handle())
         .await;
+    let _ = ready_tx.send(());
     Ok(())
 }
 
@@ -816,5 +844,44 @@ mod tests {
                 "expected `{sql}` to be rejected for auto-refresh"
             );
         }
+    }
+
+    // I4: `run_query_stream` / `preview_query_stream` が使う「register_stream を
+    // タスク本体の実行より前に完了させるゲート」の順序保証を確認する回帰テスト。
+    // ゲートが無いと、SQL 即エラーのような速いタスクが register_stream より先に
+    // forget_stream してしまい、完了済みタスクの AbortHandle がマップに残り続ける
+    // (以後その stream_id への cancel_stream が誤って true を返す) 競合が起こりうる。
+    // ここではその実装パターンそのものを AppState に対して再現し、
+    // 「register_stream 完了時点でエントリが存在する」→「ゲート解放後にタスクが
+    // forget_stream する」という順序が守られることを検証する。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn stream_gate_ensures_register_happens_before_task_forgets_itself() {
+        let state = Arc::new(AppState::default());
+        let stream_id = "test-stream-gate".to_string();
+
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+        let task_state = state.clone();
+        let task_stream_id = stream_id.clone();
+        // 実処理を模した「即完了するタスク」。ゲートを待ってから自分の登録を消す。
+        let handle = tokio::spawn(async move {
+            let _ = ready_rx.await;
+            task_state.forget_stream(&task_stream_id).await;
+        });
+        state
+            .register_stream(stream_id.clone(), handle.abort_handle())
+            .await;
+        // register_stream が完了した時点でエントリが存在すること (forget がまだ
+        // 走っていない = ゲートで正しく順序付けられている)。
+        assert!(
+            state.streams.read().await.contains_key(&stream_id),
+            "stream should be registered before the gate is released"
+        );
+        let _ = ready_tx.send(());
+        handle.await.unwrap();
+        // タスクがゲート解放後に forget_stream を実行し、エントリが消えていること。
+        assert!(
+            !state.streams.read().await.contains_key(&stream_id),
+            "stream should have been forgotten by the task after the gate opened"
+        );
     }
 }

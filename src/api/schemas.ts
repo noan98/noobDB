@@ -261,6 +261,8 @@ export const dataDiff = z.object({
   target_driver: driverKind,
   table: z.string(),
   columns: z.array(z.string()),
+  /** `columns` と同じ並びの型名。BLOB 列を復元して sql_literal の補正に使う (修正3)。 */
+  column_types: z.array(z.string()),
   primary_key: z.array(z.string()),
   rows: z.array(rowDiff),
   truncated: z.boolean(),

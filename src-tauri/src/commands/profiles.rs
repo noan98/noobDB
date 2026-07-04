@@ -228,18 +228,24 @@ fn is_known_driver(driver: &str) -> bool {
 /// インポートされたプロファイル群を既存リストへ統合する純粋ロジック。ストレージに
 /// 触れないのでユニットテストできる。`gen_id` は ID 衝突時 (Rename) や ID 欠落時に
 /// 新 ID を採番するクロージャ (本番は `new_profile_id`、テストは決定的なカウンタ)。
+/// 3 つ目の戻り値は Overwrite で本体を差し替えた既存プロファイルの id 一覧 —
+/// これらは呼び出し元 (`import_profiles`) が keyring の秘密を消すのに使う
+/// (インポートされるプロファイルは秘密を含まないため、host/user が変わった旧
+/// keyring エントリを新プロファイル宛に誤って引き継がないようにするため。#H4)。
+/// Rename で新規採番される経路は別 id なので既存秘密に影響しない。
 fn merge_imported(
     mut all: Vec<ConnectionProfile>,
     imported: Vec<ConnectionProfile>,
     strategy: ImportStrategy,
     mut gen_id: impl FnMut() -> String,
-) -> (Vec<ConnectionProfile>, ImportResult) {
+) -> (Vec<ConnectionProfile>, ImportResult, Vec<String>) {
     let mut result = ImportResult {
         imported: 0,
         skipped: 0,
         overwritten: 0,
         invalid: 0,
     };
+    let mut overwritten_ids = Vec::new();
     for mut profile in imported {
         if profile.name.trim().is_empty() || !is_known_driver(&profile.driver) {
             result.invalid += 1;
@@ -254,6 +260,7 @@ fn merge_imported(
                 }
                 ImportStrategy::Overwrite => {
                     if let Some(existing) = all.iter_mut().find(|p| p.id == profile.id) {
+                        overwritten_ids.push(profile.id.clone());
                         *existing = profile;
                     }
                     result.overwritten += 1;
@@ -270,7 +277,7 @@ fn merge_imported(
         all.push(profile);
         result.imported += 1;
     }
-    (all, result)
+    (all, result, overwritten_ids)
 }
 
 /// 指定 (または全) プロファイルを秘密情報抜きで JSON 化する純粋ロジック。`ids` が
@@ -321,8 +328,19 @@ pub async fn import_profiles(path: String, strategy: ImportStrategy) -> Result<I
     }
 
     let all = store::load_all()?;
-    let (merged, result) = merge_imported(all, parsed.profiles, strategy, new_profile_id);
+    let (merged, result, overwritten_ids) =
+        merge_imported(all, parsed.profiles, strategy, new_profile_id);
     store::save_all(&merged)?;
+    // Overwrite で本体を差し替えた既存プロファイルの keyring 秘密を消す。
+    // インポートされるプロファイル本体には秘密が含まれないため (エクスポート
+    // 注記のとおり)、host/user が変わっていた場合に旧サーバ向けパスワードが
+    // 新しい接続先へ誤って使い回されるのを防ぐ (#H4)。次回接続時は資格情報の
+    // 再入力が必要になるが、これは export/import の既知の制約と整合する。
+    for id in &overwritten_ids {
+        if let Err(e) = secrets::delete_all(id) {
+            tracing::warn!(profile_id = %id, error = %e, "failed to clear keyring secrets for overwritten profile");
+        }
+    }
     tracing::info!(
         imported = result.imported,
         skipped = result.skipped,
@@ -335,16 +353,31 @@ pub async fn import_profiles(path: String, strategy: ImportStrategy) -> Result<I
 
 #[tauri::command]
 pub async fn delete_profile(id: String) -> Result<()> {
-    let result = (|| -> Result<()> {
-        secrets::delete_all(&id)?;
-        store::delete(&id)?;
-        Ok(())
-    })();
+    let result = delete_profile_ordered(&id, store::delete, secrets::delete_all);
     match &result {
         Ok(()) => tracing::info!(profile_id = %id, "profile deleted"),
         Err(e) => tracing::error!(profile_id = %id, error = %e, "failed to delete profile"),
     }
     result
+}
+
+/// プロファイル削除の順序を切り出した純粋ロジック (#H5)。**先にプロファイル本体
+/// (`store_delete`) を削除し、それが成功した後にのみ keyring の秘密
+/// (`secrets_delete`) を消す。** 逆順だと `store_delete` が失敗したときに
+/// 「プロファイルは残っているのに秘密だけ消えている」という不整合な状態になる。
+/// この順序なら store 削除が失敗しても秘密は残り、プロファイルも残るので整合性
+/// が保たれる。孤立 keyring エントリ防止という元の意図 (プロファイルが消えたのに
+/// 秘密が残る) は、store 削除成功後に secrets を消すことで引き続き達成される。
+/// 呼び出しをクロージャとして受け取ることで、実ファイル/keyring に触れずに
+/// 呼び出し順序をユニットテストできる。
+fn delete_profile_ordered(
+    id: &str,
+    store_delete: impl FnOnce(&str) -> Result<()>,
+    secrets_delete: impl FnOnce(&str) -> Result<()>,
+) -> Result<()> {
+    store_delete(id)?;
+    secrets_delete(id)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -410,7 +443,8 @@ mod tests {
     fn import_rename_assigns_fresh_ids_on_collision() {
         let existing = vec![profile("a", "Existing", "mysql")];
         let incoming = vec![profile("a", "Incoming", "postgres")];
-        let (merged, res) = merge_imported(existing, incoming, ImportStrategy::Rename, counter());
+        let (merged, res, overwritten_ids) =
+            merge_imported(existing, incoming, ImportStrategy::Rename, counter());
         assert_eq!(res.imported, 1);
         assert_eq!(merged.len(), 2);
         // Original kept, new one got a fresh id (not "a").
@@ -418,29 +452,37 @@ mod tests {
         assert!(merged
             .iter()
             .any(|p| p.id == "new1" && p.name == "Incoming"));
+        // Rename never touches an existing id in place, so no keyring secrets
+        // need clearing.
+        assert!(overwritten_ids.is_empty());
     }
 
     #[test]
     fn import_skip_keeps_existing() {
         let existing = vec![profile("a", "Existing", "mysql")];
         let incoming = vec![profile("a", "Incoming", "postgres")];
-        let (merged, res) = merge_imported(existing, incoming, ImportStrategy::Skip, counter());
+        let (merged, res, overwritten_ids) =
+            merge_imported(existing, incoming, ImportStrategy::Skip, counter());
         assert_eq!(res.skipped, 1);
         assert_eq!(res.imported, 0);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].name, "Existing");
+        assert!(overwritten_ids.is_empty());
     }
 
     #[test]
     fn import_overwrite_replaces_existing() {
         let existing = vec![profile("a", "Existing", "mysql")];
         let incoming = vec![profile("a", "Incoming", "postgres")];
-        let (merged, res) =
+        let (merged, res, overwritten_ids) =
             merge_imported(existing, incoming, ImportStrategy::Overwrite, counter());
         assert_eq!(res.overwritten, 1);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].name, "Incoming");
         assert_eq!(merged[0].driver, "postgres");
+        // H4: the overwritten id must be reported so the caller can clear its
+        // stale keyring secrets (host/user may have changed under the same id).
+        assert_eq!(overwritten_ids, vec!["a".to_string()]);
     }
 
     #[test]
@@ -450,10 +492,12 @@ mod tests {
             profile("", "", "mysql"),          // empty name
             profile("", "Good", "sqlite"),     // valid, fresh id
         ];
-        let (merged, res) = merge_imported(vec![], incoming, ImportStrategy::Rename, counter());
+        let (merged, res, overwritten_ids) =
+            merge_imported(vec![], incoming, ImportStrategy::Rename, counter());
         assert_eq!(res.invalid, 2);
         assert_eq!(res.imported, 1);
         assert_eq!(merged.len(), 1);
+        assert!(overwritten_ids.is_empty());
         assert_eq!(merged[0].name, "Good");
         assert_eq!(merged[0].id, "new1");
     }
@@ -462,5 +506,43 @@ mod tests {
     fn import_strategy_deserializes_from_lowercase() {
         let s: ImportStrategy = serde_json::from_str("\"overwrite\"").unwrap();
         assert_eq!(s, ImportStrategy::Overwrite);
+    }
+
+    // H5: store 削除→secrets 削除の順で呼ばれること。
+    #[test]
+    fn delete_profile_ordered_deletes_store_before_secrets() {
+        use std::cell::RefCell;
+        let calls: RefCell<Vec<&str>> = RefCell::new(Vec::new());
+        let result = delete_profile_ordered(
+            "a",
+            |_| {
+                calls.borrow_mut().push("store");
+                Ok(())
+            },
+            |_| {
+                calls.borrow_mut().push("secrets");
+                Ok(())
+            },
+        );
+        assert!(result.is_ok());
+        assert_eq!(calls.into_inner(), vec!["store", "secrets"]);
+    }
+
+    // store 削除が失敗した場合、secrets 削除は呼ばれず、プロファイルと秘密の
+    // どちらも残る (不整合な「秘密だけ消えた」状態を防ぐ)。
+    #[test]
+    fn delete_profile_ordered_skips_secrets_when_store_delete_fails() {
+        use std::cell::RefCell;
+        let secrets_called = RefCell::new(false);
+        let result = delete_profile_ordered(
+            "a",
+            |_| Err(AppError::Io(std::io::Error::other("disk full"))),
+            |_| {
+                *secrets_called.borrow_mut() = true;
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!*secrets_called.borrow());
     }
 }

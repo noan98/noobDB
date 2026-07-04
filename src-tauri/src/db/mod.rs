@@ -569,8 +569,11 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 ///
 /// Allow list: `SELECT` / `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `WITH`.
 /// Trailing semicolons and whitespace are tolerated. `SELECT ... FOR UPDATE`,
-/// `FOR SHARE` and the MySQL `LOCK IN SHARE MODE` form are rejected because
-/// they acquire row locks even though they syntactically begin with `SELECT`.
+/// `FOR SHARE`, `FOR NO KEY UPDATE`, `FOR KEY SHARE` and the MySQL
+/// `LOCK IN SHARE MODE` form — including their `NOWAIT` / `SKIP LOCKED` /
+/// `OF <table>` suffixed variants (see [`has_locking_clause`]) — are rejected
+/// because they acquire row locks even though they syntactically begin with
+/// `SELECT`.
 ///
 /// Beyond the leading keyword the body is masked (comments / string literals /
 /// quoted identifiers blanked, reusing `mask_for_analysis`) and then:
@@ -618,13 +621,73 @@ pub fn is_read_only_sql(sql: &str) -> bool {
             return false;
         }
     }
-    if body.ends_with("for update")
-        || body.ends_with("for share")
-        || body.ends_with("lock in share mode")
-    {
+    if has_locking_clause(body) {
         return false;
     }
     true
+}
+
+/// Row-locking clause phrases recognised by [`has_locking_clause`]: `SELECT
+/// ... FOR UPDATE` / `FOR SHARE` (standard SQL / MySQL / PostgreSQL), the
+/// PostgreSQL-only `FOR NO KEY UPDATE` / `FOR KEY SHARE`, and the MySQL-only
+/// `LOCK IN SHARE MODE`. The two- and three-word phrases are checked before
+/// the shorter `for update` / `for share` so callers scanning in this order
+/// see the more specific match first (the phrases don't actually overlap as
+/// substrings, but ordering longest-first keeps that invariant obvious).
+const LOCKING_CLAUSES: &[&str] = &[
+    "for no key update",
+    "for key share",
+    "for update",
+    "for share",
+    "lock in share mode",
+];
+
+/// True when masked/lowercased `body` contains a row-locking clause anywhere —
+/// any of [`LOCKING_CLAUSES`] — including the PostgreSQL suffixed forms that
+/// may follow the base phrase: `NOWAIT` (`FOR UPDATE NOWAIT`), `SKIP LOCKED`
+/// (`FOR UPDATE SKIP LOCKED`), and `OF <table>[, ...]` (`FOR UPDATE OF t`,
+/// also valid on `FOR SHARE` / `FOR NO KEY UPDATE` / `FOR KEY SHARE`). Rather
+/// than parsing those suffixes explicitly, this matches the base phrase
+/// anywhere in the body — safe because `body` has already had comments and
+/// string/quoted-identifier literals masked to spaces, so any surviving
+/// occurrence of e.g. `for update` is real SQL syntax, not a coincidental
+/// column value, and any write keyword trailing a locking clause (which would
+/// make the suffix invalid SQL) is independently caught by the write-keyword
+/// scan that runs before this check in [`is_read_only_sql`].
+///
+/// Matching is word-bounded on the *whole* phrase — the character immediately
+/// before it must be a non-word character (or start of string) and the
+/// character immediately after must be a non-word character (or end of
+/// string) — so a column named `for_updated_at` / `updated_at` is never
+/// mistaken for the clause.
+fn has_locking_clause(body: &str) -> bool {
+    LOCKING_CLAUSES
+        .iter()
+        .any(|phrase| contains_word_phrase(body, phrase))
+}
+
+/// Like [`contains_word`], but `phrase` may itself contain literal spaces
+/// (e.g. `"for update"`); the match still requires a non-word boundary
+/// immediately before and after the whole phrase.
+fn contains_word_phrase(haystack: &str, phrase: &str) -> bool {
+    let hb = haystack.as_bytes();
+    let pb = phrase.as_bytes();
+    if pb.is_empty() || hb.len() < pb.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + pb.len() <= hb.len() {
+        if &hb[i..i + pb.len()] == pb {
+            let before_ok = i == 0 || !is_word_byte(hb[i - 1]);
+            let after = i + pb.len();
+            let after_ok = after >= hb.len() || !is_word_byte(hb[after]);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Appends an automatic `LIMIT <limit>` to an ad-hoc `SELECT` / `WITH ... SELECT`
@@ -681,11 +744,11 @@ pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
         }
     }
     // Locking reads put the LIMIT in the wrong place if appended at the very end
-    // (`… LOCK IN SHARE MODE LIMIT n` is invalid), so leave them untouched.
-    if body.ends_with("for update")
-        || body.ends_with("for share")
-        || body.ends_with("lock in share mode")
-    {
+    // (`… LOCK IN SHARE MODE LIMIT n` is invalid, and `LIMIT` can't be spliced
+    // in before a trailing `NOWAIT` / `SKIP LOCKED` / `OF <table>` suffix
+    // either), so leave any statement carrying a locking clause untouched. See
+    // [`has_locking_clause`] for the recognised phrases and suffixed forms.
+    if has_locking_clause(body) {
         return None;
     }
     if is_aggregate_only(body) {
@@ -739,19 +802,26 @@ pub(crate) fn has_stacked_statements(sql: &str) -> bool {
 /// makes the whole string invalid. Empty input (only whitespace / comments / bare
 /// `;`) is allowed and runs nothing.
 ///
-/// Comments and string / quoted-identifier literals are masked first (reusing
-/// `mask_for_analysis`), so a `;` inside `'a;b'` is not mistaken for a separator.
+/// Comments and string / quoted-identifier literals are masked first, using
+/// the **conservative** ([`mask_for_analysis_conservative`], not the
+/// MySQL-flavoured `mask_for_analysis`) reading — this input is executed
+/// verbatim against whichever driver the profile targets (including
+/// PostgreSQL / SQLite, where `\` is not a string escape), and the
+/// MySQL-flavoured mask can be tricked into treating a stray `\'` as an
+/// escaped quote, hiding a stacked statement inside what it thinks is still
+/// an open string literal.
 pub fn is_session_init_sql(sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    let masked = mask_for_analysis(&orig);
+    let masked = mask_for_analysis_conservative(&orig);
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
     for stmt in masked_lower.split(';') {
         let s = stmt.trim();
         if s.is_empty() {
             continue;
         }
-        let allowed =
-            starts_with_word(s, "set") || starts_with_word(s, "pragma") || is_read_only_sql(s);
+        let allowed = (starts_with_word(s, "set") && is_allowed_set_statement(s))
+            || starts_with_word(s, "pragma")
+            || is_read_only_sql(s);
         if !allowed {
             return false;
         }
@@ -759,11 +829,73 @@ pub fn is_session_init_sql(sql: &str) -> bool {
     true
 }
 
+/// Narrows the blanket `starts_with_word(s, "set")` allowance in
+/// [`is_session_init_sql`]: a bare `SET` changes one session-local setting
+/// and is safe (`SET SESSION …` / `SET LOCAL …` / `SET NAMES …` /
+/// `SET ROLE …` / `SET search_path …` / `SET time_zone …` / `SET x = y`),
+/// but a handful of `SET` sub-forms reach further than "this session" and
+/// must not be let through a read-only profile's init SQL:
+///
+/// * `SET GLOBAL …` (MySQL) mutates server-wide configuration, not just the
+///   current connection.
+/// * `SET PASSWORD …` (MySQL) changes an account's credentials.
+/// * `SET STATEMENT … FOR <stmt>` (MariaDB) wraps an arbitrary statement —
+///   including DML/DDL — as a session-setting prefix, which would otherwise
+///   sail through as "starts with SET".
+///
+/// `s` must already be masked (literals/comments blanked) and lowercased, as
+/// produced by [`is_session_init_sql`].
+fn is_allowed_set_statement(s: &str) -> bool {
+    let rest = s["set".len()..].trim_start();
+    let next_word: &str = rest
+        .split(|c: char| !is_word_char(c))
+        .find(|w| !w.is_empty())
+        .unwrap_or("");
+    !matches!(next_word, "global" | "password" | "statement")
+}
+
 /// Replaces every comment and the interior of every string / quoted-identifier
 /// literal with spaces, preserving the original char count so positions still
 /// line up with the source. Newlines inside comments are kept so line-comment
 /// boundaries survive.
+///
+/// Backslash is treated as a string-literal escape character (MySQL's
+/// default `NO_BACKSLASH_ESCAPES`-off behaviour). This is what
+/// [`is_read_only_sql`] and the shared golden-vector tests
+/// (`tests/read_only_golden.rs` / `readOnlyGolden.test.ts`) are calibrated
+/// against, so this default must not change. Callers that need the more
+/// conservative (non-MySQL-specific) reading should use
+/// [`mask_for_analysis_conservative`] instead.
 fn mask_for_analysis(src: &[char]) -> Vec<char> {
+    mask_for_analysis_impl(src, true)
+}
+
+/// Like [`mask_for_analysis`], but does **not** treat `\` as a string escape
+/// character. PostgreSQL (with the default `standard_conforming_strings =
+/// on`) and SQLite both treat `\` inside `'…'` as an ordinary character, so a
+/// literal there is closed by the first unescaped, non-doubled quote — not by
+/// skipping over a backslash-escaped one. Using the MySQL-flavoured
+/// [`mask_for_analysis`] on those dialects lets a payload like
+/// `'\'; DELETE FROM t; --'` be mis-read as one still-open string, masking
+/// the `; DELETE …` as if it were inside the literal.
+///
+/// This is intentionally the more conservative reading: a string literal can
+/// only close *earlier* than the MySQL-flavoured mask would judge, never
+/// later, so real SQL keywords are never hidden that the MySQL mask would
+/// have revealed — only the reverse. That means a small number of otherwise
+/// legitimate MySQL init statements containing `\'` inside a string could be
+/// rejected as invalid; that's an acceptable false-negative (fail closed)
+/// given this guards session-init SQL for every physical connection in a
+/// read-only profile. See [`is_session_init_sql`].
+fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
+    mask_for_analysis_impl(src, false)
+}
+
+/// Shared implementation for [`mask_for_analysis`] /
+/// [`mask_for_analysis_conservative`]. `backslash_escapes` controls whether
+/// `\` inside a `'…'` / `"…"` literal is treated as escaping the following
+/// character (MySQL) or as an ordinary character (PostgreSQL / SQLite).
+fn mask_for_analysis_impl(src: &[char], backslash_escapes: bool) -> Vec<char> {
     let mut out: Vec<char> = Vec::with_capacity(src.len());
     let n = src.len();
     let mut i = 0;
@@ -824,8 +956,9 @@ fn mask_for_analysis(src: &[char]) -> Vec<char> {
             i += 1;
             while i < n {
                 let d = src[i];
-                // Backslash escape (MySQL string literals only).
-                if d == '\\' && quote != '`' && i + 1 < n {
+                // Backslash escape (MySQL string literals only; skipped
+                // entirely under the conservative/non-MySQL reading).
+                if backslash_escapes && d == '\\' && quote != '`' && i + 1 < n {
                     out.push(' ');
                     out.push(' ');
                     i += 2;
@@ -1240,6 +1373,41 @@ mod tests {
         assert!(is_session_init_sql("SET application_name = 'a;b'"));
     }
 
+    /// Regression test for the backslash-masking bypass: on PostgreSQL /
+    /// SQLite, `\` is not a string escape, so `'\'` closes the literal right
+    /// there. The MySQL-flavoured mask used to treat `\'` as an escaped quote
+    /// and read the whole rest of the string (including `; DELETE …`) as
+    /// still inside the literal, letting the stacked DELETE slip through as
+    /// part of an apparently-single, allowed `SET` statement.
+    #[test]
+    fn session_init_rejects_backslash_masked_stacked_statement() {
+        assert!(!is_session_init_sql(
+            "SET application_name = '\\'; DELETE FROM important_table; SET application_name = 'ok'"
+        ));
+        // Legitimate init SQL across all three dialects still passes.
+        assert!(is_session_init_sql("SET time_zone = 'UTC'"));
+        assert!(is_session_init_sql("PRAGMA foreign_keys=ON"));
+        assert!(is_session_init_sql("SELECT 1"));
+    }
+
+    /// Regression test: a bare `starts_with_word(s, "set")` check let through
+    /// `SET` sub-forms that reach beyond the current session (server-wide
+    /// config, account credentials, or a MariaDB `SET STATEMENT … FOR`
+    /// wrapper around an arbitrary statement), even under a read-only
+    /// profile's init SQL.
+    #[test]
+    fn session_init_rejects_set_global_password_and_statement_for() {
+        assert!(!is_session_init_sql("SET GLOBAL read_only = 0"));
+        assert!(!is_session_init_sql("SET PASSWORD FOR 'a'@'%' = 'x'"));
+        assert!(!is_session_init_sql(
+            "SET STATEMENT max_statement_time=0 FOR DELETE FROM users"
+        ));
+        // Ordinary session-scoped SET forms remain allowed.
+        assert!(is_session_init_sql("SET SESSION time_zone='UTC'"));
+        assert!(is_session_init_sql("SET NAMES utf8mb4"));
+        assert!(is_session_init_sql("SET search_path TO app"));
+    }
+
     #[test]
     fn ssl_mode_serializes_to_snake_case_wire_names() {
         // The wire names must match the frontend union and the values the
@@ -1309,6 +1477,26 @@ mod tests {
         assert!(!is_read_only_sql("SELECT * FROM t for update;"));
         assert!(!is_read_only_sql("SELECT * FROM t FOR SHARE"));
         assert!(!is_read_only_sql("SELECT * FROM t LOCK IN SHARE MODE"));
+    }
+
+    /// Regression test (#J1): the row-locking check used a strict
+    /// `ends_with("for update"/"for share"/"lock in share mode")`, so it
+    /// missed every PostgreSQL variant that adds a suffix after the base
+    /// phrase (`NOWAIT` / `SKIP LOCKED` / `OF <table>`) or uses one of the two
+    /// PostgreSQL-only phrases (`FOR NO KEY UPDATE` / `FOR KEY SHARE`), all of
+    /// which still acquire row locks and must be rejected.
+    #[test]
+    fn rejects_locking_select_variants_with_suffixes() {
+        assert!(!is_read_only_sql("SELECT * FROM t FOR UPDATE NOWAIT"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR UPDATE SKIP LOCKED"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR UPDATE OF t"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR NO KEY UPDATE"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR KEY SHARE"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR SHARE OF t"));
+        // A column literally named `updated_at` must not be mistaken for the
+        // `FOR UPDATE` clause (no `for` keyword precedes it here at all, but
+        // this guards the word-boundary logic generally).
+        assert!(is_read_only_sql("SELECT updated_at FROM t"));
     }
 
     #[test]
@@ -1767,6 +1955,21 @@ mod tests {
             apply_auto_limit("SELECT * FROM t LOCK IN SHARE MODE", 100).is_none(),
             "LOCK IN SHARE MODE should skip LIMIT"
         );
+    }
+
+    /// 修正 J1: `apply_auto_limit` のロック句チェックは末尾完全一致
+    /// (`ends_with("for update"/"for share"/"lock in share mode")`) のみだった
+    /// ため、`NOWAIT` / `SKIP LOCKED` / `OF <table>` の接尾辞が付くバリアントや
+    /// PostgreSQL 専用の `FOR NO KEY UPDATE` / `FOR KEY SHARE` を取りこぼし、
+    /// ロック句の後ろに ` LIMIT n` を付与して構文エラーを起こしていた。
+    #[test]
+    fn auto_limit_skips_locking_select_suffix_variants() {
+        assert!(apply_auto_limit("SELECT * FROM t FOR UPDATE NOWAIT", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR UPDATE SKIP LOCKED", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR UPDATE OF t", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR NO KEY UPDATE", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR KEY SHARE", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR SHARE OF t", 100).is_none());
     }
 
     /// MISSED: `apply_auto_limit` 505行目 `while end > 0` が `while end >= 0` に

@@ -125,6 +125,13 @@ async fn dump_mysql(
     if database.is_empty() {
         return Err(AppError::InvalidInput("database name is empty".into()));
     }
+    // `-` 始まりの DB 名はオプションとして誤解釈されうる (`--all-databases` 等)。
+    // `--` によるオプション終端 (下記) と合わせた多層防御として、そもそも受け付けない。
+    if database.starts_with('-') {
+        return Err(AppError::InvalidInput(
+            "database name must not start with '-'".into(),
+        ));
+    }
 
     // Credentials go into a temp option file (mode 0600 on unix) so the
     // password never appears in the process arguments or environment.
@@ -169,6 +176,10 @@ async fn dump_mysql(
     if options.no_create_info {
         cmd.arg("--no-create-info");
     }
+    // `--` でオプション終端を明示し、以降の引数 (DB 名) をオプションとして解釈させない。
+    // `--all-databases` や `--result-file=...` のような値を DB 名として渡された場合の
+    // 引数インジェクションを防ぐ (上の `starts_with('-')` チェックと合わせた多層防御)。
+    cmd.arg("--");
     cmd.arg(database);
 
     let out_file = std::fs::File::create(path)?;
@@ -655,6 +666,42 @@ mod tests {
         // 整形により列が 2 スペース字下げで改行されること。返り値は整形後のサイズ。
         assert!(out.contains("\n  a,"), "got: {out}");
         assert_eq!(bytes as usize, out.len());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // `-` 始まりの DB 名は mysqldump へオプションとして誤解釈されうるため、外部プロセスを
+    // 起動する前に拒否する (引数インジェクション対策の多層防御の 1 つ目)。
+    #[tokio::test]
+    async fn dump_mysql_rejects_database_name_starting_with_dash() {
+        let opts = DbConnectOptions {
+            host: "127.0.0.1".into(),
+            port: 3306,
+            user: "root".into(),
+            password: "secret".into(),
+            database: None,
+            driver: DriverKind::Mysql,
+            file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+        };
+        let path =
+            std::env::temp_dir().join(format!("noobdb_dump_reject_{}.sql", std::process::id()));
+        let result = dump_mysql(
+            &opts,
+            "--all-databases",
+            path.to_str().unwrap(),
+            &DumpOptions::default(),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::InvalidInput(_))),
+            "expected InvalidInput, got: {result:?}"
+        );
+        // コマンドは起動されていないはずなので出力ファイルは作られない。
+        assert!(!path.exists());
         let _ = std::fs::remove_file(&path);
     }
 

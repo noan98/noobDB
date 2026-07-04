@@ -24,6 +24,23 @@ pub fn load_private_key(path: &Path, passphrase: Option<&str>) -> Result<Arc<Pri
     Ok(Arc::new(key))
 }
 
+/// OpenSSH 8.8 以降は既定でレガシー `ssh-rsa` (SHA-1) 署名を拒否するため、RSA 鍵で
+/// 認証する際はサーバの `server-sig-algs` 拡張 (ext-info) を問い合わせ、
+/// `rsa-sha2-256`/`rsa-sha2-512` のうちサーバが受理する方を使う必要がある。
+/// `russh::client::Handle::best_supported_rsa_hash` がこの問い合わせを行う。
+/// 拡張未対応のサーバでは `Ok(None)` (= 判定不能、レガシーへフォールバック) を
+/// 返し、問い合わせ自体が失敗した場合も同様にフォールバックする — これは本修正
+/// 前の既定動作 (常に `None`) と同じなので、デグレードにはならない。RSA 以外の
+/// 鍵種では `PrivateKeyWithHashAlg::new` が `hash_alg` を無視するため影響しない。
+async fn best_supported_rsa_hash(session: &Session) -> Option<russh::keys::HashAlg> {
+    session
+        .best_supported_rsa_hash()
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+}
+
 /// Authenticate an already-connected SSH session using the method in `cfg`.
 pub async fn authenticate(session: &mut Session, cfg: &SshConfig) -> Result<()> {
     tracing::debug!(method = ?cfg.auth_method, user = %cfg.user, "ssh: authenticating");
@@ -41,11 +58,12 @@ async fn authenticate_key(session: &mut Session, cfg: &SshConfig) -> Result<()> 
         Some(cfg.passphrase.as_str())
     };
     let key = load_private_key(&cfg.private_key_path, passphrase)?;
+    let hash_alg = best_supported_rsa_hash(session).await;
 
     let authed = session
         .authenticate_publickey(
             &cfg.user,
-            russh::keys::PrivateKeyWithHashAlg::new(key, None),
+            russh::keys::PrivateKeyWithHashAlg::new(key, hash_alg),
         )
         .await
         .map_err(|e| {
@@ -130,10 +148,11 @@ where
         ));
     }
 
+    let hash_alg = best_supported_rsa_hash(session).await;
     for id in identities {
         let public_key = id.public_key().into_owned();
         let result = session
-            .authenticate_publickey_with(&cfg.user, public_key, None, &mut agent)
+            .authenticate_publickey_with(&cfg.user, public_key, hash_alg, &mut agent)
             .await
             .map_err(|e| {
                 tracing::error!(user = %cfg.user, error = %e, "ssh: agent auth error");

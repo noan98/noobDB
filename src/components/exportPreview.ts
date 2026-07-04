@@ -15,6 +15,50 @@ import type { CellValue, Column, ExportFormat } from "../api/tauri";
  * 在グリッド (current scope) のエクスポートと同じく文字列としてそのまま扱う。
  */
 
+/**
+ * 指数表記の数値文字列 (`"1e+21"` / `"1.23e-10"` 等) をプレーンな 10 進展開へ
+ * 組み立て直す。`formatFloat` からのみ呼ばれる内部ヘルパー。
+ */
+function expandExponential(s: string): string {
+  const m = /^(-)?(\d+)(?:\.(\d+))?e([+-])(\d+)$/i.exec(s);
+  if (!m) return s;
+  const [, sign = "", intPart, fracPart = "", expSign, expDigits] = m;
+  const exp = (expSign === "-" ? -1 : 1) * Number(expDigits);
+  const digits = intPart + fracPart;
+  const pointPos = intPart.length + exp;
+  let body: string;
+  if (pointPos <= 0) {
+    body = "0." + "0".repeat(-pointPos) + digits;
+  } else if (pointPos >= digits.length) {
+    body = digits + "0".repeat(pointPos - digits.length);
+  } else {
+    body = digits.slice(0, pointPos) + "." + digits.slice(pointPos);
+  }
+  return sign + body;
+}
+
+/**
+ * 数値をバックエンド (Rust の `f64::to_string()`) と同じ書式の文字列にする。
+ *
+ * JS の `String(v)` は絶対値がおよそ 1e21 以上、または 1e-6 未満のとき指数表記
+ * (`"1e+21"` 等) になるが、Rust の `f64::to_string()` は常にプレーンな 10 進展開
+ * (指数表記なし) を返すため、極端に大きい/小さい値でプレビューが実ファイルの出力と
+ * 食い違ってしまう。`String(v)` の結果が指数表記になったときだけ、10 進展開へ
+ * 組み立て直す。整数値の浮動小数 (`2.0` 等) は元々 `String()` の時点で小数点なし
+ * (`"2"`) になるため、この関数を通しても変わらない。
+ *
+ * 完全一致を保証するものではない: 有効桁が非常に多い値では、JS と Rust それぞれの
+ * 「最短で往復可能な 10 進表現」アルゴリズムの実装差でごく僅かに食い違う可能性が
+ * ある。ここでは主要な乖離要因である指数表記の回避のみを解消する。非有限値
+ * (NaN/Infinity) は対象外 (呼び出し側が別途ハンドリングする)。
+ */
+function formatFloat(v: number): string {
+  if (!Number.isFinite(v)) return String(v);
+  const s = String(v);
+  if (!/e/i.test(s)) return s;
+  return expandExponential(s);
+}
+
 function csvField(s: string): string {
   const needsQuote =
     s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r");
@@ -25,7 +69,7 @@ function csvField(s: string): string {
 function valueToCsv(v: CellValue): string {
   if (v === null) return "";
   if (typeof v === "boolean") return v ? "true" : "false";
-  if (typeof v === "number") return String(v);
+  if (typeof v === "number") return formatFloat(v);
   return csvField(v);
 }
 
@@ -42,16 +86,39 @@ export function buildCsv(columns: Column[], rows: CellValue[][]): string {
 }
 
 /**
+ * 文字列を Unicode コードポイント順で比較する。JS の既定の文字列比較 (`<`/`>`) は
+ * UTF-16 コード単位ごとの比較で、サロゲートペア (絵文字など U+10000 以上の非 BMP
+ * 文字) の先頭コード単位 (U+D800〜U+DBFF) が U+E000〜U+FFFF より小さい値になるため、
+ * 実際のコードポイント値としては大きい非 BMP 文字が誤って「小さい」と判定される。
+ * Rust の `BTreeMap<String, _>` は `char` (Unicode スカラー値 = コードポイント) の
+ * 数値比較でソートするため、フロントもコードポイント単位で比較しないと非 BMP 文字
+ * 混在時に順序が食い違う。`Array.from` は文字列をコードポイント単位 (サロゲート
+ * ペアも 1 要素) でイテレートするため、それぞれの先頭コードポイントを比較する。
+ */
+function compareCodePoints(a: string, b: string): number {
+  const ca = Array.from(a);
+  const cb = Array.from(b);
+  const len = Math.min(ca.length, cb.length);
+  for (let i = 0; i < len; i++) {
+    const pa = ca[i].codePointAt(0) ?? 0;
+    const pb = cb[i].codePointAt(0) ?? 0;
+    if (pa !== pb) return pa - pb;
+  }
+  return ca.length - cb.length;
+}
+
+/**
  * 1 行を列名キーのオブジェクトに変換する。キーは serde_json の `BTreeMap` 出力に
  * 合わせてソート済みのプレーンオブジェクトとして返す (`JSON.stringify` は非整数
- * キーの挿入順を保つため、ソート順に挿入すれば出力もソート順になる)。
+ * キーの挿入順を保つため、ソート順に挿入すれば出力もソート順になる)。ソートは
+ * コードポイント順 (`compareCodePoints`) — BTreeMap と同じ順序にするため。
  */
 function rowToObject(columns: Column[], row: CellValue[]): Record<string, CellValue> {
   const pairs: [string, CellValue][] = columns.map((col, i) => [
     col.name,
     row[i] ?? null,
   ]);
-  pairs.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  pairs.sort((a, b) => compareCodePoints(a[0], b[0]));
   const obj: Record<string, CellValue> = {};
   for (const [k, v] of pairs) obj[k] = v;
   return obj;
@@ -100,7 +167,7 @@ export function mdEscape(s: string): string {
 function valueToMarkdown(v: CellValue): string {
   if (v === null) return "";
   if (typeof v === "boolean") return v ? "true" : "false";
-  if (typeof v === "number") return String(v);
+  if (typeof v === "number") return formatFloat(v);
   return mdEscape(v);
 }
 
@@ -145,7 +212,7 @@ function sqlLiteral(driver: string, v: CellValue): string {
     if (driver === "postgres") return v ? "TRUE" : "FALSE";
     return v ? "1" : "0";
   }
-  if (typeof v === "number") return Number.isFinite(v) ? String(v) : "NULL";
+  if (typeof v === "number") return Number.isFinite(v) ? formatFloat(v) : "NULL";
   const escaped =
     driver === "postgres" || driver === "sqlite"
       ? v.replace(/'/g, "''")

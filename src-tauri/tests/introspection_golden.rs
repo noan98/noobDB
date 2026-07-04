@@ -246,7 +246,8 @@ async fn postgres_introspection_golden_when_env_set() {
     assert_eq!(id.key, "PRI");
     assert!(!id.nullable);
     let name = col(&authors, "name");
-    assert_eq!(name.data_type, "character varying");
+    // K5: introspection は長さ付きの完全型を返す (varchar(100) → character varying(100))。
+    assert_eq!(name.data_type, "character varying(100)");
     assert!(!name.nullable);
     let bio = col(&authors, "bio");
     assert_eq!(bio.data_type, "text");

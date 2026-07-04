@@ -63,6 +63,24 @@ describe("navigateNewer (↓)", () => {
     expect(res.text).toBe("");
     expect(res.state).toEqual(initialHistoryNav);
   });
+
+  it("ナビゲーション中に履歴がクリアされて空になっても下書きへ安全に戻す", () => {
+    // 履歴クリア等でナビゲーション中に history が空配列になったケース。
+    // 修正前は history[nextIndex] が undefined になり、エディタが undefined で
+    // 置換されてしまっていた。
+    const res = navigateNewer([], { index: 2, draft: "my draft" })!;
+    expect(res.text).toBe("my draft");
+    expect(res.state).toEqual(initialHistoryNav);
+    expect(res.cursor).toBe("end");
+  });
+
+  it("ナビゲーション中に履歴が縮んでも範囲内にクランプする (navigateOlder と対称)", () => {
+    // 履歴が 3 件から 1 件に縮んだ状態で、まだ 3 件時点のインデックスを保持している。
+    const res = navigateNewer(["only left"], { index: 5, draft: "draft" })!;
+    expect(res.text).toBe("only left");
+    expect(res.state.index).toBe(0);
+    expect(res.cursor).toBe("end");
+  });
 });
 
 describe("往復", () => {

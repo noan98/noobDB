@@ -439,6 +439,12 @@ interface Tab {
    */
   paginatable: string | null;
   /**
+   * プレビュー開始前の `paginatable` の退避値 (#F3)。プレビュー中は `paginatable`
+   * を一時的に null にするため、完了/キャンセル/破棄のいずれの終了パスでもここから
+   * 復元する。`undefined` は「プレビュー未実行、または復元済み」を意味する。
+   */
+  previewPrevPaginatable?: string | null;
+  /**
    * Row cap that was auto-injected into the last run (from the stream's done
    * event), or null when no auto LIMIT was applied. Drives the "auto LIMIT N
    * applied" badge near the result grid.
@@ -712,6 +718,34 @@ async function shouldRestoreSavedTabs(
 
 function emptyResult(columns: Column[]): QueryResult {
   return { columns, rows: [], rows_affected: 0, elapsed_ms: 0 };
+}
+
+// Apply 完了後、実際に DB へ送信・コミットされたセル編集 (`applied`) だけを
+// `current` の pendingEdits から取り除く。Apply の往復中に追加/上書きされた
+// 編集 (= `applied` に無いか、値が食い違うもの) はまだ DB 未送信なので保持し、
+// 「未送信の編集が黙ってコミット済み扱いになる」事故 (#F2) を防ぐ。
+function pendingEditsAfterApply(current: PendingEdits, applied: PendingEdits): PendingEdits {
+  const next: PendingEdits = {};
+  for (const rowKey of Object.keys(current)) {
+    const currentRow = current[rowKey];
+    const appliedRow = applied[rowKey];
+    if (!appliedRow) {
+      next[rowKey] = currentRow;
+      continue;
+    }
+    const remainingRow: Record<number, string> = {};
+    for (const colKey of Object.keys(currentRow)) {
+      const colIdx = Number(colKey);
+      // 送信した値のままなら反映済みなので削除。Apply 中にさらに書き換えられて
+      // いれば (値が食い違う)、まだ未送信の新しい編集として残す。
+      if (appliedRow[colIdx] !== undefined && currentRow[colIdx] === appliedRow[colIdx]) {
+        continue;
+      }
+      remainingRow[colIdx] = currentRow[colIdx];
+    }
+    if (Object.keys(remainingRow).length > 0) next[rowKey] = remainingRow;
+  }
+  return next;
 }
 
 function emptyPreview(): PreviewResult {
@@ -1238,7 +1272,17 @@ export default function App() {
       const sid = streamIdRef.current.get(tabId);
       detachStreamListener(tabId);
       if (sid) {
-        try { await api.cancelStream(sid); } catch { /* best-effort */ }
+        try {
+          // バックエンドの AbortHandle 登録より先にここへ来ると (invoke の
+          // ラウンドトリップ中)、cancel は false (空振り) を返し旧クエリが完走
+          // しうる (#F5)。戻り値を確認し、false のときだけ短い遅延を挟んで
+          // もう一度だけ試みる (ベストエフォートの緩和であり完全な解消ではない)。
+          const cancelled = await api.cancelStream(sid);
+          if (!cancelled) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            await api.cancelStream(sid).catch(() => {});
+          }
+        } catch { /* best-effort */ }
       }
     },
     [detachStreamListener],
@@ -1763,6 +1807,10 @@ export default function App() {
       setStatus({ kind: "idle" });
       toast.success(translate("toastConnected", { name: profile.name }));
     } catch (e) {
+      // 接続失敗時は表示状態を実態 (未接続) に合わせる。sessionId は既に null に
+      // なっているが selectedProfile を旧プロファイルのままにすると、ヘッダが
+      // 実際には非アクティブな旧接続を「接続中」として描画し続けてしまう (#F6)。
+      setSelectedProfile(null);
       setErrorProfileId(profile.id);
       setStatus({ kind: "key", key: "statusConnectionFailed", vars: { error: String(e) }, error: true });
     } finally {
@@ -1921,6 +1969,15 @@ export default function App() {
             read_only: profile.read_only,
             skip_history: profile.skip_history,
           });
+          // connect 解決後に中断フラグを再確認する。await 中にユーザが別接続へ
+          // 切り替えていた場合、ここで確立できてしまったセッションを表示中の
+          // (別の) セッションへ上書きしてしまうと「見た目は別接続・実行先は
+          // このセッション」という食い違いが起きるため、状態反映せず後始末する。
+          if (reconnectAbortRef.current) {
+            try { await api.disconnect(res.session_id); } catch { /* best effort */ }
+            reconnectingRef.current = false;
+            return;
+          }
           // 成功: タブを維持したままセッションだけ差し替える。
           setSessionId(res.session_id);
           setSelectedProfile(profile);
@@ -2334,6 +2391,11 @@ export default function App() {
         if (!tt) return;
         // In-flight guard: skip this tick if the previous run is still streaming.
         if (tt.streaming) return;
+        // 未適用の編集がある間は自動リフレッシュを見送る (次の tick へ持ち越す)。
+        // runQueryInTab は常に pendingEdits / editUndoStack / editRedoStack を
+        // リセットするため、ここでスキップしないと編集中のセルと Undo/Redo 履歴が
+        // 黙って破棄されてしまう (#F1)。
+        if (Object.keys(tt.pendingEdits).length > 0) return;
         const sql = tt.lastExecutedSql;
         // Defence in depth: never poll a non-read-only statement (the backend
         // enforces this too via the auto-refresh guard).
@@ -2468,6 +2530,11 @@ export default function App() {
       return;
     }
     const tab = tabs.find((tt) => tt.id === tabId);
+    // プレビュー中は (下の PreviewGrid 分岐で ResultGrid ごと差し替わるため)
+    // paginatable を一時的に無効化するが、プレビュー終了後は元のテーブルタブへ
+    // 戻れるよう必ず復元する (#F3)。復元しないと PaginationBar・全件エクスポート・
+    // Retry・INSERT 後の再取得が恒久的に機能停止する。
+    const previousPaginatable = tab?.paginatable ?? null;
     await cancelStreamForTab(tabId);
 
     const streamId = newStreamId(tabId);
@@ -2486,6 +2553,7 @@ export default function App() {
       previewStreaming: true,
       previewRowLimit: rowLimit,
       paginatable: null,
+      previewPrevPaginatable: previousPaginatable,
       loadingMore: false,
       canLoadMore: false,
     });
@@ -2538,7 +2606,13 @@ export default function App() {
         });
       },
       onDone: () => {
-        patchTab(tabId, (tt) => ({ ...tt, streaming: false, previewStreaming: false }));
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          streaming: false,
+          previewStreaming: false,
+          paginatable: previousPaginatable,
+          previewPrevPaginatable: undefined,
+        }));
         const tt = tabsRef.current.find((x) => x.id === tabId);
         const rowsAffected = tt?.preview?.rows_affected ?? 0;
         const elapsedMs = tt?.preview?.elapsed_ms ?? Date.now() - startedAt;
@@ -2550,7 +2624,13 @@ export default function App() {
         finalize();
       },
       onError: ({ error, connectionLost }) => {
-        patchTab(tabId, (tt) => ({ ...tt, streaming: false, previewStreaming: false }));
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          streaming: false,
+          previewStreaming: false,
+          paginatable: previousPaginatable,
+          previewPrevPaginatable: undefined,
+        }));
         finalize();
         if (connectionLost) {
           void handleConnectionLostRef.current();
@@ -2577,7 +2657,13 @@ export default function App() {
         chunkSize: settings.streamPrefetchSize,
       });
     } catch (e) {
-      patchTab(tabId, (tt) => ({ ...tt, streaming: false, previewStreaming: false }));
+      patchTab(tabId, (tt) => ({
+        ...tt,
+        streaming: false,
+        previewStreaming: false,
+        paginatable: previousPaginatable,
+        previewPrevPaginatable: undefined,
+      }));
       setStatus({ kind: "key", key: "statusPreviewError", vars: { error: String(e) }, error: true });
       finalize();
     }
@@ -3023,7 +3109,18 @@ export default function App() {
   const stopTab = useCallback(async (tab: Tab) => {
     if (!tab.streaming) return;
     await cancelStreamForTab(tab.id);
-    patchTab(tab.id, (tt) => ({ ...tt, streaming: false, previewStreaming: false }));
+    patchTab(tab.id, (tt) => ({
+      ...tt,
+      streaming: false,
+      previewStreaming: false,
+      // プレビューをキャンセルした場合、previewQueryInTab の onDone/onError は
+      // (リスナーが既に detach 済みのため) 発火しない。退避しておいた
+      // paginatable をここで復元する (#F3)。プレビューでなければ
+      // previewPrevPaginatable は undefined なのでノーオペ。
+      ...(tt.previewPrevPaginatable !== undefined
+        ? { paginatable: tt.previewPrevPaginatable, previewPrevPaginatable: undefined }
+        : null),
+    }));
     setStatus({ kind: "key", key: "statusQueryCancelled" });
   }, [cancelStreamForTab, patchTab]);
 
@@ -3147,7 +3244,21 @@ export default function App() {
         Object.keys(tt.pendingEdits).length > 0
           ? [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT)
           : (tt.editUndoStack ?? []);
-      return { ...tt, pendingEdits: {}, editUndoStack: undoStack, editRedoStack: [], preview: null };
+      // ストリーミング中に破棄した場合、previewQueryInTab の onDone/onError は
+      // (リスナー detach 済みのため) 発火せず paginatable を復元できない。退避値
+      // が残っていればここで復元する (#F3)。
+      const paginatableRestore =
+        tt.previewPrevPaginatable !== undefined
+          ? { paginatable: tt.previewPrevPaginatable, previewPrevPaginatable: undefined }
+          : null;
+      return {
+        ...tt,
+        pendingEdits: {},
+        editUndoStack: undoStack,
+        editRedoStack: [],
+        preview: null,
+        ...paginatableRestore,
+      };
     });
   }, [patchTab, cancelStreamForTab]);
 
@@ -3253,10 +3364,14 @@ export default function App() {
       runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
     } else {
       patchTab(tabId, (tt) => {
+        // Apply 実行中 (await 中) に追加/上書きされた編集は DB へ送信されていない
+        // ため、送信済みスナップショット (`pendingEdits`、この関数冒頭で捕捉) だけを
+        // グリッドへ反映し pendingEdits から取り除く。それ以外の新規編集は pending
+        // のまま保持する (#F2)。
         if (!tt.result) {
           return {
             ...tt,
-            pendingEdits: {},
+            pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
             editUndoStack: [],
             editRedoStack: [],
             preview: null,
@@ -3268,13 +3383,13 @@ export default function App() {
           columns: tt.result.columns,
           rows: tt.result.rows,
           pkIndices,
-          edits: tt.pendingEdits,
+          edits: pendingEdits,
           deleteKeys: new Set(tt.pendingDeletes ?? []),
         });
         return {
           ...tt,
           result: { ...tt.result, rows: nextRows, rows_affected: nextRows.length },
-          pendingEdits: {},
+          pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
           editUndoStack: [],
           editRedoStack: [],
           preview: null,

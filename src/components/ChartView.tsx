@@ -212,7 +212,7 @@ function CartesianChart({
 }) {
   // ホバー中のバンド (X インデックス)。値を読み取るためのガイド/ツールチップに使う。
   const [hover, setHover] = useState<number | null>(null);
-  const { min, max } = valueExtent(model);
+  const { min, max } = valueExtent(model, type);
   const span = max - min || 1;
   const plotW = W - PAD.left - PAD.right;
   const plotH = H - PAD.top - PAD.bottom;
@@ -502,23 +502,49 @@ function PieChart({ model, colors }: { model: ChartModel; colors: string[] }) {
           // ラベルは十分大きいスライスにだけ重ねる (小さいと文字がはみ出す)。
           const lx = cx + ox + r * 0.62 * Math.cos(mid);
           const ly = cy + oy + r * 0.62 * Math.sin(mid);
+          // 1 スライスで全周 (frac がほぼ 1) のとき、始点と終点が一致し弧の
+          // 経路が退化して何も描かれなくなる (SVG の A コマンドは開始角=終了角だと
+          // 面積 0 になる)。この場合は弧ではなく単純な円で描画するフォールバックに
+          // 切り替える。複数スライスでも浮動小数の丸めで実質全周になるケースを
+          // 想定し、スライス数ではなく frac の値で判定する。
+          const isFullCircle = frac >= 1 - 1e-9;
           return (
             <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} style={{ cursor: "default" }}>
-              <motion.path
-                d={`M ${cx + ox} ${cy + oy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`}
-                fill={color}
-                stroke="var(--bg-surface)"
-                strokeWidth={1}
-                initial={animate ? { opacity: 0 } : false}
-                animate={{ opacity: 1 }}
-                transition={
-                  animate
-                    ? { duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.02 }
-                    : { duration: 0 }
-                }
-              >
-                <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
-              </motion.path>
+              {isFullCircle ? (
+                <motion.circle
+                  cx={cx + ox}
+                  cy={cy + oy}
+                  r={r}
+                  fill={color}
+                  stroke="var(--bg-surface)"
+                  strokeWidth={1}
+                  initial={animate ? { opacity: 0 } : false}
+                  animate={{ opacity: 1 }}
+                  transition={
+                    animate
+                      ? { duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.02 }
+                      : { duration: 0 }
+                  }
+                >
+                  <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
+                </motion.circle>
+              ) : (
+                <motion.path
+                  d={`M ${cx + ox} ${cy + oy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`}
+                  fill={color}
+                  stroke="var(--bg-surface)"
+                  strokeWidth={1}
+                  initial={animate ? { opacity: 0 } : false}
+                  animate={{ opacity: 1 }}
+                  transition={
+                    animate
+                      ? { duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.02 }
+                      : { duration: 0 }
+                  }
+                >
+                  <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
+                </motion.path>
+              )}
               {frac >= 0.05 && (
                 <text x={lx} y={ly} textAnchor="middle" fontSize="12" fontWeight={700} fill={readableInk(color)} pointerEvents="none">
                   {pct.toFixed(0)}%

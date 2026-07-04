@@ -138,6 +138,10 @@ pub async fn compare_table_data(
         )));
     }
     let columns: Vec<String> = col_info.iter().map(|c| c.name.clone()).collect();
+    // `columns` と同じ並びの型名。修正3: BLOB 列が IPC 往復で Value::String に
+    // 化けても、この型情報から Value::Bytes へ補正できるようにする
+    // (`data_diff::generate_data_sync_sql` 参照)。
+    let column_types: Vec<String> = col_info.iter().map(|c| c.data_type.clone()).collect();
     let primary_key: Vec<String> = col_info
         .iter()
         .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
@@ -172,6 +176,7 @@ pub async fn compare_table_data(
         target_driver: driver,
         table,
         columns,
+        column_types,
         primary_key,
         rows,
         truncated,

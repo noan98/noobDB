@@ -56,6 +56,39 @@ describe("normalizePersistedWorkspace", () => {
     expect(ws.activePane).toBe(0);
   });
 
+  it("truncates a non-integer activeIndex before range-checking it", () => {
+    // A corrupted/hand-edited localStorage value like `1.5` used to pass the
+    // `>= 0 && < length` check as-is, and `builtTabs[1.5]` downstream would be
+    // `undefined`, crashing the restore path. It should now truncate to a valid
+    // integer index when the truncated value is still in range.
+    const ws = normalizePersistedWorkspace({
+      panes: [
+        {
+          tabs: [
+            { kind: "query", title: "A", sql: "SELECT 1" },
+            { kind: "query", title: "B", sql: "SELECT 2" },
+          ],
+          activeIndex: 1.5,
+        },
+      ],
+      activePane: 0,
+    });
+    expect(ws.panes[0].activeIndex).toBe(1);
+  });
+
+  it("falls back to 0 when the truncated activeIndex is still out of range", () => {
+    const ws = normalizePersistedWorkspace({
+      panes: [
+        {
+          tabs: [{ kind: "query", title: "A", sql: "SELECT 1" }],
+          activeIndex: 5.9,
+        },
+      ],
+      activePane: 0,
+    });
+    expect(ws.panes[0].activeIndex).toBe(0);
+  });
+
   it("returns an empty workspace for unknown shapes", () => {
     expect(normalizePersistedWorkspace(null).panes).toHaveLength(0);
     expect(normalizePersistedWorkspace(42).panes).toHaveLength(0);
