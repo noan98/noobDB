@@ -63,6 +63,7 @@ import {
   HEAT_PALETTES,
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
+import { accentFill, ACCENT_FILL_STOPS } from "../colorScale";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
@@ -306,6 +307,8 @@ export const GRID_CSS: SystemStyleObject = {
   // データバーは幅を transform (scaleX) で表現する。width の補間はレイアウト/
   // ペイントを毎フレーム誘発するため、数値列の全セルが一斉に動くソート/再取得時に
   // 重くなる。scaleX なら GPU 合成のみで済む (値は利用側が inline style で渡す)。
+  // 塗り色は `colorScale.ts` の `accentFill`/`ACCENT_FILL_STOPS` (#718) を参照し、
+  // NULL 率ミニバーと同じ生成レシピ・不透明度段階を共有する (二重定義しない)。
   "& .cell-databar": {
     position: "absolute",
     left: 0,
@@ -313,7 +316,7 @@ export const GRID_CSS: SystemStyleObject = {
     bottom: 0,
     width: "100%",
     transformOrigin: "left center",
-    background: "color-mix(in srgb, var(--accent) 28%, transparent)",
+    background: accentFill(ACCENT_FILL_STOPS.dataBar),
     borderRadius: "var(--radius-sm)",
     transitionProperty: "transform",
     transitionDuration: "var(--dur-med)",
@@ -1783,7 +1786,9 @@ function ColumnStatsMenu({
     }
   };
 
-  // NULL 率ミニバー (条件付き書式 #499 と同じアクセント系トーン)。
+  // NULL 率ミニバー (条件付き書式 #499 と同じアクセント系トーン)。塗りは
+  // `colorScale.ts` の `accentFill`/`ACCENT_FILL_STOPS` を `.cell-databar` と
+  // 共有し、`color-mix(--accent)` の直書きを避ける (#718)。
   const nullBar = (
     <Box
       role="img"
@@ -1799,7 +1804,7 @@ function ColumnStatsMenu({
         width="100%"
         transformOrigin="left center"
         style={{ transform: `scaleX(${nullPct / 100})` }}
-        background="color-mix(in srgb, var(--accent) 55%, transparent)"
+        background={accentFill(ACCENT_FILL_STOPS.nullRate)}
         transition="transform var(--dur-med) var(--ease-out)"
       />
     </Box>

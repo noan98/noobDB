@@ -147,6 +147,32 @@ export function categoricalColor(index: number): string {
   return CATEGORICAL[i];
 }
 
+/**
+ * アクセント色 (`--accent`) 基点の塗り。データバー / NULL 率ミニバー (#718) は
+ * ヒートマップ (`heatmapColor`) と異なり、接続ごとに変わる `--accent` CSS 変数に
+ * 追従させたいため hex ランプでは表現できない。そこで `color-mix(in srgb,
+ * var(--accent) N%, transparent)` という**塗りの生成レシピ**そのものをここへ
+ * 集約し、不透明度の段階 (`ACCENT_FILL_STOPS`) を単一ソース化する。これにより
+ * `ResultGrid.tsx` (`.cell-databar`) と `ColumnStatsMenu` (NULL 率バー) が
+ * 同じ文字列を直書きして二重定義することを防ぐ (#525 コメントの集約先)。
+ * DOM 非依存の純関数 (文字列生成のみ) なので Vitest で検証できる。
+ */
+export const ACCENT_FILL_STOPS = {
+  /** データバー (`.cell-databar`) の塗り不透明度。 */
+  dataBar: 28,
+  /** NULL 率ミニバーの塗り不透明度 (バー本体)。 */
+  nullRate: 55,
+} as const;
+
+/**
+ * アクセント色を `percent`% の不透明度で乗せる `color-mix()` 文字列を返す。
+ * `percent` は [0,100] にクランプし、NaN/非有限は 0 (無着色) に倒す。
+ */
+export function accentFill(percent: number): string {
+  const p = Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 0;
+  return `color-mix(in srgb, var(--accent) ${p}%, transparent)`;
+}
+
 /** 暗い前景インク (黒寄りグレー)。純黒より角が立たない。 */
 export const INK_DARK = "#1a1a1a";
 /** 明るい前景インク。 */
