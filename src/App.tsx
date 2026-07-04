@@ -1616,6 +1616,11 @@ export default function App() {
     // 現在の接続のタブを退避してから片付ける (背景セッションは生かしたまま)。
     if (selectedProfile) persistTabsForProfile(selectedProfile.id);
     await closeAllTabs();
+    // 旧セッションの DB 名を持ったまま各モーダルが新しい sessionId で開き続けない
+    // よう、切替時も handleDisconnect / tearDownLostSession と同じく閉じる。
+    setImportTarget(null);
+    setDumpTarget(null);
+    setSchemaExportTarget(null);
     setErrorProfileId(null);
     setConnectionStatus("connected");
     setSessionId(target.sessionId);
@@ -5614,6 +5619,7 @@ export default function App() {
       <AnimatePresence>
         {schemaExportTarget && sessionId && (
           <SchemaExportModal
+            key={schemaExportTarget}
             sessionId={sessionId}
             database={schemaExportTarget}
             driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
