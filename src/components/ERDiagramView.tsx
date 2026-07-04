@@ -145,8 +145,10 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
       </chakra.button>
       {data.columns.map((col) => (
         <Box key={col.name} css={colRowCss}>
+          {/* PK の鍵アイコンは接続ツリー (ConnectionList) と同じ --cell-date の
+              琥珀で統一する (FK は両者とも accent)。 */}
           {col.isPk ? (
-            <chakra.span color="var(--status-warning, #f59e0b)" title={data.pkTitle} display="inline-flex">
+            <chakra.span color="var(--cell-date)" title={data.pkTitle} display="inline-flex">
               <Icon name="key" size={12} />
             </chakra.span>
           ) : col.isFk ? (
@@ -479,7 +481,7 @@ function ERDiagramInner({
         {t("erDiagramDesc")}
       </chakra.p>
       {truncated && (
-        <chakra.p margin={0} padding="6px 24px 0" fontSize="sm" color="var(--status-warning, #f59e0b)">
+        <chakra.p margin={0} padding="6px 24px 0" fontSize="sm" color="var(--status-warning)">
           {t("erDiagramTruncated", { shown: summary!.shown, total: summary!.total })}
         </chakra.p>
       )}

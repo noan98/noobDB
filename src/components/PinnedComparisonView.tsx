@@ -163,7 +163,7 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
           label={t("pinCompareDiff")}
         />
         {left && right && !comparable && (
-          <chakra.span fontSize="sm" color="var(--status-warning, #f59e0b)">
+          <chakra.span fontSize="sm" color="var(--status-warning)">
             {t("pinCompareNotComparable")}
           </chakra.span>
         )}

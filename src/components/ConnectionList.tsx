@@ -1168,7 +1168,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             >
               <chakra.span
                 display="inline-flex"
-                animation={refreshing ? "spinner-rotate 0.7s linear infinite" : undefined}
+                animation={refreshing ? "spinner-rotate var(--dur-spin) linear infinite" : undefined}
               >
                 <Icon name="refresh" size={13} />
               </chakra.span>
@@ -1296,7 +1296,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             <TreeChevron visibility="hidden" aria-hidden />
                                             <TreeIcon
                                               fontSize="xs"
-                                              color={isPk ? "app.cell.date" : isFk ? "#f59e0b" : "app.textMuted"}
+                                              color={isPk ? "app.cell.date" : isFk ? "app.accent" : "app.textMuted"}
                                               title={isPk ? t("colPkTitle") : isFk ? t("colFkTitle") : undefined}
                                               aria-hidden
                                             >
@@ -1333,7 +1333,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             <TreeChevron visibility="hidden" aria-hidden />
                                             <TreeIcon
                                               fontSize="xs"
-                                              color={idx.primary ? "app.cell.date" : idx.unique ? "#10b981" : "app.textMuted"}
+                                              color={idx.primary ? "app.cell.date" : idx.unique ? "app.status.success" : "app.textMuted"}
                                               aria-hidden
                                             >
                                               {idx.primary ? <Icon name="key" /> : <Icon name="list" />}

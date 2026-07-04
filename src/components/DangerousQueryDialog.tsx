@@ -96,12 +96,14 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
       </ModalBody>
 
       {/*
-        安全側優先レイアウト: 不可逆な「実行」は非強調 (secondary) で左側に
-        置き、安全な「キャンセル」を強調色 (primary) で右側 + デフォルトフォーカスに
-        する。HIG 各種ガイドラインに倣い、破壊的アクションを視覚的に優位にしない。
+        安全側優先レイアウト: 不可逆な「実行」は非強調で左側に置き、安全な
+        「キャンセル」を強調色 (primary) で右側 + デフォルトフォーカスにする。
+        HIG 各種ガイドラインに倣い、破壊的アクションを視覚的に優位にしない。
+        実行側はベタ塗りにせず dangerOutline (枠線 + 危険色文字) にすることで、
+        非強調のまま「これは破壊的操作である」ことを色でも伝える。
       */}
       <ModalFooter>
-        <Button type="button" variant="secondary" onClick={onConfirm}>
+        <Button type="button" variant="dangerOutline" onClick={onConfirm}>
           {t("dangerousConfirm")}
         </Button>
         <div style={{ flex: 1 }} />

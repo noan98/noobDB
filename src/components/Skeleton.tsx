@@ -32,14 +32,27 @@ import { chakra } from "@chakra-ui/react";
  *  シマーは `skeleton-shimmer` keyframe (App.css) で実装済みで、
  *  `prefers-reduced-motion` では静止する。テーマの `--bg-muted` /
  *  `--bg-elevated` トークンを使うのでライト/ダーク切替に自動追従する。
+ *
+ *  ハイライト帯は疑似要素の `transform: translateX` でスライドさせる
+ *  (background-position の補間は再ペイントを毎フレーム誘発するため使わない)。
+ *  スタッガ用の `animationDelay` は要素の inline style に渡せば疑似要素が
+ *  `animation-delay: inherit` で引き継ぐ。
  */
 export const Skeleton = chakra("div", {
   base: {
+    position: "relative",
+    overflow: "hidden",
     borderRadius: "2px",
-    background:
-      "linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-elevated) 50%, var(--bg-muted) 75%)",
-    backgroundSize: "200% 100%",
-    animation: "skeleton-shimmer 1.4s ease-in-out infinite",
+    background: "var(--bg-muted)",
+    "&::after": {
+      content: '""',
+      position: "absolute",
+      inset: 0,
+      background:
+        "linear-gradient(90deg, transparent, var(--bg-elevated), transparent)",
+      animation: "skeleton-shimmer var(--dur-shimmer) ease-in-out infinite",
+      animationDelay: "inherit",
+    },
   },
 });
 
@@ -51,13 +64,21 @@ export const Skeleton = chakra("div", {
  */
 export const SkeletonRow = chakra("div", {
   base: {
+    position: "relative",
+    overflow: "hidden",
     height: "22px",
     mx: "4px",
     my: "3px",
-    borderRadius: "var(--radius-sm, 4px)",
-    background:
-      "linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-elevated) 50%, var(--bg-muted) 75%)",
-    backgroundSize: "200% 100%",
-    animation: "skeleton-shimmer 1.4s ease-in-out infinite",
+    borderRadius: "var(--radius-sm)",
+    background: "var(--bg-muted)",
+    "&::after": {
+      content: '""',
+      position: "absolute",
+      inset: 0,
+      background:
+        "linear-gradient(90deg, transparent, var(--bg-elevated), transparent)",
+      animation: "skeleton-shimmer var(--dur-shimmer) ease-in-out infinite",
+      animationDelay: "inherit",
+    },
   },
 });

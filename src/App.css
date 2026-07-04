@@ -167,6 +167,12 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast: 120ms;
   --dur-med: 200ms;
+  /* ループアニメーション (無限再生) の周期。複数箇所から参照される値だけを
+     トークン化し、スピナー/シマー/不確定プログレスの速度が画面間でドリフト
+     しないようにする (単一箇所でしか使わない周期は利用側に直書きのまま)。 */
+  --dur-spin: 0.7s;
+  --dur-shimmer: 1.4s;
+  --dur-progress-loop: 1.1s;
 
   /* ── Focus ring tokens (#475, #540) ──────────────────────────────────
      キーボードフォーカスのリングを 1 か所で定義し、全フォーカス要素 (ボタン/
@@ -1178,9 +1184,13 @@ html, body, #root {
   100% { transform: translateX(360%); }
 }
 
+/* シマーは transform (translateX) のみで動かす。background-position の補間は
+   GPU 合成されず毎フレーム再ペイントになるため、多数のスケルトンセルが同時に
+   シマーするローディング中の負荷を避ける (利用側はハイライト帯の疑似要素を
+   スライドさせる。Skeleton.tsx / ResultGrid の grid-skeleton-cell を参照)。 */
 @keyframes skeleton-shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 @keyframes apply-flash {

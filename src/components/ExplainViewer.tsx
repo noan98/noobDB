@@ -89,7 +89,9 @@ const totalCostCss: SystemStyleObject = {
 
 /**
  * 重さスコアのバッジ (0〜100)。band (low/mid/high) で配色を切り替える。
- * low は緑、mid は warm (#f59e0b)、high は hot (#dc2626) でヒート色と揃える。
+ * low は緑 (--status-success)、mid は warm (--status-warning)、high は hot
+ * (--status-error) でヒート色と揃える。文字色は --text-warning / --text-success を
+ * 使い、ライト/ダークの追従はトークン側に任せる (手書き _dark 分岐を持たない)。
  */
 function scoreBadgeCss(band: ScoreBand): SystemStyleObject {
   const base: SystemStyleObject = {
@@ -100,33 +102,31 @@ function scoreBadgeCss(band: ScoreBand): SystemStyleObject {
     fontWeight: 700,
     lineHeight: 1,
     padding: "3px 9px",
-    borderRadius: "var(--radius-full, 999px)",
+    borderRadius: "var(--radius-pill)",
     border: "1px solid",
     cursor: "default",
   };
   if (band === "high") {
     return {
       ...base,
-      background: "color-mix(in srgb, #dc2626 16%, transparent)",
-      borderColor: "color-mix(in srgb, #dc2626 45%, transparent)",
+      background: "color-mix(in srgb, var(--status-error) 16%, transparent)",
+      borderColor: "color-mix(in srgb, var(--status-error) 45%, transparent)",
       color: "var(--text-error)",
     };
   }
   if (band === "mid") {
     return {
       ...base,
-      background: "color-mix(in srgb, #f59e0b 16%, transparent)",
-      borderColor: "color-mix(in srgb, #f59e0b 45%, transparent)",
-      color: "#b45309",
-      _dark: { color: "#fbbf24" },
+      background: "color-mix(in srgb, var(--status-warning) 16%, transparent)",
+      borderColor: "color-mix(in srgb, var(--status-warning) 45%, transparent)",
+      color: "var(--text-warning)",
     };
   }
   return {
     ...base,
-    background: "color-mix(in srgb, #16a34a 16%, transparent)",
-    borderColor: "color-mix(in srgb, #16a34a 45%, transparent)",
-    color: "#15803d",
-    _dark: { color: "#4ade80" },
+    background: "color-mix(in srgb, var(--status-success) 16%, transparent)",
+    borderColor: "color-mix(in srgb, var(--status-success) 45%, transparent)",
+    color: "var(--text-success)",
   };
 }
 const scoreValueCss: SystemStyleObject = {
@@ -168,9 +168,9 @@ function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
   if (selected) {
     const bg =
       heat === "hot"
-        ? "color-mix(in srgb, #dc2626 24%, var(--bg-active))"
+        ? "color-mix(in srgb, var(--status-error) 24%, var(--bg-active))"
         : heat === "warm"
-          ? "color-mix(in srgb, #f59e0b 22%, var(--bg-active))"
+          ? "color-mix(in srgb, var(--status-warning) 22%, var(--bg-active))"
           : "var(--bg-active)";
     // 選択行はホバーしても選択色を維持する。
     return { ...base, background: bg, borderLeftColor: "var(--accent)", _hover: { background: bg } };
@@ -178,15 +178,15 @@ function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
   if (heat === "hot") {
     return {
       ...base,
-      background: "color-mix(in srgb, #dc2626 16%, transparent)",
-      _hover: { background: "color-mix(in srgb, #dc2626 24%, transparent)" },
+      background: "color-mix(in srgb, var(--status-error) 16%, transparent)",
+      _hover: { background: "color-mix(in srgb, var(--status-error) 24%, transparent)" },
     };
   }
   if (heat === "warm") {
     return {
       ...base,
-      background: "color-mix(in srgb, #f59e0b 14%, transparent)",
-      _hover: { background: "color-mix(in srgb, #f59e0b 22%, transparent)" },
+      background: "color-mix(in srgb, var(--status-warning) 14%, transparent)",
+      _hover: { background: "color-mix(in srgb, var(--status-warning) 22%, transparent)" },
     };
   }
   return { ...base, _hover: { background: "var(--bg-row-hover)" } };
@@ -239,8 +239,8 @@ function accessBadgeCss(bad: boolean): SystemStyleObject {
     return {
       ...badgeBaseCss,
       fontWeight: 600,
-      background: "color-mix(in srgb, #dc2626 16%, transparent)",
-      borderColor: "color-mix(in srgb, #dc2626 40%, transparent)",
+      background: "color-mix(in srgb, var(--status-error) 16%, transparent)",
+      borderColor: "color-mix(in srgb, var(--status-error) 40%, transparent)",
       color: "var(--text-error)",
     };
   }
@@ -257,16 +257,15 @@ function costBadgeCss(heat: Heat): SystemStyleObject {
   if (heat === "warm") {
     return {
       ...badgeBaseCss,
-      color: "#b45309",
-      borderColor: "color-mix(in srgb, #f59e0b 40%, transparent)",
-      _dark: { color: "#fbbf24" },
+      color: "var(--text-warning)",
+      borderColor: "color-mix(in srgb, var(--status-warning) 40%, transparent)",
     };
   }
   if (heat === "hot") {
     return {
       ...badgeBaseCss,
       color: "var(--text-error)",
-      borderColor: "color-mix(in srgb, #dc2626 40%, transparent)",
+      borderColor: "color-mix(in srgb, var(--status-error) 40%, transparent)",
     };
   }
   return badgeBaseCss;
@@ -283,16 +282,15 @@ function hintBadgeCss(sev: "caution" | "warning"): SystemStyleObject {
   if (sev === "caution") {
     return {
       ...base,
-      background: "color-mix(in srgb, #f59e0b 16%, transparent)",
-      borderColor: "color-mix(in srgb, #f59e0b 45%, transparent)",
-      color: "#b45309",
-      _dark: { color: "#fbbf24" },
+      background: "color-mix(in srgb, var(--status-warning) 16%, transparent)",
+      borderColor: "color-mix(in srgb, var(--status-warning) 45%, transparent)",
+      color: "var(--text-warning)",
     };
   }
   return {
     ...base,
-    background: "color-mix(in srgb, #dc2626 16%, transparent)",
-    borderColor: "color-mix(in srgb, #dc2626 45%, transparent)",
+    background: "color-mix(in srgb, var(--status-error) 16%, transparent)",
+    borderColor: "color-mix(in srgb, var(--status-error) 45%, transparent)",
     color: "var(--text-error)",
   };
 }
@@ -307,7 +305,7 @@ const hintsListCss: SystemStyleObject = {
 };
 /** 詳細パネルのヒント 1 件。重大度で左枠色を変える。 */
 function hintItemCss(sev: HintSeverity): SystemStyleObject {
-  const borderLeftColor = sev === "info" ? "var(--accent)" : sev === "caution" ? "#f59e0b" : "#dc2626";
+  const borderLeftColor = sev === "info" ? "var(--accent)" : sev === "caution" ? "var(--status-warning)" : "var(--status-error)";
   return {
     display: "flex",
     flexDirection: "column",
@@ -317,23 +315,22 @@ function hintItemCss(sev: HintSeverity): SystemStyleObject {
     border: "1px solid var(--border)",
     borderLeftWidth: "3px",
     borderLeftColor,
-    background: "var(--bg-subtle, var(--bg-muted))",
+    background: "var(--bg-muted)",
     fontSize: "var(--text-sm)",
     lineHeight: 1.45,
   };
 }
 /** ヒントの重大度ラベル。 */
 function hintSevCss(sev: HintSeverity): SystemStyleObject {
-  const color = sev === "info" ? "var(--accent)" : sev === "warning" ? "var(--text-error)" : "#b45309";
-  const base: SystemStyleObject = {
+  const color =
+    sev === "info" ? "var(--accent)" : sev === "warning" ? "var(--text-error)" : "var(--text-warning)";
+  return {
     fontWeight: 600,
     fontSize: "var(--text-2xs)",
     letterSpacing: "0.04em",
     textTransform: "uppercase",
     color,
   };
-  if (sev === "caution") return { ...base, _dark: { color: "#fbbf24" } };
-  return base;
 }
 const hintTextCss: SystemStyleObject = { color: "var(--text)" };
 
