@@ -306,11 +306,23 @@ export const system = createSystem(defaultConfig, config);
  *  | 主要アクション (Save / Connect / Execute)  | `primary`    |
  *  | 破壊的アクション (削除 / Drop / Clear)     | `danger`     |
  *  | 常駐する注意アクション (Disconnect など)   | `dangerOutline` |
- *  | 警告付き実行 (危険クエリ承認 / 中断)       | `warning`    |
- *  | 成功確定 (セル編集 Apply など)             | `success`    |
+ *  | 警告付き実行 (ストリーミング中断など)      | `warning`    |
+ *  | DB 書き込み確定 (セル編集 Apply / Commit)  | `success`    |
  *  | キャンセル / 閉じる (モーダル・フォーム)   | `secondary`  |
  *  | アイコン専用 (X / メニューの ✕ など)       | `ghost`      |
  *  | 中立 (Test / Refresh / Browse など)        | `default`    |
+ *
+ *  例外 — 確認ダイアログの安全側優先レイアウト (`DangerousQueryDialog` /
+ *  `ConfirmDialog`): 破壊的な「実行」はベタ塗りで強調せず、左側に
+ *  `dangerOutline` (tone=warning の注意付き確認は `secondary`) で置き、
+ *  右端のキャンセルを `primary` + 初期フォーカスにする (ModalFooter の
+ *  ガイドライン参照)。破壊的操作を視覚的に優位にしないための意図的な逆転で、
+ *  上の表 (danger = ベタ塗り) をこの文脈にだけ適用しない。
+ *
+ *  `success` は「DB へ書き込みが確定する操作」(インライン編集 Apply /
+ *  トランザクション Commit) に限定する。ペンディング編集への積み込みなど
+ *  ステージング止まりの確定は `primary` (CellValueViewer の保存・一括編集の
+ *  Apply など)。
  *
  *  右クリックメニューの破壊的項目は `ContextMenu` の `danger: true` で同色に揃える。 */
 export const buttonRecipe = defineRecipe({

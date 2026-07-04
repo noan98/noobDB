@@ -15,10 +15,11 @@ import { Button, PressableButton } from "./ui";
  * Promise<boolean> を受け取る。返ってきた要素 (`dialog`) を JSX 木のどこかに
  * レンダーすると、確認が必要になったタイミングで自動的に表示される。
  *
- * 想定する `tone` (Confirm ボタンの variant):
- *   - "primary"  通常の確認 (タブ復元など)
- *   - "warning"  注意付き実行 (本番接続など)
- *   - "danger"   破壊的確認 (将来用)
+ * 想定する `tone` と Confirm ボタンの見た目 (安全側優先レイアウトのため、
+ * danger/warning はベタ塗りで強調せず、キャンセル側を primary にする):
+ *   - "primary"  通常の確認 (タブ復元など)。右端に primary で置く。
+ *   - "warning"  注意付き実行 (本番接続など)。左に secondary (非強調) で置く。
+ *   - "danger"   破壊的確認。左に dangerOutline (非強調 + 危険色) で置く。
  */
 
 export type ConfirmTone = "primary" | "warning" | "danger";
@@ -110,9 +111,10 @@ function ConfirmDialog({ title, message, confirmLabel, cancelLabel, tone, onConf
   // (DangerousQueryDialog と同じ方針)。
   const cancelRef = useRef<HTMLButtonElement>(null);
   // 破壊的/注意付き確認 (danger・warning) は安全側優先レイアウトに従い、
-  // 実行を左に非強調 (secondary) で置き、キャンセルを右端 + primary にする
+  // 実行を左に非強調で置き、キャンセルを右端 + primary にする
   // (DangerousQueryDialog・ModalFooter のガイドラインと同一)。通常の確認 (primary)
-  // は他モーダルと同じ「右端 = 主アクション」配置。
+  // は他モーダルと同じ「右端 = 主アクション」配置。danger は非強調のまま
+  // 危険色を帯びる dangerOutline で「破壊的操作」であることを色でも伝える。
   const destructive = tone !== "primary";
 
   return (
@@ -124,7 +126,11 @@ function ConfirmDialog({ title, message, confirmLabel, cancelLabel, tone, onConf
       <ModalFooter>
         {destructive ? (
           <>
-            <Button type="button" variant="secondary" onClick={onConfirm}>
+            <Button
+              type="button"
+              variant={tone === "danger" ? "dangerOutline" : "secondary"}
+              onClick={onConfirm}
+            >
               {confirmLabel}
             </Button>
             <div style={{ flex: 1 }} />

@@ -80,7 +80,7 @@ export function SplashScreen() {
           borderRadius="pill"
           css={{
             background: "var(--brand-gradient)",
-            animation: "query-progress-slide 1.1s var(--ease) infinite",
+            animation: "query-progress-slide var(--dur-progress-loop) var(--ease) infinite",
           }}
         />
       </chakra.div>

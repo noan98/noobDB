@@ -247,7 +247,7 @@ export function CellValueViewer({
               </>
             )}
             <chakra.div flex="1" />
-            <Button type="button" onClick={onClose}>
+            <Button type="button" variant="secondary" onClick={onClose}>
               {t("cellViewerCancel")}
             </Button>
             <Button

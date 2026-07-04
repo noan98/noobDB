@@ -64,7 +64,7 @@ const cardBaseCss: SystemStyleObject = {
   padding: "8px 10px",
   border: "1px solid var(--border)",
   borderRadius: "var(--radius-md)",
-  boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.12))",
+  boxShadow: "var(--shadow-sm)",
   cursor: "pointer",
   overflow: "hidden",
   fontSize: "var(--text-sm)",
@@ -111,7 +111,7 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
             fontWeight={700}
             px="4px"
             borderRadius="var(--radius-sm)"
-            background={data.worstHint === "warning" ? "#dc2626" : "#f59e0b"}
+            background={data.worstHint === "warning" ? "var(--status-error)" : "var(--status-warning)"}
             color="#fff"
           >
             !

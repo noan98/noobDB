@@ -4514,7 +4514,7 @@ export default function App() {
                   width: "35%",
                   borderRadius: "var(--radius-pill)",
                   background: "var(--accent)",
-                  animation: "query-progress-slide 1.05s var(--ease) infinite",
+                  animation: "query-progress-slide var(--dur-progress-loop) var(--ease) infinite",
                 }}
               />
             </motion.div>
@@ -5248,7 +5248,7 @@ export default function App() {
           position="absolute"
           inset={0}
           zIndex={30}
-          bg="rgba(0, 0, 0, 0.3)"
+          bg="var(--overlay)"
           onClick={() => setNarrowSidebarOpen(false)}
           aria-hidden
         />
@@ -5428,8 +5428,8 @@ export default function App() {
                         px="1.5"
                         py="0.5"
                         borderRadius="4px"
-                        bg="color-mix(in srgb, #f59e0b 18%, transparent)"
-                        color="#f59e0b"
+                        bg="color-mix(in srgb, var(--status-warning) 18%, transparent)"
+                        color="var(--text-warning)"
                         title={t("txActiveHelp")}
                       >
                         {t("txActiveBadge")}

@@ -247,10 +247,10 @@ export const GRID_CSS: SystemStyleObject = {
   "& tbody tr.grid-row-deleting td": {
     textDecoration: "line-through",
     color: "var(--text-muted)",
-    background: "color-mix(in srgb, var(--danger-bg, #ef4444) 12%, transparent)",
+    background: "color-mix(in srgb, var(--error-solid) 12%, transparent)",
   },
   "& tbody tr.grid-row-deleting td.row-index": {
-    boxShadow: "inset 3px 0 0 var(--danger-fg, #ef4444)",
+    boxShadow: "inset 3px 0 0 var(--error-solid)",
   },
   "& th.col-filler, & td.col-filler": {
     padding: 0,
@@ -303,14 +303,19 @@ export const GRID_CSS: SystemStyleObject = {
     borderRadius: "var(--radius-sm)",
     overflow: "hidden",
   },
+  // データバーは幅を transform (scaleX) で表現する。width の補間はレイアウト/
+  // ペイントを毎フレーム誘発するため、数値列の全セルが一斉に動くソート/再取得時に
+  // 重くなる。scaleX なら GPU 合成のみで済む (値は利用側が inline style で渡す)。
   "& .cell-databar": {
     position: "absolute",
     left: 0,
     top: 0,
     bottom: 0,
+    width: "100%",
+    transformOrigin: "left center",
     background: "color-mix(in srgb, var(--accent) 28%, transparent)",
     borderRadius: "var(--radius-sm)",
-    transitionProperty: "width",
+    transitionProperty: "transform",
     transitionDuration: "var(--dur-med)",
     transitionTimingFunction: "var(--ease-out)",
   },
@@ -512,12 +517,23 @@ export const GRID_CSS: SystemStyleObject = {
     whiteSpace: "normal",
   },
   "& tbody tr.grid-skeleton-row": { pointerEvents: "none" },
+  // スケルトンセル。シマー帯は疑似要素の transform スライドで動かし
+  // (Skeleton.tsx と同方式)、多数セルの同時再ペイントを避ける。スタッガの
+  // animationDelay は inline style から疑似要素へ inherit で引き継ぐ。
   "& td.grid-skeleton-cell > div": {
+    position: "relative",
+    overflow: "hidden",
     height: "10px",
     borderRadius: "2px",
-    background: "linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-elevated) 50%, var(--bg-muted) 75%)",
-    backgroundSize: "200% 100%",
-    animation: "skeleton-shimmer 1.4s ease-in-out infinite",
+    background: "var(--bg-muted)",
+  },
+  "& td.grid-skeleton-cell > div::after": {
+    content: '""',
+    position: "absolute",
+    inset: 0,
+    background: "linear-gradient(90deg, transparent, var(--bg-elevated), transparent)",
+    animation: "skeleton-shimmer var(--dur-shimmer) ease-in-out infinite",
+    animationDelay: "inherit",
   },
   "& .grid-filter-summary": {
     position: "sticky",
@@ -584,16 +600,16 @@ export const GRID_CSS: SystemStyleObject = {
   // 流用し、追加行は緑で示す (削除行は今回結果に無いためツールバーの件数で示す)。
   // 緑は色覚に配慮しつつ「追加=増加」の直感に沿う。reduced-motion 時も色は残る。
   "& tbody tr.grid-row-added td.row-index": {
-    boxShadow: "inset 3px 0 0 #16a34a",
+    boxShadow: "inset 3px 0 0 var(--status-success)",
   },
   "& tbody tr.grid-row-added td": {
-    background: "color-mix(in srgb, #16a34a 12%, transparent)",
+    background: "color-mix(in srgb, var(--status-success) 12%, transparent)",
   },
   "& tbody tr.grid-row-added.grid-row-stripe td": {
-    background: "color-mix(in srgb, #16a34a 16%, transparent)",
+    background: "color-mix(in srgb, var(--status-success) 16%, transparent)",
   },
   "& tbody tr.grid-row-added:hover td": {
-    background: "color-mix(in srgb, #16a34a 20%, transparent)",
+    background: "color-mix(in srgb, var(--status-success) 20%, transparent)",
   },
   // インラインセル編集 (ResultGrid のみ出現)
   "& td.is-pending-edit": {
@@ -1632,7 +1648,7 @@ function ColumnFilterMenu({
         >
           {t("gridFilterClearColumn")}
         </Button>
-        <Button size="sm" px="2.5" onClick={onClose}>
+        <Button variant="secondary" size="sm" px="2.5" onClick={onClose}>
           {t("gridFilterCloseMenu")}
         </Button>
       </Box>
@@ -1787,9 +1803,11 @@ function ColumnStatsMenu({
     >
       <Box
         height="100%"
-        width={`${nullPct}%`}
+        width="100%"
+        transformOrigin="left center"
+        style={{ transform: `scaleX(${nullPct / 100})` }}
         background="color-mix(in srgb, var(--accent) 55%, transparent)"
-        transition="width var(--dur-med) var(--ease-out)"
+        transition="transform var(--dur-med) var(--ease-out)"
       />
     </Box>
   );
@@ -1928,7 +1946,7 @@ function ColumnStatsMenu({
       )}
 
       <Box display="flex" justifyContent="flex-end" paddingTop="0.5">
-        <Button size="sm" px="2.5" onClick={onClose}>
+        <Button variant="secondary" size="sm" px="2.5" onClick={onClose}>
           {t("gridStatsClose")}
         </Button>
       </Box>
@@ -2317,7 +2335,7 @@ export function DataGrid({
                 <span className="cell-cf-wrap">
                   <span
                     className="cell-databar"
-                    style={{ width: `${dataBarPercent(num, stats)}%` }}
+                    style={{ transform: `scaleX(${dataBarPercent(num, stats) / 100})` }}
                     aria-hidden
                   />
                   <span className={`cell-number cell-cf-value ${extraClass}`}>{display}</span>
@@ -3632,7 +3650,7 @@ export function DataGrid({
                 _focus={{
                   outline: "none",
                   borderColor: "var(--accent)",
-                  boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+                  boxShadow: "var(--focus-ring)",
                 }}
               />
               <chakra.button
@@ -3649,6 +3667,7 @@ export function DataGrid({
               </chakra.button>
             </ModalBody>
             <ModalFooter>
+              <div style={{ flex: 1 }} />
               <Button variant="secondary" size="sm" onClick={() => setBulkEdit(null)}>
                 {t("dangerousCancel")}
               </Button>
@@ -3771,7 +3790,7 @@ export function DataGrid({
               py="1.5" px="3.5"
               fontSize="sm"
               color="#ffffff"
-              background="color-mix(in srgb, #16a34a 92%, #000000)"
+              background="color-mix(in srgb, var(--status-success) 92%, #000000)"
               borderRadius="md"
               boxShadow="lg"
             >
@@ -3902,8 +3921,8 @@ function StreamingBanner({
       color="app.textMuted"
       flexShrink={0}
       borderBottom="1px solid"
-      borderColor={approaching ? "color-mix(in srgb, #f59e0b 45%, var(--border))" : "app.borderSubtle"}
-      bg={approaching ? "color-mix(in srgb, #f59e0b 12%, var(--bg-muted))" : "app.surfaceMuted"}
+      borderColor={approaching ? "color-mix(in srgb, var(--status-warning) 45%, var(--border))" : "app.borderSubtle"}
+      bg={approaching ? "color-mix(in srgb, var(--status-warning) 12%, var(--bg-muted))" : "app.surfaceMuted"}
     >
       <chakra.span
         aria-hidden
@@ -3911,7 +3930,7 @@ function StreamingBanner({
         height="8px"
         borderRadius="50%"
         flexShrink={0}
-        background={approaching ? "#ef4444" : "#f59e0b"}
+        background={approaching ? "var(--status-error)" : "var(--status-warning)"}
         animation="streaming-pulse 1s ease-in-out infinite"
       />
       <chakra.span flex="1" display="inline-flex" alignItems="center" gap="2" minW={0} overflow="hidden">
@@ -3925,7 +3944,7 @@ function StreamingBanner({
           {statusText}
         </motion.span>
         {approaching && (
-          <chakra.span color="#b45309" fontWeight={600} whiteSpace="nowrap">
+          <chakra.span color="var(--text-warning)" fontWeight={600} whiteSpace="nowrap">
             {t("statusTimeoutApproaching", { secs: remainingSecs })}
           </chakra.span>
         )}
@@ -4311,7 +4330,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           color="app.text"
           borderBottom="1px solid"
           borderColor="app.borderSubtle"
-          background="color-mix(in srgb, #f59e0b 14%, var(--bg-muted))"
+          background="color-mix(in srgb, var(--status-warning) 14%, var(--bg-muted))"
         >
           <chakra.span flex="1">
             {t("autoLimitApplied", { limit: autoLimitApplied! })}
@@ -4654,7 +4673,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           >
             {t("resultStatusBar", { rows: result.rows.length, ms: result.elapsed_ms })}
             {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
-              <chakra.span color="#f59e0b" marginLeft="6px" title={t("autoLimitApplied", { limit: autoLimitApplied })}>
+              <chakra.span color="var(--text-warning)" marginLeft="6px" title={t("autoLimitApplied", { limit: autoLimitApplied })}>
                 LIMIT {autoLimitApplied}
               </chakra.span>
             )}

@@ -72,7 +72,7 @@ function pillCss(active: boolean): SystemStyleObject {
     borderRadius: "var(--radius-pill)",
     fontSize: "var(--text-sm)",
     cursor: "pointer",
-    transition: "background 0.12s, border-color 0.12s",
+    transition: "background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
     _hover: { background: "var(--bg-hover)" },
   };
   if (active) {
@@ -179,12 +179,13 @@ const previewCopyCss: SystemStyleObject = {
   borderRadius: "var(--radius-sm)",
   cursor: "pointer",
   zIndex: 1,
-  transition: "color 0.12s, border-color 0.12s, background 0.12s",
+  transition:
+    "color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease)",
   _hover: { color: "var(--text)", background: "var(--bg-hover)" },
   _focusVisible: {
     outline: "none",
     borderColor: "var(--accent)",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)",
+    boxShadow: "var(--focus-ring)",
   },
 };
 const previewCss: SystemStyleObject = {
@@ -911,8 +912,11 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
             {t("qbPreviewRun")}
           </Button>
         )}
+        {/* 実行はエディタの Run / 他モーダルの Execute と同じ「主要アクション =
+            primary (アクセント色)」に統一する。success はセル編集 Apply などの
+            DB 書き込み確定に限定する (theme.ts の variant 規約)。 */}
         <Button
-          variant="success"
+          variant="primary"
           onClick={handleExecute}
           disabled={runBlockedByReadOnly}
           title={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
