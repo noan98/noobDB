@@ -94,16 +94,24 @@ impl LogStore {
 
     fn clear(&self) -> io::Result<()> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        // アクティブファイルは remove_file → 再オープンではなく、既存ハンドルを
-        // そのまま `set_len(0)` で in-place truncate する (#H7)。remove +
-        // 再オープンの順だと、再オープンが失敗したときに `inner.file` が
-        // 「削除済みで以後パスから見えないファイル」を指したままになり、以後の
-        // write はそのファイルディスクリプタに対しては成功するように見えても、
-        // 実体は次回起動までどこからも読めない (黙ってログが消える)。truncate
-        // なら常に同じ有効なハンドル・同じパスを指し続けるので、失敗しても
-        // ハンドルが壊れることはない (追記モードのため、truncate 後の書き込みは
-        // ファイル末尾 = 0 バイト目から正しく再開される)。
-        inner.file.set_len(0)?;
+        // アクティブファイルを空にする。新しいハンドルを開いて**成功したときだけ**
+        // 既存の `inner.file` を差し替えるので、途中で失敗しても既存ハンドルは
+        // 有効なまま残る (#H7: remove → 再オープンの順だと、再オープン失敗時に
+        // `inner.file` が「削除済みで以後パスから見えないファイル」を指したままに
+        // なり、以後の write は成功に見えても実体は次回起動までどこからも読めない
+        // = 黙ってログが消える)。
+        //
+        // in-place の `set_len(0)` は使わない: Windows の SetEndOfFile は
+        // write-data 権限を要求し、`open_append` の append 専用ハンドルでは
+        // `Access Denied` になる (Unix の ftruncate は append fd でも成功するため
+        // OS 差が出る)。代わりに `truncate(true)` で開き直す — 既存ファイルを
+        // O_TRUNC で空にするだけなのでパスも inode も変わらず、全 OS で動く。
+        let fresh = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(self.current_path())?;
+        inner.file = fresh;
         inner.size = 0;
         // バックアップセグメントはアクティブハンドルに影響しないので、削除に
         // 失敗してもベストエフォートで無視してよい。
@@ -232,12 +240,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // H7: clear() はアクティブファイルを remove+再オープンではなく in-place
-    // truncate するので、同じ inode (= 同じオープン済みハンドル) を指し続ける。
+    // H7: clear() はアクティブファイルを remove+再作成ではなく、同じパスを
+    // O_TRUNC で開き直して空にするので、ファイルは再作成されず inode が保たれる。
     // Unix では inode 番号が変わらないことで検証できる。
     #[cfg(unix)]
     #[test]
-    fn clear_truncates_active_file_in_place_without_reopening() {
+    fn clear_truncates_active_file_preserving_inode() {
         use std::os::unix::fs::MetadataExt;
 
         let dir = scratch_dir("clear_inplace");
