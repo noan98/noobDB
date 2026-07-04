@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { chakra } from "@chakra-ui/react";
+import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
@@ -12,6 +13,7 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { copyToClipboard } from "./clipboard";
+import { useConfirm } from "./ConfirmDialog";
 import { KeybindingSettings } from "./KeybindingSettings";
 import { useToast } from "./Toast";
 import {
@@ -44,10 +46,15 @@ import {
   TabRestoreMode,
   Theme,
   applySyntaxPreset,
+  deserializeSettingsImport,
   detectSyntaxPreset,
+  replaceAllSettings,
+  resetAllSettings,
+  resetAppearanceDefaults,
   resetPreviewHighlight,
   resetStreamingDefaults,
   resetSyntaxColors,
+  serializeSettingsExport,
   setAccentColor,
   setAutoLimitCount,
   setAutoLimitEnabled,
@@ -480,6 +487,7 @@ const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> 
 export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
   const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const settings = useSettings();
   const colors = settings.syntaxColors[theme];
   const previewHighlight = settings.previewHighlight[theme];
@@ -571,6 +579,58 @@ export function SettingsView({ theme, onClose }: Props) {
     await loadLogs();
   };
 
+  // 設定のエクスポート/インポート/全初期化 (#679)。接続プロファイル・秘密情報は
+  // 対象外 — こちらは既存の `export_profiles` / `import_profiles` (#442) が担う。
+  const handleExportSettings = async () => {
+    try {
+      const dest = await saveFileDialog({
+        defaultPath: "noobdb-settings.json",
+        title: t("settingsBackupExportTitle"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof dest !== "string" || !dest) return;
+      const json = serializeSettingsExport(settings);
+      await api.writeBinaryFile(dest, new TextEncoder().encode(json));
+      toast.success(t("settingsBackupExportSuccess", { path: dest }));
+    } catch (e) {
+      toast.error(t("settingsBackupExportError", { error: String(e) }));
+    }
+  };
+
+  const handleImportSettings = async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: t("settingsBackupImportTitle"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const raw = await api.readTextFile(picked);
+      const next = deserializeSettingsImport(raw);
+      const ok = await confirm({
+        title: t("settingsBackupImportTitle"),
+        message: t("settingsBackupImportConfirm"),
+        tone: "warning",
+      });
+      if (!ok) return;
+      replaceAllSettings(next);
+      toast.success(t("settingsBackupImportSuccess"));
+    } catch (e) {
+      toast.error(t("settingsBackupImportError", { error: String(e) }));
+    }
+  };
+
+  const handleResetAllSettings = async () => {
+    const ok = await confirm({
+      title: t("settingsBackupResetAllTitle"),
+      message: t("settingsBackupResetAllConfirm"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    resetAllSettings();
+    toast.success(t("settingsBackupResetAllSuccess"));
+  };
+
   return (
     <Modal onClose={onClose} width="988px">
       <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
@@ -591,6 +651,9 @@ export function SettingsView({ theme, onClose }: Props) {
       <SettingsSection>
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsAppearance")}</chakra.h3>
+          <SettingsReset onClick={resetAppearanceDefaults}>
+            {t("settingsReset")}
+          </SettingsReset>
         </SettingsSectionHeader>
         <SettingsNumberRow>
           <chakra.label htmlFor="settings-font-size">{t("settingsFontSize")}</chakra.label>
@@ -1132,8 +1195,35 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsLogsPath>
         )}
       </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsBackup")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsBackupHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsReset type="button" onClick={handleExportSettings}>
+            {t("settingsBackupExport")}
+          </SettingsReset>
+          <SettingsReset type="button" onClick={handleImportSettings}>
+            {t("settingsBackupImport")}
+          </SettingsReset>
+          <SettingsHelpInline>{t("settingsBackupExcludesProfiles")}</SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsReset
+            type="button"
+            color="var(--status-error)"
+            onClick={handleResetAllSettings}
+          >
+            {t("settingsBackupResetAll")}
+          </SettingsReset>
+          <SettingsHelpInline>{t("settingsBackupResetAllHelp")}</SettingsHelpInline>
+        </SettingsToggleRow>
+      </SettingsSection>
         </chakra.div>
       </ModalBody>
+      {confirmDialog}
     </Modal>
   );
 }
