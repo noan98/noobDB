@@ -771,3 +771,41 @@ async fn mysql_process_list_and_kill() {
     victim.close().await;
     conn.close().await;
 }
+
+/// #587 / #641 回帰: `list_processes` は `performance_schema.processlist` が
+/// 空成功 (`performance_schema = OFF`) またはエラーのとき
+/// `information_schema.PROCESSLIST` へフォールバックする。このフォールバック
+/// 分岐の選択ロジック (`db::mysql::process_list_needs_fallback`) は
+/// `db/mysql.rs` の単体テストが空成功/エラー/非空成功の 3 パターンで
+/// カバー済み (`performance_schema` は起動時にしか変更できない変数のため、
+/// 実サーバ上で OFF を再現して分岐そのものを駆動するのは困難)。
+/// ここではフォールバック先の実クエリ文字列が実サーバに対して構文的に
+/// 有効で、少なくとも自分自身のスレッドを返すことを固定し、
+/// `information_schema.PROCESSLIST` 側のカラム名/構文がドリフトしても
+/// 静かに壊れないようにする。
+#[tokio::test]
+async fn mysql_process_list_information_schema_fallback_query_is_valid() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // Same projection/table/order-by shape as the fallback branch in
+    // `db::mysql::MySqlConn::list_processes`.
+    let res = conn
+        .execute(
+            "SELECT ID, USER, HOST, DB, COMMAND, STATE, TIME, INFO, ID = CONNECTION_ID() \
+             FROM information_schema.PROCESSLIST ORDER BY ID",
+            None,
+        )
+        .await
+        .expect("information_schema.PROCESSLIST fallback query must be valid SQL");
+    assert!(
+        !res.rows.is_empty(),
+        "fallback source must at least contain this client's own connection"
+    );
+
+    conn.close().await;
+}
