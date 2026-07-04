@@ -1289,7 +1289,7 @@ const en = {
   schemaCompareTitle: "Schema comparison",
   schemaCompareClose: "Close",
   schemaCompareDesc:
-    "Pick a source and a target connection and database to see how their schemas differ. This opens read-only sessions just for the comparison and closes them when you leave. Generating the SQL to apply the differences is coming in a later release.",
+    "Pick a source and a target connection and database to see how their schemas differ. This opens read-only sessions just for the comparison and closes them when you leave. You can generate SQL to apply the differences and run it against the target — destructive statements (DROP) and DELETE are opt-in switches, and applying is refused on read-only sessions.",
   schemaCompareNoProfiles: "No saved connections to compare. Create a connection first.",
   schemaCompareSource: "Source",
   schemaCompareTarget: "Target",
@@ -2786,7 +2786,7 @@ const ja: Dict = {
   schemaCompareTitle: "スキーマ比較",
   schemaCompareClose: "閉じる",
   schemaCompareDesc:
-    "ソースとターゲットの接続・データベースを選ぶと、両者のスキーマの差分を確認できます。比較専用の読み取り専用セッションを開き、画面を離れると自動的に閉じます。差分を反映する SQL の生成は今後のリリースで対応予定です。",
+    "ソースとターゲットの接続・データベースを選ぶと、両者のスキーマの差分を確認できます。比較専用の読み取り専用セッションを開き、画面を離れると自動的に閉じます。差分を埋める SQL を生成してターゲットへ適用できます — 破壊的な操作 (DROP) と DELETE は個別のオプトインスイッチで有効化する必要があり、読み取り専用セッションへの適用は拒否されます。",
   schemaCompareNoProfiles: "比較できる接続がありません。先に接続を作成してください。",
   schemaCompareSource: "ソース",
   schemaCompareTarget: "ターゲット",
