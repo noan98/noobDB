@@ -1,3 +1,5 @@
+use tokio::io::AsyncReadExt;
+
 use crate::error::{AppError, Result};
 
 /// エディタへ取り込めるテキストファイルのサイズ上限 (8 MiB)。ドラッグ&ドロップ
@@ -40,15 +42,33 @@ pub async fn read_text_file(path: String) -> Result<String> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("file path is empty".into()));
     }
-    let meta = tokio::fs::metadata(&path).await?;
-    if meta.len() > MAX_TEXT_FILE_BYTES {
+    // metadata による事前チェックは通常ファイルに対する早期リジェクトとして残す
+    // (エラーメッセージが素早く出る)。ただし metadata だけに頼ると、(a) チェック
+    // 後に追記されたぶんが素通りする TOCTOU、(b) /dev/zero や /proc の一部、
+    // 名前付きパイプなど metadata 長が 0 または不定な特殊ファイルで上限が効かず
+    // 無制限に読む (あるいは FIFO で永久ブロックする) 問題がある。そのため実際の
+    // 読み取り側でも `take` で打ち切り、実読み取りバイト数で上限を強制する。
+    if let Ok(meta) = tokio::fs::metadata(&path).await {
+        if meta.len() > MAX_TEXT_FILE_BYTES {
+            return Err(AppError::InvalidInput(format!(
+                "file too large to open in the editor ({} bytes, limit {} bytes)",
+                meta.len(),
+                MAX_TEXT_FILE_BYTES
+            )));
+        }
+    }
+
+    let file = tokio::fs::File::open(&path).await?;
+    // 上限ちょうどのファイルを正しく許可しつつ超過を検出するため、上限 + 1 バイト
+    // まで読む。読めたバイト数が上限を超えていれば拒否する。
+    let mut limited = file.take(MAX_TEXT_FILE_BYTES + 1);
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes).await?;
+    if bytes.len() as u64 > MAX_TEXT_FILE_BYTES {
         return Err(AppError::InvalidInput(format!(
-            "file too large to open in the editor ({} bytes, limit {} bytes)",
-            meta.len(),
-            MAX_TEXT_FILE_BYTES
+            "file too large to open in the editor (limit {MAX_TEXT_FILE_BYTES} bytes)"
         )));
     }
-    let bytes = tokio::fs::read(&path).await?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
@@ -111,5 +131,34 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::Io(_)));
+    }
+
+    // H6: 上限ちょうどのファイルは許可され、1 バイトでも超えると拒否されること。
+    // metadata の事前チェックだけでなく実読み取り側 (`take`) でも上限が効いて
+    // いることを、境界値の両側で確認する。
+    #[tokio::test]
+    async fn accepts_file_exactly_at_the_size_limit() {
+        let path =
+            std::env::temp_dir().join(format!("noobdb_read_at_limit_{}.sql", std::process::id()));
+        let data = vec![b'a'; MAX_TEXT_FILE_BYTES as usize];
+        tokio::fs::write(&path, &data).await.unwrap();
+        let content = read_text_file(path.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        assert_eq!(content.len() as u64, MAX_TEXT_FILE_BYTES);
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn rejects_file_one_byte_over_the_size_limit() {
+        let path =
+            std::env::temp_dir().join(format!("noobdb_read_over_limit_{}.sql", std::process::id()));
+        let data = vec![b'a'; MAX_TEXT_FILE_BYTES as usize + 1];
+        tokio::fs::write(&path, &data).await.unwrap();
+        let err = read_text_file(path.to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+        let _ = tokio::fs::remove_file(&path).await;
     }
 }

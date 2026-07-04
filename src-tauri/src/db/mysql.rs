@@ -112,7 +112,25 @@ impl MySqlConn {
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
-        sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(stmt))).await?;
+        let result =
+            sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(stmt))).await;
+        if let Err(e) = result {
+            // COMMIT/ROLLBACK 自体が失敗すると、この接続は BEGIN したままの
+            // 不定状態になり得る。`guard` は既に None にしてあるので復旧の
+            // 余地はなく、そのままプールに返すと次の利用者がトランザクション
+            // 状態を引き継いでしまう。COMMIT 失敗時はベストエフォートで
+            // ROLLBACK を試み (失敗しても無視)、最後にこの接続を `detach`
+            // してプール管理から切り離してから破棄する — プールへは返さない。
+            if commit {
+                let _ = sqlx::Executor::execute(
+                    &mut *conn,
+                    sqlx::raw_sql(sqlx::AssertSqlSafe("ROLLBACK")),
+                )
+                .await;
+            }
+            drop(conn.detach());
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -1138,6 +1156,20 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
         }
+        // rust_decimal::Decimal は有効桁数が約 28〜29 桁までで、MySQL の
+        // DECIMAL(65, x) のような広い精度の値は範囲外になり得る。MySQL の
+        // ワイヤプロトコルは DECIMAL/NEWDECIMAL を常にテキスト (10 進数の
+        // 文字列そのもの) として送るため、`&str`/`String` の Decode
+        // 実装は型チェックさえ通れば元のテキストをそのまま返す。ただし
+        // `String::compatible` は NEWDECIMAL を文字列系カラム型として
+        // 認識しないため通常の `try_get` は型不一致で弾かれる —
+        // `try_get_unchecked` でその互換性チェックだけを迂回し、実体は
+        // 引き続き sqlx の `&str` デコード (=生テキスト読み出し) を使う。
+        // これにより範囲外の値も生バイナリ (Value::Bytes) に落ちず、
+        // 人間可読な数値文字列として表示できる。
+        if let Ok(v) = row.try_get_unchecked::<Option<String>, _>(i) {
+            return v.map(Value::String).unwrap_or(Value::Null);
+        }
     }
     if ti(type_name, &["DATE", "TIME", "DATETIME", "TIMESTAMP"]) {
         // Each chrono type is `compatible` with exactly one MySQL column type
@@ -1680,7 +1712,12 @@ fn skip_leading_comments_and_ws(sql: &str) -> &str {
 /// ignored so a keyword inside a literal or identifier isn't mistaken for the
 /// main statement. If no decisive keyword is found (e.g. `WITH ... TABLE t`),
 /// the statement is treated as query-shaped.
-fn with_cte_is_mutation(sql: &str) -> bool {
+///
+/// この判定はキーワード列挙のみで方言非依存 (MySQL/PostgreSQL 双方の DML
+/// キーワードを含む) なので、`db/postgres.rs` / `db/sqlite.rs` の
+/// `is_query_shape` からも `super::mysql::with_cte_is_mutation` として共有
+/// する (`pub(crate)`)。
+pub(crate) fn with_cte_is_mutation(sql: &str) -> bool {
     let mut depth: i32 = 0;
     let mut in_single = false;
     let mut in_double = false;

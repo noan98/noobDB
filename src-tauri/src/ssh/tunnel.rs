@@ -33,6 +33,17 @@ pub struct SshConfig {
     pub remote_port: u16,
 }
 
+/// accept ループが一時的なエラー (EMFILE/ENFILE/ECONNABORTED 等) から回復を試みる
+/// ときの初期待機時間と上限。
+const INITIAL_ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
+const MAX_ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
+
+/// 連続 accept エラー時のバックオフを次の値へ進める純関数 (指数バックオフ、上限
+/// あり)。ソケット I/O を含まないのでユニットテストできる。
+fn next_accept_backoff(current: Duration) -> Duration {
+    (current * 2).min(MAX_ACCEPT_BACKOFF)
+}
+
 /// An active local-port-forward SSH tunnel.
 /// Dropping this struct tears down the accept loop, all in-flight transfer
 /// tasks, and the SSH session.
@@ -83,12 +94,29 @@ impl SshTunnel {
         let tasks_for_accept = transfer_tasks.clone();
 
         let accept_task = tokio::spawn(async move {
+            // 連続 accept エラー時のバックオフ状態。EMFILE/ENFILE のような一時的な
+            // 資源枯渇でタイトループに陥り CPU を焼き尽くさないための対策。
+            let mut backoff = INITIAL_ACCEPT_BACKOFF;
+
             loop {
                 let (mut socket, peer) = match listener.accept().await {
-                    Ok(s) => s,
+                    Ok(s) => {
+                        // 成功したらバックオフをリセットする。
+                        backoff = INITIAL_ACCEPT_BACKOFF;
+                        s
+                    }
                     Err(e) => {
-                        tracing::warn!("tunnel listener accept failed: {e}");
-                        return;
+                        // accept() の一時的エラー (EMFILE/ENFILE/ECONNABORTED 等) で
+                        // ループを終了すると listener が drop され、ローカルポートが
+                        // 閉じてしまう。SshTunnel と SSH セッション自体は生き続ける
+                        // ため、以後 sqlx が新規物理接続を張ろうとした時点で
+                        // connection refused になる (「接続は生きているのにクエリが
+                        // 失敗する」という不可解な壊れ方)。ループは継続し、連続
+                        // エラー時のみ短い待機を挟んでタイトループを避ける。
+                        tracing::warn!("tunnel listener accept failed: {e}; retrying");
+                        tokio::time::sleep(backoff).await;
+                        backoff = next_accept_backoff(backoff);
+                        continue;
                     }
                 };
 
@@ -156,5 +184,33 @@ impl Drop for SshTunnel {
             h.abort();
         }
         tracing::info!(local_port = self.local_port, "ssh tunnel closed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // H1: accept ループの一時的エラーからの回復戦略 (指数バックオフ、上限あり)
+    // が正しく計算されることを検証する。ソケットを実際に使わないので高速かつ
+    // 決定的にテストできる。
+    #[test]
+    fn accept_backoff_doubles_until_capped() {
+        let mut backoff = INITIAL_ACCEPT_BACKOFF;
+        assert_eq!(backoff, Duration::from_millis(50));
+
+        backoff = next_accept_backoff(backoff);
+        assert_eq!(backoff, Duration::from_millis(100));
+
+        backoff = next_accept_backoff(backoff);
+        assert_eq!(backoff, Duration::from_millis(200));
+
+        // 十分に繰り返すと上限 (MAX_ACCEPT_BACKOFF) で頭打ちになり、それ以上は
+        // 増え続けない (タイトループ化も無限増大もしない)。
+        for _ in 0..20 {
+            backoff = next_accept_backoff(backoff);
+        }
+        assert_eq!(backoff, MAX_ACCEPT_BACKOFF);
+        assert_eq!(next_accept_backoff(backoff), MAX_ACCEPT_BACKOFF);
     }
 }

@@ -569,8 +569,11 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 ///
 /// Allow list: `SELECT` / `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `WITH`.
 /// Trailing semicolons and whitespace are tolerated. `SELECT ... FOR UPDATE`,
-/// `FOR SHARE` and the MySQL `LOCK IN SHARE MODE` form are rejected because
-/// they acquire row locks even though they syntactically begin with `SELECT`.
+/// `FOR SHARE`, `FOR NO KEY UPDATE`, `FOR KEY SHARE` and the MySQL
+/// `LOCK IN SHARE MODE` form — including their `NOWAIT` / `SKIP LOCKED` /
+/// `OF <table>` suffixed variants (see [`has_locking_clause`]) — are rejected
+/// because they acquire row locks even though they syntactically begin with
+/// `SELECT`.
 ///
 /// Beyond the leading keyword the body is masked (comments / string literals /
 /// quoted identifiers blanked, reusing `mask_for_analysis`) and then:
@@ -618,13 +621,73 @@ pub fn is_read_only_sql(sql: &str) -> bool {
             return false;
         }
     }
-    if body.ends_with("for update")
-        || body.ends_with("for share")
-        || body.ends_with("lock in share mode")
-    {
+    if has_locking_clause(body) {
         return false;
     }
     true
+}
+
+/// Row-locking clause phrases recognised by [`has_locking_clause`]: `SELECT
+/// ... FOR UPDATE` / `FOR SHARE` (standard SQL / MySQL / PostgreSQL), the
+/// PostgreSQL-only `FOR NO KEY UPDATE` / `FOR KEY SHARE`, and the MySQL-only
+/// `LOCK IN SHARE MODE`. The two- and three-word phrases are checked before
+/// the shorter `for update` / `for share` so callers scanning in this order
+/// see the more specific match first (the phrases don't actually overlap as
+/// substrings, but ordering longest-first keeps that invariant obvious).
+const LOCKING_CLAUSES: &[&str] = &[
+    "for no key update",
+    "for key share",
+    "for update",
+    "for share",
+    "lock in share mode",
+];
+
+/// True when masked/lowercased `body` contains a row-locking clause anywhere —
+/// any of [`LOCKING_CLAUSES`] — including the PostgreSQL suffixed forms that
+/// may follow the base phrase: `NOWAIT` (`FOR UPDATE NOWAIT`), `SKIP LOCKED`
+/// (`FOR UPDATE SKIP LOCKED`), and `OF <table>[, ...]` (`FOR UPDATE OF t`,
+/// also valid on `FOR SHARE` / `FOR NO KEY UPDATE` / `FOR KEY SHARE`). Rather
+/// than parsing those suffixes explicitly, this matches the base phrase
+/// anywhere in the body — safe because `body` has already had comments and
+/// string/quoted-identifier literals masked to spaces, so any surviving
+/// occurrence of e.g. `for update` is real SQL syntax, not a coincidental
+/// column value, and any write keyword trailing a locking clause (which would
+/// make the suffix invalid SQL) is independently caught by the write-keyword
+/// scan that runs before this check in [`is_read_only_sql`].
+///
+/// Matching is word-bounded on the *whole* phrase — the character immediately
+/// before it must be a non-word character (or start of string) and the
+/// character immediately after must be a non-word character (or end of
+/// string) — so a column named `for_updated_at` / `updated_at` is never
+/// mistaken for the clause.
+fn has_locking_clause(body: &str) -> bool {
+    LOCKING_CLAUSES
+        .iter()
+        .any(|phrase| contains_word_phrase(body, phrase))
+}
+
+/// Like [`contains_word`], but `phrase` may itself contain literal spaces
+/// (e.g. `"for update"`); the match still requires a non-word boundary
+/// immediately before and after the whole phrase.
+fn contains_word_phrase(haystack: &str, phrase: &str) -> bool {
+    let hb = haystack.as_bytes();
+    let pb = phrase.as_bytes();
+    if pb.is_empty() || hb.len() < pb.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + pb.len() <= hb.len() {
+        if &hb[i..i + pb.len()] == pb {
+            let before_ok = i == 0 || !is_word_byte(hb[i - 1]);
+            let after = i + pb.len();
+            let after_ok = after >= hb.len() || !is_word_byte(hb[after]);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Appends an automatic `LIMIT <limit>` to an ad-hoc `SELECT` / `WITH ... SELECT`
@@ -681,11 +744,11 @@ pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
         }
     }
     // Locking reads put the LIMIT in the wrong place if appended at the very end
-    // (`… LOCK IN SHARE MODE LIMIT n` is invalid), so leave them untouched.
-    if body.ends_with("for update")
-        || body.ends_with("for share")
-        || body.ends_with("lock in share mode")
-    {
+    // (`… LOCK IN SHARE MODE LIMIT n` is invalid, and `LIMIT` can't be spliced
+    // in before a trailing `NOWAIT` / `SKIP LOCKED` / `OF <table>` suffix
+    // either), so leave any statement carrying a locking clause untouched. See
+    // [`has_locking_clause`] for the recognised phrases and suffixed forms.
+    if has_locking_clause(body) {
         return None;
     }
     if is_aggregate_only(body) {
@@ -1416,6 +1479,26 @@ mod tests {
         assert!(!is_read_only_sql("SELECT * FROM t LOCK IN SHARE MODE"));
     }
 
+    /// Regression test (#J1): the row-locking check used a strict
+    /// `ends_with("for update"/"for share"/"lock in share mode")`, so it
+    /// missed every PostgreSQL variant that adds a suffix after the base
+    /// phrase (`NOWAIT` / `SKIP LOCKED` / `OF <table>`) or uses one of the two
+    /// PostgreSQL-only phrases (`FOR NO KEY UPDATE` / `FOR KEY SHARE`), all of
+    /// which still acquire row locks and must be rejected.
+    #[test]
+    fn rejects_locking_select_variants_with_suffixes() {
+        assert!(!is_read_only_sql("SELECT * FROM t FOR UPDATE NOWAIT"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR UPDATE SKIP LOCKED"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR UPDATE OF t"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR NO KEY UPDATE"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR KEY SHARE"));
+        assert!(!is_read_only_sql("SELECT * FROM t FOR SHARE OF t"));
+        // A column literally named `updated_at` must not be mistaken for the
+        // `FOR UPDATE` clause (no `for` keyword precedes it here at all, but
+        // this guards the word-boundary logic generally).
+        assert!(is_read_only_sql("SELECT updated_at FROM t"));
+    }
+
     #[test]
     fn rejects_multi_statement_even_with_read_only_lead() {
         assert!(!is_read_only_sql("SELECT 1; DELETE FROM t"));
@@ -1872,6 +1955,21 @@ mod tests {
             apply_auto_limit("SELECT * FROM t LOCK IN SHARE MODE", 100).is_none(),
             "LOCK IN SHARE MODE should skip LIMIT"
         );
+    }
+
+    /// 修正 J1: `apply_auto_limit` のロック句チェックは末尾完全一致
+    /// (`ends_with("for update"/"for share"/"lock in share mode")`) のみだった
+    /// ため、`NOWAIT` / `SKIP LOCKED` / `OF <table>` の接尾辞が付くバリアントや
+    /// PostgreSQL 専用の `FOR NO KEY UPDATE` / `FOR KEY SHARE` を取りこぼし、
+    /// ロック句の後ろに ` LIMIT n` を付与して構文エラーを起こしていた。
+    #[test]
+    fn auto_limit_skips_locking_select_suffix_variants() {
+        assert!(apply_auto_limit("SELECT * FROM t FOR UPDATE NOWAIT", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR UPDATE SKIP LOCKED", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR UPDATE OF t", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR NO KEY UPDATE", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR KEY SHARE", 100).is_none());
+        assert!(apply_auto_limit("SELECT * FROM t FOR SHARE OF t", 100).is_none());
     }
 
     /// MISSED: `apply_auto_limit` 505行目 `while end > 0` が `while end >= 0` に

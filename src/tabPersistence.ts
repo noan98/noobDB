@@ -147,10 +147,16 @@ export function normalizePersistedWorkspace(parsed: unknown): PersistedWorkspace
       .filter(isValidPane)
       .map((p) => {
         const tabs = sanitizeTabs(p.tabs);
+        // 非整数 (例: 1.5) が紛れ込んだ localStorage を読み込んでも `builtTabs[1.5]`
+        // のような範囲外アクセスにならないよう、範囲検証の前に整数化する
+        // (`activePane` の `Math.trunc` 正規化と対称)。truncate 後もなお範囲外なら
+        // 0 にフォールバックする既存の挙動は維持する。
+        const truncatedIndex =
+          typeof p.activeIndex === "number" && Number.isFinite(p.activeIndex)
+            ? Math.trunc(p.activeIndex)
+            : NaN;
         const activeIndex =
-          typeof p.activeIndex === "number" && p.activeIndex >= 0 && p.activeIndex < tabs.length
-            ? p.activeIndex
-            : 0;
+          truncatedIndex >= 0 && truncatedIndex < tabs.length ? truncatedIndex : 0;
         return { tabs, activeIndex };
       })
       .filter((p) => p.tabs.length > 0);

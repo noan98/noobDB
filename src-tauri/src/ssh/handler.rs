@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use russh::client::{Handler, Session};
 use russh::keys::{HashAlg, PublicKey};
@@ -97,8 +97,32 @@ impl ClientHandler {
                 out.push('\n');
             }
         }
-        std::fs::write(&path, out)
+        write_atomic(&path, out.as_bytes())
     }
+}
+
+/// `path` の内容全体をアトミックに置き換える。同じディレクトリに一時ファイルを
+/// 書いて `sync_all` してから `rename` することで、書き込み途中のクラッシュ/
+/// 電源断/ディスクフルで known_hosts が半端な内容のまま残り、以後のホスト鍵検証が
+/// 壊れる事態を防ぐ (同一ファイルシステム内の `rename` はアトミック)。追記のみの
+/// `remember` は末尾追記なのでデータ喪失リスクが低く、対象外。
+fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp_path = dir.join(format!(
+        ".{}.tmp.{}",
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "known_hosts".to_string()),
+        std::process::id()
+    ));
+    {
+        let mut f = std::fs::File::create(&tmp_path)?;
+        f.write_all(content)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
 }
 
 /// Pre-0.60 builds stored the bare base64 SHA-256 digest, while russh 0.60
@@ -274,6 +298,38 @@ mod tests {
 
         let recorded = std::fs::read_to_string(&path).unwrap();
         assert_eq!(recorded.trim(), format!("ssh.example.com:22 {modern}"));
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    // H3: known_hosts の全体書き換え (replace_entry が使う write_atomic) は
+    // リネーム後に内容が読め、一時ファイルを残さないこと。
+    #[test]
+    fn write_atomic_leaves_only_the_final_file() {
+        let path = temp_known_hosts();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        super::write_atomic(&path, b"ssh.example.com:22 SHA256:abc\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "ssh.example.com:22 SHA256:abc\n"
+        );
+
+        // Overwrite and confirm no temp file lingers alongside it.
+        super::write_atomic(&path, b"ssh.example.com:22 SHA256:def\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "ssh.example.com:22 SHA256:def\n"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "known_hosts")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp file was left behind: {leftovers:?}"
+        );
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }

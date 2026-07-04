@@ -179,6 +179,20 @@ describe("isReadOnlySql", () => {
     expect(isReadOnlySql("SELECT * FROM t LOCK IN SHARE MODE")).toBe(false);
   });
 
+  it("rejects row-locking SELECT variants with suffixes (#J1)", () => {
+    // The old check was a strict `endsWith("for update"/"for share"/...)`, so
+    // it missed every suffixed PostgreSQL variant and the two PostgreSQL-only
+    // phrases — all of which still acquire row locks.
+    expect(isReadOnlySql("SELECT * FROM t FOR UPDATE NOWAIT")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t FOR UPDATE SKIP LOCKED")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t FOR UPDATE OF t")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t FOR NO KEY UPDATE")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t FOR KEY SHARE")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t FOR SHARE OF t")).toBe(false);
+    // A column merely named `updated_at` must not be mistaken for the clause.
+    expect(isReadOnlySql("SELECT updated_at FROM t")).toBe(true);
+  });
+
   it("is not fooled by keywords inside strings or comments", () => {
     expect(isReadOnlySql("SELECT 'delete from t' AS note")).toBe(true);
     expect(isReadOnlySql("SELECT 1 /* drop table t */")).toBe(true);

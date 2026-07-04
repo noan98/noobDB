@@ -27,15 +27,20 @@ export type ErrorIllustrationKind =
  * null を返すことはなく、常に何らかの種別を返す (フォールバックは "queryFailed")。
  */
 export function illustrationForError(raw: string): ErrorIllustrationKind {
-  // タイムアウト: Rust バックエンドの AppError::Timeout の文言と sqlx の pool タイムアウト
-  if (/timed? ?out|timeout/i.test(raw)) return "timeout";
-  // 接続失敗: サーバへの到達不能 / 接続切断
+  // 接続失敗: サーバへの到達不能 / 接続切断。
+  // "connection timed out" のように接続失敗系の文言にも "timed out" が含まれるため、
+  // 下の timeout 判定より必ず先に評価する。そうしないと「到達不能」を意味する
+  // メッセージが「クエリタイムアウト」イラストに誤分類され、matchErrorHint が返す
+  // ヒント (接続先の確認を促す errorHintConnection) と食い違ってしまう。
   if (
     /connection refused|(?:can't|cannot|couldn't|could not) connect|connection reset|connection timed out|server has gone away|lost connection|broken pipe|connection was killed|server closed the connection|terminating connection|error communicating with database/i.test(
       raw,
     )
   )
     return "connectionFailed";
+  // タイムアウト: Rust バックエンドの AppError::Timeout の文言と sqlx の pool タイムアウト
+  // (上の接続失敗パターンに一致しない、クエリ/ロック等のタイムアウトのみここに残る)。
+  if (/timed? ?out|timeout/i.test(raw)) return "timeout";
   // 権限不足: 認証失敗 / アクセス拒否
   if (/access denied|authentication failed|password authentication failed|permission denied|insufficient privilege/i.test(raw))
     return "permissionDenied";

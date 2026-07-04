@@ -249,6 +249,41 @@ const WRITE_KEYWORDS = [
 ];
 
 /**
+ * Row-locking clause phrases recognised by `hasLockingClause`: `SELECT ...
+ * FOR UPDATE` / `FOR SHARE` (standard SQL / MySQL / PostgreSQL), the
+ * PostgreSQL-only `FOR NO KEY UPDATE` / `FOR KEY SHARE`, and the MySQL-only
+ * `LOCK IN SHARE MODE`. Mirrors the backend `LOCKING_CLAUSES`
+ * (`src-tauri/src/db/mod.rs`).
+ */
+const LOCKING_CLAUSES = [
+  "for no key update",
+  "for key share",
+  "for update",
+  "for share",
+  "lock in share mode",
+];
+
+/**
+ * True when masked/lowercased `body` contains a row-locking clause anywhere —
+ * any of `LOCKING_CLAUSES` — including the PostgreSQL suffixed forms that may
+ * follow the base phrase: `NOWAIT` (`FOR UPDATE NOWAIT`), `SKIP LOCKED`
+ * (`FOR UPDATE SKIP LOCKED`), and `OF <table>[, ...]` (`FOR UPDATE OF t`, also
+ * valid on `FOR SHARE` / `FOR NO KEY UPDATE` / `FOR KEY SHARE`). Rather than
+ * parsing those suffixes explicitly, this matches the base phrase anywhere in
+ * the body — safe because `body` has already had comments and string/quoted
+ * identifier literals masked to spaces, so any surviving occurrence of e.g.
+ * `for update` is real SQL syntax, not a coincidental column value, and any
+ * write keyword trailing a locking clause (which would make the suffix
+ * invalid SQL) is independently caught by `WRITE_KEYWORDS`. Matching is
+ * word-bounded on the whole phrase, so a column named `for_updated_at` /
+ * `updated_at` is never mistaken for the clause. Mirrors the backend
+ * `has_locking_clause` (`src-tauri/src/db/mod.rs`).
+ */
+function hasLockingClause(body: string): boolean {
+  return LOCKING_CLAUSES.some((phrase) => containsWord(body, phrase));
+}
+
+/**
  * Best-effort mirror of the backend `is_read_only_sql` gate
  * (`src-tauri/src/db/mod.rs`): true only when `sql` is a single statement that
  * begins with an allowed read-only keyword and carries no write/DDL keyword,
@@ -270,13 +305,7 @@ export function isReadOnlySql(sql: string): boolean {
   // Trailing separators were stripped, so a remaining `;` hides a 2nd statement.
   if (body.includes(";")) return false;
   if (WRITE_KEYWORDS.some((kw) => containsWord(body, kw))) return false;
-  if (
-    body.endsWith("for update") ||
-    body.endsWith("for share") ||
-    body.endsWith("lock in share mode")
-  ) {
-    return false;
-  }
+  if (hasLockingClause(body)) return false;
   return true;
 }
 

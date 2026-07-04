@@ -94,10 +94,20 @@ impl LogStore {
 
     fn clear(&self) -> io::Result<()> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = std::fs::remove_file(self.prev_path());
-        let _ = std::fs::remove_file(self.current_path());
-        inner.file = open_append(&self.current_path())?;
+        // アクティブファイルは remove_file → 再オープンではなく、既存ハンドルを
+        // そのまま `set_len(0)` で in-place truncate する (#H7)。remove +
+        // 再オープンの順だと、再オープンが失敗したときに `inner.file` が
+        // 「削除済みで以後パスから見えないファイル」を指したままになり、以後の
+        // write はそのファイルディスクリプタに対しては成功するように見えても、
+        // 実体は次回起動までどこからも読めない (黙ってログが消える)。truncate
+        // なら常に同じ有効なハンドル・同じパスを指し続けるので、失敗しても
+        // ハンドルが壊れることはない (追記モードのため、truncate 後の書き込みは
+        // ファイル末尾 = 0 バイト目から正しく再開される)。
+        inner.file.set_len(0)?;
         inner.size = 0;
+        // バックアップセグメントはアクティブハンドルに影響しないので、削除に
+        // 失敗してもベストエフォートで無視してよい。
+        let _ = std::fs::remove_file(self.prev_path());
         Ok(())
     }
 }
@@ -217,6 +227,32 @@ mod tests {
         store.clear().unwrap();
         assert_eq!(store.read(), "");
         // Writing still works after a clear.
+        store.write_bytes(b"after\n").unwrap();
+        assert_eq!(store.read(), "after\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // H7: clear() はアクティブファイルを remove+再オープンではなく in-place
+    // truncate するので、同じ inode (= 同じオープン済みハンドル) を指し続ける。
+    // Unix では inode 番号が変わらないことで検証できる。
+    #[cfg(unix)]
+    #[test]
+    fn clear_truncates_active_file_in_place_without_reopening() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = scratch_dir("clear_inplace");
+        let store = LogStore::open(dir.clone()).unwrap();
+        store.write_bytes(b"before\n").unwrap();
+        let ino_before = std::fs::metadata(store.current_path()).unwrap().ino();
+
+        store.clear().unwrap();
+
+        // The active log file still exists at the same path with the same
+        // inode (truncated in place), not recreated from scratch.
+        let meta_after = std::fs::metadata(store.current_path()).unwrap();
+        assert_eq!(meta_after.ino(), ino_before, "active file was recreated");
+        assert_eq!(meta_after.len(), 0);
+
         store.write_bytes(b"after\n").unwrap();
         assert_eq!(store.read(), "after\n");
         let _ = std::fs::remove_dir_all(&dir);

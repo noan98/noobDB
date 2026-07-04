@@ -92,6 +92,25 @@ describe("buildErGraph", () => {
     expect(graph.edges).toHaveLength(2);
   });
 
+  it("does not cross-mark FK columns when a space-joined key would collide", () => {
+    // Table "order items" column "id" and table "order" column "items id" would
+    // both join to the same "table column" string under a naive space-joined
+    // dedup key, incorrectly marking the unrelated "order"."items id" column as
+    // a foreign key. The only real FK here originates from "order items"."id".
+    const graph = buildErGraph({
+      tables: [
+        { name: "order items", columns: ["id", "other"] },
+        { name: "order", columns: ["items id", "other2"] },
+        { name: "orders", columns: ["id"] },
+      ],
+      foreignKeys: [fk("order items", "id", "orders", "id")],
+    });
+    const orderItems = graph.nodes.find((n) => n.id === "order items")!;
+    const order = graph.nodes.find((n) => n.id === "order")!;
+    expect(orderItems.data.columns.find((c) => c.name === "id")!.isFk).toBe(true);
+    expect(order.data.columns.find((c) => c.name === "items id")!.isFk).toBe(false);
+  });
+
   it("keeps self-referencing foreign keys", () => {
     const graph = buildErGraph({
       tables: [{ name: "employees", columns: ["id", "manager_id"] }],

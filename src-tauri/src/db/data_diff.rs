@@ -39,6 +39,27 @@ pub struct RowDiff {
     pub target: Option<Vec<Value>>,
     /// For `Different`, the names of the non-key columns whose values differ.
     pub changed_columns: Vec<String>,
+    /// True if this row's key cannot be trusted to identify a single physical
+    /// row: two or more rows collided onto the same key signature (a duplicate
+    /// primary key — including distinct rows that share an identical `NULL`
+    /// "key", which SQLite permits in a non-`INTEGER` primary key; see
+    /// [`compute_data_diff`]). A *unique* key that merely contains a `NULL`
+    /// (e.g. a composite key with one `NULL` facet) is **not** flagged — it is
+    /// safely addressable with `pk = ... AND pk2 IS NULL`. When the key is
+    /// unreliable, [`generate_data_sync_sql`] skips `UPDATE`/`DELETE` for the
+    /// row (an `INSERT` for a `SourceOnly` row stays safe — it never touches an
+    /// existing row) and surfaces a warning instead of guessing which physical
+    /// row `pk = ...` is meant to match.
+    ///
+    /// `#[serde(default)]`: この `DataDiff` はフロントを往復して
+    /// `generate_data_sync_sql` へ渡し戻される。フロントの zod スキーマは未知
+    /// フィールドを破棄するため往復後の JSON にはこのフィールドが無く、default
+    /// が無いとデシリアライズ自体が失敗する。default で `false` に戻るぶん
+    /// フラグとしての保護は往復で失われるが、`generate_data_sync_sql` 側が
+    /// キー値そのもの (往復しても残る) から NULL / 重複キーを再計算して補うため
+    /// 実害はない。
+    #[serde(default)]
+    pub key_unreliable: bool,
 }
 
 /// Result of comparing one table's rows across the two connections.
@@ -68,6 +89,14 @@ pub struct DataDiff {
 /// Rows are matched on a tagged signature of their key values, so an integer
 /// `1` never collides with the string `"1"`. Source order is preserved for
 /// inserts / updates; target-only rows follow in target order.
+///
+/// 修正 L1: 同一キー署名に 2 行以上が畳まれる「重複キー」を検出したら
+/// `key_unreliable` を立てて呼び出し側 (`generate_data_sync_sql`) に伝え、
+/// `UPDATE`/`DELETE` の誤爆を防ぐ (`SourceOnly` の `INSERT` は既存行を書き換え
+/// ないので安全であり許容する)。SQLite は非 `INTEGER` 主キーに `NULL` を許す
+/// ため、複数の行が同じ `NULL` キー (`Value::Null` の Debug 表現) に畳まれる
+/// のがこの重複の代表例。ただし単一行の `NULL` 含みキーは一意に特定できるので
+/// 弾かない (`pk = ... AND pk2 IS NULL` で安全に扱える)。
 pub fn compute_data_diff(
     columns: &[String],
     pk_idx: &[usize],
@@ -83,11 +112,20 @@ pub fn compute_data_diff(
             .collect::<Vec<_>>()
             .join("\u{1f}")
     };
-
     let mut target_by_sig: HashMap<String, &Vec<Value>> = HashMap::with_capacity(target.len());
+    // 同じ sig の行が 2 件以上あれば重複キー — 後勝ちで上書きされてしまうので
+    // どのキーが衝突したかを別途記録しておく。これが唯一の「信頼できない」条件:
+    // 単一の NULL 含みキー (例: 複合キーの一部が NULL だが行を一意に特定できる)
+    // は `pk = ... AND pk2 IS NULL` で安全に扱えるので弾かない。危険なのは
+    // 「複数の物理行が同一キー (NULL 同士の畳み込みを含む) に潰れる」場合だけ。
+    let mut dup_sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
     for row in target {
-        target_by_sig.insert(sig(&key_of(row)), row);
+        let s = sig(&key_of(row));
+        if target_by_sig.insert(s.clone(), row).is_some() {
+            dup_sigs.insert(s);
+        }
     }
+    let is_unreliable = |_key: &[Value], s: &str| dup_sigs.contains(s);
 
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<RowDiff> = Vec::new();
@@ -95,6 +133,7 @@ pub fn compute_data_diff(
     for s_row in source {
         let key = key_of(s_row);
         let s = sig(&key);
+        let unreliable = is_unreliable(&key, &s);
         match target_by_sig.get(&s) {
             Some(t_row) => {
                 seen.insert(s);
@@ -106,6 +145,7 @@ pub fn compute_data_diff(
                         source: Some(s_row.clone()),
                         target: Some((*t_row).clone()),
                         changed_columns: changed,
+                        key_unreliable: unreliable,
                     });
                 }
             }
@@ -115,21 +155,25 @@ pub fn compute_data_diff(
                 source: Some(s_row.clone()),
                 target: None,
                 changed_columns: Vec::new(),
+                key_unreliable: unreliable,
             }),
         }
     }
 
     for t_row in target {
         let key = key_of(t_row);
-        if seen.contains(&sig(&key)) {
+        let s = sig(&key);
+        if seen.contains(&s) {
             continue;
         }
+        let unreliable = is_unreliable(&key, &s);
         out.push(RowDiff {
             status: RowStatus::TargetOnly,
             key,
             source: None,
             target: Some(t_row.clone()),
             changed_columns: Vec::new(),
+            key_unreliable: unreliable,
         });
     }
 
@@ -172,6 +216,15 @@ fn values_equal(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// タグ付きのキー署名。整数 `1` と文字列 `"1"` を区別する (`compute_data_diff`
+/// のペアリングと同じ表現)。`generate_data_sync_sql` の重複キー再計算でも使う。
+fn key_signature(key: &[Value]) -> String {
+    key.iter()
+        .map(|v| format!("{v:?}"))
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
+}
+
 /// Renders the DML that makes the target table's rows match the source's.
 /// `INSERT`s come first, then `UPDATE`s, then `DELETE`s; `DELETE`s appear only
 /// when `allow_delete` is set.
@@ -193,6 +246,27 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
         );
     }
 
+    // 修正 L1: NULL / 重複した主キーの行は `pk = ...` / `pk IS NULL` が
+    // 意図しない行に波及しうるため、UPDATE/DELETE は生成せず INSERT のみ許容する。
+    // `key_unreliable` フラグは IPC 往復で失われる (上記 RowDiff の doc 参照) ため、
+    // 往復しても残るキー値そのものから NULL キー・重複キーを再計算し、フラグと
+    // OR して判定する (フラグに依存せず保護が効く)。
+    let duplicate_key_sigs: std::collections::HashSet<String> = {
+        let mut seen = std::collections::HashSet::new();
+        let mut dups = std::collections::HashSet::new();
+        for row in &diff.rows {
+            let s = key_signature(&row.key);
+            if !seen.insert(s.clone()) {
+                dups.insert(s);
+            }
+        }
+        dups
+    };
+    let is_unreliable = |row: &RowDiff| -> bool {
+        row.key_unreliable || duplicate_key_sigs.contains(&key_signature(&row.key))
+    };
+    let mut skipped_unreliable = false;
+
     for row in &diff.rows {
         match row.status {
             RowStatus::SourceOnly => {
@@ -207,7 +281,9 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
                 }
             }
             RowStatus::Different => {
-                if let Some(values) = &row.source {
+                if is_unreliable(row) {
+                    skipped_unreliable = true;
+                } else if let Some(values) = &row.source {
                     let values = coerce_binary_values(&diff.columns, &diff.column_types, values);
                     let key = coerce_binary_key(
                         &diff.columns,
@@ -235,21 +311,50 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
             }
             RowStatus::TargetOnly => {
                 if allow_delete && !skip_delete {
-                    let key = coerce_binary_key(
-                        &diff.columns,
-                        &diff.column_types,
-                        &diff.primary_key,
-                        &row.key,
-                    );
-                    statements.push(SyncStatement {
-                        sql: delete_sql(driver, &table_ident, &diff.primary_key, &key),
-                        table: diff.table.clone(),
-                        kind: SyncKind::DeleteRow,
-                        destructive: true,
-                    });
+                    if is_unreliable(row) {
+                        skipped_unreliable = true;
+                    } else {
+                        let key = coerce_binary_key(
+                            &diff.columns,
+                            &diff.column_types,
+                            &diff.primary_key,
+                            &row.key,
+                        );
+                        statements.push(SyncStatement {
+                            sql: delete_sql(driver, &table_ident, &diff.primary_key, &key),
+                            table: diff.table.clone(),
+                            kind: SyncKind::DeleteRow,
+                            destructive: true,
+                        });
+                    }
                 }
             }
         }
+    }
+
+    if skipped_unreliable {
+        warnings.push(
+            "重複した主キー (複数の行が同一キーに畳まれるケース。NULL 同士の \
+             畳み込みを含む) を持つ行が検出されたため、安全のため該当行の \
+             UPDATE/DELETE は生成していません (INSERT が必要な行は通常どおり \
+             生成されます)。対象テーブルの主キー定義を見直してください。"
+                .to_string(),
+        );
+    }
+
+    // 修正 L5 (既知の限界): 大文字小文字のみ異なる主キーを持つ SourceOnly/
+    // TargetOnly のペアは、DB の照合順序 (collation) が大小無視 (例: MySQL の
+    // `_ci` 系) の場合は本来同一行を指す。ここでは照合順序を introspection
+    // していないため確実な判定はできず、ベストエフォートで気づきを促す警告に
+    // 留める (完全な自動修正はスコープ外)。
+    if has_case_insensitive_key_collision(&diff.rows) {
+        warnings.push(
+            "大文字小文字のみ異なる主キーが SourceOnly / TargetOnly の両方に検出されました。 \
+             主キー列の照合順序が大文字小文字を区別しない設定 (例: MySQL の *_ci) の場合、 \
+             生成された INSERT / DELETE が一意制約違反などで失敗する可能性があります。 \
+             適用前に主キーの値と照合順序を確認してください。"
+                .to_string(),
+        );
     }
 
     statements.sort_by_key(|s| s.kind.order());
@@ -257,6 +362,33 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
         statements,
         warnings,
     }
+}
+
+/// True if some `SourceOnly` row's key and some `TargetOnly` row's key are
+/// equal once string components are lower-cased — i.e. they likely refer to
+/// the same logical row under a case-insensitive collation, but were split
+/// into an add + a remove because the exact bytes differ. Best-effort only:
+/// this module has no visibility into the target column's actual collation.
+fn has_case_insensitive_key_collision(rows: &[RowDiff]) -> bool {
+    let lower_key = |key: &[Value]| -> String {
+        key.iter()
+            .map(|v| match v {
+                Value::String(s) => s.to_ascii_lowercase(),
+                other => format!("{other:?}"),
+            })
+            .collect::<Vec<_>>()
+            .join("\u{1f}")
+    };
+
+    let source_only_lower: std::collections::HashSet<String> = rows
+        .iter()
+        .filter(|r| r.status == RowStatus::SourceOnly)
+        .map(|r| lower_key(&r.key))
+        .collect();
+
+    rows.iter()
+        .filter(|r| r.status == RowStatus::TargetOnly)
+        .any(|r| source_only_lower.contains(&lower_key(&r.key)))
 }
 
 /// True if `type_name` (a driver column type, e.g. `varbinary(255)`,
@@ -732,6 +864,7 @@ mod tests {
                 source: Some(source_row.clone()),
                 target: None,
                 changed_columns: Vec::new(),
+                key_unreliable: false,
             }],
             truncated: false,
             source_count: 1,
@@ -754,5 +887,278 @@ mod tests {
         };
         let postgres_plan = generate_data_sync_sql(&postgres_diff, false);
         assert!(postgres_plan.statements[0].sql.contains("'\\xa1b2'"));
+    }
+
+    #[test]
+    fn null_key_target_only_row_is_not_deleted() {
+        // 修正 L1: 同一 NULL キーに複数行が畳まれる (重複キー) 場合、`pk IS NULL`
+        // が複数行に波及しうるため DELETE を生成しない。
+        let columns = vec!["id".to_string(), "name".to_string()];
+        let pk = vec![0usize];
+        let source: Vec<Vec<Value>> = vec![];
+        // 2 行とも id=NULL — SQLite が許す非 INTEGER PK の NULL 重複を想定。
+        let target = vec![
+            vec![Value::Null, Value::String("orphan1".to_string())],
+            vec![Value::Null, Value::String("orphan2".to_string())],
+        ];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        assert_eq!(diffs.len(), 2);
+        assert!(
+            diffs.iter().all(|r| r.key_unreliable),
+            "重複 NULL キーの行はすべて unreliable のはず"
+        );
+
+        let diff = DataDiff {
+            target_driver: DriverKind::Sqlite,
+            table: "t".to_string(),
+            column_types: vec!["TEXT".to_string(); columns.len()],
+            columns,
+            primary_key: vec!["id".to_string()],
+            rows: diffs,
+            truncated: false,
+            source_count: 0,
+            target_count: 2,
+        };
+
+        let plan = generate_data_sync_sql(&diff, true);
+        assert!(
+            !plan
+                .statements
+                .iter()
+                .any(|s| s.kind == SyncKind::DeleteRow),
+            "重複 NULL 主キーの行に対して DELETE を生成してはいけない"
+        );
+        assert!(
+            !plan.warnings.is_empty(),
+            "重複主キーをスキップしたことの警告が必要: {:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn unique_null_composite_key_is_deletable_with_is_null() {
+        // 修正 L1: 単一行の NULL 含みキーは一意に特定できるので弾かない。
+        // 複合キー (a, b) の b が NULL でも、その行が 1 件なら
+        // `a = ... AND b IS NULL` で安全に DELETE できる。
+        let columns = vec!["a".to_string(), "b".to_string(), "v".to_string()];
+        let pk = vec![0usize, 1usize];
+        let source: Vec<Vec<Value>> = vec![];
+        let target = vec![vec![
+            Value::Int(1),
+            Value::Null,
+            Value::String("x".to_string()),
+        ]];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        assert_eq!(diffs.len(), 1);
+        assert!(
+            !diffs[0].key_unreliable,
+            "一意な NULL 含み複合キーは unreliable ではない"
+        );
+
+        let diff = DataDiff {
+            target_driver: DriverKind::Postgres,
+            table: "t".to_string(),
+            column_types: vec!["TEXT".to_string(); columns.len()],
+            columns,
+            primary_key: vec!["a".to_string(), "b".to_string()],
+            rows: diffs,
+            truncated: false,
+            source_count: 0,
+            target_count: 1,
+        };
+
+        let plan = generate_data_sync_sql(&diff, true);
+        assert_eq!(
+            plan.statements
+                .iter()
+                .filter(|s| s.kind == SyncKind::DeleteRow)
+                .map(|s| s.sql.as_str())
+                .collect::<Vec<_>>(),
+            vec![r#"DELETE FROM "t" WHERE "a" = 1 AND "b" IS NULL"#]
+        );
+    }
+
+    #[test]
+    fn null_key_protection_survives_ipc_round_trip() {
+        // 修正 L1 (往復対策): DataDiff はフロントを往復して generate へ戻る。
+        // フロントの zod は未知フィールド (key_unreliable) を破棄するため、
+        // 往復後の JSON には key_unreliable が無い。この状況を再現し、
+        // (a) デシリアライズが #[serde(default)] で成功すること、
+        // (b) それでも重複キー (同一 NULL キーに畳まれた 2 行) の DELETE が
+        //     キー値からの再計算により抑止されること を確認する。
+        // フラグに依存しない保護であることの回帰テスト。
+        let json = r#"{
+            "target_driver": "sqlite",
+            "table": "t",
+            "columns": ["id", "name"],
+            "column_types": ["TEXT", "TEXT"],
+            "primary_key": ["id"],
+            "rows": [
+                {
+                    "status": "target_only",
+                    "key": [null],
+                    "source": null,
+                    "target": [null, "orphan1"],
+                    "changed_columns": []
+                },
+                {
+                    "status": "target_only",
+                    "key": [null],
+                    "source": null,
+                    "target": [null, "orphan2"],
+                    "changed_columns": []
+                }
+            ],
+            "truncated": false,
+            "source_count": 0,
+            "target_count": 2
+        }"#;
+        let diff: DataDiff =
+            serde_json::from_str(json).expect("往復後の JSON をデシリアライズできる");
+        assert!(
+            !diff.rows[0].key_unreliable,
+            "往復後はフラグが失われ false に戻る (default)"
+        );
+
+        let plan = generate_data_sync_sql(&diff, true);
+        assert!(
+            !plan
+                .statements
+                .iter()
+                .any(|s| s.kind == SyncKind::DeleteRow),
+            "往復後でも重複キーの DELETE を生成してはいけない"
+        );
+        assert!(
+            !plan.warnings.is_empty(),
+            "往復後でもスキップ警告が必要: {:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn unique_null_key_different_row_is_updated_with_is_null() {
+        // 修正 L1: 一意な NULL キーでペアリングされた Different 行は、単一行を
+        // 特定できるので `pk IS NULL` で安全に UPDATE できる (弾かない)。
+        let columns = vec!["id".to_string(), "score".to_string()];
+        let pk = vec![0usize];
+        let source = vec![vec![Value::Null, Value::Int(1)]];
+        let target = vec![vec![Value::Null, Value::Int(2)]];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].status, RowStatus::Different);
+        assert!(
+            !diffs[0].key_unreliable,
+            "一意な NULL キーは unreliable ではない"
+        );
+
+        let diff = DataDiff {
+            target_driver: DriverKind::Sqlite,
+            table: "t".to_string(),
+            column_types: vec!["INTEGER".to_string(); columns.len()],
+            columns,
+            primary_key: vec!["id".to_string()],
+            rows: diffs,
+            truncated: false,
+            source_count: 1,
+            target_count: 1,
+        };
+
+        let plan = generate_data_sync_sql(&diff, true);
+        let updates: Vec<&str> = plan
+            .statements
+            .iter()
+            .filter(|s| s.kind == SyncKind::UpdateRow)
+            .map(|s| s.sql.as_str())
+            .collect();
+        assert_eq!(
+            updates,
+            vec![r#"UPDATE "t" SET "score" = 1 WHERE "id" IS NULL"#]
+        );
+    }
+
+    #[test]
+    fn duplicate_non_null_target_key_marks_rows_unreliable() {
+        // 修正 L1: sig が衝突する重複 PK (通常は起こらないはずの壊れたデータ) も
+        // 安全側に倒し、UPDATE/DELETE の対象から外す。
+        let columns = vec!["id".to_string(), "v".to_string()];
+        let pk = vec![0usize];
+        let source: Vec<Vec<Value>> = vec![];
+        // 同じキー `1` を持つ 2 行が target に存在する (本来 PK 制約で起こらない
+        // はずの壊れたデータを想定)。
+        let target = vec![
+            vec![Value::Int(1), Value::String("a".to_string())],
+            vec![Value::Int(1), Value::String("b".to_string())],
+        ];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        assert!(
+            diffs.iter().all(|r| r.key_unreliable),
+            "重複 PK の行はすべて unreliable のはず: {diffs:?}"
+        );
+    }
+
+    #[test]
+    fn non_null_unique_keys_are_not_flagged_unreliable() {
+        // Guard: 通常の (NULL を含まず重複もない) キーは unreliable にならない。
+        let columns = cols();
+        let pk = vec![0usize];
+        let source = vec![row(1, "a", 10)];
+        let target = vec![row(1, "a", 99)];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        assert_eq!(diffs.len(), 1);
+        assert!(!diffs[0].key_unreliable);
+    }
+
+    #[test]
+    fn case_insensitive_key_collision_warns() {
+        // 修正 L5 (既知の限界): CI 照合の主キーでは 'ABC' と 'abc' が同一行を
+        // 指すが、この層は照合順序を知らないため SourceOnly + TargetOnly に
+        // 分解される。せめて気づけるようベストエフォートで警告する。
+        let columns = vec!["code".to_string(), "v".to_string()];
+        let pk = vec![0usize];
+        let source = vec![vec![Value::String("ABC".to_string()), Value::Int(1)]];
+        let target = vec![vec![Value::String("abc".to_string()), Value::Int(1)]];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        assert_eq!(diffs.len(), 2);
+
+        let diff = DataDiff {
+            target_driver: DriverKind::Mysql,
+            table: "t".to_string(),
+            column_types: vec!["VARCHAR".to_string(); columns.len()],
+            columns,
+            primary_key: vec!["code".to_string()],
+            rows: diffs,
+            truncated: false,
+            source_count: 1,
+            target_count: 1,
+        };
+        let plan = generate_data_sync_sql(&diff, true);
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("大文字小文字")),
+            "CI 照合の可能性に気づく警告が必要: {:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn distinct_keys_do_not_trigger_case_insensitive_warning() {
+        // Guard: 大小文字を無視しても一致しないキー同士では警告しない。
+        let columns = vec!["code".to_string(), "v".to_string()];
+        let pk = vec![0usize];
+        let source = vec![vec![Value::String("xyz".to_string()), Value::Int(1)]];
+        let target = vec![vec![Value::String("abc".to_string()), Value::Int(1)]];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        let diff = DataDiff {
+            target_driver: DriverKind::Mysql,
+            table: "t".to_string(),
+            column_types: vec!["VARCHAR".to_string(); columns.len()],
+            columns,
+            primary_key: vec!["code".to_string()],
+            rows: diffs,
+            truncated: false,
+            source_count: 1,
+            target_count: 1,
+        };
+        let plan = generate_data_sync_sql(&diff, true);
+        assert!(!plan.warnings.iter().any(|w| w.contains("大文字小文字")));
     }
 }

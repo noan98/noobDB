@@ -405,4 +405,41 @@ mod tests {
         assert_eq!(d.target_driver, DriverKind::Postgres);
         assert!(d.tables.is_empty());
     }
+
+    // --- 修正 L4: 長さ/精度付き data_type の比較 (PostgreSQL introspection が
+    // `character varying(50)` / `numeric(10,2)` のような完全型文字列を返す
+    // ようになる変更を受けて) ---------------------------------------------
+
+    #[test]
+    fn varchar_length_difference_is_detected_as_different() {
+        let s = vec![table("t", vec![col("name", "character varying(50)")])];
+        let t = vec![table("t", vec![col("name", "character varying(255)")])];
+        let d = diff(&s, &t);
+        assert_eq!(d.tables[0].status, DiffStatus::Different);
+        assert_eq!(
+            d.tables[0].columns[0].changed_fields,
+            vec!["data_type".to_string()]
+        );
+    }
+
+    #[test]
+    fn numeric_precision_scale_difference_is_detected() {
+        let s = vec![table("t", vec![col("price", "numeric(10,2)")])];
+        let t = vec![table("t", vec![col("price", "numeric(12,4)")])];
+        let d = diff(&s, &t);
+        assert_eq!(d.tables[0].status, DiffStatus::Different);
+        assert!(d.tables[0].columns[0]
+            .changed_fields
+            .contains(&"data_type".to_string()));
+    }
+
+    #[test]
+    fn identical_length_qualified_types_are_case_insensitive_same() {
+        // 大文字小文字だけが違う場合 (ドライバがまれに揺れる可能性) は従来
+        // どおり同一視する。長さ部分の数字は大小文字の影響を受けない。
+        let s = vec![table("t", vec![col("name", "CHARACTER VARYING(50)")])];
+        let t = vec![table("t", vec![col("name", "character varying(50)")])];
+        let d = diff(&s, &t);
+        assert_eq!(d.tables[0].status, DiffStatus::Same);
+    }
 }
