@@ -97,3 +97,13 @@ export function matchErrorHint(raw: string): I18nKey | null {
   }
   return null;
 }
+
+/**
+ * PATTERNS に登録されている全ヒントキー (登録順、重複なし)。
+ *
+ * ゴールデンベクタテスト (`errorHintGolden.test.ts`、#667) が、共有フィクスチャの
+ * ケースが全キーを少なくとも 1 回踏んでいるかを動的に検証するために公開する
+ * (到達しない = dead なヒントの検出)。新しい PATTERNS エントリを追加すれば、この
+ * 配列にも自動的に反映される。
+ */
+export const ALL_ERROR_HINT_KEYS: I18nKey[] = PATTERNS.map((p) => p.key);
