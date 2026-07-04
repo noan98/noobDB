@@ -300,6 +300,10 @@
   --cell-bool-false: #9333ea;
   --cell-date: #b45309;
   --cell-json: #6d28d9;
+  /* PK (主キー) 表示専用の意味トークン (#717)。以前は --cell-date (日付型セル色)
+     を PK アイコンに流用していたが、日付表示の調整が PK 表示へ波及する意図しない
+     結合を避けるため分離した。初期値は現行 --cell-date と同値で見た目は不変。 */
+  --key-accent: #b45309;
   --cell-binary: #4b5563;
   /* ENUM/SET の色分けバッジ (#451)。色相はセルごとに値から決まる (--enum-hue)。
      ライト/ダークで読みやすさを保てるよう彩度・明度のみテーマで切り替える。 */
@@ -436,6 +440,7 @@
   --cell-bool-true: #93c5fd;
   --cell-bool-false: #d8b4fe;
   --cell-date: #fcd34d;
+  --key-accent: #fcd34d;
   --cell-json: #c4b5fd;
   --cell-enum-s: 55%;
   --cell-enum-l: 72%;
@@ -519,6 +524,7 @@
   --cell-bool-true: #8be9fd;
   --cell-bool-false: #ff92df;
   --cell-date: #ffb86c;
+  --key-accent: #ffb86c;
   --cell-json: #d6acff;
   --cell-enum-s: 60%;
   --cell-enum-l: 74%;
@@ -600,6 +606,7 @@
   --cell-bool-true: #0033cc;
   --cell-bool-false: #6a0dad;
   --cell-date: #7a4100;
+  --key-accent: #7a4100;
   --cell-json: #6a0dad;
   --cell-enum-s: 70%;
   --cell-enum-l: 30%;
@@ -675,6 +682,7 @@
   --cell-bool-true: #66a3ff;
   --cell-bool-false: #d98cff;
   --cell-date: #ffb84d;
+  --key-accent: #ffb84d;
   --cell-json: #d98cff;
   --cell-enum-s: 65%;
   --cell-enum-l: 75%;
@@ -753,6 +761,7 @@
   --cell-bool-true: #005b8f;
   --cell-bool-false: #9a3f82;
   --cell-date: #8a5a00;
+  --key-accent: #8a5a00;
   --cell-json: #6f3a9e;
   --cell-enum-s: 55%;
   --cell-enum-l: 38%;
@@ -828,6 +837,7 @@
   --cell-bool-true: #56b4e9;
   --cell-bool-false: #e69ac7;
   --cell-date: #f0c050;
+  --key-accent: #f0c050;
   --cell-json: #c79af0;
   --cell-enum-s: 55%;
   --cell-enum-l: 72%;
