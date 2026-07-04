@@ -146,6 +146,10 @@ const config = defineConfig({
           accent: { value: "var(--accent)" },
           accentHover: { value: "var(--accent-hover)" },
           accentText: { value: "var(--accent-text)" },
+          // 主キー (PK) 表示専用の意味トークン (#717)。以前は --cell-date (日付型
+          // セル色) を PK アイコンに流用していたが、日付表示調整が PK 表示へ波及
+          // する意図しない結合を避けるため分離した。
+          keyAccent: { value: "var(--key-accent)" },
           // ブランド基調色 (#619)。アクセントと違いテーマ/接続で変わらず固定。
           // ロゴマーク・スプラッシュ・ブランド面が参照する。値は App.css の
           // --brand-* と brand.tsx の定数に一致。
