@@ -971,6 +971,13 @@ const en = {
   gridCopyRow: "Copy row (TSV)",
   gridCopyRowWithHeaders: "Copy row with column names",
   gridCopyAsInsert: "Copy as INSERT",
+  gridCopyAsInsertRows: "Copy {count} rows as INSERT (one statement per row)",
+  gridCopyAsInsertRowsTitle: "One INSERT INTO ... VALUES (...); statement per selected row",
+  gridCopyAsInsertRowsCombined: "Copy {count} rows as INSERT (combined)",
+  gridCopyAsInsertRowsCombinedTitle:
+    "A single INSERT INTO ... VALUES (...), (...); statement covering all selected rows",
+  gridCopyAsInsertAmbiguousTable:
+    "Couldn't resolve a single source table for this result — copied with a placeholder table name; edit it before running",
   gridCopyAsUpdate: "Copy as UPDATE",
   gridCopyAsDelete: "Copy as DELETE",
   gridCopyAsSqlNoPk: "UPDATE / DELETE need a primary key",
@@ -2469,6 +2476,13 @@ const ja: Dict = {
   gridCopyRow: "行をコピー (TSV)",
   gridCopyRowWithHeaders: "列名付きで行をコピー",
   gridCopyAsInsert: "INSERT としてコピー",
+  gridCopyAsInsertRows: "{count} 行を INSERT としてコピー (1行1文)",
+  gridCopyAsInsertRowsTitle: "選択した各行につき 1 つの INSERT INTO ... VALUES (...); 文を生成します",
+  gridCopyAsInsertRowsCombined: "{count} 行を INSERT としてコピー (まとめて1文)",
+  gridCopyAsInsertRowsCombinedTitle:
+    "選択したすべての行を 1 つの INSERT INTO ... VALUES (...), (...); 文にまとめます",
+  gridCopyAsInsertAmbiguousTable:
+    "この結果の元テーブルを一意に特定できなかったため、仮のテーブル名でコピーしました。実行前に書き換えてください",
   gridCopyAsUpdate: "UPDATE としてコピー",
   gridCopyAsDelete: "DELETE としてコピー",
   gridCopyAsSqlNoPk: "UPDATE / DELETE には主キーが必要です",
