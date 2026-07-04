@@ -1,9 +1,10 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DangerFinding, DangerKind } from "../dangerousSql";
+import { typedConfirmMatches } from "../typeToConfirm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button } from "./ui";
+import { Button, Input } from "./ui";
 
 interface Props {
   findings: DangerFinding[];
@@ -15,6 +16,15 @@ interface Props {
    * is empty.
    */
   writeApproval?: boolean;
+  /**
+   * When set, this is an irreversible DROP/TRUNCATE on a production
+   * connection: the confirm button stays disabled until the user types this
+   * text exactly (the table name when it could be resolved unambiguously,
+   * otherwise `TYPE_TO_CONFIRM_FALLBACK`). Null/undefined skips the extra
+   * gate — non-production connections keep the existing one-click confirm.
+   * A UI safety net only (#675), not backend-enforced.
+   */
+  typedConfirmTarget?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -26,13 +36,30 @@ const KIND_LABEL_KEYS: Record<DangerKind, Parameters<ReturnType<typeof useT>>[0]
   truncate: "dangerousKindTruncate",
 };
 
-export function DangerousQueryDialog({ findings, isProduction, writeApproval, onConfirm, onCancel }: Props) {
+export function DangerousQueryDialog({
+  findings,
+  isProduction,
+  writeApproval,
+  typedConfirmTarget,
+  onConfirm,
+  onCancel,
+}: Props) {
   const t = useT();
-  // Default focus to Cancel so a stray Enter doesn't run the query.
+  // Default focus to Cancel so a stray Enter doesn't run the query — unless a
+  // typed confirmation is required, in which case the user needs to type
+  // into the input anyway, so focus starts there.
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const typedInputRef = useRef<HTMLInputElement>(null);
+  const [typedValue, setTypedValue] = useState("");
+  const requiresTyped = !!typedConfirmTarget;
+  const typedMatches = !requiresTyped || typedConfirmMatches(typedValue, typedConfirmTarget);
 
   return (
-    <Modal width="520px" onClose={onCancel} initialFocusEl={() => cancelRef.current}>
+    <Modal
+      width="520px"
+      onClose={onCancel}
+      initialFocusEl={() => (requiresTyped ? typedInputRef.current : cancelRef.current)}
+    >
       <ModalHeader onClose={onCancel} closeLabel={t("dangerousCancel")}>
         {t("dangerousTitle")}
       </ModalHeader>
@@ -93,6 +120,27 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
             {t(writeApproval ? "dangerousWriteApprovalIntro" : "dangerousIntro")}
           </chakra.p>
         )}
+        {requiresTyped && (
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
+            <chakra.label
+              htmlFor="dangerous-type-confirm-input"
+              fontSize="sm"
+              fontWeight={600}
+              color="app.text"
+            >
+              {t("typeToConfirmLabel", { target: typedConfirmTarget })}
+            </chakra.label>
+            <Input
+              id="dangerous-type-confirm-input"
+              ref={typedInputRef}
+              value={typedValue}
+              onChange={(e) => setTypedValue(e.target.value)}
+              placeholder={typedConfirmTarget}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </chakra.div>
+        )}
       </ModalBody>
 
       {/*
@@ -103,7 +151,12 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
         非強調のまま「これは破壊的操作である」ことを色でも伝える。
       */}
       <ModalFooter>
-        <Button type="button" variant="dangerOutline" onClick={onConfirm}>
+        <Button
+          type="button"
+          variant="dangerOutline"
+          onClick={onConfirm}
+          disabled={requiresTyped && !typedMatches}
+        >
           {t("dangerousConfirm")}
         </Button>
         <div style={{ flex: 1 }} />

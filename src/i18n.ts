@@ -240,6 +240,10 @@ const en = {
   dangerousTargetUnknown: "Target: (could not determine)",
   dangerousCancel: "Cancel",
   dangerousConfirm: "Run anyway",
+  // Shared "type to confirm" gate (#675) used by DangerousQueryDialog,
+  // ConfirmDialog (drop/truncate from the connection tree), and
+  // SchemaCompareView's production apply confirmation.
+  typeToConfirmLabel: "Type the following to continue: {target}",
   parameterInputTitle: "Enter query parameters",
   parameterInputIntro:
     "This query contains {{name}} placeholders. Provide a value and type for each. Values are escaped for the active driver before the query runs.",
@@ -1186,6 +1190,10 @@ const en = {
   helpConfirmWritesDesc:
     "On a production connection, shows an approval dialog before running a non-read-only statement. This is a UI safety net to prevent accidents — unlike read-only it is NOT enforced in the backend, so calling the backend directly bypasses it. For hard enforcement, use read-only or database-side privileges.",
 
+  helpTypeToConfirmTitle: "Type-to-confirm gate for irreversible actions",
+  helpTypeToConfirmDesc:
+    "On a production connection, DROP/TRUNCATE (from the query editor or the connection tree) and applying a schema/data sync plan with destructive statements require typing the target name (or a fixed word when it can't be resolved) before the action button enables. Like confirm_writes, this is a UI safety net only — it is NOT enforced in the backend, so calling the backend directly bypasses it.",
+
   helpSectionShortcuts: "Keyboard shortcuts",
   helpSectionShortcutsDesc:
     "Speed up the operations you repeat most. Editor shortcuts work while the SQL editor has focus.",
@@ -1334,6 +1342,10 @@ const en = {
     'Apply {count} statement(s) to "{name}"? This modifies the target schema ({destructive} destructive).',
   schemaCompareApplyProductionConfirm:
     '"{name}" is a production connection. Apply schema changes anyway?',
+  schemaCompareApplyTypedConfirmTitle: "Confirm destructive apply on production",
+  schemaCompareApplyTypedConfirmBody:
+    '"{name}" is a production connection and this plan includes {destructive} destructive statement(s) (DROP/DELETE). This cannot be undone.',
+  schemaCompareApplyTypedConfirmOk: "Apply anyway",
   schemaCompareApplyDone: "Applied {count} statement(s) to the target.",
   schemaCompareDestructiveFlag: "destructive",
   schemaCompareKindCreateTable: "CREATE TABLE",
@@ -1738,6 +1750,9 @@ const ja: Dict = {
   dangerousTargetUnknown: "対象: (特定できませんでした)",
   dangerousCancel: "キャンセル",
   dangerousConfirm: "実行する",
+  // DangerousQueryDialog・ConfirmDialog (ツリーからの DROP/TRUNCATE)・
+  // SchemaCompareView の本番適用確認で共有する「タイプして確認」ゲート (#675)。
+  typeToConfirmLabel: "続行するには次のテキストを入力してください: {target}",
   parameterInputTitle: "クエリパラメータの入力",
   parameterInputIntro:
     "このクエリには {{name}} プレースホルダーが含まれています。各パラメータの値と型を指定してください。値は実行前に接続中のドライバに合わせてエスケープされます。",
@@ -2683,6 +2698,10 @@ const ja: Dict = {
   helpConfirmWritesDesc:
     "本番としてマークした接続で、読み取り専用でない文を実行する前に承認ダイアログを表示します。これは誤操作を防ぐための UI 上の安全網であり、読み取り専用 (read_only) のようにバックエンドで強制されるものではありません (バックエンドを直接呼べば回避できます)。確実に書き込みを禁止したい場合は、読み取り専用や DB 側の権限設定を使ってください。",
 
+  helpTypeToConfirmTitle: "不可逆な操作のタイプ入力確認ゲート",
+  helpTypeToConfirmDesc:
+    "本番としてマークした接続で、DROP/TRUNCATE (クエリエディタ・接続ツリーのいずれも) や破壊的な文を含む同期適用を実行する前に、対象名 (特定できない場合は固定の確認ワード) を入力しないとボタンが有効化されない確認ステップを追加します。confirm_writes と同様、これは UI 上の安全網であり、バックエンドで強制されるものではありません (バックエンドを直接呼べば回避できます)。",
+
   helpSectionShortcuts: "キーボードショートカット",
   helpSectionShortcutsDesc:
     "よく使う操作を素早く行えます。エディタ向けのショートカットは SQL エディタにフォーカスがあるときに有効です。",
@@ -2831,6 +2850,10 @@ const ja: Dict = {
     "{count} 文を「{name}」へ適用しますか? ターゲットのスキーマを変更します (うち破壊的: {destructive})。",
   schemaCompareApplyProductionConfirm:
     "「{name}」は本番接続です。スキーマ変更を適用しますか?",
+  schemaCompareApplyTypedConfirmTitle: "本番への破壊的な適用の確認",
+  schemaCompareApplyTypedConfirmBody:
+    "「{name}」は本番接続で、この適用計画には破壊的な文 (DROP/DELETE) が {destructive} 件含まれています。元に戻すことはできません。",
+  schemaCompareApplyTypedConfirmOk: "承知の上で適用する",
   schemaCompareApplyDone: "{count} 文をターゲットへ適用しました。",
   schemaCompareDestructiveFlag: "破壊的",
   schemaCompareKindCreateTable: "CREATE TABLE",

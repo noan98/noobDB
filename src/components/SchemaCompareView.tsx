@@ -17,6 +17,7 @@ import {
 } from "../api/tauri";
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
+import { useConfirm } from "./ConfirmDialog";
 import { Icon } from "./Icon";
 import { Button, Checkbox, Input, PressableButton, Select } from "./ui";
 
@@ -356,6 +357,11 @@ export function SchemaCompareView({
 }) {
   const t = useT();
   const settings = useSettings();
+  // 不可逆 (破壊的ステートメントを含む同期適用) × 本番接続の強確認ゲート
+  // (対象接続名のタイプ入力。#675) に使う。既存の 2 段階 window.confirm は
+  // #674 の対象領域のため素通しのまま残し、破壊的 × 本番のケースだけこの
+  // ダイアログへ差し替える。
+  const { confirm: confirmTyped, dialog: typedConfirmDialog } = useConfirm();
 
   const [source, setSource] = useState<SideState>(EMPTY_SIDE);
   const [target, setTarget] = useState<SideState>(EMPTY_SIDE);
@@ -661,12 +667,28 @@ export function SchemaCompareView({
       destructive: destructiveCount,
     });
     if (!window.confirm(confirmMsg)) return;
-    if (
-      targetProfile.is_production &&
-      settings.confirmProductionConnect &&
-      !window.confirm(t("schemaCompareApplyProductionConfirm", { name: targetProfile.name }))
-    ) {
-      return;
+    if (targetProfile.is_production) {
+      if (destructiveCount > 0) {
+        // 不可逆 (破壊的ステートメントを含む適用) × 本番接続: 対象接続名の
+        // タイプ入力を要求する強確認ゲート (#675)。`confirmProductionConnect`
+        // 設定に関わらず常に要求する — 通常の本番接続警告より強い安全網。
+        const ok = await confirmTyped({
+          title: t("schemaCompareApplyTypedConfirmTitle"),
+          message: t("schemaCompareApplyTypedConfirmBody", {
+            name: targetProfile.name,
+            destructive: destructiveCount,
+          }),
+          confirmLabel: t("schemaCompareApplyTypedConfirmOk"),
+          tone: "danger",
+          typedConfirmation: targetProfile.name,
+        });
+        if (!ok) return;
+      } else if (
+        settings.confirmProductionConnect &&
+        !window.confirm(t("schemaCompareApplyProductionConfirm", { name: targetProfile.name }))
+      ) {
+        return;
+      }
     }
 
     setApplying(true);
@@ -719,6 +741,7 @@ export function SchemaCompareView({
     targetProfile,
     target.database,
     settings.confirmProductionConnect,
+    confirmTyped,
     t,
     runCompare,
     compareData,
@@ -975,6 +998,7 @@ export function SchemaCompareView({
           )}
         </>
       )}
+      {typedConfirmDialog}
     </Box>
   );
 }
