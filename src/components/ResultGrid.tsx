@@ -744,6 +744,13 @@ interface Props {
    * filled it), so small results and aggregates stay quiet.
    */
   autoLimitApplied?: number | null;
+  /**
+   * Set when the last run stopped before finishing (user cancel or query
+   * timeout) instead of completing normally, so `result` holds only a
+   * partial result. Drives a status-bar badge and the export-confirmation
+   * warning (#685). Cleared by the caller on the next run.
+   */
+  partialResult?: { reason: "cancelled" | "timeout"; rows: number } | null;
   /** Called from the badge to re-run the query without the auto LIMIT. */
   onFetchAllRows?: () => void;
   /** Active connection's driver ("mysql" | "postgres" | "sqlite"), for row→SQL generation. */
@@ -3974,6 +3981,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   canLoadMore,
   onLoadMore,
   autoLimitApplied,
+  partialResult,
   onFetchAllRows,
   driver,
   database,
@@ -4677,6 +4685,20 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 LIMIT {autoLimitApplied}
               </chakra.span>
             )}
+            {partialResult && (
+              <chakra.span
+                color="var(--text-warning)"
+                marginLeft="6px"
+                title={t(
+                  partialResult.reason === "cancelled"
+                    ? "partialResultCancelledTitle"
+                    : "partialResultTimeoutTitle",
+                  { rows: partialResult.rows },
+                )}
+              >
+                {t("partialResultBadge")}
+              </chakra.span>
+            )}
           </chakra.span>
         )}
         <chakra.input
@@ -4945,7 +4967,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             database={database ?? null}
             table={table ?? null}
             driver={driver}
-            partial={showAutoLimitBadge || !!canLoadMore}
+            partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
+            stoppedPartial={!!partialResult}
             fullExport={fullExport}
             onClose={() => setShowExport(false)}
           />

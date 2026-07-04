@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::query::record_write_history;
 use crate::error::{AppError, Result};
-use crate::state::{AppState, Session};
+use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
 /// Number of data rows returned by `parse_csv_preview` for the mapping UI.
 const PREVIEW_ROW_LIMIT: usize = 50;
@@ -441,7 +441,18 @@ pub async fn import_csv(
         batch_size.unwrap_or(DEFAULT_BATCH_SIZE),
     ));
     state
-        .register_stream(stream_id, handle.abort_handle())
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                // A CSV/JSON import runs as one all-or-nothing transaction, so
+                // there's no meaningful "rows delivered so far" to report on
+                // cancel (unlike the query/preview/export streams, #685) —
+                // this counter is never incremented.
+                delivered_rows: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                kind: StreamKind::Import,
+            },
+        )
         .await;
     Ok(())
 }

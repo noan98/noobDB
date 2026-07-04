@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
@@ -8,6 +9,32 @@ use crate::ssh::SshTunnel;
 
 pub type SessionId = String;
 pub type StreamId = String;
+
+/// Which streaming command registered a given [`StreamHandle`]. `cancel_stream`
+/// is a single generic IPC entry point shared by `run_query_stream` /
+/// `preview_query_stream` / `export_query_stream` / `import_csv`, so it needs
+/// this tag to know which `<kind>-stream:cancelled` event (if any) to emit
+/// (#685).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamKind {
+    Query,
+    Preview,
+    Export,
+    Import,
+}
+
+/// A running streaming task tracked by [`AppState`]. Besides the `AbortHandle`
+/// needed to cancel it, this carries a shared row counter so a cancellation
+/// (or timeout) can report how many rows had already been delivered to the
+/// frontend before the stream stopped (#685) — without this, a partial
+/// result is indistinguishable from a complete one. The task increments
+/// `delivered_rows` as it emits batches; `cancel_stream` reads the current
+/// value at abort time.
+pub struct StreamHandle {
+    pub abort: AbortHandle,
+    pub delivered_rows: Arc<AtomicU64>,
+    pub kind: StreamKind,
+}
 
 pub struct Session {
     pub id: SessionId,
@@ -35,7 +62,7 @@ pub struct AppState {
     pub sessions: RwLock<HashMap<SessionId, Arc<Session>>>,
     /// Active streaming tasks keyed by client-provided stream id.
     /// Aborting the handle cancels the task and stops further events.
-    pub streams: RwLock<HashMap<StreamId, AbortHandle>>,
+    pub streams: RwLock<HashMap<StreamId, StreamHandle>>,
 }
 
 impl AppState {
@@ -65,14 +92,14 @@ impl AppState {
         removed
     }
 
-    pub async fn register_stream(&self, stream_id: StreamId, handle: AbortHandle) {
+    pub async fn register_stream(&self, stream_id: StreamId, handle: StreamHandle) {
         let mut map = self.streams.write().await;
         tracing::debug!(stream_id = %stream_id, "stream registered");
         if let Some(prev) = map.insert(stream_id, handle) {
             // Cancel any previous task that reused this id — caller side
             // should not normally collide, but never let two run concurrently.
             tracing::warn!("stream id reused; aborting previous task");
-            prev.abort();
+            prev.abort.abort();
         }
     }
 
@@ -80,14 +107,20 @@ impl AppState {
         self.streams.write().await.remove(stream_id);
     }
 
-    pub async fn cancel_stream(&self, stream_id: &str) -> bool {
+    /// Aborts the task registered for `stream_id` and returns the number of
+    /// rows it had delivered so far together with which command registered it,
+    /// or `None` when no such stream is running (already finished, or never
+    /// existed). The caller (the `cancel_stream` IPC command) uses the kind to
+    /// emit the matching `<kind>-stream:cancelled` event.
+    pub async fn cancel_stream(&self, stream_id: &str) -> Option<(u64, StreamKind)> {
         if let Some(h) = self.streams.write().await.remove(stream_id) {
-            h.abort();
-            tracing::debug!(stream_id = %stream_id, "stream cancelled");
-            true
+            h.abort.abort();
+            let delivered_rows = h.delivered_rows.load(Ordering::SeqCst);
+            tracing::debug!(stream_id = %stream_id, delivered_rows, "stream cancelled");
+            Some((delivered_rows, h.kind))
         } else {
             tracing::debug!(stream_id = %stream_id, "cancel: no such stream");
-            false
+            None
         }
     }
 }

@@ -20,6 +20,7 @@ import {
   listenPreviewStream,
   listenQueryStream,
 } from "./api/tauri";
+import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import {
   applyEditsToRows,
   buildDeleteStatements,
@@ -268,7 +269,7 @@ const RUNNING_STATUS_KEYS = new Set([
 const CRITICAL_STATUS_KEYS = new Set(["statusConnectionLost"]);
 
 // 警告 (warning): 接続は維持されており、設定変更や再試行で回復しうる軽度の障害。
-const WARNING_STATUS_KEYS = new Set(["statusQueryTimeout"]);
+const WARNING_STATUS_KEYS = new Set(["statusQueryTimeout", "statusQueryTimeoutPartial"]);
 
 // Maps a status to a tone for the footer's icon + colored left border.
 // Derived from the existing `error` flag and known keys, so call sites don't
@@ -537,6 +538,14 @@ interface Tab {
   prevResultSql?: string | null;
   /** 結果差分ハイライトのトグル (ON/OFF)。既定 OFF。In-memory only。 */
   diffHighlight?: boolean;
+  /**
+   * Set when the last run stopped before completing normally (user cancel or
+   * query timeout), so `result.rows` holds only a partial result. Cleared on
+   * the next run. Drives the partial-result badge in `ResultGrid` and the
+   * export-confirmation warning (#685). `rows` is the row count reported by
+   * the backend at the moment the stream stopped.
+   */
+  partialResult?: { reason: "cancelled" | "timeout"; rows: number } | null;
 }
 
 /**
@@ -1267,22 +1276,27 @@ export default function App() {
     streamIdRef.current.delete(tabId);
   }, []);
 
+  // 戻り値は「実際にキャンセルできた場合の、中断時点で届いていた行数」(#685)。
+  // ストリームが既に終わっていた/存在しなかった場合は null。呼び出し側 (例:
+  // 明示的な停止ボタン `stopTab`) はこれを使って「N 行で停止」を表示できる。
   const cancelStreamForTab = useCallback(
-    async (tabId: string) => {
+    async (tabId: string): Promise<number | null> => {
       const sid = streamIdRef.current.get(tabId);
       detachStreamListener(tabId);
-      if (sid) {
-        try {
-          // バックエンドの AbortHandle 登録より先にここへ来ると (invoke の
-          // ラウンドトリップ中)、cancel は false (空振り) を返し旧クエリが完走
-          // しうる (#F5)。戻り値を確認し、false のときだけ短い遅延を挟んで
-          // もう一度だけ試みる (ベストエフォートの緩和であり完全な解消ではない)。
-          const cancelled = await api.cancelStream(sid);
-          if (!cancelled) {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            await api.cancelStream(sid).catch(() => {});
-          }
-        } catch { /* best-effort */ }
+      if (!sid) return null;
+      try {
+        // バックエンドの AbortHandle 登録より先にここへ来ると (invoke の
+        // ラウンドトリップ中)、cancel は空振り (cancelled: false) を返し旧
+        // クエリが完走しうる (#F5)。結果を確認し、空振りのときだけ短い遅延を
+        // 挟んでもう一度だけ試みる (ベストエフォートの緩和であり完全な解消
+        // ではない)。
+        const first = await api.cancelStream(sid);
+        if (first.cancelled) return first.deliveredRows;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const retry = await api.cancelStream(sid).catch(() => null);
+        return retry?.cancelled ? retry.deliveredRows : null;
+      } catch {
+        return null;
       }
     },
     [detachStreamListener],
@@ -2181,6 +2195,7 @@ export default function App() {
       loadingMore: false,
       canLoadMore: false,
       queryError: null,
+      partialResult: null,
       // Drop any in-flight cell edits: their row indices reference the
       // previous result set and would no longer line up with the new rows.
       pendingEdits: {},
@@ -2276,11 +2291,14 @@ export default function App() {
         }
         finalize();
       },
-      onError: ({ error, timedOut, connectionLost }) => {
+      onError: ({ error, timedOut, connectionLost, deliveredRows }) => {
         patchTab(tabId, (tt) => ({
           ...tt,
           streaming: false,
           queryError: connectionLost ? null : (error ?? "Unknown error"),
+          // タイムアウトは取得済みの行を残したまま止まる — 部分結果である旨を
+          // グリッドのバッジ/エクスポート確認に伝える (#685)。
+          ...(timedOut ? { partialResult: timeoutPartialResult(deliveredRows) } : {}),
         }));
         setHistoryReloadKey((k) => k + 1);
         finalize();
@@ -2293,8 +2311,8 @@ export default function App() {
         if (timedOut) {
           setStatus({
             kind: "key",
-            key: "statusQueryTimeout",
-            vars: { secs: timeoutSecs },
+            key: "statusQueryTimeoutPartial",
+            vars: { secs: timeoutSecs, rows: deliveredRows },
             error: true,
           });
         } else {
@@ -3108,11 +3126,19 @@ export default function App() {
   // `cancelStream` tears down the cursor while leaving the connection open.
   const stopTab = useCallback(async (tab: Tab) => {
     if (!tab.streaming) return;
-    await cancelStreamForTab(tab.id);
+    const wasPreview = tab.previewStreaming;
+    // バックエンドが報告する「中断時点で届いていた行数」(#685)。ストリームが
+    // 既に終わっていた場合 (null) は、フロント側に貯まっている行数へフォール
+    // バックする (resolveCancelledRows) — メッセージは常に何らかの行数を出す。
+    const deliveredRows = await cancelStreamForTab(tab.id);
+    const partial = cancelledPartialResult(deliveredRows, tab.result?.rows.length ?? 0);
+    const rows = partial.rows;
     patchTab(tab.id, (tt) => ({
       ...tt,
       streaming: false,
       previewStreaming: false,
+      // プレビューは別グリッド (before/after) で完結し、部分結果バッジの対象外。
+      ...(wasPreview ? {} : { partialResult: partial }),
       // プレビューをキャンセルした場合、previewQueryInTab の onDone/onError は
       // (リスナーが既に detach 済みのため) 発火しない。退避しておいた
       // paginatable をここで復元する (#F3)。プレビューでなければ
@@ -3121,7 +3147,11 @@ export default function App() {
         ? { paginatable: tt.previewPrevPaginatable, previewPrevPaginatable: undefined }
         : null),
     }));
-    setStatus({ kind: "key", key: "statusQueryCancelled" });
+    setStatus(
+      wasPreview
+        ? { kind: "key", key: "statusQueryCancelled" }
+        : { kind: "key", key: "statusQueryCancelledPartial", vars: { rows } },
+    );
   }, [cancelStreamForTab, patchTab]);
 
   // Insert a snippet into the focused pane's editor, or open a fresh query tab
@@ -4786,6 +4816,7 @@ export default function App() {
                       onToggleRowDelete={tab.kind === "table" && !readOnly ? (key) => toggleRowDeleteForTab(tab.id, key) : undefined}
                       onRequestInsertRow={tab.kind === "table" && !readOnly ? () => requestInsertRowForTab(tab.id) : undefined}
                       autoLimitApplied={tab.autoLimitApplied}
+                      partialResult={tab.partialResult ?? null}
                       onFetchAllRows={() => fetchAllForTab(tab)}
                       driver={selectedProfile?.driver ?? "mysql"}
                       database={tab.database ?? selectedProfile?.database ?? null}

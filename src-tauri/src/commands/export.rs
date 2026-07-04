@@ -12,7 +12,7 @@ use crate::db::sync::quote_ident;
 use crate::db::types::{Column, StreamBatch, Value};
 use crate::db::{is_read_only_sql, DriverKind};
 use crate::error::{AppError, Result};
-use crate::state::AppState;
+use crate::state::{AppState, StreamHandle, StreamKind};
 
 /// SQL INSERT 形式で出力するときの対象テーブル名が空のときに使うプレースホルダ。
 /// JOIN など結果元テーブルが特定できないケースでも有効な SQL になるようにする。
@@ -438,6 +438,11 @@ struct ExportErrorEvent {
     #[serde(rename = "streamId")]
     stream_id: String,
     message: String,
+    /// Rows already written to the output file before the run failed.
+    /// Informational only — a failed/cancelled export always deletes its
+    /// partial output file (see [`PartialFileCleanup`]), but the UI can still
+    /// use this to explain how far the run got (#685).
+    rows: u64,
 }
 
 /// Incremental file writer for the streaming export. Writes the header (CSV) or
@@ -647,6 +652,9 @@ pub async fn export_query_stream(
     // ファイルは既に作成済み (`with_query` 内)。正常完了以外の経路 (エラー/タイムアウト/
     // キャンセル) では Drop で自動的に削除される。
     let cleanup = PartialFileCleanup::new(&path);
+    // Shared with `AppState` so `cancel_stream` can read how many rows had
+    // already been written when it aborts this task (#685).
+    let counter = Arc::new(AtomicU64::new(0));
 
     let handle = tokio::spawn(spawn_export_stream(
         app,
@@ -659,9 +667,17 @@ pub async fn export_query_stream(
         query_timeout_secs,
         shared,
         cleanup,
+        counter.clone(),
     ));
     state
-        .register_stream(stream_id, handle.abort_handle())
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows: counter,
+                kind: StreamKind::Export,
+            },
+        )
         .await;
     Ok(())
 }
@@ -678,8 +694,8 @@ async fn spawn_export_stream(
     query_timeout_secs: Option<u64>,
     shared: Arc<Mutex<Option<StreamExportSink>>>,
     mut cleanup: PartialFileCleanup,
+    counter: Arc<AtomicU64>,
 ) {
-    let counter = Arc::new(AtomicU64::new(0));
     let emit_app = app.clone();
     let emit_id = stream_id.clone();
     let sink_cb = shared.clone();
@@ -752,6 +768,7 @@ async fn spawn_export_stream(
                         ExportErrorEvent {
                             stream_id: stream_id.clone(),
                             message: e.to_string(),
+                            rows: counter.load(Ordering::SeqCst),
                         },
                     );
                 }
@@ -770,6 +787,7 @@ async fn spawn_export_stream(
                 ExportErrorEvent {
                     stream_id: stream_id.clone(),
                     message: e.to_string(),
+                    rows: counter.load(Ordering::SeqCst),
                 },
             );
         }
