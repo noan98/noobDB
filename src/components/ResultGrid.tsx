@@ -66,7 +66,7 @@ import {
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
-import { Skeleton } from "./Skeleton";
+import { Skeleton, shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
 import { LoadingButton } from "./LoadingButton";
@@ -517,24 +517,17 @@ export const GRID_CSS: SystemStyleObject = {
     whiteSpace: "normal",
   },
   "& tbody tr.grid-skeleton-row": { pointerEvents: "none" },
-  // スケルトンセル。シマー帯は疑似要素の transform スライドで動かし
-  // (Skeleton.tsx と同方式)、多数セルの同時再ペイントを避ける。スタッガの
-  // animationDelay は inline style から疑似要素へ inherit で引き継ぐ。
+  // スケルトンセル。土台とシマー帯は Skeleton.tsx の共有定義
+  // (shimmerContainerCss / shimmerAfterCss) を使い、帯幅・色・周期の
+  // 修正漏れを防ぐ (#719)。多数セルの同時再ペイントを避けるため疑似要素の
+  // transform スライドで動かし、スタッガの animationDelay は inline style
+  // から疑似要素へ inherit で引き継ぐ。
   "& td.grid-skeleton-cell > div": {
-    position: "relative",
-    overflow: "hidden",
+    ...shimmerContainerCss,
     height: "10px",
     borderRadius: "2px",
-    background: "var(--bg-muted)",
   },
-  "& td.grid-skeleton-cell > div::after": {
-    content: '""',
-    position: "absolute",
-    inset: 0,
-    background: "linear-gradient(90deg, transparent, var(--bg-elevated), transparent)",
-    animation: "skeleton-shimmer var(--dur-shimmer) ease-in-out infinite",
-    animationDelay: "inherit",
-  },
+  "& td.grid-skeleton-cell > div::after": shimmerAfterCss,
   "& .grid-filter-summary": {
     position: "sticky",
     top: 0,
