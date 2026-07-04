@@ -12,6 +12,7 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { copyToClipboard } from "./clipboard";
+import { useConfirm } from "./ConfirmDialog";
 import { KeybindingSettings } from "./KeybindingSettings";
 import { useToast } from "./Toast";
 import {
@@ -480,6 +481,7 @@ const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> 
 export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
   const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const settings = useSettings();
   const colors = settings.syntaxColors[theme];
   const previewHighlight = settings.previewHighlight[theme];
@@ -566,12 +568,19 @@ export function SettingsView({ theme, onClose }: Props) {
     setTimeout(() => setLogCopied(false), 1500);
   };
   const clearLogs = async () => {
-    if (!window.confirm(t("settingsLogsClearConfirm"))) return;
+    const ok = await confirm({
+      title: t("settingsLogsClear"),
+      message: t("settingsLogsClearConfirm"),
+      confirmLabel: t("settingsLogsClear"),
+      tone: "danger",
+    });
+    if (!ok) return;
     await api.clearLogs();
     await loadLogs();
   };
 
   return (
+    <>
     <Modal onClose={onClose} width="988px">
       <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
         {t("settingsTitle")}
@@ -1135,5 +1144,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </chakra.div>
       </ModalBody>
     </Modal>
+    {confirmDialog}
+    </>
   );
 }
