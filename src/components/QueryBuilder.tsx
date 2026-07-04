@@ -292,7 +292,10 @@ function pickDefaultDatabase(driver: string, list: string[]): string | null {
   return user ?? list[0] ?? null;
 }
 
-function quoteValue(driver: string, raw: string): string {
+// テスト (QueryBuilder.test.ts) からバックスラッシュ/クオート処理を直接検証
+// できるよう export する (他の生成ロジックと違い、この関数はコンポーネント外に
+// 切り出されておらずここが唯一のテスト経路)。
+export function quoteValue(driver: string, raw: string): string {
   const v = raw.trim();
   if (v === "") return "''";
   if (/^null$/i.test(v)) return "NULL";
@@ -302,7 +305,14 @@ function quoteValue(driver: string, raw: string): string {
     if (driver === "sqlite") return v.toLowerCase() === "true" ? "1" : "0";
     return v.toUpperCase();
   }
-  return "'" + v.replace(/\\/g, "\\\\").replace(/'/g, "''") + "'";
+  // バックスラッシュの二重化は MySQL のみ必要。PostgreSQL (既定の
+  // standard_conforming_strings = on) と SQLite ではバックスラッシュは
+  // ただの文字なので、二重化すると値が変わってしまい (例: C:\temp が
+  // C:\\temp として保存され)、WHERE 句が既存行に一致しなくなる。
+  // cellEdit.ts の quoteString / db/data_diff.rs の quote_string と方針を揃える。
+  const escaped =
+    driver === "mysql" ? v.replace(/\\/g, "\\\\").replace(/'/g, "''") : v.replace(/'/g, "''");
+  return "'" + escaped + "'";
 }
 
 function tableRef(driver: string, database: string, table: string): string {

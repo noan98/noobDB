@@ -739,19 +739,26 @@ pub(crate) fn has_stacked_statements(sql: &str) -> bool {
 /// makes the whole string invalid. Empty input (only whitespace / comments / bare
 /// `;`) is allowed and runs nothing.
 ///
-/// Comments and string / quoted-identifier literals are masked first (reusing
-/// `mask_for_analysis`), so a `;` inside `'a;b'` is not mistaken for a separator.
+/// Comments and string / quoted-identifier literals are masked first, using
+/// the **conservative** ([`mask_for_analysis_conservative`], not the
+/// MySQL-flavoured `mask_for_analysis`) reading — this input is executed
+/// verbatim against whichever driver the profile targets (including
+/// PostgreSQL / SQLite, where `\` is not a string escape), and the
+/// MySQL-flavoured mask can be tricked into treating a stray `\'` as an
+/// escaped quote, hiding a stacked statement inside what it thinks is still
+/// an open string literal.
 pub fn is_session_init_sql(sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    let masked = mask_for_analysis(&orig);
+    let masked = mask_for_analysis_conservative(&orig);
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
     for stmt in masked_lower.split(';') {
         let s = stmt.trim();
         if s.is_empty() {
             continue;
         }
-        let allowed =
-            starts_with_word(s, "set") || starts_with_word(s, "pragma") || is_read_only_sql(s);
+        let allowed = (starts_with_word(s, "set") && is_allowed_set_statement(s))
+            || starts_with_word(s, "pragma")
+            || is_read_only_sql(s);
         if !allowed {
             return false;
         }
@@ -759,11 +766,73 @@ pub fn is_session_init_sql(sql: &str) -> bool {
     true
 }
 
+/// Narrows the blanket `starts_with_word(s, "set")` allowance in
+/// [`is_session_init_sql`]: a bare `SET` changes one session-local setting
+/// and is safe (`SET SESSION …` / `SET LOCAL …` / `SET NAMES …` /
+/// `SET ROLE …` / `SET search_path …` / `SET time_zone …` / `SET x = y`),
+/// but a handful of `SET` sub-forms reach further than "this session" and
+/// must not be let through a read-only profile's init SQL:
+///
+/// * `SET GLOBAL …` (MySQL) mutates server-wide configuration, not just the
+///   current connection.
+/// * `SET PASSWORD …` (MySQL) changes an account's credentials.
+/// * `SET STATEMENT … FOR <stmt>` (MariaDB) wraps an arbitrary statement —
+///   including DML/DDL — as a session-setting prefix, which would otherwise
+///   sail through as "starts with SET".
+///
+/// `s` must already be masked (literals/comments blanked) and lowercased, as
+/// produced by [`is_session_init_sql`].
+fn is_allowed_set_statement(s: &str) -> bool {
+    let rest = s["set".len()..].trim_start();
+    let next_word: &str = rest
+        .split(|c: char| !is_word_char(c))
+        .find(|w| !w.is_empty())
+        .unwrap_or("");
+    !matches!(next_word, "global" | "password" | "statement")
+}
+
 /// Replaces every comment and the interior of every string / quoted-identifier
 /// literal with spaces, preserving the original char count so positions still
 /// line up with the source. Newlines inside comments are kept so line-comment
 /// boundaries survive.
+///
+/// Backslash is treated as a string-literal escape character (MySQL's
+/// default `NO_BACKSLASH_ESCAPES`-off behaviour). This is what
+/// [`is_read_only_sql`] and the shared golden-vector tests
+/// (`tests/read_only_golden.rs` / `readOnlyGolden.test.ts`) are calibrated
+/// against, so this default must not change. Callers that need the more
+/// conservative (non-MySQL-specific) reading should use
+/// [`mask_for_analysis_conservative`] instead.
 fn mask_for_analysis(src: &[char]) -> Vec<char> {
+    mask_for_analysis_impl(src, true)
+}
+
+/// Like [`mask_for_analysis`], but does **not** treat `\` as a string escape
+/// character. PostgreSQL (with the default `standard_conforming_strings =
+/// on`) and SQLite both treat `\` inside `'…'` as an ordinary character, so a
+/// literal there is closed by the first unescaped, non-doubled quote — not by
+/// skipping over a backslash-escaped one. Using the MySQL-flavoured
+/// [`mask_for_analysis`] on those dialects lets a payload like
+/// `'\'; DELETE FROM t; --'` be mis-read as one still-open string, masking
+/// the `; DELETE …` as if it were inside the literal.
+///
+/// This is intentionally the more conservative reading: a string literal can
+/// only close *earlier* than the MySQL-flavoured mask would judge, never
+/// later, so real SQL keywords are never hidden that the MySQL mask would
+/// have revealed — only the reverse. That means a small number of otherwise
+/// legitimate MySQL init statements containing `\'` inside a string could be
+/// rejected as invalid; that's an acceptable false-negative (fail closed)
+/// given this guards session-init SQL for every physical connection in a
+/// read-only profile. See [`is_session_init_sql`].
+fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
+    mask_for_analysis_impl(src, false)
+}
+
+/// Shared implementation for [`mask_for_analysis`] /
+/// [`mask_for_analysis_conservative`]. `backslash_escapes` controls whether
+/// `\` inside a `'…'` / `"…"` literal is treated as escaping the following
+/// character (MySQL) or as an ordinary character (PostgreSQL / SQLite).
+fn mask_for_analysis_impl(src: &[char], backslash_escapes: bool) -> Vec<char> {
     let mut out: Vec<char> = Vec::with_capacity(src.len());
     let n = src.len();
     let mut i = 0;
@@ -824,8 +893,9 @@ fn mask_for_analysis(src: &[char]) -> Vec<char> {
             i += 1;
             while i < n {
                 let d = src[i];
-                // Backslash escape (MySQL string literals only).
-                if d == '\\' && quote != '`' && i + 1 < n {
+                // Backslash escape (MySQL string literals only; skipped
+                // entirely under the conservative/non-MySQL reading).
+                if backslash_escapes && d == '\\' && quote != '`' && i + 1 < n {
                     out.push(' ');
                     out.push(' ');
                     i += 2;
@@ -1238,6 +1308,41 @@ mod tests {
         // A `;` hidden inside a string literal is not a statement boundary, so
         // this remains a single (allowed) SET statement.
         assert!(is_session_init_sql("SET application_name = 'a;b'"));
+    }
+
+    /// Regression test for the backslash-masking bypass: on PostgreSQL /
+    /// SQLite, `\` is not a string escape, so `'\'` closes the literal right
+    /// there. The MySQL-flavoured mask used to treat `\'` as an escaped quote
+    /// and read the whole rest of the string (including `; DELETE …`) as
+    /// still inside the literal, letting the stacked DELETE slip through as
+    /// part of an apparently-single, allowed `SET` statement.
+    #[test]
+    fn session_init_rejects_backslash_masked_stacked_statement() {
+        assert!(!is_session_init_sql(
+            "SET application_name = '\\'; DELETE FROM important_table; SET application_name = 'ok'"
+        ));
+        // Legitimate init SQL across all three dialects still passes.
+        assert!(is_session_init_sql("SET time_zone = 'UTC'"));
+        assert!(is_session_init_sql("PRAGMA foreign_keys=ON"));
+        assert!(is_session_init_sql("SELECT 1"));
+    }
+
+    /// Regression test: a bare `starts_with_word(s, "set")` check let through
+    /// `SET` sub-forms that reach beyond the current session (server-wide
+    /// config, account credentials, or a MariaDB `SET STATEMENT … FOR`
+    /// wrapper around an arbitrary statement), even under a read-only
+    /// profile's init SQL.
+    #[test]
+    fn session_init_rejects_set_global_password_and_statement_for() {
+        assert!(!is_session_init_sql("SET GLOBAL read_only = 0"));
+        assert!(!is_session_init_sql("SET PASSWORD FOR 'a'@'%' = 'x'"));
+        assert!(!is_session_init_sql(
+            "SET STATEMENT max_statement_time=0 FOR DELETE FROM users"
+        ));
+        // Ordinary session-scoped SET forms remain allowed.
+        assert!(is_session_init_sql("SET SESSION time_zone='UTC'"));
+        assert!(is_session_init_sql("SET NAMES utf8mb4"));
+        assert!(is_session_init_sql("SET search_path TO app"));
     }
 
     #[test]

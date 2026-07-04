@@ -153,8 +153,12 @@ impl Handler for ClientHandler {
                 Ok(true)
             }
             Err(e) => {
-                tracing::warn!("known_hosts lookup failed: {e}");
-                Ok(true)
+                // known_hosts を検証できない (data_dir 未解決・パーミッション不正・
+                // I/O エラーなど) 場合に無条件で受理すると TOFU による MITM 検出が
+                // 無音で無効化されてしまう。セキュリティ制御は fail-open ではなく
+                // fail-close にすべきなので、検証不能時は接続を中断する。
+                tracing::warn!("known_hosts lookup failed: {e}; refusing connection (fail-closed)");
+                Err(russh::Error::UnknownKey)
             }
         }
     }

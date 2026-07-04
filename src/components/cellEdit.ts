@@ -43,6 +43,10 @@ const BINARY_TYPES = new Set([
   "LONGBLOB",
   "BINARY",
   "VARBINARY",
+  // PostgreSQL のバイナリ型。db/postgres.rs は bytea 列を type_name = "BYTEA"
+  // で報告するため、ここに含めないと編集不可の防御をすり抜けて hex 文字列が
+  // そのままテキストとして書き込まれ、元のバイナリ値を破壊してしまう。
+  "BYTEA",
 ]);
 
 /**

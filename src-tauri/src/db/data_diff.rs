@@ -50,6 +50,10 @@ pub struct DataDiff {
     pub columns: Vec<String>,
     /// Primary-key column names (a subset of `columns`).
     pub primary_key: Vec<String>,
+    /// Column type names, in the same order as `columns` (same length). Used
+    /// to restore `Value::Bytes` for BLOB columns after an IPC round trip
+    /// re-serializes them as `Value::String` (see [`is_binary_type`]).
+    pub column_types: Vec<String>,
     pub rows: Vec<RowDiff>,
     /// True if either side hit the row cap, so the diff is partial.
     pub truncated: bool,
@@ -144,11 +148,28 @@ fn changed_columns(
         if pk_idx.contains(&i) {
             continue;
         }
-        if source.get(i) != target.get(i) {
+        let eq = match (source.get(i), target.get(i)) {
+            (Some(a), Some(b)) => values_equal(a, b),
+            (a, b) => a == b,
+        };
+        if !eq {
             changed.push(name.clone());
         }
     }
     changed
+}
+
+/// Value equality that treats two `NaN` floats as equal. The derived
+/// `PartialEq` on `Value` follows IEEE-754 (`NaN != NaN`), which would make a
+/// column holding `NaN` on both sides compare as "changed" on every run —
+/// and since `DataDiff` round-trips through `serde_json` (which turns
+/// non-finite `f64` into `null`), the generated `UPDATE` would silently
+/// clobber the value with `NULL`. Everything else falls back to `==`.
+fn values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Float(x), Value::Float(y)) if x.is_nan() && y.is_nan() => true,
+        _ => a == b,
+    }
 }
 
 /// Renders the DML that makes the target table's rows match the source's.
@@ -158,13 +179,27 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
     let driver = diff.target_driver;
     let table_ident = quote_ident(driver, &diff.table);
     let mut statements: Vec<SyncStatement> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // 行数上限で切り捨てられた比較結果は、source 側に実在する行を誤って
+    // TargetOnly と分類しうる (ウィンドウのズレ)。DELETE は破壊的操作なので、
+    // allow_delete の指定に関わらず一切生成しない。
+    let skip_delete = diff.truncated;
+    if skip_delete && diff.rows.iter().any(|r| r.status == RowStatus::TargetOnly) {
+        warnings.push(
+            "比較結果が行数上限で切り捨てられているため、削除 (DELETE) は安全のため \
+             生成していません。全行を比較するには対象を絞るか上限を上げてください。"
+                .to_string(),
+        );
+    }
 
     for row in &diff.rows {
         match row.status {
             RowStatus::SourceOnly => {
                 if let Some(values) = &row.source {
+                    let values = coerce_binary_values(&diff.columns, &diff.column_types, values);
                     statements.push(SyncStatement {
-                        sql: insert_sql(driver, &table_ident, &diff.columns, values),
+                        sql: insert_sql(driver, &table_ident, &diff.columns, &values),
                         table: diff.table.clone(),
                         kind: SyncKind::InsertRow,
                         destructive: false,
@@ -173,14 +208,21 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
             }
             RowStatus::Different => {
                 if let Some(values) = &row.source {
+                    let values = coerce_binary_values(&diff.columns, &diff.column_types, values);
+                    let key = coerce_binary_key(
+                        &diff.columns,
+                        &diff.column_types,
+                        &diff.primary_key,
+                        &row.key,
+                    );
                     if let Some(sql) = update_sql(
                         driver,
                         &table_ident,
                         &diff.columns,
                         &diff.primary_key,
                         &row.changed_columns,
-                        values,
-                        &row.key,
+                        &values,
+                        &key,
                     ) {
                         statements.push(SyncStatement {
                             sql,
@@ -192,9 +234,15 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
                 }
             }
             RowStatus::TargetOnly => {
-                if allow_delete {
+                if allow_delete && !skip_delete {
+                    let key = coerce_binary_key(
+                        &diff.columns,
+                        &diff.column_types,
+                        &diff.primary_key,
+                        &row.key,
+                    );
                     statements.push(SyncStatement {
-                        sql: delete_sql(driver, &table_ident, &diff.primary_key, &row.key),
+                        sql: delete_sql(driver, &table_ident, &diff.primary_key, &key),
                         table: diff.table.clone(),
                         kind: SyncKind::DeleteRow,
                         destructive: true,
@@ -207,8 +255,66 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
     statements.sort_by_key(|s| s.kind.order());
     SyncPlan {
         statements,
-        warnings: Vec::new(),
+        warnings,
     }
+}
+
+/// True if `type_name` (a driver column type, e.g. `varbinary(255)`,
+/// `BYTEA`, `blob`) holds binary data rather than text. Used to restore
+/// `Value::Bytes` for values that came back as `Value::String` after an IPC
+/// round trip (see the `DataDiff::column_types` doc comment).
+fn is_binary_type(type_name: &str) -> bool {
+    let upper = type_name.to_ascii_uppercase();
+    upper.contains("BLOB") || upper.contains("BINARY") || upper.contains("BYTEA")
+}
+
+/// If `value` is a `Value::String` holding a hex-encoded BLOB (per
+/// `type_name`), converts it back to `Value::Bytes` so `sql_literal` renders
+/// it as a binary literal instead of quoted text. Anything else (including
+/// `Value::Null`) passes through unchanged.
+fn coerce_binary_value(type_name: Option<&str>, value: &Value) -> Value {
+    match (type_name, value) {
+        (Some(t), Value::String(hex)) if is_binary_type(t) => Value::Bytes(hex.clone()),
+        _ => value.clone(),
+    }
+}
+
+/// Looks up `name`'s type within `all_columns`/`all_types` (parallel arrays).
+fn type_of_column<'a>(
+    all_columns: &[String],
+    all_types: &'a [String],
+    name: &str,
+) -> Option<&'a str> {
+    all_columns
+        .iter()
+        .position(|c| c == name)
+        .and_then(|i| all_types.get(i))
+        .map(|s| s.as_str())
+}
+
+/// Applies [`coerce_binary_value`] to each of `values`, one per `columns[i]`.
+fn coerce_binary_values(columns: &[String], all_types: &[String], values: &[Value]) -> Vec<Value> {
+    columns
+        .iter()
+        .zip(values.iter())
+        .map(|(name, value)| coerce_binary_value(type_of_column(columns, all_types, name), value))
+        .collect()
+}
+
+/// Same as [`coerce_binary_values`] but for a primary-key value vector, whose
+/// names (`key_columns`) are looked up against the full `columns`/`all_types`
+/// arrays (a PK is a subset of the table's columns).
+fn coerce_binary_key(
+    columns: &[String],
+    all_types: &[String],
+    key_columns: &[String],
+    key: &[Value],
+) -> Vec<Value> {
+    key_columns
+        .iter()
+        .zip(key.iter())
+        .map(|(name, value)| coerce_binary_value(type_of_column(columns, all_types, name), value))
+        .collect()
 }
 
 fn insert_sql(
@@ -305,7 +411,31 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
         },
         Value::Int(i) => i.to_string(),
         Value::UInt(u) => u.to_string(),
-        Value::Float(f) => f.to_string(),
+        Value::Float(f) => {
+            if f.is_finite() {
+                f.to_string()
+            } else {
+                // NaN / Infinity / -Infinity have no literal spelling in any
+                // of the three dialects. PostgreSQL accepts the quoted
+                // special values and implicitly casts them into a float
+                // column; MySQL / SQLite have no such casting float type
+                // literal and would either reject or silently mangle the
+                // text, so fall back to NULL there (same policy as
+                // `commands/dump.rs::sqlite_literal`).
+                match driver {
+                    DriverKind::Postgres => {
+                        if f.is_nan() {
+                            "'NaN'".to_string()
+                        } else if *f > 0.0 {
+                            "'Infinity'".to_string()
+                        } else {
+                            "'-Infinity'".to_string()
+                        }
+                    }
+                    DriverKind::Mysql | DriverKind::Sqlite => "NULL".to_string(),
+                }
+            }
+        }
         Value::String(s) => quote_string(driver, s),
         Value::Bytes(hex) => match driver {
             DriverKind::Mysql | DriverKind::Sqlite => format!("X'{hex}'"),
@@ -371,6 +501,7 @@ mod tests {
         let diff = DataDiff {
             target_driver: DriverKind::Mysql,
             table: "scores".to_string(),
+            column_types: vec!["BIGINT".to_string(); columns.len()],
             columns,
             primary_key: vec!["id".to_string()],
             rows: diffs,
@@ -459,5 +590,169 @@ mod tests {
         assert_eq!(diffs.len(), 2);
         assert!(diffs.iter().any(|r| r.status == RowStatus::SourceOnly));
         assert!(diffs.iter().any(|r| r.status == RowStatus::TargetOnly));
+    }
+
+    #[test]
+    fn nan_columns_do_not_appear_as_changed() {
+        // 修正 5a: 両側とも NaN の浮動小数列は "Different" と誤判定されない。
+        let columns = vec!["id".to_string(), "score".to_string()];
+        let pk = vec![0usize];
+        let source = vec![vec![Value::Int(1), Value::Float(f64::NAN)]];
+        let target = vec![vec![Value::Int(1), Value::Float(f64::NAN)]];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        assert!(
+            diffs.is_empty(),
+            "NaN == NaN の行が Different と誤判定された: {diffs:?}"
+        );
+    }
+
+    #[test]
+    fn non_nan_float_changes_are_still_detected() {
+        let columns = vec!["id".to_string(), "score".to_string()];
+        let pk = vec![0usize];
+        let source = vec![vec![Value::Int(1), Value::Float(1.5)]];
+        let target = vec![vec![Value::Int(1), Value::Float(2.5)]];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].status, RowStatus::Different);
+    }
+
+    #[test]
+    fn non_finite_float_literals_avoid_invalid_sql() {
+        // 修正 5b: NaN/Infinity/-Infinity は各ドライバで安全な形にする。
+        assert_eq!(
+            sql_literal(DriverKind::Postgres, &Value::Float(f64::NAN)),
+            "'NaN'"
+        );
+        assert_eq!(
+            sql_literal(DriverKind::Postgres, &Value::Float(f64::INFINITY)),
+            "'Infinity'"
+        );
+        assert_eq!(
+            sql_literal(DriverKind::Postgres, &Value::Float(f64::NEG_INFINITY)),
+            "'-Infinity'"
+        );
+        assert_eq!(
+            sql_literal(DriverKind::Mysql, &Value::Float(f64::NAN)),
+            "NULL"
+        );
+        assert_eq!(
+            sql_literal(DriverKind::Sqlite, &Value::Float(f64::NAN)),
+            "NULL"
+        );
+        assert_eq!(
+            sql_literal(DriverKind::Mysql, &Value::Float(f64::INFINITY)),
+            "NULL"
+        );
+        // 有限値は従来どおり。
+        assert_eq!(sql_literal(DriverKind::Postgres, &Value::Float(1.5)), "1.5");
+        assert_eq!(sql_literal(DriverKind::Mysql, &Value::Float(-2.0)), "-2");
+    }
+
+    #[test]
+    fn truncated_diff_skips_delete_and_warns() {
+        // 修正 6: truncated:true では allow_delete=true でも DELETE を生成しない。
+        let columns = cols();
+        let pk = vec![0usize];
+        let source = vec![row(1, "a", 10)];
+        let target = vec![row(1, "a", 10), row(4, "d", 40)];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        let diff = DataDiff {
+            target_driver: DriverKind::Mysql,
+            table: "scores".to_string(),
+            column_types: vec!["BIGINT".to_string(); columns.len()],
+            columns,
+            primary_key: vec!["id".to_string()],
+            rows: diffs,
+            truncated: true,
+            source_count: 1,
+            target_count: 2,
+        };
+
+        let plan = generate_data_sync_sql(&diff, true);
+        assert!(
+            !plan
+                .statements
+                .iter()
+                .any(|s| s.kind == SyncKind::DeleteRow),
+            "truncated diff generated a DELETE despite allow_delete"
+        );
+        assert!(
+            !plan.warnings.is_empty(),
+            "truncated diff with a TargetOnly row should produce a warning"
+        );
+    }
+
+    #[test]
+    fn non_truncated_diff_still_generates_delete() {
+        // Guard: the existing `generates_dml_with_delete_gated` test already covers this
+        // (truncated: false), but assert explicitly that truncation is the gate, not
+        // allow_delete alone becoming a no-op.
+        let columns = cols();
+        let pk = vec![0usize];
+        let source = vec![row(1, "a", 10)];
+        let target = vec![row(1, "a", 10), row(4, "d", 40)];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        let diff = DataDiff {
+            target_driver: DriverKind::Mysql,
+            table: "scores".to_string(),
+            column_types: vec!["BIGINT".to_string(); columns.len()],
+            columns,
+            primary_key: vec!["id".to_string()],
+            rows: diffs,
+            truncated: false,
+            source_count: 1,
+            target_count: 2,
+        };
+
+        let plan = generate_data_sync_sql(&diff, true);
+        assert!(plan
+            .statements
+            .iter()
+            .any(|s| s.kind == SyncKind::DeleteRow));
+        assert!(plan.warnings.is_empty());
+    }
+
+    #[test]
+    fn blob_round_tripped_as_string_is_rendered_as_binary_literal() {
+        // 修正 3: column_types が BLOB/BYTEA の列は、Value::String(hex) を
+        // Value::Bytes として扱い、X'..' / '\x..' で出力する。
+        let columns = vec!["id".to_string(), "payload".to_string()];
+        let column_types = vec!["BIGINT".to_string(), "BLOB".to_string()];
+        let source_row = vec![Value::Int(1), Value::String("a1b2".to_string())];
+        let diff = DataDiff {
+            target_driver: DriverKind::Mysql,
+            table: "files".to_string(),
+            columns: columns.clone(),
+            column_types: column_types.clone(),
+            primary_key: vec!["id".to_string()],
+            rows: vec![RowDiff {
+                status: RowStatus::SourceOnly,
+                key: vec![Value::Int(1)],
+                source: Some(source_row.clone()),
+                target: None,
+                changed_columns: Vec::new(),
+            }],
+            truncated: false,
+            source_count: 1,
+            target_count: 0,
+        };
+
+        let mysql_plan = generate_data_sync_sql(&diff, false);
+        assert!(mysql_plan.statements[0].sql.contains("X'a1b2'"));
+
+        let sqlite_diff = DataDiff {
+            target_driver: DriverKind::Sqlite,
+            ..diff.clone()
+        };
+        let sqlite_plan = generate_data_sync_sql(&sqlite_diff, false);
+        assert!(sqlite_plan.statements[0].sql.contains("X'a1b2'"));
+
+        let postgres_diff = DataDiff {
+            target_driver: DriverKind::Postgres,
+            ..diff
+        };
+        let postgres_plan = generate_data_sync_sql(&postgres_diff, false);
+        assert!(postgres_plan.statements[0].sql.contains("'\\xa1b2'"));
     }
 }
