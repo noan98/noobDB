@@ -233,15 +233,41 @@ const badgeBaseCss: SystemStyleObject = {
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
 };
+type SeverityTone = "error" | "warning";
+
+/**
+ * caution/warning (ヒートの warm/hot も同義) の重大度カテゴリから、状態バッジ・
+ * ボーダーで使う色トークンをまとめて返す共通ヘルパー。`status` は生の
+ * `--status-*` トークン (border-left など単色でそのまま使う箇所向け)、`text` は
+ * `--text-*` トークン、`bg`/`border` はバッジの背景/枠線用に `color-mix` で
+ * 薄めた値 (枠線の混合率は呼び出し元で異なるため `borderPct` で指定、既定 40%)。
+ * `accessBadgeCss` / `costBadgeCss` / `hintBadgeCss` / `hintItemCss` /
+ * `hintSevCss` が共通で利用する。
+ */
+function severityTokens(
+  tone: SeverityTone,
+  borderPct = 40,
+): { status: string; text: string; bg: string; border: string } {
+  const status = tone === "error" ? "var(--status-error)" : "var(--status-warning)";
+  const text = tone === "error" ? "var(--text-error)" : "var(--text-warning)";
+  return {
+    status,
+    text,
+    bg: `color-mix(in srgb, ${status} 16%, transparent)`,
+    border: `color-mix(in srgb, ${status} ${borderPct}%, transparent)`,
+  };
+}
+
 /** access バッジ。`ALL` (フルスキャン) のときだけ警告色にする。 */
 function accessBadgeCss(bad: boolean): SystemStyleObject {
   if (bad) {
+    const tone = severityTokens("error");
     return {
       ...badgeBaseCss,
       fontWeight: 600,
-      background: "color-mix(in srgb, var(--status-error) 16%, transparent)",
-      borderColor: "color-mix(in srgb, var(--status-error) 40%, transparent)",
-      color: "var(--text-error)",
+      background: tone.bg,
+      borderColor: tone.border,
+      color: tone.text,
     };
   }
   return { ...badgeBaseCss, fontWeight: 600 };
@@ -255,18 +281,12 @@ const indexBadgeCss: SystemStyleObject = {
 /** cost バッジ。ヒートに応じて文字/枠色を上げる。 */
 function costBadgeCss(heat: Heat): SystemStyleObject {
   if (heat === "warm") {
-    return {
-      ...badgeBaseCss,
-      color: "var(--text-warning)",
-      borderColor: "color-mix(in srgb, var(--status-warning) 40%, transparent)",
-    };
+    const tone = severityTokens("warning");
+    return { ...badgeBaseCss, color: tone.text, borderColor: tone.border };
   }
   if (heat === "hot") {
-    return {
-      ...badgeBaseCss,
-      color: "var(--text-error)",
-      borderColor: "color-mix(in srgb, var(--status-error) 40%, transparent)",
-    };
+    const tone = severityTokens("error");
+    return { ...badgeBaseCss, color: tone.text, borderColor: tone.border };
   }
   return badgeBaseCss;
 }
@@ -279,20 +299,8 @@ function hintBadgeCss(sev: "caution" | "warning"): SystemStyleObject {
     textAlign: "center",
     py: "0.5", px: "1",
   };
-  if (sev === "caution") {
-    return {
-      ...base,
-      background: "color-mix(in srgb, var(--status-warning) 16%, transparent)",
-      borderColor: "color-mix(in srgb, var(--status-warning) 45%, transparent)",
-      color: "var(--text-warning)",
-    };
-  }
-  return {
-    ...base,
-    background: "color-mix(in srgb, var(--status-error) 16%, transparent)",
-    borderColor: "color-mix(in srgb, var(--status-error) 45%, transparent)",
-    color: "var(--text-error)",
-  };
+  const tone = severityTokens(sev === "caution" ? "warning" : "error", 45);
+  return { ...base, background: tone.bg, borderColor: tone.border, color: tone.text };
 }
 
 const hintsListCss: SystemStyleObject = {
@@ -305,7 +313,8 @@ const hintsListCss: SystemStyleObject = {
 };
 /** 詳細パネルのヒント 1 件。重大度で左枠色を変える。 */
 function hintItemCss(sev: HintSeverity): SystemStyleObject {
-  const borderLeftColor = sev === "info" ? "var(--accent)" : sev === "caution" ? "var(--status-warning)" : "var(--status-error)";
+  const borderLeftColor =
+    sev === "info" ? "var(--accent)" : severityTokens(sev === "caution" ? "warning" : "error").status;
   return {
     display: "flex",
     flexDirection: "column",
@@ -323,7 +332,7 @@ function hintItemCss(sev: HintSeverity): SystemStyleObject {
 /** ヒントの重大度ラベル。 */
 function hintSevCss(sev: HintSeverity): SystemStyleObject {
   const color =
-    sev === "info" ? "var(--accent)" : sev === "warning" ? "var(--text-error)" : "var(--text-warning)";
+    sev === "info" ? "var(--accent)" : severityTokens(sev === "warning" ? "error" : "warning").text;
   return {
     fontWeight: 600,
     fontSize: "var(--text-2xs)",
