@@ -166,6 +166,16 @@ import {
   type ConnectionStatus,
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
+import {
+  isAppWindowFocused,
+  registerNotificationClickFocus,
+  sendQueryNotification,
+} from "./notifications";
+import {
+  firstLineForNotification,
+  shouldNotifyQueryCompletion,
+  type QueryNotificationKind,
+} from "./queryNotify";
 import { incomingForeignKeys } from "./fkNavigation";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
@@ -924,6 +934,13 @@ export default function App() {
   const toggleSidebar = useCallback(() => {
     if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen((v) => !v);
     else setSidebarUserCollapsed((v) => !v);
+  }, []);
+
+  // 長時間クエリ完了時の OS 通知 (#707): クリックでウィンドウを前面化する購読を
+  // アプリ起動時に一度だけ登録する。通知自体は runQueryInTab の onDone/onError で
+  // 個別に判定・送信する (notifyQueryOutcome を参照)。
+  useEffect(() => {
+    registerNotificationClickFocus();
   }, []);
 
   // Lock the cursor while dragging so it doesn't flicker off the thin handle.
@@ -2140,6 +2157,55 @@ export default function App() {
     return justAdded;
   }, []);
 
+  // 長時間クエリ完了時の OS 通知 (#707)。実行開始からの経過時間が設定の閾値以上
+  // かつウィンドウが非フォーカスのときだけ発火する (判定は queryNotify.ts の
+  // 純関数)。通知本文には件数・経過時間・エラー先頭 1 行のみを含め、SQL 本文や
+  // 結果データは一切渡さない。ベストエフォートで、失敗してもクエリ完了処理自体は
+  // 継続する (finalize/setStatus は呼び出し元で完結済み)。
+  const notifyQueryOutcome = useCallback(
+    async (
+      kind: QueryNotificationKind,
+      elapsedMs: number,
+      extra: { rows?: number; error?: string | null } = {},
+    ) => {
+      if (!settings.queryNotificationsEnabled) return;
+      const windowFocused = await isAppWindowFocused();
+      if (
+        !shouldNotifyQueryCompletion({
+          enabled: settings.queryNotificationsEnabled,
+          elapsedMs,
+          thresholdSecs: settings.queryNotificationThresholdSecs,
+          windowFocused,
+        })
+      ) {
+        return;
+      }
+      let title: string;
+      let body: string;
+      switch (kind) {
+        case "done":
+          title = translate("notifyQueryDoneTitle");
+          body = translate("notifyQueryDoneBody", { rows: extra.rows ?? 0, ms: elapsedMs });
+          break;
+        case "timeout":
+          title = translate("notifyQueryTimeoutTitle");
+          body = translate("notifyQueryTimeoutBody");
+          break;
+        case "cancelled":
+          title = translate("notifyQueryCancelledTitle");
+          body = translate("notifyQueryCancelledBody");
+          break;
+        case "error":
+        default:
+          title = translate("notifyQueryErrorTitle");
+          body = firstLineForNotification(extra.error ?? "");
+          break;
+      }
+      void sendQueryNotification(title, body);
+    },
+    [settings.queryNotificationsEnabled, settings.queryNotificationThresholdSecs],
+  );
+
   const runQueryInTab = useCallback(async (
     tabId: string,
     sql: string,
@@ -2275,6 +2341,12 @@ export default function App() {
           invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
         }
         finalize();
+        // Auto-refresh ticks fire this same onDone every cadence — notifying on
+        // every tick while the window is unfocused would be spam, not a useful
+        // nudge, so only long-running *manual* runs are eligible (#707).
+        if (!autoRefresh) {
+          void notifyQueryOutcome("done", elapsedMs, { rows: hasColumns ? totalRows : rowsAffected });
+        }
       },
       onError: ({ error, timedOut, connectionLost }) => {
         patchTab(tabId, (tt) => ({
@@ -2284,6 +2356,9 @@ export default function App() {
         }));
         setHistoryReloadKey((k) => k + 1);
         finalize();
+        if (!autoRefresh && !connectionLost) {
+          void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error });
+        }
         // A dropped connection leaves the session unusable: tear it down and
         // prompt a reconnect rather than showing the raw transport error.
         if (connectionLost) {
@@ -2337,6 +2412,7 @@ export default function App() {
     patchTab,
     cancelStreamForTab,
     invalidateSchemaCache,
+    notifyQueryOutcome,
     selectedProfile?.database,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
@@ -3122,7 +3198,12 @@ export default function App() {
         : null),
     }));
     setStatus({ kind: "key", key: "statusQueryCancelled" });
-  }, [cancelStreamForTab, patchTab]);
+    // Preview (dry-run) cancellations aren't the "long-running editor query"
+    // this notification is meant for (#707) — only notify for a real query run.
+    if (!tab.previewStreaming) {
+      void notifyQueryOutcome("cancelled", tab.result?.elapsed_ms ?? 0);
+    }
+  }, [cancelStreamForTab, patchTab, notifyQueryOutcome]);
 
   // Insert a snippet into the focused pane's editor, or open a fresh query tab
   // holding the snippet when there is no active tab yet.

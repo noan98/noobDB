@@ -132,6 +132,17 @@ export interface Settings {
    * 既定にマージして利用する。
    */
   shortcutOverrides: Record<string, string>;
+  /**
+   * 長時間クエリ完了時に OS デスクトップ通知を出す (#707)。ウィンドウが
+   * 非フォーカスかつ実行時間が `queryNotificationThresholdSecs` 以上のときのみ
+   * 発火する (判定は `queryNotify.ts`)。
+   */
+  queryNotificationsEnabled: boolean;
+  /**
+   * クエリ完了通知を出すまでの経過時間の閾値 (秒)。この秒数未満で完了した
+   * クエリは (ウィンドウが非フォーカスでも) 通知しない。
+   */
+  queryNotificationThresholdSecs: number;
 }
 
 /**
@@ -402,6 +413,12 @@ export const DEFAULT_AUTO_RECONNECT_MAX_RETRIES = 5;
 export const MIN_AUTO_RECONNECT_RETRIES = 1;
 export const MAX_AUTO_RECONNECT_RETRIES = 20;
 
+/** クエリ完了通知 (#707) は既定オン、閾値は既定 10 秒。 */
+export const DEFAULT_QUERY_NOTIFICATIONS_ENABLED = true;
+export const DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS = 10;
+export const MIN_QUERY_NOTIFICATION_THRESHOLD_SECS = 1;
+export const MAX_QUERY_NOTIFICATION_THRESHOLD_SECS = 3_600;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -431,6 +448,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoReconnectEnabled: DEFAULT_AUTO_RECONNECT_ENABLED,
   autoReconnectMaxRetries: DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   shortcutOverrides: {},
+  queryNotificationsEnabled: DEFAULT_QUERY_NOTIFICATIONS_ENABLED,
+  queryNotificationThresholdSecs: DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -448,6 +467,15 @@ export function sanitizeAutoRefreshSecs(input: unknown, fallback: number): numbe
   const n = Math.floor(input);
   if (n < AUTO_REFRESH_MIN_SECS) return AUTO_REFRESH_MIN_SECS;
   if (n > AUTO_REFRESH_MAX_SECS) return AUTO_REFRESH_MAX_SECS;
+  return n;
+}
+
+/** Clamps the query-completion notification threshold (seconds) to the allowed range (#707). */
+export function sanitizeQueryNotificationThresholdSecs(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.floor(input);
+  if (n < MIN_QUERY_NOTIFICATION_THRESHOLD_SECS) return MIN_QUERY_NOTIFICATION_THRESHOLD_SECS;
+  if (n > MAX_QUERY_NOTIFICATION_THRESHOLD_SECS) return MAX_QUERY_NOTIFICATION_THRESHOLD_SECS;
   return n;
 }
 
@@ -595,6 +623,8 @@ export function normalizeSettings(input: unknown): Settings {
     autoReconnectEnabled?: unknown;
     autoReconnectMaxRetries?: unknown;
     shortcutOverrides?: unknown;
+    queryNotificationsEnabled?: unknown;
+    queryNotificationThresholdSecs?: unknown;
   };
   return {
     syntaxColors: {
@@ -653,6 +683,14 @@ export function normalizeSettings(input: unknown): Settings {
       DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
     ),
     shortcutOverrides: sanitizeShortcutOverrides(parsed.shortcutOverrides),
+    queryNotificationsEnabled:
+      typeof parsed.queryNotificationsEnabled === "boolean"
+        ? parsed.queryNotificationsEnabled
+        : DEFAULT_QUERY_NOTIFICATIONS_ENABLED,
+    queryNotificationThresholdSecs: sanitizeQueryNotificationThresholdSecs(
+      parsed.queryNotificationThresholdSecs,
+      DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
+    ),
   };
 }
 
@@ -908,6 +946,21 @@ export function setAutoReconnectMaxRetries(value: number): void {
   const next = sanitizeAutoReconnectRetries(value, current.autoReconnectMaxRetries);
   if (current.autoReconnectMaxRetries === next) return;
   current = { ...current, autoReconnectMaxRetries: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setQueryNotificationsEnabled(value: boolean): void {
+  if (current.queryNotificationsEnabled === value) return;
+  current = { ...current, queryNotificationsEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setQueryNotificationThresholdSecs(value: number): void {
+  const next = sanitizeQueryNotificationThresholdSecs(value, current.queryNotificationThresholdSecs);
+  if (current.queryNotificationThresholdSecs === next) return;
+  current = { ...current, queryNotificationThresholdSecs: next };
   persist();
   listeners.forEach((cb) => cb());
 }

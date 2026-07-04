@@ -19,10 +19,13 @@ import {
   DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   DEFAULT_DISPLAY_COUNT,
   DEFAULT_FONT_SIZE_PX,
+  DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   DEFAULT_QUERY_TIMEOUT_SECS,
   DEFAULT_STREAM_PREFETCH_SIZE,
   MAX_AUTO_RECONNECT_RETRIES,
+  MAX_QUERY_NOTIFICATION_THRESHOLD_SECS,
   MIN_AUTO_RECONNECT_RETRIES,
+  MIN_QUERY_NOTIFICATION_THRESHOLD_SECS,
   DENSITY_ORDER,
   MAX_FONT_SIZE_PX,
   MIN_FONT_SIZE_PX,
@@ -59,6 +62,8 @@ import {
   setDefaultDisplayCount,
   setDensity,
   setFontSizePx,
+  setQueryNotificationsEnabled,
+  setQueryNotificationThresholdSecs,
   setQueryTimeoutSecs,
   setPreviewHighlight,
   setCellEditOnBlur,
@@ -495,6 +500,9 @@ export function SettingsView({ theme, onClose }: Props) {
     String(settings.autoReconnectMaxRetries),
   );
   const [fontSizeInput, setFontSizeInput] = useState(String(settings.fontSizePx));
+  const [notifyThresholdInput, setNotifyThresholdInput] = useState(
+    String(settings.queryNotificationThresholdSecs),
+  );
   useEffect(() => setDisplayInput(String(settings.defaultDisplayCount)), [settings.defaultDisplayCount]);
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
@@ -504,6 +512,10 @@ export function SettingsView({ theme, onClose }: Props) {
     [settings.autoReconnectMaxRetries],
   );
   useEffect(() => setFontSizeInput(String(settings.fontSizePx)), [settings.fontSizePx]);
+  useEffect(
+    () => setNotifyThresholdInput(String(settings.queryNotificationThresholdSecs)),
+    [settings.queryNotificationThresholdSecs],
+  );
 
   const commitDisplay = () => {
     const n = Number.parseInt(displayInput, 10);
@@ -524,6 +536,11 @@ export function SettingsView({ theme, onClose }: Props) {
     const n = Number.parseInt(timeoutInput, 10);
     if (Number.isFinite(n) && n >= 0) setQueryTimeoutSecs(n);
     else setTimeoutInput(String(settings.queryTimeoutSecs));
+  };
+  const commitNotifyThreshold = () => {
+    const n = Number.parseInt(notifyThresholdInput, 10);
+    if (Number.isFinite(n)) setQueryNotificationThresholdSecs(n);
+    else setNotifyThresholdInput(String(settings.queryNotificationThresholdSecs));
   };
   const commitReconnectRetries = () => {
     const n = Number.parseInt(reconnectRetriesInput, 10);
@@ -976,6 +993,48 @@ export function SettingsView({ theme, onClose }: Props) {
           />
           <SettingsHelpInline>
             {t("settingsAutoReconnectMaxRetriesHelp")}
+          </SettingsHelpInline>
+        </SettingsNumberRow>
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsNotifications")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-query-notifications">
+            <Switch
+              id="settings-query-notifications"
+              checked={settings.queryNotificationsEnabled}
+              onChange={setQueryNotificationsEnabled}
+            />
+            {t("settingsQueryNotifications")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsQueryNotificationsHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-query-notification-threshold">
+            {t("settingsQueryNotificationThreshold")}
+          </chakra.label>
+          <Input
+            id="settings-query-notification-threshold"
+            type="number"
+            min={MIN_QUERY_NOTIFICATION_THRESHOLD_SECS}
+            max={MAX_QUERY_NOTIFICATION_THRESHOLD_SECS}
+            step={1}
+            value={notifyThresholdInput}
+            placeholder={String(DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS)}
+            disabled={!settings.queryNotificationsEnabled}
+            onChange={(e) => setNotifyThresholdInput(e.target.value)}
+            onBlur={commitNotifyThreshold}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsHelpInline>
+            {t("settingsQueryNotificationThresholdHelp")}
           </SettingsHelpInline>
         </SettingsNumberRow>
       </SettingsSection>
