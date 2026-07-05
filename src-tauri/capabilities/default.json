@@ -20,6 +20,8 @@
     "core:path:default",
     "dialog:allow-open",
     "dialog:allow-save",
-    "notification:default"
+    "notification:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

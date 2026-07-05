@@ -143,6 +143,13 @@ export interface Settings {
    * クエリは (ウィンドウが非フォーカスでも) 通知しない。
    */
   queryNotificationThresholdSecs: number;
+  /**
+   * 起動時にアプリの更新を自動チェックする (#705)。既定オン。オフにすると
+   * 起動時の自動チェックを止め、設定画面の「更新を確認」ボタンからの手動
+   * チェックのみになる (オフライン/社内配布/手動運用向けの逃げ道)。ダウンロード・
+   * 適用・再起動は本設定に関係なく常にユーザ承認制で、勝手には行われない。
+   */
+  autoUpdateCheckEnabled: boolean;
 }
 
 /**
@@ -419,6 +426,9 @@ export const DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS = 10;
 export const MIN_QUERY_NOTIFICATION_THRESHOLD_SECS = 1;
 export const MAX_QUERY_NOTIFICATION_THRESHOLD_SECS = 3_600;
 
+/** 起動時のアプリ更新チェック (#705) は既定オン。 */
+export const DEFAULT_AUTO_UPDATE_CHECK_ENABLED = true;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -450,6 +460,7 @@ export const DEFAULT_SETTINGS: Settings = {
   shortcutOverrides: {},
   queryNotificationsEnabled: DEFAULT_QUERY_NOTIFICATIONS_ENABLED,
   queryNotificationThresholdSecs: DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
+  autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -625,6 +636,7 @@ export function normalizeSettings(input: unknown): Settings {
     shortcutOverrides?: unknown;
     queryNotificationsEnabled?: unknown;
     queryNotificationThresholdSecs?: unknown;
+    autoUpdateCheckEnabled?: unknown;
   };
   return {
     syntaxColors: {
@@ -691,6 +703,10 @@ export function normalizeSettings(input: unknown): Settings {
       parsed.queryNotificationThresholdSecs,
       DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
     ),
+    autoUpdateCheckEnabled:
+      typeof parsed.autoUpdateCheckEnabled === "boolean"
+        ? parsed.autoUpdateCheckEnabled
+        : DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
   };
 }
 
@@ -1017,6 +1033,13 @@ export function setQueryNotificationThresholdSecs(value: number): void {
   const next = sanitizeQueryNotificationThresholdSecs(value, current.queryNotificationThresholdSecs);
   if (current.queryNotificationThresholdSecs === next) return;
   current = { ...current, queryNotificationThresholdSecs: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setAutoUpdateCheckEnabled(value: boolean): void {
+  if (current.autoUpdateCheckEnabled === value) return;
+  current = { ...current, autoUpdateCheckEnabled: value };
   persist();
   listeners.forEach((cb) => cb());
 }

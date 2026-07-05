@@ -219,12 +219,25 @@ pub fn run() {
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "noobDB starting");
 
-    let result = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // 長時間クエリ完了時の OS デスクトップ通知 (#707)。フロントは
         // @tauri-apps/plugin-notification の JS API を直接呼ぶため、追加の
         // Tauri コマンド登録は不要 (capabilities に notification:default のみ追加)。
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+
+    // アプリ内自動更新 (#705)。updater / process はデスクトップ専用プラグインなので
+    // desktop ターゲットのときだけ登録する (モバイル対応時にビルドが壊れないよう
+    // Tauri 公式テンプレートと同じ cfg ガードを踏襲)。更新の検出/ダウンロード/適用は
+    // フロント (`updater.ts`) が JS API で駆動し、ユーザ承認時のみ再起動する。
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init());
+    }
+
+    let result = builder
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::connection::test_connection,
