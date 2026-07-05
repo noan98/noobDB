@@ -145,10 +145,11 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
       </chakra.button>
       {data.columns.map((col) => (
         <Box key={col.name} css={colRowCss}>
-          {/* PK の鍵アイコンは接続ツリー (ConnectionList) と同じ --cell-date の
-              琥珀で統一する (FK は両者とも accent)。 */}
+          {/* PK の鍵アイコンは接続ツリー (ConnectionList) と同じ --key-accent の
+              琥珀で統一する (FK は両者とも accent)。--key-accent は PK 表示専用の
+              意味トークンで、--cell-date (日付型セル色) とは独立している (#717)。 */}
           {col.isPk ? (
-            <chakra.span color="var(--cell-date)" title={data.pkTitle} display="inline-flex">
+            <chakra.span color="var(--key-accent)" title={data.pkTitle} display="inline-flex">
               <Icon name="key" size={12} />
             </chakra.span>
           ) : col.isFk ? (

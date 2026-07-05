@@ -20,6 +20,7 @@ import {
   listenPreviewStream,
   listenQueryStream,
 } from "./api/tauri";
+import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import {
   applyEditsToRows,
   buildDeleteStatements,
@@ -158,6 +159,7 @@ import {
   isSchemaMutatingSql,
   type DangerFinding,
 } from "./dangerousSql";
+import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
 import { matchErrorHint } from "./errorHints";
 import {
@@ -166,6 +168,16 @@ import {
   type ConnectionStatus,
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
+import {
+  isAppWindowFocused,
+  registerNotificationClickFocus,
+  sendQueryNotification,
+} from "./notifications";
+import {
+  firstLineForNotification,
+  shouldNotifyQueryCompletion,
+  type QueryNotificationKind,
+} from "./queryNotify";
 import { incomingForeignKeys } from "./fkNavigation";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
@@ -268,7 +280,7 @@ const RUNNING_STATUS_KEYS = new Set([
 const CRITICAL_STATUS_KEYS = new Set(["statusConnectionLost"]);
 
 // 警告 (warning): 接続は維持されており、設定変更や再試行で回復しうる軽度の障害。
-const WARNING_STATUS_KEYS = new Set(["statusQueryTimeout"]);
+const WARNING_STATUS_KEYS = new Set(["statusQueryTimeout", "statusQueryTimeoutPartial"]);
 
 // Maps a status to a tone for the footer's icon + colored left border.
 // Derived from the existing `error` flag and known keys, so call sites don't
@@ -537,6 +549,14 @@ interface Tab {
   prevResultSql?: string | null;
   /** 結果差分ハイライトのトグル (ON/OFF)。既定 OFF。In-memory only。 */
   diffHighlight?: boolean;
+  /**
+   * Set when the last run stopped before completing normally (user cancel or
+   * query timeout), so `result.rows` holds only a partial result. Cleared on
+   * the next run. Drives the partial-result badge in `ResultGrid` and the
+   * export-confirmation warning (#685). `rows` is the row count reported by
+   * the backend at the moment the stream stopped.
+   */
+  partialResult?: { reason: "cancelled" | "timeout"; rows: number } | null;
 }
 
 /**
@@ -926,6 +946,13 @@ export default function App() {
     else setSidebarUserCollapsed((v) => !v);
   }, []);
 
+  // 長時間クエリ完了時の OS 通知 (#707): クリックでウィンドウを前面化する購読を
+  // アプリ起動時に一度だけ登録する。通知自体は runQueryInTab の onDone/onError で
+  // 個別に判定・送信する (notifyQueryOutcome を参照)。
+  useEffect(() => {
+    registerNotificationClickFocus();
+  }, []);
+
   // Lock the cursor while dragging so it doesn't flicker off the thin handle.
   useEffect(() => {
     if (!sidebarResizing) return;
@@ -1173,6 +1200,13 @@ export default function App() {
     autoLimit: number | null;
     /** True when this run should execute as a multi-statement batch. */
     batch?: boolean;
+    /**
+     * Set when this is an irreversible DROP/TRUNCATE on a production
+     * connection: text the user must type to enable the confirm button
+     * (#675). Null when the extra gate doesn't apply (non-production, or no
+     * drop/truncate finding).
+     */
+    typedConfirmTarget: string | null;
   } | null>(null);
 
   // Pending {{variable}} parameter prompt. When the editor's SQL contains
@@ -1238,6 +1272,10 @@ export default function App() {
   // we can synchronously cancel from anywhere (tab close, disconnect).
   const streamUnlistenRef = useRef<Map<string, UnlistenFn>>(new Map());
   const streamIdRef = useRef<Map<string, string>>(new Map());
+  // Wall-clock start of each tab's in-flight run (keyed by tab id). Read on
+  // cancel to compute elapsed time for the completion notification (#707),
+  // since `tab.result.elapsed_ms` stays 0 until the first row batch arrives.
+  const runStartRef = useRef<Map<string, number>>(new Map());
 
   // Active auto-refresh (scheduled re-execution) timers, keyed by tab id. Held
   // in a ref so reconciling them doesn't churn on every streamed row batch.
@@ -1267,22 +1305,27 @@ export default function App() {
     streamIdRef.current.delete(tabId);
   }, []);
 
+  // 戻り値は「実際にキャンセルできた場合の、中断時点で届いていた行数」(#685)。
+  // ストリームが既に終わっていた/存在しなかった場合は null。呼び出し側 (例:
+  // 明示的な停止ボタン `stopTab`) はこれを使って「N 行で停止」を表示できる。
   const cancelStreamForTab = useCallback(
-    async (tabId: string) => {
+    async (tabId: string): Promise<number | null> => {
       const sid = streamIdRef.current.get(tabId);
       detachStreamListener(tabId);
-      if (sid) {
-        try {
-          // バックエンドの AbortHandle 登録より先にここへ来ると (invoke の
-          // ラウンドトリップ中)、cancel は false (空振り) を返し旧クエリが完走
-          // しうる (#F5)。戻り値を確認し、false のときだけ短い遅延を挟んで
-          // もう一度だけ試みる (ベストエフォートの緩和であり完全な解消ではない)。
-          const cancelled = await api.cancelStream(sid);
-          if (!cancelled) {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            await api.cancelStream(sid).catch(() => {});
-          }
-        } catch { /* best-effort */ }
+      if (!sid) return null;
+      try {
+        // バックエンドの AbortHandle 登録より先にここへ来ると (invoke の
+        // ラウンドトリップ中)、cancel は空振り (cancelled: false) を返し旧
+        // クエリが完走しうる (#F5)。結果を確認し、空振りのときだけ短い遅延を
+        // 挟んでもう一度だけ試みる (ベストエフォートの緩和であり完全な解消
+        // ではない)。
+        const first = await api.cancelStream(sid);
+        if (first.cancelled) return first.deliveredRows;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const retry = await api.cancelStream(sid).catch(() => null);
+        return retry?.cancelled ? retry.deliveredRows : null;
+      } catch {
+        return null;
       }
     },
     [detachStreamListener],
@@ -2140,6 +2183,55 @@ export default function App() {
     return justAdded;
   }, []);
 
+  // 長時間クエリ完了時の OS 通知 (#707)。実行開始からの経過時間が設定の閾値以上
+  // かつウィンドウが非フォーカスのときだけ発火する (判定は queryNotify.ts の
+  // 純関数)。通知本文には件数・経過時間・エラー先頭 1 行のみを含め、SQL 本文や
+  // 結果データは一切渡さない。ベストエフォートで、失敗してもクエリ完了処理自体は
+  // 継続する (finalize/setStatus は呼び出し元で完結済み)。
+  const notifyQueryOutcome = useCallback(
+    async (
+      kind: QueryNotificationKind,
+      elapsedMs: number,
+      extra: { rows?: number; error?: string | null } = {},
+    ) => {
+      if (!settings.queryNotificationsEnabled) return;
+      const windowFocused = await isAppWindowFocused();
+      if (
+        !shouldNotifyQueryCompletion({
+          enabled: settings.queryNotificationsEnabled,
+          elapsedMs,
+          thresholdSecs: settings.queryNotificationThresholdSecs,
+          windowFocused,
+        })
+      ) {
+        return;
+      }
+      let title: string;
+      let body: string;
+      switch (kind) {
+        case "done":
+          title = translate("notifyQueryDoneTitle");
+          body = translate("notifyQueryDoneBody", { rows: extra.rows ?? 0, ms: elapsedMs });
+          break;
+        case "timeout":
+          title = translate("notifyQueryTimeoutTitle");
+          body = translate("notifyQueryTimeoutBody");
+          break;
+        case "cancelled":
+          title = translate("notifyQueryCancelledTitle");
+          body = translate("notifyQueryCancelledBody");
+          break;
+        case "error":
+        default:
+          title = translate("notifyQueryErrorTitle");
+          body = firstLineForNotification(extra.error ?? "");
+          break;
+      }
+      void sendQueryNotification(title, body);
+    },
+    [settings.queryNotificationsEnabled, settings.queryNotificationThresholdSecs],
+  );
+
   const runQueryInTab = useCallback(async (
     tabId: string,
     sql: string,
@@ -2163,6 +2255,7 @@ export default function App() {
     const streamId = newStreamId(tabId);
     streamIdRef.current.set(tabId, streamId);
     const startedAt = Date.now();
+    runStartRef.current.set(tabId, startedAt);
     setStatus({ kind: "key", key: "statusRunningQuery" });
     // 結果差分ハイライト (#597): 直前の結果行とその SQL を退避しておき、同一クエリの
     // 再実行 (prevResultSql === 今回 sql) のときだけ ResultGrid 側で差分計算に使う。
@@ -2181,6 +2274,7 @@ export default function App() {
       loadingMore: false,
       canLoadMore: false,
       queryError: null,
+      partialResult: null,
       // Drop any in-flight cell edits: their row indices reference the
       // previous result set and would no longer line up with the new rows.
       pendingEdits: {},
@@ -2275,15 +2369,27 @@ export default function App() {
           invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
         }
         finalize();
+        // Auto-refresh ticks fire this same onDone every cadence — notifying on
+        // every tick while the window is unfocused would be spam, not a useful
+        // nudge, so only long-running *manual* runs are eligible (#707).
+        if (!autoRefresh) {
+          void notifyQueryOutcome("done", elapsedMs, { rows: hasColumns ? totalRows : rowsAffected });
+        }
       },
-      onError: ({ error, timedOut, connectionLost }) => {
+      onError: ({ error, timedOut, connectionLost, deliveredRows }) => {
         patchTab(tabId, (tt) => ({
           ...tt,
           streaming: false,
           queryError: connectionLost ? null : (error ?? "Unknown error"),
+          // タイムアウトは取得済みの行を残したまま止まる — 部分結果である旨を
+          // グリッドのバッジ/エクスポート確認に伝える (#685)。
+          ...(timedOut ? { partialResult: timeoutPartialResult(deliveredRows) } : {}),
         }));
         setHistoryReloadKey((k) => k + 1);
         finalize();
+        if (!autoRefresh && !connectionLost) {
+          void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error });
+        }
         // A dropped connection leaves the session unusable: tear it down and
         // prompt a reconnect rather than showing the raw transport error.
         if (connectionLost) {
@@ -2293,8 +2399,8 @@ export default function App() {
         if (timedOut) {
           setStatus({
             kind: "key",
-            key: "statusQueryTimeout",
-            vars: { secs: timeoutSecs },
+            key: "statusQueryTimeoutPartial",
+            vars: { secs: timeoutSecs, rows: deliveredRows },
             error: true,
           });
         } else {
@@ -2337,6 +2443,7 @@ export default function App() {
     patchTab,
     cancelStreamForTab,
     invalidateSchemaCache,
+    notifyQueryOutcome,
     selectedProfile?.database,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
@@ -2766,6 +2873,9 @@ export default function App() {
       patchTab(tabId, (tt) => ({
         ...tt,
         result: res,
+        // ページ送りは完全な新ページへの置換なので、前回のキャンセル/タイム
+        // アウト由来の部分結果バッジ (#685) はここでクリアする。
+        partialResult: null,
         page: target,
         pageSize,
         loadingMore: false,
@@ -2972,6 +3082,17 @@ export default function App() {
       isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
     const needsWriteApproval = requireWriteApproval && !isReadOnlySql(sql);
     if (findings.length > 0 || needsWriteApproval) {
+      // Irreversible DROP/TRUNCATE on a production connection gets the
+      // stronger "type the target name to confirm" gate (#675); everything
+      // else (non-production, or DELETE/UPDATE-without-WHERE findings) keeps
+      // the existing one-click confirmation.
+      const destructiveTargets = findings
+        .filter((f) => f.kind === "drop" || f.kind === "truncate")
+        .map((f) => f.target);
+      const typedConfirmTarget =
+        isProduction && destructiveTargets.length > 0
+          ? resolveTypedConfirmTarget(destructiveTargets)
+          : null;
       setPendingDangerous({
         tabId: target.id,
         sql,
@@ -2980,6 +3101,7 @@ export default function App() {
         writeApproval: needsWriteApproval,
         autoLimit,
         batch,
+        typedConfirmTarget,
       });
       return;
     }
@@ -3108,11 +3230,19 @@ export default function App() {
   // `cancelStream` tears down the cursor while leaving the connection open.
   const stopTab = useCallback(async (tab: Tab) => {
     if (!tab.streaming) return;
-    await cancelStreamForTab(tab.id);
+    const wasPreview = tab.previewStreaming;
+    // バックエンドが報告する「中断時点で届いていた行数」(#685)。ストリームが
+    // 既に終わっていた場合 (null) は、フロント側に貯まっている行数へフォール
+    // バックする (resolveCancelledRows) — メッセージは常に何らかの行数を出す。
+    const deliveredRows = await cancelStreamForTab(tab.id);
+    const partial = cancelledPartialResult(deliveredRows, tab.result?.rows.length ?? 0);
+    const rows = partial.rows;
     patchTab(tab.id, (tt) => ({
       ...tt,
       streaming: false,
       previewStreaming: false,
+      // プレビューは別グリッド (before/after) で完結し、部分結果バッジの対象外。
+      ...(wasPreview ? {} : { partialResult: partial }),
       // プレビューをキャンセルした場合、previewQueryInTab の onDone/onError は
       // (リスナーが既に detach 済みのため) 発火しない。退避しておいた
       // paginatable をここで復元する (#F3)。プレビューでなければ
@@ -3121,8 +3251,22 @@ export default function App() {
         ? { paginatable: tt.previewPrevPaginatable, previewPrevPaginatable: undefined }
         : null),
     }));
-    setStatus({ kind: "key", key: "statusQueryCancelled" });
-  }, [cancelStreamForTab, patchTab]);
+    setStatus(
+      wasPreview
+        ? { kind: "key", key: "statusQueryCancelled" }
+        : { kind: "key", key: "statusQueryCancelledPartial", vars: { rows } },
+    );
+    // Preview (dry-run) cancellations aren't the "long-running editor query"
+    // this notification is meant for (#707) — only notify for a real query run.
+    if (!wasPreview) {
+      // 行がまだ届いていない長時間クエリの停止でも経過時間を正しく出すため、
+      // result.elapsed_ms (行到着まで 0) ではなく実行開始時刻から算出する。
+      const started = runStartRef.current.get(tab.id);
+      const elapsedMs =
+        started !== undefined ? Date.now() - started : (tab.result?.elapsed_ms ?? 0);
+      void notifyQueryOutcome("cancelled", elapsedMs);
+    }
+  }, [cancelStreamForTab, patchTab, notifyQueryOutcome]);
 
   // Insert a snippet into the focused pane's editor, or open a fresh query tab
   // holding the snippet when there is no active tab yet.
@@ -3560,23 +3704,28 @@ export default function App() {
   }, [selectedProfile?.is_production]);
 
   const handleTruncateTable = useCallback(async (database: string, table: string) => {
+    // 不可逆 (TRUNCATE) × 本番接続では、対象テーブル名のタイプ入力を要求する
+    // 強確認ゲートを追加する (#675)。非本番はこれまで通り 1 クリック確認。
     const ok = await confirm({
       title: translate("truncateConfirmTitle", { table }),
       message: maintenanceMessage(translate("truncateConfirmBody", { table })),
       confirmLabel: translate("truncateConfirmOk"),
       tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? table : undefined,
     });
     if (!ok) return;
     const driver = selectedProfile?.driver ?? "mysql";
     await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, runMaintenanceDdl]);
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
 
   const handleDropTable = useCallback(async (database: string, table: string) => {
+    // 不可逆 (DROP) × 本番接続では同様にタイプ入力の強確認ゲートを追加する (#675)。
     const ok = await confirm({
       title: translate("dropConfirmTitle", { table }),
       message: maintenanceMessage(translate("dropConfirmBody", { table })),
       confirmLabel: translate("dropConfirmOk"),
       tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? table : undefined,
     });
     if (!ok) return;
     const driver = selectedProfile?.driver ?? "mysql";
@@ -3587,7 +3736,7 @@ export default function App() {
         .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
         .forEach((tt) => handleCloseTabRef.current(tt.id));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, runMaintenanceDdl]);
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
 
   const handleRenameTableSubmit = useCallback(async (newName: string) => {
     const target = renameTarget;
@@ -4786,6 +4935,7 @@ export default function App() {
                       onToggleRowDelete={tab.kind === "table" && !readOnly ? (key) => toggleRowDeleteForTab(tab.id, key) : undefined}
                       onRequestInsertRow={tab.kind === "table" && !readOnly ? () => requestInsertRowForTab(tab.id) : undefined}
                       autoLimitApplied={tab.autoLimitApplied}
+                      partialResult={tab.partialResult ?? null}
                       onFetchAllRows={() => fetchAllForTab(tab)}
                       driver={selectedProfile?.driver ?? "mysql"}
                       database={tab.database ?? selectedProfile?.database ?? null}
@@ -5810,6 +5960,7 @@ export default function App() {
             findings={pendingDangerous.findings}
             isProduction={pendingDangerous.isProduction}
             writeApproval={pendingDangerous.writeApproval}
+            typedConfirmTarget={pendingDangerous.typedConfirmTarget}
             onConfirm={handleConfirmDangerous}
             onCancel={handleCancelDangerous}
           />

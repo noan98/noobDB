@@ -135,6 +135,7 @@ const SECTIONS: Section[] = [
       { titleKey: "helpReadOnlyTitle", descKey: "helpReadOnlyDesc" },
       { titleKey: "helpProductionTitle", descKey: "helpProductionDesc" },
       { titleKey: "helpConfirmWritesTitle", descKey: "helpConfirmWritesDesc" },
+      { titleKey: "helpTypeToConfirmTitle", descKey: "helpTypeToConfirmDesc" },
     ],
   },
   {

@@ -142,6 +142,7 @@ const en = {
   settingsAutoLimitCount: "Auto LIMIT rows",
   settingsAutoLimitCountHelp: "Row cap applied when auto LIMIT kicks in.",
   settingsSafety: "Safety",
+  settingsNotifications: "Notifications",
   settingsConfirmProductionConnect: "Confirm before connecting to production",
   settingsConfirmProductionConnectHelp: "Show a confirmation dialog when connecting to a profile marked as production.",
   settingsConfirmDangerousQueries: "Confirm before dangerous write queries",
@@ -160,6 +161,17 @@ const en = {
   settingsAutoReconnectHelp: "When a connection drops (idle timeout, network / VPN loss, SSH tunnel drop), reconnect automatically with the same profile using exponential backoff. A drop detected mid-transaction is never auto-reconnected — it surfaces an error so a partial commit can't happen. When off, a manual Reconnect button is shown instead.",
   settingsAutoReconnectMaxRetries: "Max reconnect attempts",
   settingsAutoReconnectMaxRetriesHelp: "How many times to retry (with growing backoff) before giving up and showing a manual Reconnect button.",
+  settingsQueryNotifications: "Notify when a slow query finishes",
+  settingsQueryNotificationsHelp: "Show an OS desktop notification when a query finishes (success, error, cancelled, or timed out) while this window is not focused. Never includes the SQL text or result rows — only counts, timing, and a one-line error excerpt. Clicking the notification brings the window to the front.",
+  settingsQueryNotificationThreshold: "Notify after (seconds)",
+  settingsQueryNotificationThresholdHelp: "Only notify for queries that took at least this long to finish.",
+  notifyQueryDoneTitle: "Query finished",
+  notifyQueryDoneBody: "{rows} rows in {ms} ms",
+  notifyQueryErrorTitle: "Query failed",
+  notifyQueryTimeoutTitle: "Query timed out",
+  notifyQueryTimeoutBody: "Cancelled after exceeding the timeout — the connection is still open.",
+  notifyQueryCancelledTitle: "Query cancelled",
+  notifyQueryCancelledBody: "The running query was cancelled; rows already loaded are kept.",
   settingsTabPersistence: "Tab persistence",
   settingsTabPersistenceHelp: "Choose what to do with the tabs that were open when you last disconnected from a profile.",
   settingsTabRestoreMode: "Restore behavior",
@@ -206,6 +218,26 @@ const en = {
   settingsLogsClearConfirm: "Delete all saved application logs?",
   settingsLogsEmpty: "No logs recorded yet.",
   settingsLogsPath: "File: {path}",
+  settingsBackup: "Backup & reset",
+  settingsBackupHelp:
+    "Export or import all app settings (appearance, safety, streaming, keybindings, etc.) as a JSON file, or reset everything back to defaults.",
+  settingsBackupExport: "Export settings",
+  settingsBackupExportTitle: "Export settings",
+  settingsBackupExportSuccess: "Exported settings to {path}",
+  settingsBackupExportError: "Settings export failed: {error}",
+  settingsBackupImport: "Import settings",
+  settingsBackupImportTitle: "Import settings",
+  settingsBackupImportConfirm:
+    "Replace all current app settings with the imported file? Invalid or out-of-range values fall back to defaults automatically.",
+  settingsBackupImportSuccess: "Settings imported.",
+  settingsBackupImportError: "Settings import failed: {error}",
+  settingsBackupExcludesProfiles: "Connection profiles and secrets are not included (use Export/Import connection profiles for those).",
+  settingsBackupResetAll: "Reset all to defaults",
+  settingsBackupResetAllTitle: "Reset all settings",
+  settingsBackupResetAllConfirm:
+    "Reset every app setting — appearance, safety, streaming, keybindings and all other sections — back to its default value? This cannot be undone.",
+  settingsBackupResetAllSuccess: "All settings were reset to defaults.",
+  settingsBackupResetAllHelp: "Resets every section on this screen, including keybinding overrides.",
   tabRestoreConfirm: "Restore {count} tabs from your last session?",
   tabRestoreConfirmTitle: "Restore tabs",
   tabRestoreConfirmRestore: "Restore",
@@ -240,6 +272,10 @@ const en = {
   dangerousTargetUnknown: "Target: (could not determine)",
   dangerousCancel: "Cancel",
   dangerousConfirm: "Run anyway",
+  // Shared "type to confirm" gate (#675) used by DangerousQueryDialog,
+  // ConfirmDialog (drop/truncate from the connection tree), and
+  // SchemaCompareView's production apply confirmation.
+  typeToConfirmLabel: "Type the following to continue: {target}",
   parameterInputTitle: "Enter query parameters",
   parameterInputIntro:
     "This query contains {{name}} placeholders. Provide a value and type for each. Values are escaped for the active driver before the query runs.",
@@ -287,12 +323,16 @@ const en = {
   statusRunningElapsed: "Running query... ({ms} ms)",
   statusTimeoutApproaching: "Timing out in {secs}s",
   statusQueryCancelled: "Query cancelled — the rows already loaded are kept.",
+  statusQueryCancelledPartial: "Query cancelled after {rows} rows — the rows already loaded are kept.",
   statusLoadingMore: "Loading more rows... ({rows} loaded)",
   statusPreviewStreaming: "Streaming preview... ({ms} ms)",
   gridLoadingMore: "Loading more rows...",
   autoLimitApplied: "Auto-applied LIMIT {limit} — there may be more rows.",
   autoLimitFetchAll: "Fetch all rows",
   autoLimitFetchAllTitle: "Re-run this query without the automatic LIMIT.",
+  partialResultBadge: "Partial",
+  partialResultCancelledTitle: "Cancelled after {rows} rows — this is a partial result.",
+  partialResultTimeoutTitle: "Timed out after {rows} rows — this is a partial result.",
 
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
   statusFailedDeleteProfile: "Failed to delete profile: {error}",
@@ -323,6 +363,7 @@ const en = {
   statusDismiss: "Close this message",
   statusSeverityCritical: "Critical",
   statusQueryTimeout: "Query timed out after {secs}s and was cancelled. The connection is still open — raise or disable the timeout in Settings.",
+  statusQueryTimeoutPartial: "Query timed out after {secs}s (stopped after {rows} rows). The connection is still open — raise or disable the timeout in Settings.",
   statusRunningPreview: "Running preview (will roll back)...",
   statusPreviewDone: "Preview: {rows} rows affected ({ms} ms) — rolled back, DB unchanged",
   statusPreviewError: "Preview error: {error}",
@@ -662,6 +703,7 @@ const en = {
   profileImportError: "Profile import failed: {error}",
   exportRowCount: "{rows} rows will be exported.",
   exportPartialWarning: "Only the rows currently loaded are exported. To export the full result set, run \"Fetch all rows\" first.",
+  exportPartialWarningStopped: "The query was cancelled or timed out before finishing — only the rows already loaded are exported. Re-run it to get the full result.",
   // 全件ストリーミングエクスポート。
   exportScope: "What to export",
   exportScopeCurrent: "Current grid only",
@@ -971,6 +1013,13 @@ const en = {
   gridCopyRow: "Copy row (TSV)",
   gridCopyRowWithHeaders: "Copy row with column names",
   gridCopyAsInsert: "Copy as INSERT",
+  gridCopyAsInsertRows: "Copy {count} rows as INSERT (one statement per row)",
+  gridCopyAsInsertRowsTitle: "One INSERT INTO ... VALUES (...); statement per selected row",
+  gridCopyAsInsertRowsCombined: "Copy {count} rows as INSERT (combined)",
+  gridCopyAsInsertRowsCombinedTitle:
+    "A single INSERT INTO ... VALUES (...), (...); statement covering all selected rows",
+  gridCopyAsInsertAmbiguousTable:
+    "Couldn't resolve a single source table for this result — copied with a placeholder table name; edit it before running",
   gridCopyAsUpdate: "Copy as UPDATE",
   gridCopyAsDelete: "Copy as DELETE",
   gridCopyAsSqlNoPk: "UPDATE / DELETE need a primary key",
@@ -1186,6 +1235,10 @@ const en = {
   helpConfirmWritesDesc:
     "On a production connection, shows an approval dialog before running a non-read-only statement. This is a UI safety net to prevent accidents — unlike read-only it is NOT enforced in the backend, so calling the backend directly bypasses it. For hard enforcement, use read-only or database-side privileges.",
 
+  helpTypeToConfirmTitle: "Type-to-confirm gate for irreversible actions",
+  helpTypeToConfirmDesc:
+    "On a production connection, DROP/TRUNCATE (from the query editor or the connection tree) and applying a schema/data sync plan with destructive statements require typing the target name (or a fixed word when it can't be resolved) before the action button enables. Like confirm_writes, this is a UI safety net only — it is NOT enforced in the backend, so calling the backend directly bypasses it.",
+
   helpSectionShortcuts: "Keyboard shortcuts",
   helpSectionShortcutsDesc:
     "Speed up the operations you repeat most. Editor shortcuts work while the SQL editor has focus.",
@@ -1289,7 +1342,7 @@ const en = {
   schemaCompareTitle: "Schema comparison",
   schemaCompareClose: "Close",
   schemaCompareDesc:
-    "Pick a source and a target connection and database to see how their schemas differ. This opens read-only sessions just for the comparison and closes them when you leave. Generating the SQL to apply the differences is coming in a later release.",
+    "Pick a source and a target connection and database to see how their schemas differ. This opens read-only sessions just for the comparison and closes them when you leave. You can generate SQL to apply the differences and run it against the target — destructive statements (DROP) and DELETE are opt-in switches, and applying is refused on read-only sessions.",
   schemaCompareNoProfiles: "No saved connections to compare. Create a connection first.",
   schemaCompareSource: "Source",
   schemaCompareTarget: "Target",
@@ -1334,6 +1387,10 @@ const en = {
     'Apply {count} statement(s) to "{name}"? This modifies the target schema ({destructive} destructive).',
   schemaCompareApplyProductionConfirm:
     '"{name}" is a production connection. Apply schema changes anyway?',
+  schemaCompareApplyTypedConfirmTitle: "Confirm destructive apply on production",
+  schemaCompareApplyTypedConfirmBody:
+    '"{name}" is a production connection and this plan includes {destructive} destructive statement(s) (DROP/DELETE). This cannot be undone.',
+  schemaCompareApplyTypedConfirmOk: "Apply anyway",
   schemaCompareApplyDone: "Applied {count} statement(s) to the target.",
   schemaCompareDestructiveFlag: "destructive",
   schemaCompareKindCreateTable: "CREATE TABLE",
@@ -1640,6 +1697,7 @@ const ja: Dict = {
   settingsAutoLimitCount: "自動 LIMIT 行数",
   settingsAutoLimitCountHelp: "自動 LIMIT が適用されるときの行数の上限です。",
   settingsSafety: "セーフティ",
+  settingsNotifications: "通知",
   settingsConfirmProductionConnect: "本番環境接続時に確認ダイアログを表示",
   settingsConfirmProductionConnectHelp: "本番環境としてマークされた接続先に接続する前に確認ダイアログを表示します。",
   settingsConfirmDangerousQueries: "危険な書き込みクエリの実行前に確認",
@@ -1658,6 +1716,17 @@ const ja: Dict = {
   settingsAutoReconnectHelp: "接続が切れたとき（アイドルタイムアウト、ネットワークや VPN の切断、SSH トンネル断）に、同じプロファイルで指数バックオフしながら自動再接続します。トランザクション中の断は、中途半端なコミットを避けるため自動再接続せずエラーにします。無効にすると手動の再接続ボタンを表示します。",
   settingsAutoReconnectMaxRetries: "最大再接続回数",
   settingsAutoReconnectMaxRetriesHelp: "諦めて手動の再接続ボタンを表示するまでに、（待機を伸ばしながら）何回まで再試行するか。",
+  settingsQueryNotifications: "時間のかかったクエリ完了時に通知",
+  settingsQueryNotificationsHelp: "このウィンドウが非フォーカスのときにクエリが完了（成功・エラー・キャンセル・タイムアウト）したら OS のデスクトップ通知を表示します。SQL 本文や結果データは一切含めず、件数・経過時間・エラーの先頭 1 行のみを表示します。通知をクリックするとウィンドウが前面に表示されます。",
+  settingsQueryNotificationThreshold: "通知するまでの経過時間 (秒)",
+  settingsQueryNotificationThresholdHelp: "この秒数以上かかったクエリの完了時のみ通知します。",
+  notifyQueryDoneTitle: "クエリが完了しました",
+  notifyQueryDoneBody: "{rows} 件取得 ({ms} ms)",
+  notifyQueryErrorTitle: "クエリでエラーが発生しました",
+  notifyQueryTimeoutTitle: "クエリがタイムアウトしました",
+  notifyQueryTimeoutBody: "タイムアウトのため中断されました — 接続は維持されています。",
+  notifyQueryCancelledTitle: "クエリをキャンセルしました",
+  notifyQueryCancelledBody: "実行中のクエリをキャンセルしました。取得済みの行は保持されます。",
   settingsTabPersistence: "タブの永続化",
   settingsTabPersistenceHelp: "切断時に開いていたタブを、次回同じ接続先につないだときにどう扱うかを選択します。",
   settingsTabRestoreMode: "復元方法",
@@ -1704,6 +1773,27 @@ const ja: Dict = {
   settingsLogsClearConfirm: "保存されているアプリケーションログをすべて削除しますか？",
   settingsLogsEmpty: "まだログは記録されていません。",
   settingsLogsPath: "ファイル: {path}",
+  settingsBackup: "バックアップとリセット",
+  settingsBackupHelp:
+    "外観・安全性・ストリーミング・キーバインドなど、アプリ設定全体を JSON ファイルとしてエクスポート/インポートできます。すべての設定を既定値に戻すこともできます。",
+  settingsBackupExport: "設定をエクスポート",
+  settingsBackupExportTitle: "設定をエクスポート",
+  settingsBackupExportSuccess: "{path} に設定をエクスポートしました",
+  settingsBackupExportError: "設定のエクスポートに失敗しました: {error}",
+  settingsBackupImport: "設定をインポート",
+  settingsBackupImportTitle: "設定をインポート",
+  settingsBackupImportConfirm:
+    "現在のアプリ設定をすべて、選択したファイルの内容で置き換えますか？ 不正な値や範囲外の値は自動的に既定値へフォールバックします。",
+  settingsBackupImportSuccess: "設定をインポートしました。",
+  settingsBackupImportError: "設定のインポートに失敗しました: {error}",
+  settingsBackupExcludesProfiles:
+    "接続プロファイルと秘密情報は含まれません (それらは接続プロファイルのエクスポート/インポートを使用してください)。",
+  settingsBackupResetAll: "すべて既定値に戻す",
+  settingsBackupResetAllTitle: "すべての設定をリセット",
+  settingsBackupResetAllConfirm:
+    "外観・安全性・ストリーミング・キーバインドを含む、この画面のすべての設定項目を既定値に戻しますか？ この操作は取り消せません。",
+  settingsBackupResetAllSuccess: "すべての設定を既定値に戻しました。",
+  settingsBackupResetAllHelp: "キーバインドの上書きを含む、この画面の全セクションをリセットします。",
   tabRestoreConfirm: "前回開いていた {count} 個のタブを復元しますか？",
   tabRestoreConfirmTitle: "タブを復元",
   tabRestoreConfirmRestore: "復元する",
@@ -1738,6 +1828,9 @@ const ja: Dict = {
   dangerousTargetUnknown: "対象: (特定できませんでした)",
   dangerousCancel: "キャンセル",
   dangerousConfirm: "実行する",
+  // DangerousQueryDialog・ConfirmDialog (ツリーからの DROP/TRUNCATE)・
+  // SchemaCompareView の本番適用確認で共有する「タイプして確認」ゲート (#675)。
+  typeToConfirmLabel: "続行するには次のテキストを入力してください: {target}",
   parameterInputTitle: "クエリパラメータの入力",
   parameterInputIntro:
     "このクエリには {{name}} プレースホルダーが含まれています。各パラメータの値と型を指定してください。値は実行前に接続中のドライバに合わせてエスケープされます。",
@@ -1785,12 +1878,16 @@ const ja: Dict = {
   statusRunningElapsed: "クエリを実行中... ({ms} ms)",
   statusTimeoutApproaching: "まもなくタイムアウト (残り {secs} 秒)",
   statusQueryCancelled: "クエリをキャンセルしました — 取得済みの行はそのまま保持されます。",
+  statusQueryCancelledPartial: "{rows} 行取得した時点でキャンセルしました — 取得済みの行はそのまま保持されます。",
   statusLoadingMore: "追加レコードを読み込み中... ({rows} 件取得済み)",
   statusPreviewStreaming: "プレビューをストリーミング中... ({ms} ms)",
   gridLoadingMore: "追加レコードを読み込み中...",
   autoLimitApplied: "自動的に LIMIT {limit} を適用しました — さらに行がある可能性があります。",
   autoLimitFetchAll: "全件取得",
   autoLimitFetchAllTitle: "自動 LIMIT を外してこのクエリを再実行します。",
+  partialResultBadge: "部分結果",
+  partialResultCancelledTitle: "{rows} 行取得した時点でキャンセルされました — これは部分結果です。",
+  partialResultTimeoutTitle: "{rows} 行取得した時点でタイムアウトしました — これは部分結果です。",
 
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
   statusFailedDeleteProfile: "プロファイルの削除に失敗しました: {error}",
@@ -1821,6 +1918,7 @@ const ja: Dict = {
   statusDismiss: "このメッセージを閉じる",
   statusSeverityCritical: "重大",
   statusQueryTimeout: "クエリが {secs} 秒でタイムアウトし、中断されました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
+  statusQueryTimeoutPartial: "クエリが {secs} 秒でタイムアウトし、{rows} 行取得した時点で停止しました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
   statusRunningPreview: "プレビュー実行中 (ロールバックされます)...",
   statusPreviewDone: "プレビュー: 影響行数 {rows} 件 ({ms} ms) — ロールバック済み、DBは変更されていません",
   statusPreviewError: "プレビューエラー: {error}",
@@ -2160,6 +2258,7 @@ const ja: Dict = {
   profileImportError: "プロファイルのインポートに失敗しました: {error}",
   exportRowCount: "{rows} 行をエクスポートします。",
   exportPartialWarning: "現在読み込み済みの行のみが対象です。全件をエクスポートするには、先に「全件取得」を実行してください。",
+  exportPartialWarningStopped: "クエリはキャンセルまたはタイムアウトにより途中で停止しました — 現在読み込み済みの行のみが対象です。全件を取得するにはクエリを再実行してください。",
   // 全件ストリーミングエクスポート。
   exportScope: "エクスポート対象",
   exportScopeCurrent: "現在のグリッドのみ",
@@ -2469,6 +2568,13 @@ const ja: Dict = {
   gridCopyRow: "行をコピー (TSV)",
   gridCopyRowWithHeaders: "列名付きで行をコピー",
   gridCopyAsInsert: "INSERT としてコピー",
+  gridCopyAsInsertRows: "{count} 行を INSERT としてコピー (1行1文)",
+  gridCopyAsInsertRowsTitle: "選択した各行につき 1 つの INSERT INTO ... VALUES (...); 文を生成します",
+  gridCopyAsInsertRowsCombined: "{count} 行を INSERT としてコピー (まとめて1文)",
+  gridCopyAsInsertRowsCombinedTitle:
+    "選択したすべての行を 1 つの INSERT INTO ... VALUES (...), (...); 文にまとめます",
+  gridCopyAsInsertAmbiguousTable:
+    "この結果の元テーブルを一意に特定できなかったため、仮のテーブル名でコピーしました。実行前に書き換えてください",
   gridCopyAsUpdate: "UPDATE としてコピー",
   gridCopyAsDelete: "DELETE としてコピー",
   gridCopyAsSqlNoPk: "UPDATE / DELETE には主キーが必要です",
@@ -2683,6 +2789,10 @@ const ja: Dict = {
   helpConfirmWritesDesc:
     "本番としてマークした接続で、読み取り専用でない文を実行する前に承認ダイアログを表示します。これは誤操作を防ぐための UI 上の安全網であり、読み取り専用 (read_only) のようにバックエンドで強制されるものではありません (バックエンドを直接呼べば回避できます)。確実に書き込みを禁止したい場合は、読み取り専用や DB 側の権限設定を使ってください。",
 
+  helpTypeToConfirmTitle: "不可逆な操作のタイプ入力確認ゲート",
+  helpTypeToConfirmDesc:
+    "本番としてマークした接続で、DROP/TRUNCATE (クエリエディタ・接続ツリーのいずれも) や破壊的な文を含む同期適用を実行する前に、対象名 (特定できない場合は固定の確認ワード) を入力しないとボタンが有効化されない確認ステップを追加します。confirm_writes と同様、これは UI 上の安全網であり、バックエンドで強制されるものではありません (バックエンドを直接呼べば回避できます)。",
+
   helpSectionShortcuts: "キーボードショートカット",
   helpSectionShortcutsDesc:
     "よく使う操作を素早く行えます。エディタ向けのショートカットは SQL エディタにフォーカスがあるときに有効です。",
@@ -2786,7 +2896,7 @@ const ja: Dict = {
   schemaCompareTitle: "スキーマ比較",
   schemaCompareClose: "閉じる",
   schemaCompareDesc:
-    "ソースとターゲットの接続・データベースを選ぶと、両者のスキーマの差分を確認できます。比較専用の読み取り専用セッションを開き、画面を離れると自動的に閉じます。差分を反映する SQL の生成は今後のリリースで対応予定です。",
+    "ソースとターゲットの接続・データベースを選ぶと、両者のスキーマの差分を確認できます。比較専用の読み取り専用セッションを開き、画面を離れると自動的に閉じます。差分を埋める SQL を生成してターゲットへ適用できます — 破壊的な操作 (DROP) と DELETE は個別のオプトインスイッチで有効化する必要があり、読み取り専用セッションへの適用は拒否されます。",
   schemaCompareNoProfiles: "比較できる接続がありません。先に接続を作成してください。",
   schemaCompareSource: "ソース",
   schemaCompareTarget: "ターゲット",
@@ -2831,6 +2941,10 @@ const ja: Dict = {
     "{count} 文を「{name}」へ適用しますか? ターゲットのスキーマを変更します (うち破壊的: {destructive})。",
   schemaCompareApplyProductionConfirm:
     "「{name}」は本番接続です。スキーマ変更を適用しますか?",
+  schemaCompareApplyTypedConfirmTitle: "本番への破壊的な適用の確認",
+  schemaCompareApplyTypedConfirmBody:
+    "「{name}」は本番接続で、この適用計画には破壊的な文 (DROP/DELETE) が {destructive} 件含まれています。元に戻すことはできません。",
+  schemaCompareApplyTypedConfirmOk: "承知の上で適用する",
   schemaCompareApplyDone: "{count} 文をターゲットへ適用しました。",
   schemaCompareDestructiveFlag: "破壊的",
   schemaCompareKindCreateTable: "CREATE TABLE",

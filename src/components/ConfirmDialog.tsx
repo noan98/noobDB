@@ -1,8 +1,10 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
+import { chakra } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { useT } from "../i18n";
+import { typedConfirmMatches } from "../typeToConfirm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, PressableButton } from "./ui";
+import { Button, Input, PressableButton } from "./ui";
 
 /**
  * テーマに追従するカスタム確認ダイアログ。`window.confirm()` を置き換えるために
@@ -30,10 +32,19 @@ export interface ConfirmOptions {
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: ConfirmTone;
+  /**
+   * When set, requires the user to type this text exactly before the
+   * confirm button is enabled — the "type the target name to confirm" gate
+   * (#675) used for irreversible operations (DROP/TRUNCATE) on production
+   * connections. A UI safety net only, like `confirm_writes`: the backend
+   * does not require or check this text.
+   */
+  typedConfirmation?: string;
 }
 
 interface PendingState extends ConfirmOptions {
   resolve: (ok: boolean) => void;
+  seq: number;
 }
 
 /**
@@ -58,12 +69,16 @@ export function useConfirm(): { confirm: (opts: ConfirmOptions) => Promise<boole
   // 重複呼び出しのキューイングは行わず、後から来た confirm に上書きされる前に
   // 一旦キャンセルとして解決する (= UI ループ的に呼び出し側が困らない)。
   const lastResolveRef = useRef<((ok: boolean) => void) | null>(null);
+  // 呼び出しごとの連番。ConfirmDialog の key に使い、続けて別の typedConfirmation
+  // で confirm() したとき前回の入力欄の値を持ち越さない (安全網の汚染防止)。
+  const seqRef = useRef(0);
 
   const confirm = useCallback((opts: ConfirmOptions) => {
     return new Promise<boolean>((resolve) => {
       if (lastResolveRef.current) lastResolveRef.current(false);
       lastResolveRef.current = resolve;
-      setState({ ...opts, resolve });
+      seqRef.current += 1;
+      setState({ ...opts, resolve, seq: seqRef.current });
     });
   }, []);
 
@@ -81,11 +96,13 @@ export function useConfirm(): { confirm: (opts: ConfirmOptions) => Promise<boole
     <AnimatePresence>
       {state && (
         <ConfirmDialog
+          key={state.seq}
           title={state.title}
           message={state.message}
           confirmLabel={state.confirmLabel ?? t("confirmDefaultOk")}
           cancelLabel={state.cancelLabel ?? t("confirmDefaultCancel")}
           tone={state.tone ?? "primary"}
+          typedConfirmation={state.typedConfirmation}
           onConfirm={() => close(true)}
           onCancel={() => close(false)}
         />
@@ -102,14 +119,30 @@ interface ConfirmDialogProps {
   confirmLabel: string;
   cancelLabel: string;
   tone: ConfirmTone;
+  typedConfirmation?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-function ConfirmDialog({ title, message, confirmLabel, cancelLabel, tone, onConfirm, onCancel }: ConfirmDialogProps) {
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  cancelLabel,
+  tone,
+  typedConfirmation,
+  onConfirm,
+  onCancel,
+}: ConfirmDialogProps) {
+  const t = useT();
   // 既定フォーカスは「キャンセル」へ。stray Enter で実行が走らないようにする
-  // (DangerousQueryDialog と同じ方針)。
+  // (DangerousQueryDialog と同じ方針)。タイプ確認ゲートがあるときはどのみち
+  // 入力が必要になるので、最初から入力欄へフォーカスする。
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const typedInputRef = useRef<HTMLInputElement>(null);
+  const [typedValue, setTypedValue] = useState("");
+  const requiresTyped = !!typedConfirmation;
+  const typedMatches = !requiresTyped || typedConfirmMatches(typedValue, typedConfirmation);
   // 破壊的/注意付き確認 (danger・warning) は安全側優先レイアウトに従い、
   // 実行を左に非強調で置き、キャンセルを右端 + primary にする
   // (DangerousQueryDialog・ModalFooter のガイドラインと同一)。通常の確認 (primary)
@@ -118,11 +151,38 @@ function ConfirmDialog({ title, message, confirmLabel, cancelLabel, tone, onConf
   const destructive = tone !== "primary";
 
   return (
-    <Modal width="440px" onClose={onCancel} initialFocusEl={() => cancelRef.current}>
+    <Modal
+      width="440px"
+      onClose={onCancel}
+      initialFocusEl={() => (requiresTyped ? typedInputRef.current : cancelRef.current)}
+    >
       <ModalHeader onClose={onCancel} closeLabel={cancelLabel}>
         {title}
       </ModalHeader>
-      <ModalBody>{message}</ModalBody>
+      <ModalBody display="flex" flexDirection="column" gap="3">
+        {message}
+        {requiresTyped && (
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
+            <chakra.label
+              htmlFor="confirm-dialog-type-confirm-input"
+              fontSize="sm"
+              fontWeight={600}
+              color="app.text"
+            >
+              {t("typeToConfirmLabel", { target: typedConfirmation })}
+            </chakra.label>
+            <Input
+              id="confirm-dialog-type-confirm-input"
+              ref={typedInputRef}
+              value={typedValue}
+              onChange={(e) => setTypedValue(e.target.value)}
+              placeholder={typedConfirmation}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </chakra.div>
+        )}
+      </ModalBody>
       <ModalFooter>
         {destructive ? (
           <>
@@ -130,6 +190,7 @@ function ConfirmDialog({ title, message, confirmLabel, cancelLabel, tone, onConf
               type="button"
               variant={tone === "danger" ? "dangerOutline" : "secondary"}
               onClick={onConfirm}
+              disabled={requiresTyped && !typedMatches}
             >
               {confirmLabel}
             </Button>
@@ -144,7 +205,12 @@ function ConfirmDialog({ title, message, confirmLabel, cancelLabel, tone, onConf
             <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel}>
               {cancelLabel}
             </Button>
-            <PressableButton type="button" variant="primary" onClick={onConfirm}>
+            <PressableButton
+              type="button"
+              variant="primary"
+              onClick={onConfirm}
+              disabled={requiresTyped && !typedMatches}
+            >
               {confirmLabel}
             </PressableButton>
           </>

@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::query::record_write_history;
 use crate::error::{AppError, Result};
-use crate::state::{AppState, Session};
+use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
 /// Number of data rows returned by `parse_csv_preview` for the mapping UI.
 const PREVIEW_ROW_LIMIT: usize = 50;
@@ -429,20 +429,43 @@ pub async fn import_csv(
         ));
     }
 
-    let handle = tokio::spawn(spawn_import(
-        app,
-        session,
-        stream_id.clone(),
-        database,
-        table,
-        path,
-        options,
-        mapping,
-        batch_size.unwrap_or(DEFAULT_BATCH_SIZE),
-    ));
-    state
-        .register_stream(stream_id, handle.abort_handle())
+    // register_stream をタスク本体より前に完了させるためのゲート
+    // (run_query_stream / preview_query_stream と同じ理由。#685)。入力エラー等で
+    // 即終了する import が register より先に forget_stream し、完了済みハンドルが
+    // streams に残る競合を防ぐ。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let stream_id_for_task = stream_id.clone();
+    let handle = tokio::spawn(async move {
+        let _ = ready_rx.await;
+        spawn_import(
+            app,
+            session,
+            stream_id_for_task,
+            database,
+            table,
+            path,
+            options,
+            mapping,
+            batch_size.unwrap_or(DEFAULT_BATCH_SIZE),
+        )
         .await;
+    });
+    state
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                // A CSV/JSON import runs as one all-or-nothing transaction, so
+                // there's no meaningful "rows delivered so far" to report on
+                // cancel (unlike the query/preview/export streams, #685) —
+                // this counter is never incremented.
+                delivered_rows: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                kind: StreamKind::Import,
+            },
+        )
+        .await;
+    // register_stream 完了後にタスク本体の実行を許可する。
+    let _ = ready_tx.send(());
     Ok(())
 }
 

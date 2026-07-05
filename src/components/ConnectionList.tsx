@@ -1296,7 +1296,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             <TreeChevron visibility="hidden" aria-hidden />
                                             <TreeIcon
                                               fontSize="xs"
-                                              color={isPk ? "app.cell.date" : isFk ? "app.accent" : "app.textMuted"}
+                                              color={isPk ? "app.keyAccent" : isFk ? "app.accent" : "app.textMuted"}
                                               title={isPk ? t("colPkTitle") : isFk ? t("colFkTitle") : undefined}
                                               aria-hidden
                                             >
@@ -1333,7 +1333,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             <TreeChevron visibility="hidden" aria-hidden />
                                             <TreeIcon
                                               fontSize="xs"
-                                              color={idx.primary ? "app.cell.date" : idx.unique ? "app.status.success" : "app.textMuted"}
+                                              color={idx.primary ? "app.keyAccent" : idx.unique ? "app.status.success" : "app.textMuted"}
                                               aria-hidden
                                             >
                                               {idx.primary ? <Icon name="key" /> : <Icon name="list" />}

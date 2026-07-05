@@ -582,6 +582,81 @@ export function buildRowSql(input: BuildRowSqlInput, kind: RowSqlKind): string[]
   return stmts;
 }
 
+/**
+ * Fallback table name used by `buildInsertClipboard` when no concrete target
+ * table can be resolved (e.g. a JOIN or otherwise free-form query result with
+ * no single owning table). Mirrors the backend's SQL-export fallback
+ * (`commands/export.rs`'s `exported_table`) so the two "copy as INSERT" paths
+ * agree on what an unresolved table looks like.
+ */
+export const FALLBACK_INSERT_TABLE = "exported_table";
+
+export interface BuildInsertClipboardResult {
+  /** The generated SQL, or `""` when there was nothing to emit (no rows or
+   *  no columns). */
+  sql: string;
+  /** `false` when `table` was empty/unresolved and `FALLBACK_INSERT_TABLE`
+   *  was substituted — callers should warn the user the table name needs
+   *  editing before the statement can run as-is. */
+  tableResolved: boolean;
+}
+
+export interface BuildInsertClipboardInput {
+  driver: string;
+  database: string;
+  /** Resolved target table name, or `null`/`undefined`/blank when the
+   *  result's origin table is ambiguous (e.g. a JOIN). */
+  table: string | null | undefined;
+  columns: Column[];
+  /** The selected result rows, one INSERT (or VALUES tuple) per row. */
+  rows: CellValue[][];
+}
+
+/**
+ * Builds a clipboard-ready `INSERT` payload for one or more selected result
+ * rows — the row context menu / range-selection "Copy as INSERT" action
+ * (#601).
+ *
+ * `combineValues` selects the statement shape:
+ *   - `false` — one `INSERT INTO ... VALUES (...);` per row (delegates to
+ *     `buildRowSql`, so the literal/escaping rules are identical to the
+ *     existing single-row "copy as INSERT").
+ *   - `true`  — a single statement with one `VALUES` tuple per row:
+ *     `INSERT INTO ... VALUES (...), (...), ...;`.
+ *
+ * When `table` is missing/blank, falls back to `FALLBACK_INSERT_TABLE` and
+ * reports `tableResolved: false` so the caller can surface a warning instead
+ * of silently emitting SQL against a guessed table name.
+ */
+export function buildInsertClipboard(
+  input: BuildInsertClipboardInput,
+  combineValues: boolean,
+): BuildInsertClipboardResult {
+  const { driver, database, columns, rows } = input;
+  const tableResolved = !!(input.table && input.table.trim().length > 0);
+  const table = tableResolved ? (input.table as string).trim() : FALLBACK_INSERT_TABLE;
+  const validRows = rows.filter((r): r is CellValue[] => !!r);
+  if (columns.length === 0 || validRows.length === 0) {
+    return { sql: "", tableResolved };
+  }
+  if (!combineValues) {
+    const stmts = buildRowSql(
+      { driver, database, table, columns, rows: validRows, pkIndices: [] },
+      "insert",
+    );
+    return { sql: stmts.join("\n"), tableResolved };
+  }
+  const ref = qualifiedTableRef(driver, database, table);
+  const cols = columns.map((c) => quoteIdentFor(driver, c.name)).join(", ");
+  const tuples = validRows.map(
+    (row) => `(${columns.map((c, i) => rowValueLiteral(driver, row[i], c)).join(", ")})`,
+  );
+  return {
+    sql: `INSERT INTO ${ref} (${cols}) VALUES ${tuples.join(", ")};`,
+    tableResolved,
+  };
+}
+
 /** Total number of cells (across all rows) currently flagged for edit. */
 export function countEditedCells(edits: PendingEdits): number {
   let n = 0;

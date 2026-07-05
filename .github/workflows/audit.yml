@@ -1,0 +1,74 @@
+name: audit
+
+# フロントエンド依存 (pnpm) の定期脆弱性監査 (#605)。
+#
+# 位置づけ: 依存関係の脆弱性チェックは Rust 側で cargo-deny (RustSec Advisory DB、
+# ci.yml の rust (deny) ジョブ) が既に PR ごとに実走しているが、フロントエンド側
+# (pnpm) には対になる仕組みが無かった。本ワークフローがその可視化を担う。
+#
+# 役割分担 (CLAUDE.md にも記載):
+#   - Dependabot (.github/dependabot.yml)  … 更新 PR の自動生成 (グルーピング/週次)
+#   - cargo-deny (ci.yml の rust (deny))   … Rust 依存のライセンス許可リスト + 脆弱性ゲート
+#   - pnpm audit (このワークフロー)         … フロント依存の脆弱性可視化
+#
+# PR ごとに実走させると新規脆弱性の検出が翌 PR まで遅延しないメリットはあるが、
+# 依存を追加/更新していない PR でも毎回外部 DB (npm advisory) に問い合わせることになり
+# 無駄が大きい。バンドルサイズ (#443) ・カバレッジ (#482) と同じ漸進方針で、まずは
+# 週次スケジュール + 手動トリガの可視化のみとし、**fail させない**。
+on:
+  schedule:
+    # 毎週月曜 03:00 UTC (JST 月曜 12:00) に実行。
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# corepack が pnpm を取得する際の対話プロンプトを無効化 (CI は非対話)。
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  pnpm-audit:
+    name: pnpm audit (frontend 依存脆弱性)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # 当面は閾値による fail を設けず可視化のみ (バンドルサイズ #443・カバレッジ
+      # #482 と同じ漸進方針)。`pnpm audit` 自体は脆弱性が見つかると非ゼロ終了する
+      # ため `|| true` で吸収し、結果は Job Summary に出す。
+      - name: pnpm audit (可視化のみ)
+        run: |
+          {
+            echo '### pnpm audit (フロントエンド依存脆弱性)'
+            echo ''
+            echo '```'
+            pnpm audit || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

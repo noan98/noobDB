@@ -8,6 +8,8 @@ import {
   readableInk,
   INK_DARK,
   INK_LIGHT,
+  accentFill,
+  ACCENT_FILL_STOPS,
 } from "../colorScale";
 
 // データ可視化カラースケール体系 (#525) の値 → 色マッピング純関数の検証。
@@ -102,6 +104,28 @@ describe("readableInk (#525/#526)", () => {
 
   it("falls back to dark ink for invalid hex", () => {
     expect(readableInk("not-a-color")).toBe(INK_DARK);
+  });
+});
+
+describe("accentFill (#718 — data bar / NULL rate mini bar shared fill)", () => {
+  it("emits a color-mix() recipe against --accent at the given percent", () => {
+    expect(accentFill(28)).toBe("color-mix(in srgb, var(--accent) 28%, transparent)");
+    expect(accentFill(55)).toBe("color-mix(in srgb, var(--accent) 55%, transparent)");
+  });
+
+  it("clamps percent into [0,100]", () => {
+    expect(accentFill(-10)).toBe("color-mix(in srgb, var(--accent) 0%, transparent)");
+    expect(accentFill(150)).toBe("color-mix(in srgb, var(--accent) 100%, transparent)");
+  });
+
+  it("treats NaN / non-finite as 0 (no fill, safe side)", () => {
+    expect(accentFill(NaN)).toBe("color-mix(in srgb, var(--accent) 0%, transparent)");
+    expect(accentFill(Infinity)).toBe("color-mix(in srgb, var(--accent) 0%, transparent)");
+  });
+
+  it("exposes the data bar / NULL rate opacity stops as a single shared source", () => {
+    expect(ACCENT_FILL_STOPS.dataBar).toBe(28);
+    expect(ACCENT_FILL_STOPS.nullRate).toBe(55);
   });
 });
 

@@ -63,14 +63,16 @@ import {
   HEAT_PALETTES,
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
+import { accentFill, ACCENT_FILL_STOPS } from "../colorScale";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
-import { Skeleton } from "./Skeleton";
+import { Skeleton, shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import {
+  buildInsertClipboard,
   buildRowSql,
   countEditedCells,
   countEditedRows,
@@ -306,6 +308,8 @@ export const GRID_CSS: SystemStyleObject = {
   // データバーは幅を transform (scaleX) で表現する。width の補間はレイアウト/
   // ペイントを毎フレーム誘発するため、数値列の全セルが一斉に動くソート/再取得時に
   // 重くなる。scaleX なら GPU 合成のみで済む (値は利用側が inline style で渡す)。
+  // 塗り色は `colorScale.ts` の `accentFill`/`ACCENT_FILL_STOPS` (#718) を参照し、
+  // NULL 率ミニバーと同じ生成レシピ・不透明度段階を共有する (二重定義しない)。
   "& .cell-databar": {
     position: "absolute",
     left: 0,
@@ -313,7 +317,7 @@ export const GRID_CSS: SystemStyleObject = {
     bottom: 0,
     width: "100%",
     transformOrigin: "left center",
-    background: "color-mix(in srgb, var(--accent) 28%, transparent)",
+    background: accentFill(ACCENT_FILL_STOPS.dataBar),
     borderRadius: "var(--radius-sm)",
     transitionProperty: "transform",
     transitionDuration: "var(--dur-med)",
@@ -517,24 +521,17 @@ export const GRID_CSS: SystemStyleObject = {
     whiteSpace: "normal",
   },
   "& tbody tr.grid-skeleton-row": { pointerEvents: "none" },
-  // スケルトンセル。シマー帯は疑似要素の transform スライドで動かし
-  // (Skeleton.tsx と同方式)、多数セルの同時再ペイントを避ける。スタッガの
-  // animationDelay は inline style から疑似要素へ inherit で引き継ぐ。
+  // スケルトンセル。土台とシマー帯は Skeleton.tsx の共有定義
+  // (shimmerContainerCss / shimmerAfterCss) を使い、帯幅・色・周期の
+  // 修正漏れを防ぐ (#719)。多数セルの同時再ペイントを避けるため疑似要素の
+  // transform スライドで動かし、スタッガの animationDelay は inline style
+  // から疑似要素へ inherit で引き継ぐ。
   "& td.grid-skeleton-cell > div": {
-    position: "relative",
-    overflow: "hidden",
+    ...shimmerContainerCss,
     height: "10px",
     borderRadius: "2px",
-    background: "var(--bg-muted)",
   },
-  "& td.grid-skeleton-cell > div::after": {
-    content: '""',
-    position: "absolute",
-    inset: 0,
-    background: "linear-gradient(90deg, transparent, var(--bg-elevated), transparent)",
-    animation: "skeleton-shimmer var(--dur-shimmer) ease-in-out infinite",
-    animationDelay: "inherit",
-  },
+  "& td.grid-skeleton-cell > div::after": shimmerAfterCss,
   "& .grid-filter-summary": {
     position: "sticky",
     top: 0,
@@ -744,6 +741,13 @@ interface Props {
    * filled it), so small results and aggregates stay quiet.
    */
   autoLimitApplied?: number | null;
+  /**
+   * Set when the last run stopped before finishing (user cancel or query
+   * timeout) instead of completing normally, so `result` holds only a
+   * partial result. Drives a status-bar badge and the export-confirmation
+   * warning (#685). Cleared by the caller on the next run.
+   */
+  partialResult?: { reason: "cancelled" | "timeout"; rows: number } | null;
   /** Called from the badge to re-run the query without the auto LIMIT. */
   onFetchAllRows?: () => void;
   /** Active connection's driver ("mysql" | "postgres" | "sqlite"), for row→SQL generation. */
@@ -1790,7 +1794,9 @@ function ColumnStatsMenu({
     }
   };
 
-  // NULL 率ミニバー (条件付き書式 #499 と同じアクセント系トーン)。
+  // NULL 率ミニバー (条件付き書式 #499 と同じアクセント系トーン)。塗りは
+  // `colorScale.ts` の `accentFill`/`ACCENT_FILL_STOPS` を `.cell-databar` と
+  // 共有し、`color-mix(--accent)` の直書きを避ける (#718)。
   const nullBar = (
     <Box
       role="img"
@@ -1806,7 +1812,7 @@ function ColumnStatsMenu({
         width="100%"
         transformOrigin="left center"
         style={{ transform: `scaleX(${nullPct / 100})` }}
-        background="color-mix(in srgb, var(--accent) 55%, transparent)"
+        background={accentFill(ACCENT_FILL_STOPS.nullRate)}
         transition="transform var(--dur-med) var(--ease-out)"
       />
     </Box>
@@ -2572,6 +2578,9 @@ export function DataGrid({
 
   // Whether the right-click menu can offer "copy as SQL": we need a concrete
   // target table (set only for table tabs, not free-form query results).
+  // UPDATE/DELETE mutate a real row, so they stay gated on a resolved table —
+  // unlike "copy as INSERT" (below), which tolerates an ambiguous table via a
+  // fallback name.
   const rowSqlAvailable = !!rowSqlTable;
   const rowSqlHasPk = (pkIndices?.length ?? 0) > 0;
   const copyRowSql = (rowIdx: number, kind: RowSqlKind) => {
@@ -2590,6 +2599,31 @@ export function DataGrid({
     );
     if (stmts.length === 0) return;
     void runCopy(stmts.join("\n"));
+  };
+
+  // "Copy as INSERT" for one or more selected rows (#601). Unlike
+  // UPDATE/DELETE this only ever reads data, so it works even without a
+  // resolvable primary key, and even without a resolvable target table (a
+  // JOIN / free-form query result falls back to a placeholder table name and
+  // warns via toast — `buildInsertClipboard`'s `tableResolved` flag).
+  const copyRowsAsInsert = (rowIndices: number[], combineValues: boolean) => {
+    const selectedRows = rowIndices.map((i) => rows[i]).filter((r): r is CellValue[] => !!r);
+    if (selectedRows.length === 0 || columns.length === 0) return;
+    const result = buildInsertClipboard(
+      {
+        driver: rowSqlDriver ?? "mysql",
+        database: rowSqlDatabase ?? "",
+        table: rowSqlTable,
+        columns,
+        rows: selectedRows,
+      },
+      combineValues,
+    );
+    if (!result.sql) return;
+    if (!result.tableResolved) {
+      toast.info(t("gridCopyAsInsertAmbiguousTable"));
+    }
+    void runCopy(result.sql);
   };
 
   const commitEdit = (
@@ -3475,27 +3509,59 @@ export function DataGrid({
               label: t("gridCopyRowWithHeaders"),
               onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
             },
-            ...(rowSqlAvailable
-              ? [
-                  { separator: true as const },
-                  {
-                    label: t("gridCopyAsInsert"),
-                    onSelect: () => copyRowSql(copyMenu.rowIdx, "insert"),
-                  },
-                  {
-                    label: t("gridCopyAsUpdate"),
-                    onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
-                    disabled: !rowSqlHasPk,
-                    title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                  },
-                  {
-                    label: t("gridCopyAsDelete"),
-                    onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
-                    disabled: !rowSqlHasPk,
-                    title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                  },
-                ]
-              : []),
+            ...(() => {
+              // "Copy as INSERT" (#601): operates on every row covered by an
+              // active multi-row range selection, or just the clicked row
+              // when there is none/it's a single row. Unlike UPDATE/DELETE
+              // (below) it stays available even without a resolved target
+              // table — `copyRowsAsInsert` falls back to a placeholder name
+              // and warns instead.
+              const insertRowIndices =
+                selectionRect && selectionRect.rowIndexSet.size > 1
+                  ? Array.from(selectionRect.rowIndexSet)
+                  : [copyMenu.rowIdx];
+              const multiRow = insertRowIndices.length > 1;
+              return [
+                { separator: true as const },
+                multiRow
+                  ? {
+                      label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
+                      title: t("gridCopyAsInsertRowsTitle"),
+                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                    }
+                  : {
+                      label: t("gridCopyAsInsert"),
+                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                    },
+                ...(multiRow
+                  ? [
+                      {
+                        label: t("gridCopyAsInsertRowsCombined", {
+                          count: insertRowIndices.length,
+                        }),
+                        title: t("gridCopyAsInsertRowsCombinedTitle"),
+                        onSelect: () => copyRowsAsInsert(insertRowIndices, true),
+                      },
+                    ]
+                  : []),
+                ...(rowSqlAvailable
+                  ? [
+                      {
+                        label: t("gridCopyAsUpdate"),
+                        onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
+                        disabled: !rowSqlHasPk,
+                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                      },
+                      {
+                        label: t("gridCopyAsDelete"),
+                        onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
+                        disabled: !rowSqlHasPk,
+                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                      },
+                    ]
+                  : []),
+              ];
+            })(),
             // 一括編集 (#596): 矩形選択がある編集可能なテーブルでのみ、
             // 「選択セルに値を設定」を出す。PK が無いテーブルは行を特定できないため非表示。
             ...(onBulkEdit && editable && selectionRect && (pkIndices?.length ?? 0) > 0
@@ -3974,6 +4040,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   canLoadMore,
   onLoadMore,
   autoLimitApplied,
+  partialResult,
   onFetchAllRows,
   driver,
   database,
@@ -4677,6 +4744,20 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 LIMIT {autoLimitApplied}
               </chakra.span>
             )}
+            {partialResult && (
+              <chakra.span
+                color="var(--text-warning)"
+                marginLeft="6px"
+                title={t(
+                  partialResult.reason === "cancelled"
+                    ? "partialResultCancelledTitle"
+                    : "partialResultTimeoutTitle",
+                  { rows: partialResult.rows },
+                )}
+              >
+                {t("partialResultBadge")}
+              </chakra.span>
+            )}
           </chakra.span>
         )}
         <chakra.input
@@ -4945,7 +5026,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             database={database ?? null}
             table={table ?? null}
             driver={driver}
-            partial={showAutoLimitBadge || !!canLoadMore}
+            partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
+            stoppedPartial={!!partialResult}
             fullExport={fullExport}
             onClose={() => setShowExport(false)}
           />

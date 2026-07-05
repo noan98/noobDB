@@ -99,7 +99,9 @@ describe("主要画面のレンダリング (実ブラウザ)", () => {
 
   it("設定画面が描画される", async () => {
     const screen = await renderInBrowser(<SettingsView theme="light" onClose={() => {}} />);
-    await expect.element(screen.getByText(t("settingsTitle"))).toBeVisible();
+    await expect.element(
+      screen.getByRole("heading", { name: t("settingsTitle"), exact: true }),
+    ).toBeVisible();
   });
 
   it("ヘルプ画面が描画される", async () => {

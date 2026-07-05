@@ -568,26 +568,27 @@ impl MySqlConn {
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
         let projection =
             "SELECT ID, USER, HOST, DB, COMMAND, STATE, TIME, INFO, ID = CONNECTION_ID() FROM";
-        let rows: Vec<MySqlRow> = match sqlx::query(sqlx::AssertSqlSafe(format!(
+        let primary = sqlx::query(sqlx::AssertSqlSafe(format!(
             "{projection} performance_schema.processlist ORDER BY ID"
         )))
         .fetch_all(&self.pool)
-        .await
-        {
-            Ok(rows) if !rows.is_empty() => rows,
-            // Fall back when this source is unavailable. That is not only an
-            // error (table missing on pre-8.0.22 / MariaDB) but also an EMPTY
-            // success: with `performance_schema = OFF` the table still exists
-            // and the query succeeds, yet nothing is collected. A truly empty
-            // processlist is impossible — the connection running this very
-            // query always appears — so empty unambiguously means "disabled".
-            _ => {
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "{projection} information_schema.PROCESSLIST ORDER BY ID"
-                )))
-                .fetch_all(&self.pool)
-                .await?
-            }
+        .await;
+        // Fall back when this source is unavailable. That is not only an
+        // error (table missing on pre-8.0.22 / MariaDB) but also an EMPTY
+        // success: with `performance_schema = OFF` the table still exists
+        // and the query succeeds, yet nothing is collected. A truly empty
+        // processlist is impossible — the connection running this very
+        // query always appears — so empty unambiguously means "disabled".
+        // The decision itself is split into `process_list_needs_fallback` so
+        // it can be unit-tested without a live server (#587, #641).
+        let rows: Vec<MySqlRow> = if process_list_needs_fallback(&primary) {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "{projection} information_schema.PROCESSLIST ORDER BY ID"
+            )))
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            primary?
         };
         Ok(rows
             .into_iter()
@@ -982,6 +983,22 @@ pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()
     drop(c);
     conn.close().await;
     Ok(())
+}
+
+/// Decides whether `list_processes` must fall back from
+/// `performance_schema.processlist` to `information_schema.PROCESSLIST`
+/// (#587). A query error (table missing on pre-8.0.22 / MariaDB) always
+/// warrants the fallback; a *successful but empty* result does too, because
+/// with `performance_schema = OFF` the table still exists and the query still
+/// succeeds, yet collects nothing — and an empty processlist is impossible
+/// since the connection running this very query always appears in it.
+/// Split out as a pure, generic function so the branch selection is
+/// unit-testable without a live server (#641).
+fn process_list_needs_fallback<T>(primary: &std::result::Result<Vec<T>, sqlx::Error>) -> bool {
+    match primary {
+        Ok(rows) => rows.is_empty(),
+        Err(_) => true,
+    }
 }
 
 /// Maps the driver-neutral [`SslMode`] to MySQL's `MySqlSslMode`. `VerifyFull`
@@ -1871,6 +1888,33 @@ mod tests {
         assert_eq!(non_empty(&Some(String::new())), None);
         assert_eq!(non_empty(&Some(" /k.pem ".to_string())), Some("/k.pem"));
         assert_eq!(non_empty(&None), None);
+    }
+
+    /// #587 / #641: the fallback from `performance_schema.processlist` to
+    /// `information_schema.PROCESSLIST` must trigger both when the primary
+    /// query errors (table missing on old MySQL / MariaDB) and when it
+    /// succeeds but returns zero rows (`performance_schema = OFF`), since a
+    /// genuinely empty processlist is impossible. It must NOT trigger when the
+    /// primary query returns at least one row.
+    #[test]
+    fn process_list_fallback_triggers_on_error_and_on_empty_success() {
+        let empty_ok: std::result::Result<Vec<i32>, sqlx::Error> = Ok(Vec::new());
+        assert!(
+            process_list_needs_fallback(&empty_ok),
+            "an empty success must fall back (performance_schema = OFF case)"
+        );
+
+        let err: std::result::Result<Vec<i32>, sqlx::Error> = Err(sqlx::Error::RowNotFound);
+        assert!(
+            process_list_needs_fallback(&err),
+            "a query error must fall back (table missing on old MySQL / MariaDB)"
+        );
+
+        let nonempty_ok: std::result::Result<Vec<i32>, sqlx::Error> = Ok(vec![1, 2]);
+        assert!(
+            !process_list_needs_fallback(&nonempty_ok),
+            "a non-empty success must NOT fall back"
+        );
     }
 
     #[test]
