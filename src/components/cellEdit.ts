@@ -634,7 +634,7 @@ export function buildInsertClipboard(
 ): BuildInsertClipboardResult {
   const { driver, database, columns, rows } = input;
   const tableResolved = !!(input.table && input.table.trim().length > 0);
-  const table = tableResolved ? (input.table as string) : FALLBACK_INSERT_TABLE;
+  const table = tableResolved ? (input.table as string).trim() : FALLBACK_INSERT_TABLE;
   const validRows = rows.filter((r): r is CellValue[] => !!r);
   if (columns.length === 0 || validRows.length === 0) {
     return { sql: "", tableResolved };

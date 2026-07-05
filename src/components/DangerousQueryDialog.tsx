@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DangerFinding, DangerKind } from "../dangerousSql";
@@ -53,6 +53,11 @@ export function DangerousQueryDialog({
   const [typedValue, setTypedValue] = useState("");
   const requiresTyped = !!typedConfirmTarget;
   const typedMatches = !requiresTyped || typedConfirmMatches(typedValue, typedConfirmTarget);
+  // 同一インスタンスを使い回す呼び出し側でも、対象が変わったら前回入力を
+  // 持ち越さない (安全網の入力欄が汚染されないようにする)。
+  useEffect(() => {
+    setTypedValue("");
+  }, [typedConfirmTarget]);
 
   return (
     <Modal

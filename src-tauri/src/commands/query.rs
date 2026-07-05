@@ -436,7 +436,8 @@ async fn spawn_query_stream(
             StreamBatch::Rows(rows) => {
                 // Count rows before emitting so a cancel racing this exact
                 // point never under-reports what actually reached the UI.
-                delivered_rows_cb.fetch_add(rows.len() as u64, Ordering::SeqCst);
+                let emitted_len = rows.len() as u64;
+                delivered_rows_cb.fetch_add(emitted_len, Ordering::SeqCst);
                 emit_app
                     .emit(
                         EV_QUERY_ROWS,
@@ -446,6 +447,8 @@ async fn spawn_query_stream(
                         },
                     )
                     .map_err(|e| {
+                        // The UI never received these rows; roll back the count.
+                        delivered_rows_cb.fetch_sub(emitted_len, Ordering::SeqCst);
                         tracing::warn!(
                             stream_id = %emit_id,
                             error = %e,
@@ -839,7 +842,8 @@ fn emit_chunks(
     let mut i = 0;
     while i < rows.len() {
         let end = (i + chunk).min(rows.len());
-        delivered_rows.fetch_add((end - i) as u64, Ordering::SeqCst);
+        let emitted_len = (end - i) as u64;
+        delivered_rows.fetch_add(emitted_len, Ordering::SeqCst);
         if let Err(e) = app.emit(
             event,
             PreviewRowsEvent {
@@ -847,6 +851,8 @@ fn emit_chunks(
                 rows: rows[i..end].to_vec(),
             },
         ) {
+            // The UI never received this chunk; roll back the count.
+            delivered_rows.fetch_sub(emitted_len, Ordering::SeqCst);
             tracing::warn!(
                 stream_id = %stream_id,
                 event = %event,

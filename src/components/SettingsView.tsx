@@ -1289,7 +1289,6 @@ export function SettingsView({ theme, onClose }: Props) {
       </SettingsSection>
         </chakra.div>
       </ModalBody>
-      {confirmDialog}
     </Modal>
     {confirmDialog}
     </>

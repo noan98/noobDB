@@ -656,19 +656,31 @@ pub async fn export_query_stream(
     // already been written when it aborts this task (#685).
     let counter = Arc::new(AtomicU64::new(0));
 
-    let handle = tokio::spawn(spawn_export_stream(
-        app,
-        session,
-        stream_id.clone(),
-        sql,
-        database,
-        initial_batch,
-        chunk_size,
-        query_timeout_secs,
-        shared,
-        cleanup,
-        counter.clone(),
-    ));
+    // register_stream をタスク本体より前に完了させるためのゲート
+    // (run_query_stream / preview_query_stream と同じ理由。#685)。ゲートが
+    // 無いと、即エラーや極小結果の export が register より先に forget_stream し、
+    // 完了済み StreamHandle が streams に残り後続の cancel_stream が誤って成功を
+    // 返す競合窓ができる。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let stream_id_for_task = stream_id.clone();
+    let counter_for_task = counter.clone();
+    let handle = tokio::spawn(async move {
+        let _ = ready_rx.await;
+        spawn_export_stream(
+            app,
+            session,
+            stream_id_for_task,
+            sql,
+            database,
+            initial_batch,
+            chunk_size,
+            query_timeout_secs,
+            shared,
+            cleanup,
+            counter_for_task,
+        )
+        .await;
+    });
     state
         .register_stream(
             stream_id,
@@ -679,6 +691,8 @@ pub async fn export_query_stream(
             },
         )
         .await;
+    // register_stream 完了後にタスク本体の実行を許可する。
+    let _ = ready_tx.send(());
     Ok(())
 }
 

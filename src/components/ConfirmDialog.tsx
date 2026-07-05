@@ -44,6 +44,7 @@ export interface ConfirmOptions {
 
 interface PendingState extends ConfirmOptions {
   resolve: (ok: boolean) => void;
+  seq: number;
 }
 
 /**
@@ -68,12 +69,16 @@ export function useConfirm(): { confirm: (opts: ConfirmOptions) => Promise<boole
   // 重複呼び出しのキューイングは行わず、後から来た confirm に上書きされる前に
   // 一旦キャンセルとして解決する (= UI ループ的に呼び出し側が困らない)。
   const lastResolveRef = useRef<((ok: boolean) => void) | null>(null);
+  // 呼び出しごとの連番。ConfirmDialog の key に使い、続けて別の typedConfirmation
+  // で confirm() したとき前回の入力欄の値を持ち越さない (安全網の汚染防止)。
+  const seqRef = useRef(0);
 
   const confirm = useCallback((opts: ConfirmOptions) => {
     return new Promise<boolean>((resolve) => {
       if (lastResolveRef.current) lastResolveRef.current(false);
       lastResolveRef.current = resolve;
-      setState({ ...opts, resolve });
+      seqRef.current += 1;
+      setState({ ...opts, resolve, seq: seqRef.current });
     });
   }, []);
 
@@ -91,6 +96,7 @@ export function useConfirm(): { confirm: (opts: ConfirmOptions) => Promise<boole
     <AnimatePresence>
       {state && (
         <ConfirmDialog
+          key={state.seq}
           title={state.title}
           message={state.message}
           confirmLabel={state.confirmLabel ?? t("confirmDefaultOk")}

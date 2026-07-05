@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_ACCENT_COLOR,
   DEFAULT_SETTINGS,
+  MAX_FONT_SIZE_PX,
   SETTINGS_EXPORT_KIND,
   SETTINGS_EXPORT_VERSION,
   deserializeSettingsImport,
@@ -62,7 +63,7 @@ describe("deserializeSettingsImport (#679)", () => {
       settings: { fontSizePx: 9999, accentColor: "not-a-color", density: "gigantic" },
     });
     const restored = deserializeSettingsImport(malformed);
-    expect(restored.fontSizePx).toBeLessThanOrEqual(24);
+    expect(restored.fontSizePx).toBeLessThanOrEqual(MAX_FONT_SIZE_PX);
     expect(restored.accentColor).toBe(DEFAULT_ACCENT_COLOR);
     expect(restored.density).toBe("normal");
   });

@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 // ドキュメントコメント中で `` `window.confirm()` `` のように "説明のために言及する"
 // ケースは許容したいので、直前がバッククォート (`` ` ``) の場合は除外する
 // (negative lookbehind)。
-const CALL_PATTERN = /(?<!`)window\.confirm\(/;
+const CALL_PATTERN = /(?<!`)window(?:\.confirm|\?\.confirm|\[["']confirm["']\])\(/;
 
 const modules = import.meta.glob("../**/*.{ts,tsx}", {
   eager: true,

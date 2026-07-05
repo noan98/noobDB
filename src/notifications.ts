@@ -17,23 +17,31 @@ import {
 } from "@tauri-apps/plugin-notification";
 
 let permissionState: "granted" | "denied" | "unknown" = "unknown";
+let permissionPromise: Promise<boolean> | null = null;
 
 async function ensurePermission(): Promise<boolean> {
   if (permissionState === "granted") return true;
   if (permissionState === "denied") return false;
-  try {
-    let granted = await isPermissionGranted();
-    if (!granted) {
-      const result = await requestPermission();
-      granted = result === "granted";
+  // 複数クエリがほぼ同時に完了しても権限要求は 1 回に集約する (in-flight 共有)。
+  if (permissionPromise) return permissionPromise;
+  permissionPromise = (async () => {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        const result = await requestPermission();
+        granted = result === "granted";
+      }
+      permissionState = granted ? "granted" : "denied";
+      return granted;
+    } catch {
+      // 権限 API 自体が失敗する環境 (未対応 OS 等) では通知を諦める。
+      permissionState = "denied";
+      return false;
+    } finally {
+      permissionPromise = null;
     }
-    permissionState = granted ? "granted" : "denied";
-    return granted;
-  } catch {
-    // 権限 API 自体が失敗する環境 (未対応 OS 等) では通知を諦める。
-    permissionState = "denied";
-    return false;
-  }
+  })();
+  return permissionPromise;
 }
 
 /** 現在のウィンドウがフォーカスされているかを返す。判定に失敗した場合は
