@@ -205,6 +205,7 @@ import {
   type PersistedTab,
   type PersistedWorkspace,
 } from "./tabPersistence";
+import { reorderIfPermutation } from "./tabReorder";
 import {
   buildPageSql,
   clampPage,
@@ -1488,20 +1489,10 @@ export default function App() {
     setPanes((prev) =>
       prev.map((p) => {
         if (p.id !== paneId) return p;
-        const cur = new Set(p.tabIds);
-        const next = new Set(orderedIds);
-        // Accept only a true permutation: same length, no duplicates, and the
-        // two id sets match exactly. This rejects a corrupt list like
-        // ["a","a","b"] that would otherwise drop a tab and leave it unreachable.
-        if (
-          orderedIds.length !== p.tabIds.length ||
-          next.size !== p.tabIds.length ||
-          !orderedIds.every((id) => cur.has(id)) ||
-          !p.tabIds.every((id) => next.has(id))
-        ) {
-          return p;
-        }
-        return { ...p, tabIds: orderedIds };
+        // Accept only a true permutation of this pane's ids so a stale callback
+        // can't smuggle in foreign tabs or drop one (see tabReorder.ts).
+        const validated = reorderIfPermutation(p.tabIds, orderedIds);
+        return validated ? { ...p, tabIds: validated } : p;
       }),
     );
   }, []);
