@@ -4384,6 +4384,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       // フックとして公開する (#657)。
       data-query-phase={deriveQueryPhase({
         streaming,
+        error: !!queryError,
         canceled: !!partialResult,
         hasResult: result.columns.length > 0,
       })}
