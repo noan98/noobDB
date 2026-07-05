@@ -68,6 +68,7 @@ import { ExportModal, type FullExportContext } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
 import { Skeleton, shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
+import { deriveQueryPhase, formatElapsed } from "../queryRunState";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
 import { LoadingButton } from "./LoadingButton";
@@ -3971,9 +3972,10 @@ function StreamingBanner({
   const timeoutMs = timeoutSecs > 0 ? timeoutSecs * 1000 : 0;
   const approaching = timeoutMs > 0 && elapsedMs >= timeoutMs * 0.8;
   const remainingSecs = Math.max(0, Math.ceil((timeoutMs - elapsedMs) / 1000));
+  const elapsed = formatElapsed(elapsedMs);
   const statusText = hasColumns
-    ? t("statusStreaming", { rows, ms: elapsedMs })
-    : t("statusRunningElapsed", { ms: elapsedMs });
+    ? t("statusStreaming", { rows, elapsed })
+    : t("statusRunningElapsed", { elapsed });
   return (
     <Box
       role="status"
@@ -4375,6 +4377,17 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       overflow="hidden"
       bg="app.surface"
       position={streaming ? "relative" : undefined}
+      // カラム確定でスケルトン → 実データへ切り替わる瞬間だけ一度フェードイン
+      // させ、滑らかに差し替える (#657)。reduced-motion では静止 (App.css)。
+      className={streaming ? "grid-data-reveal" : undefined}
+      // 実行フェーズを離散モデル (queryRunState) で表し、スタイル/テストの
+      // フックとして公開する (#657)。
+      data-query-phase={deriveQueryPhase({
+        streaming,
+        error: !!queryError,
+        canceled: !!partialResult,
+        hasResult: result.columns.length > 0,
+      })}
     >
       {streaming && (
         <StreamingBanner
@@ -4555,7 +4568,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             {t("editNoPkHint")}
           </chakra.span>
         )}
-        {editableActive && hasPendingEdits && (
+        {editableActive && (
+          // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
+          // 出現/退出させる (#659)。reduced-motion は MotionConfig が自動抑制する。
+          <AnimatePresence>
+            {hasPendingEdits && (
+              <motion.div
+                key="edit-review-bar"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                transition={transitions.enter}
+                style={{ display: "inline-flex", alignItems: "stretch" }}
+              >
           <Box
             role="group"
             aria-label={t("editToolbarAria")}
@@ -4567,6 +4592,25 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             borderRight="1px solid var(--border-subtle)"
             background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
           >
+            {/* 件数バッジ: 未確定の編集セル数を丸ピルで示す (#659)。 */}
+            <chakra.span
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              minW="18px"
+              height="18px"
+              px="1.5"
+              borderRadius="full"
+              fontSize="2xs"
+              fontWeight={700}
+              lineHeight="1"
+              color="var(--preview-highlight)"
+              background="color-mix(in srgb, var(--preview-highlight) 20%, transparent)"
+              flexShrink={0}
+              aria-hidden
+            >
+              {editsCount}
+            </chakra.span>
             <chakra.span
               fontSize="xs"
               color="var(--preview-highlight)"
@@ -4657,6 +4701,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               {t("editCancelButton")}
             </Button>
           </Box>
+              </motion.div>
+            )}
+          </AnimatePresence>
         )}
         <AnimatePresence>
           {showDiscardConfirm && (

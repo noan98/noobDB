@@ -89,6 +89,25 @@ describe("normalizePersistedWorkspace", () => {
     expect(ws.panes[0].activeIndex).toBe(0);
   });
 
+  // Reorder (#658) is persisted purely as tab array order, so a reordered
+  // pane must round-trip through normalize in the same order it was saved.
+  it("preserves tab order through normalize (reorder round-trip)", () => {
+    const ws = normalizePersistedWorkspace({
+      panes: [
+        {
+          tabs: [
+            { kind: "query", title: "C", sql: "SELECT 3" },
+            { kind: "query", title: "A", sql: "SELECT 1" },
+            { kind: "query", title: "B", sql: "SELECT 2" },
+          ],
+          activeIndex: 0,
+        },
+      ],
+      activePane: 0,
+    });
+    expect(ws.panes[0].tabs.map((tt) => tt.title)).toEqual(["C", "A", "B"]);
+  });
+
   it("returns an empty workspace for unknown shapes", () => {
     expect(normalizePersistedWorkspace(null).panes).toHaveLength(0);
     expect(normalizePersistedWorkspace(42).panes).toHaveLength(0);

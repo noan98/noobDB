@@ -1222,6 +1222,19 @@ html, body, #root {
   animation: pane-overlay-in var(--dur-med, 200ms) var(--ease-out, ease-out);
 }
 
+/* `grid-data-reveal`: ストリーミングでカラムが確定し、スケルトンから実データの
+   グリッドへ差し替わる瞬間 (#657) の滑らかな出現。データ Box のマウント時に
+   一度だけ再生され、以降の行の流入や再レンダリングでは再生されない。下の
+   reduced-motion メディアクエリで静止化される。 */
+@keyframes grid-data-reveal {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.grid-data-reveal {
+  animation: grid-data-reveal var(--dur-base, 180ms) var(--ease-out, ease-out);
+}
+
 /* ---------- Reduced motion ----------
    OS の「視差効果/アニメーションを減らす」設定時は、無限アニメーション
    (点滅ドット等) を静止させ、トランジションを実質無効化する。
