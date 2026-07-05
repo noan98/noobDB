@@ -22,7 +22,7 @@ import {
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { sql, type SQLNamespace } from "@codemirror/lang-sql";
-import { lintGutter, linter } from "@codemirror/lint";
+import { forceLinting, lintGutter, linter } from "@codemirror/lint";
 import {
   acceptCompletion,
   autocompletion,
@@ -599,6 +599,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase),
       ),
     });
+    // 方言 (driver) が変わっても `@codemirror/lint` は doc 変更が無い限り再実行
+    // されず、旧方言の診断が残ってしまう (#704 のレビュー指摘)。lint 有効時は
+    // 明示的に再 lint を促し、新方言のパースツリーで診断を更新する。
+    if (sqlLintEnabledRef.current) forceLinting(view);
     // `databaseSchema` is a stable reference from the parent's cache: it only
     // changes identity on (re)fetch or when the editor's database changes, so
     // depending on it directly is both correct and cheap.
