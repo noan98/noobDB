@@ -1272,6 +1272,10 @@ export default function App() {
   // we can synchronously cancel from anywhere (tab close, disconnect).
   const streamUnlistenRef = useRef<Map<string, UnlistenFn>>(new Map());
   const streamIdRef = useRef<Map<string, string>>(new Map());
+  // Wall-clock start of each tab's in-flight run (keyed by tab id). Read on
+  // cancel to compute elapsed time for the completion notification (#707),
+  // since `tab.result.elapsed_ms` stays 0 until the first row batch arrives.
+  const runStartRef = useRef<Map<string, number>>(new Map());
 
   // Active auto-refresh (scheduled re-execution) timers, keyed by tab id. Held
   // in a ref so reconciling them doesn't churn on every streamed row batch.
@@ -2251,6 +2255,7 @@ export default function App() {
     const streamId = newStreamId(tabId);
     streamIdRef.current.set(tabId, streamId);
     const startedAt = Date.now();
+    runStartRef.current.set(tabId, startedAt);
     setStatus({ kind: "key", key: "statusRunningQuery" });
     // 結果差分ハイライト (#597): 直前の結果行とその SQL を退避しておき、同一クエリの
     // 再実行 (prevResultSql === 今回 sql) のときだけ ResultGrid 側で差分計算に使う。
@@ -2868,6 +2873,9 @@ export default function App() {
       patchTab(tabId, (tt) => ({
         ...tt,
         result: res,
+        // ページ送りは完全な新ページへの置換なので、前回のキャンセル/タイム
+        // アウト由来の部分結果バッジ (#685) はここでクリアする。
+        partialResult: null,
         page: target,
         pageSize,
         loadingMore: false,
@@ -3251,7 +3259,12 @@ export default function App() {
     // Preview (dry-run) cancellations aren't the "long-running editor query"
     // this notification is meant for (#707) — only notify for a real query run.
     if (!wasPreview) {
-      void notifyQueryOutcome("cancelled", tab.result?.elapsed_ms ?? 0);
+      // 行がまだ届いていない長時間クエリの停止でも経過時間を正しく出すため、
+      // result.elapsed_ms (行到着まで 0) ではなく実行開始時刻から算出する。
+      const started = runStartRef.current.get(tab.id);
+      const elapsedMs =
+        started !== undefined ? Date.now() - started : (tab.result?.elapsed_ms ?? 0);
+      void notifyQueryOutcome("cancelled", elapsedMs);
     }
   }, [cancelStreamForTab, patchTab, notifyQueryOutcome]);
 
