@@ -26,9 +26,18 @@
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENDNUU1NURGQ0FBNEY4MjgKUldRbytLVEszMVZlekRETXlCa24wc2ZtdTFWeWJYYkdWQjk2ZG1DdWNnZTFtUkUxQ2s3ZG1rTXEK",
+      "endpoints": [
+        "https://github.com/noan98/noobDB/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

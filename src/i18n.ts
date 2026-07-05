@@ -218,6 +218,28 @@ const en = {
   settingsLogsClearConfirm: "Delete all saved application logs?",
   settingsLogsEmpty: "No logs recorded yet.",
   settingsLogsPath: "File: {path}",
+
+  settingsUpdates: "Updates",
+  settingsUpdatesHelp:
+    "noobDB can update itself in place. Update artifacts and their manifest are signed, and an update whose signature fails verification is never applied. Downloading, installing, and restarting always require your approval — the app never restarts on its own.",
+  settingsCurrentVersion: "Current version: {version}",
+  settingsVersionUnknown: "unknown",
+  settingsAutoUpdateCheck: "Check for updates on startup",
+  settingsAutoUpdateCheckHelp:
+    "Automatically check for a newer version when the app starts. Turn this off for offline or managed environments; you can still check manually below. A failed check (offline, unreachable manifest) is ignored silently and never blocks startup.",
+  settingsCheckForUpdates: "Check for updates",
+  settingsCheckingForUpdates: "Checking…",
+  updateUpToDate: "You're on the latest version ({version}).",
+  updateCheckFailed: "Couldn't check for updates. Check your connection and try again.",
+  updateAvailableTitle: "Update available",
+  updateAvailableMessage:
+    "A new version {version} is available (you have {current}). Download it and restart to update now?",
+  updateReleaseNotesLabel: "Release notes",
+  updateDownloadAndRestart: "Download & restart",
+  updateLater: "Later",
+  updateDownloadingStarted: "Downloading the update… the app will restart automatically when it's ready.",
+  updateFailed: "Update failed: {error}",
+
   settingsBackup: "Backup & reset",
   settingsBackupHelp:
     "Export or import all app settings (appearance, safety, streaming, keybindings, etc.) as a JSON file, or reset everything back to defaults.",
@@ -1773,6 +1795,28 @@ const ja: Dict = {
   settingsLogsClearConfirm: "保存されているアプリケーションログをすべて削除しますか？",
   settingsLogsEmpty: "まだログは記録されていません。",
   settingsLogsPath: "ファイル: {path}",
+
+  settingsUpdates: "アップデート",
+  settingsUpdatesHelp:
+    "noobDB はアプリ自身をその場で更新できます。更新の成果物とマニフェストは署名されており、署名検証に失敗した更新は適用されません。ダウンロード・インストール・再起動は必ずあなたの承認が必要で、アプリが勝手に再起動することはありません。",
+  settingsCurrentVersion: "現在のバージョン: {version}",
+  settingsVersionUnknown: "不明",
+  settingsAutoUpdateCheck: "起動時に更新を確認する",
+  settingsAutoUpdateCheckHelp:
+    "アプリ起動時に新しいバージョンを自動で確認します。オフラインや社内配布の環境ではオフにできます (下のボタンから手動確認は可能)。確認に失敗しても (オフライン・マニフェスト取得失敗) 静かに無視し、起動を妨げません。",
+  settingsCheckForUpdates: "更新を確認",
+  settingsCheckingForUpdates: "確認中…",
+  updateUpToDate: "最新バージョンです ({version})。",
+  updateCheckFailed: "更新を確認できませんでした。接続を確認してもう一度お試しください。",
+  updateAvailableTitle: "更新があります",
+  updateAvailableMessage:
+    "新しいバージョン {version} があります (現在 {current})。今すぐダウンロードして再起動し、更新しますか？",
+  updateReleaseNotesLabel: "リリースノート",
+  updateDownloadAndRestart: "ダウンロードして再起動",
+  updateLater: "後で",
+  updateDownloadingStarted: "更新をダウンロードしています… 準備ができると自動的に再起動します。",
+  updateFailed: "更新に失敗しました: {error}",
+
   settingsBackup: "バックアップとリセット",
   settingsBackupHelp:
     "外観・安全性・ストリーミング・キーバインドなど、アプリ設定全体を JSON ファイルとしてエクスポート/インポートできます。すべての設定を既定値に戻すこともできます。",

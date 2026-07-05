@@ -73,6 +73,21 @@ describe("deserializeSettingsImport (#679)", () => {
     expect(restored).toEqual(DEFAULT_SETTINGS);
   });
 
+  it("normalizes the auto-update-check flag and defaults it on when missing/invalid (#705)", () => {
+    expect(
+      deserializeSettingsImport(JSON.stringify({ settings: { autoUpdateCheckEnabled: false } }))
+        .autoUpdateCheckEnabled,
+    ).toBe(false);
+    // Missing or non-boolean values fall back to the default (on).
+    expect(
+      deserializeSettingsImport(JSON.stringify({ settings: {} })).autoUpdateCheckEnabled,
+    ).toBe(true);
+    expect(
+      deserializeSettingsImport(JSON.stringify({ settings: { autoUpdateCheckEnabled: "no" } }))
+        .autoUpdateCheckEnabled,
+    ).toBe(true);
+  });
+
   it("throws on invalid JSON so callers can surface a parse error", () => {
     expect(() => deserializeSettingsImport("{not json")).toThrow();
   });

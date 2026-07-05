@@ -71,6 +71,7 @@ import {
   setFontSizePx,
   setQueryNotificationsEnabled,
   setQueryNotificationThresholdSecs,
+  setAutoUpdateCheckEnabled,
   setQueryTimeoutSecs,
   setPreviewHighlight,
   setCellEditOnBlur,
@@ -83,6 +84,9 @@ import {
   useSettings,
 } from "../settings";
 import { ACCENT_PRESETS } from "../accent";
+import { checkForAppUpdate, getCurrentAppVersion } from "../updater";
+import { displayVersion } from "../updaterFormat";
+import { confirmAndInstallUpdate } from "./updatePrompt";
 
 interface Props {
   theme: Theme;
@@ -565,6 +569,36 @@ export function SettingsView({ theme, onClose }: Props) {
   const [logPath, setLogPath] = useState<string | null>(null);
   const [logLoading, setLogLoading] = useState(false);
   const [logCopied, setLogCopied] = useState(false);
+
+  // アプリ内自動更新 (#705): 現在バージョン表示と手動チェック。
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void getCurrentAppVersion().then((v) => {
+      if (active) setAppVersion(v);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const handleCheckForUpdates = async () => {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      const update = await checkForAppUpdate();
+      if (!update) {
+        toast.success(t("updateUpToDate", { version: displayVersion(appVersion) }));
+        return;
+      }
+      await confirmAndInstallUpdate(update, { t, toast, confirm });
+    } catch {
+      // 手動チェックは失敗を明示的に知らせる (起動時の静かな無視とは対照的)。
+      toast.error(t("updateCheckFailed"));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const loadLogs = async () => {
     setLogLoading(true);
@@ -1260,6 +1294,40 @@ export function SettingsView({ theme, onClose }: Props) {
             {t("settingsLogsPath", { path: logPath })}
           </SettingsLogsPath>
         )}
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsUpdates")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsUpdatesHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <chakra.span>
+            {t("settingsCurrentVersion", {
+              version: appVersion ?? t("settingsVersionUnknown"),
+            })}
+          </chakra.span>
+          <SettingsReset
+            type="button"
+            onClick={handleCheckForUpdates}
+            disabled={checkingUpdate}
+          >
+            {checkingUpdate ? t("settingsCheckingForUpdates") : t("settingsCheckForUpdates")}
+          </SettingsReset>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-auto-update-check">
+            <Switch
+              id="settings-auto-update-check"
+              checked={settings.autoUpdateCheckEnabled}
+              onChange={setAutoUpdateCheckEnabled}
+            />
+            {t("settingsAutoUpdateCheck")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsAutoUpdateCheckHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection>

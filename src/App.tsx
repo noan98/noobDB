@@ -173,6 +173,8 @@ import {
   registerNotificationClickFocus,
   sendQueryNotification,
 } from "./notifications";
+import { checkForAppUpdate } from "./updater";
+import { confirmAndInstallUpdate } from "./components/updatePrompt";
 import {
   firstLineForNotification,
   shouldNotifyQueryCompletion,
@@ -951,6 +953,29 @@ export default function App() {
   // 個別に判定・送信する (notifyQueryOutcome を参照)。
   useEffect(() => {
     registerNotificationClickFocus();
+  }, []);
+
+  // アプリ内自動更新 (#705): 起動時に一度だけ更新を確認する (設定でオフにできる)。
+  // ベストエフォート — オフライン/マニフェスト取得失敗は静かに無視して起動を
+  // ブロックしない。更新があればユーザ承認制の確認ダイアログを出し、承認された
+  // ときだけダウンロード・適用・再起動する (勝手には再起動しない)。
+  useEffect(() => {
+    if (!getSettings().autoUpdateCheckEnabled) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const update = await checkForAppUpdate();
+        if (cancelled || !update) return;
+        await confirmAndInstallUpdate(update, { t, toast, confirm });
+      } catch {
+        // ベストエフォート: 起動時チェックの失敗は静かに無視する。
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // 起動時に一度だけ。t/toast/confirm はレンダー間で安定なので依存に含めない。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Lock the cursor while dragging so it doesn't flicker off the thin handle.

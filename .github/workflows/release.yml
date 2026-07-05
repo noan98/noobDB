@@ -101,16 +101,29 @@ jobs:
       # ビルドだけ走らせて rust-cache (target) を main スコープに温める。
       # タグビルドはここで作られた main スコープのキャッシュにフォールバックして
       # ヒットするようになる。
+      #
+      # updater アーティファクト生成 (createUpdaterArtifacts、#705) は署名鍵
+      # (TAURI_SIGNING_PRIVATE_KEY) を要求し、鍵が無いとビルドが失敗する。キャッシュ
+      # 温めビルドには鍵を渡さない (Secrets はリリース時のみ) ため、--config で
+      # createUpdaterArtifacts を false に上書きして通常の NSIS ビルドだけ行う。
       - name: Build Tauri app (cache warm, no release)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: pnpm tauri build -- ${{ matrix.args }}
+        run: pnpm tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}' -- ${{ matrix.args }}
 
-      # タグ push のときだけ実際のリリース (ドラフト) を作成する。
+      # タグ push のときだけ実際のリリース (ドラフト) を作成する。updater 用の
+      # latest.json + 署名は tauri-action が createUpdaterArtifacts を検出して自動
+      # 生成・アップロードする (#705)。署名鍵は GitHub Actions Secrets で管理し、
+      # リポジトリには置かない (公開鍵のみ tauri.conf.json の plugins.updater.pubkey)。
+      # Secrets 未設定のリポジトリではこの署名付きビルドが失敗するため、更新機能を
+      # 使うには TAURI_SIGNING_PRIVATE_KEY (と鍵にパスワードを付けた場合は
+      # TAURI_SIGNING_PRIVATE_KEY_PASSWORD) の登録が前提。
       - name: Build Tauri app (release)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "noobDB ${{ github.ref_name }}"
