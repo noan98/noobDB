@@ -358,6 +358,10 @@ export function SchemaCompareView({
   const t = useT();
   const settings = useSettings();
   const { confirm, dialog: confirmDialog } = useConfirm();
+  // 不可逆 (破壊的ステートメントを含む同期適用) × 本番接続の強確認ゲート
+  // (対象接続名のタイプ入力。#675) に使う専用ダイアログ。破壊的 × 本番の
+  // ケースだけこちらへ差し替え、それ以外は上の confirm (テーマ追従ダイアログ。#674) を使う。
+  const { confirm: confirmTyped, dialog: typedConfirmDialog } = useConfirm();
 
   const [source, setSource] = useState<SideState>(EMPTY_SIDE);
   const [target, setTarget] = useState<SideState>(EMPTY_SIDE);
@@ -668,13 +672,30 @@ export function SchemaCompareView({
       tone: destructiveCount > 0 ? "danger" : "warning",
     });
     if (!applyOk) return;
-    if (targetProfile.is_production && settings.confirmProductionConnect) {
-      const prodOk = await confirm({
-        title: t("productionConfirmTitle"),
-        message: t("schemaCompareApplyProductionConfirm", { name: targetProfile.name }),
-        tone: "warning",
-      });
-      if (!prodOk) return;
+    if (targetProfile.is_production) {
+      if (destructiveCount > 0) {
+        // 不可逆 (破壊的ステートメントを含む適用) × 本番接続: 対象接続名の
+        // タイプ入力を要求する強確認ゲート (#675)。`confirmProductionConnect`
+        // 設定に関わらず常に要求する — 通常の本番接続警告より強い安全網。
+        const ok = await confirmTyped({
+          title: t("schemaCompareApplyTypedConfirmTitle"),
+          message: t("schemaCompareApplyTypedConfirmBody", {
+            name: targetProfile.name,
+            destructive: destructiveCount,
+          }),
+          confirmLabel: t("schemaCompareApplyTypedConfirmOk"),
+          tone: "danger",
+          typedConfirmation: targetProfile.name,
+        });
+        if (!ok) return;
+      } else if (settings.confirmProductionConnect) {
+        const prodOk = await confirm({
+          title: t("productionConfirmTitle"),
+          message: t("schemaCompareApplyProductionConfirm", { name: targetProfile.name }),
+          tone: "warning",
+        });
+        if (!prodOk) return;
+      }
     }
 
     setApplying(true);
@@ -727,6 +748,7 @@ export function SchemaCompareView({
     targetProfile,
     target.database,
     settings.confirmProductionConnect,
+    confirmTyped,
     t,
     confirm,
     runCompare,
@@ -985,6 +1007,7 @@ export function SchemaCompareView({
         </>
       )}
       {confirmDialog}
+      {typedConfirmDialog}
     </Box>
   );
 }

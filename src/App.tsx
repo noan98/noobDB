@@ -158,6 +158,7 @@ import {
   isSchemaMutatingSql,
   type DangerFinding,
 } from "./dangerousSql";
+import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
 import { matchErrorHint } from "./errorHints";
 import {
@@ -1173,6 +1174,13 @@ export default function App() {
     autoLimit: number | null;
     /** True when this run should execute as a multi-statement batch. */
     batch?: boolean;
+    /**
+     * Set when this is an irreversible DROP/TRUNCATE on a production
+     * connection: text the user must type to enable the confirm button
+     * (#675). Null when the extra gate doesn't apply (non-production, or no
+     * drop/truncate finding).
+     */
+    typedConfirmTarget: string | null;
   } | null>(null);
 
   // Pending {{variable}} parameter prompt. When the editor's SQL contains
@@ -2972,6 +2980,17 @@ export default function App() {
       isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
     const needsWriteApproval = requireWriteApproval && !isReadOnlySql(sql);
     if (findings.length > 0 || needsWriteApproval) {
+      // Irreversible DROP/TRUNCATE on a production connection gets the
+      // stronger "type the target name to confirm" gate (#675); everything
+      // else (non-production, or DELETE/UPDATE-without-WHERE findings) keeps
+      // the existing one-click confirmation.
+      const destructiveTargets = findings
+        .filter((f) => f.kind === "drop" || f.kind === "truncate")
+        .map((f) => f.target);
+      const typedConfirmTarget =
+        isProduction && destructiveTargets.length > 0
+          ? resolveTypedConfirmTarget(destructiveTargets)
+          : null;
       setPendingDangerous({
         tabId: target.id,
         sql,
@@ -2980,6 +2999,7 @@ export default function App() {
         writeApproval: needsWriteApproval,
         autoLimit,
         batch,
+        typedConfirmTarget,
       });
       return;
     }
@@ -3560,23 +3580,28 @@ export default function App() {
   }, [selectedProfile?.is_production]);
 
   const handleTruncateTable = useCallback(async (database: string, table: string) => {
+    // 不可逆 (TRUNCATE) × 本番接続では、対象テーブル名のタイプ入力を要求する
+    // 強確認ゲートを追加する (#675)。非本番はこれまで通り 1 クリック確認。
     const ok = await confirm({
       title: translate("truncateConfirmTitle", { table }),
       message: maintenanceMessage(translate("truncateConfirmBody", { table })),
       confirmLabel: translate("truncateConfirmOk"),
       tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? table : undefined,
     });
     if (!ok) return;
     const driver = selectedProfile?.driver ?? "mysql";
     await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, runMaintenanceDdl]);
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
 
   const handleDropTable = useCallback(async (database: string, table: string) => {
+    // 不可逆 (DROP) × 本番接続では同様にタイプ入力の強確認ゲートを追加する (#675)。
     const ok = await confirm({
       title: translate("dropConfirmTitle", { table }),
       message: maintenanceMessage(translate("dropConfirmBody", { table })),
       confirmLabel: translate("dropConfirmOk"),
       tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? table : undefined,
     });
     if (!ok) return;
     const driver = selectedProfile?.driver ?? "mysql";
@@ -3587,7 +3612,7 @@ export default function App() {
         .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
         .forEach((tt) => handleCloseTabRef.current(tt.id));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, runMaintenanceDdl]);
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
 
   const handleRenameTableSubmit = useCallback(async (newName: string) => {
     const target = renameTarget;
@@ -5810,6 +5835,7 @@ export default function App() {
             findings={pendingDangerous.findings}
             isProduction={pendingDangerous.isProduction}
             writeApproval={pendingDangerous.writeApproval}
+            typedConfirmTarget={pendingDangerous.typedConfirmTarget}
             onConfirm={handleConfirmDangerous}
             onCancel={handleCancelDangerous}
           />
