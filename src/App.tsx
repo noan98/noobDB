@@ -3484,6 +3484,22 @@ export default function App() {
     });
     const stmts = [...updates, ...deletes, ...inserts];
     if (stmts.length === 0) return;
+    // 本番接続で書き込み承認 (confirm_writes) が有効なときは、通常のクエリ実行
+    // ゲートと同じく、インライン編集の一括 Apply にも確認を要求する (#659)。
+    // read-only は編集面自体が無効なので到達しないが、保険で条件に含める。
+    const needsWriteApproval =
+      (selectedProfile?.is_production ?? false) &&
+      (selectedProfile?.confirm_writes ?? false) &&
+      !readOnly;
+    if (needsWriteApproval) {
+      const ok = await confirm({
+        title: translate("editApplyConfirmTitle"),
+        message: translate("editApplyConfirmBody", { count: stmts.length }),
+        confirmLabel: translate("editApplyButton"),
+        tone: "warning",
+      });
+      if (!ok) return;
+    }
     const tabId = tab.id;
     patchTab(tabId, (tt) => ({ ...tt, applyingEdits: true }));
     setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: stmts.length } });
@@ -3571,6 +3587,10 @@ export default function App() {
     runQueryInTab,
     settings.defaultDisplayCount,
     selectedProfile?.driver,
+    selectedProfile?.is_production,
+    selectedProfile?.confirm_writes,
+    readOnly,
+    confirm,
   ]);
 
   // 行を削除予定にトグルする。

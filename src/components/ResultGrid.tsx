@@ -4567,7 +4567,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             {t("editNoPkHint")}
           </chakra.span>
         )}
-        {editableActive && hasPendingEdits && (
+        {editableActive && (
+          // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
+          // 出現/退出させる (#659)。reduced-motion は MotionConfig が自動抑制する。
+          <AnimatePresence>
+            {hasPendingEdits && (
+              <motion.div
+                key="edit-review-bar"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                transition={transitions.enter}
+                style={{ display: "inline-flex", alignItems: "stretch" }}
+              >
           <Box
             role="group"
             aria-label={t("editToolbarAria")}
@@ -4579,6 +4591,25 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             borderRight="1px solid var(--border-subtle)"
             background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
           >
+            {/* 件数バッジ: 未確定の編集セル数を丸ピルで示す (#659)。 */}
+            <chakra.span
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              minW="18px"
+              height="18px"
+              px="1.5"
+              borderRadius="full"
+              fontSize="2xs"
+              fontWeight={700}
+              lineHeight="1"
+              color="var(--preview-highlight)"
+              background="color-mix(in srgb, var(--preview-highlight) 20%, transparent)"
+              flexShrink={0}
+              aria-hidden
+            >
+              {editsCount}
+            </chakra.span>
             <chakra.span
               fontSize="xs"
               color="var(--preview-highlight)"
@@ -4669,6 +4700,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               {t("editCancelButton")}
             </Button>
           </Box>
+              </motion.div>
+            )}
+          </AnimatePresence>
         )}
         <AnimatePresence>
           {showDiscardConfirm && (
