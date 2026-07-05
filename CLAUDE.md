@@ -998,7 +998,7 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   ラッパーは `api/schemas.ts` の **zod スキーマ**でレスポンスを実行時検証し、Rust の
   serde 構造体と TS 型のズレを早期検出します (未知フィールドは破棄で前方互換)。
 - `components/` (接続・クエリ) — `ConnectionList`/`ConnectionForm` (接続)、`QueryEditor`
-  (CodeMirror 6 + スキーマ補完)、`QueryBuilder`、`ResultGrid`/`PreviewGrid`
+  (CodeMirror 6 + スキーマ補完 + リアルタイム構文チェック。後述の #704 lint 統合)、`QueryBuilder`、`ResultGrid`/`PreviewGrid`
   (TanStack Table)、`TabBar`、`HistoryList`、`SnippetList`/`SnippetForm`、
   `ExportModal`/`DumpModal`/`ImportModal`、`ExplainViewer`、`SettingsView`、
   `HelpView`、`DangerousQueryDialog`、`CellValueViewer`、`ERDiagramView`
@@ -1056,7 +1056,8 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   reduced-motion で静止化する。
 - `settings.ts` — `useSyncExternalStore` ベースの設定ストア。シンタックスカラー
   (`syntaxColors` light/dark)・プレビューハイライト色・表示行数 (`defaultDisplayCount` /
-  `streamPrefetchSize`)・自動 LIMIT (`autoLimitEnabled` / `autoLimitCount`)・本番接続確認
+  `streamPrefetchSize`)・自動 LIMIT (`autoLimitEnabled` / `autoLimitCount`)・SQL 構文
+  チェック (`sqlLintEnabled`。#704)・本番接続確認
   (`confirmProductionConnect`)・危険クエリ確認 (`confirmDangerousQueries`)・新規タブ実行
   (`resultsInNewTab`)・タブ復元 (`tabRestoreMode`)・クエリタイムアウト
   (`queryTimeoutSecs`)・フォントサイズ (`fontSizePx`) / フォントファミリ
@@ -1069,6 +1070,20 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
 - `dangerousSql.ts` — WHERE なし UPDATE/DELETE・DROP・TRUNCATE を検出する
   フロント側の安全網 (バックエンド `is_read_only_sql` と同じくリテラル/コメントを
   マスクするベストエフォート判定)。`DangerousQueryDialog` の確認に使われます。
+- `components/sqlLint.ts` — クエリエディタのリアルタイム SQL 構文チェック (#704) の
+  純ロジック。`@codemirror/lang-sql` が既に構築した **Lezer パースツリーを再利用**し
+  (`syntaxTree(state)`)、エラーノード (`node.type.isError` = 括弧不整合など) と、
+  クオートで始まり閉じられていないトークン (未終端の文字列/引用符付き識別子。Lezer は
+  未終端文字列をエラーにせず EOF まで伸びる 1 トークンにするためツリーから別途拾う) を
+  `@codemirror/lint` の `Diagnostic[]` へ変換する。`QueryEditor` が `lintGutter()` +
+  `linter()` (デバウンス 500ms) を Compartment 越しに追加し、設定 `sqlLintEnabled`
+  (既定オン) のオン/オフと言語切替で再構成する。方言追従は共有ツリー経由で自動 (別途
+  dialect を渡さない)。診断メッセージは `i18n` (`editorLint*`) で日英対応。**編集支援
+  (ベストエフォート) であって安全判定ではない**: 文法が寛容なためキーワードのタイポや
+  カンマ抜けは検出できず、`apply_auto_limit` と同じく誤検出より見逃しを優先する保守的
+  方針。安全網 (`dangerousSql.ts` / `is_read_only_sql`) とは目的も経路も別物で判定
+  ロジックを共有しない。`sqlLint.test.ts` が正常 SQL の非検出・未終端/括弧の検出・
+  方言差を固定する。
 - `i18n.ts` — 日本語/英語の文字列テーブルと `useT` フック。
 - `tabPersistence.ts` — プロファイルごとの開きタブを localStorage に保存/復元。
 - `errorHints.ts` — DB エラー文字列を人間向けのヒントに対応付け。

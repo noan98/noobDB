@@ -150,6 +150,13 @@ export interface Settings {
    * 適用・再起動は本設定に関係なく常にユーザ承認制で、勝手には行われない。
    */
   autoUpdateCheckEnabled: boolean;
+  /**
+   * クエリエディタのリアルタイム SQL 構文チェック (#704)。既定オン。オンのとき
+   * CodeMirror の Lezer パースツリーを使い、括弧の不整合・未終端の文字列/引用符
+   * などを実行前に下線 + ガターで表示する。ベストエフォートの編集支援であり
+   * 安全判定ではない。誤検出が気になるユーザ向けにオフにできる。
+   */
+  sqlLintEnabled: boolean;
 }
 
 /**
@@ -429,6 +436,9 @@ export const MAX_QUERY_NOTIFICATION_THRESHOLD_SECS = 3_600;
 /** 起動時のアプリ更新チェック (#705) は既定オン。 */
 export const DEFAULT_AUTO_UPDATE_CHECK_ENABLED = true;
 
+/** リアルタイム SQL 構文チェック (#704) は既定オン。 */
+export const DEFAULT_SQL_LINT_ENABLED = true;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -461,6 +471,7 @@ export const DEFAULT_SETTINGS: Settings = {
   queryNotificationsEnabled: DEFAULT_QUERY_NOTIFICATIONS_ENABLED,
   queryNotificationThresholdSecs: DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
+  sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -637,6 +648,7 @@ export function normalizeSettings(input: unknown): Settings {
     queryNotificationsEnabled?: unknown;
     queryNotificationThresholdSecs?: unknown;
     autoUpdateCheckEnabled?: unknown;
+    sqlLintEnabled?: unknown;
   };
   return {
     syntaxColors: {
@@ -707,6 +719,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.autoUpdateCheckEnabled === "boolean"
         ? parsed.autoUpdateCheckEnabled
         : DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
+    sqlLintEnabled:
+      typeof parsed.sqlLintEnabled === "boolean"
+        ? parsed.sqlLintEnabled
+        : DEFAULT_SQL_LINT_ENABLED,
   };
 }
 
@@ -1040,6 +1056,13 @@ export function setQueryNotificationThresholdSecs(value: number): void {
 export function setAutoUpdateCheckEnabled(value: boolean): void {
   if (current.autoUpdateCheckEnabled === value) return;
   current = { ...current, autoUpdateCheckEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setSqlLintEnabled(value: boolean): void {
+  if (current.sqlLintEnabled === value) return;
+  current = { ...current, sqlLintEnabled: value };
   persist();
   listeners.forEach((cb) => cb());
 }

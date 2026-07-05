@@ -78,6 +78,7 @@ import {
   setResultGridMode,
   setResultGridPageSize,
   setRichCellRendering,
+  setSqlLintEnabled,
   setStreamPrefetchSize,
   setSyntaxColor,
   setTabRestoreMode,
@@ -924,6 +925,26 @@ export function SettingsView({ theme, onClose }: Props) {
             {t("settingsAutoLimitCountHelp")}
           </SettingsHelpInline>
         </SettingsNumberRow>
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsSqlLint")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsSqlLintHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-sql-lint">
+            <Switch
+              id="settings-sql-lint"
+              checked={settings.sqlLintEnabled}
+              onChange={setSqlLintEnabled}
+            />
+            {t("settingsSqlLintEnabled")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsSqlLintEnabledHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
       </SettingsSection>
 
       <SettingsSection>

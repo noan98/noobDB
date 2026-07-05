@@ -99,6 +99,12 @@ const SECTIONS: Section[] = [
       },
       { titleKey: "helpExplainTitle", descKey: "helpExplainDesc", impact: "no" },
       { titleKey: "helpFormatTitle", descKey: "helpFormatDesc", impact: "no" },
+      {
+        titleKey: "helpSqlLintTitle",
+        descKey: "helpSqlLintDesc",
+        impact: "no",
+        noteKey: "helpSqlLintNote",
+      },
       { titleKey: "helpQueryBuilderTitle", descKey: "helpQueryBuilderDesc", impact: "no" },
       { titleKey: "helpSnippetTitle", descKey: "helpSnippetDesc", impact: "no" },
       { titleKey: "helpExportTitle", descKey: "helpExportDesc", impact: "no" },
