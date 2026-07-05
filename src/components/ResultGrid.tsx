@@ -72,6 +72,7 @@ import { useToast } from "./Toast";
 import { Button } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import {
+  buildInsertClipboard,
   buildRowSql,
   countEditedCells,
   countEditedRows,
@@ -2570,6 +2571,9 @@ export function DataGrid({
 
   // Whether the right-click menu can offer "copy as SQL": we need a concrete
   // target table (set only for table tabs, not free-form query results).
+  // UPDATE/DELETE mutate a real row, so they stay gated on a resolved table —
+  // unlike "copy as INSERT" (below), which tolerates an ambiguous table via a
+  // fallback name.
   const rowSqlAvailable = !!rowSqlTable;
   const rowSqlHasPk = (pkIndices?.length ?? 0) > 0;
   const copyRowSql = (rowIdx: number, kind: RowSqlKind) => {
@@ -2588,6 +2592,31 @@ export function DataGrid({
     );
     if (stmts.length === 0) return;
     void runCopy(stmts.join("\n"));
+  };
+
+  // "Copy as INSERT" for one or more selected rows (#601). Unlike
+  // UPDATE/DELETE this only ever reads data, so it works even without a
+  // resolvable primary key, and even without a resolvable target table (a
+  // JOIN / free-form query result falls back to a placeholder table name and
+  // warns via toast — `buildInsertClipboard`'s `tableResolved` flag).
+  const copyRowsAsInsert = (rowIndices: number[], combineValues: boolean) => {
+    const selectedRows = rowIndices.map((i) => rows[i]).filter((r): r is CellValue[] => !!r);
+    if (selectedRows.length === 0 || columns.length === 0) return;
+    const result = buildInsertClipboard(
+      {
+        driver: rowSqlDriver ?? "mysql",
+        database: rowSqlDatabase ?? "",
+        table: rowSqlTable,
+        columns,
+        rows: selectedRows,
+      },
+      combineValues,
+    );
+    if (!result.sql) return;
+    if (!result.tableResolved) {
+      toast.info(t("gridCopyAsInsertAmbiguousTable"));
+    }
+    void runCopy(result.sql);
   };
 
   const commitEdit = (
@@ -3473,27 +3502,59 @@ export function DataGrid({
               label: t("gridCopyRowWithHeaders"),
               onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
             },
-            ...(rowSqlAvailable
-              ? [
-                  { separator: true as const },
-                  {
-                    label: t("gridCopyAsInsert"),
-                    onSelect: () => copyRowSql(copyMenu.rowIdx, "insert"),
-                  },
-                  {
-                    label: t("gridCopyAsUpdate"),
-                    onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
-                    disabled: !rowSqlHasPk,
-                    title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                  },
-                  {
-                    label: t("gridCopyAsDelete"),
-                    onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
-                    disabled: !rowSqlHasPk,
-                    title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                  },
-                ]
-              : []),
+            ...(() => {
+              // "Copy as INSERT" (#601): operates on every row covered by an
+              // active multi-row range selection, or just the clicked row
+              // when there is none/it's a single row. Unlike UPDATE/DELETE
+              // (below) it stays available even without a resolved target
+              // table — `copyRowsAsInsert` falls back to a placeholder name
+              // and warns instead.
+              const insertRowIndices =
+                selectionRect && selectionRect.rowIndexSet.size > 1
+                  ? Array.from(selectionRect.rowIndexSet)
+                  : [copyMenu.rowIdx];
+              const multiRow = insertRowIndices.length > 1;
+              return [
+                { separator: true as const },
+                multiRow
+                  ? {
+                      label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
+                      title: t("gridCopyAsInsertRowsTitle"),
+                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                    }
+                  : {
+                      label: t("gridCopyAsInsert"),
+                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                    },
+                ...(multiRow
+                  ? [
+                      {
+                        label: t("gridCopyAsInsertRowsCombined", {
+                          count: insertRowIndices.length,
+                        }),
+                        title: t("gridCopyAsInsertRowsCombinedTitle"),
+                        onSelect: () => copyRowsAsInsert(insertRowIndices, true),
+                      },
+                    ]
+                  : []),
+                ...(rowSqlAvailable
+                  ? [
+                      {
+                        label: t("gridCopyAsUpdate"),
+                        onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
+                        disabled: !rowSqlHasPk,
+                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                      },
+                      {
+                        label: t("gridCopyAsDelete"),
+                        onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
+                        disabled: !rowSqlHasPk,
+                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                      },
+                    ]
+                  : []),
+              ];
+            })(),
             // 一括編集 (#596): 矩形選択がある編集可能なテーブルでのみ、
             // 「選択セルに値を設定」を出す。PK が無いテーブルは行を特定できないため非表示。
             ...(onBulkEdit && editable && selectionRect && (pkIndices?.length ?? 0) > 0
