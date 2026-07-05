@@ -344,9 +344,9 @@ const en = {
   formSkipHistory: "Don't record query history",
   formSkipHistoryHelp: "Statements run on this connection are not saved to the query history. Useful when your SQL may embed passwords or other sensitive values.",
 
-  statusStreaming: "Streaming... {rows} rows loaded ({ms} ms)",
+  statusStreaming: "Streaming... {rows} rows loaded ({elapsed})",
   statusStreamingDone: "{rows} rows in {ms} ms",
-  statusRunningElapsed: "Running query... ({ms} ms)",
+  statusRunningElapsed: "Running query... ({elapsed})",
   statusTimeoutApproaching: "Timing out in {secs}s",
   statusQueryCancelled: "Query cancelled — the rows already loaded are kept.",
   statusQueryCancelledPartial: "Query cancelled after {rows} rows — the rows already loaded are kept.",
@@ -1933,9 +1933,9 @@ const ja: Dict = {
   formSkipHistory: "クエリ履歴を記録しない",
   formSkipHistoryHelp: "この接続で実行した文をクエリ履歴に保存しません。SQL にパスワード等の機密情報が含まれる可能性がある場合に有用です。",
 
-  statusStreaming: "ストリーミング中... {rows} 件取得 ({ms} ms)",
+  statusStreaming: "ストリーミング中... {rows} 件取得 ({elapsed})",
   statusStreamingDone: "{rows} 件取得 ({ms} ms)",
-  statusRunningElapsed: "クエリを実行中... ({ms} ms)",
+  statusRunningElapsed: "クエリを実行中... ({elapsed})",
   statusTimeoutApproaching: "まもなくタイムアウト (残り {secs} 秒)",
   statusQueryCancelled: "クエリをキャンセルしました — 取得済みの行はそのまま保持されます。",
   statusQueryCancelledPartial: "{rows} 行取得した時点でキャンセルしました — 取得済みの行はそのまま保持されます。",

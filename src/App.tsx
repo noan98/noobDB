@@ -206,6 +206,7 @@ import {
   type PersistedWorkspace,
 } from "./tabPersistence";
 import { reorderIfPermutation } from "./tabReorder";
+import { formatElapsed } from "./queryRunState";
 import {
   buildPageSql,
   clampPage,
@@ -2339,7 +2340,7 @@ export default function App() {
           return {
             kind: "key",
             key: "statusStreaming",
-            vars: { rows: nextRowCount(tabId, rows.length), ms: Date.now() - startedAt },
+            vars: { rows: nextRowCount(tabId, rows.length), elapsed: formatElapsed(Date.now() - startedAt) },
           };
         });
       },
