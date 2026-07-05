@@ -656,6 +656,62 @@ export function normalizeSettings(input: unknown): Settings {
   };
 }
 
+/**
+ * Schema tag/version for the settings export file (#679). Bump the version
+ * if the export shape changes incompatibly; `normalizeSettings` keeps older
+ * exports loadable regardless, since it treats unknown/missing fields as
+ * defaults field by field.
+ */
+export const SETTINGS_EXPORT_KIND = "noobdb-settings";
+export const SETTINGS_EXPORT_VERSION = 1;
+
+export interface SettingsExportFile {
+  kind: typeof SETTINGS_EXPORT_KIND;
+  version: number;
+  exportedAt: string;
+  settings: Settings;
+}
+
+/**
+ * Serializes app settings (including keybinding overrides, which already
+ * live in `shortcutOverrides`) to a pretty-printed JSON string for the
+ * "export settings" feature (#679). Deliberately excludes connection
+ * profiles and secrets, which have their own dedicated export
+ * (`export_profiles` / #442).
+ */
+export function serializeSettingsExport(
+  settings: Settings,
+  exportedAt: string = new Date().toISOString(),
+): string {
+  const file: SettingsExportFile = {
+    kind: SETTINGS_EXPORT_KIND,
+    version: SETTINGS_EXPORT_VERSION,
+    exportedAt,
+    settings,
+  };
+  return JSON.stringify(file, null, 2);
+}
+
+/**
+ * Parses a settings export JSON string back into a fully-valid `Settings`
+ * object. Accepts either the wrapped `{ kind, version, settings }` shape
+ * this app produces, or a bare `Settings`-shaped object (so a hand-edited
+ * file, or a future export format, still loads something sensible). Always
+ * routed through `normalizeSettings`, so a corrupt, foreign, or malicious
+ * JSON file can never crash the app or smuggle in an out-of-range value —
+ * at worst it silently falls back to defaults field by field. Throws only
+ * when `raw` is not valid JSON at all; callers should catch that to show an
+ * error toast.
+ */
+export function deserializeSettingsImport(raw: string): Settings {
+  const parsed: unknown = JSON.parse(raw);
+  const inner =
+    parsed && typeof parsed === "object" && "settings" in parsed
+      ? (parsed as { settings?: unknown }).settings
+      : parsed;
+  return normalizeSettings(inner);
+}
+
 function loadInitial(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -944,6 +1000,52 @@ export function resetStreamingDefaults(): void {
     defaultDisplayCount: DEFAULT_DISPLAY_COUNT,
     streamPrefetchSize: DEFAULT_STREAM_PREFETCH_SIZE,
   };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * Resets the Appearance section (font size, density, font families, theme
+ * preset, accent color) to defaults (#679), matching the scoped "reset to
+ * defaults" buttons the Streaming / Syntax highlighting / Preview highlight
+ * sections already have. Leaves syntax colors and the preview highlight
+ * color untouched — those already have their own per-theme resets
+ * (`resetSyntaxColors` / `resetPreviewHighlight`).
+ */
+export function resetAppearanceDefaults(): void {
+  current = {
+    ...current,
+    fontSizePx: DEFAULT_FONT_SIZE_PX,
+    density: DEFAULT_DENSITY,
+    monoFontFamily: DEFAULT_MONO_FONT_FAMILY,
+    uiFontFamily: DEFAULT_UI_FONT_FAMILY,
+    themePreset: DEFAULT_THEME_PRESET,
+    accentColor: DEFAULT_ACCENT_COLOR,
+  };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * Replaces the entire settings object in one shot — used by "import
+ * settings" (#679). Routed through `normalizeSettings` again as defense in
+ * depth, even though callers are expected to have already validated via
+ * `deserializeSettingsImport`.
+ */
+export function replaceAllSettings(next: Settings): void {
+  current = normalizeSettings(next);
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * Resets every setting — every section plus keybinding overrides — to
+ * defaults ("Reset all to defaults", #679). Unlike the scoped per-section
+ * resets above, this is a broad, hard-to-undo action, so callers should
+ * gate it behind a confirmation dialog.
+ */
+export function resetAllSettings(): void {
+  current = { ...DEFAULT_SETTINGS };
   persist();
   listeners.forEach((cb) => cb());
 }
