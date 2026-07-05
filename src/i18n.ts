@@ -141,6 +141,10 @@ const en = {
   settingsAutoLimitEnabledHelp: "Append a LIMIT to editor SELECT/WITH queries that don't already have one. A badge lets you fetch all rows in one click.",
   settingsAutoLimitCount: "Auto LIMIT rows",
   settingsAutoLimitCountHelp: "Row cap applied when auto LIMIT kicks in.",
+  settingsSqlLint: "SQL syntax check",
+  settingsSqlLintHelp: "Underlines likely syntax errors in the editor as you type, before you run — a best-effort editing aid, not a safety check.",
+  settingsSqlLintEnabled: "Enable syntax check",
+  settingsSqlLintEnabledHelp: "Reuse the editor's parse tree to flag unmatched brackets and unterminated strings/quotes, following the connected driver's dialect. Conservative by design — it prefers missing an error over a false positive. Turn off to hide all diagnostics.",
   settingsSafety: "Safety",
   settingsNotifications: "Notifications",
   settingsConfirmProductionConnect: "Confirm before connecting to production",
@@ -539,6 +543,8 @@ const en = {
   editorHintDisabled: "Connect a session to run queries.",
   editorHintEmpty: "Type a SQL statement first.",
   statusFormatError: "Format failed: {error}",
+  editorLintSyntaxError: "Possible syntax error",
+  editorLintUnterminated: "Unterminated string or quoted identifier",
 
   explainEmpty: "No plan yet. Use the Explain button to analyze a query.",
   explainLoading: "Analyzing query plan...",
@@ -1202,6 +1208,12 @@ const en = {
   helpFormatDesc:
     "Reformats the SQL in the editor for readability. Touches the editor text only. The dump dialog's \"Format SQL\" option applies the same policy (2-space indent, keyword case preserved) to the saved file on the backend; minor dialect differences may remain since the backend uses a generic formatter.",
 
+  helpSqlLintTitle: "Syntax check",
+  helpSqlLintDesc:
+    "Underlines likely syntax errors in the editor as you type — unmatched brackets and unterminated strings/quotes — so you can fix them before running. It reuses the editor's own parse tree and follows the connected driver's dialect (MySQL / PostgreSQL / SQLite).",
+  helpSqlLintNote:
+    "Best-effort editing aid, not a validity check: the parser is lenient, so many mistakes (keyword typos, missing commas) are not flagged, and it can't confirm the server will accept the query. It is deliberately conservative — it prefers missing an error over a false positive. Toggle it in Settings › SQL syntax check.",
+
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
     "Assembles SQL from a form. It only writes text into the editor—you still need to press Run to execute it.",
@@ -1718,6 +1730,10 @@ const ja: Dict = {
   settingsAutoLimitEnabledHelp: "LIMIT のないエディタの SELECT / WITH クエリに LIMIT を付与します。バッジからワンクリックで全件取得に切り替えられます。",
   settingsAutoLimitCount: "自動 LIMIT 行数",
   settingsAutoLimitCountHelp: "自動 LIMIT が適用されるときの行数の上限です。",
+  settingsSqlLint: "SQL 構文チェック",
+  settingsSqlLintHelp: "入力中にエディタ上で構文エラーの可能性を下線表示します（実行前に気付けます）。ベストエフォートの編集支援であり、安全性の判定ではありません。",
+  settingsSqlLintEnabled: "構文チェックを有効化",
+  settingsSqlLintEnabledHelp: "エディタのパースツリーを再利用し、括弧の不整合や未終端の文字列/引用符を接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。オフにするとすべての診断を非表示にします。",
   settingsSafety: "セーフティ",
   settingsNotifications: "通知",
   settingsConfirmProductionConnect: "本番環境接続時に確認ダイアログを表示",
@@ -2116,6 +2132,8 @@ const ja: Dict = {
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
   editorHintEmpty: "先に SQL を入力してください。",
   statusFormatError: "整形に失敗しました: {error}",
+  editorLintSyntaxError: "構文エラーの可能性があります",
+  editorLintUnterminated: "文字列または引用符付き識別子が閉じられていません",
 
   explainEmpty: "まだ実行計画はありません。Explain ボタンでクエリを解析してください。",
   explainLoading: "実行計画を解析中...",
@@ -2777,6 +2795,12 @@ const ja: Dict = {
   helpFormatTitle: "整形 (Format)",
   helpFormatDesc:
     "エディタ内の SQL を読みやすく整形します。エディタのテキストを変更するだけです。ダンプダイアログの「SQL を整形」オプションは、保存ファイルにバックエンドで同じ方針 (2 スペース字下げ・キーワードのケースは保持) を適用します。バックエンドは汎用の整形器を使うため、方言差が一部残ることがあります。",
+
+  helpSqlLintTitle: "構文チェック",
+  helpSqlLintDesc:
+    "入力中に、括弧の不整合や未終端の文字列/引用符といった構文エラーの可能性をエディタ上で下線表示し、実行前に修正できるようにします。エディタ自身のパースツリーを再利用し、接続中ドライバの方言 (MySQL / PostgreSQL / SQLite) に追従します。",
+  helpSqlLintNote:
+    "ベストエフォートの編集支援であって妥当性の検証ではありません。パーサは寛容なため、キーワードのタイポやカンマ抜けなど多くの誤りは検出されず、サーバが実際に受理するかも保証しません。誤検出より見逃しを優先する保守的な判定です。設定 › SQL 構文チェック で切り替えられます。",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
