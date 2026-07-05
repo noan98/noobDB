@@ -17,6 +17,7 @@ import {
 } from "../api/tauri";
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
+import { useConfirm } from "./ConfirmDialog";
 import { Icon } from "./Icon";
 import { Button, Checkbox, Input, PressableButton, Select } from "./ui";
 
@@ -356,6 +357,7 @@ export function SchemaCompareView({
 }) {
   const t = useT();
   const settings = useSettings();
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   const [source, setSource] = useState<SideState>(EMPTY_SIDE);
   const [target, setTarget] = useState<SideState>(EMPTY_SIDE);
@@ -660,13 +662,19 @@ export function SchemaCompareView({
       name: targetProfile.name,
       destructive: destructiveCount,
     });
-    if (!window.confirm(confirmMsg)) return;
-    if (
-      targetProfile.is_production &&
-      settings.confirmProductionConnect &&
-      !window.confirm(t("schemaCompareApplyProductionConfirm", { name: targetProfile.name }))
-    ) {
-      return;
+    const applyOk = await confirm({
+      title: t("schemaCompareApply", { count: statements.length }),
+      message: confirmMsg,
+      tone: destructiveCount > 0 ? "danger" : "warning",
+    });
+    if (!applyOk) return;
+    if (targetProfile.is_production && settings.confirmProductionConnect) {
+      const prodOk = await confirm({
+        title: t("productionConfirmTitle"),
+        message: t("schemaCompareApplyProductionConfirm", { name: targetProfile.name }),
+        tone: "warning",
+      });
+      if (!prodOk) return;
     }
 
     setApplying(true);
@@ -720,6 +728,7 @@ export function SchemaCompareView({
     target.database,
     settings.confirmProductionConnect,
     t,
+    confirm,
     runCompare,
     compareData,
   ]);
@@ -975,6 +984,7 @@ export function SchemaCompareView({
           )}
         </>
       )}
+      {confirmDialog}
     </Box>
   );
 }
