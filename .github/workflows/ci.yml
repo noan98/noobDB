@@ -91,7 +91,7 @@ jobs:
 
       - name: Cache pnpm store
         id: pnpm-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -171,7 +171,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -273,7 +273,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -297,7 +297,7 @@ jobs:
       # 別物として管理する。Cargo.lock が変わってもプレフィックス一致で前回分を
       # 復元し、差分のみ再コンパイルする。
       - name: Cache sccache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -448,7 +448,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -476,7 +476,7 @@ jobs:
 
       # sccache のローカルディスクキャッシュを永続化する (ジョブ種別 test で分離)。
       - name: Cache sccache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-test-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -624,7 +624,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -646,7 +646,7 @@ jobs:
           key: windows-clippy
 
       - name: Cache sccache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -732,7 +732,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -752,7 +752,7 @@ jobs:
           key: windows-test
 
       - name: Cache sccache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
