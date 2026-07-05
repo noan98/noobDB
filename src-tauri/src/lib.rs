@@ -30,7 +30,7 @@ pub mod __test_api {
     pub use crate::error::AppError;
     pub use crate::profiles::SshAuthMethod;
     pub use crate::ssh::{SshConfig, SshTunnel};
-    pub use crate::state::{AppState, Session};
+    pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await

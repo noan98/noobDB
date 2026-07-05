@@ -281,8 +281,14 @@ export const connectResult = z.object({ session_id: z.string() });
 /** 単純なプリミティブ/配列レスポンス用の共有スキーマ。 */
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
-export const booleanResponse = z.boolean();
 export const stringResponse = z.string();
+
+/** `cancel_stream` の戻り値。中断できた行数 (#685) を運ぶため単純な bool から
+ *  拡張されている。 */
+export const cancelStreamResponse = z.object({
+  cancelled: z.boolean(),
+  deliveredRows: z.number(),
+});
 
 /** プロファイルインポート結果。 */
 export const profileImportResult = z.object({
@@ -340,6 +346,15 @@ export const queryStreamErrorEvent = z.object({
   error: z.string(),
   timedOut: z.boolean(),
   connectionLost: z.boolean(),
+  /** Rows already delivered to the frontend before the run failed (#685). */
+  deliveredRows: z.number(),
+});
+
+/** キャンセル成立時に `query-stream:cancelled` / `preview-stream:cancelled` /
+ *  `export-stream:cancelled` として届く共通ペイロード (#685)。 */
+export const streamCancelledEvent = z.object({
+  streamId: z.string(),
+  deliveredRows: z.number(),
 });
 
 export const previewStreamMetaEvent = z.object({
@@ -358,6 +373,8 @@ export const previewStreamErrorEvent = z.object({
   streamId: z.string(),
   error: z.string(),
   connectionLost: z.boolean(),
+  /** Rows already delivered to the frontend before the run failed (#685). */
+  deliveredRows: z.number(),
 });
 
 export const importStartedEvent = z.object({
@@ -397,6 +414,10 @@ export const exportDoneEvent = z.object({
 export const exportStreamErrorEvent = z.object({
   streamId: z.string(),
   message: z.string(),
+  /** Rows already written to the output file before the run failed (#685).
+   *  Informational only — a failed/cancelled export always discards its
+   *  partial output file. */
+  rows: z.number(),
 });
 
 /** DEV ビルドでのみ詳細なバリデーションエラーをコンソールへ出す。 */
