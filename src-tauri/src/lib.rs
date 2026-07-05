@@ -221,6 +221,10 @@ pub fn run() {
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // 長時間クエリ完了時の OS デスクトップ通知 (#707)。フロントは
+        // @tauri-apps/plugin-notification の JS API を直接呼ぶため、追加の
+        // Tauri コマンド登録は不要 (capabilities に notification:default のみ追加)。
+        .plugin(tauri_plugin_notification::init())
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::connection::test_connection,

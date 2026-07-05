@@ -24,6 +24,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+# 長時間クエリ完了時の OS デスクトップ通知 (#707)。フロントは
+# `@tauri-apps/plugin-notification` を直接呼び、既存の dialog プラグインと同じ
+# 方針 (Rust コマンドではなくプラグイン自体の JS API を使う) を踏襲する。
+tauri-plugin-notification = "2"
 
 # Async runtime. 本体コードが実際に使う tokio API を監査し、そこから必要な feature を
 # すべて明示する (旧 "full" は未使用の signal / io-std / parking_lot なども含んでいた)。
