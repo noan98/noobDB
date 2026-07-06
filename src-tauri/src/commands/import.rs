@@ -817,4 +817,98 @@ mod tests {
             "héllo"
         );
     }
+
+    // ── エンコーディング変換のラウンドトリップ / 境界ケース (#626) ──
+    //
+    // `decode_bytes` は `encoding_rs` で Shift_JIS / EUC-JP などをデコードする。
+    // マルチバイト境界・不正バイト (ロッシー)・BOM の各入力で、静かなデータ破損や
+    // panic が起きないことを固定する。テスト入力は `encoding_rs` の encoder で
+    // 生成し、往復一致 (encode → decode_bytes → 原文) を確認する。
+
+    /// 日本語文字列を各エンコーディングにエンコードして返す。エンコード不能文字が
+    /// あればテストを落とす (テストデータが対象エンコーディングで表現可能なことを保証)。
+    fn encode_to(text: &str, enc: &'static encoding_rs::Encoding) -> Vec<u8> {
+        let (bytes, _, had_errors) = enc.encode(text);
+        assert!(!had_errors, "test text must be encodable in {}", enc.name());
+        bytes.into_owned()
+    }
+
+    #[test]
+    fn decode_shift_jis_multibyte_roundtrips() {
+        // ひらがな・漢字・全角記号を含む (Shift_JIS は 2 バイト文字の宝庫)。
+        let text = "こんにちは、世界！ABC　（全角）";
+        let bytes = encode_to(text, encoding_rs::SHIFT_JIS);
+        // マルチバイト列であることを確認 (ASCII のみなら境界テストにならない)。
+        assert!(bytes.len() > text.chars().count());
+        assert_eq!(
+            decode_bytes(&bytes, "shift_jis"),
+            text,
+            "Shift_JIS のマルチバイト文字が往復で一致するはず"
+        );
+    }
+
+    #[test]
+    fn decode_euc_jp_multibyte_roundtrips() {
+        let text = "漢字とかな、混在テキスト";
+        let bytes = encode_to(text, encoding_rs::EUC_JP);
+        assert_eq!(
+            decode_bytes(&bytes, "euc-jp"),
+            text,
+            "EUC-JP のマルチバイト文字が往復で一致するはず"
+        );
+    }
+
+    #[test]
+    fn decode_invalid_bytes_are_lossy_not_panicking() {
+        // Shift_JIS として不正なバイト列 (単独の先行バイト 0x82 の直後に不正な後続)。
+        // ロッシーデコードで置換文字 U+FFFD になり、panic しないこと。
+        let bad = vec![0x82, 0xFF, b'a', b'b'];
+        let decoded = decode_bytes(&bad, "shift_jis");
+        assert!(
+            decoded.contains('\u{FFFD}'),
+            "不正バイトは置換文字 U+FFFD に落ちるはず: {decoded:?}"
+        );
+        // 末尾の妥当な ASCII は保持される。
+        assert!(decoded.ends_with("ab"), "妥当な後続は保持されるはず");
+    }
+
+    #[test]
+    fn decode_strips_utf8_bom() {
+        // UTF-8 BOM (EF BB BF) 付きのテキストは、BOM が除去された本文になる
+        // (encoding_rs の decode は BOM をスニッフして取り除く)。
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice("id,name".as_bytes());
+        assert_eq!(
+            decode_bytes(&bytes, "utf-8"),
+            "id,name",
+            "UTF-8 BOM は本文から除去されるはず (先頭に U+FEFF を残さない)"
+        );
+    }
+
+    #[test]
+    fn decode_utf16le_bom_is_honored() {
+        // UTF-16LE BOM (FF FE) 付きの本文は、ラベルが utf-8 でも BOM のエンコーディングが
+        // 優先されて正しくデコードされる (encoding_rs の BOM スニッフィング)。
+        let mut bytes = vec![0xFF, 0xFE];
+        for u in "AB".encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(
+            decode_bytes(&bytes, "utf-8"),
+            "AB",
+            "UTF-16LE BOM が優先されてデコードされるはず"
+        );
+    }
+
+    #[test]
+    fn shift_jis_csv_preview_decodes_japanese_headers_and_values() {
+        // decode_bytes → parse_preview の一連の流れ (parse_csv_preview と同じ順序) で、
+        // Shift_JIS の CSV が正しい日本語ヘッダ/値になることを end-to-end で確認する。
+        let csv = "名前,年齢\n山田,30\n";
+        let bytes = encode_to(csv, encoding_rs::SHIFT_JIS);
+        let text = decode_bytes(&bytes, "shift_jis");
+        let p = parse_preview(text.as_bytes(), &opts(true, None)).unwrap();
+        assert_eq!(p.headers, vec!["名前", "年齢"]);
+        assert_eq!(p.rows, vec![vec!["山田", "30"]]);
+    }
 }

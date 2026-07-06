@@ -1459,4 +1459,81 @@ mod tests {
         );
         let _ = std::fs::remove_file(&path);
     }
+
+    // ── 中断時の出力状態の end-to-end 保証 (#626) ──
+    //
+    // 上の 2 つはガード単体をダミー内容で検証するが、ここでは実際の
+    // `StreamExportSink` にヘッダ + 一部の行だけを書いた「途中で切れた」状態を作り、
+    // `PartialFileCleanup` と組み合わせたときに:
+    //   - 中断 (finish/commit なし) では書きかけの不正ファイルが残らない
+    //   - 正常完了 (finish + commit) では閉じ括弧まで揃った妥当なファイルが残る
+    // ことを固定する。宣言順は spawn_export_stream の drop 順 (sink → cleanup) に
+    // 合わせ、sink の BufWriter が partial をフラッシュした後に cleanup が削除する
+    // 経路を模す。
+
+    /// ヘルパ: 一時ファイルパスを作る (中身はまだ作らない)。
+    fn tmp_export_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "noobdb_export_sink_{tag}_{}.json",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn interrupted_stream_export_leaves_no_partial_file() {
+        let path = tmp_export_path("interrupted");
+        let path_str = path.to_str().unwrap().to_string();
+        let cols = vec![col("id"), col("name")];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("a".into())],
+            vec![Value::Int(2), Value::String("b".into())],
+        ];
+        {
+            // drop 順: 後宣言の sink が先に drop (partial をフラッシュ) → cleanup が削除。
+            let _cleanup = PartialFileCleanup::new(&path);
+            let mut sink =
+                StreamExportSink::with_query(&path_str, ExportFormat::Json, None, test_sql_opts())
+                    .unwrap();
+            sink.on_columns(cols).unwrap();
+            sink.on_rows(&rows).unwrap();
+            // finish() も commit() も呼ばずにスコープを抜ける = abort による future drop。
+            // この時点でファイルには閉じ括弧の無い不正な JSON (`[ ... `) が書かれうる。
+        }
+        assert!(
+            !path.exists(),
+            "中断された export は書きかけの部分ファイルを残さないはず"
+        );
+    }
+
+    #[test]
+    fn completed_stream_export_leaves_valid_closed_file() {
+        let path = tmp_export_path("completed");
+        let path_str = path.to_str().unwrap().to_string();
+        let cols = vec![col("id"), col("name")];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("a".into())],
+            vec![Value::Int(2), Value::String("b".into())],
+        ];
+        {
+            let mut cleanup = PartialFileCleanup::new(&path);
+            let mut sink =
+                StreamExportSink::with_query(&path_str, ExportFormat::Json, None, test_sql_opts())
+                    .unwrap();
+            sink.on_columns(cols).unwrap();
+            sink.on_rows(&rows).unwrap();
+            // finish() が配列を閉じてフラッシュし、commit() で残すことを許可する。
+            sink.finish().unwrap();
+            cleanup.commit();
+        }
+        assert!(path.exists(), "正常完了した export はファイルを残すはず");
+        let content = std::fs::read_to_string(&path).unwrap();
+        // 閉じ括弧まで揃った妥当な JSON 配列としてパースできる (途中で切れていない)。
+        let parsed: serde_json::Value = serde_json::from_str(&content)
+            .unwrap_or_else(|e| panic!("完了ファイルは妥当な JSON のはず: {e}\n---\n{content}"));
+        let arr = parsed.as_array().expect("トップレベルは配列");
+        assert_eq!(arr.len(), 2, "2 行が書き出されているはず");
+        assert_eq!(arr[0]["id"], serde_json::json!(1));
+        assert_eq!(arr[1]["name"], serde_json::json!("b"));
+        let _ = std::fs::remove_file(&path);
+    }
 }

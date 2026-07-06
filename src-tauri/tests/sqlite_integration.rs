@@ -1203,3 +1203,80 @@ async fn sqlite_init_sql_runs_on_each_connection() {
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// 小さな hex エンコーダ (統合テストクレートは data_encoding を直接依存しないため自前)。
+fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
+}
+
+/// #626 — BLOB ↔ hex 文字列変換のラウンドトリップ整合。
+///
+/// 各ドライバの `decode_cell` は BLOB を `Value::Bytes` (16 進小文字) にする。空 /
+/// 1 byte / NUL 含み / 全バイト値 (0..=255) / 1 MB の代表バイナリを `X'...'` リテラルで
+/// 書き込み、読み戻した `Value::Bytes` が元バイト列の hex と一致することを固定する
+/// (静かなバイナリ破損の検出)。SQLite はファイルベースで外部サーバ不要・常時実走。
+#[tokio::test]
+async fn sqlite_blob_hex_roundtrip_for_representative_binaries() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_blob_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect");
+
+    conn.execute("CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB)", None)
+        .await
+        .expect("create blobs");
+
+    // 代表バイナリ: (id, bytes)。
+    let all_bytes: Vec<u8> = (0u16..=255).map(|b| b as u8).collect();
+    let big: Vec<u8> = (0..1_048_576usize).map(|i| (i % 256) as u8).collect(); // 1 MiB
+    let cases: Vec<(i64, Vec<u8>)> = vec![
+        (1, vec![]),                             // 空バイト列
+        (2, vec![0x00]),                         // 単一の NUL
+        (3, vec![0xDE, 0xAD, 0xBE, 0xEF]),       // 任意 4 バイト
+        (4, vec![0x00, 0x01, 0xFF, 0x00, 0xFE]), // NUL を内包するパターン
+        (5, all_bytes),                          // 全バイト値 0..=255
+        (6, big),                                // 1 MiB
+    ];
+
+    for (id, bytes) in &cases {
+        let hex = to_hex(bytes);
+        // 空バイト列は X'' で表す。
+        conn.execute(
+            &format!("INSERT INTO blobs (id, data) VALUES ({id}, X'{hex}')"),
+            None,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("insert blob id={id} failed: {e}"));
+    }
+
+    // 各行を読み戻し、Value::Bytes(hex) が元バイト列の hex と一致することを確認。
+    for (id, bytes) in &cases {
+        let res = conn
+            .execute(&format!("SELECT data FROM blobs WHERE id = {id}"), None)
+            .await
+            .unwrap_or_else(|e| panic!("select blob id={id} failed: {e}"));
+        assert_eq!(res.rows.len(), 1, "id={id}: 1 行返るはず");
+        let expected_hex = to_hex(bytes);
+        match &res.rows[0][0] {
+            t::Value::Bytes(got) => assert_eq!(
+                *got, expected_hex,
+                "id={id}: BLOB の hex 往復が一致するはず (len={} bytes)",
+                bytes.len()
+            ),
+            // 空バイト列は空 BLOB。decode は Value::Bytes("") を返すのが期待。
+            other => panic!("id={id}: expected Value::Bytes, got {other:?}"),
+        }
+    }
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
