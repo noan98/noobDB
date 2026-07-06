@@ -495,3 +495,71 @@ async fn postgres_ddl_dml_mixed_batch_rolls_back() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// ライブクエリ・インスペクタ (#746): PostgreSQL のライブテールはコア機能の
+/// pg_stat_activity だけで動くため常に可。digest 集計は pg_stat_statements 拡張の
+/// 有無で決まる (CI の素の postgres コンテナには入っていない) ので、不可の場合は
+/// 理由コードが導入手順つきヘルプへマップ可能なものであることを確認する。
+/// また、noobDB 自身の接続は application_name で識別・除外されるため、
+/// テールに自アプリ由来の行や内部カタログ参照文が混ざらないことを固定する。
+#[tokio::test]
+async fn postgres_query_inspector_support_and_tail() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let support = conn.query_stats_support().await.expect("support probe");
+    assert!(
+        support.live_tail,
+        "pg_stat_activity is core; live tail must be supported"
+    );
+    assert!(support.live_tail_reason.is_none());
+    if support.statements {
+        // 拡張が入っている環境ではスナップショット取得まで通ることを確認。
+        let stats = conn.statement_stats().await.expect("statement stats");
+        assert!(stats.iter().all(|s| {
+            !s.fingerprint.contains("pg_stat_") && !s.fingerprint.contains("pg_catalog")
+        }));
+    } else {
+        // 未導入/不可読は理由コード付きで縮退する (#587: 黙って空にしない)。
+        let reason = support.statements_reason.as_deref().expect("reason code");
+        assert!(
+            reason == "pg_stat_statements_missing" || reason == "stats_unreadable",
+            "unexpected reason code: {reason}"
+        );
+        assert!(
+            conn.statement_stats().await.is_err(),
+            "statement_stats must error when unsupported"
+        );
+    }
+
+    // noobDB の全接続は application_name = "noobDB" で接続するため、
+    // 自アプリ由来の行はテールから除外される。内部カタログ参照文も同様。
+    let observed = t::connect(&opts).await.expect("second connect");
+    observed
+        .execute("SELECT 746 AS noobdb_inspector_marker", None)
+        .await
+        .expect("marker query");
+    let tail = conn.live_queries().await.expect("live queries");
+    assert!(
+        tail.iter()
+            .all(|q| q.application.as_deref() != Some("noobDB")),
+        "rows from this app's own connections must be excluded from the tail"
+    );
+    assert!(
+        tail.iter()
+            .all(|q| !q.query.contains("noobdb_inspector_marker")),
+        "the app's own marker query must be excluded via application_name"
+    );
+    assert!(
+        tail.iter()
+            .all(|q| { !q.query.contains("pg_stat_") && !q.query.contains("pg_catalog") }),
+        "internal catalog statements must be excluded from the live tail"
+    );
+
+    observed.close().await;
+    conn.close().await;
+}

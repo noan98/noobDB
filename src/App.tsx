@@ -141,6 +141,9 @@ const TableStatisticsPanel = lazy(() =>
 const ServerInfoPanel = lazy(() =>
   import("./components/ServerInfoPanel").then((m) => ({ default: m.ServerInfoPanel })),
 );
+const QueryInspectorPanel = lazy(() =>
+  import("./components/QueryInspectorPanel").then((m) => ({ default: m.QueryInspectorPanel })),
+);
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
@@ -829,6 +832,8 @@ export default function App() {
   const [showProcesses, setShowProcesses] = useState(false);
   // サーバ情報パネル (バージョン・設定変数) の開閉。#563。
   const [showServerInfo, setShowServerInfo] = useState(false);
+  // ライブクエリ・インスペクタ (ライブテール + digest 集計) の開閉。#746。
+  const [showQueryInspector, setShowQueryInspector] = useState(false);
   // サイズ・統計ダッシュボードの対象データベース (null = 非表示)。#562。
   const [sizesTarget, setSizesTarget] = useState<string | null>(null);
   const showSizes = sizesTarget !== null;
@@ -3319,7 +3324,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3332,7 +3337,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3863,7 +3868,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false);
+    setShowServerInfo(false); setShowQueryInspector(false);
     setShowSnippetForm(false);
     setSizesTarget(database);
   }, []);
@@ -3900,7 +3905,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
     setShowSnippetForm(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -3912,7 +3917,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3926,7 +3931,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -4083,7 +4088,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -4141,7 +4146,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -4188,7 +4193,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showSizes ||
+        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
       ) {
         return;
@@ -4231,6 +4236,7 @@ export default function App() {
     showErd,
     showProcesses,
     showServerInfo,
+    showQueryInspector,
     showSizes,
     showSnippetForm,
     showCommandPalette,
@@ -4317,7 +4323,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showSizes ||
+        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
@@ -4361,6 +4367,7 @@ export default function App() {
     showErd,
     showProcesses,
     showServerInfo,
+    showQueryInspector,
     showSizes,
     showSnippetForm,
     showCommandPalette,
@@ -4377,14 +4384,14 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "compareResults" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "queryInspector" | "compareResults" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
     else if (view === "help") setShowHelp(true);
@@ -4392,6 +4399,7 @@ export default function App() {
     else if (view === "erDiagram") setShowErd(true);
     else if (view === "processes") setShowProcesses(true);
     else if (view === "serverInfo") setShowServerInfo(true);
+    else if (view === "queryInspector") setShowQueryInspector(true);
     else if (view === "compareResults") setShowCompareResults(true);
     else if (view === "newConnection") {
       setShowForm(true);
@@ -5192,7 +5200,7 @@ export default function App() {
                   setShowHelp(false);
                   setShowCompare(false);
                   setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
                   setShowForm(false);
                   setShowSnippetForm(true);
                   setFormInstanceId((n) => n + 1);
@@ -5216,7 +5224,7 @@ export default function App() {
                   <Icon name="transfer" />
                 </IconButton>
                 <IconButton
-                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowCompareResults(false); setShowServerInfo(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowCompareResults(false); setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                   title={t("appNew")}
                   aria-label={t("appNew")}
                 >
@@ -5473,6 +5481,12 @@ export default function App() {
           />
         ) : showServerInfo && sessionId ? (
           <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
+        ) : showQueryInspector && sessionId ? (
+          <QueryInspectorPanel
+            sessionId={sessionId}
+            driver={selectedProfile?.driver ?? "mysql"}
+            onClose={() => setShowQueryInspector(false)}
+          />
         ) : showSizes && sizesTarget && sessionId ? (
           <TableStatisticsPanel
             sessionId={sessionId}
@@ -6056,6 +6070,17 @@ export default function App() {
                 ? t("appToolsNeedsSession")
                 : selectedProfile?.driver === "sqlite"
                   ? t("appProcessesUnsupported")
+                  : undefined,
+            },
+            {
+              label: t("appQueryInspector"),
+              onSelect: () => openFullView("queryInspector"),
+              // SQLite はサーバ統計を持たず非対応のため導線を出さない (#746)。
+              disabled: !sessionId || selectedProfile?.driver === "sqlite",
+              title: !sessionId
+                ? t("appToolsNeedsSession")
+                : selectedProfile?.driver === "sqlite"
+                  ? t("appQueryInspectorUnsupported")
                   : undefined,
             },
             {

@@ -76,6 +76,16 @@ export interface Settings {
    */
   autoRefreshDefaultSecs: number;
   /**
+   * ライブクエリ・インスペクタ (#746) のポーリング間隔 (秒)。エンジンのメモリ上の
+   * 統計を読むだけの軽い SELECT なので、結果グリッドの自動リフレッシュより短い
+   * 下限 (2 秒) を許す。記録中のみポーリングされる。
+   */
+  inspectorPollIntervalSecs: number;
+  /** N+1 判定 (#746): 時間窓内でこの回数以上同型クエリが観測されたらフラグする。 */
+  inspectorNPlusOneMinCount: number;
+  /** N+1 判定 (#746): 「1 リクエスト相当」とみなす時間窓 (ms)。 */
+  inspectorNPlusOneWindowMs: number;
+  /**
    * How the result grid navigates rows: "scroll" keeps the existing infinite-scroll
    * behaviour; "paginate" adds a footer with page controls instead.
    */
@@ -422,6 +432,19 @@ const AUTO_REFRESH_MAX_SECS = 3_600;
 export const AUTO_REFRESH_INTERVAL_OPTIONS = [5, 10, 30, 60, 300] as const;
 export const DEFAULT_AUTO_REFRESH_SECS = 10;
 
+/** ライブクエリ・インスペクタ (#746) のポーリング間隔プリセットと境界。 */
+export const INSPECTOR_INTERVAL_OPTIONS = [2, 5, 10, 30] as const;
+export const DEFAULT_INSPECTOR_POLL_SECS = 5;
+const MIN_INSPECTOR_POLL_SECS = 2;
+const MAX_INSPECTOR_POLL_SECS = 300;
+/** N+1 判定 (#746) の既定閾値と境界 (`queryInspector.ts` の既定と揃える)。 */
+export const DEFAULT_INSPECTOR_N_PLUS_ONE_MIN_COUNT = 10;
+export const DEFAULT_INSPECTOR_N_PLUS_ONE_WINDOW_MS = 2000;
+const MIN_INSPECTOR_N_PLUS_ONE_MIN_COUNT = 2;
+const MAX_INSPECTOR_N_PLUS_ONE_MIN_COUNT = 1000;
+const MIN_INSPECTOR_N_PLUS_ONE_WINDOW_MS = 100;
+const MAX_INSPECTOR_N_PLUS_ONE_WINDOW_MS = 60_000;
+
 export const DEFAULT_AUTO_RECONNECT_ENABLED = true;
 export const DEFAULT_AUTO_RECONNECT_MAX_RETRIES = 5;
 export const MIN_AUTO_RECONNECT_RETRIES = 1;
@@ -458,6 +481,9 @@ export const DEFAULT_SETTINGS: Settings = {
   accentColor: DEFAULT_ACCENT_COLOR,
   density: DEFAULT_DENSITY,
   autoRefreshDefaultSecs: DEFAULT_AUTO_REFRESH_SECS,
+  inspectorPollIntervalSecs: DEFAULT_INSPECTOR_POLL_SECS,
+  inspectorNPlusOneMinCount: DEFAULT_INSPECTOR_N_PLUS_ONE_MIN_COUNT,
+  inspectorNPlusOneWindowMs: DEFAULT_INSPECTOR_N_PLUS_ONE_WINDOW_MS,
   resultGridMode: DEFAULT_RESULT_GRID_MODE,
   resultGridPageSize: DEFAULT_RESULT_GRID_PAGE_SIZE,
   cellEditOnBlur: DEFAULT_CELL_EDIT_ON_BLUR,
@@ -489,6 +515,15 @@ export function sanitizeAutoRefreshSecs(input: unknown, fallback: number): numbe
   const n = Math.floor(input);
   if (n < AUTO_REFRESH_MIN_SECS) return AUTO_REFRESH_MIN_SECS;
   if (n > AUTO_REFRESH_MAX_SECS) return AUTO_REFRESH_MAX_SECS;
+  return n;
+}
+
+/** 整数値を [min, max] に丸める共通クランプ (インスペクタ #746 の各設定用)。 */
+function sanitizeIntInRange(input: unknown, fallback: number, min: number, max: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.floor(input);
+  if (n < min) return min;
+  if (n > max) return max;
   return n;
 }
 
@@ -635,6 +670,9 @@ export function normalizeSettings(input: unknown): Settings {
     accentColor?: unknown;
     density?: unknown;
     autoRefreshDefaultSecs?: unknown;
+    inspectorPollIntervalSecs?: unknown;
+    inspectorNPlusOneMinCount?: unknown;
+    inspectorNPlusOneWindowMs?: unknown;
     resultGridMode?: unknown;
     resultGridPageSize?: unknown;
     cellEditOnBlur?: unknown;
@@ -684,6 +722,24 @@ export function normalizeSettings(input: unknown): Settings {
     autoRefreshDefaultSecs: sanitizeAutoRefreshSecs(
       parsed.autoRefreshDefaultSecs,
       DEFAULT_AUTO_REFRESH_SECS,
+    ),
+    inspectorPollIntervalSecs: sanitizeIntInRange(
+      parsed.inspectorPollIntervalSecs,
+      DEFAULT_INSPECTOR_POLL_SECS,
+      MIN_INSPECTOR_POLL_SECS,
+      MAX_INSPECTOR_POLL_SECS,
+    ),
+    inspectorNPlusOneMinCount: sanitizeIntInRange(
+      parsed.inspectorNPlusOneMinCount,
+      DEFAULT_INSPECTOR_N_PLUS_ONE_MIN_COUNT,
+      MIN_INSPECTOR_N_PLUS_ONE_MIN_COUNT,
+      MAX_INSPECTOR_N_PLUS_ONE_MIN_COUNT,
+    ),
+    inspectorNPlusOneWindowMs: sanitizeIntInRange(
+      parsed.inspectorNPlusOneWindowMs,
+      DEFAULT_INSPECTOR_N_PLUS_ONE_WINDOW_MS,
+      MIN_INSPECTOR_N_PLUS_ONE_WINDOW_MS,
+      MAX_INSPECTOR_N_PLUS_ONE_WINDOW_MS,
     ),
     resultGridMode: sanitizeResultGridMode(parsed.resultGridMode, DEFAULT_RESULT_GRID_MODE),
     resultGridPageSize: sanitizePageSize(parsed.resultGridPageSize, DEFAULT_RESULT_GRID_PAGE_SIZE),
@@ -964,6 +1020,45 @@ export function setAutoRefreshDefaultSecs(value: number): void {
   const next = sanitizeAutoRefreshSecs(value, current.autoRefreshDefaultSecs);
   if (current.autoRefreshDefaultSecs === next) return;
   current = { ...current, autoRefreshDefaultSecs: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setInspectorPollIntervalSecs(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.inspectorPollIntervalSecs,
+    MIN_INSPECTOR_POLL_SECS,
+    MAX_INSPECTOR_POLL_SECS,
+  );
+  if (current.inspectorPollIntervalSecs === next) return;
+  current = { ...current, inspectorPollIntervalSecs: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setInspectorNPlusOneMinCount(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.inspectorNPlusOneMinCount,
+    MIN_INSPECTOR_N_PLUS_ONE_MIN_COUNT,
+    MAX_INSPECTOR_N_PLUS_ONE_MIN_COUNT,
+  );
+  if (current.inspectorNPlusOneMinCount === next) return;
+  current = { ...current, inspectorNPlusOneMinCount: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setInspectorNPlusOneWindowMs(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.inspectorNPlusOneWindowMs,
+    MIN_INSPECTOR_N_PLUS_ONE_WINDOW_MS,
+    MAX_INSPECTOR_N_PLUS_ONE_WINDOW_MS,
+  );
+  if (current.inspectorNPlusOneWindowMs === next) return;
+  current = { ...current, inspectorNPlusOneWindowMs: next };
   persist();
   listeners.forEach((cb) => cb());
 }

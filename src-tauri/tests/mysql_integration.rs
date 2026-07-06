@@ -872,3 +872,79 @@ async fn mysql_ddl_dml_mixed_batch_is_not_atomic() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// ライブクエリ・インスペクタ (#746): CI の MySQL 8 は performance_schema が
+/// 既定 ON・events_statements_current/_history と statements_digest の consumer も
+/// 既定有効なので、前提プローブは両機能とも可を返すはず。別プール (= 別接続) で
+/// 目印クエリを流し、digest 集計に正規化済みフィンガープリントとして現れること、
+/// ライブテールが performance_schema / information_schema 参照文 (インスペクタ
+/// 自身のポーリング等) を返さないことを確認する。
+#[tokio::test]
+async fn mysql_query_inspector_support_and_stats() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let support = conn.query_stats_support().await.expect("support probe");
+    assert!(
+        support.live_tail,
+        "MySQL 8 defaults must support live tail (reason: {:?})",
+        support.live_tail_reason
+    );
+    assert!(
+        support.statements,
+        "MySQL 8 defaults must support digest stats (reason: {:?})",
+        support.statements_reason
+    );
+
+    // 別接続 (別プール) から目印クエリを発行する。digest は数値リテラルを ? に
+    // 正規化するが識別子 (別名) は保持するので、別名で追跡できる。
+    let observed = t::connect(&opts).await.expect("second connect");
+    observed
+        .execute("SELECT 746 AS noobdb_inspector_marker", None)
+        .await
+        .expect("marker query");
+
+    let stats = conn.statement_stats().await.expect("statement stats");
+    assert!(
+        stats
+            .iter()
+            .any(|s| s.fingerprint.contains("noobdb_inspector_marker")),
+        "digest stats must include the marker statement"
+    );
+    assert!(
+        stats.iter().all(|s| {
+            !s.fingerprint.contains("performance_schema")
+                && !s.fingerprint.contains("information_schema")
+        }),
+        "internal catalog statements must be excluded from digest stats"
+    );
+    let marker = stats
+        .iter()
+        .find(|s| s.fingerprint.contains("noobdb_inspector_marker"))
+        .expect("marker digest");
+    assert!(
+        marker.calls >= 1,
+        "marker digest must count at least one call"
+    );
+
+    let tail = conn.live_queries().await.expect("live queries");
+    assert!(
+        tail.iter().all(|q| {
+            !q.query.contains("performance_schema") && !q.query.contains("information_schema")
+        }),
+        "internal catalog statements must be excluded from the live tail"
+    );
+    // 別接続の目印クエリは events_statements_history 経由でテールに載るはず。
+    assert!(
+        tail.iter()
+            .any(|q| q.query.contains("noobdb_inspector_marker")),
+        "the other connection's marker query must appear in the live tail"
+    );
+
+    observed.close().await;
+    conn.close().await;
+}

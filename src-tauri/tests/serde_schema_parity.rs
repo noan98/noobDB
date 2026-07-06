@@ -22,9 +22,9 @@
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
-    ServerInfo, ServerVariable, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
-    Value,
+    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat, TableColumnInfo,
+    TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -117,6 +117,33 @@ fn build_fixtures() -> serde_json::Value {
         query: Some("SELECT 1".into()),
         is_self: true,
     };
+    let query_stats_support = QueryStatsSupport {
+        live_tail: true,
+        statements: false,
+        live_tail_reason: Some("stats_unreadable".into()),
+        statements_reason: Some("pg_stat_statements_missing".into()),
+    };
+    let live_query = LiveQuery {
+        key: "42:1699".into(),
+        query: "SELECT * FROM users WHERE id = 1".into(),
+        user: Some("app".into()),
+        host: Some("10.0.0.5:53344".into()),
+        database: Some("appdb".into()),
+        application: Some("myapp".into()),
+        duration_ms: Some(1.5),
+        rows_examined: Some(100),
+        running: true,
+        started_at_ms: Some(1700000000000.0),
+    };
+    let statement_stat = StatementStat {
+        digest: "abc123".into(),
+        fingerprint: "SELECT * FROM `users` WHERE `id` = ?".into(),
+        database: Some("appdb".into()),
+        calls: 1200,
+        total_time_ms: 4321.5,
+        max_time_ms: 87.2,
+        rows: Some(1200),
+    };
     let preview_result = PreviewResult {
         target_table: Some("users".into()),
         columns: vec![column.clone()],
@@ -141,6 +168,9 @@ fn build_fixtures() -> serde_json::Value {
         "serverVariable": server_variable,
         "serverInfo": server_info,
         "processInfo": process_info,
+        "queryStatsSupport": query_stats_support,
+        "liveQuery": live_query,
+        "statementStat": statement_stat,
         "previewResult": preview_result,
     })
 }

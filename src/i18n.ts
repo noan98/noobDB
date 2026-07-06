@@ -1509,6 +1509,76 @@ const en = {
   processColTime: "Time",
   processColQuery: "Query",
 
+  // ライブクエリ・インスペクタ (#746)
+  appQueryInspector: "Query inspector",
+  appQueryInspectorUnsupported: "Not available for SQLite connections",
+  inspectorTitle: "Query inspector",
+  inspectorClose: "Close query inspector",
+  inspectorDesc:
+    "Watch the queries your application (ORM) is sending to this database. Recording polls read-only server statistics (MySQL performance_schema / PostgreSQL pg_stat_activity + pg_stat_statements) — no agent, no server configuration change, and no persistence: collected data stays in memory only. Queries from this app are excluded.",
+  inspectorStart: "Start recording",
+  inspectorStop: "Stop recording",
+  inspectorRecordingBadge: "● REC",
+  inspectorUnavailable: "Neither live tail nor statement statistics are available on this server.",
+  inspectorIntervalLabel: "Interval",
+  inspectorIntervalAria: "Polling interval",
+  inspectorIntervalSecs: "{secs}s",
+  inspectorSampledAt: "Sampled {time}",
+  inspectorLoadError: "Failed to sample query statistics: {error}",
+  inspectorMemoryNote: "Collected data is kept in memory only and is discarded when the panel closes.",
+  inspectorTabTail: "Live tail",
+  inspectorTabStats: "Top queries",
+  inspectorTailDegraded: "Live tail is unavailable: {reason}",
+  inspectorStatsDegraded: "Statement statistics are unavailable: {reason}",
+  inspectorReasonUnsupportedDriver: "this driver has no server-side statistics (SQLite is file-backed).",
+  inspectorReasonPerformanceSchemaOff:
+    "performance_schema is OFF on this MySQL server. Set performance_schema=ON in my.cnf ([mysqld] section) and restart the server to enable it.",
+  inspectorReasonConsumerOff:
+    "the events_statements_current / events_statements_history consumers are disabled. Enable them with: UPDATE performance_schema.setup_consumers SET ENABLED='YES' WHERE NAME LIKE 'events_statements%';",
+  inspectorReasonDigestOff:
+    "the statements_digest consumer is disabled. Enable it with: UPDATE performance_schema.setup_consumers SET ENABLED='YES' WHERE NAME='statements_digest';",
+  inspectorReasonPgssMissing:
+    "the pg_stat_statements extension is not installed. Add pg_stat_statements to shared_preload_libraries in postgresql.conf, restart the server, then run CREATE EXTENSION pg_stat_statements;",
+  inspectorReasonUnreadable:
+    "the statistics source exists but could not be read (insufficient privileges or an unsupported server version). Only what your database user is allowed to see is shown.",
+  inspectorReasonUnknown: "not available on this server.",
+  inspectorPrivilegeNote:
+    "{count} event(s) hide their SQL text because your database user lacks the privilege to see other users' queries — only what you are allowed to see is shown.",
+  inspectorFilterPlaceholder: "Filter by user / host / DB / SQL…",
+  inspectorMinDurationLabel: "Min duration (ms)",
+  inspectorTailCount: "{shown} / {total} events",
+  inspectorTailEmpty: "No queries observed yet. Exercise your application against this database.",
+  inspectorTailIdle: "Press \"Start recording\" to begin tailing queries.",
+  inspectorStatsEmpty: "No statements executed since recording started.",
+  inspectorStatsIdle: "Press \"Start recording\" to collect statement statistics.",
+  inspectorCumulativeLabel: "Show cumulative totals (since server statistics reset)",
+  inspectorBaselineAt: "Delta since {time}",
+  inspectorColObserved: "Observed",
+  inspectorColSource: "Source",
+  inspectorColDb: "DB",
+  inspectorColDuration: "Duration",
+  inspectorColQuery: "Query",
+  inspectorColActions: "Actions",
+  inspectorColCalls: "Calls",
+  inspectorColTotalTime: "Total time",
+  inspectorColMeanTime: "Mean",
+  inspectorColMaxTime: "Worst",
+  inspectorColRows: "Rows",
+  inspectorColRowsExamined: "Rows examined",
+  inspectorColFingerprint: "Statement",
+  inspectorMaxCumulativeTitle:
+    "Worst latency is a high-water mark and cannot be diffed — it is cumulative since the server's statistics reset.",
+  inspectorRunningTitle: "Still running at the last sample",
+  inspectorNPlusOneCountLabel: "N+1: count ≥",
+  inspectorNPlusOneWindowLabel: "within (ms)",
+  inspectorNPlusOneExplain:
+    "This statement ran {count} times within a {windowMs} ms window (about one request). It may be issued from a loop — consider batching it with a JOIN or IN (…).",
+  inspectorNPlusOneRateExplain:
+    "This statement's recent call rate exceeds the N+1 threshold per {windowMs} ms window. It may be issued from a loop.",
+  inspectorCopySql: "Copy SQL",
+  inspectorCopied: "Copied to clipboard",
+  inspectorCopyFailed: "Copy failed",
+
   // テーブル保守コマンド (#561)
   maintenanceMenu: "Maintenance",
   maintenanceAnalyze: "Analyze (update statistics)",
@@ -3098,6 +3168,77 @@ const ja: Dict = {
   processColState: "状態",
   processColTime: "時間",
   processColQuery: "クエリ",
+
+  // ライブクエリ・インスペクタ (#746)
+  appQueryInspector: "クエリインスペクタ",
+  appQueryInspectorUnsupported: "SQLite 接続では使用できません",
+  inspectorTitle: "クエリインスペクタ",
+  inspectorClose: "クエリインスペクタを閉じる",
+  inspectorDesc:
+    "アプリケーション (ORM) がこの DB に投げているクエリを観測します。記録中は読み取り専用のサーバ統計 (MySQL performance_schema / PostgreSQL pg_stat_activity + pg_stat_statements) をポーリングするだけで、エージェント常駐やサーバ設定変更は不要です。収集データは在メモリのみで保存されません。このアプリ自身のクエリは除外されます。",
+  inspectorStart: "記録開始",
+  inspectorStop: "記録停止",
+  inspectorRecordingBadge: "● 記録中",
+  inspectorUnavailable: "このサーバではライブテールと集計のどちらも利用できません。",
+  inspectorIntervalLabel: "間隔",
+  inspectorIntervalAria: "ポーリング間隔",
+  inspectorIntervalSecs: "{secs} 秒",
+  inspectorSampledAt: "{time} 取得",
+  inspectorLoadError: "クエリ統計の取得に失敗しました: {error}",
+  inspectorMemoryNote: "収集データは在メモリのみで、パネルを閉じると破棄されます。",
+  inspectorTabTail: "ライブテール",
+  inspectorTabStats: "上位クエリ",
+  inspectorTailDegraded: "ライブテールは利用できません: {reason}",
+  inspectorStatsDegraded: "ステートメント集計は利用できません: {reason}",
+  inspectorReasonUnsupportedDriver:
+    "このドライバにはサーバ側統計がありません (SQLite はファイルベースです)。",
+  inspectorReasonPerformanceSchemaOff:
+    "この MySQL サーバでは performance_schema が OFF です。my.cnf の [mysqld] セクションで performance_schema=ON を設定し、サーバを再起動すると有効になります。",
+  inspectorReasonConsumerOff:
+    "events_statements_current / events_statements_history consumer が無効です。UPDATE performance_schema.setup_consumers SET ENABLED='YES' WHERE NAME LIKE 'events_statements%'; で有効化できます。",
+  inspectorReasonDigestOff:
+    "statements_digest consumer が無効です。UPDATE performance_schema.setup_consumers SET ENABLED='YES' WHERE NAME='statements_digest'; で有効化できます。",
+  inspectorReasonPgssMissing:
+    "pg_stat_statements 拡張が未導入です。postgresql.conf の shared_preload_libraries に pg_stat_statements を追加してサーバを再起動し、CREATE EXTENSION pg_stat_statements; を実行してください。",
+  inspectorReasonUnreadable:
+    "統計ソースは存在しますが読み取れませんでした (権限不足、または非対応のサーババージョン)。DB ユーザに見えている範囲のみ表示します。",
+  inspectorReasonUnknown: "このサーバでは利用できません。",
+  inspectorPrivilegeNote:
+    "{count} 件のイベントは、他ユーザのクエリ文を見る権限が無いため SQL 本文が隠されています (見えている範囲のみ表示しています)。",
+  inspectorFilterPlaceholder: "ユーザ / ホスト / DB / SQL で絞り込み…",
+  inspectorMinDurationLabel: "所要時間の下限 (ms)",
+  inspectorTailCount: "{shown} / {total} 件",
+  inspectorTailEmpty: "まだクエリを観測していません。アプリからこの DB へアクセスしてみてください。",
+  inspectorTailIdle: "「記録開始」を押すとクエリのテールを開始します。",
+  inspectorStatsEmpty: "記録開始以降に実行されたステートメントはありません。",
+  inspectorStatsIdle: "「記録開始」を押すとステートメント統計の収集を開始します。",
+  inspectorCumulativeLabel: "累積値を表示 (サーバ統計リセット以降)",
+  inspectorBaselineAt: "{time} からの差分",
+  inspectorColObserved: "観測時刻",
+  inspectorColSource: "接続元",
+  inspectorColDb: "DB",
+  inspectorColDuration: "所要時間",
+  inspectorColQuery: "クエリ",
+  inspectorColActions: "操作",
+  inspectorColCalls: "実行回数",
+  inspectorColTotalTime: "総時間",
+  inspectorColMeanTime: "平均",
+  inspectorColMaxTime: "最悪",
+  inspectorColRows: "行数",
+  inspectorColRowsExamined: "走査行数",
+  inspectorColFingerprint: "ステートメント",
+  inspectorMaxCumulativeTitle:
+    "最悪レイテンシは高水位マークのため差分にできません (サーバ統計リセット以降の累積値です)。",
+  inspectorRunningTitle: "直近サンプル時点で実行中",
+  inspectorNPlusOneCountLabel: "N+1: 回数 ≥",
+  inspectorNPlusOneWindowLabel: "時間窓 (ms)",
+  inspectorNPlusOneExplain:
+    "このクエリが {windowMs} ms (1 リクエスト相当) の時間窓で {count} 回実行されています。ループ内クエリの可能性があります — JOIN や IN (…) でのまとめ取りを検討してください。",
+  inspectorNPlusOneRateExplain:
+    "このステートメントの直近の実行レートが {windowMs} ms 窓あたりの N+1 閾値を超えています。ループ内クエリの可能性があります。",
+  inspectorCopySql: "SQL をコピー",
+  inspectorCopied: "クリップボードにコピーしました",
+  inspectorCopyFailed: "コピーに失敗しました",
 
   // テーブル保守コマンド (#561)
   maintenanceMenu: "保守",

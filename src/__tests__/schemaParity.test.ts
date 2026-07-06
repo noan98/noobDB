@@ -36,6 +36,9 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["tableSizeInfo", schemas.tableSizeInfo],
   ["serverInfo", schemas.serverInfo],
   ["processInfo", schemas.processInfo],
+  ["queryStatsSupport", schemas.queryStatsSupport],
+  ["liveQuery", schemas.liveQuery],
+  ["statementStat", schemas.statementStat],
   ["previewResult", schemas.previewResult],
 ];
 

@@ -116,6 +116,39 @@ export const processInfo = z.object({
   is_self: z.boolean(),
 });
 
+/** ライブクエリ・インスペクタ (#746) の前提可否 + 縮退理由コード。 */
+export const queryStatsSupport = z.object({
+  live_tail: z.boolean(),
+  statements: z.boolean(),
+  live_tail_reason: z.string().nullable(),
+  statements_reason: z.string().nullable(),
+});
+
+/** ライブテールの 1 イベント (#746)。 */
+export const liveQuery = z.object({
+  key: z.string(),
+  query: z.string(),
+  user: z.string().nullable(),
+  host: z.string().nullable(),
+  database: z.string().nullable(),
+  application: z.string().nullable(),
+  duration_ms: z.number().nullable(),
+  rows_examined: z.number().nullable(),
+  running: z.boolean(),
+  started_at_ms: z.number().nullable(),
+});
+
+/** digest 単位の累積統計 1 行 (#746)。 */
+export const statementStat = z.object({
+  digest: z.string(),
+  fingerprint: z.string(),
+  database: z.string().nullable(),
+  calls: z.number(),
+  total_time_ms: z.number(),
+  max_time_ms: z.number(),
+  rows: z.number().nullable(),
+});
+
 export const schemaObject = z.object({
   kind: z.string(),
   name: z.string(),
@@ -316,6 +349,8 @@ export const tableRowEstimateArray = z.array(tableRowEstimate);
 export const tableSizeInfoArray = z.array(tableSizeInfo);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
+export const liveQueryArray = z.array(liveQuery);
+export const statementStatArray = z.array(statementStat);
 export const schemaObjectArray = z.array(schemaObject);
 export const connectionProfileArray = z.array(connectionProfile);
 export const snippetArray = z.array(snippet);

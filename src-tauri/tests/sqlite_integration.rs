@@ -1284,3 +1284,45 @@ async fn sqlite_blob_hex_roundtrip_for_representative_binaries() {
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// ライブクエリ・インスペクタ (#746): SQLite はサーバ統計を持たないため、
+/// 前提プローブは理由コード `unsupported_driver` 付きで両機能とも不可を返し、
+/// ライブテール / digest 集計の直接呼び出しはエラーで短絡する (UI は導線自体を
+/// 出さないので、これは直接 IPC 呼び出しに対するバックストップ)。
+#[tokio::test]
+async fn sqlite_query_inspector_is_unsupported() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_inspector_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let support = conn.query_stats_support().await.expect("support probe");
+    assert!(
+        !support.live_tail,
+        "SQLite must not report live tail support"
+    );
+    assert!(!support.statements, "SQLite must not report digest support");
+    assert_eq!(
+        support.live_tail_reason.as_deref(),
+        Some("unsupported_driver")
+    );
+    assert_eq!(
+        support.statements_reason.as_deref(),
+        Some("unsupported_driver")
+    );
+
+    assert!(
+        conn.live_queries().await.is_err(),
+        "live_queries must error on SQLite (backstop for direct IPC calls)"
+    );
+    assert!(
+        conn.statement_stats().await.is_err(),
+        "statement_stats must error on SQLite (backstop for direct IPC calls)"
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
