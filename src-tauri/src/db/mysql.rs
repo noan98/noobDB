@@ -1,9 +1,7 @@
 use std::time::Instant;
 
 use futures_util::StreamExt;
-use sqlx::mysql::{
-    MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode,
-};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
 use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
@@ -12,7 +10,9 @@ use super::types::{
     ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
     TableSizeInfo, Value,
 };
-use super::{build_insert_sql, init_sql_of, DbConnectOptions, SslMode};
+use super::{
+    build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode,
+};
 use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
@@ -112,7 +112,25 @@ impl MySqlConn {
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
-        sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(stmt))).await?;
+        let result =
+            sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(stmt))).await;
+        if let Err(e) = result {
+            // COMMIT/ROLLBACK 自体が失敗すると、この接続は BEGIN したままの
+            // 不定状態になり得る。`guard` は既に None にしてあるので復旧の
+            // 余地はなく、そのままプールに返すと次の利用者がトランザクション
+            // 状態を引き継いでしまう。COMMIT 失敗時はベストエフォートで
+            // ROLLBACK を試み (失敗しても無視)、最後にこの接続を `detach`
+            // してプール管理から切り離してから破棄する — プールへは返さない。
+            if commit {
+                let _ = sqlx::Executor::execute(
+                    &mut *conn,
+                    sqlx::raw_sql(sqlx::AssertSqlSafe("ROLLBACK")),
+                )
+                .await;
+            }
+            drop(conn.detach());
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -515,6 +533,24 @@ impl MySqlConn {
     /// dropped without committing) so the batch is all-or-nothing — no
     /// statement is left committed when a later one errors. Returns the total
     /// `rows_affected` across all statements on success.
+    ///
+    /// **Caveat — DDL is NOT atomic on MySQL.** MySQL performs an *implicit
+    /// commit* before and after every DDL statement (`CREATE` / `ALTER` /
+    /// `DROP` / `TRUNCATE` / `RENAME`, etc.; see the MySQL manual, "Statements
+    /// That Cause an Implicit Commit"). So in a mixed batch such as
+    /// `["CREATE TABLE t ...", "INSERT INTO t ..."]`, the `CREATE` is committed
+    /// the instant it runs. If a *later* statement fails, rolling this
+    /// transaction back cannot undo the already-committed DDL — the table
+    /// persists even though the batch "failed". The all-or-nothing contract
+    /// above therefore holds only for pure-DML batches; DDL+DML batches are
+    /// non-atomic and can leave partial schema/data behind. This is an
+    /// **intrinsic MySQL limitation**, not something this method can fix
+    /// without splitting or pre-validating batches (see #640). Callers that
+    /// need atomicity for schema changes must not mix DDL and DML in one
+    /// `execute_transaction` call; `commands::sync::apply_sync_sql` accounts
+    /// for this with a best-effort sequential policy on MySQL. PostgreSQL's
+    /// `execute_transaction` (transactional DDL) does not have this caveat.
+    /// The behaviour is pinned by `mysql_integration::mysql_ddl_dml_mixed_batch_is_not_atomic`.
     pub async fn execute_transaction(
         &self,
         statements: &[String],
@@ -550,26 +586,27 @@ impl MySqlConn {
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
         let projection =
             "SELECT ID, USER, HOST, DB, COMMAND, STATE, TIME, INFO, ID = CONNECTION_ID() FROM";
-        let rows: Vec<MySqlRow> = match sqlx::query(sqlx::AssertSqlSafe(format!(
+        let primary = sqlx::query(sqlx::AssertSqlSafe(format!(
             "{projection} performance_schema.processlist ORDER BY ID"
         )))
         .fetch_all(&self.pool)
-        .await
-        {
-            Ok(rows) if !rows.is_empty() => rows,
-            // Fall back when this source is unavailable. That is not only an
-            // error (table missing on pre-8.0.22 / MariaDB) but also an EMPTY
-            // success: with `performance_schema = OFF` the table still exists
-            // and the query succeeds, yet nothing is collected. A truly empty
-            // processlist is impossible — the connection running this very
-            // query always appears — so empty unambiguously means "disabled".
-            _ => {
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "{projection} information_schema.PROCESSLIST ORDER BY ID"
-                )))
-                .fetch_all(&self.pool)
-                .await?
-            }
+        .await;
+        // Fall back when this source is unavailable. That is not only an
+        // error (table missing on pre-8.0.22 / MariaDB) but also an EMPTY
+        // success: with `performance_schema = OFF` the table still exists
+        // and the query succeeds, yet nothing is collected. A truly empty
+        // processlist is impossible — the connection running this very
+        // query always appears — so empty unambiguously means "disabled".
+        // The decision itself is split into `process_list_needs_fallback` so
+        // it can be unit-tested without a live server (#587, #641).
+        let rows: Vec<MySqlRow> = if process_list_needs_fallback(&primary) {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "{projection} information_schema.PROCESSLIST ORDER BY ID"
+            )))
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            primary?
         };
         Ok(rows
             .into_iter()
@@ -966,6 +1003,22 @@ pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()
     Ok(())
 }
 
+/// Decides whether `list_processes` must fall back from
+/// `performance_schema.processlist` to `information_schema.PROCESSLIST`
+/// (#587). A query error (table missing on pre-8.0.22 / MariaDB) always
+/// warrants the fallback; a *successful but empty* result does too, because
+/// with `performance_schema = OFF` the table still exists and the query still
+/// succeeds, yet collects nothing — and an empty processlist is impossible
+/// since the connection running this very query always appears in it.
+/// Split out as a pure, generic function so the branch selection is
+/// unit-testable without a live server (#641).
+fn process_list_needs_fallback<T>(primary: &std::result::Result<Vec<T>, sqlx::Error>) -> bool {
+    match primary {
+        Ok(rows) => rows.is_empty(),
+        Err(_) => true,
+    }
+}
+
 /// Maps the driver-neutral [`SslMode`] to MySQL's `MySqlSslMode`. `VerifyFull`
 /// maps to `VerifyIdentity` (the MySQL equivalent of full hostname verification).
 fn map_ssl_mode(mode: SslMode) -> MySqlSslMode {
@@ -1065,20 +1118,6 @@ async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<Query
     }
 }
 
-fn columns_of(rows: &[MySqlRow]) -> Vec<Column> {
-    let Some(first) = rows.first() else {
-        return Vec::new();
-    };
-    first
-        .columns()
-        .iter()
-        .map(|c: &MySqlColumn| Column {
-            name: c.name().to_string(),
-            type_name: c.type_info().name().to_string(),
-        })
-        .collect()
-}
-
 fn row_to_values(row: &MySqlRow) -> Vec<Value> {
     (0..row.columns().len())
         .map(|i| decode_cell(row, i))
@@ -1138,6 +1177,20 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
         }
+        // rust_decimal::Decimal は有効桁数が約 28〜29 桁までで、MySQL の
+        // DECIMAL(65, x) のような広い精度の値は範囲外になり得る。MySQL の
+        // ワイヤプロトコルは DECIMAL/NEWDECIMAL を常にテキスト (10 進数の
+        // 文字列そのもの) として送るため、`&str`/`String` の Decode
+        // 実装は型チェックさえ通れば元のテキストをそのまま返す。ただし
+        // `String::compatible` は NEWDECIMAL を文字列系カラム型として
+        // 認識しないため通常の `try_get` は型不一致で弾かれる —
+        // `try_get_unchecked` でその互換性チェックだけを迂回し、実体は
+        // 引き続き sqlx の `&str` デコード (=生テキスト読み出し) を使う。
+        // これにより範囲外の値も生バイナリ (Value::Bytes) に落ちず、
+        // 人間可読な数値文字列として表示できる。
+        if let Ok(v) = row.try_get_unchecked::<Option<String>, _>(i) {
+            return v.map(Value::String).unwrap_or(Value::Null);
+        }
     }
     if ti(type_name, &["DATE", "TIME", "DATETIME", "TIMESTAMP"]) {
         // Each chrono type is `compatible` with exactly one MySQL column type
@@ -1195,14 +1248,7 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
     }
 
     // Default: string (covers VARCHAR/TEXT/ENUM/SET/CHAR and unknown types)
-    match row.try_get::<Option<String>, _>(i) {
-        Ok(Some(s)) => Value::String(s),
-        Ok(None) => Value::Null,
-        Err(_) => match row.try_get::<Option<Vec<u8>>, _>(i) {
-            Ok(Some(b)) => Value::Bytes(data_encoding::HEXLOWER.encode(&b)),
-            _ => Value::Null,
-        },
-    }
+    decode_string_or_bytes(row, i)
 }
 
 /// Best-effort extraction of the target table from a mutation statement.
@@ -1339,8 +1385,10 @@ fn is_ident_byte(b: u8) -> bool {
 }
 
 /// Backtick-quotes a single identifier, doubling any embedded backticks.
+/// 実装は方言共通の `sync::quote_ident` に一本化している (`fn(&str) -> String`
+/// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
 fn quote_ident(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
+    super::sync::quote_ident(super::DriverKind::Mysql, name)
 }
 
 fn skip_modifiers<I: Iterator<Item = String>>(
@@ -1680,7 +1728,12 @@ fn skip_leading_comments_and_ws(sql: &str) -> &str {
 /// ignored so a keyword inside a literal or identifier isn't mistaken for the
 /// main statement. If no decisive keyword is found (e.g. `WITH ... TABLE t`),
 /// the statement is treated as query-shaped.
-fn with_cte_is_mutation(sql: &str) -> bool {
+///
+/// この判定はキーワード列挙のみで方言非依存 (MySQL/PostgreSQL 双方の DML
+/// キーワードを含む) なので、`db/postgres.rs` / `db/sqlite.rs` の
+/// `is_query_shape` からも `super::mysql::with_cte_is_mutation` として共有
+/// する (`pub(crate)`)。
+pub(crate) fn with_cte_is_mutation(sql: &str) -> bool {
     let mut depth: i32 = 0;
     let mut in_single = false;
     let mut in_double = false;
@@ -1834,6 +1887,33 @@ mod tests {
         assert_eq!(non_empty(&Some(String::new())), None);
         assert_eq!(non_empty(&Some(" /k.pem ".to_string())), Some("/k.pem"));
         assert_eq!(non_empty(&None), None);
+    }
+
+    /// #587 / #641: the fallback from `performance_schema.processlist` to
+    /// `information_schema.PROCESSLIST` must trigger both when the primary
+    /// query errors (table missing on old MySQL / MariaDB) and when it
+    /// succeeds but returns zero rows (`performance_schema = OFF`), since a
+    /// genuinely empty processlist is impossible. It must NOT trigger when the
+    /// primary query returns at least one row.
+    #[test]
+    fn process_list_fallback_triggers_on_error_and_on_empty_success() {
+        let empty_ok: std::result::Result<Vec<i32>, sqlx::Error> = Ok(Vec::new());
+        assert!(
+            process_list_needs_fallback(&empty_ok),
+            "an empty success must fall back (performance_schema = OFF case)"
+        );
+
+        let err: std::result::Result<Vec<i32>, sqlx::Error> = Err(sqlx::Error::RowNotFound);
+        assert!(
+            process_list_needs_fallback(&err),
+            "a query error must fall back (table missing on old MySQL / MariaDB)"
+        );
+
+        let nonempty_ok: std::result::Result<Vec<i32>, sqlx::Error> = Ok(vec![1, 2]);
+        assert!(
+            !process_list_needs_fallback(&nonempty_ok),
+            "a non-empty success must NOT fall back"
+        );
     }
 
     #[test]

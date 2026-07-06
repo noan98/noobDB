@@ -19,6 +19,7 @@ import {
   TreeSearch,
 } from "./tree";
 import { copyToClipboard } from "./clipboard";
+import { useConfirm } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -45,6 +46,7 @@ function formatTime(iso: string): string {
 export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTab }: Props) {
   const t = useT();
   const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -100,7 +102,13 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
     const msg = scopeId
       ? t("historyClearConfirmProfile", { name: activeProfile?.name ?? "" })
       : t("historyClearConfirmAll");
-    if (!window.confirm(msg)) return;
+    const ok = await confirm({
+      title: t("historyClear"),
+      message: msg,
+      confirmLabel: t("historyClear"),
+      tone: "danger",
+    });
+    if (!ok) return;
     try {
       await api.clearHistory(scopeId);
       const rows = await api.listHistory({ profileId: scopeId, search: debounced || null });
@@ -274,6 +282,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
           })}
         </Tree>
       )}
+      {confirmDialog}
     </TreePane>
   );
 });

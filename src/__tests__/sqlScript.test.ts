@@ -45,6 +45,30 @@ describe("splitSqlStatements", () => {
     ]);
   });
 
+  it("treats `#` as a line comment, matching dangerousSql.ts's maskLiterals (#J3)", () => {
+    // A `;` after `#` is inside the (now-recognized) comment, so it is not a
+    // statement boundary.
+    expect(splitSqlStatements("SELECT 1 # a; b\n; SELECT 2")).toEqual([
+      "SELECT 1 # a; b",
+      "SELECT 2",
+    ]);
+    // Regression: this is the exact input from #J3 — PostgreSQL's `#>>`
+    // operator followed by a stacked DELETE. Before the fix, `splitSqlStatements`
+    // did not treat `#` as a comment, so it saw two statements here
+    // (`SELECT data #>> '{a}' FROM t` and `DELETE FROM t`), while
+    // `analyzeDangerousSql`/`isReadOnlySql` (which do treat `#` as a comment)
+    // saw one statement with the DELETE masked away as "comment" text — the
+    // mismatch meant the dangerous-write confirmation could be skipped. Both
+    // now agree it is a single statement.
+    expect(
+      splitSqlStatements("SELECT data #>> '{a}' FROM t; DELETE FROM t"),
+    ).toEqual(["SELECT data #>> '{a}' FROM t; DELETE FROM t"]);
+  });
+
+  it("drops a trailing `#`-comment-only fragment", () => {
+    expect(splitSqlStatements("SELECT 1; # note")).toEqual(["SELECT 1"]);
+  });
+
   it("keeps a dollar-quoted function body as a single statement", () => {
     const sql =
       "CREATE FUNCTION f() RETURNS int AS $$ BEGIN; RETURN 1; END; $$ LANGUAGE plpgsql; SELECT f()";

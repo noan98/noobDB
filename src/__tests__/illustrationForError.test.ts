@@ -57,6 +57,13 @@ describe("illustrationForError", () => {
         ),
       ).toBe("connectionFailed");
     });
+
+    it("connection timed out → connectionFailed (接続失敗が timeout より優先)", () => {
+      // "connection timed out" は timeout パターン ("timed out") にも一致するが、
+      // 接続失敗パターンを先に評価するため connectionFailed を返す。matchErrorHint
+      // が返す errorHintConnection (接続先の確認を促すヒント) と整合する。
+      expect(illustrationForError("connection timed out")).toBe("connectionFailed");
+    });
   });
 
   describe("timeout: タイムアウト系のエラー", () => {
@@ -64,12 +71,6 @@ describe("illustrationForError", () => {
       expect(
         illustrationForError("Query timed out after 30s and was cancelled."),
       ).toBe("timeout");
-    });
-
-    it("connection timed out → timeout (接続タイムアウトはタイムアウト優先)", () => {
-      // "connection timed out" は connectionFailed パターンにも含まれるが、
-      // timeout パターンが先に評価されるため timeout を返す。
-      expect(illustrationForError("connection timed out")).toBe("timeout");
     });
 
     it("timeout (小文字) → timeout", () => {
@@ -189,12 +190,13 @@ describe("illustrationForError", () => {
     });
   });
 
-  describe("優先順位: timeout が connectionFailed より先に評価される", () => {
-    it("'connection timed out' は timeout を返す (timeout パターンが先)", () => {
-      // connectionFailed パターンにも "connection timed out" が含まれるが、
-      // illustrationForError は timeout を先にテストするため timeout を返す。
+  describe("優先順位: connectionFailed が timeout より先に評価される", () => {
+    it("'connection timed out' は connectionFailed を返す (接続失敗パターンが先)", () => {
+      // timeout パターンにも "connection timed out" の "timed out" が含まれるが、
+      // illustrationForError は connectionFailed を先にテストするため
+      // connectionFailed を返す (matchErrorHint のヒントと整合させるため)。
       const result = illustrationForError("connection timed out");
-      expect(result).toBe("timeout");
+      expect(result).toBe("connectionFailed");
     });
   });
 });

@@ -22,7 +22,9 @@ pub mod __test_api {
     pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, ForeignKey, QueryResult, TableColumnInfo, TableSchema, Value,
+        Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
+        ServerInfo, ServerVariable, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
+        Value,
     };
     pub use crate::db::{
         is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
@@ -30,7 +32,7 @@ pub mod __test_api {
     pub use crate::error::AppError;
     pub use crate::profiles::SshAuthMethod;
     pub use crate::ssh::{SshConfig, SshTunnel};
-    pub use crate::state::{AppState, Session};
+    pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
@@ -119,6 +121,25 @@ pub mod __test_api {
             &s,
             &t,
         ))
+    }
+
+    /// Drives the `apply_sync_sql` IPC command's core path (session lookup +
+    /// read-only guard + empty-statement guard + transactional apply) without a
+    /// Tauri runtime, so integration tests can verify the destructive-write
+    /// guards actually fire on the command layer (not just the pure generator).
+    pub async fn apply_sync_sql_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        statements: Vec<String>,
+    ) -> crate::error::Result<u64> {
+        crate::commands::sync::apply_sync_sql_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            statements,
+        )
+        .await
     }
 
     /// Runs `sql` against MySQL via the text protocol, for statements the
@@ -219,8 +240,25 @@ pub fn run() {
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "noobDB starting");
 
-    let result = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // 長時間クエリ完了時の OS デスクトップ通知 (#707)。フロントは
+        // @tauri-apps/plugin-notification の JS API を直接呼ぶため、追加の
+        // Tauri コマンド登録は不要 (capabilities に notification:default のみ追加)。
+        .plugin(tauri_plugin_notification::init());
+
+    // アプリ内自動更新 (#705)。updater / process はデスクトップ専用プラグインなので
+    // desktop ターゲットのときだけ登録する (モバイル対応時にビルドが壊れないよう
+    // Tauri 公式テンプレートと同じ cfg ガードを踏襲)。更新の検出/ダウンロード/適用は
+    // フロント (`updater.ts`) が JS API で駆動し、ユーザ承認時のみ再起動する。
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init());
+    }
+
+    let result = builder
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::connection::test_connection,

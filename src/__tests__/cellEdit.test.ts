@@ -3,12 +3,14 @@ import { CellValue, Column, TableColumnInfo } from "../api/tauri";
 import {
   applyEditsToRows,
   buildDeleteStatements,
+  buildInsertClipboard,
   buildInsertStatements,
   buildRowSql,
   buildUpdateStatements,
   cellValueFromInput,
   countEditedCells,
   countEditedRows,
+  FALLBACK_INSERT_TABLE,
   isEditableColumnType,
   resolvePkIndices,
   rowEditKey,
@@ -50,6 +52,14 @@ describe("isEditableColumnType", () => {
     expect(isEditableColumnType("BLOB")).toBe(false);
     expect(isEditableColumnType("longblob")).toBe(false);
     expect(isEditableColumnType("VarBinary")).toBe(false);
+  });
+
+  it("rejects PostgreSQL BYTEA case-insensitively (regression: #修正4)", () => {
+    // db/postgres.rs は bytea 列を type_name = "BYTEA" として報告する。ここが
+    // false を返さないと編集不可の防御をすり抜け、hex 文字列がテキストとして
+    // 書き込まれて元のバイナリ値を破壊してしまう。
+    expect(isEditableColumnType("BYTEA")).toBe(false);
+    expect(isEditableColumnType("bytea")).toBe(false);
   });
 });
 
@@ -346,6 +356,14 @@ describe("buildRowSql", () => {
       ).toEqual(['INSERT INTO "tbl" ("id", "data") VALUES (1, X\'deadbeef\');']);
     });
 
+    it("treats PostgreSQL BYTEA as a BLOB-family column (regression: #修正4)", () => {
+      const columns = [col("id", "INT"), col("data", "BYTEA")];
+      const rows: CellValue[][] = [[1, "deadbeef"]];
+      expect(
+        buildRowSql(baseRowSql({ driver: "postgres", columns, rows }), "insert"),
+      ).toEqual(['INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xdeadbeef\');']);
+    });
+
     it("emits one statement per row", () => {
       expect(
         buildRowSql(baseRowSql({ rows: [[1, "a"], [2, "b"]] }), "insert"),
@@ -413,6 +431,105 @@ describe("buildRowSql", () => {
   it("returns [] when there are no columns", () => {
     expect(buildRowSql(baseRowSql({ columns: [], rows: [[]], pkIndices: [] }), "insert")).toEqual(
       [],
+    );
+  });
+});
+
+describe("buildInsertClipboard", () => {
+  const columns = [col("id", "INT"), col("flag", "BOOLEAN"), col("note", "VARCHAR")];
+  const rows: CellValue[][] = [
+    [1, true, null],
+    [2, false, "O'Brien"],
+  ];
+
+  it("one-statement-per-row mode matches buildRowSql and reports the table resolved", () => {
+    const result = buildInsertClipboard(
+      { driver: "mysql", database: "db", table: "tbl", columns, rows },
+      false,
+    );
+    expect(result.tableResolved).toBe(true);
+    expect(result.sql).toBe(
+      [
+        "INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (1, TRUE, NULL);",
+        "INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (2, FALSE, 'O''Brien');",
+      ].join("\n"),
+    );
+  });
+
+  it("combined mode emits one statement with one VALUES tuple per row", () => {
+    const result = buildInsertClipboard(
+      { driver: "mysql", database: "db", table: "tbl", columns, rows },
+      true,
+    );
+    expect(result.tableResolved).toBe(true);
+    expect(result.sql).toBe(
+      "INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (1, TRUE, NULL), (2, FALSE, 'O''Brien');",
+    );
+  });
+
+  it("falls back to a placeholder table name and reports unresolved when table is blank/missing", () => {
+    for (const table of [null, undefined, "", "   "]) {
+      const result = buildInsertClipboard(
+        { driver: "mysql", database: "db", table, columns, rows: [rows[0]] },
+        false,
+      );
+      expect(result.tableResolved).toBe(false);
+      expect(result.sql).toBe(
+        `INSERT INTO \`db\`.\`${FALLBACK_INSERT_TABLE}\` (\`id\`, \`flag\`, \`note\`) VALUES (1, TRUE, NULL);`,
+      );
+    }
+  });
+
+  it("renders driver-specific BLOB literals in combined mode", () => {
+    const blobCols = [col("id", "INT"), col("data", "BLOB")];
+    const blobRows: CellValue[][] = [
+      [1, "deadbeef"],
+      [2, ""],
+    ];
+    const result = buildInsertClipboard(
+      { driver: "mysql", database: "db", table: "tbl", columns: blobCols, rows: blobRows },
+      true,
+    );
+    expect(result.sql).toBe(
+      "INSERT INTO `db`.`tbl` (`id`, `data`) VALUES (1, 0xdeadbeef), (2, '');",
+    );
+  });
+
+  it("keeps precision-preserving numeric strings unquoted in combined mode", () => {
+    const numCols = [col("id", "BIGINT"), col("amount", "DECIMAL")];
+    const numRows: CellValue[][] = [["9007199254740993", "12.50"]];
+    const result = buildInsertClipboard(
+      { driver: "postgres", database: "db", table: "tbl", columns: numCols, rows: numRows },
+      true,
+    );
+    expect(result.sql).toBe(
+      'INSERT INTO "db"."tbl" ("id", "amount") VALUES (9007199254740993, 12.50);',
+    );
+  });
+
+  it("returns an empty string when there are no rows or no columns", () => {
+    expect(
+      buildInsertClipboard(
+        { driver: "mysql", database: "db", table: "tbl", columns, rows: [] },
+        true,
+      ).sql,
+    ).toBe("");
+    expect(
+      buildInsertClipboard(
+        { driver: "mysql", database: "db", table: "tbl", columns: [], rows },
+        true,
+      ).sql,
+    ).toBe("");
+  });
+
+  it("skips missing rows (holes) without throwing", () => {
+    const sparse = [rows[0], undefined as unknown as CellValue[], rows[1]];
+    const result = buildInsertClipboard(
+      { driver: "mysql", database: "db", table: "tbl", columns, rows: sparse },
+      true,
+    );
+    expect(result.sql).toBe(
+      "INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (1, TRUE, NULL), (2, FALSE, 'O''Brien');",
     );
   });
 });

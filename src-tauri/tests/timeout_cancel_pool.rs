@@ -70,14 +70,21 @@ async fn cancel_stream_then_same_pool_succeeds() {
     });
     let stream_id = "stream-cancel-1".to_string();
     state
-        .register_stream(stream_id.clone(), handle.abort_handle())
+        .register_stream(
+            stream_id.clone(),
+            t::StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                kind: t::StreamKind::Query,
+            },
+        )
         .await;
 
     // クエリが走り始めるのを待ってから、実 cancel_stream 経路で abort する。
     tokio::time::sleep(Duration::from_millis(100)).await;
     let cancelled = state.cancel_stream(&stream_id).await;
     assert!(
-        cancelled,
+        cancelled.is_some(),
         "登録済みストリームは cancel_stream で abort されるはず"
     );
 

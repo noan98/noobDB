@@ -132,13 +132,13 @@ export function ConnectionFailedIllustration({ size = 96 }: IllustrationProps) {
       {/* 断線ケーブル */}
       <path d="M80 51h12" opacity="0.4" strokeDasharray="4 3" />
       {/* ✕ マーク (エラー色) */}
-      <g stroke="var(--chakra-colors-app-textError, #e53e3e)" strokeWidth={2.5}>
+      <g stroke="var(--text-error)" strokeWidth={2.5}>
         <circle
           cx="104"
           cy="27"
           r="14"
-          fill="color-mix(in srgb, var(--chakra-colors-app-textError, #e53e3e) 12%, transparent)"
-          stroke="var(--chakra-colors-app-textError, #e53e3e)"
+          fill="color-mix(in srgb, var(--text-error) 12%, transparent)"
+          stroke="var(--text-error)"
         />
         <path d="M97 20l14 14M111 20L97 34" />
       </g>

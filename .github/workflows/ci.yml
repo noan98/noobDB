@@ -30,6 +30,9 @@ jobs:
   changes:
     name: detect changed areas
     runs-on: ubuntu-latest
+    # 各ジョブに timeout-minutes を付け、ハング時にデフォルト 6 時間ランナーを
+    # 占有し続けるのを防ぐ (実測に余裕を持たせた保守的な上限。正常時は影響なし)。
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -40,9 +43,12 @@ jobs:
     steps:
       # pull_request イベントでは paths-filter は API 比較で checkout 不要だが、
       # push (main) イベントではローカルの git 履歴を比較するため checkout が必要。
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # push 比較は直前コミットとの差分なので、親コミットまで含む fetch-depth: 2 で
+      # paths-filter が自前 fetch にフォールバックせず確実に履歴比較できるようにする。
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 2
 
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         id: filter
@@ -67,8 +73,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
+      # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
+      - name: Record job start time (#565)
+        run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -85,7 +97,8 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        id: pnpm-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -116,6 +129,23 @@ jobs:
       - name: Unit tests (Vitest) + coverage threshold
         run: pnpm test --coverage
 
+      # ジョブ所要時間とキャッシュヒット有無を Job Summary へ出力する (#565)。
+      # バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで fail
+      # させない。ビルド時間退行 (キャッシュミス・依存増) の早期発見が目的。
+      - name: Job timing & cache summary (#565)
+        if: always()
+        run: |
+          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
+          {
+            echo "### frontend (typecheck + build) 所要時間・キャッシュ"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "| --- | --- |"
+            echo "| 所要時間 | ${ELAPSED} 秒 |"
+            echo "| pnpm store キャッシュヒット | ${{ steps.pnpm-cache.outputs.cache-hit }} |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # 実ブラウザ (Vitest ブラウザモード / Playwright + headless Chromium) で主要画面の
   # レンダリングとビジュアル回帰を検証する (#306)。jsdom の純ロジックテスト
   # (frontend ジョブ) とは実行環境が異なるため別ジョブに分離している。Chakra UI
@@ -130,8 +160,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -148,7 +179,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -177,8 +208,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -203,6 +235,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: "0"
       # sccache をコンパイルキャッシュとして使う (#417)。rust-cache が target
@@ -212,7 +245,12 @@ jobs:
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
+      # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
+      - name: Record job start time (#565)
+        run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -245,7 +283,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -258,6 +296,7 @@ jobs:
           components: clippy
 
       - name: Cache cargo
+        id: rust-cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: "./src-tauri -> target"
@@ -268,7 +307,7 @@ jobs:
       # 別物として管理する。Cargo.lock が変わってもプレフィックス一致で前回分を
       # 復元し、差分のみ再コンパイルする。
       - name: Cache sccache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -288,10 +327,31 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
 
-      # sccache のヒット率を Job ログに出して効果計測の材料にする (#417)。
-      - name: sccache stats
+      # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
+      # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
+      # 拡張し、バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで
+      # fail はさせない。
+      - name: Job timing & cache summary (#565)
         if: always()
-        run: sccache --show-stats
+        run: |
+          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
+          {
+            echo "### rust (clippy) 所要時間・キャッシュ"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "| --- | --- |"
+            echo "| 所要時間 | ${ELAPSED} 秒 |"
+            echo "| rust-cache (target) ヒット | ${{ steps.rust-cache.outputs.cache-hit }} |"
+            echo ""
+            echo '<details><summary>sccache --show-stats</summary>'
+            echo ''
+            echo '```'
+            sccache --show-stats
+            echo '```'
+            echo ''
+            echo '</details>'
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # 依存ライセンスの許可リスト検査と、RustSec Advisory DB による既知脆弱性チェック
   # を cargo-deny で行う (#332)。設定は src-tauri/deny.toml。cargo metadata を読む
@@ -303,8 +363,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -324,6 +385,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
       # sccache をコンパイルキャッシュとして使う (#417)。カバレッジ計装ビルド
@@ -358,7 +420,12 @@ jobs:
           --health-timeout=5s
           --health-retries=10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
+      # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
+      - name: Record job start time (#565)
+        run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -393,7 +460,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -413,6 +480,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Cache cargo
+        id: rust-cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: "./src-tauri -> target"
@@ -420,7 +488,7 @@ jobs:
 
       # sccache のローカルディスクキャッシュを永続化する (ジョブ種別 test で分離)。
       - name: Cache sccache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-test-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -485,10 +553,31 @@ jobs:
         working-directory: src-tauri
         run: cargo llvm-cov report --fail-under-lines 60
 
-      # sccache のヒット率を Job ログに出して効果計測の材料にする (#417)。
-      - name: sccache stats
+      # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
+      # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
+      # 拡張し、バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで
+      # fail はさせない。
+      - name: Job timing & cache summary (#565)
         if: always()
-        run: sccache --show-stats
+        run: |
+          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
+          {
+            echo "### rust (test) 所要時間・キャッシュ"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "| --- | --- |"
+            echo "| 所要時間 | ${ELAPSED} 秒 |"
+            echo "| rust-cache (target) ヒット | ${{ steps.rust-cache.outputs.cache-hit }} |"
+            echo ""
+            echo '<details><summary>sccache --show-stats</summary>'
+            echo ''
+            echo '```'
+            sccache --show-stats
+            echo '```'
+            echo ''
+            echo '</details>'
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Windows ターゲットの PR 事前検証 (#392)。Rust のコンパイル・テストは普段
   # Linux でしか走らず、Windows 固有の挙動 (keyring・ファイルパス・改行コード・
@@ -508,6 +597,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
       # Linux ジョブと同じく sccache でコンパイルキャッシュを効かせる (#417)。
@@ -515,7 +605,15 @@ jobs:
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
+      # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
+      # windows-latest の既定シェルは pwsh なので、他の GITHUB_ENV 書き込み
+      # ステップと同様に明示的に bash を指定する。
+      - name: Record job start time (#565)
+        shell: bash
+        run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -539,7 +637,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -554,13 +652,14 @@ jobs:
           components: clippy
 
       - name: Cache cargo
+        id: rust-cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: windows-clippy
 
       - name: Cache sccache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -577,21 +676,53 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
 
-      - name: sccache stats
+      # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
+      # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
+      # 拡張し、バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで
+      # fail はさせない。
+      - name: Job timing & cache summary (#565)
         if: always()
-        run: sccache --show-stats
+        shell: bash
+        run: |
+          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
+          {
+            echo "### rust (windows clippy) 所要時間・キャッシュ"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "| --- | --- |"
+            echo "| 所要時間 | ${ELAPSED} 秒 |"
+            echo "| rust-cache (target) ヒット | ${{ steps.rust-cache.outputs.cache-hit }} |"
+            echo ""
+            echo '<details><summary>sccache --show-stats</summary>'
+            echo ''
+            echo '```'
+            sccache --show-stats
+            echo '```'
+            echo ''
+            echo '</details>'
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
 
   rust-windows-test:
     name: rust (windows test)
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
+      # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
+      # windows-latest の既定シェルは pwsh なので、他の GITHUB_ENV 書き込み
+      # ステップと同様に明示的に bash を指定する。
+      - name: Record job start time (#565)
+        shell: bash
+        run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -615,7 +746,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -628,13 +759,14 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Cache cargo
+        id: rust-cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: windows-test
 
       - name: Cache sccache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
           key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -658,6 +790,29 @@ jobs:
         working-directory: src-tauri
         run: cargo nextest run --locked --all-targets
 
-      - name: sccache stats
+      # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
+      # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
+      # 拡張し、バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで
+      # fail はさせない。
+      - name: Job timing & cache summary (#565)
         if: always()
-        run: sccache --show-stats
+        shell: bash
+        run: |
+          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
+          {
+            echo "### rust (windows test) 所要時間・キャッシュ"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "| --- | --- |"
+            echo "| 所要時間 | ${ELAPSED} 秒 |"
+            echo "| rust-cache (target) ヒット | ${{ steps.rust-cache.outputs.cache-hit }} |"
+            echo ""
+            echo '<details><summary>sccache --show-stats</summary>'
+            echo ''
+            echo '```'
+            sccache --show-stats
+            echo '```'
+            echo ''
+            echo '</details>'
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"

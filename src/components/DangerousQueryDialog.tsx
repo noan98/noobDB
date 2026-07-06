@@ -1,9 +1,10 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DangerFinding, DangerKind } from "../dangerousSql";
+import { typedConfirmMatches } from "../typeToConfirm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button } from "./ui";
+import { Button, Input } from "./ui";
 
 interface Props {
   findings: DangerFinding[];
@@ -15,6 +16,15 @@ interface Props {
    * is empty.
    */
   writeApproval?: boolean;
+  /**
+   * When set, this is an irreversible DROP/TRUNCATE on a production
+   * connection: the confirm button stays disabled until the user types this
+   * text exactly (the table name when it could be resolved unambiguously,
+   * otherwise `TYPE_TO_CONFIRM_FALLBACK`). Null/undefined skips the extra
+   * gate — non-production connections keep the existing one-click confirm.
+   * A UI safety net only (#675), not backend-enforced.
+   */
+  typedConfirmTarget?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -26,13 +36,35 @@ const KIND_LABEL_KEYS: Record<DangerKind, Parameters<ReturnType<typeof useT>>[0]
   truncate: "dangerousKindTruncate",
 };
 
-export function DangerousQueryDialog({ findings, isProduction, writeApproval, onConfirm, onCancel }: Props) {
+export function DangerousQueryDialog({
+  findings,
+  isProduction,
+  writeApproval,
+  typedConfirmTarget,
+  onConfirm,
+  onCancel,
+}: Props) {
   const t = useT();
-  // Default focus to Cancel so a stray Enter doesn't run the query.
+  // Default focus to Cancel so a stray Enter doesn't run the query — unless a
+  // typed confirmation is required, in which case the user needs to type
+  // into the input anyway, so focus starts there.
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const typedInputRef = useRef<HTMLInputElement>(null);
+  const [typedValue, setTypedValue] = useState("");
+  const requiresTyped = !!typedConfirmTarget;
+  const typedMatches = !requiresTyped || typedConfirmMatches(typedValue, typedConfirmTarget);
+  // 同一インスタンスを使い回す呼び出し側でも、対象が変わったら前回入力を
+  // 持ち越さない (安全網の入力欄が汚染されないようにする)。
+  useEffect(() => {
+    setTypedValue("");
+  }, [typedConfirmTarget]);
 
   return (
-    <Modal width="520px" onClose={onCancel} initialFocusEl={() => cancelRef.current}>
+    <Modal
+      width="520px"
+      onClose={onCancel}
+      initialFocusEl={() => (requiresTyped ? typedInputRef.current : cancelRef.current)}
+    >
       <ModalHeader onClose={onCancel} closeLabel={t("dangerousCancel")}>
         {t("dangerousTitle")}
       </ModalHeader>
@@ -93,15 +125,43 @@ export function DangerousQueryDialog({ findings, isProduction, writeApproval, on
             {t(writeApproval ? "dangerousWriteApprovalIntro" : "dangerousIntro")}
           </chakra.p>
         )}
+        {requiresTyped && (
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
+            <chakra.label
+              htmlFor="dangerous-type-confirm-input"
+              fontSize="sm"
+              fontWeight={600}
+              color="app.text"
+            >
+              {t("typeToConfirmLabel", { target: typedConfirmTarget })}
+            </chakra.label>
+            <Input
+              id="dangerous-type-confirm-input"
+              ref={typedInputRef}
+              value={typedValue}
+              onChange={(e) => setTypedValue(e.target.value)}
+              placeholder={typedConfirmTarget}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </chakra.div>
+        )}
       </ModalBody>
 
       {/*
-        安全側優先レイアウト: 不可逆な「実行」は非強調 (secondary) で左側に
-        置き、安全な「キャンセル」を強調色 (primary) で右側 + デフォルトフォーカスに
-        する。HIG 各種ガイドラインに倣い、破壊的アクションを視覚的に優位にしない。
+        安全側優先レイアウト: 不可逆な「実行」は非強調で左側に置き、安全な
+        「キャンセル」を強調色 (primary) で右側 + デフォルトフォーカスにする。
+        HIG 各種ガイドラインに倣い、破壊的アクションを視覚的に優位にしない。
+        実行側はベタ塗りにせず dangerOutline (枠線 + 危険色文字) にすることで、
+        非強調のまま「これは破壊的操作である」ことを色でも伝える。
       */}
       <ModalFooter>
-        <Button type="button" variant="secondary" onClick={onConfirm}>
+        <Button
+          type="button"
+          variant="dangerOutline"
+          onClick={onConfirm}
+          disabled={requiresTyped && !typedMatches}
+        >
           {t("dangerousConfirm")}
         </Button>
         <div style={{ flex: 1 }} />

@@ -36,10 +36,18 @@ interface Props {
   driver?: string;
   /**
    * True when the grid holds only part of the result set (an auto LIMIT is
-   * binding, or more pages can still be loaded). Surfaces a warning so the
-   * user doesn't mistake a partial export for the full set.
+   * binding, more pages can still be loaded, or the run was cancelled/timed
+   * out before finishing). Surfaces a warning so the user doesn't mistake a
+   * partial export for the full set.
    */
   partial?: boolean;
+  /**
+   * True when `partial` is set specifically because the run was cancelled or
+   * timed out (rather than an auto LIMIT / pagination) (#685). Swaps in a
+   * warning that doesn't suggest the "fetch all rows" action, which doesn't
+   * apply here — the remedy is to re-run the query.
+   */
+  stoppedPartial?: boolean;
   /** 全件エクスポートのコンテキスト。未提供ならグリッドのみエクスポート。 */
   fullExport?: FullExportContext;
   onClose: () => void;
@@ -114,7 +122,7 @@ type Status =
 /** エクスポート対象: 現在のグリッドのみ / クエリを再実行して全件。 */
 type ExportScope = "current" | "full";
 
-export function ExportModal({ columns, rows, database, table, driver, partial, fullExport, onClose }: Props) {
+export function ExportModal({ columns, rows, database, table, driver, partial, stoppedPartial, fullExport, onClose }: Props) {
   const t = useT();
   const toast = useToast();
   const [format, setFormat] = useState<ExportFormat>("csv");
@@ -382,14 +390,14 @@ export function ExportModal({ columns, rows, database, table, driver, partial, f
             role="status"
             py="2" px="2.5"
             border="1px solid"
-            borderColor="color-mix(in srgb, #f59e0b 50%, var(--border))"
-            bg="color-mix(in srgb, #f59e0b 14%, var(--bg-muted))"
+            borderColor="color-mix(in srgb, var(--status-warning) 50%, var(--border))"
+            bg="color-mix(in srgb, var(--status-warning) 14%, var(--bg-muted))"
             color="app.text"
             borderRadius="md"
             fontSize="sm"
             lineHeight={1.5}
           >
-            {t("exportPartialWarning")}
+            {stoppedPartial ? t("exportPartialWarningStopped") : t("exportPartialWarning")}
           </chakra.div>
         )}
         <FormSection>

@@ -443,3 +443,55 @@ async fn postgres_process_list_and_kill() {
     victim.close().await;
     conn.close().await;
 }
+
+/// #640 — PostgreSQL の**トランザクショナル DDL** により、DDL+DML 混在バッチで
+/// 後続 DML が失敗すると先行の `CREATE TABLE` も**ロールバックされる**ことを確認する。
+///
+/// MySQL の対比テスト (`mysql_ddl_dml_mixed_batch_is_not_atomic`) では暗黙コミットで
+/// CREATE が残るのに対し、PostgreSQL では何も残らない — このドライバ差を明示する。
+#[tokio::test]
+async fn postgres_ddl_dml_mixed_batch_rolls_back() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // クリーンな状態から開始。
+    conn.execute("DROP TABLE IF EXISTS public.ddl_dml_mixed_pg", None)
+        .await
+        .expect("pre-drop");
+
+    // CREATE TABLE → 型不一致 INSERT (id は INT) で確実に失敗させる。
+    let batch = vec![
+        "CREATE TABLE public.ddl_dml_mixed_pg (id INT PRIMARY KEY)".to_string(),
+        "INSERT INTO public.ddl_dml_mixed_pg (id) VALUES ('not-an-int')".to_string(),
+    ];
+    let res = conn.execute_transaction(&batch, None).await;
+    assert!(
+        res.is_err(),
+        "後続 INSERT の失敗で execute_transaction 全体はエラーを返すはず: {res:?}"
+    );
+
+    // PostgreSQL はトランザクショナル DDL なので CREATE TABLE もロールバックされ残らない。
+    let exists = conn
+        .execute(
+            "SELECT COUNT(*) AS n FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'ddl_dml_mixed_pg'",
+            None,
+        )
+        .await
+        .expect("check table existence");
+    assert!(
+        matches!(&exists.rows[0][0], t::Value::Int(0)),
+        "PostgreSQL では混在バッチ失敗時に CREATE TABLE もロールバックされ、テーブルは残らないはず: {:?}",
+        exists.rows[0][0]
+    );
+
+    // 念のため後始末 (残っていた場合に備えて)。
+    conn.execute("DROP TABLE IF EXISTS public.ddl_dml_mixed_pg", None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}

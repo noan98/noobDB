@@ -29,12 +29,18 @@ ignore = [
     # rsa の Marvin 攻撃 (タイミング側チャネル)。SSH 認証用に russh が引き込む
     # rsa 0.10.0-rc.16 に該当。修正版は未リリースで、russh 側の対応待ち。
     "RUSTSEC-2023-0071",
-    # glib の VariantStrIter のイテレータ実装の unsound。Tauri の GTK スタックが
-    # 引き込む glib 0.18.5 に該当。Tauri / gtk-rs 側の更新待ち。
-    "RUSTSEC-2024-0429",
     # russh が固定する aes 0.9.0 (プレリリース系暗号スタック) は crates.io で
     # yank 済み。差し替えは russh の更新待ち。
     { crate = "aes@0.9.0", reason = "russh 0.60 が固定する yanked なプレリリース版。upstream 更新待ち" },
+    # quick-xml 0.39.4 の 2 件の DoS advisory (RUSTSEC-2026-0194: 重複属性名検査の
+    # 二次関数的実行時間 / RUSTSEC-2026-0195: NsReader の非有界アロケーション)。
+    # Tauri (tauri → plist 1.9.0) が 0.39 系を固定しており、plist/tauri 側が
+    # quick-xml >= 0.41 に更新するまで cargo update では差し替えられない (0.41 は
+    # plist の依存制約外)。本アプリは信頼できない XML を quick-xml の NsReader で
+    # 解析せず、plist は Tauri 内部の macOS メタデータ処理でのみ使われるため実影響は
+    # 低い。plist/Tauri の更新で解消次第、この 2 件を外す。
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]
 
 [licenses]

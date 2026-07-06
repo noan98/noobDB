@@ -200,6 +200,13 @@ describe("WCAG AA contrast for core tokens (#326)", () => {
       }
     });
 
+    it("PK key accent color meets AA on the tree/ER surfaces (#717)", () => {
+      // --key-accent は接続ツリー (ConnectionList) と ER 図 (ERDiagramView) の PK
+      // アイコン専用トークン。--cell-date からの分離後も見た目 (コントラスト) は
+      // 不変であることを固定する。
+      check(vars, "key-accent", "bg-elevated", AA_TEXT);
+    });
+
     it("text on the row-selection / row-hover highlight meets AA", () => {
       check(vars, "text", "bg-active", AA_TEXT);
       check(vars, "text", "bg-row-hover", AA_TEXT);
@@ -275,7 +282,7 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
       check(vars, "status-info", "bg", AA_UI);
     });
     it("typed cell + syntax colors meet AA on their surfaces", () => {
-      for (const c of ["cell-number", "cell-bool-true", "cell-date", "cell-json", "cell-binary"]) {
+      for (const c of ["cell-number", "cell-bool-true", "cell-date", "cell-json", "cell-binary", "key-accent"]) {
         check(vars, c, "bg-elevated", AA_TEXT);
       }
       for (const c of ["syntax-keyword", "syntax-string", "syntax-comment", "syntax-function"]) {

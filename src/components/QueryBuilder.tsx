@@ -72,7 +72,7 @@ function pillCss(active: boolean): SystemStyleObject {
     borderRadius: "var(--radius-pill)",
     fontSize: "var(--text-sm)",
     cursor: "pointer",
-    transition: "background 0.12s, border-color 0.12s",
+    transition: "background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
     _hover: { background: "var(--bg-hover)" },
   };
   if (active) {
@@ -179,12 +179,13 @@ const previewCopyCss: SystemStyleObject = {
   borderRadius: "var(--radius-sm)",
   cursor: "pointer",
   zIndex: 1,
-  transition: "color 0.12s, border-color 0.12s, background 0.12s",
+  transition:
+    "color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease)",
   _hover: { color: "var(--text)", background: "var(--bg-hover)" },
   _focusVisible: {
     outline: "none",
     borderColor: "var(--accent)",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)",
+    boxShadow: "var(--focus-ring)",
   },
 };
 const previewCss: SystemStyleObject = {
@@ -292,7 +293,10 @@ function pickDefaultDatabase(driver: string, list: string[]): string | null {
   return user ?? list[0] ?? null;
 }
 
-function quoteValue(driver: string, raw: string): string {
+// テスト (QueryBuilder.test.ts) からバックスラッシュ/クオート処理を直接検証
+// できるよう export する (他の生成ロジックと違い、この関数はコンポーネント外に
+// 切り出されておらずここが唯一のテスト経路)。
+export function quoteValue(driver: string, raw: string): string {
   const v = raw.trim();
   if (v === "") return "''";
   if (/^null$/i.test(v)) return "NULL";
@@ -302,7 +306,14 @@ function quoteValue(driver: string, raw: string): string {
     if (driver === "sqlite") return v.toLowerCase() === "true" ? "1" : "0";
     return v.toUpperCase();
   }
-  return "'" + v.replace(/\\/g, "\\\\").replace(/'/g, "''") + "'";
+  // バックスラッシュの二重化は MySQL のみ必要。PostgreSQL (既定の
+  // standard_conforming_strings = on) と SQLite ではバックスラッシュは
+  // ただの文字なので、二重化すると値が変わってしまい (例: C:\temp が
+  // C:\\temp として保存され)、WHERE 句が既存行に一致しなくなる。
+  // cellEdit.ts の quoteString / db/data_diff.rs の quote_string と方針を揃える。
+  const escaped =
+    driver === "mysql" ? v.replace(/\\/g, "\\\\").replace(/'/g, "''") : v.replace(/'/g, "''");
+  return "'" + escaped + "'";
 }
 
 function tableRef(driver: string, database: string, table: string): string {
@@ -901,8 +912,11 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
             {t("qbPreviewRun")}
           </Button>
         )}
+        {/* 実行はエディタの Run / 他モーダルの Execute と同じ「主要アクション =
+            primary (アクセント色)」に統一する。success はセル編集 Apply などの
+            DB 書き込み確定に限定する (theme.ts の variant 規約)。 */}
         <Button
-          variant="success"
+          variant="primary"
           onClick={handleExecute}
           disabled={runBlockedByReadOnly}
           title={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}

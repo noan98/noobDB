@@ -22,6 +22,7 @@ import {
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { sql, type SQLNamespace } from "@codemirror/lang-sql";
+import { forceLinting, lintGutter, linter } from "@codemirror/lint";
 import {
   acceptCompletion,
   autocompletion,
@@ -35,13 +36,16 @@ import {
   HighlightStyle,
   indentOnInput,
   syntaxHighlighting,
+  syntaxTree,
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { format as formatSql } from "sql-formatter";
 import type { TableSchema } from "../api/tauri";
 import { useT } from "../i18n";
+import { useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset } from "../sqlScript";
+import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
@@ -110,6 +114,10 @@ const stmtFlashField = StateField.define<DecorationSet>({
   },
   provide: (f) => EditorView.decorations.from(f),
 });
+
+// リアルタイム構文チェック (#704) のデバウンス遅延 (ms)。大きなスクリプトでも
+// 入力を阻害しないよう、タイプが落ち着いてから lint を走らせる。
+const SQL_LINT_DELAY_MS = 500;
 
 /** エディタの再割り当て可能なアクション (#557) の解決済みコンボ。 */
 export interface EditorKeyBindings {
@@ -318,10 +326,44 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onToggleFocus,
 }: Props, ref) {
   const t = useT();
+  const settings = useSettings();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const sqlCompartment = useMemo(() => new Compartment(), []);
   const actionKeymapCompartment = useMemo(() => new Compartment(), []);
+  const lintCompartment = useMemo(() => new Compartment(), []);
+
+  // リアルタイム構文チェック (#704)。設定でオン/オフでき、診断メッセージは i18n
+  // 経由で日英対応。linter は `syntaxTree(state)` の (lang-sql が既に構築した)
+  // ツリーを再利用するため方言追従は自動 (別途 dialect を渡す必要がない)。
+  const sqlLintEnabled = settings.sqlLintEnabled;
+  const lintMessages: SqlLintMessages = {
+    syntaxError: t("editorLintSyntaxError"),
+    unterminated: t("editorLintUnterminated"),
+  };
+  const lintMessagesRef = useRef(lintMessages);
+  lintMessagesRef.current = lintMessages;
+  const sqlLintEnabledRef = useRef(sqlLintEnabled);
+  sqlLintEnabledRef.current = sqlLintEnabled;
+
+  // オンのときだけ linter + lintGutter を返し、オフでは空 (診断を一切出さない)。
+  // クロージャは ref からメッセージを読むので、言語切替時は下の useEffect が
+  // compartment を作り直して再 lint する。
+  const buildLintExtension = (enabled: boolean) =>
+    enabled
+      ? [
+          lintGutter(),
+          linter(
+            (view) =>
+              diagnosticsFromTree(
+                syntaxTree(view.state),
+                view.state.doc.toString(),
+                lintMessagesRef.current,
+              ),
+            { delay: SQL_LINT_DELAY_MS },
+          ),
+        ]
+      : [];
 
   // エディタ系ショートカットの解決済みコンボ。未指定は既定へフォールバック。
   const runCombo = editorBindings?.run ?? DEFAULT_SHORTCUT_COMBOS.run;
@@ -484,6 +526,9 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           search({ top: true }),
           highlightSelectionMatches(),
           stmtFlashField,
+          // 構文チェック (#704) は Compartment 越しにして、設定トグルや言語切替で
+          // 再構成できるようにする。作成時点の設定値で初期化する。
+          lintCompartment.of(buildLintExtension(sqlLintEnabledRef.current)),
           sqlCompartment.of(buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase)),
           // 再割り当て可能なアクション (Run / Run statement / Preview / Format) は
           // Compartment 越しのキーマップにして、設定変更時に再構成できるようにする。
@@ -554,11 +599,27 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         buildSqlExtension(driver, schemaTable, databaseSchema, defaultDatabase),
       ),
     });
+    // 方言 (driver) が変わっても `@codemirror/lint` は doc 変更が無い限り再実行
+    // されず、旧方言の診断が残ってしまう (#704 のレビュー指摘)。lint 有効時は
+    // 明示的に再 lint を促し、新方言のパースツリーで診断を更新する。
+    if (sqlLintEnabledRef.current) forceLinting(view);
     // `databaseSchema` is a stable reference from the parent's cache: it only
     // changes identity on (re)fetch or when the editor's database changes, so
     // depending on it directly is both correct and cheap.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schemaKey, driver, databaseSchema, defaultDatabase]);
+
+  // 構文チェックのオン/オフ、または診断メッセージ (言語切替) が変わったら lint
+  // 拡張を再構成する (#704)。オフ→空で診断が消え、言語切替では新メッセージで
+  // 作り直した linter が再 lint する。
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: lintCompartment.reconfigure(buildLintExtension(sqlLintEnabled)),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sqlLintEnabled, lintMessages.syntaxError, lintMessages.unterminated]);
 
   // ショートカットの上書きが変わったら、アクションキーマップを再構成する (#557)。
   useEffect(() => {

@@ -771,3 +771,104 @@ async fn mysql_process_list_and_kill() {
     victim.close().await;
     conn.close().await;
 }
+
+/// #587 / #641 回帰: `list_processes` は `performance_schema.processlist` が
+/// 空成功 (`performance_schema = OFF`) またはエラーのとき
+/// `information_schema.PROCESSLIST` へフォールバックする。このフォールバック
+/// 分岐の選択ロジック (`db::mysql::process_list_needs_fallback`) は
+/// `db/mysql.rs` の単体テストが空成功/エラー/非空成功の 3 パターンで
+/// カバー済み (`performance_schema` は起動時にしか変更できない変数のため、
+/// 実サーバ上で OFF を再現して分岐そのものを駆動するのは困難)。
+/// ここではフォールバック先の実クエリ文字列が実サーバに対して構文的に
+/// 有効で、少なくとも自分自身のスレッドを返すことを固定し、
+/// `information_schema.PROCESSLIST` 側のカラム名/構文がドリフトしても
+/// 静かに壊れないようにする。
+#[tokio::test]
+async fn mysql_process_list_information_schema_fallback_query_is_valid() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // Same projection/table/order-by shape as the fallback branch in
+    // `db::mysql::MySqlConn::list_processes`.
+    let res = conn
+        .execute(
+            "SELECT ID, USER, HOST, DB, COMMAND, STATE, TIME, INFO, ID = CONNECTION_ID() \
+             FROM information_schema.PROCESSLIST ORDER BY ID",
+            None,
+        )
+        .await
+        .expect("information_schema.PROCESSLIST fallback query must be valid SQL");
+    assert!(
+        !res.rows.is_empty(),
+        "fallback source must at least contain this client's own connection"
+    );
+
+    conn.close().await;
+}
+
+/// #640 — MySQL の DDL 暗黙コミットにより DDL+DML 混在バッチが非原子になる挙動を
+/// **期待値として固定**する (回帰検出)。
+///
+/// `execute_transaction(["CREATE TABLE ...", "INSERT ... (失敗)"])` を投げると、
+/// MySQL は `CREATE TABLE` の時点で暗黙コミットするため、後続 INSERT が失敗して
+/// トランザクションをロールバックしても **CREATE TABLE は残る**。この非原子性を
+/// テストで明示し、PostgreSQL の対比テスト (`postgres_ddl_dml_mixed_batch_rolls_back`)
+/// と合わせてドライバ差を可視化する。
+#[tokio::test]
+async fn mysql_ddl_dml_mixed_batch_is_not_atomic() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // クリーンな状態から開始。
+    conn.execute("DROP TABLE IF EXISTS ddl_dml_mixed_t", Some(&db))
+        .await
+        .expect("pre-drop");
+
+    // CREATE TABLE (暗黙コミット) → 型に合わない INSERT で確実に失敗させる。
+    // id は INT なので 'not-an-int' は変換エラー (strict モード) になる。
+    let batch = vec![
+        "CREATE TABLE ddl_dml_mixed_t (id INT PRIMARY KEY)".to_string(),
+        "INSERT INTO ddl_dml_mixed_t (id) VALUES ('not-an-int')".to_string(),
+    ];
+    let res = conn.execute_transaction(&batch, Some(&db)).await;
+    assert!(
+        res.is_err(),
+        "後続 INSERT の失敗で execute_transaction 全体はエラーを返すはず: {res:?}"
+    );
+
+    // だが CREATE TABLE は暗黙コミット済みで残る (非原子性)。これが MySQL の現状挙動。
+    let exists = conn
+        .execute(
+            "SELECT COUNT(*) AS n FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ddl_dml_mixed_t'",
+            Some(&db),
+        )
+        .await
+        .expect("check table existence");
+    let n = match &exists.rows[0][0] {
+        t::Value::Int(n) => *n,
+        other => panic!("expected int count, got {other:?}"),
+    };
+    assert_eq!(
+        n, 1,
+        "MySQL は DDL の暗黙コミットにより、バッチ失敗後も CREATE TABLE が残る (非原子)"
+    );
+
+    // 後始末。
+    conn.execute("DROP TABLE IF EXISTS ddl_dml_mixed_t", Some(&db))
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}

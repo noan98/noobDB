@@ -132,6 +132,31 @@ export interface Settings {
    * 既定にマージして利用する。
    */
   shortcutOverrides: Record<string, string>;
+  /**
+   * 長時間クエリ完了時に OS デスクトップ通知を出す (#707)。ウィンドウが
+   * 非フォーカスかつ実行時間が `queryNotificationThresholdSecs` 以上のときのみ
+   * 発火する (判定は `queryNotify.ts`)。
+   */
+  queryNotificationsEnabled: boolean;
+  /**
+   * クエリ完了通知を出すまでの経過時間の閾値 (秒)。この秒数未満で完了した
+   * クエリは (ウィンドウが非フォーカスでも) 通知しない。
+   */
+  queryNotificationThresholdSecs: number;
+  /**
+   * 起動時にアプリの更新を自動チェックする (#705)。既定オン。オフにすると
+   * 起動時の自動チェックを止め、設定画面の「更新を確認」ボタンからの手動
+   * チェックのみになる (オフライン/社内配布/手動運用向けの逃げ道)。ダウンロード・
+   * 適用・再起動は本設定に関係なく常にユーザ承認制で、勝手には行われない。
+   */
+  autoUpdateCheckEnabled: boolean;
+  /**
+   * クエリエディタのリアルタイム SQL 構文チェック (#704)。既定オン。オンのとき
+   * CodeMirror の Lezer パースツリーを使い、括弧の不整合・未終端の文字列/引用符
+   * などを実行前に下線 + ガターで表示する。ベストエフォートの編集支援であり
+   * 安全判定ではない。誤検出が気になるユーザ向けにオフにできる。
+   */
+  sqlLintEnabled: boolean;
 }
 
 /**
@@ -402,6 +427,18 @@ export const DEFAULT_AUTO_RECONNECT_MAX_RETRIES = 5;
 export const MIN_AUTO_RECONNECT_RETRIES = 1;
 export const MAX_AUTO_RECONNECT_RETRIES = 20;
 
+/** クエリ完了通知 (#707) は既定オン、閾値は既定 10 秒。 */
+export const DEFAULT_QUERY_NOTIFICATIONS_ENABLED = true;
+export const DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS = 10;
+export const MIN_QUERY_NOTIFICATION_THRESHOLD_SECS = 1;
+export const MAX_QUERY_NOTIFICATION_THRESHOLD_SECS = 3_600;
+
+/** 起動時のアプリ更新チェック (#705) は既定オン。 */
+export const DEFAULT_AUTO_UPDATE_CHECK_ENABLED = true;
+
+/** リアルタイム SQL 構文チェック (#704) は既定オン。 */
+export const DEFAULT_SQL_LINT_ENABLED = true;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -431,6 +468,10 @@ export const DEFAULT_SETTINGS: Settings = {
   autoReconnectEnabled: DEFAULT_AUTO_RECONNECT_ENABLED,
   autoReconnectMaxRetries: DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   shortcutOverrides: {},
+  queryNotificationsEnabled: DEFAULT_QUERY_NOTIFICATIONS_ENABLED,
+  queryNotificationThresholdSecs: DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
+  autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
+  sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -448,6 +489,15 @@ export function sanitizeAutoRefreshSecs(input: unknown, fallback: number): numbe
   const n = Math.floor(input);
   if (n < AUTO_REFRESH_MIN_SECS) return AUTO_REFRESH_MIN_SECS;
   if (n > AUTO_REFRESH_MAX_SECS) return AUTO_REFRESH_MAX_SECS;
+  return n;
+}
+
+/** Clamps the query-completion notification threshold (seconds) to the allowed range (#707). */
+export function sanitizeQueryNotificationThresholdSecs(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.floor(input);
+  if (n < MIN_QUERY_NOTIFICATION_THRESHOLD_SECS) return MIN_QUERY_NOTIFICATION_THRESHOLD_SECS;
+  if (n > MAX_QUERY_NOTIFICATION_THRESHOLD_SECS) return MAX_QUERY_NOTIFICATION_THRESHOLD_SECS;
   return n;
 }
 
@@ -595,6 +645,10 @@ export function normalizeSettings(input: unknown): Settings {
     autoReconnectEnabled?: unknown;
     autoReconnectMaxRetries?: unknown;
     shortcutOverrides?: unknown;
+    queryNotificationsEnabled?: unknown;
+    queryNotificationThresholdSecs?: unknown;
+    autoUpdateCheckEnabled?: unknown;
+    sqlLintEnabled?: unknown;
   };
   return {
     syntaxColors: {
@@ -653,7 +707,79 @@ export function normalizeSettings(input: unknown): Settings {
       DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
     ),
     shortcutOverrides: sanitizeShortcutOverrides(parsed.shortcutOverrides),
+    queryNotificationsEnabled:
+      typeof parsed.queryNotificationsEnabled === "boolean"
+        ? parsed.queryNotificationsEnabled
+        : DEFAULT_QUERY_NOTIFICATIONS_ENABLED,
+    queryNotificationThresholdSecs: sanitizeQueryNotificationThresholdSecs(
+      parsed.queryNotificationThresholdSecs,
+      DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
+    ),
+    autoUpdateCheckEnabled:
+      typeof parsed.autoUpdateCheckEnabled === "boolean"
+        ? parsed.autoUpdateCheckEnabled
+        : DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
+    sqlLintEnabled:
+      typeof parsed.sqlLintEnabled === "boolean"
+        ? parsed.sqlLintEnabled
+        : DEFAULT_SQL_LINT_ENABLED,
   };
+}
+
+/**
+ * Schema tag/version for the settings export file (#679). Bump the version
+ * if the export shape changes incompatibly; `normalizeSettings` keeps older
+ * exports loadable regardless, since it treats unknown/missing fields as
+ * defaults field by field.
+ */
+export const SETTINGS_EXPORT_KIND = "noobdb-settings";
+export const SETTINGS_EXPORT_VERSION = 1;
+
+export interface SettingsExportFile {
+  kind: typeof SETTINGS_EXPORT_KIND;
+  version: number;
+  exportedAt: string;
+  settings: Settings;
+}
+
+/**
+ * Serializes app settings (including keybinding overrides, which already
+ * live in `shortcutOverrides`) to a pretty-printed JSON string for the
+ * "export settings" feature (#679). Deliberately excludes connection
+ * profiles and secrets, which have their own dedicated export
+ * (`export_profiles` / #442).
+ */
+export function serializeSettingsExport(
+  settings: Settings,
+  exportedAt: string = new Date().toISOString(),
+): string {
+  const file: SettingsExportFile = {
+    kind: SETTINGS_EXPORT_KIND,
+    version: SETTINGS_EXPORT_VERSION,
+    exportedAt,
+    settings,
+  };
+  return JSON.stringify(file, null, 2);
+}
+
+/**
+ * Parses a settings export JSON string back into a fully-valid `Settings`
+ * object. Accepts either the wrapped `{ kind, version, settings }` shape
+ * this app produces, or a bare `Settings`-shaped object (so a hand-edited
+ * file, or a future export format, still loads something sensible). Always
+ * routed through `normalizeSettings`, so a corrupt, foreign, or malicious
+ * JSON file can never crash the app or smuggle in an out-of-range value —
+ * at worst it silently falls back to defaults field by field. Throws only
+ * when `raw` is not valid JSON at all; callers should catch that to show an
+ * error toast.
+ */
+export function deserializeSettingsImport(raw: string): Settings {
+  const parsed: unknown = JSON.parse(raw);
+  const inner =
+    parsed && typeof parsed === "object" && "settings" in parsed
+      ? (parsed as { settings?: unknown }).settings
+      : parsed;
+  return normalizeSettings(inner);
 }
 
 function loadInitial(): Settings {
@@ -912,6 +1038,35 @@ export function setAutoReconnectMaxRetries(value: number): void {
   listeners.forEach((cb) => cb());
 }
 
+export function setQueryNotificationsEnabled(value: boolean): void {
+  if (current.queryNotificationsEnabled === value) return;
+  current = { ...current, queryNotificationsEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setQueryNotificationThresholdSecs(value: number): void {
+  const next = sanitizeQueryNotificationThresholdSecs(value, current.queryNotificationThresholdSecs);
+  if (current.queryNotificationThresholdSecs === next) return;
+  current = { ...current, queryNotificationThresholdSecs: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setAutoUpdateCheckEnabled(value: boolean): void {
+  if (current.autoUpdateCheckEnabled === value) return;
+  current = { ...current, autoUpdateCheckEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setSqlLintEnabled(value: boolean): void {
+  if (current.sqlLintEnabled === value) return;
+  current = { ...current, sqlLintEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
 /**
  * 1 つのショートカットの上書きを設定/解除する (#557)。`combo` が null または
  * 空文字なら既定へ戻す (= マップから削除)。`combo` を与えるとその id を上書きする。
@@ -944,6 +1099,52 @@ export function resetStreamingDefaults(): void {
     defaultDisplayCount: DEFAULT_DISPLAY_COUNT,
     streamPrefetchSize: DEFAULT_STREAM_PREFETCH_SIZE,
   };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * Resets the Appearance section (font size, density, font families, theme
+ * preset, accent color) to defaults (#679), matching the scoped "reset to
+ * defaults" buttons the Streaming / Syntax highlighting / Preview highlight
+ * sections already have. Leaves syntax colors and the preview highlight
+ * color untouched — those already have their own per-theme resets
+ * (`resetSyntaxColors` / `resetPreviewHighlight`).
+ */
+export function resetAppearanceDefaults(): void {
+  current = {
+    ...current,
+    fontSizePx: DEFAULT_FONT_SIZE_PX,
+    density: DEFAULT_DENSITY,
+    monoFontFamily: DEFAULT_MONO_FONT_FAMILY,
+    uiFontFamily: DEFAULT_UI_FONT_FAMILY,
+    themePreset: DEFAULT_THEME_PRESET,
+    accentColor: DEFAULT_ACCENT_COLOR,
+  };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * Replaces the entire settings object in one shot — used by "import
+ * settings" (#679). Routed through `normalizeSettings` again as defense in
+ * depth, even though callers are expected to have already validated via
+ * `deserializeSettingsImport`.
+ */
+export function replaceAllSettings(next: Settings): void {
+  current = normalizeSettings(next);
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * Resets every setting — every section plus keybinding overrides — to
+ * defaults ("Reset all to defaults", #679). Unlike the scoped per-section
+ * resets above, this is a broad, hard-to-undo action, so callers should
+ * gate it behind a confirmation dialog.
+ */
+export function resetAllSettings(): void {
+  current = { ...DEFAULT_SETTINGS };
   persist();
   listeners.forEach((cb) => cb());
 }

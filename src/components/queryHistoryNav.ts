@@ -72,17 +72,23 @@ export function navigateNewer(
   if (state.index === -1) return null;
 
   const nextIndex = state.index - 1;
-  if (nextIndex < 0) {
-    // 最新位置へ復帰: 下書きを戻し、ナビゲーション状態をリセットする。
+  // 最新位置へ復帰、または (navigateOlder と対称に) ナビゲーション中に履歴が縮んで
+  // (履歴クリア等) 配列が空になった場合は、下書きを戻してナビゲーション状態をリセット
+  // する。ここで history.length === 0 もガードしないと、後段の `history[nextIndex]`
+  // が undefined になりエディタへ空/undefined テキストが流し込まれてしまう。
+  if (nextIndex < 0 || history.length === 0) {
     return {
       state: initialHistoryNav,
       text: state.draft ?? "",
       cursor: "end",
     };
   }
+  // 履歴が縮んでナビゲーション位置が範囲外になっていても安全なようクランプする
+  // (navigateOlder の最古クランプと対称)。
+  const clampedIndex = Math.min(nextIndex, history.length - 1);
   return {
-    state: { index: nextIndex, draft: state.draft },
-    text: history[nextIndex],
+    state: { index: clampedIndex, draft: state.draft },
+    text: history[clampedIndex],
     cursor: "end",
   };
 }

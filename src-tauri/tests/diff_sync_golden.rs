@@ -31,6 +31,9 @@ fn data_sync_sqls(
     let diff = t::DataDiff {
         target_driver: DriverKind::Sqlite,
         table: table.to_string(),
+        // このゴールデンは非バイナリ列のみを扱うため、型は TEXT 固定で十分
+        // (バイナリ補正は走らない)。
+        column_types: vec!["TEXT".to_string(); columns.len()],
         columns,
         primary_key: pk.iter().map(|c| c.to_string()).collect(),
         rows,
@@ -272,6 +275,8 @@ async fn sqlite_composite_pk_with_nulls_converges_end_to_end() {
     let diff = t::DataDiff {
         target_driver: DriverKind::Sqlite,
         table: "catalog".to_string(),
+        // 非バイナリ列のみのゴールデン。型は TEXT 固定で十分。
+        column_types: vec!["TEXT".to_string(); columns.len()],
         columns: columns.clone(),
         primary_key: vec!["region".to_string(), "code".to_string()],
         rows: row_diffs,
