@@ -45,7 +45,7 @@ jobs:
       # push (main) イベントではローカルの git 履歴を比較するため checkout が必要。
       # push 比較は直前コミットとの差分なので、親コミットまで含む fetch-depth: 2 で
       # paths-filter が自前 fetch にフォールバックせず確実に履歴比較できるようにする。
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           fetch-depth: 2
@@ -80,7 +80,7 @@ jobs:
       - name: Record job start time (#565)
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -162,7 +162,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -210,7 +210,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -250,7 +250,7 @@ jobs:
       - name: Record job start time (#565)
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -365,7 +365,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -425,7 +425,7 @@ jobs:
       - name: Record job start time (#565)
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -613,7 +613,7 @@ jobs:
         shell: bash
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -722,7 +722,7 @@ jobs:
         shell: bash
         run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
