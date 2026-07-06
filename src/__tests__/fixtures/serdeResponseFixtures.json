@@ -1,0 +1,128 @@
+{
+  "column": {
+    "name": "id",
+    "type_name": "INTEGER"
+  },
+  "foreignKey": {
+    "column": "user_id",
+    "constraint_name": "fk_orders_user",
+    "referenced_column": "id",
+    "referenced_table": "users",
+    "table": "orders"
+  },
+  "indexInfo": {
+    "columns": [
+      "name"
+    ],
+    "method": "btree",
+    "name": "idx_users_name",
+    "primary": false,
+    "unique": true
+  },
+  "previewResult": {
+    "after_rows": [
+      [
+        2
+      ]
+    ],
+    "before_rows": [
+      [
+        1
+      ]
+    ],
+    "columns": [
+      {
+        "name": "id",
+        "type_name": "INTEGER"
+      }
+    ],
+    "elapsed_ms": 5,
+    "primary_key": [
+      "id"
+    ],
+    "rows_affected": 1,
+    "target_table": "users",
+    "truncated": false
+  },
+  "processInfo": {
+    "command": "Query",
+    "database": "testdb",
+    "host": "127.0.0.1:53344",
+    "id": 42,
+    "is_self": true,
+    "query": "SELECT 1",
+    "state": "executing",
+    "time_secs": 3,
+    "user": "root"
+  },
+  "queryResult": {
+    "columns": [
+      {
+        "name": "id",
+        "type_name": "INTEGER"
+      },
+      {
+        "name": "label",
+        "type_name": "TEXT"
+      }
+    ],
+    "elapsed_ms": 12,
+    "rows": [
+      [
+        1,
+        "a"
+      ],
+      [
+        null,
+        "deadbeef"
+      ]
+    ],
+    "rows_affected": 0
+  },
+  "schemaObject": {
+    "id": "1234",
+    "kind": "view",
+    "name": "active_users"
+  },
+  "serverInfo": {
+    "variables": [
+      {
+        "name": "max_connections",
+        "value": "151"
+      }
+    ],
+    "version": "8.0.36"
+  },
+  "serverVariable": {
+    "name": "max_connections",
+    "value": "151"
+  },
+  "tableColumnInfo": {
+    "data_type": "int",
+    "default": "0",
+    "extra": "auto_increment",
+    "key": "PRI",
+    "name": "id",
+    "nullable": false,
+    "referenced_column": "id",
+    "referenced_table": "parent"
+  },
+  "tableRowEstimate": {
+    "estimate": 1234,
+    "name": "users"
+  },
+  "tableSchema": {
+    "columns": [
+      "id",
+      "name"
+    ],
+    "name": "users"
+  },
+  "tableSizeInfo": {
+    "data_bytes": 65536,
+    "index_bytes": 16384,
+    "name": "users",
+    "row_estimate": 1234,
+    "total_bytes": 81920
+  }
+}

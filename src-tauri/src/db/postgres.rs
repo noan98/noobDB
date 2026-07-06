@@ -355,6 +355,16 @@ impl PostgresConn {
     /// dropped without committing) so the batch is all-or-nothing — no
     /// statement is left committed when a later one errors. Returns the total
     /// `rows_affected` across all statements on success.
+    /// Runs `statements` sequentially inside one transaction, all-or-nothing:
+    /// on any error the transaction is dropped without committing.
+    ///
+    /// Unlike MySQL, PostgreSQL has **transactional DDL** — `CREATE` / `ALTER`
+    /// / `DROP` do not implicitly commit, so a mixed DDL+DML batch is genuinely
+    /// atomic: if a later statement fails, an earlier `CREATE TABLE` is rolled
+    /// back too and leaves nothing behind. This contrast with MySQL (see
+    /// `mysql.rs::execute_transaction`, #640) is pinned by the paired
+    /// integration tests `postgres_ddl_dml_mixed_batch_rolls_back` /
+    /// `mysql_ddl_dml_mixed_batch_is_not_atomic`.
     pub async fn execute_transaction(
         &self,
         statements: &[String],

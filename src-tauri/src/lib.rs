@@ -22,7 +22,9 @@ pub mod __test_api {
     pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, ForeignKey, QueryResult, TableColumnInfo, TableSchema, Value,
+        Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
+        ServerInfo, ServerVariable, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
+        Value,
     };
     pub use crate::db::{
         is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
@@ -119,6 +121,25 @@ pub mod __test_api {
             &s,
             &t,
         ))
+    }
+
+    /// Drives the `apply_sync_sql` IPC command's core path (session lookup +
+    /// read-only guard + empty-statement guard + transactional apply) without a
+    /// Tauri runtime, so integration tests can verify the destructive-write
+    /// guards actually fire on the command layer (not just the pure generator).
+    pub async fn apply_sync_sql_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        statements: Vec<String>,
+    ) -> crate::error::Result<u64> {
+        crate::commands::sync::apply_sync_sql_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            statements,
+        )
+        .await
     }
 
     /// Runs `sql` against MySQL via the text protocol, for statements the

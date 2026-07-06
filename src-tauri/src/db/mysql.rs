@@ -533,6 +533,24 @@ impl MySqlConn {
     /// dropped without committing) so the batch is all-or-nothing — no
     /// statement is left committed when a later one errors. Returns the total
     /// `rows_affected` across all statements on success.
+    ///
+    /// **Caveat — DDL is NOT atomic on MySQL.** MySQL performs an *implicit
+    /// commit* before and after every DDL statement (`CREATE` / `ALTER` /
+    /// `DROP` / `TRUNCATE` / `RENAME`, etc.; see the MySQL manual, "Statements
+    /// That Cause an Implicit Commit"). So in a mixed batch such as
+    /// `["CREATE TABLE t ...", "INSERT INTO t ..."]`, the `CREATE` is committed
+    /// the instant it runs. If a *later* statement fails, rolling this
+    /// transaction back cannot undo the already-committed DDL — the table
+    /// persists even though the batch "failed". The all-or-nothing contract
+    /// above therefore holds only for pure-DML batches; DDL+DML batches are
+    /// non-atomic and can leave partial schema/data behind. This is an
+    /// **intrinsic MySQL limitation**, not something this method can fix
+    /// without splitting or pre-validating batches (see #640). Callers that
+    /// need atomicity for schema changes must not mix DDL and DML in one
+    /// `execute_transaction` call; `commands::sync::apply_sync_sql` accounts
+    /// for this with a best-effort sequential policy on MySQL. PostgreSQL's
+    /// `execute_transaction` (transactional DDL) does not have this caveat.
+    /// The behaviour is pinned by `mysql_integration::mysql_ddl_dml_mixed_batch_is_not_atomic`.
     pub async fn execute_transaction(
         &self,
         statements: &[String],
