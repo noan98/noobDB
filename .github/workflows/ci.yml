@@ -30,6 +30,9 @@ jobs:
   changes:
     name: detect changed areas
     runs-on: ubuntu-latest
+    # 各ジョブに timeout-minutes を付け、ハング時にデフォルト 6 時間ランナーを
+    # 占有し続けるのを防ぐ (実測に余裕を持たせた保守的な上限。正常時は影響なし)。
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -40,9 +43,12 @@ jobs:
     steps:
       # pull_request イベントでは paths-filter は API 比較で checkout 不要だが、
       # push (main) イベントではローカルの git 履歴を比較するため checkout が必要。
+      # push 比較は直前コミットとの差分なので、親コミットまで含む fetch-depth: 2 で
+      # paths-filter が自前 fetch にフォールバックせず確実に履歴比較できるようにする。
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+          fetch-depth: 2
 
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         id: filter
@@ -67,6 +73,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
       # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
@@ -153,6 +160,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -200,6 +208,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -226,6 +235,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: "0"
       # sccache をコンパイルキャッシュとして使う (#417)。rust-cache が target
@@ -353,6 +363,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -374,6 +385,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
       # sccache をコンパイルキャッシュとして使う (#417)。カバレッジ計装ビルド
@@ -585,6 +597,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
       # Linux ジョブと同じく sccache でコンパイルキャッシュを効かせる (#417)。
@@ -695,6 +708,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache

@@ -25,6 +25,8 @@ jobs:
     name: detect changed areas
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ (正常時は影響なし)。
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -61,6 +63,7 @@ jobs:
         needs.changes.outputs.js == 'true'
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

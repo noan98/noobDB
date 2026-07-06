@@ -35,6 +35,9 @@ jobs:
   detect:
     name: detect merge conflicts
     runs-on: ubuntu-latest
+    # main push 時は全 open PR を直列にポーリングするため、PR 数が多いときの
+    # 積み上がりに上限を付ける (正常時は影響なし)。
+    timeout-minutes: 15
     steps:
       - name: Detect conflicts and sync label + comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0

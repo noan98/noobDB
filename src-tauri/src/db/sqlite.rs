@@ -1,15 +1,15 @@
 use std::time::Instant;
 
 use futures_util::StreamExt;
-use sqlx::sqlite::{SqliteColumn, SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
-use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
+use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
     TableSizeInfo, Value,
 };
-use super::{build_insert_sql, init_sql_of, DbConnectOptions};
+use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
 
 /// Default "database" name reported to the UI tree. SQLite uses `main` for
@@ -828,20 +828,6 @@ async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Quer
     }
 }
 
-fn columns_of(rows: &[SqliteRow]) -> Vec<Column> {
-    let Some(first) = rows.first() else {
-        return Vec::new();
-    };
-    first
-        .columns()
-        .iter()
-        .map(|c: &SqliteColumn| Column {
-            name: c.name().to_string(),
-            type_name: c.type_info().name().to_string(),
-        })
-        .collect()
-}
-
 fn row_to_values(row: &SqliteRow) -> Vec<Value> {
     (0..row.columns().len())
         .map(|i| decode_cell(row, i))
@@ -1015,8 +1001,10 @@ async fn fetch_primary_key(pool: &SqlitePool, target: &str) -> Result<Vec<String
 }
 
 /// Double-quotes a single identifier, doubling any embedded double quotes.
+/// 実装は方言共通の `sync::quote_ident` に一本化している (`fn(&str) -> String`
+/// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
 fn quote_ident(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
+    super::sync::quote_ident(super::DriverKind::Sqlite, name)
 }
 
 fn strip_identifier_quotes(s: &str) -> String {

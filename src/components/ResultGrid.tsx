@@ -936,9 +936,13 @@ function classifyByValue(v: CellValue): CellKind | null {
   return null;
 }
 
+// toLocaleString() は呼び出しごとに内部で NumberFormat を作り直すため、可視セル
+// 描画のたびに走る整数整形ではキャッシュしたフォーマッタを再利用する (出力は同一)。
+const intFormatter = new Intl.NumberFormat();
+
 function formatNumber(v: number): string {
   if (!Number.isFinite(v)) return String(v);
-  if (Number.isInteger(v)) return v.toLocaleString();
+  if (Number.isInteger(v)) return intFormatter.format(v);
   return v.toString();
 }
 
@@ -990,12 +994,17 @@ const sortBool: SortingFn<RowShape> = (rowA, rowB, columnId) => {
   return cmpNullable(toBool(av), toBool(bv), (x, y) => (x === y ? 0 : x ? 1 : -1));
 };
 
+// localeCompare はオプション付き呼び出しのたびに照合設定を再構築するため、
+// O(n log n) のソート比較では事前構築した Intl.Collator を使う (順序は同一で
+// 10〜100 倍速い)。
+const stringCollator = new Intl.Collator(undefined, { numeric: true });
+
 const sortString: SortingFn<RowShape> = (rowA, rowB, columnId) => {
   const av = rowA.getValue(columnId) as CellValue;
   const bv = rowB.getValue(columnId) as CellValue;
   const as = av === null || av === undefined ? null : String(av);
   const bs = bv === null || bv === undefined ? null : String(bv);
-  return cmpNullable(as, bs, (x, y) => x.localeCompare(y, undefined, { numeric: true }));
+  return cmpNullable(as, bs, (x, y) => stringCollator.compare(x, y));
 };
 
 function sortingFnForKind(kind: CellKind): SortingFn<RowShape> {
@@ -2137,11 +2146,16 @@ export function DataGrid({
   const [colFormats, setColFormats] = useState<Record<number, CondFormatMode>>({});
   const [heatPaletteKey, setHeatPaletteKey] = useState<string>(DEFAULT_HEAT_PALETTE);
   // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のみ算出。
+  // `rows.map` で行数長の中間配列を列ごとに作らず、ジェネレータで 1 パス集計する。
   const columnStats = useMemo<(NumericStats | null)[]>(
     () =>
       columnKinds.map((k, i) =>
         k === "number" || k === "decimal"
-          ? computeNumericStats(rows.map((r) => r[i]))
+          ? computeNumericStats(
+              (function* () {
+                for (const r of rows) yield r[i];
+              })(),
+            )
           : null,
       ),
     [columnKinds, rows],
@@ -2271,9 +2285,12 @@ export function DataGrid({
   };
 
   const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
+    // 列ごとの線形探索 (find) は横に広いテーブルで O(列数²) になるため、
+    // 名前 → メタデータの Map を 1 度だけ作って引く。
+    const metaByName = new Map(columnMeta?.map((m) => [m.name, m]) ?? []);
     return columns.map((c, i) => {
       const kind = columnKinds[i];
-      const fkInfo = columnMeta?.find((m) => m.name === c.name);
+      const fkInfo = metaByName.get(c.name);
       const fkTable = fkInfo?.referenced_table ?? null;
       return {
         id: String(i),
@@ -4247,14 +4264,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // true when no column metadata is available, keeping validation permissive.
   // Memoized so the per-cell checks in the grid and the `hasInvalidEdit` scan
   // below reuse one stable function instead of rebuilding it every render.
+  // The name→metadata map avoids a linear scan per validated cell.
+  const tableColumnsByName = useMemo(
+    () => new Map((tableColumns ?? []).map((c) => [c.name, c])),
+    [tableColumns],
+  );
   const validateEdit = useCallback(
     (colIdx: number, value: string): I18nKey | null => {
       const col = columns?.[colIdx];
       if (!col) return null;
-      const info = tableColumns?.find((c) => c.name === col.name) ?? null;
+      const info = tableColumnsByName.get(col.name) ?? null;
       return validateCellInput(value, col.type_name, info?.nullable ?? true);
     },
-    [columns, tableColumns],
+    [columns, tableColumnsByName],
   );
 
   // True when any pending edit fails validation. Memoized over the edits and

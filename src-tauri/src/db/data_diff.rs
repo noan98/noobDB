@@ -106,34 +106,31 @@ pub fn compute_data_diff(
     use std::collections::HashMap;
 
     let key_of = |row: &[Value]| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
-    let sig = |key: &[Value]| -> String {
-        key.iter()
-            .map(|v| format!("{v:?}"))
-            .collect::<Vec<_>>()
-            .join("\u{1f}")
-    };
     let mut target_by_sig: HashMap<String, &Vec<Value>> = HashMap::with_capacity(target.len());
     // 同じ sig の行が 2 件以上あれば重複キー — 後勝ちで上書きされてしまうので
     // どのキーが衝突したかを別途記録しておく。これが唯一の「信頼できない」条件:
     // 単一の NULL 含みキー (例: 複合キーの一部が NULL だが行を一意に特定できる)
     // は `pk = ... AND pk2 IS NULL` で安全に扱えるので弾かない。危険なのは
     // 「複数の物理行が同一キー (NULL 同士の畳み込みを含む) に潰れる」場合だけ。
+    // 署名は target-only 判定の 2 パス目でも行順のまま使うため保存し、全 target 行
+    // 分の再計算 (format! + join) を避ける。
     let mut dup_sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut target_sigs: Vec<String> = Vec::with_capacity(target.len());
     for row in target {
-        let s = sig(&key_of(row));
+        let s = key_signature(&key_of(row));
         if target_by_sig.insert(s.clone(), row).is_some() {
-            dup_sigs.insert(s);
+            dup_sigs.insert(s.clone());
         }
+        target_sigs.push(s);
     }
-    let is_unreliable = |_key: &[Value], s: &str| dup_sigs.contains(s);
 
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<RowDiff> = Vec::new();
 
     for s_row in source {
         let key = key_of(s_row);
-        let s = sig(&key);
-        let unreliable = is_unreliable(&key, &s);
+        let s = key_signature(&key);
+        let unreliable = dup_sigs.contains(&s);
         match target_by_sig.get(&s) {
             Some(t_row) => {
                 seen.insert(s);
@@ -160,20 +157,17 @@ pub fn compute_data_diff(
         }
     }
 
-    for t_row in target {
-        let key = key_of(t_row);
-        let s = sig(&key);
-        if seen.contains(&s) {
+    for (t_row, s) in target.iter().zip(&target_sigs) {
+        if seen.contains(s) {
             continue;
         }
-        let unreliable = is_unreliable(&key, &s);
         out.push(RowDiff {
             status: RowStatus::TargetOnly,
-            key,
+            key: key_of(t_row),
             source: None,
             target: Some(t_row.clone()),
             changed_columns: Vec::new(),
-            key_unreliable: unreliable,
+            key_unreliable: dup_sigs.contains(s),
         });
     }
 

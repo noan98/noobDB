@@ -34,6 +34,33 @@ export function formatJsonCompact(s: string): string | null {
 const DATE_RE =
   /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?(?:Z|[+-]\d{2}:?\d{2})?$/;
 
+// Intl.DateTimeFormat の構築は Intl API の中でも特に高コストで、仮想化グリッドの
+// 可視セル描画のたびに作り直すと無視できない。フォーマッタはステートレスで再利用
+// できるため、ロケール × 時刻有無 (options は 2 形しかない) をキーにキャッシュする。
+const dateTimeFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getDateTimeFormatter(locale: string, hasTime: boolean): Intl.DateTimeFormat {
+  const key = `${locale}|${hasTime ? "t" : "d"}`;
+  let fmt = dateTimeFormatterCache.get(key);
+  if (!fmt) {
+    const opts: Intl.DateTimeFormatOptions = hasTime
+      ? {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+          timeZone: "UTC",
+        }
+      : { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" };
+    fmt = new Intl.DateTimeFormat(locale, opts);
+    dateTimeFormatterCache.set(key, fmt);
+  }
+  return fmt;
+}
+
 /**
  * SQL の日付/時刻文字列をロケールに応じた読みやすい表現へ整形する。表示専用で、
  * 元の値はコピー/編集時に保持する前提 (呼び出し側が `title` に原文を残す)。
@@ -68,19 +95,7 @@ export function formatDateTimeDisplay(s: string, locale: string): string | null 
     return null;
   }
   try {
-    const opts: Intl.DateTimeFormatOptions = hasTime
-      ? {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-          timeZone: "UTC",
-        }
-      : { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" };
-    return new Intl.DateTimeFormat(locale, opts).format(date);
+    return getDateTimeFormatter(locale, hasTime).format(date);
   } catch {
     return null;
   }

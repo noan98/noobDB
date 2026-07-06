@@ -40,6 +40,14 @@ on:
         type: boolean
         default: false
 
+# ビルドとテストのみで書き込みは行わないため最小権限にする (他ワークフローと同方針)。
+permissions:
+  contents: read
+
+# corepack が pnpm を取得する際の対話プロンプトを無効化 (CI は非対話)。
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
 jobs:
   e2e-linux:
     name: E2E / Linux (WebKitGTK)
@@ -63,12 +71,20 @@ jobs:
       - name: pnpm を有効化
         run: corepack enable
 
+      # ci.yml と同じ「pnpm store path の実体をキャッシュ」方式に揃える。
+      # 以前の `~/.pnpm-store` は pnpm 10 の実ストアパスと一致せずほぼ空キャッシュ
+      # だったうえ、ci.yml が温めた共有ストアキャッシュも再利用できなかった。
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
       - name: pnpm ストアのキャッシュ
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.pnpm-store
-          key: pnpm-e2e-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-e2e-
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - name: pnpm install
         run: pnpm install --frozen-lockfile

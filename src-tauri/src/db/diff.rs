@@ -10,6 +10,8 @@
 //! and column as source-only, target-only, differing, or identical. Generating
 //! the reconciling DDL is intentionally out of scope (see `super::sync`).
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::types::TableColumnInfo;
@@ -93,11 +95,19 @@ pub fn compute_schema_diff(
         target.iter().map(|t| t.name.as_str()),
     );
 
+    // 名前ごとの線形探索 (find) はテーブル数の多いスキーマで O(n²) になるため、
+    // 名前 → メタデータのマップを 1 度だけ作って引く (名前はドライバ内で一意)。
+    // 出力順は従来どおり sorted_union が決める。
+    let src_by_name: HashMap<&str, &TableColumns> =
+        source.iter().map(|t| (t.name.as_str(), t)).collect();
+    let tgt_by_name: HashMap<&str, &TableColumns> =
+        target.iter().map(|t| (t.name.as_str(), t)).collect();
+
     let tables = names
         .into_iter()
         .map(|name| {
-            let src = source.iter().find(|t| t.name == name);
-            let tgt = target.iter().find(|t| t.name == name);
+            let src = src_by_name.get(name.as_str()).copied();
+            let tgt = tgt_by_name.get(name.as_str()).copied();
             match (src, tgt) {
                 (Some(s), None) => TableDiff {
                     name,
@@ -166,10 +176,17 @@ fn diff_columns(source: &[TableColumnInfo], target: &[TableColumnInfo]) -> Vec<C
         target.iter().map(|c| c.name.as_str()),
     );
 
+    // テーブル比較と同じく、列数の多いテーブルでの O(n²) を避ける (出力順は
+    // sorted_union のまま)。
+    let src_by_name: HashMap<&str, &TableColumnInfo> =
+        source.iter().map(|c| (c.name.as_str(), c)).collect();
+    let tgt_by_name: HashMap<&str, &TableColumnInfo> =
+        target.iter().map(|c| (c.name.as_str(), c)).collect();
+
     let mut out = Vec::new();
     for name in names {
-        let src = source.iter().find(|c| c.name == name);
-        let tgt = target.iter().find(|c| c.name == name);
+        let src = src_by_name.get(name.as_str()).copied();
+        let tgt = tgt_by_name.get(name.as_str()).copied();
         match (src, tgt) {
             (Some(s), None) => out.push(ColumnDiff {
                 name,
