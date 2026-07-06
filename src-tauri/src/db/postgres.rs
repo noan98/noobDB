@@ -2,16 +2,16 @@ use std::time::Instant;
 
 use futures_util::StreamExt;
 use sqlx::postgres::{
-    PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode, PgValueFormat, PgValueRef,
+    PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode, PgValueFormat, PgValueRef,
 };
-use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
+use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
     TableSizeInfo, Value,
 };
-use super::{init_sql_of, DbConnectOptions, SslMode};
+use super::{columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
 
 pub struct PostgresConn {
@@ -1044,20 +1044,6 @@ async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryRes
     }
 }
 
-fn columns_of(rows: &[PgRow]) -> Vec<Column> {
-    let Some(first) = rows.first() else {
-        return Vec::new();
-    };
-    first
-        .columns()
-        .iter()
-        .map(|c: &PgColumn| Column {
-            name: c.name().to_string(),
-            type_name: c.type_info().name().to_string(),
-        })
-        .collect()
-}
-
 fn row_to_values(row: &PgRow) -> Vec<Value> {
     (0..row.columns().len())
         .map(|i| decode_cell(row, i))
@@ -1173,14 +1159,7 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
     }
 
     // Default: string (covers TEXT/VARCHAR/BPCHAR/NAME/UUID/INET/CITEXT/...)
-    match row.try_get::<Option<String>, _>(i) {
-        Ok(Some(s)) => Value::String(s),
-        Ok(None) => Value::Null,
-        Err(_) => match row.try_get::<Option<Vec<u8>>, _>(i) {
-            Ok(Some(b)) => Value::Bytes(data_encoding::HEXLOWER.encode(&b)),
-            _ => Value::Null,
-        },
-    }
+    decode_string_or_bytes(row, i)
 }
 
 /// Decodes a NUMERIC cell's raw wire value into a human-readable decimal
@@ -1413,8 +1392,10 @@ fn split_outside_quotes(s: &str, sep: char) -> Option<(String, String)> {
 }
 
 /// Double-quotes a single identifier, doubling any embedded double quotes.
+/// 実装は方言共通の `sync::quote_ident` に一本化している (`fn(&str) -> String`
+/// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
 fn pg_quote_ident(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
+    super::sync::quote_ident(super::DriverKind::Postgres, name)
 }
 
 /// Renders a cell as a Postgres string literal (`'...'`) or `NULL`. Relies on

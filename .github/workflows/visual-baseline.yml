@@ -29,6 +29,8 @@ jobs:
   update-baseline:
     name: regenerate screenshots
     runs-on: ubuntu-latest
+    # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ (正常時は影響なし)。
+    timeout-minutes: 20
     steps:
       # ベースライン PNG をコミットして push し返すため、認証情報を保持する
       # (persist-credentials: true / 既定)。GITHUB_TOKEN の contents: write で足りる。

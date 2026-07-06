@@ -1,9 +1,7 @@
 use std::time::Instant;
 
 use futures_util::StreamExt;
-use sqlx::mysql::{
-    MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode,
-};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
 use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
@@ -12,7 +10,9 @@ use super::types::{
     ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
     TableSizeInfo, Value,
 };
-use super::{build_insert_sql, init_sql_of, DbConnectOptions, SslMode};
+use super::{
+    build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode,
+};
 use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
@@ -1118,20 +1118,6 @@ async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<Query
     }
 }
 
-fn columns_of(rows: &[MySqlRow]) -> Vec<Column> {
-    let Some(first) = rows.first() else {
-        return Vec::new();
-    };
-    first
-        .columns()
-        .iter()
-        .map(|c: &MySqlColumn| Column {
-            name: c.name().to_string(),
-            type_name: c.type_info().name().to_string(),
-        })
-        .collect()
-}
-
 fn row_to_values(row: &MySqlRow) -> Vec<Value> {
     (0..row.columns().len())
         .map(|i| decode_cell(row, i))
@@ -1262,14 +1248,7 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
     }
 
     // Default: string (covers VARCHAR/TEXT/ENUM/SET/CHAR and unknown types)
-    match row.try_get::<Option<String>, _>(i) {
-        Ok(Some(s)) => Value::String(s),
-        Ok(None) => Value::Null,
-        Err(_) => match row.try_get::<Option<Vec<u8>>, _>(i) {
-            Ok(Some(b)) => Value::Bytes(data_encoding::HEXLOWER.encode(&b)),
-            _ => Value::Null,
-        },
-    }
+    decode_string_or_bytes(row, i)
 }
 
 /// Best-effort extraction of the target table from a mutation statement.
@@ -1406,8 +1385,10 @@ fn is_ident_byte(b: u8) -> bool {
 }
 
 /// Backtick-quotes a single identifier, doubling any embedded backticks.
+/// 実装は方言共通の `sync::quote_ident` に一本化している (`fn(&str) -> String`
+/// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
 fn quote_ident(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
+    super::sync::quote_ident(super::DriverKind::Mysql, name)
 }
 
 fn skip_modifiers<I: Iterator<Item = String>>(

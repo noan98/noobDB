@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -141,17 +142,18 @@ const CSV_FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
 
 /// 数式トリガ文字で始まり、かつ数値としてパースできない値の先頭にシングルクオート
 /// `'` を前置して文字列として固定する。Excel/LibreOffice はセル先頭の `'` を
-/// リテラル文字列マーカーとして扱うため表示上は無害化される。
-fn mitigate_formula_injection(s: &str) -> String {
+/// リテラル文字列マーカーとして扱うため表示上は無害化される。前置不要な大多数の
+/// セルではアロケーションせず借用のまま返す (エクスポートは行 × 列で呼ばれる)。
+fn mitigate_formula_injection(s: &str) -> Cow<'_, str> {
     match s.chars().next() {
         Some(c) if CSV_FORMULA_TRIGGERS.contains(&c) && s.trim().parse::<f64>().is_err() => {
-            format!("'{s}")
+            Cow::Owned(format!("'{s}"))
         }
-        _ => s.to_string(),
+        _ => Cow::Borrowed(s),
     }
 }
 
-fn csv_field(s: &str) -> String {
+fn csv_field(s: &str) -> Cow<'_, str> {
     let mitigated = mitigate_formula_injection(s);
     let needs_quote = mitigated.contains(',')
         || mitigated.contains('"')
@@ -161,18 +163,18 @@ fn csv_field(s: &str) -> String {
         return mitigated;
     }
     let escaped = mitigated.replace('"', "\"\"");
-    format!("\"{}\"", escaped)
+    Cow::Owned(format!("\"{}\"", escaped))
 }
 
-fn value_to_csv(v: &Value) -> String {
+fn value_to_csv(v: &Value) -> Cow<'_, str> {
     match v {
-        Value::Null => String::new(),
-        Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        Value::Int(i) => i.to_string(),
-        Value::UInt(u) => u.to_string(),
-        Value::Float(f) => f.to_string(),
+        Value::Null => Cow::Borrowed(""),
+        Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+        Value::Int(i) => Cow::Owned(i.to_string()),
+        Value::UInt(u) => Cow::Owned(u.to_string()),
+        Value::Float(f) => Cow::Owned(f.to_string()),
         Value::String(s) => csv_field(s),
-        Value::Bytes(hex) => csv_field(&format!("0x{}", hex)),
+        Value::Bytes(hex) => Cow::Owned(csv_field(&format!("0x{}", hex)).into_owned()),
     }
 }
 
@@ -295,22 +297,29 @@ fn write_ndjson<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) ->
 /// バックスラッシュ `\` を `\\` に置換する (これを最初にしないと、後段で `|` を `\|`
 /// にしたときに既存の `\` が誤って区切りをエスケープしてしまう)。フロントの
 /// `exportPreview.ts` の `mdEscape` と完全に一致させる。
-fn md_escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('|', "\\|")
-        .replace('\r', "")
-        .replace('\n', "<br>")
+fn md_escape(s: &str) -> Cow<'_, str> {
+    // エスケープ対象を含まない大多数のセルは全文走査 1 回だけで借用のまま返し、
+    // `replace` 連鎖による中間 String 4 連アロケーションを避ける。
+    if !s.bytes().any(|b| matches!(b, b'\\' | b'|' | b'\r' | b'\n')) {
+        return Cow::Borrowed(s);
+    }
+    Cow::Owned(
+        s.replace('\\', "\\\\")
+            .replace('|', "\\|")
+            .replace('\r', "")
+            .replace('\n', "<br>"),
+    )
 }
 
-fn value_to_markdown(v: &Value) -> String {
+fn value_to_markdown(v: &Value) -> Cow<'_, str> {
     match v {
-        Value::Null => String::new(),
-        Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        Value::Int(i) => i.to_string(),
-        Value::UInt(u) => u.to_string(),
-        Value::Float(f) => f.to_string(),
+        Value::Null => Cow::Borrowed(""),
+        Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+        Value::Int(i) => Cow::Owned(i.to_string()),
+        Value::UInt(u) => Cow::Owned(u.to_string()),
+        Value::Float(f) => Cow::Owned(f.to_string()),
         Value::String(s) => md_escape(s),
-        Value::Bytes(hex) => md_escape(&format!("0x{}", hex)),
+        Value::Bytes(hex) => Cow::Owned(md_escape(&format!("0x{}", hex)).into_owned()),
     }
 }
 
@@ -371,12 +380,17 @@ fn sql_columns_clause(driver: DriverKind, columns: &[Column]) -> String {
 
 /// 1 行を `(v1, v2, ...)` の VALUES タプルへ変換する。リテラルエスケープは
 /// `data_diff::sql_literal` を共有 (ドライバ別の文字列/BLOB/真偽値エスケープ)。
+/// 行ごとに呼ばれるため、中間 `Vec<String>` + `join` を作らず 1 バッファへ直接書く。
 fn sql_values_tuple(driver: DriverKind, columns: &[Column], row: &[Value]) -> String {
-    let vals = (0..columns.len())
-        .map(|i| sql_literal(driver, row.get(i).unwrap_or(&Value::Null)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("({})", vals)
+    let mut out = String::from("(");
+    for i in 0..columns.len() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&sql_literal(driver, row.get(i).unwrap_or(&Value::Null)));
+    }
+    out.push(')');
+    out
 }
 
 /// SQL INSERT 文を書き出す。`batch_size` 行ごとに 1 文へまとめ、各文は

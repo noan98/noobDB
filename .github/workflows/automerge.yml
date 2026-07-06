@@ -51,6 +51,9 @@ jobs:
   automerge:
     name: auto-merge eligible PRs
     runs-on: ubuntu-latest
+    # 外部 API 待ち (mergeable 判定リトライ・指数バックオフ) が積み上がっても
+    # ランナーを占有し続けないよう上限を付ける (正常時は影響なし)。
+    timeout-minutes: 10
     # CI 成功 (pull_request 由来) / レビュー提出 / CodeRabbit の PR コメント更新の
     # ときだけ走らせる。issue_comment は PR への coderabbitai[bot] コメントに限定する。
     if: >-

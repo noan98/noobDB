@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use types::{
-    ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject, ServerInfo,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
+    Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
+    ServerInfo, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -470,6 +470,46 @@ pub(crate) fn type_name_matches(name: &str, candidates: &[&str]) -> bool {
     candidates.iter().any(|c| name.eq_ignore_ascii_case(c))
 }
 
+/// Builds the driver-agnostic column metadata (`Column`) from the first row of
+/// a result set. Shared by all three drivers — the sqlx `Row` / `Column` /
+/// `TypeInfo` traits expose everything needed, so the per-driver copies were
+/// identical modulo the concrete row type.
+pub(crate) fn columns_of<R: sqlx::Row>(rows: &[R]) -> Vec<Column> {
+    use sqlx::{Column as _, TypeInfo as _};
+    let Some(first) = rows.first() else {
+        return Vec::new();
+    };
+    first
+        .columns()
+        .iter()
+        .map(|c| Column {
+            name: c.name().to_string(),
+            type_name: c.type_info().name().to_string(),
+        })
+        .collect()
+}
+
+/// Shared decode fallback tail for MySQL / Postgres: try `String`, else
+/// hex-encode `Vec<u8>` (the JSON-safe BLOB representation), else `Null`.
+/// SQLite keeps its own tail (it also tries int/float for dynamically typed
+/// columns).
+pub(crate) fn decode_string_or_bytes<R>(row: &R, i: usize) -> Value
+where
+    R: sqlx::Row,
+    usize: sqlx::ColumnIndex<R>,
+    for<'r> Option<String>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+    for<'r> Option<Vec<u8>>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+{
+    match row.try_get::<Option<String>, _>(i) {
+        Ok(Some(s)) => Value::String(s),
+        Ok(None) => Value::Null,
+        Err(_) => match row.try_get::<Option<Vec<u8>>, _>(i) {
+            Ok(Some(b)) => Value::Bytes(data_encoding::HEXLOWER.encode(&b)),
+            _ => Value::Null,
+        },
+    }
+}
+
 /// Combines the data and index byte parts a driver resolved into a `total`.
 /// Returns `Some(sum)` when at least one part is present (treating an absent
 /// part as 0), and `None` only when both are unknown — so a table with just one
@@ -560,8 +600,14 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
     if pk_cols.is_empty() {
         return String::new();
     }
-    let parts: Vec<String> = pk_cols.iter().map(|c| quote(c)).collect();
-    format!(" ORDER BY {}", parts.join(", "))
+    let mut out = String::from(" ORDER BY ");
+    for (i, c) in pk_cols.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&quote(c));
+    }
+    out
 }
 
 /// Returns true when `sql` is shaped like a read-only statement that the
