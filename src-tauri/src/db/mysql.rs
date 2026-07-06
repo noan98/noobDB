@@ -6,9 +6,9 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
-    ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
-    TableSizeInfo, Value,
+    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 use super::{
     build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode,
@@ -637,6 +637,284 @@ impl MySqlConn {
             .collect())
     }
 
+    /// ライブクエリ・インスペクタ (#746) の前提可否プローブ。
+    /// `performance_schema` が OFF なら両機能とも不可、ON なら
+    /// `setup_consumers` を読んでライブテール (events_statements_current /
+    /// _history) と digest 集計 (statements_digest) の consumer 有効状態を
+    /// それぞれ判定する。読み取りのみで、consumer の有効化などサーバ設定の
+    /// 変更は一切しない (手順はフロントが理由コードからヘルプ表示する)。
+    pub async fn query_stats_support(&self) -> Result<QueryStatsSupport> {
+        let ps_on: Option<String> = sqlx::query("SHOW GLOBAL VARIABLES LIKE 'performance_schema'")
+            .fetch_optional(&self.pool)
+            .await?
+            .and_then(|r| r.try_get::<String, _>(1).ok());
+        if !ps_on.map(|v| v.eq_ignore_ascii_case("ON")).unwrap_or(false) {
+            return Ok(QueryStatsSupport {
+                live_tail: false,
+                statements: false,
+                live_tail_reason: Some("performance_schema_off".into()),
+                statements_reason: Some("performance_schema_off".into()),
+            });
+        }
+        let consumers: Vec<MySqlRow> = match sqlx::query(
+            "SELECT NAME, ENABLED FROM performance_schema.setup_consumers
+             WHERE NAME IN ('events_statements_current',
+                            'events_statements_history',
+                            'statements_digest')",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            // performance_schema 自体は ON でもテーブルを読む権限が無い場合。
+            // 見えている範囲を明示する方針 (#587) で理由コードを返して縮退する。
+            Err(_) => {
+                return Ok(QueryStatsSupport {
+                    live_tail: false,
+                    statements: false,
+                    live_tail_reason: Some("stats_unreadable".into()),
+                    statements_reason: Some("stats_unreadable".into()),
+                });
+            }
+        };
+        let enabled = |name: &str| {
+            consumers.iter().any(|r| {
+                r.try_get::<String, _>(0)
+                    .map(|n| n == name)
+                    .unwrap_or(false)
+                    && r.try_get::<String, _>(1)
+                        .map(|e| e.eq_ignore_ascii_case("YES"))
+                        .unwrap_or(false)
+            })
+        };
+        let live_tail =
+            enabled("events_statements_current") || enabled("events_statements_history");
+        let statements = enabled("statements_digest");
+        Ok(QueryStatsSupport {
+            live_tail,
+            statements,
+            live_tail_reason: (!live_tail).then(|| "statements_consumer_off".into()),
+            statements_reason: (!statements).then(|| "statements_digest_off".into()),
+        })
+    }
+
+    /// ライブテール 1 サンプル: 実行中 (`events_statements_current`) と直近
+    /// 完了 (`events_statements_history`、スレッドごと直近 N 件で既定有効) を
+    /// 結合して返す。読み取り SELECT のみでテーブル I/O は発生しない。
+    ///
+    /// **バイナリプロトコル (サーバサイド prepared statement) 対応**: JDBC や
+    /// sqlx などが使う prepared 実行は、events_statements_* 上では
+    /// `statement/com/Execute` イベントになり **SQL_TEXT が NULL** で文面が
+    /// 見えない (MySQL 8.0.46 の既定構成で実測)。ORM アプリの多くがこの経路の
+    /// ため、`prepared_statements_instances` (文面 + 実行カウンタを保持) を
+    /// 追加ソースとして合成する: `COUNT_EXECUTE` をキーに含めることで、実行の
+    /// たびに新しいテールイベントとして観測される (ポーリング間の複数回実行は
+    /// 1 イベントに畳まれるが、実行レートは digest 側の差分が捕捉する)。
+    ///
+    /// 除外規則 (#746 自セッション/内部クエリ除外):
+    /// - `CONNECTION_ID()` — このサンプリング接続自身
+    /// - `performance_schema` / `information_schema` 参照文 — インスペクタ自身の
+    ///   ポーリングや noobDB のスキーマ introspection
+    ///
+    /// 同一プールの別物理接続はエンジンから区別できずベストエフォート。
+    /// 同一イベントが current と history の両方に載ることがあるため、
+    /// `THREAD_ID:EVENT_ID` キーで重複排除する (実行中の行を優先)。
+    pub async fn live_queries(&self) -> Result<Vec<LiveQuery>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT CONCAT(e.THREAD_ID, ':', e.EVENT_ID),
+                      e.SQL_TEXT,
+                      t.PROCESSLIST_USER,
+                      t.PROCESSLIST_HOST,
+                      COALESCE(e.CURRENT_SCHEMA, t.PROCESSLIST_DB),
+                      e.TIMER_WAIT / 1e9,
+                      e.ROWS_EXAMINED,
+                      (e.END_EVENT_ID IS NULL),
+                      e.TIMER_START
+               FROM (
+                 SELECT THREAD_ID, EVENT_ID, END_EVENT_ID, SQL_TEXT, CURRENT_SCHEMA,
+                        TIMER_WAIT, ROWS_EXAMINED, TIMER_START
+                   FROM performance_schema.events_statements_current
+                 UNION ALL
+                 SELECT THREAD_ID, EVENT_ID, END_EVENT_ID, SQL_TEXT, CURRENT_SCHEMA,
+                        TIMER_WAIT, ROWS_EXAMINED, TIMER_START
+                   FROM performance_schema.events_statements_history
+               ) e
+               JOIN performance_schema.threads t ON t.THREAD_ID = e.THREAD_ID
+               WHERE e.SQL_TEXT IS NOT NULL
+                 AND t.PROCESSLIST_ID IS NOT NULL
+                 AND t.PROCESSLIST_ID <> CONNECTION_ID()
+                 AND e.SQL_TEXT NOT LIKE '%performance\_schema%'
+                 AND e.SQL_TEXT NOT LIKE '%information\_schema%'
+               ORDER BY e.TIMER_START DESC
+               LIMIT 300"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out: Vec<LiveQuery> = Vec::with_capacity(rows.len());
+        let mut seen = std::collections::HashSet::new();
+        for r in rows {
+            let key = r.try_get::<String, _>(0).unwrap_or_default();
+            let running = decode_int_bool(&r, 7);
+            if !seen.insert(key.clone()) {
+                // 実行中 (current) の行を先に採用したいが、並びは TIMER_START
+                // 降順で current/history の同一イベントは隣接する。running の
+                // 行を優先するため、既出キーが running ならここで差し替える。
+                if running {
+                    if let Some(existing) = out.iter_mut().find(|q| q.key == key) {
+                        existing.running = true;
+                    }
+                }
+                continue;
+            }
+            out.push(LiveQuery {
+                key,
+                query: r.try_get::<String, _>(1).unwrap_or_default(),
+                user: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                host: r.try_get::<Option<String>, _>(3).ok().flatten(),
+                database: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                application: None,
+                duration_ms: r.try_get::<Option<f64>, _>(5).ok().flatten(),
+                rows_examined: r
+                    .try_get::<u64, _>(6)
+                    .map(|v| v as i64)
+                    .or_else(|_| r.try_get::<i64, _>(6))
+                    .ok(),
+                running,
+                started_at_ms: None,
+            });
+        }
+        // 追加ソース: サーバサイド prepared statement (バイナリプロトコル)。
+        // events_statements_* では文面が NULL のため、インスタンス表から合成する。
+        // AVG/件は「代表値」であり直近 1 回の実測ではない点に注意。
+        let ps_rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT CONCAT('ps:', p.OWNER_THREAD_ID, ':', p.STATEMENT_ID, ':', p.COUNT_EXECUTE),
+                      p.SQL_TEXT,
+                      t.PROCESSLIST_USER,
+                      t.PROCESSLIST_HOST,
+                      t.PROCESSLIST_DB,
+                      p.AVG_TIMER_EXECUTE / 1e9,
+                      CAST(p.SUM_ROWS_EXAMINED / GREATEST(p.COUNT_EXECUTE, 1) AS SIGNED)
+               FROM performance_schema.prepared_statements_instances p
+               JOIN performance_schema.threads t ON t.THREAD_ID = p.OWNER_THREAD_ID
+               WHERE p.COUNT_EXECUTE > 0
+                 AND t.PROCESSLIST_ID IS NOT NULL
+                 AND t.PROCESSLIST_ID <> CONNECTION_ID()
+                 AND p.SQL_TEXT NOT LIKE '%performance\_schema%'
+                 AND p.SQL_TEXT NOT LIKE '%information\_schema%'
+               ORDER BY p.OWNER_THREAD_ID DESC
+               LIMIT 100"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for r in ps_rows {
+            let key = r.try_get::<String, _>(0).unwrap_or_default();
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            out.push(LiveQuery {
+                key,
+                query: r.try_get::<String, _>(1).unwrap_or_default(),
+                user: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                host: r.try_get::<Option<String>, _>(3).ok().flatten(),
+                database: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                application: None,
+                duration_ms: r.try_get::<Option<f64>, _>(5).ok().flatten(),
+                rows_examined: r
+                    .try_get::<i64, _>(6)
+                    .or_else(|_| r.try_get::<u64, _>(6).map(|v| v as i64))
+                    .ok(),
+                running: false,
+                started_at_ms: None,
+            });
+        }
+        Ok(out)
+    }
+
+    /// digest (フィンガープリント) 単位の累積統計スナップショット (#746)。
+    /// 2 つのソースを結合する:
+    ///
+    /// 1. `events_statements_summary_by_digest` — テキストプロトコルの文。
+    ///    正規化 (digest 化) はサーバ側で完了しているのでそのまま読む。
+    /// 2. `prepared_statements_instances` を `SQL_TEXT` で GROUP BY した合成行 —
+    ///    **サーバサイド prepared statement (バイナリプロトコル) は digest 集計に
+    ///    現れない** (MySQL 8.0.46 の既定構成で実測。`statement/com/Execute` は
+    ///    digest を持たない) ため。prepared の文面は元々 `?` プレースホルダ付きで
+    ///    実質正規化済み。digest キーは `ps-` 接頭辞 + MD5(SQL_TEXT)。接続が
+    ///    閉じるとインスタンス行ごと消えてカウンタが逆行しうるが、フロントの
+    ///    差分ロジックがリセットとして吸収する。
+    ///
+    /// 「記録開始からの差分」はフロント純ロジックが 2 スナップショットを
+    /// 引き算して求めるので、ここでは常に累積値を返す。インスペクタ自身や
+    /// introspection 由来の文 (`performance_schema` / `information_schema` 参照)
+    /// は集計から除外する。
+    pub async fn statement_stats(&self) -> Result<Vec<StatementStat>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT DIGEST,
+                      DIGEST_TEXT,
+                      SCHEMA_NAME,
+                      COUNT_STAR,
+                      SUM_TIMER_WAIT / 1e9,
+                      MAX_TIMER_WAIT / 1e9,
+                      SUM_ROWS_EXAMINED
+               FROM performance_schema.events_statements_summary_by_digest
+               WHERE DIGEST IS NOT NULL
+                 AND DIGEST_TEXT NOT LIKE '%performance\_schema%'
+                 AND DIGEST_TEXT NOT LIKE '%information\_schema%'
+               ORDER BY SUM_TIMER_WAIT DESC
+               LIMIT 500"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let ps_rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT CONCAT('ps-', MD5(p.SQL_TEXT)),
+                      p.SQL_TEXT,
+                      CAST(NULL AS CHAR),
+                      CAST(SUM(p.COUNT_EXECUTE) AS UNSIGNED),
+                      SUM(p.SUM_TIMER_EXECUTE) / 1e9,
+                      MAX(p.MAX_TIMER_EXECUTE) / 1e9,
+                      CAST(SUM(p.SUM_ROWS_EXAMINED) AS UNSIGNED)
+               FROM performance_schema.prepared_statements_instances p
+               JOIN performance_schema.threads t ON t.THREAD_ID = p.OWNER_THREAD_ID
+               WHERE p.COUNT_EXECUTE > 0
+                 AND (t.PROCESSLIST_ID IS NULL OR t.PROCESSLIST_ID <> CONNECTION_ID())
+                 AND p.SQL_TEXT NOT LIKE '%performance\_schema%'
+                 AND p.SQL_TEXT NOT LIKE '%information\_schema%'
+               GROUP BY p.SQL_TEXT
+               ORDER BY SUM(p.SUM_TIMER_EXECUTE) DESC
+               LIMIT 500"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out: Vec<StatementStat> = rows
+            .into_iter()
+            .chain(ps_rows)
+            .map(|r| StatementStat {
+                digest: r.try_get::<String, _>(0).unwrap_or_default(),
+                fingerprint: r.try_get::<String, _>(1).unwrap_or_default(),
+                database: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                calls: r
+                    .try_get::<u64, _>(3)
+                    .map(|v| v as i64)
+                    .or_else(|_| r.try_get::<i64, _>(3))
+                    .unwrap_or_default(),
+                total_time_ms: r.try_get::<f64, _>(4).unwrap_or_default(),
+                max_time_ms: r.try_get::<f64, _>(5).unwrap_or_default(),
+                rows: r
+                    .try_get::<u64, _>(6)
+                    .map(|v| v as i64)
+                    .or_else(|_| r.try_get::<i64, _>(6))
+                    .ok(),
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            b.total_time_ms
+                .partial_cmp(&a.total_time_ms)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        out.truncate(500);
+        Ok(out)
+    }
+
     /// `KILL <id>` — terminates the whole connection (not just its current
     /// statement). KILL takes no placeholders, but `id` is a number so the
     /// interpolation cannot inject SQL.
@@ -1017,6 +1295,15 @@ fn process_list_needs_fallback<T>(primary: &std::result::Result<Vec<T>, sqlx::Er
         Ok(rows) => rows.is_empty(),
         Err(_) => true,
     }
+}
+
+/// MySQL の真偽値式は整数 0/1 で届く (`list_processes` の is_self と同じ)。
+/// tinyint/bigint のどちらで返っても拾えるようにフォールバックしてデコードする。
+fn decode_int_bool(row: &MySqlRow, i: usize) -> bool {
+    row.try_get::<i64, _>(i)
+        .or_else(|_| row.try_get::<i32, _>(i).map(i64::from))
+        .map(|v| v != 0)
+        .unwrap_or(false)
 }
 
 /// Maps the driver-neutral [`SslMode`] to MySQL's `MySqlSslMode`. `VerifyFull`

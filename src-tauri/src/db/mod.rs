@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
-    ServerInfo, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    QueryStatsSupport, SchemaObject, ServerInfo, StatementStat, StreamBatch, TableColumnInfo,
+    TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -442,6 +443,43 @@ impl Connection {
             Connection::MySql(c) => c.kill_process(id).await,
             Connection::Postgres(c) => c.kill_process(id).await,
             Connection::Sqlite(c) => c.kill_process(id).await,
+        }
+    }
+
+    /// ライブクエリ・インスペクタ (#746) の前提可否プローブ。MySQL は
+    /// `performance_schema` と consumer の有効状態、PostgreSQL は
+    /// `pg_stat_statements` の有無/可読性を調べ、不可なら理由コード付きで
+    /// 縮退情報を返す (黙って空にしない)。読み取りのみでサーバ設定は変えない。
+    pub async fn query_stats_support(&self) -> Result<QueryStatsSupport> {
+        match self {
+            Connection::MySql(c) => c.query_stats_support().await,
+            Connection::Postgres(c) => c.query_stats_support().await,
+            Connection::Sqlite(c) => c.query_stats_support().await,
+        }
+    }
+
+    /// ライブテール 1 サンプル: サーバが観測した実行中/直近ステートメント
+    /// (MySQL `events_statements_current`/`_history`、PostgreSQL
+    /// `pg_stat_activity`)。読み取り SELECT のみでポーリングしても安全。
+    /// 自セッション由来と noobDB 内部クエリはドライバ側で除外する。
+    /// SQLite はサーバを持たずエラーを返す。
+    pub async fn live_queries(&self) -> Result<Vec<LiveQuery>> {
+        match self {
+            Connection::MySql(c) => c.live_queries().await,
+            Connection::Postgres(c) => c.live_queries().await,
+            Connection::Sqlite(c) => c.live_queries().await,
+        }
+    }
+
+    /// digest (フィンガープリント) 単位の累積統計スナップショット (MySQL
+    /// `events_statements_summary_by_digest`、PostgreSQL `pg_stat_statements`)。
+    /// 「記録開始からの差分」計算はフロントの純ロジックが担う。SQLite は
+    /// エラーを返す。
+    pub async fn statement_stats(&self) -> Result<Vec<StatementStat>> {
+        match self {
+            Connection::MySql(c) => c.statement_stats().await,
+            Connection::Postgres(c) => c.statement_stats().await,
+            Connection::Sqlite(c) => c.statement_stats().await,
         }
     }
 

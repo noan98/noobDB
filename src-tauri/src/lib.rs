@@ -22,9 +22,9 @@ pub mod __test_api {
     pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
-        ServerInfo, ServerVariable, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
-        Value,
+        Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+        QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat,
+        TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
     };
     pub use crate::db::{
         is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
@@ -286,6 +286,9 @@ pub fn run() {
             commands::server::server_info,
             commands::process::list_processes,
             commands::process::kill_process,
+            commands::inspector::query_stats_support,
+            commands::inspector::sample_live_queries,
+            commands::inspector::sample_statement_stats,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
             commands::sync::generate_sync_sql,

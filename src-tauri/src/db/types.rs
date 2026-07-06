@@ -209,6 +209,79 @@ pub struct ProcessInfo {
     pub is_self: bool,
 }
 
+/// ライブクエリ・インスペクタ (#746) の前提可否プローブ。ライブテールと
+/// digest 集計それぞれについて「使えるか」と、使えないときの**機械可読な理由
+/// コード**を返す。黙って空にせず理由を表示して縮退するため (#587 の教訓)、
+/// フロントはコードを i18n のヘルプ文言 (有効化手順つき) にマップする。
+///
+/// 理由コードの一覧 (フロント `queryInspector.ts` と対で維持する):
+/// - `unsupported_driver` — SQLite などサーバ統計を持たないドライバ
+/// - `performance_schema_off` — MySQL で `performance_schema = OFF`
+/// - `statements_consumer_off` — MySQL で events_statements 系 consumer が無効
+/// - `statements_digest_off` — MySQL で `statements_digest` consumer が無効
+/// - `pg_stat_statements_missing` — PostgreSQL で拡張が未導入
+/// - `stats_unreadable` — ソースは存在するが読めない (権限不足・非対応バージョン)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryStatsSupport {
+    pub live_tail: bool,
+    pub statements: bool,
+    pub live_tail_reason: Option<String>,
+    pub statements_reason: Option<String>,
+}
+
+/// ライブテールの 1 イベント: サーバが観測した実行中/直近のステートメント。
+/// MySQL は `performance_schema.events_statements_current` + `_history`、
+/// PostgreSQL は `pg_stat_activity` から取る。**取得はすべて読み取り SELECT の
+/// ポーリング**で、サーバ設定は変更しない。自セッション由来 (サンプリング接続・
+/// noobDB 内部のカタログ参照) はドライバ側で除外するが、同一プールの別物理接続は
+/// エンジンから区別できないためベストエフォート ([`ProcessInfo::is_self`] と同じ限界)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveQuery {
+    /// ポーリング横断の重複排除キー。MySQL は `THREAD_ID:EVENT_ID`、
+    /// PostgreSQL は `pid:query_start エポック`。
+    pub key: String,
+    pub query: String,
+    pub user: Option<String>,
+    pub host: Option<String>,
+    pub database: Option<String>,
+    /// PostgreSQL の `application_name`。MySQL は同等の常設列が無いため `None`。
+    pub application: Option<String>,
+    /// 実行済みイベントは所要時間、実行中はサンプル時点までの経過 (ms)。
+    pub duration_ms: Option<f64>,
+    /// MySQL `ROWS_EXAMINED`。PostgreSQL の activity ビューには無く `None`。
+    pub rows_examined: Option<i64>,
+    /// サンプル時点でまだ実行中なら true。
+    pub running: bool,
+    /// クエリ開始時刻 (エポック ms)。PostgreSQL の `query_start`。MySQL の
+    /// TIMER_START はサーバ起動基準の相対値のため `None` (フロントは観測時刻で代替)。
+    pub started_at_ms: Option<f64>,
+}
+
+/// digest (フィンガープリント) 単位の**累積**統計スナップショット 1 行。
+/// MySQL は `events_statements_summary_by_digest` (正規化はサーバ側で完了)、
+/// PostgreSQL は `pg_stat_statements` (queryid 単位)。カウンタはサーバの統計
+/// リセット以降の累積値であり、「記録開始からの差分」はフロントの純ロジック
+/// (`queryInspector.ts` の差分計算) が 2 スナップショットの引き算で求める —
+/// リセット権限が無くても使えるようにするため (#746)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatementStat {
+    /// 安定キー: MySQL `DIGEST` / PostgreSQL `queryid` の文字列表現。
+    pub digest: String,
+    /// 正規化済みステートメント本文 (`DIGEST_TEXT` / `pg_stat_statements.query`)。
+    pub fingerprint: String,
+    pub database: Option<String>,
+    /// 実行回数 (累積)。
+    pub calls: i64,
+    /// 総実行時間 ms (累積)。
+    pub total_time_ms: f64,
+    /// 最悪レイテンシ ms。**高水位マーク**であり差分計算できない点に注意
+    /// (フロントは「累積の最悪値」として表示する)。
+    pub max_time_ms: f64,
+    /// 走査/処理行数 (累積)。MySQL は `SUM_ROWS_EXAMINED`、PostgreSQL は
+    /// `rows` (返却/影響行)。意味がドライバで異なるため UI 側でラベルを変える。
+    pub rows: Option<i64>,
+}
+
 /// One unit produced by streaming SELECT execution. Columns are reported
 /// once (before any rows) so the UI can render headers immediately, then
 /// row batches arrive as they are read off the wire.

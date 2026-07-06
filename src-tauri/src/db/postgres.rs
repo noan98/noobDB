@@ -7,12 +7,16 @@ use sqlx::postgres::{
 use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
-    ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
-    TableSizeInfo, Value,
+    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 use super::{columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
+
+/// pg_stat_activity の `application_name` に載せる接続の表示名。
+/// [`PostgresConn::live_queries`] が自アプリ由来の行を除外するキーでもある。
+const NOOBDB_APPLICATION_NAME: &str = "noobDB";
 
 pub struct PostgresConn {
     pool: PgPool,
@@ -27,7 +31,12 @@ impl PostgresConn {
             .host(&opts.host)
             .port(opts.port)
             .username(&opts.user)
-            .password(&opts.password);
+            .password(&opts.password)
+            // pg_stat_activity 上で noobDB 由来の接続を識別するための表示名。
+            // ライブクエリ・インスペクタ (#746) が「自アプリの接続」をテールから
+            // 除外する判定キーにも使う (この文字列を変えるときは
+            // `live_queries` のフィルタも合わせて変えること)。
+            .application_name(NOOBDB_APPLICATION_NAME);
         if let Some(db) = &opts.database {
             if !db.is_empty() {
                 connect = connect.database(db);
@@ -456,6 +465,156 @@ impl PostgresConn {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// ライブクエリ・インスペクタ (#746) の前提可否プローブ。ライブテールは
+    /// コア機能の `pg_stat_activity` だけで動くため常に可。digest 集計は
+    /// `pg_stat_statements` 拡張が要る: 未導入なら理由コード
+    /// `pg_stat_statements_missing` (フロントが `CREATE EXTENSION` /
+    /// `shared_preload_libraries` の導入手順をヘルプ表示)、導入済みでも読めない
+    /// (権限不足・PG12 以前の列名差) 場合は `stats_unreadable` で縮退する。
+    pub async fn query_stats_support(&self) -> Result<QueryStatsSupport> {
+        let statements_reason = match self.pg_stat_statements_schema().await? {
+            None => Some("pg_stat_statements_missing".to_string()),
+            Some(schema) => {
+                // 実際に読めるかまでプローブする (PG13+ の列名で 1 行だけ)。
+                let probe = format!(
+                    "SELECT calls, total_exec_time, max_exec_time, rows \
+                     FROM {schema}.pg_stat_statements LIMIT 1"
+                );
+                match sqlx::query(sqlx::AssertSqlSafe(probe))
+                    .fetch_all(&self.pool)
+                    .await
+                {
+                    Ok(_) => None,
+                    Err(_) => Some("stats_unreadable".to_string()),
+                }
+            }
+        };
+        Ok(QueryStatsSupport {
+            live_tail: true,
+            statements: statements_reason.is_none(),
+            live_tail_reason: None,
+            statements_reason,
+        })
+    }
+
+    /// `pg_stat_statements` 拡張が入っているスキーマ名 (クオート済み) を返す。
+    /// 拡張は任意のスキーマに入れられ search_path に無いと裸名では引けない
+    /// ため、毎回カタログから解決してスキーマ修飾で参照する。未導入は `None`。
+    async fn pg_stat_statements_schema(&self) -> Result<Option<String>> {
+        let row: Option<PgRow> = sqlx::query(
+            "SELECT quote_ident(n.nspname)
+               FROM pg_extension e
+               JOIN pg_namespace n ON n.oid = e.extnamespace
+              WHERE e.extname = 'pg_stat_statements'",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|r| r.try_get::<String, _>(0).ok()))
+    }
+
+    /// ライブテール 1 サンプル: `pg_stat_activity` の実行中/直近クエリ。
+    /// バックエンドごとに現在 (または最後) の 1 文が見えるので、ポーリングで
+    /// 時系列テールを構成する (重複排除キーは `pid:query_start`)。
+    ///
+    /// 除外規則 (#746 自セッション/内部クエリ除外):
+    /// - `pg_backend_pid()` — このサンプリング接続自身
+    /// - `application_name = 'noobDB'` — 本アプリの他セッション/プール接続
+    ///   (connect 時に必ず設定するため確実に効く)
+    /// - `pg_stat_` / `pg_catalog` / `information_schema` 参照文 — インスペクタ
+    ///   自身のポーリングや introspection
+    ///
+    /// 権限不足時にクエリ文が `<insufficient privilege>` になる行はそのまま
+    /// 返し、フロントが「見えている範囲」の注記を出す (黙って落とさない)。
+    pub async fn live_queries(&self) -> Result<Vec<LiveQuery>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT pid::text || ':' || COALESCE(EXTRACT(EPOCH FROM query_start)::text, '?'),
+                      query,
+                      usename,
+                      CASE WHEN client_addr IS NULL THEN NULL
+                           ELSE host(client_addr) || ':' || client_port END,
+                      datname,
+                      application_name,
+                      (EXTRACT(EPOCH FROM (COALESCE(
+                          CASE WHEN state = 'active' THEN NULL ELSE state_change END,
+                          now()) - query_start)) * 1000.0)::float8,
+                      state = 'active',
+                      (EXTRACT(EPOCH FROM query_start) * 1000.0)::float8
+               FROM pg_stat_activity
+               WHERE backend_type = 'client backend'
+                 AND pid <> pg_backend_pid()
+                 AND application_name <> $1
+                 AND query IS NOT NULL AND query <> ''
+                 AND query_start IS NOT NULL
+                 AND query NOT ILIKE '%pg\_stat\_%'
+                 AND query NOT ILIKE '%pg\_catalog%'
+                 AND query NOT ILIKE '%information\_schema%'
+               ORDER BY query_start DESC
+               LIMIT 300"#,
+        )
+        .bind(NOOBDB_APPLICATION_NAME)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| LiveQuery {
+                key: r.try_get::<String, _>(0).unwrap_or_default(),
+                query: r.try_get::<String, _>(1).unwrap_or_default(),
+                user: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                host: r.try_get::<Option<String>, _>(3).ok().flatten(),
+                database: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                application: r.try_get::<Option<String>, _>(5).ok().flatten(),
+                duration_ms: r.try_get::<Option<f64>, _>(6).ok().flatten(),
+                running: r.try_get::<bool, _>(7).unwrap_or(false),
+                rows_examined: None,
+                started_at_ms: r.try_get::<Option<f64>, _>(8).ok().flatten(),
+            })
+            .collect())
+    }
+
+    /// queryid (フィンガープリント) 単位の累積統計スナップショット
+    /// (`pg_stat_statements`、PG13+ の列名)。「記録開始からの差分」はフロント
+    /// 純ロジックが 2 スナップショットの引き算で求めるため常に累積値を返す。
+    /// インスペクタ自身や introspection 由来の文は集計から除外する。
+    pub async fn statement_stats(&self) -> Result<Vec<StatementStat>> {
+        let Some(schema) = self.pg_stat_statements_schema().await? else {
+            return Err(AppError::InvalidInput(
+                "pg_stat_statements is not installed on this server".into(),
+            ));
+        };
+        let sql = format!(
+            r#"SELECT s.queryid::text,
+                      s.query,
+                      d.datname,
+                      s.calls,
+                      s.total_exec_time,
+                      s.max_exec_time,
+                      s.rows
+               FROM {schema}.pg_stat_statements s
+               LEFT JOIN pg_database d ON d.oid = s.dbid
+               WHERE s.queryid IS NOT NULL
+                 AND s.query NOT ILIKE '%pg\_stat\_%'
+                 AND s.query NOT ILIKE '%pg\_catalog%'
+                 AND s.query NOT ILIKE '%information\_schema%'
+               ORDER BY s.total_exec_time DESC
+               LIMIT 500"#
+        );
+        let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| StatementStat {
+                digest: r.try_get::<String, _>(0).unwrap_or_default(),
+                fingerprint: r.try_get::<String, _>(1).unwrap_or_default(),
+                database: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                calls: r.try_get::<i64, _>(3).unwrap_or_default(),
+                total_time_ms: r.try_get::<f64, _>(4).unwrap_or_default(),
+                max_time_ms: r.try_get::<f64, _>(5).unwrap_or_default(),
+                rows: r.try_get::<i64, _>(6).ok(),
+            })
+            .collect())
     }
 
     pub async fn tables(&self, schema: &str) -> Result<Vec<String>> {

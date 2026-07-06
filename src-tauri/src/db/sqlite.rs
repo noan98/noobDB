@@ -5,9 +5,9 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRo
 use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::types::{
-    Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
-    ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
-    TableSizeInfo, Value,
+    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
@@ -382,6 +382,33 @@ impl SqliteConn {
         Err(AppError::InvalidInput(
             "killing processes is not supported for SQLite (file-backed, no server processes)"
                 .into(),
+        ))
+    }
+
+    /// SQLite はサーバ統計 (activity ビュー / digest 集計) を持たないため、
+    /// ライブクエリ・インスペクタ (#746) は両機能とも非対応として短絡する。
+    /// UI は SQLite では導線自体を出さない — この理由コードは直接 IPC を
+    /// 呼ばれたときのバックストップ。
+    pub async fn query_stats_support(&self) -> Result<QueryStatsSupport> {
+        Ok(QueryStatsSupport {
+            live_tail: false,
+            statements: false,
+            live_tail_reason: Some("unsupported_driver".into()),
+            statements_reason: Some("unsupported_driver".into()),
+        })
+    }
+
+    /// See [`SqliteConn::query_stats_support`] — no server, no live tail.
+    pub async fn live_queries(&self) -> Result<Vec<LiveQuery>> {
+        Err(AppError::InvalidInput(
+            "live query tail is not supported for SQLite (file-backed, no server)".into(),
+        ))
+    }
+
+    /// See [`SqliteConn::query_stats_support`] — no digest statistics.
+    pub async fn statement_stats(&self) -> Result<Vec<StatementStat>> {
+        Err(AppError::InvalidInput(
+            "statement statistics are not supported for SQLite (file-backed, no server)".into(),
         ))
     }
 

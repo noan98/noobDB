@@ -341,6 +341,59 @@ export interface ProcessInfo {
 }
 
 /**
+ * ライブクエリ・インスペクタ (#746) の前提可否。使えない機能には機械可読な
+ * 理由コード (`unsupported_driver` / `performance_schema_off` /
+ * `statements_consumer_off` / `statements_digest_off` /
+ * `pg_stat_statements_missing` / `stats_unreadable`) が付き、UI は有効化手順
+ * つきのヘルプ文言にマップして縮退表示する (黙って空にしない)。
+ */
+export interface QueryStatsSupport {
+  live_tail: boolean;
+  statements: boolean;
+  live_tail_reason: string | null;
+  statements_reason: string | null;
+}
+
+/**
+ * ライブテールの 1 イベント: サーバが観測した実行中/直近ステートメント
+ * (#746)。`key` はポーリング横断の重複排除キー。自セッション由来と noobDB
+ * 内部クエリはバックエンドで除外済み (同一プールの別物理接続はベストエフォート)。
+ */
+export interface LiveQuery {
+  key: string;
+  query: string;
+  user: string | null;
+  host: string | null;
+  database: string | null;
+  /** PostgreSQL の application_name。MySQL は null。 */
+  application: string | null;
+  /** 実行済みは所要時間、実行中はサンプル時点までの経過 (ms)。 */
+  duration_ms: number | null;
+  /** MySQL ROWS_EXAMINED。PostgreSQL は null。 */
+  rows_examined: number | null;
+  running: boolean;
+  /** クエリ開始時刻 (エポック ms)。PostgreSQL のみ。 */
+  started_at_ms: number | null;
+}
+
+/**
+ * digest (フィンガープリント) 単位の**累積**統計 1 行 (#746)。カウンタは
+ * サーバの統計リセット以降の累積値で、「記録開始からの差分」は
+ * `components/queryInspector.ts` の純ロジックが 2 スナップショットの引き算で
+ * 求める。`max_time_ms` は高水位マークで差分計算できない点に注意。
+ */
+export interface StatementStat {
+  digest: string;
+  fingerprint: string;
+  database: string | null;
+  calls: number;
+  total_time_ms: number;
+  max_time_ms: number;
+  /** MySQL は走査行数 (SUM_ROWS_EXAMINED)、PostgreSQL は返却/影響行数。 */
+  rows: number | null;
+}
+
+/**
  * Where a table or column sits relative to the two schemas in a comparison.
  * `source_only` would be added to the target, `target_only` would be removed,
  * `different` exists on both sides with differing definitions, `same` is
@@ -666,6 +719,21 @@ export const api = {
   /** プロセス/接続を強制終了する。read_only セッションはバックエンドで拒否される。 */
   killProcess: (sessionId: string, processId: number) =>
     invoke<void>("kill_process", { sessionId, processId }),
+  /** ライブクエリ・インスペクタ (#746) の前提可否プローブ。理由コード付きで縮退情報を返す。 */
+  queryStatsSupport: (sessionId: string) =>
+    invoke<QueryStatsSupport>("query_stats_support", { sessionId }).then((r) =>
+      parseResponse(schemas.queryStatsSupport, r, "query_stats_support"),
+    ),
+  /** ライブテール 1 サンプル (実行中/直近ステートメント) を取得する。読み取り SELECT のみ。 */
+  sampleLiveQueries: (sessionId: string) =>
+    invoke<LiveQuery[]>("sample_live_queries", { sessionId }).then((r) =>
+      parseResponse(schemas.liveQueryArray, r, "sample_live_queries"),
+    ),
+  /** digest 単位の累積統計スナップショットを取得する。差分計算はフロント純ロジックが担う。 */
+  sampleStatementStats: (sessionId: string) =>
+    invoke<StatementStat[]>("sample_statement_stats", { sessionId }).then((r) =>
+      parseResponse(schemas.statementStatArray, r, "sample_statement_stats"),
+    ),
   /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する。 */
   listSchemaObjects: (sessionId: string, database: string) =>
     invoke<SchemaObject[]>("list_schema_objects", { sessionId, database }).then((r) =>

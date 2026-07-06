@@ -5,6 +5,7 @@ pub mod export;
 pub mod file;
 pub mod history;
 pub mod import;
+pub mod inspector;
 pub mod logs;
 pub mod process;
 pub mod profiles;
