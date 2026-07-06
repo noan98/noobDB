@@ -547,9 +547,9 @@ impl PostgresConn {
                  AND application_name <> $1
                  AND query IS NOT NULL AND query <> ''
                  AND query_start IS NOT NULL
-                 AND query NOT ILIKE '%pg_stat_%'
-                 AND query NOT ILIKE '%pg_catalog%'
-                 AND query NOT ILIKE '%information_schema%'
+                 AND query NOT ILIKE '%pg\_stat\_%'
+                 AND query NOT ILIKE '%pg\_catalog%'
+                 AND query NOT ILIKE '%information\_schema%'
                ORDER BY query_start DESC
                LIMIT 300"#,
         )
@@ -594,9 +594,9 @@ impl PostgresConn {
                FROM {schema}.pg_stat_statements s
                LEFT JOIN pg_database d ON d.oid = s.dbid
                WHERE s.queryid IS NOT NULL
-                 AND s.query NOT ILIKE '%pg_stat_%'
-                 AND s.query NOT ILIKE '%pg_catalog%'
-                 AND s.query NOT ILIKE '%information_schema%'
+                 AND s.query NOT ILIKE '%pg\_stat\_%'
+                 AND s.query NOT ILIKE '%pg\_catalog%'
+                 AND s.query NOT ILIKE '%information\_schema%'
                ORDER BY s.total_exec_time DESC
                LIMIT 500"#
         );

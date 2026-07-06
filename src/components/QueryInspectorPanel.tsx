@@ -168,6 +168,15 @@ export function QueryInspectorPanel({
     };
   }, [sessionId]);
 
+  // support 確定時、利用不可のタブに留まっていたら利用可能な方へ自動で寄せる
+  // (例: MySQL で events_statements consumer が無効だが digest は有効な縮退環境
+  // では既定タブ "tail" が空表示になるため)。
+  useEffect(() => {
+    if (!support) return;
+    if (tab === "tail" && !support.live_tail && support.statements) setTab("stats");
+    else if (tab === "stats" && !support.statements && support.live_tail) setTab("tail");
+  }, [support, tab]);
+
   // ポーリング 1 ティック: ライブテール → digest スナップショットの順に取得する。
   // busyRef で前回のティックが終わるまでスキップ (SSH トンネル等の低速経路対策)。
   const tick = useCallback(async () => {
