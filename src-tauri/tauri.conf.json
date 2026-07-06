@@ -28,7 +28,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENDNUU1NURGQ0FBNEY4MjgKUldRbytLVEszMVZlekRETXlCa24wc2ZtdTFWeWJYYkdWQjk2ZG1DdWNnZTFtUkUxQ2s3ZG1rTXEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRDQzZDODZGQzc4MUY1MEEKUldRSzlZSEhiOGpHVEgzSTZySGs0bFlEbFo5NHF3K0kyUDF0VlZuMVk0M2hPWWNnNlBjVDQxTTcK",
       "endpoints": [
         "https://github.com/noan98/noobDB/releases/latest/download/latest.json"
       ]
