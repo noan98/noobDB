@@ -123,6 +123,12 @@ pub struct TableSchema {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableRowEstimate {
     pub name: String,
+    /// i64 精度方針 (#625): この値は JSON 数値としてフロントへ渡り、JS の `number`
+    /// (安全整数 ±(2^53-1)) で受ける。2^53 を超える推定行数では精度が静かに落ちうるが、
+    /// **概算表示 (`~1.2K`) 専用**であり超過は現実に起きない/起きても丸めに留まるため
+    /// **許容する** (文字列化しない)。`TableSizeInfo` のバイト数や `ProcessInfo.id` /
+    /// `time_secs` も同じ方針 (現実的なレンジが安全整数に収まる)。詳細は
+    /// `src/api/schemas.ts` の `tableRowEstimate` コメントと `serde_schema_parity.rs`。
     pub estimate: Option<i64>,
 }
 

@@ -59,6 +59,16 @@ export const foreignKey = z.object({
   constraint_name: z.string().nullable(),
 });
 
+/**
+ * i64 精度方針 (#625): `estimate` は Rust の `Option<i64>` を JSON 数値で受ける。
+ * JS の `number` は安全整数が ±(2^53-1) までなので、それを超える巨大テーブルの推定
+ * 行数では精度が静かに落ちうる。**方針: これは許容する** — この値は engine の統計に
+ * 基づく **概算** (`~1.2K` 形式で表示するだけ) であり、2^53 (≈9×10^15 行) を超える
+ * 現実のテーブルは事実上存在せず、超えても表示上の丸めに留まるため。文字列化には
+ * 寄せない (`TableSizeInfo` のバイト数・`ProcessInfo.id`/`time_secs` も同様に、
+ * 現実的なレンジが安全整数に収まるので number のまま)。厳密な i64 識別子を新設する
+ * ときだけ、その場で文字列シリアライズを検討する。
+ */
 export const tableRowEstimate = z.object({
   name: z.string(),
   estimate: z.number().nullable(),

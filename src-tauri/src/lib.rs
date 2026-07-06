@@ -22,7 +22,9 @@ pub mod __test_api {
     pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, ForeignKey, QueryResult, TableColumnInfo, TableSchema, Value,
+        Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
+        ServerInfo, ServerVariable, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
+        Value,
     };
     pub use crate::db::{
         is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
