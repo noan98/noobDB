@@ -27,8 +27,7 @@ use t::{
     Value,
 };
 
-const FIXTURE_JSON: &str =
-    include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
+const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
 
 /// 主要レスポンス型の代表インスタンスを serde で JSON 化し、
 /// `{ 型名: JSON }` のマップにまとめて返す。フロントのフィクスチャと同一内容。

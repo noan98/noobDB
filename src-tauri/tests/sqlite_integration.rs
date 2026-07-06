@@ -1231,9 +1231,12 @@ async fn sqlite_blob_hex_roundtrip_for_representative_binaries() {
         .await
         .expect("connect");
 
-    conn.execute("CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB)", None)
-        .await
-        .expect("create blobs");
+    conn.execute(
+        "CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB)",
+        None,
+    )
+    .await
+    .expect("create blobs");
 
     // 代表バイナリ: (id, bytes)。
     let all_bytes: Vec<u8> = (0u16..=255).map(|b| b as u8).collect();
@@ -1268,7 +1271,8 @@ async fn sqlite_blob_hex_roundtrip_for_representative_binaries() {
         let expected_hex = to_hex(bytes);
         match &res.rows[0][0] {
             t::Value::Bytes(got) => assert_eq!(
-                *got, expected_hex,
+                *got,
+                expected_hex,
                 "id={id}: BLOB の hex 往復が一致するはず (len={} bytes)",
                 bytes.len()
             ),
