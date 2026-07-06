@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { chakra } from "@chakra-ui/react";
+import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
@@ -12,6 +13,7 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { copyToClipboard } from "./clipboard";
+import { useConfirm } from "./ConfirmDialog";
 import { KeybindingSettings } from "./KeybindingSettings";
 import { useToast } from "./Toast";
 import {
@@ -19,10 +21,13 @@ import {
   DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   DEFAULT_DISPLAY_COUNT,
   DEFAULT_FONT_SIZE_PX,
+  DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   DEFAULT_QUERY_TIMEOUT_SECS,
   DEFAULT_STREAM_PREFETCH_SIZE,
   MAX_AUTO_RECONNECT_RETRIES,
+  MAX_QUERY_NOTIFICATION_THRESHOLD_SECS,
   MIN_AUTO_RECONNECT_RETRIES,
+  MIN_QUERY_NOTIFICATION_THRESHOLD_SECS,
   DENSITY_ORDER,
   MAX_FONT_SIZE_PX,
   MIN_FONT_SIZE_PX,
@@ -44,10 +49,15 @@ import {
   TabRestoreMode,
   Theme,
   applySyntaxPreset,
+  deserializeSettingsImport,
   detectSyntaxPreset,
+  replaceAllSettings,
+  resetAllSettings,
+  resetAppearanceDefaults,
   resetPreviewHighlight,
   resetStreamingDefaults,
   resetSyntaxColors,
+  serializeSettingsExport,
   setAccentColor,
   setAutoLimitCount,
   setAutoLimitEnabled,
@@ -59,18 +69,25 @@ import {
   setDefaultDisplayCount,
   setDensity,
   setFontSizePx,
+  setQueryNotificationsEnabled,
+  setQueryNotificationThresholdSecs,
+  setAutoUpdateCheckEnabled,
   setQueryTimeoutSecs,
   setPreviewHighlight,
   setCellEditOnBlur,
   setResultGridMode,
   setResultGridPageSize,
   setRichCellRendering,
+  setSqlLintEnabled,
   setStreamPrefetchSize,
   setSyntaxColor,
   setTabRestoreMode,
   useSettings,
 } from "../settings";
 import { ACCENT_PRESETS } from "../accent";
+import { checkForAppUpdate, getCurrentAppVersion } from "../updater";
+import { displayVersion } from "../updaterFormat";
+import { confirmAndInstallUpdate } from "./updatePrompt";
 
 interface Props {
   theme: Theme;
@@ -480,6 +497,7 @@ const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> 
 export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
   const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const settings = useSettings();
   const colors = settings.syntaxColors[theme];
   const previewHighlight = settings.previewHighlight[theme];
@@ -495,6 +513,9 @@ export function SettingsView({ theme, onClose }: Props) {
     String(settings.autoReconnectMaxRetries),
   );
   const [fontSizeInput, setFontSizeInput] = useState(String(settings.fontSizePx));
+  const [notifyThresholdInput, setNotifyThresholdInput] = useState(
+    String(settings.queryNotificationThresholdSecs),
+  );
   useEffect(() => setDisplayInput(String(settings.defaultDisplayCount)), [settings.defaultDisplayCount]);
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
@@ -504,6 +525,10 @@ export function SettingsView({ theme, onClose }: Props) {
     [settings.autoReconnectMaxRetries],
   );
   useEffect(() => setFontSizeInput(String(settings.fontSizePx)), [settings.fontSizePx]);
+  useEffect(
+    () => setNotifyThresholdInput(String(settings.queryNotificationThresholdSecs)),
+    [settings.queryNotificationThresholdSecs],
+  );
 
   const commitDisplay = () => {
     const n = Number.parseInt(displayInput, 10);
@@ -525,6 +550,11 @@ export function SettingsView({ theme, onClose }: Props) {
     if (Number.isFinite(n) && n >= 0) setQueryTimeoutSecs(n);
     else setTimeoutInput(String(settings.queryTimeoutSecs));
   };
+  const commitNotifyThreshold = () => {
+    const n = Number.parseInt(notifyThresholdInput, 10);
+    if (Number.isFinite(n)) setQueryNotificationThresholdSecs(n);
+    else setNotifyThresholdInput(String(settings.queryNotificationThresholdSecs));
+  };
   const commitReconnectRetries = () => {
     const n = Number.parseInt(reconnectRetriesInput, 10);
     if (Number.isFinite(n)) setAutoReconnectMaxRetries(n);
@@ -540,6 +570,36 @@ export function SettingsView({ theme, onClose }: Props) {
   const [logPath, setLogPath] = useState<string | null>(null);
   const [logLoading, setLogLoading] = useState(false);
   const [logCopied, setLogCopied] = useState(false);
+
+  // アプリ内自動更新 (#705): 現在バージョン表示と手動チェック。
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void getCurrentAppVersion().then((v) => {
+      if (active) setAppVersion(v);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const handleCheckForUpdates = async () => {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      const update = await checkForAppUpdate();
+      if (!update) {
+        toast.success(t("updateUpToDate", { version: displayVersion(appVersion) }));
+        return;
+      }
+      await confirmAndInstallUpdate(update, { t, toast, confirm });
+    } catch {
+      // 手動チェックは失敗を明示的に知らせる (起動時の静かな無視とは対照的)。
+      toast.error(t("updateCheckFailed"));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const loadLogs = async () => {
     setLogLoading(true);
@@ -566,12 +626,71 @@ export function SettingsView({ theme, onClose }: Props) {
     setTimeout(() => setLogCopied(false), 1500);
   };
   const clearLogs = async () => {
-    if (!window.confirm(t("settingsLogsClearConfirm"))) return;
+    const ok = await confirm({
+      title: t("settingsLogsClear"),
+      message: t("settingsLogsClearConfirm"),
+      confirmLabel: t("settingsLogsClear"),
+      tone: "danger",
+    });
+    if (!ok) return;
     await api.clearLogs();
     await loadLogs();
   };
 
+  // 設定のエクスポート/インポート/全初期化 (#679)。接続プロファイル・秘密情報は
+  // 対象外 — こちらは既存の `export_profiles` / `import_profiles` (#442) が担う。
+  const handleExportSettings = async () => {
+    try {
+      const dest = await saveFileDialog({
+        defaultPath: "noobdb-settings.json",
+        title: t("settingsBackupExportTitle"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof dest !== "string" || !dest) return;
+      const json = serializeSettingsExport(settings);
+      await api.writeBinaryFile(dest, new TextEncoder().encode(json));
+      toast.success(t("settingsBackupExportSuccess", { path: dest }));
+    } catch (e) {
+      toast.error(t("settingsBackupExportError", { error: String(e) }));
+    }
+  };
+
+  const handleImportSettings = async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: t("settingsBackupImportTitle"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const raw = await api.readTextFile(picked);
+      const next = deserializeSettingsImport(raw);
+      const ok = await confirm({
+        title: t("settingsBackupImportTitle"),
+        message: t("settingsBackupImportConfirm"),
+        tone: "warning",
+      });
+      if (!ok) return;
+      replaceAllSettings(next);
+      toast.success(t("settingsBackupImportSuccess"));
+    } catch (e) {
+      toast.error(t("settingsBackupImportError", { error: String(e) }));
+    }
+  };
+
+  const handleResetAllSettings = async () => {
+    const ok = await confirm({
+      title: t("settingsBackupResetAllTitle"),
+      message: t("settingsBackupResetAllConfirm"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    resetAllSettings();
+    toast.success(t("settingsBackupResetAllSuccess"));
+  };
+
   return (
+    <>
     <Modal onClose={onClose} width="988px">
       <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
         {t("settingsTitle")}
@@ -591,6 +710,9 @@ export function SettingsView({ theme, onClose }: Props) {
       <SettingsSection>
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsAppearance")}</chakra.h3>
+          <SettingsReset onClick={resetAppearanceDefaults}>
+            {t("settingsReset")}
+          </SettingsReset>
         </SettingsSectionHeader>
         <SettingsNumberRow>
           <chakra.label htmlFor="settings-font-size">{t("settingsFontSize")}</chakra.label>
@@ -807,6 +929,26 @@ export function SettingsView({ theme, onClose }: Props) {
 
       <SettingsSection>
         <SettingsSectionHeader>
+          <chakra.h3>{t("settingsSqlLint")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsSqlLintHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-sql-lint">
+            <Switch
+              id="settings-sql-lint"
+              checked={settings.sqlLintEnabled}
+              onChange={setSqlLintEnabled}
+            />
+            {t("settingsSqlLintEnabled")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsSqlLintEnabledHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsResultGridMode")}</chakra.h3>
         </SettingsSectionHeader>
         <SettingsHelp>{t("settingsResultGridModeHelp")}</SettingsHelp>
@@ -982,6 +1124,48 @@ export function SettingsView({ theme, onClose }: Props) {
 
       <SettingsSection>
         <SettingsSectionHeader>
+          <chakra.h3>{t("settingsNotifications")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-query-notifications">
+            <Switch
+              id="settings-query-notifications"
+              checked={settings.queryNotificationsEnabled}
+              onChange={setQueryNotificationsEnabled}
+            />
+            {t("settingsQueryNotifications")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsQueryNotificationsHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-query-notification-threshold">
+            {t("settingsQueryNotificationThreshold")}
+          </chakra.label>
+          <Input
+            id="settings-query-notification-threshold"
+            type="number"
+            min={MIN_QUERY_NOTIFICATION_THRESHOLD_SECS}
+            max={MAX_QUERY_NOTIFICATION_THRESHOLD_SECS}
+            step={1}
+            value={notifyThresholdInput}
+            placeholder={String(DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS)}
+            disabled={!settings.queryNotificationsEnabled}
+            onChange={(e) => setNotifyThresholdInput(e.target.value)}
+            onBlur={commitNotifyThreshold}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsHelpInline>
+            {t("settingsQueryNotificationThresholdHelp")}
+          </SettingsHelpInline>
+        </SettingsNumberRow>
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
           <chakra.h3>{t("settingsTabPersistence")}</chakra.h3>
         </SettingsSectionHeader>
         <SettingsHelp>{t("settingsTabPersistenceHelp")}</SettingsHelp>
@@ -1132,8 +1316,70 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsLogsPath>
         )}
       </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsUpdates")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsUpdatesHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <chakra.span>
+            {t("settingsCurrentVersion", {
+              version: appVersion ?? t("settingsVersionUnknown"),
+            })}
+          </chakra.span>
+          <SettingsReset
+            type="button"
+            onClick={handleCheckForUpdates}
+            disabled={checkingUpdate}
+          >
+            {checkingUpdate ? t("settingsCheckingForUpdates") : t("settingsCheckForUpdates")}
+          </SettingsReset>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-auto-update-check">
+            <Switch
+              id="settings-auto-update-check"
+              checked={settings.autoUpdateCheckEnabled}
+              onChange={setAutoUpdateCheckEnabled}
+            />
+            {t("settingsAutoUpdateCheck")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsAutoUpdateCheckHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsBackup")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsBackupHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsReset type="button" onClick={handleExportSettings}>
+            {t("settingsBackupExport")}
+          </SettingsReset>
+          <SettingsReset type="button" onClick={handleImportSettings}>
+            {t("settingsBackupImport")}
+          </SettingsReset>
+          <SettingsHelpInline>{t("settingsBackupExcludesProfiles")}</SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsReset
+            type="button"
+            color="var(--status-error)"
+            onClick={handleResetAllSettings}
+          >
+            {t("settingsBackupResetAll")}
+          </SettingsReset>
+          <SettingsHelpInline>{t("settingsBackupResetAllHelp")}</SettingsHelpInline>
+        </SettingsToggleRow>
+      </SettingsSection>
         </chakra.div>
       </ModalBody>
     </Modal>
+    {confirmDialog}
+    </>
   );
 }

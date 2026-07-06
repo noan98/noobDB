@@ -67,6 +67,8 @@ jobs:
   fallback-approve:
     name: post @coderabbitai approve when criteria met
     runs-on: ubuntu-latest
+    # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ (正常時は影響なし)。
+    timeout-minutes: 10
     # issue_comment は PR への CodeRabbit / ユーザーのコメントに絞る (人間のコメント
     # でも条件が満たされていれば走らせて構わない)。
     # check_run / status は CodeRabbit のコンテキスト名を持つものだけに絞る。

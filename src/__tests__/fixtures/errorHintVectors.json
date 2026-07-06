@@ -1,0 +1,56 @@
+{
+  "description": "AppError の Display 出力 (バック) と errorHints.ts のヒント/イラスト判定 (フロント) のフロント/バック共有ゴールデンベクタ (#667)。#444 の読み取り専用ゴールデンベクタと同じ方式: 各ケースの message に対する期待値 (hintKey / illustration) を、フロント src/errorHints.ts の matchErrorHint・illustrationForError の双方が満たすことを検証する。加えて backendKind が 'native' のケースは src-tauri/tests/error_hint_golden.rs が対応する AppError バリアントを実際に構築し、Display 出力が message と厳密一致することを検証する (バックエンドが文言を変えるとここが即座に落ちる)。backendKind が 'sqlxProtocol' のケースは、DB ドライバ固有の Box<dyn DatabaseError> を汎用テストコードで組み立てるのが実用的でないため、AppError::Sqlx(sqlx::Error::Protocol(message)) を運び役 (carrier) として使い、AppError::Sqlx の Display フォーマット文字列が内側のメッセージを欠落・改変せずに包んでいることを contains 検証する (フォーマット文字列から {0} が消えるような変更を検知できる)。新しいエラー文言パターンを追加するときはこの 1 ファイルに追記すれば両言語に反映される。",
+  "cases": [
+    { "id": "syntax-mysql", "note": "MySQL 構文エラー", "backendKind": "sqlxProtocol", "message": "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version", "hintKey": "errorHintSyntax", "illustration": "queryFailed" },
+    { "id": "syntax-postgres", "note": "PostgreSQL 構文エラー", "backendKind": "sqlxProtocol", "message": "ERROR: syntax error at or near \"SELET\"", "hintKey": "errorHintSyntax", "illustration": "queryFailed" },
+    { "id": "syntax-sqlite", "note": "SQLite 構文エラー", "backendKind": "sqlxProtocol", "message": "near \"SELET\": syntax error", "hintKey": "errorHintSyntax", "illustration": "queryFailed" },
+
+    { "id": "unknown-column-mysql", "note": "MySQL 未知カラム", "backendKind": "sqlxProtocol", "message": "Unknown column 'foo' in 'field list'", "hintKey": "errorHintUnknownColumn", "illustration": "schemaLoadFailed" },
+    { "id": "unknown-column-postgres", "note": "PostgreSQL 未知カラム", "backendKind": "sqlxProtocol", "message": "column \"bar\" does not exist", "hintKey": "errorHintUnknownColumn", "illustration": "schemaLoadFailed" },
+    { "id": "unknown-column-sqlite", "note": "SQLite 未知カラム", "backendKind": "sqlxProtocol", "message": "no such column: baz", "hintKey": "errorHintUnknownColumn", "illustration": "schemaLoadFailed" },
+
+    { "id": "unknown-database-mysql", "note": "MySQL 未知データベース", "backendKind": "sqlxProtocol", "message": "Unknown database 'mydb'", "hintKey": "errorHintUnknownDatabase", "illustration": "schemaLoadFailed" },
+    { "id": "unknown-database-postgres", "note": "PostgreSQL 未知データベース", "backendKind": "sqlxProtocol", "message": "database \"mydb\" does not exist", "hintKey": "errorHintUnknownDatabase", "illustration": "schemaLoadFailed" },
+
+    { "id": "table-not-exist-mysql", "note": "MySQL 未知テーブル", "backendKind": "sqlxProtocol", "message": "Table 'mydb.users' doesn't exist", "hintKey": "errorHintTableNotExist", "illustration": "schemaLoadFailed" },
+    { "id": "table-not-exist-postgres", "note": "PostgreSQL 未知リレーション", "backendKind": "sqlxProtocol", "message": "relation \"users\" does not exist", "hintKey": "errorHintTableNotExist", "illustration": "schemaLoadFailed" },
+    { "id": "table-not-exist-sqlite", "note": "SQLite 未知テーブル", "backendKind": "sqlxProtocol", "message": "no such table: users", "hintKey": "errorHintTableNotExist", "illustration": "schemaLoadFailed" },
+
+    { "id": "foreign-key-mysql", "note": "MySQL 外部キー制約違反", "backendKind": "sqlxProtocol", "message": "Cannot add or update a child row: a foreign key constraint fails (`db`.`orders`, CONSTRAINT `fk_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`))", "hintKey": "errorHintForeignKey", "illustration": "queryFailed" },
+    { "id": "foreign-key-postgres", "note": "PostgreSQL 外部キー制約違反", "backendKind": "sqlxProtocol", "message": "insert or update on table \"orders\" violates foreign key constraint \"orders_user_id_fkey\"", "hintKey": "errorHintForeignKey", "illustration": "queryFailed" },
+
+    { "id": "duplicate-mysql", "note": "MySQL 重複エントリ", "backendKind": "sqlxProtocol", "message": "Duplicate entry '123' for key 'PRIMARY'", "hintKey": "errorHintDuplicate", "illustration": "queryFailed" },
+    { "id": "duplicate-postgres", "note": "PostgreSQL 一意制約違反", "backendKind": "sqlxProtocol", "message": "duplicate key value violates unique constraint \"users_pkey\"", "hintKey": "errorHintDuplicate", "illustration": "queryFailed" },
+    { "id": "duplicate-sqlite", "note": "SQLite UNIQUE 制約違反", "backendKind": "sqlxProtocol", "message": "UNIQUE constraint failed: users.email", "hintKey": "errorHintDuplicate", "illustration": "queryFailed" },
+
+    { "id": "access-denied-mysql", "note": "MySQL アクセス拒否", "backendKind": "sqlxProtocol", "message": "Access denied for user 'root'@'localhost' (using password: YES)", "hintKey": "errorHintAccessDenied", "illustration": "permissionDenied" },
+    { "id": "access-denied-postgres", "note": "PostgreSQL パスワード認証失敗", "backendKind": "sqlxProtocol", "message": "password authentication failed for user \"admin\"", "hintKey": "errorHintAccessDenied", "illustration": "permissionDenied" },
+    { "id": "access-denied-generic", "note": "汎用認証失敗", "backendKind": "sqlxProtocol", "message": "authentication failed", "hintKey": "errorHintAccessDenied", "illustration": "permissionDenied" },
+
+    { "id": "connection-lost-gone-away", "note": "MySQL server has gone away", "backendKind": "sqlxProtocol", "message": "MySQL server has gone away", "hintKey": "errorHintConnectionLost", "illustration": "connectionFailed" },
+    { "id": "connection-lost-lost-connection", "note": "MySQL Lost connection during query", "backendKind": "sqlxProtocol", "message": "Lost connection to MySQL server during query", "hintKey": "errorHintConnectionLost", "illustration": "connectionFailed" },
+    { "id": "connection-lost-broken-pipe", "note": "broken pipe", "backendKind": "sqlxProtocol", "message": "Error reading result set's header: broken pipe", "hintKey": "errorHintConnectionLost", "illustration": "connectionFailed" },
+    { "id": "connection-lost-server-closed", "note": "PostgreSQL server closed the connection", "backendKind": "sqlxProtocol", "message": "server closed the connection unexpectedly", "hintKey": "errorHintConnectionLost", "illustration": "connectionFailed" },
+    { "id": "connection-lost-terminating", "note": "PostgreSQL terminating connection", "backendKind": "sqlxProtocol", "message": "FATAL: terminating connection due to administrator command", "hintKey": "errorHintConnectionLost", "illustration": "connectionFailed" },
+    { "id": "connection-lost-sqlx-transport", "note": "sqlx の transport wording", "backendKind": "sqlxProtocol", "message": "error communicating with database: Connection reset by peer", "hintKey": "errorHintConnectionLost", "illustration": "connectionFailed" },
+
+    { "id": "connection-refused", "note": "接続拒否", "backendKind": "sqlxProtocol", "message": "Connection refused (os error 111)", "hintKey": "errorHintConnection", "illustration": "connectionFailed" },
+    { "id": "connection-cannot-connect", "note": "接続不能", "backendKind": "sqlxProtocol", "message": "cannot connect to host db.example.com:5432", "hintKey": "errorHintConnection", "illustration": "connectionFailed" },
+    { "id": "connection-timed-out", "note": "接続タイムアウト (timeout イラストより接続失敗イラストが優先)", "backendKind": "sqlxProtocol", "message": "connection timed out", "hintKey": "errorHintConnection", "illustration": "connectionFailed" },
+
+    { "id": "native-session-not-found", "note": "AppError::SessionNotFound はヒント対象外 (内部エラーでユーザ向けヒントは不要)", "backendKind": "native", "variant": "SessionNotFound", "arg": "a1b2c3d4", "message": "session not found: a1b2c3d4", "hintKey": null, "illustration": "queryFailed" },
+    { "id": "native-profile-not-found", "note": "AppError::ProfileNotFound はヒント対象外", "backendKind": "native", "variant": "ProfileNotFound", "arg": "a1b2c3d4", "message": "profile not found: a1b2c3d4", "hintKey": null, "illustration": "queryFailed" },
+    { "id": "native-invalid-input", "note": "AppError::InvalidInput はヒント対象外", "backendKind": "native", "variant": "InvalidInput", "arg": "save path is empty", "message": "invalid input: save path is empty", "hintKey": null, "illustration": "queryFailed" },
+    { "id": "native-read-only", "note": "AppError::ReadOnly はヒント対象外 (UI の DangerousQueryDialog 等、別経路で案内)", "backendKind": "native", "variant": "ReadOnly", "arg": "read-only profile: only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed", "message": "read-only session: read-only profile: only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed", "hintKey": null, "illustration": "queryFailed" },
+    { "id": "native-timeout", "note": "AppError::Timeout は illustrationForError では timeout に分類されるが、matchErrorHint には対応する PATTERNS エントリが無くヒントは null (既知の非対称。#667 で発見、修正は別 Issue のスコープ)", "backendKind": "native", "variant": "Timeout", "arg": "30", "message": "query timed out after 30s", "hintKey": null, "illustration": "timeout" },
+    { "id": "native-ssh", "note": "AppError::Ssh はヒント対象外", "backendKind": "native", "variant": "Ssh", "arg": "no common key exchange algorithm", "message": "ssh error: no common key exchange algorithm", "hintKey": null, "illustration": "queryFailed" },
+    { "id": "native-ssh-key", "note": "AppError::SshKey はヒント対象外", "backendKind": "native", "variant": "SshKey", "arg": "invalid key format", "message": "ssh key error: invalid key format", "hintKey": null, "illustration": "queryFailed" },
+    { "id": "native-io", "note": "AppError::Io はヒント対象外", "backendKind": "native", "variant": "Io", "arg": "disk full", "message": "io error: disk full", "hintKey": null, "illustration": "queryFailed" },
+    { "id": "native-keyring", "note": "AppError::Keyring はヒント対象外", "backendKind": "native", "variant": "Keyring", "arg": "no matching entry found in secure storage", "message": "keyring error: no matching entry found in secure storage", "hintKey": null, "illustration": "queryFailed" },
+    { "id": "native-config-dir", "note": "AppError::ConfigDir はヒント対象外 (引数なし)", "backendKind": "native", "variant": "ConfigDir", "arg": null, "message": "config dir not found", "hintKey": null, "illustration": "queryFailed" },
+    { "id": "native-other", "note": "AppError::Other はヒント対象外", "backendKind": "native", "variant": "Other", "arg": "export sink already finished", "message": "export sink already finished", "hintKey": null, "illustration": "queryFailed" },
+
+    { "id": "permission-denied-generic-no-hint", "note": "illustrationForError は permission denied を permissionDenied に分類するが、matchErrorHint の PATTERNS には該当エントリが無くヒントは null (既知の非対称。errorHintAccessDenied は access denied/authentication failed 系のみを見ている)", "backendKind": "sqlxProtocol", "message": "permission denied for table users", "hintKey": null, "illustration": "permissionDenied" },
+    { "id": "insufficient-privilege-no-hint", "note": "同上。insufficient privilege も illustration のみ permissionDenied でヒントは null", "backendKind": "sqlxProtocol", "message": "insufficient privilege to execute this command", "hintKey": null, "illustration": "permissionDenied" }
+  ]
+}

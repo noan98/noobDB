@@ -97,6 +97,33 @@ describe("buildChartModel", () => {
     expect(count.series[0].values).toEqual([2, 1]);
   });
 
+  it("count は数値化できない非 NULL 値も COUNT(col) と同じく数える", () => {
+    // "a" グループの 2 件目は数値変換できない文字列だが、SQL の COUNT(col) は
+    // NULL でない限り数えるため、count 集計もこれを含めなければならない。
+    const withText: CellValue[][] = [
+      ["a", 10],
+      ["a", "not-a-number"],
+      ["a", null],
+      ["b", 5],
+    ];
+    const count = buildChartModel(columns, withText, {
+      type: "bar",
+      xCol: 0,
+      yCols: [1],
+      aggregation: "count",
+    });
+    // グループ "a" は 3 行中 NULL の 1 件を除いた 2 件が COUNT 対象。
+    expect(count.series[0].values).toEqual([2, 1]);
+    // 一方 sum/avg は数値変換できた行のみを対象にする (非数値・NULL を除外)。
+    const avg = buildChartModel(columns, withText, {
+      type: "bar",
+      xCol: 0,
+      yCols: [1],
+      aggregation: "avg",
+    });
+    expect(avg.series[0].values).toEqual([10, 5]);
+  });
+
   it("samples down very large unaggregated result sets", () => {
     const big: CellValue[][] = Array.from({ length: MAX_POINTS + 500 }, (_, i) => ["x", i]);
     const model = buildChartModel(columns, big, { type: "line", xCol: 0, yCols: [1], aggregation: "none" });
@@ -114,6 +141,18 @@ describe("valueExtent", () => {
   it("handles negative values", () => {
     const model = { labels: [], series: [{ name: "s", values: [-5, -2] }], sampledFrom: null };
     expect(valueExtent(model)).toEqual({ min: -5, max: 0 });
+  });
+
+  it("bar/area では明示的に指定しても 0 基線を含める", () => {
+    const model = { labels: [], series: [{ name: "s", values: [5, 8, 3] }], sampledFrom: null };
+    expect(valueExtent(model, "bar")).toEqual({ min: 0, max: 8 });
+    expect(valueExtent(model, "area")).toEqual({ min: 0, max: 8 });
+  });
+
+  it("line では 0 基線を含めず実データのレンジを返す", () => {
+    // 値が密集しているケース (0 起点だと変動がつぶれる想定)。
+    const model = { labels: [], series: [{ name: "s", values: [100, 108, 103] }], sampledFrom: null };
+    expect(valueExtent(model, "line")).toEqual({ min: 100, max: 108 });
   });
 });
 

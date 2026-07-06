@@ -34,6 +34,17 @@ describe("buildCsv", () => {
   it("空行でもヘッダは出る", () => {
     expect(buildCsv(columns, [])).toBe("id,name\r\n");
   });
+
+  it("極端な数値は指数表記にせず Rust の f64::to_string() と同じ 10 進展開にする", () => {
+    // JS の String(v) は絶対値が概ね 1e21 以上/1e-6 未満で指数表記になるが、
+    // Rust の f64::to_string() は常にプレーンな 10 進展開を返す。
+    const cols: Column[] = [{ name: "v", type_name: "DOUBLE" }];
+    expect(buildCsv(cols, [[1e21]])).toBe("v\r\n1000000000000000000000\r\n");
+    expect(buildCsv(cols, [[5e-7]])).toBe("v\r\n0.0000005\r\n");
+    expect(buildCsv(cols, [[-1.23e-10]])).toBe("v\r\n-0.000000000123\r\n");
+    // 通常範囲の値は従来どおり (指数表記にならない)。
+    expect(buildCsv(cols, [[2.0]])).toBe("v\r\n2\r\n");
+  });
 });
 
 describe("buildJson", () => {
@@ -57,6 +68,20 @@ describe("buildJson", () => {
     expect(buildJson(columns, [[1, "Alice"]], "")).toBe(
       buildJson(columns, [[1, "Alice"]]),
     );
+  });
+
+  it("キーは UTF-16 コード単位ではなく Unicode コードポイント順でソートされる", () => {
+    // U+E000 (BMP, 私用領域) と \u{1F600} (サロゲートペア) は UTF-16 コード単位の
+    // 既定比較 (`<`) だと先頭サロゲート (0xD83D=55357) が U+E000 (57344) より小さい
+    // ため \u{1F600} が先に来てしまうが、実際のコードポイント値は \u{1F600} (128512) の
+    // 方が大きいため E000 が先に来なければならない (Rust の BTreeMap はコードポイント順)。
+    const cols: Column[] = [
+      { name: "\u{E000}", type_name: "TEXT" },
+      { name: "\u{1F600}", type_name: "TEXT" },
+    ];
+    const out = buildJson(cols, [["pua", "emoji"]]);
+    const parsed = JSON.parse(out);
+    expect(Object.keys(parsed[0])).toEqual(["\u{E000}", "\u{1F600}"]);
   });
 });
 
@@ -105,6 +130,12 @@ describe("buildMarkdownTable", () => {
   it("空でもヘッダ + 区切りは出る", () => {
     expect(buildMarkdownTable(columns, [])).toBe("| id | name |\n| --- | --- |\n");
   });
+
+  it("極端な数値は指数表記にせず 10 進展開にする", () => {
+    const cols: Column[] = [{ name: "v", type_name: "DOUBLE" }];
+    const out = buildMarkdownTable(cols, [[1.5e21]]);
+    expect(out.includes("| 1500000000000000000000 |")).toBe(true);
+  });
 });
 
 describe("buildSqlInsert", () => {
@@ -148,6 +179,12 @@ describe("buildSqlInsert", () => {
 
   it("空結果は空文字列", () => {
     expect(buildSqlInsert("mysql", "t", columns, [])).toBe("");
+  });
+
+  it("極端な数値は指数表記にせず 10 進展開のリテラルにする", () => {
+    const cols: Column[] = [{ name: "v", type_name: "DOUBLE" }];
+    const out = buildSqlInsert("mysql", "t", cols, [[1e21]]);
+    expect(out.includes("(1000000000000000000000)")).toBe(true);
   });
 });
 

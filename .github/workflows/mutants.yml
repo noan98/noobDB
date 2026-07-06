@@ -20,6 +20,11 @@ on:
 permissions:
   contents: read
 
+# 手動トリガを連続起動したとき、数十分かかるジョブが重複して走らないようにする。
+concurrency:
+  group: mutants-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_INCREMENTAL: "0"
 
@@ -27,8 +32,11 @@ jobs:
   mutants:
     name: cargo-mutants (安全網モジュール)
     runs-on: ubuntu-latest
+    # フル実行は数十分かかるが、ハング時にデフォルト 6 時間ランナーを占有し続ける
+    # のを防ぐため余裕を持った上限を付ける (正常時は影響なし)。
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -53,7 +61,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}

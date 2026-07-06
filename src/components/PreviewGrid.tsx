@@ -310,6 +310,7 @@ export function PreviewGrid({
             )}
             {onDiscardEdits && (
               <Button
+                variant="secondary"
                 size="sm"
                 px="2.5"
                 onClick={onDiscardEdits}

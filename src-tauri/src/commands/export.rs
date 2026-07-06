@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -11,7 +13,7 @@ use crate::db::sync::quote_ident;
 use crate::db::types::{Column, StreamBatch, Value};
 use crate::db::{is_read_only_sql, DriverKind};
 use crate::error::{AppError, Result};
-use crate::state::AppState;
+use crate::state::{AppState, StreamHandle, StreamKind};
 
 /// SQL INSERT 形式で出力するときの対象テーブル名が空のときに使うプレースホルダ。
 /// JOIN など結果元テーブルが特定できないケースでも有効な SQL になるようにする。
@@ -131,24 +133,48 @@ async fn write_export(
     .map_err(|e| AppError::Other(format!("export task failed: {e}")))?
 }
 
-fn csv_field(s: &str) -> String {
-    let needs_quote = s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r');
-    if !needs_quote {
-        return s.to_string();
+/// CSV インジェクション (Excel/LibreOffice などでセルが数式として評価されてしまう
+/// 問題) の緩和。セル値の先頭がこれらの文字だと開いたアプリで数式として実行されうる
+/// (例: `=HYPERLINK(...)`)。ただし `-5`・`+3.2` のような符号付き数値まで壊さないよう、
+/// 値全体が数値としてパース可能な場合は前置しない (`=`/`@` は数値の先頭に来ないため
+/// 誤検出しないが、`+`/`-` は符号付き数値と衝突するのでここで除外する)。
+const CSV_FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+
+/// 数式トリガ文字で始まり、かつ数値としてパースできない値の先頭にシングルクオート
+/// `'` を前置して文字列として固定する。Excel/LibreOffice はセル先頭の `'` を
+/// リテラル文字列マーカーとして扱うため表示上は無害化される。前置不要な大多数の
+/// セルではアロケーションせず借用のまま返す (エクスポートは行 × 列で呼ばれる)。
+fn mitigate_formula_injection(s: &str) -> Cow<'_, str> {
+    match s.chars().next() {
+        Some(c) if CSV_FORMULA_TRIGGERS.contains(&c) && s.trim().parse::<f64>().is_err() => {
+            Cow::Owned(format!("'{s}"))
+        }
+        _ => Cow::Borrowed(s),
     }
-    let escaped = s.replace('"', "\"\"");
-    format!("\"{}\"", escaped)
 }
 
-fn value_to_csv(v: &Value) -> String {
+fn csv_field(s: &str) -> Cow<'_, str> {
+    let mitigated = mitigate_formula_injection(s);
+    let needs_quote = mitigated.contains(',')
+        || mitigated.contains('"')
+        || mitigated.contains('\n')
+        || mitigated.contains('\r');
+    if !needs_quote {
+        return mitigated;
+    }
+    let escaped = mitigated.replace('"', "\"\"");
+    Cow::Owned(format!("\"{}\"", escaped))
+}
+
+fn value_to_csv(v: &Value) -> Cow<'_, str> {
     match v {
-        Value::Null => String::new(),
-        Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        Value::Int(i) => i.to_string(),
-        Value::UInt(u) => u.to_string(),
-        Value::Float(f) => f.to_string(),
+        Value::Null => Cow::Borrowed(""),
+        Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+        Value::Int(i) => Cow::Owned(i.to_string()),
+        Value::UInt(u) => Cow::Owned(u.to_string()),
+        Value::Float(f) => Cow::Owned(f.to_string()),
         Value::String(s) => csv_field(s),
-        Value::Bytes(hex) => csv_field(&format!("0x{}", hex)),
+        Value::Bytes(hex) => Cow::Owned(csv_field(&format!("0x{}", hex)).into_owned()),
     }
 }
 
@@ -271,22 +297,29 @@ fn write_ndjson<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) ->
 /// バックスラッシュ `\` を `\\` に置換する (これを最初にしないと、後段で `|` を `\|`
 /// にしたときに既存の `\` が誤って区切りをエスケープしてしまう)。フロントの
 /// `exportPreview.ts` の `mdEscape` と完全に一致させる。
-fn md_escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('|', "\\|")
-        .replace('\r', "")
-        .replace('\n', "<br>")
+fn md_escape(s: &str) -> Cow<'_, str> {
+    // エスケープ対象を含まない大多数のセルは全文走査 1 回だけで借用のまま返し、
+    // `replace` 連鎖による中間 String 4 連アロケーションを避ける。
+    if !s.bytes().any(|b| matches!(b, b'\\' | b'|' | b'\r' | b'\n')) {
+        return Cow::Borrowed(s);
+    }
+    Cow::Owned(
+        s.replace('\\', "\\\\")
+            .replace('|', "\\|")
+            .replace('\r', "")
+            .replace('\n', "<br>"),
+    )
 }
 
-fn value_to_markdown(v: &Value) -> String {
+fn value_to_markdown(v: &Value) -> Cow<'_, str> {
     match v {
-        Value::Null => String::new(),
-        Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        Value::Int(i) => i.to_string(),
-        Value::UInt(u) => u.to_string(),
-        Value::Float(f) => f.to_string(),
+        Value::Null => Cow::Borrowed(""),
+        Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+        Value::Int(i) => Cow::Owned(i.to_string()),
+        Value::UInt(u) => Cow::Owned(u.to_string()),
+        Value::Float(f) => Cow::Owned(f.to_string()),
         Value::String(s) => md_escape(s),
-        Value::Bytes(hex) => md_escape(&format!("0x{}", hex)),
+        Value::Bytes(hex) => Cow::Owned(md_escape(&format!("0x{}", hex)).into_owned()),
     }
 }
 
@@ -347,12 +380,17 @@ fn sql_columns_clause(driver: DriverKind, columns: &[Column]) -> String {
 
 /// 1 行を `(v1, v2, ...)` の VALUES タプルへ変換する。リテラルエスケープは
 /// `data_diff::sql_literal` を共有 (ドライバ別の文字列/BLOB/真偽値エスケープ)。
+/// 行ごとに呼ばれるため、中間 `Vec<String>` + `join` を作らず 1 バッファへ直接書く。
 fn sql_values_tuple(driver: DriverKind, columns: &[Column], row: &[Value]) -> String {
-    let vals = (0..columns.len())
-        .map(|i| sql_literal(driver, row.get(i).unwrap_or(&Value::Null)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("({})", vals)
+    let mut out = String::from("(");
+    for i in 0..columns.len() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&sql_literal(driver, row.get(i).unwrap_or(&Value::Null)));
+    }
+    out.push(')');
+    out
 }
 
 /// SQL INSERT 文を書き出す。`batch_size` 行ごとに 1 文へまとめ、各文は
@@ -414,6 +452,11 @@ struct ExportErrorEvent {
     #[serde(rename = "streamId")]
     stream_id: String,
     message: String,
+    /// Rows already written to the output file before the run failed.
+    /// Informational only — a failed/cancelled export always deletes its
+    /// partial output file (see [`PartialFileCleanup`]), but the UI can still
+    /// use this to explain how far the run got (#685).
+    rows: u64,
 }
 
 /// Incremental file writer for the streaming export. Writes the header (CSV) or
@@ -533,6 +576,47 @@ impl StreamExportSink {
     }
 }
 
+/// キャンセル (abort) や失敗時に書きかけの出力ファイルを残さないための RAII ガード。
+///
+/// `cancel_stream` は対象タスクを `AbortHandle::abort()` で即座に中断し、タスクの
+/// future をその場で drop する。そのため `Err` 分岐にある明示的な `remove_file` も
+/// 正常完了時の `finish()` もどちらも実行されず、`BufWriter` の Drop でバッファ内容が
+/// フラッシュされて書きかけの (閉じ括弧の無い不正な JSON や途中で切れた CSV) 出力が
+/// 保存先に残ってしまう。
+///
+/// このガードを spawn されるタスクのスコープ (async fn のローカル変数) に持たせ、
+/// 正常完了時にのみ `commit()` を呼ぶ。それ以外の経路 (エラー・タイムアウト・
+/// キャンセルによる future drop) では `Drop` 実装が確実に出力ファイルを削除する —
+/// abort は future を drop するだけなので、Rust の通常の Drop 順序に乗るこの方式なら
+/// キャンセル経路でも漏れなく効く。
+struct PartialFileCleanup {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl PartialFileCleanup {
+    fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            committed: false,
+        }
+    }
+
+    /// 出力が完了し、保存先ファイルをそのまま残してよいことを示す。以降 Drop されても
+    /// 削除しない。
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for PartialFileCleanup {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
 /// Re-run `sql` and stream the full result set to `path`. Progress is
 /// reported via `export-stream:*` events keyed by `stream_id`; `cancel_stream`
 /// aborts it and returns the connection to the pool. Only read-only (SELECT)
@@ -579,22 +663,50 @@ pub async fn export_query_stream(
     // JSON 形式では実行クエリを出力に同梱する (sink 側で JSON のときだけ反映)。
     let sink = StreamExportSink::with_query(&path, format, Some(sql.clone()), sql_opts)?;
     let shared = Arc::new(Mutex::new(Some(sink)));
+    // ファイルは既に作成済み (`with_query` 内)。正常完了以外の経路 (エラー/タイムアウト/
+    // キャンセル) では Drop で自動的に削除される。
+    let cleanup = PartialFileCleanup::new(&path);
+    // Shared with `AppState` so `cancel_stream` can read how many rows had
+    // already been written when it aborts this task (#685).
+    let counter = Arc::new(AtomicU64::new(0));
 
-    let handle = tokio::spawn(spawn_export_stream(
-        app,
-        session,
-        stream_id.clone(),
-        sql,
-        database,
-        path,
-        initial_batch,
-        chunk_size,
-        query_timeout_secs,
-        shared,
-    ));
-    state
-        .register_stream(stream_id, handle.abort_handle())
+    // register_stream をタスク本体より前に完了させるためのゲート
+    // (run_query_stream / preview_query_stream と同じ理由。#685)。ゲートが
+    // 無いと、即エラーや極小結果の export が register より先に forget_stream し、
+    // 完了済み StreamHandle が streams に残り後続の cancel_stream が誤って成功を
+    // 返す競合窓ができる。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let stream_id_for_task = stream_id.clone();
+    let counter_for_task = counter.clone();
+    let handle = tokio::spawn(async move {
+        let _ = ready_rx.await;
+        spawn_export_stream(
+            app,
+            session,
+            stream_id_for_task,
+            sql,
+            database,
+            initial_batch,
+            chunk_size,
+            query_timeout_secs,
+            shared,
+            cleanup,
+            counter_for_task,
+        )
         .await;
+    });
+    state
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows: counter,
+                kind: StreamKind::Export,
+            },
+        )
+        .await;
+    // register_stream 完了後にタスク本体の実行を許可する。
+    let _ = ready_tx.send(());
     Ok(())
 }
 
@@ -605,13 +717,13 @@ async fn spawn_export_stream(
     stream_id: String,
     sql: String,
     database: Option<String>,
-    path: String,
     initial_batch: usize,
     chunk_size: usize,
     query_timeout_secs: Option<u64>,
     shared: Arc<Mutex<Option<StreamExportSink>>>,
+    mut cleanup: PartialFileCleanup,
+    counter: Arc<AtomicU64>,
 ) {
-    let counter = Arc::new(AtomicU64::new(0));
     let emit_app = app.clone();
     let emit_id = stream_id.clone();
     let sink_cb = shared.clone();
@@ -663,6 +775,8 @@ async fn spawn_export_stream(
             let sink = shared.lock().ok().and_then(|mut g| g.take());
             match sink.map(|s| s.finish()) {
                 Some(Ok(bytes)) => {
+                    // 出力が完全に書き終わったので、以降 Drop されてもファイルは消さない。
+                    cleanup.commit();
                     let rows = counter.load(Ordering::SeqCst);
                     tracing::info!(stream_id = %stream_id, rows, bytes, "streaming export complete");
                     let _ = app.emit(
@@ -675,12 +789,14 @@ async fn spawn_export_stream(
                     );
                 }
                 Some(Err(e)) => {
-                    let _ = std::fs::remove_file(&path);
+                    // finish (JSON の閉じ括弧書き込み等) 失敗。cleanup は未 commit の
+                    // ままなので、関数末尾での Drop が部分ファイルを削除する。
                     let _ = app.emit(
                         EV_EXPORT_ERROR,
                         ExportErrorEvent {
                             stream_id: stream_id.clone(),
                             message: e.to_string(),
+                            rows: counter.load(Ordering::SeqCst),
                         },
                     );
                 }
@@ -688,17 +804,18 @@ async fn spawn_export_stream(
             }
         }
         Err(e) => {
-            // Drop the sink and remove the partial file so a cancelled/failed
-            // export doesn't leave a truncated artifact behind.
+            // 実行がエラー/タイムアウトになった。sink を drop するだけでよく、部分
+            // ファイルの削除は cleanup が関数末尾の Drop で行う (cancel/abort による
+            // future drop でも同じ Drop 経路を通るため、そちらもここで担保される)。
             if let Ok(mut g) = shared.lock() {
                 g.take();
             }
-            let _ = std::fs::remove_file(&path);
             let _ = app.emit(
                 EV_EXPORT_ERROR,
                 ExportErrorEvent {
                     stream_id: stream_id.clone(),
                     message: e.to_string(),
+                    rows: counter.load(Ordering::SeqCst),
                 },
             );
         }
@@ -707,6 +824,8 @@ async fn spawn_export_stream(
     if let Some(state) = app.try_state::<AppState>() {
         state.forget_stream(&stream_id).await;
     }
+    // `cleanup` はここ (関数末尾) で drop される。abort によりこの関数の実行自体が
+    // 途中で打ち切られた場合も、future の drop に伴い同じ Drop 実装が走る。
 }
 
 #[cfg(test)]
@@ -784,6 +903,49 @@ mod tests {
                         2,\"Bob, the \"\"Builder\"\"\",\"multi\nline\"\r\n\
                         3,,true\r\n";
         assert_eq!(out, expected);
+    }
+
+    // CSV インジェクション対策: `=`/`@`/`+`/`-` 始まりの非数値セルは `'` を前置する。
+    #[test]
+    fn csv_mitigates_formula_injection_on_non_numeric_leading_triggers() {
+        let columns = vec![col("note")];
+        let rows = vec![
+            vec![Value::String("=HYPERLINK(\"http://evil\")".into())],
+            vec![Value::String("@SUM(A1:A2)".into())],
+            vec![Value::String("+cmd|/c calc".into())],
+            vec![Value::String("-cmd|/c calc".into())],
+        ];
+        let out = String::from_utf8(csv_bytes(&columns, &rows)).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[1], "\"'=HYPERLINK(\"\"http://evil\"\")\"");
+        assert_eq!(lines[2], "'@SUM(A1:A2)");
+        assert_eq!(lines[3], "'+cmd|/c calc");
+        assert_eq!(lines[4], "'-cmd|/c calc");
+    }
+
+    // 符号付き数値 (`-5`, `+3.2` 等) はそのまま (前置しない) — 数値表現を壊さない。
+    #[test]
+    fn csv_does_not_mitigate_signed_numeric_strings() {
+        let columns = vec![col("n")];
+        let rows = vec![
+            vec![Value::String("-5".into())],
+            vec![Value::String("+3.2".into())],
+            vec![Value::String("-1e10".into())],
+        ];
+        let out = String::from_utf8(csv_bytes(&columns, &rows)).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[1], "-5");
+        assert_eq!(lines[2], "+3.2");
+        assert_eq!(lines[3], "-1e10");
+    }
+
+    // 通常の文字列 (トリガ文字で始まらない) は無変更。
+    #[test]
+    fn csv_leaves_normal_strings_untouched() {
+        let columns = vec![col("name")];
+        let rows = vec![vec![Value::String("Alice".into())]];
+        let out = String::from_utf8(csv_bytes(&columns, &rows)).unwrap();
+        assert_eq!(out, "name\r\nAlice\r\n");
     }
 
     #[test]
@@ -1267,6 +1429,125 @@ mod tests {
         assert_eq!(out.matches("INSERT INTO `users`").count(), 2);
         assert!(out.contains("(1, 'a')"));
         assert!(out.contains("(2, 'b')"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── PartialFileCleanup (I1: キャンセル時に部分ファイルを残さない RAII ガード) ──
+
+    // commit() を呼ばずに drop すると、出力ファイルは削除される
+    // (エラー/タイムアウト/abort による future drop を模した経路)。
+    #[test]
+    fn partial_file_cleanup_removes_file_when_not_committed() {
+        let path = std::env::temp_dir().join(format!(
+            "noobdb_export_cleanup_uncommitted_{}.tmp",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"partial").unwrap();
+        assert!(path.exists());
+        {
+            let _guard = PartialFileCleanup::new(&path);
+            // commit() を呼ばずにスコープを抜ける。
+        }
+        assert!(
+            !path.exists(),
+            "uncommitted guard should remove the partial file on drop"
+        );
+    }
+
+    // commit() を呼んでから drop すると、出力ファイルは残る (正常完了経路)。
+    #[test]
+    fn partial_file_cleanup_keeps_file_when_committed() {
+        let path = std::env::temp_dir().join(format!(
+            "noobdb_export_cleanup_committed_{}.tmp",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"complete").unwrap();
+        assert!(path.exists());
+        {
+            let mut guard = PartialFileCleanup::new(&path);
+            guard.commit();
+        }
+        assert!(
+            path.exists(),
+            "committed guard must not remove the finished file on drop"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── 中断時の出力状態の end-to-end 保証 (#626) ──
+    //
+    // 上の 2 つはガード単体をダミー内容で検証するが、ここでは実際の
+    // `StreamExportSink` にヘッダ + 一部の行だけを書いた「途中で切れた」状態を作り、
+    // `PartialFileCleanup` と組み合わせたときに:
+    //   - 中断 (finish/commit なし) では書きかけの不正ファイルが残らない
+    //   - 正常完了 (finish + commit) では閉じ括弧まで揃った妥当なファイルが残る
+    // ことを固定する。宣言順は spawn_export_stream の drop 順 (sink → cleanup) に
+    // 合わせ、sink の BufWriter が partial をフラッシュした後に cleanup が削除する
+    // 経路を模す。
+
+    /// ヘルパ: 一時ファイルパスを作る (中身はまだ作らない)。
+    fn tmp_export_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "noobdb_export_sink_{tag}_{}.json",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn interrupted_stream_export_leaves_no_partial_file() {
+        let path = tmp_export_path("interrupted");
+        let path_str = path.to_str().unwrap().to_string();
+        let cols = vec![col("id"), col("name")];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("a".into())],
+            vec![Value::Int(2), Value::String("b".into())],
+        ];
+        {
+            // drop 順: 後宣言の sink が先に drop (partial をフラッシュ) → cleanup が削除。
+            let _cleanup = PartialFileCleanup::new(&path);
+            let mut sink =
+                StreamExportSink::with_query(&path_str, ExportFormat::Json, None, test_sql_opts())
+                    .unwrap();
+            sink.on_columns(cols).unwrap();
+            sink.on_rows(&rows).unwrap();
+            // finish() も commit() も呼ばずにスコープを抜ける = abort による future drop。
+            // この時点でファイルには閉じ括弧の無い不正な JSON (`[ ... `) が書かれうる。
+        }
+        assert!(
+            !path.exists(),
+            "中断された export は書きかけの部分ファイルを残さないはず"
+        );
+    }
+
+    #[test]
+    fn completed_stream_export_leaves_valid_closed_file() {
+        let path = tmp_export_path("completed");
+        let path_str = path.to_str().unwrap().to_string();
+        let cols = vec![col("id"), col("name")];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("a".into())],
+            vec![Value::Int(2), Value::String("b".into())],
+        ];
+        {
+            let mut cleanup = PartialFileCleanup::new(&path);
+            let mut sink =
+                StreamExportSink::with_query(&path_str, ExportFormat::Json, None, test_sql_opts())
+                    .unwrap();
+            sink.on_columns(cols).unwrap();
+            sink.on_rows(&rows).unwrap();
+            // finish() が配列を閉じてフラッシュし、commit() で残すことを許可する。
+            sink.finish().unwrap();
+            cleanup.commit();
+        }
+        assert!(path.exists(), "正常完了した export はファイルを残すはず");
+        let content = std::fs::read_to_string(&path).unwrap();
+        // 閉じ括弧まで揃った妥当な JSON 配列としてパースできる (途中で切れていない)。
+        let parsed: serde_json::Value = serde_json::from_str(&content)
+            .unwrap_or_else(|e| panic!("完了ファイルは妥当な JSON のはず: {e}\n---\n{content}"));
+        let arr = parsed.as_array().expect("トップレベルは配列");
+        assert_eq!(arr.len(), 2, "2 行が書き出されているはず");
+        assert_eq!(arr[0]["id"], serde_json::json!(1));
+        assert_eq!(arr[1]["name"], serde_json::json!("b"));
         let _ = std::fs::remove_file(&path);
     }
 }

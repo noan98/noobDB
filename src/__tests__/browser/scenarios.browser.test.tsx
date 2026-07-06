@@ -109,7 +109,7 @@ function registerBaseHandlers() {
     { name: (args.database as string) === "betadb" ? "gadgets" : "fruits", estimate: null },
   ]);
   onCommand("list_schema_objects", () => []);
-  onCommand("cancel_stream", () => true);
+  onCommand("cancel_stream", () => ({ cancelled: true, deliveredRows: 1 }));
 }
 
 /** ストリーミング一式 (columns → rows → done) を 1 ストリーム分注入する。 */
@@ -238,7 +238,9 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     await vi.waitFor(() => {
       expect(invocationsOf("cancel_stream")).toEqual([{ streamId }]);
     }, { timeout: 5000 });
-    await expect.element(screen.getByText(t("statusQueryCancelled"))).toBeVisible();
+    await expect.element(
+      screen.getByText(t("statusQueryCancelledPartial", { rows: 1 })),
+    ).toBeVisible();
 
     // 取得済みの行は保持される。
     await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();

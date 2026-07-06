@@ -256,6 +256,38 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`, `libxdo-dev`,
 `libayatana-appindicator3-dev`) が必要です。
 
+### 依存関係の自動更新と脆弱性監査 (#605)
+
+Cargo (`src-tauri/`) / pnpm (フロント) / GitHub Actions の 3 エコシステムで、更新
+PR の自動生成と脆弱性の可視化を次のように役割分担しています。追加サービス
+(Renovate 等) は導入せず、GitHub ネイティブな Dependabot と既存の cargo-deny /
+新設の pnpm audit で完結させています。
+
+- **Dependabot (`.github/dependabot.yml`) — 更新 PR の自動生成**。`cargo`
+  (`/src-tauri`)・`npm` (pnpm、`/`)・`github-actions` (`/`) の 3 エコシステムを
+  それぞれ `schedule.interval: weekly` で監視します。`groups` は各 `updates` エントリ
+  配下に置く構文 (`updates[].groups`) で、`minor`/`patch` 更新を 1 本の PR へまとめ
+  (`cargo-minor-and-patch` / `npm-minor-and-patch`) PR ノイズを抑えます (major は
+  グルーピング対象外で個別 PR になります)。`cooldown` (`semver-patch-days: 3` /
+  `semver-minor-days: 7` / `semver-major-days: 30`) でリリース直後の不安定な
+  バージョンを一定期間避けます。`open-pull-requests-limit: 5` で同時オープン数を
+  抑制。**自動マージ**は本設定固有の仕組みではなく、`.github/workflows/automerge.yml`
+  (CI 成功 + 未解決レビュースレッド 0 件を条件にする汎用の自動マージ) が Dependabot
+  PR を含むすべての適格な PR に対して既に機能しており、実績として多数の Dependabot
+  PR (`dependabot/cargo/...` 等) がこの経路でマージされています。
+- **cargo-deny (`ci.yml` の `rust (deny)` ジョブ) — Rust 依存のライセンス +
+  脆弱性ゲート**。依存ライセンスの許可リスト検査に加え、RustSec Advisory DB による
+  既知脆弱性チェックを **PR ごとに強制**します (fail する)。設定は
+  `src-tauri/deny.toml`。詳細は上記 CI セクションを参照。
+- **pnpm audit (`.github/workflows/audit.yml`) — フロント依存の脆弱性可視化**。
+  cargo-deny に対になるフロント側の仕組みが無かったため新設しました。
+  `schedule: cron` (毎週月曜) + `workflow_dispatch` で定期実行し、`pnpm audit` の
+  結果を Job Summary に出力します。pnpm は既存 CI と同じく `corepack enable` で
+  用意します。バンドルサイズ (#443) ・カバレッジ (#482) と同じ漸進方針で、
+  **当面 fail させず可視化のみ**とし (`|| true` で吸収)、PR ごとではなく週次
+  スケジュールにしているのは、依存を変更しない PR でも毎回外部の npm advisory DB
+  に問い合わせるコストを避けるためです。
+
 ### ビルド高速化
 
 ローカルと CI の Rust ビルドを速くするための設定をいくつか入れています。
@@ -792,6 +824,22 @@ LIKE ワイルドカードはエスケープされます。
 文配列をまとめて投入する従来経路) とは別物で、こちらは**開いたまま複数の往復**を
 できる点が違います。読み取り専用セッションでは書き込み文が拒否される点は同じです。
 
+**MySQL の DDL は非原子である点に注意 (#640)。** `run_query_transaction` /
+`apply_sync_sql` が使う `execute_transaction` は「begin → 逐次実行 → commit、失敗時
+rollback」の all-or-nothing 実装ですが、**MySQL/MariaDB は DDL (`CREATE` / `ALTER` /
+`DROP` / `TRUNCATE` / `RENAME` 等) を実行した時点で暗黙コミット**します。そのため
+`["CREATE TABLE t ...", "INSERT INTO t ... (失敗)"]` のような **DDL+DML 混在バッチ**では、
+後続 DML が失敗してロールバックしても先行の `CREATE TABLE` は残り、all-or-nothing が
+崩れます。これは MySQL 固有の制約で `execute_transaction` 側では吸収できないため、
+**方針は「非原子性を明示する」**とし、`db/mysql.rs::execute_transaction` のドキュメント
+コメントに詳細を記載しています (分割・事前検証はしない)。`apply_sync_sql` は既に MySQL で
+best-effort 逐次のため整合します。**スキーマ変更の原子性が必要な呼び出し側は、1 回の
+`execute_transaction` に DDL と DML を混ぜないでください。** PostgreSQL は
+トランザクショナル DDL なので同シナリオで `CREATE` もロールバックされ、この問題は
+ありません。ドライバ差は `mysql_integration::mysql_ddl_dml_mixed_batch_is_not_atomic` /
+`postgres_integration::postgres_ddl_dml_mixed_batch_rolls_back` の対比テストで固定して
+います (環境変数ゲート、未設定ならスキップ)。
+
 ### スキーマ・データ比較と同期 (Diff / Sync)
 
 2 つの接続 (セッション) 間でスキーマとデータを突き合わせ、差分を埋める SQL を生成・
@@ -854,6 +902,54 @@ fs プラグインを使わず capabilities を増やさないための経路で
 `components/ImageExportButton.tsx` (PNG 保存 / SVG 保存 / クリップボードコピーの
 メニュー) が担い、ER 図は `getNodesBounds` で全景を `scale(1)` で書き出すため現在の
 ズーム/パンに依存しません。
+
+### アプリ内自動更新 (Tauri updater プラグイン統合、#705)
+
+配布した旧バージョンのアプリが、GitHub Releases に上がった新バージョンを検出 →
+ダウンロード → 適用 (再起動) までアプリ内で行える仕組みです。Tauri 公式の
+`tauri-plugin-updater` (検出/ダウンロード/**署名検証**) と `tauri-plugin-process`
+(適用後の `relaunch`) を統合しています。既存の dialog / notification プラグインと
+同じく、フロントは Rust コマンドではなく**プラグイン自体の JS API**
+(`@tauri-apps/plugin-updater` / `@tauri-apps/plugin-process`) を直接呼ぶため、
+`invoke_handler!` へのコマンド追加はありません (`lib.rs` は desktop ターゲット限定の
+`#[cfg(desktop)]` ブロックで両プラグインを登録)。
+
+- **フロント構成**: 副作用層 `updater.ts` (プラグイン呼び出し: `getCurrentAppVersion`
+  / `checkForAppUpdate` / `installUpdateAndRestart` / `dismissUpdate`) と、純粋な整形層
+  `updaterFormat.ts` (`downloadProgressPercent` / `truncateReleaseNotes` /
+  `displayVersion`。Vitest 対象) を通知 (`notifications.ts` ⇔ `queryNotify.ts`) と同じ
+  方針で分離しています。確認ダイアログ → 承認時のダウンロード/適用という UI フローは
+  `components/updatePrompt.tsx` の `confirmAndInstallUpdate` に集約し、起動時チェック
+  (`App.tsx`) と設定画面の手動チェック (`SettingsView` の「更新を確認」ボタン + 現在
+  バージョン表示) の両方から使います。
+- **ユーザ承認制 / ベストエフォート**: 起動時に一度だけ自動チェックし
+  (`settings.ts` の `autoUpdateCheckEnabled`、既定オン。オフラインや社内配布向けに
+  設定でオフにできる)、更新があっても**ダウンロード・適用・再起動はユーザが確認
+  ダイアログで承認したときだけ**行います (勝手に再起動しない)。オフラインや
+  マニフェスト取得失敗など**チェック自体の失敗**は起動時は静かに無視し (起動を
+  ブロックしない)、手動チェックのみエラーをトーストで知らせます
+  (`checkForAppUpdate` は「最新 = null」と「失敗 = throw」を区別)。
+- **capabilities**: 最小権限方針を維持し `updater:default` と `process:allow-restart`
+  のみ追加 (`capabilities/default.json`)。
+- **署名と配布**: `tauri.conf.json` の `bundle.createUpdaterArtifacts: true` で更新用
+  成果物 (署名付き) と `latest.json` を生成し、`plugins.updater.pubkey` の**公開鍵**で
+  署名を検証します (検証に失敗した更新は適用されません)。`endpoints` は
+  `https://github.com/noan98/noobDB/releases/latest/download/latest.json`。**秘密鍵は
+  リポジトリや `profiles.json` には置かず** (秘密分離の既存方針)、GitHub Actions の
+  Secrets `TAURI_SIGNING_PRIVATE_KEY` (鍵にパスワードを付けた場合は
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) で管理します。`release.yml` のタグビルド
+  (`tauri-action`) がこの Secrets を使って署名し `latest.json` を自動アップロード
+  します。キャッシュ温めビルド (main push、鍵なし) は `--config` で
+  `createUpdaterArtifacts` を false に上書きして署名を要求せずに通します。
+
+> **セットアップ必須 (メンテナ作業)**: リポジトリに現在入っている
+> `plugins.updater.pubkey` は**プレースホルダの公開鍵**です。実運用では
+> `pnpm tauri signer generate` で鍵ペアを生成し、**公開鍵で
+> `tauri.conf.json` の `pubkey` を差し替え**、**秘密鍵を GitHub Actions Secrets
+> `TAURI_SIGNING_PRIVATE_KEY` に登録**してください (公開鍵は非秘密なのでコミット
+> 可、秘密鍵は絶対にコミットしない)。公開鍵と Secrets の秘密鍵が対でないと、
+> 署名検証が通らず更新が適用されません。ターゲットは Windows (NSIS) が最初で、
+> macOS / Linux バンドル対応が入ったら同じマニフェストに載ります。
 
 ### IPC 表面
 
@@ -918,12 +1014,16 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   ラッパーは `api/schemas.ts` の **zod スキーマ**でレスポンスを実行時検証し、Rust の
   serde 構造体と TS 型のズレを早期検出します (未知フィールドは破棄で前方互換)。
 - `components/` (接続・クエリ) — `ConnectionList`/`ConnectionForm` (接続)、`QueryEditor`
-  (CodeMirror 6 + スキーマ補完)、`QueryBuilder`、`ResultGrid`/`PreviewGrid`
+  (CodeMirror 6 + スキーマ補完 + リアルタイム構文チェック。後述の #704 lint 統合)、`QueryBuilder`、`ResultGrid`/`PreviewGrid`
   (TanStack Table)、`TabBar`、`HistoryList`、`SnippetList`/`SnippetForm`、
   `ExportModal`/`DumpModal`/`ImportModal`、`ExplainViewer`、`SettingsView`、
   `HelpView`、`DangerousQueryDialog`、`CellValueViewer`、`ERDiagramView`
   (`@xyflow/react` + `@dagrejs/dagre` による ER 図。レイアウト/グラフ構築の純ロジックは
-  `erDiagram.ts` に分離してテスト)。
+  `erDiagram.ts` に分離してテスト)、`SchemaExportModal` (DB スキーマを AI に貼れる
+  Markdown としてコピー/保存。既定は DB 全体で、テーブル選択時は FK で紐付く関連
+  テーブルを推移的に自動追加できる。Markdown 生成と FK 閉包の純ロジックは
+  `schemaExport.ts` に分離してテスト。出力はロケール非依存の英語固定で、既存 IPC
+  のみで完結しバックエンド変更なし)。
 - `components/` (発展機能) — `ChartView` (結果のグラフ化。チャートライブラリ非依存で
   SVG 描画、純ロジックは `chartData.ts`)、`CommandPalette` (Cmd/Ctrl+K の横断検索。
   `commandPaletteSearch.ts`)、`ObjectSearchModal` (スキーマ全体のオブジェクト検索。
@@ -972,7 +1072,8 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   reduced-motion で静止化する。
 - `settings.ts` — `useSyncExternalStore` ベースの設定ストア。シンタックスカラー
   (`syntaxColors` light/dark)・プレビューハイライト色・表示行数 (`defaultDisplayCount` /
-  `streamPrefetchSize`)・自動 LIMIT (`autoLimitEnabled` / `autoLimitCount`)・本番接続確認
+  `streamPrefetchSize`)・自動 LIMIT (`autoLimitEnabled` / `autoLimitCount`)・SQL 構文
+  チェック (`sqlLintEnabled`。#704)・本番接続確認
   (`confirmProductionConnect`)・危険クエリ確認 (`confirmDangerousQueries`)・新規タブ実行
   (`resultsInNewTab`)・タブ復元 (`tabRestoreMode`)・クエリタイムアウト
   (`queryTimeoutSecs`)・フォントサイズ (`fontSizePx`) / フォントファミリ
@@ -985,6 +1086,20 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
 - `dangerousSql.ts` — WHERE なし UPDATE/DELETE・DROP・TRUNCATE を検出する
   フロント側の安全網 (バックエンド `is_read_only_sql` と同じくリテラル/コメントを
   マスクするベストエフォート判定)。`DangerousQueryDialog` の確認に使われます。
+- `components/sqlLint.ts` — クエリエディタのリアルタイム SQL 構文チェック (#704) の
+  純ロジック。`@codemirror/lang-sql` が既に構築した **Lezer パースツリーを再利用**し
+  (`syntaxTree(state)`)、エラーノード (`node.type.isError` = 括弧不整合など) と、
+  クオートで始まり閉じられていないトークン (未終端の文字列/引用符付き識別子。Lezer は
+  未終端文字列をエラーにせず EOF まで伸びる 1 トークンにするためツリーから別途拾う) を
+  `@codemirror/lint` の `Diagnostic[]` へ変換する。`QueryEditor` が `lintGutter()` +
+  `linter()` (デバウンス 500ms) を Compartment 越しに追加し、設定 `sqlLintEnabled`
+  (既定オン) のオン/オフと言語切替で再構成する。方言追従は共有ツリー経由で自動 (別途
+  dialect を渡さない)。診断メッセージは `i18n` (`editorLint*`) で日英対応。**編集支援
+  (ベストエフォート) であって安全判定ではない**: 文法が寛容なためキーワードのタイポや
+  カンマ抜けは検出できず、`apply_auto_limit` と同じく誤検出より見逃しを優先する保守的
+  方針。安全網 (`dangerousSql.ts` / `is_read_only_sql`) とは目的も経路も別物で判定
+  ロジックを共有しない。`sqlLint.test.ts` が正常 SQL の非検出・未終端/括弧の検出・
+  方言差を固定する。
 - `i18n.ts` — 日本語/英語の文字列テーブルと `useT` フック。
 - `tabPersistence.ts` — プロファイルごとの開きタブを localStorage に保存/復元。
 - `errorHints.ts` — DB エラー文字列を人間向けのヒントに対応付け。

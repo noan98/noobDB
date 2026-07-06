@@ -119,18 +119,22 @@ export function buildChartModel(
   // グループ集計: X 値ごとに Y を畳み込む。
   const order: string[] = [];
   // NULL / 非数値を集計から除外するため、列ごとに「数値として加算した件数」を別管理する
-  // (SQL の SUM/AVG/COUNT(col) と同じく非 NULL の数値のみを対象にする)。
-  const groups = new Map<string, { sums: number[]; numericCounts: number[] }>();
+  // (SQL の SUM/AVG と同じく非 NULL の数値のみを対象にする)。COUNT だけは別軸で
+  // 「非 NULL の件数」を数える (SQL の COUNT(col) は数値変換できるかに関わらず非
+  // NULL 値をすべて数えるため、文字列など数値化できない値も含める必要がある)。
+  const groups = new Map<string, { sums: number[]; numericCounts: number[]; nonNullCounts: number[] }>();
   for (const r of rows) {
     const key = cellLabel(r[xCol]);
     let g = groups.get(key);
     if (!g) {
-      g = { sums: yCols.map(() => 0), numericCounts: yCols.map(() => 0) };
+      g = { sums: yCols.map(() => 0), numericCounts: yCols.map(() => 0), nonNullCounts: yCols.map(() => 0) };
       groups.set(key, g);
       order.push(key);
     }
     yCols.forEach((c, i) => {
-      const n = toNumber(r[c]);
+      const raw = r[c];
+      if (raw !== null && raw !== undefined) g!.nonNullCounts[i] += 1;
+      const n = toNumber(raw);
       if (n !== null) {
         g!.sums[i] += n;
         g!.numericCounts[i] += 1;
@@ -142,7 +146,7 @@ export function buildChartModel(
     name: aggregation === "count" ? `COUNT(${yNames[i]})` : `${aggregation.toUpperCase()}(${yNames[i]})`,
     values: order.map((key) => {
       const g = groups.get(key)!;
-      if (aggregation === "count") return g.numericCounts[i];
+      if (aggregation === "count") return g.nonNullCounts[i];
       if (aggregation === "avg") {
         const denom = g.numericCounts[i];
         return denom > 0 ? g.sums[i] / denom : 0;
@@ -185,8 +189,14 @@ export function niceTicks(min: number, max: number, count = 5): number[] {
   return ticks;
 }
 
-/** 系列全体の最大値・最小値 (軸スケール用)。空なら {min:0,max:0}。 */
-export function valueExtent(model: ChartModel): { min: number; max: number } {
+/**
+ * 系列全体の最大値・最小値 (軸スケール用)。空なら {min:0,max:0}。
+ * `type` は棒/エリアのときだけ 0 基線を含める (面積・高さの基準がわかりやすいよう)。
+ * 折れ線は値が密集しているときに 0 起点だと変動がつぶれて読みにくくなるため、
+ * 実データのレンジをそのまま使う。省略時は後方互換のため 0 基線を含める
+ * (呼び出し側の大半は棒グラフ用途のため)。
+ */
+export function valueExtent(model: ChartModel, type: ChartType = "bar"): { min: number; max: number } {
   let min = Infinity;
   let max = -Infinity;
   for (const s of model.series) {
@@ -196,6 +206,6 @@ export function valueExtent(model: ChartModel): { min: number; max: number } {
     }
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 0 };
-  // バー/エリアは 0 基線を含める。
+  if (type === "line") return { min, max };
   return { min: Math.min(0, min), max: Math.max(0, max) };
 }

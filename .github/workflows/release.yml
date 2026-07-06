@@ -31,8 +31,14 @@ jobs:
           - platform: windows-latest
             args: ""
     runs-on: ${{ matrix.platform }}
+    # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ (正常時は影響なし)。
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # このジョブは push を行わないため、認証情報をローカル git 設定に残さない
+      # (tauri-action は env の GITHUB_TOKEN を明示的に受け取る)。
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -47,7 +53,7 @@ jobs:
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -63,7 +69,7 @@ jobs:
           workspaces: "./src-tauri -> target"
 
       - name: Cache Tauri bundler tools (NSIS / WiX)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~\AppData\Local\tauri\NSIS
@@ -101,16 +107,29 @@ jobs:
       # ビルドだけ走らせて rust-cache (target) を main スコープに温める。
       # タグビルドはここで作られた main スコープのキャッシュにフォールバックして
       # ヒットするようになる。
+      #
+      # updater アーティファクト生成 (createUpdaterArtifacts、#705) は署名鍵
+      # (TAURI_SIGNING_PRIVATE_KEY) を要求し、鍵が無いとビルドが失敗する。キャッシュ
+      # 温めビルドには鍵を渡さない (Secrets はリリース時のみ) ため、--config で
+      # createUpdaterArtifacts を false に上書きして通常の NSIS ビルドだけ行う。
       - name: Build Tauri app (cache warm, no release)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: pnpm tauri build -- ${{ matrix.args }}
+        run: pnpm tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}' -- ${{ matrix.args }}
 
-      # タグ push のときだけ実際のリリース (ドラフト) を作成する。
+      # タグ push のときだけ実際のリリース (ドラフト) を作成する。updater 用の
+      # latest.json + 署名は tauri-action が createUpdaterArtifacts を検出して自動
+      # 生成・アップロードする (#705)。署名鍵は GitHub Actions Secrets で管理し、
+      # リポジトリには置かない (公開鍵のみ tauri.conf.json の plugins.updater.pubkey)。
+      # Secrets 未設定のリポジトリではこの署名付きビルドが失敗するため、更新機能を
+      # 使うには TAURI_SIGNING_PRIVATE_KEY (と鍵にパスワードを付けた場合は
+      # TAURI_SIGNING_PRIVATE_KEY_PASSWORD) の登録が前提。
       - name: Build Tauri app (release)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "noobDB ${{ github.ref_name }}"

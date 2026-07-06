@@ -146,6 +146,10 @@ const config = defineConfig({
           accent: { value: "var(--accent)" },
           accentHover: { value: "var(--accent-hover)" },
           accentText: { value: "var(--accent-text)" },
+          // 主キー (PK) 表示専用の意味トークン (#717)。以前は --cell-date (日付型
+          // セル色) を PK アイコンに流用していたが、日付表示調整が PK 表示へ波及
+          // する意図しない結合を避けるため分離した。
+          keyAccent: { value: "var(--key-accent)" },
           // ブランド基調色 (#619)。アクセントと違いテーマ/接続で変わらず固定。
           // ロゴマーク・スプラッシュ・ブランド面が参照する。値は App.css の
           // --brand-* と brand.tsx の定数に一致。
@@ -306,11 +310,29 @@ export const system = createSystem(defaultConfig, config);
  *  | 主要アクション (Save / Connect / Execute)  | `primary`    |
  *  | 破壊的アクション (削除 / Drop / Clear)     | `danger`     |
  *  | 常駐する注意アクション (Disconnect など)   | `dangerOutline` |
- *  | 警告付き実行 (危険クエリ承認 / 中断)       | `warning`    |
- *  | 成功確定 (セル編集 Apply など)             | `success`    |
+ *  | 警告付き実行 (ストリーミング中断など)      | `warning`    |
+ *  | DB 書き込み確定 (セル編集 Apply / Commit)  | `success`    |
  *  | キャンセル / 閉じる (モーダル・フォーム)   | `secondary`  |
  *  | アイコン専用 (X / メニューの ✕ など)       | `ghost`      |
  *  | 中立 (Test / Refresh / Browse など)        | `default`    |
+ *
+ *  例外 — 確認ダイアログの安全側優先レイアウト (`DangerousQueryDialog` /
+ *  `ConfirmDialog`): 破壊的な「実行」はベタ塗りで強調せず、左側に
+ *  `dangerOutline` (tone=warning の注意付き確認は `secondary`) で置き、
+ *  右端のキャンセルを `primary` + 初期フォーカスにする (ModalFooter の
+ *  ガイドライン参照)。破壊的操作を視覚的に優位にしないための意図的な逆転で、
+ *  上の表 (danger = ベタ塗り) をこの文脈にだけ適用しない。
+ *
+ *  例外 — 単独アクションのモーダル (OK / 閉じるのみでキャンセルと並ばない場合):
+ *  「キャンセル / 閉じる = secondary」の表は他の実行系ボタンと並ぶときの区別が
+ *  目的なので、閉じるボタン 1 個だけがフッターの決定操作を担う場面
+ *  (`CellValueViewer` の読み取り専用時など) では `primary` を許容する。非強調だと
+ *  決定ボタン不在に見えるため。
+ *
+ *  `success` は「DB へ書き込みが確定する操作」(インライン編集 Apply /
+ *  トランザクション Commit) に限定する。ペンディング編集への積み込みなど
+ *  ステージング止まりの確定は `primary` (CellValueViewer の保存・一括編集の
+ *  Apply など)。
  *
  *  右クリックメニューの破壊的項目は `ContextMenu` の `danger: true` で同色に揃える。 */
 export const buttonRecipe = defineRecipe({

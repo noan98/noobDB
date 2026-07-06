@@ -428,6 +428,8 @@ export interface DataDiff {
   target_driver: DriverKind;
   table: string;
   columns: string[];
+  /** `columns` と同じ並びの型名。BLOB 列を復元して sql_literal の補正に使う (修正3)。 */
+  column_types: string[];
   primary_key: string[];
   rows: RowDiff[];
   /** True if either side hit the row cap, so the diff is partial. */
@@ -604,9 +606,17 @@ export const api = {
       rowLimit: params.rowLimit,
       chunkSize: params.chunkSize,
     }),
+  /**
+   * Aborts the streaming task registered under `streamId` (query/preview/
+   * export/import all share this). `deliveredRows` is how many rows had
+   * already reached the frontend before the abort — used to tell a partial
+   * result apart from a complete one (#685). `cancelled` is false when the
+   * stream had already finished (or never existed), mirroring the old
+   * boolean-only contract.
+   */
   cancelStream: (streamId: string) =>
-    invoke<boolean>("cancel_stream", { streamId }).then((r) =>
-      parseResponse(schemas.booleanResponse, r, "cancel_stream"),
+    invoke<CancelStreamResult>("cancel_stream", { streamId }).then((r) =>
+      parseResponse(schemas.cancelStreamResponse, r, "cancel_stream"),
     ),
 
   listDatabases: (sessionId: string) =>
@@ -895,6 +905,20 @@ export const api = {
     ),
 };
 
+/** `cancelStream` の戻り値 (#685)。`cancelled` が `false` のときはストリームが
+ *  既に終わっていた (または存在しなかった) ことを意味し、`deliveredRows` は 0。 */
+export interface CancelStreamResult {
+  cancelled: boolean;
+  deliveredRows: number;
+}
+
+/** キャンセル成立時に `query-stream:cancelled` / `preview-stream:cancelled` /
+ *  `export-stream:cancelled` として届く共通ペイロード (#685)。 */
+export interface StreamCancelledEvent {
+  streamId: string;
+  deliveredRows: number;
+}
+
 export interface QueryStreamColumnsEvent {
   streamId: string;
   columns: Column[];
@@ -925,6 +949,8 @@ export interface QueryStreamErrorEvent {
    * socket broke, network dropped). The session is no longer usable.
    */
   connectionLost: boolean;
+  /** Rows already delivered to the frontend before the run failed (#685). */
+  deliveredRows: number;
 }
 
 export interface PreviewStreamMetaEvent {
@@ -954,6 +980,8 @@ export interface PreviewStreamErrorEvent {
    * socket broke, network dropped). The session is no longer usable.
    */
   connectionLost: boolean;
+  /** Rows already delivered to the frontend before the run failed (#685). */
+  deliveredRows: number;
 }
 
 export interface ImportStartedEvent {
@@ -991,11 +1019,20 @@ export interface ExportDoneEvent {
 export interface ExportStreamErrorEvent {
   streamId: string;
   message: string;
+  /** Rows already written to the output file before the run failed (#685).
+   *  Informational only — a failed/cancelled export always discards its
+   *  partial output file. */
+  rows: number;
 }
 export interface ExportStreamHandlers {
   onProgress?: (event: ExportProgressEvent) => void;
   onDone?: (event: ExportDoneEvent) => void;
   onError?: (event: ExportStreamErrorEvent) => void;
+  /** Fired when `cancelStream` claims this export (#685). See
+   *  `StreamCancelledEvent` — the frontend's own cancel flow reads
+   *  `deliveredRows` off `cancelStream`'s return value instead, since it
+   *  detaches its listeners before invoking it; this is for other consumers. */
+  onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
 export interface ImportStreamHandlers {
@@ -1010,6 +1047,8 @@ export interface QueryStreamHandlers {
   onRows?: (event: QueryStreamRowsEvent) => void;
   onDone?: (event: QueryStreamDoneEvent) => void;
   onError?: (event: QueryStreamErrorEvent) => void;
+  /** See `ExportStreamHandlers.onCancelled` (#685). */
+  onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
 export interface PreviewStreamHandlers {
@@ -1018,6 +1057,8 @@ export interface PreviewStreamHandlers {
   onAfterRows?: (event: PreviewStreamRowsEvent) => void;
   onDone?: (event: PreviewStreamDoneEvent) => void;
   onError?: (event: PreviewStreamErrorEvent) => void;
+  /** See `ExportStreamHandlers.onCancelled` (#685). */
+  onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
 /**
@@ -1055,6 +1096,10 @@ export async function listenQueryStream(
     listen<QueryStreamErrorEvent>(
       "query-stream:error",
       filter(schemas.queryStreamErrorEvent, "query-stream:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "query-stream:cancelled",
+      filter(schemas.streamCancelledEvent, "query-stream:cancelled", handlers.onCancelled),
     ),
   ]);
   return () => unlisteners.forEach((un) => un());
@@ -1095,6 +1140,10 @@ export async function listenPreviewStream(
     listen<PreviewStreamErrorEvent>(
       "preview-stream:error",
       filter(schemas.previewStreamErrorEvent, "preview-stream:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "preview-stream:cancelled",
+      filter(schemas.streamCancelledEvent, "preview-stream:cancelled", handlers.onCancelled),
     ),
   ]);
   return () => unlisteners.forEach((un) => un());
@@ -1168,6 +1217,10 @@ export async function listenExportStream(
     listen<ExportStreamErrorEvent>(
       "export-stream:error",
       filter(schemas.exportStreamErrorEvent, "export-stream:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "export-stream:cancelled",
+      filter(schemas.streamCancelledEvent, "export-stream:cancelled", handlers.onCancelled),
     ),
   ]);
   return () => unlisteners.forEach((un) => un());

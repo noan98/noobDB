@@ -40,6 +40,20 @@ pub async fn apply_sync_sql(
     statements: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<u64> {
+    apply_sync_sql_inner(state.inner(), session_id, database, statements).await
+}
+
+/// Core of [`apply_sync_sql`] decoupled from Tauri's `State` wrapper so
+/// integration tests can drive the exact command path (session lookup +
+/// read-only guard + empty-statement guard + transactional apply) without
+/// standing up a Tauri runtime. The `#[tauri::command]` wrapper above is
+/// intentionally a one-liner over this.
+pub(crate) async fn apply_sync_sql_inner(
+    state: &AppState,
+    session_id: String,
+    database: Option<String>,
+    statements: Vec<String>,
+) -> Result<u64> {
     let session = state
         .get(&session_id)
         .await

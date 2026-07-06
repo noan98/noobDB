@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 
 use directories::ProjectDirs;
@@ -44,10 +45,35 @@ pub fn save_all(profiles: &[ConnectionProfile]) -> Result<()> {
         tracing::error!(error = %e, "profiles: failed to serialize profiles");
         e
     })?;
-    std::fs::write(&path, content).map_err(|e| {
+    write_atomic(&path, content.as_bytes()).map_err(|e| {
         tracing::error!(path = %path.display(), error = %e, "profiles: failed to write profiles.json");
         e
     })?;
+    Ok(())
+}
+
+/// `path` をアトミックに (全体差し替えで) 書き込む。同じディレクトリに一時ファイル
+/// を書いて `sync_all` してから `rename` することで、書き込み途中のクラッシュ/
+/// 電源断/ディスクフルで本ファイルが半端な内容のまま残る (以後 JSON パース失敗で
+/// 全プロファイルが読めなくなる) 事態を防ぐ。同一ファイルシステム内の `rename` は
+/// アトミックなので、途中状態は一時ファイル側にしか現れない。
+fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    // プロセスごとに一意な一時ファイル名にして、並行書き込み同士が互いの一時
+    // ファイルを踏まないようにする。
+    let tmp_path = dir.join(format!(
+        ".{}.tmp.{}",
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "profiles.json".to_string()),
+        std::process::id()
+    ));
+    {
+        let mut f = std::fs::File::create(&tmp_path)?;
+        f.write_all(content)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp_path, path)?;
     Ok(())
 }
 
@@ -74,4 +100,62 @@ pub fn new_profile_id() -> String {
     (0..8)
         .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "noobdb_profiles_store_test_{tag}_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    // H3: write_atomic はリネーム後に内容が読め、一時ファイルを残さないこと。
+    #[test]
+    fn write_atomic_leaves_only_the_final_file() {
+        let dir = scratch_dir("atomic_new");
+        let path = dir.join("profiles.json");
+        write_atomic(&path, b"{\"a\":1}").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"a\":1}");
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "profiles.json")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp file was left behind: {leftovers:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // 既存ファイルを上書きするケースでも、書き込み完了後は新しい内容だけが
+    // 残ること (アトミックな置き換え)。
+    #[test]
+    fn write_atomic_overwrites_existing_file() {
+        let dir = scratch_dir("atomic_overwrite");
+        let path = dir.join("profiles.json");
+        write_atomic(&path, b"old").unwrap();
+        write_atomic(&path, b"new").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "profiles.json")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp file was left behind: {leftovers:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

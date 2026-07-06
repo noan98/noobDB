@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -8,7 +9,7 @@ use crate::db::{apply_auto_limit, is_read_only_sql};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
-use crate::state::{AppState, Session};
+use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
 /// Returns `Err(AppError::ReadOnly)` when the session is RO and `sql` is not
 /// strictly read-only. Used at every query entry point (and the streaming
@@ -274,12 +275,33 @@ struct StreamErrorEvent {
     /// prompt a reconnect instead of leaving it stuck on "connected".
     #[serde(rename = "connectionLost")]
     connection_lost: bool,
+    /// Rows already delivered to the frontend (via `:rows`/`:before-rows`/
+    /// `:after-rows` batches) before the run failed. Lets the UI tell a
+    /// partial result apart from a complete one on timeout/error (#685).
+    #[serde(rename = "deliveredRows")]
+    delivered_rows: u64,
+}
+
+/// Emitted once by `cancel_stream` when it successfully claims an active
+/// stream (see [`crate::state::AppState::cancel_stream`]). The event name
+/// (`query-stream:cancelled` / `preview-stream:cancelled` /
+/// `export-stream:cancelled`) is chosen from the stream's registered
+/// [`StreamKind`] so the right listener picks it up (#685).
+#[derive(Debug, Serialize, Clone)]
+struct StreamCancelledEvent {
+    #[serde(rename = "streamId")]
+    stream_id: String,
+    #[serde(rename = "deliveredRows")]
+    delivered_rows: u64,
 }
 
 const EV_QUERY_COLS: &str = "query-stream:columns";
 const EV_QUERY_ROWS: &str = "query-stream:rows";
 const EV_QUERY_DONE: &str = "query-stream:done";
 const EV_QUERY_ERROR: &str = "query-stream:error";
+const EV_QUERY_CANCELLED: &str = "query-stream:cancelled";
+const EV_PREVIEW_CANCELLED: &str = "preview-stream:cancelled";
+const EV_EXPORT_CANCELLED: &str = "export-stream:cancelled";
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -306,21 +328,52 @@ pub async fn run_query_stream(
     if auto_refresh {
         ensure_auto_refresh_read_only(&sql)?;
     }
-    let handle = tokio::spawn(spawn_query_stream(
-        app,
-        session,
-        stream_id.clone(),
-        sql,
-        database,
-        initial_batch,
-        chunk_size,
-        auto_limit,
-        query_timeout_secs,
-        auto_refresh,
-    ));
-    state
-        .register_stream(stream_id, handle.abort_handle())
+    // `register_stream` をタスク本体の実行より前に完了させるためのゲート。
+    // `tokio::spawn` は返り値の `JoinHandle` からしか `AbortHandle` を得られないため
+    // 文字通り「spawn より前に register」することはできないが、タスク本体を
+    // oneshot の受信待ちから始めれば、`register_stream` が完了するまでタスクの
+    // 実処理 (延いては末尾の `forget_stream`) が走らないことを保証できる。これが
+    // 無いと、SQL 即エラーのような速いタスクが `register_stream` より先に
+    // `forget_stream` してしまい、既に完了したタスクの `AbortHandle` がマップに
+    // 残り続け、以後その `stream_id` への `cancel_stream` が誤って `true` を返す
+    // (逆に登録前に forget されると後続の同 stream_id 登録を消してしまう競合窓もある)。
+    // Shared counter incremented as row batches are emitted, so a cancel or
+    // timeout can report how many rows had already reached the frontend
+    // (#685). Cloned into the state map (read by `cancel_stream`) and into
+    // the task itself (read when building the timeout/error event).
+    let delivered_rows = Arc::new(AtomicU64::new(0));
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let stream_id_for_task = stream_id.clone();
+    let delivered_rows_for_task = delivered_rows.clone();
+    let handle = tokio::spawn(async move {
+        let _ = ready_rx.await;
+        spawn_query_stream(
+            app,
+            session,
+            stream_id_for_task,
+            sql,
+            database,
+            initial_batch,
+            chunk_size,
+            auto_limit,
+            query_timeout_secs,
+            auto_refresh,
+            delivered_rows_for_task,
+        )
         .await;
+    });
+    state
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows,
+                kind: StreamKind::Query,
+            },
+        )
+        .await;
+    // タスク本体の実行を許可する。register_stream が確実に先に完了している。
+    let _ = ready_tx.send(());
     Ok(())
 }
 
@@ -336,6 +389,7 @@ async fn spawn_query_stream(
     auto_limit: Option<usize>,
     query_timeout_secs: Option<u64>,
     auto_refresh: bool,
+    delivered_rows: Arc<AtomicU64>,
 ) {
     tracing::debug!(
         session_id = %session.id,
@@ -356,6 +410,7 @@ async fn spawn_query_stream(
     };
     let emit_app = app.clone();
     let emit_id = stream_id.clone();
+    let delivered_rows_cb = delivered_rows.clone();
     let exec = session.conn.execute_stream(
         &effective_sql,
         database.as_deref(),
@@ -378,22 +433,30 @@ async fn spawn_query_stream(
                     );
                     AppError::Other(format!("ipc emit failed: {e}"))
                 }),
-            StreamBatch::Rows(rows) => emit_app
-                .emit(
-                    EV_QUERY_ROWS,
-                    StreamRowsEvent {
-                        stream_id: emit_id.clone(),
-                        rows,
-                    },
-                )
-                .map_err(|e| {
-                    tracing::warn!(
-                        stream_id = %emit_id,
-                        error = %e,
-                        "failed to emit rows event; aborting stream"
-                    );
-                    AppError::Other(format!("ipc emit failed: {e}"))
-                }),
+            StreamBatch::Rows(rows) => {
+                // Count rows before emitting so a cancel racing this exact
+                // point never under-reports what actually reached the UI.
+                let emitted_len = rows.len() as u64;
+                delivered_rows_cb.fetch_add(emitted_len, Ordering::SeqCst);
+                emit_app
+                    .emit(
+                        EV_QUERY_ROWS,
+                        StreamRowsEvent {
+                            stream_id: emit_id.clone(),
+                            rows,
+                        },
+                    )
+                    .map_err(|e| {
+                        // The UI never received these rows; roll back the count.
+                        delivered_rows_cb.fetch_sub(emitted_len, Ordering::SeqCst);
+                        tracing::warn!(
+                            stream_id = %emit_id,
+                            error = %e,
+                            "failed to emit rows event; aborting stream"
+                        );
+                        AppError::Other(format!("ipc emit failed: {e}"))
+                    })
+            }
         },
     );
     // When a positive timeout is configured, race the whole run against it.
@@ -469,6 +532,7 @@ async fn spawn_query_stream(
                     error: e.to_string(),
                     timed_out: matches!(e, AppError::Timeout(_)),
                     connection_lost: e.is_connection_lost(),
+                    delivered_rows: delivered_rows.load(Ordering::SeqCst),
                 },
             ) {
                 tracing::warn!(
@@ -633,21 +697,43 @@ pub async fn preview_query_stream(
     // INSERT/UPDATE/DELETE/REPLACE and rejects DDL (which would implicit-commit
     // and so can't be rolled back), keeping the read-only guarantee intact while
     // letting a read-only session dry-run a write to inspect its effect.
-    let handle = tokio::spawn(spawn_preview_stream(
-        app,
-        session,
-        stream_id.clone(),
-        sql,
-        database,
-        row_limit,
-        chunk_size,
-    ));
-    state
-        .register_stream(stream_id, handle.abort_handle())
+    //
+    // register_stream をタスク本体より前に完了させるためのゲート。理由は
+    // run_query_stream 側の同種コメントを参照 (register/forget の順序が逆転すると
+    // AbortHandle がマップに残り続けたり、後続の同 stream_id 登録を消してしまう)。
+    let delivered_rows = Arc::new(AtomicU64::new(0));
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let stream_id_for_task = stream_id.clone();
+    let delivered_rows_for_task = delivered_rows.clone();
+    let handle = tokio::spawn(async move {
+        let _ = ready_rx.await;
+        spawn_preview_stream(
+            app,
+            session,
+            stream_id_for_task,
+            sql,
+            database,
+            row_limit,
+            chunk_size,
+            delivered_rows_for_task,
+        )
         .await;
+    });
+    state
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows,
+                kind: StreamKind::Preview,
+            },
+        )
+        .await;
+    let _ = ready_tx.send(());
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn spawn_preview_stream(
     app: AppHandle,
     session: Arc<Session>,
@@ -656,6 +742,7 @@ async fn spawn_preview_stream(
     database: Option<String>,
     row_limit: usize,
     chunk_size: usize,
+    delivered_rows: Arc<AtomicU64>,
 ) {
     let result = session
         .conn
@@ -688,6 +775,7 @@ async fn spawn_preview_stream(
                 EV_PREVIEW_BEFORE,
                 &p.before_rows,
                 chunk_size,
+                &delivered_rows,
             );
             emit_chunks(
                 &app,
@@ -695,6 +783,7 @@ async fn spawn_preview_stream(
                 EV_PREVIEW_AFTER,
                 &p.after_rows,
                 chunk_size,
+                &delivered_rows,
             );
             if let Err(e) = app.emit(
                 EV_PREVIEW_DONE,
@@ -724,6 +813,7 @@ async fn spawn_preview_stream(
                     error: e.to_string(),
                     timed_out: false,
                     connection_lost: e.is_connection_lost(),
+                    delivered_rows: delivered_rows.load(Ordering::SeqCst),
                 },
             ) {
                 tracing::warn!(
@@ -746,11 +836,14 @@ fn emit_chunks(
     event: &str,
     rows: &[Vec<Value>],
     chunk_size: usize,
+    delivered_rows: &AtomicU64,
 ) {
     let chunk = chunk_size.max(1);
     let mut i = 0;
     while i < rows.len() {
         let end = (i + chunk).min(rows.len());
+        let emitted_len = (end - i) as u64;
+        delivered_rows.fetch_add(emitted_len, Ordering::SeqCst);
         if let Err(e) = app.emit(
             event,
             PreviewRowsEvent {
@@ -758,6 +851,8 @@ fn emit_chunks(
                 rows: rows[i..end].to_vec(),
             },
         ) {
+            // The UI never received this chunk; roll back the count.
+            delivered_rows.fetch_sub(emitted_len, Ordering::SeqCst);
             tracing::warn!(
                 stream_id = %stream_id,
                 event = %event,
@@ -769,9 +864,64 @@ fn emit_chunks(
     }
 }
 
+/// Result of [`cancel_stream`]. Replaces the plain boolean this command used
+/// to return: without a row count, a cancelled run's partial rows are
+/// indistinguishable from a complete result to the caller (#685).
+#[derive(Debug, Serialize, Clone)]
+pub struct CancelStreamResult {
+    pub cancelled: bool,
+    #[serde(rename = "deliveredRows")]
+    pub delivered_rows: u64,
+}
+
+/// Aborts the streaming task registered for `stream_id` (any of
+/// `run_query_stream` / `preview_query_stream` / `export_query_stream` /
+/// `import_csv` — they all share `AppState.streams`). On a genuine cancel
+/// (the stream was still running) this also emits the matching
+/// `<kind>-stream:cancelled` event carrying the same row count, for parity
+/// with the `:done`/`:error` terminal events (#685). The frontend's own
+/// cancel flow detaches its listeners before calling this command (so it
+/// never observes that event) and instead reads `deliveredRows` off the
+/// return value directly — the event exists for any other consumer and for
+/// architectural symmetry with the other streaming commands.
 #[tauri::command]
-pub async fn cancel_stream(stream_id: String, state: State<'_, AppState>) -> Result<bool> {
-    Ok(state.cancel_stream(&stream_id).await)
+pub async fn cancel_stream(
+    app: AppHandle,
+    stream_id: String,
+    state: State<'_, AppState>,
+) -> Result<CancelStreamResult> {
+    match state.cancel_stream(&stream_id).await {
+        Some((delivered_rows, kind)) => {
+            let event = match kind {
+                StreamKind::Query => Some(EV_QUERY_CANCELLED),
+                StreamKind::Preview => Some(EV_PREVIEW_CANCELLED),
+                StreamKind::Export => Some(EV_EXPORT_CANCELLED),
+                // CSV import has no partial-result concept to surface (the
+                // whole import is one all-or-nothing transaction), so it
+                // isn't part of this event contract.
+                StreamKind::Import => None,
+            };
+            if let Some(event) = event {
+                if let Err(e) = app.emit(
+                    event,
+                    StreamCancelledEvent {
+                        stream_id: stream_id.clone(),
+                        delivered_rows,
+                    },
+                ) {
+                    tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit cancelled event");
+                }
+            }
+            Ok(CancelStreamResult {
+                cancelled: true,
+                delivered_rows,
+            })
+        }
+        None => Ok(CancelStreamResult {
+            cancelled: false,
+            delivered_rows: 0,
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -816,5 +966,51 @@ mod tests {
                 "expected `{sql}` to be rejected for auto-refresh"
             );
         }
+    }
+
+    // I4: `run_query_stream` / `preview_query_stream` が使う「register_stream を
+    // タスク本体の実行より前に完了させるゲート」の順序保証を確認する回帰テスト。
+    // ゲートが無いと、SQL 即エラーのような速いタスクが register_stream より先に
+    // forget_stream してしまい、完了済みタスクの AbortHandle がマップに残り続ける
+    // (以後その stream_id への cancel_stream が誤って true を返す) 競合が起こりうる。
+    // ここではその実装パターンそのものを AppState に対して再現し、
+    // 「register_stream 完了時点でエントリが存在する」→「ゲート解放後にタスクが
+    // forget_stream する」という順序が守られることを検証する。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn stream_gate_ensures_register_happens_before_task_forgets_itself() {
+        let state = Arc::new(AppState::default());
+        let stream_id = "test-stream-gate".to_string();
+
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+        let task_state = state.clone();
+        let task_stream_id = stream_id.clone();
+        // 実処理を模した「即完了するタスク」。ゲートを待ってから自分の登録を消す。
+        let handle = tokio::spawn(async move {
+            let _ = ready_rx.await;
+            task_state.forget_stream(&task_stream_id).await;
+        });
+        state
+            .register_stream(
+                stream_id.clone(),
+                StreamHandle {
+                    abort: handle.abort_handle(),
+                    delivered_rows: Arc::new(AtomicU64::new(0)),
+                    kind: StreamKind::Query,
+                },
+            )
+            .await;
+        // register_stream が完了した時点でエントリが存在すること (forget がまだ
+        // 走っていない = ゲートで正しく順序付けられている)。
+        assert!(
+            state.streams.read().await.contains_key(&stream_id),
+            "stream should be registered before the gate is released"
+        );
+        let _ = ready_tx.send(());
+        handle.await.unwrap();
+        // タスクがゲート解放後に forget_stream を実行し、エントリが消えていること。
+        assert!(
+            !state.streams.read().await.contains_key(&stream_id),
+            "stream should have been forgotten by the task after the gate opened"
+        );
     }
 }

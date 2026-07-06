@@ -111,4 +111,50 @@ describe("DangerousQueryDialog", () => {
 
     expect(screen.getByText(t("dangerousWriteApprovalIntro"))).toBeInTheDocument();
   });
+
+  // #675: 本番接続の DROP/TRUNCATE には対象名タイプ入力の強確認ゲートを追加する。
+  describe("タイプして確認ゲート (#675)", () => {
+    const dropFindings: DangerFinding[] = [{ kind: "drop", target: "users" }];
+
+    it("typedConfirmTarget 未指定 (非本番・DROP/TRUNCATE 以外) では従来通りボタンが有効", () => {
+      renderWithProviders(
+        <DangerousQueryDialog
+          findings={dropFindings}
+          isProduction={false}
+          onConfirm={() => {}}
+          onCancel={() => {}}
+        />,
+      );
+      expect(screen.getByRole("button", { name: t("dangerousConfirm") })).toBeEnabled();
+      expect(screen.queryByText(t("typeToConfirmLabel", { target: "users" }))).not.toBeInTheDocument();
+    });
+
+    it("typedConfirmTarget 指定時は一致するまで実行ボタンが無効", async () => {
+      const onConfirm = vi.fn();
+      const user = userEvent.setup();
+      renderWithProviders(
+        <DangerousQueryDialog
+          findings={dropFindings}
+          isProduction={true}
+          typedConfirmTarget="users"
+          onConfirm={onConfirm}
+          onCancel={() => {}}
+        />,
+      );
+
+      const confirmButton = screen.getByRole("button", { name: t("dangerousConfirm") });
+      expect(confirmButton).toBeDisabled();
+
+      const input = screen.getByLabelText(t("typeToConfirmLabel", { target: "users" }));
+      await user.type(input, "wrong-name");
+      expect(confirmButton).toBeDisabled();
+
+      await user.clear(input);
+      await user.type(input, "users");
+      expect(confirmButton).toBeEnabled();
+
+      await user.click(confirmButton);
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+    });
+  });
 });

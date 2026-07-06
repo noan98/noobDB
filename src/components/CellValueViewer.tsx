@@ -247,7 +247,7 @@ export function CellValueViewer({
               </>
             )}
             <chakra.div flex="1" />
-            <Button type="button" onClick={onClose}>
+            <Button type="button" variant="secondary" onClick={onClose}>
               {t("cellViewerCancel")}
             </Button>
             <Button
@@ -303,6 +303,9 @@ export function CellValueViewer({
                 {t("cellViewerEdit")}
               </Button>
             ) : (
+              // 読み取り専用時は「閉じる」がフッター唯一のアクションのため、
+              // 規約表の「キャンセル/閉じる = secondary」の例外として primary を
+              // 許容する (theme.ts の buttonRecipe コメント参照。#720)。
               <Button type="button" variant="primary" onClick={onClose}>
                 {t("cellViewerClose")}
               </Button>

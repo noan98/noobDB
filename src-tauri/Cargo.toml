@@ -24,6 +24,19 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+# 長時間クエリ完了時の OS デスクトップ通知 (#707)。フロントは
+# `@tauri-apps/plugin-notification` を直接呼び、既存の dialog プラグインと同じ
+# 方針 (Rust コマンドではなくプラグイン自体の JS API を使う) を踏襲する。
+tauri-plugin-notification = "2"
+# アプリ内自動更新 (#705)。updater が新バージョンの検出/ダウンロード/署名検証を、
+# process が適用後の再起動 (`relaunch`) を担う。通知プラグインと同じく、フロントは
+# `@tauri-apps/plugin-updater` / `@tauri-apps/plugin-process` の JS API を直接呼ぶ
+# ため追加の Tauri コマンド登録は不要 (capabilities に updater:default と
+# process:allow-restart のみ追加)。updater は minisign 署名を検証し、公開鍵は
+# `tauri.conf.json` の `plugins.updater.pubkey`、秘密鍵は GitHub Actions Secrets の
+# `TAURI_SIGNING_PRIVATE_KEY` で管理する (リポジトリには置かない)。
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 # Async runtime. 本体コードが実際に使う tokio API を監査し、そこから必要な feature を
 # すべて明示する (旧 "full" は未使用の signal / io-std / parking_lot なども含んでいた)。

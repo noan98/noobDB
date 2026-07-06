@@ -12,10 +12,16 @@
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-is-maximized",
+    "core:window:allow-is-focused",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
     "core:app:default",
     "core:event:default",
     "core:path:default",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "notification:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

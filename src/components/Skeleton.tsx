@@ -27,6 +27,38 @@ import { chakra } from "@chakra-ui/react";
  * @public
  */
 
+/** スケルトンのシマー演出が共有する土台 (`position`/`overflow`/`background`)。
+ *  サイズ (`height`/`borderRadius`/余白) は利用側で上書きする。
+ *
+ * @public
+ */
+export const shimmerContainerCss = {
+  position: "relative",
+  overflow: "hidden",
+  background: "var(--bg-muted)",
+} as const;
+
+/** シマーのハイライト帯を描く `::after` 疑似要素のスタイル。`Skeleton` /
+ *  `SkeletonRow` / `ResultGrid` の grid-skeleton-cell が共有する単一の定義
+ *  で、帯幅・色・周期を変えるときの修正漏れを防ぐ (#719)。
+ *
+ *  ハイライト帯は疑似要素の `transform: translateX` でスライドさせる
+ *  (background-position の補間は再ペイントを毎フレーム誘発するため使わない)。
+ *  スタッガ用の `animationDelay` は要素の inline style に渡せば疑似要素が
+ *  `animation-delay: inherit` で引き継ぐ。
+ *
+ * @public
+ */
+export const shimmerAfterCss = {
+  content: '""',
+  position: "absolute",
+  inset: 0,
+  background:
+    "linear-gradient(90deg, transparent, var(--bg-elevated), transparent)",
+  animation: "skeleton-shimmer var(--dur-shimmer) ease-in-out infinite",
+  animationDelay: "inherit",
+} as const;
+
 /** 1 行スケルトンプリミティブ。幅・高さを props で制御する。
  *
  *  シマーは `skeleton-shimmer` keyframe (App.css) で実装済みで、
@@ -35,11 +67,9 @@ import { chakra } from "@chakra-ui/react";
  */
 export const Skeleton = chakra("div", {
   base: {
+    ...shimmerContainerCss,
     borderRadius: "2px",
-    background:
-      "linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-elevated) 50%, var(--bg-muted) 75%)",
-    backgroundSize: "200% 100%",
-    animation: "skeleton-shimmer 1.4s ease-in-out infinite",
+    "&::after": shimmerAfterCss,
   },
 });
 
@@ -51,13 +81,11 @@ export const Skeleton = chakra("div", {
  */
 export const SkeletonRow = chakra("div", {
   base: {
+    ...shimmerContainerCss,
     height: "22px",
     mx: "4px",
     my: "3px",
-    borderRadius: "var(--radius-sm, 4px)",
-    background:
-      "linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-elevated) 50%, var(--bg-muted) 75%)",
-    backgroundSize: "200% 100%",
-    animation: "skeleton-shimmer 1.4s ease-in-out infinite",
+    borderRadius: "var(--radius-sm)",
+    "&::after": shimmerAfterCss,
   },
 });

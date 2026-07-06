@@ -4,6 +4,7 @@ import { AnimatePresence, motion, Reorder } from "motion/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { transitions, variants } from "../motion";
+import { moveTabBy } from "../tabReorder";
 
 // キーボードフォーカスリング (App.css のフォーカス表現と一致、動的アクセントへ追従)。
 const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
@@ -80,6 +81,31 @@ export function TabBar({
   // タブの追加・削除でインデックスがずれても安全に参照できる。
   const tabRefs = useRef<Map<string, HTMLElement | null>>(new Map());
 
+  // Drop-position indicator: the id of the tab whose leading edge shows the
+  // insertion marker. Set while a tab is dragged (cleared on drag end) and
+  // flashed briefly after a keyboard move so the landing spot is visible.
+  const [dropIndicator, setDropIndicatorState] = useState<string | null>(null);
+  const dropFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearDropFlash = useCallback(() => {
+    if (dropFlashTimer.current) {
+      clearTimeout(dropFlashTimer.current);
+      dropFlashTimer.current = null;
+    }
+  }, []);
+  // Keyboard reorder flashes the marker (no drag-end to clear it); drag sets it
+  // persistently (dragEnd clears it) so pass `flash: false` there.
+  const setDropIndicator = useCallback(
+    (id: string | null, flash = true) => {
+      clearDropFlash();
+      setDropIndicatorState(id);
+      if (id && flash) {
+        dropFlashTimer.current = setTimeout(() => setDropIndicatorState(null), 700);
+      }
+    },
+    [clearDropFlash],
+  );
+  useEffect(() => clearDropFlash, [clearDropFlash]);
+
   /** ArrowLeft/Right/Home/End でフォーカスとアクティブタブを同時に移動する。
    *  Enter/Space は role="tab" の div 要素では既定で click が走らないため、
    *  明示的に onSelect する。Delete はタブを閉じる (Mac の慣習に合わせ Backspace
@@ -102,12 +128,14 @@ export function TabBar({
       // mirroring the drag affordance). Guarded on `onReorder` being wired.
       if (onReorder && (e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         const dir = e.key === "ArrowRight" ? 1 : -1;
-        const target = idx + dir;
-        if (target >= 0 && target < tabs.length) {
+        const order = tabs.map((tt) => tt.id);
+        const moved = moveTabBy(order, currentId, dir);
+        // moveTabBy returns the same array reference (no-op) at the edges —
+        // only fire and flash the drop indicator when the order actually moved.
+        if (moved !== order) {
           e.preventDefault();
-          const order = tabs.map((tt) => tt.id);
-          [order[idx], order[target]] = [order[target], order[idx]];
-          onReorder(order);
+          onReorder(moved);
+          setDropIndicator(currentId);
           requestAnimationFrame(() => tabRefs.current.get(currentId)?.focus());
         }
         return;
@@ -128,7 +156,7 @@ export function TabBar({
         }
       }
     },
-    [tabs, onSelect, onClose, onReorder],
+    [tabs, onSelect, onClose, onReorder, setDropIndicator],
   );
 
   const tabIds = tabs.map((tab) => tab.id);
@@ -313,6 +341,8 @@ export function TabBar({
                 value={tab.id}
                 drag={onReorder ? true : false}
                 whileDrag={{ scale: 1.04, boxShadow: "var(--shadow-lg)", zIndex: 3 }}
+                onDragStart={onReorder ? () => setDropIndicator(tab.id, false) : undefined}
+                onDragEnd={onReorder ? () => setDropIndicator(null) : undefined}
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
@@ -432,6 +462,29 @@ export function TabBar({
                     aria-hidden
                   />
                 )}
+                {/* Drop-position marker: a vertical accent bar on the tab's
+                    leading edge shown while it is dragged / just after a
+                    keyboard move, indicating where the tab lands. */}
+                <AnimatePresence>
+                  {dropIndicator === tab.id && (
+                    <MotionIndicator
+                      key="drop"
+                      initial={{ opacity: 0, scaleY: 0.4 }}
+                      animate={{ opacity: 1, scaleY: 1 }}
+                      exit={{ opacity: 0, scaleY: 0.4 }}
+                      transition={transitions.crossfade}
+                      position="absolute"
+                      left="-1px"
+                      top="2px"
+                      bottom="2px"
+                      w="2px"
+                      borderRadius="1px"
+                      bg="var(--ws-accent, var(--accent))"
+                      zIndex={4}
+                      aria-hidden
+                    />
+                  )}
+                </AnimatePresence>
               </MotionTab>
             );
           })}

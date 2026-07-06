@@ -1,15 +1,17 @@
 use std::time::Instant;
 
 use futures_util::StreamExt;
-use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode};
-use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
+use sqlx::postgres::{
+    PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode, PgValueFormat, PgValueRef,
+};
+use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::types::{
     Column, ForeignKey, IndexInfo, PreviewResult, ProcessInfo, QueryResult, SchemaObject,
     ServerInfo, ServerVariable, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
     TableSizeInfo, Value,
 };
-use super::{init_sql_of, DbConnectOptions, SslMode};
+use super::{columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
 
 pub struct PostgresConn {
@@ -103,7 +105,20 @@ impl PostgresConn {
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
-        sqlx::query(stmt).execute(&mut *conn).await?;
+        let result = sqlx::query(stmt).execute(&mut *conn).await;
+        if let Err(e) = result {
+            // COMMIT/ROLLBACK 自体が失敗すると、この接続は BEGIN したままの
+            // 不定状態になり得る。`guard` は既に None にしてあるので復旧の
+            // 余地はなく、そのままプールに返すと次の利用者がトランザクション
+            // 状態を引き継いでしまう。COMMIT 失敗時はベストエフォートで
+            // ROLLBACK を試み (失敗しても無視)、最後にこの接続を `detach`
+            // してプール管理から切り離してから破棄する — プールへは返さない。
+            if commit {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            }
+            drop(conn.detach());
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -340,6 +355,16 @@ impl PostgresConn {
     /// dropped without committing) so the batch is all-or-nothing — no
     /// statement is left committed when a later one errors. Returns the total
     /// `rows_affected` across all statements on success.
+    /// Runs `statements` sequentially inside one transaction, all-or-nothing:
+    /// on any error the transaction is dropped without committing.
+    ///
+    /// Unlike MySQL, PostgreSQL has **transactional DDL** — `CREATE` / `ALTER`
+    /// / `DROP` do not implicitly commit, so a mixed DDL+DML batch is genuinely
+    /// atomic: if a later statement fails, an earlier `CREATE TABLE` is rolled
+    /// back too and leaves nothing behind. This contrast with MySQL (see
+    /// `mysql.rs::execute_transaction`, #640) is pinned by the paired
+    /// integration tests `postgres_ddl_dml_mixed_batch_rolls_back` /
+    /// `mysql_ddl_dml_mixed_batch_is_not_atomic`.
     pub async fn execute_transaction(
         &self,
         statements: &[String],
@@ -451,6 +476,16 @@ impl PostgresConn {
     }
 
     pub async fn columns(&self, schema: &str, table: &str) -> Result<Vec<TableColumnInfo>> {
+        // `c.data_type` alone is the bare type name (`character varying` /
+        // `numeric`) with no length/precision, so `varchar(50)` and
+        // `varchar(255)` — or `numeric(10,2)` and `numeric(12,4)` — are
+        // indistinguishable to callers (schema diff/sync in db/diff.rs and
+        // db/sync.rs compare and DDL-generate off this string). Pulling
+        // `character_maximum_length` / `numeric_precision` / `numeric_scale`
+        // alongside lets `full_pg_data_type` rebuild the qualified form
+        // (`character varying(50)`, `numeric(10,2)`) that `data_type` should
+        // have carried in the first place (#K5). Types without a length
+        // (integer, text, ...) are returned unchanged.
         let rows: Vec<PgRow> = sqlx::query(
             r#"SELECT
                 c.column_name,
@@ -460,7 +495,10 @@ impl PostgresConn {
                 c.column_default,
                 ''::text AS extra,
                 fk.ref_table,
-                fk.ref_column
+                fk.ref_column,
+                c.character_maximum_length,
+                c.numeric_precision,
+                c.numeric_scale
               FROM information_schema.columns c
               LEFT JOIN (
                 SELECT kcu.column_name
@@ -501,18 +539,29 @@ impl PostgresConn {
 
         Ok(rows
             .into_iter()
-            .map(|r| TableColumnInfo {
-                name: r.try_get::<String, _>(0).unwrap_or_default(),
-                data_type: r.try_get::<String, _>(1).unwrap_or_default(),
-                nullable: r
-                    .try_get::<String, _>(2)
-                    .map(|s| s.eq_ignore_ascii_case("YES"))
-                    .unwrap_or(false),
-                key: r.try_get::<String, _>(3).unwrap_or_default(),
-                default: r.try_get::<Option<String>, _>(4).ok().flatten(),
-                extra: r.try_get::<String, _>(5).unwrap_or_default(),
-                referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
-                referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
+            .map(|r| {
+                let base_type = r.try_get::<String, _>(1).unwrap_or_default();
+                let char_len = r.try_get::<Option<i32>, _>(8).ok().flatten();
+                let numeric_precision = r.try_get::<Option<i32>, _>(9).ok().flatten();
+                let numeric_scale = r.try_get::<Option<i32>, _>(10).ok().flatten();
+                TableColumnInfo {
+                    name: r.try_get::<String, _>(0).unwrap_or_default(),
+                    data_type: full_pg_data_type(
+                        &base_type,
+                        char_len,
+                        numeric_precision,
+                        numeric_scale,
+                    ),
+                    nullable: r
+                        .try_get::<String, _>(2)
+                        .map(|s| s.eq_ignore_ascii_case("YES"))
+                        .unwrap_or(false),
+                    key: r.try_get::<String, _>(3).unwrap_or_default(),
+                    default: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                    extra: r.try_get::<String, _>(5).unwrap_or_default(),
+                    referenced_table: r.try_get::<Option<String>, _>(6).ok().flatten(),
+                    referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
+                }
             })
             .collect())
     }
@@ -849,12 +898,68 @@ impl PostgresConn {
     }
 }
 
+/// Rebuilds a qualified type string (`character varying(50)`,
+/// `numeric(10,2)`) from the bare `information_schema.columns.data_type`
+/// plus the length/precision Postgres tracks in separate columns. Without
+/// this, `varchar(50)` and `varchar(255)` (or `numeric(10,2)` and
+/// `numeric(12,4)`) both report the same bare `data_type` and schema
+/// diff/sync (db/diff.rs, db/sync.rs) can't tell them apart (#K5).
+///
+/// Types without a tracked length/precision (integer, text, ...) pass
+/// through unchanged — `char_len` and `numeric_precision` are `NULL` in
+/// `information_schema.columns` for those, so the `if let` guards simply
+/// don't fire.
+fn full_pg_data_type(
+    base: &str,
+    char_len: Option<i32>,
+    numeric_precision: Option<i32>,
+    numeric_scale: Option<i32>,
+) -> String {
+    let lower = base.to_ascii_lowercase();
+    if let Some(len) = char_len {
+        // Matches `character varying` / `character` / (the rarely reported)
+        // `bpchar`/`varchar` spellings — all contain "char".
+        if lower.contains("char") {
+            return format!("{base}({len})");
+        }
+    }
+    if let Some(precision) = numeric_precision {
+        if lower == "numeric" || lower == "decimal" {
+            return match numeric_scale {
+                Some(scale) => format!("{base}({precision},{scale})"),
+                None => format!("{base}({precision})"),
+            };
+        }
+    }
+    base.to_string()
+}
+
+/// Decides whether `sql` should run through the result-set path
+/// (`fetch`/`fetch_all`) or the `execute` path that only reports
+/// `rows_affected`.
+///
+/// Leading comments (`-- ...`, `/* ... */`) must be skipped before the
+/// keyword check, or a perfectly normal `-- note\nSELECT ...` would miss the
+/// prefix match and get misrouted to the execute path, silently returning an
+/// empty result instead of the query's rows (#K1). `strip_sql_comments`
+/// already understands PostgreSQL's dialect quirks (dollar-quoted strings,
+/// nested block comments, no `#` line comments), so it doubles as the
+/// leading-comment skipper here.
+///
+/// `WITH` (CTE) is not SELECT-only: a CTE can prefix an INSERT/UPDATE/DELETE
+/// that mutates rows. Treating every `WITH` as a query hides those mutations
+/// behind an empty "0 rows" grid (rows_affected always reported as 0), so we
+/// inspect the statement that follows the CTE definitions via the
+/// (dialect-agnostic) `with_cte_is_mutation` shared from `db::mysql` (#K2).
 fn is_query_shape(sql: &str) -> bool {
-    let trimmed = sql.trim_start().to_ascii_lowercase();
+    let cleaned = strip_sql_comments(sql);
+    let trimmed = cleaned.trim_start().to_ascii_lowercase();
+    if trimmed.starts_with("with") {
+        return !super::mysql::with_cte_is_mutation(sql);
+    }
     trimmed.starts_with("select")
         || trimmed.starts_with("show")
         || trimmed.starts_with("explain")
-        || trimmed.starts_with("with")
         || trimmed.starts_with("values")
         || trimmed.starts_with("table ")
 }
@@ -939,20 +1044,6 @@ async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryRes
     }
 }
 
-fn columns_of(rows: &[PgRow]) -> Vec<Column> {
-    let Some(first) = rows.first() else {
-        return Vec::new();
-    };
-    first
-        .columns()
-        .iter()
-        .map(|c: &PgColumn| Column {
-            name: c.name().to_string(),
-            type_name: c.type_info().name().to_string(),
-        })
-        .collect()
-}
-
 fn row_to_values(row: &PgRow) -> Vec<Value> {
     (0..row.columns().len())
         .map(|i| decode_cell(row, i))
@@ -1010,6 +1101,19 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
                 .map(|d| Value::String(d.to_string()))
                 .unwrap_or(Value::Null);
         }
+        // rust_decimal::Decimal は有効桁数が約 28〜29 桁まで・NaN 非対応の
+        // ため、範囲外の値 (`1e30::numeric` など) や `'NaN'::numeric` は
+        // 上記の Decode が失敗する。何もしないと最終的に生バイナリ
+        // (Value::Bytes の 16 進文字列) 表示に落ちてしまう (#K3)。
+        // PostgreSQL の NUMERIC はワイヤ上つねにバイナリ形式 (基数 10000 の
+        // 桁配列 + weight/scale) で送られてくるため、`String` の Decode
+        // 実装 (UTF-8 テキストとして読む) では代用できない —
+        // `decode_pg_numeric_fallback` でそのバイナリ表現を自前でデコード
+        // し、人間可読な数値文字列を組み立てる。`raw` は関数冒頭で取得済み
+        // (かつ非 NULL であることも確認済み) なので使い回す。
+        if let Some(s) = decode_pg_numeric_fallback(&raw) {
+            return Value::String(s);
+        }
     }
     if ti(type_name, &["TIMESTAMPTZ"]) {
         if let Ok(v) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i) {
@@ -1055,14 +1159,100 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
     }
 
     // Default: string (covers TEXT/VARCHAR/BPCHAR/NAME/UUID/INET/CITEXT/...)
-    match row.try_get::<Option<String>, _>(i) {
-        Ok(Some(s)) => Value::String(s),
-        Ok(None) => Value::Null,
-        Err(_) => match row.try_get::<Option<Vec<u8>>, _>(i) {
-            Ok(Some(b)) => Value::Bytes(data_encoding::HEXLOWER.encode(&b)),
-            _ => Value::Null,
-        },
+    decode_string_or_bytes(row, i)
+}
+
+/// Decodes a NUMERIC cell's raw wire value into a human-readable decimal
+/// string, without going through `rust_decimal::Decimal` (whose ~28-29
+/// significant digit / no-NaN limitation is exactly what this fallback exists
+/// to work around; see the `rust_decimal::Decimal` branch in [`decode_cell`]).
+///
+/// sqlx-postgres always negotiates the **binary** result format for typed
+/// columns (see `PgValueFormat::Binary`), so NUMERIC arrives as Postgres's
+/// wire representation: a big-endian `u16` digit count, `i16` weight, `u16`
+/// sign, `i16` display scale, followed by that many `u16` base-10000 digits
+/// (each `0..=9999`). This mirrors `numeric_out`'s formatting logic closely
+/// enough to render any finite value (arbitrary precision) or `NaN`, without
+/// requiring sqlx's private `PgNumeric` type or adding a new dependency.
+///
+/// Text-format values (`PgValueFormat::Text`) are already the exact decimal
+/// text Postgres would print, so they're returned as-is.
+///
+/// Returns `None` if the payload is malformed (too short / truncated digit
+/// array) rather than panicking — this is a best-effort fallback, and `None`
+/// simply means the caller keeps falling through to the raw-bytes display.
+fn decode_pg_numeric_fallback(raw: &PgValueRef<'_>) -> Option<String> {
+    if raw.format() != PgValueFormat::Binary {
+        return raw.as_str().ok().map(str::to_string);
     }
+    numeric_binary_to_string(raw.as_bytes().ok()?)
+}
+
+/// Pure decode of Postgres's `NUMERIC` binary wire payload into a decimal
+/// string. Split out from [`decode_pg_numeric_fallback`] so the digit-group
+/// arithmetic can be unit-tested directly against hand-built byte arrays
+/// without needing a live connection (`PgValueRef` can't be constructed
+/// outside sqlx-postgres).
+fn numeric_binary_to_string(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < 8 {
+        return None;
+    }
+    let num_digits = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+    let weight = i16::from_be_bytes([bytes[2], bytes[3]]) as i32;
+    let sign = u16::from_be_bytes([bytes[4], bytes[5]]);
+    let scale = i16::from_be_bytes([bytes[6], bytes[7]]).max(0) as usize;
+    const SIGN_NEGATIVE: u16 = 0x4000;
+    const SIGN_NAN: u16 = 0xC000;
+    if sign == SIGN_NAN {
+        return Some("NaN".to_string());
+    }
+    if bytes.len() < 8 + num_digits * 2 {
+        return None;
+    }
+    let digits: Vec<u16> = (0..num_digits)
+        .map(|d| {
+            let off = 8 + d * 2;
+            u16::from_be_bytes([bytes[off], bytes[off + 1]])
+        })
+        .collect();
+
+    let mut out = String::new();
+    if sign == SIGN_NEGATIVE {
+        out.push('-');
+    }
+    // `int_groups` base-10000 groups sit left of the decimal point (positions
+    // `weight` down to `0`); missing low-order groups (num_digits ran out)
+    // are zero. `int_groups <= 0` means the value's magnitude is < 1.
+    let int_groups = weight + 1;
+    if int_groups <= 0 {
+        out.push('0');
+    } else {
+        for g in 0..int_groups {
+            let d = digits.get(g as usize).copied().unwrap_or(0);
+            if g == 0 {
+                out.push_str(&d.to_string());
+            } else {
+                out.push_str(&format!("{d:04}"));
+            }
+        }
+    }
+    if scale > 0 {
+        out.push('.');
+        let frac_groups = scale.div_ceil(4);
+        let mut frac = String::with_capacity(frac_groups * 4);
+        for g in 0..frac_groups {
+            let group_index = int_groups + g as i32;
+            let d = if group_index >= 0 {
+                digits.get(group_index as usize).copied().unwrap_or(0)
+            } else {
+                0
+            };
+            frac.push_str(&format!("{d:04}"));
+        }
+        frac.truncate(scale);
+        out.push_str(&frac);
+    }
+    Some(out)
 }
 
 /// Best-effort extraction of the target table from a mutation statement.
@@ -1202,8 +1392,10 @@ fn split_outside_quotes(s: &str, sep: char) -> Option<(String, String)> {
 }
 
 /// Double-quotes a single identifier, doubling any embedded double quotes.
+/// 実装は方言共通の `sync::quote_ident` に一本化している (`fn(&str) -> String`
+/// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
 fn pg_quote_ident(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
+    super::sync::quote_ident(super::DriverKind::Postgres, name)
 }
 
 /// Renders a cell as a Postgres string literal (`'...'`) or `NULL`. Relies on
@@ -1350,5 +1542,184 @@ mod tests {
         assert_eq!(pg_literal(Some("O'Brien")), "'O''Brien'");
         // Backslash is literal under standard_conforming_strings.
         assert_eq!(pg_literal(Some("a\\b")), "'a\\b'");
+    }
+
+    #[test]
+    fn query_shape_recognises_plain_selects() {
+        assert!(is_query_shape("SELECT * FROM users"));
+        assert!(is_query_shape("  show all"));
+        assert!(is_query_shape("EXPLAIN SELECT 1"));
+        assert!(is_query_shape("VALUES (1), (2)"));
+        assert!(is_query_shape("TABLE users"));
+    }
+
+    #[test]
+    fn query_shape_treats_plain_dml_as_execute() {
+        assert!(!is_query_shape("INSERT INTO t VALUES (1)"));
+        assert!(!is_query_shape("UPDATE t SET x = 1"));
+        assert!(!is_query_shape("DELETE FROM t WHERE id = 1"));
+    }
+
+    #[test]
+    fn query_shape_skips_leading_comments() {
+        // #K1: a leading comment must not hide the real keyword and get the
+        // statement misrouted to the execute path (which would silently
+        // return an empty result instead of the SELECT's rows).
+        assert!(is_query_shape("-- monthly report\nSELECT * FROM orders"));
+        assert!(is_query_shape("/* hint */ SELECT 1"));
+        assert!(is_query_shape("  /* a */ -- b\n  SHOW all"));
+        // Postgres has no `#` line comment — it must NOT be skipped as one,
+        // so a statement genuinely starting with `#` falls through to the
+        // (correct) execute path rather than being misread as a comment.
+        assert!(!is_query_shape("# not a comment\nSELECT 1"));
+        // Leading comment before a CTE-prefixed mutation still routes to execute.
+        assert!(!is_query_shape(
+            "-- delete dups\nWITH c AS (SELECT 1) DELETE FROM t"
+        ));
+        assert!(!is_query_shape("/* c */ INSERT INTO t VALUES (1)"));
+    }
+
+    #[test]
+    fn query_shape_keeps_with_select_as_query() {
+        assert!(is_query_shape(
+            "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte"
+        ));
+    }
+
+    #[test]
+    fn query_shape_routes_with_dml_to_execute() {
+        // #K2: CTE-prefixed DML must report rows_affected via the execute
+        // path, not silently show an empty result grid.
+        assert!(!is_query_shape(
+            "WITH ranked AS (SELECT id FROM orders) DELETE FROM orders WHERE id IN (SELECT id FROM ranked)"
+        ));
+        assert!(!is_query_shape(
+            "WITH src AS (SELECT 1 AS id) INSERT INTO t SELECT * FROM src"
+        ));
+        assert!(!is_query_shape(
+            "WITH c AS (SELECT 1) UPDATE t SET x = 1 WHERE id IN (SELECT * FROM c)"
+        ));
+    }
+
+    #[test]
+    fn full_data_type_appends_varchar_length() {
+        assert_eq!(
+            full_pg_data_type("character varying", Some(50), None, None),
+            "character varying(50)"
+        );
+        assert_eq!(
+            full_pg_data_type("character", Some(10), None, None),
+            "character(10)"
+        );
+    }
+
+    #[test]
+    fn full_data_type_appends_numeric_precision_scale() {
+        assert_eq!(
+            full_pg_data_type("numeric", None, Some(10), Some(2)),
+            "numeric(10,2)"
+        );
+        // Precision without a scale (e.g. `numeric(10)`) still renders.
+        assert_eq!(
+            full_pg_data_type("numeric", None, Some(10), None),
+            "numeric(10)"
+        );
+    }
+
+    #[test]
+    fn full_data_type_passes_through_lengthless_types() {
+        // Unconstrained `numeric` / `varchar` (no length tracked in
+        // information_schema) and ordinary types like `integer`/`text` must
+        // be returned unchanged.
+        assert_eq!(full_pg_data_type("integer", None, None, None), "integer");
+        assert_eq!(full_pg_data_type("text", None, None, None), "text");
+        assert_eq!(full_pg_data_type("numeric", None, None, None), "numeric");
+        assert_eq!(
+            full_pg_data_type("character varying", None, None, None),
+            "character varying"
+        );
+    }
+
+    /// Builds a Postgres `NUMERIC` binary wire payload from its logical
+    /// fields, for feeding into `numeric_binary_to_string` in tests (the
+    /// inverse of the decode this function under test performs).
+    fn encode_numeric(sign: u16, weight: i16, scale: i16, digits: &[u16]) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(8 + digits.len() * 2);
+        buf.extend_from_slice(&(digits.len() as u16).to_be_bytes());
+        buf.extend_from_slice(&weight.to_be_bytes());
+        buf.extend_from_slice(&sign.to_be_bytes());
+        buf.extend_from_slice(&scale.to_be_bytes());
+        for d in digits {
+            buf.extend_from_slice(&d.to_be_bytes());
+        }
+        buf
+    }
+
+    #[test]
+    fn numeric_fallback_decodes_nan() {
+        // sign = 0xC000 (NaN); num_digits/weight/scale are irrelevant.
+        let bytes = encode_numeric(0xC000, 0, 0, &[]);
+        assert_eq!(numeric_binary_to_string(&bytes), Some("NaN".to_string()));
+    }
+
+    #[test]
+    fn numeric_fallback_decodes_zero() {
+        let bytes = encode_numeric(0x0000, 0, 0, &[]);
+        assert_eq!(numeric_binary_to_string(&bytes), Some("0".to_string()));
+    }
+
+    #[test]
+    fn numeric_fallback_decodes_plain_integer() {
+        // 12345 = 1 * 10000 + 2345 → digits [1, 2345], weight 1.
+        let bytes = encode_numeric(0x0000, 1, 0, &[1, 2345]);
+        assert_eq!(numeric_binary_to_string(&bytes), Some("12345".to_string()));
+    }
+
+    #[test]
+    fn numeric_fallback_decodes_fraction() {
+        // 123.45 → integer group [123] at weight 0, fraction group [4500]
+        // (0.45 * 10000).
+        let bytes = encode_numeric(0x0000, 0, 2, &[123, 4500]);
+        assert_eq!(numeric_binary_to_string(&bytes), Some("123.45".to_string()));
+    }
+
+    #[test]
+    fn numeric_fallback_decodes_negative() {
+        let bytes = encode_numeric(0x4000, 0, 2, &[123, 4500]);
+        assert_eq!(
+            numeric_binary_to_string(&bytes),
+            Some("-123.45".to_string())
+        );
+    }
+
+    #[test]
+    fn numeric_fallback_decodes_small_fraction_with_leading_zero_group() {
+        // 0.001 → weight -1 (first group represents the tenths-of-thousandths
+        // slot), digit [10] (0.001 * 10000).
+        let bytes = encode_numeric(0x0000, -1, 3, &[10]);
+        assert_eq!(numeric_binary_to_string(&bytes), Some("0.001".to_string()));
+    }
+
+    #[test]
+    fn numeric_fallback_handles_out_of_rust_decimal_range_value() {
+        // A value with far more digits than rust_decimal::Decimal's ~28-29
+        // significant digit ceiling — this is exactly the case that used to
+        // fall through to a raw-bytes (Value::Bytes) display (#K3). Encodes
+        // 12 base-10000 groups (~48 decimal digits) of nines, all in the
+        // integer part.
+        let digits = vec![9999u16; 12];
+        let bytes = encode_numeric(0x0000, 11, 0, &digits);
+        let expected = "9999".repeat(12);
+        assert_eq!(numeric_binary_to_string(&bytes), Some(expected));
+    }
+
+    #[test]
+    fn numeric_fallback_rejects_truncated_payload() {
+        assert_eq!(numeric_binary_to_string(&[0, 0, 0]), None);
+        // Declares 2 digits but only provides 1 — must not panic on the
+        // out-of-bounds slice access, just report failure.
+        let mut bytes = encode_numeric(0x0000, 1, 0, &[1, 2345]);
+        bytes.truncate(bytes.len() - 2);
+        assert_eq!(numeric_binary_to_string(&bytes), None);
     }
 }

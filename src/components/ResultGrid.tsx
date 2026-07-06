@@ -63,14 +63,17 @@ import {
   HEAT_PALETTES,
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
+import { accentFill, ACCENT_FILL_STOPS } from "../colorScale";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
-import { Skeleton } from "./Skeleton";
+import { Skeleton, shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
+import { deriveQueryPhase, formatElapsed } from "../queryRunState";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import {
+  buildInsertClipboard,
   buildRowSql,
   countEditedCells,
   countEditedRows,
@@ -247,10 +250,10 @@ export const GRID_CSS: SystemStyleObject = {
   "& tbody tr.grid-row-deleting td": {
     textDecoration: "line-through",
     color: "var(--text-muted)",
-    background: "color-mix(in srgb, var(--danger-bg, #ef4444) 12%, transparent)",
+    background: "color-mix(in srgb, var(--error-solid) 12%, transparent)",
   },
   "& tbody tr.grid-row-deleting td.row-index": {
-    boxShadow: "inset 3px 0 0 var(--danger-fg, #ef4444)",
+    boxShadow: "inset 3px 0 0 var(--error-solid)",
   },
   "& th.col-filler, & td.col-filler": {
     padding: 0,
@@ -303,14 +306,21 @@ export const GRID_CSS: SystemStyleObject = {
     borderRadius: "var(--radius-sm)",
     overflow: "hidden",
   },
+  // データバーは幅を transform (scaleX) で表現する。width の補間はレイアウト/
+  // ペイントを毎フレーム誘発するため、数値列の全セルが一斉に動くソート/再取得時に
+  // 重くなる。scaleX なら GPU 合成のみで済む (値は利用側が inline style で渡す)。
+  // 塗り色は `colorScale.ts` の `accentFill`/`ACCENT_FILL_STOPS` (#718) を参照し、
+  // NULL 率ミニバーと同じ生成レシピ・不透明度段階を共有する (二重定義しない)。
   "& .cell-databar": {
     position: "absolute",
     left: 0,
     top: 0,
     bottom: 0,
-    background: "color-mix(in srgb, var(--accent) 28%, transparent)",
+    width: "100%",
+    transformOrigin: "left center",
+    background: accentFill(ACCENT_FILL_STOPS.dataBar),
     borderRadius: "var(--radius-sm)",
-    transitionProperty: "width",
+    transitionProperty: "transform",
     transitionDuration: "var(--dur-med)",
     transitionTimingFunction: "var(--ease-out)",
   },
@@ -512,13 +522,17 @@ export const GRID_CSS: SystemStyleObject = {
     whiteSpace: "normal",
   },
   "& tbody tr.grid-skeleton-row": { pointerEvents: "none" },
+  // スケルトンセル。土台とシマー帯は Skeleton.tsx の共有定義
+  // (shimmerContainerCss / shimmerAfterCss) を使い、帯幅・色・周期の
+  // 修正漏れを防ぐ (#719)。多数セルの同時再ペイントを避けるため疑似要素の
+  // transform スライドで動かし、スタッガの animationDelay は inline style
+  // から疑似要素へ inherit で引き継ぐ。
   "& td.grid-skeleton-cell > div": {
+    ...shimmerContainerCss,
     height: "10px",
     borderRadius: "2px",
-    background: "linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-elevated) 50%, var(--bg-muted) 75%)",
-    backgroundSize: "200% 100%",
-    animation: "skeleton-shimmer 1.4s ease-in-out infinite",
   },
+  "& td.grid-skeleton-cell > div::after": shimmerAfterCss,
   "& .grid-filter-summary": {
     position: "sticky",
     top: 0,
@@ -584,16 +598,16 @@ export const GRID_CSS: SystemStyleObject = {
   // 流用し、追加行は緑で示す (削除行は今回結果に無いためツールバーの件数で示す)。
   // 緑は色覚に配慮しつつ「追加=増加」の直感に沿う。reduced-motion 時も色は残る。
   "& tbody tr.grid-row-added td.row-index": {
-    boxShadow: "inset 3px 0 0 #16a34a",
+    boxShadow: "inset 3px 0 0 var(--status-success)",
   },
   "& tbody tr.grid-row-added td": {
-    background: "color-mix(in srgb, #16a34a 12%, transparent)",
+    background: "color-mix(in srgb, var(--status-success) 12%, transparent)",
   },
   "& tbody tr.grid-row-added.grid-row-stripe td": {
-    background: "color-mix(in srgb, #16a34a 16%, transparent)",
+    background: "color-mix(in srgb, var(--status-success) 16%, transparent)",
   },
   "& tbody tr.grid-row-added:hover td": {
-    background: "color-mix(in srgb, #16a34a 20%, transparent)",
+    background: "color-mix(in srgb, var(--status-success) 20%, transparent)",
   },
   // インラインセル編集 (ResultGrid のみ出現)
   "& td.is-pending-edit": {
@@ -728,6 +742,13 @@ interface Props {
    * filled it), so small results and aggregates stay quiet.
    */
   autoLimitApplied?: number | null;
+  /**
+   * Set when the last run stopped before finishing (user cancel or query
+   * timeout) instead of completing normally, so `result` holds only a
+   * partial result. Drives a status-bar badge and the export-confirmation
+   * warning (#685). Cleared by the caller on the next run.
+   */
+  partialResult?: { reason: "cancelled" | "timeout"; rows: number } | null;
   /** Called from the badge to re-run the query without the auto LIMIT. */
   onFetchAllRows?: () => void;
   /** Active connection's driver ("mysql" | "postgres" | "sqlite"), for row→SQL generation. */
@@ -915,9 +936,13 @@ function classifyByValue(v: CellValue): CellKind | null {
   return null;
 }
 
+// toLocaleString() は呼び出しごとに内部で NumberFormat を作り直すため、可視セル
+// 描画のたびに走る整数整形ではキャッシュしたフォーマッタを再利用する (出力は同一)。
+const intFormatter = new Intl.NumberFormat();
+
 function formatNumber(v: number): string {
   if (!Number.isFinite(v)) return String(v);
-  if (Number.isInteger(v)) return v.toLocaleString();
+  if (Number.isInteger(v)) return intFormatter.format(v);
   return v.toString();
 }
 
@@ -969,12 +994,17 @@ const sortBool: SortingFn<RowShape> = (rowA, rowB, columnId) => {
   return cmpNullable(toBool(av), toBool(bv), (x, y) => (x === y ? 0 : x ? 1 : -1));
 };
 
+// localeCompare はオプション付き呼び出しのたびに照合設定を再構築するため、
+// O(n log n) のソート比較では事前構築した Intl.Collator を使う (順序は同一で
+// 10〜100 倍速い)。
+const stringCollator = new Intl.Collator(undefined, { numeric: true });
+
 const sortString: SortingFn<RowShape> = (rowA, rowB, columnId) => {
   const av = rowA.getValue(columnId) as CellValue;
   const bv = rowB.getValue(columnId) as CellValue;
   const as = av === null || av === undefined ? null : String(av);
   const bs = bv === null || bv === undefined ? null : String(bv);
-  return cmpNullable(as, bs, (x, y) => x.localeCompare(y, undefined, { numeric: true }));
+  return cmpNullable(as, bs, (x, y) => stringCollator.compare(x, y));
 };
 
 function sortingFnForKind(kind: CellKind): SortingFn<RowShape> {
@@ -1632,7 +1662,7 @@ function ColumnFilterMenu({
         >
           {t("gridFilterClearColumn")}
         </Button>
-        <Button size="sm" px="2.5" onClick={onClose}>
+        <Button variant="secondary" size="sm" px="2.5" onClick={onClose}>
           {t("gridFilterCloseMenu")}
         </Button>
       </Box>
@@ -1774,7 +1804,9 @@ function ColumnStatsMenu({
     }
   };
 
-  // NULL 率ミニバー (条件付き書式 #499 と同じアクセント系トーン)。
+  // NULL 率ミニバー (条件付き書式 #499 と同じアクセント系トーン)。塗りは
+  // `colorScale.ts` の `accentFill`/`ACCENT_FILL_STOPS` を `.cell-databar` と
+  // 共有し、`color-mix(--accent)` の直書きを避ける (#718)。
   const nullBar = (
     <Box
       role="img"
@@ -1787,9 +1819,11 @@ function ColumnStatsMenu({
     >
       <Box
         height="100%"
-        width={`${nullPct}%`}
-        background="color-mix(in srgb, var(--accent) 55%, transparent)"
-        transition="width var(--dur-med) var(--ease-out)"
+        width="100%"
+        transformOrigin="left center"
+        style={{ transform: `scaleX(${nullPct / 100})` }}
+        background={accentFill(ACCENT_FILL_STOPS.nullRate)}
+        transition="transform var(--dur-med) var(--ease-out)"
       />
     </Box>
   );
@@ -1928,7 +1962,7 @@ function ColumnStatsMenu({
       )}
 
       <Box display="flex" justifyContent="flex-end" paddingTop="0.5">
-        <Button size="sm" px="2.5" onClick={onClose}>
+        <Button variant="secondary" size="sm" px="2.5" onClick={onClose}>
           {t("gridStatsClose")}
         </Button>
       </Box>
@@ -2112,11 +2146,16 @@ export function DataGrid({
   const [colFormats, setColFormats] = useState<Record<number, CondFormatMode>>({});
   const [heatPaletteKey, setHeatPaletteKey] = useState<string>(DEFAULT_HEAT_PALETTE);
   // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のみ算出。
+  // `rows.map` で行数長の中間配列を列ごとに作らず、ジェネレータで 1 パス集計する。
   const columnStats = useMemo<(NumericStats | null)[]>(
     () =>
       columnKinds.map((k, i) =>
         k === "number" || k === "decimal"
-          ? computeNumericStats(rows.map((r) => r[i]))
+          ? computeNumericStats(
+              (function* () {
+                for (const r of rows) yield r[i];
+              })(),
+            )
           : null,
       ),
     [columnKinds, rows],
@@ -2246,9 +2285,12 @@ export function DataGrid({
   };
 
   const tableColumns = useMemo<ColumnDef<RowShape>[]>(() => {
+    // 列ごとの線形探索 (find) は横に広いテーブルで O(列数²) になるため、
+    // 名前 → メタデータの Map を 1 度だけ作って引く。
+    const metaByName = new Map(columnMeta?.map((m) => [m.name, m]) ?? []);
     return columns.map((c, i) => {
       const kind = columnKinds[i];
-      const fkInfo = columnMeta?.find((m) => m.name === c.name);
+      const fkInfo = metaByName.get(c.name);
       const fkTable = fkInfo?.referenced_table ?? null;
       return {
         id: String(i),
@@ -2317,7 +2359,7 @@ export function DataGrid({
                 <span className="cell-cf-wrap">
                   <span
                     className="cell-databar"
-                    style={{ width: `${dataBarPercent(num, stats)}%` }}
+                    style={{ transform: `scaleX(${dataBarPercent(num, stats) / 100})` }}
                     aria-hidden
                   />
                   <span className={`cell-number cell-cf-value ${extraClass}`}>{display}</span>
@@ -2554,6 +2596,9 @@ export function DataGrid({
 
   // Whether the right-click menu can offer "copy as SQL": we need a concrete
   // target table (set only for table tabs, not free-form query results).
+  // UPDATE/DELETE mutate a real row, so they stay gated on a resolved table —
+  // unlike "copy as INSERT" (below), which tolerates an ambiguous table via a
+  // fallback name.
   const rowSqlAvailable = !!rowSqlTable;
   const rowSqlHasPk = (pkIndices?.length ?? 0) > 0;
   const copyRowSql = (rowIdx: number, kind: RowSqlKind) => {
@@ -2572,6 +2617,31 @@ export function DataGrid({
     );
     if (stmts.length === 0) return;
     void runCopy(stmts.join("\n"));
+  };
+
+  // "Copy as INSERT" for one or more selected rows (#601). Unlike
+  // UPDATE/DELETE this only ever reads data, so it works even without a
+  // resolvable primary key, and even without a resolvable target table (a
+  // JOIN / free-form query result falls back to a placeholder table name and
+  // warns via toast — `buildInsertClipboard`'s `tableResolved` flag).
+  const copyRowsAsInsert = (rowIndices: number[], combineValues: boolean) => {
+    const selectedRows = rowIndices.map((i) => rows[i]).filter((r): r is CellValue[] => !!r);
+    if (selectedRows.length === 0 || columns.length === 0) return;
+    const result = buildInsertClipboard(
+      {
+        driver: rowSqlDriver ?? "mysql",
+        database: rowSqlDatabase ?? "",
+        table: rowSqlTable,
+        columns,
+        rows: selectedRows,
+      },
+      combineValues,
+    );
+    if (!result.sql) return;
+    if (!result.tableResolved) {
+      toast.info(t("gridCopyAsInsertAmbiguousTable"));
+    }
+    void runCopy(result.sql);
   };
 
   const commitEdit = (
@@ -3457,27 +3527,59 @@ export function DataGrid({
               label: t("gridCopyRowWithHeaders"),
               onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
             },
-            ...(rowSqlAvailable
-              ? [
-                  { separator: true as const },
-                  {
-                    label: t("gridCopyAsInsert"),
-                    onSelect: () => copyRowSql(copyMenu.rowIdx, "insert"),
-                  },
-                  {
-                    label: t("gridCopyAsUpdate"),
-                    onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
-                    disabled: !rowSqlHasPk,
-                    title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                  },
-                  {
-                    label: t("gridCopyAsDelete"),
-                    onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
-                    disabled: !rowSqlHasPk,
-                    title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                  },
-                ]
-              : []),
+            ...(() => {
+              // "Copy as INSERT" (#601): operates on every row covered by an
+              // active multi-row range selection, or just the clicked row
+              // when there is none/it's a single row. Unlike UPDATE/DELETE
+              // (below) it stays available even without a resolved target
+              // table — `copyRowsAsInsert` falls back to a placeholder name
+              // and warns instead.
+              const insertRowIndices =
+                selectionRect && selectionRect.rowIndexSet.size > 1
+                  ? Array.from(selectionRect.rowIndexSet)
+                  : [copyMenu.rowIdx];
+              const multiRow = insertRowIndices.length > 1;
+              return [
+                { separator: true as const },
+                multiRow
+                  ? {
+                      label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
+                      title: t("gridCopyAsInsertRowsTitle"),
+                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                    }
+                  : {
+                      label: t("gridCopyAsInsert"),
+                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                    },
+                ...(multiRow
+                  ? [
+                      {
+                        label: t("gridCopyAsInsertRowsCombined", {
+                          count: insertRowIndices.length,
+                        }),
+                        title: t("gridCopyAsInsertRowsCombinedTitle"),
+                        onSelect: () => copyRowsAsInsert(insertRowIndices, true),
+                      },
+                    ]
+                  : []),
+                ...(rowSqlAvailable
+                  ? [
+                      {
+                        label: t("gridCopyAsUpdate"),
+                        onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
+                        disabled: !rowSqlHasPk,
+                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                      },
+                      {
+                        label: t("gridCopyAsDelete"),
+                        onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
+                        disabled: !rowSqlHasPk,
+                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                      },
+                    ]
+                  : []),
+              ];
+            })(),
             // 一括編集 (#596): 矩形選択がある編集可能なテーブルでのみ、
             // 「選択セルに値を設定」を出す。PK が無いテーブルは行を特定できないため非表示。
             ...(onBulkEdit && editable && selectionRect && (pkIndices?.length ?? 0) > 0
@@ -3632,7 +3734,7 @@ export function DataGrid({
                 _focus={{
                   outline: "none",
                   borderColor: "var(--accent)",
-                  boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+                  boxShadow: "var(--focus-ring)",
                 }}
               />
               <chakra.button
@@ -3649,6 +3751,7 @@ export function DataGrid({
               </chakra.button>
             </ModalBody>
             <ModalFooter>
+              <div style={{ flex: 1 }} />
               <Button variant="secondary" size="sm" onClick={() => setBulkEdit(null)}>
                 {t("dangerousCancel")}
               </Button>
@@ -3771,7 +3874,7 @@ export function DataGrid({
               py="1.5" px="3.5"
               fontSize="sm"
               color="#ffffff"
-              background="color-mix(in srgb, #16a34a 92%, #000000)"
+              background="color-mix(in srgb, var(--status-success) 92%, #000000)"
               borderRadius="md"
               boxShadow="lg"
             >
@@ -3886,9 +3989,10 @@ function StreamingBanner({
   const timeoutMs = timeoutSecs > 0 ? timeoutSecs * 1000 : 0;
   const approaching = timeoutMs > 0 && elapsedMs >= timeoutMs * 0.8;
   const remainingSecs = Math.max(0, Math.ceil((timeoutMs - elapsedMs) / 1000));
+  const elapsed = formatElapsed(elapsedMs);
   const statusText = hasColumns
-    ? t("statusStreaming", { rows, ms: elapsedMs })
-    : t("statusRunningElapsed", { ms: elapsedMs });
+    ? t("statusStreaming", { rows, elapsed })
+    : t("statusRunningElapsed", { elapsed });
   return (
     <Box
       role="status"
@@ -3902,8 +4006,8 @@ function StreamingBanner({
       color="app.textMuted"
       flexShrink={0}
       borderBottom="1px solid"
-      borderColor={approaching ? "color-mix(in srgb, #f59e0b 45%, var(--border))" : "app.borderSubtle"}
-      bg={approaching ? "color-mix(in srgb, #f59e0b 12%, var(--bg-muted))" : "app.surfaceMuted"}
+      borderColor={approaching ? "color-mix(in srgb, var(--status-warning) 45%, var(--border))" : "app.borderSubtle"}
+      bg={approaching ? "color-mix(in srgb, var(--status-warning) 12%, var(--bg-muted))" : "app.surfaceMuted"}
     >
       <chakra.span
         aria-hidden
@@ -3911,7 +4015,7 @@ function StreamingBanner({
         height="8px"
         borderRadius="50%"
         flexShrink={0}
-        background={approaching ? "#ef4444" : "#f59e0b"}
+        background={approaching ? "var(--status-error)" : "var(--status-warning)"}
         animation="streaming-pulse 1s ease-in-out infinite"
       />
       <chakra.span flex="1" display="inline-flex" alignItems="center" gap="2" minW={0} overflow="hidden">
@@ -3925,7 +4029,7 @@ function StreamingBanner({
           {statusText}
         </motion.span>
         {approaching && (
-          <chakra.span color="#b45309" fontWeight={600} whiteSpace="nowrap">
+          <chakra.span color="var(--text-warning)" fontWeight={600} whiteSpace="nowrap">
             {t("statusTimeoutApproaching", { secs: remainingSecs })}
           </chakra.span>
         )}
@@ -3955,6 +4059,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   canLoadMore,
   onLoadMore,
   autoLimitApplied,
+  partialResult,
   onFetchAllRows,
   driver,
   database,
@@ -4159,14 +4264,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   // true when no column metadata is available, keeping validation permissive.
   // Memoized so the per-cell checks in the grid and the `hasInvalidEdit` scan
   // below reuse one stable function instead of rebuilding it every render.
+  // The name→metadata map avoids a linear scan per validated cell.
+  const tableColumnsByName = useMemo(
+    () => new Map((tableColumns ?? []).map((c) => [c.name, c])),
+    [tableColumns],
+  );
   const validateEdit = useCallback(
     (colIdx: number, value: string): I18nKey | null => {
       const col = columns?.[colIdx];
       if (!col) return null;
-      const info = tableColumns?.find((c) => c.name === col.name) ?? null;
+      const info = tableColumnsByName.get(col.name) ?? null;
       return validateCellInput(value, col.type_name, info?.nullable ?? true);
     },
-    [columns, tableColumns],
+    [columns, tableColumnsByName],
   );
 
   // True when any pending edit fails validation. Memoized over the edits and
@@ -4289,6 +4399,17 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       overflow="hidden"
       bg="app.surface"
       position={streaming ? "relative" : undefined}
+      // カラム確定でスケルトン → 実データへ切り替わる瞬間だけ一度フェードイン
+      // させ、滑らかに差し替える (#657)。reduced-motion では静止 (App.css)。
+      className={streaming ? "grid-data-reveal" : undefined}
+      // 実行フェーズを離散モデル (queryRunState) で表し、スタイル/テストの
+      // フックとして公開する (#657)。
+      data-query-phase={deriveQueryPhase({
+        streaming,
+        error: !!queryError,
+        canceled: !!partialResult,
+        hasResult: result.columns.length > 0,
+      })}
     >
       {streaming && (
         <StreamingBanner
@@ -4311,7 +4432,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           color="app.text"
           borderBottom="1px solid"
           borderColor="app.borderSubtle"
-          background="color-mix(in srgb, #f59e0b 14%, var(--bg-muted))"
+          background="color-mix(in srgb, var(--status-warning) 14%, var(--bg-muted))"
         >
           <chakra.span flex="1">
             {t("autoLimitApplied", { limit: autoLimitApplied! })}
@@ -4469,7 +4590,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             {t("editNoPkHint")}
           </chakra.span>
         )}
-        {editableActive && hasPendingEdits && (
+        {editableActive && (
+          // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
+          // 出現/退出させる (#659)。reduced-motion は MotionConfig が自動抑制する。
+          <AnimatePresence>
+            {hasPendingEdits && (
+              <motion.div
+                key="edit-review-bar"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                transition={transitions.enter}
+                style={{ display: "inline-flex", alignItems: "stretch" }}
+              >
           <Box
             role="group"
             aria-label={t("editToolbarAria")}
@@ -4481,6 +4614,25 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             borderRight="1px solid var(--border-subtle)"
             background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
           >
+            {/* 件数バッジ: 未確定の編集セル数を丸ピルで示す (#659)。 */}
+            <chakra.span
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              minW="18px"
+              height="18px"
+              px="1.5"
+              borderRadius="full"
+              fontSize="2xs"
+              fontWeight={700}
+              lineHeight="1"
+              color="var(--preview-highlight)"
+              background="color-mix(in srgb, var(--preview-highlight) 20%, transparent)"
+              flexShrink={0}
+              aria-hidden
+            >
+              {editsCount}
+            </chakra.span>
             <chakra.span
               fontSize="xs"
               color="var(--preview-highlight)"
@@ -4571,6 +4723,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               {t("editCancelButton")}
             </Button>
           </Box>
+              </motion.div>
+            )}
+          </AnimatePresence>
         )}
         <AnimatePresence>
           {showDiscardConfirm && (
@@ -4654,8 +4809,22 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           >
             {t("resultStatusBar", { rows: result.rows.length, ms: result.elapsed_ms })}
             {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
-              <chakra.span color="#f59e0b" marginLeft="6px" title={t("autoLimitApplied", { limit: autoLimitApplied })}>
+              <chakra.span color="var(--text-warning)" marginLeft="6px" title={t("autoLimitApplied", { limit: autoLimitApplied })}>
                 LIMIT {autoLimitApplied}
+              </chakra.span>
+            )}
+            {partialResult && (
+              <chakra.span
+                color="var(--text-warning)"
+                marginLeft="6px"
+                title={t(
+                  partialResult.reason === "cancelled"
+                    ? "partialResultCancelledTitle"
+                    : "partialResultTimeoutTitle",
+                  { rows: partialResult.rows },
+                )}
+              >
+                {t("partialResultBadge")}
               </chakra.span>
             )}
           </chakra.span>
@@ -4926,7 +5095,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             database={database ?? null}
             table={table ?? null}
             driver={driver}
-            partial={showAutoLimitBadge || !!canLoadMore}
+            partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
+            stoppedPartial={!!partialResult}
             fullExport={fullExport}
             onClose={() => setShowExport(false)}
           />

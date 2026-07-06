@@ -68,7 +68,11 @@ function StatementCard({
   t: ReturnType<typeof useT>;
 }) {
   const tone =
-    result.status === "ok" ? "#10b981" : result.status === "error" ? "var(--danger-fg, #ef4444)" : "var(--text-muted)";
+    result.status === "ok"
+      ? "var(--status-success)"
+      : result.status === "error"
+        ? "var(--status-error)"
+        : "var(--text-muted)";
   return (
     <chakra.div borderWidth="1px" borderColor="app.border" borderRadius="8px" overflow="hidden">
       <Flex align="center" gap="2" px="2.5" py="1.5" bg="app.surface" borderBottomWidth="1px" borderBottomColor="app.border">
@@ -89,7 +93,7 @@ function StatementCard({
         </chakra.span>
       </Flex>
       {result.status === "error" && (
-        <chakra.div px="2.5" py="1.5" fontSize="xs" color="var(--danger-fg, #ef4444)" fontFamily="mono" whiteSpace="pre-wrap">
+        <chakra.div px="2.5" py="1.5" fontSize="xs" color="var(--text-error)" fontFamily="mono" whiteSpace="pre-wrap">
           {result.error}
         </chakra.div>
       )}
