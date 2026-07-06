@@ -121,6 +121,25 @@ pub mod __test_api {
         ))
     }
 
+    /// Drives the `apply_sync_sql` IPC command's core path (session lookup +
+    /// read-only guard + empty-statement guard + transactional apply) without a
+    /// Tauri runtime, so integration tests can verify the destructive-write
+    /// guards actually fire on the command layer (not just the pure generator).
+    pub async fn apply_sync_sql_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        statements: Vec<String>,
+    ) -> crate::error::Result<u64> {
+        crate::commands::sync::apply_sync_sql_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            statements,
+        )
+        .await
+    }
+
     /// Runs `sql` against MySQL via the text protocol, for statements the
     /// prepared-statement protocol rejects (e.g. CREATE/DROP PROCEDURE).
     pub async fn mysql_exec_text(opts: &DbConnectOptions, sql: &str) -> crate::error::Result<()> {
