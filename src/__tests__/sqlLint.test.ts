@@ -12,6 +12,7 @@ const MSG: SqlLintMessages = {
   unterminated: "unterminated",
   unknownStatementStart: "unknown-start",
   unterminatedComment: "unterminated-comment",
+  clauseOrder: "clause-order",
 };
 
 function diags(sql: string, dialect = MySQL) {
@@ -154,6 +155,84 @@ describe("computeSqlDiagnostics — 文の先頭キーワードのタイポ", ()
   });
 });
 
+describe("computeSqlDiagnostics — 句の順序ミス", () => {
+  it("flags WHERE after ORDER BY", () => {
+    const d = diags("SELECT * FROM users ORDER BY name WHERE id = 1");
+    expect(d.length).toBe(1);
+    expect(d[0].message).toBe(MSG.clauseOrder);
+    expect(d[0].severity).toBe("warning");
+    expect(d[0].from).toBe("SELECT * FROM users ORDER BY name ".length);
+    expect(d[0].to).toBe(d[0].from + "WHERE".length);
+  });
+
+  it("flags WHERE after LIMIT and GROUP BY after ORDER BY", () => {
+    expect(
+      diags("SELECT * FROM users LIMIT 10 WHERE id = 1").map((x) => x.message),
+    ).toEqual([MSG.clauseOrder]);
+    expect(
+      diags("SELECT * FROM users ORDER BY name GROUP BY dept").map((x) => x.message),
+    ).toEqual([MSG.clauseOrder]);
+    expect(
+      diags("SELECT * FROM t ORDER BY a HAVING x = 1").map((x) => x.message),
+    ).toEqual([MSG.clauseOrder]);
+  });
+
+  it("accepts the canonical clause order in every dialect", () => {
+    const sql =
+      "SELECT dept, COUNT(*) FROM users WHERE active = 1 GROUP BY dept HAVING COUNT(*) > 2 ORDER BY dept LIMIT 10";
+    for (const dialect of [MySQL, PostgreSQL, SQLite]) {
+      expect(computeSqlDiagnostics(sql, dialect, MSG)).toEqual([]);
+    }
+  });
+
+  it("does not flag clauses inside subqueries or window functions", () => {
+    expect(
+      diags(
+        "SELECT * FROM (SELECT * FROM t ORDER BY y) s WHERE s.a = 1",
+      ),
+    ).toEqual([]);
+    expect(
+      computeSqlDiagnostics(
+        "SELECT rank() OVER (ORDER BY score) FROM players WHERE active",
+        PostgreSQL,
+        MSG,
+      ),
+    ).toEqual([]);
+    expect(
+      diags("SELECT * FROM t WHERE a IN (SELECT b FROM u ORDER BY c) ORDER BY a"),
+    ).toEqual([]);
+  });
+
+  it("resets tracking across set operations and INSERT ... SELECT", () => {
+    expect(
+      diags("SELECT * FROM a ORDER BY x LIMIT 1 UNION SELECT * FROM b WHERE y = 1"),
+    ).toEqual([]);
+    expect(diags("INSERT INTO t SELECT * FROM u WHERE x = 1 ORDER BY x")).toEqual([]);
+  });
+
+  it("tracks statements independently in a multi-statement script", () => {
+    const d = diags(
+      "SELECT * FROM a ORDER BY x; SELECT * FROM b ORDER BY y WHERE z = 1",
+    );
+    expect(d.length).toBe(1);
+    expect(d[0].message).toBe(MSG.clauseOrder);
+  });
+
+  it("allows MySQL UPDATE/DELETE with WHERE ... ORDER BY ... LIMIT", () => {
+    expect(diags("DELETE FROM t WHERE a = 1 ORDER BY b LIMIT 5")).toEqual([]);
+    expect(diags("UPDATE t SET a = 1 WHERE b = 2 ORDER BY c LIMIT 5")).toEqual([]);
+  });
+
+  it("does not use non-reserved OFFSET for ordering decisions", () => {
+    // MySQL では offset は列名に使える非予約語。順序判定に使わないので誤検出しない。
+    expect(diags("SELECT offset FROM t WHERE id = 1")).toEqual([]);
+    // PostgreSQL は OFFSET ... LIMIT ... の順も受理する。
+    expect(
+      computeSqlDiagnostics("SELECT * FROM t OFFSET 5 LIMIT 10", PostgreSQL, MSG),
+    ).toEqual([]);
+  });
+});
+
 describe("computeSqlDiagnostics — 未終端ブロックコメント", () => {
   it("flags an unterminated block comment", () => {
     const d = diags("SELECT 1 /* work in progress");
@@ -191,6 +270,7 @@ describe("diagnosticsFromTree — diagnostic shape", () => {
       unterminated: "UNT",
       unknownStatementStart: "UNK",
       unterminatedComment: "CMT",
+      clauseOrder: "CLS",
     };
     const sql = "SELECT 'x";
     const d = diagnosticsFromTree(parseSqlTree(sql, MySQL), sql, custom);

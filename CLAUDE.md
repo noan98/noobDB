@@ -1102,8 +1102,13 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `@codemirror/lint` の `Diagnostic[]` へ変換する。加えて、未終端のブロックコメント
   (`/*` 未クローズ) と、**文の先頭キーワードのタイポ** (`SELEC` など。各 `Statement`
   の先頭トークンが `Keyword` 系でなく素の `Identifier` の文を warning で報告。
-  `STATEMENT_START_EXTRA` の許可リストが方言キーワード表の載り漏れに対する安全弁) も
-  検出する。エディタの `closeBrackets()` が括弧/クオートをタイプ中に自動で閉じるため
+  `STATEMENT_START_EXTRA` の許可リストが方言キーワード表の載り漏れに対する安全弁)、
+  **句の順序ミス** (`ORDER BY` の後の `WHERE` など。文直下の `Keyword` 列を
+  `WHERE → GROUP BY → HAVING → ORDER BY → LIMIT` のランクで走査し、違反句を warning
+  で報告。サブクエリ / `OVER (...)` 内は `Parens` に包まれるため対象外。報告対象は
+  3 方言で完全予約語の句のみで、非予約語 `OFFSET` は列名と区別できないため判定に
+  使わない。SELECT / 集合演算でランクをリセットし `INSERT ... SELECT` も誤検出
+  しない) も検出する。エディタの `closeBrackets()` が括弧/クオートをタイプ中に自動で閉じるため
   括弧系の検出は主に貼り付け・削除後に効き、タイプ中の主戦力は文頭キーワード判定。
   見た目判定はリーフトークン限定 (コンテナノードに適用するとクオートで始まる文全体を
   未終端と誤検出する)。`QueryEditor` が `lintGutter()` +

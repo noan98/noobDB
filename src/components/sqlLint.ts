@@ -32,6 +32,8 @@ export interface SqlLintMessages {
   unknownStatementStart: string;
   /** 未終端のブロックコメント (`/*` が閉じられていない) のメッセージ。 */
   unterminatedComment: string;
+  /** 句の順序ミス (`ORDER BY` の後の `WHERE` など) のメッセージ。 */
+  clauseOrder: string;
 }
 
 /** 文字列/引用符の開始とみなすクオート文字。 */
@@ -67,6 +69,36 @@ const STATEMENT_START_EXTRA = new Set([
 const WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
+ * 句順序判定 (#704 フォロー) の正規の並び。SELECT 系の文は
+ * `WHERE → GROUP BY → HAVING → ORDER BY → LIMIT` の順でなければならない
+ * (MySQL / PostgreSQL / SQLite 共通)。値が小さい句ほど前に置く。
+ * `OFFSET` / `FETCH` は意図的に含めない: MySQL では `offset` が非予約語で
+ * 列名として現れうるうえ、PostgreSQL は `OFFSET ... LIMIT ...` の順も
+ * 受理するため、順序判定に使うと誤検出の芽になる。
+ */
+const CLAUSE_RANK = new Map<string, number>([
+  ["where", 1],
+  ["group", 2],
+  ["having", 3],
+  ["order", 4],
+  ["limit", 5],
+]);
+
+/**
+ * 順序違反として**報告してよい**句キーワード (小文字)。3 方言すべてで完全予約語
+ * のため、クオート無しで列名等として現れることがなく誤検出しない。`limit` は
+ * ランク付けのみで報告対象にしない (報告する状況が事実上ないため)。
+ */
+const CLAUSE_TRIGGER = new Set(["where", "group", "having", "order"]);
+
+/**
+ * 句ランクの追跡をリセットするキーワード (小文字)。`SELECT` は新しい選択リストの
+ * 開始 (`INSERT ... SELECT` / `CREATE TABLE ... AS SELECT` を含む)、集合演算は
+ * 後続に完全な SELECT が続くため、いずれも以前の句ランクを引き継がない。
+ */
+const CLAUSE_RESET = new Set(["select", "union", "intersect", "except"]);
+
+/**
  * ノードのテキストが「閉じられていないクオート」かどうか。開始クオート文字で
  * 始まり、かつ (長さが 1 以下、または末尾がその同じクオート文字でない) とき真。
  * ドル引用 (`$$...$$`) など非クオート開始のノードは対象外 (保守側に倒す)。
@@ -97,6 +129,11 @@ function isUnterminatedQuote(text: string): boolean {
  *   flag しないよう、先頭トークンの後に別トークンが続くときだけ報告し、
  *   ヒューリスティックである旨を込めて severity は `warning` にする。
  *   `unknownStatementStart`。
+ * - **句の順序ミス**: `SELECT * FROM t ORDER BY x WHERE ...` のように、文の
+ *   トップレベルで句キーワードが正規の並び (`WHERE → GROUP BY → HAVING →
+ *   ORDER BY → LIMIT`) に反して現れたとき、その句を `warning` で報告する。
+ *   サブクエリ / `OVER (...)` 内の句は `Parens` ノードに包まれて文の直下に
+ *   現れないため誤検出しない。`clauseOrder`。
  */
 export function diagnosticsFromTree(
   tree: Tree,
@@ -149,6 +186,7 @@ export function diagnosticsFromTree(
   });
 
   const unknownStarts = collectUnknownStatementStarts(tree, doc, messages);
+  const clauseOrder = collectClauseOrderIssues(tree, doc, messages);
 
   const docLen = doc.length;
   const errors = mergeErrorRanges(errorRanges).map(({ from, to }) => {
@@ -169,7 +207,51 @@ export function diagnosticsFromTree(
     } satisfies Diagnostic;
   });
 
-  return [...unterminated, ...unknownStarts, ...errors];
+  return [...unterminated, ...unknownStarts, ...clauseOrder, ...errors];
+}
+
+/**
+ * 各トップレベル `Statement` の**直下の** `Keyword` トークン列を走査し、句の順序
+ * 違反 (`ORDER BY` の後の `WHERE` など) を `warning` として報告する。
+ *
+ * - 走査は文の直下のみでネストへ降りない。サブクエリ / ウィンドウ関数の
+ *   `OVER (...)` / 関数引数内の句キーワードは `Parens` に包まれるため対象外。
+ * - `CLAUSE_RESET` (SELECT / UNION / INTERSECT / EXCEPT) でランクをリセットし、
+ *   `INSERT ... SELECT` や集合演算の後続 SELECT を誤検出しない。
+ * - 報告対象は完全予約語のみ (`CLAUSE_TRIGGER`)。`offset` のような非予約語は
+ *   列名と区別できないため順序判定に一切使わない (保守側)。
+ */
+function collectClauseOrderIssues(
+  tree: Tree,
+  doc: string,
+  messages: SqlLintMessages,
+): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  for (let stmt = tree.topNode.firstChild; stmt; stmt = stmt.nextSibling) {
+    if (stmt.type.name !== "Statement") continue;
+    let maxRank = 0;
+    for (let child = stmt.firstChild; child; child = child.nextSibling) {
+      if (child.type.name !== "Keyword") continue;
+      const word = doc.slice(child.from, child.to).toLowerCase();
+      if (CLAUSE_RESET.has(word)) {
+        maxRank = 0;
+        continue;
+      }
+      const rank = CLAUSE_RANK.get(word);
+      if (rank === undefined) continue;
+      if (rank < maxRank && CLAUSE_TRIGGER.has(word)) {
+        out.push({
+          from: child.from,
+          to: child.to,
+          severity: "warning",
+          message: messages.clauseOrder,
+          source: "sql-syntax",
+        });
+      }
+      if (rank > maxRank) maxRank = rank;
+    }
+  }
+  return out;
 }
 
 /**
