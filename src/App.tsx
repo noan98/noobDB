@@ -1670,18 +1670,35 @@ export default function App() {
   const snippetsRef = useRef<Snippet[]>([]);
   useEffect(() => { snippetsRef.current = snippets; }, [snippets]);
 
+  // プロファイル単位の更新中フラグ (再入抑止) と、並行更新数のカウンタ
+  // (`planWatchRefreshing` は複数プロファイルの背景更新が重なっても
+  // 全部終わるまで true を保つ)。
+  const planWatchInFlightRef = useRef<Set<string>>(new Set());
+  const planWatchRefreshCountRef = useRef(0);
+
   /**
    * ウォッチ中スニペットの EXPLAIN を実行して世代を記録し、前世代から構造的な
    * 変化があればトーストで通知する。`run_query` (非ストリーミング) 経由なので
    * クエリ履歴を汚さず、EXPLAIN は読み取り専用セッションでも許可される。
    * `planDiff` は (dagre を含む) `explainPlan` に依存するため、初期バンドルを
    * 太らせないよう動的 import で遅延ロードする。
+   *
+   * 保存は EXPLAIN 1 件ごとに「最新の状態を読み直し → 記録 → 保存」を await を
+   * 挟まず同期的に行う。ループ全体で 1 つの state を抱えて最後にまとめて保存
+   * すると、await 中に行われたウォッチ解除/登録 (同じく同期の load → save) を
+   * 古い state で上書きして復活・消失させてしまうため。更新中に解除された id は
+   * `recordGeneration` が no-op にし、同一プロファイルの重複更新は in-flight
+   * フラグで抑止する。
    */
   const refreshPlanWatches = useCallback(
     async (sid: string, profile: ConnectionProfile, onlyIds?: string[]) => {
-      let state = loadPlanWatch(profile.id);
-      const targets = watchedIds(state).filter((id) => !onlyIds || onlyIds.includes(id));
+      if (planWatchInFlightRef.current.has(profile.id)) return;
+      const targets = watchedIds(loadPlanWatch(profile.id)).filter(
+        (id) => !onlyIds || onlyIds.includes(id),
+      );
       if (targets.length === 0) return;
+      planWatchInFlightRef.current.add(profile.id);
+      planWatchRefreshCountRef.current += 1;
       setPlanWatchRefreshing(true);
       try {
         const planDiff = await import("./components/planDiff");
@@ -1697,7 +1714,7 @@ export default function App() {
             const snapshot = planDiff.snapshotFromResult(profile.driver, res);
             if (!snapshot) continue;
             const ops = planDiff.opsFromSnapshot(snapshot);
-            const rec = recordGeneration(state, id, {
+            const rec = recordGeneration(loadPlanWatch(profile.id), id, {
               id: newGenerationId(),
               capturedAt: new Date().toISOString(),
               driver: profile.driver,
@@ -1705,10 +1722,12 @@ export default function App() {
               payload: snapshot.payload,
               fingerprint: planDiff.planFingerprint(ops),
             });
-            state = rec.state;
-            if (rec.added && rec.prev) {
-              const cmp = planDiff.comparePlans(planDiff.opsFromSnapshot(rec.prev), ops);
-              if (cmp.significant) changed += 1;
+            if (rec.added) {
+              savePlanWatch(profile.id, rec.state);
+              if (rec.prev) {
+                const cmp = planDiff.comparePlans(planDiff.opsFromSnapshot(rec.prev), ops);
+                if (cmp.significant) changed += 1;
+              }
             }
           } catch (e) {
             toast.error(
@@ -1716,14 +1735,17 @@ export default function App() {
             );
           }
         }
-        savePlanWatch(profile.id, state);
         // 更新中に別プロファイルへ切り替わっていたら、他所の状態で上書きしない。
-        if (activeProfileIdRef.current === profile.id) setPlanWatch(state);
+        if (activeProfileIdRef.current === profile.id) {
+          setPlanWatch(loadPlanWatch(profile.id));
+        }
         if (changed > 0) {
           toast.info(translate("planWatchChangedToast", { count: changed }));
         }
       } finally {
-        setPlanWatchRefreshing(false);
+        planWatchInFlightRef.current.delete(profile.id);
+        planWatchRefreshCountRef.current -= 1;
+        setPlanWatchRefreshing(planWatchRefreshCountRef.current > 0);
       }
     },
     [toast],
@@ -3472,8 +3494,18 @@ export default function App() {
     await runWithErrorStatus(async () => {
       await api.deleteSnippet(id);
       await refreshSnippets();
+      // 実行計画ウォッチ (#743): 削除したスニペットのウォッチと世代データを
+      // 全プロファイルのストアから取り除く (孤立データを localStorage に
+      // 残さない。手動のウォッチ解除と同じ削除方針)。
+      for (const p of profiles) {
+        const cur = loadPlanWatch(p.id);
+        if (isWatched(cur, id)) savePlanWatch(p.id, removeWatch(cur, id));
+      }
+      if (activeProfileIdRef.current) {
+        setPlanWatch(loadPlanWatch(activeProfileIdRef.current));
+      }
     }, "statusFailedDeleteSnippet");
-  }, [runWithErrorStatus, refreshSnippets]);
+  }, [runWithErrorStatus, refreshSnippets, profiles]);
 
   const setCellEditForTab = useCallback(
     (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
