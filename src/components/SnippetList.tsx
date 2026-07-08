@@ -6,7 +6,7 @@ import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
-import { Checkbox, Input } from "./ui";
+import { Button, Checkbox, Input } from "./ui";
 import {
   MotionTreeNode,
   ScopeToggle,
@@ -29,6 +29,12 @@ interface Props {
   onInsert: (snippet: Snippet) => void;
   onEdit: (snippet: Snippet) => void;
   onDelete: (id: string) => void;
+  /** 実行計画ウォッチ (#743) 登録済みのスニペット ID (アクティブプロファイル分)。 */
+  watchedPlanIds?: string[];
+  /** 実行計画ウォッチの登録/解除トグル。プロファイル未接続時は undefined。 */
+  onTogglePlanWatch?: (snippet: Snippet) => void;
+  /** 実行計画ウォッチパネルを開く。プロファイル未選択時は undefined。 */
+  onOpenPlanWatch?: () => void;
 }
 
 interface MenuState {
@@ -49,7 +55,16 @@ export function scopeMatches(snippet: Snippet, profile: ConnectionProfile | null
 
 // memo 化して App.tsx の高頻度な再レンダリングから切り離す。props は親で
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
-export const SnippetList = memo(function SnippetList({ snippets, activeProfile, onInsert, onEdit, onDelete }: Props) {
+export const SnippetList = memo(function SnippetList({
+  snippets,
+  activeProfile,
+  onInsert,
+  onEdit,
+  onDelete,
+  watchedPlanIds,
+  onTogglePlanWatch,
+  onOpenPlanWatch,
+}: Props) {
   const t = useT();
   const [filter, setFilter] = useState("");
   const [showAllScopes, setShowAllScopes] = useState(false);
@@ -96,21 +111,26 @@ export const SnippetList = memo(function SnippetList({ snippets, activeProfile, 
   const handleContextMenu = (e: React.MouseEvent, s: Snippet) => {
     e.preventDefault();
     e.stopPropagation();
-    setMenu({
-      x: e.clientX,
-      y: e.clientY,
-      items: [
-        { label: t("snippetMenuInsert"), onSelect: () => onInsert(s) },
-        { label: t("snippetMenuEdit"), onSelect: () => onEdit(s) },
-        {
-          label: t("snippetMenuDelete"),
-          danger: true,
-          onSelect: () => {
-            if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s.id);
-          },
-        },
-      ],
+    const items: ContextMenuEntry[] = [
+      { label: t("snippetMenuInsert"), onSelect: () => onInsert(s) },
+      { label: t("snippetMenuEdit"), onSelect: () => onEdit(s) },
+    ];
+    if (onTogglePlanWatch) {
+      items.push({
+        label: watchedPlanIds?.includes(s.id)
+          ? t("snippetMenuUnwatchPlan")
+          : t("snippetMenuWatchPlan"),
+        onSelect: () => onTogglePlanWatch(s),
+      });
+    }
+    items.push({
+      label: t("snippetMenuDelete"),
+      danger: true,
+      onSelect: () => {
+        if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s.id);
+      },
     });
+    setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
   const renderSnippet = (s: Snippet) => (
@@ -134,6 +154,15 @@ export const SnippetList = memo(function SnippetList({ snippets, activeProfile, 
         <TreeChevron visibility="hidden" aria-hidden />
         <TreeIcon color="app.accent" aria-hidden><Icon name="snippet" /></TreeIcon>
         <TreeLabel>{s.name}</TreeLabel>
+        {watchedPlanIds?.includes(s.id) && (
+          <TreeIcon
+            color="app.accent"
+            title={t("snippetWatchBadge")}
+            aria-label={t("snippetWatchBadge")}
+          >
+            <Icon name="explain" />
+          </TreeIcon>
+        )}
         {s.tags.map((tag) => (
           <TreeBadge key={tag} textTransform="none" letterSpacing="0" fontFamily="mono">{tag}</TreeBadge>
         ))}
@@ -145,12 +174,27 @@ export const SnippetList = memo(function SnippetList({ snippets, activeProfile, 
   return (
     <TreePane>
       <TreeSearch>
-        <Input
-          type="search"
-          placeholder={t("snippetSearchPlaceholder")}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
+        <Box display="flex" gap="1.5" alignItems="center">
+          <Input
+            type="search"
+            placeholder={t("snippetSearchPlaceholder")}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            flex="1"
+          />
+          {onOpenPlanWatch && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={onOpenPlanWatch}
+              title={t("snippetOpenPlanWatch")}
+              aria-label={t("snippetOpenPlanWatch")}
+              css={{ flex: "none", minWidth: "28px", px: "2", py: "1", lineHeight: 1 }}
+            >
+              <Icon name="explain" size={13} />
+            </Button>
+          )}
+        </Box>
         {activeProfile && (
           <ScopeToggle>
             <Checkbox

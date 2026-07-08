@@ -167,6 +167,12 @@ export interface Settings {
    * 安全判定ではない。誤検出が気になるユーザ向けにオフにできる。
    */
   sqlLintEnabled: boolean;
+  /**
+   * 実行計画ウォッチ (#743): 接続確立時にウォッチ登録済みスニペットの EXPLAIN を
+   * 自動取得して世代記録・変化検知を行う。既定オン。EXPLAIN は読み取り操作のみで
+   * 履歴も汚さないが、接続直後の負荷を避けたい場合にオフにできる。
+   */
+  planWatchOnConnect: boolean;
 }
 
 /**
@@ -462,6 +468,9 @@ export const DEFAULT_AUTO_UPDATE_CHECK_ENABLED = true;
 /** リアルタイム SQL 構文チェック (#704) は既定オン。 */
 export const DEFAULT_SQL_LINT_ENABLED = true;
 
+/** 実行計画ウォッチ (#743) の接続時自動チェックは既定オン。 */
+export const DEFAULT_PLAN_WATCH_ON_CONNECT = true;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -498,6 +507,7 @@ export const DEFAULT_SETTINGS: Settings = {
   queryNotificationThresholdSecs: DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
+  planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -687,6 +697,7 @@ export function normalizeSettings(input: unknown): Settings {
     queryNotificationThresholdSecs?: unknown;
     autoUpdateCheckEnabled?: unknown;
     sqlLintEnabled?: unknown;
+    planWatchOnConnect?: unknown;
   };
   return {
     syntaxColors: {
@@ -779,6 +790,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.sqlLintEnabled === "boolean"
         ? parsed.sqlLintEnabled
         : DEFAULT_SQL_LINT_ENABLED,
+    planWatchOnConnect:
+      typeof parsed.planWatchOnConnect === "boolean"
+        ? parsed.planWatchOnConnect
+        : DEFAULT_PLAN_WATCH_ON_CONNECT,
   };
 }
 
@@ -1158,6 +1173,13 @@ export function setAutoUpdateCheckEnabled(value: boolean): void {
 export function setSqlLintEnabled(value: boolean): void {
   if (current.sqlLintEnabled === value) return;
   current = { ...current, sqlLintEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setPlanWatchOnConnect(value: boolean): void {
+  if (current.planWatchOnConnect === value) return;
+  current = { ...current, planWatchOnConnect: value };
   persist();
   listeners.forEach((cb) => cb());
 }

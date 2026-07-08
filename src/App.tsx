@@ -87,6 +87,9 @@ const SnippetForm = lazy(() =>
 const ImportModal = lazy(() =>
   import("./components/ImportModal").then((m) => ({ default: m.ImportModal })),
 );
+const PlanWatchPanel = lazy(() =>
+  import("./components/PlanWatchPanel").then((m) => ({ default: m.PlanWatchPanel })),
+);
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
 );
@@ -228,6 +231,18 @@ import {
   toggleFavorite as toggleFavoriteTable,
   type QuickAccessState,
 } from "./tableQuickAccess";
+import {
+  EMPTY_PLAN_WATCH,
+  isWatched,
+  loadPlanWatch,
+  newGenerationId,
+  recordGeneration,
+  removeWatch,
+  savePlanWatch,
+  toggleWatch,
+  watchedIds,
+  type PlanWatchState,
+} from "./planWatch";
 
 type Theme = "light" | "dark";
 
@@ -1640,6 +1655,110 @@ export default function App() {
     setQuickAccess(id ? loadQuickAccess(id) : EMPTY_QUICK_ACCESS);
   }, [selectedProfile?.id]);
 
+  // 実行計画ウォッチ (#743): アクティブプロファイルのウォッチ状態と比較パネル。
+  const [planWatch, setPlanWatch] = useState<PlanWatchState>(EMPTY_PLAN_WATCH);
+  const [planWatchOpen, setPlanWatchOpen] = useState(false);
+  const [planWatchRefreshing, setPlanWatchRefreshing] = useState(false);
+  const activeProfileIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = selectedProfile?.id ?? null;
+    activeProfileIdRef.current = id;
+    setPlanWatch(id ? loadPlanWatch(id) : EMPTY_PLAN_WATCH);
+    setPlanWatchOpen(false);
+  }, [selectedProfile?.id]);
+  // 接続時の自動チェックが古いスニペット一覧を掴まないよう ref で追従する。
+  const snippetsRef = useRef<Snippet[]>([]);
+  useEffect(() => { snippetsRef.current = snippets; }, [snippets]);
+
+  /**
+   * ウォッチ中スニペットの EXPLAIN を実行して世代を記録し、前世代から構造的な
+   * 変化があればトーストで通知する。`run_query` (非ストリーミング) 経由なので
+   * クエリ履歴を汚さず、EXPLAIN は読み取り専用セッションでも許可される。
+   * `planDiff` は (dagre を含む) `explainPlan` に依存するため、初期バンドルを
+   * 太らせないよう動的 import で遅延ロードする。
+   */
+  const refreshPlanWatches = useCallback(
+    async (sid: string, profile: ConnectionProfile, onlyIds?: string[]) => {
+      let state = loadPlanWatch(profile.id);
+      const targets = watchedIds(state).filter((id) => !onlyIds || onlyIds.includes(id));
+      if (targets.length === 0) return;
+      setPlanWatchRefreshing(true);
+      try {
+        const planDiff = await import("./components/planDiff");
+        let changed = 0;
+        for (const id of targets) {
+          const snippet = snippetsRef.current.find((s) => s.id === id);
+          if (!snippet) continue;
+          try {
+            const res = await api.runQuery(
+              sid,
+              `${explainPrefixFor(profile.driver)}${snippet.sql}`,
+            );
+            const snapshot = planDiff.snapshotFromResult(profile.driver, res);
+            if (!snapshot) continue;
+            const ops = planDiff.opsFromSnapshot(snapshot);
+            const rec = recordGeneration(state, id, {
+              id: newGenerationId(),
+              capturedAt: new Date().toISOString(),
+              driver: profile.driver,
+              payloadKind: snapshot.payloadKind,
+              payload: snapshot.payload,
+              fingerprint: planDiff.planFingerprint(ops),
+            });
+            state = rec.state;
+            if (rec.added && rec.prev) {
+              const cmp = planDiff.comparePlans(planDiff.opsFromSnapshot(rec.prev), ops);
+              if (cmp.significant) changed += 1;
+            }
+          } catch (e) {
+            toast.error(
+              translate("planWatchRefreshFailedToast", { name: snippet.name, error: String(e) }),
+            );
+          }
+        }
+        savePlanWatch(profile.id, state);
+        // 更新中に別プロファイルへ切り替わっていたら、他所の状態で上書きしない。
+        if (activeProfileIdRef.current === profile.id) setPlanWatch(state);
+        if (changed > 0) {
+          toast.info(translate("planWatchChangedToast", { count: changed }));
+        }
+      } finally {
+        setPlanWatchRefreshing(false);
+      }
+    },
+    [toast],
+  );
+
+  const handleTogglePlanWatch = useCallback(
+    (snippet: Snippet) => {
+      if (!selectedProfile) return;
+      const next = toggleWatch(loadPlanWatch(selectedProfile.id), snippet.id);
+      savePlanWatch(selectedProfile.id, next);
+      setPlanWatch(next);
+      // 登録直後に接続中なら、最初の世代をその場で取得する。
+      if (isWatched(next, snippet.id) && sessionId) {
+        void refreshPlanWatches(sessionId, selectedProfile, [snippet.id]);
+      }
+    },
+    [selectedProfile, sessionId, refreshPlanWatches],
+  );
+
+  const handleUnwatchPlan = useCallback(
+    (snippetId: string) => {
+      if (!selectedProfile) return;
+      const next = removeWatch(loadPlanWatch(selectedProfile.id), snippetId);
+      savePlanWatch(selectedProfile.id, next);
+      setPlanWatch(next);
+    },
+    [selectedProfile],
+  );
+
+  const watchedPlanIdList = useMemo(() => watchedIds(planWatch), [planWatch]);
+  const handleOpenPlanWatch = useCallback(() => setPlanWatchOpen(true), []);
+  const handleRefreshPlanWatch = useCallback(() => {
+    if (sessionId && selectedProfile) void refreshPlanWatches(sessionId, selectedProfile);
+  }, [sessionId, selectedProfile, refreshPlanWatches]);
+
   // 最近開いたテーブルを記録する。`handleOpenTable` から呼ばれ、永続化も行う。
   const recordRecentTableOpen = useCallback((database: string, table: string) => {
     const id = selectedProfile?.id;
@@ -1871,6 +1990,11 @@ export default function App() {
       }
       setStatus({ kind: "idle" });
       toast.success(translate("toastConnected", { name: profile.name }));
+      // 実行計画ウォッチ (#743): 設定が有効なら、ウォッチ登録済みスニペットの
+      // EXPLAIN を背景で取得して世代記録・変化検知を行う (接続をブロックしない)。
+      if (settings.planWatchOnConnect) {
+        void refreshPlanWatches(res.session_id, profile);
+      }
     } catch (e) {
       // 接続失敗時は表示状態を実態 (未接続) に合わせる。sessionId は既に null に
       // なっているが selectedProfile を旧プロファイルのままにすると、ヘッダが
@@ -1890,6 +2014,8 @@ export default function App() {
     upsertOpenConnection,
     settings.confirmProductionConnect,
     settings.tabRestoreMode,
+    settings.planWatchOnConnect,
+    refreshPlanWatches,
     toast,
     confirm,
   ]);
@@ -5324,6 +5450,9 @@ export default function App() {
             onInsert={handleInsertSnippet}
             onEdit={handleEditSnippet}
             onDelete={handleDeleteSnippet}
+            watchedPlanIds={watchedPlanIdList}
+            onTogglePlanWatch={selectedProfile ? handleTogglePlanWatch : undefined}
+            onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
           />
         ) : (
           <HistoryList
@@ -5917,6 +6046,21 @@ export default function App() {
               setImportInitialPath(null);
             }}
             onImported={() => handleImported(importTarget.database, importTarget.table)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {planWatchOpen && selectedProfile && (
+          <PlanWatchPanel
+            profile={selectedProfile}
+            snippets={snippets}
+            state={planWatch}
+            refreshing={planWatchRefreshing}
+            canRefresh={sessionId !== null}
+            onRefresh={handleRefreshPlanWatch}
+            onUnwatch={handleUnwatchPlan}
+            onClose={() => setPlanWatchOpen(false)}
           />
         )}
       </AnimatePresence>

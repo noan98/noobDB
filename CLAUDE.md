@@ -1036,7 +1036,15 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `ProcessListPanel` (プロセス監視・KILL。`processList.ts`)、`ProfileImportDialog`
   (プロファイルインポートの ID 衝突解決)、`ShortcutCheatSheet` (`?` キーのチートシート。
   `shortcuts.ts` が単一ソース)、`TitleBar` (Tauri `decorations: false` のカスタム
-  ウィンドウクローム。色決定は `titleBarContext.ts`)。
+  ウィンドウクローム。色決定は `titleBarContext.ts`)、`PlanWatchPanel` (実行計画
+  ウォッチ #743。スニペット単位で EXPLAIN 計画をローカルに世代管理し、任意の 2 世代を
+  `ExplainViewer` の並置 + 変化点リストで比較する。計画の正規化・フィンガープリント・
+  構造比較の純ロジックは `components/planDiff.ts`、世代ストア (localStorage・同一
+  フィンガープリントは世代を増やさない・`MAX_GENERATIONS` ローテーション・
+  プロファイル単位) は `planWatch.ts`。取得は `run_query` (非ストリーミング) 経由なので
+  クエリ履歴を汚さず、EXPLAIN は読み取り専用セッションでも動作する。接続時の自動
+  チェックは設定 `planWatchOnConnect` (既定オン) で切替でき、アクセス方式・使用
+  インデックス・結合方式・推定行数の桁違いの変化をトーストで通知する)。
 - セル整形ユーティリティ — `cellTypeMeta.ts` (カラム型を 9 種の `CellKind` へ分類)、
   `cellFormat.ts` (JSON コンパクト表記・日時のロケール整形。**表示専用**で実値は不変)、
   `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用。色は下記
