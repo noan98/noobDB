@@ -144,7 +144,7 @@ const en = {
   settingsSqlLint: "SQL syntax check",
   settingsSqlLintHelp: "Underlines likely syntax errors in the editor as you type, before you run — a best-effort editing aid, not a safety check.",
   settingsSqlLintEnabled: "Enable syntax check",
-  settingsSqlLintEnabledHelp: "Reuse the editor's parse tree to flag misspelled statement keywords, unmatched brackets, unterminated strings/quotes and unterminated block comments, following the connected driver's dialect. Conservative by design — it prefers missing an error over a false positive. Turn off to hide all diagnostics.",
+  settingsSqlLintEnabledHelp: "Reuse the editor's parse tree to flag misspelled statement keywords, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, unterminated strings/quotes and unterminated block comments, following the connected driver's dialect. Conservative by design — it prefers missing an error over a false positive. Turn off to hide all diagnostics.",
   settingsSafety: "Safety",
   settingsNotifications: "Notifications",
   settingsConfirmProductionConnect: "Confirm before connecting to production",
@@ -547,6 +547,8 @@ const en = {
   editorLintUnterminated: "Unterminated string or quoted identifier",
   editorLintUnknownStatement: "Unrecognized statement keyword — possible typo",
   editorLintUnterminatedComment: "Unterminated block comment (/* without */)",
+  editorLintClauseOrder:
+    "Clause out of order — expected WHERE → GROUP BY → HAVING → ORDER BY → LIMIT",
 
   explainEmpty: "No plan yet. Use the Explain button to analyze a query.",
   explainLoading: "Analyzing query plan...",
@@ -1214,7 +1216,7 @@ const en = {
 
   helpSqlLintTitle: "Syntax check",
   helpSqlLintDesc:
-    "Underlines likely syntax errors in the editor as you type — misspelled statement keywords (e.g. SELEC), unmatched brackets, unterminated strings/quotes and unterminated block comments — so you can fix them before running. It reuses the editor's own parse tree and follows the connected driver's dialect (MySQL / PostgreSQL / SQLite).",
+    "Underlines likely syntax errors in the editor as you type — misspelled statement keywords (e.g. SELEC), misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, unterminated strings/quotes and unterminated block comments — so you can fix them before running. It reuses the editor's own parse tree and follows the connected driver's dialect (MySQL / PostgreSQL / SQLite).",
   helpSqlLintNote:
     "Best-effort editing aid, not a validity check: the parser is lenient, so many mistakes (mid-statement typos, missing commas) are not flagged, and it can't confirm the server will accept the query. It is deliberately conservative — it prefers missing an error over a false positive. Toggle it in Settings › SQL syntax check.",
 
@@ -1807,7 +1809,7 @@ const ja: Dict = {
   settingsSqlLint: "SQL 構文チェック",
   settingsSqlLintHelp: "入力中にエディタ上で構文エラーの可能性を下線表示します（実行前に気付けます）。ベストエフォートの編集支援であり、安全性の判定ではありません。",
   settingsSqlLintEnabled: "構文チェックを有効化",
-  settingsSqlLintEnabledHelp: "エディタのパースツリーを再利用し、文の先頭キーワードのタイポ・括弧の不整合・未終端の文字列/引用符・未終端のブロックコメントを接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。オフにするとすべての診断を非表示にします。",
+  settingsSqlLintEnabledHelp: "エディタのパースツリーを再利用し、文の先頭キーワードのタイポ・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列/引用符・未終端のブロックコメントを接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。オフにするとすべての診断を非表示にします。",
   settingsSafety: "セーフティ",
   settingsNotifications: "通知",
   settingsConfirmProductionConnect: "本番環境接続時に確認ダイアログを表示",
@@ -2210,6 +2212,8 @@ const ja: Dict = {
   editorLintUnterminated: "文字列または引用符付き識別子が閉じられていません",
   editorLintUnknownStatement: "文の先頭キーワードを認識できません (タイポの可能性)",
   editorLintUnterminatedComment: "ブロックコメント (/* ... */) が閉じられていません",
+  editorLintClauseOrder:
+    "句の順序が不正です — WHERE → GROUP BY → HAVING → ORDER BY → LIMIT の順に置きます",
 
   explainEmpty: "まだ実行計画はありません。Explain ボタンでクエリを解析してください。",
   explainLoading: "実行計画を解析中...",
@@ -2876,7 +2880,7 @@ const ja: Dict = {
 
   helpSqlLintTitle: "構文チェック",
   helpSqlLintDesc:
-    "入力中に、文の先頭キーワードのタイポ (SELEC など)・括弧の不整合・未終端の文字列/引用符・未終端のブロックコメントといった構文エラーの可能性をエディタ上で下線表示し、実行前に修正できるようにします。エディタ自身のパースツリーを再利用し、接続中ドライバの方言 (MySQL / PostgreSQL / SQLite) に追従します。",
+    "入力中に、文の先頭キーワードのタイポ (SELEC など)・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列/引用符・未終端のブロックコメントといった構文エラーの可能性をエディタ上で下線表示し、実行前に修正できるようにします。エディタ自身のパースツリーを再利用し、接続中ドライバの方言 (MySQL / PostgreSQL / SQLite) に追従します。",
   helpSqlLintNote:
     "ベストエフォートの編集支援であって妥当性の検証ではありません。パーサは寛容なため、文中のタイポやカンマ抜けなど多くの誤りは検出されず、サーバが実際に受理するかも保証しません。誤検出より見逃しを優先する保守的な判定です。設定 › SQL 構文チェック で切り替えられます。",
 
