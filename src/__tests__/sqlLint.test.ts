@@ -10,6 +10,8 @@ import {
 const MSG: SqlLintMessages = {
   syntaxError: "syntax",
   unterminated: "unterminated",
+  unknownStatementStart: "unknown-start",
+  unterminatedComment: "unterminated-comment",
 };
 
 function diags(sql: string, dialect = MySQL) {
@@ -86,6 +88,91 @@ describe("computeSqlDiagnostics — bracket mismatch", () => {
   });
 });
 
+describe("computeSqlDiagnostics — 文の先頭キーワードのタイポ", () => {
+  it("flags a misspelled leading keyword (SELEC)", () => {
+    const d = diags("SELEC * FROM users");
+    expect(d.length).toBe(1);
+    expect(d[0].message).toBe(MSG.unknownStatementStart);
+    expect(d[0].severity).toBe("warning");
+    expect(d[0].from).toBe(0);
+    expect(d[0].to).toBe("SELEC".length);
+  });
+
+  it("flags only the broken statement in a multi-statement script", () => {
+    const d = diags("SELECT 1; SELEC 2 FROM t; SELECT 3");
+    expect(d.length).toBe(1);
+    expect(d[0].message).toBe(MSG.unknownStatementStart);
+    expect(d[0].from).toBe("SELECT 1; ".length);
+  });
+
+  it("does not flag a lone word still being typed", () => {
+    expect(diags("SELEC")).toEqual([]);
+    expect(diags("SELEC  ")).toEqual([]);
+  });
+
+  it("does not flag statements starting with a non-word token", () => {
+    expect(diags("(SELECT 1) UNION (SELECT 2)")).toEqual([]);
+    expect(diags("{{tbl}} placeholder", MySQL)).toEqual([]);
+    expect(diags("`quoted` x")).toEqual([]);
+  });
+
+  it("does not flag mid-statement identifiers or aliases", () => {
+    expect(diags("SELECT * FROM users u JOIN orders o ON u.id = o.uid")).toEqual([]);
+    // FORM のような文中のタイポは検出対象外 (保守的方針)。
+    expect(diags("SELECT * FORM users")).toEqual([]);
+  });
+
+  it("accepts common statement starters across dialects", () => {
+    const cases: Array<[string, typeof MySQL]> = [
+      ["SHOW TABLES", MySQL],
+      ["DESCRIBE users", MySQL],
+      ["EXPLAIN SELECT 1", MySQL],
+      ["USE mydb", MySQL],
+      ["SET @x = 1", MySQL],
+      ["BEGIN; COMMIT; ROLLBACK", MySQL],
+      ["CALL my_proc(1)", MySQL],
+      ["TRUNCATE TABLE t", MySQL],
+      ["REPLACE INTO t VALUES (1)", MySQL],
+      ["VACUUM ANALYZE users", PostgreSQL],
+      ["COPY t FROM stdin", PostgreSQL],
+      ["LISTEN channel_a", PostgreSQL],
+      ["PRAGMA journal_mode = WAL", SQLite],
+      ["ATTACH DATABASE 'x.db' AS other", SQLite],
+      ["ANALYZE main.users", SQLite],
+      ["select lower(name) from t", MySQL],
+    ];
+    for (const [sql, dialect] of cases) {
+      expect(computeSqlDiagnostics(sql, dialect, MSG), sql).toEqual([]);
+    }
+  });
+
+  it("skips leading comments when locating the first token", () => {
+    expect(diags("-- note\nSELECT 1")).toEqual([]);
+    const d = diags("-- note\nSELEC 1 FROM t");
+    expect(d.length).toBe(1);
+    expect(d[0].message).toBe(MSG.unknownStatementStart);
+  });
+});
+
+describe("computeSqlDiagnostics — 未終端ブロックコメント", () => {
+  it("flags an unterminated block comment", () => {
+    const d = diags("SELECT 1 /* work in progress");
+    expect(d.length).toBe(1);
+    expect(d[0].message).toBe(MSG.unterminatedComment);
+    expect(d[0].from).toBe("SELECT 1 ".length);
+  });
+
+  it("flags the overlapping /*/ form as unterminated", () => {
+    const d = diags("SELECT 1 /*/");
+    expect(d.some((x) => x.message === MSG.unterminatedComment)).toBe(true);
+  });
+
+  it("does not flag closed block comments or line comments", () => {
+    expect(diags("/* header */ SELECT 1")).toEqual([]);
+    expect(diags("SELECT 1 -- trailing note")).toEqual([]);
+  });
+});
+
 describe("diagnosticsFromTree — diagnostic shape", () => {
   it("produces in-range, non-negative offsets with error severity", () => {
     const sql = "SELECT * FROM users WHERE (id = 1";
@@ -99,7 +186,12 @@ describe("diagnosticsFromTree — diagnostic shape", () => {
   });
 
   it("carries the injected (i18n) messages verbatim", () => {
-    const custom: SqlLintMessages = { syntaxError: "SYN", unterminated: "UNT" };
+    const custom: SqlLintMessages = {
+      syntaxError: "SYN",
+      unterminated: "UNT",
+      unknownStatementStart: "UNK",
+      unterminatedComment: "CMT",
+    };
     const sql = "SELECT 'x";
     const d = diagnosticsFromTree(parseSqlTree(sql, MySQL), sql, custom);
     expect(d.every((x) => x.message === "SYN" || x.message === "UNT")).toBe(true);

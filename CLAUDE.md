@@ -1091,15 +1091,23 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   (`syntaxTree(state)`)、エラーノード (`node.type.isError` = 括弧不整合など) と、
   クオートで始まり閉じられていないトークン (未終端の文字列/引用符付き識別子。Lezer は
   未終端文字列をエラーにせず EOF まで伸びる 1 トークンにするためツリーから別途拾う) を
-  `@codemirror/lint` の `Diagnostic[]` へ変換する。`QueryEditor` が `lintGutter()` +
+  `@codemirror/lint` の `Diagnostic[]` へ変換する。加えて、未終端のブロックコメント
+  (`/*` 未クローズ) と、**文の先頭キーワードのタイポ** (`SELEC` など。各 `Statement`
+  の先頭トークンが `Keyword` 系でなく素の `Identifier` の文を warning で報告。
+  `STATEMENT_START_EXTRA` の許可リストが方言キーワード表の載り漏れに対する安全弁) も
+  検出する。エディタの `closeBrackets()` が括弧/クオートをタイプ中に自動で閉じるため
+  括弧系の検出は主に貼り付け・削除後に効き、タイプ中の主戦力は文頭キーワード判定。
+  見た目判定はリーフトークン限定 (コンテナノードに適用するとクオートで始まる文全体を
+  未終端と誤検出する)。`QueryEditor` が `lintGutter()` +
   `linter()` (デバウンス 500ms) を Compartment 越しに追加し、設定 `sqlLintEnabled`
   (既定オン) のオン/オフと言語切替で再構成する。方言追従は共有ツリー経由で自動 (別途
   dialect を渡さない)。診断メッセージは `i18n` (`editorLint*`) で日英対応。**編集支援
-  (ベストエフォート) であって安全判定ではない**: 文法が寛容なためキーワードのタイポや
-  カンマ抜けは検出できず、`apply_auto_limit` と同じく誤検出より見逃しを優先する保守的
-  方針。安全網 (`dangerousSql.ts` / `is_read_only_sql`) とは目的も経路も別物で判定
-  ロジックを共有しない。`sqlLint.test.ts` が正常 SQL の非検出・未終端/括弧の検出・
-  方言差を固定する。
+  (ベストエフォート) であって安全判定ではない**: 文法が寛容なため文中のタイポ
+  (`FORM` 等) やカンマ抜けは検出できず、`apply_auto_limit` と同じく誤検出より見逃しを
+  優先する保守的方針 (打ちかけの先頭単語 = 後続トークンなしも flag しない)。安全網
+  (`dangerousSql.ts` / `is_read_only_sql`) とは目的も経路も別物で判定
+  ロジックを共有しない。`sqlLint.test.ts` が正常 SQL の非検出・未終端/括弧/文頭
+  タイポの検出・方言差を固定する。
 - `i18n.ts` — 日本語/英語の文字列テーブルと `useT` フック。
 - `tabPersistence.ts` — プロファイルごとの開きタブを localStorage に保存/復元。
 - `errorHints.ts` — DB エラー文字列を人間向けのヒントに対応付け。
