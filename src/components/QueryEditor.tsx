@@ -342,6 +342,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     unterminated: t("editorLintUnterminated"),
     unknownStatementStart: t("editorLintUnknownStatement"),
     unterminatedComment: t("editorLintUnterminatedComment"),
+    clauseOrder: t("editorLintClauseOrder"),
   };
   const lintMessagesRef = useRef(lintMessages);
   lintMessagesRef.current = lintMessages;
@@ -627,6 +628,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     lintMessages.unterminated,
     lintMessages.unknownStatementStart,
     lintMessages.unterminatedComment,
+    lintMessages.clauseOrder,
   ]);
 
   // ショートカットの上書きが変わったら、アクションキーマップを再構成する (#557)。
