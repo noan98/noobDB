@@ -9,7 +9,6 @@ import {
   type HintSeverity,
   type PlanNode,
   type ScoreBand,
-  type SqlitePlanRow,
   attrVal,
   collectIds,
   computeHints,
@@ -18,10 +17,8 @@ import {
   formatValue,
   heatFor,
   maxCost,
+  parseExplainForDriver,
   parseNum,
-  parsePlan,
-  parsePostgresPlan,
-  parseSqlitePlan,
   scorePlan,
   severityLabelKey,
   worstSeverity,
@@ -30,34 +27,6 @@ import {
 const ExplainGraphView = lazy(() =>
   import("./ExplainGraphView").then((m) => ({ default: m.ExplainGraphView })),
 );
-
-/**
- * EXPLAIN 結果をドライバ別にパースする。MySQL/PostgreSQL は単一セルの JSON、
- * SQLite は `EXPLAIN QUERY PLAN` の行 (id, parent, _, detail) を木に組む。`raw` は
- * パース失敗時/空時に生表示するテキスト。
- */
-function parseExplainForDriver(
-  driver: string,
-  result: QueryResult | null,
-): { raw: string | null; root: PlanNode | null; error: string | null } {
-  if (!result || result.rows.length === 0) return { raw: null, root: null, error: null };
-  if (driver === "sqlite") {
-    const rows: SqlitePlanRow[] = result.rows.map((r) => ({
-      id: Number(r[0]) || 0,
-      parent: Number(r[1]) || 0,
-      detail: String(r[3] ?? r[r.length - 1] ?? ""),
-    }));
-    const { root, error } = parseSqlitePlan(rows);
-    const raw = rows.map((r) => r.detail).join("\n");
-    return { raw: raw || null, root, error };
-  }
-  const cell = result.rows[0] && result.rows[0].length > 0 ? result.rows[0][0] : null;
-  const raw = cell === null || cell === undefined ? null : String(cell);
-  if (!raw) return { raw: null, root: null, error: null };
-  const { root, error } =
-    driver === "postgres" ? parsePostgresPlan(raw) : parsePlan(raw);
-  return { raw, root, error };
-}
 
 /**
  * EXPLAIN プラン可視化のツリー/詳細パネルのスタイル。各要素へ直接 `css`

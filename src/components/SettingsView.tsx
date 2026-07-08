@@ -78,6 +78,7 @@ import {
   setResultGridMode,
   setResultGridPageSize,
   setRichCellRendering,
+  setPlanWatchOnConnect,
   setSqlLintEnabled,
   setStreamPrefetchSize,
   setSyntaxColor,
@@ -943,6 +944,26 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsToggleLabel>
           <SettingsHelpInline>
             {t("settingsSqlLintEnabledHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsPlanWatch")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsPlanWatchHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-plan-watch-on-connect">
+            <Switch
+              id="settings-plan-watch-on-connect"
+              checked={settings.planWatchOnConnect}
+              onChange={setPlanWatchOnConnect}
+            />
+            {t("settingsPlanWatchOnConnect")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsPlanWatchOnConnectHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>
