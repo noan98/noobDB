@@ -177,7 +177,7 @@ const en = {
   settingsSqlLint: "SQL syntax check",
   settingsSqlLintHelp: "Underlines likely syntax errors in the editor as you type, before you run — a best-effort editing aid, not a safety check.",
   settingsSqlLintEnabled: "Enable syntax check",
-  settingsSqlLintEnabledHelp: "Reuse the editor's parse tree to flag unmatched brackets and unterminated strings/quotes, following the connected driver's dialect. Conservative by design — it prefers missing an error over a false positive. Turn off to hide all diagnostics.",
+  settingsSqlLintEnabledHelp: "Reuse the editor's parse tree to flag misspelled statement keywords, unmatched brackets, unterminated strings/quotes and unterminated block comments, following the connected driver's dialect. Conservative by design — it prefers missing an error over a false positive. Turn off to hide all diagnostics.",
 
   settingsPlanWatch: "Execution plan watch",
   settingsPlanWatchHelp: "Watched snippets keep EXPLAIN plan generations locally and flag structural regressions (index → full scan, join method changes, order-of-magnitude row estimates).",
@@ -583,6 +583,8 @@ const en = {
   statusFormatError: "Format failed: {error}",
   editorLintSyntaxError: "Possible syntax error",
   editorLintUnterminated: "Unterminated string or quoted identifier",
+  editorLintUnknownStatement: "Unrecognized statement keyword — possible typo",
+  editorLintUnterminatedComment: "Unterminated block comment (/* without */)",
 
   explainEmpty: "No plan yet. Use the Explain button to analyze a query.",
   explainLoading: "Analyzing query plan...",
@@ -1250,9 +1252,9 @@ const en = {
 
   helpSqlLintTitle: "Syntax check",
   helpSqlLintDesc:
-    "Underlines likely syntax errors in the editor as you type — unmatched brackets and unterminated strings/quotes — so you can fix them before running. It reuses the editor's own parse tree and follows the connected driver's dialect (MySQL / PostgreSQL / SQLite).",
+    "Underlines likely syntax errors in the editor as you type — misspelled statement keywords (e.g. SELEC), unmatched brackets, unterminated strings/quotes and unterminated block comments — so you can fix them before running. It reuses the editor's own parse tree and follows the connected driver's dialect (MySQL / PostgreSQL / SQLite).",
   helpSqlLintNote:
-    "Best-effort editing aid, not a validity check: the parser is lenient, so many mistakes (keyword typos, missing commas) are not flagged, and it can't confirm the server will accept the query. It is deliberately conservative — it prefers missing an error over a false positive. Toggle it in Settings › SQL syntax check.",
+    "Best-effort editing aid, not a validity check: the parser is lenient, so many mistakes (mid-statement typos, missing commas) are not flagged, and it can't confirm the server will accept the query. It is deliberately conservative — it prefers missing an error over a false positive. Toggle it in Settings › SQL syntax check.",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
@@ -1876,7 +1878,7 @@ const ja: Dict = {
   settingsSqlLint: "SQL 構文チェック",
   settingsSqlLintHelp: "入力中にエディタ上で構文エラーの可能性を下線表示します（実行前に気付けます）。ベストエフォートの編集支援であり、安全性の判定ではありません。",
   settingsSqlLintEnabled: "構文チェックを有効化",
-  settingsSqlLintEnabledHelp: "エディタのパースツリーを再利用し、括弧の不整合や未終端の文字列/引用符を接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。オフにするとすべての診断を非表示にします。",
+  settingsSqlLintEnabledHelp: "エディタのパースツリーを再利用し、文の先頭キーワードのタイポ・括弧の不整合・未終端の文字列/引用符・未終端のブロックコメントを接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。オフにするとすべての診断を非表示にします。",
 
   settingsPlanWatch: "実行計画ウォッチ",
   settingsPlanWatchHelp: "ウォッチ登録したスニペットの EXPLAIN 計画をローカルに世代管理し、構造的なリグレッション (インデックス → フルスキャン・結合方式の変化・推定行数の桁違い) を検知します。",
@@ -2282,6 +2284,8 @@ const ja: Dict = {
   statusFormatError: "整形に失敗しました: {error}",
   editorLintSyntaxError: "構文エラーの可能性があります",
   editorLintUnterminated: "文字列または引用符付き識別子が閉じられていません",
+  editorLintUnknownStatement: "文の先頭キーワードを認識できません (タイポの可能性)",
+  editorLintUnterminatedComment: "ブロックコメント (/* ... */) が閉じられていません",
 
   explainEmpty: "まだ実行計画はありません。Explain ボタンでクエリを解析してください。",
   explainLoading: "実行計画を解析中...",
@@ -2948,9 +2952,9 @@ const ja: Dict = {
 
   helpSqlLintTitle: "構文チェック",
   helpSqlLintDesc:
-    "入力中に、括弧の不整合や未終端の文字列/引用符といった構文エラーの可能性をエディタ上で下線表示し、実行前に修正できるようにします。エディタ自身のパースツリーを再利用し、接続中ドライバの方言 (MySQL / PostgreSQL / SQLite) に追従します。",
+    "入力中に、文の先頭キーワードのタイポ (SELEC など)・括弧の不整合・未終端の文字列/引用符・未終端のブロックコメントといった構文エラーの可能性をエディタ上で下線表示し、実行前に修正できるようにします。エディタ自身のパースツリーを再利用し、接続中ドライバの方言 (MySQL / PostgreSQL / SQLite) に追従します。",
   helpSqlLintNote:
-    "ベストエフォートの編集支援であって妥当性の検証ではありません。パーサは寛容なため、キーワードのタイポやカンマ抜けなど多くの誤りは検出されず、サーバが実際に受理するかも保証しません。誤検出より見逃しを優先する保守的な判定です。設定 › SQL 構文チェック で切り替えられます。",
+    "ベストエフォートの編集支援であって妥当性の検証ではありません。パーサは寛容なため、文中のタイポやカンマ抜けなど多くの誤りは検出されず、サーバが実際に受理するかも保証しません。誤検出より見逃しを優先する保守的な判定です。設定 › SQL 構文チェック で切り替えられます。",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
