@@ -340,6 +340,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const lintMessages: SqlLintMessages = {
     syntaxError: t("editorLintSyntaxError"),
     unterminated: t("editorLintUnterminated"),
+    unknownStatementStart: t("editorLintUnknownStatement"),
+    unterminatedComment: t("editorLintUnterminatedComment"),
   };
   const lintMessagesRef = useRef(lintMessages);
   lintMessagesRef.current = lintMessages;
@@ -619,7 +621,13 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       effects: lintCompartment.reconfigure(buildLintExtension(sqlLintEnabled)),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sqlLintEnabled, lintMessages.syntaxError, lintMessages.unterminated]);
+  }, [
+    sqlLintEnabled,
+    lintMessages.syntaxError,
+    lintMessages.unterminated,
+    lintMessages.unknownStatementStart,
+    lintMessages.unterminatedComment,
+  ]);
 
   // ショートカットの上書きが変わったら、アクションキーマップを再構成する (#557)。
   useEffect(() => {
