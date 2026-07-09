@@ -867,6 +867,324 @@
   color-scheme: dark;
 }
 
+/* ── Theme preset: Nord (#598) ────────────────────────────────────────────
+   北欧調のダーク専用プリセット。`data-theme="nord-dark"` で選択され、Dracula
+   (#465) と同じ方式でベース :root を全面上書きする。名前が "-dark" で終わるため
+   theme.ts の `conditions.dark` ([data-theme$=dark]) に一致する。配色は Nord 公式
+   パレット (Polar Night / Snow Storm / Frost / Aurora) を基に、テキスト/状態色は
+   WCAG AA を満たすよう明度を調整している (themeContrast.test.ts が自動検証)。
+   アクセント色・密度・シンタックス配色のユーザ設定とは直交する。 */
+:root[data-theme="nord-dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.7);
+
+  --bg: #2e3440;
+  --bg-elevated: #3b4252;
+  --bg-muted: #272c36;
+  --bg-hover: #434c5e;
+  --bg-active: #4c566a;
+  --bg-active-strong: #5e6a84;
+  --bg-toolbar: #272c36;
+  --bg-header: #272c36;
+  --bg-error: #3b2a30;
+  --bg-warning: #3a3226;
+  --bg-input: #272c36;
+  --bg-stripe: #333947;
+  --bg-row-hover: #3f4a63;
+
+  --text: #eceff4;
+  --text-secondary: #d8dee9;
+  --text-muted: #a5aec0;
+  --text-null: #a8b2c4;
+  --text-error: #e78d95;
+  --text-warning: #ebcb8b;
+  --text-success: #a3be8c;
+
+  --border: #434c5e;
+  --border-strong: #4c566a;
+  --border-subtle: #3b4252;
+
+  --scrollbar-thumb: #4c566a;
+  --scrollbar-thumb-hover: #5e6a84;
+
+  --accent: #88c0d0;
+  --accent-hover: #9fd0dd;
+  --accent-text: #0a1c26;
+
+  --cm-selection: #434c5e;
+
+  --cell-number: #a3be8c;
+  --cell-decimal: #a3be8c;
+  --cell-bool-true: #88c0d0;
+  --cell-bool-false: #c9a4c4;
+  --cell-date: #ebcb8b;
+  --key-accent: #ebcb8b;
+  --cell-json: #cbb1e0;
+  --cell-enum-s: 45%;
+  --cell-enum-l: 72%;
+  --cell-binary: #a8b2c4;
+
+  --status-connected: #a3be8c;
+  --status-connecting: #ebcb8b;
+  --status-error: #e78d95;
+  --status-warning: #ebcb8b;
+  --status-success: #a3be8c;
+  --status-info: #88c0d0;
+  --status-idle: #7b88a1;
+
+  --syntax-keyword: #81a1c1;
+  --syntax-string: #a3be8c;
+  --syntax-number: #b48ead;
+  --syntax-comment: #94a3bd;
+  --syntax-function: #88c0d0;
+  --syntax-operator: #d8dee9;
+
+  --preview-highlight: #88c0d0;
+  --preview-banner-bg: #3a3226;
+  --preview-banner-border: #6b5e35;
+  --preview-banner-text: #ebcb8b;
+  --preview-banner-dot: #ebcb8b;
+
+  color-scheme: dark;
+}
+
+/* ── Theme preset: Solarized (#598) ───────────────────────────────────────
+   Solarized (Ethan Schoonover) のライト/ダーク両対応プリセット。hc- / cb- 系と
+   同じく light/dark トグルに追従する (`solarized-light` / `solarized-dark`)。
+   base 系 (base03〜base3) を背景/文字に、アクセント系 (blue/cyan/green/yellow/
+   orange/red/magenta/violet) を状態/型別色に割り当てる。公式値のままでは AA を
+   満たさないペアが多いため、ライトでは暗色側へ・ダークでは明色側へ調整している
+   (themeContrast.test.ts が自動検証)。 */
+:root[data-theme="solarized-light"] {
+  --bg: #fdf6e3;
+  --bg-elevated: #fffcf2;
+  --bg-muted: #eee8d5;
+  --bg-hover: #e8e1cc;
+  --bg-active: #d2e4ec;
+  --bg-active-strong: #b8d4e0;
+  --bg-toolbar: #f7f0dd;
+  --bg-header: #eee8d5;
+  --bg-error: #fbeae5;
+  --bg-warning: #f7ecd0;
+  --bg-input: #fffcf2;
+  --bg-stripe: #f7f0dd;
+  --bg-row-hover: #e4eef2;
+
+  --text: #073642;
+  --text-secondary: #586e75;
+  --text-muted: #4c6167;
+  --text-null: #52666d;
+  --text-error: #c02622;
+  --text-warning: #8a6900;
+  --text-success: #5d6b00;
+
+  --border: #d5cdb6;
+  --border-strong: #b8ae94;
+  --border-subtle: #eee8d5;
+
+  --scrollbar-thumb: #c4bba2;
+  --scrollbar-thumb-hover: #a89f85;
+
+  --accent: #1e6ea5;
+  --accent-hover: #175a88;
+  --accent-text: #ffffff;
+
+  --cm-selection: #d2e4ec;
+
+  --cell-number: #5d6b00;
+  --cell-decimal: #5d6b00;
+  --cell-bool-true: #1e6ea5;
+  --cell-bool-false: #b52765;
+  --cell-date: #8a6900;
+  --key-accent: #8a6900;
+  --cell-json: #5a5fb0;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 35%;
+  --cell-binary: #586e75;
+
+  --status-connected: #5d6b00;
+  --status-connecting: #8a6900;
+  --status-error: #c02622;
+  --status-warning: #9c7600;
+  --status-success: #5d6b00;
+  --status-info: #1e6ea5;
+  --status-idle: #6f7f86;
+
+  --syntax-keyword: #627100;
+  --syntax-string: #1f7268;
+  --syntax-number: #b52765;
+  --syntax-comment: #586e75;
+  --syntax-function: #1e6ea5;
+  --syntax-operator: #405860;
+
+  --preview-highlight: #1e6ea5;
+  --preview-banner-bg: #f7ecd0;
+  --preview-banner-border: #d9b968;
+  --preview-banner-text: #6b4d00;
+  --preview-banner-dot: #8a6900;
+
+  color-scheme: light;
+}
+
+:root[data-theme="solarized-dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.7);
+
+  --bg: #002b36;
+  --bg-elevated: #073642;
+  --bg-muted: #00252e;
+  --bg-hover: #12414d;
+  --bg-active: #17505f;
+  --bg-active-strong: #1e6274;
+  --bg-toolbar: #00252e;
+  --bg-header: #00252e;
+  --bg-error: #391f1c;
+  --bg-warning: #332a10;
+  --bg-input: #00252e;
+  --bg-stripe: #01313d;
+  --bg-row-hover: #14495a;
+
+  --text: #eee8d5;
+  --text-secondary: #93a1a1;
+  --text-muted: #839496;
+  --text-null: #93a1a1;
+  --text-error: #f2857e;
+  --text-warning: #deb54c;
+  --text-success: #8fa800;
+
+  --border: #1c4a58;
+  --border-strong: #2a6272;
+  --border-subtle: #073642;
+
+  --scrollbar-thumb: #2a6272;
+  --scrollbar-thumb-hover: #3b7b8d;
+
+  --accent: #3ca2e8;
+  --accent-hover: #64b5ee;
+  --accent-text: #06232e;
+
+  --cm-selection: #17505f;
+
+  --cell-number: #8fa800;
+  --cell-decimal: #8fa800;
+  --cell-bool-true: #3ca2e8;
+  --cell-bool-false: #e975ab;
+  --cell-date: #deb54c;
+  --key-accent: #deb54c;
+  --cell-json: #9da3e3;
+  --cell-enum-s: 50%;
+  --cell-enum-l: 70%;
+  --cell-binary: #93a1a1;
+
+  --status-connected: #8fa800;
+  --status-connecting: #deb54c;
+  --status-error: #f2857e;
+  --status-warning: #deb54c;
+  --status-success: #8fa800;
+  --status-info: #3ca2e8;
+  --status-idle: #6d8b8b;
+
+  --syntax-keyword: #8fa800;
+  --syntax-string: #35bdb2;
+  --syntax-number: #e975ab;
+  --syntax-comment: #7e9192;
+  --syntax-function: #3ca2e8;
+  --syntax-operator: #93a1a1;
+
+  --preview-highlight: #3ca2e8;
+  --preview-banner-bg: #332a10;
+  --preview-banner-border: #6b5a20;
+  --preview-banner-text: #deb54c;
+  --preview-banner-dot: #deb54c;
+
+  color-scheme: dark;
+}
+
+/* ── Theme preset: One Dark (#598) ────────────────────────────────────────
+   Atom One Dark のダーク専用プリセット。`data-theme="one-dark"` で選択され、
+   名前が "dark" で終わるため theme.ts の `conditions.dark` ([data-theme$=dark])
+   に一致する。配色は One Dark 公式パレットを基に、コメント色・赤系など AA を
+   満たさない色は明度を調整している (themeContrast.test.ts が自動検証)。 */
+:root[data-theme="one-dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.62);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.72);
+
+  --bg: #282c34;
+  --bg-elevated: #2f343e;
+  --bg-muted: #21252b;
+  --bg-hover: #333842;
+  --bg-active: #3e4451;
+  --bg-active-strong: #4b5263;
+  --bg-toolbar: #21252b;
+  --bg-header: #21252b;
+  --bg-error: #3a2226;
+  --bg-warning: #38301a;
+  --bg-input: #21252b;
+  --bg-stripe: #2c313a;
+  --bg-row-hover: #3d4666;
+
+  --text: #d7dae0;
+  --text-secondary: #abb2bf;
+  --text-muted: #9299a7;
+  --text-null: #99a0ae;
+  --text-error: #e88892;
+  --text-warning: #e5c07b;
+  --text-success: #98c379;
+
+  --border: #3a3f4b;
+  --border-strong: #4b5263;
+  --border-subtle: #333842;
+
+  --scrollbar-thumb: #4b5263;
+  --scrollbar-thumb-hover: #5c6577;
+
+  --accent: #61afef;
+  --accent-hover: #85c2f4;
+  --accent-text: #0a2233;
+
+  --cm-selection: #3e4451;
+
+  --cell-number: #98c379;
+  --cell-decimal: #98c379;
+  --cell-bool-true: #61afef;
+  --cell-bool-false: #d29ae6;
+  --cell-date: #e5c07b;
+  --key-accent: #e5c07b;
+  --cell-json: #c8a9f0;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 72%;
+  --cell-binary: #99a0ae;
+
+  --status-connected: #98c379;
+  --status-connecting: #e5c07b;
+  --status-error: #e88892;
+  --status-warning: #e5c07b;
+  --status-success: #98c379;
+  --status-info: #61afef;
+  --status-idle: #767f8f;
+
+  --syntax-keyword: #c678dd;
+  --syntax-string: #98c379;
+  --syntax-number: #e5c07b;
+  --syntax-comment: #8b93a2;
+  --syntax-function: #61afef;
+  --syntax-operator: #abb2bf;
+
+  --preview-highlight: #61afef;
+  --preview-banner-bg: #38301a;
+  --preview-banner-border: #6b5a2a;
+  --preview-banner-text: #e5c07b;
+  --preview-banner-dot: #e5c07b;
+
+  color-scheme: dark;
+}
+
 /* Density overrides (#410, #620). The grid-facing tokens and the control
    padding multiplier (--density-control-scale) shift together so the same
    preset tunes the grid *and* every form / button / field; horizontal padding

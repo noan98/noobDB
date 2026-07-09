@@ -247,7 +247,20 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
   it("at least the known presets are discovered", () => {
     // 退行検知: regex 変更などで自動検出が 0 件になっても素通りしないようにする。
     const names = presets.map((p) => p.name);
-    expect(names).toEqual(expect.arrayContaining(["dracula-dark", "hc-light", "hc-dark", "cb-light", "cb-dark"]));
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "dracula-dark",
+        "hc-light",
+        "hc-dark",
+        "cb-light",
+        "cb-dark",
+        // 人気コミュニティテーマプリセット (#598)。
+        "nord-dark",
+        "solarized-light",
+        "solarized-dark",
+        "one-dark",
+      ]),
+    );
   });
 
   describe.each(presets.map((p) => [p.name, p] as const))("%s preset", (_name, preset) => {
