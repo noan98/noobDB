@@ -87,6 +87,9 @@ const SnippetForm = lazy(() =>
 const ImportModal = lazy(() =>
   import("./components/ImportModal").then((m) => ({ default: m.ImportModal })),
 );
+const TestDataModal = lazy(() =>
+  import("./components/TestDataModal").then((m) => ({ default: m.TestDataModal })),
+);
 const PlanWatchPanel = lazy(() =>
   import("./components/PlanWatchPanel").then((m) => ({ default: m.PlanWatchPanel })),
 );
@@ -1195,6 +1198,8 @@ export default function App() {
   // プロセス一覧) メニューのアンカー座標。3 ボタン → 1 ボタンへの集約。
   const [toolsMenu, setToolsMenu] = useState<{ x: number; y: number } | null>(null);
   const [importTarget, setImportTarget] = useState<{ database: string; table: string } | null>(null);
+  // テストデータ生成ウィザード (#602) の対象テーブル。
+  const [testDataTarget, setTestDataTarget] = useState<{ database: string; table: string } | null>(null);
   // ドラッグ&ドロップで .csv を落としたときに ImportModal へ渡す事前選択パス。
   const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
   // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック。
@@ -3828,6 +3833,11 @@ export default function App() {
     setImportTarget({ database, table });
   }, []);
 
+  // テストデータ生成ウィザード (#602) を開く。
+  const handleGenerateTestData = useCallback((database: string, table: string) => {
+    setTestDataTarget({ database, table });
+  }, []);
+
   const handleDumpDatabase = useCallback((database: string) => {
     setDumpTarget(database);
   }, []);
@@ -5476,6 +5486,7 @@ export default function App() {
             onDelete={handleDeleteProfile}
             onPickTable={handleOpenTable}
             onImportTable={handleImportTable}
+            onGenerateTestData={handleGenerateTestData}
             onDumpDatabase={handleDumpDatabase}
             onSchemaExport={handleSchemaExport}
             onRunTableSelect={handleRunTableSelect}
@@ -6107,6 +6118,20 @@ export default function App() {
               setImportInitialPath(null);
             }}
             onImported={() => handleImported(importTarget.database, importTarget.table)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {testDataTarget && sessionId && (
+          <TestDataModal
+            sessionId={sessionId}
+            database={testDataTarget.database}
+            table={testDataTarget.table}
+            driver={selectedProfile?.driver ?? "mysql"}
+            isProduction={selectedProfile?.is_production ?? false}
+            onClose={() => setTestDataTarget(null)}
+            onInserted={() => handleImported(testDataTarget.database, testDataTarget.table)}
           />
         )}
       </AnimatePresence>

@@ -1,0 +1,387 @@
+/**
+ * スキーマに基づくテストデータ生成 (#602) の純ロジック。
+ *
+ * `TestDataModal` が使う「カラム型 → 既定の生成方針の推定」「決定論的シード
+ * (mulberry32 PRNG) による値生成」「INSERT 文の組み立て」を、副作用なしの
+ * 純関数として切り出す (CLAUDE.md の「安全性に直結する純ロジックをテストする」
+ * 方針)。乱数は自前の軽量 PRNG (mulberry32) を使い、同じシード + 同じ設定なら
+ * 常に同じ行列を返す — プレビューと実投入が必ず一致し、テストも安定する。
+ *
+ * 投入 SQL の識別子クオート・文字列エスケープは既存の方言ユーティリティ
+ * (`sqlDialect.quoteIdentFor` / `cellEdit.quoteString`) を再利用し、リテラル
+ * 規則を二重定義しない。
+ */
+
+import type { CellValue, TableColumnInfo } from "../api/tauri";
+import type { CellKind } from "./cellTypeMeta";
+import { quoteIdentFor } from "./sqlDialect";
+import { literalFromCellValue } from "./cellEdit";
+
+/** 1 カラムの値の生成方針。 */
+export type GenStrategy =
+  | "serial" // 連番 (serialStart から +1)
+  | "uuid" // UUID v4 (PRNG 由来で決定論的)
+  | "randomNumber" // ランダム数値 (min..max、decimal 列は小数 2 桁)
+  | "randomString" // ランダム文字列 (英数字 length 文字)
+  | "randomDate" // ランダム日時 (temporal に応じた書式)
+  | "randomBool" // ランダム真偽
+  | "fixed" // 固定値 (型に応じて数値/真偽へ緩く変換)
+  | "choice" // 列挙 (ENUM / 任意の候補) からランダム選択
+  | "fkRef" // FK 参照先の既存値からランダム選択 (整合性を保つ)
+  | "omit"; // INSERT に含めない (DB 既定値 / auto increment に任せる)
+
+/** 日時系カラムの出力書式。 */
+export type TemporalFormat = "date" | "time" | "datetime";
+
+/** 1 カラム分の生成設定。`inferColumnSpec` が既定を推定し、UI で編集される。 */
+export interface ColumnGenSpec {
+  column: string;
+  dataType: string;
+  kind: CellKind;
+  nullable: boolean;
+  strategy: GenStrategy;
+  /** 0..1。値の代わりに NULL を出す確率。 */
+  nullRate: number;
+  /** strategy = "fixed" の生成値 (型に応じて緩く変換)。 */
+  fixedValue: string;
+  /** strategy = "choice" / "fkRef" の候補値。空なら NULL を生成する。 */
+  choices: CellValue[];
+  /** FK 参照先 (describe_table 由来)。fkRef の候補取得に使う。 */
+  fkTable: string | null;
+  fkColumn: string | null;
+  /** strategy = "randomString" の生成文字数。 */
+  length: number;
+  /** strategy = "randomNumber" の範囲。 */
+  min: number;
+  max: number;
+  /** strategy = "serial" の開始値。 */
+  serialStart: number;
+  /** strategy = "randomDate" の書式。 */
+  temporal: TemporalFormat;
+}
+
+/**
+ * mulberry32 — 32bit 状態の軽量シード付き PRNG。暗号用途ではないテストデータ
+ * 生成に十分な品質で、同じシードから常に同じ [0, 1) 列を返す。
+ */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * `describe_table` の生の型文字列 (`varchar(255)` / `int(11) unsigned` /
+ * `timestamp with time zone` / `enum('a','b')` など) を `CellKind` へ分類する。
+ * `ResultGrid.classifyColumn` は結果セットの正規化済み型名 (`VARCHAR` 等) を
+ * 対象とするのに対し、こちらは information_schema 由来の宣言型を扱う。
+ * 判定は部分一致ベースのベストエフォートで、不明な型は "string" に落とす。
+ */
+export function classifyDataType(dataType: string): CellKind {
+  const t = dataType.trim().toLowerCase();
+  if (t.startsWith("enum") || t.startsWith("set")) return "enum";
+  if (t.startsWith("bool") || t === "tinyint(1)") return "bool";
+  if (
+    t.includes("blob") ||
+    t.startsWith("binary") ||
+    t.startsWith("varbinary") ||
+    t === "bytea"
+  ) {
+    return "binary";
+  }
+  if (t.startsWith("json")) return "json";
+  if (t.includes("timestamp") || t.includes("datetime") || t.startsWith("date")) return "date";
+  if (t.startsWith("time")) return "time";
+  if (t.startsWith("decimal") || t.startsWith("numeric") || t.startsWith("real") || t.includes("double") || t.startsWith("float")) {
+    return "decimal";
+  }
+  if (
+    t.includes("int") || // int / integer / bigint / smallint / tinyint / mediumint
+    t.startsWith("serial") ||
+    t.startsWith("year")
+  ) {
+    return "number";
+  }
+  return "string";
+}
+
+/**
+ * MySQL の `enum('a','b')` / `set('x','y')` 宣言から候補値を取り出す。
+ * `''` は値中のシングルクオートのエスケープとして復元する。ENUM 型でなければ
+ * null を返す。
+ */
+export function parseEnumChoices(dataType: string): string[] | null {
+  const m = dataType.trim().match(/^(enum|set)\s*\((.*)\)\s*$/is);
+  if (!m) return null;
+  const body = m[2];
+  const out: string[] = [];
+  // 'a','b','it''s' の形をエスケープ込みで走査する。
+  const re = /'((?:[^']|'')*)'/g;
+  let mm: RegExpExecArray | null;
+  while ((mm = re.exec(body)) !== null) {
+    out.push(mm[1].replace(/''/g, "'"));
+  }
+  return out;
+}
+
+/** `varchar(255)` のような宣言から最大長を取り出す (なければ null)。 */
+function declaredLength(dataType: string): number | null {
+  const m = dataType.trim().match(/^[a-z ]+\(\s*(\d+)\s*[,)]/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** 日時系の宣言型から出力書式を推定する。 */
+function temporalFormatOf(dataType: string): TemporalFormat {
+  const t = dataType.trim().toLowerCase();
+  if (t.includes("timestamp") || t.includes("datetime")) return "datetime";
+  if (t.startsWith("date")) return "date";
+  if (t.startsWith("time")) return "time";
+  return "datetime";
+}
+
+/**
+ * DB 側で自動採番されるカラムか (MySQL `auto_increment` / PostgreSQL の
+ * `nextval(...)` デフォルト / 生成列)。既定では INSERT から除外する。
+ */
+function isAutoGenerated(col: TableColumnInfo): boolean {
+  const extra = col.extra.toLowerCase();
+  if (extra.includes("auto_increment")) return true;
+  if (extra.includes("generated")) return true;
+  const def = (col.default ?? "").toLowerCase();
+  return def.includes("nextval(");
+}
+
+/**
+ * カラムのメタデータから既定の生成方針を推定する (#602 の受け入れ条件)。
+ *
+ * - 自動採番 (auto_increment / nextval / 生成列) → "omit" (DB に任せる)
+ * - FK (参照先あり) → "fkRef" (参照先の既存値からランダム選択)
+ * - ENUM/SET → "choice" (宣言の候補からランダム選択)
+ * - PK → 数値なら "serial"、それ以外は "uuid"
+ * - あとは CellKind 別: 数値 → ランダム数値、日時 → ランダム日時、
+ *   真偽 → ランダム真偽、JSON → 固定 "{}"、バイナリ → "omit"、
+ *   文字列 → ランダム文字列 (宣言長を超えない)
+ */
+export function inferColumnSpec(col: TableColumnInfo): ColumnGenSpec {
+  const kind = classifyDataType(col.data_type);
+  const base: ColumnGenSpec = {
+    column: col.name,
+    dataType: col.data_type,
+    kind,
+    nullable: col.nullable,
+    strategy: "randomString",
+    nullRate: 0,
+    fixedValue: "",
+    choices: [],
+    fkTable: col.referenced_table,
+    fkColumn: col.referenced_column,
+    length: Math.max(1, Math.min(declaredLength(col.data_type) ?? 12, 12)),
+    min: 1,
+    max: 1000000,
+    serialStart: 1,
+    temporal: temporalFormatOf(col.data_type),
+  };
+  if (isAutoGenerated(col)) return { ...base, strategy: "omit" };
+  if (col.referenced_table && col.referenced_column) {
+    return { ...base, strategy: "fkRef" };
+  }
+  if (kind === "enum") {
+    return { ...base, strategy: "choice", choices: parseEnumChoices(col.data_type) ?? [] };
+  }
+  const isPk = col.key.toUpperCase().includes("PRI");
+  if (isPk) {
+    if (kind === "number" || kind === "decimal") return { ...base, strategy: "serial" };
+    return { ...base, strategy: "uuid" };
+  }
+  if (col.data_type.trim().toLowerCase().startsWith("uuid")) {
+    return { ...base, strategy: "uuid" };
+  }
+  switch (kind) {
+    case "number":
+      return { ...base, strategy: "randomNumber" };
+    case "decimal":
+      return { ...base, strategy: "randomNumber", max: 10000 };
+    case "bool":
+      return { ...base, strategy: "randomBool" };
+    case "date":
+    case "time":
+      return { ...base, strategy: "randomDate" };
+    case "json":
+      return { ...base, strategy: "fixed", fixedValue: "{}" };
+    case "binary":
+      // BLOB はワイヤ表現 (16 進) と各方言のリテラル差があり文字列リテラルでは
+      // 安全に生成できないため、既定では DB 既定値 (または NULL) に任せる。
+      return { ...base, strategy: "omit" };
+    default:
+      return { ...base, strategy: "randomString" };
+  }
+}
+
+const ALNUM = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+/** PRNG のバイト列から UUID v4 形式の文字列を作る (決定論的)。 */
+function uuidFrom(rng: () => number): string {
+  const bytes: number[] = [];
+  for (let i = 0; i < 16; i++) bytes.push(Math.floor(rng() * 256) & 0xff);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// ランダム日時の範囲。Date.now() に依存すると同じシードでも日によって出力が
+// 変わるため、固定の範囲 [2023-01-01, 2026-01-01) を使う (決定論性を優先)。
+const DATE_RANGE_START = Date.UTC(2023, 0, 1);
+const DATE_RANGE_END = Date.UTC(2026, 0, 1);
+
+function pad(n: number, w = 2): string {
+  return String(n).padStart(w, "0");
+}
+
+function formatTemporal(ms: number, format: TemporalFormat): string {
+  const d = new Date(ms);
+  const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  const time = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+  if (format === "date") return date;
+  if (format === "time") return time;
+  return `${date} ${time}`;
+}
+
+/**
+ * strategy = "fixed" の入力文字列を、カラム型に応じて CellValue へ緩く変換する。
+ * `cellEdit.literalFromInput` の規約に倣う: "NULL" (大小無視) → SQL NULL、
+ * 数値カラム + 数値に見える入力 → 数値、真偽カラム + true/false/0/1 → 真偽、
+ * それ以外は文字列のまま。
+ */
+export function coerceFixedValue(raw: string, kind: CellKind): CellValue {
+  if (/^null$/i.test(raw.trim())) return null;
+  if ((kind === "number" || kind === "decimal") && raw.trim() !== "" && Number.isFinite(Number(raw.trim()))) {
+    return Number(raw.trim());
+  }
+  if (kind === "bool") {
+    const v = raw.trim().toLowerCase();
+    if (v === "true" || v === "1") return true;
+    if (v === "false" || v === "0") return false;
+  }
+  return raw;
+}
+
+function generateValue(spec: ColumnGenSpec, rowIndex: number, rng: () => number): CellValue {
+  // NULL 率は全戦略に先行して適用する (連番でも明示的に指定されていれば従う)。
+  if (spec.nullRate > 0 && rng() < spec.nullRate) return null;
+  switch (spec.strategy) {
+    case "serial":
+      return spec.serialStart + rowIndex;
+    case "uuid":
+      return uuidFrom(rng);
+    case "randomNumber": {
+      const min = Math.min(spec.min, spec.max);
+      const max = Math.max(spec.min, spec.max);
+      if (spec.kind === "decimal") {
+        const v = min + rng() * (max - min);
+        return Math.round(v * 100) / 100;
+      }
+      return Math.floor(rng() * (max - min + 1)) + min;
+    }
+    case "randomString": {
+      const len = Math.max(1, Math.floor(spec.length));
+      let s = "";
+      for (let i = 0; i < len; i++) s += ALNUM[Math.floor(rng() * ALNUM.length)];
+      return s;
+    }
+    case "randomDate": {
+      const ms = DATE_RANGE_START + Math.floor(rng() * (DATE_RANGE_END - DATE_RANGE_START));
+      // 秒未満は切り捨てて全ドライバで受理される素直な書式にする。
+      return formatTemporal(Math.floor(ms / 1000) * 1000, spec.temporal);
+    }
+    case "randomBool":
+      return rng() < 0.5;
+    case "fixed":
+      return coerceFixedValue(spec.fixedValue, spec.kind);
+    case "choice":
+    case "fkRef": {
+      if (spec.choices.length === 0) return null;
+      return spec.choices[Math.floor(rng() * spec.choices.length)];
+    }
+    case "omit":
+      return null;
+  }
+}
+
+/** INSERT 対象 (strategy が "omit" 以外) のカラム設定だけを返す。 */
+export function activeSpecs(specs: ColumnGenSpec[]): ColumnGenSpec[] {
+  return specs.filter((s) => s.strategy !== "omit");
+}
+
+/**
+ * 決定論的にテストデータ行列を生成する。返り値の列順は
+ * `activeSpecs(specs)` と一致する。同じ specs + count + seed なら常に同じ
+ * 結果を返す (プレビューと実投入の一致・テストの再現性)。
+ */
+export function generateRows(specs: ColumnGenSpec[], count: number, seed: number): CellValue[][] {
+  const rng = mulberry32(seed);
+  const active = activeSpecs(specs);
+  const rows: CellValue[][] = [];
+  for (let i = 0; i < count; i++) {
+    rows.push(active.map((spec) => generateValue(spec, i, rng)));
+  }
+  return rows;
+}
+
+/** SQLite は単一名前空間なので DB 名で修飾しない (cellEdit と同じ規約)。 */
+function qualifiedTableRef(driver: string, database: string, table: string): string {
+  if (driver === "sqlite") return quoteIdentFor(driver, table);
+  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
+}
+
+/**
+ * 生成済みの行列から、バッチサイズごとにまとめた複数行 INSERT 文を組み立てる。
+ * リテラル化は `cellEdit.literalFromCellValue` (方言別エスケープ) を共有する。
+ * 返り値の文配列を `run_query_transaction` に渡せば all-or-nothing で投入される。
+ */
+export function buildTestDataInsertStatements(
+  driver: string,
+  database: string,
+  table: string,
+  columns: string[],
+  rows: CellValue[][],
+  batchSize = 100,
+): string[] {
+  if (columns.length === 0 || rows.length === 0) return [];
+  const size = Math.max(1, Math.floor(batchSize));
+  const tableRef = qualifiedTableRef(driver, database, table);
+  const colList = columns.map((c) => quoteIdentFor(driver, c)).join(", ");
+  const statements: string[] = [];
+  for (let i = 0; i < rows.length; i += size) {
+    const chunk = rows.slice(i, i + size);
+    const values = chunk
+      .map((row) => `(${row.map((v) => literalFromCellValue(driver, v)).join(", ")})`)
+      .join(", ");
+    statements.push(`INSERT INTO ${tableRef} (${colList}) VALUES ${values}`);
+  }
+  return statements;
+}
+
+/**
+ * FK 参照先の既存値を取得する SELECT を方言別クオートで組み立てる。
+ * 取得結果 (1 列目) を `ColumnGenSpec.choices` に入れて "fkRef" で使う。
+ */
+export function buildFkSelectSql(
+  driver: string,
+  database: string,
+  refTable: string,
+  refColumn: string,
+  limit: number,
+): string {
+  const col = quoteIdentFor(driver, refColumn);
+  const tableRef = qualifiedTableRef(driver, database, refTable);
+  const n = Math.max(1, Math.floor(limit));
+  return `SELECT DISTINCT ${col} FROM ${tableRef} WHERE ${col} IS NOT NULL LIMIT ${n}`;
+}
