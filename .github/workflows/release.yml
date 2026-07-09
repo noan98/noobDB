@@ -116,13 +116,25 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: pnpm tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}' -- ${{ matrix.args }}
 
-      # タグ push のときだけ実際のリリース (ドラフト) を作成する。updater 用の
-      # latest.json + 署名は tauri-action が createUpdaterArtifacts を検出して自動
-      # 生成・アップロードする (#705)。署名鍵は GitHub Actions Secrets で管理し、
-      # リポジトリには置かない (公開鍵のみ tauri.conf.json の plugins.updater.pubkey)。
-      # Secrets 未設定のリポジトリではこの署名付きビルドが失敗するため、更新機能を
-      # 使うには TAURI_SIGNING_PRIVATE_KEY (と鍵にパスワードを付けた場合は
-      # TAURI_SIGNING_PRIVATE_KEY_PASSWORD) の登録が前提。
+      # タグ push のときだけ実際のリリースへ成果物をアップロードする。
+      #
+      # releaseDraft は false にすること。tauri-action はこのフラグと「同じ状態」の
+      # リリースしかタグ名で探さない: true だと未公開ドラフトのみを探すため、
+      # GitHub UI で先にリリースを公開してタグを生成する運用 (本リポジトリの通常
+      # フロー) では既存リリースを見つけられず、成果物 (インストーラ + .sig +
+      # latest.json) が誰にも見えない別ドラフト「noobDB vX.Y.Z」へ迷子になる
+      # (v0.8.2 で実際に発生)。false なら公開済みリリースを getReleaseByTag で
+      # 見つけてそこへ添付し、リリースが無い場合 (タグだけを git push した場合) は
+      # 公開リリースを新規作成する (本文は空になるのでリリースノートは後から編集)。
+      #
+      # updater 用の latest.json + 署名は tauri-action が createUpdaterArtifacts を
+      # 検出して自動生成・アップロードする (#705)。latest.json は
+      # releases/latest/download/ 経由で参照されるため、成果物が公開リリースに
+      # 載らないとアプリ内更新も機能しない。署名鍵は GitHub Actions Secrets で
+      # 管理し、リポジトリには置かない (公開鍵のみ tauri.conf.json の
+      # plugins.updater.pubkey)。Secrets 未設定のリポジトリではこの署名付きビルドが
+      # 失敗するため、更新機能を使うには TAURI_SIGNING_PRIVATE_KEY (と鍵にパスワードを
+      # 付けた場合は TAURI_SIGNING_PRIVATE_KEY_PASSWORD) の登録が前提。
       - name: Build Tauri app (release)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
@@ -133,7 +145,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "noobDB ${{ github.ref_name }}"
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
 
