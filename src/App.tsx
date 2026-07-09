@@ -4268,7 +4268,7 @@ export default function App() {
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      // Cmd/Ctrl+F → focus the focused pane's cross-column result search (no
+      // Cmd/Ctrl+F → open the focused pane's find-in-results bar (#644; no
       // Shift so the editor's Cmd/Ctrl+Shift+F format shortcut is left alone).
       // When focus is inside the query editor (CodeMirror), defer to its own
       // in-editor find/replace instead of stealing the shortcut.
@@ -4277,7 +4277,7 @@ export default function App() {
         const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
         if (grid) {
           e.preventDefault();
-          grid.focusSearch();
+          grid.openFind();
         }
         return;
       }
