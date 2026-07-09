@@ -170,8 +170,9 @@ export function TableStatisticsPanel({
     }
   };
   // 各ソートヘッダ共通の a11y プロパティ (フォーカス可能 + role + aria-sort + キー操作)。
+  // th はネイティブに columnheader ロールを持つ。role を上書きすると aria-sort が
+  // 無効になるため、role は付けずキーボード/クリック操作だけを足す。
   const headerProps = (key: TableStatSortKey) => ({
-    role: "button" as const,
     tabIndex: 0,
     "aria-sort": ariaSort(key),
     onClick: () => onSort(key),
@@ -282,7 +283,10 @@ export function TableStatisticsPanel({
                   {t("sizeColIndexes")}
                   {arrow("index_count")}
                 </chakra.th>
-                <chakra.th css={{ ...thBase, textAlign: "center" }}>{t("sizeColPk")}</chakra.th>
+                <chakra.th css={{ ...thBase, textAlign: "center" }} {...headerProps("primary_key")}>
+                  {t("sizeColPk")}
+                  {arrow("primary_key")}
+                </chakra.th>
                 <chakra.th css={{ ...thBase, textAlign: "right" }} {...headerProps("foreign_key_count")}>
                   {t("sizeColFk")}
                   {arrow("foreign_key_count")}

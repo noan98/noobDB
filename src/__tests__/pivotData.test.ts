@@ -3,6 +3,7 @@ import {
   buildPivotModel,
   buildPivotSql,
   defaultPivotConfig,
+  firstNumericColumnIndex,
   pivotValueLabel,
   MAX_PIVOT_ROWS,
   type PivotConfig,
@@ -131,6 +132,16 @@ describe("buildPivotModel", () => {
     expect(m.cells[0][0]).toBeNull();
   });
 
+  it("yields all-null cells for a non-count aggregation with no value field", () => {
+    // PivotView.setAgg guards against this by auto-selecting a numeric column,
+    // but lock the pure-logic behavior in case the invalid config still arrives.
+    const cfg: PivotConfig = { rowField: 0, colField: 1, valueField: null, agg: "sum" };
+    const m = buildPivotModel(COLUMNS, ROWS, cfg);
+    expect(m.cells.every((row) => row.every((v) => v === null))).toBe(true);
+    expect(m.rowTotals.every((v) => v === null)).toBe(true);
+    expect(m.grandTotal).toBeNull();
+  });
+
   it("marks truncated when distinct row keys exceed the cap", () => {
     const c = cols("g", "v");
     const rows: CellValue[][] = [];
@@ -138,6 +149,13 @@ describe("buildPivotModel", () => {
     const m = buildPivotModel(c, rows, { rowField: 0, colField: null, valueField: 1, agg: "sum" });
     expect(m.rowKeys.length).toBe(MAX_PIVOT_ROWS);
     expect(m.truncated).toBe(true);
+  });
+});
+
+describe("firstNumericColumnIndex", () => {
+  it("returns the first numeric column index or null", () => {
+    expect(firstNumericColumnIndex(COLUMNS, ROWS)).toBe(2);
+    expect(firstNumericColumnIndex(cols("a", "b"), [["x", "y"]])).toBeNull();
   });
 });
 

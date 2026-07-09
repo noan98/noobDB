@@ -136,7 +136,8 @@ export type TableStatSortKey =
   | "total_bytes"
   | "column_count"
   | "index_count"
-  | "foreign_key_count";
+  | "foreign_key_count"
+  | "primary_key";
 export type SortDirection = "asc" | "desc";
 
 /** 数値ソートキーから行の値 (不明は `null`) を取り出す。 */
@@ -156,6 +157,9 @@ function statValue(row: TableStatRow, key: Exclude<TableStatSortKey, "name">): n
       return row.indexCount;
     case "foreign_key_count":
       return row.foreignKeyCount;
+    case "primary_key":
+      // PK 有無を 1/0 に写して並べ替え可能にする。不明 (null) は末尾へ。
+      return row.hasPrimaryKey == null ? null : row.hasPrimaryKey ? 1 : 0;
   }
 }
 

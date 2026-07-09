@@ -10,6 +10,7 @@ import {
   buildPivotModel,
   buildPivotSql,
   defaultPivotConfig,
+  firstNumericColumnIndex,
   type PivotAgg,
   type PivotConfig,
   type PivotModel,
@@ -81,6 +82,10 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onClose }
     defaultPivotConfig(result.columns, result.rows),
   );
   const [heatmap, setHeatmap] = useState(true);
+  const numericFieldIdx = useMemo(
+    () => firstNumericColumnIndex(result.columns, result.rows),
+    [result.columns, result.rows],
+  );
 
   const model = useMemo<PivotModel | null>(
     () => (config ? buildPivotModel(result.columns, result.rows, config) : null),
@@ -138,7 +143,16 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onClose }
   const setColField = (v: string) => setConfig({ ...config, colField: v === "" ? null : Number(v) });
   const setValueField = (v: string) =>
     setConfig({ ...config, valueField: v === "" ? null : Number(v) });
-  const setAgg = (agg: PivotAgg) => setConfig({ ...config, agg });
+  const setAgg = (agg: PivotAgg) => {
+    // count 以外は値列が必須。未選択のまま切り替えると全セルが空になるため、
+    // 最初の数値列を自動選択する (数値列が無ければ据え置き)。
+    const needsValue = agg !== "count" && (config.valueField == null || config.valueField < 0);
+    setConfig({
+      ...config,
+      agg,
+      valueField: needsValue && numericFieldIdx != null ? numericFieldIdx : config.valueField,
+    });
+  };
 
   const sendSql = () => {
     if (!canSendSql || !onSendToEditor || !sourceSql) return;

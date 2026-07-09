@@ -157,6 +157,24 @@ describe("sortTableStats", () => {
     ]);
   });
 
+  it("sorts by primary-key presence with unknown last", () => {
+    const rows = [
+      statRow("hasPk", { hasPrimaryKey: true }),
+      statRow("noPk", { hasPrimaryKey: false }),
+      statRow("unknown", { hasPrimaryKey: null }),
+    ];
+    expect(sortTableStats(rows, "primary_key", "desc").map((r) => r.name)).toEqual([
+      "hasPk",
+      "noPk",
+      "unknown",
+    ]);
+    expect(sortTableStats(rows, "primary_key", "asc").map((r) => r.name)).toEqual([
+      "noPk",
+      "hasPk",
+      "unknown",
+    ]);
+  });
+
   it("does not mutate the input", () => {
     const input = [statRow("b"), statRow("a")];
     const before = input.map((r) => r.name);
