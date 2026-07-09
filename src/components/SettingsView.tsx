@@ -974,10 +974,11 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsSectionHeader>
         <SettingsHelp>{t("settingsResultGridModeHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel>
+          <SettingsToggleLabel htmlFor="settings-result-grid-mode">
             {t("settingsResultGridMode")}
           </SettingsToggleLabel>
           <Select
+            id="settings-result-grid-mode"
             value={settings.resultGridMode}
             onChange={(e) => setResultGridMode(e.target.value as ResultGridMode)}
           >
