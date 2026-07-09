@@ -241,7 +241,13 @@ CI は 2 つのワークフローに分かれています:
   指定してください** (ジョブ分割でチェック名が変わったため)。
 - `.github/workflows/release.yml` — `v*` タグまたは `workflow_dispatch` を
   トリガに、`windows-latest` 上で `tauri-action` 経由の NSIS バンドルを生成します。
-  `main` への push でもキャッシュ温め目的でビルドが走ります。ビルド後の
+  成果物 (インストーラ + `.sig` + `latest.json`) は**タグと同名の公開済みリリース**へ
+  添付されます (`releaseDraft: false`。GitHub UI で先にリリースを公開してタグを
+  生成する運用に対応。リリースが存在しないタグ push では公開リリースを新規作成
+  するため、リリースノートは後から編集します)。`releaseDraft: true` に戻しては
+  いけません — tauri-action は true だと未公開ドラフトしかタグ名で探さないため、
+  公開済みリリースがあると成果物が誰にも見えない別ドラフトへ迷子になります
+  (v0.8.2 で発生)。`main` への push でもキャッシュ温め目的でビルドが走ります。ビルド後の
   `Report bundle artifact sizes` ステップが、出荷バイナリ (NSIS インストーラ・
   `.exe`、将来の `.dmg` / `.AppImage` / `.deb`) のサイズを Job Summary に出力します
   (#549)。これは JS/CSS を測るバンドルサイズ可視化 (#443) の**アプリ本体版**で、方針も
