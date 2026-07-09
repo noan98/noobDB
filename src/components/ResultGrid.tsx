@@ -102,6 +102,16 @@ import {
   parseFullColumnStats,
   isNumericStatsKind,
 } from "./gridStats";
+import {
+  type GridFindMatch,
+  type GridFindResult,
+  EMPTY_FIND_RESULT,
+  buildFindKeySet,
+  computeFindMatches,
+  findMatchKey,
+  nextMatchIndex,
+  stableMatchIndex,
+} from "./gridFind";
 
 /**
  * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。
@@ -722,6 +732,22 @@ export const GRID_CSS: SystemStyleObject = {
   "&.is-apply-flash": {
     animation: "apply-flash 0.7s ease-out",
   },
+  // 結果内検索 (Find in Results, #644) のヒットハイライト。行を隠す列フィルタと
+  // 違い「読みながら探す」機能なので、選択 (アクセント色) と区別できる警告色系の
+  // 塗りにする。ストライプ/ホバーの行背景より優先する。
+  "& tbody td.is-find-hit, & tbody tr.grid-row-stripe td.is-find-hit, & tbody tr:hover td.is-find-hit":
+    {
+      background: "color-mix(in srgb, var(--status-warning) 22%, var(--bg))",
+    },
+  // 現在ヒット: 濃い塗り + inset リング。ジャンプ時は App.css の
+  // @keyframes find-current-pulse で一瞬リングを太らせて着地を示す
+  // (reduced-motion では App.css 末尾のメディアクエリで静止化)。
+  "& tbody td.is-find-current, & tbody tr.grid-row-stripe td.is-find-current, & tbody tr:hover td.is-find-current":
+    {
+      background: "color-mix(in srgb, var(--status-warning) 38%, var(--bg))",
+      boxShadow: "inset 0 0 0 2px var(--status-warning)",
+      animation: "find-current-pulse 0.45s var(--ease-out)",
+    },
 };
 
 interface Props {
@@ -872,8 +898,23 @@ interface Props {
 }
 
 export interface ResultGridHandle {
-  /** Move focus to the cross-column search box (Cmd/Ctrl+F entry point). */
-  focusSearch: () => void;
+  /** Open the find-in-results bar and focus its input (Cmd/Ctrl+F entry point, #644). */
+  openFind: () => void;
+}
+
+/**
+ * 結果内検索 (#644) のナビゲーション要求。外側 `ResultGrid` (検索バー所有) から
+ * 内側 `DataGrid` (仮想スクロール/ページング/アクティブセル所有) へ prop で渡す
+ * ワンショットのコマンド。`seq` の単調増加で同一セルへの再ジャンプも発火する。
+ */
+interface GridFindNav {
+  rowIdx: number;
+  colIdx: number;
+  seq: number;
+  /** true ならアクティブセルもヒットへ移す (Enter ナビ)。タイピング追従は false。 */
+  select: boolean;
+  /** true ならセルへ DOM フォーカスも移す (Esc でバーを閉じてグリッドへ戻るとき)。 */
+  focusCell: boolean;
 }
 
 /** Pixels-from-bottom that count as "near the end" for triggering a load. */
@@ -1333,6 +1374,33 @@ const FILTER_FIELD_CSS: SystemStyleObject = {
     boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
   },
   _disabled: { opacity: 0.5, cursor: "not-allowed" },
+};
+
+/**
+ * 結果内検索バー (#644) のトグルボタン (Aa / 完全一致 / 正規表現) の共有スタイル。
+ * `aria-pressed` を状態の単一ソースにし、押下中はアクセント色で示す。
+ */
+const FIND_TOGGLE_CSS: SystemStyleObject = {
+  px: "1.5",
+  py: "0.5",
+  fontSize: "var(--text-xs)",
+  fontFamily: "var(--font-mono)",
+  lineHeight: 1.5,
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm)",
+  background: "transparent",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+  flexShrink: 0,
+  transition:
+    "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
+  _hover: { background: "var(--bg-hover)", color: "var(--text)" },
+  '&[aria-pressed="true"]': {
+    background: "color-mix(in srgb, var(--accent) 18%, transparent)",
+    borderColor: "var(--accent)",
+    color: "var(--accent)",
+  },
 };
 
 /**
@@ -2020,6 +2088,9 @@ export function DataGrid({
   onRedoEdit,
   onSelectionSummary,
   onRunStatsQuery,
+  findHits,
+  findCurrentKey,
+  findNav,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -2133,6 +2204,15 @@ export function DataGrid({
    * hide the full-aggregate button (in-memory stats still show).
    */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
+  /**
+   * 結果内検索 (#644) のヒットセル ("row:col" キー) の集合。該当セルに
+   * ハイライトクラスを付ける。省略時 (検索バーが閉じている/プレビュー) は無印。
+   */
+  findHits?: Set<string>;
+  /** 現在ヒットのセルキー ("row:col")。ヒット中で強調するセル。 */
+  findCurrentKey?: string | null;
+  /** 現在ヒットへのスクロール/選択/フォーカス移動の要求 (seq で再発火)。 */
+  findNav?: GridFindNav | null;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -2864,6 +2944,55 @@ export function DataGrid({
   // the virtual spacer span.
   const totalColCount = visibleColIds.length + 2;
 
+  // ── 結果内検索 (#644) のナビゲーション ──
+  // 要求はワンショットの prop (`findNav`) で届く。ページング表示ではヒットの
+  // 属するページへ先に移動する必要があり、ページ切替後の再レンダーを待ってから
+  // スクロール/フォーカスするため、要求を ref に保留して毎レンダーの効果で消化する。
+  const pendingFindNavRef = useRef<GridFindNav | null>(null);
+  const findNavSeq = findNav?.seq ?? null;
+  useEffect(() => {
+    if (!findNav) return;
+    pendingFindNavRef.current = findNav;
+    if (paginationState && onPaginationChange) {
+      // ページング時: ソート/フィルタ適用後・ページ分割前の行モデルからヒット行の
+      // 表示位置を求め、そのページへジャンプする。
+      const pre = table.getPrePaginationRowModel().rows;
+      const pos = pre.findIndex((r) => r.index === findNav.rowIdx);
+      if (pos >= 0) {
+        const page = Math.floor(pos / paginationState.pageSize);
+        if (page !== paginationState.pageIndex) {
+          onPaginationChange((p) => ({ ...p, pageIndex: page }));
+        }
+      }
+    }
+    // findNav は seq 単調増加のワンショット。seq だけを依存にし、同一要求で
+    // 二重発火しないようにする。
+  }, [findNavSeq]);
+  useEffect(() => {
+    const nav = pendingFindNavRef.current;
+    if (!nav) return;
+    const visIdx = visibleRows.findIndex((r) => r.index === nav.rowIdx);
+    if (visIdx < 0) {
+      // ページ切替が反映される前なら次レンダーまで保留。列フィルタ等で行自体が
+      // 表示されていないなら諦める (件数表示は取得済み行ベースのまま)。
+      if (paginationState) {
+        const pre = table.getPrePaginationRowModel().rows;
+        if (pre.some((r) => r.index === nav.rowIdx)) return;
+      }
+      pendingFindNavRef.current = null;
+      return;
+    }
+    pendingFindNavRef.current = null;
+    if (virtualize) rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
+    if (nav.select) {
+      setSelection(null);
+      setActiveCell({ rowIdx: nav.rowIdx, colIdx: nav.colIdx });
+    }
+    if (nav.focusCell) {
+      pendingFocusRef.current = { rowIdx: nav.rowIdx, colIdx: nav.colIdx };
+    }
+  });
+
   // Grid-level keyboard handler: arrow keys, Tab, Enter, Ctrl+C, etc.
   // Fires on the <table> (bubbled from the focused <td>). When the inline
   // editor is open the input handles its own keys and this handler short-circuits.
@@ -3046,6 +3175,10 @@ export function DataGrid({
         const isActiveCell = activeCell?.rowIdx === row.index && activeCell?.colIdx === colIdx;
         const inSelection =
           !!selectionRect && selectionRect.rowIndexSet.has(row.index) && selectionRect.colIdSet.has(colIdx);
+        // 結果内検索 (#644) のヒット/現在ヒット。キーは cellRefs と同じ "row:col"。
+        const findKey = `${row.index}:${colIdx}`;
+        const isFindHit = !!findHits?.has(findKey);
+        const isFindCurrent = isFindHit && findCurrentKey === findKey;
         // Live validation of the value being typed, and of an
         // already-buffered value that's sitting invalid in the grid.
         const editError =
@@ -3095,7 +3228,7 @@ export function DataGrid({
               if (el) cellRefs.current.set(key, el);
               else cellRefs.current.delete(key);
             }}
-            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
+            className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
             title={
               isEditingHere
                 ? undefined
@@ -4160,14 +4293,116 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     };
   }, [lastEditAppliedAt]);
 
+  // ── 結果内検索 (Find in Results, #644) ──
+  // 取得済み行を横断してヒットセルをハイライトし、Enter/Shift+Enter で前後の
+  // ヒットへジャンプする。列フィルタ (行を隠す) とは独立で、マッチ計算は
+  // `gridFind.ts` の純ロジックに委ねる。
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  // バーが既に開いているときの Ctrl+F 再押下でも入力へ再フォーカスするための seq。
+  const [findFocusSeq, setFindFocusSeq] = useState(0);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findWholeCell, setFindWholeCell] = useState(false);
+  const [findRegex, setFindRegex] = useState(false);
+  const [findIdx, setFindIdx] = useState<number | null>(null);
+  const [findNav, setFindNav] = useState<GridFindNav | null>(null);
+  const findSeqRef = useRef(0);
+  const findIdxRef = useRef(findIdx);
+  findIdxRef.current = findIdx;
+  // ストリーミング等でヒット一覧が再計算されても現在ヒットのセルを維持するための
+  // スナップショットと、タイピング追従スクロールの重複発行を防ぐ直近キー。
+  const prevFindMatchRef = useRef<GridFindMatch | null>(null);
+  const lastFindAutoNavKeyRef = useRef<string | null>(null);
+
+  const findResult = useMemo<GridFindResult>(() => {
+    if (!findOpen || !result) return EMPTY_FIND_RESULT;
+    return computeFindMatches(result.rows, result.columns.length, findQuery, {
+      caseSensitive: findCaseSensitive,
+      wholeCell: findWholeCell,
+      regex: findRegex,
+    });
+  }, [findOpen, result, findQuery, findCaseSensitive, findWholeCell, findRegex]);
+  const findHits = useMemo(
+    () => (findResult.matches.length > 0 ? buildFindKeySet(findResult.matches) : undefined),
+    [findResult],
+  );
+  const findCurrentMatch =
+    findIdx != null ? (findResult.matches[findIdx] ?? null) : null;
+
+  const emitFindNav = useCallback(
+    (m: GridFindMatch, select: boolean, focusCell: boolean) => {
+      findSeqRef.current += 1;
+      setFindNav({
+        rowIdx: m.rowIdx,
+        colIdx: m.colIdx,
+        seq: findSeqRef.current,
+        select,
+        focusCell,
+      });
+    },
+    [],
+  );
+
+  // ヒット一覧の再計算 (タイピング / オプション変更 / ストリーミングの行追加) の
+  // たびに現在ヒットを安定化し、指すセルが変わったときだけスクロール追従する
+  // (行追加だけで現在ヒットが不変なら視界を動かさない)。
+  useEffect(() => {
+    const idx = stableMatchIndex(
+      findResult.matches,
+      prevFindMatchRef.current,
+      findIdxRef.current,
+    );
+    setFindIdx(idx);
+    const m = idx != null ? findResult.matches[idx] : null;
+    prevFindMatchRef.current = m;
+    if (m) {
+      const key = findMatchKey(m);
+      if (lastFindAutoNavKeyRef.current !== key) {
+        lastFindAutoNavKeyRef.current = key;
+        // タイピング追従はスクロールのみ (アクティブセル/フォーカスは動かさない)。
+        emitFindNav(m, false, false);
+      }
+    } else {
+      lastFindAutoNavKeyRef.current = null;
+    }
+  }, [findResult, emitFindNav]);
+
+  // Enter / Shift+Enter (およびバーの ‹ › ボタン): 次/前のヒットへ wrap-around で移動。
+  const findStep = (dir: 1 | -1) => {
+    const next = nextMatchIndex(findResult.matches.length, findIdx, dir);
+    if (next == null) return;
+    const m = findResult.matches[next];
+    setFindIdx(next);
+    prevFindMatchRef.current = m;
+    lastFindAutoNavKeyRef.current = findMatchKey(m);
+    emitFindNav(m, true, false);
+  };
+
+  // Esc / 閉じるボタン: バーを閉じ、現在ヒットのセルへフォーカスを戻す (ヒットが
+  // 無ければグリッドのスクロールコンテナへ)。クエリは保持し、再オープン時に全選択で
+  // すぐ上書きできるようにする (閉じている間はハイライトも消える)。
+  const closeFind = () => {
+    const m = findCurrentMatch;
+    setFindOpen(false);
+    if (m) emitFindNav(m, true, true);
+    else containerRef.current?.focus();
+  };
+
   useImperativeHandle(ref, () => ({
-    focusSearch: () => {
-      const el = searchInputRef.current;
-      if (!el) return;
-      el.focus();
-      el.select();
+    openFind: () => {
+      setFindOpen(true);
+      setFindFocusSeq((n) => n + 1);
     },
   }), []);
+  useEffect(() => {
+    if (!findOpen) return;
+    const el = findInputRef.current;
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  }, [findOpen, findFocusSeq]);
   // Latest callback in a ref so we don't have to re-attach the scroll
   // listener every time `onLoadMore` is rebuilt (it changes on every
   // App.tsx render because of useCallback deps).
@@ -4890,6 +5125,149 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           </Button>
         )}
       </Box>
+      <AnimatePresence initial={false}>
+        {findOpen && (
+          <motion.div
+            key="grid-find-bar"
+            initial={variants.slideUp.initial}
+            animate={variants.slideUp.animate}
+            exit={variants.slideUp.exit}
+            transition={transitions.enter}
+          >
+            <Box
+              role="search"
+              aria-label={t("gridFindAria")}
+              display="flex"
+              alignItems="center"
+              flexWrap="wrap"
+              gap="1.5"
+              py="1"
+              px="2"
+              bg="app.toolbar"
+              borderBottom="1px solid"
+              borderColor="app.borderSubtle"
+              flexShrink={0}
+            >
+              <chakra.input
+                ref={findInputRef}
+                type="text"
+                width="240px"
+                padding="3px 8px"
+                fontSize="sm"
+                fontFamily="inherit"
+                border="1px solid var(--border)"
+                background="var(--bg-input)"
+                color="var(--text)"
+                borderRadius="var(--radius-sm)"
+                _placeholder={{ color: "var(--text-muted)" }}
+                _focus={{
+                  outline: "none",
+                  borderColor: "var(--accent)",
+                  boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+                }}
+                value={findQuery}
+                onChange={(e) => setFindQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    findStep(e.shiftKey ? -1 : 1);
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    closeFind();
+                  }
+                }}
+                placeholder={t("gridFindPlaceholder")}
+                aria-label={t("gridFindInputAria")}
+              />
+              <chakra.button
+                type="button"
+                css={FIND_TOGGLE_CSS}
+                aria-pressed={findCaseSensitive}
+                onClick={() => setFindCaseSensitive((v) => !v)}
+                title={t("gridFindCaseTitle")}
+                aria-label={t("gridFindCaseTitle")}
+              >
+                Aa
+              </chakra.button>
+              <chakra.button
+                type="button"
+                css={FIND_TOGGLE_CSS}
+                aria-pressed={findWholeCell}
+                onClick={() => setFindWholeCell((v) => !v)}
+                title={t("gridFindWholeTitle")}
+                aria-label={t("gridFindWholeTitle")}
+              >
+                =
+              </chakra.button>
+              <chakra.button
+                type="button"
+                css={FIND_TOGGLE_CSS}
+                aria-pressed={findRegex}
+                onClick={() => setFindRegex((v) => !v)}
+                title={t("gridFindRegexTitle")}
+                aria-label={t("gridFindRegexTitle")}
+              >
+                .*
+              </chakra.button>
+              <chakra.span
+                fontSize="xs"
+                fontFamily="mono"
+                whiteSpace="nowrap"
+                aria-live="polite"
+                color={
+                  findResult.invalidRegex || (findQuery !== "" && findResult.matches.length === 0)
+                    ? "var(--text-warning)"
+                    : "app.textMuted"
+                }
+              >
+                {findResult.invalidRegex
+                  ? t("gridFindInvalidRegex")
+                  : findQuery === ""
+                    ? ""
+                    : findResult.matches.length === 0
+                      ? t("gridFindNoHits")
+                      : t("gridFindCount", {
+                          current: (findIdx ?? 0) + 1,
+                          total: findResult.matches.length,
+                        })}
+              </chakra.span>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                disabled={findResult.matches.length === 0}
+                onClick={() => findStep(-1)}
+                title={t("gridFindPrevTitle")}
+                aria-label={t("gridFindPrevTitle")}
+              >
+                ‹
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                disabled={findResult.matches.length === 0}
+                onClick={() => findStep(1)}
+                title={t("gridFindNextTitle")}
+                aria-label={t("gridFindNextTitle")}
+              >
+                ›
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                marginLeft="auto"
+                onClick={closeFind}
+                title={t("gridFindCloseTitle")}
+                aria-label={t("gridFindCloseTitle")}
+              >
+                <Icon name="close" />
+              </Button>
+            </Box>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <Box
         ref={containerRef}
         tabIndex={-1}
@@ -4930,6 +5308,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           onRunStatsQuery={onRunStatsQuery}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}
+          findHits={findHits}
+          findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
+          findNav={findNav}
           emptyMessage={
             streaming ? undefined : queryError ? (
               <EmptyState
