@@ -163,6 +163,9 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
   const tone = writes ? "var(--status-error)" : "var(--status-connected)";
   return (
     <chakra.span
+      // a11y ベースライン (a11y.browser.test.tsx) が対象ノードを特定する
+      // ための安定クラス。配色調整 (#559) で AA を満たしたら外してよい。
+      className="help-impact-badge"
       display="inline-flex"
       alignItems="center"
       gap="5px"

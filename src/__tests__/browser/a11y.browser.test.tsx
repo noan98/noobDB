@@ -81,9 +81,11 @@ const AXE_RULES = [
 // fail させる重大度。moderate / minor は当面対象外 (漸進方針)。
 const FAIL_IMPACTS = new Set(["critical", "serious"]);
 
-// ベースライン許可リスト — 導入時点で既存だった違反を画面 × ルール ID 単位で
-// 除外し、初期状態を green にする (**新規違反のみ fail**)。エントリを消化
-// (コンポーネント側を修正) したらここから削除して検出網を狭めること。
+// ベースライン許可リスト — 導入時点で既存だった違反を画面 × ルール ID ×
+// 対象セレクタ単位で除外し、初期状態を green にする (**新規違反のみ fail**)。
+// エントリを消化 (コンポーネント側を修正) したらここから削除して検出網を
+// 狭めること。ルール ID 単位の丸ごと除外にすると同一画面へ後から入った
+// 別要素の同種違反まで隠れてしまうため、除外は必ず targets で絞る。
 //
 // 導入時の走査で見つかったラベル系違反 (ConnectionForm の label / select-name、
 // SettingsView の select-name) は htmlFor/id の関連付けで修正済み。残るのは
@@ -95,12 +97,15 @@ const BASELINE_ALLOWED: ReadonlyArray<{
   screen: string;
   /** 除外する axe ルール ID。 */
   ruleId: string;
+  /** 除外する違反ノードのセレクタ (axe の node.target に部分一致)。 */
+  targets: readonly string[];
   /** なぜ即修正せずベースライン化するかの理由。 */
   reason: string;
 }> = [
   {
     screen: "result-grid",
     ruleId: "color-contrast",
+    targets: [".th-type"],
     reason:
       "列ヘッダの型ラベル (.th-type、#727c89 on #eef1f5 = 3.73:1 < 4.5:1)。" +
       "muted 系トークンの明度調整は全テーマプリセットに波及するため #559 で対応。",
@@ -108,6 +113,7 @@ const BASELINE_ALLOWED: ReadonlyArray<{
   {
     screen: "help",
     ruleId: "color-contrast",
+    targets: [".th-type", ".help-impact-badge"],
     reason:
       "実行効果バッジ (#15803d on #d4e3df = 3.78:1) とサンプルグリッドの " +
       ".th-type (result-grid と同一)。配色調整は #559 で対応。",
@@ -137,12 +143,22 @@ async function runAxe(screen: string): Promise<axe.Result[]> {
     // 実験的ルール等は runOnly 指定なので混入しない。結果は違反のみ使う。
     resultTypes: ["violations"],
   });
-  const allowed = new Set(
-    BASELINE_ALLOWED.filter((b) => b.screen === screen).map((b) => b.ruleId),
-  );
-  return results.violations.filter(
-    (v) => FAIL_IMPACTS.has(v.impact ?? "") && !allowed.has(v.id),
-  );
+  const allowed = BASELINE_ALLOWED.filter((b) => b.screen === screen);
+  return results.violations
+    .filter((v) => FAIL_IMPACTS.has(v.impact ?? ""))
+    .map((v) => {
+      // ベースライン照合は違反ノード単位: 許可済みセレクタに一致するノード
+      // だけを取り除き、残ったノード (= 新規違反) があれば fail 対象に残す。
+      const targets = allowed
+        .filter((b) => b.ruleId === v.id)
+        .flatMap((b) => b.targets);
+      if (targets.length === 0) return v;
+      const nodes = v.nodes.filter(
+        (n) => !targets.some((sel) => n.target.join(" ").includes(sel)),
+      );
+      return { ...v, nodes };
+    })
+    .filter((v) => v.nodes.length > 0);
 }
 
 /** 違反を人間が読めるレポート文字列へ整形する (fail 時のデバッグ用)。 */
