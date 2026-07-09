@@ -117,6 +117,9 @@ const RowInsertModal = lazy(() =>
 const ChartView = lazy(() =>
   import("./components/ChartView").then((m) => ({ default: m.ChartView })),
 );
+const PivotView = lazy(() =>
+  import("./components/PivotView").then((m) => ({ default: m.PivotView })),
+);
 const BatchResultsView = lazy(() =>
   import("./components/BatchResultsView").then((m) => ({ default: m.BatchResultsView })),
 );
@@ -532,6 +535,8 @@ interface Tab {
   pendingInserts?: PendingInsertRow[];
   /** チャートビューを表示中か。結果グリッドの代わりにチャートを描く。 */
   showChart?: boolean;
+  /** ピボットビューを表示中か。結果グリッドの代わりにクロス集計表を描く (#661)。 */
+  showPivot?: boolean;
   /** SQL スクリプトのバッチ実行の文ごとの結果。設定時は結果ビューに代えて表示。 */
   batchResults?: BatchStatementResult[];
   /** バッチ実行のスクリプト本文 (stop/continue 切替で再実行するため保持)。 */
@@ -3107,6 +3112,7 @@ export default function App() {
       batchScript: sql,
       batchResults: [],
       showChart: false,
+      showPivot: false,
       preview: null,
       queryError: null,
     }));
@@ -3161,6 +3167,7 @@ export default function App() {
       streaming: true,
       queryError: null,
       showChart: false,
+      showPivot: false,
       batchResults: undefined,
       preview: null,
       // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。
@@ -5061,6 +5068,14 @@ export default function App() {
                       result={tab.result}
                       onClose={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: false }))}
                     />
+                  ) : tab.showPivot && tab.result && !tab.streaming ? (
+                    <PivotView
+                      result={tab.result}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                      sourceSql={tab.lastExecutedSql}
+                      onSendToEditor={openQueryInEditor}
+                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, showPivot: false }))}
+                    />
                   ) : tab.preview ? (
                     <PreviewGrid
                       result={tab.preview}
@@ -5085,12 +5100,21 @@ export default function App() {
                   ) : (
                     <Flex direction="column" h="100%" minH={0} minW={0}>
                     {tab.result && tab.result.rows.length > 0 && !tab.streaming && (
-                      <Flex justify="flex-end" px="2.5" py="1" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
+                      <Flex justify="flex-end" gap="2" px="2.5" py="1" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
                         <Button
                           type="button"
                           variant="secondary"
                           size="sm"
-                          onClick={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: true }))}
+                          onClick={() => patchTab(tab.id, (tt) => ({ ...tt, showPivot: true, showChart: false }))}
+                          title={t("pivotShow")}
+                        >
+                          <Icon name="table" size={14} /> {t("pivotShow")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: true, showPivot: false }))}
                           title={t("chartShow")}
                         >
                           <Icon name="er-diagram" size={14} /> {t("chartShow")}
@@ -5652,6 +5676,11 @@ export default function App() {
           <TableStatisticsPanel
             sessionId={sessionId}
             database={sizesTarget}
+            onOpenTable={(table) => {
+              const db = sizesTarget;
+              setSizesTarget(null);
+              handleOpenTable(db, table);
+            }}
             onClose={() => setSizesTarget(null)}
           />
         ) : showCompareResults ? (
