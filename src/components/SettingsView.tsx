@@ -466,6 +466,8 @@ const PRESET_LABEL_KEYS: Record<SyntaxPresetKey, Parameters<ReturnType<typeof us
   solarizedLight: "settingsSyntaxPresetSolarizedLight",
   solarizedDark: "settingsSyntaxPresetSolarizedDark",
   dracula: "settingsSyntaxPresetDracula",
+  nord: "settingsSyntaxPresetNord",
+  oneDark: "settingsSyntaxPresetOneDark",
   githubLight: "settingsSyntaxPresetGithubLight",
   githubDark: "settingsSyntaxPresetGithubDark",
   monokai: "settingsSyntaxPresetMonokai",
@@ -480,6 +482,9 @@ const DENSITY_LABEL_KEYS: Record<Density, Parameters<ReturnType<typeof useT>>[0]
 const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof useT>>[0]> = {
   default: "themePresetDefault",
   dracula: "themePresetDracula",
+  nord: "themePresetNord",
+  solarized: "themePresetSolarized",
+  "one-dark": "themePresetOneDark",
   "high-contrast": "themePresetHighContrast",
   colorblind: "themePresetColorblind",
 };
@@ -974,10 +979,11 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsSectionHeader>
         <SettingsHelp>{t("settingsResultGridModeHelp")}</SettingsHelp>
         <SettingsToggleRow>
-          <SettingsToggleLabel>
+          <SettingsToggleLabel htmlFor="settings-result-grid-mode">
             {t("settingsResultGridMode")}
           </SettingsToggleLabel>
           <Select
+            id="settings-result-grid-mode"
             value={settings.resultGridMode}
             onChange={(e) => setResultGridMode(e.target.value as ResultGridMode)}
           >

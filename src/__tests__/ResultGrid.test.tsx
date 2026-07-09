@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
-import { fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { ResultGrid, GRID_CSS, isColumnFilterActive, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
+import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
+import { ResultGrid, GRID_CSS, isColumnFilterActive, type ResultGridHandle, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
 import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
@@ -948,5 +949,123 @@ describe("行インスペクタ (#462)", () => {
 
     fireEvent.keyDown(cells[0][0], { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: t("gridRowInspectorTitle", { row: 1 }) })).toBeNull();
+  });
+});
+
+// 結果内検索 (Find in Results, #644) の UI 結線テスト。マッチ計算そのものの
+// 境界ケースは gridFind.test.ts が固定するので、ここではバーの開閉・ハイライト・
+// k/N 表示・Enter/Shift+Enter ナビゲーション・Esc クローズの配線を検証する。
+describe("ResultGrid 結果内検索 (#644)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+
+  function renderWithFindOpen() {
+    const ref = createRef<ResultGridHandle>();
+    const rendered = renderWithProviders(<ResultGrid ref={ref} result={FRUIT_RESULT} />);
+    act(() => ref.current!.openFind());
+    return { ...rendered, ref };
+  }
+
+  it("openFind で検索バーが開き、入力にフォーカスされる", () => {
+    renderWithFindOpen();
+    const input = screen.getByLabelText(t("gridFindInputAria"));
+    expect(input).toBeInTheDocument();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("インクリメンタルにヒットをハイライトし k/N を表示する", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithFindOpen();
+
+    // "a" は banana / apple の 2 セルにヒットする。
+    await user.type(screen.getByLabelText(t("gridFindInputAria")), "a");
+
+    const hits = container.querySelectorAll("td.is-find-hit");
+    expect(hits).toHaveLength(2);
+    expect(screen.getByText(t("gridFindCount", { current: 1, total: 2 }))).toBeInTheDocument();
+    // 先頭ヒットが現在ヒットとして強調される。
+    const current = container.querySelector("td.is-find-current");
+    expect(current?.textContent).toBe("banana");
+  });
+
+  it("Enter / Shift+Enter で次 / 前のヒットへ wrap-around で移動する", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithFindOpen();
+    const input = screen.getByLabelText(t("gridFindInputAria"));
+    await user.type(input, "a");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(container.querySelector("td.is-find-current")?.textContent).toBe("apple");
+    expect(screen.getByText(t("gridFindCount", { current: 2, total: 2 }))).toBeInTheDocument();
+
+    // 末尾から次へ → 先頭へ wrap。
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(container.querySelector("td.is-find-current")?.textContent).toBe("banana");
+
+    // 先頭から前へ → 末尾へ wrap。
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(container.querySelector("td.is-find-current")?.textContent).toBe("apple");
+  });
+
+  it("ヒット 0 件では件数の代わりに『一致なし』を表示する", async () => {
+    const user = userEvent.setup();
+    renderWithFindOpen();
+    await user.type(screen.getByLabelText(t("gridFindInputAria")), "zzz");
+    expect(screen.getByText(t("gridFindNoHits"))).toBeInTheDocument();
+  });
+
+  it("不正な正規表現はエラーメッセージを表示する", async () => {
+    const user = userEvent.setup();
+    renderWithFindOpen();
+    await user.click(screen.getByRole("button", { name: t("gridFindRegexTitle") }));
+    // user-event は "[" をキー記述子の開始と解釈するため "[[" でエスケープする。
+    await user.type(screen.getByLabelText(t("gridFindInputAria")), "([[");
+    expect(screen.getByText(t("gridFindInvalidRegex"))).toBeInTheDocument();
+  });
+
+  it("行を隠さない (列フィルタと違い全行が見えたまま)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithFindOpen();
+    await user.type(screen.getByLabelText(t("gridFindInputAria")), "a");
+    expect(dataRowTexts(container)).toEqual([
+      ["banana", "2"],
+      ["apple", "5"],
+      ["cherry", "9"],
+    ]);
+  });
+
+  it("Esc でバーが閉じ、ハイライトが消えてグリッドへフォーカスが戻る", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithFindOpen();
+    const input = screen.getByLabelText(t("gridFindInputAria"));
+    await user.type(input, "a");
+
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText(t("gridFindInputAria"))).toBeNull();
+    });
+    expect(container.querySelectorAll("td.is-find-hit")).toHaveLength(0);
+    // 現在ヒットのセルへ DOM フォーカスが移る (グリッドのキーボードナビへ復帰)。
+    await waitFor(() => {
+      expect((document.activeElement as HTMLElement)?.textContent).toBe("banana");
+    });
+  });
+
+  it("再オープンでクエリを保持したまま入力を全選択する", async () => {
+    const user = userEvent.setup();
+    const { ref } = renderWithFindOpen();
+    const input = screen.getByLabelText(t("gridFindInputAria"));
+    await user.type(input, "a");
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByLabelText(t("gridFindInputAria"))).toBeNull();
+    });
+
+    act(() => ref.current!.openFind());
+    const input2 = screen.getByLabelText(t("gridFindInputAria")) as HTMLInputElement;
+    expect(input2.value).toBe("a");
+    expect(document.activeElement).toBe(input2);
   });
 });

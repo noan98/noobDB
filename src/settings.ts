@@ -187,13 +187,29 @@ export interface Settings {
  *   avoid the red↔green axis, using blue / orange / bluish-green / yellow so
  *   states stay distinguishable under red-green (protan/deutan) and blue-yellow
  *   (tritan) color vision (#558).
+ * - `nord` — dark-only Nord palette (arctic bluish palette, #598). Aurora /
+ *   Frost hues brightened where needed to keep WCAG AA.
+ * - `solarized` — Solarized palette that follows the light/dark toggle
+ *   (`solarized-light` / `solarized-dark`, #598). Accent hues darkened /
+ *   brightened from the canonical values where needed to keep WCAG AA.
+ * - `one-dark` — dark-only One Dark (Atom) palette (#598).
  */
-export type ThemePreset = "default" | "dracula" | "high-contrast" | "colorblind";
+export type ThemePreset =
+  | "default"
+  | "dracula"
+  | "nord"
+  | "solarized"
+  | "one-dark"
+  | "high-contrast"
+  | "colorblind";
 
 /** Presets offered in settings, in display order. */
 export const THEME_PRESET_ORDER: ThemePreset[] = [
   "default",
   "dracula",
+  "nord",
+  "solarized",
+  "one-dark",
   "high-contrast",
   "colorblind",
 ];
@@ -207,9 +223,15 @@ export const DEFAULT_THEME_PRESET: ThemePreset = "default";
  */
 export function themePresetDataTheme(preset: ThemePreset, theme: Theme): string {
   if (preset === "dracula") return "dracula-dark";
-  // high-contrast / colorblind keep the light/dark axis: the matching App.css
-  // block (`hc-light`/`hc-dark`, `cb-light`/`cb-dark`) fully overrides the
-  // palette while inheriting layout/spacing tokens from `:root`.
+  // Nord / One Dark はダーク専用プリセット (dracula と同じ方式)。名前が "dark" で
+  // 終わるため theme.ts の conditions.dark ([data-theme$=dark]) に一致する。
+  if (preset === "nord") return "nord-dark";
+  if (preset === "one-dark") return "one-dark";
+  // solarized / high-contrast / colorblind keep the light/dark axis: the
+  // matching App.css block (`solarized-light`/`solarized-dark`,
+  // `hc-light`/`hc-dark`, `cb-light`/`cb-dark`) fully overrides the palette
+  // while inheriting layout/spacing tokens from `:root`.
+  if (preset === "solarized") return theme === "dark" ? "solarized-dark" : "solarized-light";
   if (preset === "high-contrast") return theme === "dark" ? "hc-dark" : "hc-light";
   if (preset === "colorblind") return theme === "dark" ? "cb-dark" : "cb-light";
   return theme;
@@ -317,6 +339,8 @@ export type SyntaxPresetKey =
   | "solarizedLight"
   | "solarizedDark"
   | "dracula"
+  | "nord"
+  | "oneDark"
   | "githubLight"
   | "githubDark"
   | "monokai";
@@ -327,6 +351,8 @@ export const SYNTAX_PRESET_ORDER: SyntaxPresetKey[] = [
   "solarizedLight",
   "solarizedDark",
   "dracula",
+  "nord",
+  "oneDark",
   "githubLight",
   "githubDark",
   "monokai",
@@ -358,6 +384,25 @@ export const SYNTAX_PRESETS: Record<SyntaxPresetKey, SyntaxColors> = {
     comment: "#6272a4",
     function: "#50fa7b",
     operator: "#ff79c6",
+  },
+  // Nord / One Dark はテーマプリセット (#598) の App.css `--syntax-*` と同値。
+  // テーマプリセット選択後にここから同名プリセットを適用するとエディタの
+  // シンタックス配色が UI 全体の配色と一貫する。
+  nord: {
+    keyword: "#81a1c1",
+    string: "#a3be8c",
+    number: "#b48ead",
+    comment: "#94a3bd",
+    function: "#88c0d0",
+    operator: "#d8dee9",
+  },
+  oneDark: {
+    keyword: "#c678dd",
+    string: "#98c379",
+    number: "#e5c07b",
+    comment: "#8b93a2",
+    function: "#61afef",
+    operator: "#abb2bf",
   },
   githubLight: {
     keyword: "#cf222e",

@@ -16,6 +16,18 @@ describe("themePresetDataTheme (#465)", () => {
     expect(themePresetDataTheme("dracula", "dark")).toBe("dracula-dark");
   });
 
+  it("nord / one-dark are dark-only and end with dark (#598)", () => {
+    expect(themePresetDataTheme("nord", "light")).toBe("nord-dark");
+    expect(themePresetDataTheme("nord", "dark")).toBe("nord-dark");
+    expect(themePresetDataTheme("one-dark", "light")).toBe("one-dark");
+    expect(themePresetDataTheme("one-dark", "dark")).toBe("one-dark");
+  });
+
+  it("solarized follows the light/dark toggle (#598)", () => {
+    expect(themePresetDataTheme("solarized", "light")).toBe("solarized-light");
+    expect(themePresetDataTheme("solarized", "dark")).toBe("solarized-dark");
+  });
+
   it("every dark-variant preset name ends with 'dark' so conditions.dark matches", () => {
     for (const preset of THEME_PRESET_ORDER) {
       const dataTheme = themePresetDataTheme(preset, "dark");

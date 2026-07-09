@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
@@ -19,6 +19,8 @@ interface PasswordInputProps {
   onChange: (value: string) => void;
   /** True when a secret for this field already exists in the keyring. */
   hasStored: boolean;
+  /** Associates the visible <label htmlFor> with the inner input (a11y). */
+  id?: string;
 }
 
 /**
@@ -27,7 +29,7 @@ interface PasswordInputProps {
  * placeholder (read-only) so the saved state is obvious; focusing clears it for
  * editing and leaving it untouched keeps the stored value (empty `value`).
  */
-function PasswordInput({ value, onChange, hasStored }: PasswordInputProps) {
+function PasswordInput({ value, onChange, hasStored, id }: PasswordInputProps) {
   const t = useT();
   const [show, setShow] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -37,6 +39,7 @@ function PasswordInput({ value, onChange, hasStored }: PasswordInputProps) {
   return (
     <Box position="relative" display="flex" alignItems="center">
       <Input
+        id={id}
         type={show ? "text" : "password"}
         value={showingMask ? STORED_MASK : value}
         readOnly={showingMask}
@@ -163,6 +166,9 @@ function CheckboxRow({
 
 export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) {
   const t = useT();
+  // 可視ラベル (<label>) と入力コントロールを `htmlFor`/`id` で関連付けるための
+  // 一意な ID プレフィックス (a11y: axe の label / select-name ルール対応)。
+  const fid = useId();
   const groupSuggestions = useMemo(() => {
     const set = new Set<string>();
     for (const p of profiles) {
@@ -442,13 +448,14 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       </Box>
 
       <Box gridColumn="span 2">
-        <label>{t("formName")}</label>
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("formNamePlaceholder")} />
+        <label htmlFor={`${fid}-name`}>{t("formName")}</label>
+        <Input id={`${fid}-name`} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("formNamePlaceholder")} />
       </Box>
 
       <Box gridColumn="span 2">
-        <label>{t("formDriver")}</label>
+        <label htmlFor={`${fid}-driver`}>{t("formDriver")}</label>
         <Select
+          id={`${fid}-driver`}
           value={driver}
           onChange={(e) => handleDriverChange(e.target.value as DriverKind)}
         >
@@ -462,9 +469,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <Fieldset>
           <Legend>{t("formSqliteLegend")}</Legend>
           <Box>
-            <label>{t("formSqliteFilePath")}</label>
+            <label htmlFor={`${fid}-sqlite-path`}>{t("formSqliteFilePath")}</label>
             <Flex gap="2" align="end">
               <Input
+                id={`${fid}-sqlite-path`}
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
                 placeholder={t("formSqliteFilePathPlaceholder")}
@@ -481,12 +489,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <Legend>{driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}</Legend>
           <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
             <Box>
-              <label>{t("formHost")}</label>
-              <Input value={host} onChange={(e) => setHost(e.target.value)} />
+              <label htmlFor={`${fid}-host`}>{t("formHost")}</label>
+              <Input id={`${fid}-host`} value={host} onChange={(e) => setHost(e.target.value)} />
             </Box>
             <Box>
-              <label>{t("formPort")}</label>
+              <label htmlFor={`${fid}-port`}>{t("formPort")}</label>
               <Input
+                id={`${fid}-port`}
                 type="text"
                 inputMode="numeric"
                 value={port}
@@ -496,17 +505,18 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           </Box>
           <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3" mt="2">
             <Box>
-              <label>{t("formUser")}</label>
-              <Input value={user} onChange={(e) => setUser(e.target.value)} />
+              <label htmlFor={`${fid}-user`}>{t("formUser")}</label>
+              <Input id={`${fid}-user`} value={user} onChange={(e) => setUser(e.target.value)} />
             </Box>
             <Box>
-              <label>{t("formDatabase")}</label>
-              <Input value={database} onChange={(e) => setDatabase(e.target.value)} />
+              <label htmlFor={`${fid}-database`}>{t("formDatabase")}</label>
+              <Input id={`${fid}-database`} value={database} onChange={(e) => setDatabase(e.target.value)} />
             </Box>
           </Box>
           <Box mt="2">
-            <label>{t("formDbPassword")}</label>
+            <label htmlFor={`${fid}-db-password`}>{t("formDbPassword")}</label>
             <PasswordInput
+              id={`${fid}-db-password`}
               value={password}
               onChange={setPassword}
               hasStored={!!initial?.has_db_password}
@@ -519,8 +529,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <Fieldset>
           <Legend>{t("formTlsLegend")}</Legend>
           <Box>
-            <label>{t("formTlsMode")}</label>
-            <Select value={sslMode} onChange={(e) => setSslMode(e.target.value as SslMode)}>
+            <label htmlFor={`${fid}-tls-mode`}>{t("formTlsMode")}</label>
+            <Select id={`${fid}-tls-mode`} value={sslMode} onChange={(e) => setSslMode(e.target.value as SslMode)}>
               <option value="disable">{t("formTlsModeDisable")}</option>
               <option value="prefer">{t("formTlsModePrefer")}</option>
               <option value="require">{t("formTlsModeRequire")}</option>
@@ -538,9 +548,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               </Text>
             )}
           <Box mt="2">
-            <label>{t("formTlsRootCert")}</label>
+            <label htmlFor={`${fid}-tls-root-cert`}>{t("formTlsRootCert")}</label>
             <Flex gap="2" align="end">
               <Input
+                id={`${fid}-tls-root-cert`}
                 value={sslRootCert}
                 onChange={(e) => setSslRootCert(e.target.value)}
                 placeholder={t("formTlsRootCertPlaceholder")}
@@ -554,9 +565,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </Text>
           </Box>
           <Box mt="2">
-            <label>{t("formTlsClientCert")}</label>
+            <label htmlFor={`${fid}-tls-client-cert`}>{t("formTlsClientCert")}</label>
             <Flex gap="2" align="end">
               <Input
+                id={`${fid}-tls-client-cert`}
                 value={sslClientCert}
                 onChange={(e) => setSslClientCert(e.target.value)}
                 placeholder={t("formTlsClientCertPlaceholder")}
@@ -567,9 +579,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </Flex>
           </Box>
           <Box mt="2">
-            <label>{t("formTlsClientKey")}</label>
+            <label htmlFor={`${fid}-tls-client-key`}>{t("formTlsClientKey")}</label>
             <Flex gap="2" align="end">
               <Input
+                id={`${fid}-tls-client-key`}
                 value={sslClientKey}
                 onChange={(e) => setSslClientKey(e.target.value)}
                 placeholder={t("formTlsClientKeyPlaceholder")}
@@ -614,7 +627,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <Legend>{t("formDisplay")}</Legend>
         <Flex direction="column" gap="3">
           <Box>
-            <label>{t("formColor")}</label>
+            <label htmlFor={`${fid}-color`}>{t("formColor")}</label>
             <Flex align="center" gap="2" flexWrap="wrap">
               {COLOR_PRESETS.map((c) => (
                 <chakra.button
@@ -638,6 +651,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 />
               ))}
               <input
+                id={`${fid}-color`}
                 type="color"
                 value={color ?? "#888888"}
                 onChange={(e) => setColor(e.target.value)}
@@ -694,12 +708,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             <>
               <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
                 <Box>
-                  <label>{t("formSshHost")}</label>
-                  <Input value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                  <label htmlFor={`${fid}-ssh-host`}>{t("formSshHost")}</label>
+                  <Input id={`${fid}-ssh-host`} value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
                 </Box>
                 <Box>
-                  <label>{t("formPort")}</label>
+                  <label htmlFor={`${fid}-ssh-port`}>{t("formPort")}</label>
                   <Input
+                    id={`${fid}-ssh-port`}
                     type="text"
                     inputMode="numeric"
                     value={sshPort}
@@ -708,12 +723,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 </Box>
               </Box>
               <Box mt="2">
-                <label>{t("formSshUser")}</label>
-                <Input value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
+                <label htmlFor={`${fid}-ssh-user`}>{t("formSshUser")}</label>
+                <Input id={`${fid}-ssh-user`} value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
               </Box>
               <Box mt="2">
-                <label>{t("formSshAuthMethod")}</label>
+                <label htmlFor={`${fid}-ssh-auth`}>{t("formSshAuthMethod")}</label>
                 <Select
+                  id={`${fid}-ssh-auth`}
                   value={sshAuthMethod}
                   onChange={(e) => setSshAuthMethod(e.target.value as SshAuthMethod)}
                 >
@@ -725,15 +741,16 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               {sshAuthMethod === "key" && (
                 <>
                   <Box mt="2">
-                    <label>{t("formPrivateKeyPath")}</label>
+                    <label htmlFor={`${fid}-ssh-key-path`}>{t("formPrivateKeyPath")}</label>
                     <Flex gap="2" align="end">
-                      <Input value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
+                      <Input id={`${fid}-ssh-key-path`} value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
                       <Button type="button" onClick={pickKeyFile}>{t("formBrowse")}</Button>
                     </Flex>
                   </Box>
                   <Box mt="2">
-                    <label>{t("formSshPassphrase")}</label>
+                    <label htmlFor={`${fid}-ssh-passphrase`}>{t("formSshPassphrase")}</label>
                     <PasswordInput
+                      id={`${fid}-ssh-passphrase`}
                       value={sshPassphrase}
                       onChange={setSshPassphrase}
                       hasStored={!!initial?.has_ssh_passphrase}
@@ -743,8 +760,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               )}
               {sshAuthMethod === "password" && (
                 <Box mt="2">
-                  <label>{t("formSshPassword")}</label>
+                  <label htmlFor={`${fid}-ssh-password`}>{t("formSshPassword")}</label>
                   <PasswordInput
+                    id={`${fid}-ssh-password`}
                     value={sshPassword}
                     onChange={setSshPassword}
                     hasStored={!!initial?.has_ssh_password}
