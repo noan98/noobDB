@@ -81,7 +81,7 @@ sqlx = { version = "0.9", default-features = false, features = [
 ] }
 
 # SSH
-russh = "0.61"
+russh = "0.62"
 
 # Secrets / config
 # keyring のネイティブバックエンドはターゲット OS ごとに分け、ビルド中のターゲットに
