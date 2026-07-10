@@ -1437,17 +1437,25 @@ html, body, #root {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: 8px;
+  padding: 9px 10px;
   font-size: var(--text-sm);
 }
-.cm-editor .cm-panel.cm-search label { color: var(--text-muted); font-size: var(--text-xs); }
+.cm-editor .cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
 .cm-editor .cm-panel.cm-search .cm-textfield {
   background: var(--bg-input);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 2px 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: var(--text-sm);
 }
 .cm-editor .cm-panel.cm-search .cm-textfield:focus {
   outline: none;
@@ -1459,7 +1467,9 @@ html, body, #root {
   color: var(--text);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  padding: 2px 8px;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: var(--text-sm);
   background-image: none;
   cursor: pointer;
 }
