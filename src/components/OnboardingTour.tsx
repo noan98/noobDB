@@ -28,6 +28,18 @@ interface StepContent {
   description: string;
 }
 
+/** 長さ N のタプル型を組み立てる再帰ヘルパー (下記 steps の長さ固定用)。 */
+type TupleOf<T, N extends number, R extends readonly T[] = []> = R["length"] extends N
+  ? R
+  : TupleOf<T, N, [...R, T]>;
+
+/**
+ * steps 配列の要素数は `onboarding.ts` の `TOUR_STEP_COUNT` と一致していなければ
+ * ならない (進行状態のクランプ先が配列外だと最終ステップで undefined を引く)。
+ * タプル型で長さをコンパイル時に固定し、片方だけ変更すると tsc が落ちるようにする。
+ */
+type StepTuple = TupleOf<StepContent, typeof TOUR_STEP_COUNT>;
+
 interface Props {
   /** スキップ・完了・Esc いずれで閉じても呼ぶ。永続化 (`markShown`) は呼び出し側
    *  (App.tsx) の責務とし、このコンポーネント自体はステップの進行のみ扱う。 */
@@ -57,7 +69,7 @@ export function OnboardingTour({ onClose }: Props) {
     cardRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
   }, []);
 
-  const steps: StepContent[] = [
+  const steps: StepTuple = [
     {
       icon: "server",
       title: t("onboardingStepConnectTitle"),

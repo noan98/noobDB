@@ -57,8 +57,6 @@ export function normalizeChipColor(color: string | null | undefined): string | n
  * 将来チップ上にアクティブ接続チェックマーク等を重ねる拡張に備え、コントラスト
  * 計算ロジックとしてここに公開しテストで固定しておく (`groupAvatarForeground` が
  * 同じ仕組みを今日から実際に使っている)。
- *
- * @public
  */
 export function chipForeground(color: string | null | undefined): string | null {
   const normalized = normalizeChipColor(color);
