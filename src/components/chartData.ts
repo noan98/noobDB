@@ -28,6 +28,15 @@ export interface ChartModel {
   series: ChartSeries[];
   /** サンプリングで間引いたときの元の行数 (未間引きなら null)。 */
   sampledFrom: number | null;
+  /**
+   * 集計なし (`aggregation: "none"`) のとき、Y 列の生値のうち NULL/非数値で
+   * あったため `0` へ読み替えた個数の合計 (#646)。集計あり (`sum`/`avg`/`count`)
+   * は元から非数値を除外して計算するためこの読み替えが発生せず、常に `0`。
+   * `chartNotices` がこの値を見て「一部のセルは 0 として表示している」旨の
+   * 控えめな注記を出すために使う。省略時 (テストで手組みしたモデルなど) は
+   * `0` 扱い。
+   */
+  excludedNonNumeric?: number;
 }
 
 /** 描画点数の上限。これを超えたら等間隔でサンプリングする。 */
@@ -109,11 +118,18 @@ export function buildChartModel(
       for (let i = 0; i < MAX_POINTS; i++) working.push(rows[Math.floor(i * step)]);
     }
     const labels = working.map((r) => cellLabel(r[xCol]));
+    // NULL/非数値は 0 として描画する (既存挙動)。何件読み替えたかを数え、
+    // ChartView が「一部は 0 として表示している」注記を出すのに使う (#646)。
+    let excludedNonNumeric = 0;
     const series: ChartSeries[] = yCols.map((c, si) => ({
       name: yNames[si],
-      values: working.map((r) => toNumber(r[c]) ?? 0),
+      values: working.map((r) => {
+        const n = toNumber(r[c]);
+        if (n === null) excludedNonNumeric++;
+        return n ?? 0;
+      }),
     }));
-    return { labels, series, sampledFrom };
+    return { labels, series, sampledFrom, excludedNonNumeric };
   }
 
   // グループ集計: X 値ごとに Y を畳み込む。
@@ -154,7 +170,9 @@ export function buildChartModel(
       return g.sums[i];
     }),
   }));
-  return { labels, series, sampledFrom: null };
+  // 集計あり (sum/avg/count) は非数値・NULL を最初から除外して計算しており
+  // 0 への読み替えは発生しない。
+  return { labels, series, sampledFrom: null, excludedNonNumeric: 0 };
 }
 
 /**
@@ -208,4 +226,32 @@ export function valueExtent(model: ChartModel, type: ChartType = "bar"): { min: 
   if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 0 };
   if (type === "line") return { min, max };
   return { min: Math.min(0, min), max: Math.max(0, max) };
+}
+
+/**
+ * チャートに描き添える控えめな注記の種類 (#646)。破綻ではなく「見た目が
+ * 平坦/点 1 つ/値の一部を 0 として読み替えている」ことをユーザに伝えるための
+ * ヒントで、いずれもチャート自体は問題なく描画できる (棒 1 本・平坦な線など)。
+ */
+export type ChartNotice = "singlePoint" | "flatValues" | "nonNumericExcluded";
+
+/**
+ * モデルから表示すべき注記を判定する。データが破綻しているわけではないが
+ * 「なぜこう見えるか」の説明が無いと不安になりうるケースを拾う:
+ *
+ * - `singlePoint`: データ点が 1 つだけ (折れ線/面グラフは点が線にならない)。
+ * - `flatValues`: 全系列・全点の値が完全に同一 (グラフが水平な直線/同じ高さの
+ *   棒になる。バグではなく実データがそうであることを明示する)。
+ * - `nonNumericExcluded`: 集計なしで、Y 列の一部が NULL/非数値だったため `0`
+ *   として描画している (`ChartModel.excludedNonNumeric`)。
+ */
+export function chartNotices(model: ChartModel): ChartNotice[] {
+  const notices: ChartNotice[] = [];
+  if (model.labels.length === 1) notices.push("singlePoint");
+  const allValues = model.series.flatMap((s) => s.values);
+  if (model.labels.length > 1 && allValues.length > 0 && allValues.every((v) => v === allValues[0])) {
+    notices.push("flatValues");
+  }
+  if ((model.excludedNonNumeric ?? 0) > 0) notices.push("nonNumericExcluded");
+  return notices;
 }

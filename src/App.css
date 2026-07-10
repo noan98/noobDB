@@ -510,6 +510,28 @@
   --border-strong: #565a72;
   --border-subtle: #343746;
 
+  /* セマンティックカラーの 4 段階トークン (#476 の info/success/warning/error ×
+     subtle/border/solid/text)。#664 以前はこのプリセットで未定義だったため
+     ライト既定値 (:root) にフォールバックし、暗い Dracula 背景で読みにくい/
+     浮いた配色になっていた。--text-error 等・--status-* を基準に Dracula
+     パレット寄りの色相で導出し、themeContrast.test.ts が AA を検証する。 */
+  --info-subtle: #21383d;
+  --info-border: #5b99a7;
+  --info-solid: #8be9fd;
+  --info-text: #8be9fd;
+  --success-subtle: #213d2b;
+  --success-border: #4ba86b;
+  --success-solid: #6dffa0;
+  --success-text: #6dffa0;
+  --warning-subtle: #3a2f1a;
+  --warning-border: #9f9f59;
+  --warning-solid: #f1fa8c;
+  --warning-text: #ffb86c;
+  --error-subtle: #3b1f23;
+  --error-border: #a75a5c;
+  --error-solid: #ff8a8a;
+  --error-text: #ff8a8a;
+
   --scrollbar-thumb: #565a72;
   --scrollbar-thumb-hover: #6b6f8c;
 
@@ -592,6 +614,26 @@
   --border-strong: #000000;
   --border-subtle: #cccccc;
 
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。高コントラストプリセットは
+     主要本文が AAA (7:1) を狙う方針に揃え、info/success/warning/error の text
+     階層もこのプリセット専用の濃色 (--text-error 等) を基準に導出する。 */
+  --info-subtle: #e5e9f5;
+  --info-border: #6785de;
+  --info-solid: #0033cc;
+  --info-text: #0033cc;
+  --success-subtle: #e5f5ea;
+  --success-border: #67a37a;
+  --success-solid: #005f1f;
+  --success-text: #005f1f;
+  --warning-subtle: #fff8e6;
+  --warning-border: #b69367;
+  --warning-solid: #7a4100;
+  --warning-text: #7a4100;
+  --error-subtle: #fff0f0;
+  --error-border: #cc6c6c;
+  --error-solid: #a30000;
+  --error-text: #a30000;
+
   --scrollbar-thumb: #767676;
   --scrollbar-thumb-hover: #4d4d4d;
 
@@ -667,6 +709,24 @@
   --border: #808080;
   --border-strong: #ffffff;
   --border-subtle: #333333;
+
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。hc-light と同じ方針。 */
+  --info-subtle: #0c1117;
+  --info-border: #3e6197;
+  --info-solid: #66a3ff;
+  --info-text: #66a3ff;
+  --success-subtle: #0c170c;
+  --success-border: #389738;
+  --success-solid: #5cff5c;
+  --success-text: #5cff5c;
+  --warning-subtle: #2a1f00;
+  --warning-border: #9f732a;
+  --warning-solid: #ffb84d;
+  --warning-text: #ffb84d;
+  --error-subtle: #2a0000;
+  --error-border: #9f3838;
+  --error-solid: #ff6666;
+  --error-text: #ff6666;
 
   --scrollbar-thumb: #808080;
   --scrollbar-thumb-hover: #b3b3b3;
@@ -747,6 +807,25 @@
   --border-strong: #b3bdcc;
   --border-subtle: #eef1f5;
 
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。赤緑軸に依存しない
+     Okabe-Ito 系の色相 (青/橙/青緑/黄) を踏襲して導出する。 */
+  --info-subtle: #e5eff5;
+  --info-border: #679ebd;
+  --info-solid: #005b8f;
+  --info-text: #005b8f;
+  --success-subtle: #e5f5f1;
+  --success-border: #67a795;
+  --success-solid: #00674a;
+  --success-text: #00674a;
+  --warning-subtle: #fbf3df;
+  --warning-border: #bd9f64;
+  --warning-solid: #8a5a00;
+  --warning-text: #8a5a00;
+  --error-subtle: #fdf0e8;
+  --error-border: #d49368;
+  --error-solid: #b34700;
+  --error-text: #b34700;
+
   --scrollbar-thumb: #c2cad6;
   --scrollbar-thumb-hover: #a8b2c0;
 
@@ -822,6 +901,25 @@
   --border: #2a323d;
   --border-strong: #3c4553;
   --border-subtle: #222b37;
+
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。cb-light と同じ Okabe-Ito
+     系の色相をダーク背景向けに調整して導出する。 */
+  --info-subtle: #0d1417;
+  --info-border: #356c8b;
+  --info-solid: #56b4e9;
+  --info-text: #56b4e9;
+  --success-subtle: #0d1713;
+  --success-border: #378061;
+  --success-solid: #5ad6a0;
+  --success-text: #5ad6a0;
+  --warning-subtle: #2e240d;
+  --warning-border: #997a32;
+  --warning-solid: #f0c050;
+  --warning-text: #f0d050;
+  --error-subtle: #2e1a0d;
+  --error-border: #a1633a;
+  --error-solid: #ff9e5e;
+  --error-text: #ff9e5e;
 
   --scrollbar-thumb: #3a4453;
   --scrollbar-thumb-hover: #515d6e;
@@ -906,6 +1004,28 @@
   --border-strong: #4c566a;
   --border-subtle: #3b4252;
 
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。Nord 公式パレット寄りの
+     色相 (--text-error 等・--status-*) を基準に導出する。 */
+  --info-subtle: #274048;
+  --info-border: #5c8693;
+  --info-solid: #88c0d0;
+  --info-text: #88c0d0;
+  --success-subtle: #364827;
+  --success-border: #72895f;
+  --success-solid: #a3be8c;
+  --success-text: #a3be8c;
+  --warning-subtle: #3a3226;
+  --warning-border: #9b865e;
+  --warning-solid: #ebcb8b;
+  --warning-text: #ebcb8b;
+  --error-subtle: #3b2a30;
+  --error-border: #9a6068;
+  --error-solid: #e78d95;
+  /* 既存の --text-error (#e78d95) は --bg 基準では AA を満たすが --bg-elevated
+     (#3b4252) 基準では 4.14:1 と僅かに不足するため、この意味色トークン専用に
+     わずかに明るい値へ調整している (#664)。 */
+  --error-text: #ea9ea4;
+
   --scrollbar-thumb: #4c566a;
   --scrollbar-thumb-hover: #5e6a84;
 
@@ -984,6 +1104,25 @@
   --border-strong: #b8ae94;
   --border-subtle: #eee8d5;
 
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。Solarized 公式パレット
+     寄りの色相 (--text-error 等・--status-*) を基準に導出する。 */
+  --info-subtle: #e5eff5;
+  --info-border: #78a8c9;
+  --info-solid: #1e6ea5;
+  --info-text: #1e6ea5;
+  --success-subtle: #f3f5e5;
+  --success-border: #a1a967;
+  --success-solid: #5d6b00;
+  --success-text: #5d6b00;
+  --warning-subtle: #f9f1de;
+  --warning-border: #c6ad64;
+  --warning-solid: #9c7600;
+  --warning-text: #8a6900;
+  --error-subtle: #fbeae5;
+  --error-border: #db7e7a;
+  --error-solid: #c02622;
+  --error-text: #c02622;
+
   --scrollbar-thumb: #c4bba2;
   --scrollbar-thumb-hover: #a89f85;
 
@@ -1059,6 +1198,25 @@
   --border: #1c4a58;
   --border-strong: #2a6272;
   --border-subtle: #073642;
+
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。solarized-light と同じ
+     方針でダーク背景向けに調整する。 */
+  --info-subtle: #131d23;
+  --info-border: #2a668f;
+  --info-solid: #3ca2e8;
+  --info-text: #3ca2e8;
+  --success-subtle: #212313;
+  --success-border: #5e6c09;
+  --success-solid: #8fa800;
+  --success-text: #8fa800;
+  --warning-subtle: #332a10;
+  --warning-border: #917631;
+  --warning-solid: #deb54c;
+  --warning-text: #deb54c;
+  --error-subtle: #391f1c;
+  --error-border: #9f5752;
+  --error-solid: #f2857e;
+  --error-text: #f2857e;
 
   --scrollbar-thumb: #2a6272;
   --scrollbar-thumb-hover: #3b7b8d;
@@ -1140,6 +1298,25 @@
   --border: #3a3f4b;
   --border-strong: #4b5263;
   --border-subtle: #333842;
+
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。Atom One Dark 公式
+     パレット寄りの色相 (--text-error 等・--status-*) を基準に導出する。 */
+  --info-subtle: #202f3c;
+  --info-border: #44759e;
+  --info-solid: #61afef;
+  --info-text: #61afef;
+  --success-subtle: #2c3c20;
+  --success-border: #678651;
+  --success-solid: #98c379;
+  --success-text: #98c379;
+  --warning-subtle: #38301a;
+  --warning-border: #977f4f;
+  --warning-solid: #e5c07b;
+  --warning-text: #e5c07b;
+  --error-subtle: #3a2226;
+  --error-border: #9a5a61;
+  --error-solid: #e88892;
+  --error-text: #e88892;
 
   --scrollbar-thumb: #4b5263;
   --scrollbar-thumb-hover: #5c6577;

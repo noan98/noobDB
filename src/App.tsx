@@ -44,6 +44,9 @@ import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import { quoteIdentFor } from "./components/sqlDialect";
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
+import { WelcomeView } from "./components/WelcomeView";
+import { OnboardingTour } from "./components/OnboardingTour";
+import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
@@ -53,6 +56,7 @@ import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
+import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
 import { Icon } from "./components/Icon";
@@ -846,6 +850,10 @@ export default function App() {
   );
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  // 初回起動オンボーディングツアー (#599)。ウェルカム画面の「はじめかたを見る」
+  // からの手動起動、および新規ユーザ (プロファイル 0 件・未表示) への自動起動の
+  // 両方でこのフラグを立てる。表示済みフラグの永続化は閉じるときに行う。
+  const [showTour, setShowTour] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
   const [showErd, setShowErd] = useState(false);
   // ピン留め結果の比較ビュー (#622)。保持はメモリのみ・上限あり (addPinned)。
@@ -1550,6 +1558,20 @@ export default function App() {
     };
   }, [refreshProfiles]);
 
+  // 初回起動オンボーディング (#599): 起動が完了した時点でプロファイルが 0 件
+  // (= 新規ユーザ) かつツアー未表示なら自動で開始する。既存ユーザ (プロファイル
+  // ありでツアー未表示のケースを含む) には自動表示しない。`tourAutoCheckedRef`
+  // で起動直後の 1 回だけに限定し、その後プロファイルを全削除しても再度自動
+  // 表示されないようにする。
+  const tourAutoCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!booted || tourAutoCheckedRef.current) return;
+    tourAutoCheckedRef.current = true;
+    if (profiles.length === 0 && !onboarding.beenShown()) {
+      setShowTour(true);
+    }
+  }, [booted, profiles]);
+
   // 接続プロファイルのエクスポート: 全プロファイルを秘密情報抜きで JSON へ。
   const handleExportProfiles = useCallback(async () => {
     if (profiles.length === 0) {
@@ -1910,39 +1932,13 @@ export default function App() {
           <Flex direction="column" gap="2" color="app.text" alignItems="center">
             <ProductionWarningIllustration size={80} />
             <Flex align="center" gap="2">
-              {profile.color && (
-                <chakra.span
-                  display="inline-block"
-                  w="14px"
-                  h="14px"
-                  borderRadius="full"
-                  flexShrink={0}
-                  bg={profile.color}
-                  borderWidth="1px"
-                  borderStyle="solid"
-                  borderColor="app.borderStrong"
-                  aria-hidden
-                />
-              )}
+              {/* ここは「まだ接続していないプロファイル」の確認ダイアログなので、
+                  色未設定時に現在のワークスペースアクセントへフォールバックする
+                  ProfileColorChip の既定挙動は使わず、色があるときだけ表示する
+                  (#663: チップ/バッジの見た目自体は ConnectionList / TitleBar と共有)。 */}
+              {profile.color && <ProfileColorChip color={profile.color} size={14} />}
               <chakra.span fontWeight={600} fontSize="md">{profile.name}</chakra.span>
-              <chakra.span
-                display="inline-flex"
-                alignItems="center"
-                gap="1"
-                fontSize="xs"
-                textTransform="uppercase"
-                letterSpacing="0.06em"
-                fontWeight={700}
-                px="2"
-                py="0.5"
-                borderRadius="pill"
-                bg="app.status.error"
-                color="#fff"
-                flexShrink={0}
-              >
-                <Icon name="warning" size={12} />
-                {translate("listProduction")}
-              </chakra.span>
+              <ProductionBadge />
             </Flex>
             <chakra.span>{translate("productionConfirm", { name: profile.name })}</chakra.span>
             <chakra.span color="app.textMuted" fontSize="sm">
@@ -4113,6 +4109,63 @@ export default function App() {
     }, "statusFailedDeleteProfile");
   }, [runWithErrorStatus, refreshProfiles]);
 
+  // ウェルカム画面 (#599) の「SQLite ファイルを開く」導線。選ばれたファイルパスと
+  // sqlite ドライバを初期値にした空のプロファイルを editing にセットしてフォームを
+  // 開く (id を空にすることで保存時に新規プロファイルとして作られる。
+  // handleDuplicateProfile と同じ「blank id」方式)。
+  const handleWelcomeOpenSqlite = useCallback((filePath: string) => {
+    setEditing({
+      id: "",
+      name: "",
+      driver: "sqlite",
+      host: "",
+      port: 0,
+      user: "",
+      database: null,
+      ssh: null,
+      group: null,
+      color: null,
+      is_production: false,
+      confirm_writes: false,
+      read_only: false,
+      skip_history: false,
+      file_path: filePath,
+    });
+    setShowSnippetForm(false);
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowForm(true);
+    setFormInstanceId((n) => n + 1);
+  }, []);
+
+  // ウェルカム画面 (#599) の「はじめかたを見る」、およびサイドバーの「+」から
+  // 新規スニペットフォームを開く共通ハンドラ。
+  const handleOpenSnippetForm = useCallback(() => {
+    setEditingSnippet(null);
+    setSnippetFormSql("");
+    setShowSettings(false);
+    setShowHelp(false);
+    setShowCompare(false);
+    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowForm(false);
+    setShowSnippetForm(true);
+    setFormInstanceId((n) => n + 1);
+  }, []);
+
+  // オンボーディングツアー (#599) の開始/終了。終了はスキップ・完了・Esc の
+  // いずれからも呼ばれ、表示済みフラグを永続化して以後の自動起動を止める。
+  const handleStartTour = useCallback(() => {
+    setShowTour(true);
+  }, []);
+  const handleCloseTour = useCallback(() => {
+    onboarding.markShown();
+    setShowTour(false);
+  }, []);
+
   // After a CSV import, refresh the matching open table tab so the new rows
   // show up without the user reopening the table.
   const handleImported = useCallback((database: string, table: string) => {
@@ -5379,18 +5432,7 @@ export default function App() {
             </IconButton>
             {sidebarTab === "snippets" ? (
               <IconButton
-                onClick={() => {
-                  setEditingSnippet(null);
-                  setSnippetFormSql("");
-                  setShowSettings(false);
-                  setShowHelp(false);
-                  setShowCompare(false);
-                  setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
-                  setShowForm(false);
-                  setShowSnippetForm(true);
-                  setFormInstanceId((n) => n + 1);
-                }}
+                onClick={handleOpenSnippetForm}
                 title={t("appNewSnippet")}
                 aria-label={t("appNewSnippet")}
               >
@@ -5511,6 +5553,7 @@ export default function App() {
             onInsert={handleInsertSnippet}
             onEdit={handleEditSnippet}
             onDelete={handleDeleteSnippet}
+            onCreate={handleOpenSnippetForm}
             watchedPlanIds={watchedPlanIdList}
             onTogglePlanWatch={selectedProfile ? handleTogglePlanWatch : undefined}
             onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
@@ -5521,6 +5564,7 @@ export default function App() {
             reloadKey={historyReloadKey}
             onRestore={handleRestoreHistory}
             onOpenInNewTab={handleOpenHistoryInNewTab}
+            onNewQuery={sessionId ? handleNewTab : undefined}
           />
         )}
         </Box>
@@ -5877,6 +5921,17 @@ export default function App() {
                   second={renderPane(panes[1])}
                 />
               )
+            ) : profiles.length === 0 ? (
+              // 初回起動ウェルカム画面 (#599): プロファイルが 1 件も無い新規
+              // ユーザには、単一 CTA の EmptyState の代わりに主要導線を並べた
+              // WelcomeView を出す。1 件以上あれば従来どおりの未接続表示のまま。
+              <Flex direction="column" flex="1" overflow="hidden">
+                <WelcomeView
+                  onCreateConnection={handleOpenCreateForm}
+                  onOpenSqlite={handleWelcomeOpenSqlite}
+                  onStartTour={handleStartTour}
+                />
+              </Flex>
             ) : (
               <Flex direction="column" flex="1" overflow="hidden">
                 <PaneEmpty>
@@ -6348,6 +6403,9 @@ export default function App() {
           {showHelp && <HelpView onClose={() => setShowHelp(false)} />}
         </AnimatePresence>
       </Suspense>
+      {/* enter のみのポップオーバー (ContextMenu と同方針) なので AnimatePresence
+          は不要 — 閉じる際はアンマウントで即座に消える。 */}
+      {showTour && <OnboardingTour onClose={handleCloseTour} />}
       {confirmDialogElement}
       {/* ファイルのドラッグ&ドロップ時のオーバーレイ。受理/拒否を視覚的に
           示す。pointerEvents none で実際のドロップは webview のネイティブ経路に任せ、

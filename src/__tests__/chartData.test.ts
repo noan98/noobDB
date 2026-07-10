@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CellValue, Column } from "../api/tauri";
 import {
   buildChartModel,
+  chartNotices,
   defaultChartConfig,
   inferNumericColumns,
   MAX_POINTS,
@@ -129,6 +130,92 @@ describe("buildChartModel", () => {
     const model = buildChartModel(columns, big, { type: "line", xCol: 0, yCols: [1], aggregation: "none" });
     expect(model.labels).toHaveLength(MAX_POINTS);
     expect(model.sampledFrom).toBe(MAX_POINTS + 500);
+  });
+
+  it("#646: 集計なしで NULL/非数値を 0 として読み替えた件数を数える", () => {
+    const withGaps: CellValue[][] = [
+      ["a", 10],
+      ["b", null],
+      ["c", "n/a"],
+      ["d", 20],
+    ];
+    const model = buildChartModel(columns, withGaps, {
+      type: "bar",
+      xCol: 0,
+      yCols: [1],
+      aggregation: "none",
+    });
+    expect(model.series[0].values).toEqual([10, 0, 0, 20]);
+    expect(model.excludedNonNumeric).toBe(2);
+  });
+
+  it("#646: 集計あり (sum/avg/count) は非数値を最初から除外するため読み替えは発生しない", () => {
+    const withGaps: CellValue[][] = [
+      ["a", 10],
+      ["a", null],
+    ];
+    const model = buildChartModel(columns, withGaps, {
+      type: "bar",
+      xCol: 0,
+      yCols: [1],
+      aggregation: "sum",
+    });
+    expect(model.excludedNonNumeric).toBe(0);
+  });
+});
+
+describe("chartNotices (#646)", () => {
+  it("flags a lone data point", () => {
+    const model = { labels: ["a"], series: [{ name: "v", values: [10] }], sampledFrom: null };
+    expect(chartNotices(model)).toEqual(["singlePoint"]);
+  });
+
+  it("flags identical values across every point/series as flat", () => {
+    const model = {
+      labels: ["a", "b", "c"],
+      series: [{ name: "v", values: [5, 5, 5] }],
+      sampledFrom: null,
+    };
+    expect(chartNotices(model)).toEqual(["flatValues"]);
+  });
+
+  it("does not flag flat when values differ", () => {
+    const model = {
+      labels: ["a", "b"],
+      series: [{ name: "v", values: [5, 6] }],
+      sampledFrom: null,
+    };
+    expect(chartNotices(model)).toEqual([]);
+  });
+
+  it("flags non-numeric exclusions from excludedNonNumeric", () => {
+    const model = {
+      labels: ["a", "b"],
+      series: [{ name: "v", values: [1, 0] }],
+      sampledFrom: null,
+      excludedNonNumeric: 1,
+    };
+    expect(chartNotices(model)).toEqual(["nonNumericExcluded"]);
+  });
+
+  it("can report multiple notices at once", () => {
+    const model = {
+      labels: ["a"],
+      series: [{ name: "v", values: [0] }],
+      sampledFrom: null,
+      excludedNonNumeric: 1,
+    };
+    expect(chartNotices(model)).toEqual(["singlePoint", "nonNumericExcluded"]);
+  });
+
+  it("reports nothing for an empty model or a model without excludedNonNumeric", () => {
+    expect(chartNotices({ labels: [], series: [], sampledFrom: null })).toEqual([]);
+    const healthy = {
+      labels: ["a", "b"],
+      series: [{ name: "v", values: [1, 2] }],
+      sampledFrom: null,
+    };
+    expect(chartNotices(healthy)).toEqual([]);
   });
 });
 

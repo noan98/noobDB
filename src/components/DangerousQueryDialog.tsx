@@ -3,6 +3,7 @@ import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DangerFinding, DangerKind } from "../dangerousSql";
 import { typedConfirmMatches } from "../typeToConfirm";
+import { semanticColorToken } from "../semanticColors";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input } from "./ui";
 
@@ -71,12 +72,20 @@ export function DangerousQueryDialog({
 
       <ModalBody display="flex" flexDirection="column" gap="3">
         {isProduction && (
+          // 意味色「danger」の淡色バナー (#664)。以前はボタン専用の
+          // `app.dangerBg`/`app.dangerFg` (ライト/ダーク 2 値のみでテーマ
+          // プリセットに追従しない) をベタ塗り背景に転用していた。バナー用途は
+          // 本来 subtle/border/text の組み合わせ (PreviewGrid のドライラン
+          // バナーと同じパターン) が用意されており、全テーマプリセットで AA を
+          // 満たすことを検証済みなのでこちらに揃える。
           <chakra.div
             py="2" px="2.5"
             borderRadius="md"
+            borderLeft="3px solid"
+            borderLeftColor={semanticColorToken("danger", "border")}
             fontWeight={600}
-            color="app.dangerFg"
-            bg="app.dangerBg"
+            color={semanticColorToken("danger", "text")}
+            bg={semanticColorToken("danger", "subtle")}
           >
             {t("dangerousProductionNote")}
           </chakra.div>
@@ -104,7 +113,7 @@ export function DangerousQueryDialog({
                   border="1px solid"
                   borderColor="app.border"
                   borderLeft="3px solid"
-                  borderLeftColor="app.dangerBg"
+                  borderLeftColor={semanticColorToken("danger", "solid")}
                   borderRadius="md"
                   bg="app.toolbar"
                 >

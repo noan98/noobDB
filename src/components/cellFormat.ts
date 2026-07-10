@@ -102,6 +102,17 @@ export function formatDateTimeDisplay(s: string, locale: string): string | null 
 }
 
 /**
+ * 表示用に整形した文字列が元値と異なるときだけ、元値をツールチップ (`title`)
+ * 用に返す (#647)。数値セルの桁区切り整形 (`formatNumber`) のように、表示が
+ * 元値の情報を一部欠落させうる (例: 文字列 "007" → 数値 7 → "7") ケースで、
+ * ホバーすれば元の文字列を確認できるようにする。整形前後が同一なら `undefined`
+ * を返し、無意味なツールチップの氾濫を避ける。
+ */
+export function rawValueTitle(raw: string, display: string): string | undefined {
+  return raw === display ? undefined : raw;
+}
+
+/**
  * 列挙値 (ENUM/SET) を色分けバッジ表示する際の色相 (0–359)。同じ値には必ず同じ
  * 色を割り当てたいので、文字列から決定的なハッシュを取って色相に写像する。彩度/
  * 明度はテーマ側の CSS 変数で吸収するため、ここでは色相のみ算出する。

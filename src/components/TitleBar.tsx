@@ -4,6 +4,7 @@ import { chakra, Flex, type HTMLChakraProps } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { BrandMark } from "../brand";
+import { ProductionBadge, ProfileColorChip } from "./ProfileBadge";
 import { connectionBandColor, type TitleBarConnection } from "./titleBarContext";
 
 export type { TitleBarConnection } from "./titleBarContext";
@@ -96,17 +97,9 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
             <chakra.span color="app.borderStrong" flexShrink={0} aria-hidden>
               /
             </chakra.span>
-            <chakra.span
-              aria-hidden
-              boxSize="9px"
-              borderRadius="full"
-              flexShrink={0}
-              borderWidth="1px"
-              borderStyle="solid"
-              borderColor="app.borderStrong"
-              style={{ background: connection.color ?? "var(--ws-accent)" }}
-              transition="background var(--dur-med) var(--ease)"
-            />
+            {/* プロファイルカラーの丸チップ (#663)。ConnectionList / 本番接続確認
+                ダイアログと同じ `ProfileColorChip` を共有する。 */}
+            <ProfileColorChip color={connection.color} size={9} />
             <chakra.span
               fontSize="var(--text-sm)"
               fontWeight="600"
@@ -119,27 +112,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
             >
               {connection.name}
             </chakra.span>
-            {connection.isProduction && (
-              <chakra.span
-                title={t("listProductionTitle")}
-                display="inline-flex"
-                alignItems="center"
-                gap="3px"
-                flexShrink={0}
-                fontSize="var(--text-2xs)"
-                fontWeight={700}
-                textTransform="uppercase"
-                letterSpacing="0.06em"
-                px="1.5"
-                py="1px"
-                borderRadius="pill"
-                bg="app.status.error"
-                color="#fff"
-              >
-                <Icon name="production" size={11} />
-                {t("listProduction")}
-              </chakra.span>
-            )}
+            {connection.isProduction && <ProductionBadge compact />}
             {/* 自動再接続中はアンビエントなバッジで状態を示す (#600)。帯色も警告色になる。 */}
             {connection.status === "reconnecting" && (
               <chakra.span

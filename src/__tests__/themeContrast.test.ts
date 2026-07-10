@@ -294,6 +294,40 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
       check(vars, "status-idle", "bg", AA_UI);
       check(vars, "status-info", "bg", AA_UI);
     });
+    it("semantic family text meets AA on default + subtle surfaces (#476/#664)", () => {
+      // info/success/warning/error の 4 段階トークンは #664 でこのプリセットにも
+      // フル定義した。未定義のまま :root のライト値へフォールバックしないことを
+      // 固定する (このチェックは vars が preset own のみを持つ場合に落ちる —
+      // discoverPresets はベースへのフォールバックもマージするため、プリセット
+      // 側が省略していても直接ここでは検知できない。そのため generic な AA
+      // チェックに加え、プリセット自身が全トークンを定義していることも検証する)。
+      for (const fam of ["info", "success", "warning", "error"]) {
+        check(vars, `${fam}-text`, "bg", AA_TEXT);
+        check(vars, `${fam}-text`, "bg-elevated", AA_TEXT);
+        check(vars, `${fam}-text`, `${fam}-subtle`, AA_TEXT);
+      }
+    });
+    it("defines its own semantic family tokens instead of falling back to the light default (#664)", () => {
+      // フォールバックマージ (discoverPresets) 前の生ブロックだけを見て、
+      // info/success/warning/error の 4 段階トークンをプリセット自身が
+      // 定義していることを検証する。これが無いと dracula-dark などの暗い
+      // プリセットが誤ってライト既定色 (:root) を継いでしまう (#664 で発見した
+      // 回帰) — 上のフォールバックマージ後の AA チェックだけでは検知できない。
+      const re = new RegExp(
+        `:root\\[data-theme="${preset.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`,
+      );
+      const m = css.match(re);
+      expect(m, `preset block not found: ${preset.name}`).toBeTruthy();
+      const body = m![1];
+      for (const fam of ["info", "success", "warning", "error"]) {
+        for (const tier of ["subtle", "border", "solid", "text"]) {
+          expect(
+            body,
+            `--${fam}-${tier} must be defined directly in :root[data-theme="${preset.name}"]`,
+          ).toMatch(new RegExp(`--${fam}-${tier}:\\s*#[0-9a-fA-F]{6};`));
+        }
+      }
+    });
     it("typed cell + syntax colors meet AA on their surfaces", () => {
       for (const c of ["cell-number", "cell-bool-true", "cell-date", "cell-json", "cell-binary", "key-accent"]) {
         check(vars, c, "bg-elevated", AA_TEXT);

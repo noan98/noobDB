@@ -12,6 +12,8 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
+import { normalizeChipColor } from "../profileIdentity";
 import {
   databaseMaintenanceCommands,
   tableMaintenanceCommands,
@@ -1016,7 +1018,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     // matching databases / tables / columns.
     const schemaFiltered = searching && !profileMetaMatches(p);
     const status = profileStatus(p);
-    const accent = p.color ?? undefined;
+    const accent = normalizeChipColor(p.color) ?? undefined;
     const refreshing = refreshingSession === sessionId;
     // Left stripe + tint priority: production (red, always wins) > custom color >
     // active accent > none. A custom color also overrides the active accent
@@ -1115,44 +1117,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               {subtitle}
             </chakra.span>
           </chakra.span>
-          {p.is_production && (
-            <TreeBadge
-              display="inline-flex"
-              alignItems="center"
-              gap="1"
-              bg="app.status.error"
-              color="#fff"
-              borderColor="app.status.error"
-              fontSize="xs"
-              fontWeight={700}
-              letterSpacing="0.06em"
-              px="2"
-              py="0.5"
-              title={t("listProductionTitle")}
-            >
-              <Icon name="warning" size={12} />
-              {t("listProduction")}
-            </TreeBadge>
-          )}
-          {p.read_only && (
-            <TreeBadge
-              display="inline-flex"
-              alignItems="center"
-              gap="1"
-              bg="var(--status-info, var(--bg-muted))"
-              color="app.text"
-              borderColor="app.borderStrong"
-              fontSize="xs"
-              fontWeight={700}
-              letterSpacing="0.06em"
-              px="2"
-              py="0.5"
-              title={t("listReadOnlyTitle")}
-            >
-              <Icon name="key" size={12} />
-              {t("listReadOnly")}
-            </TreeBadge>
-          )}
+          {/* 本番/読取専用バッジは ConnectionList・TitleBar・本番接続確認ダイアログで
+              共有する `ProfileBadges` (#663)。配色決定は `profileIdentity.ts` /
+              `semanticColors.ts` に一元化済みで、ここに色を持たない。 */}
+          <ProfileBadges isProduction={p.is_production} readOnly={p.read_only} />
           {/* スキーマ更新ボタンはアクティブ接続でのみ表示する。refreshSchema は
               アクティブな sessionId を対象にするため、背景接続の行に出すと別接続を
               更新してしまい紛らわしい (#複数同時接続)。背景接続は接続済みドットのみ。 */}
@@ -1467,6 +1435,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       aria-expanded={groupOpen}
                     >
                       <TreeChevron transform={groupOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                      {/* グループ名のイニシャルアバター (#663)。未分類グループには
+                          そもそも意味のあるイニシャルが無いので出さない。 */}
+                      {g.name && <GroupAvatar name={g.name} size={16} />}
                       <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
                         {label}
                       </chakra.span>

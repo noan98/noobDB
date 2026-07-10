@@ -808,6 +808,11 @@ const en = {
   chartNoData: "No data to chart.",
   chartPickY: "Pick at least one Y-axis column.",
   chartSampled: "Showing {shown} sampled points of {total} rows.",
+  // 退化データの注記 (#646): チャート自体は描画できるが、見た目の理由を
+  // 一言添えないと壊れて見えかねないケース。
+  chartNoticeSinglePoint: "Only one data point — a single mark, no line.",
+  chartNoticeFlatValues: "All values are identical, so the chart is flat.",
+  chartNoticeNonNumericExcluded: "{count} non-numeric/NULL value(s) are shown as 0.",
   // ピボット / クロス集計ビュー (#661)
   pivotShow: "Pivot",
   pivotRowField: "Rows",
@@ -1791,6 +1796,36 @@ const en = {
   shortcutSidebarFilterDesc: "Focus the connection / schema filter in the sidebar.",
   shortcutObjectSearchTitle: "Cmd/Ctrl+Shift+O",
   shortcutObjectSearchDesc: "Search tables and columns across the schema and jump to one.",
+
+  // Welcome screen / first-run onboarding (#599)
+  welcomeTitle: "Welcome to noobDB",
+  welcomeSubtitle:
+    "A lightweight desktop client for MySQL, PostgreSQL and SQLite, with first-class SSH tunnel support.",
+  welcomeCreateConnectionTitle: "Add a connection",
+  welcomeCreateConnectionDesc: "Set up a connection to a MySQL or PostgreSQL server.",
+  welcomeOpenSqliteTitle: "Open a SQLite file",
+  welcomeOpenSqliteDesc: "Pick an existing .db/.sqlite file and connect to it directly.",
+  welcomeStartTourTitle: "See how it works",
+  welcomeStartTourDesc: "A quick walkthrough from connecting to running your first query.",
+
+  onboardingTourTitle: "Getting started",
+  onboardingCloseAria: "Close the tour",
+  onboardingSkip: "Skip",
+  onboardingBack: "Back",
+  onboardingNext: "Next",
+  onboardingFinish: "Done",
+  onboardingStepCounter: "{current} / {total}",
+  onboardingStepConnectTitle: "Connect to a database",
+  onboardingStepConnectDesc:
+    "Add a MySQL, PostgreSQL or SQLite connection from the sidebar (or the welcome screen) to get started.",
+  onboardingStepQueryTitle: "Run a query",
+  onboardingStepQueryDesc: "Open a query tab, write SQL and run it — results stream in as they arrive.",
+  onboardingStepEditTitle: "Edit results inline",
+  onboardingStepEditDesc:
+    "Double-click a cell in the result grid to edit it, then apply the change as a real update.",
+  onboardingStepMoreTitle: "Snippets, history and more",
+  onboardingStepMoreDesc:
+    "Save frequent queries as snippets, revisit past runs in History, and press ? anytime for shortcuts.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -2603,6 +2638,11 @@ const ja: Dict = {
   chartNoData: "チャート化するデータがありません。",
   chartPickY: "Y 軸の列を 1 つ以上選んでください。",
   chartSampled: "{total} 行から {shown} 点をサンプリングして表示しています。",
+  // 退化データの注記 (#646): チャート自体は描画できるが、見た目の理由を
+  // 一言添えないと壊れて見えかねないケース。
+  chartNoticeSinglePoint: "データ点が 1 つだけです (点のみ表示、線にはなりません)。",
+  chartNoticeFlatValues: "すべての値が同じため、グラフが平坦になっています。",
+  chartNoticeNonNumericExcluded: "非数値/NULL の値 {count} 件を 0 として表示しています。",
   // ピボット / クロス集計ビュー (#661)
   pivotShow: "ピボット",
   pivotRowField: "行",
@@ -3586,6 +3626,35 @@ const ja: Dict = {
   shortcutSidebarFilterDesc: "サイドバーの接続・スキーマフィルタにフォーカスします。",
   shortcutObjectSearchTitle: "Cmd/Ctrl+Shift+O",
   shortcutObjectSearchDesc: "テーブル/カラムをスキーマ横断で検索して該当テーブルへジャンプします。",
+
+  // ウェルカム画面 / 初回起動オンボーディング (#599)
+  welcomeTitle: "noobDB へようこそ",
+  welcomeSubtitle:
+    "MySQL・PostgreSQL・SQLite に対応した軽量デスクトップ DB クライアントです。SSH トンネルもファーストクラスでサポートします。",
+  welcomeCreateConnectionTitle: "接続を追加",
+  welcomeCreateConnectionDesc: "MySQL・PostgreSQL サーバへの接続を設定します。",
+  welcomeOpenSqliteTitle: "SQLite ファイルを開く",
+  welcomeOpenSqliteDesc: "既存の .db / .sqlite ファイルを選んで直接接続します。",
+  welcomeStartTourTitle: "はじめかたを見る",
+  welcomeStartTourDesc: "接続から最初のクエリ実行までの流れを簡単に紹介します。",
+
+  onboardingTourTitle: "はじめかた",
+  onboardingCloseAria: "ツアーを閉じる",
+  onboardingSkip: "スキップ",
+  onboardingBack: "戻る",
+  onboardingNext: "次へ",
+  onboardingFinish: "完了",
+  onboardingStepCounter: "{current} / {total}",
+  onboardingStepConnectTitle: "データベースに接続する",
+  onboardingStepConnectDesc:
+    "サイドバー (またはウェルカム画面) から MySQL・PostgreSQL・SQLite の接続を追加して始めましょう。",
+  onboardingStepQueryTitle: "クエリを実行する",
+  onboardingStepQueryDesc: "クエリタブを開いて SQL を書いて実行します。結果は到着ごとに段階的に表示されます。",
+  onboardingStepEditTitle: "結果をその場で編集する",
+  onboardingStepEditDesc: "結果グリッドのセルをダブルクリックすると編集でき、そのまま実際の更新として適用できます。",
+  onboardingStepMoreTitle: "スニペット・履歴など",
+  onboardingStepMoreDesc:
+    "よく使うクエリはスニペットとして保存でき、過去の実行は履歴から見返せます。困ったときは ? キーでショートカット一覧を開けます。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
