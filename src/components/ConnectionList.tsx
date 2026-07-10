@@ -12,7 +12,8 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
-import { semanticColorToken } from "../semanticColors";
+import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
+import { normalizeChipColor } from "../profileIdentity";
 import {
   databaseMaintenanceCommands,
   tableMaintenanceCommands,
@@ -1017,7 +1018,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     // matching databases / tables / columns.
     const schemaFiltered = searching && !profileMetaMatches(p);
     const status = profileStatus(p);
-    const accent = p.color ?? undefined;
+    const accent = normalizeChipColor(p.color) ?? undefined;
     const refreshing = refreshingSession === sessionId;
     // Left stripe + tint priority: production (red, always wins) > custom color >
     // active accent > none. A custom color also overrides the active accent
@@ -1116,56 +1117,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               {subtitle}
             </chakra.span>
           </chakra.span>
-          {p.is_production && (
-            <TreeBadge
-              display="inline-flex"
-              alignItems="center"
-              gap="1"
-              // 意味色「danger」のベタ塗り (#664)。以前は `app.status.error`
-              // (接続/処理ステータス向けのテキスト色トークン) を塗り背景に、
-              // 白文字を生の hex で重ねていたため、テーマプリセットによっては
-              // (dracula 等の status-error は明色のためベタ塗りに白文字だと
-              // コントラストが崩れる) 判読できなくなっていた。ボタンで既に
-              // ライト/ダーク双方の AA を検証済みの danger の塗り/文字トークンを
-              // 再利用する。
-              bg="app.dangerBg"
-              color="app.dangerFg"
-              borderColor="app.dangerBg"
-              fontSize="xs"
-              fontWeight={700}
-              letterSpacing="0.06em"
-              px="2"
-              py="0.5"
-              title={t("listProductionTitle")}
-            >
-              <Icon name="warning" size={12} />
-              {t("listProduction")}
-            </TreeBadge>
-          )}
-          {p.read_only && (
-            <TreeBadge
-              display="inline-flex"
-              alignItems="center"
-              gap="1"
-              // 意味色「info」の淡色バッジ (#664)。以前は `var(--status-info, ...)`
-              // を直接塗り背景に使っており、プリセットによっては明色の
-              // status-info の上に `app.text` (同じく明色になりうる) が乗り
-              // 判読しづらくなっていた。subtle/text の組み合わせは全プリセットで
-              // AA を満たすことを themeContrast.test.ts が検証している。
-              bg={semanticColorToken("info", "subtle")}
-              color={semanticColorToken("info", "text")}
-              borderColor={semanticColorToken("info", "border")}
-              fontSize="xs"
-              fontWeight={700}
-              letterSpacing="0.06em"
-              px="2"
-              py="0.5"
-              title={t("listReadOnlyTitle")}
-            >
-              <Icon name="key" size={12} />
-              {t("listReadOnly")}
-            </TreeBadge>
-          )}
+          {/* 本番/読取専用バッジは ConnectionList・TitleBar・本番接続確認ダイアログで
+              共有する `ProfileBadges` (#663)。配色決定は `profileIdentity.ts` /
+              `semanticColors.ts` に一元化済みで、ここに色を持たない。 */}
+          <ProfileBadges isProduction={p.is_production} readOnly={p.read_only} />
           {/* スキーマ更新ボタンはアクティブ接続でのみ表示する。refreshSchema は
               アクティブな sessionId を対象にするため、背景接続の行に出すと別接続を
               更新してしまい紛らわしい (#複数同時接続)。背景接続は接続済みドットのみ。 */}
@@ -1480,6 +1435,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       aria-expanded={groupOpen}
                     >
                       <TreeChevron transform={groupOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                      {/* グループ名のイニシャルアバター (#663)。未分類グループには
+                          そもそも意味のあるイニシャルが無いので出さない。 */}
+                      {g.name && <GroupAvatar name={g.name} size={16} />}
                       <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
                         {label}
                       </chakra.span>

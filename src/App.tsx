@@ -56,6 +56,7 @@ import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
+import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
 import { Icon } from "./components/Icon";
@@ -1931,39 +1932,13 @@ export default function App() {
           <Flex direction="column" gap="2" color="app.text" alignItems="center">
             <ProductionWarningIllustration size={80} />
             <Flex align="center" gap="2">
-              {profile.color && (
-                <chakra.span
-                  display="inline-block"
-                  w="14px"
-                  h="14px"
-                  borderRadius="full"
-                  flexShrink={0}
-                  bg={profile.color}
-                  borderWidth="1px"
-                  borderStyle="solid"
-                  borderColor="app.borderStrong"
-                  aria-hidden
-                />
-              )}
+              {/* ここは「まだ接続していないプロファイル」の確認ダイアログなので、
+                  色未設定時に現在のワークスペースアクセントへフォールバックする
+                  ProfileColorChip の既定挙動は使わず、色があるときだけ表示する
+                  (#663: チップ/バッジの見た目自体は ConnectionList / TitleBar と共有)。 */}
+              {profile.color && <ProfileColorChip color={profile.color} size={14} />}
               <chakra.span fontWeight={600} fontSize="md">{profile.name}</chakra.span>
-              <chakra.span
-                display="inline-flex"
-                alignItems="center"
-                gap="1"
-                fontSize="xs"
-                textTransform="uppercase"
-                letterSpacing="0.06em"
-                fontWeight={700}
-                px="2"
-                py="0.5"
-                borderRadius="pill"
-                bg="app.status.error"
-                color="#fff"
-                flexShrink={0}
-              >
-                <Icon name="warning" size={12} />
-                {translate("listProduction")}
-              </chakra.span>
+              <ProductionBadge />
             </Flex>
             <chakra.span>{translate("productionConfirm", { name: profile.name })}</chakra.span>
             <chakra.span color="app.textMuted" fontSize="sm">
