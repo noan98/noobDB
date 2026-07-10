@@ -490,7 +490,7 @@ impl SqliteConn {
             };
             resolved_pks.insert(ref_table.clone(), resolved);
         }
-        for (_, (ref_table, ref_col)) in fks.iter_mut() {
+        for (ref_table, ref_col) in fks.values_mut() {
             if ref_col.is_none() {
                 *ref_col = resolved_pks.get(ref_table).and_then(|p| p.clone());
             }
