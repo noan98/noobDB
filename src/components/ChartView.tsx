@@ -9,8 +9,10 @@ import { Button, Checkbox, Select } from "./ui";
 import { Icon } from "./Icon";
 import { ImageExportButton } from "./ImageExportButton";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
+import { EmptyState } from "./EmptyState";
 import {
   buildChartModel,
+  chartNotices,
   defaultChartConfig,
   inferNumericColumns,
   niceTicks,
@@ -19,6 +21,7 @@ import {
   type ChartType,
   type ChartConfig,
   type ChartModel,
+  type ChartNotice,
 } from "./chartData";
 
 /**
@@ -29,6 +32,12 @@ import {
  * (`colorScale.ts`、#525) を参照する。描画・系列の出現アニメーションは共有モーション
  * プリセット (`motion.ts`、#526) に沿い、reduced-motion では自動抑制される。
  * データ整形の純ロジックは chartData.ts に分離してテスト済み。
+ *
+ * **空/退化データ (#646)**: 数値列が無い・データが 0 件・Y 軸未選択は共有の
+ * `EmptyState` (アプリ全体の空状態と同じ見た目・fade-in モーション) で示す。
+ * データ点が 1 つだけ・全値同一・NULL/非数値を 0 として読み替えている、といった
+ * 「描画は破綻しないが説明が要る」ケースは `chartData.ts` の `chartNotices` が
+ * 判定し、サンプリング注記と同じ控えめなトーンで一言添える。
  */
 interface Props {
   result: QueryResult;
@@ -57,6 +66,12 @@ export function ChartView({ result, onClose }: Props) {
     () => (config ? buildChartModel(result.columns, result.rows, config) : null),
     [config, result.columns, result.rows],
   );
+  // 退化データの注記は「実際にチャートを描く」ときだけ意味を持つ (Y 未選択/
+  // データ 0 件のときは注記より前段の空状態メッセージが優先される)。
+  const notices = useMemo<ChartNotice[]>(
+    () => (model && config && config.yCols.length > 0 && model.labels.length > 0 ? chartNotices(model) : []),
+    [model, config],
+  );
 
   // 描画中の SVG を画像エクスポート (#643) で捕捉するためのコンテナ参照。
   const chartRef = useRef<HTMLDivElement>(null);
@@ -72,12 +87,12 @@ export function ChartView({ result, onClose }: Props) {
 
   if (!config || !model) {
     return (
-      <Flex direction="column" h="100%" align="center" justify="center" gap="3" color="app.textMuted">
-        <Icon name="query" size={28} />
-        <chakra.span>{t("chartNoNumeric")}</chakra.span>
-        <Button type="button" variant="secondary" onClick={onClose}>
-          {t("chartBackToTable")}
-        </Button>
+      <Flex h="100%" align="center" justify="center">
+        <EmptyState
+          icon="query"
+          title={t("chartNoNumeric")}
+          action={{ label: t("chartBackToTable"), onClick: onClose }}
+        />
       </Flex>
     );
   }
@@ -154,6 +169,15 @@ export function ChartView({ result, onClose }: Props) {
         </chakra.div>
       )}
 
+      {/* 退化データの注記 (#646): 破綻はしていないが「なぜこう見えるか」を
+          一言添えないと不安になりうるケース (点 1 つ・全値同一・非数値の 0 読み替え)。
+          サンプリング注記と同じ控えめなトーン (app.textMuted) で揃える。 */}
+      {notices.length > 0 && (
+        <chakra.div px="3" py="1" fontSize="xs" color="app.textMuted" flex="none">
+          {notices.map((n) => noticeText(n, model, t)).join("  ")}
+        </chakra.div>
+      )}
+
       {/* 凡例 */}
       {config.type !== "pie" && model.series.length > 0 && (
         <Flex gap="3" px="3" py="1" flex="none" flexWrap="wrap" fontSize="xs" color="app.textSecondary">
@@ -168,9 +192,9 @@ export function ChartView({ result, onClose }: Props) {
 
       <chakra.div ref={chartRef} flex="1" minH={0} overflow="auto" p="3">
         {model.labels.length === 0 ? (
-          <chakra.div color="app.textMuted" fontSize="sm">{t("chartNoData")}</chakra.div>
+          <EmptyState compact icon="table" title={t("chartNoData")} />
         ) : config.yCols.length === 0 ? (
-          <chakra.div color="app.textMuted" fontSize="sm">{t("chartPickY")}</chakra.div>
+          <EmptyState compact icon="filter" title={t("chartPickY")} />
         ) : config.type === "pie" ? (
           <PieChart model={model} colors={SERIES_COLORS} />
         ) : (
@@ -574,6 +598,18 @@ function PieChart({ model, colors }: { model: ChartModel; colors: string[] }) {
       })}
     </chakra.svg>
   );
+}
+
+/** `ChartNotice` を表示文言へ変換する (#646)。`useT` の `t` をそのまま受け取る。 */
+function noticeText(notice: ChartNotice, model: ChartModel, t: ReturnType<typeof useT>): string {
+  switch (notice) {
+    case "singlePoint":
+      return t("chartNoticeSinglePoint");
+    case "flatValues":
+      return t("chartNoticeFlatValues");
+    case "nonNumericExcluded":
+      return t("chartNoticeNonNumericExcluded", { count: model.excludedNonNumeric ?? 0 });
+  }
 }
 
 function formatTick(v: number): string {

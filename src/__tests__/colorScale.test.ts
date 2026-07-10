@@ -11,6 +11,8 @@ import {
   accentFill,
   ACCENT_FILL_STOPS,
 } from "../colorScale";
+// コントラスト比の計算は accent.ts と共有する (themeContrast.test.ts と同じ方針)。
+import { contrastRatio } from "../accent";
 
 // データ可視化カラースケール体系 (#525) の値 → 色マッピング純関数の検証。
 // 最小/最大/NaN/退化など境界を固定し、チャート・ヒートマップ・データバーが
@@ -105,7 +107,46 @@ describe("readableInk (#525/#526)", () => {
   it("falls back to dark ink for invalid hex", () => {
     expect(readableInk("not-a-color")).toBe(INK_DARK);
   });
+
+  it("also accepts rgb(...) strings (sampleRamp/heatmapColor's output format, #646)", () => {
+    expect(readableInk("rgb(239, 246, 255)")).toBe(INK_DARK); // ほぼ白
+    expect(readableInk("rgb(29, 78, 216)")).toBe(INK_LIGHT); // 濃い青
+  });
+
+  it("picks whichever ink has the higher contrast, not a fixed luminance threshold (#646)", () => {
+    // ヒートマップは連続ランプの中間色を塗りに使うため、固定しきい値方式だと
+    // 中間輝度の塗りで誤った側を選びコントラストが大きく落ちる組み合わせが
+    // あった (#646 で判明: グリッドの行背景と合成すると 1.3:1 まで低下)。
+    // 塗り色そのものに対しては、濃色/白のうち実コントラスト比が高い方を常に
+    // 選ぶことで、連続ランプ全域 (sequential/diverging の全ストップ間) で
+    // 十分なコントラストを維持できることをここで固定する。
+    const allStops = [
+      ...Object.values(SEQUENTIAL_RAMPS).map((r) => r.stops),
+      ...Object.values(DIVERGING_RAMPS).map((r) => r.stops),
+    ];
+    let worst = Infinity;
+    for (const stops of allStops) {
+      for (let t = 0; t <= 1; t += 0.02) {
+        const color = sampleRamp(t, stops);
+        const ink = readableInk(color);
+        const ratio = contrastRatio(ink, rgbStringToHex(color));
+        if (ratio < worst) worst = ratio;
+      }
+    }
+    // 理論下限は「濃色/白の良い方」を選ぶ方式そのものが持つ下限 (~4.17:1、
+    // INK_DARK が純黒でなくわずかに理論値を下回るぶんの余裕を見て 4.0 で固定)。
+    // 旧しきい値方式では同じ入力域で 2.2:1 まで落ちる組み合わせがあった。
+    expect(worst).toBeGreaterThanOrEqual(4.0);
+  });
 });
+
+/** テスト内だけで使う `rgb(r, g, b)` → `#rrggbb` 変換 (accent.ts の contrastRatio は hex 前提)。 */
+function rgbStringToHex(rgb: string): string {
+  const m = rgb.match(/rgb\((\d+), (\d+), (\d+)\)/);
+  if (!m) throw new Error(`unexpected color format: ${rgb}`);
+  const toHex = (n: string) => Number(n).toString(16).padStart(2, "0");
+  return `#${toHex(m[1])}${toHex(m[2])}${toHex(m[3])}`;
+}
 
 describe("accentFill (#718 — data bar / NULL rate mini bar shared fill)", () => {
   it("emits a color-mix() recipe against --accent at the given percent", () => {

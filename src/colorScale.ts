@@ -186,13 +186,46 @@ function relativeLuminance([r, g, b]: [number, number, number]): number {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
+/** 2 色 (RGB) の WCAG コントラスト比 (1–21)。 */
+function contrastOf(a: [number, number, number], b: [number, number, number]): number {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  const hi = Math.max(la, lb);
+  const lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 /**
- * 塗り色 `hex` の上に重ねる文字色を、明度に応じて白/濃色から選ぶ。スライス上の
- * パーセントラベルなど「色面の上に直接乗る文字」の可読性を確保する。明るい塗り
- * (黄/グレー等) には濃いインク、暗い塗りには白を返す。不正な hex には濃インク。
+ * `#rrggbb` / `rgb(r, g, b)` のいずれかを RGB 成分へ変換する。`sampleRamp` /
+ * `heatmapColor` は `rgb(...)` 文字列を返すため (#525)、`readableInk` はどちらの
+ * 表記も受け付ける。パース不能なら `null`。
  */
-export function readableInk(hex: string): string {
-  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return INK_DARK;
-  // 0.5 前後を境に切り替える (sRGB 相対輝度ベースの単純なしきい値)。
-  return relativeLuminance(hexToRgb(hex)) > 0.45 ? INK_DARK : INK_LIGHT;
+function parseRgb(color: string): [number, number, number] | null {
+  if (/^#[0-9a-fA-F]{6}$/.test(color)) return hexToRgb(color);
+  const m = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+  return null;
+}
+
+/**
+ * 塗り色 `color` (`#rrggbb` または `rgb(r, g, b)`) の上に重ねる文字色を、
+ * 濃色 (`INK_DARK`) / 白 (`INK_LIGHT`) のうちコントラスト比が高い方から選ぶ。
+ * スライス上のパーセントラベルやヒートマップセルの数値など「色面の上に直接
+ * 乗る文字」の可読性を確保する。不正な色文字列には濃インクを返す。
+ *
+ * 単純な明度しきい値 (0.5 など) で固定的に切り替える方式は、中間輝度の塗り
+ * (連続スケールのランプ中間色など) で誤った側を選びやすい (#646 で判明: 連続
+ * ランプを塗りに使うヒートマップで、しきい値方式だと一部の中間色でコントラスト
+ * 比が 2:1 台まで落ちる組み合わせがあった)。**2 色それぞれとの実コントラスト比を
+ * 計算し、高い方を採用する**ことで、任意の塗り色に対し常に「濃色/白のうち
+ * 良い方」を選ぶことが数学的に保証される (`INK_DARK` が純黒でないぶんだけ
+ * 理論上限よりわずかに低いが、どんな塗り色でも概ね 4:1 台以上のコントラストを
+ * 確保できる。`__tests__/colorScale.test.ts` が連続ランプ全域でこの下限を固定)。
+ */
+export function readableInk(color: string): string {
+  const rgb = parseRgb(color);
+  if (!rgb) return INK_DARK;
+  const dark = contrastOf(hexToRgb(INK_DARK), rgb);
+  const light = contrastOf(hexToRgb(INK_LIGHT), rgb);
+  return dark >= light ? INK_DARK : INK_LIGHT;
 }

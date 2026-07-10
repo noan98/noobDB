@@ -65,7 +65,7 @@ import {
   HEAT_PALETTES,
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
-import { accentFill, ACCENT_FILL_STOPS } from "../colorScale";
+import { accentFill, ACCENT_FILL_STOPS, readableInk } from "../colorScale";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
@@ -2448,19 +2448,34 @@ export function DataGrid({
                     style={{ transform: `scaleX(${dataBarPercent(num, stats) / 100})` }}
                     aria-hidden
                   />
-                  <span className={`cell-number cell-cf-value ${extraClass}`}>{display}</span>
+                  {/* データバーはアクセント色の半透明塗り (accentFill) が背景に乗るため、
+                      型別の数値色 (--cell-number) のままだと塗りの上でコントラストが
+                      不足しうる (#646)。中立な --text で全テーマ・任意のアクセント色に
+                      対し安定した可読性を確保する。 */}
+                  <span
+                    className={`cell-number cell-cf-value ${extraClass}`}
+                    style={{ color: "var(--text)" }}
+                  >
+                    {display}
+                  </span>
                 </span>
               );
             }
             const palette = HEAT_PALETTES[heatPaletteKey] ?? HEAT_PALETTES[DEFAULT_HEAT_PALETTE];
             const color = heatmapColor(normalize(num, stats), palette);
+            // ヒートマップは半透明の塗り (行背景との合成) だと、合成後の色が
+            // テーマ/行背景ごとに変わってしまい、固定の文字色ではコントラストを
+            // 保証できない (#646: 一部の組み合わせで 1.3:1 まで低下していた)。
+            // 不透明な塗りにし、`readableInk` で塗り色そのものから文字色を
+            // 決めることで、テーマに関わらず十分なコントラストを確保する。
             return (
-              <span
-                className="cell-cf-wrap"
-                title={title}
-                style={{ background: `color-mix(in srgb, ${color} 45%, transparent)` }}
-              >
-                <span className={`cell-number cell-cf-value ${extraClass}`}>{display}</span>
+              <span className="cell-cf-wrap" title={title} style={{ background: color }}>
+                <span
+                  className={`cell-number cell-cf-value ${extraClass}`}
+                  style={{ color: readableInk(color) }}
+                >
+                  {display}
+                </span>
               </span>
             );
           };

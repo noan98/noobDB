@@ -808,6 +808,11 @@ const en = {
   chartNoData: "No data to chart.",
   chartPickY: "Pick at least one Y-axis column.",
   chartSampled: "Showing {shown} sampled points of {total} rows.",
+  // 退化データの注記 (#646): チャート自体は描画できるが、見た目の理由を
+  // 一言添えないと壊れて見えかねないケース。
+  chartNoticeSinglePoint: "Only one data point — a single mark, no line.",
+  chartNoticeFlatValues: "All values are identical, so the chart is flat.",
+  chartNoticeNonNumericExcluded: "{count} non-numeric/NULL value(s) are shown as 0.",
   // ピボット / クロス集計ビュー (#661)
   pivotShow: "Pivot",
   pivotRowField: "Rows",
@@ -2633,6 +2638,11 @@ const ja: Dict = {
   chartNoData: "チャート化するデータがありません。",
   chartPickY: "Y 軸の列を 1 つ以上選んでください。",
   chartSampled: "{total} 行から {shown} 点をサンプリングして表示しています。",
+  // 退化データの注記 (#646): チャート自体は描画できるが、見た目の理由を
+  // 一言添えないと壊れて見えかねないケース。
+  chartNoticeSinglePoint: "データ点が 1 つだけです (点のみ表示、線にはなりません)。",
+  chartNoticeFlatValues: "すべての値が同じため、グラフが平坦になっています。",
+  chartNoticeNonNumericExcluded: "非数値/NULL の値 {count} 件を 0 として表示しています。",
   // ピボット / クロス集計ビュー (#661)
   pivotShow: "ピボット",
   pivotRowField: "行",

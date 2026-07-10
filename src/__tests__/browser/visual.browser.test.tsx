@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { renderInBrowser } from "./render";
 import { ResultGrid } from "../../components/ResultGrid";
 import { DangerousQueryDialog } from "../../components/DangerousQueryDialog";
+import { ChartView } from "../../components/ChartView";
 import type { Column, QueryResult } from "../../api/tauri";
 import type { DangerFinding } from "../../dangerousSql";
 import type { Theme } from "../../settings";
@@ -68,6 +69,15 @@ const RESULT: QueryResult = {
 
 const FINDINGS: DangerFinding[] = [{ kind: "deleteNoWhere", target: "users" }];
 
+/** チャートの初期状態は非数値の列を X に、最初の数値列を Y に自動選定するため、
+ *  凡例・軸・目盛り・棒の色が一度に描かれる (`RESULT` を流用)。 */
+const NO_NUMERIC_RESULT: QueryResult = {
+  columns: [{ name: "note", type_name: "TEXT" }] satisfies Column[],
+  rows: [["hello"], ["world"]],
+  rows_affected: 0,
+  elapsed_ms: 1,
+};
+
 // ビジュアル回帰は**コミット済みベースライン PNG との比較**であり、ベースラインが
 // 無い環境では `toMatchScreenshot` が (skip ではなく) 失敗する。ベースラインは
 // 比較を行う CI と同一環境 (Linux/Chromium) で生成・コミットする運用のため、
@@ -99,6 +109,28 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", () => {
       );
       const dialog = page.getByRole("dialog");
       await expect(dialog).toMatchScreenshot(`dangerous-dialog-${theme}`);
+    });
+
+    // チャート (#646): 凡例・軸・目盛り・系列色のトーン統一を固定する。
+    it(`チャート (${theme})`, async () => {
+      const root = await renderVisual(
+        <div style={{ height: "420px" }}>
+          <ChartView result={RESULT} onClose={() => {}} />
+        </div>,
+        theme,
+      );
+      await expect(root).toMatchScreenshot(`chart-${theme}`);
+    });
+
+    // チャート: 数値列が無い空状態 (共有 EmptyState、#646 で導入)。
+    it(`チャート空状態 (${theme})`, async () => {
+      const root = await renderVisual(
+        <div style={{ height: "300px" }}>
+          <ChartView result={NO_NUMERIC_RESULT} onClose={() => {}} />
+        </div>,
+        theme,
+      );
+      await expect(root).toMatchScreenshot(`chart-empty-${theme}`);
     });
   }
 });
