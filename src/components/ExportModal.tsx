@@ -408,7 +408,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             display="flex"
             gap="2"
           >
-            {(["csv", "json", "ndjson", "markdown", "sql"] as const).map((fmt) => (
+            {(["json", "csv", "ndjson", "markdown", "sql"] as const).map((fmt) => (
               <chakra.label
                 key={fmt}
                 display="inline-flex"
@@ -517,23 +517,21 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
               display="inline-flex"
               alignItems="center"
               justifyContent="center"
-              gap="1.5"
-              py="1" px="2"
-              color="app.textMuted"
+              w="28px"
+              h="28px"
+              color={copied ? "app.status.success" : "app.textMuted"}
               bg="app.bgInput"
               border="1px solid"
               borderColor="app.border"
               borderRadius="md"
-              fontSize="xs"
               cursor="pointer"
               transitionProperty="color, background, border-color"
               transitionDuration="var(--dur-fast)"
               transitionTimingFunction="var(--ease)"
-              _hover={{ color: "app.text", bg: "app.hover" }}
+              _hover={{ color: copied ? "app.status.success" : "app.text", bg: "app.hover" }}
               _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
             >
-              <Icon name={copied ? "check" : "copy"} size={14} />
-              <span>{copied ? t("gridCopied") : t("exportCopyAll")}</span>
+              <Icon name={copied ? "check" : "copy"} size={15} />
             </chakra.button>
           </chakra.div>
           <chakra.pre

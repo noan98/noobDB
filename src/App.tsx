@@ -1170,10 +1170,6 @@ export default function App() {
   const reconnectingRef = useRef(false);
   const reconnectAbortRef = useRef(false);
   const [status, setStatus] = useState<Status>({ kind: "key", key: "appDisconnected" });
-  // Lets the user dismiss the error-hint banner. Reset whenever the status
-  // changes (a new query result, connect/disconnect, connection switch, etc.)
-  // so a fresh error still shows its hint.
-  const [hintDismissed, setHintDismissed] = useState(false);
   // Lets the user close the whole error status bar (the red footer shown on a
   // failed connect, query error, etc.). Reset on every status change so a new
   // error is never silently hidden by a prior dismissal.
@@ -4801,10 +4797,8 @@ export default function App() {
   );
 
   // Any new status (new query, connect/disconnect, connection switch) re-enables
-  // the hint banner and the status bar itself so neither is permanently
-  // suppressed by a prior dismissal.
+  // the status bar so it is never permanently suppressed by a prior dismissal.
   useEffect(() => {
-    setHintDismissed(false);
     setStatusDismissed(false);
   }, [status]);
 
@@ -5965,7 +5959,11 @@ export default function App() {
                 </chakra.span>
               )}
               <Box flex="1" minW="0">
-                {statusHintKey && !hintDismissed ? (
+                {statusHintKey ? (
+                  // ヒントは初心者向けの一般的な言い回しだけだと具体性に欠けるため、
+                  // 実際のエラー本文 (シンタックスエラーの箇所など具体的な値) を常に
+                  // 併記する。閉じる操作はステータスバー右端の X に一本化し、ここには
+                  // 個別の閉じるボタンを置かない (閉じるボタンの二重表示を避ける)。
                   <Flex direction="column" gap="3px">
                     <Flex align="baseline" gap="1.5">
                       <chakra.span
@@ -5981,48 +5979,19 @@ export default function App() {
                         {t("errorHintLabel")}
                       </chakra.span>
                       <chakra.span flex="1" minW="0" lineHeight="1.45">{t(statusHintKey)}</chakra.span>
-                      <chakra.button
-                        type="button"
-                        flexShrink="0"
-                        alignSelf="flex-start"
-                        display="inline-flex"
-                        alignItems="center"
-                        justifyContent="center"
-                        w="18px"
-                        h="18px"
-                        p="0"
-                        border="none"
-                        bg="transparent"
-                        color="currentColor"
-                        borderRadius="sm"
-                        lineHeight="1"
-                        cursor="pointer"
-                        opacity={0.7}
-                        _hover={{ opacity: 1, bg: "app.hover" }}
-                        css={{ "& .icon-svg": { width: "13px", height: "13px" } }}
-                        onClick={() => setHintDismissed(true)}
-                        title={t("errorHintDismiss")}
-                        aria-label={t("errorHintDismiss")}
-                      >
-                        <Icon name="close" />
-                      </chakra.button>
                     </Flex>
-                    <chakra.details
-                      css={{ "& summary": { cursor: "pointer", opacity: 0.85, fontSize: "var(--text-xs)", width: "fit-content" } }}
+                    <chakra.span
+                      display="block"
+                      maxH="88px"
+                      overflow="auto"
+                      whiteSpace="pre-wrap"
+                      wordBreak="break-word"
+                      fontFamily="var(--font-mono)"
+                      fontSize="xs"
+                      opacity={0.9}
                     >
-                      <summary>{t("errorHintShowOriginal")}</summary>
-                      <chakra.span
-                        display="block"
-                        mt="3px"
-                        whiteSpace="pre-wrap"
-                        wordBreak="break-word"
-                        fontFamily="var(--font-mono)"
-                        fontSize="xs"
-                        opacity={0.9}
-                      >
-                        {statusText}
-                      </chakra.span>
-                    </chakra.details>
+                      {statusText}
+                    </chakra.span>
                   </Flex>
                 ) : (
                   // 単一行ステータスは折り返さず省略記号で詰め、全文はホバー
