@@ -24,7 +24,7 @@ import {
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
-import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact } from "./cellFormat";
+import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact, rawValueTitle } from "./cellFormat";
 import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
@@ -51,6 +51,8 @@ import {
   CELL_KIND_META,
   classifyEmptyValue,
   EMPTY_BADGE,
+  resolveBoolTruthy,
+  truncateHexPreview,
 } from "./cellTypeMeta";
 import {
   type CondFormatMode,
@@ -2427,16 +2429,20 @@ export function DataGrid({
           const effectiveKind = classifyByValue(v) ?? kind;
           // 数値セルの条件付き書式: 列単位でオプトインされたデータバー /
           // ヒートマップを背景に描く。NULL/非数値は対象外 (上で弾き済み or num===null)。
-          const renderNumeric = (display: string, extraClass: string) => {
+          const renderNumeric = (display: string, extraClass: string, title?: string) => {
             const mode = colFormats[i] ?? "off";
             const stats = columnStats[i];
             const num = toNumber(v);
             if (mode === "off" || !stats || num === null) {
-              return <span className={`cell-number ${extraClass}`}>{display}</span>;
+              return (
+                <span className={`cell-number ${extraClass}`} title={title}>
+                  {display}
+                </span>
+              );
             }
             if (mode === "bar") {
               return (
-                <span className="cell-cf-wrap">
+                <span className="cell-cf-wrap" title={title}>
                   <span
                     className="cell-databar"
                     style={{ transform: `scaleX(${dataBarPercent(num, stats) / 100})` }}
@@ -2451,6 +2457,7 @@ export function DataGrid({
             return (
               <span
                 className="cell-cf-wrap"
+                title={title}
                 style={{ background: `color-mix(in srgb, ${color} 45%, transparent)` }}
               >
                 <span className={`cell-number cell-cf-value ${extraClass}`}>{display}</span>
@@ -2460,13 +2467,15 @@ export function DataGrid({
           if (effectiveKind === "number") {
             const num = typeof v === "number" ? v : Number(v);
             const display = Number.isFinite(num) ? formatNumber(num) : String(v);
-            return renderNumeric(display, "");
+            // 桁区切り整形などで表示が元値と変わる場合 (例: "007" → "7") に備え、
+            // ホバーで元の文字列を確認できるようにする (#647)。同一なら title は無し。
+            return renderNumeric(display, "", rawValueTitle(String(v), display));
           }
           if (effectiveKind === "decimal") {
             return renderNumeric(String(v), "cell-decimal");
           }
           if (effectiveKind === "bool") {
-            const truthy = v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
+            const truthy = resolveBoolTruthy(v);
             // リッチ表示時はピル型バッジ、OFF 時は従来の色付きテキスト。どちらも
             // 表示文字列は "true"/"false" のまま (コピー時は元の値を使う)。
             const cls = richCellRendering ? "cell-bool cell-bool-badge" : "cell-bool";
@@ -2508,8 +2517,14 @@ export function DataGrid({
           if (effectiveKind === "enum") {
             const raw = String(v);
             // 列挙値は値ごとに決まる色相でバッジ表示する (表示専用)。OFF 時は素の文字列。
+            // 長い値は他の型と同じくグリッド CSS の ellipsis で省略されるため、
+            // title で元の文字列をホバー確認できるようにする (#647)。
             if (!richCellRendering) {
-              return <span className="cell-string">{raw}</span>;
+              return (
+                <span className="cell-string" title={raw}>
+                  {raw}
+                </span>
+              );
             }
             return (
               <span
@@ -2524,14 +2539,21 @@ export function DataGrid({
           if (effectiveKind === "binary") {
             const s = String(v);
             const label = t("gridBlobBytes", { size: formatBytes(Math.floor(s.length / 2)) });
-            const preview = s.length > 64 ? `${s.slice(0, 64)}…` : s;
+            const { preview } = truncateHexPreview(s);
             return (
               <span className="cell-binary" title={`${label} — 0x${s}`}>
                 <span className="cell-binary-tag">{label}</span>0x{preview}
               </span>
             );
           }
-          return <span className="cell-string">{String(v)}</span>;
+          // 既定 (string) カテゴリ。JSON/日時/バイナリ/列挙と同じく、グリッドの
+          // ellipsis で省略された長文をホバーで確認できるよう title を付ける (#647)。
+          const rawStr = String(v);
+          return (
+            <span className="cell-string" title={rawStr}>
+              {rawStr}
+            </span>
+          );
         },
       };
     });

@@ -4,6 +4,8 @@ import {
   cellKindIcon,
   classifyEmptyValue,
   EMPTY_BADGE,
+  resolveBoolTruthy,
+  truncateHexPreview,
   type CellKind,
 } from "../components/cellTypeMeta";
 
@@ -65,5 +67,53 @@ describe("empty value classification (#474)", () => {
       expect(EMPTY_BADGE[kind].glyph).toBeTruthy();
       expect(EMPTY_BADGE[kind].labelKey).toBeTruthy();
     }
+  });
+});
+
+describe("resolveBoolTruthy (#647)", () => {
+  it("treats the common truthy representations as true", () => {
+    expect(resolveBoolTruthy(true)).toBe(true);
+    expect(resolveBoolTruthy(1)).toBe(true);
+    expect(resolveBoolTruthy("1")).toBe(true);
+    expect(resolveBoolTruthy("true")).toBe(true);
+    expect(resolveBoolTruthy("TRUE")).toBe(true);
+  });
+
+  it("treats everything else as false", () => {
+    expect(resolveBoolTruthy(false)).toBe(false);
+    expect(resolveBoolTruthy(0)).toBe(false);
+    expect(resolveBoolTruthy("0")).toBe(false);
+    expect(resolveBoolTruthy("false")).toBe(false);
+    expect(resolveBoolTruthy(null)).toBe(false);
+    expect(resolveBoolTruthy(undefined)).toBe(false);
+    expect(resolveBoolTruthy("")).toBe(false);
+  });
+});
+
+describe("truncateHexPreview (#647)", () => {
+  it("returns the string unchanged when within the limit", () => {
+    const hex = "0f".repeat(10); // 20 chars
+    expect(truncateHexPreview(hex, 64)).toEqual({ preview: hex, truncated: false });
+  });
+
+  it("truncates and appends an ellipsis when over the limit", () => {
+    const hex = "ab".repeat(40); // 80 chars
+    const result = truncateHexPreview(hex, 64);
+    expect(result.truncated).toBe(true);
+    expect(result.preview).toBe(`${hex.slice(0, 64)}…`);
+    expect(result.preview.length).toBe(65); // 64 chars + ellipsis glyph
+  });
+
+  it("treats a value exactly at the limit as not truncated", () => {
+    const hex = "a".repeat(64);
+    expect(truncateHexPreview(hex, 64)).toEqual({ preview: hex, truncated: false });
+  });
+
+  it("defaults maxChars to 64 (grid preview length)", () => {
+    const hex = "b".repeat(100);
+    expect(truncateHexPreview(hex)).toEqual({
+      preview: `${"b".repeat(64)}…`,
+      truncated: true,
+    });
   });
 });

@@ -76,3 +76,34 @@ export const EMPTY_BADGE: Record<EmptyKind, { glyph: string; labelKey: I18nKey }
   "empty-array": { glyph: "[ ]", labelKey: "resultEmptyArray" },
   "empty-object": { glyph: "{ }", labelKey: "resultEmptyObject" },
 };
+
+/**
+ * 真偽値セルの "truthy" 判定 (表示専用)。ドライバによって `true`/`1`/`"1"`/`"true"`
+ * など表現がまちまちなため、代表的な表現をここで一箇所に集約する。ソート
+ * (`ResultGrid.ts` の `sortBool`) は NULL を明示的に区別する別実装で、こちらは
+ * kind が既に "bool" と判定済みの値を色/バッジに振り分けるためだけの単純化した
+ * 判定 (マッチしなければ false 扱い)。#647 で `ResultGrid` のセル描画から抽出し、
+ * 単体テスト可能にした。
+ */
+export function resolveBoolTruthy(v: unknown): boolean {
+  return v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
+}
+
+/** {@link truncateHexPreview} の戻り値。 */
+export interface HexPreview {
+  /** グリッド内に表示する 16 進文字列 (切り詰め時は末尾に "…" を含む)。 */
+  preview: string;
+  /** 切り詰めが発生したかどうか。 */
+  truncated: boolean;
+}
+
+/**
+ * BLOB セルの 16 進文字列をグリッド内プレビュー用に切り詰める (表示専用)。
+ * コピー/編集/エクスポートは常に元の hex 文字列を使うため、ここでの切り詰めは
+ * 見た目にのみ影響する。#647 で `ResultGrid` のセル描画から抽出し、単体テスト
+ * 可能にした。
+ */
+export function truncateHexPreview(hex: string, maxChars = 64): HexPreview {
+  if (hex.length <= maxChars) return { preview: hex, truncated: false };
+  return { preview: `${hex.slice(0, maxChars)}…`, truncated: true };
+}

@@ -3,6 +3,7 @@ import {
   enumBadgeHue,
   formatDateTimeDisplay,
   formatJsonCompact,
+  rawValueTitle,
 } from "../components/cellFormat";
 
 // 結果グリッドのセル値リッチ表示を支える純ロジックのテスト。整形は表示専用で
@@ -83,5 +84,18 @@ describe("enumBadgeHue", () => {
 
   it("異なる値はおおむね異なる色相になる", () => {
     expect(enumBadgeHue("active")).not.toBe(enumBadgeHue("inactive"));
+  });
+});
+
+describe("rawValueTitle (#647)", () => {
+  it("表示が元値と同じなら title を出さない (undefined)", () => {
+    expect(rawValueTitle("123", "123")).toBeUndefined();
+    expect(rawValueTitle("", "")).toBeUndefined();
+  });
+
+  it("表示が元値と異なるときだけ元値を返す (例: 桁区切り整形で情報が変わる場合)", () => {
+    // "007" → Number() → 桁区切り整形で "7" になり先頭ゼロの情報が失われるケース。
+    expect(rawValueTitle("007", "7")).toBe("007");
+    expect(rawValueTitle("1234567", "1,234,567")).toBe("1234567");
   });
 });
