@@ -29,6 +29,8 @@ interface Props {
   onInsert: (snippet: Snippet) => void;
   onEdit: (snippet: Snippet) => void;
   onDelete: (id: string) => void;
+  /** Empty-state CTA: open a fresh snippet form (same handler as the header "+" button, #599). */
+  onCreate?: () => void;
   /** 実行計画ウォッチ (#743) 登録済みのスニペット ID (アクティブプロファイル分)。 */
   watchedPlanIds?: string[];
   /** 実行計画ウォッチの登録/解除トグル。プロファイル未接続時は undefined。 */
@@ -61,6 +63,7 @@ export const SnippetList = memo(function SnippetList({
   onInsert,
   onEdit,
   onDelete,
+  onCreate,
   watchedPlanIds,
   onTogglePlanWatch,
   onOpenPlanWatch,
@@ -207,7 +210,12 @@ export const SnippetList = memo(function SnippetList({
       </TreeSearch>
 
       {snippets.length === 0 ? (
-        <EmptyState icon="snippet" title={t("snippetEmptyTitle")} description={t("snippetEmpty")} />
+        <EmptyState
+          icon="snippet"
+          title={t("snippetEmptyTitle")}
+          description={t("snippetEmpty")}
+          action={onCreate ? { label: t("appNewSnippet"), onClick: onCreate } : undefined}
+        />
       ) : visibleSnippets.length === 0 ? (
         <chakra.p color="app.textMuted" p="3">{t("snippetNoMatches")}</chakra.p>
       ) : (

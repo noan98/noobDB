@@ -29,6 +29,12 @@ interface Props {
   onRestore: (sql: string) => void;
   /** Open the entry's SQL in a brand-new query tab (never overwrites the editor). */
   onOpenInNewTab: (sql: string) => void;
+  /**
+   * Empty-state CTA: open a fresh query tab so a first-time user has an
+   * obvious next step ("run something and it'll show up here"). Omitted while
+   * disconnected, since there is nothing to run yet (#599).
+   */
+  onNewQuery?: () => void;
 }
 
 function oneLine(sql: string): string {
@@ -43,7 +49,7 @@ function formatTime(iso: string): string {
 
 // memo 化して App.tsx の高頻度な再レンダリングから切り離す。props は親で
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
-export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTab }: Props) {
+export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTab, onNewQuery }: Props) {
   const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -153,7 +159,12 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
         debounced ? (
           <chakra.p color="app.textMuted" p="3">{t("historyNoMatches")}</chakra.p>
         ) : (
-          <EmptyState icon="clock" title={t("historyEmptyTitle")} description={t("historyEmpty")} />
+          <EmptyState
+            icon="clock"
+            title={t("historyEmptyTitle")}
+            description={t("historyEmpty")}
+            action={onNewQuery ? { label: t("tabsNewQuery"), onClick: onNewQuery } : undefined}
+          />
         )
       ) : (
         <Tree role="tree">
