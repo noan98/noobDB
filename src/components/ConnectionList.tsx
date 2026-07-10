@@ -12,6 +12,7 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { semanticColorToken } from "../semanticColors";
 import {
   databaseMaintenanceCommands,
   tableMaintenanceCommands,
@@ -1120,9 +1121,16 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               display="inline-flex"
               alignItems="center"
               gap="1"
-              bg="app.status.error"
-              color="#fff"
-              borderColor="app.status.error"
+              // 意味色「danger」のベタ塗り (#664)。以前は `app.status.error`
+              // (接続/処理ステータス向けのテキスト色トークン) を塗り背景に、
+              // 白文字を生の hex で重ねていたため、テーマプリセットによっては
+              // (dracula 等の status-error は明色のためベタ塗りに白文字だと
+              // コントラストが崩れる) 判読できなくなっていた。ボタンで既に
+              // ライト/ダーク双方の AA を検証済みの danger の塗り/文字トークンを
+              // 再利用する。
+              bg="app.dangerBg"
+              color="app.dangerFg"
+              borderColor="app.dangerBg"
               fontSize="xs"
               fontWeight={700}
               letterSpacing="0.06em"
@@ -1139,9 +1147,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               display="inline-flex"
               alignItems="center"
               gap="1"
-              bg="var(--status-info, var(--bg-muted))"
-              color="app.text"
-              borderColor="app.borderStrong"
+              // 意味色「info」の淡色バッジ (#664)。以前は `var(--status-info, ...)`
+              // を直接塗り背景に使っており、プリセットによっては明色の
+              // status-info の上に `app.text` (同じく明色になりうる) が乗り
+              // 判読しづらくなっていた。subtle/text の組み合わせは全プリセットで
+              // AA を満たすことを themeContrast.test.ts が検証している。
+              bg={semanticColorToken("info", "subtle")}
+              color={semanticColorToken("info", "text")}
+              borderColor={semanticColorToken("info", "border")}
               fontSize="xs"
               fontWeight={700}
               letterSpacing="0.06em"

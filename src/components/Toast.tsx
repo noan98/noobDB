@@ -12,14 +12,28 @@ import { AnimatePresence, motion } from "motion/react";
 import { Box, chakra } from "@chakra-ui/react";
 import { Icon } from "./Icon";
 import { transitions } from "../motion";
+import { semanticColorToken, type SemanticRole } from "../semanticColors";
 
 export type ToastTone = "success" | "error" | "info";
 
-/** Left accent rail + icon tint per tone, bridged to the status color tokens. */
+/** Toast の tone を意味色トークンの role へマップする (#664)。`error` は
+ *  `danger` へ正規化する (semanticColors.ts の命名規約を参照)。 */
+const TONE_ROLE: Record<ToastTone, SemanticRole> = {
+  success: "success",
+  error: "danger",
+  info: "info",
+};
+
+/** Left accent rail + icon tint per tone。`text` 段階は全テーマプリセットで
+ *  `--bg` / `--bg-elevated` 基準の AA を満たすことを themeContrast.test.ts が
+ *  固定しているため、トーストのサーフェス (app.surface = --bg-elevated) 上でも
+ *  安全に使える (#664。以前は app.status.* を参照していたが、こちらは
+ *  「意味色」ではなく「接続/処理ステータス」向けの独立した体系のため、状態通知
+ *  である Toast には success/warning/danger/info の意味色ファミリーを使う)。 */
 const TONE_COLOR: Record<ToastTone, string> = {
-  success: "app.status.success",
-  error: "app.status.error",
-  info: "app.status.info",
+  success: semanticColorToken(TONE_ROLE.success, "text"),
+  error: semanticColorToken(TONE_ROLE.error, "text"),
+  info: semanticColorToken(TONE_ROLE.info, "text"),
 };
 
 export interface ToastOptions {

@@ -4006,8 +4006,12 @@ export function DataGrid({
               aria-live="polite"
               py="1.5" px="3.5"
               fontSize="sm"
-              color="#ffffff"
-              background="color-mix(in srgb, var(--status-success) 92%, #000000)"
+              // 意味色「success」のベタ塗り (#664)。以前は白文字を生の hex で
+              // 固定し、背景も `color-mix()` で --status-success を手動で暗く
+              // 調整していた。ボタンで既に AA (白文字) を検証済みの success の
+              // 塗り/文字トークンを再利用する。
+              color="app.successFg"
+              background="app.successBg"
               borderRadius="md"
               boxShadow="lg"
             >
