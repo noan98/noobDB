@@ -441,7 +441,19 @@ jobs:
       # テストバイナリ群のリンク時間を短縮する。
       # openssh-server は SSH トンネル統合テスト (#331) 用。テスト内で sshd を
       # 127.0.0.1:2222 に立て、パスワード/鍵認証のトンネル確立を実走させる。
+      #
+      # このジョブで最も重い I/O 律速ステップの一つ。後続の Rust ツールチェーン/
+      # ツール導入・キャッシュ復元・フロントビルドはいずれも apt パッケージを必要と
+      # しない (clang/mold はリンク時 = nextest 実行時に初めて要り、openssh-server は
+      # 後段の sshd 起動でのみ要る) ため、GitHub Actions のステップ並列実行 (GA /
+      # 2026-06) の background: true で非同期起動し、Rust プリアンブルと重ねて壁時計
+      # を短縮する。実際にパッケージが要る sshd 起動と nextest コンパイルの前に wait で
+      # 完了を保証する。dpkg のロックはこの apt ステップだけが握り、並走する他ステップ
+      # (setup-node / rustup / taiki-e ツール導入 / cache 復元) は apt/dpkg を使わない
+      # ため競合しない。
       - name: System deps (Tauri 2 prerequisites)
+        id: apt
+        background: true
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold openssh-server
@@ -467,11 +479,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      # SSH トンネル統合テスト (#331) 用の sshd を起動し、接続情報を $GITHUB_ENV へ。
-      # サービスコンテナ (要イメージ pull) ではなく apt の openssh-server を直接構成
-      # する方式 (ローカルでも同手順を再現・検証できる。scripts/ci-setup-sshd.sh)。
-      - name: Setup test sshd (SSH tunnel integration)
-        run: bash scripts/ci-setup-sshd.sh
+      # フロントのビルド (依存導入 + tsc/vite ビルド) は Rust ツールチェーンや cargo
+      # とは独立で、tauri::generate_context! が参照する dist/ を用意するだけ。以前は
+      # Rust ツール導入の後に直列で走らせていたが、background: true で非同期起動して
+      # 後続の Rust プリアンブル (toolchain 導入・キャッシュ復元・nextest/llvm-cov 導入
+      # = いずれも DL 律速) と重ねて壁時計を短縮する (ステップ並列実行 GA / 2026-06)。
+      # Rust の重いコンパイルは wait 後の nextest 実行 1 回だけなので CPU 競合はない。
+      # node_modules/・dist/ の書き込み先も cargo の target/ と重ならない。pnpm store
+      # キャッシュ (上の step) と corepack は直列で先に済ませてあるため background 内は
+      # 依存導入 + ビルドのみ。
+      - name: Build frontend (needed for tauri::generate_context!)
+        id: frontend
+        background: true
+        run: pnpm install --frozen-lockfile && pnpm run build
 
       # llvm-tools-preview は cargo-llvm-cov の計装ビルドに必要なコンポーネント。
       - name: Setup Rust
@@ -505,11 +525,22 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
+      # 非同期起動した apt (システム依存) とフロントビルドの完了を待ち合わせる。
+      # 以降のステップはこれらの成果 (apt パッケージ = clang/mold/openssh-server・
+      # dist/) を必要とする。background ステップの $GITHUB_ENV / outputs はこの wait
+      # 以降で初めて利用可能になり、いずれかが失敗した場合はこの wait でジョブが
+      # fail する (公式仕様)。
+      - name: Wait for background setup (apt + frontend)
+        wait: [apt, frontend]
 
-      - name: Build frontend (needed for tauri::generate_context!)
-        run: pnpm run build
+      # SSH トンネル統合テスト (#331) 用の sshd を起動し、接続情報を $GITHUB_ENV へ。
+      # openssh-server は上の apt ステップで導入されるため、wait 完了後に実行する。
+      # サービスコンテナ (要イメージ pull) ではなく apt の openssh-server を直接構成
+      # する方式 (ローカルでも同手順を再現・検証できる。scripts/ci-setup-sshd.sh)。
+      # 通常 (非 background) ステップなので、書き込んだ NOOBDB_TEST_SSH_URL /
+      # NOOBDB_TEST_SSH_KEY は後続の nextest ステップから通常どおり参照できる。
+      - name: Setup test sshd (SSH tunnel integration)
+        run: bash scripts/ci-setup-sshd.sh
 
       # nextest を llvm-cov 計装下で実行し、カバレッジ生データのみ収集する
       # (--no-report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
