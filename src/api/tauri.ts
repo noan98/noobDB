@@ -613,6 +613,9 @@ export interface DumpOptions {
  */
 export type ImportFormat = "csv" | "json" | "ndjson";
 
+/** How the importer handles rows the database rejects (#687). */
+export type ImportErrorMode = "abort" | "skip";
+
 export interface ImportOptions {
   /** Source format. Omit/`"csv"` for the classic CSV path. */
   format?: ImportFormat;
@@ -629,6 +632,12 @@ export interface ImportOptions {
   nullToken?: string | null;
   /** Encoding label (e.g. "utf-8", "shift_jis", "euc-jp"). */
   encoding: string;
+  /**
+   * Row-error handling (#687). `"abort"` (default) rolls the whole import back
+   * on the first bad row; `"skip"` drops bad rows and reports them at the end.
+   * Omitted → the backend default (`"abort"`).
+   */
+  errorMode?: ImportErrorMode;
 }
 
 export interface ColumnMapping {
@@ -1171,15 +1180,29 @@ export interface ImportProgressEvent {
   total: number;
 }
 
+/** One skipped row in a skip-mode import (#687). */
+export interface SkippedRowInfo {
+  /** 1-based record number among data records. */
+  record: number;
+  /** Source file line (CSV only; null for JSON/NDJSON). */
+  line: number | null;
+  reason: string;
+}
+
 export interface ImportDoneEvent {
   streamId: string;
   inserted: number;
   elapsedMs: number;
+  /** Rows skipped in skip mode (empty in abort mode). #687. */
+  skipped: SkippedRowInfo[];
 }
 
 export interface ImportErrorEvent {
   streamId: string;
   error: string;
+  /** For an abort-mode failure, the pinpointed record number + CSV line (#687). */
+  record: number | null;
+  line: number | null;
 }
 
 // 全件ストリーミングエクスポート。

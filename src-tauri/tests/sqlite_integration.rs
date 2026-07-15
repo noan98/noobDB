@@ -1326,3 +1326,75 @@ async fn sqlite_query_inspector_is_unsupported() {
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// Resilient import (#687): skip mode inserts good rows, skips bad ones, and
+/// reports which records were skipped; abort-mode probing pinpoints the first
+/// offending record. Uses SQLite constraints (PRIMARY KEY uniqueness + NOT NULL)
+/// to force rejections without an external server.
+#[tokio::test]
+async fn sqlite_resilient_import_skips_and_locates_bad_rows() {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_import_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(p.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE imp (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+
+    let columns = vec!["id".to_string(), "name".to_string()];
+    // Record 0: ok. Record 1: NOT NULL violation. Record 2: duplicate PK (1).
+    // Record 3: ok.
+    let cell = |s: Option<&str>| s.map(|v| v.to_string());
+    let rows: Vec<Vec<Option<String>>> = vec![
+        vec![cell(Some("1")), cell(Some("alice"))],
+        vec![cell(Some("2")), cell(None)],
+        vec![cell(Some("1")), cell(Some("dup"))],
+        vec![cell(Some("3")), cell(Some("carol"))],
+    ];
+
+    // Skip mode: good rows commit, bad rows are reported by index.
+    let outcome = conn
+        .import_rows_skipping(None, "imp", &columns, &rows, 500, |_| Ok(()))
+        .await
+        .expect("skip import");
+    assert_eq!(outcome.inserted, 2, "records 0 and 3 should insert");
+    let skipped_indices: Vec<usize> = outcome.skipped.iter().map(|s| s.index).collect();
+    assert_eq!(
+        skipped_indices,
+        vec![1, 2],
+        "records 1 and 2 should be skipped"
+    );
+    assert!(outcome.skipped.iter().all(|s| !s.reason.is_empty()));
+
+    let count = conn
+        .execute("SELECT COUNT(*) FROM imp", None)
+        .await
+        .expect("count");
+    assert!(matches!(&count.rows[0][0], t::Value::Int(2)));
+
+    // Abort-mode probe on a fresh table: pinpoints the first failing record
+    // (index 1, the NOT NULL violation) and leaves nothing behind (rolled back).
+    conn.execute("DELETE FROM imp", None).await.expect("clear");
+    let located = conn
+        .probe_failing_row(None, "imp", &columns, &rows)
+        .await
+        .expect("probe");
+    assert_eq!(located.map(|(i, _)| i), Some(1));
+    let count2 = conn
+        .execute("SELECT COUNT(*) FROM imp", None)
+        .await
+        .expect("count2");
+    assert!(
+        matches!(&count2.rows[0][0], t::Value::Int(0)),
+        "probe must not persist any rows"
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&p);
+}

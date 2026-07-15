@@ -1310,6 +1310,19 @@ const en = {
   importExecute: "Import",
   importStop: "Stop",
   importCancelled: "Import cancelled.",
+  // Row-error handling (#687).
+  importErrorMode: "On bad row",
+  importErrorModeAbort: "Abort (all-or-nothing)",
+  importErrorModeSkip: "Skip bad rows",
+  importErrorModeSkipHint:
+    "Rows the database rejects are skipped and reported at the end. Not all-or-nothing — good rows are committed.",
+  importErrorAtRecord: "{error} (failed at record {record})",
+  importErrorAtRecordLine: "{error} (failed at record {record}, line {line})",
+  importSkippedSummary: "Imported {inserted} rows; skipped {skipped}.",
+  importSkippedRow: "record {record}: {reason}",
+  importSkippedRowLine: "record {record} (line {line}): {reason}",
+  importSkippedCopy: "Copy list",
+  importSkippedCopied: "Copied skipped rows.",
 
   // スキーマに基づくテストデータ生成 (#602)
   testDataTitle: "Generate test data into {table}",
@@ -3193,6 +3206,19 @@ const ja: Dict = {
   importExecute: "インポート",
   importStop: "中止",
   importCancelled: "インポートを中止しました。",
+  // 行エラーの扱い (#687)。
+  importErrorMode: "不良行の扱い",
+  importErrorModeAbort: "中断 (all-or-nothing)",
+  importErrorModeSkip: "不良行をスキップ",
+  importErrorModeSkipHint:
+    "データベースが拒否した行はスキップし、最後に一覧報告します。all-or-nothing ではなく、正常な行はコミットされます。",
+  importErrorAtRecord: "{error} (レコード {record} で失敗)",
+  importErrorAtRecordLine: "{error} (レコード {record}, 行 {line} で失敗)",
+  importSkippedSummary: "{inserted} 行をインポート、{skipped} 行をスキップしました。",
+  importSkippedRow: "レコード {record}: {reason}",
+  importSkippedRowLine: "レコード {record} (行 {line}): {reason}",
+  importSkippedCopy: "一覧をコピー",
+  importSkippedCopied: "スキップ行をコピーしました。",
 
   // スキーマに基づくテストデータ生成 (#602)
   testDataTitle: "{table} にテストデータを生成",

@@ -449,15 +449,26 @@ export const importProgressEvent = z.object({
   total: z.number(),
 });
 
+/** スキップされた行 (skip モード。#687)。 */
+export const skippedRowInfo = z.object({
+  record: z.number(),
+  line: z.number().nullable(),
+  reason: z.string(),
+});
+
 export const importDoneEvent = z.object({
   streamId: z.string(),
   inserted: z.number(),
   elapsedMs: z.number(),
+  // 旧バックエンド (skipped フィールド無し) との後方互換で既定 []。
+  skipped: z.array(skippedRowInfo).default([]),
 });
 
 export const importErrorEvent = z.object({
   streamId: z.string(),
   error: z.string(),
+  record: z.number().nullable().default(null),
+  line: z.number().nullable().default(null),
 });
 
 // ストリーミングダンプのイベント (#686)。

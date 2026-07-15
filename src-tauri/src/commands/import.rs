@@ -8,6 +8,10 @@ use crate::commands::query::record_write_history;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
+/// Parsed rows paired with each row's source file line (CSV only; `None` for
+/// JSON/NDJSON). Aliased to keep the parse signature readable (#687).
+type ParsedRowsWithLines = (Vec<Vec<Option<String>>>, Vec<Option<u64>>);
+
 /// Number of data rows returned by `parse_csv_preview` for the mapping UI.
 const PREVIEW_ROW_LIMIT: usize = 50;
 /// Rows per INSERT statement when the caller doesn't specify. Drivers clamp
@@ -25,6 +29,20 @@ pub enum ImportFormat {
     Json,
     /// Newline-delimited JSON — one object per line.
     Ndjson,
+}
+
+/// How to handle a row the database rejects (#687). Defaults to `Abort` so the
+/// import stays all-or-nothing unless the user opts into skipping.
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportErrorMode {
+    /// Roll the whole import back on the first bad row (all-or-nothing). The
+    /// error names the failing record (and, for CSV, its file line).
+    #[default]
+    Abort,
+    /// Skip bad rows and keep going; report the skipped rows at the end. Not
+    /// all-or-nothing — good rows are committed.
+    Skip,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +67,10 @@ pub struct ImportOptions {
     /// Encoding label understood by `encoding_rs` ("utf-8", "shift_jis",
     /// "euc-jp", ...). Unknown labels fall back to UTF-8.
     pub encoding: String,
+    /// How to handle rows the database rejects (#687). Defaults to `Abort`
+    /// (all-or-nothing) for requests that omit it.
+    #[serde(default)]
+    pub error_mode: ImportErrorMode,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -315,14 +337,32 @@ fn apply_null(s: &str, opts: &ImportOptions) -> Option<String> {
 
 /// Parses every data record into target-column order, applying the NULL token.
 /// Each output row has exactly `mapping.len()` cells; a CSV field that is
-/// missing for a given mapping entry becomes NULL.
+/// missing for a given mapping entry becomes NULL. Thin wrapper over
+/// [`parse_rows_with_lines`] that drops the line info; kept for the row-parsing
+/// unit tests (the import path uses the with-lines form for error reporting).
+#[cfg(test)]
 fn parse_rows(
     data: &[u8],
     opts: &ImportOptions,
     mapping: &[ColumnMapping],
 ) -> Result<Vec<Vec<Option<String>>>> {
+    Ok(parse_rows_with_lines(data, opts, mapping)?.0)
+}
+
+/// Like [`parse_rows`] but also returns, per parsed record, its 1-based source
+/// **line** in the original file (`Some` for CSV, `None` for JSON/NDJSON where a
+/// record index is the meaningful identifier). Used so a rejected row can be
+/// reported by both record number and file line (#687).
+fn parse_rows_with_lines(
+    data: &[u8],
+    opts: &ImportOptions,
+    mapping: &[ColumnMapping],
+) -> Result<ParsedRowsWithLines> {
     if opts.format != ImportFormat::Csv {
-        return parse_json_rows(data, opts, mapping);
+        let rows = parse_json_rows(data, opts, mapping)?;
+        // JSON/NDJSON identify a row by its record index, not a file line.
+        let lines = vec![None; rows.len()];
+        return Ok((rows, lines));
     }
     let mut rdr = build_reader(data, opts);
     let mut records = rdr.records();
@@ -332,8 +372,12 @@ fn parse_rows(
         }
     }
     let mut out: Vec<Vec<Option<String>>> = Vec::new();
+    let mut lines: Vec<Option<u64>> = Vec::new();
     for rec in records {
         let rec = rec.map_err(csv_err)?;
+        // The line where this record starts (accounts for quoted multi-line
+        // fields, so it's the true file line, not a naive record+offset).
+        lines.push(rec.position().map(|p| p.line()));
         let row: Vec<Option<String>> = mapping
             .iter()
             .map(|m| match rec.get(m.csv_index) {
@@ -343,7 +387,7 @@ fn parse_rows(
             .collect();
         out.push(row);
     }
-    Ok(out)
+    Ok((out, lines))
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -361,6 +405,16 @@ struct ImportProgressEvent {
     total: u64,
 }
 
+/// One skipped row surfaced to the UI (#687): the 1-based record number among
+/// data records, the source file line (CSV only; `None` for JSON/NDJSON), and
+/// the driver's rejection reason.
+#[derive(Debug, Serialize, Clone)]
+struct SkippedRowInfo {
+    record: u64,
+    line: Option<u64>,
+    reason: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 struct ImportDoneEvent {
     #[serde(rename = "streamId")]
@@ -368,6 +422,8 @@ struct ImportDoneEvent {
     inserted: u64,
     #[serde(rename = "elapsedMs")]
     elapsed_ms: u64,
+    /// Rows skipped in `skip` mode (empty in `abort` mode). #687.
+    skipped: Vec<SkippedRowInfo>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -375,6 +431,27 @@ struct ImportErrorEvent {
     #[serde(rename = "streamId")]
     stream_id: String,
     error: String,
+    /// For an `abort`-mode failure, the 1-based record number that was rejected
+    /// (and its CSV file line), when it could be pinpointed (#687).
+    record: Option<u64>,
+    line: Option<u64>,
+}
+
+/// Outcome of the DB-execution phase of an import (#687). Setup failures (file
+/// read, parse, read-only guard) are still `Err(AppError)` from `run_import`;
+/// this captures the two DB-level results: success (with any skipped rows) and
+/// an abort-mode failure pinpointed to a record/line.
+enum ImportRun {
+    Ok {
+        inserted: u64,
+        elapsed_ms: u64,
+        skipped: Vec<SkippedRowInfo>,
+    },
+    Failed {
+        message: String,
+        record: Option<u64>,
+        line: Option<u64>,
+    },
 }
 
 const EV_IMPORT_STARTED: &str = "csv-import:started";
@@ -500,9 +577,15 @@ async fn spawn_import(
     .await;
 
     // A CSV import is a bulk write; record it to history like the edit-Apply
-    // path so destructive imports are auditable (skip_history honoured).
+    // path so destructive imports are auditable (skip_history honoured). A
+    // skip-mode run that dropped rows is recorded as a success with the count;
+    // an abort-mode failure records the pinpointed message.
     match &result {
-        Ok((inserted, elapsed_ms)) => {
+        Ok(ImportRun::Ok {
+            inserted,
+            elapsed_ms,
+            ..
+        }) => {
             record_write_history(
                 &session,
                 summary,
@@ -510,6 +593,17 @@ async fn spawn_import(
                 Some(*inserted as i64),
                 Some(*elapsed_ms as i64),
                 None,
+            )
+            .await
+        }
+        Ok(ImportRun::Failed { message, .. }) => {
+            record_write_history(
+                &session,
+                summary,
+                summary_db.as_deref(),
+                None,
+                None,
+                Some(message.clone()),
             )
             .await
         }
@@ -527,10 +621,15 @@ async fn spawn_import(
     }
 
     match result {
-        Ok((inserted, elapsed_ms)) => {
+        Ok(ImportRun::Ok {
+            inserted,
+            elapsed_ms,
+            skipped,
+        }) => {
             tracing::info!(
                 stream_id = %stream_id,
                 inserted,
+                skipped = skipped.len(),
                 elapsed_ms,
                 "csv import completed"
             );
@@ -540,18 +639,39 @@ async fn spawn_import(
                     stream_id: stream_id.clone(),
                     inserted,
                     elapsed_ms,
+                    skipped,
                 },
             ) {
                 tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit import done event");
             }
         }
+        Ok(ImportRun::Failed {
+            message,
+            record,
+            line,
+        }) => {
+            tracing::error!(stream_id = %stream_id, error = %message, record = ?record, "csv import failed");
+            if let Err(emit_err) = app.emit(
+                EV_IMPORT_ERROR,
+                ImportErrorEvent {
+                    stream_id: stream_id.clone(),
+                    error: message,
+                    record,
+                    line,
+                },
+            ) {
+                tracing::warn!(stream_id = %stream_id, error = %emit_err, "failed to emit import error event");
+            }
+        }
         Err(e) => {
-            tracing::error!(stream_id = %stream_id, error = %e, "csv import failed");
+            tracing::error!(stream_id = %stream_id, error = %e, "csv import failed (setup)");
             if let Err(emit_err) = app.emit(
                 EV_IMPORT_ERROR,
                 ImportErrorEvent {
                     stream_id: stream_id.clone(),
                     error: e.to_string(),
+                    record: None,
+                    line: None,
                 },
             ) {
                 tracing::warn!(
@@ -579,11 +699,13 @@ async fn run_import(
     options: ImportOptions,
     mapping: Vec<ColumnMapping>,
     batch_size: usize,
-) -> Result<(u64, u64)> {
+) -> Result<ImportRun> {
     let bytes = tokio::fs::read(&path).await?;
     let text = decode_bytes(&bytes, &options.encoding);
     let columns: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
-    let rows = parse_rows(text.as_bytes(), &options, &mapping)?;
+    // `lines[i]` is record i's source file line (CSV only), used to report a bad
+    // row by both record number and file line (#687).
+    let (rows, lines) = parse_rows_with_lines(text.as_bytes(), &options, &mapping)?;
     let total = rows.len() as u64;
 
     tracing::info!(
@@ -591,6 +713,7 @@ async fn run_import(
         stream_id = %stream_id,
         table = %table,
         total,
+        error_mode = ?options.error_mode,
         "csv import starting"
     );
 
@@ -604,38 +727,104 @@ async fn run_import(
         tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit import started event");
     }
 
-    let started = Instant::now();
-    let emit_app = app.clone();
-    let emit_id = stream_id.to_string();
-    let inserted = session
-        .conn
-        .import_rows(
-            database.as_deref(),
-            &table,
-            &columns,
-            &rows,
-            batch_size,
-            |n| {
-                if let Err(e) = emit_app.emit(
-                    EV_IMPORT_PROGRESS,
-                    ImportProgressEvent {
-                        stream_id: emit_id.clone(),
-                        inserted: n,
-                        total,
-                    },
-                ) {
-                    tracing::warn!(
-                        stream_id = %emit_id,
-                        error = %e,
-                        "failed to emit import progress event"
-                    );
-                }
-                Ok(())
-            },
-        )
-        .await?;
+    // Cumulative-progress emitter shared by both modes.
+    let emit_progress = {
+        let emit_app = app.clone();
+        let emit_id = stream_id.to_string();
+        move |n: u64| -> Result<()> {
+            if let Err(e) = emit_app.emit(
+                EV_IMPORT_PROGRESS,
+                ImportProgressEvent {
+                    stream_id: emit_id.clone(),
+                    inserted: n,
+                    total,
+                },
+            ) {
+                tracing::warn!(stream_id = %emit_id, error = %e, "failed to emit import progress event");
+            }
+            Ok(())
+        }
+    };
 
-    Ok((inserted, started.elapsed().as_millis() as u64))
+    let started = Instant::now();
+    match options.error_mode {
+        ImportErrorMode::Skip => {
+            // Resilient: skip rows the DB rejects, report them at the end.
+            let outcome = session
+                .conn
+                .import_rows_skipping(
+                    database.as_deref(),
+                    &table,
+                    &columns,
+                    &rows,
+                    batch_size,
+                    emit_progress,
+                )
+                .await?;
+            let skipped = outcome
+                .skipped
+                .iter()
+                .map(|s| SkippedRowInfo {
+                    record: s.index as u64 + 1,
+                    line: lines.get(s.index).copied().flatten(),
+                    reason: s.reason.clone(),
+                })
+                .collect();
+            Ok(ImportRun::Ok {
+                inserted: outcome.inserted,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                skipped,
+            })
+        }
+        ImportErrorMode::Abort => {
+            // All-or-nothing. On failure, pinpoint the offending record (no side
+            // effects — the probe rolls back) so the error can name it.
+            match session
+                .conn
+                .import_rows(
+                    database.as_deref(),
+                    &table,
+                    &columns,
+                    &rows,
+                    batch_size,
+                    emit_progress,
+                )
+                .await
+            {
+                Ok(inserted) => Ok(ImportRun::Ok {
+                    inserted,
+                    elapsed_ms: started.elapsed().as_millis() as u64,
+                    skipped: Vec::new(),
+                }),
+                Err(e) => {
+                    let located = session
+                        .conn
+                        .probe_failing_row(database.as_deref(), &table, &columns, &rows)
+                        .await
+                        .ok()
+                        .flatten();
+                    let (record, line) = match &located {
+                        Some((idx, _)) => {
+                            (Some(*idx as u64 + 1), lines.get(*idx).copied().flatten())
+                        }
+                        None => (None, None),
+                    };
+                    let message = match (record, line) {
+                        (Some(r), Some(l)) => {
+                            format!("{e} (failed at record {r}, line {l})")
+                        }
+                        (Some(r), None) => format!("{e} (failed at record {r})"),
+                        _ => e.to_string(),
+                    };
+                    Ok(ImportRun::Failed {
+                        message,
+                        record,
+                        line,
+                    })
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -650,6 +839,7 @@ mod tests {
             has_header,
             null_token: null_token.map(|s| s.to_string()),
             encoding: "utf-8".into(),
+            error_mode: ImportErrorMode::Abort,
         }
     }
 
@@ -663,6 +853,7 @@ mod tests {
             has_header: true,
             null_token: null_token.map(|s| s.to_string()),
             encoding: "utf-8".into(),
+            error_mode: ImportErrorMode::Abort,
         }
     }
 
@@ -671,6 +862,34 @@ mod tests {
             column: column.into(),
             csv_index: idx,
         }
+    }
+
+    #[test]
+    fn csv_parse_tracks_source_line_including_multiline_fields() {
+        // A quoted field spans two physical lines, so record 2 starts at line 4,
+        // not line 3 — the position tracking must reflect the true file line
+        // (#687).
+        let data = b"id,note\n1,ok\n2,\"line a\nline b\"\n3,done\n";
+        let mapping = vec![map("id", 0), map("note", 1)];
+        let (rows, lines) = parse_rows_with_lines(data, &opts(true, None), &mapping).unwrap();
+        assert_eq!(rows.len(), 3);
+        // Record 1 → line 2 (after the header on line 1).
+        assert_eq!(lines[0], Some(2));
+        // Record 2's quoted field occupies lines 3–4; its record starts at 3.
+        assert_eq!(lines[1], Some(3));
+        // Record 3 follows the two-line field, so it's on line 5.
+        assert_eq!(lines[2], Some(5));
+    }
+
+    #[test]
+    fn json_parse_has_no_source_lines() {
+        // JSON/NDJSON rows are identified by record index, not a file line.
+        let data = br#"[{"a":1},{"a":2}]"#;
+        let mapping = vec![map("a", 0)];
+        let (rows, lines) =
+            parse_rows_with_lines(data, &json_opts(ImportFormat::Json, None), &mapping).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(lines, vec![None, None]);
     }
 
     #[test]

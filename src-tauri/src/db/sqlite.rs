@@ -335,6 +335,69 @@ impl SqliteConn {
         Ok(inserted)
     }
 
+    /// Auto-commit insert of one chunk (no wrapping transaction). See
+    /// [`Connection::try_insert_chunk`] (#687). A chunk that exceeds SQLite's
+    /// bound-variable limit simply errors, and the caller retries it row by row.
+    pub(crate) async fn try_insert_chunk(
+        &self,
+        _database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+    ) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = quote_ident(table);
+        let sql = build_insert_sql(&table_ident, &cols_sql, ncols, rows.len());
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for row in rows {
+            for ci in 0..ncols {
+                q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
+            }
+        }
+        let mut conn = self.pool.acquire().await?;
+        q.execute(&mut *conn).await?;
+        Ok(())
+    }
+
+    /// Row-by-row probe inside a rolled-back transaction to find the first
+    /// rejected row. See [`Connection::probe_failing_row`] (#687).
+    pub(crate) async fn probe_failing_row(
+        &self,
+        _database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+    ) -> Result<Option<(usize, String)>> {
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = quote_ident(table);
+        let sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+        for (i, row) in rows.iter().enumerate() {
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.clone()));
+            for ci in 0..ncols {
+                q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
+            }
+            if let Err(e) = q.execute(&mut *tx).await {
+                return Ok(Some((i, e.to_string())));
+            }
+        }
+        Ok(None)
+    }
+
     /// Runs `statements` sequentially inside a single transaction. If any
     /// statement fails the transaction is rolled back (the `Transaction` is
     /// dropped without committing) so the batch is all-or-nothing — no

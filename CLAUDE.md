@@ -712,11 +712,32 @@ accept タスクの `JoinHandle` は構造体が所有しています。**`impl 
 マップから `Arc<Session>` を取り除き、最後の参照が drop されたタイミングで
 `conn.close()` とトンネルの `Drop` の両方がトリガーされます。
 
+**接続の全体タイムアウト・フェーズ進捗・キャンセル (#684)**: `connect` /
+`test_connection` は `attempt_id` と `timeout_secs` を受け取り、`open_connection`
+全体を `tokio::time::timeout` で包みます (既定 30s、5〜300s にクランプ。設定
+`connectTimeoutSecs`)。超過時は詰まっていたフェーズを含む
+`AppError::ConnectTimeout { phase, secs }` (kind `connectTimeout`) を返します。
+接続中は `connect-progress:phase` イベントでフェーズ (`tunnel_connecting` /
+`tunnel_authenticating` / `db_connecting`) を通知し (`SshTunnel::open_with_progress`
+が SSH の接続/認証フェーズを報告)、フロントはフッターにフェーズ表示とキャンセルボタンを
+出します。接続タスクは spawn して `AppState.connects` に `AbortHandle` を登録し、
+`cancel_connect(attempt_id)` で中断できます (到達不能ホストで数分固まる問題の解消)。
+
 ホスト鍵検証は `ssh/handler.rs::ClientHandler::check_server_key` における
 **初回信頼方式 (TOFU)** です。known_hosts ファイルは `<data_dir>/known_hosts` で、
 1 行 1 エントリの `host:port fingerprint` 形式です。不一致の場合は
-`russh::Error::UnknownKey` を返して接続を中断します。復旧するには該当行を手動で
-削除します。
+`russh::Error::UnknownKey` を返して接続を中断します。
+
+**アプリ内での復旧 (#682)**: 不一致時、`ClientHandler` は新旧フィンガープリントを
+共有スロットに記録し、`tunnel.rs` がそれを読んで
+`AppError::SshHostKeyMismatch { host, port, expected, actual }` (kind
+`sshHostKeyMismatch`。#683 の構造化エラー) を返します。known_hosts の読み書きは
+`ssh/known_hosts.rs` に集約し (`list_known_hosts` / `forget_host_key` / `parse` /
+アトミック書き込み `write_atomic`)、IPC `list_known_hosts` / `forget_host_key` で
+公開します。フロントは接続失敗が `sshHostKeyMismatch` のとき `HostKeyMismatchDialog`
+(新旧 fingerprint 併記 + MITM 警告 + 「旧鍵を破棄して再接続」) を出し、設定画面の
+`KnownHostsPanel` で一覧・個別破棄もできます。サーバ鍵ローテーション時に手編集は不要です
+(旧来の手動削除も引き続き有効)。
 
 ### セッション
 
@@ -804,6 +825,14 @@ LIKE ワイルドカードはエスケープされます。
   SQL を `db::format::format_sql` (`sqlformat` クレートの薄いラッパ) で整形して
   保存し直します — フロントの sql-formatter と方針 (2 スペース字下げ・キーワードの
   ケース保持) を揃えた可読性向上オプションです。
+  **進捗・キャンセル・SQLite ストリーミング (#686)**: ダンプはストリーミングコマンド
+  (`register_stream`/`forget_stream`/`stream_id` の 3 点セット) で、`dump-stream:progress`
+  (バイト数・経過秒・SQLite はテーブル数) と `:done` / `:error` を emit します。外部
+  クライアント (`mysqldump` / `pg_dump`) は stdout をファイルへ逐次パイプしながらバイト数を
+  計測し、`kill_on_drop(true)` + `PartialFileCleanup` で `cancel_stream` の abort 時に
+  子プロセスを kill し書きかけファイルを削除します (エクスポート #494 と同じ後始末方針)。
+  SQLite 経路はテーブル単位の逐次書き出しで、在メモリの全文字列構築をやめています。
+  `DumpModal` は進捗表示 (バイト/テーブル数・経過時間) とキャンセルボタンを持ちます。
 - `commands/import.rs`: CSV / JSON / NDJSON を `import_rows` でテーブルへ一括投入
   します (`encoding_rs` でエンコーディング指定可、NULL トークン・列マッピング対応)。
   読み取り専用セッションでは拒否されます。進捗は `csv-import:*` イベントで通知します。
@@ -818,6 +847,17 @@ LIKE ワイルドカードはエスケープされます。
   `CsvPreview` 型名は IPC 安定のため CSV 時代のまま据え置き、全フォーマットを扱います。
   `ImportModal` はフォーマット選択 (拡張子から既定推定) を持ち、JSON/NDJSON では
   CSV 専用フィールド (区切り/クオート/ヘッダ行) を隠します。
+  **エラー行の扱い (#687)**: `ImportOptions.error_mode` (`ImportErrorMode`: `abort`
+  既定 / `skip`) を持ちます。`abort` は従来どおり単一トランザクションの all-or-nothing で、
+  失敗時は `Connection::probe_failing_row` (ロールバックする tx で 1 行ずつ再試行) が
+  **副作用なしで先頭の不良レコードを特定**し、エラーに「レコード N (CSV は行 L)」を添えます。
+  `skip` は `Connection::import_rows_skipping` (チャンク投入 → 失敗チャンクのみ 1 行ずつ
+  再試行、良い行はコミット) で不良行を飛ばして続行し、スキップ行 (レコード番号 + CSV 行 +
+  理由) を `csv-import:done` の `skipped` で返します。行番号は `parse_rows_with_lines` が
+  CSV は `csv::Reader` の position から**引用符付き複数行フィールドも考慮した実ファイル行**を
+  取得します (JSON/NDJSON はレコード番号のみ)。各ドライバは `try_insert_chunk` (auto-commit) と
+  `probe_failing_row` (tx ロールバック) の 2 プリミティブを実装し、orchestration は
+  `db/mod.rs` に集約します。`ImportModal` はモード選択とスキップ行一覧 (コピー可) を持ちます。
 
 ### 明示的トランザクション
 

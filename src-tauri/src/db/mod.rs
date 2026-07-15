@@ -9,7 +9,7 @@ pub mod types;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use types::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, StatementStat, StreamBatch, TableColumnInfo,
@@ -120,6 +120,24 @@ pub enum Connection {
     MySql(mysql::MySqlConn),
     Postgres(postgres::PostgresConn),
     Sqlite(sqlite::SqliteConn),
+}
+
+/// A single row skipped by a resilient (skip-mode) import: its 0-based index
+/// among the parsed data records and the driver's rejection reason (#687). The
+/// command layer maps `index` to a 1-based record number and, for CSV/NDJSON, a
+/// source line before surfacing it to the UI.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SkippedRow {
+    pub index: usize,
+    pub reason: String,
+}
+
+/// Result of a resilient (skip-mode) import: how many rows were inserted and
+/// which were skipped (#687).
+#[derive(Debug, Clone)]
+pub struct ImportOutcome {
+    pub inserted: u64,
+    pub skipped: Vec<SkippedRow>,
 }
 
 impl Connection {
@@ -273,6 +291,98 @@ impl Connection {
                     .await
             }
         }
+    }
+
+    /// Insert one chunk of `rows` as a single auto-committed multi-row INSERT
+    /// (no wrapping cross-chunk transaction), erroring atomically. The resilient
+    /// skip-mode import (`import_rows_skipping`) uses this: a chunk that commits
+    /// stays committed, and a chunk that fails is retried row by row (#687).
+    pub(crate) async fn try_insert_chunk(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+    ) -> Result<()> {
+        match self {
+            Connection::MySql(c) => c.try_insert_chunk(database, table, columns, rows).await,
+            Connection::Postgres(c) => c.try_insert_chunk(database, table, columns, rows).await,
+            Connection::Sqlite(c) => c.try_insert_chunk(database, table, columns, rows).await,
+        }
+    }
+
+    /// Find the first row in `rows` that the driver rejects, returning its
+    /// 0-based index and the error text — **without persisting anything** (the
+    /// rows are inserted one by one into a transaction that is always rolled
+    /// back). Used by the abort-mode import to pinpoint which record caused an
+    /// all-or-nothing failure (#687). Returns `None` if every row inserts (which
+    /// shouldn't happen when called after a real failure, but is handled safely).
+    pub async fn probe_failing_row(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+    ) -> Result<Option<(usize, String)>> {
+        match self {
+            Connection::MySql(c) => c.probe_failing_row(database, table, columns, rows).await,
+            Connection::Postgres(c) => c.probe_failing_row(database, table, columns, rows).await,
+            Connection::Sqlite(c) => c.probe_failing_row(database, table, columns, rows).await,
+        }
+    }
+
+    /// Resilient bulk insert that **skips** rows the driver rejects instead of
+    /// aborting the whole import (#687). Not all-or-nothing: each chunk is
+    /// auto-committed; a chunk that fails is retried row by row so only the bad
+    /// rows are dropped. Returns the inserted count and the list of skipped rows
+    /// (0-based index + reason). `on_progress` receives the cumulative inserted
+    /// count after each chunk.
+    pub async fn import_rows_skipping<F>(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        batch_size: usize,
+        mut on_progress: F,
+    ) -> Result<ImportOutcome>
+    where
+        F: FnMut(u64) -> Result<()>,
+    {
+        if columns.is_empty() {
+            return Err(AppError::InvalidInput("no columns to import".into()));
+        }
+        // Cap the batch modestly: a chunk that still exceeds a driver's
+        // statement/placeholder limit just fails and falls back to per-row, so
+        // correctness never depends on this bound — it only keeps the happy path
+        // in reasonably sized batches.
+        let batch = batch_size.clamp(1, 500);
+        let mut inserted: u64 = 0;
+        let mut skipped: Vec<SkippedRow> = Vec::new();
+        for (chunk_idx, chunk) in rows.chunks(batch).enumerate() {
+            let start = chunk_idx * batch;
+            match self.try_insert_chunk(database, table, columns, chunk).await {
+                Ok(()) => inserted += chunk.len() as u64,
+                Err(_) => {
+                    // Isolate the bad rows: retry each row on its own. Good rows
+                    // commit; failures are recorded and skipped.
+                    for (i, row) in chunk.iter().enumerate() {
+                        match self
+                            .try_insert_chunk(database, table, columns, std::slice::from_ref(row))
+                            .await
+                        {
+                            Ok(()) => inserted += 1,
+                            Err(e) => skipped.push(SkippedRow {
+                                index: start + i,
+                                reason: e.to_string(),
+                            }),
+                        }
+                    }
+                }
+            }
+            on_progress(inserted)?;
+        }
+        Ok(ImportOutcome { inserted, skipped })
     }
 
     /// Runs `statements` sequentially inside a single transaction, rolling
