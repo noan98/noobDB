@@ -358,7 +358,14 @@ async fn stream_external_dump(
         .take()
         .ok_or_else(|| AppError::Other("dump child stderr was not piped".into()))?;
 
-    let mut stderr_buf = Vec::new();
+    // Drain stderr concurrently in its own task so its pipe can't fill and block
+    // the child while we're busy writing stdout to the file.
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf).await;
+        buf
+    });
+
     let pump = async {
         let mut buf = vec![0u8; PIPE_CHUNK];
         let mut last_emit = 0u64;
@@ -378,8 +385,14 @@ async fn stream_external_dump(
         Ok::<(), AppError>(())
     };
 
-    // Drain stdout (to file) and stderr (to buffer) at the same time.
-    let (pump_res, _stderr_res) = tokio::join!(pump, stderr.read_to_end(&mut stderr_buf));
+    let pump_res = pump.await;
+    // If writing the file failed (e.g. disk full), the child may still be
+    // blocked writing to a stdout pipe we've stopped reading. Kill it so it
+    // can't deadlock, then collect stderr and surface the pump error.
+    if pump_res.is_err() {
+        let _ = child.start_kill();
+    }
+    let stderr_buf = stderr_task.await.unwrap_or_default();
     pump_res?;
 
     let status = child.wait().await?;
@@ -628,7 +641,10 @@ async fn dump_sqlite(
         // Build only this one table's SQL, then flush it — the whole dump is
         // never materialized in memory at once.
         let mut chunk = String::new();
-        if options.add_drop_table {
+        // Only emit DROP TABLE when the schema (CREATE) is also emitted: a
+        // data-only dump (`no_create_info`) that dropped the table would leave
+        // the following INSERTs targeting a non-existent table on restore (#686).
+        if options.add_drop_table && !options.no_create_info {
             chunk.push_str(&format!(
                 "DROP TABLE IF EXISTS {};\n",
                 sqlite_quote_ident(&name)

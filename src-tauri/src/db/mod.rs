@@ -363,6 +363,12 @@ impl Connection {
             let start = chunk_idx * batch;
             match self.try_insert_chunk(database, table, columns, chunk).await {
                 Ok(()) => inserted += chunk.len() as u64,
+                // A single-row chunk can't be narrowed further, so record it
+                // directly instead of re-issuing the same failing INSERT.
+                Err(e) if chunk.len() == 1 => skipped.push(SkippedRow {
+                    index: start,
+                    reason: e.to_string(),
+                }),
                 Err(_) => {
                     // Isolate the bad rows: retry each row on its own. Good rows
                     // commit; failures are recorded and skipped.

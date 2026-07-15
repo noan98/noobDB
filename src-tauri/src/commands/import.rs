@@ -497,6 +497,9 @@ pub async fn import_csv(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     ensure_import_writable(&session)?;
+    if path.trim().is_empty() {
+        return Err(AppError::InvalidInput("import file path is empty".into()));
+    }
     if options.format == ImportFormat::Csv {
         validate_chars(&options)?;
     }

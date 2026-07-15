@@ -127,13 +127,19 @@ pub fn forget_host_key(host: &str, port: u16) -> Result<bool> {
 /// forget path so both mutate the file safely.
 pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // Per-process counter so two concurrent writes (PID is shared) can't collide
+    // on the same temp file name and corrupt each other's output.
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let tmp_path = dir.join(format!(
-        ".{}.tmp.{}",
+        ".{}.tmp.{}.{}",
         path.file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "known_hosts".to_string()),
-        std::process::id()
+        std::process::id(),
+        seq
     ));
     {
         let mut f = std::fs::File::create(&tmp_path)?;

@@ -310,8 +310,8 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
       const text = skipped
         .map((s) =>
           s.line != null
-            ? `record ${s.record} (line ${s.line}): ${s.reason}`
-            : `record ${s.record}: ${s.reason}`,
+            ? t("importSkippedRowLine", { record: s.record, line: s.line, reason: s.reason })
+            : t("importSkippedRow", { record: s.record, reason: s.reason }),
         )
         .join("\n");
       if (await copyToClipboard(text)) toast.success(t("importSkippedCopied"));

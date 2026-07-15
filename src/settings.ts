@@ -620,6 +620,9 @@ function sanitizeConnectTimeout(input: unknown): number {
     return DEFAULT_CONNECT_TIMEOUT_SECS;
   }
   const n = Math.floor(input);
+  // 0 / 非正値は「未設定 = 既定値」を意味する (JSON/バックエンドの clamp と一致)。
+  // 最短タイムアウト (MIN) に丸めると、ユーザが 0 にしたとき意図せず 5 秒になる。
+  if (n <= 0) return DEFAULT_CONNECT_TIMEOUT_SECS;
   if (n < MIN_CONNECT_TIMEOUT_SECS) return MIN_CONNECT_TIMEOUT_SECS;
   if (n > MAX_CONNECT_TIMEOUT_SECS) return MAX_CONNECT_TIMEOUT_SECS;
   return n;

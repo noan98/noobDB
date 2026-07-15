@@ -145,11 +145,19 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
   const streamIdRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
-  // Detach the event subscription if the modal unmounts mid-dump.
+  // On unmount mid-dump, detach the event subscription AND cancel the backend
+  // stream so it doesn't keep running (and writing) after the modal is gone.
   useEffect(
     () => () => {
+      const sid = streamIdRef.current;
+      if (sid) {
+        void api.cancelStream(sid).catch(() => {
+          /* already finished */
+        });
+      }
       unlistenRef.current?.();
       unlistenRef.current = null;
+      streamIdRef.current = null;
     },
     [],
   );
@@ -187,39 +195,42 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
     setStatus({ kind: "running" });
     setProgress(null);
 
-    // Subscribe before starting so no early progress event is missed.
-    unlistenRef.current = await listenDumpStream(streamId, {
-      onProgress: (e) =>
-        setProgress({
-          bytes: e.bytes,
-          elapsedMs: e.elapsedMs,
-          tables: e.tables,
-          tablesTotal: e.tablesTotal,
-        }),
-      onDone: (e) => {
-        cleanupStream();
-        toast.success(t("dumpSuccess", { bytes: e.bytes, path }));
-        setStatus({ kind: "idle" });
-        setProgress(null);
-      },
-      onError: (e) => {
-        cleanupStream();
-        setStatus({ kind: "error", message: e.error });
-        toast.error(t("dumpError", { error: e.error }));
-        setProgress(null);
-      },
-      onCancelled: () => {
-        cleanupStream();
-        setStatus({ kind: "idle" });
-        setProgress(null);
-        toast.info(t("dumpCancelled"));
-      },
-    });
-
     try {
+      // Subscribe before starting so no early progress event is missed. Both the
+      // subscription and the kick-off are in this try/catch so a failure in
+      // either can't leave the modal stuck in the "running" state.
+      unlistenRef.current = await listenDumpStream(streamId, {
+        onProgress: (e) =>
+          setProgress({
+            bytes: e.bytes,
+            elapsedMs: e.elapsedMs,
+            tables: e.tables,
+            tablesTotal: e.tablesTotal,
+          }),
+        onDone: (e) => {
+          cleanupStream();
+          toast.success(t("dumpSuccess", { bytes: e.bytes, path }));
+          setStatus({ kind: "idle" });
+          setProgress(null);
+        },
+        onError: (e) => {
+          cleanupStream();
+          setStatus({ kind: "error", message: e.error });
+          toast.error(t("dumpError", { error: e.error }));
+          setProgress(null);
+        },
+        onCancelled: () => {
+          cleanupStream();
+          setStatus({ kind: "idle" });
+          setProgress(null);
+          toast.info(t("dumpCancelled"));
+        },
+      });
+
       await api.dumpDatabase({ sessionId, streamId, database, path, options });
     } catch (e) {
-      // Kick-off (validation) failure — terminal events never fire in this case.
+      // Subscription or kick-off (validation) failure — terminal events never
+      // fire in this case, so reset the UI here.
       cleanupStream();
       setStatus({ kind: "error", message: String(e) });
       toast.error(t("dumpError", { error: String(e) }));
