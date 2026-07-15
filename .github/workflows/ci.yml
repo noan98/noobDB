@@ -264,7 +264,18 @@ jobs:
       # clippy は check モードでリンクしないが、build.rs (tauri-build 等) の
       # 生成・実行で linker を使うため clang + mold は必要
       # (src-tauri/.cargo/config.toml が Linux ターゲットのリンカに指定)。
+      #
+      # #770 で rust (test) に導入したパターンを横展開 (#771)。apt は I/O 律速で、
+      # 後続の Rust プリアンブル (toolchain 導入・キャッシュ復元) もフロントビルドも
+      # apt パッケージを必要としない (clang/mold はリンク時 = clippy が build.rs を
+      # 生成・実行するタイミングで初めて要る) ため、background: true で非同期起動して
+      # Rust プリアンブルと重ね、壁時計を短縮する。dpkg のロックはこの apt ステップ
+      # だけが握り、並走する他ステップ (setup-node / rustup / cache 復元) は apt/dpkg
+      # を使わないため競合しない。実際にパッケージを要する cargo clippy の前に wait で
+      # 完了を保証する。
       - name: System deps (Tauri 2 prerequisites)
+        id: apt
+        background: true
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
@@ -290,6 +301,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      # フロントのビルド (依存導入 + tsc/vite ビルド) は Rust ツールチェーンや cargo
+      # とは独立で、tauri::generate_context! が参照する dist/ を用意するだけ。
+      # background: true で非同期起動して後続の Rust プリアンブル (toolchain 導入・
+      # キャッシュ復元 = DL 律速) と重ね、壁時計を短縮する (#770 と同じパターン)。
+      # clippy の重いコンパイルは wait 後の 1 回だけなので CPU 競合はない。node_modules/
+      # ・dist/ の書き込み先も cargo の target/ と重ならない。pnpm store キャッシュ
+      # (上の step) と corepack は直列で先に済ませてあるため background 内は依存導入 +
+      # ビルドのみ。
+      - name: Build frontend (needed for tauri::generate_context!)
+        id: frontend
+        background: true
+        run: pnpm install --frozen-lockfile && pnpm run build
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
@@ -314,11 +338,12 @@ jobs:
           restore-keys: |
             sccache-${{ runner.os }}-clippy-
 
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend (needed for tauri::generate_context!)
-        run: pnpm run build
+      # 非同期起動した apt (システム依存) とフロントビルドの完了を待ち合わせる。
+      # 以降の cargo clippy はこれらの成果 (apt = clang/mold・dist/) を必要とする。
+      # background ステップの $GITHUB_ENV / outputs はこの wait 以降で初めて利用可能に
+      # なり、いずれかが失敗した場合はこの wait でジョブが fail する (公式仕様)。
+      - name: Wait for background setup (apt + frontend)
+        wait: [apt, frontend]
 
       # clippy は rustc ドライバなので型チェック (cargo check 相当) を内包する。
       # 別途 cargo check を走らせると、共有されないコンパイルがほぼ二重に走るため
@@ -515,6 +540,29 @@ jobs:
           restore-keys: |
             sccache-${{ runner.os }}-test-
 
+      # sshd 起動 (#331) は openssh-server を要するため、background 化した apt の完了を
+      # まず待つ。ここで待つのは apt だけで、フロントビルドは background のまま走らせ続ける
+      # (nextest 直前の wait で待つ)。#770 では sshd 起動 (約 22 秒) を $GITHUB_ENV の
+      # タイミング安全性を優先して直列のまま critical path に残していたが、公式仕様では
+      # background ステップの env はそれを含む wait 以降で利用可能なので、sshd も
+      # background 化して Rust ツール導入 (DL 律速) と重ねられる (#771)。
+      - name: Wait for apt (openssh-server needed by sshd)
+        wait: [apt]
+
+      # SSH トンネル統合テスト (#331) 用の sshd を起動し、接続情報を $GITHUB_ENV へ。
+      # apt (openssh-server) 完了後に background: true で非同期起動し、下の
+      # cargo-nextest / cargo-llvm-cov 導入 (DL 律速) と重ねて壁時計を短縮する。
+      # サービスコンテナ (要イメージ pull) ではなく apt の openssh-server を直接構成
+      # する方式 (ローカルでも同手順を再現・検証できる。scripts/ci-setup-sshd.sh)。
+      # 書き込む NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY は、この background を含む
+      # 下の wait 以降で初めて nextest から参照可能になる (公式仕様)。
+      - name: Setup test sshd (SSH tunnel integration)
+        id: sshd
+        background: true
+        run: bash scripts/ci-setup-sshd.sh
+
+      # cargo-nextest / cargo-llvm-cov の導入は DL 律速で、上の sshd 起動と CPU を
+      # 食い合わないため background の sshd と重ねて走らせる。
       - name: Install cargo-nextest
         uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
         with:
@@ -525,28 +573,19 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      # 非同期起動した apt (システム依存) とフロントビルドの完了を待ち合わせる。
-      # 以降のステップはこれらの成果 (apt パッケージ = clang/mold/openssh-server・
-      # dist/) を必要とする。background ステップの $GITHUB_ENV / outputs はこの wait
-      # 以降で初めて利用可能になり、いずれかが失敗した場合はこの wait でジョブが
-      # fail する (公式仕様)。
-      - name: Wait for background setup (apt + frontend)
-        wait: [apt, frontend]
-
-      # SSH トンネル統合テスト (#331) 用の sshd を起動し、接続情報を $GITHUB_ENV へ。
-      # openssh-server は上の apt ステップで導入されるため、wait 完了後に実行する。
-      # サービスコンテナ (要イメージ pull) ではなく apt の openssh-server を直接構成
-      # する方式 (ローカルでも同手順を再現・検証できる。scripts/ci-setup-sshd.sh)。
-      # 通常 (非 background) ステップなので、書き込んだ NOOBDB_TEST_SSH_URL /
-      # NOOBDB_TEST_SSH_KEY は後続の nextest ステップから通常どおり参照できる。
-      - name: Setup test sshd (SSH tunnel integration)
-        run: bash scripts/ci-setup-sshd.sh
+      # 残る background (フロントビルド = dist/、sshd = $GITHUB_ENV の SSH 接続情報) の
+      # 完了を nextest の直前で待ち合わせる。sshd の env はこの wait 以降で利用可能に
+      # なり、SSH トンネル統合テスト (#331) が nextest で正しく実走する。いずれかが失敗
+      # した場合はこの wait でジョブが fail する (公式仕様)。
+      - name: Wait for background setup (frontend + sshd)
+        wait: [frontend, sshd]
 
       # nextest を llvm-cov 計装下で実行し、カバレッジ生データのみ収集する
       # (--no-report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
       # 両ドライバの統合テストを CI で実走させる。SQLite は環境変数不要で常に走る。
-      # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY は前段の「Setup test sshd」が
-      # $GITHUB_ENV に設定済みで、SSH トンネル統合テスト (#331) もここで実走する。
+      # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY は background の「Setup test sshd」が
+      # $GITHUB_ENV へ書き込み、直前の wait: [frontend, sshd] 以降で参照可能になるため、
+      # SSH トンネル統合テスト (#331) もここで実走する。
       - name: cargo llvm-cov nextest
         working-directory: src-tauri
         env:
@@ -675,6 +714,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      # フロントのビルド (依存導入 + tsc/vite ビルド) は Rust ツールチェーンや cargo
+      # とは独立で、tauri::generate_context! が参照する dist/ を用意するだけ。Windows
+      # は apt を使わないためフロントビルドのみを background: true で非同期起動し、後続の
+      # Rust プリアンブル (toolchain 導入・キャッシュ復元 = DL 律速) と重ねて壁時計を
+      # 短縮する (#770 の横展開 / #771)。clippy の重いコンパイルは wait 後の 1 回だけ
+      # なので CPU 競合はない。pnpm store キャッシュと corepack は直列で先に済ませて
+      # あるため background 内は依存導入 + ビルドのみ。
+      - name: Build frontend (needed for tauri::generate_context!)
+        id: frontend
+        background: true
+        run: pnpm install --frozen-lockfile && pnpm run build
+
       # Windows では config.toml が MSVC リンカに lld-link を指定している。
       # windows-latest には LLVM がプリインストール済みで lld-link が PATH 上にある。
       - name: Setup Rust
@@ -697,11 +748,10 @@ jobs:
           restore-keys: |
             sccache-${{ runner.os }}-windows-clippy-
 
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend (needed for tauri::generate_context!)
-        run: pnpm run build
+      # 非同期起動したフロントビルドの完了を待ち合わせる。以降の cargo clippy は dist/
+      # を必要とする。background ステップが失敗した場合はこの wait でジョブが fail する。
+      - name: Wait for background setup (frontend)
+        wait: [frontend]
 
       - name: cargo clippy
         working-directory: src-tauri
@@ -784,6 +834,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      # フロントのビルド (依存導入 + tsc/vite ビルド) は Rust ツールチェーンや cargo
+      # とは独立で、tauri::generate_context! が参照する dist/ を用意するだけ。Windows
+      # は apt を使わないためフロントビルドのみを background: true で非同期起動し、後続の
+      # Rust プリアンブル (toolchain 導入・キャッシュ復元・nextest 導入 = DL 律速) と
+      # 重ねて壁時計を短縮する (#770 の横展開 / #771)。nextest の重いコンパイルは wait
+      # 後の 1 回だけなので CPU 競合はない。pnpm store キャッシュと corepack は直列で先に
+      # 済ませてあるため background 内は依存導入 + ビルドのみ。
+      - name: Build frontend (needed for tauri::generate_context!)
+        id: frontend
+        background: true
+        run: pnpm install --frozen-lockfile && pnpm run build
+
       # Windows では config.toml が MSVC リンカに lld-link を指定している。
       # windows-latest には LLVM がプリインストール済みで lld-link が PATH 上にある。
       - name: Setup Rust
@@ -809,11 +871,10 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend (needed for tauri::generate_context!)
-        run: pnpm run build
+      # 非同期起動したフロントビルドの完了を待ち合わせる。以降の nextest は dist/ を
+      # 必要とする。background ステップが失敗した場合はこの wait でジョブが fail する。
+      - name: Wait for background setup (frontend)
+        wait: [frontend]
 
       # SQLite 統合テスト (tests/sqlite_integration.rs) は外部サービス不要で常時
       # 実行される。MySQL/PostgreSQL は URL 環境変数を渡していないのでスキップ。
