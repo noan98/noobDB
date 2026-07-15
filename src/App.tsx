@@ -17,6 +17,7 @@ import {
   Snippet,
   TableColumnInfo,
   TableSchema,
+  listenConnectProgress,
   listenPreviewStream,
   listenQueryStream,
 } from "./api/tauri";
@@ -622,6 +623,31 @@ function newTabId(): string {
   return `tab_${Date.now().toString(36)}_${tabSeq.toString(36)}`;
 }
 
+let connectAttemptSeq = 0;
+/** A unique id per connection attempt so progress events / cancel target the
+ *  right attempt (#684). */
+function makeConnectAttemptId(): string {
+  connectAttemptSeq += 1;
+  return `conn_${Date.now().toString(36)}_${connectAttemptSeq.toString(36)}`;
+}
+
+/** Map a backend connect-phase label (#684) to its localized i18n key. Unknown
+ *  labels fall back to the generic "connecting" text. */
+function connectPhaseI18nKey(
+  phase: string,
+): "connectPhasePreparing" | "connectPhaseTunnelConnecting" | "connectPhaseTunnelAuthenticating" | "connectPhaseDbConnecting" {
+  switch (phase) {
+    case "tunnel_connecting":
+      return "connectPhaseTunnelConnecting";
+    case "tunnel_authenticating":
+      return "connectPhaseTunnelAuthenticating";
+    case "db_connecting":
+      return "connectPhaseDbConnecting";
+    default:
+      return "connectPhasePreparing";
+  }
+}
+
 let paneSeq = 0;
 function newPaneId(): string {
   paneSeq += 1;
@@ -1160,6 +1186,12 @@ export default function App() {
     { profile: ConnectionProfile; message: string } | null
   >(null);
   const [reTrustingHostKey, setReTrustingHostKey] = useState(false);
+  // The in-flight connection attempt's id + current phase (#684). Set while a
+  // connect is running so the footer can show which phase it's in and offer a
+  // cancel button; cleared when the attempt settles.
+  const [connectAttempt, setConnectAttempt] = useState<
+    { id: string; phase: string } | null
+  >(null);
   // 同時に開いている接続のレジストリ (#複数同時接続)。別プロファイルへ接続しても
   // 既存セッションを切断せず背景で生かしておき、クリックで即座に切り替えられる
   // ようにする。各エントリは生存中のバックエンドセッション 1 本に対応する。
@@ -1979,24 +2011,35 @@ export default function App() {
       setSessionId(null);
       await closeAllTabs();
     }
+    // Fresh attempt id so we can subscribe to phase progress and cancel this
+    // specific attempt (#684).
+    const attemptId = makeConnectAttemptId();
+    setConnectAttempt({ id: attemptId, phase: "preparing" });
+    const unlistenProgress = await listenConnectProgress(attemptId, (phase) =>
+      setConnectAttempt((prev) => (prev?.id === attemptId ? { ...prev, phase } : prev)),
+    ).catch(() => undefined);
     try {
       const driver: DriverKind =
         profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
           ? profile.driver
           : "mysql";
-      const res = await api.connect({
-        profile_id: profile.id,
-        driver,
-        host: profile.host,
-        port: profile.port,
-        user: profile.user,
-        password: "",
-        database: profile.database,
-        ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-        file_path: profile.file_path,
-        read_only: profile.read_only,
-        skip_history: profile.skip_history,
-      });
+      const res = await api.connect(
+        {
+          profile_id: profile.id,
+          driver,
+          host: profile.host,
+          port: profile.port,
+          user: profile.user,
+          password: "",
+          database: profile.database,
+          ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
+          file_path: profile.file_path,
+          read_only: profile.read_only,
+          skip_history: profile.skip_history,
+        },
+        attemptId,
+        settings.connectTimeoutSecs,
+      );
       setSessionId(res.session_id);
       setSelectedProfile(profile);
       // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -2048,6 +2091,8 @@ export default function App() {
       }
     } finally {
       setConnectingId(null);
+      setConnectAttempt(null);
+      unlistenProgress?.();
     }
   }, [
     sessionId,
@@ -2056,6 +2101,7 @@ export default function App() {
     persistTabsForProfile,
     switchToOpenConnection,
     upsertOpenConnection,
+    settings.connectTimeoutSecs,
     settings.confirmProductionConnect,
     settings.tabRestoreMode,
     settings.planWatchOnConnect,
@@ -2083,6 +2129,16 @@ export default function App() {
       setReTrustingHostKey(false);
     }
   }, [hostKeyMismatch, handleConnect, toast, translate]);
+
+  // Abort the in-flight connection attempt (#684): the awaiting connect command
+  // rejects with a "cancelled" error, which handleConnect's catch surfaces.
+  const handleCancelConnect = useCallback(async () => {
+    const id = connectAttempt?.id;
+    if (!id) return;
+    await api.cancelConnect(id).catch(() => {
+      /* attempt may have already finished; ignore */
+    });
+  }, [connectAttempt]);
 
   const handleDisconnect = useCallback(async () => {
     if (!sessionId) return;
@@ -6138,6 +6194,39 @@ export default function App() {
                   )}
                   {t("statusReconnect")}
                 </chakra.button>
+              )}
+              {connectAttempt && (
+                <>
+                  <chakra.span
+                    flexShrink="0"
+                    fontSize="xs"
+                    opacity={0.85}
+                    display="inline-flex"
+                    alignItems="center"
+                    gap="5px"
+                  >
+                    <Spinner size={12} />
+                    {t(connectPhaseI18nKey(connectAttempt.phase))}
+                  </chakra.span>
+                  <chakra.button
+                    type="button"
+                    flexShrink="0"
+                    px="2.5"
+                    py="3px"
+                    fontSize="xs"
+                    fontWeight={500}
+                    border="1px solid"
+                    borderColor="app.border"
+                    borderRadius="sm"
+                    bg="transparent"
+                    cursor="pointer"
+                    css={{ "&:hover": { background: "var(--bg-muted)" } }}
+                    onClick={handleCancelConnect}
+                    title={t("connectCancel")}
+                  >
+                    {t("connectCancel")}
+                  </chakra.button>
+                </>
               )}
               {isDismissible && (
                 <chakra.button

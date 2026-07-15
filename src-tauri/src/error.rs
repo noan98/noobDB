@@ -18,6 +18,12 @@ pub enum AppError {
     #[error("query timed out after {0}s")]
     Timeout(u64),
 
+    /// The whole connection attempt exceeded its deadline. Carries the phase it
+    /// was stuck in (tunnel connect / auth / DB connect) so the UI can say where
+    /// it hung instead of just "timed out" (#684).
+    #[error("connection timed out after {secs}s during {phase}")]
+    ConnectTimeout { phase: String, secs: u64 },
+
     #[error("ssh error: {0}")]
     Ssh(String),
 
@@ -89,6 +95,7 @@ impl AppError {
             AppError::InvalidInput(_) => "invalidInput",
             AppError::ReadOnly(_) => "readOnly",
             AppError::Timeout(_) => "timeout",
+            AppError::ConnectTimeout { .. } => "connectTimeout",
             AppError::Ssh(_) => "ssh",
             AppError::SshKey(_) => "sshKey",
             AppError::SshHostKeyMismatch { .. } => "sshHostKeyMismatch",

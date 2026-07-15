@@ -329,6 +329,14 @@ export const csvPreview = z.object({
 
 export const connectResult = z.object({ session_id: z.string() });
 
+/** `connect-progress:phase` イベント: 接続確立のフェーズ進捗 (#684)。
+ *  phase は "preparing" / "tunnel_connecting" / "tunnel_authenticating" /
+ *  "db_connecting" のいずれか (バック ConnectPhase::label と一致)。 */
+export const connectPhaseEvent = z.object({
+  attemptId: z.string(),
+  phase: z.string(),
+});
+
 /** 単純なプリミティブ/配列レスポンス用の共有スキーマ。 */
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();

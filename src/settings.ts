@@ -51,6 +51,13 @@ export interface Settings {
    */
   queryTimeoutSecs: number;
   /**
+   * Overall deadline (seconds) for a whole connection attempt — SSH tunnel
+   * connect + auth and DB connect together (#684). Stops an unreachable host
+   * from hanging on the OS TCP timeout. Backend clamps to [5, 300]; `0`/unset
+   * uses the backend default.
+   */
+  connectTimeoutSecs: number;
+  /**
    * Base UI font size in pixels. Scales the whole interface uniformly via the
    * --font-scale CSS variable (scale = fontSizePx / BASE_FONT_SIZE_PX).
    */
@@ -466,6 +473,11 @@ export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 export const DEFAULT_QUERY_TIMEOUT_SECS = 30;
 const MAX_QUERY_TIMEOUT_SECS = 86_400;
 
+/** Connect timeout defaults/bounds, mirroring the backend clamp (#684). */
+export const DEFAULT_CONNECT_TIMEOUT_SECS = 30;
+export const MIN_CONNECT_TIMEOUT_SECS = 5;
+export const MAX_CONNECT_TIMEOUT_SECS = 300;
+
 export const DEFAULT_RESULT_GRID_MODE: ResultGridMode = "scroll";
 export const DEFAULT_RESULT_GRID_PAGE_SIZE = 100;
 /** Page-size options offered in the result grid's paginator selector. */
@@ -531,6 +543,7 @@ export const DEFAULT_SETTINGS: Settings = {
   resultsInNewTab: false,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
+  connectTimeoutSecs: DEFAULT_CONNECT_TIMEOUT_SECS,
   fontSizePx: DEFAULT_FONT_SIZE_PX,
   accentColor: DEFAULT_ACCENT_COLOR,
   density: DEFAULT_DENSITY,
@@ -597,6 +610,18 @@ function sanitizeTimeout(input: unknown, fallback: number): number {
   const n = Math.floor(input);
   if (n < 0) return 0;
   if (n > MAX_QUERY_TIMEOUT_SECS) return MAX_QUERY_TIMEOUT_SECS;
+  return n;
+}
+
+/** Clamp a connect timeout to [MIN, MAX], falling back to the default for
+ *  invalid input (#684). Mirrors the backend clamp so the two never disagree. */
+function sanitizeConnectTimeout(input: unknown): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) {
+    return DEFAULT_CONNECT_TIMEOUT_SECS;
+  }
+  const n = Math.floor(input);
+  if (n < MIN_CONNECT_TIMEOUT_SECS) return MIN_CONNECT_TIMEOUT_SECS;
+  if (n > MAX_CONNECT_TIMEOUT_SECS) return MAX_CONNECT_TIMEOUT_SECS;
   return n;
 }
 
@@ -721,6 +746,7 @@ export function normalizeSettings(input: unknown): Settings {
     resultsInNewTab?: unknown;
     tabRestoreMode?: unknown;
     queryTimeoutSecs?: unknown;
+    connectTimeoutSecs?: unknown;
     fontSizePx?: unknown;
     accentColor?: unknown;
     density?: unknown;
@@ -772,6 +798,7 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.resultsInNewTab === "boolean" ? parsed.resultsInNewTab : false,
     tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
     queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
+    connectTimeoutSecs: sanitizeConnectTimeout(parsed.connectTimeoutSecs),
     fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
     accentColor: sanitizeAccentColor(parsed.accentColor, DEFAULT_ACCENT_COLOR),
     density: sanitizeDensity(parsed.density, DEFAULT_DENSITY),
@@ -1040,6 +1067,14 @@ export function setQueryTimeoutSecs(value: number): void {
   const next = sanitizeTimeout(value, current.queryTimeoutSecs);
   if (current.queryTimeoutSecs === next) return;
   current = { ...current, queryTimeoutSecs: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setConnectTimeoutSecs(value: number): void {
+  const next = sanitizeConnectTimeout(value);
+  if (current.connectTimeoutSecs === next) return;
+  current = { ...current, connectTimeoutSecs: next };
   persist();
   listeners.forEach((cb) => cb());
 }

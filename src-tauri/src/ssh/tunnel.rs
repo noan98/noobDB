@@ -59,8 +59,29 @@ pub struct SshTunnel {
     _session: Arc<russh::client::Handle<ClientHandler>>,
 }
 
+/// Coarse phase of opening an SSH tunnel, reported to the caller so the UI can
+/// tell "stuck connecting the TCP/SSH transport" apart from "stuck on
+/// authentication" instead of showing one opaque spinner (#684).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshPhase {
+    /// Establishing the TCP connection and SSH transport handshake.
+    Connecting,
+    /// Authenticating with the configured method (key / agent / password).
+    Authenticating,
+}
+
 impl SshTunnel {
+    /// Open a tunnel, reporting nothing about intermediate phases.
     pub async fn open(cfg: &SshConfig) -> Result<Self> {
+        Self::open_with_progress(cfg, |_| {}).await
+    }
+
+    /// Open a tunnel, invoking `on_phase` as it moves from connecting to
+    /// authenticating so the caller can surface progress (#684). The callback is
+    /// only ever called between await points (never held across one), so a plain
+    /// `Fn` suffices.
+    pub async fn open_with_progress(cfg: &SshConfig, on_phase: impl Fn(SshPhase)) -> Result<Self> {
+        on_phase(SshPhase::Connecting);
         let config = russh::client::Config {
             inactivity_timeout: Some(Duration::from_secs(600)),
             keepalive_interval: Some(Duration::from_secs(30)),
@@ -94,6 +115,7 @@ impl SshTunnel {
                 }
             };
 
+        on_phase(SshPhase::Authenticating);
         super::auth::authenticate(&mut session, cfg).await?;
 
         let session = Arc::new(session);

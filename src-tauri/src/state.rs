@@ -63,6 +63,10 @@ pub struct AppState {
     /// Active streaming tasks keyed by client-provided stream id.
     /// Aborting the handle cancels the task and stops further events.
     pub streams: RwLock<HashMap<StreamId, StreamHandle>>,
+    /// In-flight connection attempts keyed by a client-provided attempt id.
+    /// Aborting the handle cancels a connect that is hanging on an unreachable
+    /// host / stuck tunnel, so the UI can offer a cancel button (#684).
+    pub connects: RwLock<HashMap<String, AbortHandle>>,
 }
 
 impl AppState {
@@ -105,6 +109,32 @@ impl AppState {
 
     pub async fn forget_stream(&self, stream_id: &str) {
         self.streams.write().await.remove(stream_id);
+    }
+
+    /// Track an in-flight connection attempt so `cancel_connect` can abort it.
+    pub async fn register_connect(&self, attempt_id: String, handle: AbortHandle) {
+        if let Some(prev) = self.connects.write().await.insert(attempt_id, handle) {
+            // A reused attempt id shouldn't happen (the frontend mints a fresh
+            // one per attempt), but never let two run under the same key.
+            tracing::warn!("connect attempt id reused; aborting previous attempt");
+            prev.abort();
+        }
+    }
+
+    pub async fn forget_connect(&self, attempt_id: &str) {
+        self.connects.write().await.remove(attempt_id);
+    }
+
+    /// Abort the connection attempt registered for `attempt_id`. Returns `true`
+    /// when one was found and aborted, `false` when it had already finished.
+    pub async fn cancel_connect(&self, attempt_id: &str) -> bool {
+        if let Some(h) = self.connects.write().await.remove(attempt_id) {
+            h.abort();
+            tracing::debug!(attempt_id = %attempt_id, "connect attempt cancelled");
+            true
+        } else {
+            false
+        }
     }
 
     /// Aborts the task registered for `stream_id` and returns the number of

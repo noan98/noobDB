@@ -140,6 +140,10 @@ export function hintForKind(kind: string | null | undefined, message = ""): I18n
       return sshHintForMessage(message);
     case "timeout":
       return "errorHintTimeout";
+    case "connectTimeout":
+      // A whole-attempt timeout points at reachability (host/port/tunnel), so
+      // reuse the "couldn't reach the server" hint (#684).
+      return "errorHintConnection";
     case "connectionLost":
       return "errorHintConnectionLost";
     // `db` (一般的な sqlx エラー) は具体的なヒントが message 依存なので、ここでは

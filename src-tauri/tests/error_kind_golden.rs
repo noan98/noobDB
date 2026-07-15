@@ -67,6 +67,10 @@ fn build_native(variant: &str, arg: Option<&str>) -> AppError {
             expected: "SHA256:old".into(),
             actual: "SHA256:new".into(),
         },
+        "ConnectTimeout" => AppError::ConnectTimeout {
+            phase: "tunnel_connecting".into(),
+            secs: 30,
+        },
         other => panic!(
             "error_kind_golden.rs の build_native が未対応の variant: {other} (フィクスチャと \
              このテストファイルの対応表を両方更新してください)"

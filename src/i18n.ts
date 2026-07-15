@@ -201,6 +201,8 @@ const en = {
   settingsQueryTimeout: "Query timeout (seconds)",
   settingsQueryTimeoutHelp: "Automatically cancel an editor query that runs longer than this. 0 disables the timeout. The connection stays open when a query is cancelled.",
   settingsQueryTimeoutUnlimited: "No timeout — queries run unbounded",
+  settingsConnectTimeout: "Connect timeout (seconds)",
+  settingsConnectTimeoutHelp: "Abort a connection attempt (SSH tunnel + database) that takes longer than this, instead of hanging on an unreachable host. Clamped to 5–300 seconds.",
   settingsAutoReconnect: "Auto-reconnect dropped connections",
   settingsAutoReconnectHelp: "When a connection drops (idle timeout, network / VPN loss, SSH tunnel drop), reconnect automatically with the same profile using exponential backoff. A drop detected mid-transaction is never auto-reconnected — it surfaces an error so a partial commit can't happen. When off, a manual Reconnect button is shown instead.",
   settingsAutoReconnectMaxRetries: "Max reconnect attempts",
@@ -481,6 +483,12 @@ const en = {
   hostKeyMismatchReTrusting: "Reconnecting…",
   hostKeyMismatchCancel: "Cancel",
   hostKeyReTrustedToast: "Re-trusted {name}; reconnecting.",
+  // Connection phase progress + cancel (#684).
+  connectPhasePreparing: "Preparing…",
+  connectPhaseTunnelConnecting: "Connecting SSH tunnel…",
+  connectPhaseTunnelAuthenticating: "Authenticating SSH…",
+  connectPhaseDbConnecting: "Connecting to database…",
+  connectCancel: "Cancel",
   // Settings → known_hosts management panel (#682).
   knownHostsTitle: "SSH known hosts",
   knownHostsDesc:
@@ -2071,6 +2079,8 @@ const ja: Dict = {
   settingsQueryTimeout: "クエリ実行タイムアウト (秒)",
   settingsQueryTimeoutHelp: "エディタのクエリがこの秒数を超えたら自動的に中断します。0 で無効。中断しても接続は維持されます。",
   settingsQueryTimeoutUnlimited: "無制限 — タイムアウトなしで実行します",
+  settingsConnectTimeout: "接続タイムアウト (秒)",
+  settingsConnectTimeoutHelp: "接続確立 (SSH トンネル + データベース) がこの秒数を超えたら中断します。到達不能なホストで固まらないようにします。5〜300 秒にクランプされます。",
   settingsAutoReconnect: "接続断からの自動再接続",
   settingsAutoReconnectHelp: "接続が切れたとき（アイドルタイムアウト、ネットワークや VPN の切断、SSH トンネル断）に、同じプロファイルで指数バックオフしながら自動再接続します。トランザクション中の断は、中途半端なコミットを避けるため自動再接続せずエラーにします。無効にすると手動の再接続ボタンを表示します。",
   settingsAutoReconnectMaxRetries: "最大再接続回数",
@@ -2351,6 +2361,12 @@ const ja: Dict = {
   hostKeyMismatchReTrusting: "再接続中…",
   hostKeyMismatchCancel: "キャンセル",
   hostKeyReTrustedToast: "{name} を再信頼しました。再接続します。",
+  // 接続フェーズの進捗表示 + キャンセル (#684)。
+  connectPhasePreparing: "準備中…",
+  connectPhaseTunnelConnecting: "SSH トンネル接続中…",
+  connectPhaseTunnelAuthenticating: "SSH 認証中…",
+  connectPhaseDbConnecting: "データベース接続中…",
+  connectCancel: "キャンセル",
   // 設定 → known_hosts 管理パネル (#682)。
   knownHostsTitle: "SSH known_hosts",
   knownHostsDesc:

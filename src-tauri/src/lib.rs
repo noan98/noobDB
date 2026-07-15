@@ -263,6 +263,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::connection::test_connection,
             commands::connection::connect,
+            commands::connection::cancel_connect,
             commands::connection::disconnect,
             commands::connection::ping_session,
             commands::ssh::list_known_hosts,

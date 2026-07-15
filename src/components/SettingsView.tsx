@@ -74,6 +74,8 @@ import {
   setQueryNotificationThresholdSecs,
   setAutoUpdateCheckEnabled,
   setQueryTimeoutSecs,
+  setConnectTimeoutSecs,
+  DEFAULT_CONNECT_TIMEOUT_SECS,
   setPreviewHighlight,
   setCellEditOnBlur,
   setResultGridMode,
@@ -516,6 +518,9 @@ export function SettingsView({ theme, onClose }: Props) {
   const [prefetchInput, setPrefetchInput] = useState(String(settings.streamPrefetchSize));
   const [autoLimitInput, setAutoLimitInput] = useState(String(settings.autoLimitCount));
   const [timeoutInput, setTimeoutInput] = useState(String(settings.queryTimeoutSecs));
+  const [connectTimeoutInput, setConnectTimeoutInput] = useState(
+    String(settings.connectTimeoutSecs),
+  );
   const [reconnectRetriesInput, setReconnectRetriesInput] = useState(
     String(settings.autoReconnectMaxRetries),
   );
@@ -527,6 +532,10 @@ export function SettingsView({ theme, onClose }: Props) {
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
   useEffect(() => setTimeoutInput(String(settings.queryTimeoutSecs)), [settings.queryTimeoutSecs]);
+  useEffect(
+    () => setConnectTimeoutInput(String(settings.connectTimeoutSecs)),
+    [settings.connectTimeoutSecs],
+  );
   useEffect(
     () => setReconnectRetriesInput(String(settings.autoReconnectMaxRetries)),
     [settings.autoReconnectMaxRetries],
@@ -556,6 +565,11 @@ export function SettingsView({ theme, onClose }: Props) {
     const n = Number.parseInt(timeoutInput, 10);
     if (Number.isFinite(n) && n >= 0) setQueryTimeoutSecs(n);
     else setTimeoutInput(String(settings.queryTimeoutSecs));
+  };
+  const commitConnectTimeout = () => {
+    const n = Number.parseInt(connectTimeoutInput, 10);
+    if (Number.isFinite(n)) setConnectTimeoutSecs(n);
+    else setConnectTimeoutInput(String(settings.connectTimeoutSecs));
   };
   const commitNotifyThreshold = () => {
     const n = Number.parseInt(notifyThresholdInput, 10);
@@ -1109,6 +1123,30 @@ export function SettingsView({ theme, onClose }: Props) {
             )}
             <SettingsHelpInline>
               {t("settingsQueryTimeoutHelp")}
+            </SettingsHelpInline>
+          </SettingsTimeoutAux>
+        </SettingsNumberRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-connect-timeout">
+            {t("settingsConnectTimeout")}
+          </chakra.label>
+          <Input
+            id="settings-connect-timeout"
+            type="number"
+            min={5}
+            max={300}
+            step={5}
+            value={connectTimeoutInput}
+            placeholder={String(DEFAULT_CONNECT_TIMEOUT_SECS)}
+            onChange={(e) => setConnectTimeoutInput(e.target.value)}
+            onBlur={commitConnectTimeout}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsTimeoutAux>
+            <SettingsHelpInline>
+              {t("settingsConnectTimeoutHelp")}
             </SettingsHelpInline>
           </SettingsTimeoutAux>
         </SettingsNumberRow>

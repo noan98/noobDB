@@ -645,14 +645,26 @@ export interface CsvPreview {
 }
 
 export const api = {
-  testConnection: (req: ConnectRequest) =>
-    invoke<string>("test_connection", { req }).then((r) =>
-      parseResponse(schemas.stringResponse, r, "test_connection"),
-    ),
-  connect: (req: ConnectRequest) =>
-    invoke<{ session_id: string }>("connect", { req }).then((r) =>
-      parseResponse(schemas.connectResult, r, "connect"),
-    ),
+  /**
+   * Test a connection. `attemptId` (a fresh id per attempt) lets the caller
+   * subscribe to `connect-progress:phase` events and cancel via `cancelConnect`;
+   * `timeoutSecs` bounds the whole attempt (backend clamps + defaults). #684.
+   */
+  testConnection: (req: ConnectRequest, attemptId?: string, timeoutSecs?: number) =>
+    invoke<string>("test_connection", {
+      req,
+      attemptId: attemptId ?? null,
+      timeoutSecs: timeoutSecs ?? null,
+    }).then((r) => parseResponse(schemas.stringResponse, r, "test_connection")),
+  connect: (req: ConnectRequest, attemptId?: string, timeoutSecs?: number) =>
+    invoke<{ session_id: string }>("connect", {
+      req,
+      attemptId: attemptId ?? null,
+      timeoutSecs: timeoutSecs ?? null,
+    }).then((r) => parseResponse(schemas.connectResult, r, "connect")),
+  /** Cancel an in-flight connect / test-connection attempt by its id (#684). */
+  cancelConnect: (attemptId: string) =>
+    invoke<boolean>("cancel_connect", { attemptId }),
   disconnect: (sessionId: string) =>
     invoke<void>("disconnect", { sessionId }),
   /**
@@ -1380,4 +1392,30 @@ export async function listenExportStream(
     ),
   ]);
   return () => unlisteners.forEach((un) => un());
+}
+
+/** One phase of a connection attempt (#684). `phase` is a stable label:
+ *  "preparing" / "tunnel_connecting" / "tunnel_authenticating" / "db_connecting". */
+export interface ConnectPhaseEvent {
+  attemptId: string;
+  phase: string;
+}
+
+/**
+ * Subscribe to `connect-progress:phase` events for a given connection attempt,
+ * filtered by `attemptId`. Lets the UI show which phase a slow connect is in
+ * (#684). Returns an unlisten function.
+ */
+export async function listenConnectProgress(
+  attemptId: string,
+  onPhase: (phase: string) => void,
+): Promise<UnlistenFn> {
+  return listen<ConnectPhaseEvent>("connect-progress:phase", (e) => {
+    const payload = parseResponse(
+      schemas.connectPhaseEvent,
+      e.payload,
+      "connect-progress:phase",
+    );
+    if (payload.attemptId === attemptId) onPhase(payload.phase);
+  });
 }
