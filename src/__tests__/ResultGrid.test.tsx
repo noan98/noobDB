@@ -653,6 +653,82 @@ describe("列レイアウト永続化 (#447 / #463)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 集計フッター行 (#645)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("集計フッター行 (#645)", () => {
+  beforeEach(() => {
+    setLocale("en");
+    localStorage.clear();
+  });
+
+  /** フッター行の各データセルのテキストを列順に取り出す。 */
+  function footerTexts(container: HTMLElement): string[] {
+    const cells = container.querySelectorAll("tfoot td");
+    return Array.from(cells)
+      .filter((td) => !td.classList.contains("row-index") && !td.classList.contains("col-filler"))
+      .map((td) => td.textContent ?? "");
+  }
+
+  it("列メニューから集計フッターを表示し、数値列は合計・文字列列は件数を出す", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    // 初期状態ではフッターは無い。
+    expect(container.querySelector("tfoot")).toBeNull();
+
+    // qty 列の列メニューを開き「集計フッターを表示」を押す。
+    await user.click(
+      screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }),
+    );
+    await user.click(screen.getByText(t("gridFooterShow")));
+
+    // フッターが現れ、qty 列は合計 (2+5+9=16)、name 列は非NULL件数 (3)。
+    const foot = container.querySelector("tfoot");
+    expect(foot).not.toBeNull();
+    const texts = footerTexts(container);
+    // name 列: "Count" ラベル + 3、qty 列: "Sum" ラベル + 16。
+    expect(texts[0]).toContain("3");
+    expect(texts[0]).toContain(t("gridCountLabel"));
+    expect(texts[1]).toContain("16");
+    expect(texts[1]).toContain(t("gridSumLabel"));
+  });
+
+  it("列統計メニューで集計関数を切替でき、テーブル単位で永続化される", async () => {
+    const user = userEvent.setup();
+    const { container, unmount } = renderWithProviders(
+      <ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />,
+    );
+
+    // qty 列の列メニュー → 「列の統計」を開く。
+    await user.click(
+      screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }),
+    );
+    await user.click(screen.getByText(t("gridColumnStats")));
+
+    // フッター関数セレクタで avg (平均) に切替。これでフッターが自動で表示される。
+    const sel = screen.getByLabelText(
+      t("gridFooterSelectAria", { column: "qty" }),
+    ) as HTMLSelectElement;
+    await user.selectOptions(sel, "avg");
+
+    // qty 列フッターが平均 ((2+5+9)/3 = 5.333…) を表示する。
+    await waitFor(() => {
+      const texts = footerTexts(container);
+      expect(texts[1]).toContain(t("gridAvgLabel"));
+      expect(texts[1]).toContain("5.33");
+    });
+
+    // 再マウントしても状態 (表示 + avg 選択) が localStorage から復元される。
+    unmount();
+    const { container: c2 } = renderWithProviders(
+      <ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />,
+    );
+    expect(c2.querySelector("tfoot")).not.toBeNull();
+    expect(footerTexts(c2)[1]).toContain("5.33");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 複数列ソート
 // ─────────────────────────────────────────────────────────────────────────────
 describe("複数列ソート (#479)", () => {

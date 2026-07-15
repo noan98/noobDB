@@ -1073,6 +1073,20 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   構造化する (全件集計ボタンは `App` から `api.runQuery` を束ねた `onRunStatsQuery` が
   渡るときだけ出る)。すべて副作用なしの純関数で `gridStats.test.ts` がテスト。数値化は
   `cellConditionalFormat.toNumber` を共有。
+- 結果グリッドの集計フッター行 — `gridFooter.ts` (#645)。表計算ソフトのフッターに相当し、
+  各列の要約を「選択や操作なしに常に一覧で把握する」。`ResultGrid` (内側 `DataGrid`) の
+  `<tfoot>` に、縦スクロールで最下部スティッキー・横スクロール追従・ピン留め列整合で
+  列ごとの集計値を 1 つ表示する。集計値算出は `gridStats.columnStats` を**再利用**し
+  (二重定義しない)、`gridFooter.ts` は列種別ごとの選択可能な関数 (`availableFooterFns`:
+  数値列 SUM/AVG/MIN/MAX + COUNT/DISTINCT/NULL率、非数値列 COUNT/DISTINCT/NULL率)・
+  既定 (`defaultFooterFn`: 数値=SUM / 他=COUNT)・`ColumnStats` からの表示値取り出し
+  (`computeFooterCell`)・破損耐性つきのテーブル単位永続化 (`footerStateKeyFrom` は
+  `colStateKeyFrom` と同型で `noobdb.gridfooter.v1` 名前空間、`read/writeStoredFooterState`)
+  を担う純ロジック。表示 ON/OFF は列ヘッダーメニュー、列ごとの関数切替は「列の統計」
+  ポップオーバー (`ColumnStatsMenu`) のセレクタから。値更新は `motion.ts` の crossfade で
+  控えめにアニメーションし reduced-motion で抑制。`gridFooter.test.ts` (純ロジック) と
+  `ResultGrid.test.tsx` (描画/切替/永続化) がテスト。全件集計が要る場合は #524 の
+  `buildColumnStatsSql` / 全件集計ボタンに乗る (フッター自体は在メモリ対象)。
 - 基盤モジュール — `shortcuts.ts` (全ショートカット定義の単一ソース)、`keyboardNav.ts`
   (`useFocusTrap` / `useRovingFocus` / `useReturnFocus` の a11y フック)、
   `tableQuickAccess.ts` (お気に入り + 最近使ったテーブルを localStorage 永続化)、

@@ -114,6 +114,17 @@ import {
   nextMatchIndex,
   stableMatchIndex,
 } from "./gridFind";
+import {
+  type FooterAggFn,
+  type PersistedFooterState,
+  availableFooterFns,
+  computeFooterCell,
+  defaultFooterFn,
+  footerStateKeyFrom,
+  readStoredFooterState,
+  resolveFooterFn,
+  writeStoredFooterState,
+} from "./gridFooter";
 
 /**
  * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。
@@ -526,6 +537,38 @@ export const GRID_CSS: SystemStyleObject = {
   "& th.is-pinned-right, & td.is-pinned-right": {
     boxShadow: "-2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
   },
+  // 集計フッター行 (#645)。縦スクロールで最下部にスティッキーし (bottom:0)、
+  // 横スクロールはテーブル幅共有で自動追従する。ヘッダ (sticky top) の反転。
+  "& tfoot td.grid-footer-cell": {
+    position: "sticky",
+    bottom: 0,
+    zIndex: 2,
+    background: "var(--bg-header)",
+    borderTop: "1px solid var(--border-strong)",
+    color: "var(--text)",
+    fontSize: "var(--text-xs)",
+    whiteSpace: "nowrap",
+  },
+  // 行番号セルは左端固定 (sticky left) と最下部固定を両立させ、最前面へ。
+  "& tfoot td.grid-footer-cell.row-index": { zIndex: 5, background: "var(--bg-header)" },
+  // ピン留め列のフッターは横スクロール時に他フッターセルより前面へ。背景は
+  // ヘッダ同色にして下を流れる列を隠す。左右の境界影は既存 is-pinned-* を共有。
+  "& tfoot td.grid-footer-cell.is-pinned": { zIndex: 4, background: "var(--bg-header)" },
+  "& tfoot td.grid-footer-cell.col-filler": { background: "var(--bg-elevated)" },
+  // ラベル (左・淡色) と値 (右・等幅数字) を両端に配置する。
+  "& tfoot .grid-footer-inner": {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: "var(--space-2, 8px)",
+  },
+  "& tfoot .grid-footer-fn": {
+    fontSize: "var(--text-2xs)",
+    color: "var(--text-muted)",
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
+  },
+  "& tfoot .grid-footer-val": { fontVariantNumeric: "tabular-nums", fontWeight: 600 },
   "& td.grid-empty-cell": {
     padding: "3.5",
     color: "var(--text-muted)",
@@ -1432,6 +1475,8 @@ function ColumnFilterMenu({
   pinned,
   onPin,
   onShowStats,
+  footerEnabled,
+  onToggleFooter,
 }: {
   columnName: string;
   kind: CellKind;
@@ -1454,6 +1499,9 @@ function ColumnFilterMenu({
   onPin?: (side: false | "left" | "right") => void;
   /** 「列の統計」ポップオーバーを開く。未指定なら項目を出さない (#524)。 */
   onShowStats?: () => void;
+  /** 集計フッター (#645) の表示状態と切替。未指定なら項目を出さない。 */
+  footerEnabled?: boolean;
+  onToggleFooter?: () => void;
 }) {
   const t = useT();
   const numeric = isNumericFilterKind(kind);
@@ -1666,7 +1714,7 @@ function ColumnFilterMenu({
         </chakra.label>
       )}
 
-      {(onHideColumn || onShowAllColumns || onResetLayout || onShowStats) && (
+      {(onHideColumn || onShowAllColumns || onResetLayout || onShowStats || onToggleFooter) && (
         <Box display="flex" flexDirection="column" gap="1" paddingTop="0.5" borderTop="1px solid" borderColor="app.borderSubtle">
           <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="1.5">
             {t("gridColumnsLabel")}
@@ -1683,6 +1731,19 @@ function ColumnFilterMenu({
                 }}
               >
                 {t("gridColumnStats")}
+              </Button>
+            )}
+            {onToggleFooter && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => {
+                  onToggleFooter();
+                  onClose();
+                }}
+              >
+                {footerEnabled ? t("gridFooterHide") : t("gridFooterShow")}
               </Button>
             )}
             {onHideColumn && (
@@ -1782,6 +1843,31 @@ function fmtStatCell(v: CellValue): string {
 }
 
 /**
+ * 集計フッター (#645) の関数ラベル i18n キー。列統計 (#524) と同じ短縮ラベルを
+ * 再利用し、フッターセルとヘッダーメニューのセレクタで表記を一致させる。
+ */
+const FOOTER_FN_LABEL: Record<FooterAggFn, I18nKey> = {
+  none: "gridFooterFnNone",
+  count: "gridCountLabel",
+  distinct: "gridDistinctLabel",
+  nullRate: "gridStatsNullRate",
+  sum: "gridSumLabel",
+  avg: "gridAvgLabel",
+  min: "gridMinLabel",
+  max: "gridMaxLabel",
+};
+
+/** フッターセルの表示テキスト (空セルは空文字)。整形はここでロケール依存で行う。 */
+function footerCellText(cell: { blank: boolean; numeric: number | null; percent: number | null }): string {
+  if (cell.blank) return "";
+  if (cell.percent !== null) {
+    const p = cell.percent;
+    return `${p.toFixed(p > 0 && p < 1 ? 1 : 0)}%`;
+  }
+  return fmtStatNum(cell.numeric);
+}
+
+/**
  * 列のクイック統計ポップオーバー (#524)。ヘッダーメニューの「列の統計」から開く。
  * `ColumnFilterMenu` と同じく <body> へポータルし、アンカー直下にクランプ表示する。
  *
@@ -1797,6 +1883,8 @@ function ColumnStatsMenu({
   onClose,
   statsRequest,
   onRunStatsQuery,
+  footerFn,
+  onSetFooterFn,
 }: {
   columnName: string;
   kind: CellKind;
@@ -1808,6 +1896,9 @@ function ColumnStatsMenu({
   statsRequest?: FullStatsRequest;
   /** 集計 SQL を実行する (App から api.runQuery を束ねて渡す)。 */
   onRunStatsQuery?: (sql: string) => Promise<QueryResult>;
+  /** この列の集計フッター関数 (#645)。`onSetFooterFn` があるときだけ節を出す。 */
+  footerFn?: FooterAggFn;
+  onSetFooterFn?: (fn: FooterAggFn) => void;
 }) {
   const t = useT();
   const numeric = isNumericStatsKind(kind);
@@ -1975,6 +2066,46 @@ function ColumnStatsMenu({
           </>
         )}
       </Box>
+
+      {onSetFooterFn && (
+        <Box
+          display="flex"
+          flexDirection="column"
+          gap="1.5"
+          paddingTop="1"
+          borderTop="1px solid"
+          borderColor="app.borderSubtle"
+        >
+          <chakra.label
+            display="flex"
+            alignItems="center"
+            justifyContent="space-between"
+            gap="2"
+            fontSize="var(--text-xs)"
+            color="app.textMuted"
+          >
+            {t("gridFooterLabel")}
+            <chakra.select
+              aria-label={t("gridFooterSelectAria", { column: columnName })}
+              value={footerFn ?? defaultFooterFn(kind)}
+              onChange={(e) => onSetFooterFn(e.target.value as FooterAggFn)}
+              fontSize="var(--text-xs)"
+              fontFamily="inherit"
+              padding="2px 6px"
+              border="1px solid var(--border)"
+              background="var(--bg-input)"
+              color="var(--text)"
+              borderRadius="var(--radius-sm)"
+            >
+              {availableFooterFns(kind).map((fn) => (
+                <option key={fn} value={fn}>
+                  {t(FOOTER_FN_LABEL[fn])}
+                </option>
+              ))}
+            </chakra.select>
+          </chakra.label>
+        </Box>
+      )}
 
       {statsRequest && onRunStatsQuery && (
         <Box
@@ -2341,6 +2472,67 @@ export function DataGrid({
     Object.values(columnVisibility).some((v) => v === false) ||
     columnPinning.left.length > 0 ||
     columnPinning.right.length > 0;
+
+  // --- Aggregate footer row (#645), persisted per result shape ---
+  // Footer show/hide + per-column aggregate function live in their own
+  // localStorage namespace (`noobdb.gridfooter.v1`), keyed off the same table
+  // signature as column layout (`footerStateKeyFrom` mirrors `colStateKeyFrom`).
+  const footerStateKey = useMemo(
+    () => footerStateKeyFrom(columnSizingStorageKey),
+    [columnSizingStorageKey],
+  );
+  const [footerEnabled, setFooterEnabled] = useState<boolean>(
+    () => readStoredFooterState(footerStateKey).enabled ?? false,
+  );
+  const [footerAggs, setFooterAggs] = useState<Record<string, FooterAggFn>>(
+    () => readStoredFooterState(footerStateKey).aggs ?? {},
+  );
+  const footerEnabledRef = useRef(footerEnabled);
+  footerEnabledRef.current = footerEnabled;
+  const footerAggsRef = useRef(footerAggs);
+  footerAggsRef.current = footerAggs;
+  // Reload footer state when the result shape (table) changes.
+  useEffect(() => {
+    const s = readStoredFooterState(footerStateKey);
+    setFooterEnabled(s.enabled ?? false);
+    setFooterAggs(s.aggs ?? {});
+  }, [footerStateKey]);
+  const persistFooter = useCallback(
+    (patch: Partial<PersistedFooterState>) => {
+      writeStoredFooterState(footerStateKey, {
+        enabled: patch.enabled ?? footerEnabledRef.current,
+        aggs: patch.aggs ?? footerAggsRef.current,
+      });
+    },
+    [footerStateKey],
+  );
+  const toggleFooter = useCallback(() => {
+    const next = !footerEnabledRef.current;
+    setFooterEnabled(next);
+    persistFooter({ enabled: next });
+  }, [persistFooter]);
+  // Picking a per-column function also turns the footer on so the change shows.
+  const setFooterAgg = useCallback(
+    (colId: string, fn: FooterAggFn) => {
+      const nextAggs = { ...footerAggsRef.current, [colId]: fn };
+      setFooterAggs(nextAggs);
+      setFooterEnabled(true);
+      writeStoredFooterState(footerStateKey, { enabled: true, aggs: nextAggs });
+    },
+    [footerStateKey],
+  );
+  // Per-column in-memory ColumnStats for the footer, reusing gridStats
+  // (#524) so aggregate math is never re-defined. Only computed while the
+  // footer is shown, and memoized on the loaded rows so scrolling is free.
+  const footerStats = useMemo<ColumnStats[] | null>(() => {
+    if (!footerEnabled) return null;
+    return columns.map((_, i) =>
+      computeColumnStats(
+        rows.map((r) => r[i] ?? null),
+        columnKinds[i] ?? "string",
+      ),
+    );
+  }, [footerEnabled, rows, columns, columnKinds]);
 
   // Drag-to-reorder columns: track the dragged/hovered column ids for
   // visual feedback, and commit a new order on drop.
@@ -3684,6 +3876,58 @@ export function DataGrid({
             visibleRows.map((row, rowIdx) => renderRow(row, rowIdx))
           )}
         </tbody>
+        {footerEnabled && (
+          // 集計フッター行 (#645)。ヘッダと同じ leaf 列順 (reorder/hide/pin 反映) で
+          // 走査し、行番号セルと末尾フィラーを再現して桁を揃える。ピン留め列は
+          // ヘッダ/本体と同じ sticky オフセットに bottom:0 を重ねて縦横に固定する。
+          <tfoot>
+            <tr role="row" aria-label={t("gridFooterAria")}>
+              <td className="row-index grid-footer-cell" aria-hidden />
+              {table.getHeaderGroups()[0]?.headers.map((h) => {
+                const colIdx = Number(h.column.id);
+                const kind = columnKinds[colIdx] ?? "string";
+                const fn = resolveFooterFn(footerAggs[h.column.id], kind);
+                const stats = footerStats?.[colIdx];
+                const cell = stats ? computeFooterCell(stats, fn) : null;
+                const text = cell ? footerCellText(cell) : "";
+                const pinSide = h.column.getIsPinned();
+                const pinStyle: CSSProperties = pinSide
+                  ? {
+                      zIndex: 4,
+                      ...(pinSide === "left"
+                        ? { left: ROW_INDEX_WIDTH + h.column.getStart("left") }
+                        : { right: h.column.getAfter("right") }),
+                    }
+                  : {};
+                const label = t(FOOTER_FN_LABEL[fn]);
+                return (
+                  <td
+                    key={h.id}
+                    style={pinStyle}
+                    className={`grid-footer-cell col-${kind} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
+                    title={text ? `${label}: ${text}` : undefined}
+                  >
+                    {fn !== "none" && (
+                      <span className="grid-footer-inner">
+                        <span className="grid-footer-fn">{label}</span>
+                        <motion.span
+                          key={text}
+                          className="grid-footer-val"
+                          initial={{ opacity: 0.35 }}
+                          animate={{ opacity: 1 }}
+                          transition={transitions.crossfade}
+                        >
+                          {text}
+                        </motion.span>
+                      </span>
+                    )}
+                  </td>
+                );
+              })}
+              <td className="col-filler grid-footer-cell" aria-hidden />
+            </tr>
+          </tfoot>
+        )}
       </table>
       {copyMenu && (
         <ContextMenu
@@ -3987,6 +4231,8 @@ export function DataGrid({
                 }
               : undefined
           }
+          footerEnabled={footerEnabled}
+          onToggleFooter={enableColumnControls ? toggleFooter : undefined}
         />
       )}
       {statsMenu && (() => {
@@ -4015,6 +4261,10 @@ export function DataGrid({
             statsRequest={statsRequest}
             onRunStatsQuery={statsRequest ? onRunStatsQuery : undefined}
             onClose={() => setStatsMenu(null)}
+            footerFn={resolveFooterFn(footerAggs[String(colIdx)], kind)}
+            onSetFooterFn={
+              enableColumnControls ? (fn) => setFooterAgg(String(colIdx), fn) : undefined
+            }
           />
         );
       })()}
