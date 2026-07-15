@@ -1014,18 +1014,26 @@ export const api = {
       batchSize: params.batchSize ?? null,
     }),
 
+  /**
+   * Start a streaming, cancelable database dump (#686). Returns once the dump
+   * has been kicked off; progress + completion arrive via `dump-stream:*` events
+   * (subscribe with {@link listenDumpStream}) keyed by `streamId`. Cancel via
+   * {@link api.cancelStream}.
+   */
   dumpDatabase: (params: {
     sessionId: string;
+    streamId: string;
     database: string;
     path: string;
     options: DumpOptions;
   }) =>
-    invoke<number>("dump_database", {
+    invoke<void>("dump_database", {
       sessionId: params.sessionId,
+      streamId: params.streamId,
       database: params.database,
       path: params.path,
       options: params.options,
-    }).then((r) => parseResponse(schemas.numberResponse, r, "dump_database")),
+    }),
 
   parseCsvPreview: (path: string, options: ImportOptions) =>
     invoke<CsvPreview>("parse_csv_preview", { path, options }).then((r) =>
@@ -1200,6 +1208,33 @@ export interface ExportStreamHandlers {
    *  `StreamCancelledEvent` — the frontend's own cancel flow reads
    *  `deliveredRows` off `cancelStream`'s return value instead, since it
    *  detaches its listeners before invoking it; this is for other consumers. */
+  onCancelled?: (event: StreamCancelledEvent) => void;
+}
+
+export interface DumpProgressEvent {
+  streamId: string;
+  bytes: number;
+  elapsedMs: number;
+  /** Processed / total tables for the SQLite path; null for external tools. */
+  tables: number | null;
+  tablesTotal: number | null;
+}
+export interface DumpDoneEvent {
+  streamId: string;
+  bytes: number;
+  elapsedMs: number;
+}
+export interface DumpStreamErrorEvent {
+  streamId: string;
+  error: string;
+}
+export interface DumpStreamHandlers {
+  onProgress?: (event: DumpProgressEvent) => void;
+  onDone?: (event: DumpDoneEvent) => void;
+  onError?: (event: DumpStreamErrorEvent) => void;
+  /** Fired when `cancelStream` claims this dump (#686). `deliveredRows` carries
+   *  bytes written so far. The frontend's own cancel flow reads that off
+   *  `cancelStream`'s return value instead. */
   onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
@@ -1389,6 +1424,43 @@ export async function listenExportStream(
     listen<StreamCancelledEvent>(
       "export-stream:cancelled",
       filter(schemas.streamCancelledEvent, "export-stream:cancelled", handlers.onCancelled),
+    ),
+  ]);
+  return () => unlisteners.forEach((un) => un());
+}
+
+/** ストリーミングダンプの進捗/完了/エラー/キャンセルイベントを購読する (#686)。 */
+export async function listenDumpStream(
+  streamId: string,
+  handlers: DumpStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+  const unlisteners = await Promise.all([
+    listen<DumpProgressEvent>(
+      "dump-stream:progress",
+      filter(schemas.dumpProgressEvent, "dump-stream:progress", handlers.onProgress),
+    ),
+    listen<DumpDoneEvent>(
+      "dump-stream:done",
+      filter(schemas.dumpDoneEvent, "dump-stream:done", handlers.onDone),
+    ),
+    listen<DumpStreamErrorEvent>(
+      "dump-stream:error",
+      filter(schemas.dumpErrorEvent, "dump-stream:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "dump-stream:cancelled",
+      filter(schemas.dumpCancelledEvent, "dump-stream:cancelled", handlers.onCancelled),
     ),
   ]);
   return () => unlisteners.forEach((un) => un());

@@ -944,6 +944,12 @@ const en = {
   dumpRunning: "Dumping...",
   dumpSuccess: "Wrote {bytes} bytes to {path}",
   dumpError: "Dump failed: {error}",
+  // Streaming dump progress + cancel (#686).
+  dumpCancelRun: "Cancel dump",
+  dumpCancelled: "Dump cancelled.",
+  dumpProgressBytes: "Dumping… {bytes} written",
+  dumpProgressTables: "Dumping… {tables}/{total} tables ({bytes})",
+  dumpProgressElapsed: "{secs}s elapsed",
 
   // AI 向けスキーマ Markdown エクスポート。
   schemaExportTitle: "Export schema \"{database}\" for AI",
@@ -2822,6 +2828,12 @@ const ja: Dict = {
   dumpRunning: "ダンプ中...",
   dumpSuccess: "{path} に {bytes} バイトを書き出しました",
   dumpError: "ダンプに失敗しました: {error}",
+  // ストリーミングダンプの進捗表示 + キャンセル (#686)。
+  dumpCancelRun: "ダンプを中止",
+  dumpCancelled: "ダンプを中止しました。",
+  dumpProgressBytes: "ダンプ中… {bytes} 書き出し済み",
+  dumpProgressTables: "ダンプ中… {tables}/{total} テーブル ({bytes})",
+  dumpProgressElapsed: "経過 {secs} 秒",
 
   // AI 向けスキーマ Markdown エクスポート。
   schemaExportTitle: "スキーマ「{database}」を AI 向けにエクスポート",

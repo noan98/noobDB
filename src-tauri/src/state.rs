@@ -21,6 +21,10 @@ pub enum StreamKind {
     Preview,
     Export,
     Import,
+    /// A database dump (mysqldump / pg_dump / SQLite). The `delivered_rows`
+    /// counter carries bytes written so far, so a cancel can report progress
+    /// and the partial file is cleaned up (#686).
+    Dump,
 }
 
 /// A running streaming task tracked by [`AppState`]. Besides the `AbortHandle`

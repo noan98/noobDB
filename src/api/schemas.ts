@@ -460,6 +460,34 @@ export const importErrorEvent = z.object({
   error: z.string(),
 });
 
+// ストリーミングダンプのイベント (#686)。
+export const dumpProgressEvent = z.object({
+  streamId: z.string(),
+  bytes: z.number(),
+  elapsedMs: z.number(),
+  /** SQLite 経路のみ処理済み/総テーブル数。外部ツールでは null。 */
+  tables: z.number().nullable(),
+  tablesTotal: z.number().nullable(),
+});
+
+export const dumpDoneEvent = z.object({
+  streamId: z.string(),
+  bytes: z.number(),
+  elapsedMs: z.number(),
+});
+
+export const dumpErrorEvent = z.object({
+  streamId: z.string(),
+  error: z.string(),
+});
+
+/** `dump-stream:cancelled`。cancel_stream は共有ペイロード (deliveredRows) を送るが、
+ *  ダンプでは deliveredRows = 書き出し済みバイト数として解釈する (#686)。 */
+export const dumpCancelledEvent = z.object({
+  streamId: z.string(),
+  deliveredRows: z.number(),
+});
+
 // 全件ストリーミングエクスポートのイベント。
 export const exportProgressEvent = z.object({
   streamId: z.string(),
