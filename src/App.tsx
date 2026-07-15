@@ -177,7 +177,8 @@ import {
 } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
-import { matchErrorHint } from "./errorHints";
+import { resolveErrorHint } from "./errorHints";
+import { errorKindOf } from "./api/tauri";
 import {
   backoffDelayMs,
   shouldAutoReconnect,
@@ -291,8 +292,12 @@ type Status =
   // footer bar is hidden entirely; one-shot confirmations like "connected"
   // live in the toast notifications instead.
   | { kind: "idle" }
-  | { kind: "literal"; text: string; error?: boolean }
-  | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean };
+  | { kind: "literal"; text: string; error?: boolean; errorKind?: string | null }
+  // `errorKind` carries the structured `AppError.kind` (#683) so the hint/
+  // illustration resolver can classify reliably instead of pattern-matching the
+  // message text. Optional: paths that only have a plain string omit it and the
+  // resolver falls back to message matching.
+  | { kind: "key"; key: Parameters<ReturnType<typeof useT>>[0]; vars?: Record<string, string | number>; error?: boolean; errorKind?: string | null };
 
 // エラーは重大度別に区別する。`critical` は接続喪失など回復に再接続を要する
 // 致命的状態 (赤、目立つバッジ)、`warning` はタイムアウトなど接続は生きている軽度
@@ -2025,7 +2030,7 @@ export default function App() {
       // 実際には非アクティブな旧接続を「接続中」として描画し続けてしまう (#F6)。
       setSelectedProfile(null);
       setErrorProfileId(profile.id);
-      setStatus({ kind: "key", key: "statusConnectionFailed", vars: { error: String(e) }, error: true });
+      setStatus({ kind: "key", key: "statusConnectionFailed", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
     } finally {
       setConnectingId(null);
     }
@@ -2605,7 +2610,7 @@ export default function App() {
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
+      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
       finalize();
     }
   }, [
@@ -3187,7 +3192,7 @@ export default function App() {
       setStatus({ kind: "key", key: "statusStreamingDone", vars: { rows: res.rows.length, ms: res.elapsed_ms } });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
+      setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
     }
   }, [sessionId, patchTab]);
 
@@ -4834,7 +4839,10 @@ export default function App() {
   const statusHintKey = useMemo(() => {
     if (status.kind === "idle" || !status.error) return null;
     const raw = status.kind === "literal" ? status.text : status.vars?.error;
-    return raw != null ? matchErrorHint(String(raw)) : null;
+    if (raw == null) return null;
+    // Prefer the structured `AppError.kind` when the error path carried it
+    // (#683); otherwise fall back to matching the raw message text.
+    return resolveErrorHint({ kind: status.errorKind ?? null, message: String(raw) });
   }, [status]);
 
   // The profile to offer a one-click reconnect for: set whenever a connect

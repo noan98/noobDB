@@ -989,8 +989,20 @@ ipcCommandParity.test.ts` が Rust 側登録と `tauri.ts` の対応をテスト
 ときは: Rust ハンドラを追加し、`lib.rs` で登録し、`tauri.ts` に型付けされたラッパー
 (とストリーミングなら対応する `listen*` ヘルパー) を追加します — これらの間でズレが
 発生するとフロントエンドが暗黙のうちに壊れます。** エラーは `AppError` として上に
-伝搬し、その `Display` 文字列としてシリアライズされます (`error.rs::Serialize` を
-参照)。フロントエンドは reject された Promise の中で `string` として受け取ります。
+伝搬し、`{ kind, message }` の**構造化 JSON** としてシリアライズされます
+(`error.rs::Serialize` / `AppError::kind()` を参照。#683)。`kind` はバリアント由来の
+安定した判別子 (`ssh` / `sshHostKeyMismatch` / `timeout` / `readOnly` /
+`connectionLost` / `invalidInput` / `db` ...) で、`message` は従来の `Display` 文字列
+です。フロントの `src/api/tauri.ts` の `invoke` ラッパーが reject 値を
+`BackendError` (`.kind` / `.message` を持つ。`toString()` は `message` を返すので
+既存の `String(e)` 経路は不変) に正規化し、**旧形式の素の文字列も後方互換で受け付け**
+ます (`normalizeBackendError`)。`src/errorHints.ts` は「`kind` による確実な分類
+(`hintForKind`) → `message` パターンはフォールバック (`matchErrorHint`)」の 2 段構成
+(`resolveErrorHint`) で、SSH 系 (認証失敗 / エージェント不在 / 鍵・パスフレーズ /
+ホスト鍵不一致) のヒントもここで解決します。`kind` → ヒントの対応はフロント/バック
+共有ゴールデン (`src/__tests__/fixtures/errorKindVectors.json` を
+`errorKindGolden.test.ts` と `tests/error_kind_golden.rs` が突き合わせ) で固定して
+います。**`error.rs` にバリアントを追加するときは `kind()` の分岐も更新**してください。
 
 ### テスト専用 API
 

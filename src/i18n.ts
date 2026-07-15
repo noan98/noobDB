@@ -456,6 +456,18 @@ const en = {
     "Couldn't reach the database server. Check the host and port, that the server is running, and any SSH tunnel or firewall settings.",
   errorHintConnectionLost:
     "The connection seems to have dropped — the server may have closed an idle session (wait_timeout), or the network / VPN went down. Reconnect and run the query again.",
+  errorHintTimeout:
+    "The operation ran past its time limit and was cancelled. Try a narrower query (add WHERE / LIMIT), or raise the query timeout in Settings.",
+  errorHintSsh:
+    "The SSH tunnel couldn't be established. Check the SSH host, port, and user, and that the server is reachable and accepts your key-exchange / cipher settings.",
+  errorHintSshAuth:
+    "SSH authentication was rejected. Check the SSH user and the selected auth method — the key, password, or agent identity may be wrong or not authorized on the server.",
+  errorHintSshAgent:
+    "Couldn't use the SSH agent. Make sure an agent is running and holds an identity (add one with `ssh-add`, and check SSH_AUTH_SOCK), or switch to key / password auth.",
+  errorHintSshKey:
+    "The SSH private key couldn't be read or decoded. Check the key file path and format, and whether it needs a passphrase (a wrong passphrase fails here too).",
+  errorHintSshHostKey:
+    "The SSH server's host key doesn't match the one saved on first connect. This is expected after a legitimate server / key rotation, but can also mean a man-in-the-middle. Verify the new fingerprint out-of-band, then re-trust the host to reconnect.",
 
   listEmpty: "No saved connections yet.",
   listEmptyTitle: "No connections yet",
@@ -2292,6 +2304,18 @@ const ja: Dict = {
     "データベースサーバーに到達できませんでした。ホストとポート、サーバーが起動しているか、SSH トンネルやファイアウォールの設定を確認してください。",
   errorHintConnectionLost:
     "接続が切れたようです。サーバーがアイドル状態のセッションを閉じた (wait_timeout)、またはネットワークや VPN が切断された可能性があります。再接続してから、もう一度クエリを実行してください。",
+  errorHintTimeout:
+    "操作が制限時間を超えたため中断されました。クエリを絞り込む (WHERE / LIMIT を付ける) か、設定でクエリタイムアウトを延ばしてください。",
+  errorHintSsh:
+    "SSH トンネルを確立できませんでした。SSH のホスト・ポート・ユーザー、サーバーに到達できるか、鍵交換 / 暗号方式の設定が受け入れられるかを確認してください。",
+  errorHintSshAuth:
+    "SSH 認証が拒否されました。SSH ユーザーと選択した認証方式を確認してください。鍵・パスワード・エージェントの identity が誤っているか、サーバー側で許可されていない可能性があります。",
+  errorHintSshAgent:
+    "SSH エージェントを利用できませんでした。エージェントが起動して identity を保持しているか (`ssh-add` で追加、SSH_AUTH_SOCK を確認) を確かめるか、鍵 / パスワード認証に切り替えてください。",
+  errorHintSshKey:
+    "SSH 秘密鍵を読み込めませんでした (または復号に失敗)。鍵ファイルのパスと形式、パスフレーズが必要かどうかを確認してください (パスフレーズ誤りもここで失敗します)。",
+  errorHintSshHostKey:
+    "SSH サーバーのホスト鍵が、初回接続時に保存したものと一致しません。正当なサーバー / 鍵のローテーション後なら想定内ですが、中間者攻撃の可能性もあります。新しいフィンガープリントを別経路で確認したうえで、ホストを再信頼して再接続してください。",
 
   listEmpty: "保存された接続はまだありません。",
   listEmptyTitle: "接続がありません",
