@@ -13,4 +13,5 @@ pub mod query;
 pub mod schema;
 pub mod server;
 pub mod snippets;
+pub mod ssh;
 pub mod sync;

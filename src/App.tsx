@@ -118,6 +118,9 @@ const CreateTableModal = lazy(() =>
 const RenameTableDialog = lazy(() =>
   import("./components/RenameTableDialog").then((m) => ({ default: m.RenameTableDialog })),
 );
+const HostKeyMismatchDialog = lazy(() =>
+  import("./components/HostKeyMismatchDialog").then((m) => ({ default: m.HostKeyMismatchDialog })),
+);
 const RowInsertModal = lazy(() =>
   import("./components/RowInsertModal").then((m) => ({ default: m.RowInsertModal })),
 );
@@ -1151,6 +1154,12 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
+  // Set when a connect fails with an SSH host-key mismatch (#682): drives the
+  // recovery dialog that lets the user forget the stale key and reconnect.
+  const [hostKeyMismatch, setHostKeyMismatch] = useState<
+    { profile: ConnectionProfile; message: string } | null
+  >(null);
+  const [reTrustingHostKey, setReTrustingHostKey] = useState(false);
   // 同時に開いている接続のレジストリ (#複数同時接続)。別プロファイルへ接続しても
   // 既存セッションを切断せず背景で生かしておき、クリックで即座に切り替えられる
   // ようにする。各エントリは生存中のバックエンドセッション 1 本に対応する。
@@ -2030,7 +2039,13 @@ export default function App() {
       // 実際には非アクティブな旧接続を「接続中」として描画し続けてしまう (#F6)。
       setSelectedProfile(null);
       setErrorProfileId(profile.id);
-      setStatus({ kind: "key", key: "statusConnectionFailed", vars: { error: String(e) }, error: true, errorKind: errorKindOf(e) });
+      const kind = errorKindOf(e);
+      setStatus({ kind: "key", key: "statusConnectionFailed", vars: { error: String(e) }, error: true, errorKind: kind });
+      // An SSH host-key mismatch is recoverable in-app: offer the re-trust
+      // dialog instead of leaving the user to hand-edit known_hosts (#682).
+      if (kind === "sshHostKeyMismatch" && profile.ssh) {
+        setHostKeyMismatch({ profile, message: String(e) });
+      }
     } finally {
       setConnectingId(null);
     }
@@ -2048,6 +2063,26 @@ export default function App() {
     toast,
     confirm,
   ]);
+
+  // Host-key mismatch recovery (#682): forget the stale known_hosts entry for
+  // this profile's SSH endpoint, then reconnect so TOFU re-records the new key.
+  const handleReTrustHostKey = useCallback(async () => {
+    const mismatch = hostKeyMismatch;
+    const ssh = mismatch?.profile.ssh;
+    if (!mismatch || !ssh) return;
+    const { profile } = mismatch;
+    setReTrustingHostKey(true);
+    try {
+      await api.forgetHostKey(ssh.host, ssh.port);
+      setHostKeyMismatch(null);
+      toast.success(translate("hostKeyReTrustedToast", { name: profile.name }));
+      await handleConnect(profile);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setReTrustingHostKey(false);
+    }
+  }, [hostKeyMismatch, handleConnect, toast, translate]);
 
   const handleDisconnect = useCallback(async () => {
     if (!sessionId) return;
@@ -6237,6 +6272,20 @@ export default function App() {
               table={renameTarget.table}
               onConfirm={handleRenameTableSubmit}
               onCancel={() => setRenameTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {hostKeyMismatch && (
+          <Suspense fallback={null}>
+            <HostKeyMismatchDialog
+              profile={hostKeyMismatch.profile}
+              message={hostKeyMismatch.message}
+              busy={reTrustingHostKey}
+              onReTrust={handleReTrustHostKey}
+              onCancel={() => setHostKeyMismatch(null)}
             />
           </Suspense>
         )}

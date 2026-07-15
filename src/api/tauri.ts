@@ -406,6 +406,13 @@ export interface ProcessInfo {
   is_self: boolean;
 }
 
+/** One trusted SSH host from known_hosts (`host:port` + fingerprint). #682. */
+export interface KnownHost {
+  host: string;
+  port: number;
+  fingerprint: string;
+}
+
 /**
  * ライブクエリ・インスペクタ (#746) の前提可否。使えない機能には機械可読な
  * 理由コード (`unsupported_driver` / `performance_schema_off` /
@@ -653,6 +660,21 @@ export const api = {
    * トンネル断) false。セッションが見つからない場合のみ reject する。
    */
   pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
+  /**
+   * List the SSH known_hosts entries (host:port + fingerprint). Backs the
+   * Settings known_hosts panel and the host-key mismatch recovery flow (#682).
+   */
+  listKnownHosts: () =>
+    invoke<KnownHost[]>("list_known_hosts").then((r) =>
+      parseResponse(schemas.knownHostArray, r, "list_known_hosts"),
+    ),
+  /**
+   * Forget the known_hosts entry for `host:port`, so the next connection
+   * re-trusts the server's (possibly rotated) key via TOFU. Resolves to `true`
+   * when an entry was actually removed (#682).
+   */
+  forgetHostKey: (host: string, port: number) =>
+    invoke<boolean>("forget_host_key", { host, port }),
   /** 明示トランザクションを開始する。 */
   beginTransaction: (sessionId: string, database?: string | null) =>
     invoke<void>("begin_transaction", { sessionId, database: database ?? null }),

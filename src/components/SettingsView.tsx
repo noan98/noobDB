@@ -15,6 +15,7 @@ import {
 import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { KeybindingSettings } from "./KeybindingSettings";
+import { KnownHostsPanel } from "./KnownHostsPanel";
 import { useToast } from "./Toast";
 import {
   DEFAULT_AUTO_LIMIT_COUNT,
@@ -1343,6 +1344,8 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsLogsPath>
         )}
       </SettingsSection>
+
+      <KnownHostsPanel />
 
       <SettingsSection>
         <SettingsSectionHeader>

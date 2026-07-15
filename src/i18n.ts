@@ -469,6 +469,28 @@ const en = {
   errorHintSshHostKey:
     "The SSH server's host key doesn't match the one saved on first connect. This is expected after a legitimate server / key rotation, but can also mean a man-in-the-middle. Verify the new fingerprint out-of-band, then re-trust the host to reconnect.",
 
+  // SSH host-key mismatch recovery dialog (#682).
+  hostKeyMismatchTitle: "SSH host key changed",
+  hostKeyMismatchIntro:
+    "The SSH server {endpoint} presented a host key that differs from the one saved when you first connected.",
+  hostKeyMismatchStored: "Saved fingerprint (trusted)",
+  hostKeyMismatchPresented: "Presented fingerprint (new)",
+  hostKeyMismatchWarning:
+    "Only re-trust if you expected this — e.g. the server was rebuilt or its key was rotated. If you did not, this could be a man-in-the-middle attack. Verify the new fingerprint through a trusted channel before continuing.",
+  hostKeyMismatchReTrust: "Forget old key & reconnect",
+  hostKeyMismatchReTrusting: "Reconnecting…",
+  hostKeyMismatchCancel: "Cancel",
+  hostKeyReTrustedToast: "Re-trusted {name}; reconnecting.",
+  // Settings → known_hosts management panel (#682).
+  knownHostsTitle: "SSH known hosts",
+  knownHostsDesc:
+    "Host keys trusted on first connect (TOFU). Forget an entry to re-trust the server's key on the next connection — do this after a legitimate key rotation, or to clear a stale entry.",
+  knownHostsEmpty: "No SSH hosts have been trusted yet.",
+  knownHostsForget: "Forget",
+  knownHostsForgottenToast: "Forgot host key for {host}.",
+  knownHostsRefresh: "Refresh",
+  knownHostsLoadError: "Couldn't load known hosts: {error}",
+
   listEmpty: "No saved connections yet.",
   listEmptyTitle: "No connections yet",
   listEmptyDesc: "Add a database connection to get started.",
@@ -2316,6 +2338,28 @@ const ja: Dict = {
     "SSH 秘密鍵を読み込めませんでした (または復号に失敗)。鍵ファイルのパスと形式、パスフレーズが必要かどうかを確認してください (パスフレーズ誤りもここで失敗します)。",
   errorHintSshHostKey:
     "SSH サーバーのホスト鍵が、初回接続時に保存したものと一致しません。正当なサーバー / 鍵のローテーション後なら想定内ですが、中間者攻撃の可能性もあります。新しいフィンガープリントを別経路で確認したうえで、ホストを再信頼して再接続してください。",
+
+  // SSH ホスト鍵不一致の復旧ダイアログ (#682)。
+  hostKeyMismatchTitle: "SSH ホスト鍵が変わりました",
+  hostKeyMismatchIntro:
+    "SSH サーバー {endpoint} が、初回接続時に保存したものと異なるホスト鍵を提示しました。",
+  hostKeyMismatchStored: "保存済みフィンガープリント (信頼済み)",
+  hostKeyMismatchPresented: "提示されたフィンガープリント (新規)",
+  hostKeyMismatchWarning:
+    "想定内の変更 (サーバー再構築や鍵のローテーションなど) のときだけ再信頼してください。心当たりがない場合は中間者攻撃の可能性があります。続行する前に、新しいフィンガープリントを信頼できる経路で確認してください。",
+  hostKeyMismatchReTrust: "旧鍵を破棄して再接続",
+  hostKeyMismatchReTrusting: "再接続中…",
+  hostKeyMismatchCancel: "キャンセル",
+  hostKeyReTrustedToast: "{name} を再信頼しました。再接続します。",
+  // 設定 → known_hosts 管理パネル (#682)。
+  knownHostsTitle: "SSH known_hosts",
+  knownHostsDesc:
+    "初回接続時に信頼したホスト鍵 (TOFU)。エントリを破棄すると、次回接続時にサーバーの鍵を再信頼します。正当な鍵ローテーション後や、古いエントリを消したいときに使ってください。",
+  knownHostsEmpty: "まだ信頼済みの SSH ホストはありません。",
+  knownHostsForget: "破棄",
+  knownHostsForgottenToast: "{host} のホスト鍵を破棄しました。",
+  knownHostsRefresh: "再読み込み",
+  knownHostsLoadError: "known_hosts を読み込めませんでした: {error}",
 
   listEmpty: "保存された接続はまだありません。",
   listEmptyTitle: "接続がありません",

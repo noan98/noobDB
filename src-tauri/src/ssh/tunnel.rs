@@ -69,9 +69,30 @@ impl SshTunnel {
         let config = Arc::new(config);
 
         let handler = ClientHandler::new(&cfg.host, cfg.port);
-        let mut session = russh::client::connect(config, (cfg.host.as_str(), cfg.port), handler)
-            .await
-            .map_err(|e| AppError::Ssh(format!("ssh connect failed: {e}")))?;
+        // Read the mismatch slot after `connect` fails: a TOFU host-key mismatch
+        // aborts inside `check_server_key` with a generic `UnknownKey`, so we
+        // recover the recorded fingerprints here and surface a precise,
+        // recoverable `SshHostKeyMismatch` instead (#682).
+        let mismatch_slot = handler.mismatch_slot();
+        let mut session =
+            match russh::client::connect(config, (cfg.host.as_str(), cfg.port), handler).await {
+                Ok(s) => s,
+                Err(e) => {
+                    if let Some(m) = mismatch_slot
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .take()
+                    {
+                        return Err(AppError::SshHostKeyMismatch {
+                            host: cfg.host.clone(),
+                            port: cfg.port,
+                            expected: m.expected,
+                            actual: m.actual,
+                        });
+                    }
+                    return Err(AppError::Ssh(format!("ssh connect failed: {e}")));
+                }
+            };
 
         super::auth::authenticate(&mut session, cfg).await?;
 

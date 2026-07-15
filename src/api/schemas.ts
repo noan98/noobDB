@@ -116,6 +116,14 @@ export const processInfo = z.object({
   is_self: z.boolean(),
 });
 
+/** SSH known_hosts の 1 エントリ (host:port + fingerprint)。#682。 */
+export const knownHost = z.object({
+  host: z.string(),
+  port: z.number(),
+  fingerprint: z.string(),
+});
+export const knownHostArray = z.array(knownHost);
+
 /** ライブクエリ・インスペクタ (#746) の前提可否 + 縮退理由コード。 */
 export const queryStatsSupport = z.object({
   live_tail: z.boolean(),

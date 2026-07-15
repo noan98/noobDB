@@ -1,10 +1,22 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use russh::client::{Handler, Session};
 use russh::keys::{HashAlg, PublicKey};
 use russh::ChannelId;
 
 use crate::profiles::store::data_dir;
+
+/// The two fingerprints involved in a host-key mismatch: the one stored in
+/// known_hosts (`expected`) and the one the server just presented (`actual`).
+/// Recorded by [`ClientHandler::check_server_key`] so the tunnel opener can turn
+/// a generic `UnknownKey` rejection into a precise `SshHostKeyMismatch` error
+/// with an in-app re-trust flow (#682).
+#[derive(Debug, Clone)]
+pub struct HostKeyMismatch {
+    pub expected: String,
+    pub actual: String,
+}
 
 /// Client-side SSH handler. Implements TOFU known-hosts: on first encounter,
 /// accept and persist the host key fingerprint; thereafter, require a match.
@@ -14,6 +26,9 @@ pub struct ClientHandler {
     /// Overrides the known_hosts location. `None` resolves to the app data
     /// dir; only tests set this so they never touch the real user directory.
     known_hosts: Option<PathBuf>,
+    /// Set when a host-key mismatch aborts the connection, shared with the
+    /// tunnel opener via [`ClientHandler::mismatch_slot`] (#682).
+    mismatch: Arc<Mutex<Option<HostKeyMismatch>>>,
 }
 
 impl ClientHandler {
@@ -22,7 +37,15 @@ impl ClientHandler {
             host: host.into(),
             port,
             known_hosts: None,
+            mismatch: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// A handle to the mismatch slot this handler writes on a host-key mismatch.
+    /// The tunnel opener holds a clone and reads it after `connect` fails so it
+    /// can report both fingerprints (#682).
+    pub fn mismatch_slot(&self) -> Arc<Mutex<Option<HostKeyMismatch>>> {
+        self.mismatch.clone()
     }
 
     #[cfg(test)]
@@ -31,6 +54,7 @@ impl ClientHandler {
             host: host.into(),
             port,
             known_hosts: Some(known_hosts),
+            mismatch: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -97,32 +121,10 @@ impl ClientHandler {
                 out.push('\n');
             }
         }
-        write_atomic(&path, out.as_bytes())
+        // Atomic replace shared with the forget path (#682); prevents a partial
+        // write from corrupting known_hosts and breaking later verification.
+        super::known_hosts::write_atomic(&path, out.as_bytes())
     }
-}
-
-/// `path` の内容全体をアトミックに置き換える。同じディレクトリに一時ファイルを
-/// 書いて `sync_all` してから `rename` することで、書き込み途中のクラッシュ/
-/// 電源断/ディスクフルで known_hosts が半端な内容のまま残り、以後のホスト鍵検証が
-/// 壊れる事態を防ぐ (同一ファイルシステム内の `rename` はアトミック)。追記のみの
-/// `remember` は末尾追記なのでデータ喪失リスクが低く、対象外。
-fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp_path = dir.join(format!(
-        ".{}.tmp.{}",
-        path.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "known_hosts".to_string()),
-        std::process::id()
-    ));
-    {
-        let mut f = std::fs::File::create(&tmp_path)?;
-        f.write_all(content)?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&tmp_path, path)?;
-    Ok(())
 }
 
 /// Pre-0.60 builds stored the bare base64 SHA-256 digest, while russh 0.60
@@ -163,6 +165,14 @@ impl Handler for ClientHandler {
                         host = %self.host,
                         "ssh host key mismatch (known={known}, got={fingerprint})"
                     );
+                    // Record both fingerprints so the tunnel opener can surface a
+                    // precise SshHostKeyMismatch (with an in-app re-trust flow)
+                    // instead of a generic "unknown key" string (#682).
+                    *self.mismatch.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(HostKeyMismatch {
+                            expected: known.clone(),
+                            actual: fingerprint.clone(),
+                        });
                     Err(russh::Error::UnknownKey)
                 }
             }
@@ -303,20 +313,21 @@ mod tests {
     }
 
     // H3: known_hosts の全体書き換え (replace_entry が使う write_atomic) は
-    // リネーム後に内容が読め、一時ファイルを残さないこと。
+    // リネーム後に内容が読め、一時ファイルを残さないこと。write_atomic 本体は
+    // `super::super::known_hosts` へ移動したので、そのモジュール経由で検証する。
     #[test]
     fn write_atomic_leaves_only_the_final_file() {
         let path = temp_known_hosts();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
 
-        super::write_atomic(&path, b"ssh.example.com:22 SHA256:abc\n").unwrap();
+        crate::ssh::known_hosts::write_atomic(&path, b"ssh.example.com:22 SHA256:abc\n").unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "ssh.example.com:22 SHA256:abc\n"
         );
 
         // Overwrite and confirm no temp file lingers alongside it.
-        super::write_atomic(&path, b"ssh.example.com:22 SHA256:def\n").unwrap();
+        crate::ssh::known_hosts::write_atomic(&path, b"ssh.example.com:22 SHA256:def\n").unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "ssh.example.com:22 SHA256:def\n"
@@ -330,6 +341,32 @@ mod tests {
             leftovers.is_empty(),
             "temp file was left behind: {leftovers:?}"
         );
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    // ホスト鍵不一致のとき、handler が mismatch スロットに新旧フィンガープリントを
+    // 記録すること (tunnel 側が SshHostKeyMismatch を組み立てる材料。#682)。
+    #[tokio::test]
+    async fn mismatch_is_recorded_in_slot() {
+        let trusted = PublicKey::from_openssh(KEY_A).unwrap();
+        let presented = PublicKey::from_openssh(KEY_B).unwrap();
+        let trusted_fp = trusted.fingerprint(HashAlg::Sha256).to_string();
+        let presented_fp = presented.fingerprint(HashAlg::Sha256).to_string();
+
+        let path = temp_known_hosts();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, format!("ssh.example.com:22 {trusted_fp}\n")).unwrap();
+
+        let mut handler = ClientHandler::with_known_hosts("ssh.example.com", 22, path.clone());
+        let slot = handler.mismatch_slot();
+        assert!(matches!(
+            handler.check_server_key(&presented).await,
+            Err(russh::Error::UnknownKey)
+        ));
+        let recorded = slot.lock().unwrap().clone().expect("mismatch recorded");
+        assert_eq!(recorded.expected, trusted_fp);
+        assert_eq!(recorded.actual, presented_fp);
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
