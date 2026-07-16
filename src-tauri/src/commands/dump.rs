@@ -254,17 +254,27 @@ async fn spawn_dump(
 
 /// Dispatch the dump on the session's driver, then apply the optional SQL
 /// reformat (#546). Returns the final byte count.
+///
+/// The whole dump (and any reformat) is written to a **temporary file in the
+/// same directory**, and only renamed onto `final_path` after everything
+/// succeeds (#84). This way a failed / cancelled dump — or a reformat error —
+/// can never truncate or delete a pre-existing file at `final_path` (e.g. an
+/// earlier backup the user is overwriting): the partial output lives on the
+/// temp file, which `PartialFileCleanup` removes, leaving `final_path` intact.
 #[allow(clippy::too_many_arguments)]
 async fn run_dump(
     app: &AppHandle,
     session: &Session,
     stream_id: &str,
     database: &str,
-    path: &str,
+    final_path: &str,
     options: &DumpOptions,
     counter: &Arc<AtomicU64>,
     started: Instant,
 ) -> Result<u64> {
+    let tmp = dump_temp_path(final_path);
+    let tmp_str = tmp.to_string_lossy().to_string();
+
     let bytes = match session.connect_options.driver {
         DriverKind::Mysql => {
             dump_mysql(
@@ -272,7 +282,7 @@ async fn run_dump(
                 stream_id,
                 &session.connect_options,
                 database,
-                path,
+                &tmp_str,
                 options,
                 counter,
                 started,
@@ -285,7 +295,7 @@ async fn run_dump(
                 stream_id,
                 &session.connect_options,
                 database,
-                path,
+                &tmp_str,
                 options,
                 counter,
                 started,
@@ -297,7 +307,7 @@ async fn run_dump(
                 app,
                 stream_id,
                 &session.conn,
-                path,
+                &tmp_str,
                 options,
                 counter,
                 started,
@@ -306,11 +316,43 @@ async fn run_dump(
         }
     };
 
-    // 整形オプションが有効なら、書き出した SQL を整形して保存し直す (#546)。
-    if options.format_sql && bytes > 0 {
-        return format_dump_file(path.to_string()).await;
+    // 整形オプションが有効なら、書き出した SQL を整形して保存し直す (#546)。整形も
+    // 一時ファイル上で行う。
+    let bytes = if options.format_sql && bytes > 0 {
+        match format_dump_file(tmp_str.clone()).await {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(e);
+            }
+        }
+    } else {
+        bytes
+    };
+
+    // Everything succeeded: atomically move the temp file onto the final path,
+    // replacing any existing file only now (not mid-write).
+    if let Err(e) = tokio::fs::rename(&tmp, final_path).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(AppError::Io(e));
     }
     Ok(bytes)
+}
+
+/// A sibling temp path (`.<name>.dumping.<pid>.<seq>`) in the same directory as
+/// `final_path`, so the atomic `rename` onto `final_path` stays within one
+/// filesystem. The per-process counter keeps concurrent dumps from colliding.
+fn dump_temp_path(final_path: &str) -> PathBuf {
+    use std::sync::atomic::AtomicUsize;
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let p = Path::new(final_path);
+    let dir = p.parent().unwrap_or_else(|| Path::new("."));
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "dump.sql".to_string());
+    dir.join(format!(".{name}.dumping.{}.{seq}", std::process::id()))
 }
 
 /// Pipe an external dump tool's stdout to `path` while counting bytes and
@@ -921,6 +963,19 @@ fn my_cnf_quote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dump_temp_path_is_a_sibling_in_the_same_dir() {
+        let tmp = dump_temp_path("/backups/db_2026.sql");
+        // Same directory (so the later rename stays on one filesystem)...
+        assert_eq!(tmp.parent(), Some(Path::new("/backups")));
+        // ...a hidden, distinct name (never the final path itself).
+        let name = tmp.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with(".db_2026.sql.dumping."));
+        assert_ne!(tmp, Path::new("/backups/db_2026.sql"));
+        // Two calls never collide (per-process counter).
+        assert_ne!(dump_temp_path("/backups/db_2026.sql"), tmp);
+    }
 
     #[test]
     fn sqlite_literal_renders_each_value_kind() {
