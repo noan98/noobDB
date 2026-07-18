@@ -268,6 +268,7 @@ pub fn run() {
             commands::connection::ping_session,
             commands::ssh::list_known_hosts,
             commands::ssh::forget_host_key,
+            commands::ssh::trust_host_key,
             commands::query::run_query,
             commands::query::run_query_transaction,
             commands::query::begin_transaction,

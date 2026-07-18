@@ -17,6 +17,45 @@ const PREVIEW_ROW_LIMIT: usize = 50;
 /// Rows per INSERT statement when the caller doesn't specify. Drivers clamp
 /// this further to respect their own placeholder / statement-size limits.
 const DEFAULT_BATCH_SIZE: usize = 500;
+/// Upper bound on the size of a file that `parse_csv_preview` / `run_import`
+/// will read into memory. Import reads the whole file before parsing, so an
+/// unbounded read could OOM the process on a pathological input; this caps it
+/// while still allowing large bulk imports. Mirrors the size-guard pattern in
+/// `commands::file` (#687 review follow-up).
+const MAX_IMPORT_FILE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Read a file for import after rejecting an empty path and enforcing
+/// `MAX_IMPORT_FILE_BYTES`. Like `commands::file::read_text_file`, `metadata`
+/// alone is insufficient — it misses TOCTOU growth and special files whose
+/// length is 0/undefined (e.g. FIFOs, `/proc`) — so the actual read is also
+/// capped with `take` and the read length re-checked.
+async fn read_import_file(path: &str) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    if path.trim().is_empty() {
+        return Err(AppError::InvalidInput("import file path is empty".into()));
+    }
+    if let Ok(meta) = tokio::fs::metadata(path).await {
+        if meta.len() > MAX_IMPORT_FILE_BYTES {
+            return Err(AppError::InvalidInput(format!(
+                "file too large to import ({} bytes, limit {} bytes)",
+                meta.len(),
+                MAX_IMPORT_FILE_BYTES
+            )));
+        }
+    }
+    let file = tokio::fs::File::open(path).await?;
+    // Read at most limit + 1 bytes so an exactly-limit file is still accepted
+    // while anything larger is detected by the actual read length.
+    let mut limited = file.take(MAX_IMPORT_FILE_BYTES + 1);
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes).await?;
+    if bytes.len() as u64 > MAX_IMPORT_FILE_BYTES {
+        return Err(AppError::InvalidInput(format!(
+            "file too large to import (limit {MAX_IMPORT_FILE_BYTES} bytes)"
+        )));
+    }
+    Ok(bytes)
+}
 
 /// Source data format for an import. Defaults to `Csv` so requests sent before
 /// this field existed (and any caller that omits it) keep the CSV behavior.
@@ -175,7 +214,7 @@ pub async fn parse_csv_preview(path: String, options: ImportOptions) -> Result<C
     if options.format == ImportFormat::Csv {
         validate_chars(&options)?;
     }
-    let bytes = tokio::fs::read(&path).await?;
+    let bytes = read_import_file(&path).await?;
     let text = decode_bytes(&bytes, &options.encoding);
     parse_preview(text.as_bytes(), &options)
 }
@@ -509,12 +548,20 @@ pub async fn import_csv(
         ));
     }
 
+    // Rows committed so far. In `skip` mode each chunk is auto-committed, so a
+    // mid-import cancel leaves the committed rows persisted — this counter lets
+    // `cancel_stream` report them (`deliveredRows`). In `abort` mode the whole
+    // import is one transaction that rolls back on cancel, so it stays 0 (#687
+    // review follow-up).
+    let committed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
     // register_stream をタスク本体より前に完了させるためのゲート
     // (run_query_stream / preview_query_stream と同じ理由。#685)。入力エラー等で
     // 即終了する import が register より先に forget_stream し、完了済みハンドルが
     // streams に残る競合を防ぐ。
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
     let stream_id_for_task = stream_id.clone();
+    let committed_for_task = committed.clone();
     let handle = tokio::spawn(async move {
         let _ = ready_rx.await;
         spawn_import(
@@ -527,6 +574,7 @@ pub async fn import_csv(
             options,
             mapping,
             batch_size.unwrap_or(DEFAULT_BATCH_SIZE),
+            committed_for_task,
         )
         .await;
     });
@@ -535,11 +583,9 @@ pub async fn import_csv(
             stream_id,
             StreamHandle {
                 abort: handle.abort_handle(),
-                // A CSV/JSON import runs as one all-or-nothing transaction, so
-                // there's no meaningful "rows delivered so far" to report on
-                // cancel (unlike the query/preview/export streams, #685) —
-                // this counter is never incremented.
-                delivered_rows: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                // Reports rows committed so far on cancel — meaningful only in
+                // `skip` mode; `abort` mode rolls back and leaves this at 0.
+                delivered_rows: committed,
                 kind: StreamKind::Import,
             },
         )
@@ -560,6 +606,7 @@ async fn spawn_import(
     options: ImportOptions,
     mapping: Vec<ColumnMapping>,
     batch_size: usize,
+    committed: Arc<std::sync::atomic::AtomicU64>,
 ) {
     // Kept for the history summary after `run_import` consumes the originals.
     let summary_db = database.clone();
@@ -575,7 +622,7 @@ async fn spawn_import(
         mapping.len()
     );
     let result = run_import(
-        &app, &session, &stream_id, database, table, path, options, mapping, batch_size,
+        &app, &session, &stream_id, database, table, path, options, mapping, batch_size, committed,
     )
     .await;
 
@@ -702,8 +749,9 @@ async fn run_import(
     options: ImportOptions,
     mapping: Vec<ColumnMapping>,
     batch_size: usize,
+    committed: Arc<std::sync::atomic::AtomicU64>,
 ) -> Result<ImportRun> {
-    let bytes = tokio::fs::read(&path).await?;
+    let bytes = read_import_file(&path).await?;
     let text = decode_bytes(&bytes, &options.encoding);
     let columns: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
     // `lines[i]` is record i's source file line (CSV only), used to report a bad
@@ -752,7 +800,14 @@ async fn run_import(
     let started = Instant::now();
     match options.error_mode {
         ImportErrorMode::Skip => {
-            // Resilient: skip rows the DB rejects, report them at the end.
+            // Resilient: skip rows the DB rejects, report them at the end. Each
+            // chunk auto-commits, so publish the cumulative committed count into
+            // the shared counter after every chunk — a cancel mid-import can
+            // then report the rows that actually persisted.
+            let progress = move |n: u64| -> Result<()> {
+                committed.store(n, std::sync::atomic::Ordering::SeqCst);
+                emit_progress(n)
+            };
             let outcome = session
                 .conn
                 .import_rows_skipping(
@@ -761,7 +816,7 @@ async fn run_import(
                     &columns,
                     &rows,
                     batch_size,
-                    emit_progress,
+                    progress,
                 )
                 .await?;
             let skipped = outcome

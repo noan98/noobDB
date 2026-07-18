@@ -3,24 +3,10 @@ import { useT } from "../i18n";
 import type { ConnectionProfile } from "../api/tauri";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, PressableButton } from "./ui";
+import { parseHostKeyFingerprints } from "./hostKeyFingerprints";
 
-/**
- * Parse the stored/presented SSH host-key fingerprints out of an
- * `AppError::SshHostKeyMismatch` message so the dialog can show them side by
- * side. Pure and message-format tolerant: returns `null` if either fingerprint
- * can't be found, in which case the caller falls back to showing the raw
- * message. Kept separate from rendering so it can be unit-tested (#682).
- *
- * The backend message reads: `ssh host key mismatch for <host>:<port>: stored
- * fingerprint <expected>, server presented <actual>. ...`.
- */
-export function parseHostKeyFingerprints(
-  message: string,
-): { expected: string; actual: string } | null {
-  const m = /stored fingerprint\s+(\S+?),\s+server presented\s+(\S+?)[.\s]/i.exec(message);
-  if (!m) return null;
-  return { expected: m[1], actual: m[2] };
-}
+// Re-exported for existing importers (tests, App.tsx pins the approved key).
+export { parseHostKeyFingerprints };
 
 interface Props {
   /** The profile whose SSH connection hit a host-key mismatch. */

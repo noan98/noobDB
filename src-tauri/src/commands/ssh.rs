@@ -22,11 +22,23 @@ pub async fn list_known_hosts() -> Result<Vec<KnownHost>> {
 }
 
 /// Forget the known_hosts entry for `host:port`, returning `true` when an entry
-/// was removed. After a host-key mismatch, the re-trust flow calls this and then
-/// reconnects, letting TOFU record the server's new key.
+/// was removed. Used by the Settings known_hosts panel to drop a stale entry.
 #[tauri::command]
 pub async fn forget_host_key(host: String, port: u16) -> Result<bool> {
     tokio::task::spawn_blocking(move || known_hosts::forget_host_key(&host, port))
         .await
         .map_err(|e| crate::error::AppError::Other(format!("forget_host_key task failed: {e}")))?
+}
+
+/// Pin `host:port` to exactly `fingerprint`, replacing any existing entry. The
+/// host-key mismatch recovery flow calls this with the fingerprint the user
+/// approved in the dialog, then reconnects: the reconnect verifies the server
+/// against that pinned key, so a *different* key (an active MITM during the
+/// re-trust window) mismatches again and is rejected rather than TOFU-accepted
+/// (#682 review follow-up).
+#[tauri::command]
+pub async fn trust_host_key(host: String, port: u16, fingerprint: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || known_hosts::set_host_key(&host, port, &fingerprint))
+        .await
+        .map_err(|e| crate::error::AppError::Other(format!("trust_host_key task failed: {e}")))?
 }

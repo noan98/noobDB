@@ -270,11 +270,13 @@ async fn run_cancelable<T: Send + 'static>(
     fut: impl std::future::Future<Output = Result<T>> + Send + 'static,
 ) -> Result<T> {
     let handle = tokio::spawn(fut);
-    state
+    let token = state
         .register_connect(attempt_id.to_string(), handle.abort_handle())
         .await;
     let joined = handle.await;
-    state.forget_connect(attempt_id).await;
+    // Pass the token back so we only clear our own registration — never a newer
+    // attempt that reused this id and superseded us.
+    state.forget_connect(attempt_id, token).await;
     match joined {
         Ok(res) => res,
         // Task was aborted by cancel_connect.

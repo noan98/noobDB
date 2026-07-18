@@ -120,6 +120,60 @@ pub fn forget_host_key(host: &str, port: u16) -> Result<bool> {
     forget_host_key_at(&default_known_hosts_path()?, host, port)
 }
 
+/// Pin `host:port` to exactly `fingerprint` in the file at `path`, replacing any
+/// existing entry for that endpoint and leaving every other line intact.
+///
+/// This is the *secure* recovery primitive for a host-key mismatch (#682): the
+/// user approves the newly-presented fingerprint in the mismatch dialog and we
+/// pin it here, so the following reconnect verifies the server against that
+/// exact key via the normal TOFU check. A plain forget + reconnect would instead
+/// TOFU-accept whatever key is presented on reconnect — an active MITM could
+/// slip a *different* key in during that window. Pinning closes that window: a
+/// key other than the approved one mismatches again and is rejected.
+pub fn set_host_key_at(path: &Path, host: &str, port: u16, fingerprint: &str) -> Result<()> {
+    let host = host.trim();
+    let fingerprint = fingerprint.trim();
+    // Reject anything that would corrupt the line-based format (embedded spaces
+    // would be parsed as a second field / new endpoint).
+    if host.is_empty() || host.contains(char::is_whitespace) {
+        return Err(AppError::InvalidInput(
+            "invalid host for known_hosts".into(),
+        ));
+    }
+    if fingerprint.is_empty() || fingerprint.contains(char::is_whitespace) {
+        return Err(AppError::InvalidInput(
+            "invalid host key fingerprint".into(),
+        ));
+    }
+    let target = format!("{host}:{port}");
+    let existing = if path.exists() {
+        std::fs::read_to_string(path)?
+    } else {
+        String::new()
+    };
+    let mut out = String::with_capacity(existing.len() + target.len() + fingerprint.len() + 2);
+    for line in existing.lines() {
+        let is_target = line
+            .trim()
+            .split_once(' ')
+            .is_some_and(|(endpoint, _)| endpoint == target);
+        if is_target {
+            // Drop the stale entry; the fresh one is appended below.
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&format!("{target} {fingerprint}\n"));
+    write_atomic(path, out.as_bytes())?;
+    Ok(())
+}
+
+/// Pin `host:port` to `fingerprint` in the default known_hosts file.
+pub fn set_host_key(host: &str, port: u16, fingerprint: &str) -> Result<()> {
+    set_host_key_at(&default_known_hosts_path()?, host, port, fingerprint)
+}
+
 /// Atomically replace `path`'s contents: write a sibling temp file, `sync_all`,
 /// then `rename` (atomic within one filesystem). Prevents a crash/power-loss/
 /// disk-full mid-write from leaving a half-written known_hosts that would break
@@ -226,5 +280,51 @@ db.internal:2222 SHA256:xyz\n";
     fn forget_missing_file_returns_false() {
         let path = temp_path().with_file_name("nope");
         assert!(!forget_host_key_at(&path, "x", 22).unwrap());
+    }
+
+    #[test]
+    fn set_pins_fingerprint_replacing_stale_entry() {
+        let path = temp_path();
+        std::fs::write(
+            &path,
+            "a.example.com:22 SHA256:aaa\ndb.internal:2222 SHA256:old\n",
+        )
+        .unwrap();
+
+        // Pinning replaces db.internal's entry and leaves a untouched.
+        set_host_key_at(&path, "db.internal", 2222, "SHA256:new").unwrap();
+        let after = list_known_hosts_at(&path).unwrap();
+        assert_eq!(after.len(), 2);
+        assert!(after
+            .iter()
+            .any(|k| k.host == "a.example.com" && k.fingerprint == "SHA256:aaa"));
+        let pinned = after.iter().find(|k| k.host == "db.internal").unwrap();
+        assert_eq!(pinned.port, 2222);
+        assert_eq!(pinned.fingerprint, "SHA256:new");
+        // Exactly one db.internal entry — the stale one was removed, not appended.
+        assert_eq!(after.iter().filter(|k| k.host == "db.internal").count(), 1);
+
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn set_creates_file_when_missing() {
+        let path = temp_path().with_file_name("fresh_known_hosts");
+        set_host_key_at(&path, "new.example.com", 22, "SHA256:zzz").unwrap();
+        let entries = list_known_hosts_at(&path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].fingerprint, "SHA256:zzz");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn set_rejects_malformed_fingerprint_or_host() {
+        let path = temp_path().with_file_name("reject_known_hosts");
+        // A fingerprint with embedded whitespace would corrupt the line format.
+        assert!(set_host_key_at(&path, "h", 22, "SHA256:a b").is_err());
+        assert!(set_host_key_at(&path, "h", 22, "  ").is_err());
+        assert!(set_host_key_at(&path, "", 22, "SHA256:a").is_err());
+        // Nothing should have been written.
+        assert!(!path.exists());
     }
 }

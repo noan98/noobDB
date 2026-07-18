@@ -696,6 +696,15 @@ export const api = {
    */
   forgetHostKey: (host: string, port: number) =>
     invoke<boolean>("forget_host_key", { host, port }),
+  /**
+   * Pin `host:port` to exactly `fingerprint`, replacing any existing entry. The
+   * host-key mismatch recovery flow passes the fingerprint the user approved in
+   * the dialog, then reconnects — so the reconnect is verified against that
+   * pinned key and a different (MITM) key is rejected instead of TOFU-accepted
+   * (#682 review follow-up).
+   */
+  trustHostKey: (host: string, port: number, fingerprint: string) =>
+    invoke<void>("trust_host_key", { host, port, fingerprint }),
   /** 明示トランザクションを開始する。 */
   beginTransaction: (sessionId: string, database?: string | null) =>
     invoke<void>("begin_transaction", { sessionId, database: database ?? null }),
@@ -1288,6 +1297,29 @@ export interface PreviewStreamHandlers {
 }
 
 /**
+ * Await a set of `listen()` registrations failure-safe: if any registration
+ * rejects, unlisten every one that already resolved before rethrowing, so a
+ * partial failure never leaks a live listener. On success, returns a single
+ * unlisten function that detaches all of them. The registration promises are
+ * passed already-started, so they still register concurrently.
+ */
+async function registerListeners(
+  registrations: Array<Promise<UnlistenFn>>,
+): Promise<UnlistenFn> {
+  const settled = await Promise.allSettled(registrations);
+  const unlisteners: UnlistenFn[] = [];
+  for (const r of settled) {
+    if (r.status === "fulfilled") unlisteners.push(r.value);
+  }
+  const failure = settled.find((r) => r.status === "rejected");
+  if (failure) {
+    unlisteners.forEach((un) => un());
+    throw (failure as PromiseRejectedResult).reason;
+  }
+  return () => unlisteners.forEach((un) => un());
+}
+
+/**
  * Subscribes to all query-stream events for `streamId`. Events for other
  * streams are ignored. Returns a function that detaches every listener.
  */
@@ -1306,7 +1338,7 @@ export async function listenQueryStream(
         cb(parseResponse(schema, e.payload, event));
       }
     };
-  const unlisteners = await Promise.all([
+  return registerListeners([
     listen<QueryStreamColumnsEvent>(
       "query-stream:columns",
       filter(schemas.queryStreamColumnsEvent, "query-stream:columns", handlers.onColumns),
@@ -1328,7 +1360,6 @@ export async function listenQueryStream(
       filter(schemas.streamCancelledEvent, "query-stream:cancelled", handlers.onCancelled),
     ),
   ]);
-  return () => unlisteners.forEach((un) => un());
 }
 
 export async function listenPreviewStream(
@@ -1346,7 +1377,7 @@ export async function listenPreviewStream(
         cb(parseResponse(schema, e.payload, event));
       }
     };
-  const unlisteners = await Promise.all([
+  return registerListeners([
     listen<PreviewStreamMetaEvent>(
       "preview-stream:meta",
       filter(schemas.previewStreamMetaEvent, "preview-stream:meta", handlers.onMeta),
@@ -1372,7 +1403,6 @@ export async function listenPreviewStream(
       filter(schemas.streamCancelledEvent, "preview-stream:cancelled", handlers.onCancelled),
     ),
   ]);
-  return () => unlisteners.forEach((un) => un());
 }
 
 /**
@@ -1394,7 +1424,7 @@ export async function listenImportStream(
         cb(parseResponse(schema, e.payload, event));
       }
     };
-  const unlisteners = await Promise.all([
+  return registerListeners([
     listen<ImportStartedEvent>(
       "csv-import:started",
       filter(schemas.importStartedEvent, "csv-import:started", handlers.onStarted),
@@ -1412,7 +1442,6 @@ export async function listenImportStream(
       filter(schemas.importErrorEvent, "csv-import:error", handlers.onError),
     ),
   ]);
-  return () => unlisteners.forEach((un) => un());
 }
 
 /** 全件ストリーミングエクスポートの進捗/完了/エラーイベントを購読する。 */
@@ -1431,7 +1460,7 @@ export async function listenExportStream(
         cb(parseResponse(schema, e.payload, event));
       }
     };
-  const unlisteners = await Promise.all([
+  return registerListeners([
     listen<ExportProgressEvent>(
       "export-stream:progress",
       filter(schemas.exportProgressEvent, "export-stream:progress", handlers.onProgress),
@@ -1449,7 +1478,6 @@ export async function listenExportStream(
       filter(schemas.streamCancelledEvent, "export-stream:cancelled", handlers.onCancelled),
     ),
   ]);
-  return () => unlisteners.forEach((un) => un());
 }
 
 /** ストリーミングダンプの進捗/完了/エラー/キャンセルイベントを購読する (#686)。 */
@@ -1468,7 +1496,7 @@ export async function listenDumpStream(
         cb(parseResponse(schema, e.payload, event));
       }
     };
-  const unlisteners = await Promise.all([
+  return registerListeners([
     listen<DumpProgressEvent>(
       "dump-stream:progress",
       filter(schemas.dumpProgressEvent, "dump-stream:progress", handlers.onProgress),
@@ -1486,7 +1514,6 @@ export async function listenDumpStream(
       filter(schemas.dumpCancelledEvent, "dump-stream:cancelled", handlers.onCancelled),
     ),
   ]);
-  return () => unlisteners.forEach((un) => un());
 }
 
 /** One phase of a connection attempt (#684). `phase` is a stable label:

@@ -560,6 +560,35 @@ impl MySqlConn {
         Ok(())
     }
 
+    /// Whether `table`'s storage engine supports transactional DML (rollback).
+    /// InnoDB (the default) and NDB do; MyISAM / MEMORY / CSV / ARCHIVE etc. do
+    /// not. The resilient-import probe/retry strategies rely on rollback, so they
+    /// must not run against a non-transactional table (#687 review follow-up).
+    /// Returns `true` for an unknown table/engine (e.g. a view has a NULL engine)
+    /// since InnoDB is the overwhelming default; callers treat a query error the
+    /// same way.
+    pub(crate) async fn table_is_transactional(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<bool> {
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT ENGINE FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? LIMIT 1",
+        )
+        .bind(database)
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(match row.and_then(|(engine,)| engine) {
+            Some(engine) => matches!(
+                engine.to_ascii_lowercase().as_str(),
+                "innodb" | "ndb" | "ndbcluster"
+            ),
+            None => true,
+        })
+    }
+
     /// Row-by-row probe inside a rolled-back transaction to find the first
     /// rejected row. See [`Connection::probe_failing_row`] (#687).
     pub(crate) async fn probe_failing_row(
@@ -569,6 +598,16 @@ impl MySqlConn {
         columns: &[String],
         rows: &[Vec<Option<String>>],
     ) -> Result<Option<(usize, String)>> {
+        // A non-transactional engine (MyISAM etc.) can't roll back the probe
+        // inserts, so probing would leave rows behind. Skip it and let the caller
+        // report the failure without a pinpointed record (#687 review follow-up).
+        if !self
+            .table_is_transactional(database, table)
+            .await
+            .unwrap_or(true)
+        {
+            return Ok(None);
+        }
         let ncols = columns.len();
         let cols_sql = columns
             .iter()

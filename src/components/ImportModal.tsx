@@ -321,9 +321,13 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
 
   const handleCancelImport = async () => {
     const sid = streamIdRef.current;
+    // In skip mode each chunk auto-commits, so a cancel can leave rows already
+    // persisted; `deliveredRows` reports how many so the message can say so
+    // (abort mode rolls back and reports 0). #687 review follow-up.
+    let committed = 0;
     if (sid) {
       try {
-        await api.cancelStream(sid);
+        committed = (await api.cancelStream(sid)).deliveredRows;
       } catch {
         /* best-effort */
       }
@@ -332,7 +336,13 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
       unlistenRef.current();
       unlistenRef.current = null;
     }
-    setStatus({ kind: "error", message: t("importCancelled") });
+    setStatus({
+      kind: "error",
+      message:
+        committed > 0
+          ? t("importCancelledPartial", { count: committed })
+          : t("importCancelled"),
+    });
   };
 
   const percent =

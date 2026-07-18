@@ -303,6 +303,7 @@ const EV_QUERY_CANCELLED: &str = "query-stream:cancelled";
 const EV_PREVIEW_CANCELLED: &str = "preview-stream:cancelled";
 const EV_EXPORT_CANCELLED: &str = "export-stream:cancelled";
 const EV_DUMP_CANCELLED: &str = "dump-stream:cancelled";
+const EV_IMPORT_CANCELLED: &str = "csv-import:cancelled";
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -901,10 +902,11 @@ pub async fn cancel_stream(
                 // dump handler reads the field as bytes. The partial file is
                 // deleted on cancel like a streaming export (#686).
                 StreamKind::Dump => Some(EV_DUMP_CANCELLED),
-                // CSV import has no partial-result concept to surface (the
-                // whole import is one all-or-nothing transaction), so it
-                // isn't part of this event contract.
-                StreamKind::Import => None,
+                // In `skip` mode an import auto-commits each chunk, so a cancel
+                // can leave rows persisted; `delivered_rows` carries that count
+                // for parity with the other terminal events (`abort` mode rolls
+                // back and reports 0). #687 review follow-up.
+                StreamKind::Import => Some(EV_IMPORT_CANCELLED),
             };
             if let Some(event) = event {
                 if let Err(e) = app.emit(

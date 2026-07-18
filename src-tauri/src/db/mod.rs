@@ -331,6 +331,22 @@ impl Connection {
         }
     }
 
+    /// Whether `table` supports transactional DML (rollback). Only MySQL has
+    /// non-transactional storage engines (MyISAM etc.); PostgreSQL and SQLite are
+    /// always transactional. Used to keep the resilient-import probe/retry paths
+    /// off tables where a rollback wouldn't undo their side effects (#687 review
+    /// follow-up).
+    pub async fn table_is_transactional(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<bool> {
+        match self {
+            Connection::MySql(c) => c.table_is_transactional(database, table).await,
+            Connection::Postgres(_) | Connection::Sqlite(_) => Ok(true),
+        }
+    }
+
     /// Resilient bulk insert that **skips** rows the driver rejects instead of
     /// aborting the whole import (#687). Not all-or-nothing: each chunk is
     /// auto-committed; a chunk that fails is retried row by row so only the bad
@@ -352,11 +368,23 @@ impl Connection {
         if columns.is_empty() {
             return Err(AppError::InvalidInput("no columns to import".into()));
         }
+        // Non-transactional engines (MyISAM etc.) can't roll back a partially
+        // applied multi-row INSERT, so a failed chunk may leave some rows
+        // committed — and the per-row retry below would then re-insert (i.e.
+        // duplicate) them. Force single-row inserts there: a one-row INSERT is
+        // atomic even on MyISAM, so a failure affects only that row and the
+        // single-row fast-path records it without any retry. (#687 review
+        // follow-up.) A query error defaults to transactional (InnoDB is the
+        // overwhelming default), preserving the batched happy path.
+        let transactional = self
+            .table_is_transactional(database, table)
+            .await
+            .unwrap_or(true);
         // Cap the batch modestly: a chunk that still exceeds a driver's
         // statement/placeholder limit just fails and falls back to per-row, so
         // correctness never depends on this bound — it only keeps the happy path
         // in reasonably sized batches.
-        let batch = batch_size.clamp(1, 500);
+        let batch = if transactional { batch_size } else { 1 }.clamp(1, 500);
         let mut inserted: u64 = 0;
         let mut skipped: Vec<SkippedRow> = Vec::new();
         for (chunk_idx, chunk) in rows.chunks(batch).enumerate() {

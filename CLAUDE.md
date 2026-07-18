@@ -722,6 +722,10 @@ accept タスクの `JoinHandle` は構造体が所有しています。**`impl 
 が SSH の接続/認証フェーズを報告)、フロントはフッターにフェーズ表示とキャンセルボタンを
 出します。接続タスクは spawn して `AppState.connects` に `AbortHandle` を登録し、
 `cancel_connect(attempt_id)` で中断できます (到達不能ホストで数分固まる問題の解消)。
+`register_connect` は登録ごとにトークンを発行し、`forget_connect(attempt_id, token)` は
+トークンが一致する登録のみ削除します — 同じ `attempt_id` を再利用した新しい試行の
+ハンドルを、先に終わった旧タスクが誤って消してキャンセル不能にするのを防ぎます
+(#684 レビュー対応)。
 
 ホスト鍵検証は `ssh/handler.rs::ClientHandler::check_server_key` における
 **初回信頼方式 (TOFU)** です。known_hosts ファイルは `<data_dir>/known_hosts` で、
@@ -732,12 +736,17 @@ accept タスクの `JoinHandle` は構造体が所有しています。**`impl 
 共有スロットに記録し、`tunnel.rs` がそれを読んで
 `AppError::SshHostKeyMismatch { host, port, expected, actual }` (kind
 `sshHostKeyMismatch`。#683 の構造化エラー) を返します。known_hosts の読み書きは
-`ssh/known_hosts.rs` に集約し (`list_known_hosts` / `forget_host_key` / `parse` /
-アトミック書き込み `write_atomic`)、IPC `list_known_hosts` / `forget_host_key` で
-公開します。フロントは接続失敗が `sshHostKeyMismatch` のとき `HostKeyMismatchDialog`
-(新旧 fingerprint 併記 + MITM 警告 + 「旧鍵を破棄して再接続」) を出し、設定画面の
+`ssh/known_hosts.rs` に集約し (`list_known_hosts` / `forget_host_key` /
+`set_host_key` / `parse` / アトミック書き込み `write_atomic`)、IPC
+`list_known_hosts` / `forget_host_key` / `trust_host_key` で公開します。フロントは
+接続失敗が `sshHostKeyMismatch` のとき `HostKeyMismatchDialog` (新旧 fingerprint
+併記 + MITM 警告 + 「旧鍵を破棄して再接続」) を出し、設定画面の
 `KnownHostsPanel` で一覧・個別破棄もできます。サーバ鍵ローテーション時に手編集は不要です
-(旧来の手動削除も引き続き有効)。
+(旧来の手動削除も引き続き有効)。**再信頼はダイアログで承認した fingerprint を
+`trust_host_key` で known_hosts に固定してから再接続します** (単なる forget + TOFU
+では再接続時に提示された別の鍵まで信頼してしまうため。承認鍵をピン留めすることで、
+再接続で別の鍵 = MITM が提示されたら再び不一致として拒否されます。#682 レビュー対応。
+メッセージから fingerprint を取れない場合のみ従来の forget + TOFU にフォールバック)。
 
 ### セッション
 
@@ -858,6 +867,18 @@ LIKE ワイルドカードはエスケープされます。
   取得します (JSON/NDJSON はレコード番号のみ)。各ドライバは `try_insert_chunk` (auto-commit) と
   `probe_failing_row` (tx ロールバック) の 2 プリミティブを実装し、orchestration は
   `db/mod.rs` に集約します。`ImportModal` はモード選択とスキップ行一覧 (コピー可) を持ちます。
+  **非トランザクションエンジン (MyISAM 等) の扱い**: probe/retry はロールバックを前提とする
+  ため、`Connection::table_is_transactional` (MySQL のみ `information_schema` の `ENGINE` を
+  参照。他ドライバは常に true) で判定し、非トランザクションなら `import_rows_skipping` は
+  **バッチを 1 行に落とし** (1 行 INSERT は MyISAM でも原子的なので、失敗チャンクの再試行で
+  行を重複させない)、MySQL の `probe_failing_row` は **probe をスキップ**して副作用を残さない
+  (エラーはレコード特定なしで報告)。判定に失敗したときは InnoDB 既定とみなし従来のバッチ経路
+  を維持します。**skip モードのキャンセル整合**: skip はチャンクごとに auto-commit するため
+  途中キャンセルで一部行が残りうる。コミット済み件数を `StreamHandle.delivered_rows` に反映し、
+  `cancel_stream` は `csv-import:cancelled` を emit して `deliveredRows` (= コミット済み行数) を
+  返します (`abort` はロールバックするので 0)。`ImportModal` はキャンセル時にこの件数を表示。
+  読み込みは `read_import_file` が空パス拒否 + `MAX_IMPORT_FILE_BYTES` (512 MiB) 上限を
+  `commands::file` と同じく metadata + `take` の二段で強制します。
 
 ### 明示的トランザクション
 
@@ -1002,7 +1023,9 @@ fs プラグインを使わず capabilities を増やさないための経路で
 すべての `#[tauri::command]` は `lib.rs::run()` 内の `invoke_handler!` マクロで
 登録されます。現在のコマンド群:
 
-- 接続: `test_connection` / `connect` / `disconnect`
+- 接続: `test_connection` / `connect` / `disconnect` / `ping_session` /
+  `cancel_connect`
+- SSH known_hosts: `list_known_hosts` / `forget_host_key` / `trust_host_key`
 - クエリ: `run_query` / `run_query_transaction` / `run_query_stream` /
   `preview_query_stream` / `cancel_stream`
 - 明示的トランザクション: `begin_transaction` / `run_in_transaction` /

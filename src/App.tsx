@@ -22,6 +22,9 @@ import {
   listenQueryStream,
 } from "./api/tauri";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
+// Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
+// fingerprint without pulling the dialog component into the main bundle (#682).
+import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
 import {
   applyEditsToRows,
   buildDeleteStatements,
@@ -2110,16 +2113,26 @@ export default function App() {
     confirm,
   ]);
 
-  // Host-key mismatch recovery (#682): forget the stale known_hosts entry for
-  // this profile's SSH endpoint, then reconnect so TOFU re-records the new key.
+  // Host-key mismatch recovery (#682): pin the fingerprint the user approved in
+  // the dialog, then reconnect. Pinning (rather than a plain forget + TOFU) means
+  // the reconnect is verified against that exact key — if an active MITM presents
+  // a *different* key during the re-trust window it mismatches again and is
+  // rejected, keeping the mismatch dialog up instead of silently trusting it.
+  // If the fingerprint can't be parsed from the message (unexpected format), fall
+  // back to forget + TOFU so recovery is still possible.
   const handleReTrustHostKey = useCallback(async () => {
     const mismatch = hostKeyMismatch;
     const ssh = mismatch?.profile.ssh;
     if (!mismatch || !ssh) return;
     const { profile } = mismatch;
+    const approved = parseHostKeyFingerprints(mismatch.message)?.actual;
     setReTrustingHostKey(true);
     try {
-      await api.forgetHostKey(ssh.host, ssh.port);
+      if (approved) {
+        await api.trustHostKey(ssh.host, ssh.port, approved);
+      } else {
+        await api.forgetHostKey(ssh.host, ssh.port);
+      }
       setHostKeyMismatch(null);
       toast.success(translate("hostKeyReTrustedToast", { name: profile.name }));
       await handleConnect(profile);

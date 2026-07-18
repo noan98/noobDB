@@ -1310,6 +1310,8 @@ const en = {
   importExecute: "Import",
   importStop: "Stop",
   importCancelled: "Import cancelled.",
+  importCancelledPartial:
+    "Import cancelled; {count} already-committed row(s) were kept.",
   // Row-error handling (#687).
   importErrorMode: "On bad row",
   importErrorModeAbort: "Abort (all-or-nothing)",
@@ -3206,6 +3208,8 @@ const ja: Dict = {
   importExecute: "インポート",
   importStop: "中止",
   importCancelled: "インポートを中止しました。",
+  importCancelledPartial:
+    "インポートを中止しました。コミット済みの {count} 行は保持されています。",
   // 行エラーの扱い (#687)。
   importErrorMode: "不良行の扱い",
   importErrorModeAbort: "中断 (all-or-nothing)",
