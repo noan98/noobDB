@@ -1275,6 +1275,10 @@ export interface ImportStreamHandlers {
   onProgress?: (event: ImportProgressEvent) => void;
   onDone?: (event: ImportDoneEvent) => void;
   onError?: (event: ImportErrorEvent) => void;
+  /** Skip-mode import auto-commits chunks, so a cancel can leave rows persisted;
+   *  `deliveredRows` carries the committed count. See `ExportStreamHandlers`
+   *  (#685/#687). */
+  onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
 export interface QueryStreamHandlers {
@@ -1440,6 +1444,13 @@ export async function listenImportStream(
     listen<ImportErrorEvent>(
       "csv-import:error",
       filter(schemas.importErrorEvent, "csv-import:error", handlers.onError),
+    ),
+    // Skip-mode import auto-commits each chunk, so a cancel can leave rows
+    // persisted; the backend emits `csv-import:cancelled` carrying that count
+    // (`deliveredRows`). Subscribe for parity with the other streams (#687).
+    listen<StreamCancelledEvent>(
+      "csv-import:cancelled",
+      filter(schemas.streamCancelledEvent, "csv-import:cancelled", handlers.onCancelled),
     ),
   ]);
 }

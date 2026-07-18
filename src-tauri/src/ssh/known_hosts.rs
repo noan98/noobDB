@@ -9,11 +9,30 @@
 //! after a legitimate server-key rotation.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use serde::Serialize;
 
 use crate::error::{AppError, Result};
 use crate::profiles::store::data_dir;
+
+/// Serializes every read-modify-write of the known_hosts file so concurrent
+/// mutations don't lose each other's changes (the update is read → rewrite →
+/// atomic `rename`, and without a lock the last rename would clobber a
+/// concurrent one). Every mutator — `forget_host_key_at`, `set_host_key_at`, and
+/// the handler's `remember` / `replace_entry` — must hold this for its whole
+/// read→write sequence. Poisoning is recovered (`into_inner`): a panic mid-update
+/// can't corrupt the file because `write_atomic` only renames a fully-written
+/// temp, so the protected data is still consistent.
+pub(crate) static KNOWN_HOSTS_LOCK: Mutex<()> = Mutex::new(());
+
+/// Acquire [`KNOWN_HOSTS_LOCK`], recovering from poisoning. The guard must be
+/// held for the entire read-modify-write, so callers bind it to a local.
+pub(crate) fn lock_known_hosts() -> std::sync::MutexGuard<'static, ()> {
+    KNOWN_HOSTS_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
 
 /// One trusted host entry: the `host:port` endpoint and the SHA-256 fingerprint
 /// recorded on first use. Serialized to the frontend for the known_hosts
@@ -90,6 +109,9 @@ pub fn list_known_hosts() -> Result<Vec<KnownHost>> {
 /// This is the recovery primitive: after a host-key mismatch the user forgets
 /// the stale entry, and the next connection re-trusts the new key via TOFU.
 pub fn forget_host_key_at(path: &Path, host: &str, port: u16) -> Result<bool> {
+    // Hold the lock across the whole read-modify-write so a concurrent mutation
+    // can't clobber this one (see KNOWN_HOSTS_LOCK).
+    let _guard = lock_known_hosts();
     if !path.exists() {
         return Ok(false);
     }
@@ -145,6 +167,8 @@ pub fn set_host_key_at(path: &Path, host: &str, port: u16, fingerprint: &str) ->
             "invalid host key fingerprint".into(),
         ));
     }
+    // Hold the lock across the whole read-modify-write (see KNOWN_HOSTS_LOCK).
+    let _guard = lock_known_hosts();
     let target = format!("{host}:{port}");
     let existing = if path.exists() {
         std::fs::read_to_string(path)?

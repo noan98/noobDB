@@ -620,7 +620,7 @@ impl MySqlConn {
         apply_use_database(&mut conn, database).await?;
         let mut tx = conn.begin().await?;
         for (i, row) in rows.iter().enumerate() {
-            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.clone()));
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
             for ci in 0..ncols {
                 q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
             }

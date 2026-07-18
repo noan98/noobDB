@@ -94,6 +94,9 @@ impl ClientHandler {
 
     fn remember(&self, fingerprint: &str) -> std::io::Result<()> {
         use std::io::Write;
+        // Serialize with other known_hosts mutators so a concurrent read-modify-
+        // write (forget / re-trust / migrate) can't drop this appended entry.
+        let _guard = super::known_hosts::lock_known_hosts();
         let path = self.known_hosts_path()?;
         let mut f = std::fs::OpenOptions::new()
             .create(true)
@@ -105,6 +108,9 @@ impl ClientHandler {
     /// Rewrite this endpoint's known_hosts entry with `fingerprint`, leaving
     /// every other line untouched.
     fn replace_entry(&self, fingerprint: &str) -> std::io::Result<()> {
+        // Serialize the read-modify-write with the other known_hosts mutators
+        // (see known_hosts::KNOWN_HOSTS_LOCK).
+        let _guard = super::known_hosts::lock_known_hosts();
         let path = self.known_hosts_path()?;
         let target = format!("{}:{}", self.host, self.port);
         let content = std::fs::read_to_string(&path)?;
