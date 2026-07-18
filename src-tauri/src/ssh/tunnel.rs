@@ -59,8 +59,29 @@ pub struct SshTunnel {
     _session: Arc<russh::client::Handle<ClientHandler>>,
 }
 
+/// Coarse phase of opening an SSH tunnel, reported to the caller so the UI can
+/// tell "stuck connecting the TCP/SSH transport" apart from "stuck on
+/// authentication" instead of showing one opaque spinner (#684).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshPhase {
+    /// Establishing the TCP connection and SSH transport handshake.
+    Connecting,
+    /// Authenticating with the configured method (key / agent / password).
+    Authenticating,
+}
+
 impl SshTunnel {
+    /// Open a tunnel, reporting nothing about intermediate phases.
     pub async fn open(cfg: &SshConfig) -> Result<Self> {
+        Self::open_with_progress(cfg, |_| {}).await
+    }
+
+    /// Open a tunnel, invoking `on_phase` as it moves from connecting to
+    /// authenticating so the caller can surface progress (#684). The callback is
+    /// only ever called between await points (never held across one), so a plain
+    /// `Fn` suffices.
+    pub async fn open_with_progress(cfg: &SshConfig, on_phase: impl Fn(SshPhase)) -> Result<Self> {
+        on_phase(SshPhase::Connecting);
         let config = russh::client::Config {
             inactivity_timeout: Some(Duration::from_secs(600)),
             keepalive_interval: Some(Duration::from_secs(30)),
@@ -69,10 +90,32 @@ impl SshTunnel {
         let config = Arc::new(config);
 
         let handler = ClientHandler::new(&cfg.host, cfg.port);
-        let mut session = russh::client::connect(config, (cfg.host.as_str(), cfg.port), handler)
-            .await
-            .map_err(|e| AppError::Ssh(format!("ssh connect failed: {e}")))?;
+        // Read the mismatch slot after `connect` fails: a TOFU host-key mismatch
+        // aborts inside `check_server_key` with a generic `UnknownKey`, so we
+        // recover the recorded fingerprints here and surface a precise,
+        // recoverable `SshHostKeyMismatch` instead (#682).
+        let mismatch_slot = handler.mismatch_slot();
+        let mut session =
+            match russh::client::connect(config, (cfg.host.as_str(), cfg.port), handler).await {
+                Ok(s) => s,
+                Err(e) => {
+                    if let Some(m) = mismatch_slot
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .take()
+                    {
+                        return Err(AppError::SshHostKeyMismatch {
+                            host: cfg.host.clone(),
+                            port: cfg.port,
+                            expected: m.expected,
+                            actual: m.actual,
+                        });
+                    }
+                    return Err(AppError::Ssh(format!("ssh connect failed: {e}")));
+                }
+            };
 
+        on_phase(SshPhase::Authenticating);
         super::auth::authenticate(&mut session, cfg).await?;
 
         let session = Arc::new(session);

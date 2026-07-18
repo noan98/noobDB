@@ -359,6 +359,61 @@ impl PostgresConn {
         Ok(inserted)
     }
 
+    /// Auto-commit insert of one chunk (no wrapping transaction). See
+    /// [`Connection::try_insert_chunk`] (#687).
+    pub(crate) async fn try_insert_chunk(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+    ) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let sql = build_pg_insert(table, columns, rows);
+        let mut conn = self.pool.acquire().await?;
+        apply_search_path(&mut conn, database).await?;
+        sqlx::Executor::execute(
+            &mut *conn,
+            sqlx::raw_sql("SET standard_conforming_strings = on"),
+        )
+        .await?;
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Row-by-row probe inside a rolled-back transaction to find the first
+    /// rejected row. See [`Connection::probe_failing_row`] (#687).
+    pub(crate) async fn probe_failing_row(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+    ) -> Result<Option<(usize, String)>> {
+        let mut conn = self.pool.acquire().await?;
+        apply_search_path(&mut conn, database).await?;
+        sqlx::Executor::execute(
+            &mut *conn,
+            sqlx::raw_sql("SET standard_conforming_strings = on"),
+        )
+        .await?;
+        let mut tx = conn.begin().await?;
+        for (i, row) in rows.iter().enumerate() {
+            let sql = build_pg_insert(table, columns, std::slice::from_ref(row));
+            if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&mut *tx)
+                .await
+            {
+                return Ok(Some((i, e.to_string())));
+            }
+        }
+        Ok(None)
+    }
+
     /// Runs `statements` sequentially inside a single transaction. If any
     /// statement fails the transaction is rolled back (the `Transaction` is
     /// dropped without committing) so the batch is all-or-nothing — no
@@ -1565,6 +1620,34 @@ fn pg_literal(cell: Option<&str>) -> String {
         None => "NULL".to_string(),
         Some(s) => format!("'{}'", s.replace('\'', "''")),
     }
+}
+
+/// Build a multi-row `INSERT ... VALUES (...), (...)` with inline literals,
+/// mirroring the construction in `import_rows`. Shared by the resilient
+/// try/probe paths (#687). Requires `standard_conforming_strings = on`.
+fn build_pg_insert(table: &str, columns: &[String], rows: &[Vec<Option<String>>]) -> String {
+    let ncols = columns.len();
+    let cols_sql = columns
+        .iter()
+        .map(|c| pg_quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let table_ident = pg_quote_ident(table);
+    let mut sql = format!("INSERT INTO {} ({}) VALUES ", table_ident, cols_sql);
+    for (r, row) in rows.iter().enumerate() {
+        if r > 0 {
+            sql.push(',');
+        }
+        sql.push('(');
+        for ci in 0..ncols {
+            if ci > 0 {
+                sql.push(',');
+            }
+            sql.push_str(&pg_literal(row.get(ci).and_then(|c| c.as_deref())));
+        }
+        sql.push(')');
+    }
+    sql
 }
 
 async fn fetch_capped_pg(

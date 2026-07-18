@@ -21,6 +21,10 @@ pub enum StreamKind {
     Preview,
     Export,
     Import,
+    /// A database dump (mysqldump / pg_dump / SQLite). The `delivered_rows`
+    /// counter carries bytes written so far, so a cancel can report progress
+    /// and the partial file is cleaned up (#686).
+    Dump,
 }
 
 /// A running streaming task tracked by [`AppState`]. Besides the `AbortHandle`
@@ -63,6 +67,14 @@ pub struct AppState {
     /// Active streaming tasks keyed by client-provided stream id.
     /// Aborting the handle cancels the task and stops further events.
     pub streams: RwLock<HashMap<StreamId, StreamHandle>>,
+    /// In-flight connection attempts keyed by a client-provided attempt id.
+    /// Aborting the handle cancels a connect that is hanging on an unreachable
+    /// host / stuck tunnel, so the UI can offer a cancel button (#684). The
+    /// value carries a per-registration token so a finishing task only clears
+    /// its *own* entry (see `register_connect` / `forget_connect`).
+    pub connects: RwLock<HashMap<String, (u64, AbortHandle)>>,
+    /// Monotonic source of the per-registration tokens above.
+    connect_seq: AtomicU64,
 }
 
 impl AppState {
@@ -105,6 +117,49 @@ impl AppState {
 
     pub async fn forget_stream(&self, stream_id: &str) {
         self.streams.write().await.remove(stream_id);
+    }
+
+    /// Track an in-flight connection attempt so `cancel_connect` can abort it.
+    /// Returns a per-registration token that must be passed back to
+    /// `forget_connect`, so a task that reused an `attempt_id` never clears the
+    /// newer registration that superseded it.
+    pub async fn register_connect(&self, attempt_id: String, handle: AbortHandle) -> u64 {
+        let token = self.connect_seq.fetch_add(1, Ordering::Relaxed);
+        if let Some((_, prev)) = self
+            .connects
+            .write()
+            .await
+            .insert(attempt_id, (token, handle))
+        {
+            // A reused attempt id shouldn't happen (the frontend mints a fresh
+            // one per attempt), but never let two run under the same key.
+            tracing::warn!("connect attempt id reused; aborting previous attempt");
+            prev.abort();
+        }
+        token
+    }
+
+    /// Remove the registration for `attempt_id` only when it still carries
+    /// `token`. If a newer attempt reused the same id, its (larger) token won't
+    /// match and its abort handle is preserved so `cancel_connect` can still
+    /// reach it.
+    pub async fn forget_connect(&self, attempt_id: &str, token: u64) {
+        let mut map = self.connects.write().await;
+        if map.get(attempt_id).is_some_and(|(cur, _)| *cur == token) {
+            map.remove(attempt_id);
+        }
+    }
+
+    /// Abort the connection attempt registered for `attempt_id`. Returns `true`
+    /// when one was found and aborted, `false` when it had already finished.
+    pub async fn cancel_connect(&self, attempt_id: &str) -> bool {
+        if let Some((_, h)) = self.connects.write().await.remove(attempt_id) {
+            h.abort();
+            tracing::debug!(attempt_id = %attempt_id, "connect attempt cancelled");
+            true
+        } else {
+            false
+        }
     }
 
     /// Aborts the task registered for `stream_id` and returns the number of

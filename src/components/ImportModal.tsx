@@ -6,8 +6,10 @@ import {
   listenImportStream,
   type ColumnMapping,
   type CsvPreview,
+  type ImportErrorMode,
   type ImportFormat,
   type ImportOptions,
+  type SkippedRowInfo,
   type TableColumnInfo,
 } from "../api/tauri";
 import { chakra } from "@chakra-ui/react";
@@ -20,6 +22,7 @@ import { Button, Input, PressableButton, Select, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
 
 interface Props {
@@ -43,6 +46,8 @@ type NullMode = "none" | "empty" | "custom";
 type Status =
   | { kind: "idle" }
   | { kind: "importing"; inserted: number; total: number }
+  // Skip-mode completion carrying the rows that were dropped (#687).
+  | { kind: "done"; inserted: number; skipped: SkippedRowInfo[] }
   | { kind: "error"; message: string };
 
 const ENCODINGS = ["utf-8", "shift_jis", "euc-jp", "utf-16le", "windows-1252"];
@@ -108,6 +113,7 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
   const [hasHeader, setHasHeader] = useState(true);
   const [nullMode, setNullMode] = useState<NullMode>("empty");
   const [nullCustom, setNullCustom] = useState("NULL");
+  const [errorMode, setErrorMode] = useState<ImportErrorMode>("abort");
 
   const [tableColumns, setTableColumns] = useState<TableColumnInfo[] | null>(null);
   const [preview, setPreview] = useState<CsvPreview | null>(null);
@@ -131,8 +137,8 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
 
   const buildOptions = useCallback((): ImportOptions => {
     const nullToken = nullMode === "none" ? null : nullMode === "empty" ? "" : nullCustom;
-    return { format, delimiter, quote, hasHeader, nullToken, encoding };
-  }, [format, delimiter, quote, hasHeader, nullMode, nullCustom, encoding]);
+    return { format, delimiter, quote, hasHeader, nullToken, encoding, errorMode };
+  }, [format, delimiter, quote, hasHeader, nullMode, nullCustom, encoding, errorMode]);
 
   // Fetch destination columns once for the mapping UI.
   useEffect(() => {
@@ -242,17 +248,30 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
       onProgress: (e) =>
         setStatus({ kind: "importing", inserted: e.inserted, total: e.total }),
       onDone: (e) => {
-        toast.success(t("importSuccess", { inserted: e.inserted, ms: e.elapsedMs }));
-        setStatus({ kind: "idle" });
         if (unlistenRef.current) {
           unlistenRef.current();
           unlistenRef.current = null;
         }
+        if (e.skipped.length > 0) {
+          // Skip mode dropped some rows — keep the modal open to show them.
+          toast.info(t("importSkippedSummary", { inserted: e.inserted, skipped: e.skipped.length }));
+          setStatus({ kind: "done", inserted: e.inserted, skipped: e.skipped });
+        } else {
+          toast.success(t("importSuccess", { inserted: e.inserted, ms: e.elapsedMs }));
+          setStatus({ kind: "idle" });
+        }
         onImported();
       },
       onError: (e) => {
-        setStatus({ kind: "error", message: e.error });
-        toast.error(e.error);
+        // Enrich an abort-mode failure with the pinpointed record/line (#687).
+        const message =
+          e.record != null
+            ? e.line != null
+              ? t("importErrorAtRecordLine", { error: e.error, record: e.record, line: e.line })
+              : t("importErrorAtRecord", { error: e.error, record: e.record })
+            : e.error;
+        setStatus({ kind: "error", message });
+        toast.error(message);
         if (unlistenRef.current) {
           unlistenRef.current();
           unlistenRef.current = null;
@@ -286,11 +305,29 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
     }
   };
 
+  const copySkipped = useCallback(
+    async (skipped: SkippedRowInfo[]) => {
+      const text = skipped
+        .map((s) =>
+          s.line != null
+            ? t("importSkippedRowLine", { record: s.record, line: s.line, reason: s.reason })
+            : t("importSkippedRow", { record: s.record, reason: s.reason }),
+        )
+        .join("\n");
+      if (await copyToClipboard(text)) toast.success(t("importSkippedCopied"));
+    },
+    [toast, t],
+  );
+
   const handleCancelImport = async () => {
     const sid = streamIdRef.current;
+    // In skip mode each chunk auto-commits, so a cancel can leave rows already
+    // persisted; `deliveredRows` reports how many so the message can say so
+    // (abort mode rolls back and reports 0). #687 review follow-up.
+    let committed = 0;
     if (sid) {
       try {
-        await api.cancelStream(sid);
+        committed = (await api.cancelStream(sid)).deliveredRows;
       } catch {
         /* best-effort */
       }
@@ -299,7 +336,13 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
       unlistenRef.current();
       unlistenRef.current = null;
     }
-    setStatus({ kind: "error", message: t("importCancelled") });
+    setStatus({
+      kind: "error",
+      message:
+        committed > 0
+          ? t("importCancelledPartial", { count: committed })
+          : t("importCancelled"),
+    });
   };
 
   const percent =
@@ -439,7 +482,27 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
               />
             </chakra.div>
           )}
+
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
+            <FieldLabel htmlFor="import-error-mode">{t("importErrorMode")}</FieldLabel>
+            <Select
+              id="import-error-mode"
+              minW="150px"
+              value={errorMode}
+              onChange={(e) => setErrorMode(e.target.value as ImportErrorMode)}
+              disabled={importing}
+            >
+              <option value="abort">{t("importErrorModeAbort")}</option>
+              <option value="skip">{t("importErrorModeSkip")}</option>
+            </Select>
+          </chakra.div>
         </FormSection>
+
+        {errorMode === "skip" && (
+          <chakra.div fontSize="xs" color="app.textMuted">
+            {t("importErrorModeSkipHint")}
+          </chakra.div>
+        )}
 
         {!isCsv && (
           <chakra.div fontSize="xs" color="app.textMuted">
@@ -592,6 +655,54 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
             </chakra.div>
             <chakra.div fontSize="sm" color="app.textMuted">
               {t("importProgress", { inserted: status.inserted, total: status.total })}
+            </chakra.div>
+          </chakra.div>
+        )}
+        {status.kind === "done" && (
+          <chakra.div display="flex" flexDirection="column" gap="2">
+            <chakra.div
+              display="flex"
+              alignItems="center"
+              justifyContent="space-between"
+              gap="3"
+            >
+              <chakra.span fontSize="sm" fontWeight={500}>
+                {t("importSkippedSummary", {
+                  inserted: status.inserted,
+                  skipped: status.skipped.length,
+                })}
+              </chakra.span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => void copySkipped(status.skipped)}
+              >
+                {t("importSkippedCopy")}
+              </Button>
+            </chakra.div>
+            <chakra.div
+              maxH="180px"
+              overflowY="auto"
+              border="1px solid"
+              borderColor="app.border"
+              borderRadius="sm"
+              fontSize="xs"
+              fontFamily="var(--font-mono)"
+            >
+              {status.skipped.map((s, i) => (
+                <chakra.div
+                  key={`${s.record}-${i}`}
+                  px="2"
+                  py="1"
+                  borderBottom={i < status.skipped.length - 1 ? "1px solid" : undefined}
+                  borderColor="app.border"
+                >
+                  {s.line != null
+                    ? t("importSkippedRowLine", { record: s.record, line: s.line, reason: s.reason })
+                    : t("importSkippedRow", { record: s.record, reason: s.reason })}
+                </chakra.div>
+              ))}
             </chakra.div>
           </chakra.div>
         )}

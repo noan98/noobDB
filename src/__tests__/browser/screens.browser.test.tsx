@@ -37,6 +37,8 @@ vi.mock("../../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       readLogs: vi.fn(async () => ({ text: "", path: "/tmp/noobdb.log" })),
+      // SettingsView の KnownHostsPanel がマウント時に呼ぶ (#682)。実 DB 無しで空一覧。
+      listKnownHosts: vi.fn(async () => []),
     },
   };
 });

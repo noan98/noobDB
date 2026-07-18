@@ -528,6 +528,110 @@ impl MySqlConn {
         Ok(inserted)
     }
 
+    /// Auto-commit insert of one chunk (no wrapping transaction). See
+    /// [`Connection::try_insert_chunk`] (#687).
+    pub(crate) async fn try_insert_chunk(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+    ) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = quote_ident(table);
+        let sql = build_insert_sql(&table_ident, &cols_sql, ncols, rows.len());
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for row in rows {
+            for ci in 0..ncols {
+                q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
+            }
+        }
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        q.execute(&mut *conn).await?;
+        Ok(())
+    }
+
+    /// Whether `table`'s storage engine supports transactional DML (rollback).
+    /// InnoDB (the default) and NDB do; MyISAM / MEMORY / CSV / ARCHIVE etc. do
+    /// not. The resilient-import probe/retry strategies rely on rollback, so they
+    /// must not run against a non-transactional table (#687 review follow-up).
+    /// Returns `true` for an unknown table/engine (e.g. a view has a NULL engine)
+    /// since InnoDB is the overwhelming default; callers treat a query error the
+    /// same way.
+    pub(crate) async fn table_is_transactional(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<bool> {
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT ENGINE FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? LIMIT 1",
+        )
+        .bind(database)
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(match row.and_then(|(engine,)| engine) {
+            Some(engine) => matches!(
+                engine.to_ascii_lowercase().as_str(),
+                "innodb" | "ndb" | "ndbcluster"
+            ),
+            None => true,
+        })
+    }
+
+    /// Row-by-row probe inside a rolled-back transaction to find the first
+    /// rejected row. See [`Connection::probe_failing_row`] (#687).
+    pub(crate) async fn probe_failing_row(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+    ) -> Result<Option<(usize, String)>> {
+        // A non-transactional engine (MyISAM etc.) can't roll back the probe
+        // inserts, so probing would leave rows behind. Skip it and let the caller
+        // report the failure without a pinpointed record (#687 review follow-up).
+        if !self
+            .table_is_transactional(database, table)
+            .await
+            .unwrap_or(true)
+        {
+            return Ok(None);
+        }
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = quote_ident(table);
+        let sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        let mut tx = conn.begin().await?;
+        for (i, row) in rows.iter().enumerate() {
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+            for ci in 0..ncols {
+                q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
+            }
+            if let Err(e) = q.execute(&mut *tx).await {
+                // `tx` is dropped on return → the probe inserts are rolled back.
+                return Ok(Some((i, e.to_string())));
+            }
+        }
+        Ok(None)
+    }
+
     /// Runs `statements` sequentially inside a single transaction. If any
     /// statement fails the transaction is rolled back (the `Transaction` is
     /// dropped without committing) so the batch is all-or-nothing — no

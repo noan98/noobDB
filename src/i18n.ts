@@ -201,6 +201,8 @@ const en = {
   settingsQueryTimeout: "Query timeout (seconds)",
   settingsQueryTimeoutHelp: "Automatically cancel an editor query that runs longer than this. 0 disables the timeout. The connection stays open when a query is cancelled.",
   settingsQueryTimeoutUnlimited: "No timeout — queries run unbounded",
+  settingsConnectTimeout: "Connect timeout (seconds)",
+  settingsConnectTimeoutHelp: "Abort a connection attempt (SSH tunnel + database) that takes longer than this, instead of hanging on an unreachable host. Clamped to 5–300 seconds.",
   settingsAutoReconnect: "Auto-reconnect dropped connections",
   settingsAutoReconnectHelp: "When a connection drops (idle timeout, network / VPN loss, SSH tunnel drop), reconnect automatically with the same profile using exponential backoff. A drop detected mid-transaction is never auto-reconnected — it surfaces an error so a partial commit can't happen. When off, a manual Reconnect button is shown instead.",
   settingsAutoReconnectMaxRetries: "Max reconnect attempts",
@@ -456,6 +458,46 @@ const en = {
     "Couldn't reach the database server. Check the host and port, that the server is running, and any SSH tunnel or firewall settings.",
   errorHintConnectionLost:
     "The connection seems to have dropped — the server may have closed an idle session (wait_timeout), or the network / VPN went down. Reconnect and run the query again.",
+  errorHintTimeout:
+    "The operation ran past its time limit and was cancelled. Try a narrower query (add WHERE / LIMIT), or raise the query timeout in Settings.",
+  errorHintSsh:
+    "The SSH tunnel couldn't be established. Check the SSH host, port, and user, and that the server is reachable and accepts your key-exchange / cipher settings.",
+  errorHintSshAuth:
+    "SSH authentication was rejected. Check the SSH user and the selected auth method — the key, password, or agent identity may be wrong or not authorized on the server.",
+  errorHintSshAgent:
+    "Couldn't use the SSH agent. Make sure an agent is running and holds an identity (add one with `ssh-add`, and check SSH_AUTH_SOCK), or switch to key / password auth.",
+  errorHintSshKey:
+    "The SSH private key couldn't be read or decoded. Check the key file path and format, and whether it needs a passphrase (a wrong passphrase fails here too).",
+  errorHintSshHostKey:
+    "The SSH server's host key doesn't match the one saved on first connect. This is expected after a legitimate server / key rotation, but can also mean a man-in-the-middle. Verify the new fingerprint out-of-band, then re-trust the host to reconnect.",
+
+  // SSH host-key mismatch recovery dialog (#682).
+  hostKeyMismatchTitle: "SSH host key changed",
+  hostKeyMismatchIntro:
+    "The SSH server {endpoint} presented a host key that differs from the one saved when you first connected.",
+  hostKeyMismatchStored: "Saved fingerprint (trusted)",
+  hostKeyMismatchPresented: "Presented fingerprint (new)",
+  hostKeyMismatchWarning:
+    "Only re-trust if you expected this — e.g. the server was rebuilt or its key was rotated. If you did not, this could be a man-in-the-middle attack. Verify the new fingerprint through a trusted channel before continuing.",
+  hostKeyMismatchReTrust: "Forget old key & reconnect",
+  hostKeyMismatchReTrusting: "Reconnecting…",
+  hostKeyMismatchCancel: "Cancel",
+  hostKeyReTrustedToast: "Re-trusted {name}; reconnecting.",
+  // Connection phase progress + cancel (#684).
+  connectPhasePreparing: "Preparing…",
+  connectPhaseTunnelConnecting: "Connecting SSH tunnel…",
+  connectPhaseTunnelAuthenticating: "Authenticating SSH…",
+  connectPhaseDbConnecting: "Connecting to database…",
+  connectCancel: "Cancel",
+  // Settings → known_hosts management panel (#682).
+  knownHostsTitle: "SSH known hosts",
+  knownHostsDesc:
+    "Host keys trusted on first connect (TOFU). Forget an entry to re-trust the server's key on the next connection — do this after a legitimate key rotation, or to clear a stale entry.",
+  knownHostsEmpty: "No SSH hosts have been trusted yet.",
+  knownHostsForget: "Forget",
+  knownHostsForgottenToast: "Forgot host key for {host}.",
+  knownHostsRefresh: "Refresh",
+  knownHostsLoadError: "Couldn't load known hosts: {error}",
 
   listEmpty: "No saved connections yet.",
   listEmptyTitle: "No connections yet",
@@ -902,6 +944,12 @@ const en = {
   dumpRunning: "Dumping...",
   dumpSuccess: "Wrote {bytes} bytes to {path}",
   dumpError: "Dump failed: {error}",
+  // Streaming dump progress + cancel (#686).
+  dumpCancelRun: "Cancel dump",
+  dumpCancelled: "Dump cancelled.",
+  dumpProgressBytes: "Dumping… {bytes} written",
+  dumpProgressTables: "Dumping… {tables}/{total} tables ({bytes})",
+  dumpProgressElapsed: "{secs}s elapsed",
 
   // AI 向けスキーマ Markdown エクスポート。
   schemaExportTitle: "Export schema \"{database}\" for AI",
@@ -1262,6 +1310,21 @@ const en = {
   importExecute: "Import",
   importStop: "Stop",
   importCancelled: "Import cancelled.",
+  importCancelledPartial:
+    "Import cancelled; {count} already-committed row(s) were kept.",
+  // Row-error handling (#687).
+  importErrorMode: "On bad row",
+  importErrorModeAbort: "Abort (all-or-nothing)",
+  importErrorModeSkip: "Skip bad rows",
+  importErrorModeSkipHint:
+    "Rows the database rejects are skipped and reported at the end. Not all-or-nothing — good rows are committed.",
+  importErrorAtRecord: "{error} (failed at record {record})",
+  importErrorAtRecordLine: "{error} (failed at record {record}, line {line})",
+  importSkippedSummary: "Imported {inserted} rows; skipped {skipped}.",
+  importSkippedRow: "record {record}: {reason}",
+  importSkippedRowLine: "record {record} (line {line}): {reason}",
+  importSkippedCopy: "Copy list",
+  importSkippedCopied: "Copied skipped rows.",
 
   // スキーマに基づくテストデータ生成 (#602)
   testDataTitle: "Generate test data into {table}",
@@ -2037,6 +2100,8 @@ const ja: Dict = {
   settingsQueryTimeout: "クエリ実行タイムアウト (秒)",
   settingsQueryTimeoutHelp: "エディタのクエリがこの秒数を超えたら自動的に中断します。0 で無効。中断しても接続は維持されます。",
   settingsQueryTimeoutUnlimited: "無制限 — タイムアウトなしで実行します",
+  settingsConnectTimeout: "接続タイムアウト (秒)",
+  settingsConnectTimeoutHelp: "接続確立 (SSH トンネル + データベース) がこの秒数を超えたら中断します。到達不能なホストで固まらないようにします。5〜300 秒にクランプされます。",
   settingsAutoReconnect: "接続断からの自動再接続",
   settingsAutoReconnectHelp: "接続が切れたとき（アイドルタイムアウト、ネットワークや VPN の切断、SSH トンネル断）に、同じプロファイルで指数バックオフしながら自動再接続します。トランザクション中の断は、中途半端なコミットを避けるため自動再接続せずエラーにします。無効にすると手動の再接続ボタンを表示します。",
   settingsAutoReconnectMaxRetries: "最大再接続回数",
@@ -2292,6 +2357,46 @@ const ja: Dict = {
     "データベースサーバーに到達できませんでした。ホストとポート、サーバーが起動しているか、SSH トンネルやファイアウォールの設定を確認してください。",
   errorHintConnectionLost:
     "接続が切れたようです。サーバーがアイドル状態のセッションを閉じた (wait_timeout)、またはネットワークや VPN が切断された可能性があります。再接続してから、もう一度クエリを実行してください。",
+  errorHintTimeout:
+    "操作が制限時間を超えたため中断されました。クエリを絞り込む (WHERE / LIMIT を付ける) か、設定でクエリタイムアウトを延ばしてください。",
+  errorHintSsh:
+    "SSH トンネルを確立できませんでした。SSH のホスト・ポート・ユーザー、サーバーに到達できるか、鍵交換 / 暗号方式の設定が受け入れられるかを確認してください。",
+  errorHintSshAuth:
+    "SSH 認証が拒否されました。SSH ユーザーと選択した認証方式を確認してください。鍵・パスワード・エージェントの identity が誤っているか、サーバー側で許可されていない可能性があります。",
+  errorHintSshAgent:
+    "SSH エージェントを利用できませんでした。エージェントが起動して identity を保持しているか (`ssh-add` で追加、SSH_AUTH_SOCK を確認) を確かめるか、鍵 / パスワード認証に切り替えてください。",
+  errorHintSshKey:
+    "SSH 秘密鍵を読み込めませんでした (または復号に失敗)。鍵ファイルのパスと形式、パスフレーズが必要かどうかを確認してください (パスフレーズ誤りもここで失敗します)。",
+  errorHintSshHostKey:
+    "SSH サーバーのホスト鍵が、初回接続時に保存したものと一致しません。正当なサーバー / 鍵のローテーション後なら想定内ですが、中間者攻撃の可能性もあります。新しいフィンガープリントを別経路で確認したうえで、ホストを再信頼して再接続してください。",
+
+  // SSH ホスト鍵不一致の復旧ダイアログ (#682)。
+  hostKeyMismatchTitle: "SSH ホスト鍵が変わりました",
+  hostKeyMismatchIntro:
+    "SSH サーバー {endpoint} が、初回接続時に保存したものと異なるホスト鍵を提示しました。",
+  hostKeyMismatchStored: "保存済みフィンガープリント (信頼済み)",
+  hostKeyMismatchPresented: "提示されたフィンガープリント (新規)",
+  hostKeyMismatchWarning:
+    "想定内の変更 (サーバー再構築や鍵のローテーションなど) のときだけ再信頼してください。心当たりがない場合は中間者攻撃の可能性があります。続行する前に、新しいフィンガープリントを信頼できる経路で確認してください。",
+  hostKeyMismatchReTrust: "旧鍵を破棄して再接続",
+  hostKeyMismatchReTrusting: "再接続中…",
+  hostKeyMismatchCancel: "キャンセル",
+  hostKeyReTrustedToast: "{name} を再信頼しました。再接続します。",
+  // 接続フェーズの進捗表示 + キャンセル (#684)。
+  connectPhasePreparing: "準備中…",
+  connectPhaseTunnelConnecting: "SSH トンネル接続中…",
+  connectPhaseTunnelAuthenticating: "SSH 認証中…",
+  connectPhaseDbConnecting: "データベース接続中…",
+  connectCancel: "キャンセル",
+  // 設定 → known_hosts 管理パネル (#682)。
+  knownHostsTitle: "SSH known_hosts",
+  knownHostsDesc:
+    "初回接続時に信頼したホスト鍵 (TOFU)。エントリを破棄すると、次回接続時にサーバーの鍵を再信頼します。正当な鍵ローテーション後や、古いエントリを消したいときに使ってください。",
+  knownHostsEmpty: "まだ信頼済みの SSH ホストはありません。",
+  knownHostsForget: "破棄",
+  knownHostsForgottenToast: "{host} のホスト鍵を破棄しました。",
+  knownHostsRefresh: "再読み込み",
+  knownHostsLoadError: "known_hosts を読み込めませんでした: {error}",
 
   listEmpty: "保存された接続はまだありません。",
   listEmptyTitle: "接続がありません",
@@ -2738,6 +2843,12 @@ const ja: Dict = {
   dumpRunning: "ダンプ中...",
   dumpSuccess: "{path} に {bytes} バイトを書き出しました",
   dumpError: "ダンプに失敗しました: {error}",
+  // ストリーミングダンプの進捗表示 + キャンセル (#686)。
+  dumpCancelRun: "ダンプを中止",
+  dumpCancelled: "ダンプを中止しました。",
+  dumpProgressBytes: "ダンプ中… {bytes} 書き出し済み",
+  dumpProgressTables: "ダンプ中… {tables}/{total} テーブル ({bytes})",
+  dumpProgressElapsed: "経過 {secs} 秒",
 
   // AI 向けスキーマ Markdown エクスポート。
   schemaExportTitle: "スキーマ「{database}」を AI 向けにエクスポート",
@@ -3097,6 +3208,21 @@ const ja: Dict = {
   importExecute: "インポート",
   importStop: "中止",
   importCancelled: "インポートを中止しました。",
+  importCancelledPartial:
+    "インポートを中止しました。コミット済みの {count} 行は保持されています。",
+  // 行エラーの扱い (#687)。
+  importErrorMode: "不良行の扱い",
+  importErrorModeAbort: "中断 (all-or-nothing)",
+  importErrorModeSkip: "不良行をスキップ",
+  importErrorModeSkipHint:
+    "データベースが拒否した行はスキップし、最後に一覧報告します。all-or-nothing ではなく、正常な行はコミットされます。",
+  importErrorAtRecord: "{error} (レコード {record} で失敗)",
+  importErrorAtRecordLine: "{error} (レコード {record}, 行 {line} で失敗)",
+  importSkippedSummary: "{inserted} 行をインポート、{skipped} 行をスキップしました。",
+  importSkippedRow: "レコード {record}: {reason}",
+  importSkippedRowLine: "レコード {record} (行 {line}): {reason}",
+  importSkippedCopy: "一覧をコピー",
+  importSkippedCopied: "スキップ行をコピーしました。",
 
   // スキーマに基づくテストデータ生成 (#602)
   testDataTitle: "{table} にテストデータを生成",

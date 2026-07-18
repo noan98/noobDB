@@ -116,6 +116,14 @@ export const processInfo = z.object({
   is_self: z.boolean(),
 });
 
+/** SSH known_hosts の 1 エントリ (host:port + fingerprint)。#682。 */
+export const knownHost = z.object({
+  host: z.string(),
+  port: z.number(),
+  fingerprint: z.string(),
+});
+export const knownHostArray = z.array(knownHost);
+
 /** ライブクエリ・インスペクタ (#746) の前提可否 + 縮退理由コード。 */
 export const queryStatsSupport = z.object({
   live_tail: z.boolean(),
@@ -321,6 +329,14 @@ export const csvPreview = z.object({
 
 export const connectResult = z.object({ session_id: z.string() });
 
+/** `connect-progress:phase` イベント: 接続確立のフェーズ進捗 (#684)。
+ *  phase は "preparing" / "tunnel_connecting" / "tunnel_authenticating" /
+ *  "db_connecting" のいずれか (バック ConnectPhase::label と一致)。 */
+export const connectPhaseEvent = z.object({
+  attemptId: z.string(),
+  phase: z.string(),
+});
+
 /** 単純なプリミティブ/配列レスポンス用の共有スキーマ。 */
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
@@ -433,15 +449,54 @@ export const importProgressEvent = z.object({
   total: z.number(),
 });
 
+/** スキップされた行 (skip モード。#687)。 */
+export const skippedRowInfo = z.object({
+  record: z.number(),
+  line: z.number().nullable(),
+  reason: z.string(),
+});
+
 export const importDoneEvent = z.object({
   streamId: z.string(),
   inserted: z.number(),
   elapsedMs: z.number(),
+  // 旧バックエンド (skipped フィールド無し) との後方互換で既定 []。
+  skipped: z.array(skippedRowInfo).default([]),
 });
 
 export const importErrorEvent = z.object({
   streamId: z.string(),
   error: z.string(),
+  record: z.number().nullable().default(null),
+  line: z.number().nullable().default(null),
+});
+
+// ストリーミングダンプのイベント (#686)。
+export const dumpProgressEvent = z.object({
+  streamId: z.string(),
+  bytes: z.number(),
+  elapsedMs: z.number(),
+  /** SQLite 経路のみ処理済み/総テーブル数。外部ツールでは null。 */
+  tables: z.number().nullable(),
+  tablesTotal: z.number().nullable(),
+});
+
+export const dumpDoneEvent = z.object({
+  streamId: z.string(),
+  bytes: z.number(),
+  elapsedMs: z.number(),
+});
+
+export const dumpErrorEvent = z.object({
+  streamId: z.string(),
+  error: z.string(),
+});
+
+/** `dump-stream:cancelled`。cancel_stream は共有ペイロード (deliveredRows) を送るが、
+ *  ダンプでは deliveredRows = 書き出し済みバイト数として解釈する (#686)。 */
+export const dumpCancelledEvent = z.object({
+  streamId: z.string(),
+  deliveredRows: z.number(),
 });
 
 // 全件ストリーミングエクスポートのイベント。

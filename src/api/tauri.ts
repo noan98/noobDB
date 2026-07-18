@@ -1,7 +1,73 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
+
+/**
+ * A backend error carrying the structured `AppError.kind` discriminant (#683).
+ *
+ * Tauri rejects a command's promise with whatever the backend `AppError`
+ * serializes to. Since #683 that is a `{ kind, message }` object rather than a
+ * bare string, so `invoke` below normalizes it into this class. `toString()`
+ * intentionally returns just `message` (not `"BackendError: <message>"`) so the
+ * many existing `String(e)` call sites keep showing the raw backend text
+ * unchanged, while newer code can read `.kind` for reliable classification.
+ */
+export class BackendError extends Error {
+  readonly kind: string;
+  constructor(kind: string, message: string) {
+    super(message);
+    this.name = "BackendError";
+    this.kind = kind;
+    // Restore the prototype chain so `instanceof BackendError` works even when
+    // compiled down to older targets (the standard `extends Error` caveat).
+    Object.setPrototypeOf(this, BackendError.prototype);
+  }
+  override toString(): string {
+    return this.message;
+  }
+}
+
+/**
+ * Normalizes whatever a rejected IPC promise carries into a {@link BackendError}.
+ * Accepts the structured `{ kind, message }` object (current backend), a bare
+ * string (legacy/pre-#683 error surfaces and some mocks), or any other value —
+ * so every error path ends up with a consistent shape and a usable `.message`.
+ */
+export function normalizeBackendError(raw: unknown): BackendError {
+  if (raw instanceof BackendError) return raw;
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    if (typeof o.kind === "string" && typeof o.message === "string") {
+      return new BackendError(o.kind, o.message);
+    }
+    if (raw instanceof Error) {
+      return new BackendError("unknown", raw.message);
+    }
+  }
+  if (typeof raw === "string") {
+    return new BackendError("unknown", raw);
+  }
+  return new BackendError("unknown", String(raw));
+}
+
+/** The structured `kind` of a caught error, or `null` when it isn't a
+ *  {@link BackendError} (e.g. a plain string from an older surface). Lets UI
+ *  code classify errors without re-implementing the normalization. */
+export function errorKindOf(e: unknown): string | null {
+  return e instanceof BackendError ? e.kind : null;
+}
+
+/**
+ * Typed wrapper around Tauri's `invoke` that normalizes any rejection into a
+ * {@link BackendError} (#683). All IPC calls in this module go through here, so
+ * the whole frontend receives errors in one consistent shape.
+ */
+function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  return rawInvoke<T>(cmd, args).catch((raw: unknown) => {
+    throw normalizeBackendError(raw);
+  });
+}
 
 export type DriverKind = "mysql" | "postgres" | "sqlite";
 
@@ -340,6 +406,13 @@ export interface ProcessInfo {
   is_self: boolean;
 }
 
+/** One trusted SSH host from known_hosts (`host:port` + fingerprint). #682. */
+export interface KnownHost {
+  host: string;
+  port: number;
+  fingerprint: string;
+}
+
 /**
  * ライブクエリ・インスペクタ (#746) の前提可否。使えない機能には機械可読な
  * 理由コード (`unsupported_driver` / `performance_schema_off` /
@@ -540,6 +613,9 @@ export interface DumpOptions {
  */
 export type ImportFormat = "csv" | "json" | "ndjson";
 
+/** How the importer handles rows the database rejects (#687). */
+export type ImportErrorMode = "abort" | "skip";
+
 export interface ImportOptions {
   /** Source format. Omit/`"csv"` for the classic CSV path. */
   format?: ImportFormat;
@@ -556,6 +632,12 @@ export interface ImportOptions {
   nullToken?: string | null;
   /** Encoding label (e.g. "utf-8", "shift_jis", "euc-jp"). */
   encoding: string;
+  /**
+   * Row-error handling (#687). `"abort"` (default) rolls the whole import back
+   * on the first bad row; `"skip"` drops bad rows and reports them at the end.
+   * Omitted → the backend default (`"abort"`).
+   */
+  errorMode?: ImportErrorMode;
 }
 
 export interface ColumnMapping {
@@ -572,14 +654,26 @@ export interface CsvPreview {
 }
 
 export const api = {
-  testConnection: (req: ConnectRequest) =>
-    invoke<string>("test_connection", { req }).then((r) =>
-      parseResponse(schemas.stringResponse, r, "test_connection"),
-    ),
-  connect: (req: ConnectRequest) =>
-    invoke<{ session_id: string }>("connect", { req }).then((r) =>
-      parseResponse(schemas.connectResult, r, "connect"),
-    ),
+  /**
+   * Test a connection. `attemptId` (a fresh id per attempt) lets the caller
+   * subscribe to `connect-progress:phase` events and cancel via `cancelConnect`;
+   * `timeoutSecs` bounds the whole attempt (backend clamps + defaults). #684.
+   */
+  testConnection: (req: ConnectRequest, attemptId?: string, timeoutSecs?: number) =>
+    invoke<string>("test_connection", {
+      req,
+      attemptId: attemptId ?? null,
+      timeoutSecs: timeoutSecs ?? null,
+    }).then((r) => parseResponse(schemas.stringResponse, r, "test_connection")),
+  connect: (req: ConnectRequest, attemptId?: string, timeoutSecs?: number) =>
+    invoke<{ session_id: string }>("connect", {
+      req,
+      attemptId: attemptId ?? null,
+      timeoutSecs: timeoutSecs ?? null,
+    }).then((r) => parseResponse(schemas.connectResult, r, "connect")),
+  /** Cancel an in-flight connect / test-connection attempt by its id (#684). */
+  cancelConnect: (attemptId: string) =>
+    invoke<boolean>("cancel_connect", { attemptId }),
   disconnect: (sessionId: string) =>
     invoke<void>("disconnect", { sessionId }),
   /**
@@ -587,6 +681,30 @@ export const api = {
    * トンネル断) false。セッションが見つからない場合のみ reject する。
    */
   pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
+  /**
+   * List the SSH known_hosts entries (host:port + fingerprint). Backs the
+   * Settings known_hosts panel and the host-key mismatch recovery flow (#682).
+   */
+  listKnownHosts: () =>
+    invoke<KnownHost[]>("list_known_hosts").then((r) =>
+      parseResponse(schemas.knownHostArray, r, "list_known_hosts"),
+    ),
+  /**
+   * Forget the known_hosts entry for `host:port`, so the next connection
+   * re-trusts the server's (possibly rotated) key via TOFU. Resolves to `true`
+   * when an entry was actually removed (#682).
+   */
+  forgetHostKey: (host: string, port: number) =>
+    invoke<boolean>("forget_host_key", { host, port }),
+  /**
+   * Pin `host:port` to exactly `fingerprint`, replacing any existing entry. The
+   * host-key mismatch recovery flow passes the fingerprint the user approved in
+   * the dialog, then reconnects — so the reconnect is verified against that
+   * pinned key and a different (MITM) key is rejected instead of TOFU-accepted
+   * (#682 review follow-up).
+   */
+  trustHostKey: (host: string, port: number, fingerprint: string) =>
+    invoke<void>("trust_host_key", { host, port, fingerprint }),
   /** 明示トランザクションを開始する。 */
   beginTransaction: (sessionId: string, database?: string | null) =>
     invoke<void>("begin_transaction", { sessionId, database: database ?? null }),
@@ -914,18 +1032,26 @@ export const api = {
       batchSize: params.batchSize ?? null,
     }),
 
+  /**
+   * Start a streaming, cancelable database dump (#686). Returns once the dump
+   * has been kicked off; progress + completion arrive via `dump-stream:*` events
+   * (subscribe with {@link listenDumpStream}) keyed by `streamId`. Cancel via
+   * {@link api.cancelStream}.
+   */
   dumpDatabase: (params: {
     sessionId: string;
+    streamId: string;
     database: string;
     path: string;
     options: DumpOptions;
   }) =>
-    invoke<number>("dump_database", {
+    invoke<void>("dump_database", {
       sessionId: params.sessionId,
+      streamId: params.streamId,
       database: params.database,
       path: params.path,
       options: params.options,
-    }).then((r) => parseResponse(schemas.numberResponse, r, "dump_database")),
+    }),
 
   parseCsvPreview: (path: string, options: ImportOptions) =>
     invoke<CsvPreview>("parse_csv_preview", { path, options }).then((r) =>
@@ -1063,15 +1189,29 @@ export interface ImportProgressEvent {
   total: number;
 }
 
+/** One skipped row in a skip-mode import (#687). */
+export interface SkippedRowInfo {
+  /** 1-based record number among data records. */
+  record: number;
+  /** Source file line (CSV only; null for JSON/NDJSON). */
+  line: number | null;
+  reason: string;
+}
+
 export interface ImportDoneEvent {
   streamId: string;
   inserted: number;
   elapsedMs: number;
+  /** Rows skipped in skip mode (empty in abort mode). #687. */
+  skipped: SkippedRowInfo[];
 }
 
 export interface ImportErrorEvent {
   streamId: string;
   error: string;
+  /** For an abort-mode failure, the pinpointed record number + CSV line (#687). */
+  record: number | null;
+  line: number | null;
 }
 
 // 全件ストリーミングエクスポート。
@@ -1103,11 +1243,42 @@ export interface ExportStreamHandlers {
   onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
+export interface DumpProgressEvent {
+  streamId: string;
+  bytes: number;
+  elapsedMs: number;
+  /** Processed / total tables for the SQLite path; null for external tools. */
+  tables: number | null;
+  tablesTotal: number | null;
+}
+export interface DumpDoneEvent {
+  streamId: string;
+  bytes: number;
+  elapsedMs: number;
+}
+export interface DumpStreamErrorEvent {
+  streamId: string;
+  error: string;
+}
+export interface DumpStreamHandlers {
+  onProgress?: (event: DumpProgressEvent) => void;
+  onDone?: (event: DumpDoneEvent) => void;
+  onError?: (event: DumpStreamErrorEvent) => void;
+  /** Fired when `cancelStream` claims this dump (#686). `deliveredRows` carries
+   *  bytes written so far. The frontend's own cancel flow reads that off
+   *  `cancelStream`'s return value instead. */
+  onCancelled?: (event: StreamCancelledEvent) => void;
+}
+
 export interface ImportStreamHandlers {
   onStarted?: (event: ImportStartedEvent) => void;
   onProgress?: (event: ImportProgressEvent) => void;
   onDone?: (event: ImportDoneEvent) => void;
   onError?: (event: ImportErrorEvent) => void;
+  /** Skip-mode import auto-commits chunks, so a cancel can leave rows persisted;
+   *  `deliveredRows` carries the committed count. See `ExportStreamHandlers`
+   *  (#685/#687). */
+  onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
 export interface QueryStreamHandlers {
@@ -1130,6 +1301,29 @@ export interface PreviewStreamHandlers {
 }
 
 /**
+ * Await a set of `listen()` registrations failure-safe: if any registration
+ * rejects, unlisten every one that already resolved before rethrowing, so a
+ * partial failure never leaks a live listener. On success, returns a single
+ * unlisten function that detaches all of them. The registration promises are
+ * passed already-started, so they still register concurrently.
+ */
+async function registerListeners(
+  registrations: Array<Promise<UnlistenFn>>,
+): Promise<UnlistenFn> {
+  const settled = await Promise.allSettled(registrations);
+  const unlisteners: UnlistenFn[] = [];
+  for (const r of settled) {
+    if (r.status === "fulfilled") unlisteners.push(r.value);
+  }
+  const failure = settled.find((r) => r.status === "rejected");
+  if (failure) {
+    unlisteners.forEach((un) => un());
+    throw (failure as PromiseRejectedResult).reason;
+  }
+  return () => unlisteners.forEach((un) => un());
+}
+
+/**
  * Subscribes to all query-stream events for `streamId`. Events for other
  * streams are ignored. Returns a function that detaches every listener.
  */
@@ -1148,7 +1342,7 @@ export async function listenQueryStream(
         cb(parseResponse(schema, e.payload, event));
       }
     };
-  const unlisteners = await Promise.all([
+  return registerListeners([
     listen<QueryStreamColumnsEvent>(
       "query-stream:columns",
       filter(schemas.queryStreamColumnsEvent, "query-stream:columns", handlers.onColumns),
@@ -1170,7 +1364,6 @@ export async function listenQueryStream(
       filter(schemas.streamCancelledEvent, "query-stream:cancelled", handlers.onCancelled),
     ),
   ]);
-  return () => unlisteners.forEach((un) => un());
 }
 
 export async function listenPreviewStream(
@@ -1188,7 +1381,7 @@ export async function listenPreviewStream(
         cb(parseResponse(schema, e.payload, event));
       }
     };
-  const unlisteners = await Promise.all([
+  return registerListeners([
     listen<PreviewStreamMetaEvent>(
       "preview-stream:meta",
       filter(schemas.previewStreamMetaEvent, "preview-stream:meta", handlers.onMeta),
@@ -1214,7 +1407,6 @@ export async function listenPreviewStream(
       filter(schemas.streamCancelledEvent, "preview-stream:cancelled", handlers.onCancelled),
     ),
   ]);
-  return () => unlisteners.forEach((un) => un());
 }
 
 /**
@@ -1236,7 +1428,7 @@ export async function listenImportStream(
         cb(parseResponse(schema, e.payload, event));
       }
     };
-  const unlisteners = await Promise.all([
+  return registerListeners([
     listen<ImportStartedEvent>(
       "csv-import:started",
       filter(schemas.importStartedEvent, "csv-import:started", handlers.onStarted),
@@ -1253,8 +1445,14 @@ export async function listenImportStream(
       "csv-import:error",
       filter(schemas.importErrorEvent, "csv-import:error", handlers.onError),
     ),
+    // Skip-mode import auto-commits each chunk, so a cancel can leave rows
+    // persisted; the backend emits `csv-import:cancelled` carrying that count
+    // (`deliveredRows`). Subscribe for parity with the other streams (#687).
+    listen<StreamCancelledEvent>(
+      "csv-import:cancelled",
+      filter(schemas.streamCancelledEvent, "csv-import:cancelled", handlers.onCancelled),
+    ),
   ]);
-  return () => unlisteners.forEach((un) => un());
 }
 
 /** 全件ストリーミングエクスポートの進捗/完了/エラーイベントを購読する。 */
@@ -1273,7 +1471,7 @@ export async function listenExportStream(
         cb(parseResponse(schema, e.payload, event));
       }
     };
-  const unlisteners = await Promise.all([
+  return registerListeners([
     listen<ExportProgressEvent>(
       "export-stream:progress",
       filter(schemas.exportProgressEvent, "export-stream:progress", handlers.onProgress),
@@ -1291,5 +1489,66 @@ export async function listenExportStream(
       filter(schemas.streamCancelledEvent, "export-stream:cancelled", handlers.onCancelled),
     ),
   ]);
-  return () => unlisteners.forEach((un) => un());
+}
+
+/** ストリーミングダンプの進捗/完了/エラー/キャンセルイベントを購読する (#686)。 */
+export async function listenDumpStream(
+  streamId: string,
+  handlers: DumpStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter =
+    <T extends { streamId: string }>(
+      schema: Parameters<typeof parseResponse>[0],
+      event: string,
+      cb?: (e: T) => void,
+    ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+  return registerListeners([
+    listen<DumpProgressEvent>(
+      "dump-stream:progress",
+      filter(schemas.dumpProgressEvent, "dump-stream:progress", handlers.onProgress),
+    ),
+    listen<DumpDoneEvent>(
+      "dump-stream:done",
+      filter(schemas.dumpDoneEvent, "dump-stream:done", handlers.onDone),
+    ),
+    listen<DumpStreamErrorEvent>(
+      "dump-stream:error",
+      filter(schemas.dumpErrorEvent, "dump-stream:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "dump-stream:cancelled",
+      filter(schemas.dumpCancelledEvent, "dump-stream:cancelled", handlers.onCancelled),
+    ),
+  ]);
+}
+
+/** One phase of a connection attempt (#684). `phase` is a stable label:
+ *  "preparing" / "tunnel_connecting" / "tunnel_authenticating" / "db_connecting". */
+export interface ConnectPhaseEvent {
+  attemptId: string;
+  phase: string;
+}
+
+/**
+ * Subscribe to `connect-progress:phase` events for a given connection attempt,
+ * filtered by `attemptId`. Lets the UI show which phase a slow connect is in
+ * (#684). Returns an unlisten function.
+ */
+export async function listenConnectProgress(
+  attemptId: string,
+  onPhase: (phase: string) => void,
+): Promise<UnlistenFn> {
+  return listen<ConnectPhaseEvent>("connect-progress:phase", (e) => {
+    const payload = parseResponse(
+      schemas.connectPhaseEvent,
+      e.payload,
+      "connect-progress:phase",
+    );
+    if (payload.attemptId === attemptId) onPhase(payload.phase);
+  });
 }

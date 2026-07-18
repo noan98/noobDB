@@ -98,6 +98,75 @@ export function matchErrorHint(raw: string): I18nKey | null {
   return null;
 }
 
+// ── kind による確実な分類 (#683) ──
+//
+// バックエンドの `AppError` は `{ kind, message }` で届く (`src/api/tauri.ts` が
+// `BackendError` へ正規化)。`kind` はバリアント由来の安定した判別子なので、ドライバや
+// 依存クレートの文言変更に影響されず確実に分類できる。`matchErrorHint` の文字列
+// パターンはあくまでフォールバック (旧形式の生文字列エラーや、`kind` だけでは
+// 区別できない SSH のサブ種別のため) として残す。
+//
+// SSH の `kind` は `ssh` / `sshKey` / `sshHostKeyMismatch` の 3 つしかないため、
+// 認証失敗・エージェント不在・鍵/パスフレーズ問題の細分は `ssh` kind 内で message を
+// 見て判定する (バックの `AppError::Ssh` はこれらを 1 バリアントに集約しているため)。
+
+/** `ssh` kind のメッセージを認証失敗 / エージェント不在 / 一般 SSH へ細分する。 */
+function sshHintForMessage(message: string): I18nKey {
+  // エージェント関連 (identity 無し・ソケット未接続など) を最優先で拾う。
+  if (/ssh-agent|ssh agent|SSH_AUTH_SOCK|no identities/i.test(message)) {
+    return "errorHintSshAgent";
+  }
+  // 認証拒否 (公開鍵/パスワード/エージェントいずれの失敗も message に authentication
+  // /auth が入る)。
+  if (/authentication|auth (?:error|failed)|permission denied/i.test(message)) {
+    return "errorHintSshAuth";
+  }
+  // それ以外は接続/鍵交換など一般的な SSH トンネル確立失敗。
+  return "errorHintSsh";
+}
+
+/**
+ * `AppError.kind` から確実にヒントキーを選ぶ。対応するヒントが無い kind
+ * (内部エラーや UI 別経路で案内するもの) では null を返し、呼び出し側が message の
+ * 文字列マッチにフォールバックできるようにする。
+ */
+export function hintForKind(kind: string | null | undefined, message = ""): I18nKey | null {
+  switch (kind) {
+    case "sshHostKeyMismatch":
+      return "errorHintSshHostKey";
+    case "sshKey":
+      return "errorHintSshKey";
+    case "ssh":
+      return sshHintForMessage(message);
+    case "timeout":
+      return "errorHintTimeout";
+    case "connectTimeout":
+      // A whole-attempt timeout points at reachability (host/port/tunnel), so
+      // reuse the "couldn't reach the server" hint (#684).
+      return "errorHintConnection";
+    case "connectionLost":
+      return "errorHintConnectionLost";
+    // `db` (一般的な sqlx エラー) は具体的なヒントが message 依存なので、ここでは
+    // 判定せず matchErrorHint にフォールバックさせる。その他の内部エラー
+    // (sessionNotFound / invalidInput / readOnly ...) はヒント対象外。
+    default:
+      return null;
+  }
+}
+
+/**
+ * 構造化エラー (`{ kind, message }`) からヒントキーを解決する 2 段構成の入口 (#683)。
+ * まず `kind` で確実に分類し、該当が無ければ従来どおり `message` の文字列パターンに
+ * フォールバックする。`kind` を持たない旧形式の生文字列エラーは `matchErrorHint` の
+ * 経路だけが効く (後方互換)。
+ */
+export function resolveErrorHint(err: {
+  kind?: string | null;
+  message: string;
+}): I18nKey | null {
+  return hintForKind(err.kind, err.message) ?? matchErrorHint(err.message);
+}
+
 /**
  * PATTERNS に登録されている全ヒントキー (登録順、重複なし)。
  *
