@@ -36,17 +36,30 @@ const TONE_COLOR: Record<ToastTone, string> = {
   info: semanticColorToken(TONE_ROLE.info, "text"),
 };
 
+/** 取り消しなどのアクションボタン 1 つ (#676)。押すとハンドラを実行してトーストを
+ *  閉じる。キーボードからも到達できる (通常の button)。 */
+export interface ToastAction {
+  label: string;
+  onAction: () => void;
+}
+
 export interface ToastOptions {
   message: string;
   tone?: ToastTone;
   /** Auto-dismiss delay in ms. `0` keeps the toast until dismissed by hand. */
   duration?: number;
+  /**
+   * 任意のアクション (Undo など、#676)。指定すると本文の右にボタンを描画する。
+   * アクション付きトーストは既定の表示時間を長めにして押す余裕を持たせる。
+   */
+  action?: ToastAction;
 }
 
 interface ToastItem {
   id: number;
   message: string;
   tone: ToastTone;
+  action?: ToastAction;
 }
 
 interface ToastApi {
@@ -78,14 +91,20 @@ let nextId = 1;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  // アクション付きトースト (Undo 等、#676) は hover/focus 中に自動消滅を一時停止
+  // できるよう、残り時間と現在の計測開始時刻を toast ごとに憶える。通常の
+  // トーストは pause/resume を呼ぶ経路が無いので参照されないだけで挙動は不変。
+  const timerMeta = useRef<Map<number, { remaining: number; startedAt: number }>>(new Map());
 
   // Clear any pending auto-dismiss timers if the provider unmounts so they
   // can't fire setState on a torn-down instance.
   useEffect(() => {
     const pending = timers.current;
+    const pendingMeta = timerMeta.current;
     return () => {
       pending.forEach(clearTimeout);
       pending.clear();
+      pendingMeta.clear();
     };
   }, []);
 
@@ -96,23 +115,59 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       clearTimeout(timer);
       timers.current.delete(id);
     }
+    timerMeta.current.delete(id);
   }, []);
+
+  // 指定ミリ秒後に dismiss する新しいタイマーを張る。同じ id で pause → resume
+  // したときも、この関数で「残り時間」から再度張り直す。
+  const armTimer = useCallback(
+    (id: number, ms: number) => {
+      timerMeta.current.set(id, { remaining: ms, startedAt: Date.now() });
+      timers.current.set(
+        id,
+        setTimeout(() => dismiss(id), ms),
+      );
+    },
+    [dismiss],
+  );
+
+  // Hover/focus の間だけ自動消滅を止める (#676 レビュー対応)。経過分を残り時間
+  // から差し引いておき、resume 時にそこから再開する。
+  const pauseTimer = useCallback((id: number) => {
+    const timer = timers.current.get(id);
+    if (!timer) return;
+    clearTimeout(timer);
+    timers.current.delete(id);
+    const meta = timerMeta.current.get(id);
+    if (meta) {
+      const elapsed = Date.now() - meta.startedAt;
+      meta.remaining = Math.max(0, meta.remaining - elapsed);
+    }
+  }, []);
+
+  const resumeTimer = useCallback(
+    (id: number) => {
+      const meta = timerMeta.current.get(id);
+      if (!meta || meta.remaining <= 0) return;
+      armTimer(id, meta.remaining);
+    },
+    [armTimer],
+  );
 
   const notify = useCallback(
     (opts: ToastOptions) => {
       const id = nextId++;
       const tone = opts.tone ?? "info";
-      // Errors linger longer than confirmations so they can be read.
-      const duration = opts.duration ?? (tone === "error" ? 6000 : 3500);
-      setToasts((cur) => [...cur, { id, message: opts.message, tone }]);
+      // Errors linger longer than confirmations so they can be read; toasts with
+      // an action (e.g. Undo, #676) also linger so the user has time to click.
+      const duration =
+        opts.duration ?? (opts.action ? 8000 : tone === "error" ? 6000 : 3500);
+      setToasts((cur) => [...cur, { id, message: opts.message, tone, action: opts.action }]);
       if (duration > 0) {
-        timers.current.set(
-          id,
-          setTimeout(() => dismiss(id), duration),
-        );
+        armTimer(id, duration);
       }
     },
-    [dismiss],
+    [armTimer],
   );
 
   const api = useMemo<ToastApi>(
@@ -172,6 +227,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 boxShadow="elevationToast"
                 fontSize="sm"
                 color="app.text"
+                // アクション (Undo 等) 付きトーストのみ、hover/focus 中は自動消滅を
+                // 止める (#676 レビュー対応)。通常のトーストにはハンドラを付けず
+                // 挙動を変えない。onBlur は focus が Box 内の別要素 (アクション
+                // ボタン等) へ移っただけなら resume しない (focus-within 相当)。
+                {...(toast.action && {
+                  onMouseEnter: () => pauseTimer(toast.id),
+                  onMouseLeave: () => resumeTimer(toast.id),
+                  onFocus: () => pauseTimer(toast.id),
+                  onBlur: (e: React.FocusEvent<HTMLDivElement>) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                      resumeTimer(toast.id);
+                    }
+                  },
+                })}
               >
                 {toast.tone !== "info" && (
                   <chakra.span
@@ -186,6 +255,33 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 <chakra.span flex="1" minW={0} lineHeight="1.4" wordBreak="break-word">
                   {toast.message}
                 </chakra.span>
+                {toast.action && (
+                  <chakra.button
+                    type="button"
+                    onClick={() => {
+                      // Run the action, then dismiss so the toast doesn't linger.
+                      toast.action?.onAction();
+                      dismiss(toast.id);
+                    }}
+                    flexShrink={0}
+                    display="inline-flex"
+                    alignItems="center"
+                    px="2"
+                    py="1"
+                    fontSize="sm"
+                    fontWeight={600}
+                    color={TONE_COLOR[toast.tone]}
+                    bg="transparent"
+                    border="1px solid"
+                    borderColor="app.border"
+                    borderRadius="sm"
+                    cursor="pointer"
+                    whiteSpace="nowrap"
+                    _hover={{ bg: "app.hover" }}
+                  >
+                    {toast.action.label}
+                  </chakra.button>
+                )}
                 <chakra.button
                   type="button"
                   onClick={() => dismiss(toast.id)}

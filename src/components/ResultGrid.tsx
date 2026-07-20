@@ -24,6 +24,8 @@ import {
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
+import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
+import { comboMatchesEvent } from "../shortcutKeys";
 import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact, rawValueTitle } from "./cellFormat";
 import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
@@ -125,6 +127,12 @@ import {
   resolveFooterFn,
   writeStoredFooterState,
 } from "./gridFooter";
+import {
+  gridViewStateKeyFrom,
+  readStoredGridView,
+  toPersistedGridView,
+  writeStoredGridView,
+} from "./gridViewState";
 
 /**
  * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。
@@ -795,6 +803,24 @@ export const GRID_CSS: SystemStyleObject = {
     },
 };
 
+/**
+ * グリッド系ショートカット (#681) の解決済みバインド。`shortcutBindings` (App)
+ * から必要なキーだけ抜き出して渡す。省略されたキーは
+ * `DEFAULT_SHORTCUT_COMBOS` の既定値へフォールバックする。
+ */
+export interface GridBindings {
+  gridCopy: string;
+  gridCopyHeaders: string;
+  gridInspector: string;
+  gridUndo: string;
+  gridRedo: string;
+  /** ページ送り/戻し (#681)。Alt+←/→ の既定を App 側のページングへ正確に譲るための
+   *  参照専用バインド — DataGrid 自身はこのキーで何もしない (App の window
+   *  ハンドラが処理する)。 */
+  gridPageNext: string;
+  gridPagePrev: string;
+}
+
 interface Props {
   result: QueryResult | null;
   /** True while batches are still arriving from a streaming query. */
@@ -940,11 +966,27 @@ interface Props {
    */
   onPinResult?: () => void;
   canPinResult?: boolean;
+  /**
+   * 復元するグリッドの縦スクロール位置 (px、#678)。テーブルタブのみ App が渡す。
+   * 行が揃った後に一度だけ、スクロール可能域へクランプして適用する (行が減っていたら
+   * 末尾へクランプ)。
+   */
+  initialScrollTop?: number;
+  /** スクロール位置が変わるたびに現在の scrollTop を通知する (#678。タブ永続化用)。 */
+  onScroll?: (scrollTop: number) => void;
+  /**
+   * グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo) の
+   * 解決済みバインド (#681)。省略時は今日の既定キー (`DEFAULT_SHORTCUT_COMBOS`)
+   * のまま動く。
+   */
+  gridBindings?: GridBindings;
 }
 
 export interface ResultGridHandle {
   /** Open the find-in-results bar and focus its input (Cmd/Ctrl+F entry point, #644). */
   openFind: () => void;
+  /** キーボードフォーカスをグリッドへ移す (ペインフォーカス循環 #681)。 */
+  focus: () => void;
 }
 
 /**
@@ -2224,6 +2266,7 @@ export function DataGrid({
   findHits,
   findCurrentKey,
   findNav,
+  gridBindings,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -2346,12 +2389,33 @@ export function DataGrid({
   findCurrentKey?: string | null;
   /** 現在ヒットへのスクロール/選択/フォーカス移動の要求 (seq で再発火)。 */
   findNav?: GridFindNav | null;
+  /**
+   * コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/ページ送りの解決済みバインド
+   * (#681)。省略時は今日の既定キーのまま (`DEFAULT_SHORTCUT_COMBOS`)。
+   */
+  gridBindings?: GridBindings;
 }) {
   const t = useT();
   const locale = useLocale();
   const toast = useToast();
   const { cellEditOnBlur, richCellRendering } = useSettings();
   const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
+
+  // グリッド系ショートカットの実効バインド (#681)。未指定のキーは今日の既定へ
+  // フォールバックするので、`gridBindings` を渡さない呼び出し元 (プレビューの
+  // before/after 表示など) は従来どおりの挙動のまま変わらない。
+  const effectiveGridBindings = useMemo<GridBindings>(
+    () => ({
+      gridCopy: gridBindings?.gridCopy ?? DEFAULT_SHORTCUT_COMBOS.gridCopy,
+      gridCopyHeaders: gridBindings?.gridCopyHeaders ?? DEFAULT_SHORTCUT_COMBOS.gridCopyHeaders,
+      gridInspector: gridBindings?.gridInspector ?? DEFAULT_SHORTCUT_COMBOS.gridInspector,
+      gridUndo: gridBindings?.gridUndo ?? DEFAULT_SHORTCUT_COMBOS.gridUndo,
+      gridRedo: gridBindings?.gridRedo ?? DEFAULT_SHORTCUT_COMBOS.gridRedo,
+      gridPageNext: gridBindings?.gridPageNext ?? DEFAULT_SHORTCUT_COMBOS.gridPageNext,
+      gridPagePrev: gridBindings?.gridPagePrev ?? DEFAULT_SHORTCUT_COMBOS.gridPagePrev,
+    }),
+    [gridBindings],
+  );
 
   const columnKinds = useMemo<CellKind[]>(() => columns.map(classifyColumn), [columns]);
 
@@ -2374,8 +2438,53 @@ export function DataGrid({
     [columnKinds, rows],
   );
 
-  const [sorting, setSorting] = useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  // --- Sort & column filters, persisted per result shape (#677) ---
+  // Column widths/order/visibility were already persisted (#616); sort and
+  // column filters used to reset on every reopen. They now ride the same
+  // per-result-shape key (`gridViewStateKeyFrom` mirrors `colStateKeyFrom`) so
+  // "column widths remembered but sort forgotten" no longer feels broken.
+  const gridViewKey = useMemo(
+    () => gridViewStateKeyFrom(columnSizingStorageKey),
+    [columnSizingStorageKey],
+  );
+  const [sorting, setSorting] = useState<SortingState>(
+    () => readStoredGridView(gridViewKey).sorting ?? [],
+  );
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
+    () => readStoredGridView(gridViewKey).filters ?? [],
+  );
+  const sortingRef = useRef(sorting);
+  sortingRef.current = sorting;
+  const columnFiltersRef = useRef(columnFilters);
+  columnFiltersRef.current = columnFilters;
+  // Reload sort/filters when the result shape (table) changes. Persisting only
+  // happens on user interaction (below), so this load never races a stale write.
+  useEffect(() => {
+    const s = readStoredGridView(gridViewKey);
+    setSorting(s.sorting ?? []);
+    setColumnFilters(s.filters ?? []);
+  }, [gridViewKey]);
+  const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
+    const next = typeof updater === "function" ? updater(sortingRef.current) : updater;
+    setSorting(next);
+    writeStoredGridView(gridViewKey, toPersistedGridView(next, columnFiltersRef.current));
+  };
+  const handleColumnFiltersChange: OnChangeFn<ColumnFiltersState> = (updater) => {
+    const next = typeof updater === "function" ? updater(columnFiltersRef.current) : updater;
+    setColumnFilters(next);
+    writeStoredGridView(gridViewKey, toPersistedGridView(sortingRef.current, next));
+  };
+  // Clear both sort and filters, persisting the reset in one write (avoids the
+  // stale-ref hazard of calling the two handlers back to back).
+  const clearSortAndFilters = useCallback(() => {
+    setSorting([]);
+    setColumnFilters([]);
+    writeStoredGridView(gridViewKey, {});
+  }, [gridViewKey]);
+  const clearSorting = useCallback(() => {
+    setSorting([]);
+    writeStoredGridView(gridViewKey, toPersistedGridView([], columnFiltersRef.current));
+  }, [gridViewKey]);
 
   // Column widths persist per result shape. The ref mirrors the live state so
   // functional updates from TanStack resolve against the latest value without
@@ -2798,8 +2907,8 @@ export function DataGrid({
       columnPinning,
       ...(paginationState ? { pagination: paginationState } : {}),
     },
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
+    onSortingChange: handleSortingChange,
+    onColumnFiltersChange: handleColumnFiltersChange,
     onColumnSizingChange: handleColumnSizingChange,
     onColumnOrderChange: handleColumnOrderChange,
     onColumnVisibilityChange: handleColumnVisibilityChange,
@@ -3241,6 +3350,46 @@ export function DataGrid({
     // Plain move clears the selection; Shift+move extends a rectangular range.
     const go = (r: number, c: number) => (e.shiftKey ? extendSelectionTo(r, c) : moveActive(r, c));
 
+    // グリッド系ショートカット (行インスペクタ/Undo/Redo/コピー/コピー+ヘッダ、
+    // #681)。既定コンボ (Alt+Enter 等) はナビゲーション用の switch と衝突しない
+    // が、リバインドで任意のキーになり得るため switch より先に単独で突き合わせる。
+    // Redo は従来からの Ctrl/Cmd+Y も後方互換で残す (再割り当て対象外の別名)。
+    const ne = e.nativeEvent;
+    if (comboMatchesEvent(effectiveGridBindings.gridInspector, ne)) {
+      e.preventDefault();
+      setInspectorOpen((o) => !o);
+      return;
+    }
+    if (comboMatchesEvent(effectiveGridBindings.gridUndo, ne)) {
+      e.preventDefault();
+      // App レベルのグローバル Undo/Redo ハンドラ (window の keydown リスナ) が
+      // 同じキー押下を二重に処理してしまわないよう、ここで止める
+      // (CodeRabbit レビュー対応: stopPropagation しないと 1 回の押下で 2 回
+      // undo/redo が走っていた)。
+      e.stopPropagation();
+      onUndoEdit?.();
+      return;
+    }
+    if (
+      comboMatchesEvent(effectiveGridBindings.gridRedo, ne) ||
+      ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "y" || e.key === "Y"))
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      onRedoEdit?.();
+      return;
+    }
+    if (comboMatchesEvent(effectiveGridBindings.gridCopyHeaders, ne)) {
+      e.preventDefault();
+      copySelection(true);
+      return;
+    }
+    if (comboMatchesEvent(effectiveGridBindings.gridCopy, ne)) {
+      e.preventDefault();
+      copySelection(false);
+      return;
+    }
+
     switch (e.key) {
       case "ArrowUp":
         e.preventDefault();
@@ -3251,10 +3400,28 @@ export function DataGrid({
         if (visIdx < rowCount - 1) go(visibleRows[visIdx + 1].index, colIdx);
         break;
       case "ArrowLeft":
+        // gridPagePrev/gridPageNext (既定 Alt+←/→、#681) は App レベルのページ
+        // 送りに譲り、ここでは何もしない (preventDefault もしない) — bubble した
+        // イベントをそちらが拾う。セル移動と同時発火するのを防ぐ。リバインド後も
+        // 正しく譲れるよう、素の e.altKey ではなく解決済みコンボそのものを見る
+        // (#681 レビュー対応)。
+        if (
+          comboMatchesEvent(effectiveGridBindings.gridPageNext, ne) ||
+          comboMatchesEvent(effectiveGridBindings.gridPagePrev, ne)
+        ) {
+          break;
+        }
         e.preventDefault();
         if (colPos > 0) go(rowIdx, visibleColIds[colPos - 1]);
         break;
       case "ArrowRight":
+        // 同上。
+        if (
+          comboMatchesEvent(effectiveGridBindings.gridPageNext, ne) ||
+          comboMatchesEvent(effectiveGridBindings.gridPagePrev, ne)
+        ) {
+          break;
+        }
         e.preventDefault();
         if (colPos >= 0 && colPos < lastColPos) go(rowIdx, visibleColIds[colPos + 1]);
         break;
@@ -3297,11 +3464,7 @@ export function DataGrid({
         break;
       case "Enter": {
         e.preventDefault();
-        // Alt/Option+Enter toggles the row inspector for the active row.
-        if (e.altKey) {
-          setInspectorOpen((o) => !o);
-          break;
-        }
+        // Alt/Option+Enter (行インスペクタトグル) は switch より前段で処理済み。
         const colEd = editable && (editableColumns?.[colIdx] ?? false);
         if (colEd && onSetCellEdit) {
           const v = rows[rowIdx]?.[colIdx] ?? null;
@@ -3318,27 +3481,14 @@ export function DataGrid({
         break;
       }
       default:
-        // Printable character → start editing with that char
+        // Printable character → start editing with that char (Undo/Redo/Copy
+        // are handled above, before the switch).
         if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
           const colEd = editable && (editableColumns?.[colIdx] ?? false);
           if (colEd && onSetCellEdit) {
             e.preventDefault();
             setEditing({ rowIdx, colIdx, value: e.key });
           }
-        } else if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "z" || e.key === "Z") && !e.shiftKey) {
-          e.preventDefault();
-          onUndoEdit?.();
-        } else if (
-          (e.ctrlKey || e.metaKey) && !e.altKey &&
-          ((e.key === "z" || e.key === "Z") && e.shiftKey || e.key === "y" || e.key === "Y")
-        ) {
-          e.preventDefault();
-          onRedoEdit?.();
-        } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
-          // Copy the selection range (or active cell) as TSV. Shift includes a
-          // header row of the covered column names.
-          e.preventDefault();
-          copySelection(e.shiftKey);
         }
     }
   };
@@ -3632,10 +3782,7 @@ export function DataGrid({
             <chakra.button
               type="button"
               className="grid-filter-clear"
-              onClick={() => {
-                setColumnFilters([]);
-                setSorting([]);
-              }}
+              onClick={clearSortAndFilters}
             >
               {t("gridClearFilters")}
             </chakra.button>
@@ -3644,7 +3791,7 @@ export function DataGrid({
             <chakra.button
               type="button"
               className="grid-filter-clear"
-              onClick={() => setSorting([])}
+              onClick={clearSorting}
             >
               {t("gridClearSort")}
             </chakra.button>
@@ -4523,6 +4670,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onToggleMaximize,
   onPinResult,
   canPinResult,
+  initialScrollTop,
+  onScroll,
+  gridBindings,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -4561,6 +4711,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }, [autoRefreshSecs]);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // Scroll position capture/restore for tab persistence (#678). `onScrollRef`
+  // keeps the callback fresh without re-binding the listener; `scrollRestoredRef`
+  // ensures the persisted position is applied at most once per mount.
+  const onScrollRef = useRef(onScroll);
+  onScrollRef.current = onScroll;
+  const scrollRestoredRef = useRef(false);
   // 直近に再生済みの apply-flash タイムスタンプ。タブ切替などで同じ
   // lastEditAppliedAt を持つ ResultGrid が再マウント/再評価されても、過去の成功時刻で
   // フラッシュが再発火しないよう単調増加チェックに使う。
@@ -4685,6 +4841,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
       setFindOpen(true);
       setFindFocusSeq((n) => n + 1);
     },
+    focus: () => {
+      containerRef.current?.focus();
+    },
   }), []);
   useEffect(() => {
     if (!findOpen) return;
@@ -4720,6 +4879,37 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     el.addEventListener("scroll", trigger, { passive: true });
     return () => el.removeEventListener("scroll", trigger);
   }, [canLoadMore, loadingMore, result?.rows.length]);
+
+  // Report the grid's scroll position so table tabs can restore where the user
+  // was (#678). Independent of the load-more listener (which is conditional).
+  // Re-binds only when the container mounts/unmounts (result toggles null ↔ set);
+  // the same DOM node persists across result replacements, so it stays attached.
+  const hasResultForScroll = result != null;
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const report = () => onScrollRef.current?.(el.scrollTop);
+    el.addEventListener("scroll", report, { passive: true });
+    return () => el.removeEventListener("scroll", report);
+  }, [hasResultForScroll]);
+
+  // Restore the persisted scroll position once, after rows first populate (#678).
+  // Clamp to the scrollable range so a now-shorter result lands at the end
+  // instead of overscrolling. Applied at most once per mount (`scrollRestoredRef`).
+  useEffect(() => {
+    if (scrollRestoredRef.current) return;
+    if (!initialScrollTop || initialScrollTop <= 0) {
+      scrollRestoredRef.current = true;
+      return;
+    }
+    const el = containerRef.current;
+    if (!el) return;
+    if (streaming) return; // ストリーミング完了前は行の並びが確定しないため復元を待つ
+    if ((result?.rows.length ?? 0) === 0) return; // wait for rows to lay out
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    el.scrollTop = Math.min(initialScrollTop, max);
+    scrollRestoredRef.current = true;
+  }, [initialScrollTop, result?.rows.length, streaming]);
 
   // PK indices and per-column editability are computed once per render so
   // both the toolbar (gating Preview/Apply) and the grid agree on which
@@ -5602,6 +5792,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           findHits={findHits}
           findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
           findNav={findNav}
+          gridBindings={gridBindings}
           emptyMessage={
             streaming ? undefined : queryError ? (
               <EmptyState

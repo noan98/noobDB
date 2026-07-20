@@ -16,6 +16,20 @@ export interface PersistedTab {
    * decoupled from the component's internals.
    */
   builderSnapshot?: QueryBuilderSnapshot;
+  /**
+   * Editor caret + selection as document offsets (#678). A caret is
+   * `anchor === head`. Clamped to the SQL length on restore, so a stored
+   * offset that no longer fits the (out-of-band edited) SQL collapses safely.
+   */
+  selection?: { anchor: number; head: number };
+  /**
+   * Result grid vertical scroll position in px (#678). Table tabs only — query
+   * tabs don't restore their result, so there's nothing to scroll. Re-applied
+   * after the result is re-fetched, clamped to the scrollable range.
+   */
+  gridScrollTop?: number;
+  /** Rows-per-page for paginated table tabs (#678). */
+  pageSize?: number;
 }
 
 function isValidKind(k: unknown): k is "table" | "query" | "explain" {
@@ -65,6 +79,18 @@ function isValidBuilderSnapshot(v: unknown): v is QueryBuilderSnapshot {
   return true;
 }
 
+/** A finite, non-negative integer offset (caret/scroll positions). */
+function isOffset(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0;
+}
+
+/** A `{ anchor, head }` selection with two valid offsets. */
+function isValidSelection(v: unknown): v is { anchor: number; head: number } {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return isOffset(o.anchor) && isOffset(o.head);
+}
+
 function isValidTab(v: unknown): v is PersistedTab {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
@@ -91,6 +117,18 @@ function sanitizeTab(raw: unknown): PersistedTab | null {
   if (typeof o.table === "string") out.table = o.table;
   if (isValidBuilderSnapshot(o.builderSnapshot)) {
     out.builderSnapshot = o.builderSnapshot;
+  }
+  // Fidelity fields (#678) are all optional and dropped silently if malformed —
+  // the editor text / result is still useful without the caret or scroll.
+  if (isValidSelection(o.selection)) {
+    // CodeMirror のオフセットは整数前提なので丸める (手編集/破損データ対策)。
+    out.selection = { anchor: Math.trunc(o.selection.anchor), head: Math.trunc(o.selection.head) };
+  }
+  if (isOffset(o.gridScrollTop)) out.gridScrollTop = o.gridScrollTop;
+  // 0 < pageSize < 1 が trunc で 0 にならないよう、trunc 後に正数判定する。
+  if (isOffset(o.pageSize)) {
+    const ps = Math.trunc(o.pageSize);
+    if (ps > 0) out.pageSize = ps;
   }
   return out;
 }

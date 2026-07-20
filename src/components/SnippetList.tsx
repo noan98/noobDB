@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { ConnectionProfile, Snippet } from "../api/tauri";
@@ -22,13 +22,15 @@ import {
   TreeSearch,
 } from "./tree";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { readCollapsedSnippetFolders, writeCollapsedSnippetFolders } from "./snippetFolders";
 
 interface Props {
   snippets: Snippet[];
   activeProfile: ConnectionProfile | null;
   onInsert: (snippet: Snippet) => void;
   onEdit: (snippet: Snippet) => void;
-  onDelete: (id: string) => void;
+  /** Passes the full snippet (not just id) so the caller can offer an Undo (#676). */
+  onDelete: (snippet: Snippet) => void;
   /** Empty-state CTA: open a fresh snippet form (same handler as the header "+" button, #599). */
   onCreate?: () => void;
   /** 実行計画ウォッチ (#743) 登録済みのスニペット ID (アクティブプロファイル分)。 */
@@ -71,8 +73,17 @@ export const SnippetList = memo(function SnippetList({
   const t = useT();
   const [filter, setFilter] = useState("");
   const [showAllScopes, setShowAllScopes] = useState(false);
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  // フォルダの開閉は localStorage に永続化し、再起動後も維持する (#677)。既定は
+  // 開いているので閉じているフォルダキーだけを保存する。
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>(
+    readCollapsedSnippetFolders,
+  );
   const [menu, setMenu] = useState<MenuState | null>(null);
+
+  // 閉じているフォルダの集合を永続化する (開くと自動でエントリが消える)。
+  useEffect(() => {
+    writeCollapsedSnippetFolders(expandedFolders);
+  }, [expandedFolders]);
 
   const scopeFiltered = useMemo(() => {
     if (!activeProfile || showAllScopes) return snippets;
@@ -130,7 +141,7 @@ export const SnippetList = memo(function SnippetList({
       label: t("snippetMenuDelete"),
       danger: true,
       onSelect: () => {
-        if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s.id);
+        if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s);
       },
     });
     setMenu({ x: e.clientX, y: e.clientY, items });

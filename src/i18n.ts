@@ -408,6 +408,10 @@ const en = {
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
   statusFailedDeleteProfile: "Failed to delete profile: {error}",
   statusFailedDeleteSnippet: "Failed to delete snippet: {error}",
+  statusFailedSaveSnippet: "Failed to restore snippet: {error}",
+  toastUndo: "Undo",
+  toastSnippetDeleted: "Deleted snippet “{name}”",
+  toastProfileDeleted: "Deleted connection “{name}”",
   statusConnecting: "Connecting to {name}...",
   toastConnected: "Connected to {name}",
   toastTabRestoreMissing:
@@ -1496,8 +1500,8 @@ const en = {
   shortcutGridCopyHeadersDesc: "Copy the selection with a header row of column names.",
   shortcutGridInspectorTitle: "Alt/Option+Enter",
   shortcutGridInspectorDesc: "Toggle the row inspector for the active row.",
-  shortcutEditUndoTitle: "Cmd/Ctrl+Z / ⇧Z",
-  shortcutEditUndoDesc: "Undo / redo pending inline cell edits (before Apply).",
+  shortcutEditUndoTitle: "Cmd/Ctrl+Z",
+  shortcutEditUndoDesc: "Undo the last pending inline cell edit (before Apply).",
   shortcutMaximizeResultTitle: "Cmd/Ctrl+Shift+M",
   shortcutMaximizeResultDesc: "Toggle maximizing the result panel.",
   resultMaximizeTitle: "Maximize the result panel (Cmd/Ctrl+Shift+M)",
@@ -1858,6 +1862,13 @@ const en = {
   settingsRichCellRendering: "Rich cell rendering",
   settingsRichCellRenderingHelp:
     "Format cell values by type in the result grid: compact JSON, localized date/time, boolean badges and enum color badges. Display-only — copy, inline edit and export always keep the original value. Turn off to show every cell as the raw string the driver returned.",
+  settingsAutoRefreshDefault: "Default auto-refresh interval",
+  settingsAutoRefreshDefaultHelp:
+    "Default cadence pre-selected in the result grid's auto-refresh control.",
+
+  settingsSearchPlaceholder: "Search settings…",
+  settingsSearchNoMatch: "No matching settings",
+  settingsNavAria: "Settings sections",
 
   resultStatusBar: "{rows} rows · {ms} ms",
 
@@ -1865,6 +1876,22 @@ const en = {
   shortcutSidebarFilterDesc: "Focus the connection / schema filter in the sidebar.",
   shortcutObjectSearchTitle: "Cmd/Ctrl+Shift+O",
   shortcutObjectSearchDesc: "Search tables and columns across the schema and jump to one.",
+  shortcutOpenSettingsTitle: "Cmd/Ctrl+,",
+  shortcutOpenSettingsDesc: "Open Settings.",
+  shortcutOpenHelpTitle: "F1",
+  shortcutOpenHelpDesc: "Open Help.",
+  shortcutToggleThemeTitle: "Cmd/Ctrl+Shift+L",
+  shortcutToggleThemeDesc: "Toggle the light / dark theme.",
+  shortcutToggleSidebarTitle: "Cmd/Ctrl+B",
+  shortcutToggleSidebarDesc: "Show or hide the sidebar.",
+  shortcutCyclePaneTitle: "F6",
+  shortcutCyclePaneDesc: "Cycle keyboard focus between the sidebar, editor, and result grid.",
+  shortcutGridPageNextTitle: "Alt+→",
+  shortcutGridPageNextDesc: "Go to the next page of a paginated table result.",
+  shortcutGridPagePrevTitle: "Alt+←",
+  shortcutGridPagePrevDesc: "Go to the previous page of a paginated table result.",
+  shortcutGridRedoTitle: "Cmd/Ctrl+Shift+Z",
+  shortcutGridRedoDesc: "Redo a previously undone pending inline cell edit (before Apply).",
 
   // Welcome screen / first-run onboarding (#599)
   welcomeTitle: "Welcome to noobDB",
@@ -2307,6 +2334,10 @@ const ja: Dict = {
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
   statusFailedDeleteProfile: "プロファイルの削除に失敗しました: {error}",
   statusFailedDeleteSnippet: "スニペットの削除に失敗しました: {error}",
+  statusFailedSaveSnippet: "スニペットの復元に失敗しました: {error}",
+  toastUndo: "元に戻す",
+  toastSnippetDeleted: "スニペット「{name}」を削除しました",
+  toastProfileDeleted: "接続「{name}」を削除しました",
   statusConnecting: "{name} に接続中...",
   toastConnected: "{name} に接続しました",
   toastTabRestoreMissing:
@@ -3394,8 +3425,8 @@ const ja: Dict = {
   shortcutGridCopyHeadersDesc: "列名のヘッダ行付きで選択範囲をコピーします。",
   shortcutGridInspectorTitle: "Alt/Option+Enter",
   shortcutGridInspectorDesc: "アクティブ行の行インスペクタを開閉します。",
-  shortcutEditUndoTitle: "Cmd/Ctrl+Z / ⇧Z",
-  shortcutEditUndoDesc: "未適用のインラインセル編集を Undo / Redo します (Apply 前)。",
+  shortcutEditUndoTitle: "Cmd/Ctrl+Z",
+  shortcutEditUndoDesc: "直前の未適用インラインセル編集を Undo します (Apply 前)。",
   shortcutMaximizeResultTitle: "Cmd/Ctrl+Shift+M",
   shortcutMaximizeResultDesc: "結果パネルの最大化表示を切り替えます。",
   resultMaximizeTitle: "結果パネルを最大化（Cmd/Ctrl+Shift+M）",
@@ -3757,6 +3788,13 @@ const ja: Dict = {
   settingsRichCellRendering: "セル値のリッチ表示",
   settingsRichCellRenderingHelp:
     "結果グリッドのセル値を種類に応じて整形します: JSON のコンパクト表示、日付/時刻のローカライズ、真偽値バッジ、列挙値の色分けバッジ。表示専用で、コピー・インライン編集・エクスポートでは常に元の値を保持します。オフにすると、ドライバが返した素の文字列のまま表示します。",
+  settingsAutoRefreshDefault: "自動更新の既定間隔",
+  settingsAutoRefreshDefaultHelp:
+    "結果グリッドの自動更新コントロールで既定選択される間隔。",
+
+  settingsSearchPlaceholder: "設定を検索…",
+  settingsSearchNoMatch: "一致する設定がありません",
+  settingsNavAria: "設定セクション",
 
   resultStatusBar: "{rows} 件 · {ms} ms",
 
@@ -3764,6 +3802,22 @@ const ja: Dict = {
   shortcutSidebarFilterDesc: "サイドバーの接続・スキーマフィルタにフォーカスします。",
   shortcutObjectSearchTitle: "Cmd/Ctrl+Shift+O",
   shortcutObjectSearchDesc: "テーブル/カラムをスキーマ横断で検索して該当テーブルへジャンプします。",
+  shortcutOpenSettingsTitle: "Cmd/Ctrl+,",
+  shortcutOpenSettingsDesc: "設定を開きます。",
+  shortcutOpenHelpTitle: "F1",
+  shortcutOpenHelpDesc: "ヘルプを開きます。",
+  shortcutToggleThemeTitle: "Cmd/Ctrl+Shift+L",
+  shortcutToggleThemeDesc: "ライト/ダークテーマを切り替えます。",
+  shortcutToggleSidebarTitle: "Cmd/Ctrl+B",
+  shortcutToggleSidebarDesc: "サイドバーの表示/非表示を切り替えます。",
+  shortcutCyclePaneTitle: "F6",
+  shortcutCyclePaneDesc: "サイドバー・エディタ・結果グリッドの間でキーボードフォーカスを順に移動します。",
+  shortcutGridPageNextTitle: "Alt+→",
+  shortcutGridPageNextDesc: "ページングされたテーブル結果の次のページへ移動します。",
+  shortcutGridPagePrevTitle: "Alt+←",
+  shortcutGridPagePrevDesc: "ページングされたテーブル結果の前のページへ移動します。",
+  shortcutGridRedoTitle: "Cmd/Ctrl+Shift+Z",
+  shortcutGridRedoDesc: "取り消した未適用のインラインセル編集をやり直します (Apply 前)。",
 
   // ウェルカム画面 / 初回起動オンボーディング (#599)
   welcomeTitle: "noobDB へようこそ",

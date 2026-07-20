@@ -4,6 +4,7 @@ import { AnimatePresence } from "motion/react";
 import { api, ConnectionProfile, IndexInfo, SchemaObject, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
+import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
@@ -210,7 +211,8 @@ interface Props {
   onCreate: () => void;
   onEdit: (profile: ConnectionProfile) => void;
   onDuplicate: (profile: ConnectionProfile) => void;
-  onDelete: (id: string) => void;
+  /** Passes the full profile (not just id) so the caller can offer an Undo (#676). */
+  onDelete: (profile: ConnectionProfile) => void;
   onPickTable: (database: string, table: string) => void;
   onImportTable: (database: string, table: string) => void;
   /** スキーマに基づくテストデータ生成ウィザードを開く (#602)。read_only では無効化。 */
@@ -360,18 +362,156 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 
-  const loadDatabases = useCallback(async () => {
-    if (!sessionId) {
-      setDatabases(null);
-      return;
-    }
-    try {
-      const dbs = await api.listDatabases(sessionId);
+  // Tree expansion is persisted per profile (#677). We persist imperatively from
+  // the toggle handlers (below) rather than from a reactive effect, so a
+  // disconnect that resets the tree to `{}` can't wipe the saved state, and a
+  // transient prop mismatch can't save under the wrong profile. These refs let
+  // the handlers read the latest profile / other-axis state without re-binding.
+  const activeProfileIdRef = useRef(activeProfileId);
+  activeProfileIdRef.current = activeProfileId;
+  const expandedDbsRef = useRef(expandedDbs);
+  expandedDbsRef.current = expandedDbs;
+  const expandedTablesRef = useRef(expandedTables);
+  expandedTablesRef.current = expandedTables;
+  const persistTree = useCallback(
+    (dbs: Record<string, boolean>, tables: Record<string, boolean>) => {
+      const pid = activeProfileIdRef.current;
+      if (pid) saveSchemaTree(pid, { dbs, tables });
+    },
+    [],
+  );
+
+  // Restore the persisted tree expansion for the connecting session's profile
+  // (#677) and eagerly re-fetch the open nodes so the tree comes back
+  // drilled-in rather than collapsed. DB/table keys that no longer exist are
+  // ignored (and pruned from storage). Mirrors `refreshSchema`'s eager reload,
+  // but driven off the stored open-set instead of live React state.
+  const restoreTreeForSession = useCallback(
+    async (targetSessionId: string) => {
+      const pid = activeProfileIdRef.current;
+      const stored = pid ? loadSchemaTree(pid) : { dbs: {}, tables: {} };
+      const openDbNames = Object.keys(stored.dbs).filter((db) => stored.dbs[db]);
+      const openTableKeys = Object.keys(stored.tables).filter((k) => stored.tables[k]);
+      // Optimistically open the stored nodes so the tree feels continuous while
+      // the schema loads; pruned below once we know what still exists.
+      setExpandedDbs(openDbNames.length > 0 ? { ...stored.dbs } : {});
+      setExpandedTables(openTableKeys.length > 0 ? { ...stored.tables } : {});
+
+      let dbs: string[];
+      try {
+        dbs = await api.listDatabases(targetSessionId);
+      } catch (e) {
+        if (sessionIdRef.current === targetSessionId) setError(String(e));
+        return;
+      }
+      if (sessionIdRef.current !== targetSessionId) return;
       setDatabases(dbs);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [sessionId]);
+
+      const existingOpenDbs = openDbNames.filter((db) => dbs.includes(db));
+
+      // Fetch tables (+ estimates + non-table objects) for the open DBs.
+      const nextTables: Record<string, string[]> = {};
+      const nextEstimates: Record<string, Record<string, number | null>> = {};
+      const nextObjects: Record<string, SchemaObject[]> = {};
+      const failedTableDbs = new Set<string>();
+      await Promise.all(
+        existingOpenDbs.map(async (db) => {
+          try {
+            nextTables[db] = await api.listTables(targetSessionId, db);
+          } catch {
+            // Skip a database that failed to list; re-expanding retries it.
+            failedTableDbs.add(db);
+          }
+          try {
+            const est = await api.tableRowEstimates(targetSessionId, db);
+            const map: Record<string, number | null> = {};
+            for (const e of est) map[e.name] = e.estimate;
+            nextEstimates[db] = map;
+          } catch {
+            // Estimates are decorative; a failure just drops the badges.
+          }
+          try {
+            nextObjects[db] = await api.listSchemaObjects(targetSessionId, db);
+          } catch {
+            nextObjects[db] = [];
+          }
+        }),
+      );
+      if (sessionIdRef.current !== targetSessionId) return;
+
+      // Fetch columns (+ indexes) only for open tables under an open DB that we
+      // listed and confirmed still exist.
+      const nextCols: Record<string, TableColumnInfo[]> = {};
+      const nextIndexes: Record<string, IndexInfo[]> = {};
+      await Promise.all(
+        openTableKeys.map(async (key) => {
+          const sep = key.indexOf("::");
+          if (sep < 0) return;
+          const db = key.slice(0, sep);
+          const tbl = key.slice(sep + 2);
+          if (!nextTables[db]?.includes(tbl)) return;
+          try {
+            nextCols[key] = await api.describeTable(targetSessionId, db, tbl);
+          } catch {
+            return;
+          }
+          try {
+            nextIndexes[key] = await api.listIndexes(targetSessionId, db, tbl);
+          } catch {
+            nextIndexes[key] = [];
+          }
+        }),
+      );
+      if (sessionIdRef.current !== targetSessionId) return;
+
+      setTables((prev) => ({ ...prev, ...nextTables }));
+      setRowEstimates((prev) => ({ ...prev, ...nextEstimates }));
+      setSchemaObjects((prev) => ({ ...prev, ...nextObjects }));
+      setTableColumns((prev) => ({ ...prev, ...nextCols }));
+      setTableIndexes((prev) => ({ ...prev, ...nextIndexes }));
+
+      // Prune only DBs/tables we can CONFIRM are gone. A table key is dropped
+      // only when its DB no longer exists, or its DB was listed here and the
+      // table is absent. Tables under a collapsed DB (not listed this pass) or a
+      // DB whose listTables failed are "unknown" and kept, so a transient error
+      // or a closed-but-existing DB never wipes persisted expansion (#677).
+      const keptTableKeys = openTableKeys.filter((key) => {
+        const sep = key.indexOf("::");
+        if (sep < 0) return false; // malformed → drop
+        const db = key.slice(0, sep);
+        const tbl = key.slice(sep + 2);
+        if (!dbs.includes(db)) return false; // DB gone → table gone
+        const listed = nextTables[db]; // undefined = collapsed DB or listTables failed
+        if (listed && !listed.includes(tbl)) return false; // confirmed absent
+        return true; // present or unknown → keep
+      });
+      // Merge onto the latest live state (via refs) so DBs/tables the user
+      // expanded during the async restore aren't clobbered (#677). Only keys we
+      // confirmed gone are removed; survivors are ensured open.
+      const finalDbs: Record<string, boolean> = {};
+      for (const [db, open] of Object.entries(expandedDbsRef.current)) {
+        if (open && dbs.includes(db)) finalDbs[db] = true;
+      }
+      for (const db of existingOpenDbs) finalDbs[db] = true;
+      const goneTableKeys = new Set(openTableKeys.filter((k) => !keptTableKeys.includes(k)));
+      const finalTables: Record<string, boolean> = {};
+      for (const [key, open] of Object.entries(expandedTablesRef.current)) {
+        if (open && !goneTableKeys.has(key)) finalTables[key] = true;
+      }
+      for (const key of keptTableKeys) finalTables[key] = true;
+      setExpandedDbs(finalDbs);
+      setExpandedTables(finalTables);
+      // Persist the pruned baseline only when we actually removed stale keys
+      // (user toggles during restore already persisted themselves).
+      if (
+        existingOpenDbs.length !== openDbNames.length ||
+        keptTableKeys.length !== openTableKeys.length
+      ) {
+        persistTree(finalDbs, finalTables);
+      }
+    },
+    [persistTree],
+  );
 
   // Re-query the schema for the active session without disconnecting, so
   // server-side changes (new/dropped tables or columns) show up. Currently
@@ -445,20 +585,22 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   useEffect(() => {
     setTables({});
     setRowEstimates({});
-    setExpandedDbs({});
-    setExpandedTables({});
     setTableColumns({});
     setTableIndexes({});
     setSchemaObjects({});
     tablesInFlightRef.current.clear();
     estimatesInFlightRef.current.clear();
     if (sessionId) {
+      // Expanded state is restored (not reset) so the tree comes back drilled-in
+      // for the reconnecting profile (#677).
       setDatabases(null);
-      loadDatabases();
+      void restoreTreeForSession(sessionId);
     } else {
+      setExpandedDbs({});
+      setExpandedTables({});
       setDatabases(null);
     }
-  }, [sessionId, loadDatabases]);
+  }, [sessionId, restoreTreeForSession]);
 
   // Auto-expand the active connection.
   useEffect(() => {
@@ -527,7 +669,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           label: t("contextMenuDelete"),
           danger: true,
           onSelect: () => {
-            if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id);
+            if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p);
           },
         },
       ],
@@ -690,10 +832,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (!sessionId) return;
     const isOpen = expandedDbs[db];
     if (isOpen) {
-      setExpandedDbs({ ...expandedDbs, [db]: false });
+      const next = { ...expandedDbs, [db]: false };
+      setExpandedDbs(next);
+      persistTree(next, expandedTablesRef.current);
       return;
     }
-    setExpandedDbs({ ...expandedDbs, [db]: true });
+    const next = { ...expandedDbs, [db]: true };
+    setExpandedDbs(next);
+    persistTree(next, expandedTablesRef.current);
     if (tables[db]) return;
     // Skip if a fetch is already in flight for this database — covers both
     // rapid collapse / re-expand and overlap with the schema-search eager loader.
@@ -728,10 +874,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     const key = tableKey(db, tbl);
     const isOpen = expandedTables[key];
     if (isOpen) {
-      setExpandedTables((prev) => ({ ...prev, [key]: false }));
+      const next = { ...expandedTables, [key]: false };
+      setExpandedTables(next);
+      persistTree(expandedDbsRef.current, next);
       return;
     }
-    setExpandedTables((prev) => ({ ...prev, [key]: true }));
+    const next = { ...expandedTables, [key]: true };
+    setExpandedTables(next);
+    persistTree(expandedDbsRef.current, next);
     if (tableColumns[key]) return;
     // Same in-flight guard as toggleDb: rapid collapse / re-expand mid-fetch
     // must not re-issue describeTable for the same table.
