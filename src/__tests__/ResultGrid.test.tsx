@@ -217,7 +217,12 @@ describe("ResultGrid", () => {
 });
 
 describe("カラム別フィルタ (#390)", () => {
-  beforeEach(() => setLocale("en"));
+  beforeEach(() => {
+    setLocale("en");
+    // ソート・列フィルタは結果シェイプ単位で localStorage に永続化される (#677)。
+    // 同一結果 (FRUIT_RESULT) を使う各テストが前のフィルタを読み込まないようクリアする。
+    localStorage.clear();
+  });
 
   const NULLABLE_COLUMNS: Column[] = [
     { name: "name", type_name: "VARCHAR" },

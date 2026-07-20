@@ -530,6 +530,18 @@ interface Tab {
    * `table_row_estimates` から取得して設定する。未取得/不明なら null/undefined。
    */
   rowEstimateTotal?: number | null;
+  /**
+   * エディタのカーソル/選択 (ドキュメントオフセット、#678)。復元時にエディタへ
+   * 流し込む初期値であり、以後のライブ値は `editorSelectionRef` (再レンダ回避のため
+   * ref マップ) が保持する。復元されたまま一度も開かれていないタブの再保存に備え、
+   * ここにも保持しておく。
+   */
+  selection?: { anchor: number; head: number };
+  /**
+   * 結果グリッドの縦スクロール位置 (px、#678)。table タブの復元用初期値。ライブ値は
+   * `gridScrollRef` が保持する。
+   */
+  gridScrollTop?: number;
   /** Non-null when the last query run failed (cleared on the next run). */
   queryError: string | null;
   /**
@@ -782,7 +794,11 @@ function dragFeedbackFor(paths: string[]): DragFeedback {
   return { accept: true, kind: hasSql ? "sql" : "csv" };
 }
 
-function toPersistedTab(tab: Tab): PersistedTab {
+function toPersistedTab(
+  tab: Tab,
+  liveSelection?: { anchor: number; head: number },
+  liveGridScrollTop?: number,
+): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
@@ -790,6 +806,17 @@ function toPersistedTab(tab: Tab): PersistedTab {
   // the next reconnect — closing the tab still drops it because the tab is
   // removed from the persisted list before the next save.
   if (tab.builderSnapshot) out.builderSnapshot = tab.builderSnapshot;
+  // Editor caret/selection (#678): prefer the live value captured while the tab
+  // was mounted, else the value restored onto the tab (never opened this run).
+  const selection = liveSelection ?? tab.selection;
+  if (selection) out.selection = selection;
+  // Grid scroll + page size are only meaningful for table tabs (query tabs don't
+  // restore their result). Persist scroll only when actually scrolled.
+  if (tab.kind === "table") {
+    const scroll = liveGridScrollTop ?? tab.gridScrollTop;
+    if (typeof scroll === "number" && scroll > 0) out.gridScrollTop = scroll;
+    if (typeof tab.pageSize === "number" && tab.pageSize > 0) out.pageSize = tab.pageSize;
+  }
   return out;
 }
 
@@ -1150,6 +1177,13 @@ export default function App() {
   // inserts and Cmd/Ctrl+F target the focused pane's handle.
   const editorRefs = useRef<Map<string, QueryEditorHandle>>(new Map());
   const resultGridRefs = useRef<Map<string, ResultGridHandle>>(new Map());
+  // Live editor caret/selection and grid scroll per tab id (#678). Kept in refs
+  // (not tab state) so the high-frequency selection/scroll callbacks don't
+  // re-render; folded into the persisted tab shape at save time. Only mounted
+  // (active) tabs update these; a restored-but-unopened tab falls back to the
+  // selection/scroll stored on the tab itself.
+  const editorSelectionRef = useRef<Map<string, { anchor: number; head: number }>>(new Map());
+  const gridScrollRef = useRef<Map<string, number>>(new Map());
   const connectionListRef = useRef<ConnectionListHandle>(null);
   const editorRefSetters = useRef<Map<string, (h: QueryEditorHandle | null) => void>>(new Map());
   const gridRefSetters = useRef<Map<string, (h: ResultGridHandle | null) => void>>(new Map());
@@ -1899,7 +1933,13 @@ export default function App() {
           const paneTabs = p.tabIds
             .map((id) => curTabs.find((tt) => tt.id === id))
             .filter((tt): tt is Tab => tt != null)
-            .map(toPersistedTab);
+            .map((tt) =>
+              toPersistedTab(
+                tt,
+                editorSelectionRef.current.get(tt.id),
+                gridScrollRef.current.get(tt.id),
+              ),
+            );
           const activeIndex = Math.max(0, p.tabIds.indexOf(p.activeTabId ?? ""));
           return { tabs: paneTabs, activeIndex: Math.min(activeIndex, Math.max(0, paneTabs.length - 1)) };
         })
@@ -2818,7 +2858,11 @@ export default function App() {
           try {
             await api.describeTable(sid, s.database, s.table);
             const base = qualifiedTableSql(profile.driver, s.database, s.table);
-            const sql = `${base} LIMIT ${limit}`;
+            // Re-fetch page 1 at the restored page size (#678) so users who work
+            // at 500/1000 rows don't have to re-select it; falls back to the
+            // default display count when no page size was persisted.
+            const pageLimit = s.pageSize && s.pageSize > 0 ? s.pageSize : limit;
+            const sql = `${base} LIMIT ${pageLimit}`;
             return {
               ...makeTab("table", s.title || s.table, sql),
               database: s.database,
@@ -2826,6 +2870,9 @@ export default function App() {
               previewRowLimit: limit,
               paginatable: base,
               builderSnapshot: restoredSnapshot,
+              selection: s.selection,
+              gridScrollTop: s.gridScrollTop,
+              ...(s.pageSize && s.pageSize > 0 ? { page: 1, pageSize: s.pageSize } : {}),
             };
           } catch (e) {
             // Table is gone — fall through to a query tab using the saved SQL,
@@ -2847,12 +2894,14 @@ export default function App() {
             title: s.title || tab.title,
             previewRowLimit: limit,
             builderSnapshot: restoredSnapshot,
+            selection: s.selection,
           };
         }
         return {
           ...makeTab("query", s.kind === "query" ? s.title : translate("tabUntitledQuery"), s.sql),
           previewRowLimit: limit,
           builderSnapshot: restoredSnapshot,
+          selection: s.selection,
         };
       };
 
@@ -5118,6 +5167,8 @@ export default function App() {
                     key={tab.id}
                     ref={getEditorRefSetter(pane.id)}
                     initialSql={tab.sql}
+                    initialSelection={tab.selection}
+                    onSelectionChange={(sel) => editorSelectionRef.current.set(tab.id, sel)}
                     running={tab.streaming && !tab.previewStreaming}
                     previewRunning={tab.previewStreaming}
                     onRun={(sql) => resolveParamsThen(tab, sql, "run")}
@@ -5322,6 +5373,8 @@ export default function App() {
                     <ResultGrid
                       ref={getGridRefSetter(pane.id)}
                       result={tab.result}
+                      initialScrollTop={tab.kind === "table" ? tab.gridScrollTop : undefined}
+                      onScroll={(top) => gridScrollRef.current.set(tab.id, top)}
                       streaming={tab.streaming}
                       onStopStreaming={() => stopTab(tab)}
                       loadingMore={tab.loadingMore}

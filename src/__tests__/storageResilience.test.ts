@@ -9,6 +9,17 @@ import {
 } from "../settings";
 import { loadPersistedWorkspace, type PersistedWorkspace } from "../tabPersistence";
 import { EMPTY_QUICK_ACCESS, loadQuickAccess } from "../tableQuickAccess";
+import { loadSchemaTree, normalizeSchemaTree, saveSchemaTree } from "../schemaTreeState";
+import {
+  normalizeCollapsedFolders,
+  readCollapsedSnippetFolders,
+  writeCollapsedSnippetFolders,
+} from "../components/snippetFolders";
+import {
+  normalizeGridView,
+  readStoredGridView,
+  writeStoredGridView,
+} from "../components/gridViewState";
 
 const EMPTY_WORKSPACE: PersistedWorkspace = { panes: [], activePane: 0 };
 
@@ -185,5 +196,184 @@ describe("loadQuickAccess (クイックアクセスの破損耐性)", () => {
 
   it("キーが無いプロファイルは空状態", () => {
     expect(loadQuickAccess("never-saved")).toEqual(EMPTY_QUICK_ACCESS);
+  });
+});
+
+describe("normalizeGridView (グリッドのソート・列フィルタ #677 の破損耐性)", () => {
+  it("非オブジェクト入力はすべて空へ落ちる", () => {
+    for (const bad of [null, undefined, 42, "x", true, [1, 2, 3]]) {
+      expect(normalizeGridView(bad)).toEqual({});
+    }
+  });
+
+  it("妥当なソートと列フィルタは保持する", () => {
+    const parsed = {
+      sorting: [{ id: "1", desc: true }],
+      filters: [{ id: "0", value: { op: "contains", value: "x", value2: "", nullMode: "any" } }],
+    };
+    expect(normalizeGridView(parsed)).toEqual(parsed);
+  });
+
+  it("未知の演算子・型不一致のフィルタ/ソートを捨てる", () => {
+    const parsed = {
+      sorting: [{ id: "1", desc: "yes" }, { id: 2, desc: true }, { id: "3", desc: false }],
+      filters: [
+        { id: "0", value: { op: "bogus", value: "x", value2: "", nullMode: "any" } },
+        { id: "1", value: { op: "eq", value: "5", value2: "", nullMode: "wrong" } },
+        { id: "2", value: { op: "gt", value: "3", value2: "", nullMode: "only" } },
+      ],
+    };
+    const out = normalizeGridView(parsed);
+    expect(out.sorting).toEqual([{ id: "3", desc: false }]);
+    expect(out.filters).toEqual([
+      { id: "2", value: { op: "gt", value: "3", value2: "", nullMode: "only" } },
+    ]);
+  });
+
+  it("空の配列になったフィールドは省く", () => {
+    expect(normalizeGridView({ sorting: [], filters: [] })).toEqual({});
+  });
+
+  it("readStoredGridView は壊れた JSON でも例外を投げず空を返す", () => {
+    const KEY = "noobdb.gridview.v1::db::t::[\"a\"]";
+    localStorage.setItem(KEY, "{broken");
+    let out!: ReturnType<typeof readStoredGridView>;
+    expect(() => {
+      out = readStoredGridView(KEY);
+    }).not.toThrow();
+    expect(out).toEqual({});
+  });
+
+  it("書き込み→読み戻しのラウンドトリップ (実質デフォルトはキー削除)", () => {
+    const KEY = "noobdb.gridview.v1::db::t::[\"a\"]";
+    writeStoredGridView(KEY, { sorting: [{ id: "0", desc: true }] });
+    expect(readStoredGridView(KEY)).toEqual({ sorting: [{ id: "0", desc: true }] });
+    writeStoredGridView(KEY, {});
+    expect(localStorage.getItem(KEY)).toBeNull();
+  });
+});
+
+describe("normalizeSchemaTree (スキーマツリー展開 #677 の破損耐性)", () => {
+  it("非オブジェクト入力は空ツリーへ落ちる", () => {
+    for (const bad of [null, undefined, 42, "x", true]) {
+      expect(normalizeSchemaTree(bad)).toEqual({ dbs: {}, tables: {} });
+    }
+  });
+
+  it("開いている DB / テーブルキー配列を Record へ変換し、非文字列は捨てる", () => {
+    const out = normalizeSchemaTree({ dbs: ["db1", 2, "db2"], tables: ["db1::t1", null] });
+    expect(out).toEqual({ dbs: { db1: true, db2: true }, tables: { "db1::t1": true } });
+  });
+
+  it("loadSchemaTree は壊れた JSON でも例外を投げず空を返す", () => {
+    localStorage.setItem("noobdb.schematree.p1", "}{nope");
+    let out!: ReturnType<typeof loadSchemaTree>;
+    expect(() => {
+      out = loadSchemaTree("p1");
+    }).not.toThrow();
+    expect(out).toEqual({ dbs: {}, tables: {} });
+  });
+
+  it("save→load のラウンドトリップ (閉じたキーは省く)", () => {
+    saveSchemaTree("p1", { dbs: { db1: true, db2: false }, tables: { "db1::t1": true } });
+    expect(loadSchemaTree("p1")).toEqual({ dbs: { db1: true }, tables: { "db1::t1": true } });
+  });
+
+  it("すべて閉じている状態はエントリを削除する", () => {
+    saveSchemaTree("p1", { dbs: { db1: true }, tables: {} });
+    expect(localStorage.getItem("noobdb.schematree.p1")).not.toBeNull();
+    saveSchemaTree("p1", { dbs: { db1: false }, tables: {} });
+    expect(localStorage.getItem("noobdb.schematree.p1")).toBeNull();
+  });
+
+  it("キーが無いプロファイルは空ツリー", () => {
+    expect(loadSchemaTree("never")).toEqual({ dbs: {}, tables: {} });
+  });
+});
+
+describe("normalizeCollapsedFolders (スニペットフォルダ開閉 #677 の破損耐性)", () => {
+  it("非配列入力は空へ落ちる", () => {
+    for (const bad of [null, undefined, 42, "x", {}]) {
+      expect(normalizeCollapsedFolders(bad)).toEqual({});
+    }
+  });
+
+  it("閉じているフォルダキー配列を { key: false } へ変換し、非文字列は捨てる", () => {
+    expect(normalizeCollapsedFolders(["a", 1, "b", null])).toEqual({ a: false, b: false });
+  });
+
+  it("read は壊れた JSON でも例外を投げず空を返す", () => {
+    localStorage.setItem("noobdb.snippetlist.collapsedFolders", "{broken");
+    let out!: ReturnType<typeof readCollapsedSnippetFolders>;
+    expect(() => {
+      out = readCollapsedSnippetFolders();
+    }).not.toThrow();
+    expect(out).toEqual({});
+  });
+
+  it("write→read のラウンドトリップ (開いているフォルダは保存しない)", () => {
+    writeCollapsedSnippetFolders({ a: false, b: true, c: false });
+    expect(readCollapsedSnippetFolders()).toEqual({ a: false, c: false });
+    writeCollapsedSnippetFolders({ a: true, b: true });
+    expect(localStorage.getItem("noobdb.snippetlist.collapsedFolders")).toBeNull();
+  });
+});
+
+describe("PersistedTab の忠実度フィールド (#678) の後方互換・破損耐性", () => {
+  const KEY = "noobdb.tabs.profile-1";
+
+  it("selection / gridScrollTop / pageSize を持つタブを復元する", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify([
+        {
+          kind: "table",
+          title: "T",
+          database: "db",
+          table: "t",
+          sql: "SELECT * FROM t",
+          selection: { anchor: 3, head: 7 },
+          gridScrollTop: 120,
+          pageSize: 500,
+        },
+      ]),
+    );
+    const tab = loadPersistedWorkspace("profile-1").panes[0].tabs[0];
+    expect(tab.selection).toEqual({ anchor: 3, head: 7 });
+    expect(tab.gridScrollTop).toBe(120);
+    expect(tab.pageSize).toBe(500);
+  });
+
+  it("新フィールドが無い旧タブもそのまま読める (後方互換)", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify([{ kind: "query", title: "Q", sql: "SELECT 1" }]),
+    );
+    const tab = loadPersistedWorkspace("profile-1").panes[0].tabs[0];
+    expect(tab.sql).toBe("SELECT 1");
+    expect(tab.selection).toBeUndefined();
+    expect(tab.gridScrollTop).toBeUndefined();
+    expect(tab.pageSize).toBeUndefined();
+  });
+
+  it("壊れた selection / 負値の scroll / pageSize は捨ててタブ自体は残す", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify([
+        {
+          kind: "query",
+          title: "Q",
+          sql: "SELECT 1",
+          selection: { anchor: "x", head: 2 },
+          gridScrollTop: -5,
+          pageSize: 0,
+        },
+      ]),
+    );
+    const tab = loadPersistedWorkspace("profile-1").panes[0].tabs[0];
+    expect(tab.sql).toBe("SELECT 1");
+    expect(tab.selection).toBeUndefined();
+    expect(tab.gridScrollTop).toBeUndefined();
+    expect(tab.pageSize).toBeUndefined();
   });
 });

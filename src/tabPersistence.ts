@@ -16,6 +16,20 @@ export interface PersistedTab {
    * decoupled from the component's internals.
    */
   builderSnapshot?: QueryBuilderSnapshot;
+  /**
+   * Editor caret + selection as document offsets (#678). A caret is
+   * `anchor === head`. Clamped to the SQL length on restore, so a stored
+   * offset that no longer fits the (out-of-band edited) SQL collapses safely.
+   */
+  selection?: { anchor: number; head: number };
+  /**
+   * Result grid vertical scroll position in px (#678). Table tabs only — query
+   * tabs don't restore their result, so there's nothing to scroll. Re-applied
+   * after the result is re-fetched, clamped to the scrollable range.
+   */
+  gridScrollTop?: number;
+  /** Rows-per-page for paginated table tabs (#678). */
+  pageSize?: number;
 }
 
 function isValidKind(k: unknown): k is "table" | "query" | "explain" {
@@ -65,6 +79,18 @@ function isValidBuilderSnapshot(v: unknown): v is QueryBuilderSnapshot {
   return true;
 }
 
+/** A finite, non-negative integer offset (caret/scroll positions). */
+function isOffset(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0;
+}
+
+/** A `{ anchor, head }` selection with two valid offsets. */
+function isValidSelection(v: unknown): v is { anchor: number; head: number } {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return isOffset(o.anchor) && isOffset(o.head);
+}
+
 function isValidTab(v: unknown): v is PersistedTab {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
@@ -92,6 +118,13 @@ function sanitizeTab(raw: unknown): PersistedTab | null {
   if (isValidBuilderSnapshot(o.builderSnapshot)) {
     out.builderSnapshot = o.builderSnapshot;
   }
+  // Fidelity fields (#678) are all optional and dropped silently if malformed —
+  // the editor text / result is still useful without the caret or scroll.
+  if (isValidSelection(o.selection)) {
+    out.selection = { anchor: o.selection.anchor, head: o.selection.head };
+  }
+  if (isOffset(o.gridScrollTop)) out.gridScrollTop = o.gridScrollTop;
+  if (isOffset(o.pageSize) && o.pageSize > 0) out.pageSize = Math.trunc(o.pageSize);
   return out;
 }
 

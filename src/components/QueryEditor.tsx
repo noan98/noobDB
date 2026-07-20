@@ -161,6 +161,14 @@ interface Props {
   databaseSchema?: TableSchema[] | null;
   activeTable?: ActiveTable | null;
   initialSql?: string;
+  /**
+   * 復元するカーソル/選択 (ドキュメントオフセット、#678)。マウント時に doc 長へ
+   * クランプして適用する。undefined なら先頭 (既定)。エディタは一度だけ生成されるため
+   * マウント時の値のみが使われる。
+   */
+  initialSelection?: { anchor: number; head: number };
+  /** カーソル/選択が変わるたびに現在のオフセットを通知する (#678。タブ永続化用)。 */
+  onSelectionChange?: (selection: { anchor: number; head: number }) => void;
   sessionId?: string | null;
   defaultDatabase?: string | null;
   /**
@@ -313,6 +321,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   databaseSchema,
   activeTable,
   initialSql,
+  initialSelection,
+  onSelectionChange,
   sessionId,
   defaultDatabase,
   explainMode,
@@ -389,6 +399,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   const [showBuilder, setShowBuilder] = useState(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
   const onFormatErrorRef = useRef(onFormatError);
   onFormatErrorRef.current = onFormatError;
   const onRunRef = useRef(onRun);
@@ -486,6 +498,14 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   useEffect(() => {
     if (!hostRef.current) return;
     const startDoc = initialSql ?? "";
+    // 復元するカーソル/選択を doc 長へクランプ (#678)。SQL 本文と保存オフセットが
+    // 不整合でも範囲外にならない。undefined なら CodeMirror 既定 (先頭) に任せる。
+    const startSelection = initialSelection
+      ? {
+          anchor: Math.max(0, Math.min(initialSelection.anchor, startDoc.length)),
+          head: Math.max(0, Math.min(initialSelection.head, startDoc.length)),
+        }
+      : null;
 
     // 履歴ナビゲーションの結果をエディタへ反映する。`navigatingRef` を立てて dispatch
     // することで、この doc 変更を updateListener がユーザのタイプと誤認してナビ位置を
@@ -513,6 +533,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       parent: hostRef.current,
       state: EditorState.create({
         doc: startDoc,
+        ...(startSelection ? { selection: startSelection } : {}),
         extensions: [
           lineNumbers(),
           highlightActiveLine(),
@@ -579,6 +600,12 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               if (!navigatingRef.current) resetHistoryNav();
               setHasContent(u.state.doc.length > 0);
               onChangeRef.current?.(u.state.doc.toString());
+            }
+            // カーソル/選択の変化をタブ永続化用に通知 (#678)。ref マップ書き込みだけの
+            // 軽量コールバックなので毎回発火してよい (React 再レンダは起こさない)。
+            if (u.selectionSet || u.docChanged) {
+              const sel = u.state.selection.main;
+              onSelectionChangeRef.current?.({ anchor: sel.anchor, head: sel.head });
             }
           }),
         ],

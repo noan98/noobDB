@@ -125,6 +125,12 @@ import {
   resolveFooterFn,
   writeStoredFooterState,
 } from "./gridFooter";
+import {
+  gridViewStateKeyFrom,
+  readStoredGridView,
+  toPersistedGridView,
+  writeStoredGridView,
+} from "./gridViewState";
 
 /**
  * 結果テーブル (TanStack グリッド) のセル/ヘッダ単位のスタイル。
@@ -940,6 +946,14 @@ interface Props {
    */
   onPinResult?: () => void;
   canPinResult?: boolean;
+  /**
+   * 復元するグリッドの縦スクロール位置 (px、#678)。テーブルタブのみ App が渡す。
+   * 行が揃った後に一度だけ、スクロール可能域へクランプして適用する (行が減っていたら
+   * 末尾へクランプ)。
+   */
+  initialScrollTop?: number;
+  /** スクロール位置が変わるたびに現在の scrollTop を通知する (#678。タブ永続化用)。 */
+  onScroll?: (scrollTop: number) => void;
 }
 
 export interface ResultGridHandle {
@@ -2374,8 +2388,53 @@ export function DataGrid({
     [columnKinds, rows],
   );
 
-  const [sorting, setSorting] = useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  // --- Sort & column filters, persisted per result shape (#677) ---
+  // Column widths/order/visibility were already persisted (#616); sort and
+  // column filters used to reset on every reopen. They now ride the same
+  // per-result-shape key (`gridViewStateKeyFrom` mirrors `colStateKeyFrom`) so
+  // "column widths remembered but sort forgotten" no longer feels broken.
+  const gridViewKey = useMemo(
+    () => gridViewStateKeyFrom(columnSizingStorageKey),
+    [columnSizingStorageKey],
+  );
+  const [sorting, setSorting] = useState<SortingState>(
+    () => readStoredGridView(gridViewKey).sorting ?? [],
+  );
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
+    () => readStoredGridView(gridViewKey).filters ?? [],
+  );
+  const sortingRef = useRef(sorting);
+  sortingRef.current = sorting;
+  const columnFiltersRef = useRef(columnFilters);
+  columnFiltersRef.current = columnFilters;
+  // Reload sort/filters when the result shape (table) changes. Persisting only
+  // happens on user interaction (below), so this load never races a stale write.
+  useEffect(() => {
+    const s = readStoredGridView(gridViewKey);
+    setSorting(s.sorting ?? []);
+    setColumnFilters(s.filters ?? []);
+  }, [gridViewKey]);
+  const handleSortingChange: OnChangeFn<SortingState> = (updater) => {
+    const next = typeof updater === "function" ? updater(sortingRef.current) : updater;
+    setSorting(next);
+    writeStoredGridView(gridViewKey, toPersistedGridView(next, columnFiltersRef.current));
+  };
+  const handleColumnFiltersChange: OnChangeFn<ColumnFiltersState> = (updater) => {
+    const next = typeof updater === "function" ? updater(columnFiltersRef.current) : updater;
+    setColumnFilters(next);
+    writeStoredGridView(gridViewKey, toPersistedGridView(sortingRef.current, next));
+  };
+  // Clear both sort and filters, persisting the reset in one write (avoids the
+  // stale-ref hazard of calling the two handlers back to back).
+  const clearSortAndFilters = useCallback(() => {
+    setSorting([]);
+    setColumnFilters([]);
+    writeStoredGridView(gridViewKey, {});
+  }, [gridViewKey]);
+  const clearSorting = useCallback(() => {
+    setSorting([]);
+    writeStoredGridView(gridViewKey, toPersistedGridView([], columnFiltersRef.current));
+  }, [gridViewKey]);
 
   // Column widths persist per result shape. The ref mirrors the live state so
   // functional updates from TanStack resolve against the latest value without
@@ -2798,8 +2857,8 @@ export function DataGrid({
       columnPinning,
       ...(paginationState ? { pagination: paginationState } : {}),
     },
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
+    onSortingChange: handleSortingChange,
+    onColumnFiltersChange: handleColumnFiltersChange,
     onColumnSizingChange: handleColumnSizingChange,
     onColumnOrderChange: handleColumnOrderChange,
     onColumnVisibilityChange: handleColumnVisibilityChange,
@@ -3632,10 +3691,7 @@ export function DataGrid({
             <chakra.button
               type="button"
               className="grid-filter-clear"
-              onClick={() => {
-                setColumnFilters([]);
-                setSorting([]);
-              }}
+              onClick={clearSortAndFilters}
             >
               {t("gridClearFilters")}
             </chakra.button>
@@ -3644,7 +3700,7 @@ export function DataGrid({
             <chakra.button
               type="button"
               className="grid-filter-clear"
-              onClick={() => setSorting([])}
+              onClick={clearSorting}
             >
               {t("gridClearSort")}
             </chakra.button>
@@ -4523,6 +4579,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onToggleMaximize,
   onPinResult,
   canPinResult,
+  initialScrollTop,
+  onScroll,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -4561,6 +4619,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   }, [autoRefreshSecs]);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // Scroll position capture/restore for tab persistence (#678). `onScrollRef`
+  // keeps the callback fresh without re-binding the listener; `scrollRestoredRef`
+  // ensures the persisted position is applied at most once per mount.
+  const onScrollRef = useRef(onScroll);
+  onScrollRef.current = onScroll;
+  const scrollRestoredRef = useRef(false);
   // 直近に再生済みの apply-flash タイムスタンプ。タブ切替などで同じ
   // lastEditAppliedAt を持つ ResultGrid が再マウント/再評価されても、過去の成功時刻で
   // フラッシュが再発火しないよう単調増加チェックに使う。
@@ -4720,6 +4784,36 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     el.addEventListener("scroll", trigger, { passive: true });
     return () => el.removeEventListener("scroll", trigger);
   }, [canLoadMore, loadingMore, result?.rows.length]);
+
+  // Report the grid's scroll position so table tabs can restore where the user
+  // was (#678). Independent of the load-more listener (which is conditional).
+  // Re-binds only when the container mounts/unmounts (result toggles null ↔ set);
+  // the same DOM node persists across result replacements, so it stays attached.
+  const hasResultForScroll = result != null;
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const report = () => onScrollRef.current?.(el.scrollTop);
+    el.addEventListener("scroll", report, { passive: true });
+    return () => el.removeEventListener("scroll", report);
+  }, [hasResultForScroll]);
+
+  // Restore the persisted scroll position once, after rows first populate (#678).
+  // Clamp to the scrollable range so a now-shorter result lands at the end
+  // instead of overscrolling. Applied at most once per mount (`scrollRestoredRef`).
+  useEffect(() => {
+    if (scrollRestoredRef.current) return;
+    if (!initialScrollTop || initialScrollTop <= 0) {
+      scrollRestoredRef.current = true;
+      return;
+    }
+    const el = containerRef.current;
+    if (!el) return;
+    if ((result?.rows.length ?? 0) === 0) return; // wait for rows to lay out
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    el.scrollTop = Math.min(initialScrollTop, max);
+    scrollRestoredRef.current = true;
+  }, [initialScrollTop, result?.rows.length]);
 
   // PK indices and per-column editability are computed once per render so
   // both the toolbar (gating Preview/Apply) and the grid agree on which
