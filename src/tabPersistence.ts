@@ -121,10 +121,15 @@ function sanitizeTab(raw: unknown): PersistedTab | null {
   // Fidelity fields (#678) are all optional and dropped silently if malformed —
   // the editor text / result is still useful without the caret or scroll.
   if (isValidSelection(o.selection)) {
-    out.selection = { anchor: o.selection.anchor, head: o.selection.head };
+    // CodeMirror のオフセットは整数前提なので丸める (手編集/破損データ対策)。
+    out.selection = { anchor: Math.trunc(o.selection.anchor), head: Math.trunc(o.selection.head) };
   }
   if (isOffset(o.gridScrollTop)) out.gridScrollTop = o.gridScrollTop;
-  if (isOffset(o.pageSize) && o.pageSize > 0) out.pageSize = Math.trunc(o.pageSize);
+  // 0 < pageSize < 1 が trunc で 0 にならないよう、trunc 後に正数判定する。
+  if (isOffset(o.pageSize)) {
+    const ps = Math.trunc(o.pageSize);
+    if (ps > 0) out.pageSize = ps;
+  }
   return out;
 }
 

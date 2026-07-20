@@ -4809,11 +4809,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     }
     const el = containerRef.current;
     if (!el) return;
+    if (streaming) return; // ストリーミング完了前は行の並びが確定しないため復元を待つ
     if ((result?.rows.length ?? 0) === 0) return; // wait for rows to lay out
     const max = Math.max(0, el.scrollHeight - el.clientHeight);
     el.scrollTop = Math.min(initialScrollTop, max);
     scrollRestoredRef.current = true;
-  }, [initialScrollTop, result?.rows.length]);
+  }, [initialScrollTop, result?.rows.length, streaming]);
 
   // PK indices and per-column editability are computed once per render so
   // both the toolbar (gating Preview/Apply) and the grid agree on which

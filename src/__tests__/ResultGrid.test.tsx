@@ -218,10 +218,10 @@ describe("ResultGrid", () => {
 
 describe("カラム別フィルタ (#390)", () => {
   beforeEach(() => {
-    setLocale("en");
     // ソート・列フィルタは結果シェイプ単位で localStorage に永続化される (#677)。
     // 同一結果 (FRUIT_RESULT) を使う各テストが前のフィルタを読み込まないようクリアする。
     localStorage.clear();
+    setLocale("en");
   });
 
   const NULLABLE_COLUMNS: Column[] = [
@@ -737,7 +737,10 @@ describe("集計フッター行 (#645)", () => {
 // 複数列ソート
 // ─────────────────────────────────────────────────────────────────────────────
 describe("複数列ソート (#479)", () => {
-  beforeEach(() => setLocale("en"));
+  beforeEach(() => {
+    localStorage.clear();
+    setLocale("en");
+  });
 
   const SORT_COLUMNS: Column[] = [
     { name: "status", type_name: "VARCHAR" },

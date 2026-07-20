@@ -407,26 +407,19 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setDatabases(dbs);
 
       const existingOpenDbs = openDbNames.filter((db) => dbs.includes(db));
-      if (existingOpenDbs.length === 0) {
-        // Nothing survived: collapse and clean storage if it held stale keys.
-        if (openDbNames.length > 0 || openTableKeys.length > 0) {
-          setExpandedDbs({});
-          setExpandedTables({});
-          persistTree({}, {});
-        }
-        return;
-      }
 
       // Fetch tables (+ estimates + non-table objects) for the open DBs.
       const nextTables: Record<string, string[]> = {};
       const nextEstimates: Record<string, Record<string, number | null>> = {};
       const nextObjects: Record<string, SchemaObject[]> = {};
+      const failedTableDbs = new Set<string>();
       await Promise.all(
         existingOpenDbs.map(async (db) => {
           try {
             nextTables[db] = await api.listTables(targetSessionId, db);
           } catch {
             // Skip a database that failed to list; re-expanding retries it.
+            failedTableDbs.add(db);
           }
           try {
             const est = await api.tableRowEstimates(targetSessionId, db);
@@ -445,10 +438,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       );
       if (sessionIdRef.current !== targetSessionId) return;
 
-      // Fetch columns (+ indexes) for open tables that still exist.
+      // Fetch columns (+ indexes) only for open tables under an open DB that we
+      // listed and confirmed still exist.
       const nextCols: Record<string, TableColumnInfo[]> = {};
       const nextIndexes: Record<string, IndexInfo[]> = {};
-      const survivingTableKeys: string[] = [];
       await Promise.all(
         openTableKeys.map(async (key) => {
           const sep = key.indexOf("::");
@@ -456,7 +449,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           const db = key.slice(0, sep);
           const tbl = key.slice(sep + 2);
           if (!nextTables[db]?.includes(tbl)) return;
-          survivingTableKeys.push(key);
           try {
             nextCols[key] = await api.describeTable(targetSessionId, db, tbl);
           } catch {
@@ -477,18 +469,44 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setTableColumns((prev) => ({ ...prev, ...nextCols }));
       setTableIndexes((prev) => ({ ...prev, ...nextIndexes }));
 
-      // Prune vanished DBs/tables from the live state and storage.
-      const cleanedDbs: Record<string, boolean> = {};
-      for (const db of existingOpenDbs) cleanedDbs[db] = true;
-      const cleanedTables: Record<string, boolean> = {};
-      for (const key of survivingTableKeys) cleanedTables[key] = true;
-      setExpandedDbs(cleanedDbs);
-      setExpandedTables(cleanedTables);
+      // Prune only DBs/tables we can CONFIRM are gone. A table key is dropped
+      // only when its DB no longer exists, or its DB was listed here and the
+      // table is absent. Tables under a collapsed DB (not listed this pass) or a
+      // DB whose listTables failed are "unknown" and kept, so a transient error
+      // or a closed-but-existing DB never wipes persisted expansion (#677).
+      const keptTableKeys = openTableKeys.filter((key) => {
+        const sep = key.indexOf("::");
+        if (sep < 0) return false; // malformed → drop
+        const db = key.slice(0, sep);
+        const tbl = key.slice(sep + 2);
+        if (!dbs.includes(db)) return false; // DB gone → table gone
+        const listed = nextTables[db]; // undefined = collapsed DB or listTables failed
+        if (listed && !listed.includes(tbl)) return false; // confirmed absent
+        return true; // present or unknown → keep
+      });
+      // Merge onto the latest live state (via refs) so DBs/tables the user
+      // expanded during the async restore aren't clobbered (#677). Only keys we
+      // confirmed gone are removed; survivors are ensured open.
+      const finalDbs: Record<string, boolean> = {};
+      for (const [db, open] of Object.entries(expandedDbsRef.current)) {
+        if (open && dbs.includes(db)) finalDbs[db] = true;
+      }
+      for (const db of existingOpenDbs) finalDbs[db] = true;
+      const goneTableKeys = new Set(openTableKeys.filter((k) => !keptTableKeys.includes(k)));
+      const finalTables: Record<string, boolean> = {};
+      for (const [key, open] of Object.entries(expandedTablesRef.current)) {
+        if (open && !goneTableKeys.has(key)) finalTables[key] = true;
+      }
+      for (const key of keptTableKeys) finalTables[key] = true;
+      setExpandedDbs(finalDbs);
+      setExpandedTables(finalTables);
+      // Persist the pruned baseline only when we actually removed stale keys
+      // (user toggles during restore already persisted themselves).
       if (
         existingOpenDbs.length !== openDbNames.length ||
-        survivingTableKeys.length !== openTableKeys.length
+        keptTableKeys.length !== openTableKeys.length
       ) {
-        persistTree(cleanedDbs, cleanedTables);
+        persistTree(finalDbs, finalTables);
       }
     },
     [persistTree],

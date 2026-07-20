@@ -1966,6 +1966,11 @@ export default function App() {
     // Cancel any in-flight streams before tearing down tabs.
     const ids = Array.from(streamIdRef.current.keys());
     await Promise.all(ids.map((tid) => cancelStreamForTab(tid)));
+    // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
+    for (const tt of tabsRef.current) {
+      editorSelectionRef.current.delete(tt.id);
+      gridScrollRef.current.delete(tt.id);
+    }
     setTabs([]);
     setPanes([]);
     setActivePaneId(null);
@@ -4435,6 +4440,9 @@ export default function App() {
   // into a single pane.
   const handleCloseTab = useCallback((id: string) => {
     cancelStreamForTab(id);
+    // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
+    editorSelectionRef.current.delete(id);
+    gridScrollRef.current.delete(id);
     const prevPanes = panesRef.current;
     let removedPaneId: string | null = null;
     let next = prevPanes.map((p) => {
@@ -5167,7 +5175,7 @@ export default function App() {
                     key={tab.id}
                     ref={getEditorRefSetter(pane.id)}
                     initialSql={tab.sql}
-                    initialSelection={tab.selection}
+                    initialSelection={editorSelectionRef.current.get(tab.id) ?? tab.selection}
                     onSelectionChange={(sel) => editorSelectionRef.current.set(tab.id, sel)}
                     running={tab.streaming && !tab.previewStreaming}
                     previewRunning={tab.previewStreaming}
@@ -5371,9 +5379,14 @@ export default function App() {
                       </Flex>
                     )}
                     <ResultGrid
+                      key={tab.id}
                       ref={getGridRefSetter(pane.id)}
                       result={tab.result}
-                      initialScrollTop={tab.kind === "table" ? tab.gridScrollTop : undefined}
+                      initialScrollTop={
+                        tab.kind === "table"
+                          ? (gridScrollRef.current.get(tab.id) ?? tab.gridScrollTop)
+                          : undefined
+                      }
                       onScroll={(top) => gridScrollRef.current.set(tab.id, top)}
                       streaming={tab.streaming}
                       onStopStreaming={() => stopTab(tab)}
