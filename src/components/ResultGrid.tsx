@@ -814,6 +814,11 @@ export interface GridBindings {
   gridInspector: string;
   gridUndo: string;
   gridRedo: string;
+  /** ページ送り/戻し (#681)。Alt+←/→ の既定を App 側のページングへ正確に譲るための
+   *  参照専用バインド — DataGrid 自身はこのキーで何もしない (App の window
+   *  ハンドラが処理する)。 */
+  gridPageNext: string;
+  gridPagePrev: string;
 }
 
 interface Props {
@@ -2385,8 +2390,8 @@ export function DataGrid({
   /** 現在ヒットへのスクロール/選択/フォーカス移動の要求 (seq で再発火)。 */
   findNav?: GridFindNav | null;
   /**
-   * コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo の解決済みバインド (#681)。
-   * 省略時は今日の既定キーのまま (`DEFAULT_SHORTCUT_COMBOS`)。
+   * コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/ページ送りの解決済みバインド
+   * (#681)。省略時は今日の既定キーのまま (`DEFAULT_SHORTCUT_COMBOS`)。
    */
   gridBindings?: GridBindings;
 }) {
@@ -2406,6 +2411,8 @@ export function DataGrid({
       gridInspector: gridBindings?.gridInspector ?? DEFAULT_SHORTCUT_COMBOS.gridInspector,
       gridUndo: gridBindings?.gridUndo ?? DEFAULT_SHORTCUT_COMBOS.gridUndo,
       gridRedo: gridBindings?.gridRedo ?? DEFAULT_SHORTCUT_COMBOS.gridRedo,
+      gridPageNext: gridBindings?.gridPageNext ?? DEFAULT_SHORTCUT_COMBOS.gridPageNext,
+      gridPagePrev: gridBindings?.gridPagePrev ?? DEFAULT_SHORTCUT_COMBOS.gridPagePrev,
     }),
     [gridBindings],
   );
@@ -3355,6 +3362,11 @@ export function DataGrid({
     }
     if (comboMatchesEvent(effectiveGridBindings.gridUndo, ne)) {
       e.preventDefault();
+      // App レベルのグローバル Undo/Redo ハンドラ (window の keydown リスナ) が
+      // 同じキー押下を二重に処理してしまわないよう、ここで止める
+      // (CodeRabbit レビュー対応: stopPropagation しないと 1 回の押下で 2 回
+      // undo/redo が走っていた)。
+      e.stopPropagation();
       onUndoEdit?.();
       return;
     }
@@ -3363,6 +3375,7 @@ export function DataGrid({
       ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "y" || e.key === "Y"))
     ) {
       e.preventDefault();
+      e.stopPropagation();
       onRedoEdit?.();
       return;
     }
@@ -3387,16 +3400,28 @@ export function DataGrid({
         if (visIdx < rowCount - 1) go(visibleRows[visIdx + 1].index, colIdx);
         break;
       case "ArrowLeft":
-        // Alt+← は App レベルのページ送り (#681、gridPagePrev) に譲り、ここでは
-        // 何もしない (preventDefault もしない) — bubble したイベントをそちらが
-        // 拾う。セル移動と同時発火するのを防ぐ。
-        if (e.altKey) break;
+        // gridPagePrev/gridPageNext (既定 Alt+←/→、#681) は App レベルのページ
+        // 送りに譲り、ここでは何もしない (preventDefault もしない) — bubble した
+        // イベントをそちらが拾う。セル移動と同時発火するのを防ぐ。リバインド後も
+        // 正しく譲れるよう、素の e.altKey ではなく解決済みコンボそのものを見る
+        // (#681 レビュー対応)。
+        if (
+          comboMatchesEvent(effectiveGridBindings.gridPageNext, ne) ||
+          comboMatchesEvent(effectiveGridBindings.gridPagePrev, ne)
+        ) {
+          break;
+        }
         e.preventDefault();
         if (colPos > 0) go(rowIdx, visibleColIds[colPos - 1]);
         break;
       case "ArrowRight":
-        // Alt+→ も同様に gridPageNext に譲る。
-        if (e.altKey) break;
+        // 同上。
+        if (
+          comboMatchesEvent(effectiveGridBindings.gridPageNext, ne) ||
+          comboMatchesEvent(effectiveGridBindings.gridPagePrev, ne)
+        ) {
+          break;
+        }
         e.preventDefault();
         if (colPos >= 0 && colPos < lastColPos) go(rowIdx, visibleColIds[colPos + 1]);
         break;

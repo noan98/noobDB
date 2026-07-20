@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api/tauri";
@@ -608,15 +608,34 @@ export function SettingsView({ theme, onClose }: Props) {
     if (!q) return SECTIONS;
     return SECTIONS.filter((sec) => t(sec.titleKey).toLowerCase().includes(q));
   })();
+  // ナビクリック直後は smooth スクロールの中間イベントでスクロールスパイが
+  // ハイライトを巻き戻してしまう (#680 レビュー対応)。クリックから 600ms は
+  // handleModalBodyScroll を早期リターンさせて抑制する。
+  const suppressSpyUntilRef = useRef(0);
   const handleNavClick = (id: string) => {
     setActiveSection(id);
+    suppressSpyUntilRef.current = Date.now() + 600;
     document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
   const handleModalBodyScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (Date.now() < suppressSpyUntilRef.current) return;
     const container = e.currentTarget;
     const containerTop = container.getBoundingClientRect().top;
-    let current = SECTIONS[0].id;
-    for (const sec of SECTIONS) {
+    // 検索で絞り込み中は、表示されているナビ (filteredSections) の中からだけ
+    // アクティブセクションを選ぶ — フルリストで選ぶと `aria-current` が非表示の
+    // ボタンに付いてしまう (#680 レビュー対応)。絞り込み結果が空のときは
+    // (ナビにボタンが無く aria-current の対象も無いので) フルリストで計算しておく。
+    const sections = filteredSections.length > 0 ? filteredSections : SECTIONS;
+    // 一番下までスクロールしたら、リストの最後のセクションを強制的にアクティブに
+    // する。最後のセクションが短いと先頭がコンテナ上端に到達しないまま末尾に着く
+    // ことがあり、その場合でも一番下までスクロールしたら経路をここで補う
+    // (#680 レビュー対応)。
+    if (container.scrollTop + container.clientHeight >= container.scrollHeight - 4) {
+      setActiveSection(sections[sections.length - 1].id);
+      return;
+    }
+    let current = sections[0].id;
+    for (const sec of sections) {
       const el = document.getElementById(sec.id);
       if (!el) continue;
       // セクション先頭がコンテナ上端よりわずかに下 (24px 以内) までなら
@@ -836,7 +855,7 @@ export function SettingsView({ theme, onClose }: Props) {
       </ModalHeader>
       <ModalBody onScroll={handleModalBodyScroll}>
         <chakra.div display="flex" gap="16px" alignItems="flex-start">
-        <SettingsNavAside aria-label={t("settingsSearchPlaceholder")}>
+        <SettingsNavAside aria-label={t("settingsNavAria")}>
           <Input
             value={navQuery}
             onChange={(e) => setNavQuery(e.target.value)}

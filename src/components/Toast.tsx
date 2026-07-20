@@ -91,14 +91,20 @@ let nextId = 1;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  // アクション付きトースト (Undo 等、#676) は hover/focus 中に自動消滅を一時停止
+  // できるよう、残り時間と現在の計測開始時刻を toast ごとに憶える。通常の
+  // トーストは pause/resume を呼ぶ経路が無いので参照されないだけで挙動は不変。
+  const timerMeta = useRef<Map<number, { remaining: number; startedAt: number }>>(new Map());
 
   // Clear any pending auto-dismiss timers if the provider unmounts so they
   // can't fire setState on a torn-down instance.
   useEffect(() => {
     const pending = timers.current;
+    const pendingMeta = timerMeta.current;
     return () => {
       pending.forEach(clearTimeout);
       pending.clear();
+      pendingMeta.clear();
     };
   }, []);
 
@@ -109,7 +115,44 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       clearTimeout(timer);
       timers.current.delete(id);
     }
+    timerMeta.current.delete(id);
   }, []);
+
+  // 指定ミリ秒後に dismiss する新しいタイマーを張る。同じ id で pause → resume
+  // したときも、この関数で「残り時間」から再度張り直す。
+  const armTimer = useCallback(
+    (id: number, ms: number) => {
+      timerMeta.current.set(id, { remaining: ms, startedAt: Date.now() });
+      timers.current.set(
+        id,
+        setTimeout(() => dismiss(id), ms),
+      );
+    },
+    [dismiss],
+  );
+
+  // Hover/focus の間だけ自動消滅を止める (#676 レビュー対応)。経過分を残り時間
+  // から差し引いておき、resume 時にそこから再開する。
+  const pauseTimer = useCallback((id: number) => {
+    const timer = timers.current.get(id);
+    if (!timer) return;
+    clearTimeout(timer);
+    timers.current.delete(id);
+    const meta = timerMeta.current.get(id);
+    if (meta) {
+      const elapsed = Date.now() - meta.startedAt;
+      meta.remaining = Math.max(0, meta.remaining - elapsed);
+    }
+  }, []);
+
+  const resumeTimer = useCallback(
+    (id: number) => {
+      const meta = timerMeta.current.get(id);
+      if (!meta || meta.remaining <= 0) return;
+      armTimer(id, meta.remaining);
+    },
+    [armTimer],
+  );
 
   const notify = useCallback(
     (opts: ToastOptions) => {
@@ -121,13 +164,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         opts.duration ?? (opts.action ? 8000 : tone === "error" ? 6000 : 3500);
       setToasts((cur) => [...cur, { id, message: opts.message, tone, action: opts.action }]);
       if (duration > 0) {
-        timers.current.set(
-          id,
-          setTimeout(() => dismiss(id), duration),
-        );
+        armTimer(id, duration);
       }
     },
-    [dismiss],
+    [armTimer],
   );
 
   const api = useMemo<ToastApi>(
@@ -187,6 +227,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 boxShadow="elevationToast"
                 fontSize="sm"
                 color="app.text"
+                // アクション (Undo 等) 付きトーストのみ、hover/focus 中は自動消滅を
+                // 止める (#676 レビュー対応)。通常のトーストにはハンドラを付けず
+                // 挙動を変えない。onBlur は focus が Box 内の別要素 (アクション
+                // ボタン等) へ移っただけなら resume しない (focus-within 相当)。
+                {...(toast.action && {
+                  onMouseEnter: () => pauseTimer(toast.id),
+                  onMouseLeave: () => resumeTimer(toast.id),
+                  onFocus: () => pauseTimer(toast.id),
+                  onBlur: (e: React.FocusEvent<HTMLDivElement>) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                      resumeTimer(toast.id);
+                    }
+                  },
+                })}
               >
                 {toast.tone !== "info" && (
                   <chakra.span

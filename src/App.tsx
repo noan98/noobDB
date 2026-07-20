@@ -233,6 +233,8 @@ import { reorderIfPermutation } from "./tabReorder";
 import { formatElapsed } from "./queryRunState";
 import {
   buildPageSql,
+  canGoNext,
+  canGoPrev,
   clampPage,
   estimatedTotalPages,
 } from "./pagination";
@@ -915,9 +917,12 @@ export default function App() {
       shortcutBindings.format,
     ],
   );
-  // グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo、
-  // #681) の解決済みバインド。`ResultGrid` の内側 `DataGrid` の keydown ハンドラへ
-  // 渡し、既定は今日の挙動 (Mod+C 等) のまま再割り当て可能にする。
+  // グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/
+  // ページ送り、#681) の解決済みバインド。`ResultGrid` の内側 `DataGrid` の
+  // keydown ハンドラへ渡し、既定は今日の挙動 (Mod+C・Alt+←/→ 等) のまま再割り当て
+  // 可能にする。gridPageNext/gridPagePrev はここに含めることで、リバインド後の
+  // コンボでも DataGrid 側のナビゲーション switch が正しく App へ譲る (#681 レビュー
+  // 対応。素の e.altKey 判定だと再割り当て後に矛盾していた)。
   const gridBindings = useMemo(
     () => ({
       gridCopy: shortcutBindings.gridCopy,
@@ -925,6 +930,8 @@ export default function App() {
       gridInspector: shortcutBindings.gridInspector,
       gridUndo: shortcutBindings.gridUndo,
       gridRedo: shortcutBindings.gridRedo,
+      gridPageNext: shortcutBindings.gridPageNext,
+      gridPagePrev: shortcutBindings.gridPagePrev,
     }),
     [
       shortcutBindings.gridCopy,
@@ -932,6 +939,8 @@ export default function App() {
       shortcutBindings.gridInspector,
       shortcutBindings.gridUndo,
       shortcutBindings.gridRedo,
+      shortcutBindings.gridPageNext,
+      shortcutBindings.gridPagePrev,
     ],
   );
   const [showSettings, setShowSettings] = useState(false);
@@ -4328,6 +4337,13 @@ export default function App() {
   const finalizeProfileDelete = useCallback(async (id: string) => {
     pendingProfileDeleteTimers.current.delete(id);
     await runWithErrorStatus(async () => {
+      // 削除確定前に、対象プロファイルのライブ接続 (アクティブ/背景いずれも) を
+      // 必ず切断する。接続を張ったまま keyring の資格情報だけ消すと、設定は
+      // 消えたのにセッションだけ生き残る孤立接続になってしまうため
+      // (CodeRabbit レビュー対応)。`handleDisconnectProfile` は対象が未接続なら
+      // 何もしない (no-op) ので、常時呼んでよい。Undo 済み (finalize 自体が
+      // キャンセル) の場合はここに到達しないので、切断は起きない。
+      await handleDisconnectProfile(id);
       await api.deleteProfile(id);
       await refreshProfiles();
     }, "statusFailedDeleteProfile");
@@ -4337,7 +4353,7 @@ export default function App() {
       next.delete(id);
       return next;
     });
-  }, [runWithErrorStatus, refreshProfiles]);
+  }, [runWithErrorStatus, refreshProfiles, handleDisconnectProfile]);
 
   const handleDeleteProfile = useCallback((profile: ConnectionProfile) => {
     const id = profile.id;
@@ -4352,7 +4368,9 @@ export default function App() {
     pendingProfileDeleteTimers.current.set(id, timer);
     toast.notify({
       message: translate("toastProfileDeleted", { name: profile.name }),
-      duration: PROFILE_DELETE_UNDO_MS,
+      // finalize タイマーが動き出す前にトーストが消えるよう、わずかに短くする
+      // (#676 レビュー対応: トースト表示中に finalize が走る競合を避ける)。
+      duration: PROFILE_DELETE_UNDO_MS - 500,
       action: {
         label: translate("toastUndo"),
         onAction: () => {
@@ -4644,17 +4662,43 @@ export default function App() {
       // Alt+←/→ → フォーカス中ペインのアクティブタブがページング可能なテーブル
       // タブなら 1 ページ送る/戻る (#681)。ストリーミング中・読み込み中・
       // ページング非対応タブでは何もしない (誤操作防止、goToPageInTab 自体の
-      // ガードとも二重化)。
+      // ガードとも二重化)。テキスト入力にフォーカスがある間は介入しない —
+      // セル編集 input / サイドバーフィルタ / モーダル入力での Option/Alt+矢印の
+      // 単語移動 (macOS) がページングとして誤爆し、pendingEdits を吹き飛ばすのを
+      // 防ぐ (#681 レビュー対応、resultSearch と同じ判定を流用)。
       const pageNext = comboMatchesEvent(bindingsRef.current.gridPageNext, e);
       const pagePrev = !pageNext && comboMatchesEvent(bindingsRef.current.gridPagePrev, e);
       if (pageNext || pagePrev) {
+        const target = e.target as HTMLElement | null;
+        if (target) {
+          const tag = target.tagName;
+          if (
+            tag === "INPUT" ||
+            tag === "TEXTAREA" ||
+            tag === "SELECT" ||
+            target.isContentEditable ||
+            target.closest(".cm-editor")
+          ) {
+            return;
+          }
+        }
         const pane = focusedPane();
         const tab = pane ? tabsRef.current.find((tt) => tt.id === pane.activeTabId) : undefined;
         if (!tab || tab.kind !== "table" || !tab.paginatable || tab.streaming || tab.loadingMore) {
           return;
         }
+        // PaginationBar (#src/components/PaginationBar.tsx) と同じ判定を使い、
+        // 次/前ページが実在するときだけ送る。存在しないページを取りに行かない
+        // (#681 レビュー対応)。
+        const pageSize = tab.pageSize ?? tab.previewRowLimit;
+        const totalPages = estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
+        const page = tab.page ?? 1;
+        const canAdvance = pageNext
+          ? canGoNext(page, totalPages, tab.result?.rows.length ?? 0, pageSize)
+          : canGoPrev(page);
+        if (!canAdvance) return;
         e.preventDefault();
-        void goToPageInTab(tab.id, (tab.page ?? 1) + (pageNext ? 1 : -1));
+        void goToPageInTab(tab.id, page + (pageNext ? 1 : -1));
         return;
       }
       // F6 → サイドバー/エディタ/結果グリッドの間でキーボードフォーカスを順に
@@ -4969,12 +5013,18 @@ export default function App() {
   // `openFullView` 定義後に置くことで宣言順を素直にしている)。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if (comboMatchesEvent(bindingsRef.current.openSettings, e)) {
+        // 接続フォーム/スニペットフォームの入力途中を openFullView が無条件に
+        // 閉じてしまう (setShowForm(false) 等) ので、開いている間はショートカット
+        // 自体を素通しして未保存内容を守る (#681 レビュー対応)。
+        if (showForm || showSnippetForm) return;
         e.preventDefault();
         openFullView("settings");
         return;
       }
       if (comboMatchesEvent(bindingsRef.current.openHelp, e)) {
+        if (showForm || showSnippetForm) return;
         e.preventDefault();
         openFullView("help");
         return;
@@ -4992,7 +5042,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [openFullView, toggleTheme, toggleSidebar]);
+  }, [openFullView, toggleTheme, toggleSidebar, showForm, showSnippetForm]);
 
   // パレットの「現在の DB」を要する項目 (スキーマエクスポート等) の対象 DB。
   const paletteDatabase = activeTab?.database ?? selectedProfile?.database ?? null;
@@ -5090,8 +5140,9 @@ export default function App() {
       });
     }
 
-    // 接続プロファイル。
-    for (const profile of profiles) {
+    // 接続プロファイル。削除 Undo 待ち (#676) のプロファイルは、finalize で
+    // keyring ごと消える前に接続されてしまわないよう除外する。
+    for (const profile of visibleProfiles) {
       const isSqlite = profile.driver === "sqlite";
       const sublabel = isSqlite
         ? profile.file_path ?? ""
@@ -5162,7 +5213,7 @@ export default function App() {
     sessionId,
     selectedProfile?.id,
     paletteDatabase,
-    profiles,
+    visibleProfiles,
     schemaCache,
     snippets,
     queryHistory,
@@ -6074,7 +6125,7 @@ export default function App() {
       >
         <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
         {showCompare ? (
-          <SchemaCompareView profiles={profiles} onClose={() => setShowCompare(false)} />
+          <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
         ) : showErd && sessionId ? (
           <ERDiagramView
             sessionId={sessionId}

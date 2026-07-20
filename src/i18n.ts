@@ -1500,8 +1500,8 @@ const en = {
   shortcutGridCopyHeadersDesc: "Copy the selection with a header row of column names.",
   shortcutGridInspectorTitle: "Alt/Option+Enter",
   shortcutGridInspectorDesc: "Toggle the row inspector for the active row.",
-  shortcutEditUndoTitle: "Cmd/Ctrl+Z / ⇧Z",
-  shortcutEditUndoDesc: "Undo / redo pending inline cell edits (before Apply).",
+  shortcutEditUndoTitle: "Cmd/Ctrl+Z",
+  shortcutEditUndoDesc: "Undo the last pending inline cell edit (before Apply).",
   shortcutMaximizeResultTitle: "Cmd/Ctrl+Shift+M",
   shortcutMaximizeResultDesc: "Toggle maximizing the result panel.",
   resultMaximizeTitle: "Maximize the result panel (Cmd/Ctrl+Shift+M)",
@@ -1868,6 +1868,7 @@ const en = {
 
   settingsSearchPlaceholder: "Search settings…",
   settingsSearchNoMatch: "No matching settings",
+  settingsNavAria: "Settings sections",
 
   resultStatusBar: "{rows} rows · {ms} ms",
 
@@ -3424,8 +3425,8 @@ const ja: Dict = {
   shortcutGridCopyHeadersDesc: "列名のヘッダ行付きで選択範囲をコピーします。",
   shortcutGridInspectorTitle: "Alt/Option+Enter",
   shortcutGridInspectorDesc: "アクティブ行の行インスペクタを開閉します。",
-  shortcutEditUndoTitle: "Cmd/Ctrl+Z / ⇧Z",
-  shortcutEditUndoDesc: "未適用のインラインセル編集を Undo / Redo します (Apply 前)。",
+  shortcutEditUndoTitle: "Cmd/Ctrl+Z",
+  shortcutEditUndoDesc: "直前の未適用インラインセル編集を Undo します (Apply 前)。",
   shortcutMaximizeResultTitle: "Cmd/Ctrl+Shift+M",
   shortcutMaximizeResultDesc: "結果パネルの最大化表示を切り替えます。",
   resultMaximizeTitle: "結果パネルを最大化（Cmd/Ctrl+Shift+M）",
@@ -3793,6 +3794,7 @@ const ja: Dict = {
 
   settingsSearchPlaceholder: "設定を検索…",
   settingsSearchNoMatch: "一致する設定がありません",
+  settingsNavAria: "設定セクション",
 
   resultStatusBar: "{rows} 件 · {ms} ms",
 
