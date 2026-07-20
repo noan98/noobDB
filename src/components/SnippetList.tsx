@@ -29,7 +29,8 @@ interface Props {
   activeProfile: ConnectionProfile | null;
   onInsert: (snippet: Snippet) => void;
   onEdit: (snippet: Snippet) => void;
-  onDelete: (id: string) => void;
+  /** Passes the full snippet (not just id) so the caller can offer an Undo (#676). */
+  onDelete: (snippet: Snippet) => void;
   /** Empty-state CTA: open a fresh snippet form (same handler as the header "+" button, #599). */
   onCreate?: () => void;
   /** 実行計画ウォッチ (#743) 登録済みのスニペット ID (アクティブプロファイル分)。 */
@@ -140,7 +141,7 @@ export const SnippetList = memo(function SnippetList({
       label: t("snippetMenuDelete"),
       danger: true,
       onSelect: () => {
-        if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s.id);
+        if (confirm(t("snippetDeleteConfirm", { name: s.name }))) onDelete(s);
       },
     });
     setMenu({ x: e.clientX, y: e.clientY, items });

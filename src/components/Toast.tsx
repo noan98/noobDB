@@ -36,17 +36,30 @@ const TONE_COLOR: Record<ToastTone, string> = {
   info: semanticColorToken(TONE_ROLE.info, "text"),
 };
 
+/** 取り消しなどのアクションボタン 1 つ (#676)。押すとハンドラを実行してトーストを
+ *  閉じる。キーボードからも到達できる (通常の button)。 */
+export interface ToastAction {
+  label: string;
+  onAction: () => void;
+}
+
 export interface ToastOptions {
   message: string;
   tone?: ToastTone;
   /** Auto-dismiss delay in ms. `0` keeps the toast until dismissed by hand. */
   duration?: number;
+  /**
+   * 任意のアクション (Undo など、#676)。指定すると本文の右にボタンを描画する。
+   * アクション付きトーストは既定の表示時間を長めにして押す余裕を持たせる。
+   */
+  action?: ToastAction;
 }
 
 interface ToastItem {
   id: number;
   message: string;
   tone: ToastTone;
+  action?: ToastAction;
 }
 
 interface ToastApi {
@@ -102,9 +115,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (opts: ToastOptions) => {
       const id = nextId++;
       const tone = opts.tone ?? "info";
-      // Errors linger longer than confirmations so they can be read.
-      const duration = opts.duration ?? (tone === "error" ? 6000 : 3500);
-      setToasts((cur) => [...cur, { id, message: opts.message, tone }]);
+      // Errors linger longer than confirmations so they can be read; toasts with
+      // an action (e.g. Undo, #676) also linger so the user has time to click.
+      const duration =
+        opts.duration ?? (opts.action ? 8000 : tone === "error" ? 6000 : 3500);
+      setToasts((cur) => [...cur, { id, message: opts.message, tone, action: opts.action }]);
       if (duration > 0) {
         timers.current.set(
           id,
@@ -186,6 +201,33 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 <chakra.span flex="1" minW={0} lineHeight="1.4" wordBreak="break-word">
                   {toast.message}
                 </chakra.span>
+                {toast.action && (
+                  <chakra.button
+                    type="button"
+                    onClick={() => {
+                      // Run the action, then dismiss so the toast doesn't linger.
+                      toast.action?.onAction();
+                      dismiss(toast.id);
+                    }}
+                    flexShrink={0}
+                    display="inline-flex"
+                    alignItems="center"
+                    px="2"
+                    py="1"
+                    fontSize="sm"
+                    fontWeight={600}
+                    color={TONE_COLOR[toast.tone]}
+                    bg="transparent"
+                    border="1px solid"
+                    borderColor="app.border"
+                    borderRadius="sm"
+                    cursor="pointer"
+                    whiteSpace="nowrap"
+                    _hover={{ bg: "app.hover" }}
+                  >
+                    {toast.action.label}
+                  </chakra.button>
+                )}
                 <chakra.button
                   type="button"
                   onClick={() => dismiss(toast.id)}

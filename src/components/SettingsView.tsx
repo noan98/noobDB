@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api/tauri";
-import { useT } from "../i18n";
+import { useT, type I18nKey } from "../i18n";
 import { Icon } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
@@ -18,6 +18,7 @@ import { KeybindingSettings } from "./KeybindingSettings";
 import { KnownHostsPanel } from "./KnownHostsPanel";
 import { useToast } from "./Toast";
 import {
+  AUTO_REFRESH_INTERVAL_OPTIONS,
   DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   DEFAULT_DISPLAY_COUNT,
@@ -64,6 +65,7 @@ import {
   setAutoLimitEnabled,
   setAutoReconnectEnabled,
   setAutoReconnectMaxRetries,
+  setAutoRefreshDefaultSecs,
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
   setResultsInNewTab,
@@ -503,6 +505,88 @@ const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> 
   rose: "settingsAccentRose",
 };
 
+/**
+ * セクションナビ + 検索 (#680) が参照するセクション一覧。`id` は各セクション要素の
+ * DOM id (Task B で各 `<SettingsSection>` / 外部コンポーネントのラッパーに付与) と、
+ * `titleKey` は見出しの i18n キーと一致させる。並び順は実際のセクション出現順
+ * (ModalBody 内の DOM 順) と揃えること — スクロールスパイの「一番上に見えている
+ * セクション」判定がこの並び順を前提にしている。
+ */
+interface SettingsSectionMeta {
+  id: string;
+  titleKey: I18nKey;
+}
+
+const SECTIONS: SettingsSectionMeta[] = [
+  { id: "settings-sec-language", titleKey: "settingsLanguage" },
+  { id: "settings-sec-appearance", titleKey: "settingsAppearance" },
+  { id: "settings-sec-streaming", titleKey: "settingsStreaming" },
+  { id: "settings-sec-auto-limit", titleKey: "settingsAutoLimit" },
+  { id: "settings-sec-sql-lint", titleKey: "settingsSqlLint" },
+  { id: "settings-sec-plan-watch", titleKey: "settingsPlanWatch" },
+  { id: "settings-sec-result-grid", titleKey: "settingsResultGridMode" },
+  { id: "settings-sec-safety", titleKey: "settingsSafety" },
+  { id: "settings-sec-notifications", titleKey: "settingsNotifications" },
+  { id: "settings-sec-tab-persistence", titleKey: "settingsTabPersistence" },
+  { id: "settings-sec-syntax-highlighting", titleKey: "settingsSyntaxHighlighting" },
+  { id: "settings-sec-preview-highlight", titleKey: "settingsPreviewHighlight" },
+  { id: "settings-sec-keybindings", titleKey: "settingsShortcuts" },
+  { id: "settings-sec-logs", titleKey: "settingsLogs" },
+  { id: "settings-sec-knownhosts", titleKey: "knownHostsTitle" },
+  { id: "settings-sec-updates", titleKey: "settingsUpdates" },
+  { id: "settings-sec-backup", titleKey: "settingsBackup" },
+];
+
+// セクションナビ (左ペイン) のレイアウト要素。
+const SettingsNavAside = chakra("aside", {
+  base: {
+    position: "sticky",
+    top: "0",
+    alignSelf: "flex-start",
+    display: "flex",
+    flexDirection: "column",
+    gap: "2",
+    minW: "180px",
+    maxW: "220px",
+    maxH: "calc(90vh - 120px)",
+    overflowY: "auto",
+    flexShrink: 0,
+    "& input": { fontSize: "sm" },
+  },
+});
+
+const SettingsNavList = chakra("div", {
+  base: { display: "flex", flexDirection: "column", gap: "0.5" },
+});
+
+const SettingsNavButton = chakra("button", {
+  base: {
+    textAlign: "left",
+    px: "2.5",
+    py: "1.5",
+    fontSize: "sm",
+    fontWeight: 500,
+    color: "app.textSecondary",
+    background: "transparent",
+    border: "none",
+    borderRadius: "sm",
+    cursor: "pointer",
+    transitionProperty: "background, color",
+    transitionDuration: "var(--dur-fast)",
+    transitionTimingFunction: "var(--ease)",
+    _hover: { background: "app.hover", color: "app.text" },
+    "&[aria-current=true]": {
+      background: "app.hover",
+      color: "app.text",
+      fontWeight: 600,
+    },
+  },
+});
+
+const SettingsNavEmpty = chakra("p", {
+  base: { margin: 0, px: "2.5", py: "1", fontSize: "sm", color: "app.textMuted" },
+});
+
 export function SettingsView({ theme, onClose }: Props) {
   const t = useT();
   const toast = useToast();
@@ -511,6 +595,40 @@ export function SettingsView({ theme, onClose }: Props) {
   const colors = settings.syntaxColors[theme];
   const previewHighlight = settings.previewHighlight[theme];
   const themeLabel = t(theme === "dark" ? "settingsThemeDark" : "settingsThemeLight");
+
+  // セクションナビ + 検索 (#680)。検索語は翻訳済みの見出しに対して大小無視の部分一致で
+  // 絞り込む (毎レンダー再計算 — 17 件程度なので useMemo は不要)。アクティブセクションは
+  // ナビクリック時に即時更新し、加えて ModalBody のスクロールに追従させる
+  // (IntersectionObserver は jsdom 環境に存在せずテスト環境で扱いにくいため、
+  // スクロールイベントで「コンテナ上端に最も近いセクション」を判定する簡易実装)。
+  const [navQuery, setNavQuery] = useState("");
+  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
+  const filteredSections = (() => {
+    const q = navQuery.trim().toLowerCase();
+    if (!q) return SECTIONS;
+    return SECTIONS.filter((sec) => t(sec.titleKey).toLowerCase().includes(q));
+  })();
+  const handleNavClick = (id: string) => {
+    setActiveSection(id);
+    document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  const handleModalBodyScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    const containerTop = container.getBoundingClientRect().top;
+    let current = SECTIONS[0].id;
+    for (const sec of SECTIONS) {
+      const el = document.getElementById(sec.id);
+      if (!el) continue;
+      // セクション先頭がコンテナ上端よりわずかに下 (24px 以内) までなら
+      // 「表示中」とみなす。上端を超えたら手前のセクションが依然アクティブ。
+      if (el.getBoundingClientRect().top - containerTop <= 24) {
+        current = sec.id;
+      } else {
+        break;
+      }
+    }
+    setActiveSection(current);
+  };
 
   // Local input state so users can clear the field while typing without
   // snapping back to the persisted value on each keystroke.
@@ -716,9 +834,34 @@ export function SettingsView({ theme, onClose }: Props) {
       <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
         {t("settingsTitle")}
       </ModalHeader>
-      <ModalBody>
-        <chakra.div display="flex" flexDirection="column" gap="18px">
-      <SettingsSection>
+      <ModalBody onScroll={handleModalBodyScroll}>
+        <chakra.div display="flex" gap="16px" alignItems="flex-start">
+        <SettingsNavAside aria-label={t("settingsSearchPlaceholder")}>
+          <Input
+            value={navQuery}
+            onChange={(e) => setNavQuery(e.target.value)}
+            placeholder={t("settingsSearchPlaceholder")}
+            aria-label={t("settingsSearchPlaceholder")}
+          />
+          {filteredSections.length === 0 ? (
+            <SettingsNavEmpty>{t("settingsSearchNoMatch")}</SettingsNavEmpty>
+          ) : (
+            <SettingsNavList role="navigation" aria-label={t("settingsTitle")}>
+              {filteredSections.map((sec) => (
+                <SettingsNavButton
+                  key={sec.id}
+                  type="button"
+                  aria-current={activeSection === sec.id}
+                  onClick={() => handleNavClick(sec.id)}
+                >
+                  {t(sec.titleKey)}
+                </SettingsNavButton>
+              ))}
+            </SettingsNavList>
+          )}
+        </SettingsNavAside>
+        <chakra.div display="flex" flexDirection="column" gap="18px" flex="1" minW={0}>
+      <SettingsSection id="settings-sec-language" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsLanguage")}</chakra.h3>
         </SettingsSectionHeader>
@@ -728,7 +871,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsToggleRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-appearance" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsAppearance")}</chakra.h3>
           <SettingsReset onClick={resetAppearanceDefaults}>
@@ -852,7 +995,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsToggleRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-streaming" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsStreaming")}</chakra.h3>
           <SettingsReset onClick={resetStreamingDefaults}>
@@ -906,7 +1049,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsNumberRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-auto-limit" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsAutoLimit")}</chakra.h3>
         </SettingsSectionHeader>
@@ -948,7 +1091,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsNumberRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-sql-lint" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsSqlLint")}</chakra.h3>
         </SettingsSectionHeader>
@@ -968,7 +1111,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsToggleRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-plan-watch" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsPlanWatch")}</chakra.h3>
         </SettingsSectionHeader>
@@ -988,7 +1131,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsToggleRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-result-grid" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsResultGridMode")}</chakra.h3>
         </SettingsSectionHeader>
@@ -1027,6 +1170,27 @@ export function SettingsView({ theme, onClose }: Props) {
             {t("settingsResultGridPageSizeHelp")}
           </SettingsHelpInline>
         </SettingsNumberRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-auto-refresh-default">
+            {t("settingsAutoRefreshDefault")}
+          </chakra.label>
+          <Select
+            id="settings-auto-refresh-default"
+            value={String(settings.autoRefreshDefaultSecs)}
+            onChange={(e) => setAutoRefreshDefaultSecs(Number(e.target.value))}
+          >
+            {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s % 60 === 0
+                  ? t("autoRefreshIntervalMins", { mins: s / 60 })
+                  : t("autoRefreshIntervalSecs", { secs: s })}
+              </option>
+            ))}
+          </Select>
+          <SettingsHelpInline>
+            {t("settingsAutoRefreshDefaultHelp")}
+          </SettingsHelpInline>
+        </SettingsNumberRow>
         <SettingsToggleRow>
           <SettingsToggleLabel htmlFor="settings-cell-edit-on-blur">
             <Switch
@@ -1055,7 +1219,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsToggleRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-safety" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsSafety")}</chakra.h3>
         </SettingsSectionHeader>
@@ -1188,7 +1352,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsNumberRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-notifications" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsNotifications")}</chakra.h3>
         </SettingsSectionHeader>
@@ -1230,7 +1394,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsNumberRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-tab-persistence" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsTabPersistence")}</chakra.h3>
         </SettingsSectionHeader>
@@ -1251,7 +1415,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsToggleRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-syntax-highlighting" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsSyntaxHighlighting")}</chakra.h3>
           <SettingsReset onClick={() => resetSyntaxColors(theme)}>
@@ -1309,7 +1473,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsColorGrid>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-preview-highlight" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsPreviewHighlight")}</chakra.h3>
           <SettingsReset onClick={() => resetPreviewHighlight(theme)}>
@@ -1346,9 +1510,11 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsColorGrid>
       </SettingsSection>
 
-      <KeybindingSettings />
+      <chakra.div id="settings-sec-keybindings" scrollMarginTop="8px">
+        <KeybindingSettings />
+      </chakra.div>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-logs" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsLogs")}</chakra.h3>
           <SettingsLogsActions>
@@ -1383,9 +1549,11 @@ export function SettingsView({ theme, onClose }: Props) {
         )}
       </SettingsSection>
 
-      <KnownHostsPanel />
+      <chakra.div id="settings-sec-knownhosts" scrollMarginTop="8px">
+        <KnownHostsPanel />
+      </chakra.div>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-updates" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsUpdates")}</chakra.h3>
         </SettingsSectionHeader>
@@ -1419,7 +1587,7 @@ export function SettingsView({ theme, onClose }: Props) {
         </SettingsToggleRow>
       </SettingsSection>
 
-      <SettingsSection>
+      <SettingsSection id="settings-sec-backup" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsBackup")}</chakra.h3>
         </SettingsSectionHeader>
@@ -1444,6 +1612,7 @@ export function SettingsView({ theme, onClose }: Props) {
           <SettingsHelpInline>{t("settingsBackupResetAllHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>
+        </chakra.div>
         </chakra.div>
       </ModalBody>
     </Modal>

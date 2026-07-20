@@ -40,14 +40,27 @@ export type ShortcutId =
   | "run"
   | "runStatement"
   | "preview"
-  | "format";
+  | "format"
+  | "openSettings"
+  | "openHelp"
+  | "toggleTheme"
+  | "toggleSidebar"
+  | "cyclePaneFocus"
+  | "gridPageNext"
+  | "gridPagePrev"
+  | "gridCopy"
+  | "gridCopyHeaders"
+  | "gridInspector"
+  | "gridUndo"
+  | "gridRedo";
 
 /**
  * 衝突検出のスコープ = どのキーリスナが捌くか。`global` は window レベルの
- * keydown ハンドラ (`App.tsx`)、`editor` は CodeMirror のキーマップ。異なる
- * スコープ間の同一キーは衝突としない。
+ * keydown ハンドラ (`App.tsx`)、`editor` は CodeMirror のキーマップ、`grid` は
+ * `ResultGrid` (内側 `DataGrid`) 自身の keydown ハンドラ。異なるスコープ間の
+ * 同一キーは衝突としない。
  */
-export type ShortcutScope = "global" | "editor";
+export type ShortcutScope = "global" | "editor" | "grid";
 
 export interface ShortcutDef {
   /** キー表記の i18n キー (例: "Cmd/Ctrl+Enter")。再割り当て不可時の表示に使う。 */
@@ -83,6 +96,11 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutCheatSheetTitle", descKey: "shortcutCheatSheetDesc", category: "global" },
   { keysKey: "shortcutSidebarFilterTitle", descKey: "shortcutSidebarFilterDesc", category: "global", id: "sidebarFilter", scope: "global", defaultCombo: "Mod+P" },
   { keysKey: "shortcutObjectSearchTitle", descKey: "shortcutObjectSearchDesc", category: "global", id: "objectSearch", scope: "global", defaultCombo: "Mod+Shift+O" },
+  { keysKey: "shortcutOpenSettingsTitle", descKey: "shortcutOpenSettingsDesc", category: "global", id: "openSettings", scope: "global", defaultCombo: "Mod+," },
+  { keysKey: "shortcutOpenHelpTitle", descKey: "shortcutOpenHelpDesc", category: "global", id: "openHelp", scope: "global", defaultCombo: "F1" },
+  { keysKey: "shortcutToggleThemeTitle", descKey: "shortcutToggleThemeDesc", category: "global", id: "toggleTheme", scope: "global", defaultCombo: "Mod+Shift+L" },
+  { keysKey: "shortcutToggleSidebarTitle", descKey: "shortcutToggleSidebarDesc", category: "global", id: "toggleSidebar", scope: "global", defaultCombo: "Mod+B" },
+  { keysKey: "shortcutCyclePaneTitle", descKey: "shortcutCyclePaneDesc", category: "global", id: "cyclePaneFocus", scope: "global", defaultCombo: "F6" },
   { keysKey: "helpShortcutRunTitle", descKey: "helpShortcutRunDesc", category: "editor", id: "run", scope: "editor", defaultCombo: "Mod+Enter" },
   { keysKey: "shortcutRunStatementTitle", descKey: "shortcutRunStatementDesc", category: "editor", id: "runStatement", scope: "editor", defaultCombo: "Mod+Alt+Enter" },
   { keysKey: "shortcutRunNewTabTitle", descKey: "shortcutRunNewTabDesc", category: "editor", id: "runNewTab", scope: "global", defaultCombo: "Mod+Shift+Enter" },
@@ -95,10 +113,13 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutFindNavTitle", descKey: "shortcutFindNavDesc", category: "grid" },
   { keysKey: "shortcutGridNavTitle", descKey: "shortcutGridNavDesc", category: "grid" },
   { keysKey: "shortcutGridSelectTitle", descKey: "shortcutGridSelectDesc", category: "grid" },
-  { keysKey: "shortcutGridCopyTitle", descKey: "shortcutGridCopyDesc", category: "grid" },
-  { keysKey: "shortcutGridCopyHeadersTitle", descKey: "shortcutGridCopyHeadersDesc", category: "grid" },
-  { keysKey: "shortcutGridInspectorTitle", descKey: "shortcutGridInspectorDesc", category: "grid" },
-  { keysKey: "shortcutEditUndoTitle", descKey: "shortcutEditUndoDesc", category: "grid" },
+  { keysKey: "shortcutGridCopyTitle", descKey: "shortcutGridCopyDesc", category: "grid", id: "gridCopy", scope: "grid", defaultCombo: "Mod+C" },
+  { keysKey: "shortcutGridCopyHeadersTitle", descKey: "shortcutGridCopyHeadersDesc", category: "grid", id: "gridCopyHeaders", scope: "grid", defaultCombo: "Mod+Shift+C" },
+  { keysKey: "shortcutGridInspectorTitle", descKey: "shortcutGridInspectorDesc", category: "grid", id: "gridInspector", scope: "grid", defaultCombo: "Alt+Enter" },
+  { keysKey: "shortcutEditUndoTitle", descKey: "shortcutEditUndoDesc", category: "grid", id: "gridUndo", scope: "grid", defaultCombo: "Mod+Z" },
+  { keysKey: "shortcutGridRedoTitle", descKey: "shortcutGridRedoDesc", category: "grid", id: "gridRedo", scope: "grid", defaultCombo: "Mod+Shift+Z" },
+  { keysKey: "shortcutGridPageNextTitle", descKey: "shortcutGridPageNextDesc", category: "grid", id: "gridPageNext", scope: "global", defaultCombo: "Alt+ArrowRight" },
+  { keysKey: "shortcutGridPagePrevTitle", descKey: "shortcutGridPagePrevDesc", category: "grid", id: "gridPagePrev", scope: "global", defaultCombo: "Alt+ArrowLeft" },
   { keysKey: "shortcutMaximizeResultTitle", descKey: "shortcutMaximizeResultDesc", category: "grid", id: "maximizeResult", scope: "global", defaultCombo: "Mod+Shift+M" },
   { keysKey: "helpShortcutNewTabTitle", descKey: "helpShortcutNewTabDesc", category: "tabs", id: "newTab", scope: "global", defaultCombo: "Mod+T" },
   { keysKey: "helpShortcutCloseTabTitle", descKey: "helpShortcutCloseTabDesc", category: "tabs", id: "closeTab", scope: "global", defaultCombo: "Mod+W" },

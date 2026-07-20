@@ -24,6 +24,8 @@ import {
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
+import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
+import { comboMatchesEvent } from "../shortcutKeys";
 import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact, rawValueTitle } from "./cellFormat";
 import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
@@ -801,6 +803,19 @@ export const GRID_CSS: SystemStyleObject = {
     },
 };
 
+/**
+ * グリッド系ショートカット (#681) の解決済みバインド。`shortcutBindings` (App)
+ * から必要なキーだけ抜き出して渡す。省略されたキーは
+ * `DEFAULT_SHORTCUT_COMBOS` の既定値へフォールバックする。
+ */
+export interface GridBindings {
+  gridCopy: string;
+  gridCopyHeaders: string;
+  gridInspector: string;
+  gridUndo: string;
+  gridRedo: string;
+}
+
 interface Props {
   result: QueryResult | null;
   /** True while batches are still arriving from a streaming query. */
@@ -954,11 +969,19 @@ interface Props {
   initialScrollTop?: number;
   /** スクロール位置が変わるたびに現在の scrollTop を通知する (#678。タブ永続化用)。 */
   onScroll?: (scrollTop: number) => void;
+  /**
+   * グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo) の
+   * 解決済みバインド (#681)。省略時は今日の既定キー (`DEFAULT_SHORTCUT_COMBOS`)
+   * のまま動く。
+   */
+  gridBindings?: GridBindings;
 }
 
 export interface ResultGridHandle {
   /** Open the find-in-results bar and focus its input (Cmd/Ctrl+F entry point, #644). */
   openFind: () => void;
+  /** キーボードフォーカスをグリッドへ移す (ペインフォーカス循環 #681)。 */
+  focus: () => void;
 }
 
 /**
@@ -2238,6 +2261,7 @@ export function DataGrid({
   findHits,
   findCurrentKey,
   findNav,
+  gridBindings,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -2360,12 +2384,31 @@ export function DataGrid({
   findCurrentKey?: string | null;
   /** 現在ヒットへのスクロール/選択/フォーカス移動の要求 (seq で再発火)。 */
   findNav?: GridFindNav | null;
+  /**
+   * コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo の解決済みバインド (#681)。
+   * 省略時は今日の既定キーのまま (`DEFAULT_SHORTCUT_COMBOS`)。
+   */
+  gridBindings?: GridBindings;
 }) {
   const t = useT();
   const locale = useLocale();
   const toast = useToast();
   const { cellEditOnBlur, richCellRendering } = useSettings();
   const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
+
+  // グリッド系ショートカットの実効バインド (#681)。未指定のキーは今日の既定へ
+  // フォールバックするので、`gridBindings` を渡さない呼び出し元 (プレビューの
+  // before/after 表示など) は従来どおりの挙動のまま変わらない。
+  const effectiveGridBindings = useMemo<GridBindings>(
+    () => ({
+      gridCopy: gridBindings?.gridCopy ?? DEFAULT_SHORTCUT_COMBOS.gridCopy,
+      gridCopyHeaders: gridBindings?.gridCopyHeaders ?? DEFAULT_SHORTCUT_COMBOS.gridCopyHeaders,
+      gridInspector: gridBindings?.gridInspector ?? DEFAULT_SHORTCUT_COMBOS.gridInspector,
+      gridUndo: gridBindings?.gridUndo ?? DEFAULT_SHORTCUT_COMBOS.gridUndo,
+      gridRedo: gridBindings?.gridRedo ?? DEFAULT_SHORTCUT_COMBOS.gridRedo,
+    }),
+    [gridBindings],
+  );
 
   const columnKinds = useMemo<CellKind[]>(() => columns.map(classifyColumn), [columns]);
 
@@ -3300,6 +3343,40 @@ export function DataGrid({
     // Plain move clears the selection; Shift+move extends a rectangular range.
     const go = (r: number, c: number) => (e.shiftKey ? extendSelectionTo(r, c) : moveActive(r, c));
 
+    // グリッド系ショートカット (行インスペクタ/Undo/Redo/コピー/コピー+ヘッダ、
+    // #681)。既定コンボ (Alt+Enter 等) はナビゲーション用の switch と衝突しない
+    // が、リバインドで任意のキーになり得るため switch より先に単独で突き合わせる。
+    // Redo は従来からの Ctrl/Cmd+Y も後方互換で残す (再割り当て対象外の別名)。
+    const ne = e.nativeEvent;
+    if (comboMatchesEvent(effectiveGridBindings.gridInspector, ne)) {
+      e.preventDefault();
+      setInspectorOpen((o) => !o);
+      return;
+    }
+    if (comboMatchesEvent(effectiveGridBindings.gridUndo, ne)) {
+      e.preventDefault();
+      onUndoEdit?.();
+      return;
+    }
+    if (
+      comboMatchesEvent(effectiveGridBindings.gridRedo, ne) ||
+      ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "y" || e.key === "Y"))
+    ) {
+      e.preventDefault();
+      onRedoEdit?.();
+      return;
+    }
+    if (comboMatchesEvent(effectiveGridBindings.gridCopyHeaders, ne)) {
+      e.preventDefault();
+      copySelection(true);
+      return;
+    }
+    if (comboMatchesEvent(effectiveGridBindings.gridCopy, ne)) {
+      e.preventDefault();
+      copySelection(false);
+      return;
+    }
+
     switch (e.key) {
       case "ArrowUp":
         e.preventDefault();
@@ -3310,10 +3387,16 @@ export function DataGrid({
         if (visIdx < rowCount - 1) go(visibleRows[visIdx + 1].index, colIdx);
         break;
       case "ArrowLeft":
+        // Alt+← は App レベルのページ送り (#681、gridPagePrev) に譲り、ここでは
+        // 何もしない (preventDefault もしない) — bubble したイベントをそちらが
+        // 拾う。セル移動と同時発火するのを防ぐ。
+        if (e.altKey) break;
         e.preventDefault();
         if (colPos > 0) go(rowIdx, visibleColIds[colPos - 1]);
         break;
       case "ArrowRight":
+        // Alt+→ も同様に gridPageNext に譲る。
+        if (e.altKey) break;
         e.preventDefault();
         if (colPos >= 0 && colPos < lastColPos) go(rowIdx, visibleColIds[colPos + 1]);
         break;
@@ -3356,11 +3439,7 @@ export function DataGrid({
         break;
       case "Enter": {
         e.preventDefault();
-        // Alt/Option+Enter toggles the row inspector for the active row.
-        if (e.altKey) {
-          setInspectorOpen((o) => !o);
-          break;
-        }
+        // Alt/Option+Enter (行インスペクタトグル) は switch より前段で処理済み。
         const colEd = editable && (editableColumns?.[colIdx] ?? false);
         if (colEd && onSetCellEdit) {
           const v = rows[rowIdx]?.[colIdx] ?? null;
@@ -3377,27 +3456,14 @@ export function DataGrid({
         break;
       }
       default:
-        // Printable character → start editing with that char
+        // Printable character → start editing with that char (Undo/Redo/Copy
+        // are handled above, before the switch).
         if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
           const colEd = editable && (editableColumns?.[colIdx] ?? false);
           if (colEd && onSetCellEdit) {
             e.preventDefault();
             setEditing({ rowIdx, colIdx, value: e.key });
           }
-        } else if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "z" || e.key === "Z") && !e.shiftKey) {
-          e.preventDefault();
-          onUndoEdit?.();
-        } else if (
-          (e.ctrlKey || e.metaKey) && !e.altKey &&
-          ((e.key === "z" || e.key === "Z") && e.shiftKey || e.key === "y" || e.key === "Y")
-        ) {
-          e.preventDefault();
-          onRedoEdit?.();
-        } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
-          // Copy the selection range (or active cell) as TSV. Shift includes a
-          // header row of the covered column names.
-          e.preventDefault();
-          copySelection(e.shiftKey);
         }
     }
   };
@@ -4581,6 +4647,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   canPinResult,
   initialScrollTop,
   onScroll,
+  gridBindings,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -4748,6 +4815,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     openFind: () => {
       setFindOpen(true);
       setFindFocusSeq((n) => n + 1);
+    },
+    focus: () => {
+      containerRef.current?.focus();
     },
   }), []);
   useEffect(() => {
@@ -5697,6 +5767,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           findHits={findHits}
           findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
           findNav={findNav}
+          gridBindings={gridBindings}
           emptyMessage={
             streaming ? undefined : queryError ? (
               <EmptyState

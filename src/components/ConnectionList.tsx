@@ -211,7 +211,8 @@ interface Props {
   onCreate: () => void;
   onEdit: (profile: ConnectionProfile) => void;
   onDuplicate: (profile: ConnectionProfile) => void;
-  onDelete: (id: string) => void;
+  /** Passes the full profile (not just id) so the caller can offer an Undo (#676). */
+  onDelete: (profile: ConnectionProfile) => void;
   onPickTable: (database: string, table: string) => void;
   onImportTable: (database: string, table: string) => void;
   /** スキーマに基づくテストデータ生成ウィザードを開く (#602)。read_only では無効化。 */
@@ -668,7 +669,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           label: t("contextMenuDelete"),
           danger: true,
           onSelect: () => {
-            if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p.id);
+            if (confirm(t("listDeleteConfirm", { name: p.name }))) onDelete(p);
           },
         },
       ],

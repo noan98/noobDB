@@ -213,6 +213,8 @@ export interface QueryEditorHandle {
   insertText: (text: string) => void;
   /** Replaces the entire editor contents (used to restore a history entry). */
   setText: (text: string) => void;
+  /** キーボードフォーカスをエディタへ移す (ペインフォーカス循環 #681)。 */
+  focus: () => void;
 }
 
 function formatEditorContent(
@@ -690,6 +692,9 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         selection: { anchor: text.length },
       });
       view.focus();
+    },
+    focus: () => {
+      viewRef.current?.focus();
     },
   }), []);
 

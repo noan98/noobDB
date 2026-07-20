@@ -631,6 +631,9 @@ interface PaneState {
 
 /** Maximum number of undo/redo snapshots kept per tab. */
 const EDIT_UNDO_LIMIT = 50;
+/** Grace window for undoing a connection-profile delete (#676). Matches the
+ *  Undo toast's on-screen duration so the deferred delete finalizes as it fades. */
+const PROFILE_DELETE_UNDO_MS = 8000;
 
 let tabSeq = 0;
 function newTabId(): string {
@@ -912,6 +915,25 @@ export default function App() {
       shortcutBindings.format,
     ],
   );
+  // グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo、
+  // #681) の解決済みバインド。`ResultGrid` の内側 `DataGrid` の keydown ハンドラへ
+  // 渡し、既定は今日の挙動 (Mod+C 等) のまま再割り当て可能にする。
+  const gridBindings = useMemo(
+    () => ({
+      gridCopy: shortcutBindings.gridCopy,
+      gridCopyHeaders: shortcutBindings.gridCopyHeaders,
+      gridInspector: shortcutBindings.gridInspector,
+      gridUndo: shortcutBindings.gridUndo,
+      gridRedo: shortcutBindings.gridRedo,
+    }),
+    [
+      shortcutBindings.gridCopy,
+      shortcutBindings.gridCopyHeaders,
+      shortcutBindings.gridInspector,
+      shortcutBindings.gridUndo,
+      shortcutBindings.gridRedo,
+    ],
+  );
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   // 初回起動オンボーディングツアー (#599)。ウェルカム画面の「はじめかたを見る」
@@ -1117,6 +1139,13 @@ export default function App() {
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  // Profiles pending a delayed delete (#676 Undo). While an id is here the
+  // profile is hidden from the sidebar but NOT yet deleted from the backend, so
+  // "Undo" can cancel the pending delete and keep the OS-keyring secrets intact
+  // (delete_profile wipes them irreversibly). The timer that finalizes each
+  // delete lives in a ref so Undo can cancel it and unmount can clear it.
+  const [pendingDeleteProfileIds, setPendingDeleteProfileIds] = useState<Set<string>>(new Set());
+  const pendingProfileDeleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // 起動スプラッシュ (#619)。初回プロファイル読み込みが終わるまで true のまま。
   const [booted, setBooted] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState<ConnectionProfile | null>(null);
@@ -1185,6 +1214,10 @@ export default function App() {
   const editorSelectionRef = useRef<Map<string, { anchor: number; head: number }>>(new Map());
   const gridScrollRef = useRef<Map<string, number>>(new Map());
   const connectionListRef = useRef<ConnectionListHandle>(null);
+  // ペインフォーカス循環 (F6, #681) のカーソル: 0=サイドバー / 1=エディタ /
+  // 2=結果グリッド。押下のたびに次の対象へ進める。対象の ref が無い (未マウント)
+  // ときはその場でスキップし、次の対象を試す。
+  const paneFocusCursorRef = useRef(0);
   const editorRefSetters = useRef<Map<string, (h: QueryEditorHandle | null) => void>>(new Map());
   const gridRefSetters = useRef<Map<string, (h: ResultGridHandle | null) => void>>(new Map());
   const getEditorRefSetter = useCallback((paneId: string) => {
@@ -1720,11 +1753,13 @@ export default function App() {
   }, [refreshSnippets]);
 
   const runWithErrorStatus = useCallback(
-    async (fn: () => Promise<void>, key: Parameters<ReturnType<typeof useT>>[0]) => {
+    async (fn: () => Promise<void>, key: Parameters<ReturnType<typeof useT>>[0]): Promise<boolean> => {
       try {
         await fn();
+        return true;
       } catch (e) {
         setStatus({ kind: "key", key, vars: { error: String(e) }, error: true });
+        return false;
       }
     },
     [],
@@ -3657,8 +3692,9 @@ export default function App() {
     setFormInstanceId((n) => n + 1);
   }, []);
 
-  const handleDeleteSnippet = useCallback(async (id: string) => {
-    await runWithErrorStatus(async () => {
+  const handleDeleteSnippet = useCallback(async (snippet: Snippet) => {
+    const id = snippet.id;
+    const ok = await runWithErrorStatus(async () => {
       await api.deleteSnippet(id);
       await refreshSnippets();
       // 実行計画ウォッチ (#743): 削除したスニペットのウォッチと世代データを
@@ -3672,7 +3708,30 @@ export default function App() {
         setPlanWatch(loadPlanWatch(activeProfileIdRef.current));
       }
     }, "statusFailedDeleteSnippet");
-  }, [runWithErrorStatus, refreshSnippets, profiles]);
+    if (!ok) return;
+    // Undo (#676): snippets have no secrets, so restoring with the original id
+    // via save_snippet fully re-creates it (plan-watch is per-user, not restored).
+    toast.notify({
+      message: translate("toastSnippetDeleted", { name: snippet.name }),
+      action: {
+        label: translate("toastUndo"),
+        onAction: () => {
+          void runWithErrorStatus(async () => {
+            await api.saveSnippet({
+              id: snippet.id,
+              name: snippet.name,
+              folder: snippet.folder,
+              tags: snippet.tags,
+              sql: snippet.sql,
+              driver: snippet.driver,
+              scope: snippet.scope,
+            });
+            await refreshSnippets();
+          }, "statusFailedSaveSnippet");
+        },
+      },
+    });
+  }, [runWithErrorStatus, refreshSnippets, profiles, toast]);
 
   const setCellEditForTab = useCallback(
     (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
@@ -4265,12 +4324,72 @@ export default function App() {
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
-  const handleDeleteProfile = useCallback(async (id: string) => {
+  // Actually perform the deferred backend delete once the Undo window lapses.
+  const finalizeProfileDelete = useCallback(async (id: string) => {
+    pendingProfileDeleteTimers.current.delete(id);
     await runWithErrorStatus(async () => {
       await api.deleteProfile(id);
       await refreshProfiles();
     }, "statusFailedDeleteProfile");
+    setPendingDeleteProfileIds((cur) => {
+      if (!cur.has(id)) return cur;
+      const next = new Set(cur);
+      next.delete(id);
+      return next;
+    });
   }, [runWithErrorStatus, refreshProfiles]);
+
+  const handleDeleteProfile = useCallback((profile: ConnectionProfile) => {
+    const id = profile.id;
+    // Ignore a repeat delete of an already-pending profile.
+    if (pendingProfileDeleteTimers.current.has(id)) return;
+    // Hide from the sidebar right away, but defer the irreversible backend delete
+    // (which wipes keyring secrets) so Undo can cancel it (#676).
+    setPendingDeleteProfileIds((cur) => new Set(cur).add(id));
+    const timer = setTimeout(() => {
+      void finalizeProfileDelete(id);
+    }, PROFILE_DELETE_UNDO_MS);
+    pendingProfileDeleteTimers.current.set(id, timer);
+    toast.notify({
+      message: translate("toastProfileDeleted", { name: profile.name }),
+      duration: PROFILE_DELETE_UNDO_MS,
+      action: {
+        label: translate("toastUndo"),
+        onAction: () => {
+          const pending = pendingProfileDeleteTimers.current.get(id);
+          if (pending) {
+            clearTimeout(pending);
+            pendingProfileDeleteTimers.current.delete(id);
+          }
+          setPendingDeleteProfileIds((cur) => {
+            if (!cur.has(id)) return cur;
+            const next = new Set(cur);
+            next.delete(id);
+            return next;
+          });
+        },
+      },
+    });
+  }, [finalizeProfileDelete, toast]);
+
+  // Clear any pending profile-delete timers on unmount. Leaving them uncancelled
+  // would fire setState on a torn-down tree; not finalizing is the safe choice
+  // (the profile simply isn't deleted — its keyring secrets stay intact).
+  useEffect(() => {
+    const timers = pendingProfileDeleteTimers.current;
+    return () => {
+      timers.forEach(clearTimeout);
+      timers.clear();
+    };
+  }, []);
+
+  // Profiles shown in the sidebar: hide those in the delete Undo window (#676).
+  const visibleProfiles = useMemo(
+    () => (pendingDeleteProfileIds.size === 0
+      ? profiles
+      : profiles.filter((p) => !pendingDeleteProfileIds.has(p.id))),
+    [profiles, pendingDeleteProfileIds],
+  );
 
   // ウェルカム画面 (#599) の「SQLite ファイルを開く」導線。選ばれたファイルパスと
   // sqlite ドライバを初期値にした空のプロファイルを editing にセットしてフォームを
@@ -4522,6 +4641,54 @@ export default function App() {
         if (active) handleCloseTabRef.current(active);
         return;
       }
+      // Alt+←/→ → フォーカス中ペインのアクティブタブがページング可能なテーブル
+      // タブなら 1 ページ送る/戻る (#681)。ストリーミング中・読み込み中・
+      // ページング非対応タブでは何もしない (誤操作防止、goToPageInTab 自体の
+      // ガードとも二重化)。
+      const pageNext = comboMatchesEvent(bindingsRef.current.gridPageNext, e);
+      const pagePrev = !pageNext && comboMatchesEvent(bindingsRef.current.gridPagePrev, e);
+      if (pageNext || pagePrev) {
+        const pane = focusedPane();
+        const tab = pane ? tabsRef.current.find((tt) => tt.id === pane.activeTabId) : undefined;
+        if (!tab || tab.kind !== "table" || !tab.paginatable || tab.streaming || tab.loadingMore) {
+          return;
+        }
+        e.preventDefault();
+        void goToPageInTab(tab.id, (tab.page ?? 1) + (pageNext ? 1 : -1));
+        return;
+      }
+      // F6 → サイドバー/エディタ/結果グリッドの間でキーボードフォーカスを順に
+      // 循環させる (#681)。対象の ref が無ければスキップして次を試す。
+      if (comboMatchesEvent(bindingsRef.current.cyclePaneFocus, e)) {
+        e.preventDefault();
+        const focusTargets: Array<() => boolean> = [
+          () => {
+            if (!connectionListRef.current) return false;
+            connectionListRef.current.focusFilter();
+            return true;
+          },
+          () => {
+            const h = editorRefs.current.get(activePaneIdRef.current ?? "");
+            if (!h) return false;
+            h.focus();
+            return true;
+          },
+          () => {
+            const h = resultGridRefs.current.get(activePaneIdRef.current ?? "");
+            if (!h) return false;
+            h.focus();
+            return true;
+          },
+        ];
+        for (let i = 0; i < focusTargets.length; i++) {
+          const idx = (paneFocusCursorRef.current + i) % focusTargets.length;
+          if (focusTargets[idx]()) {
+            paneFocusCursorRef.current = (idx + 1) % focusTargets.length;
+            break;
+          }
+        }
+        return;
+      }
       // n 番目のタブへのジャンプ (Cmd/Ctrl+1〜9) は再割り当て対象外。
       if (!mod || e.altKey || e.shiftKey) return;
       if (e.key >= "1" && e.key <= "9") {
@@ -4536,7 +4703,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab]);
+  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -4796,6 +4963,36 @@ export default function App() {
       setFormInstanceId((n) => n + 1);
     }
   }, []);
+
+  // 設定/ヘルプを開く・テーマ切替・サイドバー開閉 (#681)。コマンドパレットと
+  // 同様、接続前でも使えるよう常時有効にする (Cmd/Ctrl+K のハンドラの隣に置かず
+  // `openFullView` 定義後に置くことで宣言順を素直にしている)。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (comboMatchesEvent(bindingsRef.current.openSettings, e)) {
+        e.preventDefault();
+        openFullView("settings");
+        return;
+      }
+      if (comboMatchesEvent(bindingsRef.current.openHelp, e)) {
+        e.preventDefault();
+        openFullView("help");
+        return;
+      }
+      if (comboMatchesEvent(bindingsRef.current.toggleTheme, e)) {
+        e.preventDefault();
+        toggleTheme();
+        return;
+      }
+      if (comboMatchesEvent(bindingsRef.current.toggleSidebar, e)) {
+        e.preventDefault();
+        toggleSidebar();
+        return;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [openFullView, toggleTheme, toggleSidebar]);
 
   // パレットの「現在の DB」を要する項目 (スキーマエクスポート等) の対象 DB。
   const paletteDatabase = activeTab?.database ?? selectedProfile?.database ?? null;
@@ -5381,6 +5578,7 @@ export default function App() {
                     <ResultGrid
                       key={tab.id}
                       ref={getGridRefSetter(pane.id)}
+                      gridBindings={gridBindings}
                       result={tab.result}
                       initialScrollTop={
                         tab.kind === "table"
@@ -5686,7 +5884,7 @@ export default function App() {
           {sidebarTab === "connections" ? (
           <ConnectionList
             ref={connectionListRef}
-            profiles={profiles}
+            profiles={visibleProfiles}
             activeProfileId={selectedProfile?.id ?? null}
             sessionId={sessionId}
             connectingId={connectingId}
