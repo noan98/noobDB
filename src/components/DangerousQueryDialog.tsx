@@ -26,8 +26,22 @@ interface Props {
    * A UI safety net only (#675), not backend-enforced.
    */
   typedConfirmTarget?: string | null;
+  /**
+   * 影響行数プリフライト (#737) から引き継いだ件数。エディタの現在文が単純な
+   * UPDATE / DELETE のとき、実行前の推定影響行数を「約 N 行が削除/更新されます」と
+   * 併記する。null のときは何も出さない。
+   */
+  impact?: PreflightImpact | null;
   onConfirm: () => void;
   onCancel: () => void;
+}
+
+export interface PreflightImpact {
+  verb: "update" | "delete";
+  /** 影響行数 (COUNT 結果)。全行だが件数未取得のときは null。 */
+  count: number | null;
+  /** WHERE なし = テーブル全行が対象。 */
+  allRows: boolean;
 }
 
 const KIND_LABEL_KEYS: Record<DangerKind, Parameters<ReturnType<typeof useT>>[0]> = {
@@ -42,6 +56,7 @@ export function DangerousQueryDialog({
   isProduction,
   writeApproval,
   typedConfirmTarget,
+  impact,
   onConfirm,
   onCancel,
 }: Props) {
@@ -133,6 +148,34 @@ export function DangerousQueryDialog({
           <chakra.p m={0} color="app.text">
             {t(writeApproval ? "dangerousWriteApprovalIntro" : "dangerousIntro")}
           </chakra.p>
+        )}
+        {impact && (impact.count !== null || impact.allRows) && (
+          // プリフライトの影響行数を「約 N 行が削除/更新されます」と併記する (#737)。
+          // 全行 (WHERE なし) は危険色バナーで一段強調する。
+          <chakra.div
+            py="2" px="2.5"
+            borderRadius="md"
+            borderLeft="3px solid"
+            borderLeftColor={semanticColorToken(impact.allRows ? "danger" : "warning", "border")}
+            bg={semanticColorToken(impact.allRows ? "danger" : "warning", "subtle")}
+            color={semanticColorToken(impact.allRows ? "danger" : "warning", "text")}
+            display="flex"
+            flexDirection="column"
+            gap="0.5"
+          >
+            {impact.count !== null && (
+              <chakra.span fontWeight={600}>
+                {t(
+                  impact.verb === "delete" ? "dangerousImpactDelete" : "dangerousImpactUpdate",
+                  { count: impact.count.toLocaleString() },
+                )}
+              </chakra.span>
+            )}
+            {impact.allRows && <chakra.span>{t("dangerousImpactAllRows")}</chakra.span>}
+            <chakra.span fontSize="sm" color="app.textMuted">
+              {t("dangerousImpactNote")}
+            </chakra.span>
+          </chakra.div>
         )}
         {requiresTyped && (
           <chakra.div display="flex" flexDirection="column" gap="1.5">

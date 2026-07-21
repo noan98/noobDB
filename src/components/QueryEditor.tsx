@@ -46,6 +46,8 @@ import { useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
+import { usePreflightImpact, type PreflightResult } from "./usePreflight";
+import { PreflightBadge } from "./PreflightBadge";
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
@@ -206,6 +208,11 @@ interface Props {
    */
   focusMode?: boolean;
   onToggleFocus?: () => void;
+  /**
+   * 影響行数プリフライト (#737) の結果が変わるたびに通知する。App 側はタブ単位で
+   * 保持し、危険クエリ確認ダイアログへ件数を引き継ぐのに使う。
+   */
+  onPreflightImpact?: (result: PreflightResult | null) => void;
 }
 
 export interface QueryEditorHandle {
@@ -257,6 +264,17 @@ function selectionOrAllText(view: EditorView): string | null {
     : view.state.sliceDoc(sel.from, sel.to);
   if (text.trim().length === 0) return null;
   return text;
+}
+
+/**
+ * 影響行数プリフライト (#737) が対象にするテキスト。実行対象と同じく「選択があれば
+ * 選択、無ければ全文」で、空/空白のみは空文字を返す (バッジを出さない)。`EditorState`
+ * から直接読めるので updateListener からも呼べる。
+ */
+function preflightTextFromState(state: EditorState): string {
+  const sel = state.selection.main;
+  const text = sel.empty ? state.doc.toString() : state.sliceDoc(sel.from, sel.to);
+  return text.trim().length > 0 ? text : "";
 }
 
 function buildSqlExtension(
@@ -336,6 +354,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   editorBindings,
   focusMode,
   onToggleFocus,
+  onPreflightImpact,
 }: Props, ref) {
   const t = useT();
   const settings = useSettings();
@@ -399,6 +418,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   };
   const [hasContent, setHasContent] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
+  // 影響行数プリフライト (#737) の対象テキスト。updateListener が「選択 or 全文」を
+  // 反映し、値が実際に変わったときだけ更新する (カーソル移動だけでは再計算しない)。
+  const [preflightSql, setPreflightSql] = useState("");
+  const preflightSqlRef = useRef("");
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onSelectionChangeRef = useRef(onSelectionChange);
@@ -409,6 +432,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onRunRef.current = onRun;
   const onPreviewRef = useRef(onPreview);
   onPreviewRef.current = onPreview;
+  const onPreflightImpactRef = useRef(onPreflightImpact);
+  onPreflightImpactRef.current = onPreflightImpact;
   const driverRef = useRef(driver);
   driverRef.current = driver;
   // 履歴ナビゲーション用。エディタは初回だけ生成されキーマップ内のクロージャ
@@ -608,6 +633,13 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             if (u.selectionSet || u.docChanged) {
               const sel = u.state.selection.main;
               onSelectionChangeRef.current?.({ anchor: sel.anchor, head: sel.head });
+              // プリフライト対象テキスト (選択 or 全文) を更新。実値が変わったときだけ
+              // setState し、カーソル移動 (選択なし = 常に全文) では再計算しない。
+              const pfText = preflightTextFromState(u.state);
+              if (pfText !== preflightSqlRef.current) {
+                preflightSqlRef.current = pfText;
+                setPreflightSql(pfText);
+              }
             }
           }),
         ],
@@ -615,6 +647,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     });
     viewRef.current = view;
     setHasContent(startDoc.length > 0);
+    // 復元されたタブが書き込み DML なら、マウント直後からプリフライトを効かせる。
+    const initPreflightText = preflightTextFromState(view.state);
+    preflightSqlRef.current = initPreflightText;
+    setPreflightSql(initPreflightText);
     return () => view.destroy();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -672,6 +708,21 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     // bindingsRef は毎レンダ更新されるため、コンボ文字列の変化を依存に使う。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runCombo, runStatementCombo, previewCombo, formatCombo]);
+
+  // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と
+  // WHERE から COUNT を組み立ててデバウンス付きで裏実行する。設定オフ・未接続では
+  // 無効 (フックが即 null を返しバッジは出ない)。read_only セッションでも COUNT は
+  // 読み取りなので安全に動く。
+  const preflight = usePreflightImpact({
+    sql: preflightSql || null,
+    sessionId: sessionId ?? null,
+    database: defaultDatabase ?? null,
+    enabled: settings.preflightImpactEnabled && !disabled,
+  });
+  // 結果が変わるたび親へ通知 (危険クエリ確認ダイアログへの件数引き継ぎ用)。
+  useEffect(() => {
+    onPreflightImpactRef.current?.(preflight);
+  }, [preflight]);
 
   useImperativeHandle(ref, () => ({
     insertText: (text: string) => {
@@ -840,6 +891,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             title={disabledReason ?? `${t("editorPreviewTitle")} (${t("editorPreviewShortcut")})`}
           />
         )}
+        {/* 影響行数プリフライトのバッジ (#737)。実行ボタン付近に常時表示する。 */}
+        <PreflightBadge result={preflight} />
         <ToolbarButton
           onClick={formatSelectionOrAll}
           disabled={disabled || !hasContent}
