@@ -5,6 +5,7 @@ use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, My
 use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
+use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::types::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
@@ -799,6 +800,57 @@ impl MySqlConn {
             statements,
             live_tail_reason: (!live_tail).then(|| "statements_consumer_off".into()),
             statements_reason: (!statements).then(|| "statements_digest_off".into()),
+        })
+    }
+
+    /// スキーマ健全性アドバイザ (#741) の未使用インデックス統計。
+    /// `sys.schema_unused_indexes` は performance_schema 有効時のみ意味を持つ
+    /// (無効時は理由コード付きで縮退)。このビューは PRIMARY KEY を既に除外して
+    /// おり、UNIQUE の除外は純ロジック側が担う。読み取りのみ。
+    pub async fn unused_indexes(&self, db: &str) -> Result<UnusedIndexStats> {
+        let ps_on: Option<String> = sqlx::query("SHOW GLOBAL VARIABLES LIKE 'performance_schema'")
+            .fetch_optional(&self.pool)
+            .await?
+            .and_then(|r| r.try_get::<String, _>(1).ok());
+        if !ps_on.map(|v| v.eq_ignore_ascii_case("ON")).unwrap_or(false) {
+            return Ok(UnusedIndexStats {
+                supported: false,
+                reason: Some("performance_schema_off".into()),
+                entries: Vec::new(),
+            });
+        }
+        // sys スキーマが無い/読めない (権限・非対応構成) 場合は縮退する。
+        let rows: Vec<MySqlRow> = match sqlx::query(
+            "SELECT object_name, index_name
+             FROM sys.schema_unused_indexes
+             WHERE object_schema = ?
+             ORDER BY object_name, index_name",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(_) => {
+                return Ok(UnusedIndexStats {
+                    supported: false,
+                    reason: Some("stats_unreadable".into()),
+                    entries: Vec::new(),
+                });
+            }
+        };
+        let entries = rows
+            .iter()
+            .filter_map(|r| {
+                let table = r.try_get::<Option<String>, _>(0).ok().flatten()?;
+                let index = r.try_get::<Option<String>, _>(1).ok().flatten()?;
+                Some(UnusedIndexEntry { table, index })
+            })
+            .collect();
+        Ok(UnusedIndexStats {
+            supported: true,
+            reason: None,
+            entries,
         })
     }
 

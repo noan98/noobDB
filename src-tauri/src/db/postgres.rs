@@ -6,6 +6,7 @@ use sqlx::postgres::{
 };
 use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
+use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::types::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
@@ -551,6 +552,46 @@ impl PostgresConn {
             statements: statements_reason.is_none(),
             live_tail_reason: None,
             statements_reason,
+        })
+    }
+
+    /// スキーマ健全性アドバイザ (#741) の未使用インデックス統計。
+    /// `pg_stat_user_indexes.idx_scan = 0` = 統計リセット以降スキャンされて
+    /// いないインデックス。統計コレクタは既定で有効なので通常は常に読める
+    /// (読めなければ理由コード付きで縮退)。PRIMARY/UNIQUE の除外は純ロジック側が
+    /// 担うためここではそのまま返す。読み取りのみ。
+    pub async fn unused_indexes(&self, schema: &str) -> Result<UnusedIndexStats> {
+        let rows: Vec<PgRow> = match sqlx::query(
+            r#"SELECT relname, indexrelname
+               FROM pg_stat_user_indexes
+               WHERE schemaname = $1 AND idx_scan = 0
+               ORDER BY relname, indexrelname"#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(_) => {
+                return Ok(UnusedIndexStats {
+                    supported: false,
+                    reason: Some("stats_unreadable".into()),
+                    entries: Vec::new(),
+                });
+            }
+        };
+        let entries = rows
+            .iter()
+            .filter_map(|r| {
+                let table = r.try_get::<String, _>("relname").ok()?;
+                let index = r.try_get::<String, _>("indexrelname").ok()?;
+                Some(UnusedIndexEntry { table, index })
+            })
+            .collect();
+        Ok(UnusedIndexStats {
+            supported: true,
+            reason: None,
+            entries,
         })
     }
 

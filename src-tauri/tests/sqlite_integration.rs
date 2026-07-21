@@ -1505,3 +1505,120 @@ async fn sqlite_reconnect_reestablishes_same_session() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// スキーマ健全性アドバイザ (#741) をエンドツーエンドで駆動する: 実 SQLite に
+/// 各ルールを踏む/踏まないスキーマを作り、`analyze_schema_health` の collect →
+/// 純ロジックの全経路 (ビュー除外・メタデータ収集・統計縮退) を検証する。
+/// 外部サーバ不要で常時実走する。
+#[tokio::test]
+async fn sqlite_advisor_flags_expected_rules() {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_advisor_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(p.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // 良好なテーブル (INTEGER PK)。指摘なし。
+    conn.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
+        None,
+    )
+    .await
+    .expect("create users");
+    // FK to users(id) だが user_id にインデックスが無い → FkMissingIndex。
+    // 型は両端 INTEGER で一致させ、型不一致ルールは踏ませない。
+    conn.execute(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, \
+         user_id INTEGER REFERENCES users(id), note TEXT)",
+        None,
+    )
+    .await
+    .expect("create orders");
+    // PK 無し → MissingPrimaryKey。
+    conn.execute("CREATE TABLE logs (msg TEXT)", None)
+        .await
+        .expect("create logs");
+    // 単一列だが BIGINT PK (rowid エイリアスにならない) → SqliteIntegerPkHint。
+    conn.execute(
+        "CREATE TABLE widgets (id BIGINT PRIMARY KEY, label TEXT)",
+        None,
+    )
+    .await
+    .expect("create widgets");
+    // 同一構成の非 UNIQUE インデックス 2 本 → DuplicateIndex (1 本のみ指摘)。
+    conn.execute("CREATE INDEX idx_users_name1 ON users(name)", None)
+        .await
+        .expect("idx1");
+    conn.execute("CREATE INDEX idx_users_name2 ON users(name)", None)
+        .await
+        .expect("idx2");
+    // ビュー: PK 欠落ルールで誤検出しないよう解析対象から除外されること。
+    conn.execute("CREATE VIEW v_users AS SELECT id, name FROM users", None)
+        .await
+        .expect("view");
+
+    let report = t::analyze_schema_health(&conn, "main")
+        .await
+        .expect("analyze");
+
+    let has = |rule: t::RuleId, table: &str| {
+        report
+            .findings
+            .iter()
+            .any(|f| f.rule == rule && f.table == table)
+    };
+
+    assert!(
+        has(t::RuleId::FkMissingIndex, "orders"),
+        "orders.user_id FK without index must be flagged"
+    );
+    assert!(
+        has(t::RuleId::MissingPrimaryKey, "logs"),
+        "logs has no primary key"
+    );
+    assert!(
+        has(t::RuleId::SqliteIntegerPkHint, "widgets"),
+        "widgets BIGINT PK is a rowid-alias footgun"
+    );
+    assert!(
+        has(t::RuleId::DuplicateIndex, "users"),
+        "duplicate index on users(name) must be flagged"
+    );
+    // 型が一致する FK (orders.user_id INTEGER ↔ users.id INTEGER) は
+    // 型不一致として誤検出しない。
+    assert!(
+        !has(t::RuleId::FkTypeMismatch, "orders"),
+        "matching FK column types must not be flagged"
+    );
+    // 同一構成の非 UNIQUE インデックス 2 本は「ちょうど 1 件」だけ指摘する
+    // (両方 DROP を勧める誤誘導を避ける)。
+    assert_eq!(
+        report
+            .findings
+            .iter()
+            .filter(|f| f.rule == t::RuleId::DuplicateIndex && f.table == "users")
+            .count(),
+        1,
+        "users(name) duplicate indexes must produce exactly one finding"
+    );
+    // ビューは解析対象外 — どの指摘の対象にもならない。
+    assert!(
+        !report.findings.iter().any(|f| f.table == "v_users"),
+        "views must be excluded from analysis"
+    );
+    // 未使用インデックスルールは SQLite では理由付きでスキップ (黙って 0 件にしない)。
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|s| s.rule == t::RuleId::UnusedIndex && s.reason == "unsupported_driver"),
+        "unused-index rule must degrade with a reason on SQLite"
+    );
+    // ベーステーブル 4 つ (users/orders/logs/widgets)。ビューは数えない。
+    assert_eq!(report.tables_analyzed, 4);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&p);
+}

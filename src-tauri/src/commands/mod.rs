@@ -1,3 +1,4 @@
+pub mod advisor;
 pub mod connection;
 pub mod diff;
 pub mod dump;

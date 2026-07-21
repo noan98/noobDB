@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
+use super::advisor::UnusedIndexStats;
 use super::types::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
@@ -482,6 +483,17 @@ impl SqliteConn {
         Err(AppError::InvalidInput(
             "statement statistics are not supported for SQLite (file-backed, no server)".into(),
         ))
+    }
+
+    /// スキーマ健全性アドバイザ (#741) の未使用インデックス統計。SQLite は
+    /// サーバサイドのインデックス使用統計を持たないため、未使用ルールは
+    /// 縮退する (`unsupported_driver`)。
+    pub async fn unused_indexes(&self, _db: &str) -> Result<UnusedIndexStats> {
+        Ok(UnusedIndexStats {
+            supported: false,
+            reason: Some("unsupported_driver".into()),
+            entries: Vec::new(),
+        })
     }
 
     pub async fn tables(&self, _db: &str) -> Result<Vec<String>> {

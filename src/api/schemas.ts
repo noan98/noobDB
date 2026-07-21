@@ -332,6 +332,41 @@ export const dataDiff = z.object({
   target_count: z.number(),
 });
 
+// スキーマ健全性アドバイザ (#741)。RuleId / Severity はバックの serde 表現
+// (snake_case / lowercase) に一致させる。
+const advisorSeverity = z.enum(["high", "medium", "low"]);
+const advisorRuleId = z.enum([
+  "fk_missing_index",
+  "duplicate_index",
+  "redundant_index",
+  "missing_primary_key",
+  "unused_index",
+  "fk_type_mismatch",
+  "sqlite_integer_pk_hint",
+]);
+
+export const healthFinding = z.object({
+  rule: advisorRuleId,
+  severity: advisorSeverity,
+  table: z.string(),
+  columns: z.array(z.string()),
+  context: z.array(z.string()),
+  fix_ddl: z.string().nullable(),
+  statistical: z.boolean(),
+});
+
+export const skippedRule = z.object({
+  rule: advisorRuleId,
+  reason: z.string(),
+});
+
+export const schemaHealthReport = z.object({
+  driver: driverKind,
+  tables_analyzed: z.number(),
+  findings: z.array(healthFinding),
+  skipped: z.array(skippedRule),
+});
+
 export const csvPreview = z.object({
   headers: z.array(z.string()),
   rows: z.array(z.array(z.string())),

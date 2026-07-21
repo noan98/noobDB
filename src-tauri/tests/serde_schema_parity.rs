@@ -22,8 +22,9 @@
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
+    Column, DriverKind, ForeignKey, HealthFinding, IndexInfo, LiveQuery, PreviewResult,
+    ProcessInfo, QueryResult, QueryStatsSupport, RuleId, SchemaHealthReport, SchemaObject,
+    ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRule, StatementStat,
     TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
@@ -163,6 +164,25 @@ fn build_fixtures() -> serde_json::Value {
         elapsed_ms: 5,
         truncated: false,
     };
+    let health_finding = HealthFinding {
+        rule: RuleId::FkMissingIndex,
+        severity: Severity::High,
+        table: "orders".into(),
+        columns: vec!["user_id".into()],
+        context: vec!["users".into()],
+        fix_ddl: Some("CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);".into()),
+        statistical: false,
+    };
+    let skipped_rule = SkippedRule {
+        rule: RuleId::UnusedIndex,
+        reason: "performance_schema_off".into(),
+    };
+    let schema_health_report = SchemaHealthReport {
+        driver: DriverKind::Mysql,
+        tables_analyzed: 3,
+        findings: vec![health_finding.clone()],
+        skipped: vec![skipped_rule.clone()],
+    };
 
     json!({
         "column": column,
@@ -182,6 +202,9 @@ fn build_fixtures() -> serde_json::Value {
         "liveQuery": live_query,
         "statementStat": statement_stat,
         "previewResult": preview_result,
+        "healthFinding": health_finding,
+        "skippedRule": skipped_rule,
+        "schemaHealthReport": schema_health_report,
     })
 }
 

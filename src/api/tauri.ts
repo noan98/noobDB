@@ -535,6 +535,48 @@ export interface SchemaDiff {
   tables: TableDiff[];
 }
 
+/** スキーマ健全性アドバイザ (#741) の指摘ルール識別子。バックの serde
+ *  (snake_case) と一致させる。 */
+export type AdvisorRuleId =
+  | "fk_missing_index"
+  | "duplicate_index"
+  | "redundant_index"
+  | "missing_primary_key"
+  | "unused_index"
+  | "fk_type_mismatch"
+  | "sqlite_integer_pk_hint";
+
+/** 指摘の重要度。フロントで semantic トークンに色分けされる (#664)。 */
+export type AdvisorSeverity = "high" | "medium" | "low";
+
+/** スキーマ健全性の 1 指摘。`columns` / `context` の意味はルールごとに異なる
+ *  (バック `db::advisor::RuleId` のドキュメント参照)。 */
+export interface HealthFinding {
+  rule: AdvisorRuleId;
+  severity: AdvisorSeverity;
+  table: string;
+  columns: string[];
+  context: string[];
+  /** エディタへ挿入する修正 DDL。設計判断を要するルールでは null。 */
+  fix_ddl: string | null;
+  /** エンジンの実行時統計に由来する指摘 (観測期間に依存する旨を注記)。 */
+  statistical: boolean;
+}
+
+/** 前提を満たさずスキップしたルールと機械可読な理由コード。 */
+export interface SkippedRule {
+  rule: AdvisorRuleId;
+  reason: string;
+}
+
+/** スキーマ健全性診断のレポート全体。 */
+export interface SchemaHealthReport {
+  driver: DriverKind;
+  tables_analyzed: number;
+  findings: HealthFinding[];
+  skipped: SkippedRule[];
+}
+
 /** What a generated sync statement does. */
 export type SyncKind =
   | "create_table"
@@ -861,6 +903,12 @@ export const api = {
   listIndexes: (sessionId: string, database: string, table: string) =>
     invoke<IndexInfo[]>("list_indexes", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.indexInfoArray, r, "list_indexes"),
+    ),
+  /** スキーマ健全性を診断する (#741)。読み取りのみ。指摘リストと、前提を満たさず
+   *  スキップしたルール (理由コード付き) を返す。 */
+  analyzeSchemaHealth: (sessionId: string, database: string) =>
+    invoke<SchemaHealthReport>("analyze_schema_health", { sessionId, database }).then((r) =>
+      parseResponse(schemas.schemaHealthReport, r, "analyze_schema_health"),
     ),
   /** サーバ側プロセス/接続の一覧を取得する (プロセス監視パネル)。SQLite は非対応。 */
   listProcesses: (sessionId: string) =>

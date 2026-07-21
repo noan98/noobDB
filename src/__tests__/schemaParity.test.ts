@@ -41,6 +41,9 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["liveQuery", schemas.liveQuery],
   ["statementStat", schemas.statementStat],
   ["previewResult", schemas.previewResult],
+  ["healthFinding", schemas.healthFinding],
+  ["skippedRule", schemas.skippedRule],
+  ["schemaHealthReport", schemas.schemaHealthReport],
 ];
 
 describe("zod ⇔ serde フィールドパリティ (主要レスポンス型)", () => {

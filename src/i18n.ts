@@ -1823,6 +1823,67 @@ const en = {
   inspectorCopied: "Copied to clipboard",
   inspectorCopyFailed: "Copy failed",
 
+  // スキーマ健全性アドバイザ (#741)
+  appAdvisor: "Schema health advisor",
+  appAdvisorUnsupported: "Connect to a database first",
+  advisorTitle: "Schema health advisor",
+  advisorClose: "Close schema health advisor",
+  advisorDesc:
+    "Run deterministic, rule-based checks against this database's schema to catch classic design pitfalls — foreign keys without an index, duplicate or unused indexes, tables with no primary key, and mismatched key types. Everything here is read-only introspection; suggested fix DDL is inserted into the editor, never run automatically.",
+  advisorRun: "Run diagnosis",
+  advisorRerun: "Re-run",
+  advisorRunning: "Analyzing schema…",
+  advisorError: "Diagnosis failed: {error}",
+  advisorSummary: "{findings} finding(s) across {tables} table(s)",
+  advisorNoFindings: "No schema health issues found across {tables} table(s). Nice and tidy.",
+  advisorSeverityHigh: "High",
+  advisorSeverityMedium: "Medium",
+  advisorSeverityLow: "Low",
+  advisorColRule: "Rule",
+  advisorColTarget: "Target",
+  advisorColSeverity: "Severity",
+  advisorColDetail: "Detail",
+  advisorInsertFix: "Insert fix into editor",
+  advisorCopyFix: "Copy fix DDL",
+  advisorInserted: "Fix DDL inserted into the editor",
+  advisorCopied: "Copied to clipboard",
+  advisorCopyFailed: "Copy failed",
+  advisorStatisticalNote:
+    "Statistics-based: this depends on the observation window since the server's stats were last reset. A recently restored database or a replica may differ — verify before dropping.",
+  advisorSkippedTitle: "Skipped rules",
+  advisorSkippedRule: "{rule}: {reason}",
+  // ルール見出し
+  advisorRuleFkMissingIndexTitle: "Foreign key without an index",
+  advisorRuleDuplicateIndexTitle: "Duplicate index",
+  advisorRuleRedundantIndexTitle: "Redundant (prefix-covered) index",
+  advisorRuleMissingPrimaryKeyTitle: "Table without a primary key",
+  advisorRuleUnusedIndexTitle: "Unused index",
+  advisorRuleFkTypeMismatchTitle: "Foreign key type mismatch",
+  advisorRuleSqliteIntegerPkHintTitle: "Non-INTEGER integer primary key",
+  // ルール説明 (パラメータ差し込み)
+  advisorRuleFkMissingIndexDesc:
+    "{table}({columns}) is a foreign key referencing {ref}, but no index leads with these columns. Joins and cascading deletes on it may be slow.",
+  advisorRuleDuplicateIndexDesc:
+    "Index {index} on ({columns}) is an exact duplicate of {other}. One of them is redundant and only slows writes.",
+  advisorRuleRedundantIndexDesc:
+    "Index {index} on ({columns}) is a leading prefix of {covering}, which already covers it. Keeping both only slows writes.",
+  advisorRuleMissingPrimaryKeyDesc:
+    "{table} has no primary key. Row editing, replication and undo-style features rely on one to identify rows.",
+  advisorRuleUnusedIndexDesc:
+    "Index {index} on {table}({columns}) has not been used since the server's statistics were last reset. It may only be slowing writes.",
+  advisorRuleFkTypeMismatchDesc:
+    "{table}.{column} is {srcType}, but the referenced {ref} is {refType}. The type mismatch can force an implicit conversion that prevents the index from being used in joins.",
+  advisorRuleSqliteIntegerPkHintDesc:
+    "{table}.{column} is declared {type} PRIMARY KEY. In SQLite only exactly INTEGER PRIMARY KEY becomes a rowid alias; {type} creates a separate index alongside the rowid, wasting space.",
+  // 未使用ルールのスキップ理由
+  advisorReasonUnsupportedDriver:
+    "this driver has no server-side index usage statistics (SQLite is file-backed), so the unused-index rule is skipped.",
+  advisorReasonPerformanceSchemaOff:
+    "performance_schema is OFF on this MySQL server, so sys.schema_unused_indexes is unavailable. Set performance_schema=ON in my.cnf ([mysqld]) and restart to enable the unused-index rule.",
+  advisorReasonStatsUnreadable:
+    "the index usage statistics exist but could not be read (insufficient privileges or an unsupported server version), so the unused-index rule is skipped.",
+  advisorReasonUnknown: "the unused-index rule was skipped because its statistics are unavailable.",
+
   // テーブル保守コマンド (#561)
   maintenanceMenu: "Maintenance",
   maintenanceAnalyze: "Analyze (update statistics)",
@@ -3792,6 +3853,67 @@ const ja: Dict = {
   inspectorCopySql: "SQL をコピー",
   inspectorCopied: "クリップボードにコピーしました",
   inspectorCopyFailed: "コピーに失敗しました",
+
+  // スキーマ健全性アドバイザ (#741)
+  appAdvisor: "スキーマ健全性アドバイザ",
+  appAdvisorUnsupported: "先にデータベースへ接続してください",
+  advisorTitle: "スキーマ健全性アドバイザ",
+  advisorClose: "スキーマ健全性アドバイザを閉じる",
+  advisorDesc:
+    "決定的なルールベースでスキーマを診断し、設計の定番の落とし穴を洗い出します — インデックスの無い外部キー、重複・未使用インデックス、PK の無いテーブル、キーの型不一致など。すべて読み取りの introspection で、修正 DDL はエディタに挿入するだけです (自動実行はしません)。",
+  advisorRun: "診断を実行",
+  advisorRerun: "再実行",
+  advisorRunning: "スキーマを解析中…",
+  advisorError: "診断に失敗しました: {error}",
+  advisorSummary: "{tables} テーブル中 {findings} 件の指摘",
+  advisorNoFindings: "{tables} テーブルを診断し、スキーマ健全性の問題は見つかりませんでした。良好です。",
+  advisorSeverityHigh: "高",
+  advisorSeverityMedium: "中",
+  advisorSeverityLow: "低",
+  advisorColRule: "ルール",
+  advisorColTarget: "対象",
+  advisorColSeverity: "重要度",
+  advisorColDetail: "説明",
+  advisorInsertFix: "修正をエディタに挿入",
+  advisorCopyFix: "修正 DDL をコピー",
+  advisorInserted: "修正 DDL をエディタに挿入しました",
+  advisorCopied: "クリップボードにコピーしました",
+  advisorCopyFailed: "コピーに失敗しました",
+  advisorStatisticalNote:
+    "統計依存: サーバの統計が最後にリセットされて以降の観測期間に依存します。最近リストアした DB やレプリカでは結果が異なることがあります — 削除前に確認してください。",
+  advisorSkippedTitle: "スキップしたルール",
+  advisorSkippedRule: "{rule}: {reason}",
+  // ルール見出し
+  advisorRuleFkMissingIndexTitle: "インデックスの無い外部キー",
+  advisorRuleDuplicateIndexTitle: "重複インデックス",
+  advisorRuleRedundantIndexTitle: "冗長 (プレフィックス包含) インデックス",
+  advisorRuleMissingPrimaryKeyTitle: "PK の無いテーブル",
+  advisorRuleUnusedIndexTitle: "未使用インデックス",
+  advisorRuleFkTypeMismatchTitle: "外部キーの型不一致",
+  advisorRuleSqliteIntegerPkHintTitle: "INTEGER でない整数 PK",
+  // ルール説明 (パラメータ差し込み)
+  advisorRuleFkMissingIndexDesc:
+    "{table}({columns}) は {ref} を参照する外部キーですが、この列を先頭に持つインデックスがありません。JOIN やカスケード削除が遅くなる可能性があります。",
+  advisorRuleDuplicateIndexDesc:
+    "({columns}) のインデックス {index} は {other} と完全に重複しています。一方は冗長で、書き込みを遅くするだけです。",
+  advisorRuleRedundantIndexDesc:
+    "({columns}) のインデックス {index} は {covering} の先頭プレフィックスで、既に賄われています。両方持つと書き込みを遅くするだけです。",
+  advisorRuleMissingPrimaryKeyDesc:
+    "{table} には主キーがありません。行編集・レプリケーション・Undo 系機能は行を特定するために主キーを前提とします。",
+  advisorRuleUnusedIndexDesc:
+    "{table}({columns}) のインデックス {index} は、サーバの統計が最後にリセットされて以降一度も使われていません。書き込みを遅くしているだけの可能性があります。",
+  advisorRuleFkTypeMismatchDesc:
+    "{table}.{column} は {srcType} ですが、参照先の {ref} は {refType} です。型の不一致は暗黙変換を招き、JOIN でインデックスが効かなくなることがあります。",
+  advisorRuleSqliteIntegerPkHintDesc:
+    "{table}.{column} は {type} PRIMARY KEY として宣言されています。SQLite では厳密に INTEGER PRIMARY KEY のときだけ rowid エイリアスになり、{type} では rowid とは別にインデックスが作られ領域を余分に使います。",
+  // 未使用ルールのスキップ理由
+  advisorReasonUnsupportedDriver:
+    "このドライバはサーバ側のインデックス使用統計を持たない (SQLite はファイルベース) ため、未使用インデックスルールはスキップされます。",
+  advisorReasonPerformanceSchemaOff:
+    "この MySQL サーバでは performance_schema が OFF のため sys.schema_unused_indexes を利用できません。my.cnf の [mysqld] に performance_schema=ON を設定して再起動すると未使用インデックスルールが有効になります。",
+  advisorReasonStatsUnreadable:
+    "インデックス使用統計は存在しますが読めませんでした (権限不足または非対応バージョン) ため、未使用インデックスルールはスキップされます。",
+  advisorReasonUnknown: "統計が利用できないため未使用インデックスルールはスキップされました。",
 
   // テーブル保守コマンド (#561)
   maintenanceMenu: "保守",
