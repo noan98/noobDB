@@ -53,6 +53,12 @@ import type { Transition, Variants } from "motion/react";
  * - 空/オンボーディング表示の fade-in (`EmptyState`)。
  * - `Switch` のつまみ (`springs.snappy`)、アイコン/バッジのクロスフェード
  *   (`MultiStateBadge` / `QueryEditor` / `ImportModal` / `App`)。
+ * - 結果パネルの種類切替 (`App` — `AnimatePresence mode="wait"` + `variants.fade`)。
+ *   グリッド ⇔ EXPLAIN / チャート / ピボット / プレビュー / バッチのように「軽量
+ *   パネルの種類が変わる」ときだけ控えめにクロスフェードする。key を表示内容の
+ *   種類 (contentMode) にしているため、table ⇔ query タブ切替のように両者とも
+ *   グリッドのままなら再生されず、重い `ResultGrid` をフェードのために再マウント
+ *   しない (#788)。設定 / ヘルプ画面の開閉は `Modal` (上記) 経由で既にフェードする。
  */
 
 /** cubic-bezier カーブ。CSS の `--ease` / `--ease-out` と同じ値。 */

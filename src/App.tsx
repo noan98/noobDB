@@ -5294,6 +5294,27 @@ export default function App() {
     // 要素ツリーは保たれグリッドの状態 (スクロール/選択) やエディタの内容も維持される。
     const maximized = layoutMode === "result" && isFocused && tab != null;
     const editorFocused = layoutMode === "editor" && isFocused && tab != null;
+    // 結果領域が「どの軽量パネルを表示しているか」の判別子 (#788)。下の結果側
+    // 条件分岐 (explain → batch → chart → pivot → preview → grid) と同順で一致させ、
+    // これを AnimatePresence の key にすることで、パネルの種類が変わるとき (例:
+    // グリッド ⇔ EXPLAIN) だけ控えめなクロスフェードを添える。table ⇔ query の
+    // ように両者とも "grid" のままなら key は不変なので、重い ResultGrid を
+    // フェードのために再マウントしない (issue #788 の設計方針: 軽量パネル側に
+    // トランジションを限定)。tab が無い空状態は下の Splitter 分岐の外側で扱うため
+    // ここでは使われない (安全に "empty" を返すだけ)。
+    const contentMode = !tab
+      ? "empty"
+      : tab.kind === "explain"
+        ? "explain"
+        : tab.batchResults
+          ? "batch"
+          : tab.showChart && tab.result && !tab.streaming
+            ? "chart"
+            : tab.showPivot && tab.result && !tab.streaming
+              ? "pivot"
+              : tab.preview
+                ? "preview"
+                : "grid";
     return (
       <Flex
         key={pane.id}
@@ -5524,6 +5545,29 @@ export default function App() {
                   )}
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
+                  {/* 結果パネルの種類が変わるとき (グリッド ⇔ EXPLAIN /
+                      チャート / ピボット / プレビュー / バッチ) に控えめな
+                      クロスフェードを添える (#788)。key は contentMode なので
+                      同種のまま (table ⇔ query タブ切替など) は再生されず、
+                      ResultGrid を余計に再マウントしない。reduced-motion は
+                      ルートの MotionConfig で自動抑制。initial={false} で
+                      ペイン初回描画時のフェードインは抑える。 */}
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.div
+                      key={contentMode}
+                      initial={variants.fade.initial}
+                      animate={variants.fade.animate}
+                      exit={variants.fade.exit}
+                      transition={transitions.enter}
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        minWidth: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        overflow: "hidden",
+                      }}
+                    >
                   {tab.kind === "explain" ? (
                     <ExplainViewer
                       result={tab.result}
@@ -5733,6 +5777,8 @@ export default function App() {
                     )}
                     </Flex>
                   )}
+                    </motion.div>
+                  </AnimatePresence>
                 </Suspense>
                   </Box>
                 </Box>
