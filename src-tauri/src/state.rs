@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
 
 use crate::db::{Connection, DbConnectOptions};
-use crate::ssh::SshTunnel;
+use crate::ssh::{SshConfig, SshTunnel};
 
 pub type SessionId = String;
 pub type StreamId = String;
@@ -56,6 +56,13 @@ pub struct Session {
     /// When true, statements run on this session are NOT written to the
     /// query history. Set at connect time from the profile flag.
     pub skip_history: bool,
+    /// Non-secret SSH parameters needed to rebuild the tunnel on reconnect
+    /// (#712). `None` for direct (non-tunneled) and file-backed sessions. The
+    /// passphrase / password are intentionally *not* kept here — they are
+    /// re-resolved from the keyring at reconnect time so we don't add new
+    /// plaintext retention beyond the DB password already held in
+    /// `connect_options`.
+    pub reconnect_ssh: Option<SshConfig>,
     /// Held to keep the tunnel alive for the lifetime of this session.
     /// Dropping the Session drops this and cleans the tunnel up.
     pub _tunnel: Option<SshTunnel>,
@@ -86,6 +93,23 @@ impl AppState {
             .insert(id.clone(), Arc::new(session));
         tracing::debug!(session_id = %id, "session created");
         id
+    }
+
+    /// Swap the session registered under `session.id` for `session`, returning
+    /// the previous entry (if any) so the caller can close its connection after
+    /// the replacement is in place. Used by `reconnect` to substitute a freshly
+    /// re-established connection while keeping the same `SessionId`, so the
+    /// frontend's tabs and grid state (keyed by session id) survive untouched
+    /// (#712).
+    pub async fn replace(&self, session: Session) -> Option<Arc<Session>> {
+        let id = session.id.clone();
+        let prev = self
+            .sessions
+            .write()
+            .await
+            .insert(id.clone(), Arc::new(session));
+        tracing::info!(session_id = %id, "session replaced (reconnect)");
+        prev
     }
 
     pub async fn get(&self, id: &str) -> Option<Arc<Session>> {

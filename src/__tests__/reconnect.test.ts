@@ -79,4 +79,12 @@ describe("shouldAutoReconnect", () => {
   it("refuses zero / negative max retries", () => {
     expect(shouldAutoReconnect({ ...base, maxRetries: 0 })).toBe(false);
   });
+
+  it("refuses production profiles so they never auto-retry (#712)", () => {
+    // Even when everything else would allow it, a production connection must
+    // fall back to the manual reconnect button.
+    expect(shouldAutoReconnect({ ...base, isProduction: true })).toBe(false);
+    // Omitted / false keeps the default (non-production) behavior.
+    expect(shouldAutoReconnect({ ...base, isProduction: false })).toBe(true);
+  });
 });

@@ -677,6 +677,13 @@ export const api = {
   disconnect: (sessionId: string) =>
     invoke<void>("disconnect", { sessionId }),
   /**
+   * 切断されたセッションをその場で張り直す (#712)。同じ `sessionId` のまま SSH
+   * トンネルを再構築し、`connect_options` から新しい接続を確立してセッションを
+   * 差し替える。id が変わらないため、開いているタブ・グリッド状態はそのまま生きる。
+   * 失敗時は旧セッションを壊さずに reject する。
+   */
+  reconnect: (sessionId: string) => invoke<void>("reconnect", { sessionId }),
+  /**
    * 接続のヘルスチェック。生きていれば true、死んでいれば (スリープ復帰や
    * トンネル断) false。セッションが見つからない場合のみ reject する。
    */

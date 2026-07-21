@@ -55,8 +55,18 @@ pub mod __test_api {
             connect_options: opts,
             read_only,
             skip_history: true,
+            reconnect_ssh: None,
             _tunnel: None,
         }
+    }
+
+    /// Drives the `reconnect` IPC command's core path (session lookup + in-place
+    /// transport rebuild + same-id swap) without a Tauri runtime (#712).
+    pub async fn reconnect_via_command(
+        state: &AppState,
+        session_id: &str,
+    ) -> crate::error::Result<()> {
+        crate::commands::connection::reconnect_inner(state, session_id).await
     }
 
     /// Drives the `run_query` IPC command's core path (session lookup +
@@ -265,6 +275,7 @@ pub fn run() {
             commands::connection::connect,
             commands::connection::cancel_connect,
             commands::connection::disconnect,
+            commands::connection::reconnect,
             commands::connection::ping_session,
             commands::ssh::list_known_hosts,
             commands::ssh::forget_host_key,
