@@ -10,6 +10,19 @@
     "referenced_table": "users",
     "table": "orders"
   },
+  "healthFinding": {
+    "columns": [
+      "user_id"
+    ],
+    "context": [
+      "users"
+    ],
+    "fix_ddl": "CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);",
+    "rule": "fk_missing_index",
+    "severity": "high",
+    "statistical": false,
+    "table": "orders"
+  },
   "indexInfo": {
     "columns": [
       "name"
@@ -97,6 +110,31 @@
     "statements": false,
     "statements_reason": "pg_stat_statements_missing"
   },
+  "schemaHealthReport": {
+    "driver": "mysql",
+    "findings": [
+      {
+        "columns": [
+          "user_id"
+        ],
+        "context": [
+          "users"
+        ],
+        "fix_ddl": "CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);",
+        "rule": "fk_missing_index",
+        "severity": "high",
+        "statistical": false,
+        "table": "orders"
+      }
+    ],
+    "skipped": [
+      {
+        "reason": "performance_schema_off",
+        "rule": "unused_index"
+      }
+    ],
+    "tables_analyzed": 3
+  },
   "schemaObject": {
     "id": "1234",
     "kind": "view",
@@ -123,6 +161,10 @@
   "serverVariable": {
     "name": "max_connections",
     "value": "151"
+  },
+  "skippedRule": {
+    "reason": "performance_schema_off",
+    "rule": "unused_index"
   },
   "statementStat": {
     "calls": 1200,

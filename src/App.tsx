@@ -166,6 +166,9 @@ const ServerInfoPanel = lazy(() =>
 const QueryInspectorPanel = lazy(() =>
   import("./components/QueryInspectorPanel").then((m) => ({ default: m.QueryInspectorPanel })),
 );
+const AdvisorPanel = lazy(() =>
+  import("./components/AdvisorPanel").then((m) => ({ default: m.AdvisorPanel })),
+);
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
@@ -962,6 +965,8 @@ export default function App() {
   const [showServerInfo, setShowServerInfo] = useState(false);
   // ライブクエリ・インスペクタ (ライブテール + digest 集計) の開閉。#746。
   const [showQueryInspector, setShowQueryInspector] = useState(false);
+  // スキーマ健全性アドバイザ (ルールベース診断) の開閉。#741。
+  const [showAdvisor, setShowAdvisor] = useState(false);
   // サイズ・統計ダッシュボードの対象データベース (null = 非表示)。#562。
   const [sizesTarget, setSizesTarget] = useState<string | null>(null);
   const showSizes = sizesTarget !== null;
@@ -3657,6 +3662,20 @@ export default function App() {
     }
   }, [activeTab, sessionId, activeEditor, addTab]);
 
+  // Insert an advisor's fix DDL (#741) into the focused query/explain editor,
+  // or a fresh query tab. Executing it still goes through the existing safety
+  // nets (read-only rejection, dangerous-query confirmation). The panel stays
+  // open so several fixes can be inserted in a row; each insert appends a
+  // trailing newline so consecutive statements don't run together.
+  const handleInsertAdvisorSql = useCallback((sql: string) => {
+    const text = sql.endsWith("\n") ? sql : `${sql}\n`;
+    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+      activeEditor()?.insertText(text);
+    } else if (sessionId) {
+      addTab({ ...makeQueryTab(), sql: text, lastExecutedSql: text });
+    }
+  }, [activeTab, sessionId, activeEditor, addTab]);
+
   // Restore a history entry's SQL into the focused pane's query/explain editor
   // when there is one, otherwise into a fresh query tab so we don't clobber a
   // table tab's auto-generated SELECT.
@@ -3681,7 +3700,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -3694,7 +3713,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -4264,7 +4283,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false);
+    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false);
     setShowSnippetForm(false);
     setSizesTarget(database);
   }, []);
@@ -4301,7 +4320,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -4313,7 +4332,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -4327,7 +4346,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -4434,7 +4453,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -4448,7 +4467,7 @@ export default function App() {
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowForm(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
@@ -4984,14 +5003,14 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "queryInspector" | "compareResults" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "queryInspector" | "advisor" | "compareResults" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null);
+    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
     else if (view === "help") setShowHelp(true);
@@ -5000,6 +5019,7 @@ export default function App() {
     else if (view === "processes") setShowProcesses(true);
     else if (view === "serverInfo") setShowServerInfo(true);
     else if (view === "queryInspector") setShowQueryInspector(true);
+    else if (view === "advisor") setShowAdvisor(true);
     else if (view === "compareResults") setShowCompareResults(true);
     else if (view === "newConnection") {
       setShowForm(true);
@@ -5129,6 +5149,14 @@ export default function App() {
       },
     );
     if (sessionId) {
+      items.push({
+        id: "nav:advisor",
+        group: "navigation",
+        label: t("appAdvisor"),
+        icon: "warning",
+        keywords: "advisor schema health index lint 健全性 診断 インデックス",
+        run: () => openFullView("advisor"),
+      });
       items.push({
         id: "nav:disconnect",
         group: "navigation",
@@ -5925,7 +5953,7 @@ export default function App() {
                   <Icon name="transfer" />
                 </IconButton>
                 <IconButton
-                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowCompareResults(false); setShowServerInfo(false); setShowQueryInspector(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowCompareResults(false); setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                   title={t("appNew")}
                   aria-label={t("appNew")}
                 >
@@ -6194,6 +6222,14 @@ export default function App() {
             sessionId={sessionId}
             driver={selectedProfile?.driver ?? "mysql"}
             onClose={() => setShowQueryInspector(false)}
+          />
+        ) : showAdvisor && sessionId ? (
+          <AdvisorPanel
+            sessionId={sessionId}
+            database={activeTab?.database ?? selectedProfile?.database ?? ""}
+            driver={selectedProfile?.driver ?? "mysql"}
+            onInsertSql={handleInsertAdvisorSql}
+            onClose={() => setShowAdvisor(false)}
           />
         ) : showSizes && sizesTarget && sessionId ? (
           <TableStatisticsPanel
@@ -6857,6 +6893,17 @@ export default function App() {
                 ? t("appToolsNeedsSession")
                 : selectedProfile?.driver === "sqlite"
                   ? t("appQueryInspectorUnsupported")
+                  : undefined,
+            },
+            {
+              label: t("appAdvisor"),
+              onSelect: () => openFullView("advisor"),
+              // 全ドライバ対応 (SQLite も方言ルールあり)。DB コンテキストが必要。
+              disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
+              title: !sessionId
+                ? t("appToolsNeedsSession")
+                : !(activeTab?.database ?? selectedProfile?.database)
+                  ? t("appAdvisorUnsupported")
                   : undefined,
             },
             {

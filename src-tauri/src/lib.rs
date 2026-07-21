@@ -16,6 +16,10 @@ mod state;
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
 pub mod __test_api {
+    pub use crate::db::advisor::{
+        analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
+        TableMeta, UnusedIndexEntry, UnusedIndexStats,
+    };
     pub use crate::db::data_diff::{
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
@@ -150,6 +154,18 @@ pub mod __test_api {
             statements,
         )
         .await
+    }
+
+    /// Drives the schema-health advisor's full command path
+    /// (`commands::advisor`) without Tauri: collects table / column / index /
+    /// foreign-key metadata and unused-index stats from a live connection and
+    /// runs the pure rule engine. Lets integration tests verify real
+    /// introspection feeds the advisor correctly.
+    pub async fn analyze_schema_health(
+        conn: &Connection,
+        database: &str,
+    ) -> crate::error::Result<SchemaHealthReport> {
+        crate::commands::advisor::collect_and_analyze(conn, database).await
     }
 
     /// Runs `sql` against MySQL via the text protocol, for statements the
@@ -305,6 +321,7 @@ pub fn run() {
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,
             commands::inspector::sample_statement_stats,
+            commands::advisor::analyze_schema_health,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
             commands::sync::generate_sync_sql,

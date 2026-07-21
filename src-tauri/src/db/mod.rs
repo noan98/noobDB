@@ -1,3 +1,4 @@
+pub mod advisor;
 pub mod data_diff;
 pub mod diff;
 pub mod format;
@@ -10,6 +11,7 @@ pub mod types;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
+use advisor::UnusedIndexStats;
 use types::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, StatementStat, StreamBatch,
@@ -638,6 +640,19 @@ impl Connection {
             Connection::MySql(c) => c.statement_stats().await,
             Connection::Postgres(c) => c.statement_stats().await,
             Connection::Sqlite(c) => c.statement_stats().await,
+        }
+    }
+
+    /// スキーマ健全性アドバイザ (#741) の未使用インデックス統計。PostgreSQL は
+    /// `pg_stat_user_indexes.idx_scan = 0`、MySQL は `sys.schema_unused_indexes`
+    /// (performance_schema 有効時のみ)。前提を満たさなければ理由コード付きで
+    /// 縮退する ([`UnusedIndexStats::supported`] = false)。SQLite はサーバ統計を
+    /// 持たず `unsupported_driver` を返す。読み取りのみ。
+    pub async fn unused_indexes(&self, db: &str) -> Result<UnusedIndexStats> {
+        match self {
+            Connection::MySql(c) => c.unused_indexes(db).await,
+            Connection::Postgres(c) => c.unused_indexes(db).await,
+            Connection::Sqlite(c) => c.unused_indexes(db).await,
         }
     }
 
