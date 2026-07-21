@@ -23,8 +23,8 @@ use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat, TableColumnInfo,
-    TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
+    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -144,6 +144,15 @@ fn build_fixtures() -> serde_json::Value {
         max_time_ms: 87.2,
         rows: Some(1200),
     };
+    let server_metrics = ServerMetrics {
+        connections: Some(42),
+        active: Some(3),
+        idle_in_transaction: Some(1),
+        lock_waiting: Some(0),
+        questions: Some(1_000_000),
+        slow_queries: Some(12),
+        lock_waits: Some(5),
+    };
     let preview_result = PreviewResult {
         target_table: Some("users".into()),
         columns: vec![column.clone()],
@@ -168,6 +177,7 @@ fn build_fixtures() -> serde_json::Value {
         "serverVariable": server_variable,
         "serverInfo": server_info,
         "processInfo": process_info,
+        "serverMetrics": server_metrics,
         "queryStatsSupport": query_stats_support,
         "liveQuery": live_query,
         "statementStat": statement_stat,

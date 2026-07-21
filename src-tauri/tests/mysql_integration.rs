@@ -174,6 +174,40 @@ async fn mysql_server_info_reports_version_and_variables() {
     conn.close().await;
 }
 
+/// 監視ダッシュボード (#731): `SHOW GLOBAL STATUS` から接続数・スループット・ロック
+/// 待ちのカウンタを 1 サンプル取得できること。値は環境依存だが、常設の status 変数
+/// (`Threads_connected` / `Questions`) は必ず報告されるので `Some` を要求する。
+#[tokio::test]
+async fn mysql_server_metrics_reports_connection_and_throughput_counters() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let m = conn.server_metrics().await.expect("server_metrics");
+    // 接続中の自分自身が居るので接続数は 1 以上。
+    assert!(
+        m.connections.is_some_and(|c| c >= 1),
+        "Threads_connected must be reported and >= 1, got {:?}",
+        m.connections
+    );
+    // Questions は起動以降の累積なので必ず正。
+    assert!(
+        m.questions.is_some_and(|q| q >= 1),
+        "Questions must be reported and >= 1, got {:?}",
+        m.questions
+    );
+    // MySQL では行ロック待ちの累積カウンタも報告される (0 でも Some)。
+    assert!(
+        m.lock_waits.is_some(),
+        "Innodb_row_lock_waits must be reported, got None"
+    );
+
+    conn.close().await;
+}
+
 /// The preview lifts the user's WHERE clause out of the statement and uses it
 /// to filter the BEFORE snapshot, so an UPDATE or DELETE that touches a row
 /// past the first `row_limit` rows still shows the affected rows in the

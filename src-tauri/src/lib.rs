@@ -23,7 +23,7 @@ pub mod __test_api {
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
         Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-        QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat,
+        QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
         TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
     };
     pub use crate::db::{
@@ -288,6 +288,7 @@ pub fn run() {
             commands::schema::table_row_estimates,
             commands::schema::table_sizes,
             commands::server::server_info,
+            commands::server::server_metrics,
             commands::process::list_processes,
             commands::process::kill_process,
             commands::inspector::query_stats_support,

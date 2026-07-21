@@ -406,6 +406,32 @@ export interface ProcessInfo {
   is_self: boolean;
 }
 
+/**
+ * サーバランタイムの軽量メトリクス 1 サンプル (#731)。監視ダッシュボードが一定
+ * 間隔でポーリングし、在メモリのリングバッファに蓄積して接続数 / QPS / ロック待ちを
+ * 時系列グラフ化する。ゲージ (瞬時値) とカウンタ (累積値) が混在し、QPS/TPS などの
+ * レートは累積カウンタの 2 サンプル差分から `serverMetrics.ts` の純ロジックが算出
+ * する。エンジンが報告しない項目は `null`。スループット (`questions`) の意味は
+ * ドライバで異なる (MySQL=ステートメント数 / PostgreSQL=トランザクション数)。
+ * SQLite はサーバを持たずコマンドがエラーを返す (UI は導線ごと非表示にする)。
+ */
+export interface ServerMetrics {
+  /** クライアント接続数 (ゲージ)。MySQL Threads_connected / PG client backend 数。 */
+  connections: number | null;
+  /** 実行中の接続・スレッド数 (ゲージ)。MySQL Threads_running / PG state='active'。 */
+  active: number | null;
+  /** トランザクション開始済みだがアイドルな接続数 (ゲージ)。PG のみ (MySQL は null)。 */
+  idle_in_transaction: number | null;
+  /** いまロック待ちの接続・スレッド数 (ゲージ)。MySQL Innodb_row_lock_current_waits / PG wait_event_type='Lock'。 */
+  lock_waiting: number | null;
+  /** スループットカウンタ (累積)。MySQL Questions / PG xact_commit+xact_rollback。 */
+  questions: number | null;
+  /** スロークエリ数 (累積)。MySQL Slow_queries。PG は null。 */
+  slow_queries: number | null;
+  /** 行ロック待ちの累積回数。MySQL Innodb_row_lock_waits。PG は null。 */
+  lock_waits: number | null;
+}
+
 /** One trusted SSH host from known_hosts (`host:port` + fingerprint). #682. */
 export interface KnownHost {
   host: string;
@@ -837,6 +863,16 @@ export const api = {
   /** プロセス/接続を強制終了する。read_only セッションはバックエンドで拒否される。 */
   killProcess: (sessionId: string, processId: number) =>
     invoke<void>("kill_process", { sessionId, processId }),
+  /**
+   * サーバランタイムのメトリクスを 1 サンプル取得する (監視ダッシュボード #731)。
+   * `SHOW GLOBAL STATUS` / `pg_stat_activity` などメモリ上のカウンタを読むだけの
+   * 読み取り操作なので read_only セッションでも許可される。SQLite は非対応で
+   * エラーを返す (呼び出し側で catch して導線ごと非表示にする)。
+   */
+  serverMetrics: (sessionId: string) =>
+    invoke<ServerMetrics>("server_metrics", { sessionId }).then((r) =>
+      parseResponse(schemas.serverMetrics, r, "server_metrics"),
+    ),
   /** ライブクエリ・インスペクタ (#746) の前提可否プローブ。理由コード付きで縮退情報を返す。 */
   queryStatsSupport: (sessionId: string) =>
     invoke<QueryStatsSupport>("query_stats_support", { sessionId }).then((r) =>

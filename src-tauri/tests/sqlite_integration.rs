@@ -288,6 +288,32 @@ async fn sqlite_server_info_reports_version_and_pragmas() {
 }
 
 #[tokio::test]
+async fn sqlite_server_metrics_is_unsupported() {
+    // 監視ダッシュボード (#731) はサーバランタイム統計を要する。SQLite はファイル
+    // ベースでサーバを持たないため、list_processes と同じく Err で短絡し、フロントが
+    // 導線を非表示にできるようにする (空リストと「非対応」を区別する)。
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_srvmetrics_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let result = conn.server_metrics().await;
+    assert!(
+        result.is_err(),
+        "SQLite server_metrics must error (unsupported), got: {result:?}"
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn sqlite_foreign_keys_are_introspected_for_er_diagram() {
     // The ER diagram is fed by `foreign_keys`: it must surface every FK in the
     // database (across all tables) with the referencing and referenced sides,

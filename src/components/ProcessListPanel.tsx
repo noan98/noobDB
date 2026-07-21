@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
-import { api, type ProcessInfo } from "../api/tauri";
+import { api, type DriverKind, type ProcessInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import { formatProcessTime, pruneSelection, summarizeQuery } from "./processList";
+import { ServerMetricsPanel } from "./ServerMetricsPanel";
 import { useConfirm } from "./ConfirmDialog";
 import { Icon } from "./Icon";
 import { Spinner } from "./Spinner";
@@ -59,16 +60,23 @@ const queryTdCss: SystemStyleObject = {
 
 export function ProcessListPanel({
   sessionId,
+  driver,
   readOnly,
   onClose,
 }: {
   sessionId: string;
+  driver: DriverKind;
   readOnly: boolean;
   onClose: () => void;
 }) {
   const t = useT();
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
+
+  // 監視ダッシュボード (#731) はサーバランタイム統計を要するため、サーバを持たない
+  // SQLite ではタブごと出さない (導線を非表示にする)。
+  const showMetricsTab = driver !== "sqlite";
+  const [tab, setTab] = useState<"processes" | "metrics">("processes");
 
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -223,6 +231,21 @@ export function ProcessListPanel({
         </Button>
       </chakra.header>
 
+      {showMetricsTab && (
+        <Flex gap="1" borderBottom="1px solid" borderColor="app.border" role="tablist">
+          <TabButton active={tab === "processes"} onClick={() => setTab("processes")}>
+            {t("processTabProcesses")}
+          </TabButton>
+          <TabButton active={tab === "metrics"} onClick={() => setTab("metrics")}>
+            {t("processTabMetrics")}
+          </TabButton>
+        </Flex>
+      )}
+
+      {tab === "metrics" && showMetricsTab ? (
+        <ServerMetricsPanel sessionId={sessionId} driver={driver} />
+      ) : (
+        <>
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
         {t("processDesc")}
       </chakra.p>
@@ -348,8 +371,42 @@ export function ProcessListPanel({
           </chakra.table>
         </Box>
       )}
+        </>
+      )}
 
       {dialog}
     </Box>
+  );
+}
+
+/** プロセス一覧 / メトリクスの簡易タブボタン。 */
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <chakra.button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      px="3"
+      py="1.5"
+      fontSize="sm"
+      fontWeight={active ? 600 : 400}
+      color={active ? "app.text" : "app.textMuted"}
+      borderBottom="2px solid"
+      borderColor={active ? "var(--accent)" : "transparent"}
+      marginBottom="-1px"
+      background="transparent"
+      cursor="pointer"
+    >
+      {children}
+    </chakra.button>
   );
 }

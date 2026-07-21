@@ -6137,6 +6137,7 @@ export default function App() {
         ) : showProcesses && sessionId ? (
           <ProcessListPanel
             sessionId={sessionId}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             readOnly={selectedProfile?.read_only ?? false}
             onClose={() => setShowProcesses(false)}
           />

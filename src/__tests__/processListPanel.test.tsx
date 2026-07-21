@@ -27,7 +27,7 @@ beforeEach(() => {
 describe("ProcessListPanel render smoke (#604)", () => {
   it("mounts and shows the process-list title", async () => {
     renderWithProviders(
-      <ProcessListPanel sessionId="s1" readOnly={false} onClose={() => {}} />,
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} onClose={() => {}} />,
     );
     expect(screen.getByText(t("processTitle"))).toBeInTheDocument();
     await waitFor(() =>
@@ -38,7 +38,7 @@ describe("ProcessListPanel render smoke (#604)", () => {
   it("invokes onClose when the close control is activated", async () => {
     const onClose = vi.fn();
     renderWithProviders(
-      <ProcessListPanel sessionId="s1" readOnly onClose={onClose} />,
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly onClose={onClose} />,
     );
     fireEvent.click(screen.getByRole("button", { name: t("processClose") }));
     expect(onClose).toHaveBeenCalledOnce();

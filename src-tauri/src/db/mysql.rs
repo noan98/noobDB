@@ -7,8 +7,8 @@ use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef}
 
 use super::types::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 use super::{
     build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode,
@@ -1367,6 +1367,41 @@ impl MySqlConn {
             })
             .collect();
         Ok(ServerInfo { version, variables })
+    }
+
+    /// 監視ダッシュボード (#731) 用の 1 サンプル。`SHOW GLOBAL STATUS` の
+    /// メモリ上カウンタを 1 回で読み、必要な変数だけ拾う (テーブル I/O なし)。
+    /// スループット (`Questions`) やロック待ち (`Innodb_row_lock_waits`) は累積
+    /// カウンタで、レートへの変換はフロントが 2 サンプルの差分から行う。
+    pub async fn server_metrics(&self) -> Result<ServerMetrics> {
+        // Variable_name / Value の全行を大小無視のマップにする。値は文字列
+        // (数値カウンタも文字列で返る) なので try_get::<String> で受ける。
+        let rows: Vec<MySqlRow> = sqlx::query("SHOW GLOBAL STATUS")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut status: std::collections::HashMap<String, String> =
+            std::collections::HashMap::with_capacity(rows.len());
+        for r in rows {
+            let name = r.try_get::<String, _>(0).unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            if let Some(value) = r.try_get::<Option<String>, _>(1).ok().flatten() {
+                status.insert(name.to_ascii_lowercase(), value);
+            }
+        }
+        // カウンタ値の取り出し (欠損/非数値は None に縮退)。
+        let g = |key: &str| status.get(key).and_then(|v| v.trim().parse::<i64>().ok());
+        Ok(ServerMetrics {
+            connections: g("threads_connected"),
+            active: g("threads_running"),
+            // MySQL に PostgreSQL 的な "idle in transaction" 状態のゲージは無い。
+            idle_in_transaction: None,
+            lock_waiting: g("innodb_row_lock_current_waits"),
+            questions: g("questions"),
+            slow_queries: g("slow_queries"),
+            lock_waits: g("innodb_row_lock_waits"),
+        })
     }
 }
 
