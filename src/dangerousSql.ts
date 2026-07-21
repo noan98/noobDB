@@ -26,8 +26,17 @@ export interface DangerFinding {
  * literals replaced by spaces. Keyword and `WHERE` detection runs against this
  * so a string such as `'... where ...'` can't masquerade as a real clause.
  * Length is preserved so callers can slice the original at the same offsets.
+ *
+ * Exported so sibling analysers built on the same "mask first, then scan
+ * keywords" approach can reuse the exact masking rules instead of duplicating
+ * them (e.g. `components/preflight.ts`, which turns a write DML into a COUNT
+ * probe — #737). The mask is dialect-agnostic: it blanks the contents of single
+ * quotes, double quotes, backticks, dollar-quoted strings, line comments
+ * (`--` / `#`) and block comments, so clause keywords (`WHERE`, `ORDER BY`, …)
+ * survive while a `where` hiding inside a string or a quoted identifier named
+ * `` `order` `` does not.
  */
-function maskLiterals(sql: string): string {
+export function maskLiterals(sql: string): string {
   const out = sql.split("");
   const n = sql.length;
   const blank = (start: number, end: number) => {

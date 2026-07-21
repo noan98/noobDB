@@ -175,6 +175,14 @@ export interface Settings {
    */
   sqlLintEnabled: boolean;
   /**
+   * 実行前の影響行数プリフライト (#737)。既定オン。オンのとき、エディタの現在文が
+   * 単純な UPDATE / DELETE のとき対象テーブルと WHERE から `SELECT COUNT(*)` を
+   * 組み立ててデバウンス付きで裏実行し、「影響: 約 N 行」「影響: 全行」バッジを
+   * 実行ボタン付近に常時表示する。COUNT は読み取りで履歴も汚さないが、重い
+   * テーブルへの裏 COUNT を避けたい場合にオフにできる。
+   */
+  preflightImpactEnabled: boolean;
+  /**
    * 実行計画ウォッチ (#743): 接続確立時にウォッチ登録済みスニペットの EXPLAIN を
    * 自動取得して世代記録・変化検知を行う。既定オン。EXPLAIN は読み取り操作のみで
    * 履歴も汚さないが、接続直後の負荷を避けたい場合にオフにできる。
@@ -525,6 +533,9 @@ export const DEFAULT_AUTO_UPDATE_CHECK_ENABLED = true;
 /** リアルタイム SQL 構文チェック (#704) は既定オン。 */
 export const DEFAULT_SQL_LINT_ENABLED = true;
 
+/** 実行前の影響行数プリフライト (#737) は既定オン。 */
+export const DEFAULT_PREFLIGHT_IMPACT_ENABLED = true;
+
 /** 実行計画ウォッチ (#743) の接続時自動チェックは既定オン。 */
 export const DEFAULT_PLAN_WATCH_ON_CONNECT = true;
 
@@ -565,6 +576,7 @@ export const DEFAULT_SETTINGS: Settings = {
   queryNotificationThresholdSecs: DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
+  preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
 };
 
@@ -771,6 +783,7 @@ export function normalizeSettings(input: unknown): Settings {
     queryNotificationThresholdSecs?: unknown;
     autoUpdateCheckEnabled?: unknown;
     sqlLintEnabled?: unknown;
+    preflightImpactEnabled?: unknown;
     planWatchOnConnect?: unknown;
   };
   return {
@@ -865,6 +878,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.sqlLintEnabled === "boolean"
         ? parsed.sqlLintEnabled
         : DEFAULT_SQL_LINT_ENABLED,
+    preflightImpactEnabled:
+      typeof parsed.preflightImpactEnabled === "boolean"
+        ? parsed.preflightImpactEnabled
+        : DEFAULT_PREFLIGHT_IMPACT_ENABLED,
     planWatchOnConnect:
       typeof parsed.planWatchOnConnect === "boolean"
         ? parsed.planWatchOnConnect
@@ -1256,6 +1273,13 @@ export function setAutoUpdateCheckEnabled(value: boolean): void {
 export function setSqlLintEnabled(value: boolean): void {
   if (current.sqlLintEnabled === value) return;
   current = { ...current, sqlLintEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setPreflightImpactEnabled(value: boolean): void {
+  if (current.preflightImpactEnabled === value) return;
+  current = { ...current, preflightImpactEnabled: value };
   persist();
   listeners.forEach((cb) => cb());
 }

@@ -112,6 +112,55 @@ describe("DangerousQueryDialog", () => {
     expect(screen.getByText(t("dangerousWriteApprovalIntro"))).toBeInTheDocument();
   });
 
+  // #737: プリフライトの影響行数を確認ダイアログへ引き継ぐ。
+  describe("影響行数の引き継ぎ (#737)", () => {
+    it("WHERE なし DELETE は全行 + 件数を表示する", () => {
+      renderWithProviders(
+        <DangerousQueryDialog
+          findings={findings}
+          isProduction={false}
+          impact={{ verb: "delete", count: 45000, allRows: true }}
+          onConfirm={() => {}}
+          onCancel={() => {}}
+        />,
+      );
+      expect(
+        screen.getByText(t("dangerousImpactDelete", { count: (45000).toLocaleString() })),
+      ).toBeInTheDocument();
+      expect(screen.getByText(t("dangerousImpactAllRows"))).toBeInTheDocument();
+      expect(screen.getByText(t("dangerousImpactNote"))).toBeInTheDocument();
+    });
+
+    it("WHERE 付き UPDATE は件数のみ表示し全行文言は出さない", () => {
+      renderWithProviders(
+        <DangerousQueryDialog
+          findings={[]}
+          isProduction={true}
+          writeApproval
+          impact={{ verb: "update", count: 12, allRows: false }}
+          onConfirm={() => {}}
+          onCancel={() => {}}
+        />,
+      );
+      expect(
+        screen.getByText(t("dangerousImpactUpdate", { count: (12).toLocaleString() })),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(t("dangerousImpactAllRows"))).not.toBeInTheDocument();
+    });
+
+    it("impact 未指定では影響行数の文言を出さない", () => {
+      renderWithProviders(
+        <DangerousQueryDialog
+          findings={findings}
+          isProduction={false}
+          onConfirm={() => {}}
+          onCancel={() => {}}
+        />,
+      );
+      expect(screen.queryByText(t("dangerousImpactNote"))).not.toBeInTheDocument();
+    });
+  });
+
   // #675: 本番接続の DROP/TRUNCATE には対象名タイプ入力の強確認ゲートを追加する。
   describe("タイプして確認ゲート (#675)", () => {
     const dropFindings: DangerFinding[] = [{ kind: "drop", target: "users" }];

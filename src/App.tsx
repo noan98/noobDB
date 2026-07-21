@@ -56,6 +56,8 @@ import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
 import { HistoryList } from "./components/HistoryList";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
+import type { PreflightResult } from "./components/usePreflight";
+import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
 import { TabBar } from "./components/TabBar";
@@ -1222,6 +1224,10 @@ export default function App() {
   // selection/scroll stored on the tab itself.
   const editorSelectionRef = useRef<Map<string, { anchor: number; head: number }>>(new Map());
   const gridScrollRef = useRef<Map<string, number>>(new Map());
+  // タブ単位の最新プリフライト結果 (#737)。危険クエリ確認ダイアログを開くとき、実行
+  // 対象の SQL と一致する結果があれば影響行数を引き継ぐ。ref なので高頻度更新でも
+  // 再レンダしない。
+  const preflightRef = useRef<Map<string, PreflightResult | null>>(new Map());
   const connectionListRef = useRef<ConnectionListHandle>(null);
   // ペインフォーカス循環 (F6, #681) のカーソル: 0=サイドバー / 1=エディタ /
   // 2=結果グリッド。押下のたびに次の対象へ進める。対象の ref が無い (未マウント)
@@ -1393,6 +1399,8 @@ export default function App() {
      * drop/truncate finding).
      */
     typedConfirmTarget: string | null;
+    /** 影響行数プリフライト (#737) から引き継いだ件数 (該当時のみ)。 */
+    impact?: PreflightImpact | null;
   } | null>(null);
 
   // Pending {{variable}} parameter prompt. When the editor's SQL contains
@@ -2014,6 +2022,7 @@ export default function App() {
     for (const tt of tabsRef.current) {
       editorSelectionRef.current.delete(tt.id);
       gridScrollRef.current.delete(tt.id);
+      preflightRef.current.delete(tt.id);
     }
     setTabs([]);
     setPanes([]);
@@ -3474,6 +3483,13 @@ export default function App() {
         isProduction && destructiveTargets.length > 0
           ? resolveTypedConfirmTarget(destructiveTargets)
           : null;
+      // プリフライト (#737) の件数を引き継ぐ。実行対象 SQL と一致し COUNT 確定
+      // (`ready`) の結果だけを採用する (未確定・別テキスト・推定不可では出さない)。
+      const pf = preflightRef.current.get(tab.id);
+      const impact: PreflightImpact | null =
+        pf && pf.sql === sql && pf.status === "ready"
+          ? { verb: pf.plan.verb, count: pf.count, allRows: pf.plan.allRows }
+          : null;
       setPendingDangerous({
         tabId: target.id,
         sql,
@@ -3483,6 +3499,7 @@ export default function App() {
         autoLimit,
         batch,
         typedConfirmTarget,
+        impact,
       });
       return;
     }
@@ -4580,6 +4597,7 @@ export default function App() {
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
     editorSelectionRef.current.delete(id);
     gridScrollRef.current.delete(id);
+    preflightRef.current.delete(id);
     const prevPanes = panesRef.current;
     let removedPaneId: string | null = null;
     let next = prevPanes.map((p) => {
@@ -5432,6 +5450,7 @@ export default function App() {
                     onExplain={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "explain")}
                     explainMode={tab.kind === "explain"}
                     onChange={(sql) => updateTab(tab.id, { sql })}
+                    onPreflightImpact={(r) => preflightRef.current.set(tab.id, r)}
                     onSaveSnippet={handleSaveSnippetFromEditor}
                     onFormatError={(error) =>
                       setStatus({
@@ -6740,6 +6759,7 @@ export default function App() {
             isProduction={pendingDangerous.isProduction}
             writeApproval={pendingDangerous.writeApproval}
             typedConfirmTarget={pendingDangerous.typedConfirmTarget}
+            impact={pendingDangerous.impact}
             onConfirm={handleConfirmDangerous}
             onCancel={handleCancelDangerous}
           />

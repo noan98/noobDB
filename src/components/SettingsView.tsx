@@ -85,6 +85,7 @@ import {
   setRichCellRendering,
   setPlanWatchOnConnect,
   setSqlLintEnabled,
+  setPreflightImpactEnabled,
   setStreamPrefetchSize,
   setSyntaxColor,
   setTabRestoreMode,
@@ -523,6 +524,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-streaming", titleKey: "settingsStreaming" },
   { id: "settings-sec-auto-limit", titleKey: "settingsAutoLimit" },
   { id: "settings-sec-sql-lint", titleKey: "settingsSqlLint" },
+  { id: "settings-sec-preflight-impact", titleKey: "settingsPreflightImpact" },
   { id: "settings-sec-plan-watch", titleKey: "settingsPlanWatch" },
   { id: "settings-sec-result-grid", titleKey: "settingsResultGridMode" },
   { id: "settings-sec-safety", titleKey: "settingsSafety" },
@@ -1126,6 +1128,26 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsToggleLabel>
           <SettingsHelpInline>
             {t("settingsSqlLintEnabledHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection id="settings-sec-preflight-impact" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsPreflightImpact")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsPreflightImpactHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-preflight-impact">
+            <Switch
+              id="settings-preflight-impact"
+              checked={settings.preflightImpactEnabled}
+              onChange={setPreflightImpactEnabled}
+            />
+            {t("settingsPreflightImpactEnabled")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsPreflightImpactEnabledHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>

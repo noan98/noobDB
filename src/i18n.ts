@@ -181,6 +181,11 @@ const en = {
   settingsSqlLintEnabled: "Enable syntax check",
   settingsSqlLintEnabledHelp: "Reuse the editor's parse tree to flag misspelled statement keywords, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, unterminated strings/quotes and unterminated block comments, following the connected driver's dialect. Conservative by design — it prefers missing an error over a false positive. Turn off to hide all diagnostics.",
 
+  settingsPreflightImpact: "Impact-row preflight",
+  settingsPreflightImpactHelp: "For a plain UPDATE/DELETE in the editor, show a badge estimating how many rows it will affect — before you run — so an unexpected magnitude (or a whole-table write) is visible ahead of the confirmation dialog.",
+  settingsPreflightImpactEnabled: "Show impact-row badge",
+  settingsPreflightImpactEnabledHelp: "Convert a simple single-table UPDATE/DELETE into a background SELECT COUNT(*) (debounced, read-only, never recorded in query history) and show the estimate near the Run button. Complex shapes (joins, subquery FROM, ORDER BY/LIMIT) degrade to \"can't estimate\". The number is a snapshot and may drift by run time. Turn off to skip the background count on heavy tables.",
+
   settingsPlanWatch: "Execution plan watch",
   settingsPlanWatchHelp: "Watched snippets keep EXPLAIN plan generations locally and flag structural regressions (index → full scan, join method changes, order-of-magnitude row estimates).",
   settingsPlanWatchOnConnect: "Check watched plans on connect",
@@ -341,6 +346,11 @@ const en = {
   dangerousKindTruncate: "TRUNCATE (removes all rows)",
   dangerousTargetTable: "Target: {target}",
   dangerousTargetUnknown: "Target: (could not determine)",
+  // Impact-row count handed off from the editor preflight (#737).
+  dangerousImpactDelete: "About {count} rows will be deleted.",
+  dangerousImpactUpdate: "About {count} rows will be updated.",
+  dangerousImpactAllRows: "This affects every row in the table.",
+  dangerousImpactNote: "Estimate as of preflight — may drift by run time.",
   dangerousCancel: "Cancel",
   dangerousConfirm: "Run anyway",
   // Shared "type to confirm" gate (#675) used by DangerousQueryDialog,
@@ -636,6 +646,19 @@ const en = {
   editorLintUnterminatedComment: "Unterminated block comment (/* without */)",
   editorLintClauseOrder:
     "Clause out of order — expected WHERE → GROUP BY → HAVING → ORDER BY → LIMIT",
+
+  // Impact-row preflight badge (#737).
+  editorPreflightImpact: "Affects ~{count} rows",
+  editorPreflightAllRows: "Affects ALL rows ({count})",
+  editorPreflightAllRowsNoCount: "Affects ALL rows (no WHERE)",
+  editorPreflightCounting: "Estimating impact…",
+  editorPreflightUnestimable: "Impact: can't estimate",
+  editorPreflightTooltip:
+    "Estimated rows this write will affect, from a background SELECT COUNT(*). A snapshot — the real count may drift by run time.",
+  editorPreflightAllRowsTooltip:
+    "No WHERE clause: this write affects every row in the table. Count is a snapshot and may drift by run time.",
+  editorPreflightUnestimableTooltip:
+    "The statement shape (join, subquery FROM, ORDER BY/LIMIT, …) can't be safely converted to a row count, so no number is shown.",
 
   explainEmpty: "No plan yet. Use the Explain button to analyze a query.",
   explainLoading: "Analyzing query plan...",
@@ -2107,6 +2130,11 @@ const ja: Dict = {
   settingsSqlLintEnabled: "構文チェックを有効化",
   settingsSqlLintEnabledHelp: "エディタのパースツリーを再利用し、文の先頭キーワードのタイポ・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列/引用符・未終端のブロックコメントを接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。オフにするとすべての診断を非表示にします。",
 
+  settingsPreflightImpact: "影響行数プリフライト",
+  settingsPreflightImpactHelp: "エディタの単純な UPDATE / DELETE に対し、実行前に「約 N 行に影響」というバッジを表示します。確認ダイアログより手前で、桁違いの影響やテーブル全行への書き込みに気付けます。",
+  settingsPreflightImpactEnabled: "影響行数バッジを表示",
+  settingsPreflightImpactEnabledHelp: "単一テーブルの単純な UPDATE / DELETE を裏の SELECT COUNT(*) (デバウンス付き・読み取り専用・履歴に記録しない) に変換し、実行ボタン付近に推定件数を表示します。複雑な形状 (JOIN・サブクエリ FROM・ORDER BY / LIMIT) は「推定不可」に降格します。件数は実行時点とズレうるスナップショットです。重いテーブルへの裏 COUNT を避けたい場合はオフにできます。",
+
   settingsPlanWatch: "実行計画ウォッチ",
   settingsPlanWatchHelp: "ウォッチ登録したスニペットの EXPLAIN 計画をローカルに世代管理し、構造的なリグレッション (インデックス → フルスキャン・結合方式の変化・推定行数の桁違い) を検知します。",
   settingsPlanWatchOnConnect: "接続時にウォッチ済み計画をチェック",
@@ -2268,6 +2296,11 @@ const ja: Dict = {
   dangerousKindTruncate: "TRUNCATE（全行を削除します）",
   dangerousTargetTable: "対象: {target}",
   dangerousTargetUnknown: "対象: (特定できませんでした)",
+  // エディタのプリフライトから引き継ぐ影響行数 (#737)。
+  dangerousImpactDelete: "約 {count} 行が削除されます。",
+  dangerousImpactUpdate: "約 {count} 行が更新されます。",
+  dangerousImpactAllRows: "テーブルの全行が対象です。",
+  dangerousImpactNote: "プリフライト時点の推定値です (実行時点とズレる可能性があります)。",
   dangerousCancel: "キャンセル",
   dangerousConfirm: "実行する",
   // DangerousQueryDialog・ConfirmDialog (ツリーからの DROP/TRUNCATE)・
@@ -2562,6 +2595,19 @@ const ja: Dict = {
   editorLintUnterminatedComment: "ブロックコメント (/* ... */) が閉じられていません",
   editorLintClauseOrder:
     "句の順序が不正です — WHERE → GROUP BY → HAVING → ORDER BY → LIMIT の順に置きます",
+
+  // 影響行数プリフライトのバッジ (#737)。
+  editorPreflightImpact: "影響: 約 {count} 行",
+  editorPreflightAllRows: "影響: 全行 ({count} 行)",
+  editorPreflightAllRowsNoCount: "影響: 全行 (WHERE なし)",
+  editorPreflightCounting: "影響を計測中…",
+  editorPreflightUnestimable: "影響: 推定不可",
+  editorPreflightTooltip:
+    "この書き込みが影響する行数の推定 (裏で SELECT COUNT(*) を実行)。実行時点とズレうるスナップショットです。",
+  editorPreflightAllRowsTooltip:
+    "WHERE 句がありません: テーブルの全行が対象です。件数は実行時点とズレうるスナップショットです。",
+  editorPreflightUnestimableTooltip:
+    "この文の形状 (JOIN・サブクエリ FROM・ORDER BY / LIMIT など) は安全に行数へ変換できないため、数字は表示しません。",
 
   explainEmpty: "まだ実行計画はありません。Explain ボタンでクエリを解析してください。",
   explainLoading: "実行計画を解析中...",
