@@ -58,16 +58,23 @@ export interface ShouldReconnectInput {
   attempt: number;
   /** 設定上の最大リトライ回数。 */
   maxRetries: number;
+  /**
+   * 対象が本番プロファイル (`is_production`) か。本番接続は意図しない再接続で
+   * 勝手に張り直さないよう、自動リトライせず必ず手動ボタンにする (#712)。省略時は
+   * 非本番扱い。
+   */
+  isProduction?: boolean;
 }
 
 /**
  * いま自動再接続を開始/継続してよいかを判定する。設定で有効かつトランザクション
- * 中でなく、まだリトライ上限に達していないときだけ `true`。トランザクション中の
- * 断はここで明確に弾き、呼び出し側は明示エラーへ倒す (受け入れ条件)。
+ * 中でなく、本番プロファイルでもなく、まだリトライ上限に達していないときだけ `true`。
+ * トランザクション中の断と本番接続はここで明確に弾き、呼び出し側は手動再接続へ
+ * 倒す (受け入れ条件)。
  */
 export function shouldAutoReconnect(input: ShouldReconnectInput): boolean {
-  const { enabled, inTransaction, attempt, maxRetries } = input;
-  if (!enabled || inTransaction) return false;
+  const { enabled, inTransaction, attempt, maxRetries, isProduction } = input;
+  if (!enabled || inTransaction || isProduction) return false;
   if (!Number.isFinite(attempt) || !Number.isFinite(maxRetries)) return false;
   return attempt >= 0 && attempt < maxRetries;
 }

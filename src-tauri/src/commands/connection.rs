@@ -218,6 +218,9 @@ pub async fn connect(
     let read_only = req.read_only;
     let skip_history = req.skip_history;
     let driver = req.driver;
+    // Capture the non-secret SSH parameters before `req` is moved into the
+    // connect future, so the session can rebuild its tunnel on reconnect (#712).
+    let reconnect_ssh = reconnect_ssh_from(&req);
     let progress = ConnectProgress::new(app.clone(), attempt_id.clone());
 
     let fut = async move { open_connection(&req, &progress, secs).await };
@@ -236,6 +239,7 @@ pub async fn connect(
         read_only,
         skip_history,
         connect_options: opts,
+        reconnect_ssh,
         _tunnel: tunnel,
     };
     let id = state.insert(session).await;
@@ -312,6 +316,121 @@ pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Resul
         tracing::debug!(session_id = %session_id, "disconnect: no such session");
     }
     Ok(())
+}
+
+/// Re-establish a dropped session's connection *in place*, keeping the same
+/// `SessionId` (#712). Rebuilds the SSH tunnel (when the session was tunneled),
+/// opens a fresh `db::Connection` from the session's stored `connect_options`,
+/// and only then swaps the live session for the new one — so on any failure the
+/// old session is left untouched and the caller can retry. Because the id is
+/// unchanged, the frontend's open tabs and grid state (keyed by session id) stay
+/// alive without a disconnect/restore round-trip.
+///
+/// Secrets follow the same rules as `connect`: the DB password is reused from
+/// the already-held `connect_options`, and SSH passphrase / password are
+/// re-resolved from the keyring by `profile_id` — no new plaintext is retained.
+/// Session flags (`read_only` / `skip_history`) are preserved.
+#[tauri::command]
+pub async fn reconnect(session_id: String, state: State<'_, AppState>) -> Result<()> {
+    reconnect_inner(&state, &session_id).await
+}
+
+/// Core of [`reconnect`], split out so integration tests can drive the
+/// session-swap path without a Tauri runtime (exposed via `__test_api`).
+pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
+    let old = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+
+    // Build the fresh transport under an overall deadline so a reconnect against
+    // a now-unreachable host can't hang indefinitely (mirrors `connect`'s
+    // guardrail). The old session is not disturbed while this runs.
+    let secs = DEFAULT_CONNECT_TIMEOUT_SECS;
+    let (tunnel, opts, conn) =
+        match tokio::time::timeout(Duration::from_secs(secs), reopen_transport(&old)).await {
+            Ok(res) => res?,
+            Err(_) => {
+                return Err(AppError::ConnectTimeout {
+                    phase: ConnectPhase::DbConnecting.label().to_string(),
+                    secs,
+                })
+            }
+        };
+
+    let new_session = Session {
+        id: old.id.clone(),
+        profile_id: old.profile_id.clone(),
+        conn,
+        connect_options: opts,
+        read_only: old.read_only,
+        skip_history: old.skip_history,
+        reconnect_ssh: old.reconnect_ssh.clone(),
+        _tunnel: tunnel,
+    };
+
+    // Swap the live session for the new one, then close the old connection. The
+    // old tunnel (if any) is dropped when the last Arc to the previous session
+    // goes away, per the existing lifetime design.
+    if let Some(prev) = state.replace(new_session).await {
+        prev.conn.close().await;
+    }
+    tracing::info!(session_id = %session_id, "reconnected");
+    Ok(())
+}
+
+/// Open a fresh tunnel (if the session was tunneled) and DB connection for a
+/// reconnect. Returns the new tunnel guard, the options actually used (with the
+/// tunnel's fresh local port patched in), and the live connection. Does not
+/// touch `AppState`.
+async fn reopen_transport(
+    old: &Session,
+) -> Result<(Option<SshTunnel>, DbConnectOptions, Connection)> {
+    let mut opts = old.connect_options.clone();
+    let tunnel = if let Some(ssh) = &old.reconnect_ssh {
+        // Re-resolve SSH secrets from the keyring (no new plaintext retention).
+        let mut cfg = ssh.clone();
+        if let Some(pid) = &old.profile_id {
+            if cfg.passphrase.is_empty() {
+                if let Some(p) = secrets::get_ssh_passphrase(pid)? {
+                    cfg.passphrase = p;
+                }
+            }
+            if cfg.password.is_empty() {
+                if let Some(p) = secrets::get_ssh_password(pid)? {
+                    cfg.password = p;
+                }
+            }
+        }
+        let t = SshTunnel::open(&cfg).await?;
+        // The stored options point at the old (now-dead) tunnel's local port;
+        // redirect them at the freshly-bound one.
+        opts.host = "127.0.0.1".to_string();
+        opts.port = t.local_port;
+        Some(t)
+    } else {
+        None
+    };
+    let conn = Connection::connect(&opts).await?;
+    Ok((tunnel, opts, conn))
+}
+
+/// Build the non-secret [`SshConfig`] to stash on the session for reconnect,
+/// from a connect request. Returns `None` when the request isn't tunneled. The
+/// passphrase / password are deliberately left empty — reconnect re-resolves
+/// them from the keyring so no extra plaintext lingers in memory (#712).
+fn reconnect_ssh_from(req: &ConnectRequest) -> Option<SshConfig> {
+    req.ssh.as_ref().map(|ssh| SshConfig {
+        host: ssh.host.clone(),
+        port: ssh.port,
+        user: ssh.user.clone(),
+        auth_method: ssh.auth_method,
+        private_key_path: ssh.private_key_path.clone(),
+        passphrase: String::new(),
+        password: String::new(),
+        remote_host: req.host.clone(),
+        remote_port: req.port,
+    })
 }
 
 /// Emits a single structured line describing a connection attempt. Logs only
@@ -531,5 +650,61 @@ mod tests {
         assert_eq!(e.kind(), "connectTimeout");
         assert!(e.to_string().contains("tunnel_authenticating"));
         assert!(e.to_string().contains("30s"));
+    }
+
+    /// Minimal connect request builder for the reconnect-spec tests below.
+    fn req_with_ssh(ssh: Option<SshRequest>) -> ConnectRequest {
+        ConnectRequest {
+            profile_id: Some("prof".into()),
+            driver: DriverKind::Mysql,
+            host: "db.internal".into(),
+            port: 3306,
+            user: "app".into(),
+            password: "secret".into(),
+            database: None,
+            ssh,
+            file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+            read_only: false,
+            skip_history: false,
+        }
+    }
+
+    #[test]
+    fn reconnect_ssh_from_is_none_without_ssh() {
+        // A direct (non-tunneled) session has nothing to rebuild.
+        assert!(reconnect_ssh_from(&req_with_ssh(None)).is_none());
+    }
+
+    #[test]
+    fn reconnect_ssh_from_captures_endpoint_and_blanks_secrets() {
+        let ssh = SshRequest {
+            host: "bastion".into(),
+            port: 2222,
+            user: "tunnel".into(),
+            auth_method: SshAuthMethod::Password,
+            private_key_path: std::path::PathBuf::from("/keys/id"),
+            passphrase: "phrase".into(),
+            password: "pw".into(),
+        };
+        let cfg = reconnect_ssh_from(&req_with_ssh(Some(ssh))).expect("tunneled -> Some");
+        // Non-secret SSH parameters are captured verbatim...
+        assert_eq!(cfg.host, "bastion");
+        assert_eq!(cfg.port, 2222);
+        assert_eq!(cfg.user, "tunnel");
+        assert_eq!(cfg.auth_method, SshAuthMethod::Password);
+        assert_eq!(cfg.private_key_path, std::path::PathBuf::from("/keys/id"));
+        // ...the remote endpoint comes from the DB host/port (what the tunnel
+        // forwards to), not the SSH host...
+        assert_eq!(cfg.remote_host, "db.internal");
+        assert_eq!(cfg.remote_port, 3306);
+        // ...and secrets are deliberately dropped (re-resolved from keyring at
+        // reconnect time), so nothing sensitive lingers on the session (#712).
+        assert!(cfg.passphrase.is_empty());
+        assert!(cfg.password.is_empty());
     }
 }

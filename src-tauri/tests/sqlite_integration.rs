@@ -1398,3 +1398,84 @@ async fn sqlite_resilient_import_skips_and_locates_bad_rows() {
     conn.close().await;
     let _ = std::fs::remove_file(&p);
 }
+
+/// Reconnect (#712): after a session's connection is dropped, `reconnect`
+/// re-establishes it **in place** — same `SessionId`, preserved flags — and
+/// queries succeed again through the normal command path. For SQLite there is no
+/// SSH tunnel, so this exercises the direct rebuild path (`connect_options`
+/// reuse) which always runs in CI without an external server.
+#[tokio::test]
+async fn sqlite_reconnect_reestablishes_same_session() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_reconnect_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("CREATE TABLE recon (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+    conn.execute("INSERT INTO recon (id) VALUES (1), (2)", None)
+        .await
+        .expect("seed");
+
+    // read_only carried through so we can assert the flag survives reconnect.
+    let session = t::make_session("recon_sess", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    // Baseline: the session works before we drop it.
+    let before = t::run_query_via_command(&state, &sid, "SELECT COUNT(*) FROM recon", None)
+        .await
+        .expect("query before drop");
+    assert!(matches!(&before.rows[0][0], t::Value::Int(2)));
+
+    // Simulate a dropped connection by closing the live pool. Subsequent queries
+    // on the same (now-dead) session fail.
+    state
+        .get(&sid)
+        .await
+        .expect("session present")
+        .conn
+        .close()
+        .await;
+    assert!(
+        t::run_query_via_command(&state, &sid, "SELECT 1", None)
+            .await
+            .is_err(),
+        "a closed connection must reject queries before reconnect"
+    );
+
+    // Reconnect in place: same id, fresh connection.
+    t::reconnect_via_command(&state, &sid)
+        .await
+        .expect("reconnect must succeed");
+
+    // The session id is unchanged and queries work again.
+    assert!(
+        state.get(&sid).await.is_some(),
+        "session id must survive reconnect"
+    );
+    let after = t::run_query_via_command(&state, &sid, "SELECT COUNT(*) FROM recon", None)
+        .await
+        .expect("query after reconnect");
+    assert!(matches!(&after.rows[0][0], t::Value::Int(2)));
+
+    // The read_only flag was preserved, so a write is still rejected by the guard.
+    assert!(
+        matches!(
+            t::run_query_via_command(&state, &sid, "INSERT INTO recon (id) VALUES (3)", None).await,
+            Err(t::AppError::ReadOnly(_))
+        ),
+        "read_only must survive reconnect"
+    );
+
+    // Reconnecting an unknown session id is a clean error, not a panic.
+    assert!(matches!(
+        t::reconnect_via_command(&state, "nope").await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+
+    let _ = std::fs::remove_file(&path);
+}

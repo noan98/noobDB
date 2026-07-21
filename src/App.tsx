@@ -2348,25 +2348,23 @@ export default function App() {
     [closeAllTabs, persistTabsForProfile, removeOpenConnection],
   );
 
-  // 指数バックオフで自動再接続を試みるループ。成功したら同じプロファイルで張り直した
-  // 新セッションへ差し替え (開いているタブはそのまま維持)、上限まで失敗したら
-  // `tearDownLostSession` で手動再接続 UI に倒す。SSH トンネルの張り直しは
-  // `api.connect` → バックエンドの `build_options` が担い、ライフタイム規約を守る。
+  // 指数バックオフで自動再接続を試みるループ (#712)。切れたセッションを **同じ
+  // session id のまま** その場で張り直すため、成功しても sessionId は変わらず、
+  // 開いているタブ・グリッド状態はそのまま生き続ける (退避/復元の往復が不要)。
+  // SSH トンネルの再構築は `api.reconnect` → バックエンドが保存済みの
+  // `connect_options` + SSH 設定から行い、ライフタイム規約 (新接続確立後に旧接続を
+  // drop) を守る。上限まで失敗したら `tearDownLostSession` で手動再接続 UI に倒す。
   const runReconnectLoop = useCallback(
     async (profile: ConnectionProfile, oldSessionId: string, maxRetries: number) => {
       if (reconnectingRef.current) return;
       reconnectingRef.current = true;
       reconnectAbortRef.current = false;
       setConnectionStatus("reconnecting");
-      // 再接続が最終的に失敗してもタブが失われないよう先に退避しておく。
+      // 再接続が最終的に失敗して手動フォールバックへ倒れてもタブが失われないよう
+      // 先に退避しておく (成功パスではタブはそのまま生き続けるので保険)。旧セッション
+      // は落とさない — `api.reconnect` が同じ id を差し替えるため、先に disconnect
+      // すると session not found になる。
       persistTabsForProfile(profile.id);
-      // 死んだバックエンドセッションを落としてリークを防ぐ (ベストエフォート)。
-      try { await api.disconnect(oldSessionId); } catch { /* already gone */ }
-
-      const driver: DriverKind =
-        profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
-          ? profile.driver
-          : "mysql";
 
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
@@ -2378,33 +2376,13 @@ export default function App() {
         await new Promise((resolve) => setTimeout(resolve, backoffDelayMs(attempt)));
         if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
         try {
-          const res = await api.connect({
-            profile_id: profile.id,
-            driver,
-            host: profile.host,
-            port: profile.port,
-            user: profile.user,
-            password: "",
-            database: profile.database,
-            ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-            file_path: profile.file_path,
-            read_only: profile.read_only,
-            skip_history: profile.skip_history,
-          });
-          // connect 解決後に中断フラグを再確認する。await 中にユーザが別接続へ
-          // 切り替えていた場合、ここで確立できてしまったセッションを表示中の
-          // (別の) セッションへ上書きしてしまうと「見た目は別接続・実行先は
-          // このセッション」という食い違いが起きるため、状態反映せず後始末する。
-          if (reconnectAbortRef.current) {
-            try { await api.disconnect(res.session_id); } catch { /* best effort */ }
-            reconnectingRef.current = false;
-            return;
-          }
-          // 成功: タブを維持したままセッションだけ差し替える。
-          setSessionId(res.session_id);
-          setSelectedProfile(profile);
-          // レジストリの該当エントリを新セッション id へ差し替える (#複数同時接続)。
-          upsertOpenConnection(res.session_id, profile);
+          // 同じ session id のまま張り直す。id が変わらないのでタブ・グリッドは維持。
+          await api.reconnect(oldSessionId);
+          // await 中にユーザが別接続へ切り替えていたら UI は触らずに抜ける。
+          // バックエンドのセッションは張り直し済みで、背景接続として有効なまま
+          // (切り替え先の表示を上書きしない)。
+          if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
+          // 成功: セッションはその場で復活。タブ・グリッドはそのまま。
           setErrorProfileId(null);
           setConnectionStatus("connected");
           setStatus({ kind: "idle" });
@@ -2416,12 +2394,13 @@ export default function App() {
           console.warn("reconnect attempt failed", e);
         }
       }
-      // 上限到達: 諦めて手動再接続 UI へ。
+      // 上限到達: 諦めて手動再接続 UI へ (タブは退避済み → 復元される)。旧セッション
+      // はまだ生きている (張り直せなかっただけ) ので id を渡して確実に後始末する。
       reconnectingRef.current = false;
       if (reconnectAbortRef.current) return;
-      await tearDownLostSession(profile, null, { gaveUpAfter: maxRetries });
+      await tearDownLostSession(profile, oldSessionId, { gaveUpAfter: maxRetries });
     },
-    [persistTabsForProfile, tearDownLostSession, upsertOpenConnection, toast],
+    [persistTabsForProfile, tearDownLostSession, toast],
   );
 
   // 接続断 (クエリ失敗 / フォーカス時のヘルスチェック失敗) の統一ハンドラ。設定と
@@ -2441,6 +2420,8 @@ export default function App() {
         inTransaction,
         attempt: 0,
         maxRetries: cfg.autoReconnectMaxRetries,
+        // 本番プロファイルは自動リトライせず必ず手動再接続にする (#712)。
+        isProduction: profile.is_production ?? false,
       })
     ) {
       await tearDownLostSession(profile, oldSessionId, { inTransaction });
