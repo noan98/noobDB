@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use types::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, StatementStat, StreamBatch, TableColumnInfo,
-    TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, StatementStat, StreamBatch,
+    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -564,6 +564,20 @@ impl Connection {
             Connection::MySql(c) => c.server_info().await,
             Connection::Postgres(c) => c.server_info().await,
             Connection::Sqlite(c) => c.server_info().await,
+        }
+    }
+
+    /// サーバランタイムの軽量メトリクス 1 サンプル (#731)。監視ダッシュボードが
+    /// 一定間隔でポーリングし、フロントの在メモリ・リングバッファに蓄積して接続数 /
+    /// QPS / ロック待ちの時系列を描く。MySQL は `SHOW GLOBAL STATUS`、PostgreSQL は
+    /// `pg_stat_activity` / `pg_stat_database` の集計で、いずれもメモリ上のカウンタを
+    /// 読むだけでテーブル I/O は無い。サーバ状態を変更しないため read_only セッション
+    /// でも許可する。SQLite はサーバを持たずエラーを返す。
+    pub async fn server_metrics(&self) -> Result<ServerMetrics> {
+        match self {
+            Connection::MySql(c) => c.server_metrics().await,
+            Connection::Postgres(c) => c.server_metrics().await,
+            Connection::Sqlite(c) => c.server_metrics().await,
         }
     }
 

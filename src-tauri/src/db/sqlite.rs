@@ -6,8 +6,8 @@ use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::types::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
@@ -436,6 +436,15 @@ impl SqliteConn {
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
         Err(AppError::InvalidInput(
             "process list is not supported for SQLite (file-backed, no server processes)".into(),
+        ))
+    }
+
+    /// See [`SqliteConn::list_processes`] — a file-backed database has no server
+    /// runtime to sample, so the monitoring dashboard (#731) is unsupported. The
+    /// frontend catches this error to hide the dashboard entry point.
+    pub async fn server_metrics(&self) -> Result<ServerMetrics> {
+        Err(AppError::InvalidInput(
+            "server metrics are not supported for SQLite (file-backed, no server)".into(),
         ))
     }
 

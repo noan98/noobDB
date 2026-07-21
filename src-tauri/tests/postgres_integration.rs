@@ -563,3 +563,39 @@ async fn postgres_query_inspector_support_and_tail() {
     observed.close().await;
     conn.close().await;
 }
+
+/// 監視ダッシュボード (#731): `pg_stat_activity` の状態別集計と `pg_stat_database` の
+/// トランザクション累計を 1 サンプル取得できること。接続中の自分が居るので接続数は
+/// 1 以上、スループット (xact 累計) も正になる。MySQL 固有の slow_queries / lock_waits
+/// は PostgreSQL では None に縮退する。
+#[tokio::test]
+async fn postgres_server_metrics_reports_connection_and_transaction_counters() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let m = conn.server_metrics().await.expect("server_metrics");
+    assert!(
+        m.connections.is_some_and(|c| c >= 1),
+        "client backend count must be reported and >= 1, got {:?}",
+        m.connections
+    );
+    assert!(
+        m.active.is_some_and(|a| a >= 1),
+        "at least one active backend (this query) expected, got {:?}",
+        m.active
+    );
+    assert!(
+        m.questions.is_some_and(|q| q >= 1),
+        "xact_commit+rollback sum must be reported and >= 1, got {:?}",
+        m.questions
+    );
+    // PostgreSQL には MySQL 相当の常設カウンタが無いので None に縮退する。
+    assert!(m.slow_queries.is_none(), "slow_queries has no PG analog");
+    assert!(m.lock_waits.is_none(), "lock_waits has no cheap PG analog");
+
+    conn.close().await;
+}

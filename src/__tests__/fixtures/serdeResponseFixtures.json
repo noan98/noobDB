@@ -111,6 +111,15 @@
     ],
     "version": "8.0.36"
   },
+  "serverMetrics": {
+    "active": 3,
+    "connections": 42,
+    "idle_in_transaction": 1,
+    "lock_waiting": 0,
+    "lock_waits": 5,
+    "questions": 1000000,
+    "slow_queries": 12
+  },
   "serverVariable": {
     "name": "max_connections",
     "value": "151"

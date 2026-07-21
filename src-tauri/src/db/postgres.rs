@@ -8,8 +8,8 @@ use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::types::{
     Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerVariable, StatementStat, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 use super::{columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
@@ -1109,6 +1109,58 @@ impl PostgresConn {
             })
             .collect();
         Ok(ServerInfo { version, variables })
+    }
+
+    /// 監視ダッシュボード (#731) 用の 1 サンプル。`pg_stat_activity` の状態別集計
+    /// (接続数 / active / idle in transaction / ロック待ち) と `pg_stat_database` の
+    /// トランザクション累計を読む。いずれもメモリ上のビューで安価。非スーパーユーザ
+    /// でも state / wait_event は全バックエンド分見える (query 本文だけが権限で
+    /// マスクされる) ため件数集計は degrade しない。集計クエリ自体が失敗した場合は
+    /// 該当フィールドのみ `None` に縮退させ、全体は失敗させない。
+    pub async fn server_metrics(&self) -> Result<ServerMetrics> {
+        // 接続状態の集計は 1 行で受ける。FILTER 集計なので追加の GROUP BY は不要。
+        // ロック待ちは client backend に限らず全バックエンドの wait_event_type='Lock'。
+        let activity = sqlx::query(
+            r#"SELECT
+                 count(*) FILTER (WHERE backend_type = 'client backend')::bigint AS connections,
+                 count(*) FILTER (WHERE backend_type = 'client backend' AND state = 'active')::bigint AS active,
+                 count(*) FILTER (WHERE backend_type = 'client backend' AND state LIKE 'idle in transaction%')::bigint AS idle_in_tx,
+                 count(*) FILTER (WHERE wait_event_type = 'Lock')::bigint AS lock_waiting
+               FROM pg_stat_activity"#,
+        )
+        .fetch_one(&self.pool)
+        .await;
+        let (connections, active, idle_in_transaction, lock_waiting) = match activity {
+            Ok(r) => (
+                r.try_get::<i64, _>(0).ok(),
+                r.try_get::<i64, _>(1).ok(),
+                r.try_get::<i64, _>(2).ok(),
+                r.try_get::<i64, _>(3).ok(),
+            ),
+            // 権限やバージョン差で読めないときは接続系メトリクスのみ縮退する。
+            Err(_) => (None, None, None, None),
+        };
+        // スループット: 全 DB のトランザクション数 (commit + rollback) の累積和。
+        // MySQL の Questions とは意味が異なる (トランザクション vs ステートメント)
+        // ため、フロントは TPS としてラベル表示する。
+        let questions = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT sum(xact_commit + xact_rollback)::bigint FROM pg_stat_database",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .ok()
+        .flatten();
+        Ok(ServerMetrics {
+            connections,
+            active,
+            idle_in_transaction,
+            lock_waiting,
+            questions,
+            // PostgreSQL には MySQL の Slow_queries / Innodb_row_lock_waits に相当する
+            // 安価な常設カウンタが無い (待ち数は lock_waiting ゲージで見る)。
+            slow_queries: None,
+            lock_waits: None,
+        })
     }
 }
 

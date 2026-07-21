@@ -116,6 +116,17 @@ export const processInfo = z.object({
   is_self: z.boolean(),
 });
 
+/** サーバランタイムの軽量メトリクス 1 サンプル (監視ダッシュボード #731)。 */
+export const serverMetrics = z.object({
+  connections: z.number().nullable(),
+  active: z.number().nullable(),
+  idle_in_transaction: z.number().nullable(),
+  lock_waiting: z.number().nullable(),
+  questions: z.number().nullable(),
+  slow_queries: z.number().nullable(),
+  lock_waits: z.number().nullable(),
+});
+
 /** SSH known_hosts の 1 エントリ (host:port + fingerprint)。#682。 */
 export const knownHost = z.object({
   host: z.string(),

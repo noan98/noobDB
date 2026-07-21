@@ -175,6 +175,51 @@ pub struct ServerInfo {
     pub variables: Vec<ServerVariable>,
 }
 
+/// サーバランタイムの軽量メトリクス 1 サンプル (#731)。監視ダッシュボードが一定間隔で
+/// ポーリングし、フロントの在メモリ・リングバッファに蓄積して接続数 / QPS / ロック待ちを
+/// 時系列グラフ化する。**1 回のサンプリングで軽い読み取りのみ** — MySQL は
+/// `SHOW GLOBAL STATUS`、PostgreSQL は `pg_stat_activity` / `pg_stat_database` の集計で、
+/// テーブル I/O は発生しない。サーバ状態を変更しないためポーリングしても安全で、
+/// `list_processes` と同じく read_only セッションでも許可する。
+///
+/// **ゲージ (瞬時値) とカウンタ (累積値) が混在する**。QPS/TPS のような**レートは
+/// 累積カウンタの 2 サンプル差分**からフロントの純ロジック (`serverMetrics.ts`) が
+/// 算出する — サーバ側の統計リセット権限が無くても使えるようにするため (#746 の
+/// digest 差分と同じ発想)。フロントは各サンプルを受信時刻でスタンプするため、
+/// バックエンドはタイムスタンプを含めない (クロック依存を避ける)。
+///
+/// フィールドはドライバ非依存の共通表現で、エンジンが報告しない項目は `None`。
+/// スループットの意味はドライバで異なる (MySQL `Questions` = ステートメント数、
+/// PostgreSQL = トランザクション数 `xact_commit + xact_rollback`) ため、フロントは
+/// ドライバ種別でラベル (QPS / TPS) を切り替える。権限不足で一部の集計が読めない
+/// 場合は該当フィールドのみ `None` に縮退させ、全体は失敗させない (取得できた範囲で
+/// degrade)。SQLite はサーバを持たずエラーを返す (`list_processes` と同じ短絡方針)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerMetrics {
+    /// クライアント接続数 (ゲージ)。MySQL `Threads_connected`、PostgreSQL の
+    /// client backend 数。
+    pub connections: Option<i64>,
+    /// 実行中 (非スリープ/アクティブ) の接続・スレッド数 (ゲージ)。MySQL
+    /// `Threads_running`、PostgreSQL `state = 'active'` の数。
+    pub active: Option<i64>,
+    /// トランザクション開始済みだがアイドルな接続数 (ゲージ)。PostgreSQL
+    /// `state LIKE 'idle in transaction%'`。MySQL は同等の状態が無く `None`。
+    pub idle_in_transaction: Option<i64>,
+    /// いまロック取得を待っている接続・スレッド数 (ゲージ)。MySQL
+    /// `Innodb_row_lock_current_waits`、PostgreSQL `wait_event_type = 'Lock'` の数。
+    pub lock_waiting: Option<i64>,
+    /// スループットカウンタ (累積)。MySQL `Questions` (実行ステートメント数)、
+    /// PostgreSQL `sum(xact_commit + xact_rollback)` (トランザクション数)。フロントが
+    /// 2 サンプルの差分を経過秒で割り QPS/TPS を出す。
+    pub questions: Option<i64>,
+    /// スロークエリ数 (累積)。MySQL `Slow_queries`。PostgreSQL は同等の常設カウンタが
+    /// 無く `None`。
+    pub slow_queries: Option<i64>,
+    /// 行ロック待ちが発生した累積回数。MySQL `Innodb_row_lock_waits`。PostgreSQL は
+    /// 同等の安価な累積カウンタが無く `None` (待ち数は `lock_waiting` ゲージで見る)。
+    pub lock_waits: Option<i64>,
+}
+
 /// One server-side process/connection shown in the process monitor panel.
 /// MySQL maps rows from `processlist` (ID/USER/HOST/DB/COMMAND/STATE/TIME/
 /// INFO), PostgreSQL from `pg_stat_activity` (pid/usename/client addr/datname/
