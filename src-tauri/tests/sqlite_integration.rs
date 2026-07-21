@@ -1586,6 +1586,23 @@ async fn sqlite_advisor_flags_expected_rules() {
         has(t::RuleId::DuplicateIndex, "users"),
         "duplicate index on users(name) must be flagged"
     );
+    // 型が一致する FK (orders.user_id INTEGER ↔ users.id INTEGER) は
+    // 型不一致として誤検出しない。
+    assert!(
+        !has(t::RuleId::FkTypeMismatch, "orders"),
+        "matching FK column types must not be flagged"
+    );
+    // 同一構成の非 UNIQUE インデックス 2 本は「ちょうど 1 件」だけ指摘する
+    // (両方 DROP を勧める誤誘導を避ける)。
+    assert_eq!(
+        report
+            .findings
+            .iter()
+            .filter(|f| f.rule == t::RuleId::DuplicateIndex && f.table == "users")
+            .count(),
+        1,
+        "users(name) duplicate indexes must produce exactly one finding"
+    );
     // ビューは解析対象外 — どの指摘の対象にもならない。
     assert!(
         !report.findings.iter().any(|f| f.table == "v_users"),

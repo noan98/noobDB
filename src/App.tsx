@@ -5148,7 +5148,10 @@ export default function App() {
         run: () => toggleTheme(),
       },
     );
-    if (sessionId) {
+    // アドバイザは DB コンテキストが要る (ツールメニューと同じガード)。DB が
+    // 解決できないとパレットから開いても database="" で診断が失敗するため、
+    // ここで導線ごと出さない。
+    if (sessionId && paletteDatabase) {
       items.push({
         id: "nav:advisor",
         group: "navigation",
@@ -5157,6 +5160,8 @@ export default function App() {
         keywords: "advisor schema health index lint 健全性 診断 インデックス",
         run: () => openFullView("advisor"),
       });
+    }
+    if (sessionId) {
       items.push({
         id: "nav:disconnect",
         group: "navigation",
@@ -6223,11 +6228,10 @@ export default function App() {
             driver={selectedProfile?.driver ?? "mysql"}
             onClose={() => setShowQueryInspector(false)}
           />
-        ) : showAdvisor && sessionId ? (
+        ) : showAdvisor && sessionId && (activeTab?.database ?? selectedProfile?.database) ? (
           <AdvisorPanel
             sessionId={sessionId}
-            database={activeTab?.database ?? selectedProfile?.database ?? ""}
-            driver={selectedProfile?.driver ?? "mysql"}
+            database={(activeTab?.database ?? selectedProfile?.database) as string}
             onInsertSql={handleInsertAdvisorSql}
             onClose={() => setShowAdvisor(false)}
           />

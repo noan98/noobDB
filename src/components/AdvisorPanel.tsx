@@ -90,7 +90,6 @@ export function AdvisorPanel({
 }: {
   sessionId: string;
   database: string;
-  driver: string;
   onInsertSql: (sql: string) => void;
   onClose: () => void;
 }) {
