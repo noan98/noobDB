@@ -417,6 +417,7 @@ const en = {
 
   statusFailedLoadProfiles: "Failed to load profiles: {error}",
   statusFailedDeleteProfile: "Failed to delete profile: {error}",
+  statusFailedReorderProfiles: "Failed to reorder connections: {error}",
   statusFailedDeleteSnippet: "Failed to delete snippet: {error}",
   statusFailedSaveSnippet: "Failed to restore snippet: {error}",
   toastUndo: "Undo",
@@ -2448,6 +2449,7 @@ const ja: Dict = {
 
   statusFailedLoadProfiles: "接続プロファイルの読み込みに失敗しました: {error}",
   statusFailedDeleteProfile: "プロファイルの削除に失敗しました: {error}",
+  statusFailedReorderProfiles: "接続の並べ替えに失敗しました: {error}",
   statusFailedDeleteSnippet: "スニペットの削除に失敗しました: {error}",
   statusFailedSaveSnippet: "スニペットの復元に失敗しました: {error}",
   toastUndo: "元に戻す",

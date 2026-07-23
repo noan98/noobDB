@@ -1,6 +1,6 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, Reorder } from "motion/react";
 import { api, ConnectionProfile, IndexInfo, SchemaObject, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
@@ -8,6 +8,7 @@ import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
+import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
@@ -24,7 +25,6 @@ import {
 import { Input } from "./ui";
 import type { I18nKey } from "../i18n";
 import {
-  MotionTreeNode,
   MotionTreeRow,
   TreeBadge,
   TreeChevron,
@@ -36,6 +36,45 @@ import {
 } from "./tree";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
+
+/** localStorage に永続化するグループ表示順序のキー (#786)。触られていない
+ *  グループはアルファベット順の既定挙動のままなので、ドラッグ/キーボードで
+ *  実際に動かした結果だけをここに書く (折りたたみ状態と同じ最小保存方針)。 */
+const GROUP_ORDER_KEY = "noobdb.connlist.groupOrder";
+
+/** localStorage から永続化済みグループ順序を復元する。SSR/未対応環境や
+ *  パース失敗時は空 (= 全グループがアルファベット順になる、既存の既定挙動)。 */
+function readGroupOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(GROUP_ORDER_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((k): k is string => typeof k === "string");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 接続プロファイル行 / グループ見出しブロックのドラッグ並べ替え (#786) 用の
+ * `Reorder.Item` ラッパ。`TabBar` の `ReorderItemDiv`/`MotionTab` と同じ理由
+ * (Chakra の `as` は `Reorder.Item` のロジックを消してしまうため) で `as="div"`
+ * 固定の薄いラッパを噛ませてから chakra で装飾する。プロファイル行 (ヘッダ +
+ * 展開中のスキーマサブツリー) とグループ見出しブロック (ヘッダ + 配下の
+ * プロファイル群) の両方で共用する — どちらも「ヘッダ + 折りたたみ可能な子」の
+ * 縦積みブロックという同じ形をしているため。
+ */
+const ReorderItemDiv = forwardRef<HTMLDivElement, React.ComponentProps<typeof Reorder.Item<string>>>(
+  function ReorderItemDiv(props, ref) {
+    return <Reorder.Item as="div" ref={ref} {...props} />;
+  },
+);
+const MotionReorderNode = chakra(
+  ReorderItemDiv,
+  { base: { display: "flex", flexDirection: "column" } },
+  { forwardProps: ["transition"] },
+);
 
 /** サイドバーフィルタで公開するハンドル型。App.tsx が Cmd/Ctrl+P でフォーカスを当てるために使う。 */
 export interface ConnectionListHandle {
@@ -208,6 +247,15 @@ interface Props {
   onConnect: (profile: ConnectionProfile) => void;
   /** Close a specific background (or active) connection without reconnecting. */
   onDisconnectProfile?: (profileId: string) => void;
+  /**
+   * Drag/keyboard reorder of connections (#786). Called with the new order of
+   * every id present in the `profiles` prop (a true permutation of
+   * `profiles.map(p => p.id)`) — the caller is responsible for embedding this
+   * back into the full backend order (e.g. when `profiles` is itself a filtered
+   * view) and persisting it via `api.reorderProfiles`. Omitted disables both
+   * drag and keyboard reorder (profiles render statically, as before #786).
+   */
+  onReorderProfiles?: (orderedIds: string[]) => void;
   onCreate: () => void;
   onEdit: (profile: ConnectionProfile) => void;
   onDuplicate: (profile: ConnectionProfile) => void;
@@ -271,6 +319,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   openProfileIds,
   onConnect,
   onDisconnectProfile,
+  onReorderProfiles,
   onCreate,
   onEdit,
   onDuplicate,
@@ -303,6 +352,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
   // グループ折りたたみ状態は localStorage に永続化し、再起動後も維持する。
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(readCollapsedGroups);
+  // グループの表示順序 (#786)。触られていない名前は `applyGroupOrder` が
+  // アルファベット順で埋める (= 既存の既定挙動) ので、初期値は空でよい。
+  const [groupOrder, setGroupOrder] = useState<string[]>(readGroupOrder);
   const [tableColumns, setTableColumns] = useState<Record<string, TableColumnInfo[]>>({});
   // テーブルごとのインデックス一覧。テーブル展開時に列と並行で遅延取得する。
   const [tableIndexes, setTableIndexes] = useState<Record<string, IndexInfo[]>>({});
@@ -626,6 +678,22 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
   }, [expandedGroups]);
 
+  // グループの表示順序 (#786) を localStorage へ永続化する。ドラッグ/キーボードで
+  // 実際に動かした結果のみが `groupOrder` に入るので、何も触っていない初期状態
+  // (空配列) では書き込まず、既存のキーもそのままにする (アルファベット順の既定
+  // 挙動を壊さない)。
+  useEffect(() => {
+    try {
+      if (groupOrder.length > 0) {
+        localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(groupOrder));
+      } else {
+        localStorage.removeItem(GROUP_ORDER_KEY);
+      }
+    } catch {
+      // ストレージ不可環境では永続化を諦める (セッション内の動作には影響しない)。
+    }
+  }, [groupOrder]);
+
   // The column tooltip is anchored to a snapshot of the row's position, so it
   // would detach if the tree scrolls or the window resizes under the pointer.
   useEffect(() => {
@@ -638,6 +706,105 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       window.removeEventListener("resize", clear);
     };
   }, [hoveredColumn]);
+
+  // --- 接続 / グループの並べ替え (#786) ---
+  //
+  // Drop-position indicator: the key of the row currently shown as the drag/
+  // keyboard-move target. Shared between profile rows and group headers with a
+  // `"group:"` prefix on the latter (profile ids never start with it, so the
+  // two id spaces can't collide) — mirrors `TabBar`'s single `dropIndicator`
+  // state + flash-then-clear helper.
+  const [dropIndicator, setDropIndicatorState] = useState<string | null>(null);
+  const dropFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearDropFlash = useCallback(() => {
+    if (dropFlashTimer.current) {
+      clearTimeout(dropFlashTimer.current);
+      dropFlashTimer.current = null;
+    }
+  }, []);
+  const setDropIndicator = useCallback(
+    (key: string | null, flash = true) => {
+      clearDropFlash();
+      setDropIndicatorState(key);
+      if (key && flash) {
+        dropFlashTimer.current = setTimeout(() => setDropIndicatorState(null), 700);
+      }
+    },
+    [clearDropFlash],
+  );
+  useEffect(() => clearDropFlash, [clearDropFlash]);
+
+  // Roving refs so a keyboard move can restore focus to the row it just moved
+  // (the DOM node is recreated at a new position on the next render).
+  const profileRowRefs = useRef<Map<string, HTMLElement | null>>(new Map());
+  const groupRowRefs = useRef<Map<string, HTMLElement | null>>(new Map());
+
+  /** Drag reorder within one flat list of profiles (ungrouped list, or one
+   *  group's members). `siblingIds` is the id order that list was rendered
+   *  with; `proposed` is Motion's `Reorder.Group.onReorder` payload for that
+   *  same list. Guards against a corrupted permutation before embedding the
+   *  new relative order back into the full `profiles` order. */
+  const handleProfilesDrag = (siblingIds: string[], proposed: string[]) => {
+    if (!onReorderProfiles) return;
+    const validated = reorderIfPermutation(siblingIds, proposed);
+    if (!validated) return;
+    const currentIds = profiles.map((p) => p.id);
+    const full = applySubsequenceOrder(currentIds, validated);
+    if (full !== currentIds) onReorderProfiles(full);
+  };
+
+  /** Cmd/Ctrl+Shift+↑/↓ moves the focused profile row within its own list
+   *  (ungrouped list, or its group) by one position — mirrors `TabBar`'s
+   *  accessible reorder shortcut, adapted to a vertical tree. Enter/Space keep
+   *  their existing "activate the row" behavior. */
+  const handleProfileRowKeyDown = (p: ConnectionProfile, siblingIds: string[]) => (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handleProfileClick(p);
+      return;
+    }
+    if (!onReorderProfiles || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+    if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
+    const dir = e.key === "ArrowDown" ? 1 : -1;
+    const moved = moveItemBy(siblingIds, p.id, dir);
+    if (moved === siblingIds) return;
+    e.preventDefault();
+    const full = applySubsequenceOrder(
+      profiles.map((pp) => pp.id),
+      moved,
+    );
+    onReorderProfiles(full);
+    setDropIndicator(p.id);
+    requestAnimationFrame(() => profileRowRefs.current.get(p.id)?.focus());
+  };
+
+  /** Drag reorder of the named-group headers themselves (relative to one
+   *  another; the ungrouped section always stays last, matching the existing
+   *  default). Persisted to localStorage, not the backend (groups have no
+   *  entity of their own — see `connectionOrder.ts`). */
+  const handleGroupsDrag = (namedGroupKeys: string[], proposed: string[]) => {
+    const validated = reorderIfPermutation(namedGroupKeys, proposed);
+    if (validated) setGroupOrder(validated);
+  };
+
+  /** Cmd/Ctrl+Shift+↑/↓ moves the focused group header among its sibling
+   *  named groups. Enter/Space keep the existing expand/collapse toggle. */
+  const handleGroupRowKeyDown = (name: string, namedGroupKeys: string[]) => (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setExpandedGroups((prev) => ({ ...prev, [name]: prev[name] === false ? true : false }));
+      return;
+    }
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
+    const dir = e.key === "ArrowDown" ? 1 : -1;
+    const moved = moveItemBy(namedGroupKeys, name, dir);
+    if (moved === namedGroupKeys) return;
+    e.preventDefault();
+    setGroupOrder(moved);
+    setDropIndicator(`group:${name}`);
+    requestAnimationFrame(() => groupRowRefs.current.get(name)?.focus());
+  };
 
   const handleProfileClick = (p: ConnectionProfile) => {
     if (p.id === activeProfileId) {
@@ -906,6 +1073,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
 
   const q = filter.trim().toLowerCase();
   const searching = q.length > 0;
+  // Drag/keyboard reorder is disabled while a search filter is active — the
+  // tree shows a filtered subset then, and reordering a partial view would
+  // silently reorder the underlying full list in a way the user can't see.
+  const reorderEnabled = !!onReorderProfiles && !searching;
   const activeExpanded = activeProfileId ? !!expandedProfiles[activeProfileId] : false;
   // The schema tree only shows the active connection, so its read-only flag
   // governs whether write-y table actions (Import CSV) are offered.
@@ -986,14 +1157,17 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       map.get(key)!.push(p);
     }
     const groups: { name: string | null; profiles: ConnectionProfile[] }[] = [];
-    const names = Array.from(map.keys())
-      .filter((k): k is string => k !== null)
-      .sort((a, b) => a.localeCompare(b));
+    // #786: 表示順は永続化済み `groupOrder` を土台にした並び (触っていないグループ
+    // はアルファベット順の既定挙動のまま — `applyGroupOrder` を参照)。
+    const names = applyGroupOrder(
+      Array.from(map.keys()).filter((k): k is string => k !== null),
+      groupOrder,
+    );
     for (const name of names) groups.push({ name, profiles: map.get(name)! });
     const ungrouped = map.get(null);
     if (ungrouped && ungrouped.length > 0) groups.push({ name: null, profiles: ungrouped });
     return groups;
-  }, [profiles, visibleProfiles]);
+  }, [profiles, visibleProfiles, groupOrder]);
 
   const profileStatus = (p: ConnectionProfile): "connected" | "connecting" | "error" | "idle" => {
     if (connectingId === p.id) return "connecting";
@@ -1160,7 +1334,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     );
   };
 
-  const renderProfile = (p: ConnectionProfile) => {
+  const renderProfile = (p: ConnectionProfile, siblingIds: string[]) => {
     const isActive = p.id === activeProfileId;
     const isOpen = !!expandedProfiles[p.id];
     // When the query matches the connection's own metadata, show its full tree;
@@ -1200,8 +1374,24 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     const driverIcon = driverIconName(p.driver);
 
     return (
-      <MotionTreeNode key={p.id} {...variants.fade} transition={transitions.crossfade}>
+      <MotionReorderNode
+        key={p.id}
+        // ドラッグ並べ替え (#786): Reorder.Item の `value`。`reorderEnabled` が
+        // false (コールバック未接続、または検索フィルタ中) のときは `drag` を
+        // 無効化して従来どおり静的に並べる (TabBar と同じ方式)。
+        value={p.id}
+        drag={reorderEnabled}
+        whileDrag={{ scale: 1.02, boxShadow: "var(--shadow-lg)", zIndex: 3 }}
+        onDragStart={reorderEnabled ? () => setDropIndicator(p.id, false) : undefined}
+        onDragEnd={reorderEnabled ? () => setDropIndicator(null) : undefined}
+        {...variants.fade}
+        transition={transitions.crossfade}
+      >
         <MotionTreeRow
+          ref={(el: HTMLElement | null) => {
+            if (el) profileRowRefs.current.set(p.id, el);
+            else profileRowRefs.current.delete(p.id);
+          }}
           pt="5px"
           pb="5px"
           pr="2.5"
@@ -1212,6 +1402,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           borderLeftWidth="4px"
           borderLeftColor={borderLeftColor}
           bg={rowBg}
+          // 並べ替え (ドラッグ中/キーボード移動直後) の着地位置を上端のインセット
+          // アクセントバーで示す。TabBar の挿入マーカーと同じ役割。
+          boxShadow={dropIndicator === p.id ? "inset 0 2px 0 0 var(--accent)" : undefined}
           _hover={{ bg: rowBg ?? "app.hover" }}
           // ホバーで控えめに拡大 + 影を出すモーション。
           // prefers-reduced-motion はルートの MotionConfig が自動抑制する。
@@ -1220,6 +1413,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           style={{ transformOrigin: "center left" }}
           onClick={() => handleProfileClick(p)}
           onContextMenu={(e) => handleProfileContextMenu(e, p)}
+          onKeyDown={handleProfileRowKeyDown(p, siblingIds)}
+          tabIndex={0}
           role="treeitem"
           aria-expanded={isOpen}
           title={
@@ -1500,7 +1695,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             )}
           </TreeChildren>
         </TreeCollapse>
-      </MotionTreeNode>
+      </MotionReorderNode>
     );
   };
 
@@ -1544,65 +1739,189 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         <Text color="app.textMuted" p="3">{t("listNoMatches")}</Text>
       ) : (
         <Box flex="1" overflowY="auto" py="1" fontSize="md" color="app.text" role="tree">
-          {grouped === null
-            ? <AnimatePresence initial={false}>{visibleProfiles.map(renderProfile)}</AnimatePresence>
-            : grouped.map((g) => {
-                const key = g.name ?? "__ungrouped__";
+          {grouped === null ? (
+            // ungrouped の 1 本のフラットな並び: そのままプロファイルの並び順
+            // (ドラッグ/キーボードで動かせる)。
+            (() => {
+              const ids = visibleProfiles.map((p) => p.id);
+              return (
+                <Reorder.Group
+                  as="div"
+                  axis="y"
+                  values={ids}
+                  onReorder={(proposed: string[]) => handleProfilesDrag(ids, proposed)}
+                  style={{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
+                >
+                  <AnimatePresence initial={false}>
+                    {visibleProfiles.map((p) => renderProfile(p, ids))}
+                  </AnimatePresence>
+                </Reorder.Group>
+              );
+            })()
+          ) : (
+            (() => {
+              // 名前付きグループ (ドラッグ/キーボードで見出しごと並べ替え可能) と、
+              // 常に末尾に固定される未分類セクション (既存の既定挙動を維持) を分ける。
+              const namedGroups = grouped.filter(
+                (g): g is { name: string; profiles: ConnectionProfile[] } => g.name !== null,
+              );
+              const ungroupedGroup = grouped.find((g) => g.name === null);
+              const namedGroupKeys = namedGroups.map((g) => g.name);
+
+              const renderGroupBlock = (g: { name: string; profiles: ConnectionProfile[] }) => {
+                const key = g.name;
                 const groupOpen = expandedGroups[key] !== false;
-                const label = g.name ?? t("listGroupUngrouped");
+                const memberIds = g.profiles.map((p) => p.id);
                 return (
-                  <TreeNode key={key}>
-                    <Box
-                      display="flex"
-                      alignItems="center"
-                      gap="1"
-                      whiteSpace="nowrap"
-                      overflow="hidden"
-                      userSelect="none"
-                      cursor="pointer"
-                      pt="1.5"
-                      pr="2.5"
-                      pb="1.5"
-                      pl="1.5"
-                      fontSize="xs"
-                      textTransform="uppercase"
-                      letterSpacing="0.06em"
-                      color="app.textMuted"
-                      bg="app.surfaceMuted"
-                      borderTop="1px solid"
-                      borderTopColor="app.borderSubtle"
-                      borderBottom="1px solid"
-                      borderBottomColor="app.borderSubtle"
-                      borderLeft="2px solid transparent"
-                      transitionProperty="background, color, border-color, box-shadow"
-                      transitionDuration="var(--dur-fast)"
-                      transitionTimingFunction="var(--ease)"
-                      _hover={{ bg: "app.hover", color: "app.text" }}
-                      onClick={() =>
-                        setExpandedGroups((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
-                      }
-                      role="treeitem"
-                      aria-expanded={groupOpen}
-                    >
-                      <TreeChevron transform={groupOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
-                      {/* グループ名のイニシャルアバター (#663)。未分類グループには
-                          そもそも意味のあるイニシャルが無いので出さない。 */}
-                      {g.name && <GroupAvatar name={g.name} size={16} />}
-                      <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
-                        {label}
-                      </chakra.span>
-                      <TreeBadge textTransform="none" letterSpacing="0">{g.profiles.length}</TreeBadge>
-                    </Box>
-                    <TreeCollapse open={groupOpen}>
-                      <Box display="flex" flexDirection="column">
-                        <AnimatePresence initial={false}>
-                          {g.profiles.map(renderProfile)}
-                        </AnimatePresence>
+                  <MotionReorderNode
+                    key={key}
+                    value={key}
+                    drag={reorderEnabled}
+                    whileDrag={{ scale: 1.01, boxShadow: "var(--shadow-lg)", zIndex: 3 }}
+                    onDragStart={reorderEnabled ? () => setDropIndicator(`group:${key}`, false) : undefined}
+                    onDragEnd={reorderEnabled ? () => setDropIndicator(null) : undefined}
+                  >
+                    <TreeNode>
+                      <Box
+                        ref={(el: HTMLElement | null) => {
+                          if (el) groupRowRefs.current.set(key, el);
+                          else groupRowRefs.current.delete(key);
+                        }}
+                        display="flex"
+                        alignItems="center"
+                        gap="1"
+                        whiteSpace="nowrap"
+                        overflow="hidden"
+                        userSelect="none"
+                        cursor="pointer"
+                        pt="1.5"
+                        pr="2.5"
+                        pb="1.5"
+                        pl="1.5"
+                        fontSize="xs"
+                        textTransform="uppercase"
+                        letterSpacing="0.06em"
+                        color="app.textMuted"
+                        bg="app.surfaceMuted"
+                        borderTop="1px solid"
+                        borderTopColor="app.borderSubtle"
+                        borderBottom="1px solid"
+                        borderBottomColor="app.borderSubtle"
+                        borderLeft="2px solid transparent"
+                        boxShadow={dropIndicator === `group:${key}` ? "inset 0 2px 0 0 var(--accent)" : undefined}
+                        transitionProperty="background, color, border-color, box-shadow"
+                        transitionDuration="var(--dur-fast)"
+                        transitionTimingFunction="var(--ease)"
+                        _hover={{ bg: "app.hover", color: "app.text" }}
+                        onClick={() =>
+                          setExpandedGroups((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
+                        }
+                        onKeyDown={handleGroupRowKeyDown(key, namedGroupKeys)}
+                        tabIndex={0}
+                        role="treeitem"
+                        aria-expanded={groupOpen}
+                      >
+                        <TreeChevron transform={groupOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                        {/* グループ名のイニシャルアバター (#663)。 */}
+                        <GroupAvatar name={g.name} size={16} />
+                        <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
+                          {g.name}
+                        </chakra.span>
+                        <TreeBadge textTransform="none" letterSpacing="0">{g.profiles.length}</TreeBadge>
                       </Box>
-                    </TreeCollapse>
-                  </TreeNode>
+                      <TreeCollapse open={groupOpen}>
+                        <Reorder.Group
+                          as="div"
+                          axis="y"
+                          values={memberIds}
+                          onReorder={(proposed: string[]) => handleProfilesDrag(memberIds, proposed)}
+                          style={{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
+                        >
+                          <AnimatePresence initial={false}>
+                            {g.profiles.map((p) => renderProfile(p, memberIds))}
+                          </AnimatePresence>
+                        </Reorder.Group>
+                      </TreeCollapse>
+                    </TreeNode>
+                  </MotionReorderNode>
                 );
-              })}
+              };
+
+              return (
+                <>
+                  <Reorder.Group
+                    as="div"
+                    axis="y"
+                    values={namedGroupKeys}
+                    onReorder={(proposed: string[]) => handleGroupsDrag(namedGroupKeys, proposed)}
+                    style={{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
+                  >
+                    {namedGroups.map(renderGroupBlock)}
+                  </Reorder.Group>
+                  {ungroupedGroup && (() => {
+                    const key = "__ungrouped__";
+                    const groupOpen = expandedGroups[key] !== false;
+                    const memberIds = ungroupedGroup.profiles.map((p) => p.id);
+                    return (
+                      <TreeNode key={key}>
+                        <Box
+                          display="flex"
+                          alignItems="center"
+                          gap="1"
+                          whiteSpace="nowrap"
+                          overflow="hidden"
+                          userSelect="none"
+                          cursor="pointer"
+                          pt="1.5"
+                          pr="2.5"
+                          pb="1.5"
+                          pl="1.5"
+                          fontSize="xs"
+                          textTransform="uppercase"
+                          letterSpacing="0.06em"
+                          color="app.textMuted"
+                          bg="app.surfaceMuted"
+                          borderTop="1px solid"
+                          borderTopColor="app.borderSubtle"
+                          borderBottom="1px solid"
+                          borderBottomColor="app.borderSubtle"
+                          borderLeft="2px solid transparent"
+                          transitionProperty="background, color, border-color, box-shadow"
+                          transitionDuration="var(--dur-fast)"
+                          transitionTimingFunction="var(--ease)"
+                          _hover={{ bg: "app.hover", color: "app.text" }}
+                          onClick={() =>
+                            setExpandedGroups((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
+                          }
+                          role="treeitem"
+                          aria-expanded={groupOpen}
+                        >
+                          <TreeChevron transform={groupOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                          <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
+                            {t("listGroupUngrouped")}
+                          </chakra.span>
+                          <TreeBadge textTransform="none" letterSpacing="0">{ungroupedGroup.profiles.length}</TreeBadge>
+                        </Box>
+                        <TreeCollapse open={groupOpen}>
+                          <Reorder.Group
+                            as="div"
+                            axis="y"
+                            values={memberIds}
+                            onReorder={(proposed: string[]) => handleProfilesDrag(memberIds, proposed)}
+                            style={{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
+                          >
+                            <AnimatePresence initial={false}>
+                              {ungroupedGroup.profiles.map((p) => renderProfile(p, memberIds))}
+                            </AnimatePresence>
+                          </Reorder.Group>
+                        </TreeCollapse>
+                      </TreeNode>
+                    );
+                  })()}
+                </>
+              );
+            })()
+          )}
         </Box>
       )}
 

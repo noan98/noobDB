@@ -235,6 +235,7 @@ import {
   type PersistedWorkspace,
 } from "./tabPersistence";
 import { reorderIfPermutation } from "./tabReorder";
+import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
 import {
   buildPageSql,
@@ -4407,6 +4408,31 @@ export default function App() {
     });
   }, [finalizeProfileDelete, toast]);
 
+  // 接続リストのドラッグ/キーボード並べ替え (#786)。`ConnectionList` は
+  // `visibleProfiles` (Undo 待ちの削除中プロファイルを除いた表示用の部分集合) を
+  // 受け取っているため、そこから返る並び順もその部分集合の順列でしかない。
+  // `applySubsequenceOrder` で `profiles` (真の全件) へ埋め戻し、除外されていた
+  // 要素の絶対位置は変えずに保つ。楽観的に state を更新してからバックエンドへ
+  // 永続化し、失敗したら `refreshProfiles` でサーバ側の真実に巻き戻す。
+  const handleReorderProfiles = useCallback(
+    (orderedVisibleIds: string[]) => {
+      const currentIds = profiles.map((p) => p.id);
+      const embedded = applySubsequenceOrder(currentIds, orderedVisibleIds);
+      if (embedded === currentIds) return;
+      const byId = new Map(profiles.map((p) => [p.id, p]));
+      const reordered = embedded
+        .map((id) => byId.get(id))
+        .filter((p): p is ConnectionProfile => !!p);
+      setProfiles(reordered);
+      void runWithErrorStatus(() => api.reorderProfiles(embedded), "statusFailedReorderProfiles").then(
+        (ok) => {
+          if (!ok) void refreshProfiles();
+        },
+      );
+    },
+    [profiles, runWithErrorStatus, refreshProfiles],
+  );
+
   // Clear any pending profile-delete timers on unmount. Leaving them uncancelled
   // would fire setState on a torn-down tree; not finalizing is the safe choice
   // (the profile simply isn't deleted — its keyring secrets stay intact).
@@ -6022,6 +6048,7 @@ export default function App() {
             openProfileIds={openProfileIds}
             onConnect={handleConnect}
             onDisconnectProfile={handleDisconnectProfile}
+            onReorderProfiles={handleReorderProfiles}
             onCreate={handleOpenCreateForm}
             onEdit={handleOpenEditForm}
             onDuplicate={handleDuplicateProfile}
