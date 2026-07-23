@@ -1042,6 +1042,12 @@ export default function App() {
 
     // 表示密度: data-density 属性で App.css の `--density-*` トークンを切り替える。
     root.setAttribute("data-density", settings.density);
+
+    // モーション量コントロール (#787): data-motion 属性は settings.motionPreference
+    // をそのまま反映する。"reduced"/"full" のときだけ App.css の
+    // `:root[data-motion=...]` ルールが OS 設定を上書きし、"system" は
+    // OS の prefers-reduced-motion にそのまま従う (どのセレクタにも一致しない)。
+    root.setAttribute("data-motion", settings.motionPreference);
   }, [settings, theme]);
 
   const toggleTheme = useCallback(() => {

@@ -1568,9 +1568,14 @@ html, body, #root {
   from { background: color-mix(in srgb, var(--accent) 42%, transparent); }
   to { background: color-mix(in srgb, var(--accent) 0%, transparent); }
 }
+/* モーション量コントロール (#787): motionPreference="full" のときは OS が
+   reduce でもこの抑制を適用しない。"reduced" のときは OS 設定に関わらず
+   同じ抑制を強制する (プレーン CSS には @media とセレクタの OR を 1 ブロックに
+   まとめる手段がないため、下の 2 番目のルールで同じ抑制を明示的に複製する)。 */
 @media (prefers-reduced-motion: reduce) {
-  .cm-editor .cm-stmt-flash { animation: none; }
+  :root:not([data-motion="full"]) .cm-editor .cm-stmt-flash { animation: none; }
 }
+:root[data-motion="reduced"] .cm-editor .cm-stmt-flash { animation: none; }
 
 .cm-tooltip.cm-tooltip-autocomplete {
   background: var(--bg-elevated);
@@ -1752,15 +1757,38 @@ html, body, #root {
 /* ---------- Reduced motion ----------
    OS の「視差効果/アニメーションを減らす」設定時は、無限アニメーション
    (点滅ドット等) を静止させ、トランジションを実質無効化する。
-   将来追加するモーダル/スピナーのアニメーションにも自動で効く。 */
+   将来追加するモーダル/スピナーのアニメーションにも自動で効く。
+
+   モーション量コントロール (#787、settings.motionPreference、`App.tsx` が
+   `document.documentElement` の data-motion 属性へ反映):
+   - "system" (既定): 下の 2 ブロックは従来どおり — 何も data-motion に依存する
+     セレクタに一致せず、OS の prefers-reduced-motion だけで決まる。
+   - "full": OS が reduce でも下の @media ブロックの抑制を適用しない
+     (`:not([data-motion="full"])` で除外)。CSS の transition-duration 等は
+     コンポーネントごとに値が異なり「元の値へ戻す」単一のルールが書けないため、
+     抑制ルール自体を除外する形で実現している。
+   - "reduced": OS 設定に関わらず、下の @media ブロックと同じ抑制をここに強制
+     適用する。プレーン CSS には「@media の条件と属性セレクタの条件の OR」を
+     1 つの宣言ブロックにまとめる仕組みがなく (mixin 相当の機能がない)、
+     duplicate を避けきれないため、上の @media ブロックと**同じプロパティを
+     保つ**ことをここに明記する (変更時は両方を揃えること)。 */
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  :root:not([data-motion="full"]) *,
+  :root:not([data-motion="full"]) *::before,
+  :root:not([data-motion="full"]) *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+:root[data-motion="reduced"] *,
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }
