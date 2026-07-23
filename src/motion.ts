@@ -20,6 +20,15 @@ import type { Transition, Variants } from "motion/react";
  * - **CSS:** `src/App.css` 末尾の `@media (prefers-reduced-motion: reduce)` が
  *   全要素の transition / animation を実質無効化する。
  *
+ * **アプリ内モーション量コントロール (#787、`settings.motionPreference`):**
+ * OS 設定を変えられない/変えたくないユーザ向けに、上記 2 系統を OS 設定に
+ * 関わらず強制できる。`"reduced"` は常に抑制、`"full"` は常に有効化、`"system"`
+ * (既定) は上記のとおり OS 追従のまま。JS 側は `main.tsx` の `MotionRoot` が
+ * `MotionConfig reducedMotion` を `"always"`/`"never"`/`"user"` に切り替え、CSS
+ * 側は `App.tsx` が `document.documentElement` に反映する `data-motion` 属性を
+ * `App.css` の `:root[data-motion="reduced"]` / `:root[data-motion="full"]` が
+ * 参照する。個々のコンポーネントはこれまでどおり何も分岐を書く必要はない。
+ *
  * ## 「CSS のまま残す / Motion 化する」の境界
  *
  * - **CSS のまま残す:** 単純な hover / focus / active の色・影・枠線などの

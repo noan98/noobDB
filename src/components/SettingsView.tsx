@@ -42,6 +42,9 @@ import {
   THEME_PRESET_ORDER,
   setThemePreset,
   type ThemePreset,
+  MOTION_PREFERENCE_ORDER,
+  setMotionPreference,
+  type MotionPreference,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
   SYNTAX_PRESET_ORDER,
   Density,
@@ -493,6 +496,15 @@ const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof 
   "one-dark": "themePresetOneDark",
   "high-contrast": "themePresetHighContrast",
   colorblind: "themePresetColorblind",
+};
+
+const MOTION_PREFERENCE_LABEL_KEYS: Record<
+  MotionPreference,
+  Parameters<ReturnType<typeof useT>>[0]
+> = {
+  system: "settingsMotionPreferenceSystem",
+  full: "settingsMotionPreferenceFull",
+  reduced: "settingsMotionPreferenceReduced",
 };
 
 const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> = {
@@ -1013,6 +1025,23 @@ export function SettingsView({ theme, onClose }: Props) {
             />
           </SettingsSwatchRow>
           <SettingsHelpInline>{t("settingsAccentColorHelp")}</SettingsHelpInline>
+        </SettingsToggleRow>
+
+        <SettingsToggleRow>
+          <SettingsToggleLabel as="span">{t("settingsMotionPreference")}</SettingsToggleLabel>
+          <SettingsSegment role="group" aria-label={t("settingsMotionPreference")}>
+            {MOTION_PREFERENCE_ORDER.map((m) => (
+              <SettingsSegmentButton
+                key={m}
+                type="button"
+                aria-pressed={settings.motionPreference === m}
+                onClick={() => setMotionPreference(m)}
+              >
+                {t(MOTION_PREFERENCE_LABEL_KEYS[m])}
+              </SettingsSegmentButton>
+            ))}
+          </SettingsSegment>
+          <SettingsHelpInline>{t("settingsMotionPreferenceHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>
 
