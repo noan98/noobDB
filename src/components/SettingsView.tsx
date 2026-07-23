@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api/tauri";
+import {
+  THEME_PREVIEW_CHIP_ORDER,
+  themePreviewColors,
+  themePreviewGradient,
+} from "../themePresetPreview";
 import { useT, type I18nKey } from "../i18n";
 import { Icon } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
@@ -42,6 +47,9 @@ import {
   THEME_PRESET_ORDER,
   setThemePreset,
   type ThemePreset,
+  MOTION_PREFERENCE_ORDER,
+  setMotionPreference,
+  type MotionPreference,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
   SYNTAX_PRESET_ORDER,
   Density,
@@ -398,6 +406,72 @@ const SettingsSwatch = chakra("button", {
   },
 });
 
+// テーマプリセットのミニパレットプレビュー (#789)。カード列は SettingsSwatchRow
+// と同じ flex-wrap 方式で、幅固定のカードが自然に折り返す。
+const ThemePresetRow = chakra("div", {
+  base: { display: "flex", flexWrap: "wrap", gap: "2" },
+});
+
+// ホバー/押下の軽い press/scale フィードバック付きカード。動きの duration/easing は
+// motion.ts が CSS 側にも配っているトークン (`--dur-fast` / `--ease`) をそのまま使う。
+// 密な個数 (7 プリセット) を同時マウントするため、motion.ts の設計方針
+// (「単純な hover/focus/active の transition は motion 化しても利点が薄く
+// レンダリングコストが増えるだけ」— 共通ボタン/ツリー行/ツールバーボタンは
+// CSS のまま残す、と明記) に従い、他の設定行の各種ボタン群と同じく
+// framer-motion では包まずネイティブ CSS transition + transform で実装する。
+const ThemePresetCard = chakra("button", {
+  base: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: "1.5",
+    width: "92px",
+    p: "2",
+    border: "1px solid",
+    borderColor: "app.borderStrong",
+    borderRadius: "md",
+    background: "app.surface",
+    cursor: "pointer",
+    transitionProperty: "border-color, box-shadow, transform",
+    transitionDuration: "var(--dur-fast)",
+    transitionTimingFunction: "var(--ease)",
+    _hover: { borderColor: "app.textMuted", transform: "scale(1.03)" },
+    "&:active": { transform: "scale(0.97)" },
+    "&[aria-pressed=true]": {
+      borderColor: "app.accent",
+      boxShadow: "inset 0 0 0 1px var(--accent)",
+    },
+    _focusVisible: {
+      outline: "none",
+      boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)",
+    },
+  },
+});
+
+// 5 色を 1 本の帯 (CSS グラデーション) で並べたミニパレット。チップ 1 個ずつを
+// 別 DOM 要素にすると 7 プリセット × 5 チップ = 35 要素が常時マウントされ、設定
+// モーダルの初期レンダーコストが目に見えて増える (#789 実装時に settingsView.test.tsx
+// のマウント時間実測で確認)。単一要素の `background: linear-gradient(...)` に
+// まとめることで見た目 (色チップが並ぶミニパレット) を保ったまま要素数を 1/5 に削減する。
+const ThemePresetSwatchStrip = chakra("div", {
+  base: {
+    width: "100%",
+    height: "14px",
+    borderRadius: "sm",
+    border: "1px solid",
+    borderColor: "app.borderSubtle",
+  },
+});
+
+const ThemePresetCardLabel = chakra("span", {
+  base: {
+    fontSize: "xs",
+    fontWeight: 500,
+    color: "app.text",
+    lineHeight: "1.2",
+  },
+});
+
 const SettingsLogsActions = chakra("div", {
   base: { display: "flex", alignItems: "center", gap: "2" },
 });
@@ -493,6 +567,29 @@ const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof 
   "one-dark": "themePresetOneDark",
   "high-contrast": "themePresetHighContrast",
   colorblind: "themePresetColorblind",
+};
+
+const MOTION_PREFERENCE_LABEL_KEYS: Record<
+  MotionPreference,
+  Parameters<ReturnType<typeof useT>>[0]
+> = {
+  system: "settingsMotionPreferenceSystem",
+  full: "settingsMotionPreferenceFull",
+  reduced: "settingsMotionPreferenceReduced",
+};
+
+/** テーマプリセットのミニパレットプレビュー (#789) の各チップの i18n ラベル
+ *  (ホバー時の title のみに使う。チップ列自体は aria-hidden でカードの
+ *  アクセシブルネームには含めない)。 */
+const THEME_PREVIEW_CHIP_LABEL_KEYS: Record<
+  (typeof THEME_PREVIEW_CHIP_ORDER)[number],
+  Parameters<ReturnType<typeof useT>>[0]
+> = {
+  bg: "themePreviewChipBg",
+  surface: "themePreviewChipSurface",
+  accent: "themePreviewChipAccent",
+  text: "themePreviewChipText",
+  keyword: "themePreviewChipKeyword",
 };
 
 const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> = {
@@ -968,18 +1065,30 @@ export function SettingsView({ theme, onClose }: Props) {
 
         <SettingsToggleRow>
           <SettingsToggleLabel as="span">{t("settingsThemePreset")}</SettingsToggleLabel>
-          <SettingsSegment role="group" aria-label={t("settingsThemePreset")}>
-            {THEME_PRESET_ORDER.map((p) => (
-              <SettingsSegmentButton
-                key={p}
-                type="button"
-                aria-pressed={settings.themePreset === p}
-                onClick={() => setThemePreset(p as ThemePreset)}
-              >
-                {t(THEME_PRESET_LABEL_KEYS[p])}
-              </SettingsSegmentButton>
-            ))}
-          </SettingsSegment>
+          <ThemePresetRow role="group" aria-label={t("settingsThemePreset")}>
+            {THEME_PRESET_ORDER.map((p) => {
+              const selected = settings.themePreset === p;
+              const colors = themePreviewColors(p, theme);
+              const chipTitle = THEME_PREVIEW_CHIP_ORDER.map((chip) =>
+                t(THEME_PREVIEW_CHIP_LABEL_KEYS[chip]),
+              ).join(" / ");
+              return (
+                <ThemePresetCard
+                  key={p}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setThemePreset(p as ThemePreset)}
+                >
+                  <ThemePresetSwatchStrip
+                    aria-hidden="true"
+                    title={chipTitle}
+                    style={{ background: themePreviewGradient(colors) }}
+                  />
+                  <ThemePresetCardLabel>{t(THEME_PRESET_LABEL_KEYS[p])}</ThemePresetCardLabel>
+                </ThemePresetCard>
+              );
+            })}
+          </ThemePresetRow>
           <SettingsHelpInline>{t("settingsThemePresetHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
 
@@ -1013,6 +1122,23 @@ export function SettingsView({ theme, onClose }: Props) {
             />
           </SettingsSwatchRow>
           <SettingsHelpInline>{t("settingsAccentColorHelp")}</SettingsHelpInline>
+        </SettingsToggleRow>
+
+        <SettingsToggleRow>
+          <SettingsToggleLabel as="span">{t("settingsMotionPreference")}</SettingsToggleLabel>
+          <SettingsSegment role="group" aria-label={t("settingsMotionPreference")}>
+            {MOTION_PREFERENCE_ORDER.map((m) => (
+              <SettingsSegmentButton
+                key={m}
+                type="button"
+                aria-pressed={settings.motionPreference === m}
+                onClick={() => setMotionPreference(m)}
+              >
+                {t(MOTION_PREFERENCE_LABEL_KEYS[m])}
+              </SettingsSegmentButton>
+            ))}
+          </SettingsSegment>
+          <SettingsHelpInline>{t("settingsMotionPreferenceHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>
 

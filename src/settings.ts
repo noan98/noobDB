@@ -188,6 +188,16 @@ export interface Settings {
    * 履歴も汚さないが、接続直後の負荷を避けたい場合にオフにできる。
    */
   planWatchOnConnect: boolean;
+  /**
+   * アプリ内モーション量コントロール (#787)。既定は `system` で、これまでどおり
+   * OS の `prefers-reduced-motion` に追従する (`main.tsx` の
+   * `MotionConfig reducedMotion="user"` + `App.css` の
+   * `@media (prefers-reduced-motion: reduce)`)。`reduced` は OS 設定に関わらず
+   * 常にモーションを抑制し、`full` は OS が「動きを減らす」でも常にモーションを
+   * 有効化する。OS 設定を変更できない/したくないユーザや、逆に動きを積極的に
+   * 楽しみたいユーザ向けのアプリ内の逃げ道。
+   */
+  motionPreference: MotionPreference;
 }
 
 /**
@@ -319,6 +329,21 @@ export type Density = "compact" | "normal" | "spacious";
 /** Density presets offered in the appearance settings, in display order. */
 export const DENSITY_ORDER: Density[] = ["compact", "normal", "spacious"];
 export const DEFAULT_DENSITY: Density = "normal";
+
+/**
+ * モーション量プリファレンス (#787). `system` は OS の `prefers-reduced-motion`
+ * に追従 (既定)、`full` は OS 設定に関わらず常にモーション有効、`reduced` は
+ * OS 設定に関わらず常に抑制する。値はそのまま `document.documentElement` の
+ * `data-motion` 属性に反映され (`App.tsx`)、`App.css` の
+ * `:root[data-motion="reduced"]` / `:root[data-motion="full"]` ルールと
+ * `main.tsx` の `MotionConfig reducedMotion` ("user"/"never"/"always") の
+ * 両方から参照される単一の情報源。
+ */
+export type MotionPreference = "system" | "full" | "reduced";
+
+/** モーション量プリファレンスの表示順 (設定 UI のセグメント順)。 */
+export const MOTION_PREFERENCE_ORDER: MotionPreference[] = ["system", "full", "reduced"];
+export const DEFAULT_MOTION_PREFERENCE: MotionPreference = "system";
 
 /** Default accent color: `null` means "use the per-theme CSS default". */
 export const DEFAULT_ACCENT_COLOR: string | null = null;
@@ -578,6 +603,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
+  motionPreference: DEFAULT_MOTION_PREFERENCE,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -695,6 +721,12 @@ function sanitizeThemePreset(input: unknown, fallback: ThemePreset): ThemePreset
   return THEME_PRESET_ORDER.includes(input as ThemePreset) ? (input as ThemePreset) : fallback;
 }
 
+function sanitizeMotionPreference(input: unknown, fallback: MotionPreference): MotionPreference {
+  return MOTION_PREFERENCE_ORDER.includes(input as MotionPreference)
+    ? (input as MotionPreference)
+    : fallback;
+}
+
 /**
  * 永続化されたショートカット上書きマップを検証する。文字列値のエントリのみ
  * 受け入れ、空文字や非文字列は捨てる (壊れた localStorage 耐性)。id の妥当性は
@@ -785,6 +817,7 @@ export function normalizeSettings(input: unknown): Settings {
     sqlLintEnabled?: unknown;
     preflightImpactEnabled?: unknown;
     planWatchOnConnect?: unknown;
+    motionPreference?: unknown;
   };
   return {
     syntaxColors: {
@@ -886,6 +919,7 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.planWatchOnConnect === "boolean"
         ? parsed.planWatchOnConnect
         : DEFAULT_PLAN_WATCH_ON_CONNECT,
+    motionPreference: sanitizeMotionPreference(parsed.motionPreference, DEFAULT_MOTION_PREFERENCE),
   };
 }
 
@@ -1233,6 +1267,14 @@ export function setThemePreset(value: ThemePreset): void {
   listeners.forEach((cb) => cb());
 }
 
+export function setMotionPreference(value: MotionPreference): void {
+  const next = sanitizeMotionPreference(value, current.motionPreference);
+  if (current.motionPreference === next) return;
+  current = { ...current, motionPreference: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
 export function setAutoReconnectEnabled(value: boolean): void {
   if (current.autoReconnectEnabled === value) return;
   current = { ...current, autoReconnectEnabled: value };
@@ -1329,11 +1371,11 @@ export function resetStreamingDefaults(): void {
 
 /**
  * Resets the Appearance section (font size, density, font families, theme
- * preset, accent color) to defaults (#679), matching the scoped "reset to
- * defaults" buttons the Streaming / Syntax highlighting / Preview highlight
- * sections already have. Leaves syntax colors and the preview highlight
- * color untouched — those already have their own per-theme resets
- * (`resetSyntaxColors` / `resetPreviewHighlight`).
+ * preset, accent color, motion preference) to defaults (#679, #787), matching
+ * the scoped "reset to defaults" buttons the Streaming / Syntax highlighting /
+ * Preview highlight sections already have. Leaves syntax colors and the
+ * preview highlight color untouched — those already have their own per-theme
+ * resets (`resetSyntaxColors` / `resetPreviewHighlight`).
  */
 export function resetAppearanceDefaults(): void {
   current = {
@@ -1344,6 +1386,7 @@ export function resetAppearanceDefaults(): void {
     uiFontFamily: DEFAULT_UI_FONT_FAMILY,
     themePreset: DEFAULT_THEME_PRESET,
     accentColor: DEFAULT_ACCENT_COLOR,
+    motionPreference: DEFAULT_MOTION_PREFERENCE,
   };
   persist();
   listeners.forEach((cb) => cb());

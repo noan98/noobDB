@@ -272,13 +272,31 @@ jobs:
       # プリアンブルと重ね、壁時計を短縮する。dpkg のロックはこの apt ステップだけが
       # 握り、並走する他ステップ (rustup / cache 復元) は apt/dpkg を使わないため
       # 競合しない。実際にパッケージを要する cargo clippy の前に wait で完了を保証する。
+      # ランナーイメージに焼き込まれた apt インデックスは古く、アーカイブから既に
+      # 削除された旧バージョンの .deb を参照して 404 で install が失敗することがある
+      # (2026-07-23 に gst-plugins-good の 1ubuntu1.4 参照で発生。アーカイブには
+      # 後継の 1ubuntu1.5 のみ存在)。cache-apt-pkgs-action 内部の update は実際には
+      # インデックスを更新できていない (実測 1 秒未満で完了しリストが古いまま) ため、
+      # ここで (1) ミラーを本家 archive.ubuntu.com に差し替え (Azure ミラー自体の
+      # インデックス/プール同期ズレも回避)、(2) 自前の apt-get update でリストを
+      # 確実に最新化してから action に渡す。効くのはキャッシュミス時のクリーン
+      # インストール経路だけで、キャッシュヒット時の所要時間には影響しない。
+      - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+
       - name: System deps (Tauri 2 prerequisites)
         id: apt
         background: true
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
-          version: tauri-2
+          # version はキャッシュキーの一部。上記 404 の間に action が「0 パッケージの
+          # 空キャッシュ」を保存してしまった場合、同じキーでの再実行は空キャッシュを
+          # 復元して失敗し続けるため、キーを進めて無効化する
+          # (tauri-2 〜 tauri-4 は 2026-07-23 に汚染)。
+          version: tauri-5
 
       # Rust の単体 / 統合テストは __test_api 経由で db::Connection を駆動するだけで
       # webview も run() も起動せず、実フロント資産を必要としない。tauri::generate_context!
@@ -453,13 +471,22 @@ jobs:
       # 完了を保証する。dpkg のロックはこの apt ステップだけが握り、並走する他ステップ
       # (setup-node / rustup / taiki-e ツール導入 / cache 復元) は apt/dpkg を使わない
       # ため競合しない。
+      # クリッピージョブ側と同じ理由の stale インデックス対策 (ミラー差替 + 自前
+      # update)。詳細はそちらのコメントを参照。
+      - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+
       - name: System deps (Tauri 2 prerequisites)
         id: apt
         background: true
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold openssh-server
-          version: tauri-2-ssh
+          # クリッピージョブ側と同じ理由のキーバンプ (tauri-2-ssh 〜 tauri-4-ssh は
+          # 2026-07-23 に空キャッシュで汚染)。詳細はそちらのコメントを参照。
+          version: tauri-5-ssh
 
       # Rust の単体 / 統合テストは __test_api 経由で db::Connection を駆動するだけで
       # webview も run() も起動せず、実フロント資産を必要としない。tauri::generate_context!

@@ -212,6 +212,7 @@ import {
 import { incomingForeignKeys } from "./fkNavigation";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
+import { workspaceSpineColor } from "./profileIdentity";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
@@ -235,6 +236,7 @@ import {
   type PersistedWorkspace,
 } from "./tabPersistence";
 import { reorderIfPermutation } from "./tabReorder";
+import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
 import {
   buildPageSql,
@@ -1028,19 +1030,39 @@ export default function App() {
     // アクセント色: ユーザー指定があれば 3 つの CSS 変数を実行時に注入し、未指定
     // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す。前景と
     // hover はテーマに応じて算出するため、theme 変更時も再実行される。
+    // 加えて調和トーン (#790): 選択行・アクティブ状態の面 (--bg-active /
+    // --bg-active-strong) もアクセント色から派生させ、ボタンだけでなく UI 全体が
+    // 一体で追従するようにする。--accent-subtle / --accent-selection として単独でも
+    // 注入しつつ、既存の消費箇所 (グリッド選択行・接続リストのアクティブ行・
+    // タブ・コマンドパレット等) が参照する --bg-active / --bg-active-strong 自体も
+    // 上書きすることで、個別コンポーネントを書き換えずに一括で波及させる。
     if (settings.accentColor) {
       const v = accentVars(settings.accentColor, theme);
       root.style.setProperty("--accent", v.accent);
       root.style.setProperty("--accent-hover", v.accentHover);
       root.style.setProperty("--accent-text", v.accentText);
+      root.style.setProperty("--accent-subtle", v.accentSubtle);
+      root.style.setProperty("--accent-selection", v.accentSelection);
+      root.style.setProperty("--bg-active", v.accentSubtle);
+      root.style.setProperty("--bg-active-strong", v.accentSelection);
     } else {
       root.style.removeProperty("--accent");
       root.style.removeProperty("--accent-hover");
       root.style.removeProperty("--accent-text");
+      root.style.removeProperty("--accent-subtle");
+      root.style.removeProperty("--accent-selection");
+      root.style.removeProperty("--bg-active");
+      root.style.removeProperty("--bg-active-strong");
     }
 
     // 表示密度: data-density 属性で App.css の `--density-*` トークンを切り替える。
     root.setAttribute("data-density", settings.density);
+
+    // モーション量コントロール (#787): data-motion 属性は settings.motionPreference
+    // をそのまま反映する。"reduced"/"full" のときだけ App.css の
+    // `:root[data-motion=...]` ルールが OS 設定を上書きし、"system" は
+    // OS の prefers-reduced-motion にそのまま従う (どのセレクタにも一致しない)。
+    root.setAttribute("data-motion", settings.motionPreference);
   }, [settings, theme]);
 
   const toggleTheme = useCallback(() => {
@@ -4407,6 +4429,31 @@ export default function App() {
     });
   }, [finalizeProfileDelete, toast]);
 
+  // 接続リストのドラッグ/キーボード並べ替え (#786)。`ConnectionList` は
+  // `visibleProfiles` (Undo 待ちの削除中プロファイルを除いた表示用の部分集合) を
+  // 受け取っているため、そこから返る並び順もその部分集合の順列でしかない。
+  // `applySubsequenceOrder` で `profiles` (真の全件) へ埋め戻し、除外されていた
+  // 要素の絶対位置は変えずに保つ。楽観的に state を更新してからバックエンドへ
+  // 永続化し、失敗したら `refreshProfiles` でサーバ側の真実に巻き戻す。
+  const handleReorderProfiles = useCallback(
+    (orderedVisibleIds: string[]) => {
+      const currentIds = profiles.map((p) => p.id);
+      const embedded = applySubsequenceOrder(currentIds, orderedVisibleIds);
+      if (embedded === currentIds) return;
+      const byId = new Map(profiles.map((p) => [p.id, p]));
+      const reordered = embedded
+        .map((id) => byId.get(id))
+        .filter((p): p is ConnectionProfile => !!p);
+      setProfiles(reordered);
+      void runWithErrorStatus(() => api.reorderProfiles(embedded), "statusFailedReorderProfiles").then(
+        (ok) => {
+          if (!ok) void refreshProfiles();
+        },
+      );
+    },
+    [profiles, runWithErrorStatus, refreshProfiles],
+  );
+
   // Clear any pending profile-delete timers on unmount. Leaving them uncancelled
   // would fire setState on a torn-down tree; not finalizing is the safe choice
   // (the profile simply isn't deleted — its keyring secrets stay intact).
@@ -5875,6 +5922,7 @@ export default function App() {
         gridColumn="1"
         direction="column"
         overflow="hidden"
+        position="relative"
         borderRightWidth="1px"
         borderRightColor="app.border"
         bg="app.surface"
@@ -5890,6 +5938,35 @@ export default function App() {
             }
           : {})}
       >
+        {/* サイドバー左端のカラースパイン (#791)。「今どの接続で作業しているか」を
+            サイドバー全体で常に示すワークスペース・アイデンティティ。色の決定は
+            `workspaceSpineColor` に一元化 (本番は常に危険色で上書き)。key を
+            プロファイル id にして接続確立/切替のたびに `transitions.enter` で
+            軽く定着させ、色が変わったことに気付きやすくする。reduced-motion は
+            ルートの MotionConfig が自動で即時化する。 */}
+        <AnimatePresence mode="wait">
+          {sessionId && selectedProfile && (
+            <motion.div
+              key={selectedProfile.id}
+              aria-hidden
+              initial={{ opacity: 0, scaleY: 0.6 }}
+              animate={{ opacity: 1, scaleY: 1 }}
+              exit={{ opacity: 0, scaleY: 0.6 }}
+              transition={transitions.enter}
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: 0,
+                width: selectedProfile.is_production ? "4px" : "3px",
+                background: workspaceSpineColor(selectedProfile),
+                transformOrigin: "top",
+                pointerEvents: "none",
+                zIndex: 1,
+              }}
+            />
+          )}
+        </AnimatePresence>
         <Flex
           as="header"
           px="3"
@@ -6022,6 +6099,7 @@ export default function App() {
             openProfileIds={openProfileIds}
             onConnect={handleConnect}
             onDisconnectProfile={handleDisconnectProfile}
+            onReorderProfiles={handleReorderProfiles}
             onCreate={handleOpenCreateForm}
             onEdit={handleOpenEditForm}
             onDuplicate={handleDuplicateProfile}
@@ -6291,11 +6369,18 @@ export default function App() {
               pl={sidebarCollapsed ? "46px" : "14px"}
               pr="3.5"
               py="2"
-              borderBottomWidth="1px"
-              borderBottomColor="app.border"
+              borderBottomWidth={selectedProfile?.is_production ? "2px" : "1px"}
+              borderBottomColor={selectedProfile?.is_production ? "app.status.error" : "app.border"}
               minH="42px"
-              bg={`color-mix(in srgb, var(--ws-accent) ${selectedProfile?.is_production ? "9%" : "4%"}, var(--bg-elevated))`}
-              transition="background var(--dur-med) var(--ease)"
+              // 本番接続は `--ws-accent` (プロファイルのカスタム色) ではなく常に危険色
+              // トークンで塗る。カスタム色に紛れて「本番らしさ」が薄まるのを防ぐため
+              // (#791)。非本番は従来どおり控えめなワークスペースアクセントの色付け。
+              bg={
+                selectedProfile?.is_production
+                  ? "color-mix(in srgb, var(--status-error) 16%, var(--bg-elevated))"
+                  : "color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated))"
+              }
+              transition="background var(--dur-med) var(--ease), border-color var(--dur-med) var(--ease)"
               css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
             >
               <Flex align="center" gap="2" overflow="hidden">

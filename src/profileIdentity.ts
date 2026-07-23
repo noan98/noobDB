@@ -26,6 +26,12 @@ export interface ProfileIdentityFlags {
   read_only: boolean;
 }
 
+/** `workspaceSpineColor` の入力に必要な最小フィールド。 */
+export interface WorkspaceIdentityInput {
+  is_production: boolean;
+  color?: string | null;
+}
+
 /**
  * 表示すべきバッジの種類を、表示すべき優先順で返す (本番を常に先に)。
  * 両方 true ならどちらも返し、両方 false なら空配列。
@@ -62,6 +68,25 @@ export function chipForeground(color: string | null | undefined): string | null 
   const normalized = normalizeChipColor(color);
   if (!normalized || !parseHex(normalized)) return null;
   return accentForeground(normalized);
+}
+
+/**
+ * アクティブ接続の「ワークスペース・アイデンティティ」を表す単色を決定する
+ * (#791)。サイドバー左端のカラースパインなど、アプリ全体で「今どの接続で
+ * 作業しているか」を一目で示す面が参照する単一の出所。優先順位は
+ * `ConnectionList` の行スパインと同じ**本番が常に最優先**:
+ *
+ * 1. 未接続 (`active` が `null`) → `"transparent"` (何も塗らない)
+ * 2. 本番接続 (`is_production`) → 常に危険色トークン (`--status-error`)。
+ *    プロファイルの `color` がどんな色でも誤操作リスクを薄めないよう上書きする。
+ * 3. プロファイルにカスタム色があればそれをそのまま使う。
+ * 4. 色未設定ならワークスペースアクセント (`--ws-accent`、無ければブランド
+ *    アクセント `--accent`) にフォールバックする — 未設定時も自然に見える。
+ */
+export function workspaceSpineColor(active: WorkspaceIdentityInput | null): string {
+  if (!active) return "transparent";
+  if (active.is_production) return "var(--status-error)";
+  return normalizeChipColor(active.color) ?? "var(--ws-accent, var(--accent))";
 }
 
 /** イニシャルとして取り出すコードポイント数の上限 (単一語のとき)。 */

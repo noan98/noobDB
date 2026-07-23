@@ -380,6 +380,61 @@ fn delete_profile_ordered(
     Ok(())
 }
 
+/// 接続リストのドラッグ/キーボード並べ替え (#786)。`ordered_ids` の順に
+/// `profiles.json` の配列を並べ替える — プロファイルの並び順は特別なフィールドを
+/// 持たず、この配列順そのものが真実 (`list_profiles` はファイル順をそのまま返す)。
+/// 新しいプロファイル追加時のフィールドを増やさずに済む、既存ストレージを最大限
+/// 利用した永続化方針 (CLAUDE.md の「Rust 変更は最小限に」に沿う)。
+#[tauri::command]
+pub async fn reorder_profiles(ordered_ids: Vec<String>) -> Result<()> {
+    let all = store::load_all()?;
+    let count = all.len();
+    let reordered = reorder_profiles_pure(all, &ordered_ids).ok_or_else(|| {
+        AppError::InvalidInput(
+            "orderedIds must be a permutation of the existing profile ids".to_string(),
+        )
+    })?;
+    store::save_all(&reordered)?;
+    tracing::info!(count, "profiles reordered");
+    Ok(())
+}
+
+/// `ordered_ids` に従ってプロファイル一覧を並べ替える純粋ロジック。`ordered_ids`
+/// は `all` の id 集合の**真の順列**でなければならない (欠落・重複・混入を拒否
+/// する) — フロントの `connectionOrder.ts::reorderIfPermutation` と同じ不変条件を
+/// バックエンドでも強制する。順列でなければ `None` を返す (IPC を直接叩く/競合
+/// レースなど、フロント側のガードをすり抜けた不正な入力からストレージを守る)。
+/// ファイル IO に触れないのでユニットテストできる。
+fn reorder_profiles_pure(
+    all: Vec<ConnectionProfile>,
+    ordered_ids: &[String],
+) -> Option<Vec<ConnectionProfile>> {
+    if ordered_ids.len() != all.len() {
+        return None;
+    }
+    let mut by_id: std::collections::HashMap<String, ConnectionProfile> =
+        std::collections::HashMap::with_capacity(all.len());
+    for p in all {
+        // 既存ストレージに重複 id があるのは想定外の破損状態。安全側に倒し、
+        // 並べ替えは行わずエラーとして扱う。
+        if by_id.insert(p.id.clone(), p).is_some() {
+            return None;
+        }
+    }
+    let mut seen = std::collections::HashSet::with_capacity(ordered_ids.len());
+    let mut reordered = Vec::with_capacity(ordered_ids.len());
+    for id in ordered_ids {
+        if !seen.insert(id.as_str()) {
+            return None; // ordered_ids 内の重複
+        }
+        reordered.push(by_id.remove(id)?); // 混入 (未知の id) は remove が None を返す
+    }
+    if !by_id.is_empty() {
+        return None; // ordered_ids に含まれなかった id が残っている (件数不一致の防御)
+    }
+    Some(reordered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,5 +599,61 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(!*secrets_called.borrow());
+    }
+
+    // #786: 真の順列なら、指定順にプロファイルを並べ替えて返す。
+    #[test]
+    fn reorder_profiles_pure_accepts_a_valid_permutation() {
+        let all = vec![
+            profile("a", "A", "mysql"),
+            profile("b", "B", "mysql"),
+            profile("c", "C", "mysql"),
+        ];
+        let reordered =
+            reorder_profiles_pure(all, &["c".to_string(), "a".to_string(), "b".to_string()])
+                .unwrap();
+        assert_eq!(
+            reordered.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            vec!["c", "a", "b"]
+        );
+    }
+
+    // 件数が合わない (欠落) 場合は None。
+    #[test]
+    fn reorder_profiles_pure_rejects_wrong_length() {
+        let all = vec![profile("a", "A", "mysql"), profile("b", "B", "mysql")];
+        assert!(reorder_profiles_pure(all, &["a".to_string()]).is_none());
+    }
+
+    // ordered_ids 内の重複 (どこかのプロファイルが到達不能になる) は None。
+    #[test]
+    fn reorder_profiles_pure_rejects_duplicate_id() {
+        let all = vec![profile("a", "A", "mysql"), profile("b", "B", "mysql")];
+        assert!(reorder_profiles_pure(all, &["a".to_string(), "a".to_string()]).is_none());
+    }
+
+    // 未知の id が混入している場合は None。
+    #[test]
+    fn reorder_profiles_pure_rejects_foreign_id() {
+        let all = vec![profile("a", "A", "mysql"), profile("b", "B", "mysql")];
+        assert!(reorder_profiles_pure(all, &["a".to_string(), "x".to_string()]).is_none());
+    }
+
+    // 恒等順列 (現状維持) も正しく受理される。
+    #[test]
+    fn reorder_profiles_pure_accepts_identity_order() {
+        let all = vec![profile("a", "A", "mysql"), profile("b", "B", "mysql")];
+        let reordered = reorder_profiles_pure(all, &["a".to_string(), "b".to_string()]).unwrap();
+        assert_eq!(
+            reordered.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+    }
+
+    // 空リストも順列 (空 = 空) として許容する。
+    #[test]
+    fn reorder_profiles_pure_accepts_empty() {
+        let reordered = reorder_profiles_pure(vec![], &[]).unwrap();
+        assert!(reordered.is_empty());
     }
 }
