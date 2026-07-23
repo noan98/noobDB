@@ -763,7 +763,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       handleProfileClick(p);
       return;
     }
-    if (!onReorderProfiles || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+    // ドラッグと同じく検索フィルタ中は無効 (`reorderEnabled`) — 部分表示のまま
+    // 裏の全体順序を動かさない。イベント発火時に評価されるので後方の宣言でよい。
+    if (!reorderEnabled || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
     if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
     const dir = e.key === "ArrowDown" ? 1 : -1;
     const moved = moveItemBy(siblingIds, p.id, dir);
@@ -795,7 +797,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       setExpandedGroups((prev) => ({ ...prev, [name]: prev[name] === false ? true : false }));
       return;
     }
-    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    // 検索フィルタ中は `namedGroupKeys` がヒットしたグループだけの部分集合になる。
+    // その部分集合で `setGroupOrder` すると永続化済みの全体順序を可視分だけで
+    // 上書きしてしまうため、ドラッグと同じく `reorderEnabled` でガードする。
+    if (!reorderEnabled || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
     if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
     const dir = e.key === "ArrowDown" ? 1 : -1;
     const moved = moveItemBy(namedGroupKeys, name, dir);
