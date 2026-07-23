@@ -67,7 +67,12 @@ function readGroupOrder(): string[] {
  */
 const ReorderItemDiv = forwardRef<HTMLDivElement, React.ComponentProps<typeof Reorder.Item<string>>>(
   function ReorderItemDiv(props, ref) {
-    return <Reorder.Item as="div" ref={ref} {...props} />;
+    // `layout="position"` が必須: Reorder.Item 既定の layout アニメーションは
+    // サイズ変化も scale で FLIP させるため、ブロック内のサブツリー展開 (高さ変化)
+    // のたびに内部の行が変形・移動し、直後のクリック/ダブルクリックが別要素へ
+    // 当たってしまう (テーブル行の dblclick タブオープンが壊れる)。position 限定に
+    // すると並べ替え時のスライドは維持しつつ、自身のサイズ変化では変形しない。
+    return <Reorder.Item as="div" layout="position" ref={ref} {...props} />;
   },
 );
 const MotionReorderNode = chakra(
