@@ -156,9 +156,10 @@ export function accentHover(hex: string, theme: Theme): string {
   return toHex(mix(rgb, target, amount));
 }
 
-/** ライト/ダークそれぞれの `App.css` `--bg` と一致する調和トーンの基準色。 */
-const LIGHT_BG: [number, number, number] = [245, 247, 250]; // #f5f7fa
-const DARK_BG: [number, number, number] = [13, 17, 23]; // #0d1117
+/** ライト/ダークそれぞれの `App.css` `--bg` と一致する調和トーンの基準色。
+ *  テスト (`accent.test.ts`) が値を再利用して重複定義によるドリフトを防ぐため export。 */
+export const LIGHT_BG: [number, number, number] = [245, 247, 250]; // #f5f7fa
+export const DARK_BG: [number, number, number] = [13, 17, 23]; // #0d1117
 
 /** 調和トーンの上に乗る本文の代表色。`App.css` の `--text` (各テーマ) と一致。 */
 const LIGHT_TEXT_REF = "#1a2330";

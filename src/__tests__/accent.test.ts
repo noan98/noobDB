@@ -7,6 +7,8 @@ import {
   accentHover,
   accentSelection,
   accentSubtle,
+  DARK_BG,
+  LIGHT_BG,
   accentVars,
   contrastRatio,
   parseHex,
@@ -128,7 +130,7 @@ describe("accentSubtle / accentSelection", () => {
 
   it("selection is a stronger tone than subtle (moves further from the base surface)", () => {
     for (const theme of THEMES) {
-      const base = theme === "dark" ? [13, 17, 23] : [245, 247, 250];
+      const base = theme === "dark" ? DARK_BG : LIGHT_BG;
       const subtleRgb = parseHex(accentSubtle("#2563eb", theme));
       const selectionRgb = parseHex(accentSelection("#2563eb", theme));
       expect(subtleRgb).not.toBeNull();

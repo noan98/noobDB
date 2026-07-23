@@ -1903,6 +1903,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           onClick={() =>
                             setExpandedGroups((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))
                           }
+                          // 名前付きグループ見出しと同じキーボード対応 (Enter/Space で
+                          // 開閉)。未分類は並べ替え不可のため矢印キーの移動は
+                          // moveItemBy が no-op になり、開閉だけが効く。
+                          onKeyDown={handleGroupRowKeyDown(key, namedGroupKeys)}
+                          tabIndex={0}
                           role="treeitem"
                           aria-expanded={groupOpen}
                         >
