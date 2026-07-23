@@ -291,6 +291,11 @@
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
   --accent-text: #ffffff;
+  /* 調和トーン (#790)。カスタムアクセント未選択時は --bg-active / --bg-active-strong
+     (このテーマ・プリセットの固定値) をそのまま指す。App.tsx はカスタムアクセント
+     選択時にこれら 4 変数すべてを accent.ts の派生値へ inline 上書きする。 */
+  --accent-subtle: var(--bg-active);
+  --accent-selection: var(--bg-active-strong);
 
   --cm-selection: #b3d4fc;
 
