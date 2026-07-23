@@ -11,6 +11,30 @@
  *   WCAG AA (4.5:1) をできる限り満たす。
  *
  * いずれも DOM に依存しない純粋関数なので Vitest で直接検証できる。
+ *
+ * ── 調和トーン (#790) ──────────────────────────────────────────────────
+ * 上記 3 変数はボタンとフォーカスリング程度にしか効かず、選択行・アクティブ状態
+ * などの微弱な面 (`App.css` の `--bg-active` / `--bg-active-strong`、Chakra の
+ * `app.active` / `app.activeStrong` トークン) はテーマ固定のトーンのままだった。
+ * `accentSubtle` / `accentSelection` はこれらの面をアクセント色から派生させる
+ * 追加の純関数で、`App.tsx` が `--accent-subtle` / `--accent-selection` として
+ * 注入しつつ、既存の `--bg-active` / `--bg-active-strong` 自体もこの値で上書きする
+ * (新しい消費側コンポーネントを増やさず、既存の全消費箇所に一括で波及させるため)。
+ *
+ * 算出方針: テーマの `--bg` 相当の基準色 (`LIGHT_BG` / `DARK_BG`) へ選択色を
+ * `mix()` で少量 (subtle) / やや多め (selection) に混ぜる。混合率は、既定アクセント
+ * (`#2563eb` ライト / `#4c93f7` ダーク) を入力したときに `App.css` の既存固定値
+ * (`--bg-active` 等) と近似する値を逆算して選んでいるため、**アクセント未変更の
+ * ユーザーの見た目は変えない** (this 関数は `settings.accentColor` が非 null の
+ * ときだけ呼ばれ、null なら `App.css` の固定値がそのまま使われる)。ただし
+ * 基準色→固定値の変換は元々 `mix()` 単体では再現できない非線形な手調整だったため
+ * (RGB 各チャンネルで逆算した係数が完全には一致しない)、完全一致ではなく近似値
+ * になる。詳細は Issue #790 の PR 説明を参照。
+ *
+ * WCAG セーフティネット: 混合後の面は非テキストだが、その上に乗る本文
+ * (`--text`) の可読性を保証するため、`contrastRatio` で下限 (4.5:1, AA 相当) を
+ * 満たすまで混合率を段階的に半減させる。混合率 0 は基準色そのもの
+ * (`LIGHT_BG`/`DARK_BG`) を返し、これは常に本文と高コントラストなので必ず収束する。
  */
 
 import type { Theme } from "./settings";
@@ -132,20 +156,92 @@ export function accentHover(hex: string, theme: Theme): string {
   return toHex(mix(rgb, target, amount));
 }
 
+/** ライト/ダークそれぞれの `App.css` `--bg` と一致する調和トーンの基準色。 */
+const LIGHT_BG: [number, number, number] = [245, 247, 250]; // #f5f7fa
+const DARK_BG: [number, number, number] = [13, 17, 23]; // #0d1117
+
+/** 調和トーンの上に乗る本文の代表色。`App.css` の `--text` (各テーマ) と一致。 */
+const LIGHT_TEXT_REF = "#1a2330";
+const DARK_TEXT_REF = "#e6edf3";
+
+/**
+ * 混合率 (基準色からアクセント色へ寄せる割合)。既定アクセント
+ * (`#2563eb` ライト / `#4c93f7` ダーク) を入力したとき、`App.css` の既存固定値
+ * (`--bg-active` / `--bg-active-strong`) に近似するよう逆算した値。
+ */
+const TINT_AMOUNT: Record<Theme, { subtle: number; selection: number }> = {
+  light: { subtle: 0.08, selection: 0.16 },
+  dark: { subtle: 0.45, selection: 0.6 },
+};
+
+/** WCAG AA 相当のコントラスト下限。面塗り自体でなく、その上に乗る本文向け。 */
+const MIN_TONE_CONTRAST = 4.5;
+
+function toneBase(theme: Theme): [number, number, number] {
+  return theme === "dark" ? DARK_BG : LIGHT_BG;
+}
+
+function toneTextRef(theme: Theme): string {
+  return theme === "dark" ? DARK_TEXT_REF : LIGHT_TEXT_REF;
+}
+
+/**
+ * 選択色を基準色 (`--bg` 相当) へ `amount` で混ぜ、混合後の面が `textRef` に対して
+ * `MIN_TONE_CONTRAST` を満たすまで `amount` を半減させ続ける。`amount` が 0 に
+ * 収束すれば基準色そのもの (本文と常に高コントラスト) になるため必ず終了する。
+ */
+function harmonicTone(hex: string, theme: Theme, amount: number): string {
+  const base = toneBase(theme);
+  const rgb = parseHex(hex);
+  if (!rgb) return toHex(base);
+  const textRef = toneTextRef(theme);
+  let a = amount;
+  let out = toHex(mix(base, rgb, a));
+  let guard = 0;
+  while (contrastRatio(out, textRef) < MIN_TONE_CONTRAST && guard < 24) {
+    a /= 2;
+    out = toHex(mix(base, rgb, a));
+    guard += 1;
+  }
+  return out;
+}
+
+/**
+ * 選択色から派生する控えめな面塗り (`--bg-active` 相当)。ホバーより一段弱い
+ * 「薄くアクセントが香る」トーンで、選択行・アクティブ項目の背景に使う。
+ */
+export function accentSubtle(hex: string, theme: Theme): string {
+  return harmonicTone(hex, theme, TINT_AMOUNT[theme].subtle);
+}
+
+/**
+ * 選択色から派生するやや強めの面塗り (`--bg-active-strong` 相当)。ソート中の
+ * 列見出しなど、選択状態をより強調したい面に使う。
+ */
+export function accentSelection(hex: string, theme: Theme): string {
+  return harmonicTone(hex, theme, TINT_AMOUNT[theme].selection);
+}
+
 export interface AccentVars {
   accent: string;
   accentHover: string;
   accentText: string;
+  accentSubtle: string;
+  accentSelection: string;
 }
 
 /**
- * 選択されたアクセント色から、注入すべき 3 つの CSS 変数値を算出する。
- * `App.tsx` がこれを `--accent` / `--accent-hover` / `--accent-text` に書き込む。
+ * 選択されたアクセント色から、注入すべき CSS 変数値を算出する。`App.tsx` が
+ * これを `--accent` / `--accent-hover` / `--accent-text` /
+ * `--accent-subtle` / `--accent-selection` に書き込む (後者 2 つは
+ * `--bg-active` / `--bg-active-strong` も上書きし、選択行・アクティブ状態に波及させる)。
  */
 export function accentVars(hex: string, theme: Theme): AccentVars {
   return {
     accent: hex,
     accentHover: accentHover(hex, theme),
     accentText: accentForeground(hex),
+    accentSubtle: accentSubtle(hex, theme),
+    accentSelection: accentSelection(hex, theme),
   };
 }

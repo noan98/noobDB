@@ -1029,15 +1029,29 @@ export default function App() {
     // アクセント色: ユーザー指定があれば 3 つの CSS 変数を実行時に注入し、未指定
     // (null) なら inline 上書きを外して App.css のテーマ既定へ戻す。前景と
     // hover はテーマに応じて算出するため、theme 変更時も再実行される。
+    // 加えて調和トーン (#790): 選択行・アクティブ状態の面 (--bg-active /
+    // --bg-active-strong) もアクセント色から派生させ、ボタンだけでなく UI 全体が
+    // 一体で追従するようにする。--accent-subtle / --accent-selection として単独でも
+    // 注入しつつ、既存の消費箇所 (グリッド選択行・接続リストのアクティブ行・
+    // タブ・コマンドパレット等) が参照する --bg-active / --bg-active-strong 自体も
+    // 上書きすることで、個別コンポーネントを書き換えずに一括で波及させる。
     if (settings.accentColor) {
       const v = accentVars(settings.accentColor, theme);
       root.style.setProperty("--accent", v.accent);
       root.style.setProperty("--accent-hover", v.accentHover);
       root.style.setProperty("--accent-text", v.accentText);
+      root.style.setProperty("--accent-subtle", v.accentSubtle);
+      root.style.setProperty("--accent-selection", v.accentSelection);
+      root.style.setProperty("--bg-active", v.accentSubtle);
+      root.style.setProperty("--bg-active-strong", v.accentSelection);
     } else {
       root.style.removeProperty("--accent");
       root.style.removeProperty("--accent-hover");
       root.style.removeProperty("--accent-text");
+      root.style.removeProperty("--accent-subtle");
+      root.style.removeProperty("--accent-selection");
+      root.style.removeProperty("--bg-active");
+      root.style.removeProperty("--bg-active-strong");
     }
 
     // 表示密度: data-density 属性で App.css の `--density-*` トークンを切り替える。
