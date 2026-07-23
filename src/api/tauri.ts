@@ -1020,6 +1020,13 @@ export const api = {
     ),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
   /**
+   * 接続リストのドラッグ/キーボード並べ替え (#786)。`orderedIds` は既存プロファイル
+   * 全件の真の順列でなければならない — 検証は `ConnectionList` / `App.tsx` の純
+   * ロジック (`connectionOrder.ts`) が行い、バックエンドも同じ不変条件を強制する。
+   * 並び順は `profiles.json` の配列順そのものなので、専用フィールドは無い。
+   */
+  reorderProfiles: (orderedIds: string[]) => invoke<void>("reorder_profiles", { orderedIds }),
+  /**
    * 接続プロファイルを **秘密情報抜きで** `path` に JSON 出力する。`ids`
    * 省略時は全件。返り値は書き込んだバイト数。
    */

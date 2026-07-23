@@ -330,6 +330,7 @@ pub fn run() {
             commands::profiles::list_profiles,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,
+            commands::profiles::reorder_profiles,
             commands::profiles::export_profiles,
             commands::profiles::import_profiles,
             commands::snippets::list_snippets,
