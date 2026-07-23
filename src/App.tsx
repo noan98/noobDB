@@ -212,6 +212,7 @@ import {
 import { incomingForeignKeys } from "./fkNavigation";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
+import { workspaceSpineColor } from "./profileIdentity";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
@@ -5875,6 +5876,7 @@ export default function App() {
         gridColumn="1"
         direction="column"
         overflow="hidden"
+        position="relative"
         borderRightWidth="1px"
         borderRightColor="app.border"
         bg="app.surface"
@@ -5890,6 +5892,35 @@ export default function App() {
             }
           : {})}
       >
+        {/* サイドバー左端のカラースパイン (#791)。「今どの接続で作業しているか」を
+            サイドバー全体で常に示すワークスペース・アイデンティティ。色の決定は
+            `workspaceSpineColor` に一元化 (本番は常に危険色で上書き)。key を
+            プロファイル id にして接続確立/切替のたびに `transitions.enter` で
+            軽く定着させ、色が変わったことに気付きやすくする。reduced-motion は
+            ルートの MotionConfig が自動で即時化する。 */}
+        <AnimatePresence mode="wait">
+          {sessionId && selectedProfile && (
+            <motion.div
+              key={selectedProfile.id}
+              aria-hidden
+              initial={{ opacity: 0, scaleY: 0.6 }}
+              animate={{ opacity: 1, scaleY: 1 }}
+              exit={{ opacity: 0, scaleY: 0.6 }}
+              transition={transitions.enter}
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: 0,
+                width: selectedProfile.is_production ? "4px" : "3px",
+                background: workspaceSpineColor(selectedProfile),
+                transformOrigin: "top",
+                pointerEvents: "none",
+                zIndex: 1,
+              }}
+            />
+          )}
+        </AnimatePresence>
         <Flex
           as="header"
           px="3"
@@ -6291,11 +6322,18 @@ export default function App() {
               pl={sidebarCollapsed ? "46px" : "14px"}
               pr="3.5"
               py="2"
-              borderBottomWidth="1px"
-              borderBottomColor="app.border"
+              borderBottomWidth={selectedProfile?.is_production ? "2px" : "1px"}
+              borderBottomColor={selectedProfile?.is_production ? "app.status.error" : "app.border"}
               minH="42px"
-              bg={`color-mix(in srgb, var(--ws-accent) ${selectedProfile?.is_production ? "9%" : "4%"}, var(--bg-elevated))`}
-              transition="background var(--dur-med) var(--ease)"
+              // 本番接続は `--ws-accent` (プロファイルのカスタム色) ではなく常に危険色
+              // トークンで塗る。カスタム色に紛れて「本番らしさ」が薄まるのを防ぐため
+              // (#791)。非本番は従来どおり控えめなワークスペースアクセントの色付け。
+              bg={
+                selectedProfile?.is_production
+                  ? "color-mix(in srgb, var(--status-error) 16%, var(--bg-elevated))"
+                  : "color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated))"
+              }
+              transition="background var(--dur-med) var(--ease), border-color var(--dur-med) var(--ease)"
               css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
             >
               <Flex align="center" gap="2" overflow="hidden">

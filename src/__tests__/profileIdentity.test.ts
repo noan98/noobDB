@@ -6,6 +6,7 @@ import {
   groupInitials,
   normalizeChipColor,
   profileBadgeKinds,
+  workspaceSpineColor,
 } from "../profileIdentity";
 import { CATEGORICAL } from "../colorScale";
 import { ACCENT_FG_DARK, ACCENT_FG_LIGHT } from "../accent";
@@ -129,5 +130,32 @@ describe("groupAvatarColor / groupAvatarForeground (#663)", () => {
   it("returns a valid AA-contrast foreground for its own background", () => {
     const fg = groupAvatarForeground("Production");
     expect([ACCENT_FG_LIGHT, ACCENT_FG_DARK]).toContain(fg);
+  });
+});
+
+describe("workspaceSpineColor (#791)", () => {
+  it("returns transparent when there is no active connection", () => {
+    expect(workspaceSpineColor(null)).toBe("transparent");
+  });
+
+  it("falls back to the workspace accent when color is unset", () => {
+    expect(workspaceSpineColor({ is_production: false, color: null })).toBe(
+      "var(--ws-accent, var(--accent))",
+    );
+    expect(workspaceSpineColor({ is_production: false })).toBe("var(--ws-accent, var(--accent))");
+    expect(workspaceSpineColor({ is_production: false, color: "   " })).toBe(
+      "var(--ws-accent, var(--accent))",
+    );
+  });
+
+  it("uses the profile's custom color when set", () => {
+    expect(workspaceSpineColor({ is_production: false, color: "#22c55e" })).toBe("#22c55e");
+  });
+
+  it("always uses the danger token for production, overriding any custom color", () => {
+    expect(workspaceSpineColor({ is_production: true, color: "#22c55e" })).toBe(
+      "var(--status-error)",
+    );
+    expect(workspaceSpineColor({ is_production: true, color: null })).toBe("var(--status-error)");
   });
 });
