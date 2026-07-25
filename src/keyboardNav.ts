@@ -17,10 +17,6 @@
 
 import { useCallback, useEffect, useRef } from "react";
 
-// ---------------------------------------------------------------------------
-// useReturnFocus
-// ---------------------------------------------------------------------------
-
 /**
  * マウント時にフォーカスしていた要素を記憶し、アンマウント時に返す。
  *
@@ -39,16 +35,13 @@ import { useCallback, useEffect, useRef } from "react";
  * ```
  */
 export function useReturnFocus(): void {
-  // コンポーネントマウント時点でのアクティブ要素を保存する。
   // ref なので再レンダリングをトリガーしない。
   const returnTo = useRef<Element | null>(null);
 
   useEffect(() => {
-    // マウント時に「今フォーカスがある要素」を記憶する。
     returnTo.current = document.activeElement;
 
     return () => {
-      // アンマウント時に、記憶した要素がまだ DOM に存在すればフォーカスを返す。
       const el = returnTo.current;
       if (el && el instanceof HTMLElement && document.contains(el)) {
         el.focus();
@@ -56,10 +49,6 @@ export function useReturnFocus(): void {
     };
   }, []);
 }
-
-// ---------------------------------------------------------------------------
-// useFocusTrap
-// ---------------------------------------------------------------------------
 
 /**
  * 指定したコンテナ内でフォーカスをトラップし、Tab / Shift+Tab でコンテナ内を
@@ -140,10 +129,6 @@ export function useFocusTrap(
     };
   }, [containerRef]);
 }
-
-// ---------------------------------------------------------------------------
-// useRovingFocus
-// ---------------------------------------------------------------------------
 
 /**
  * WAI-ARIA の roving tabindex パターンを実装するフック。

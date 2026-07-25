@@ -77,7 +77,7 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
         with:
           languages: ${{ matrix.language }}
           # ノイズの多いルールを抑制してシグナル重視のベースラインから運用開始する。
@@ -89,8 +89,13 @@ jobs:
       # 設定を後続ステップが読むため)。以前 init だけ v4.37.0 に上がり autobuild /
       # analyze が v4.36.3 のままだったことで「Loaded a configuration file for
       # version '4.37.0', but running version '4.36.3'」の設定エラーになっていた。
+      # 同じ事故が analyze だけ v4.37.1 に上がったことで再発したため、3 ステップとも
+      # v4.37.1 に揃えた。**codeql-action は単一リポジトリなので、init / autobuild /
+      # analyze は同じコミット SHA を指す**のが正しい状態。バージョンを上げるときは
+      # 必ず 3 箇所同時に更新すること (Dependabot が 1 箇所だけ上げた PR は、他の
+      # 2 箇所も揃えてからマージする)。
       - name: Autobuild
-        uses: github/codeql-action/autobuild@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/autobuild@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1

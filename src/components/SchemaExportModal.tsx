@@ -127,7 +127,6 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
       cancelled = true;
     };
     // マウント時に一度だけ実行する。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 実効出力集合。選択モードで「FK 関連も含める」が ON なら選択の FK 推移的閉包。

@@ -443,7 +443,6 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
       })
       .catch((e) => { if (!cancelled) setLoadError(String(e)); });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   useEffect(() => {
@@ -462,7 +461,6 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
       .catch((e) => { if (!cancelled) setLoadError(String(e)); })
       .finally(() => { if (!cancelled) setLoadingTables(false); });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, database]);
 
   useEffect(() => {
@@ -1030,7 +1028,6 @@ function SqlPreview({ sql, driver }: SqlPreviewProps) {
       view.destroy();
       viewRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driver]);
 
   useEffect(() => {
