@@ -17,10 +17,6 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useReturnFocus, useFocusTrap, useRovingFocus } from "../keyboardNav";
 
-// ---------------------------------------------------------------------------
-// useReturnFocus
-// ---------------------------------------------------------------------------
-
 /** useReturnFocus を使う最小コンポーネント */
 function ReturnFocusComponent({ onClose }: { onClose: () => void }) {
   useReturnFocus();
@@ -62,10 +58,6 @@ describe("useReturnFocus", () => {
     expect(trigger).toHaveFocus();
   });
 });
-
-// ---------------------------------------------------------------------------
-// useFocusTrap
-// ---------------------------------------------------------------------------
 
 /** useFocusTrap を使う最小コンポーネント */
 function TrapComponent({ onEscape }: { onEscape?: () => void }) {
@@ -119,10 +111,6 @@ describe("useFocusTrap", () => {
     expect(onEscape).toHaveBeenCalledTimes(1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// useRovingFocus
-// ---------------------------------------------------------------------------
 
 /** useRovingFocus を使う最小リストコンポーネント */
 function RovingListComponent({ wrap = true }: { wrap?: boolean }) {

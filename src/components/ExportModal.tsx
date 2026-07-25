@@ -208,7 +208,6 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       cancelled = true;
     };
     // マウント時に一度だけ実行する (format/basename はマウント直後の値を使う)。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const isSaving = status.kind === "saving" || status.kind === "streaming";
@@ -223,7 +222,6 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     });
     // intentionally exclude `initialBasename` so changing the timestamp
     // doesn't overwrite an in-progress path edit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [format]);
 
   const handleBrowse = async () => {

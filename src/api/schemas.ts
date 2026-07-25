@@ -598,7 +598,6 @@ export function parseResponse<T>(
     return result.data as T;
   }
   if (DEV) {
-    // eslint-disable-next-line no-console
     console.error(
       `[IPC] "${command}" のレスポンスがスキーマ検証に失敗しました:\n${formatIssues(
         result.error,

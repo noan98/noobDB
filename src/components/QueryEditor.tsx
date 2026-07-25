@@ -652,7 +652,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     preflightSqlRef.current = initPreflightText;
     setPreflightSql(initPreflightText);
     return () => view.destroy();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const schemaKey = schemaTable
@@ -674,7 +673,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     // `databaseSchema` is a stable reference from the parent's cache: it only
     // changes identity on (re)fetch or when the editor's database changes, so
     // depending on it directly is both correct and cheap.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schemaKey, driver, databaseSchema, defaultDatabase]);
 
   // 構文チェックのオン/オフ、または診断メッセージ (言語切替) が変わったら lint
@@ -686,7 +684,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     view.dispatch({
       effects: lintCompartment.reconfigure(buildLintExtension(sqlLintEnabled)),
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     sqlLintEnabled,
     lintMessages.syntaxError,
@@ -706,7 +703,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       ),
     });
     // bindingsRef は毎レンダ更新されるため、コンボ文字列の変化を依存に使う。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runCombo, runStatementCombo, previewCombo, formatCombo]);
 
   // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と

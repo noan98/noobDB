@@ -1137,7 +1137,6 @@ export default function App() {
       cancelled = true;
     };
     // 起動時に一度だけ。t/toast/confirm はレンダー間で安定なので依存に含めない。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Lock the cursor while dragging so it doesn't flicker off the thin handle.
