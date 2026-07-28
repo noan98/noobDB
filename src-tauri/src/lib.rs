@@ -53,6 +53,21 @@ pub mod __test_api {
     // フィクスチャ生成専用のため struct そのものを再公開する。
     pub use crate::commands::import::CsvPreview;
 
+    // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
+    // 生成専用のピンポイント再エクスポート。`preview_query_stream` の行イベント
+    // (PreviewRowsEvent) は `StreamRowsEvent` と同一シェイプのため個別公開せず、
+    // フィクスチャは共有する (前者は非公開のまま)。
+    pub use crate::commands::connection::ConnectPhaseEvent;
+    pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
+    pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
+    pub use crate::commands::import::{
+        ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
+    };
+    pub use crate::commands::query::{
+        PreviewDoneEvent, PreviewMetaEvent, StreamCancelledEvent, StreamColumnsEvent,
+        StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
+    };
+
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
     }

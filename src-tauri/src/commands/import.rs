@@ -429,51 +429,55 @@ fn parse_rows_with_lines(
     Ok((out, lines))
 }
 
+// 構造体・フィールドの `pub` は #825 の zod ⇔ serde ゴールデン
+// (`serde_schema_parity.rs`) が `__test_api` 経由で代表インスタンスを組み立てる
+// ためのもの。IPC 経路としては引き続き非公開モジュール内に留まる (#824 の
+// LogView と同じ最小限の可視性拡張パターン)。
 #[derive(Debug, Serialize, Clone)]
-struct ImportStartedEvent {
+pub struct ImportStartedEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    total: u64,
+    pub stream_id: String,
+    pub total: u64,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct ImportProgressEvent {
+pub struct ImportProgressEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    inserted: u64,
-    total: u64,
+    pub stream_id: String,
+    pub inserted: u64,
+    pub total: u64,
 }
 
 /// One skipped row surfaced to the UI (#687): the 1-based record number among
 /// data records, the source file line (CSV only; `None` for JSON/NDJSON), and
 /// the driver's rejection reason.
 #[derive(Debug, Serialize, Clone)]
-struct SkippedRowInfo {
-    record: u64,
-    line: Option<u64>,
-    reason: String,
+pub struct SkippedRowInfo {
+    pub record: u64,
+    pub line: Option<u64>,
+    pub reason: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct ImportDoneEvent {
+pub struct ImportDoneEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    inserted: u64,
+    pub stream_id: String,
+    pub inserted: u64,
     #[serde(rename = "elapsedMs")]
-    elapsed_ms: u64,
+    pub elapsed_ms: u64,
     /// Rows skipped in `skip` mode (empty in `abort` mode). #687.
-    skipped: Vec<SkippedRowInfo>,
+    pub skipped: Vec<SkippedRowInfo>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct ImportErrorEvent {
+pub struct ImportErrorEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    error: String,
+    pub stream_id: String,
+    pub error: String,
     /// For an `abort`-mode failure, the 1-based record number that was rejected
     /// (and its CSV file line), when it could be pinpointed (#687).
-    record: Option<u64>,
-    line: Option<u64>,
+    pub record: Option<u64>,
+    pub line: Option<u64>,
 }
 
 /// Outcome of the DB-execution phase of an import (#687). Setup failures (file
