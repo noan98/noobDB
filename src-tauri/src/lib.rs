@@ -23,7 +23,7 @@ pub mod __test_api {
     pub use crate::db::data_diff::{
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
-    pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
+    pub use crate::db::diff::{compute_schema_diff, ColumnDiff, DiffStatus, SchemaDiff, TableDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
         Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
@@ -34,9 +34,24 @@ pub mod __test_api {
         is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
     };
     pub use crate::error::AppError;
-    pub use crate::profiles::SshAuthMethod;
+    pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshProfile};
+    pub use crate::ssh::known_hosts::KnownHost;
     pub use crate::ssh::{SshConfig, SshTunnel};
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
+
+    // zod ⇔ serde ゴールデン (#824) が代表インスタンスを組み立てるための追加の
+    // レスポンス/永続化型の再エクスポート。いずれも非公開モジュール配下にあるため、
+    // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
+    pub use crate::commands::connection::ConnectResponse;
+    pub use crate::commands::logs::LogView;
+    pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags};
+    pub use crate::commands::query::CancelStreamResult;
+    pub use crate::history::HistoryEntry;
+    pub use crate::snippets::{Snippet, SnippetScope};
+
+    // `commands::import::CsvPreview` はコマンドモジュール内に定義されているが、
+    // フィクスチャ生成専用のため struct そのものを再公開する。
+    pub use crate::commands::import::CsvPreview;
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await

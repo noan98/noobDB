@@ -1,7 +1,96 @@
 {
+  "cancelStreamResponse": {
+    "cancelled": true,
+    "deliveredRows": 42
+  },
   "column": {
     "name": "id",
     "type_name": "INTEGER"
+  },
+  "connectResult": {
+    "session_id": "abcd1234"
+  },
+  "connectionProfile": {
+    "color": "#dc2626",
+    "confirm_writes": true,
+    "database": "appdb",
+    "driver": "mysql",
+    "file_path": null,
+    "group": "production",
+    "has_db_password": true,
+    "has_ssh_passphrase": false,
+    "has_ssh_password": false,
+    "host": "db.example.com",
+    "id": "abc12345",
+    "init_sql": "SET time_zone = '+00:00';",
+    "is_production": true,
+    "name": "Prod MySQL",
+    "port": 3306,
+    "read_only": false,
+    "skip_history": false,
+    "ssh": {
+      "auth_method": "key",
+      "host": "jump.example.com",
+      "port": 22,
+      "private_key_path": "/home/deploy/.ssh/id_ed25519",
+      "user": "deploy"
+    },
+    "ssl_client_cert": "/etc/ssl/client.pem",
+    "ssl_client_key": "/etc/ssl/client.key",
+    "ssl_mode": "verify_full",
+    "ssl_root_cert": "/etc/ssl/ca.pem",
+    "user": "app"
+  },
+  "csvPreview": {
+    "headers": [
+      "id",
+      "name"
+    ],
+    "rows": [
+      [
+        "1",
+        "Alice"
+      ]
+    ],
+    "truncated": false
+  },
+  "dataDiff": {
+    "column_types": [
+      "int",
+      "varchar"
+    ],
+    "columns": [
+      "id",
+      "name"
+    ],
+    "primary_key": [
+      "id"
+    ],
+    "rows": [
+      {
+        "changed_columns": [
+          "name"
+        ],
+        "key": [
+          1
+        ],
+        "key_unreliable": false,
+        "source": [
+          1,
+          "Alice"
+        ],
+        "status": "different",
+        "target": [
+          1,
+          "Alicia"
+        ]
+      }
+    ],
+    "source_count": 10,
+    "table": "users",
+    "target_count": 10,
+    "target_driver": "postgres",
+    "truncated": false
   },
   "foreignKey": {
     "column": "user_id",
@@ -23,6 +112,19 @@
     "statistical": false,
     "table": "orders"
   },
+  "historyEntry": {
+    "database": "appdb",
+    "driver": "mysql",
+    "elapsed_ms": 12,
+    "error": null,
+    "executed_at": "2026-01-01T00:00:00Z",
+    "id": 101,
+    "profile_id": "abc12345",
+    "rows": 1,
+    "rows_affected": null,
+    "sql": "SELECT 1",
+    "status": "ok"
+  },
   "indexInfo": {
     "columns": [
       "name"
@@ -31,6 +133,11 @@
     "name": "idx_users_name",
     "primary": false,
     "unique": true
+  },
+  "knownHost": {
+    "fingerprint": "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+    "host": "db.example.com",
+    "port": 22
   },
   "liveQuery": {
     "application": "myapp",
@@ -43,6 +150,10 @@
     "running": true,
     "started_at_ms": 1700000000000.0,
     "user": "app"
+  },
+  "logView": {
+    "path": "/home/user/.local/share/noobDB/noobdb.log",
+    "text": "2026-01-01T00:00:00Z INFO noobdb starting"
   },
   "previewResult": {
     "after_rows": [
@@ -80,6 +191,12 @@
     "time_secs": 3,
     "user": "root"
   },
+  "profileImportResult": {
+    "imported": 3,
+    "invalid": 0,
+    "overwritten": 0,
+    "skipped": 1
+  },
   "queryResult": {
     "columns": [
       {
@@ -109,6 +226,34 @@
     "live_tail_reason": "stats_unreadable",
     "statements": false,
     "statements_reason": "pg_stat_statements_missing"
+  },
+  "schemaDiff": {
+    "source_driver": "mysql",
+    "tables": [
+      {
+        "columns": [
+          {
+            "changed_fields": [],
+            "name": "email",
+            "source": {
+              "data_type": "int",
+              "default": "0",
+              "extra": "auto_increment",
+              "key": "PRI",
+              "name": "id",
+              "nullable": false,
+              "referenced_column": "id",
+              "referenced_table": "parent"
+            },
+            "status": "source_only",
+            "target": null
+          }
+        ],
+        "name": "users",
+        "status": "different"
+      }
+    ],
+    "target_driver": "postgres"
   },
   "schemaHealthReport": {
     "driver": "mysql",
@@ -166,6 +311,21 @@
     "reason": "performance_schema_off",
     "rule": "unused_index"
   },
+  "snippet": {
+    "driver": "mysql",
+    "folder": "reports",
+    "id": "snip0001",
+    "name": "Active users",
+    "scope": {
+      "kind": "profile",
+      "profile_id": "abc12345"
+    },
+    "sql": "SELECT * FROM users WHERE active = 1",
+    "tags": [
+      "users",
+      "active"
+    ]
+  },
   "statementStat": {
     "calls": 1200,
     "database": "appdb",
@@ -174,6 +334,19 @@
     "max_time_ms": 87.2,
     "rows": 1200,
     "total_time_ms": 4321.5
+  },
+  "syncPlan": {
+    "statements": [
+      {
+        "destructive": false,
+        "kind": "add_column",
+        "sql": "ALTER TABLE `users` ADD COLUMN `email` VARCHAR(255);",
+        "table": "users"
+      }
+    ],
+    "warnings": [
+      "SQLite cannot alter columns in place"
+    ]
   },
   "tableColumnInfo": {
     "data_type": "int",
