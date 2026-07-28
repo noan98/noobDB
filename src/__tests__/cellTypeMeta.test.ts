@@ -3,6 +3,7 @@ import {
   CELL_KIND_META,
   cellKindIcon,
   classifyEmptyValue,
+  classifyTypeName,
   EMPTY_BADGE,
   resolveBoolTruthy,
   truncateHexPreview,
@@ -34,6 +35,40 @@ describe("column type → icon mapping (#474)", () => {
 
   it("uses the same numeric glyph for integer and decimal", () => {
     expect(cellKindIcon("number")).toBe(cellKindIcon("decimal"));
+  });
+});
+
+describe("classifyTypeName (#748: shared by ResultGrid and dataSearch)", () => {
+  it("classifies numeric SQL types", () => {
+    expect(classifyTypeName("INT")).toBe("number");
+    expect(classifyTypeName("bigint")).toBe("number");
+    expect(classifyTypeName("BIGINT UNSIGNED")).toBe("number");
+    expect(classifyTypeName("DOUBLE")).toBe("number");
+  });
+
+  it("classifies decimal types distinctly from integers", () => {
+    expect(classifyTypeName("DECIMAL")).toBe("decimal");
+    expect(classifyTypeName("NUMERIC")).toBe("decimal");
+  });
+
+  it("classifies boolean, date, time, json, enum and binary", () => {
+    expect(classifyTypeName("BOOLEAN")).toBe("bool");
+    expect(classifyTypeName("BOOL")).toBe("bool");
+    expect(classifyTypeName("DATE")).toBe("date");
+    expect(classifyTypeName("TIMESTAMP")).toBe("date");
+    expect(classifyTypeName("TIME")).toBe("time");
+    expect(classifyTypeName("JSON")).toBe("json");
+    expect(classifyTypeName("JSONB")).toBe("json");
+    expect(classifyTypeName("ENUM")).toBe("enum");
+    expect(classifyTypeName("SET")).toBe("enum");
+    expect(classifyTypeName("BLOB")).toBe("binary");
+    expect(classifyTypeName("VARBINARY")).toBe("binary");
+  });
+
+  it("falls back to string for anything unrecognized (VARCHAR, TEXT, ...)", () => {
+    expect(classifyTypeName("VARCHAR")).toBe("string");
+    expect(classifyTypeName("TEXT")).toBe("string");
+    expect(classifyTypeName("something-unknown")).toBe("string");
   });
 });
 
