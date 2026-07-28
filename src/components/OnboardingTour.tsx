@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { chakra, Flex, Text } from "@chakra-ui/react";
-import { motion } from "motion/react";
-import { transitions } from "../motion";
+import { AnimatePresence, motion } from "motion/react";
+import { transitions, variants } from "../motion";
 import { useFocusTrap, useReturnFocus } from "../keyboardNav";
 import { useT } from "../i18n";
 import { Icon, type IconName } from "./Icon";
@@ -135,12 +135,41 @@ export function OnboardingTour({ onClose }: Props) {
             bg="app.surfaceMuted"
             color="app.accent"
             aria-hidden
+            overflow="hidden"
           >
-            <Icon name={current.icon} size={16} strokeWidth={1.5} />
+            {/* ステップ切替時、アイコンをクロスフェードする (#819)。key をステップ
+                番号にして毎回入れ替え、initial={false} で初回マウント時のフェード
+                インは抑える。reduced-motion はルートの MotionConfig が自動吸収。 */}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={state.step}
+                initial={variants.fade.initial}
+                animate={variants.fade.animate}
+                exit={variants.fade.exit}
+                transition={transitions.crossfade}
+                style={{ display: "inline-flex" }}
+              >
+                <Icon name={current.icon} size={16} strokeWidth={1.5} />
+              </motion.div>
+            </AnimatePresence>
           </Flex>
-          <Text fontWeight="600" fontSize="sm" color="app.text">
-            {current.title}
-          </Text>
+          <chakra.div overflow="hidden">
+            {/* タイトルの差し替えも同じくクロスフェード + わずかなスライド
+                (`variants.slideUp`) で行う。 */}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={state.step}
+                initial={variants.slideUp.initial}
+                animate={variants.slideUp.animate}
+                exit={variants.slideUp.exit}
+                transition={transitions.crossfade}
+              >
+                <Text fontWeight="600" fontSize="sm" color="app.text">
+                  {current.title}
+                </Text>
+              </motion.div>
+            </AnimatePresence>
+          </chakra.div>
         </Flex>
         <chakra.button
           type="button"
@@ -165,9 +194,51 @@ export function OnboardingTour({ onClose }: Props) {
         </chakra.button>
       </Flex>
 
-      <Text color="app.textMuted" fontSize="sm" lineHeight="1.6">
-        {current.description}
-      </Text>
+      <chakra.div overflow="hidden">
+        {/* 説明文もタイトルと同じく `slideUp` でクロスフェードする (#819)。 */}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={state.step}
+            initial={variants.slideUp.initial}
+            animate={variants.slideUp.animate}
+            exit={variants.slideUp.exit}
+            transition={transitions.crossfade}
+          >
+            <Text color="app.textMuted" fontSize="sm" lineHeight="1.6">
+              {current.description}
+            </Text>
+          </motion.div>
+        </AnimatePresence>
+      </chakra.div>
+
+      {/* ドット式の視覚的プログレスインジケータ (#819)。テキストの「1 / 4」を
+          置き換えるのではなく併存させ、一目で全体のステップ数と現在地を示す。
+          単純な色/サイズの補間なので CSS transition のまま (motion.ts の方針
+          どおり、mount/unmount を伴わない状態変化は CSS に任せる)。個々のドットは
+          装飾目的で aria-hidden にし、グループ全体の aria-label で
+          スクリーンリーダーへ現在地を伝える。 */}
+      <Flex
+        role="group"
+        aria-label={t("onboardingProgressAria", { current: state.step + 1, total: TOUR_STEP_COUNT })}
+        justify="center"
+        align="center"
+        gap="1.5"
+      >
+        {Array.from({ length: TOUR_STEP_COUNT }, (_, i) => (
+          <chakra.span
+            key={i}
+            aria-hidden
+            data-active={i === state.step ? "true" : undefined}
+            display="inline-block"
+            boxSize={i === state.step ? "8px" : "6px"}
+            rounded="full"
+            bg={i === state.step ? "app.accent" : "app.borderStrong"}
+            transitionProperty="width, height, background-color"
+            transitionDuration="var(--dur-fast)"
+            transitionTimingFunction="var(--ease)"
+          />
+        ))}
+      </Flex>
 
       <Flex align="center" justify="space-between" mt="1" gap="2">
         <chakra.button

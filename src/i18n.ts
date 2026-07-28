@@ -2027,6 +2027,7 @@ const en = {
   onboardingNext: "Next",
   onboardingFinish: "Done",
   onboardingStepCounter: "{current} / {total}",
+  onboardingProgressAria: "Step {current} of {total}",
   onboardingStepConnectTitle: "Connect to a database",
   onboardingStepConnectDesc:
     "Add a MySQL, PostgreSQL or SQLite connection from the sidebar (or the welcome screen) to get started.",
@@ -4069,6 +4070,7 @@ const ja: Dict = {
   onboardingNext: "次へ",
   onboardingFinish: "完了",
   onboardingStepCounter: "{current} / {total}",
+  onboardingProgressAria: "ステップ {current} / {total}",
   onboardingStepConnectTitle: "データベースに接続する",
   onboardingStepConnectDesc:
     "サイドバー (またはウェルカム画面) から MySQL・PostgreSQL・SQLite の接続を追加して始めましょう。",
