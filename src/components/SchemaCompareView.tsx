@@ -19,6 +19,7 @@ import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
 import { Icon } from "./Icon";
+import { MigrationExportModal } from "./MigrationExportModal";
 import { Button, Checkbox, Input, PressableButton, Select } from "./ui";
 
 /**
@@ -303,7 +304,9 @@ function statementCss(destructive: boolean): SystemStyleObject {
 
 type Side = "source" | "target";
 
-function coerceDriver(driver: string): DriverKind {
+/** `ConnectionProfile.driver` (プレーンな `string`) を `DriverKind` へ絞り込む。
+ *  `MigrationExportModal` (#744) もヘッダのメタ情報生成で共有する。 */
+export function coerceDriver(driver: string): DriverKind {
   return driver === "postgres" || driver === "sqlite" ? driver : "mysql";
 }
 
@@ -646,10 +649,19 @@ export function SchemaCompareView({
     });
   }, []);
 
+  const sourceProfile = useMemo(
+    () => profiles.find((p) => p.id === source.profileId) ?? null,
+    [profiles, source.profileId],
+  );
   const targetProfile = useMemo(
     () => profiles.find((p) => p.id === target.profileId) ?? null,
     [profiles, target.profileId],
   );
+
+  // マイグレーションとして保存 (#744)。schema 系プラン (`generate_sync_sql` の
+  // 出力) だけが対象 — down 側の生成が `compare_schema` の再実行を要するため、
+  // データ同期プラン (`planKind === "data"`) はスコープ外。
+  const [migrationExportOpen, setMigrationExportOpen] = useState(false);
 
   const applyPlan = useCallback(async () => {
     if (!plan || !targetProfile || !target.database) return;
@@ -980,7 +992,7 @@ export function SchemaCompareView({
                         ))}
                       </chakra.ul>
                       <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
-                      <Box css={actionsCss}>
+                      <Box css={actionsCss} display="flex" gap="2" flexWrap="wrap">
                         <PressableButton
                           variant="primary"
                           onClick={applyPlan}
@@ -990,6 +1002,14 @@ export function SchemaCompareView({
                             ? t("schemaCompareApplying")
                             : t("schemaCompareApply", { count: selectedCount })}
                         </PressableButton>
+                        {planKind === "schema" && (
+                          <Button
+                            type="button"
+                            onClick={() => setMigrationExportOpen(true)}
+                          >
+                            {t("schemaCompareSaveMigration")}
+                          </Button>
+                        )}
                       </Box>
                     </>
                   )}
@@ -1008,6 +1028,27 @@ export function SchemaCompareView({
       )}
       {confirmDialog}
       {typedConfirmDialog}
+      {migrationExportOpen &&
+        plan &&
+        planKind === "schema" &&
+        sourceProfile &&
+        targetProfile &&
+        source.sessionId &&
+        source.database &&
+        target.sessionId &&
+        target.database && (
+          <MigrationExportModal
+            plan={plan}
+            allowDestructive={allowDestructive}
+            sourceSessionId={source.sessionId}
+            sourceDatabase={source.database}
+            sourceProfile={sourceProfile}
+            targetSessionId={target.sessionId}
+            targetDatabase={target.database}
+            targetProfile={targetProfile}
+            onClose={() => setMigrationExportOpen(false)}
+          />
+        )}
     </Box>
   );
 }
