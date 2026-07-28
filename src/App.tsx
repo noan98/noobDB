@@ -47,6 +47,13 @@ import {
 import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import { quoteIdentFor } from "./components/sqlDialect";
+import {
+  applyServerBrowse,
+  type ServerFilter,
+  type ServerFilterOp,
+  type ServerSort,
+  type ServerSortDirection,
+} from "./components/serverBrowse";
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { WelcomeView } from "./components/WelcomeView";
@@ -544,6 +551,15 @@ interface Tab {
    */
   rowEstimateTotal?: number | null;
   /**
+   * サーバ側ソート (#792): table タブのヘッダーメニューから適用した全件ソート。
+   * `paginatable` base SQL への注入 (`applyServerBrowse`) と再フェッチは
+   * `goToPageInTab` が担う。In-memory only (タブを閉じれば消える。ワークスペース
+   * 復元では引き継がない)。
+   */
+  serverSort?: ServerSort | null;
+  /** サーバ側フィルタ (#792): table タブのヘッダーメニューから適用した全件 WHERE。 */
+  serverFilter?: ServerFilter | null;
+  /**
    * エディタのカーソル/選択 (ドキュメントオフセット、#678)。復元時にエディタへ
    * 流し込む初期値であり、以後のライブ値は `editorSelectionRef` (再レンダ回避のため
    * ref マップ) が保持する。復元されたまま一度も開かれていないタブの再保存に備え、
@@ -687,6 +703,21 @@ function newPaneId(): string {
 
 function newStreamId(tabId: string): string {
   return `${tabId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * table タブの総ページ数目安 (#792)。`rowEstimateTotal` は統計情報ベースの全件
+ * 概算行数なので、サーバ側フィルタ (WHERE) 適用中はもはや正しい母数ではない —
+ * 誤って小さすぎる総ページ数を表示しないよう、その場合は未知 (null) として扱い
+ * `canGoNext` の「直近ページが満杯なら続きがありそう」フォールバックに委ねる。
+ * ソートのみ (WHERE なし) なら行数は変わらないので、そのまま概算を使う。
+ */
+function tableTotalPagesEstimate(
+  tab: Pick<Tab, "serverFilter" | "rowEstimateTotal">,
+  pageSize: number,
+): number | null {
+  if (tab.serverFilter) return null;
+  return estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
 }
 
 function qualifiedTableSql(driver: string, database: string, table: string): string {
@@ -3312,7 +3343,16 @@ export default function App() {
   // ページネーション: table タブの `paginatable` base SQL から N ページ目を
   // 取得して結果を**置き換える** (loadMore は追記、こちらはページ送り)。ページング用の
   // 内部クエリは `api.runQuery` 経由なので履歴を汚さない (CLAUDE.md のクエリ履歴方針)。
-  const goToPageInTab = useCallback(async (tabId: string, page: number, sizeOverride?: number) => {
+  // `browseOverride` はサーバ側ソート/フィルタの適用/解除 (#792) から呼ばれる経路専用:
+  // 通常のページ送り (undefined) は現在の `tab.serverSort`/`serverFilter` を使い回すが、
+  // 適用/解除の瞬間は「ページ番号は変わらず 1 のまま」でも再フェッチが要るため、
+  // `force` で target===現在ページの早期リターンを無効化する。
+  const goToPageInTab = useCallback(async (
+    tabId: string,
+    page: number,
+    sizeOverride?: number,
+    browseOverride?: { sort?: ServerSort | null; filter?: ServerFilter | null; force?: boolean },
+  ) => {
     if (!sessionId) return;
     const tab = tabsRef.current.find((tt) => tt.id === tabId);
     if (
@@ -3324,11 +3364,15 @@ export default function App() {
     ) {
       return;
     }
+    const nextSort = browseOverride && "sort" in browseOverride ? browseOverride.sort ?? null : tab.serverSort ?? null;
+    const nextFilter = browseOverride && "filter" in browseOverride ? browseOverride.filter ?? null : tab.serverFilter ?? null;
     const pageSize = Math.max(1, sizeOverride ?? tab.pageSize ?? tab.previewRowLimit);
-    const total = estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
+    const total = tableTotalPagesEstimate({ serverFilter: nextFilter, rowEstimateTotal: tab.rowEstimateTotal }, pageSize);
     const target = clampPage(page, total);
-    if (target === (tab.page ?? 1) && tab.result) return;
-    const sql = buildPageSql(tab.paginatable, pageSize, target);
+    if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const effectiveBase = applyServerBrowse(tab.paginatable, driver, nextFilter, nextSort);
+    const sql = buildPageSql(effectiveBase, pageSize, target);
     patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     try {
       const res = await api.runQuery(sessionId, sql, tab.database ?? null);
@@ -3340,6 +3384,8 @@ export default function App() {
         partialResult: null,
         page: target,
         pageSize,
+        serverSort: nextSort,
+        serverFilter: nextFilter,
         loadingMore: false,
         // ページングは置換なので、無限スクロールの load-more は無効化する。
         canLoadMore: false,
@@ -3367,12 +3413,30 @@ export default function App() {
         error: true,
       });
     }
-  }, [sessionId, patchTab]);
+  }, [sessionId, patchTab, selectedProfile?.driver]);
 
   // ページサイズを変更し、1 ページ目から取り直す。状態反映のレースを避けるため、
   // 新サイズを goToPageInTab に直接渡す。
   const setPageSizeInTab = useCallback((tabId: string, size: number) => {
     void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
+  }, [goToPageInTab]);
+
+  // サーバ側ソート (#792): ヘッダーメニューから列の昇順/降順/解除を選ぶと、1 ページ目
+  // から再フェッチする。単一列のみ (複数列 ORDER BY は最小セットの対象外)。
+  const setServerSortInTab = useCallback((tabId: string, column: string, direction: ServerSortDirection | null) => {
+    const next: ServerSort | null = direction ? { column, direction } : null;
+    void goToPageInTab(tabId, 1, undefined, { sort: next, force: true });
+  }, [goToPageInTab]);
+
+  // サーバ側フィルタ (#792): ヘッダーメニューから条件を適用/解除すると、1 ページ目
+  // から再フェッチする。単一条件のみ (複数条件の AND/OR は最小セットの対象外)。
+  const setServerFilterInTab = useCallback((
+    tabId: string,
+    column: string,
+    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+  ) => {
+    const next: ServerFilter | null = filter ? { column, ...filter } : null;
+    void goToPageInTab(tabId, 1, undefined, { filter: next, force: true });
   }, [goToPageInTab]);
 
   // SQL スクリプト (複数文) のバッチ実行。文ごとに順次実行し、各文の結果
@@ -4040,7 +4104,10 @@ export default function App() {
       // 新規行はサーバが採番する PK (AUTO_INCREMENT など) を取り込む必要があるため、
       // ここだけは再取得して反映する。
       const limit = Math.max(1, settings.defaultDisplayCount);
-      patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
+      // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
+      // サーバ側ソート/フィルタの表示 (#792) も解除しておく (SQL 未適用のままバッジ
+      // だけ残るのを防ぐ)。
+      patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [], serverSort: null, serverFilter: null }));
       runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
     } else {
       patchTab(tabId, (tt) => {
@@ -4628,8 +4695,12 @@ export default function App() {
     if (tab && tab.paginatable) {
       const limit = Math.max(1, tab.previewRowLimit || settings.defaultDisplayCount);
       runQueryInTab(tab.id, `${tab.paginatable} LIMIT ${limit}`, tab.paginatable);
+      // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
+      // サーバ側ソート/フィルタの表示 (#792) を state 側でも解除しておく — SQL は
+      // 未適用なのに「適用中」バッジが残るのを防ぐ。
+      patchTab(tab.id, (tt) => ({ ...tt, serverSort: null, serverFilter: null }));
     }
-  }, [runQueryInTab, settings.defaultDisplayCount]);
+  }, [runQueryInTab, settings.defaultDisplayCount, patchTab]);
 
   const handleNewTab = useCallback((paneId?: string) => {
     const tab = makeQueryTab();
@@ -4860,7 +4931,7 @@ export default function App() {
         // 次/前ページが実在するときだけ送る。存在しないページを取りに行かない
         // (#681 レビュー対応)。
         const pageSize = tab.pageSize ?? tab.previewRowLimit;
-        const totalPages = estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
+        const totalPages = tableTotalPagesEstimate(tab, pageSize);
         const page = tab.page ?? 1;
         const canAdvance = pageNext
           ? canGoNext(page, totalPages, tab.result?.rows.length ?? 0, pageSize)
@@ -5926,12 +5997,34 @@ export default function App() {
                       onRunStatsQuery={
                         sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
                       }
+                      serverSort={tab.kind === "table" ? tab.serverSort ?? null : undefined}
+                      serverFilter={tab.kind === "table" ? tab.serverFilter ?? null : undefined}
+                      onSetServerSort={
+                        tab.kind === "table" && sessionId && tab.paginatable
+                          ? (column, direction) => setServerSortInTab(tab.id, column, direction)
+                          : undefined
+                      }
+                      onSetServerFilter={
+                        tab.kind === "table" && sessionId && tab.paginatable
+                          ? (column, filter) => setServerFilterInTab(tab.id, column, filter)
+                          : undefined
+                      }
                       fullExport={
                         sessionId && (tab.kind === "table" ? tab.paginatable : tab.lastExecutedSql)
                           ? {
                               sessionId,
                               // table タブは LIMIT を持たない base SQL を再実行して全件出す。
-                              sql: tab.kind === "table" ? (tab.paginatable as string) : tab.lastExecutedSql,
+                              // アクティブなサーバ側ソート/フィルタ (#792) があれば、画面に
+                              // 見えている条件と食い違わないよう同じ WHERE/ORDER BY を効かせる。
+                              sql:
+                                tab.kind === "table"
+                                  ? applyServerBrowse(
+                                      tab.paginatable as string,
+                                      selectedProfile?.driver ?? "mysql",
+                                      tab.serverFilter ?? null,
+                                      tab.serverSort ?? null,
+                                    )
+                                  : tab.lastExecutedSql,
                               initialBatch: Math.max(1, settings.defaultDisplayCount),
                               chunkSize: Math.max(1, settings.streamPrefetchSize),
                             }
@@ -5948,10 +6041,7 @@ export default function App() {
                         page={tab.page ?? 1}
                         pageSize={tab.pageSize ?? tab.previewRowLimit}
                         rowsOnPage={tab.result.rows.length}
-                        totalPages={estimatedTotalPages(
-                          tab.rowEstimateTotal ?? null,
-                          tab.pageSize ?? tab.previewRowLimit,
-                        )}
+                        totalPages={tableTotalPagesEstimate(tab, tab.pageSize ?? tab.previewRowLimit)}
                         loading={tab.loadingMore}
                         onGoToPage={(p) => goToPageInTab(tab.id, p)}
                         onSetPageSize={(s) => setPageSizeInTab(tab.id, s)}

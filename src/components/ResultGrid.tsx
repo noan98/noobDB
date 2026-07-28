@@ -90,6 +90,7 @@ import {
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
+import type { ServerFilter, ServerFilterOp, ServerSort, ServerSortDirection } from "./serverBrowse";
 import { diffResultRows } from "../resultDiff";
 import {
   buildFkJumpSql,
@@ -1002,6 +1003,19 @@ interface Props {
    * のまま動く。
    */
   gridBindings?: GridBindings;
+  /**
+   * サーバ側ソート/フィルタ (#792): table タブでヘッダーメニューから適用した
+   * 全件対象の並び替え/絞り込み。SQL 組み立て・再フェッチは App が担う。
+   * `onSetServerSort`/`onSetServerFilter` 未指定なら table タブ以外とみなし、
+   * ヘッダーメニューにセクションを出さない。
+   */
+  serverSort?: ServerSort | null;
+  serverFilter?: ServerFilter | null;
+  onSetServerSort?: (column: string, direction: ServerSortDirection | null) => void;
+  onSetServerFilter?: (
+    column: string,
+    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+  ) => void;
 }
 
 export interface ResultGridHandle {
@@ -1557,6 +1571,11 @@ function ColumnFilterMenu({
   onShowStats,
   footerEnabled,
   onToggleFooter,
+  serverSortDir,
+  onSetServerSort,
+  serverFilter,
+  onApplyServerFilter,
+  onClearServerFilter,
 }: {
   columnName: string;
   kind: CellKind;
@@ -1582,6 +1601,17 @@ function ColumnFilterMenu({
   /** 集計フッター (#645) の表示状態と切替。未指定なら項目を出さない。 */
   footerEnabled?: boolean;
   onToggleFooter?: () => void;
+  /**
+   * サーバ側ソート (#792): この列が現在の全件ソート対象なら方向、そうでなければ
+   * null。`onSetServerSort` 未指定なら table タブ以外 (プレビュー等) とみなし
+   * セクション自体を出さない。
+   */
+  serverSortDir?: ServerSortDirection | null;
+  onSetServerSort?: (direction: ServerSortDirection | null) => void;
+  /** サーバ側フィルタ (#792): この列が現在の全件 WHERE 対象ならその条件。 */
+  serverFilter?: { op: ServerFilterOp; value: string } | null;
+  onApplyServerFilter?: (op: ServerFilterOp, value: string) => void;
+  onClearServerFilter?: () => void;
 }) {
   const t = useT();
   const numeric = isNumericFilterKind(kind);
@@ -1589,6 +1619,11 @@ function ColumnFilterMenu({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState<ColumnFilter>(() => value ?? makeDefaultFilter(kind));
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [serverFilterOp, setServerFilterOp] = useState<ServerFilterOp>(
+    () => serverFilter?.op ?? (numeric ? "eq" : "contains"),
+  );
+  const [serverFilterValue, setServerFilterValue] = useState<string>(() => serverFilter?.value ?? "");
+  const serverFilterNeedsValue = serverFilterOp === "eq" || serverFilterOp === "contains";
 
   // Commit the draft up to the table, clearing it when it no longer narrows.
   const apply = (next: ColumnFilter) => {
@@ -1741,6 +1776,88 @@ function ColumnFilterMenu({
           <option value="exclude">{t("gridFilterNullExclude")}</option>
         </chakra.select>
       </chakra.label>
+
+      {(onSetServerSort || onApplyServerFilter) && (
+        <Box
+          display="flex"
+          flexDirection="column"
+          gap="1.5"
+          paddingTop="1"
+          borderTop="1px solid"
+          borderColor="app.borderSubtle"
+        >
+          <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+            {t("gridServerBrowseLabel")}
+          </chakra.span>
+          {onSetServerSort && (
+            <chakra.select
+              css={FILTER_FIELD_CSS}
+              value={serverSortDir ?? "none"}
+              aria-label={t("gridServerSortSelectAria")}
+              onChange={(e) => {
+                const v = e.target.value;
+                onSetServerSort(v === "none" ? null : (v as ServerSortDirection));
+              }}
+            >
+              <option value="none">{t("gridServerSortOptionNone")}</option>
+              <option value="asc">{t("gridServerSortOptionAsc")}</option>
+              <option value="desc">{t("gridServerSortOptionDesc")}</option>
+            </chakra.select>
+          )}
+          {onApplyServerFilter && (
+            <>
+              <chakra.select
+                css={FILTER_FIELD_CSS}
+                value={serverFilterOp}
+                aria-label={t("gridServerFilterOpAria")}
+                onChange={(e) => setServerFilterOp(e.target.value as ServerFilterOp)}
+              >
+                <option value="eq">{t("gridServerFilterOpEq")}</option>
+                <option value="contains">{t("gridServerFilterOpContains")}</option>
+                <option value="isNull">{t("gridServerFilterOpIsNull")}</option>
+                <option value="isNotNull">{t("gridServerFilterOpIsNotNull")}</option>
+              </chakra.select>
+              {serverFilterNeedsValue && (
+                <chakra.input
+                  css={FILTER_FIELD_CSS}
+                  type="text"
+                  inputMode={numeric ? "decimal" : undefined}
+                  value={serverFilterValue}
+                  placeholder={t("gridFilterValuePlaceholder")}
+                  aria-label={t("gridServerFilterValueAria")}
+                  onChange={(e) => setServerFilterValue(e.target.value)}
+                />
+              )}
+              <Box display="flex" gap="1.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="2"
+                  onClick={() => {
+                    onApplyServerFilter(serverFilterOp, serverFilterValue);
+                    onClose();
+                  }}
+                >
+                  {t("gridServerFilterApply")}
+                </Button>
+                {serverFilter && onClearServerFilter && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    px="2"
+                    onClick={() => {
+                      onClearServerFilter();
+                      onClose();
+                    }}
+                  >
+                    {t("gridServerFilterClear")}
+                  </Button>
+                )}
+              </Box>
+            </>
+          )}
+        </Box>
+      )}
 
       {formatSupported && (
         <chakra.label display="flex" flexDirection="column" gap="3px">
@@ -2308,6 +2425,10 @@ export function DataGrid({
   findCurrentKey,
   findNav,
   gridBindings,
+  serverSort,
+  serverFilter,
+  onSetServerSort,
+  onSetServerFilter,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -2448,6 +2569,21 @@ export function DataGrid({
    * (#681)。省略時は今日の既定キーのまま (`DEFAULT_SHORTCUT_COMBOS`)。
    */
   gridBindings?: GridBindings;
+  /**
+   * サーバ側ソート/フィルタ (#792): table タブでヘッダーメニューから適用した
+   * 全件対象の並び替え/絞り込み。実際の SQL 組み立て (`applyServerBrowse`) と
+   * 再フェッチは呼び出し元 (App.tsx) が担い、ここは現在の状態の表示と、
+   * ヘッダーメニュー経由の変更要求の中継のみを行う。`onSetServerSort` /
+   * `onSetServerFilter` が未指定なら table タブ以外とみなしセクション自体を
+   * 出さない (プレビュー/ダイアログ内のグリッドなど)。
+   */
+  serverSort?: ServerSort | null;
+  serverFilter?: ServerFilter | null;
+  onSetServerSort?: (column: string, direction: ServerSortDirection | null) => void;
+  onSetServerFilter?: (
+    column: string,
+    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+  ) => void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -3826,7 +3962,7 @@ export function DataGrid({
 
   return (
     <>
-      {(isFiltered || multiSortActive) && (
+      {(isFiltered || multiSortActive || serverSort || serverFilter) && (
         <Box className="grid-filter-summary">
           {isFiltered && t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
           {multiSortActive && (
@@ -3848,6 +3984,35 @@ export function DataGrid({
               onClick={clearSorting}
             >
               {t("gridClearSort")}
+            </chakra.button>
+          )}
+          {serverSort && (
+            <chakra.span>
+              {t("gridServerSortChip", {
+                column: serverSort.column,
+                dir: t(serverSort.direction === "asc" ? "gridServerSortOptionAsc" : "gridServerSortOptionDesc"),
+              })}
+            </chakra.span>
+          )}
+          {serverSort && onSetServerSort && (
+            <chakra.button
+              type="button"
+              className="grid-filter-clear"
+              onClick={() => onSetServerSort(serverSort.column, null)}
+            >
+              {t("gridServerBrowseClear")}
+            </chakra.button>
+          )}
+          {serverFilter && (
+            <chakra.span>{t("gridServerFilterChip", { column: serverFilter.column })}</chakra.span>
+          )}
+          {serverFilter && onSetServerFilter && (
+            <chakra.button
+              type="button"
+              className="grid-filter-clear"
+              onClick={() => onSetServerFilter(serverFilter.column, null)}
+            >
+              {t("gridServerBrowseClear")}
             </chakra.button>
           )}
         </Box>
@@ -4487,6 +4652,36 @@ export function DataGrid({
           }
           footerEnabled={footerEnabled}
           onToggleFooter={enableColumnControls ? toggleFooter : undefined}
+          serverSortDir={
+            serverSort && serverSort.column === (columns[filterMenu.colIdx]?.name ?? "")
+              ? serverSort.direction
+              : null
+          }
+          onSetServerSort={
+            onSetServerSort
+              ? (dir) => onSetServerSort(columns[filterMenu.colIdx]?.name ?? "", dir)
+              : undefined
+          }
+          serverFilter={
+            serverFilter && serverFilter.column === (columns[filterMenu.colIdx]?.name ?? "")
+              ? { op: serverFilter.op, value: serverFilter.value }
+              : null
+          }
+          onApplyServerFilter={
+            onSetServerFilter
+              ? (op, value) =>
+                  onSetServerFilter(columns[filterMenu.colIdx]?.name ?? "", {
+                    op,
+                    value,
+                    numeric: isNumericFilterKind(columnKinds[filterMenu.colIdx] ?? "string"),
+                  })
+              : undefined
+          }
+          onClearServerFilter={
+            onSetServerFilter
+              ? () => onSetServerFilter(columns[filterMenu.colIdx]?.name ?? "", null)
+              : undefined
+          }
         />
       )}
       {statsMenu && (() => {
@@ -4784,6 +4979,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   initialScrollTop,
   onScroll,
   gridBindings,
+  serverSort,
+  serverFilter,
+  onSetServerSort,
+  onSetServerFilter,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -5960,6 +6159,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
           findNav={findNav}
           gridBindings={gridBindings}
+          serverSort={serverSort}
+          serverFilter={serverFilter}
+          onSetServerSort={onSetServerSort}
+          onSetServerFilter={onSetServerFilter}
           emptyMessage={
             streaming ? undefined : queryError ? (
               <EmptyState
