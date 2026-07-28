@@ -86,6 +86,7 @@ import {
   rowEditKey,
   validateCellInput,
   type PendingEdits,
+  type PendingInsertRow,
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
@@ -918,6 +919,12 @@ interface Props {
   /** 新規行追加を要求する。 */
   onRequestInsertRow?: () => void;
   /**
+   * 選択行を種に行追加モーダルを開く (行の複製、#820)。渡す値は列インデックスを
+   * キーにした `PendingInsertRow` — `RowInsertModal` の `initialValues` にそのまま
+   * 渡せる。未指定ならメニュー項目を出さない。
+   */
+  onDuplicateRow?: (row: PendingInsertRow) => void;
+  /**
    * Apply a single value (or NULL) to every cell of the current rectangular
    * selection in one batch (#596). Set by App for editable table tabs.
    */
@@ -1185,6 +1192,22 @@ const ROW_INDEX_WIDTH = 44;
 function cellToText(v: CellValue): string {
   if (v === null || v === undefined) return "";
   return String(v);
+}
+
+/**
+ * 行の値を `PendingInsertRow` (列インデックス → 文字列) に変換する。行の複製
+ * (#820) で、選択行の値を種に `RowInsertModal` の `initialValues` として渡す
+ * ために使う。値の文字列化は `cellToText` と同じ規約 (コピー系アクション共通) を
+ * 流用し、NULL/undefined の列はキー自体を省く — フォーム上は空欄のまま = 未設定
+ * (DB 既定値) として扱われ、通常の「行を追加」の空欄と挙動が揃う。
+ */
+function rowToPendingInsert(row: CellValue[]): PendingInsertRow {
+  const seed: PendingInsertRow = {};
+  row.forEach((v, i) => {
+    const text = cellToText(v);
+    if (text !== "") seed[i] = text;
+  });
+  return seed;
 }
 
 const COL_SIZING_LRU_KEY = "noobdb.colsizing.lru.v1";
@@ -2253,6 +2276,7 @@ export function DataGrid({
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
+  onDuplicateRow,
   validateEdit,
   columnSizingStorageKey,
   emptyMessage,
@@ -2315,6 +2339,11 @@ export function DataGrid({
   onToggleRowDelete?: (rowKey: string) => void;
   /** 新規行追加を要求する。未指定ならメニュー項目を出さない。 */
   onRequestInsertRow?: () => void;
+  /**
+   * 選択行を種に行追加モーダルを開く (行の複製、#820)。未指定ならメニュー
+   * 項目を出さない。
+   */
+  onDuplicateRow?: (row: PendingInsertRow) => void;
   /**
    * Validates a pending edit by result-column index, returning an i18n key
    * describing the problem or `null` when the value is acceptable. Drives the
@@ -4148,6 +4177,23 @@ export function DataGrid({
                   : []),
               ];
             })(),
+            // 行の複製 (#820): クリックした行の値を種に行追加モーダルを開く。
+            // `onRequestInsertRow` と同じ表示条件 (編集可能なテーブルタブ) で
+            // App から渡される。
+            ...(onDuplicateRow
+              ? [
+                  { separator: true as const },
+                  {
+                    label: t("gridDuplicateRow"),
+                    title: t("gridDuplicateRowTitle"),
+                    onSelect: () => {
+                      const row = rows[copyMenu.rowIdx];
+                      setCopyMenu(null);
+                      if (row) onDuplicateRow(rowToPendingInsert(row));
+                    },
+                  },
+                ]
+              : []),
             // 一括編集 (#596): 矩形選択がある編集可能なテーブルでのみ、
             // 「選択セルに値を設定」を出す。PK が無いテーブルは行を特定できないため非表示。
             ...(onBulkEdit && editable && selectionRect && (pkIndices?.length ?? 0) > 0
@@ -4664,6 +4710,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
+  onDuplicateRow,
   onBulkEdit,
   diffPrevRows,
   diffComparable,
@@ -5819,6 +5866,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           pendingDeleteKeys={pendingDeleteKeys}
           onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
           onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
+          onDuplicateRow={editableActive ? onDuplicateRow : undefined}
           onUndoEdit={onUndoEdit}
           onRedoEdit={onRedoEdit}
           validateEdit={validateEdit}
