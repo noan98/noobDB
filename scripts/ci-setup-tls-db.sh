@@ -121,12 +121,23 @@ echo "==> mysqld を起動 (127.0.0.1:$MYSQL_TLS_PORT, TLS 必須)"
   --log-error="$TLS_DIR/mysqld.log" &
 disown
 
+mysql_ready=0
 for _ in $(seq 1 60); do
   if grep -q "ready for connections" "$TLS_DIR/mysqld.log" 2>/dev/null; then
+    mysql_ready=1
     break
   fi
   sleep 0.5
 done
+if [ "$mysql_ready" -ne 1 ]; then
+  # 起動タイムアウト時はここで確実に fail させる。継続すると後段が
+  # NOOBDB_TEST_MYSQL_TLS_URL を $GITHUB_ENV へ書き出してしまい、TLS 統合テストが
+  # 「サーバ不在への接続失敗」という別の理由で落ちて原因が分かりにくくなるため。
+  echo "!! mysqld が 30 秒以内に ready になりませんでした" >&2
+  echo "--- mysqld.log ---" >&2
+  cat "$TLS_DIR/mysqld.log" >&2 || true
+  exit 1
+fi
 echo "--- mysqld.log (tail) ---"
 tail -n 20 "$TLS_DIR/mysqld.log" || true
 
