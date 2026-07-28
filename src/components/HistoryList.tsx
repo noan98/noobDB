@@ -1,7 +1,7 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
-import { useT } from "../i18n";
+import { I18nKey, useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
@@ -21,6 +21,63 @@ import {
 import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { useToast } from "./Toast";
+import {
+  HISTORY_PERIOD_FILTERS,
+  HISTORY_STATUS_FILTERS,
+  historyPeriodRange,
+  HistoryPeriodFilter,
+  historyStatusParam,
+  HistoryStatusFilter,
+} from "./historyFilters";
+
+// ステータス/期間の 2 択セグメント。SettingsView の SettingsSegment と同じ
+// 見た目のローカル版 (この 1 画面でしか使わないため共有コンポーネント化はしない)。
+const FilterSegment = chakra("div", {
+  base: {
+    display: "inline-flex",
+    border: "1px solid",
+    borderColor: "app.borderStrong",
+    borderRadius: "md",
+    overflow: "hidden",
+    flexShrink: 0,
+  },
+});
+
+const FilterSegmentButton = chakra("button", {
+  base: {
+    px: "2.5",
+    py: "3px",
+    fontSize: "xs",
+    fontWeight: 500,
+    border: "none",
+    borderRadius: 0,
+    background: "app.surface",
+    color: "app.text",
+    cursor: "pointer",
+    transitionProperty: "background, color",
+    transitionDuration: "var(--dur-fast)",
+    transitionTimingFunction: "var(--ease)",
+    _hover: { background: "app.hover" },
+    "&[aria-pressed=true]": {
+      background: "app.accent",
+      color: "app.accentText",
+    },
+    "&[aria-pressed=true]:hover": { background: "app.accentHover" },
+    "& + &": { borderLeft: "1px solid var(--border-strong)" },
+  },
+});
+
+const STATUS_FILTER_LABEL_KEYS: Record<HistoryStatusFilter, I18nKey> = {
+  all: "historyStatusFilterAll",
+  ok: "historyStatusFilterOk",
+  error: "historyStatusFilterError",
+};
+
+const PERIOD_FILTER_LABEL_KEYS: Record<HistoryPeriodFilter, I18nKey> = {
+  all: "historyPeriodFilterAll",
+  today: "historyPeriodFilterToday",
+  "7d": "historyPeriodFilterWeek",
+};
 
 interface Props {
   activeProfile: ConnectionProfile | null;
@@ -56,6 +113,8 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("all");
+  const [periodFilter, setPeriodFilter] = useState<HistoryPeriodFilter>("all");
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
@@ -85,11 +144,17 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
   // Scope to the active profile unless "show all" is on. When disconnected
   // there is no active profile, so everything is shown.
   const scopeId = showAll ? null : activeProfile?.id ?? null;
+  const statusParam = historyStatusParam(statusFilter);
+  // Memoized so re-renders unrelated to the period filter (e.g. the copy-icon
+  // timer) don't recompute `now` and spuriously re-trigger the fetch effect
+  // below with a millisecond-shifted `from` bound.
+  const { from, to } = useMemo(() => historyPeriodRange(periodFilter), [periodFilter]);
+  const hasActiveFilter = Boolean(debounced) || statusFilter !== "all" || periodFilter !== "all";
 
   useEffect(() => {
     let cancelled = false;
     api
-      .listHistory({ profileId: scopeId, search: debounced || null })
+      .listHistory({ profileId: scopeId, search: debounced || null, status: statusParam, from, to })
       .then((rows) => {
         if (!cancelled) {
           setEntries(rows);
@@ -102,7 +167,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
     return () => {
       cancelled = true;
     };
-  }, [scopeId, debounced, reloadKey]);
+  }, [scopeId, debounced, statusParam, from, to, reloadKey]);
 
   const handleClear = async () => {
     const msg = scopeId
@@ -117,7 +182,13 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
     if (!ok) return;
     try {
       await api.clearHistory(scopeId);
-      const rows = await api.listHistory({ profileId: scopeId, search: debounced || null });
+      const rows = await api.listHistory({
+        profileId: scopeId,
+        search: debounced || null,
+        status: statusParam,
+        from,
+        to,
+      });
       setEntries(rows);
       setError(null);
     } catch (e) {
@@ -145,6 +216,33 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
         )}
       </TreeSearch>
 
+      <TreeSearch borderTop="none" pt={0} display="flex" flexWrap="wrap" alignItems="center" gap="2">
+        <FilterSegment role="group" aria-label={t("historyStatusFilterLabel")}>
+          {HISTORY_STATUS_FILTERS.map((s) => (
+            <FilterSegmentButton
+              key={s}
+              type="button"
+              aria-pressed={statusFilter === s}
+              onClick={() => setStatusFilter(s)}
+            >
+              {t(STATUS_FILTER_LABEL_KEYS[s])}
+            </FilterSegmentButton>
+          ))}
+        </FilterSegment>
+        <FilterSegment role="group" aria-label={t("historyPeriodFilterLabel")}>
+          {HISTORY_PERIOD_FILTERS.map((p) => (
+            <FilterSegmentButton
+              key={p}
+              type="button"
+              aria-pressed={periodFilter === p}
+              onClick={() => setPeriodFilter(p)}
+            >
+              {t(PERIOD_FILTER_LABEL_KEYS[p])}
+            </FilterSegmentButton>
+          ))}
+        </FilterSegment>
+      </TreeSearch>
+
       {entries.length > 0 && (
         <TreeSearch borderTop="none" pt={0}>
           <PressableButton type="button" variant="danger" onClick={handleClear}>
@@ -156,7 +254,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
       {error ? (
         <chakra.p color="app.textError" p="3">{error}</chakra.p>
       ) : entries.length === 0 ? (
-        debounced ? (
+        hasActiveFilter ? (
           <chakra.p color="app.textMuted" p="3">{t("historyNoMatches")}</chakra.p>
         ) : (
           <EmptyState
