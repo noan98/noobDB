@@ -54,11 +54,15 @@ impl ConnectPhase {
     }
 }
 
+// `pub` は #825 の zod ⇔ serde ゴールデン (`serde_schema_parity.rs`) が
+// `__test_api` 経由で代表インスタンスを組み立てるためのもの。IPC 経路としては
+// 引き続き非公開モジュール内に留まる (#824 の LogView と同じ最小限の可視性
+// 拡張パターン)。
 #[derive(Debug, Serialize, Clone)]
-struct ConnectPhaseEvent {
+pub struct ConnectPhaseEvent {
     #[serde(rename = "attemptId")]
-    attempt_id: String,
-    phase: &'static str,
+    pub attempt_id: String,
+    pub phase: &'static str,
 }
 
 const EV_CONNECT_PHASE: &str = "connect-progress:phase";

@@ -227,59 +227,63 @@ pub async fn finish_transaction(
     Ok(())
 }
 
+// 構造体・フィールドの `pub` は #825 の zod ⇔ serde ゴールデン
+// (`serde_schema_parity.rs`) が `__test_api` 経由で代表インスタンスを組み立てる
+// ためのもの。IPC 経路としては引き続き非公開モジュール内に留まる (#824 の
+// LogView と同じ最小限の可視性拡張パターン)。
 #[derive(Debug, Serialize, Clone)]
-struct StreamColumnsEvent {
+pub struct StreamColumnsEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    columns: Vec<Column>,
+    pub stream_id: String,
+    pub columns: Vec<Column>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct StreamRowsEvent {
+pub struct StreamRowsEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    rows: Vec<Vec<Value>>,
+    pub stream_id: String,
+    pub rows: Vec<Vec<Value>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct StreamDoneEvent {
+pub struct StreamDoneEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
+    pub stream_id: String,
     #[serde(rename = "totalRows")]
-    total_rows: u64,
+    pub total_rows: u64,
     #[serde(rename = "rowsAffected")]
-    rows_affected: u64,
+    pub rows_affected: u64,
     #[serde(rename = "elapsedMs")]
-    elapsed_ms: u64,
+    pub elapsed_ms: u64,
     /// True when the result had columns (a SELECT-shaped statement). False
     /// for INSERT/UPDATE/etc. so the UI can show "rows affected" instead.
     #[serde(rename = "hasColumns")]
-    has_columns: bool,
+    pub has_columns: bool,
     /// The row cap that was auto-injected for this run, or `null` when none was
     /// applied. Lets the UI show a "auto LIMIT N applied" badge.
     #[serde(rename = "appliedAutoLimit")]
-    applied_auto_limit: Option<u64>,
+    pub applied_auto_limit: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct StreamErrorEvent {
+pub struct StreamErrorEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    error: String,
+    pub stream_id: String,
+    pub error: String,
     /// True when the run was aborted by the execution-timeout guard rather than
     /// failing in the database, so the UI can show a dedicated timeout message.
     #[serde(rename = "timedOut")]
-    timed_out: bool,
+    pub timed_out: bool,
     /// True when the failure means the DB connection was lost (server closed it,
     /// socket broke, network dropped). Lets the UI drop the now-dead session and
     /// prompt a reconnect instead of leaving it stuck on "connected".
     #[serde(rename = "connectionLost")]
-    connection_lost: bool,
+    pub connection_lost: bool,
     /// Rows already delivered to the frontend (via `:rows`/`:before-rows`/
     /// `:after-rows` batches) before the run failed. Lets the UI tell a
     /// partial result apart from a complete one on timeout/error (#685).
     #[serde(rename = "deliveredRows")]
-    delivered_rows: u64,
+    pub delivered_rows: u64,
 }
 
 /// Emitted once by `cancel_stream` when it successfully claims an active
@@ -288,11 +292,11 @@ struct StreamErrorEvent {
 /// `export-stream:cancelled`) is chosen from the stream's registered
 /// [`StreamKind`] so the right listener picks it up (#685).
 #[derive(Debug, Serialize, Clone)]
-struct StreamCancelledEvent {
+pub struct StreamCancelledEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
+    pub stream_id: String,
     #[serde(rename = "deliveredRows")]
-    delivered_rows: u64,
+    pub delivered_rows: u64,
 }
 
 const EV_QUERY_COLS: &str = "query-stream:columns";
@@ -643,19 +647,19 @@ pub(crate) async fn record_write_history(
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct PreviewMetaEvent {
+pub struct PreviewMetaEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
+    pub stream_id: String,
     #[serde(rename = "targetTable")]
-    target_table: Option<String>,
-    columns: Vec<Column>,
+    pub target_table: Option<String>,
+    pub columns: Vec<Column>,
     #[serde(rename = "primaryKey")]
-    primary_key: Vec<String>,
+    pub primary_key: Vec<String>,
     #[serde(rename = "rowsAffected")]
-    rows_affected: u64,
+    pub rows_affected: u64,
     #[serde(rename = "elapsedMs")]
-    elapsed_ms: u64,
-    truncated: bool,
+    pub elapsed_ms: u64,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -666,9 +670,9 @@ struct PreviewRowsEvent {
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct PreviewDoneEvent {
+pub struct PreviewDoneEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
+    pub stream_id: String,
 }
 
 const EV_PREVIEW_META: &str = "preview-stream:meta";

@@ -29,6 +29,13 @@ type AnyObjectSchema = z.ZodObject<z.ZodRawShape>;
 // (schemaDiff 内)・`syncStatement` (syncPlan 内)・`rowDiff` (dataDiff 内。
 // `key_unreliable` は往復時に zod が意図的に落とすフィールドなのでスキーマに
 // 含めない、#824) も上位型経由の間接カバーで、個別 case は持たない。
+//
+// #825: ストリーミングイベントの emit ペイロードも追加。`skippedRowInfo`
+// (importDoneEvent 内) も上記と同じ間接カバーで個別 case を持たない。
+// `streamCancelledEvent` フィクスチャは `StreamCancelledEvent` (Rust) を
+// query/preview/export/import の cancelled イベントで共有しており、
+// `dump-stream:cancelled` も同一シェイプの `dumpCancelledEvent` zod スキーマで
+// 受けるため、ここでは同じフィクスチャを両スキーマに対して検証する。
 const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["queryResult", schemas.queryResult],
   ["tableColumnInfo", schemas.tableColumnInfo],
@@ -60,6 +67,27 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["schemaDiff", schemas.schemaDiff],
   ["syncPlan", schemas.syncPlan],
   ["dataDiff", schemas.dataDiff],
+
+  // #825: ストリーミングイベントの emit ペイロード。
+  ["queryStreamColumnsEvent", schemas.queryStreamColumnsEvent],
+  ["streamRowsEventLite", schemas.streamRowsEventLite],
+  ["queryStreamDoneEvent", schemas.queryStreamDoneEvent],
+  ["queryStreamErrorEvent", schemas.queryStreamErrorEvent],
+  ["streamCancelledEvent", schemas.streamCancelledEvent],
+  ["streamCancelledEvent", schemas.dumpCancelledEvent],
+  ["previewStreamMetaEvent", schemas.previewStreamMetaEvent],
+  ["previewStreamDoneEvent", schemas.previewStreamDoneEvent],
+  ["importStartedEvent", schemas.importStartedEvent],
+  ["importProgressEvent", schemas.importProgressEvent],
+  ["importDoneEvent", schemas.importDoneEvent],
+  ["importErrorEvent", schemas.importErrorEvent],
+  ["dumpProgressEvent", schemas.dumpProgressEvent],
+  ["dumpDoneEvent", schemas.dumpDoneEvent],
+  ["dumpErrorEvent", schemas.dumpErrorEvent],
+  ["exportProgressEvent", schemas.exportProgressEvent],
+  ["exportDoneEvent", schemas.exportDoneEvent],
+  ["exportStreamErrorEvent", schemas.exportStreamErrorEvent],
+  ["connectPhaseEvent", schemas.connectPhaseEvent],
 ];
 
 describe("zod ⇔ serde フィールドパリティ (主要レスポンス型)", () => {

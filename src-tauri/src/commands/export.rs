@@ -432,31 +432,35 @@ const EV_EXPORT_PROGRESS: &str = "export-stream:progress";
 const EV_EXPORT_DONE: &str = "export-stream:done";
 const EV_EXPORT_ERROR: &str = "export-stream:error";
 
+// 構造体・フィールドの `pub` は #825 の zod ⇔ serde ゴールデン
+// (`serde_schema_parity.rs`) が `__test_api` 経由で代表インスタンスを組み立てる
+// ためのもの。IPC 経路としては引き続き非公開モジュール内に留まる (#824 の
+// LogView と同じ最小限の可視性拡張パターン)。
 #[derive(Serialize, Clone)]
-struct ExportProgressEvent {
+pub struct ExportProgressEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    rows: u64,
+    pub stream_id: String,
+    pub rows: u64,
 }
 
 #[derive(Serialize, Clone)]
-struct ExportDoneEvent {
+pub struct ExportDoneEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    rows: u64,
-    bytes: u64,
+    pub stream_id: String,
+    pub rows: u64,
+    pub bytes: u64,
 }
 
 #[derive(Serialize, Clone)]
-struct ExportErrorEvent {
+pub struct ExportErrorEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    message: String,
+    pub stream_id: String,
+    pub message: String,
     /// Rows already written to the output file before the run failed.
     /// Informational only — a failed/cancelled export always deletes its
     /// partial output file (see [`PartialFileCleanup`]), but the UI can still
     /// use this to explain how far the run got (#685).
-    rows: u64,
+    pub rows: u64,
 }
 
 /// Incremental file writer for the streaming export. Writes the header (CSV) or

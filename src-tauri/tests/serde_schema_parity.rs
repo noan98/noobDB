@@ -1,3 +1,7 @@
+// #825 でフィクスチャ数が増え、`serde_json::json!` マクロの再帰的展開が既定の
+// 再帰制限 (128) を超えるようになったため引き上げる。
+#![recursion_limit = "256"]
+
 //! zod ⇔ serde フィールド整合の共有ゴールデン (Rust 側、#625)。
 //!
 //! IPC のコマンド名パリティは `ipcCommandParity.test.ts` が担うが、**レスポンス
@@ -18,18 +22,28 @@
 //! フィクスチャの再生成 (意図的にレスポンス型を変えたとき):
 //!   `NOOBDB_WRITE_SERDE_FIXTURES=1 cargo test --test serde_schema_parity`
 //! を実行するとフィクスチャを上書きする (その後 diff を確認してコミット)。
+//!
+//! #825 でストリーミングイベント (`query-stream:*` / `preview-stream:*` /
+//! `csv-import:*` / `dump-stream:*` / `export-stream:*` / `connect-progress:phase`)
+//! の emit ペイロード構造体もこのゴールデンへ加えた。これらは元々 `commands::*`
+//! 配下の非公開型だったため、`lib.rs::__test_api` へピンポイントで再エクスポート
+//! している (フィールドも同様に `pub` 化。#824 の `LogView` と同じパターン)。
 
 use std::path::PathBuf;
 
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    CancelStreamResult, Column, ColumnDiff, ConnectResponse, ConnectionProfile, CsvPreview,
-    DataDiff, DiffStatus, DriverKind, ForeignKey, HealthFinding, HistoryEntry, ImportResult,
-    IndexInfo, KnownHost, LiveQuery, LogView, PreviewResult, ProcessInfo, ProfileWithSecretFlags,
-    QueryResult, QueryStatsSupport, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport,
-    SchemaObject, ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRule, Snippet,
-    SnippetScope, SshAuthMethod, SshProfile, SslMode, StatementStat, SyncKind, SyncPlan,
+    CancelStreamResult, Column, ColumnDiff, ConnectPhaseEvent, ConnectResponse, ConnectionProfile,
+    CsvPreview, DataDiff, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
+    ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
+    HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
+    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LogView, PreviewDoneEvent,
+    PreviewMetaEvent, PreviewResult, ProcessInfo, ProfileWithSecretFlags, QueryResult,
+    QueryStatsSupport, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
+    ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet,
+    SnippetScope, SshAuthMethod, SshProfile, SslMode, StatementStat, StreamCancelledEvent,
+    StreamColumnsEvent, StreamDoneEvent, StreamErrorEvent, StreamRowsEvent, SyncKind, SyncPlan,
     SyncStatement, TableColumnInfo, TableDiff, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
@@ -335,6 +349,119 @@ fn build_fixtures() -> serde_json::Value {
         target_count: 10,
     };
 
+    // --- #825: ストリーミングイベントの emit ペイロード -----------------------
+    //
+    // `preview_query_stream` の行イベント (`PreviewRowsEvent`) は `StreamRowsEvent`
+    // と全く同じシェイプ ({ streamId, rows }) なので個別のフィクスチャは持たず
+    // `streamRowsEventLite` で間接的にカバーする (フロント `schemaParity.test.ts`
+    // の nestedOnly と同じ発想)。`StreamCancelledEvent` は
+    // query/preview/export/import の cancelled イベントで共有され、`dump-stream:
+    // cancelled` も同一シェイプの `dumpCancelledEvent` zod スキーマで受けるため、
+    // フロント側は同じフィクスチャを両スキーマに対して検証する。
+
+    let stream_columns_event = StreamColumnsEvent {
+        stream_id: "strm0001".into(),
+        columns: vec![column.clone()],
+    };
+    let stream_rows_event = StreamRowsEvent {
+        stream_id: "strm0001".into(),
+        rows: vec![vec![Value::Int(1), Value::String("a".into())]],
+    };
+    let stream_done_event = StreamDoneEvent {
+        stream_id: "strm0001".into(),
+        total_rows: 2,
+        rows_affected: 0,
+        elapsed_ms: 12,
+        has_columns: true,
+        applied_auto_limit: Some(1000),
+    };
+    let stream_error_event = StreamErrorEvent {
+        stream_id: "strm0001".into(),
+        error: "connection reset by peer".into(),
+        timed_out: false,
+        connection_lost: true,
+        delivered_rows: 5,
+    };
+    let stream_cancelled_event = StreamCancelledEvent {
+        stream_id: "strm0001".into(),
+        delivered_rows: 5,
+    };
+    let preview_meta_event = PreviewMetaEvent {
+        stream_id: "strm0002".into(),
+        target_table: Some("users".into()),
+        columns: vec![column.clone()],
+        primary_key: vec!["id".into()],
+        rows_affected: 1,
+        elapsed_ms: 3,
+        truncated: false,
+    };
+    let preview_done_event = PreviewDoneEvent {
+        stream_id: "strm0002".into(),
+    };
+
+    let import_started_event = ImportStartedEvent {
+        stream_id: "strm0003".into(),
+        total: 100,
+    };
+    let import_progress_event = ImportProgressEvent {
+        stream_id: "strm0003".into(),
+        inserted: 50,
+        total: 100,
+    };
+    let import_done_event = ImportDoneEvent {
+        stream_id: "strm0003".into(),
+        inserted: 99,
+        elapsed_ms: 42,
+        skipped: vec![SkippedRowInfo {
+            record: 7,
+            line: Some(8),
+            reason: "duplicate key".into(),
+        }],
+    };
+    let import_error_event = ImportErrorEvent {
+        stream_id: "strm0003".into(),
+        error: "NOT NULL constraint failed".into(),
+        record: Some(3),
+        line: Some(4),
+    };
+
+    let dump_progress_event = DumpProgressEvent {
+        stream_id: "strm0004".into(),
+        bytes: 65536,
+        elapsed_ms: 500,
+        tables: Some(2),
+        tables_total: Some(5),
+    };
+    let dump_done_event = DumpDoneEvent {
+        stream_id: "strm0004".into(),
+        bytes: 131072,
+        elapsed_ms: 1200,
+    };
+    let dump_error_event = DumpErrorEvent {
+        stream_id: "strm0004".into(),
+        error: "mysqldump exited with status 1".into(),
+    };
+
+    let export_progress_event = ExportProgressEvent {
+        stream_id: "strm0005".into(),
+        rows: 500,
+    };
+    let export_done_event = ExportDoneEvent {
+        stream_id: "strm0005".into(),
+        rows: 1000,
+        bytes: 40960,
+    };
+    let export_error_event = ExportErrorEvent {
+        stream_id: "strm0005".into(),
+        message: "disk full".into(),
+        rows: 200,
+    };
+
+    let connect_phase_event = ConnectPhaseEvent {
+        attempt_id: "attempt0001".into(),
+        phase: "tunnel_connecting",
+    };
+
     json!({
         "column": column,
         "queryResult": query_result,
@@ -368,6 +495,26 @@ fn build_fixtures() -> serde_json::Value {
         "schemaDiff": schema_diff,
         "syncPlan": sync_plan,
         "dataDiff": data_diff,
+
+        // --- #825: ストリーミングイベントの emit ペイロード ---
+        "queryStreamColumnsEvent": stream_columns_event,
+        "streamRowsEventLite": stream_rows_event,
+        "queryStreamDoneEvent": stream_done_event,
+        "queryStreamErrorEvent": stream_error_event,
+        "streamCancelledEvent": stream_cancelled_event,
+        "previewStreamMetaEvent": preview_meta_event,
+        "previewStreamDoneEvent": preview_done_event,
+        "importStartedEvent": import_started_event,
+        "importProgressEvent": import_progress_event,
+        "importDoneEvent": import_done_event,
+        "importErrorEvent": import_error_event,
+        "dumpProgressEvent": dump_progress_event,
+        "dumpDoneEvent": dump_done_event,
+        "dumpErrorEvent": dump_error_event,
+        "exportProgressEvent": export_progress_event,
+        "exportDoneEvent": export_done_event,
+        "exportStreamErrorEvent": export_error_event,
+        "connectPhaseEvent": connect_phase_event,
     })
 }
 
