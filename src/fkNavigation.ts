@@ -12,9 +12,9 @@ import { quoteIdentFor } from "./components/sqlDialect";
 /**
  * テーブル参照を必要なら `database`.`table` で修飾する。SQLite はデータベース
  * 修飾子を持たず、`database` が空のときも修飾しない (既存のジャンプ SQL 生成と
- * 同じ判定)。
+ * 同じ判定)。DB 全体検索 (`dataSearch.ts`、#748) のジャンプ SQL 生成とも共有する。
  */
-function qualifiedTable(
+export function qualifiedTable(
   driver: string,
   database: string | null | undefined,
   table: string,

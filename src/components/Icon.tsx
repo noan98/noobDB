@@ -28,6 +28,7 @@ import { chakra } from "@chakra-ui/react";
  * | 切断 (接続解除)            | `unplug`        |
  * | 転送 (イン/エクスポート両方向) | `transfer`  |
  * | ツール (補助ビュー集約)    | `tools`         |
+ * | 検索 (値/横断検索)         | `search`        |
  *
  * ## サイズ / ストローク規約
  *
@@ -95,7 +96,8 @@ export type IconName =
   | "minimize"
   | "mysql"
   | "postgres"
-  | "sqlite";
+  | "sqlite"
+  | "search";
 
 /**
  * アイコンのサイズトークン (px)。呼び出し側はこの定数を参照し、密度/タイポグラフィ
@@ -489,6 +491,13 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
       <path d="M3 16h3a2 2 0 0 1 2 2v3" />
       <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+    </>
+  ),
+  // 検索: 虫眼鏡 (DB 全体からの値検索 #748 のコマンドパレット項目・入力欄で使用)。
+  search: (
+    <>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
     </>
   ),
   // ドライバのブランドロゴ (simple-icons, CC0 / 単一パスの塗り)。FILLED_ICONS 経由で
