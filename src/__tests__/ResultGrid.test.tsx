@@ -1138,3 +1138,85 @@ describe("ResultGrid 結果内検索 (#644)", () => {
     expect(document.activeElement).toBe(input2);
   });
 });
+
+// 行の複製 (#820): 行コンテキストメニューから選択行の値を種に
+// `onDuplicateRow` を呼ぶ配線。RowInsertModal の初期値変換 (rowInsertModal.test.tsx)
+// とは別に、ここでは「どの値がどの列インデックスへ渡るか」の配線だけを固定する。
+describe("行の複製 (#820)", () => {
+  beforeEach(() => setLocale("en"));
+
+  const columns: Column[] = [
+    { name: "id", type_name: "INT" },
+    { name: "name", type_name: "VARCHAR" },
+    { name: "note", type_name: "TEXT" },
+  ];
+  const tableColumns: TableColumnInfo[] = [
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "name",
+      data_type: "varchar",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "note",
+      data_type: "text",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+  ];
+  const result = makeResult(columns, [[1, "banana", null]]);
+
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  it("行コンテキストメニューの「行を複製」で選択行の値を初期値に onDuplicateRow を呼ぶ", async () => {
+    const user = userEvent.setup();
+    const onDuplicateRow = vi.fn();
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={result}
+        editable
+        tableColumns={tableColumns}
+        onDuplicateRow={onDuplicateRow}
+      />,
+    );
+    const cells = dataCells(container);
+    fireEvent.contextMenu(cells[0][1]);
+
+    const item = await screen.findByRole("menuitem", { name: t("gridDuplicateRow") });
+    await user.click(item);
+
+    // NULL の列 (note) はキー自体を省く — フォーム上は空欄 = 未設定になる。
+    expect(onDuplicateRow).toHaveBeenCalledWith({ 0: "1", 1: "banana" });
+  });
+
+  it("onDuplicateRow が未指定ならメニュー項目を出さない", () => {
+    const { container } = renderWithProviders(
+      <ResultGrid result={result} editable tableColumns={tableColumns} />,
+    );
+    const cells = dataCells(container);
+    fireEvent.contextMenu(cells[0][1]);
+    expect(screen.queryByText(t("gridDuplicateRow"))).toBeNull();
+  });
+});
