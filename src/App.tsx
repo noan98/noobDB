@@ -126,6 +126,9 @@ const PaginationBar = lazy(() =>
 const ObjectSearchModal = lazy(() =>
   import("./components/ObjectSearchModal").then((m) => ({ default: m.ObjectSearchModal })),
 );
+const DataSearchModal = lazy(() =>
+  import("./components/DataSearchModal").then((m) => ({ default: m.DataSearchModal })),
+);
 const CreateTableModal = lazy(() =>
   import("./components/CreateTableModal").then((m) => ({ default: m.CreateTableModal })),
 );
@@ -1012,6 +1015,8 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   // スキーマ横断のグローバルオブジェクト検索の開閉。
   const [showObjectSearch, setShowObjectSearch] = useState(false);
+  // DB 全体からの値検索 (#748) の開閉。
+  const [showDataSearch, setShowDataSearch] = useState(false);
   // `?` キーで開くショートカット チートシートの開閉。
   const [showCheatSheet, setShowCheatSheet] = useState(false);
   // エディタ/結果のレイアウトモード (#618)。`result` は結果パネルの全画面化
@@ -1395,7 +1400,7 @@ export default function App() {
     overlayOpenRef.current =
       showForm || showSettings || showHelp || showCompare || showCompareResults || showErd ||
       showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm ||
-      showCommandPalette || showObjectSearch || showCheatSheet;
+      showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
   });
   // アクティブになったタブがクエリタブのときだけ、次フレームでエディタへ
   // フォーカスする (#816)。setState 直後はまだ DOM 未反映のため
@@ -1453,6 +1458,7 @@ export default function App() {
   useEffect(() => {
     if (!sessionId) {
       setShowObjectSearch(false);
+      setShowDataSearch(false);
       setCreateTableDb(null);
       setRenameTarget(null);
       setSaveAsTableRequest(null);
@@ -5035,7 +5041,7 @@ export default function App() {
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
         showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
-        showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
+        showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet
       ) {
         return;
       }
@@ -5082,6 +5088,7 @@ export default function App() {
     showSnippetForm,
     showCommandPalette,
     showObjectSearch,
+    showDataSearch,
     showCheatSheet,
     undoCellEditForTab,
     redoCellEditForTab,
@@ -5165,7 +5172,7 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
         showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
-        showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet;
+        showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
         e.preventDefault();
@@ -5213,6 +5220,7 @@ export default function App() {
     showSnippetForm,
     showCommandPalette,
     showObjectSearch,
+    showDataSearch,
     showCheatSheet,
   ]);
 
@@ -5317,6 +5325,14 @@ export default function App() {
           icon: "database",
           keywords: "schema export ai markdown claude llm スキーマ 出力 エクスポート",
           run: () => setSchemaExportTarget(paletteDatabase),
+        });
+        items.push({
+          id: "nav:data-search",
+          group: "navigation",
+          label: t("cmdkActionDataSearch"),
+          icon: "search",
+          keywords: "data search value grep find 値 検索 データ 横断",
+          run: () => setShowDataSearch(true),
         });
       }
     }
@@ -7260,6 +7276,19 @@ export default function App() {
               currentDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
               onOpenTable={handleOpenTable}
               onClose={() => setShowObjectSearch(false)}
+            />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showDataSearch && sessionId && paletteDatabase && (
+            <DataSearchModal
+              sessionId={sessionId}
+              database={paletteDatabase}
+              driver={selectedProfile?.driver ?? "mysql"}
+              isProduction={selectedProfile?.is_production ?? false}
+              profileName={selectedProfile?.name ?? ""}
+              onOpenHit={(sql, title) => openAndRunQuery(sql, title)}
+              onClose={() => setShowDataSearch(false)}
             />
           )}
         </AnimatePresence>

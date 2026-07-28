@@ -89,6 +89,56 @@ export function resolveBoolTruthy(v: unknown): boolean {
   return v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
 }
 
+/**
+ * 生の型名 (DB カタログ由来。`Column.type_name` / `TableColumnInfo.data_type` の
+ * どちらも同じ文字列語彙) を {@link CellKind} へ分類する。`ResultGrid` のセル
+ * 描画 (`classifyColumn`) と、DB 全体検索 (`dataSearch.ts` の走査対象絞り込み) が
+ * 同じ分類基準を共有するための単一ソース。大文字化してから比較するので
+ * 大小は問わない。
+ */
+const NUMERIC_TYPES = new Set([
+  "TINYINT",
+  "SMALLINT",
+  "MEDIUMINT",
+  "INT",
+  "INTEGER",
+  "BIGINT",
+  "YEAR",
+  "FLOAT",
+  "DOUBLE",
+  "REAL",
+  "TINYINT UNSIGNED",
+  "SMALLINT UNSIGNED",
+  "MEDIUMINT UNSIGNED",
+  "INT UNSIGNED",
+  "BIGINT UNSIGNED",
+]);
+
+const DECIMAL_TYPES = new Set(["DECIMAL", "NEWDECIMAL", "NUMERIC"]);
+const DATE_TYPES = new Set(["DATE", "DATETIME", "TIMESTAMP"]);
+const TIME_TYPES = new Set(["TIME"]);
+const BINARY_TYPES = new Set([
+  "BLOB",
+  "TINYBLOB",
+  "MEDIUMBLOB",
+  "LONGBLOB",
+  "BINARY",
+  "VARBINARY",
+]);
+
+export function classifyTypeName(typeName: string): CellKind {
+  const t = typeName.toUpperCase();
+  if (NUMERIC_TYPES.has(t)) return "number";
+  if (DECIMAL_TYPES.has(t)) return "decimal";
+  if (t === "BOOLEAN" || t === "BOOL") return "bool";
+  if (DATE_TYPES.has(t)) return "date";
+  if (TIME_TYPES.has(t)) return "time";
+  if (t === "JSON" || t === "JSONB") return "json";
+  if (t === "ENUM" || t === "SET") return "enum";
+  if (BINARY_TYPES.has(t)) return "binary";
+  return "string";
+}
+
 /** {@link truncateHexPreview} の戻り値。 */
 export interface HexPreview {
   /** グリッド内に表示する 16 進文字列 (切り詰め時は末尾に "…" を含む)。 */

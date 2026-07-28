@@ -52,6 +52,7 @@ import {
   type CellKind,
   CELL_KIND_META,
   classifyEmptyValue,
+  classifyTypeName,
   EMPTY_BADGE,
   resolveBoolTruthy,
   truncateHexPreview,
@@ -1050,47 +1051,10 @@ interface RowShape {
 // CellKind は表示メタ (型アイコン/空値分類) と共有するため cellTypeMeta.ts に集約し、
 // ここでは import して使う。
 
-const NUMERIC_TYPES = new Set([
-  "TINYINT",
-  "SMALLINT",
-  "MEDIUMINT",
-  "INT",
-  "INTEGER",
-  "BIGINT",
-  "YEAR",
-  "FLOAT",
-  "DOUBLE",
-  "REAL",
-  "TINYINT UNSIGNED",
-  "SMALLINT UNSIGNED",
-  "MEDIUMINT UNSIGNED",
-  "INT UNSIGNED",
-  "BIGINT UNSIGNED",
-]);
-
-const DECIMAL_TYPES = new Set(["DECIMAL", "NEWDECIMAL", "NUMERIC"]);
-const DATE_TYPES = new Set(["DATE", "DATETIME", "TIMESTAMP"]);
-const TIME_TYPES = new Set(["TIME"]);
-const BINARY_TYPES = new Set([
-  "BLOB",
-  "TINYBLOB",
-  "MEDIUMBLOB",
-  "LONGBLOB",
-  "BINARY",
-  "VARBINARY",
-]);
-
+// 型名 → CellKind の分類基準は `cellTypeMeta.ts::classifyTypeName` に集約
+// (DB 全体検索 #748 の走査対象絞り込みと共有するため)。
 function classifyColumn(col: Column): CellKind {
-  const t = col.type_name.toUpperCase();
-  if (NUMERIC_TYPES.has(t)) return "number";
-  if (DECIMAL_TYPES.has(t)) return "decimal";
-  if (t === "BOOLEAN" || t === "BOOL") return "bool";
-  if (DATE_TYPES.has(t)) return "date";
-  if (TIME_TYPES.has(t)) return "time";
-  if (t === "JSON" || t === "JSONB") return "json";
-  if (t === "ENUM" || t === "SET") return "enum";
-  if (BINARY_TYPES.has(t)) return "binary";
-  return "string";
+  return classifyTypeName(col.type_name);
 }
 
 function classifyByValue(v: CellValue): CellKind | null {
