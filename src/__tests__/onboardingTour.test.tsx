@@ -53,4 +53,38 @@ describe("OnboardingTour (#599)", () => {
     fireEvent.keyDown(getByRole("dialog"), { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  // ドット式の視覚的プログレスインジケータ (#819)。テキストの「1 / 4」に加えて
+  // ステップ数ぶんのドットが描画され、現在ステップだけが `data-active` で
+  // 区別できることを固定する。
+  describe("progress dots (#819)", () => {
+    // `OnboardingTour` は `createPortal` で document.body 直下に描画されるため、
+    // render() が返す `container` 配下には現れない。要素探索は role で拾った
+    // グループ (実 DOM ノード) 自身を起点にする。
+    it("renders one dot per step with only the current step marked active", () => {
+      const { getByRole } = renderWithProviders(<OnboardingTour onClose={() => {}} />);
+      const group = getByRole("group", {
+        name: t("onboardingProgressAria", { current: 1, total: TOUR_STEP_COUNT }),
+      });
+      const dots = group.querySelectorAll("[aria-hidden]");
+      expect(dots).toHaveLength(TOUR_STEP_COUNT);
+      expect(group.querySelectorAll('[data-active="true"]')).toHaveLength(1);
+      expect(dots[0].getAttribute("data-active")).toBe("true");
+      for (let i = 1; i < dots.length; i++) {
+        expect(dots[i].getAttribute("data-active")).toBeNull();
+      }
+    });
+
+    it("moves the active dot forward when advancing to the next step", () => {
+      const { getByRole } = renderWithProviders(<OnboardingTour onClose={() => {}} />);
+      fireEvent.click(getByRole("button", { name: t("onboardingNext") }));
+
+      const group = getByRole("group", {
+        name: t("onboardingProgressAria", { current: 2, total: TOUR_STEP_COUNT }),
+      });
+      const dots = group.querySelectorAll('[data-active="true"]');
+      expect(dots).toHaveLength(1);
+      expect(Array.from(group.querySelectorAll("[aria-hidden]")).indexOf(dots[0])).toBe(1);
+    });
+  });
 });
