@@ -207,11 +207,14 @@ jobs:
           # 6. 同じ head SHA に対して既に @coderabbitai approve を本ワークフロー
           #    から投稿していないかを確認する。識別タグ (HTML コメント) を
           #    投稿本文に埋めておくことで一意に検出できる。
+          #    注意: `gh api` に `--arg` は無く、`--jq` は値を 1 つしか取らない
+          #    (`--jq --arg marker "$marker" '<式>'` は「accepts 1 arg(s),
+          #    received 4」で必ず落ちる)。marker をシェル変数のまま jq 式へ渡さず、
+          #    gh 側では該当コメントの本文だけを取り出し、突き合わせは grep -F で行う。
           marker="<!-- coderabbit-fallback-approve: ${headSha} -->"
           existing="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
-            --jq --arg marker "$marker" \
-            '[.[] | select(.user.login == "github-actions[bot]")
-                  | select(.body | contains($marker))] | length')"
+            --jq '.[] | select(.user.login == "github-actions[bot]") | .body' \
+            | grep -Fc -- "$marker" || true)"
           if [ "${existing:-0}" -gt 0 ]; then
             echo "head SHA $headSha に対する @coderabbitai approve 投稿は既存。スキップ。"
             exit 0

@@ -5698,28 +5698,6 @@ export default function App() {
                     />
                   ) : (
                     <Flex direction="column" h="100%" minH={0} minW={0}>
-                    {tab.result && tab.result.rows.length > 0 && !tab.streaming && (
-                      <Flex justify="flex-end" gap="2" px="2.5" py="1" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => patchTab(tab.id, (tt) => ({ ...tt, showPivot: true, showChart: false }))}
-                          title={t("pivotShow")}
-                        >
-                          <Icon name="table" size={14} /> {t("pivotShow")}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: true, showPivot: false }))}
-                          title={t("chartShow")}
-                        >
-                          <Icon name="er-diagram" size={14} /> {t("chartShow")}
-                        </Button>
-                      </Flex>
-                    )}
                     {tab.kind === "table" && !readOnly &&
                       ((tab.pendingInserts?.length ?? 0) > 0 || (tab.pendingDeletes?.length ?? 0) > 0) && (
                       <Flex
@@ -5788,6 +5766,12 @@ export default function App() {
                       diffHighlightEnabled={tab.diffHighlight ?? false}
                       onToggleDiffHighlight={() =>
                         patchTab(tab.id, (tt) => ({ ...tt, diffHighlight: !tt.diffHighlight }))
+                      }
+                      onShowPivot={() =>
+                        patchTab(tab.id, (tt) => ({ ...tt, showPivot: true, showChart: false }))
+                      }
+                      onShowChart={() =>
+                        patchTab(tab.id, (tt) => ({ ...tt, showChart: true, showPivot: false }))
                       }
                       onClearEdits={() => clearEditsForTab(tab.id)}
                       onUndoEdit={() => undoCellEditForTab(tab.id)}

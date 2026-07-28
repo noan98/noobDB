@@ -937,6 +937,13 @@ interface Props {
   /** 差分ハイライトのトグル切替。未指定ならトグル UI を出さない。 */
   onToggleDiffHighlight?: () => void;
   /**
+   * 結果をピボット表示へ切り替える。未指定ならツールバーにボタンを出さない。
+   * 差分トグルの右隣に並べ、結果パネル上部の独立行を持たない。
+   */
+  onShowPivot?: () => void;
+  /** 結果をチャート表示へ切り替える。未指定ならツールバーにボタンを出さない。 */
+  onShowChart?: () => void;
+  /**
    * 全件ストリーミングエクスポートのコンテキスト。提供されると ExportModal に
    * 「全件 (再実行)」モードが現れる。
    */
@@ -4662,6 +4669,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   diffComparable,
   diffHighlightEnabled,
   onToggleDiffHighlight,
+  onShowPivot,
+  onShowChart,
   fullExport,
   lastEditAppliedAt,
   applyingEdits,
@@ -5173,6 +5182,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         borderBottom="1px solid"
         borderColor="app.borderSubtle"
         flexShrink={0}
+        // 分割ペインが狭いとき、縮まないボタン (ピン/最大化/ピボット/チャート) が
+        // 親の overflow: hidden でクリップされて操作不能になるのを防ぐ。TabBar と
+        // 同じ横スクロール方式で、フォーカス移動時もブラウザが自動で見える位置へ
+        // スクロールする。
+        overflowX="auto"
+        overflowY="hidden"
+        scrollbarWidth="thin"
       >
         <Button
           size="sm"
@@ -5294,6 +5310,35 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               </chakra.span>
             )}
           </Box>
+        )}
+        {/*
+          ピボット / チャートへの切り替え。以前は結果グリッド上部の独立した行に
+          置いていたが、Export・自動更新・差分と同じツールバーへ寄せて縦の場所を
+          節約する。表示条件は Export と同じ (ストリーミング中でなく行がある)。
+        */}
+        {onShowPivot && canExport && (
+          <Button
+            variant="secondary"
+            size="sm"
+            px="2.5"
+            flexShrink={0}
+            onClick={onShowPivot}
+            title={t("pivotShow")}
+          >
+            <Icon name="table" size={14} /> {t("pivotShow")}
+          </Button>
+        )}
+        {onShowChart && canExport && (
+          <Button
+            variant="secondary"
+            size="sm"
+            px="2.5"
+            flexShrink={0}
+            onClick={onShowChart}
+            title={t("chartShow")}
+          >
+            <Icon name="er-diagram" size={14} /> {t("chartShow")}
+          </Button>
         )}
         {editable && tableColumns && pkIndices.length === 0 && (
           <chakra.span
