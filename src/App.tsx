@@ -1377,6 +1377,8 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
   // 新規行追加モーダル: 対象タブ ID。null で閉じる。
   const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
+  // 行の複製 (#820): モーダルを開く際の初期値の種。通常の「行を追加」では null。
+  const [rowInsertSeed, setRowInsertSeed] = useState<PendingInsertRow | null>(null);
   // 明示トランザクション: 現在のセッションでトランザクションが有効か。実行経路の
   // 振り分けにコールバックから参照するため ref も併せ持つ。
   const [txActive, setTxActive] = useState(false);
@@ -4038,14 +4040,22 @@ export default function App() {
     });
   }, [patchTab]);
 
-  // 新規行追加モーダルを開く。
+  // 新規行追加モーダルを開く (空欄から)。
   const requestInsertRowForTab = useCallback((tabId: string) => {
+    setRowInsertSeed(null);
+    setRowInsertTabId(tabId);
+  }, []);
+
+  // 行の複製 (#820): 選択行の値を種に同じモーダルを開く。
+  const requestDuplicateRowForTab = useCallback((tabId: string, row: PendingInsertRow) => {
+    setRowInsertSeed(row);
     setRowInsertTabId(tabId);
   }, []);
 
   // モーダルで確定した新規行を保留に追加する。
   const addInsertRowForTab = useCallback((tabId: string, row: PendingInsertRow) => {
     setRowInsertTabId(null);
+    setRowInsertSeed(null);
     patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
   }, [patchTab]);
 
@@ -5746,6 +5756,7 @@ export default function App() {
                       pendingDeleteKeys={tab.pendingDeletes ? new Set(tab.pendingDeletes) : undefined}
                       onToggleRowDelete={tab.kind === "table" && !readOnly ? (key) => toggleRowDeleteForTab(tab.id, key) : undefined}
                       onRequestInsertRow={tab.kind === "table" && !readOnly ? () => requestInsertRowForTab(tab.id) : undefined}
+                      onDuplicateRow={tab.kind === "table" && !readOnly ? (row) => requestDuplicateRowForTab(tab.id, row) : undefined}
                       autoLimitApplied={tab.autoLimitApplied}
                       partialResult={tab.partialResult ?? null}
                       onFetchAllRows={() => fetchAllForTab(tab)}
@@ -6872,8 +6883,9 @@ export default function App() {
               <RowInsertModal
                 table={insTab.table}
                 columns={insTab.result.columns}
+                initialValues={rowInsertSeed ?? undefined}
                 onConfirm={(row) => addInsertRowForTab(insTab.id, row)}
-                onCancel={() => setRowInsertTabId(null)}
+                onCancel={() => { setRowInsertTabId(null); setRowInsertSeed(null); }}
               />
             </Suspense>
           );

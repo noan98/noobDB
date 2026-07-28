@@ -14,13 +14,19 @@ import { Button, Input, PressableButton } from "./ui";
 interface Props {
   table: string;
   columns: Column[];
+  /**
+   * 既存行の値を種にフォームを開くときの初期値 (行の複製、#820)。
+   * 列インデックスをキーにした文字列値で、`onConfirm` が返す形式と同じ
+   * `PendingInsertRow`。未指定 (通常の「行を追加」) なら従来どおり空欄で開く。
+   */
+  initialValues?: PendingInsertRow;
   onConfirm: (row: PendingInsertRow) => void;
   onCancel: () => void;
 }
 
-export function RowInsertModal({ table, columns, onConfirm, onCancel }: Props) {
+export function RowInsertModal({ table, columns, initialValues, onConfirm, onCancel }: Props) {
   const t = useT();
-  const [values, setValues] = useState<Record<number, string>>({});
+  const [values, setValues] = useState<Record<number, string>>(initialValues ?? {});
   const firstRef = useRef<HTMLInputElement>(null);
 
   const submit = () => {

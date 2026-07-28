@@ -1227,6 +1227,9 @@ const en = {
   gridCopyAsUpdate: "Copy as UPDATE",
   gridCopyAsDelete: "Copy as DELETE",
   gridCopyAsSqlNoPk: "UPDATE / DELETE need a primary key",
+  // 行の複製 (#820)
+  gridDuplicateRow: "Duplicate row...",
+  gridDuplicateRowTitle: "Open the add-row form pre-filled with this row's values",
   gridCopied: "Copied",
   clipboardCopyFailed: "Failed to copy to clipboard",
   gridViewFull: "View full value",
@@ -3269,6 +3272,9 @@ const ja: Dict = {
   gridCopyAsUpdate: "UPDATE としてコピー",
   gridCopyAsDelete: "DELETE としてコピー",
   gridCopyAsSqlNoPk: "UPDATE / DELETE には主キーが必要です",
+  // 行の複製 (#820)
+  gridDuplicateRow: "行を複製...",
+  gridDuplicateRowTitle: "この行の値を初期値にした行追加フォームを開きます",
   gridCopied: "コピーしました",
   clipboardCopyFailed: "クリップボードへのコピーに失敗しました",
   gridViewFull: "全文を表示",

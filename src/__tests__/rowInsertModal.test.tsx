@@ -38,3 +38,43 @@ describe("RowInsertModal render smoke (#604)", () => {
     expect(onCancel).toHaveBeenCalledOnce();
   });
 });
+
+/**
+ * 行の複製 (#820)。既存行の値を種にモーダルを開くとき、`initialValues` の
+ * 各列インデックスの値が対応する入力欄へそのまま反映され、未指定 (通常の
+ * 「行を追加」) では従来どおり空欄で開くことを固定する。
+ */
+describe("RowInsertModal initialValues (#820)", () => {
+  it("prefills inputs from initialValues and keeps them editable before confirming", () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={SAMPLE_COLUMNS}
+        initialValues={{ 0: "42", 1: "alice" }}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    const inputs = screen.getAllByRole("textbox");
+    expect((inputs[0] as HTMLInputElement).value).toBe("42");
+    expect((inputs[1] as HTMLInputElement).value).toBe("alice");
+
+    fireEvent.click(screen.getByRole("button", { name: t("rowOpsInsertAdd") }));
+    expect(onConfirm).toHaveBeenCalledWith({ 0: "42", 1: "alice" });
+  });
+
+  it("opens with empty inputs when initialValues is omitted", () => {
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={SAMPLE_COLUMNS}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    for (const input of screen.getAllByRole("textbox")) {
+      expect((input as HTMLInputElement).value).toBe("");
+    }
+  });
+});
