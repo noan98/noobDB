@@ -1058,11 +1058,20 @@ export const api = {
     profileId?: string | null;
     limit?: number | null;
     search?: string | null;
+    /** `"ok"` or `"error"`; omit/`null` for no status filter (#822). */
+    status?: string | null;
+    /** RFC3339 inclusive lower bound on `executed_at` (#822). */
+    from?: string | null;
+    /** RFC3339 inclusive upper bound on `executed_at` (#822). */
+    to?: string | null;
   } = {}) =>
     invoke<HistoryEntry[]>("list_history", {
       profileId: params.profileId ?? null,
       limit: params.limit ?? null,
       search: params.search ?? null,
+      status: params.status ?? null,
+      from: params.from ?? null,
+      to: params.to ?? null,
     }).then((r) => parseResponse(schemas.historyEntryArray, r, "list_history")),
   clearHistory: (profileId?: string | null) =>
     invoke<number>("clear_history", { profileId: profileId ?? null }).then((r) =>
