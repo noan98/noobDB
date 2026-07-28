@@ -7,6 +7,10 @@
     "name": "id",
     "type_name": "INTEGER"
   },
+  "connectPhaseEvent": {
+    "attemptId": "attempt0001",
+    "phase": "tunnel_connecting"
+  },
   "connectResult": {
     "session_id": "abcd1234"
   },
@@ -92,6 +96,36 @@
     "target_driver": "postgres",
     "truncated": false
   },
+  "dumpDoneEvent": {
+    "bytes": 131072,
+    "elapsedMs": 1200,
+    "streamId": "strm0004"
+  },
+  "dumpErrorEvent": {
+    "error": "mysqldump exited with status 1",
+    "streamId": "strm0004"
+  },
+  "dumpProgressEvent": {
+    "bytes": 65536,
+    "elapsedMs": 500,
+    "streamId": "strm0004",
+    "tables": 2,
+    "tablesTotal": 5
+  },
+  "exportDoneEvent": {
+    "bytes": 40960,
+    "rows": 1000,
+    "streamId": "strm0005"
+  },
+  "exportProgressEvent": {
+    "rows": 500,
+    "streamId": "strm0005"
+  },
+  "exportStreamErrorEvent": {
+    "message": "disk full",
+    "rows": 200,
+    "streamId": "strm0005"
+  },
   "foreignKey": {
     "column": "user_id",
     "constraint_name": "fk_orders_user",
@@ -124,6 +158,33 @@
     "rows_affected": null,
     "sql": "SELECT 1",
     "status": "ok"
+  },
+  "importDoneEvent": {
+    "elapsedMs": 42,
+    "inserted": 99,
+    "skipped": [
+      {
+        "line": 8,
+        "reason": "duplicate key",
+        "record": 7
+      }
+    ],
+    "streamId": "strm0003"
+  },
+  "importErrorEvent": {
+    "error": "NOT NULL constraint failed",
+    "line": 4,
+    "record": 3,
+    "streamId": "strm0003"
+  },
+  "importProgressEvent": {
+    "inserted": 50,
+    "streamId": "strm0003",
+    "total": 100
+  },
+  "importStartedEvent": {
+    "streamId": "strm0003",
+    "total": 100
   },
   "indexInfo": {
     "columns": [
@@ -180,6 +241,25 @@
     "target_table": "users",
     "truncated": false
   },
+  "previewStreamDoneEvent": {
+    "streamId": "strm0002"
+  },
+  "previewStreamMetaEvent": {
+    "columns": [
+      {
+        "name": "id",
+        "type_name": "INTEGER"
+      }
+    ],
+    "elapsedMs": 3,
+    "primaryKey": [
+      "id"
+    ],
+    "rowsAffected": 1,
+    "streamId": "strm0002",
+    "targetTable": "users",
+    "truncated": false
+  },
   "processInfo": {
     "command": "Query",
     "database": "testdb",
@@ -226,6 +306,30 @@
     "live_tail_reason": "stats_unreadable",
     "statements": false,
     "statements_reason": "pg_stat_statements_missing"
+  },
+  "queryStreamColumnsEvent": {
+    "columns": [
+      {
+        "name": "id",
+        "type_name": "INTEGER"
+      }
+    ],
+    "streamId": "strm0001"
+  },
+  "queryStreamDoneEvent": {
+    "appliedAutoLimit": 1000,
+    "elapsedMs": 12,
+    "hasColumns": true,
+    "rowsAffected": 0,
+    "streamId": "strm0001",
+    "totalRows": 2
+  },
+  "queryStreamErrorEvent": {
+    "connectionLost": true,
+    "deliveredRows": 5,
+    "error": "connection reset by peer",
+    "streamId": "strm0001",
+    "timedOut": false
   },
   "schemaDiff": {
     "source_driver": "mysql",
@@ -334,6 +438,19 @@
     "max_time_ms": 87.2,
     "rows": 1200,
     "total_time_ms": 4321.5
+  },
+  "streamCancelledEvent": {
+    "deliveredRows": 5,
+    "streamId": "strm0001"
+  },
+  "streamRowsEventLite": {
+    "rows": [
+      [
+        1,
+        "a"
+      ]
+    ],
+    "streamId": "strm0001"
   },
   "syncPlan": {
     "statements": [

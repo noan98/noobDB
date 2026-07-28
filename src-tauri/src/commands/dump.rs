@@ -24,34 +24,38 @@ const EV_DUMP_PROGRESS: &str = "dump-stream:progress";
 const EV_DUMP_DONE: &str = "dump-stream:done";
 const EV_DUMP_ERROR: &str = "dump-stream:error";
 
+// 構造体・フィールドの `pub` は #825 の zod ⇔ serde ゴールデン
+// (`serde_schema_parity.rs`) が `__test_api` 経由で代表インスタンスを組み立てる
+// ためのもの。IPC 経路としては引き続き非公開モジュール内に留まる (#824 の
+// LogView と同じ最小限の可視性拡張パターン)。
 #[derive(Debug, Serialize, Clone)]
-struct DumpProgressEvent {
+pub struct DumpProgressEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    bytes: u64,
+    pub stream_id: String,
+    pub bytes: u64,
     #[serde(rename = "elapsedMs")]
-    elapsed_ms: u64,
+    pub elapsed_ms: u64,
     /// Processed / total tables for the SQLite path; `null` for external tools
     /// where only bytes are known (#686).
-    tables: Option<u64>,
+    pub tables: Option<u64>,
     #[serde(rename = "tablesTotal")]
-    tables_total: Option<u64>,
+    pub tables_total: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct DumpDoneEvent {
+pub struct DumpDoneEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    bytes: u64,
+    pub stream_id: String,
+    pub bytes: u64,
     #[serde(rename = "elapsedMs")]
-    elapsed_ms: u64,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct DumpErrorEvent {
+pub struct DumpErrorEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    error: String,
+    pub stream_id: String,
+    pub error: String,
 }
 
 /// RAII guard that deletes a partially written dump file unless `commit`ted.
