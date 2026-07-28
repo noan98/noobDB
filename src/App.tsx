@@ -104,6 +104,9 @@ const TestDataModal = lazy(() =>
 const PlanWatchPanel = lazy(() =>
   import("./components/PlanWatchPanel").then((m) => ({ default: m.PlanWatchPanel })),
 );
+const SchemaDriftPanel = lazy(() =>
+  import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
+);
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
 );
@@ -274,6 +277,21 @@ import {
   watchedIds,
   type PlanWatchState,
 } from "./planWatch";
+import {
+  buildDriftDetail,
+  buildSnapshotPayload,
+  canDiff,
+  captureGeneration,
+  diffIndexes,
+  EMPTY_SCHEMA_DRIFT,
+  loadSchemaDrift,
+  recordSnapshotGeneration,
+  saveSchemaDrift,
+  summarizeDrift,
+  toDiffInput,
+  type SchemaDriftState,
+  type SnapshotTable,
+} from "./schemaDrift";
 
 type Theme = "light" | "dark";
 
@@ -2007,6 +2025,82 @@ export default function App() {
     if (sessionId && selectedProfile) void refreshPlanWatches(sessionId, selectedProfile);
   }, [sessionId, selectedProfile, refreshPlanWatches]);
 
+  // スキーマドリフト・タイムライン (#736): アクティブプロファイルのスナップ
+  // ショット状態と閲覧パネル。
+  const [schemaDrift, setSchemaDrift] = useState<SchemaDriftState>(EMPTY_SCHEMA_DRIFT);
+  const [schemaDriftOpen, setSchemaDriftOpen] = useState(false);
+  const [schemaDriftCapturing, setSchemaDriftCapturing] = useState(false);
+  useEffect(() => {
+    const id = selectedProfile?.id ?? null;
+    setSchemaDrift(id ? loadSchemaDrift(id) : EMPTY_SCHEMA_DRIFT);
+  }, [selectedProfile?.id]);
+  const schemaDriftInFlightRef = useRef<Set<string>>(new Set());
+
+  /**
+   * プロファイルの既定データベースのスキーマ (テーブル・列・インデックス) を
+   * 取得して世代として記録する。前世代とフィンガープリントが異なるときだけ
+   * `diffSchemaSnapshots` (セッション不要、`compute_schema_diff` を流用) で
+   * 差分を計算し、控えめなトーストで要約を知らせる。読み取り操作のみで
+   * クエリ履歴は汚さない。デフォルトデータベースが無いプロファイル (SQLite の
+   * 空パス等) では静かに何もしない。
+   */
+  const captureSchemaSnapshot = useCallback(
+    async (sid: string, profile: ConnectionProfile) => {
+      const database = profile.database;
+      if (!database) return;
+      if (schemaDriftInFlightRef.current.has(profile.id)) return;
+      schemaDriftInFlightRef.current.add(profile.id);
+      setSchemaDriftCapturing(true);
+      try {
+        const tableNames = await api.listTables(sid, database);
+        const tables: SnapshotTable[] = [];
+        for (const name of tableNames) {
+          try {
+            const [columns, indexes] = await Promise.all([
+              api.describeTable(sid, database, name),
+              api.listIndexes(sid, database, name),
+            ]);
+            tables.push({ name, columns, indexes });
+          } catch {
+            // 個々のテーブルの取得失敗はベストエフォートでスキップする
+            // (一部テーブルの権限不足などで全体を止めない)。
+          }
+        }
+        const payload = buildSnapshotPayload(profile.driver as DriverKind, database, tables);
+        const gen = captureGeneration(payload);
+        const rec = recordSnapshotGeneration(loadSchemaDrift(profile.id), gen);
+        if (!rec.added) return;
+        saveSchemaDrift(profile.id, rec.state);
+        if (activeProfileIdRef.current === profile.id) setSchemaDrift(rec.state);
+        if (!rec.prev || !canDiff(rec.prev) || !canDiff(gen)) return;
+        const source = toDiffInput(rec.prev);
+        const target = toDiffInput(gen);
+        if (!source || !target) return;
+        const diff = await api.diffSchemaSnapshots({
+          sourceDriver: rec.prev.driver,
+          targetDriver: gen.driver,
+          source,
+          target,
+        });
+        const summary = summarizeDrift(diff, diffIndexes(rec.prev, gen));
+        if (summary.tables.length > 0) {
+          toast.info(translate("schemaDriftChangedToast", { detail: buildDriftDetail(summary) }));
+        }
+      } catch (e) {
+        toast.error(translate("schemaDriftRefreshFailedToast", { error: String(e) }));
+      } finally {
+        schemaDriftInFlightRef.current.delete(profile.id);
+        setSchemaDriftCapturing(false);
+      }
+    },
+    [toast],
+  );
+
+  const handleOpenSchemaDrift = useCallback(() => setSchemaDriftOpen(true), []);
+  const handleCaptureSchemaDrift = useCallback(() => {
+    if (sessionId && selectedProfile) void captureSchemaSnapshot(sessionId, selectedProfile);
+  }, [sessionId, selectedProfile, captureSchemaSnapshot]);
+
   // 最近開いたテーブルを記録する。`handleOpenTable` から呼ばれ、永続化も行う。
   const recordRecentTableOpen = useCallback((database: string, table: string) => {
     const id = selectedProfile?.id;
@@ -2240,6 +2334,12 @@ export default function App() {
       if (settings.planWatchOnConnect) {
         void refreshPlanWatches(res.session_id, profile);
       }
+      // スキーマドリフト・タイムライン (#736): 設定が有効なら、接続確立直後に
+      // スキーマスナップショットを背景で取得し、前回接続時からの変化を検知する
+      // (接続をブロックしない)。
+      if (settings.schemaDriftOnConnect) {
+        void captureSchemaSnapshot(res.session_id, profile);
+      }
     } catch (e) {
       // 接続失敗時は表示状態を実態 (未接続) に合わせる。sessionId は既に null に
       // なっているが selectedProfile を旧プロファイルのままにすると、ヘッダが
@@ -2270,6 +2370,8 @@ export default function App() {
     settings.tabRestoreMode,
     settings.planWatchOnConnect,
     refreshPlanWatches,
+    settings.schemaDriftOnConnect,
+    captureSchemaSnapshot,
     toast,
     confirm,
   ]);
@@ -6910,6 +7012,19 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {schemaDriftOpen && selectedProfile && (
+          <SchemaDriftPanel
+            profile={selectedProfile}
+            state={schemaDrift}
+            canCapture={sessionId !== null}
+            capturing={schemaDriftCapturing}
+            onCapture={handleCaptureSchemaDrift}
+            onClose={() => setSchemaDriftOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {dumpTarget && sessionId && (
           <DumpModal
             sessionId={sessionId}
@@ -7142,6 +7257,16 @@ export default function App() {
               },
               disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
               title: !sessionId ? t("appToolsNeedsSession") : undefined,
+            },
+            {
+              label: t("appSchemaDrift"),
+              onSelect: handleOpenSchemaDrift,
+              disabled: !sessionId || !selectedProfile?.database,
+              title: !sessionId
+                ? t("appToolsNeedsSession")
+                : !selectedProfile?.database
+                  ? t("appSchemaDriftUnsupported")
+                  : undefined,
             },
             {
               label: t("appPinCompare", { count: pinnedResults.length }),

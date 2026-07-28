@@ -535,6 +535,17 @@ export interface SchemaDiff {
   tables: TableDiff[];
 }
 
+/**
+ * One table's full column metadata — the wire shape `diffSchemaSnapshots`
+ * expects on each side (mirrors the Rust `TableColumns` struct in
+ * `db::diff`). Used both by the live `compare_schema` collection shape and by
+ * `schemaDrift.ts`'s stored snapshots (schema drift timeline, #736).
+ */
+export interface SchemaSnapshotTable {
+  name: string;
+  columns: TableColumnInfo[];
+}
+
 /** スキーマ健全性アドバイザ (#741) の指摘ルール識別子。バックの serde
  *  (snake_case) と一致させる。 */
 export type AdvisorRuleId =
@@ -975,6 +986,27 @@ export const api = {
       targetSessionId: params.targetSessionId,
       targetDatabase: params.targetDatabase,
     }).then((r) => parseResponse(schemas.schemaDiff, r, "compare_schema")),
+  /**
+   * セッションを介さず、2 つの独立に取得したスキーマスナップショットを
+   * `compute_schema_diff` で突き合わせる (スキーマドリフト・タイムライン #736)。
+   * `source` / `target` は `listTables` + `describeTable` で集めた
+   * `{ name, columns }` の配列 — `compareSchema` がライブ接続から集める形と同じ
+   * shape で、`schemaDrift.ts` の localStorage 世代ストアに保存された過去の
+   * スナップショットを渡せる。読み取り専用でも常時利用可能 (セッション自体を
+   * 使わない純粋な計算コマンド)。
+   */
+  diffSchemaSnapshots: (params: {
+    sourceDriver: DriverKind;
+    targetDriver: DriverKind;
+    source: SchemaSnapshotTable[];
+    target: SchemaSnapshotTable[];
+  }) =>
+    invoke<SchemaDiff>("diff_schema_snapshots", {
+      sourceDriver: params.sourceDriver,
+      targetDriver: params.targetDriver,
+      source: params.source,
+      target: params.target,
+    }).then((r) => parseResponse(schemas.schemaDiff, r, "diff_schema_snapshots")),
   generateSyncSql: (diff: SchemaDiff, allowDestructive: boolean) =>
     invoke<SyncPlan>("generate_sync_sql", { diff, allowDestructive }).then((r) =>
       parseResponse(schemas.syncPlan, r, "generate_sync_sql"),

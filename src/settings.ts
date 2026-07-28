@@ -189,6 +189,15 @@ export interface Settings {
    */
   planWatchOnConnect: boolean;
   /**
+   * スキーマドリフト・タイムライン (#736): 接続確立時にそのプロファイルの
+   * スキーマスナップショットを自動取得し、前回接続時のスナップショットと比較
+   * して変化があれば検知する。既定オン。スナップショット取得
+   * (`listTables`/`describeTable`/`listIndexes`) は読み取り操作のみで履歴も
+   * 汚さないが、テーブル数の多いスキーマでの接続直後の負荷を避けたい場合は
+   * オフにできる。
+   */
+  schemaDriftOnConnect: boolean;
+  /**
    * アプリ内モーション量コントロール (#787)。既定は `system` で、これまでどおり
    * OS の `prefers-reduced-motion` に追従する (`main.tsx` の
    * `MotionConfig reducedMotion="user"` + `App.css` の
@@ -564,6 +573,9 @@ export const DEFAULT_PREFLIGHT_IMPACT_ENABLED = true;
 /** 実行計画ウォッチ (#743) の接続時自動チェックは既定オン。 */
 export const DEFAULT_PLAN_WATCH_ON_CONNECT = true;
 
+/** スキーマドリフト・タイムライン (#736) の接続時自動スナップショットは既定オン。 */
+export const DEFAULT_SCHEMA_DRIFT_ON_CONNECT = true;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -603,6 +615,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
+  schemaDriftOnConnect: DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
   motionPreference: DEFAULT_MOTION_PREFERENCE,
 };
 
@@ -817,6 +830,7 @@ export function normalizeSettings(input: unknown): Settings {
     sqlLintEnabled?: unknown;
     preflightImpactEnabled?: unknown;
     planWatchOnConnect?: unknown;
+    schemaDriftOnConnect?: unknown;
     motionPreference?: unknown;
   };
   return {
@@ -919,6 +933,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.planWatchOnConnect === "boolean"
         ? parsed.planWatchOnConnect
         : DEFAULT_PLAN_WATCH_ON_CONNECT,
+    schemaDriftOnConnect:
+      typeof parsed.schemaDriftOnConnect === "boolean"
+        ? parsed.schemaDriftOnConnect
+        : DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
     motionPreference: sanitizeMotionPreference(parsed.motionPreference, DEFAULT_MOTION_PREFERENCE),
   };
 }
@@ -1329,6 +1347,13 @@ export function setPreflightImpactEnabled(value: boolean): void {
 export function setPlanWatchOnConnect(value: boolean): void {
   if (current.planWatchOnConnect === value) return;
   current = { ...current, planWatchOnConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setSchemaDriftOnConnect(value: boolean): void {
+  if (current.schemaDriftOnConnect === value) return;
+  current = { ...current, schemaDriftOnConnect: value };
   persist();
   listeners.forEach((cb) => cb());
 }
