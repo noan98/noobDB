@@ -4,8 +4,8 @@ use crate::logs;
 /// Application log contents plus the on-disk path, for the Settings log viewer.
 #[derive(serde::Serialize)]
 pub struct LogView {
-    text: String,
-    path: Option<String>,
+    pub text: String,
+    pub path: Option<String>,
 }
 
 #[tauri::command]
