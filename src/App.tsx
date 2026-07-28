@@ -44,6 +44,7 @@ import {
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
+import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import { quoteIdentFor } from "./components/sqlDialect";
 import { EmptyState } from "./components/EmptyState";
@@ -123,6 +124,9 @@ const CreateTableModal = lazy(() =>
 );
 const RenameTableDialog = lazy(() =>
   import("./components/RenameTableDialog").then((m) => ({ default: m.RenameTableDialog })),
+);
+const SaveAsTableModal = lazy(() =>
+  import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
 );
 const HostKeyMismatchDialog = lazy(() =>
   import("./components/HostKeyMismatchDialog").then((m) => ({ default: m.HostKeyMismatchDialog })),
@@ -1400,6 +1404,8 @@ export default function App() {
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
+  // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
+  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
   // 新規行追加モーダル: 対象タブ ID。null で閉じる。
   const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
   // 行の複製 (#820): モーダルを開く際の初期値の種。通常の「行を追加」では null。
@@ -1418,6 +1424,7 @@ export default function App() {
       setShowObjectSearch(false);
       setCreateTableDb(null);
       setRenameTarget(null);
+      setSaveAsTableRequest(null);
       setRowInsertTabId(null);
     }
   }, [sessionId]);
@@ -4302,6 +4309,21 @@ export default function App() {
     }
   }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl]);
 
+  // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
+  // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
+  // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
+  const handleSaveAsTableConfirm = useCallback((newName: string) => {
+    const req = saveAsTableRequest;
+    setSaveAsTableRequest(null);
+    if (!req) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const ddl = buildCreateTableAsSql(driver, req.database, newName, req.sql);
+    void (async () => {
+      const success = await runMaintenanceDdl(ddl, req.database);
+      if (success) toast.success(translate("saveAsTableSuccess", { table: newName }));
+    })();
+  }, [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast]);
+
   // テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
   // 生成済み SQL を確認ダイアログで提示し、承認後に既存のクエリ経路で実行する。
   // データは消さないが書き込み/ロックを伴うため、本番接続では追加警告を出す。
@@ -5857,6 +5879,19 @@ export default function App() {
                       onShowChart={() =>
                         patchTab(tab.id, (tt) => ({ ...tt, showChart: true, showPivot: false }))
                       }
+                      onSaveAsTable={
+                        sessionId &&
+                        !readOnly &&
+                        tab.lastExecutedSql &&
+                        isCtasEligibleSql(tab.lastExecutedSql) &&
+                        (tab.database ?? selectedProfile?.database)
+                          ? () =>
+                              setSaveAsTableRequest({
+                                sql: tab.lastExecutedSql,
+                                database: (tab.database ?? selectedProfile?.database) as string,
+                              })
+                          : undefined
+                      }
                       onClearEdits={() => clearEditsForTab(tab.id)}
                       onUndoEdit={() => undoCellEditForTab(tab.id)}
                       onRedoEdit={() => redoCellEditForTab(tab.id)}
@@ -6928,6 +6963,21 @@ export default function App() {
               table={renameTarget.table}
               onConfirm={handleRenameTableSubmit}
               onCancel={() => setRenameTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {saveAsTableRequest && sessionId && (
+          <Suspense fallback={null}>
+            <SaveAsTableModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={saveAsTableRequest.database}
+              sourceSql={saveAsTableRequest.sql}
+              onConfirm={handleSaveAsTableConfirm}
+              onClose={() => setSaveAsTableRequest(null)}
             />
           </Suspense>
         )}

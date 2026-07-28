@@ -913,6 +913,21 @@ const en = {
   pivotTruncated:
     "Truncated to the first {rows} row groups / {cols} column groups; the rest were omitted.",
   pivotNoData: "No data to pivot.",
+  // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
+  saveAsTableButton: "Save as table",
+  saveAsTableButtonTitle: "Save the current result as a new table (CREATE TABLE ... AS SELECT)",
+  saveAsTableDisabledTitle:
+    "Only a single SELECT/WITH query on a writable connection can be saved as a table.",
+  saveAsTableTitle: "Save results as table",
+  saveAsTableClose: "Close",
+  saveAsTableNameLabel: "New table name",
+  saveAsTableNamePlaceholder: "new_table",
+  saveAsTableNameExists: "A table named \"{table}\" already exists.",
+  saveAsTableListError: "Couldn't verify existing table names: {error}",
+  saveAsTablePreview: "SQL preview",
+  saveAsTablePreviewEmpty: "Enter a table name to preview the SQL.",
+  saveAsTableConfirm: "Create table",
+  saveAsTableSuccess: "Created table \"{table}\" from the result set.",
   // SQL スクリプトのバッチ実行。
   statusBatchRunning: "Running script ({total} statements)...",
   statusBatchDone: "Script done: {ok} ok, {errors} error(s) of {total}",
@@ -2959,6 +2974,21 @@ const ja: Dict = {
   pivotTruncated:
     "先頭の {rows} 行グループ / {cols} 列グループのみ表示しています (残りは省略)。",
   pivotNoData: "ピボットするデータがありません。",
+  // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
+  saveAsTableButton: "テーブルへ保存",
+  saveAsTableButtonTitle: "現在の結果を新規テーブルとして保存します (CREATE TABLE ... AS SELECT)",
+  saveAsTableDisabledTitle:
+    "単一の SELECT/WITH クエリで、かつ書き込み可能な接続のときだけテーブルへ保存できます。",
+  saveAsTableTitle: "結果をテーブルへ保存",
+  saveAsTableClose: "閉じる",
+  saveAsTableNameLabel: "新しいテーブル名",
+  saveAsTableNamePlaceholder: "new_table",
+  saveAsTableNameExists: "テーブル「{table}」は既に存在します。",
+  saveAsTableListError: "既存テーブル名の確認に失敗しました: {error}",
+  saveAsTablePreview: "SQL プレビュー",
+  saveAsTablePreviewEmpty: "テーブル名を入力すると SQL がプレビューされます。",
+  saveAsTableConfirm: "テーブルを作成",
+  saveAsTableSuccess: "結果セットからテーブル「{table}」を作成しました。",
   // SQL スクリプトのバッチ実行。
   statusBatchRunning: "スクリプトを実行中 ({total} 文)...",
   statusBatchDone: "スクリプト完了: {total} 文中 成功 {ok} / エラー {errors}",
