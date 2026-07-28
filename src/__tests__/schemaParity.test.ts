@@ -24,7 +24,11 @@ type AnyObjectSchema = z.ZodObject<z.ZodRawShape>;
 
 // フィクスチャのキー ⇔ エクスポート済み zod スキーマの対応。`column` / `serverVariable`
 // は非公開の入れ子スキーマなので、それらを内包する上位型 (queryResult / serverInfo) の
-// parse で間接的にカバーする (主要レスポンス型のキー整合をここで固定)。
+// parse で間接的にカバーする (主要レスポンス型のキー整合をここで固定)。同様に
+// `sshProfile` (connectionProfile 内)・`tableDiff`/`columnDiff`/`diffStatus`
+// (schemaDiff 内)・`syncStatement` (syncPlan 内)・`rowDiff` (dataDiff 内。
+// `key_unreliable` は往復時に zod が意図的に落とすフィールドなのでスキーマに
+// 含めない、#824) も上位型経由の間接カバーで、個別 case は持たない。
 const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["queryResult", schemas.queryResult],
   ["tableColumnInfo", schemas.tableColumnInfo],
@@ -44,6 +48,18 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["healthFinding", schemas.healthFinding],
   ["skippedRule", schemas.skippedRule],
   ["schemaHealthReport", schemas.schemaHealthReport],
+  ["connectionProfile", schemas.connectionProfile],
+  ["snippet", schemas.snippet],
+  ["historyEntry", schemas.historyEntry],
+  ["logView", schemas.logView],
+  ["csvPreview", schemas.csvPreview],
+  ["connectResult", schemas.connectResult],
+  ["profileImportResult", schemas.profileImportResult],
+  ["cancelStreamResponse", schemas.cancelStreamResponse],
+  ["knownHost", schemas.knownHost],
+  ["schemaDiff", schemas.schemaDiff],
+  ["syncPlan", schemas.syncPlan],
+  ["dataDiff", schemas.dataDiff],
 ];
 
 describe("zod ⇔ serde フィールドパリティ (主要レスポンス型)", () => {

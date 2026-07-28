@@ -19,13 +19,18 @@
 //!   `NOOBDB_WRITE_SERDE_FIXTURES=1 cargo test --test serde_schema_parity`
 //! を実行するとフィクスチャを上書きする (その後 diff を確認してコミット)。
 
+use std::path::PathBuf;
+
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    Column, DriverKind, ForeignKey, HealthFinding, IndexInfo, LiveQuery, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, RuleId, SchemaHealthReport, SchemaObject,
-    ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRule, StatementStat,
-    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    CancelStreamResult, Column, ColumnDiff, ConnectResponse, ConnectionProfile, CsvPreview,
+    DataDiff, DiffStatus, DriverKind, ForeignKey, HealthFinding, HistoryEntry, ImportResult,
+    IndexInfo, KnownHost, LiveQuery, LogView, PreviewResult, ProcessInfo, ProfileWithSecretFlags,
+    QueryResult, QueryStatsSupport, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport,
+    SchemaObject, ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRule, Snippet,
+    SnippetScope, SshAuthMethod, SshProfile, SslMode, StatementStat, SyncKind, SyncPlan,
+    SyncStatement, TableColumnInfo, TableDiff, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -184,6 +189,152 @@ fn build_fixtures() -> serde_json::Value {
         skipped: vec![skipped_rule.clone()],
     };
 
+    // --- #824: 未収載だった主要レスポンス/永続化型 ---------------------------
+
+    let ssh_profile = SshProfile {
+        host: "jump.example.com".into(),
+        port: 22,
+        user: "deploy".into(),
+        auth_method: SshAuthMethod::Key,
+        private_key_path: PathBuf::from("/home/deploy/.ssh/id_ed25519"),
+    };
+    let connection_profile_inner = ConnectionProfile {
+        id: "abc12345".into(),
+        name: "Prod MySQL".into(),
+        driver: "mysql".into(),
+        host: "db.example.com".into(),
+        port: 3306,
+        user: "app".into(),
+        database: Some("appdb".into()),
+        ssh: Some(ssh_profile),
+        group: Some("production".into()),
+        color: Some("#dc2626".into()),
+        is_production: true,
+        confirm_writes: true,
+        read_only: false,
+        skip_history: false,
+        file_path: None,
+        ssl_mode: Some(SslMode::VerifyFull),
+        ssl_root_cert: Some("/etc/ssl/ca.pem".into()),
+        ssl_client_cert: Some("/etc/ssl/client.pem".into()),
+        ssl_client_key: Some("/etc/ssl/client.key".into()),
+        init_sql: Some("SET time_zone = '+00:00';".into()),
+    };
+    let connection_profile = ProfileWithSecretFlags {
+        profile: connection_profile_inner,
+        has_db_password: true,
+        has_ssh_passphrase: false,
+        has_ssh_password: false,
+    };
+
+    let snippet = Snippet {
+        id: "snip0001".into(),
+        name: "Active users".into(),
+        folder: Some("reports".into()),
+        tags: vec!["users".into(), "active".into()],
+        sql: "SELECT * FROM users WHERE active = 1".into(),
+        driver: Some("mysql".into()),
+        scope: SnippetScope::Profile {
+            profile_id: "abc12345".into(),
+        },
+    };
+
+    let history_entry = HistoryEntry {
+        id: 101,
+        profile_id: Some("abc12345".into()),
+        driver: "mysql".into(),
+        database: Some("appdb".into()),
+        sql: "SELECT 1".into(),
+        rows: Some(1),
+        rows_affected: None,
+        elapsed_ms: Some(12),
+        status: "ok".into(),
+        error: None,
+        executed_at: "2026-01-01T00:00:00Z".into(),
+    };
+
+    let log_view = LogView {
+        text: "2026-01-01T00:00:00Z INFO noobdb starting".into(),
+        path: Some("/home/user/.local/share/noobDB/noobdb.log".into()),
+    };
+
+    let csv_preview = CsvPreview {
+        headers: vec!["id".into(), "name".into()],
+        rows: vec![vec!["1".into(), "Alice".into()]],
+        truncated: false,
+    };
+
+    let connect_result = ConnectResponse {
+        session_id: "abcd1234".into(),
+    };
+
+    let profile_import_result = ImportResult {
+        imported: 3,
+        skipped: 1,
+        overwritten: 0,
+        invalid: 0,
+    };
+
+    let cancel_stream_response = CancelStreamResult {
+        cancelled: true,
+        delivered_rows: 42,
+    };
+
+    let known_host = KnownHost {
+        host: "db.example.com".into(),
+        port: 22,
+        fingerprint: "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG".into(),
+    };
+
+    let column_diff = ColumnDiff {
+        name: "email".into(),
+        status: DiffStatus::SourceOnly,
+        source: Some(table_column_info.clone()),
+        target: None,
+        changed_fields: vec![],
+    };
+    let table_diff = TableDiff {
+        name: "users".into(),
+        status: DiffStatus::Different,
+        columns: vec![column_diff],
+    };
+    let schema_diff = SchemaDiff {
+        source_driver: DriverKind::Mysql,
+        target_driver: DriverKind::Postgres,
+        tables: vec![table_diff],
+    };
+
+    let sync_statement = SyncStatement {
+        sql: "ALTER TABLE `users` ADD COLUMN `email` VARCHAR(255);".into(),
+        table: "users".into(),
+        kind: SyncKind::AddColumn,
+        destructive: false,
+    };
+    let sync_plan = SyncPlan {
+        statements: vec![sync_statement],
+        warnings: vec!["SQLite cannot alter columns in place".into()],
+    };
+
+    let row_diff = RowDiff {
+        status: RowStatus::Different,
+        key: vec![Value::Int(1)],
+        source: Some(vec![Value::Int(1), Value::String("Alice".into())]),
+        target: Some(vec![Value::Int(1), Value::String("Alicia".into())]),
+        changed_columns: vec!["name".into()],
+        key_unreliable: false,
+    };
+    let data_diff = DataDiff {
+        target_driver: DriverKind::Postgres,
+        table: "users".into(),
+        columns: vec!["id".into(), "name".into()],
+        primary_key: vec!["id".into()],
+        column_types: vec!["int".into(), "varchar".into()],
+        rows: vec![row_diff],
+        truncated: false,
+        source_count: 10,
+        target_count: 10,
+    };
+
     json!({
         "column": column,
         "queryResult": query_result,
@@ -205,6 +356,18 @@ fn build_fixtures() -> serde_json::Value {
         "healthFinding": health_finding,
         "skippedRule": skipped_rule,
         "schemaHealthReport": schema_health_report,
+        "connectionProfile": connection_profile,
+        "snippet": snippet,
+        "historyEntry": history_entry,
+        "logView": log_view,
+        "csvPreview": csv_preview,
+        "connectResult": connect_result,
+        "profileImportResult": profile_import_result,
+        "cancelStreamResponse": cancel_stream_response,
+        "knownHost": known_host,
+        "schemaDiff": schema_diff,
+        "syncPlan": sync_plan,
+        "dataDiff": data_diff,
     })
 }
 
