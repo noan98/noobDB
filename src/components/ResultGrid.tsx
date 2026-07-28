@@ -5182,6 +5182,13 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         borderBottom="1px solid"
         borderColor="app.borderSubtle"
         flexShrink={0}
+        // 分割ペインが狭いとき、縮まないボタン (ピン/最大化/ピボット/チャート) が
+        // 親の overflow: hidden でクリップされて操作不能になるのを防ぐ。TabBar と
+        // 同じ横スクロール方式で、フォーカス移動時もブラウザが自動で見える位置へ
+        // スクロールする。
+        overflowX="auto"
+        overflowY="hidden"
+        scrollbarWidth="thin"
       >
         <Button
           size="sm"
