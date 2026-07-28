@@ -92,6 +92,7 @@ import {
   setResultGridPageSize,
   setRichCellRendering,
   setPlanWatchOnConnect,
+  setSchemaDriftOnConnect,
   setSqlLintEnabled,
   setPreflightImpactEnabled,
   setStreamPrefetchSize,
@@ -1294,6 +1295,26 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsToggleLabel>
           <SettingsHelpInline>
             {t("settingsPlanWatchOnConnectHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection id="settings-sec-schema-drift" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsSchemaDrift")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsSchemaDriftHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-schema-drift-on-connect">
+            <Switch
+              id="settings-schema-drift-on-connect"
+              checked={settings.schemaDriftOnConnect}
+              onChange={setSchemaDriftOnConnect}
+            />
+            {t("settingsSchemaDriftOnConnect")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsSchemaDriftOnConnectHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>

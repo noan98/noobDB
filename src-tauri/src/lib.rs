@@ -354,6 +354,7 @@ pub fn run() {
             commands::advisor::analyze_schema_health,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
+            commands::diff::diff_schema_snapshots,
             commands::sync::generate_sync_sql,
             commands::sync::generate_data_sync_sql,
             commands::sync::apply_sync_sql,
