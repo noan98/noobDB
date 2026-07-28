@@ -1350,6 +1350,31 @@ export default function App() {
   useEffect(() => { panesRef.current = panes; }, [panes]);
   const activePaneIdRef = useRef<string | null>(activePaneId);
   useEffect(() => { activePaneIdRef.current = activePaneId; }, [activePaneId]);
+  // 新規タブ・タブ切替・接続直後のエディタ自動フォーカス (#816) が、モーダル/オーバー
+  // レイ表示中にフォーカスを奪わないためのガード。F6 巡回 / Esc 復元ハンドラが使う
+  // 判定集合と揃える (これらの状態の間はタブワークスペース自体が描画されないか、
+  // 前面にモーダルが乗っている)。依存配列なしの effect で毎レンダ最新値に同期し、
+  // requestAnimationFrame 越しの非同期フォーカス実行時点の値を参照できるようにする。
+  const overlayOpenRef = useRef(false);
+  useEffect(() => {
+    overlayOpenRef.current =
+      showForm || showSettings || showHelp || showCompare || showCompareResults || showErd ||
+      showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm ||
+      showCommandPalette || showObjectSearch || showCheatSheet;
+  });
+  // アクティブになったタブがクエリタブのときだけ、次フレームでエディタへ
+  // フォーカスする (#816)。setState 直後はまだ DOM 未反映のため
+  // requestAnimationFrame 越しに呼ぶ (サイドバータブのフォーカス移動と同じ
+  // パターン、#1219 付近参照)。F6 巡回 (paneFocusCursorRef) や
+  // フォーカストラップ (keyboardNav.ts) の状態には触れない — こちらは
+  // フォーカスを直接移すだけの単発処理。
+  const focusEditorIfQueryTab = useCallback((paneId: string | null, tabKind: TabKind | undefined) => {
+    if (!paneId || tabKind !== "query") return;
+    requestAnimationFrame(() => {
+      if (overlayOpenRef.current) return;
+      editorRefs.current.get(paneId)?.focus();
+    });
+  }, []);
   // Right-click target for the tab move/close menu (viewport coords).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   // サイドバーヘッダの「プロファイル転送」ボタン直下に出すインポート/エクスポート
@@ -1563,7 +1588,10 @@ export default function App() {
   const selectTab = useCallback((paneId: string, tabId: string) => {
     setActivePaneId(paneId);
     setPanes((prev) => prev.map((p) => (p.id === paneId ? { ...p, activeTabId: tabId } : p)));
-  }, []);
+    // 切り替え先がクエリタブならエディタへ自動フォーカスする (#816)。table/explain
+    // タブへの切替では発火しない。
+    focusEditorIfQueryTab(paneId, tabsRef.current.find((t) => t.id === tabId)?.kind);
+  }, [focusEditorIfQueryTab]);
 
   // Append a freshly built tab to a pane (the focused pane by default) and make
   // it active there. Used by every "open in a new tab" entry point.
@@ -2763,6 +2791,26 @@ export default function App() {
         if (!autoRefresh) {
           void notifyQueryOutcome("done", elapsedMs, { rows: hasColumns ? totalRows : rowsAffected });
         }
+        // 実行完了時に結果グリッドへフォーカスを渡し、キーボード完結フロー
+        // (実行→結果閲覧→コピー) を繋げる (#816)。エディタの Cmd/Ctrl+Enter
+        // キーマップ経由の実行 (= 完了直前までエディタにフォーカスがあった) の
+        // ときだけ発火し、ツールバーのボタンクリックでの実行では奪わない。
+        // 自動リフレッシュの tick・結果セットの無い DML・完了時点で既に別タブへ
+        // 切り替わっている場合は対象外。F6 巡回 (paneFocusCursorRef) やフォーカス
+        // トラップ (keyboardNav.ts) の状態には触れない一度きりの focus() 呼び出し
+        // なので干渉しない。
+        if (!autoRefresh && hasColumns) {
+          const focusedInEditor = !!(document.activeElement as HTMLElement | null)?.closest(".cm-editor");
+          if (focusedInEditor) {
+            requestAnimationFrame(() => {
+              if (overlayOpenRef.current) return;
+              const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+              if (owner && owner.activeTabId === tabId) {
+                resultGridRefs.current.get(owner.id)?.focus();
+              }
+            });
+          }
+        }
       },
       onError: ({ error, timedOut, connectionLost, deliveredRows }) => {
         patchTab(tabId, (tt) => ({
@@ -2992,12 +3040,22 @@ export default function App() {
         setTabs([tab]);
         setPanes([{ id: paneId, tabIds: [tab.id], activeTabId: tab.id }]);
         setActivePaneId(paneId);
+        // 復元対象が無く新規クエリタブへ落ちた場合も接続直後の自動フォーカス
+        // (#816) を適用する。
+        focusEditorIfQueryTab(paneId, tab.kind);
         return;
       }
       setTabs(allTabs);
       setPanes(builtPanes);
       const activePaneIdx = Math.min(Math.max(0, ws.activePane), builtPanes.length - 1);
-      setActivePaneId(builtPanes[activePaneIdx].id);
+      const activePane = builtPanes[activePaneIdx];
+      setActivePaneId(activePane.id);
+      // 接続直後にタブを復元した結果、アクティブなタブがクエリタブならエディタへ
+      // 自動フォーカスする (#816)。table/explain タブが復元先だと発火しない。
+      focusEditorIfQueryTab(
+        activePane.id,
+        allTabs.find((tt) => tt.id === activePane.activeTabId)?.kind,
+      );
       // Re-run the initial table query for restored table tabs so the user
       // immediately sees data instead of an empty grid.
       for (const tab of allTabs) {
@@ -3021,7 +3079,7 @@ export default function App() {
         );
       }
     },
-    [runQueryInTab, settings.defaultDisplayCount, toast],
+    [runQueryInTab, settings.defaultDisplayCount, toast, focusEditorIfQueryTab],
   );
 
   useEffect(() => {
@@ -4552,7 +4610,22 @@ export default function App() {
   }, [runQueryInTab, settings.defaultDisplayCount]);
 
   const handleNewTab = useCallback((paneId?: string) => {
-    addTab(makeQueryTab(), paneId);
+    const tab = makeQueryTab();
+    addTab(tab, paneId);
+    // 新規タブは常にクエリタブなので、生成先のペインが確定次第エディタへ自動
+    // フォーカスする (#816)。addTab は既存ペインが 0 件のとき新規ペイン ID を
+    // 内部 (setPanes 更新関数) で生成するため、渡した paneId をそのまま使わず
+    // 実際にタブを収めたペインを tabIds から逆引きする (activateTab と同じ手法)。
+    // panesRef は setPanes 後の useEffect で更新されるため (commit と同期の
+    // callback ref ではない)、1 フレームだと未反映のことがあり、二重
+    // requestAnimationFrame で effect の反映を待ってから読む。
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (overlayOpenRef.current) return;
+        const owner = panesRef.current.find((p) => p.tabIds.includes(tab.id));
+        if (owner) editorRefs.current.get(owner.id)?.focus();
+      });
+    });
   }, [addTab]);
 
   /**
