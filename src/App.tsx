@@ -214,7 +214,7 @@ import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
 import { workspaceSpineColor } from "./profileIdentity";
 import { resolveShortcutBindings } from "./shortcuts";
-import { comboMatchesEvent } from "./shortcutKeys";
+import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
 import {
   useSettings,
@@ -6927,7 +6927,13 @@ export default function App() {
             title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
           },
           { separator: true },
-          { label: t("tabClose"), onSelect: () => handleCloseTab(tabMenu.tabId), danger: true },
+          {
+            label: t("tabClose"),
+            icon: "close",
+            shortcut: formatCombo(shortcutBindings.closeTab),
+            onSelect: () => handleCloseTab(tabMenu.tabId),
+            danger: true,
+          },
         ];
         return (
           <ContextMenu x={tabMenu.x} y={tabMenu.y} items={items} onClose={() => setTabMenu(null)} />

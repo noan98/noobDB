@@ -4,6 +4,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { useReturnFocus, useRovingFocus } from "../keyboardNav";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 
 /**
  * メニュー本体を motion 化するラッパー。`transition` を Chakra のスタイルプロップに
@@ -29,6 +30,15 @@ export interface ContextMenuItem {
   disabled?: boolean;
   /** Tooltip — handy for explaining why an item is disabled. */
   title?: string;
+  /** Leading icon (#815). Reserve for primary/frequent actions — most items go without one. */
+  icon?: IconName;
+  /**
+   * Right-aligned key hint (#815), e.g. `"Cmd/Ctrl+C"`. Callers resolve this from
+   * `shortcuts.ts`'s `resolveShortcutBindings` + `shortcutKeys.ts`'s `formatCombo`
+   * (the same pair `ShortcutCheatSheet` uses) so the hint tracks user rebinding —
+   * `ContextMenu` itself stays display-only and doesn't know about shortcut ids.
+   */
+  shortcut?: string;
 }
 
 export interface ContextMenuSeparator {
@@ -160,7 +170,9 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               key={`${entry.label}-${i}`}
               type="button"
               role="menuitem"
-              display="block"
+              display="flex"
+              alignItems="center"
+              gap="2"
               textAlign="left"
               bg="transparent"
               border="none"
@@ -186,7 +198,27 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               }}
               onClick={() => activate(entry)}
             >
-              {entry.label}
+              {entry.icon && (
+                <Box flexShrink={0} opacity={entry.disabled ? 0.6 : 0.85} aria-hidden>
+                  <Icon name={entry.icon} size={ICON_SIZES.sm} />
+                </Box>
+              )}
+              <chakra.span flex="1" minW="0">
+                {entry.label}
+              </chakra.span>
+              {entry.shortcut && (
+                <chakra.kbd
+                  flexShrink={0}
+                  ml="3"
+                  fontSize="xs"
+                  fontFamily="inherit"
+                  color={entry.danger ? "inherit" : "app.textMuted"}
+                  opacity={entry.disabled ? 0.6 : 0.85}
+                  whiteSpace="nowrap"
+                >
+                  {entry.shortcut}
+                </chakra.kbd>
+              )}
             </chakra.button>
           ),
         )}
