@@ -34,7 +34,14 @@ pub enum DiffStatus {
 /// One table paired with its full column metadata — the collected shape of one
 /// side of the comparison. Built by the command layer from `Connection::tables`
 /// + `Connection::columns`.
-#[derive(Debug, Clone)]
+///
+/// Also doubles as the wire shape for `commands::diff::diff_schema_snapshots`
+/// (schema drift timeline, #736): the frontend captures this same
+/// `{ name, columns }` structure into a `localStorage` snapshot (via the same
+/// `list_tables` + `describe_table` round trips `compare_schema` performs
+/// live) and later replays two snapshots through `compute_schema_diff` without
+/// either side needing a live session. Hence `Serialize`/`Deserialize` here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableColumns {
     pub name: String,
     pub columns: Vec<TableColumnInfo>,
