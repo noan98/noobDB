@@ -23,20 +23,39 @@ import tauriTs from "../api/tauri.ts?raw";
 // 抽出して突き合わせ、片側にしか存在しない名前があればテストを落とす。
 
 // `commands/*.rs` の `const EV_XXX: &str = "event-name";` からイベント名リテラルを
-// 抽出する。ストリーミングイベントは全て「意味の分かる定数名 → リテラル」という同じ
-// 書き方に統一されているため (grep で確認済み)、この定数宣言パターンだけを対象にすれば
-// 過不足なく拾える。
+// 抽出する。ストリーミングイベントは「意味の分かる定数名 → リテラル」という書き方に
+// 統一されているためこれが主経路だが、将来 `.emit("xxx-yyy:zzz", ...)` のように定数を
+// 介さず直接リテラルで emit されても取りこぼさないよう、emit 呼び出しの第一引数に
+// 現れるイベント名形状のリテラルも合わせて拾う (下の規約テストとの二段構え)。
 function extractEmittedEvents(rustSources: string[]): Set<string> {
   const events = new Set<string>();
-  const re = /const EV_[A-Z0-9_]+\s*:\s*&str\s*=\s*"([^"]+)";/g;
+  const constRe = /const EV_[A-Z0-9_]+\s*:\s*&str\s*=\s*"([^"]+)";/g;
+  const emitLiteralRe = /\.emit(?:_to|_all)?\s*\(\s*"([a-z][a-z0-9-]*:[a-z][a-z0-9-]*)"/g;
+  for (const src of rustSources) {
+    for (const re of [constRe, emitLiteralRe]) {
+      let match: RegExpExecArray | null;
+      re.lastIndex = 0;
+      while ((match = re.exec(src)) !== null) {
+        events.add(match[1]);
+      }
+    }
+  }
+  return events;
+}
+
+// emit 呼び出しの第一引数トークンを抽出する (規約テスト用)。`\s` は改行にも一致する
+// ため、`.emit(\n    EV_XXX,` のような複数行呼び出しも拾える。
+function extractEmitFirstArgs(rustSources: string[]): string[] {
+  const args: string[] = [];
+  const re = /\.emit(?:_to|_all)?\s*\(\s*("[^"]*"|[A-Za-z_][A-Za-z0-9_]*)/g;
   for (const src of rustSources) {
     let match: RegExpExecArray | null;
     re.lastIndex = 0;
     while ((match = re.exec(src)) !== null) {
-      events.add(match[1]);
+      args.push(match[1]);
     }
   }
-  return events;
+  return args;
 }
 
 // `src/api/tauri.ts` の `listen<...>("event-name", ...)` (ジェネリック省略可) から
@@ -105,5 +124,28 @@ describe("ストリーミングイベント名パリティ (Rust emit ↔ tauri.
 
   it("emit 集合と listen 集合が完全一致する", () => {
     expect([...listened].sort()).toEqual([...emitted].sort());
+  });
+
+  it("すべての emit 呼び出しの第一引数が EV_* 定数またはイベント名リテラルである (抽出漏れ防止)", () => {
+    // 定数 (EV_*) 経路とリテラル経路の両方は extractEmittedEvents が拾う。それ以外の
+    // 形 (別名の定数・変数など) で emit されると抽出から漏れてパリティ検証が素通り
+    // するため、ここで規約として固定する。`event` は行バッチ emit ヘルパの転送
+    // パラメータ (呼び出し元が EV_* 定数を渡すため、定数経路で抽出済み) の許可。
+    const offenders = extractEmitFirstArgs([
+      queryRs,
+      dumpRs,
+      exportRs,
+      importRs,
+      connectionRs,
+    ]).filter((arg) => {
+      if (arg.startsWith('"')) return false;
+      if (/^EV_[A-Z0-9_]+$/.test(arg)) return false;
+      if (arg === "event") return false;
+      return true;
+    });
+    expect(
+      offenders,
+      `EV_* 定数でもリテラルでもない emit 第一引数: ${offenders.join(", ")}`,
+    ).toEqual([]);
   });
 });
