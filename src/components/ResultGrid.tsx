@@ -25,7 +25,7 @@ import {
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
-import { comboMatchesEvent } from "../shortcutKeys";
+import { comboMatchesEvent, formatCombo } from "../shortcutKeys";
 import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact, rawValueTitle } from "./cellFormat";
 import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
@@ -2292,6 +2292,8 @@ export function DataGrid({
   onPaginationChange,
   onUndoEdit,
   onRedoEdit,
+  canUndo,
+  canRedo,
   onSelectionSummary,
   onRunStatsQuery,
   findHits,
@@ -2404,6 +2406,14 @@ export function DataGrid({
   onPaginationChange?: OnChangeFn<PaginationState>;
   onUndoEdit?: () => void;
   onRedoEdit?: () => void;
+  /**
+   * 呼び出し元 (`ResultGrid`) が保持する Undo/Redo スタックの可否 (#815)。
+   * 右クリックメニューの「元に戻す/やり直す」項目の disabled 判定にのみ使う —
+   * ツールバーボタンの有効判定は `ResultGrid` 自身が別途行うので、ここは省略
+   * (undefined) なら常に有効として扱う。
+   */
+  canUndo?: boolean;
+  canRedo?: boolean;
   /**
    * Called whenever the rectangular range selection changes, with the live
    * aggregate of the selected cells (or null when nothing multi-cell is
@@ -4118,10 +4128,16 @@ export function DataGrid({
           y={copyMenu.y}
           onClose={() => setCopyMenu(null)}
           items={[
-            { label: t("gridCopyCell"), onSelect: () => copyCell(copyMenu.rowIdx, copyMenu.colIdx) },
+            {
+              label: t("gridCopyCell"),
+              icon: "copy",
+              shortcut: formatCombo(effectiveGridBindings.gridCopy),
+              onSelect: () => copyCell(copyMenu.rowIdx, copyMenu.colIdx),
+            },
             { label: t("gridCopyRow"), onSelect: () => copyRow(copyMenu.rowIdx) },
             {
               label: t("gridCopyRowWithHeaders"),
+              shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
               onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
             },
             ...(() => {
@@ -4274,6 +4290,7 @@ export function DataGrid({
             },
             {
               label: t("gridRowInspector"),
+              shortcut: formatCombo(effectiveGridBindings.gridInspector),
               onSelect: () => {
                 const rk = copyMenu.rowIdx;
                 const ck = copyMenu.colIdx;
@@ -4282,6 +4299,35 @@ export function DataGrid({
                 setInspectorOpen(true);
               },
             },
+            // 元に戻す/やり直す (#815): ツールバーの Undo/Redo ボタンと同じ
+            // ハンドラ/有効判定をメニューからも呼べるようにする。
+            ...(onUndoEdit || onRedoEdit
+              ? [
+                  { separator: true as const },
+                  ...(onUndoEdit
+                    ? [
+                        {
+                          label: t("gridUndoItem"),
+                          icon: "undo" as const,
+                          shortcut: formatCombo(effectiveGridBindings.gridUndo),
+                          disabled: canUndo === false,
+                          onSelect: () => { setCopyMenu(null); onUndoEdit(); },
+                        },
+                      ]
+                    : []),
+                  ...(onRedoEdit
+                    ? [
+                        {
+                          label: t("gridRedoItem"),
+                          icon: "redo" as const,
+                          shortcut: formatCombo(effectiveGridBindings.gridRedo),
+                          disabled: canRedo === false,
+                          onSelect: () => { setCopyMenu(null); onRedoEdit(); },
+                        },
+                      ]
+                    : []),
+                ]
+              : []),
             // 行の追加・削除。PK が無いテーブルでは削除を無効化 (行を一意に
             // 特定できないため)。新規行追加は PK 有無に依らず可能。
             ...(onToggleRowDelete || onRequestInsertRow
@@ -5869,6 +5915,8 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           onDuplicateRow={editableActive ? onDuplicateRow : undefined}
           onUndoEdit={onUndoEdit}
           onRedoEdit={onRedoEdit}
+          canUndo={canUndo}
+          canRedo={canRedo}
           validateEdit={validateEdit}
           rowSqlDriver={driver}
           rowSqlDatabase={database}

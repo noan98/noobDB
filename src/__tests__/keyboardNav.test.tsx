@@ -203,6 +203,72 @@ describe("useRovingFocus", () => {
     await user.keyboard("{End}");
     expect(screen.getByRole("option", { name: "Cherry" })).toHaveFocus();
   });
+
+  // -------------------------------------------------------------------------
+  // 先頭文字ジャンプ (type-ahead, #815)
+  // -------------------------------------------------------------------------
+
+  it("印字可能な文字キーで、その文字から始まる次の項目へフォーカスが移る", async () => {
+    const user = userEvent.setup();
+    render(<RovingListComponent />);
+
+    screen.getByRole("option", { name: "Apple" }).focus();
+    // "b" → Banana から始まる次の項目。
+    await user.keyboard("b");
+    expect(screen.getByRole("option", { name: "Banana" })).toHaveFocus();
+  });
+
+  it("大文字小文字を無視してマッチする", async () => {
+    const user = userEvent.setup();
+    render(<RovingListComponent />);
+
+    screen.getByRole("option", { name: "Apple" }).focus();
+    await user.keyboard("C");
+    expect(screen.getByRole("option", { name: "Cherry" })).toHaveFocus();
+  });
+
+  it("末尾から先頭へ循環して一致項目を探す", async () => {
+    const user = userEvent.setup();
+    render(<RovingListComponent />);
+
+    // Cherry にフォーカスした状態で "a" を押すと、末尾から折り返して Apple へ。
+    screen.getByRole("option", { name: "Cherry" }).focus();
+    await user.keyboard("a");
+    expect(screen.getByRole("option", { name: "Apple" })).toHaveFocus();
+  });
+
+  it("同じ文字を繰り返し押すと一致項目間を巡回する", async () => {
+    // Apple/Apricot のように同じ頭文字を持つ2項目を用意する。
+    function TwoAComponent() {
+      const ref = useRef<HTMLUListElement>(null);
+      const { onKeyDown } = useRovingFocus(ref, "[role=option]", { orientation: "vertical" });
+      return (
+        <ul ref={ref} role="listbox" onKeyDown={onKeyDown}>
+          <li role="option" tabIndex={0}>Apple</li>
+          <li role="option" tabIndex={-1}>Apricot</li>
+          <li role="option" tabIndex={-1}>Banana</li>
+        </ul>
+      );
+    }
+    const user = userEvent.setup();
+    render(<TwoAComponent />);
+
+    screen.getByRole("option", { name: "Apple" }).focus();
+    await user.keyboard("a");
+    expect(screen.getByRole("option", { name: "Apricot" })).toHaveFocus();
+    await user.keyboard("a");
+    expect(screen.getByRole("option", { name: "Apple" })).toHaveFocus();
+  });
+
+  it("一致する項目が無ければフォーカスは変わらない", async () => {
+    const user = userEvent.setup();
+    render(<RovingListComponent />);
+
+    const apple = screen.getByRole("option", { name: "Apple" });
+    apple.focus();
+    await user.keyboard("z");
+    expect(apple).toHaveFocus();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -264,6 +330,34 @@ describe("ContextMenu キーボードナビゲーション", () => {
 
     expect(onClose).toHaveBeenCalled();
     expect(onSelect).toHaveBeenCalled();
+  });
+
+  it("先頭文字ジャンプ (type-ahead) でメニュー項目間を移動できる", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ContextMenu x={100} y={100} items={items} onClose={() => {}} />,
+    );
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[role="menuitem"]')).not.toBeNull();
+    });
+    // 最初の項目 (Edit) にフォーカスが当たっているところから "d" を押すと
+    // Delete へ移動する。
+    await user.keyboard("d");
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveFocus();
+  });
+
+  it("icon / shortcut を持つ項目にアイコンとキー表記が表示される", async () => {
+    const testItems: ContextMenuEntry[] = [
+      { label: "Copy value", icon: "copy", shortcut: "Cmd/Ctrl+C", onSelect: vi.fn() },
+    ];
+    renderWithProviders(
+      <ContextMenu x={100} y={100} items={testItems} onClose={() => {}} />,
+    );
+
+    const menuItem = await screen.findByRole("menuitem", { name: /Copy value/ });
+    expect(menuItem).toHaveTextContent("Cmd/Ctrl+C");
+    expect(menuItem.querySelector("svg")).not.toBeNull();
   });
 });
 

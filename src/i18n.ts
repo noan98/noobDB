@@ -1240,6 +1240,11 @@ const en = {
   gridInspectorClose: "Close inspector",
   gridInspectorCopyField: "Copy field value",
   gridInspectorEmpty: "No columns to show",
+  // コンテキストメニューの Undo/Redo (#815). ツールバーボタンの
+  // editUndoTitle/editRedoTitle と同じ操作だが、メニュー項目としては
+  // ショートカット表記を別カラムで出すため文言だけの短いラベルにする。
+  gridUndoItem: "Undo",
+  gridRedoItem: "Redo",
   // 結果グリッドからの行追加・削除。
   gridAddRow: "Add new row...",
   gridMarkDelete: "Mark row for deletion",
@@ -3286,6 +3291,9 @@ const ja: Dict = {
   gridInspectorClose: "インスペクタを閉じる",
   gridInspectorCopyField: "フィールド値をコピー",
   gridInspectorEmpty: "表示する列がありません",
+  // コンテキストメニューの Undo/Redo (#815)。
+  gridUndoItem: "元に戻す",
+  gridRedoItem: "やり直す",
   // 結果グリッドからの行追加・削除。
   gridAddRow: "新規行を追加...",
   gridMarkDelete: "行を削除予定にする",
