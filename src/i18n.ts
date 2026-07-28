@@ -1204,6 +1204,26 @@ const en = {
   gridPinNone: "Don't pin",
   gridPinLeft: "Pin to left",
   gridPinRight: "Pin to right",
+  // Server-side sort/filter for the table-browse grid (#792): applied on the
+  // server against ALL rows (not just the currently loaded ones), then
+  // re-fetches page 1. Distinct from the client-side sort/filter above, which
+  // only reorders/hides already-loaded rows.
+  gridServerBrowseLabel: "Server-side (all rows)",
+  gridServerSortSelectAria: "Server-side sort",
+  gridServerSortOptionNone: "Off",
+  gridServerSortOptionAsc: "Ascending",
+  gridServerSortOptionDesc: "Descending",
+  gridServerFilterOpAria: "Server-side filter condition",
+  gridServerFilterOpEq: "Equals",
+  gridServerFilterOpContains: "Contains",
+  gridServerFilterOpIsNull: "IS NULL",
+  gridServerFilterOpIsNotNull: "IS NOT NULL",
+  gridServerFilterValueAria: "Server-side filter value",
+  gridServerFilterApply: "Apply",
+  gridServerFilterClear: "Clear",
+  gridServerSortChip: "Server sort: {column} ({dir})",
+  gridServerFilterChip: "Server filter: {column}",
+  gridServerBrowseClear: "Clear",
   // Range-selection summary (#523) and column quick-stats (#524). Short labels
   // are shared between the two so the analysis vocabulary stays consistent.
   gridCountLabel: "Count",
@@ -3278,6 +3298,25 @@ const ja: Dict = {
   gridPinNone: "固定しない",
   gridPinLeft: "左に固定",
   gridPinRight: "右に固定",
+  // テーブル閲覧グリッドのサーバ側ソート/フィルタ (#792)。読み込み済みの行だけでなく
+  // 全件を対象にサーバへ WHERE/ORDER BY を送り、1 ページ目から再取得する。上の
+  // クライアント側ソート/フィルタ (読み込み済み行の並び替え/絞り込みのみ) とは別物。
+  gridServerBrowseLabel: "サーバー側 (全件)",
+  gridServerSortSelectAria: "サーバー側ソート",
+  gridServerSortOptionNone: "なし",
+  gridServerSortOptionAsc: "昇順",
+  gridServerSortOptionDesc: "降順",
+  gridServerFilterOpAria: "サーバー側フィルタの条件",
+  gridServerFilterOpEq: "等しい",
+  gridServerFilterOpContains: "含む",
+  gridServerFilterOpIsNull: "NULL である",
+  gridServerFilterOpIsNotNull: "NULL でない",
+  gridServerFilterValueAria: "サーバー側フィルタの値",
+  gridServerFilterApply: "適用",
+  gridServerFilterClear: "解除",
+  gridServerSortChip: "サーバー側ソート: {column} ({dir})",
+  gridServerFilterChip: "サーバー側フィルタ: {column}",
+  gridServerBrowseClear: "解除",
   // 範囲選択サマリ (#523) と列クイック統計 (#524)。短いラベルは両機能で共有し、
   // 分析用語の表記を揃える。
   gridCountLabel: "件数",
