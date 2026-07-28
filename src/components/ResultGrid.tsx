@@ -951,6 +951,14 @@ interface Props {
   /** 結果をチャート表示へ切り替える。未指定ならツールバーにボタンを出さない。 */
   onShowChart?: () => void;
   /**
+   * 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。App が
+   * セッション・対象クエリ・データベースを確定させたときだけ渡す — 読み取り専用
+   * セッション、対象クエリが単一の SELECT/WITH でない、データベース文脈が無いなど
+   * の理由で保存できないときは未指定になり、Export と同じくボタンは disabled
+   * (ツールチップで理由を示す) のまま出る。
+   */
+  onSaveAsTable?: () => void;
+  /**
    * 全件ストリーミングエクスポートのコンテキスト。提供されると ExportModal に
    * 「全件 (再実行)」モードが現れる。
    */
@@ -4764,6 +4772,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onToggleDiffHighlight,
   onShowPivot,
   onShowChart,
+  onSaveAsTable,
   fullExport,
   lastEditAppliedAt,
   applyingEdits,
@@ -5297,6 +5306,23 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           }
         >
           {t("exportButton")}
+        </Button>
+        <Button
+          size="sm"
+          px="2.5"
+          onClick={() => onSaveAsTable?.()}
+          disabled={!canExport || !onSaveAsTable}
+          title={
+            streaming
+              ? t("exportDisabledStreaming")
+              : !canExport
+                ? t("exportDisabledNoRows")
+                : onSaveAsTable
+                  ? t("saveAsTableButtonTitle")
+                  : t("saveAsTableDisabledTitle")
+          }
+        >
+          {t("saveAsTableButton")}
         </Button>
         {onSetAutoRefresh && (
           <Box
