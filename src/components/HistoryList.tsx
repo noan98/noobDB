@@ -3,7 +3,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { I18nKey, useT } from "../i18n";
 import { transitions, variants } from "../motion";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Checkbox, Input, PressableButton } from "./ui";
 import {
@@ -359,7 +359,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
                         void handleCopy(h.id, h.sql);
                       }}
                     >
-                      <Icon name={copiedId === h.id ? "check" : "copy"} size={15} />
+                      <Icon name={copiedId === h.id ? "check" : "copy"} size={ICON_SIZES.md} />
                     </chakra.button>
                     <chakra.button
                       type="button"
@@ -379,7 +379,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
                         onOpenInNewTab(h.sql);
                       }}
                     >
-                      <Icon name="query" size={15} />
+                      <Icon name="query" size={ICON_SIZES.md} />
                     </chakra.button>
                   </chakra.span>
                 </TreeRow>

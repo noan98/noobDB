@@ -11,7 +11,7 @@ import {
   useSettings,
 } from "../settings";
 import { copyToClipboard } from "./clipboard";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import {
   computeStatDelta,
   detectNPlusOne,
@@ -321,7 +321,7 @@ export function QueryInspectorPanel({
           aria-label={t("inspectorClose")}
           title={t("inspectorClose")}
         >
-          <Icon name="close" size={13} />
+          <Icon name="close" size={ICON_SIZES.sm} />
         </Button>
       </chakra.header>
 
@@ -556,7 +556,7 @@ export function QueryInspectorPanel({
                                 aria-label={t("inspectorCopySql")}
                                 title={t("inspectorCopySql")}
                               >
-                                <Icon name="copy" size={12} />
+                                <Icon name="copy" size={ICON_SIZES.sm} />
                               </Button>
                             </chakra.td>
                           </tr>
@@ -641,7 +641,7 @@ export function QueryInspectorPanel({
                               aria-label={t("inspectorCopySql")}
                               title={t("inspectorCopySql")}
                             >
-                              <Icon name="copy" size={12} />
+                              <Icon name="copy" size={ICON_SIZES.sm} />
                             </Button>
                           </chakra.td>
                         </tr>

@@ -4,7 +4,7 @@ import { AnimatePresence } from "motion/react";
 import { ConnectionProfile, Snippet } from "../api/tauri";
 import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { Button, Checkbox, Input } from "./ui";
 import {
@@ -205,7 +205,7 @@ export const SnippetList = memo(function SnippetList({
               aria-label={t("snippetOpenPlanWatch")}
               css={{ flex: "none", minWidth: "28px", px: "2", py: "1", lineHeight: 1 }}
             >
-              <Icon name="explain" size={13} />
+              <Icon name="explain" size={ICON_SIZES.sm} />
             </Button>
           )}
         </Box>

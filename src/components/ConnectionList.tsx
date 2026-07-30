@@ -1506,7 +1506,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                 display="inline-flex"
                 animation={refreshing ? "spinner-rotate var(--dur-spin) linear infinite" : undefined}
               >
-                <Icon name="refresh" size={13} />
+                <Icon name="refresh" size={ICON_SIZES.sm} />
               </chakra.span>
             </chakra.button>
           )}

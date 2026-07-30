@@ -7,7 +7,7 @@ import { useT } from "../i18n";
 import { transitions } from "../motion";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import type { CellKind } from "./cellTypeMeta";
 
 interface Props {
@@ -130,7 +130,7 @@ export function RowInspector({
             title={t("gridInspectorPrev")}
             aria-label={t("gridInspectorPrev")}
           >
-            <Icon name="chevron-left" size={16} />
+            <Icon name="chevron-left" size={ICON_SIZES.md} />
           </chakra.button>
           <chakra.button
             type="button"
@@ -151,7 +151,7 @@ export function RowInspector({
             title={t("gridInspectorNext")}
             aria-label={t("gridInspectorNext")}
           >
-            <Icon name="chevron-right" size={16} />
+            <Icon name="chevron-right" size={ICON_SIZES.md} />
           </chakra.button>
           <chakra.button
             type="button"
@@ -170,7 +170,7 @@ export function RowInspector({
             title={t("gridInspectorClose")}
             aria-label={t("gridInspectorClose")}
           >
-            <Icon name="close" size={16} />
+            <Icon name="close" size={ICON_SIZES.md} />
           </chakra.button>
         </Box>
 
@@ -230,7 +230,7 @@ export function RowInspector({
                       title={t("gridInspectorCopyField")}
                       aria-label={t("gridInspectorCopyField")}
                     >
-                      <Icon name="copy" size={13} />
+                      <Icon name="copy" size={ICON_SIZES.sm} />
                     </chakra.button>
                   </Box>
                   {isNull ? (

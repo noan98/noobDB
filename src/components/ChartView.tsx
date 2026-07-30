@@ -6,7 +6,7 @@ import { useT } from "../i18n";
 import { CATEGORICAL, readableInk } from "../colorScale";
 import { durations, easings } from "../motion";
 import { Button, Checkbox, Select } from "./ui";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { ImageExportButton } from "./ImageExportButton";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { EmptyState } from "./EmptyState";
@@ -113,7 +113,7 @@ export function ChartView({ result, onClose }: Props) {
       {/* 設定バー */}
       <Flex align="center" gap="2.5" px="3" py="2" flex="none" borderBottomWidth="1px" borderBottomColor="app.border" flexWrap="wrap" fontSize="sm">
         <Button type="button" variant="secondary" size="sm" onClick={onClose}>
-          <Icon name="table" size={14} /> {t("chartBackToTable")}
+          <Icon name="table" size={ICON_SIZES.md} /> {t("chartBackToTable")}
         </Button>
         <ImageExportButton
           filenameBase="chart"

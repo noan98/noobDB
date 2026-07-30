@@ -9,7 +9,7 @@ import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
 import { copyToClipboard } from "./clipboard";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
 import { useToast } from "./Toast";
@@ -669,7 +669,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                                   aria-label={t("qbRemove")}
                                   title={t("qbRemove")}
                                 >
-                                  <Icon name="close" size={12} />
+                                  <Icon name="close" size={ICON_SIZES.sm} />
                                 </chakra.button>
                               </chakra.td>
                             ))}
@@ -720,7 +720,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     title={t("qbRemove")}
                     disabled={setPairs.length <= 1}
                   >
-                    <Icon name="close" size={12} />
+                    <Icon name="close" size={ICON_SIZES.sm} />
                   </chakra.button>
                 </Box>
               ))}
@@ -758,7 +758,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     title={t("qbRemove")}
                     disabled={insertPairs.length <= 1}
                   >
-                    <Icon name="close" size={12} />
+                    <Icon name="close" size={ICON_SIZES.sm} />
                   </chakra.button>
                 </Box>
               ))}
@@ -819,7 +819,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     title={t("qbRemove")}
                     disabled={whereConditions.length <= 1}
                   >
-                    <Icon name="close" size={12} />
+                    <Icon name="close" size={ICON_SIZES.sm} />
                   </chakra.button>
                 </Box>
               ))}

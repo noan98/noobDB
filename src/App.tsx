@@ -73,7 +73,7 @@ import { TitleBar } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
-import { Icon } from "./components/Icon";
+import { Icon, ICON_SIZES } from "./components/Icon";
 import { Button } from "./components/ui";
 import { LoadingButton } from "./components/LoadingButton";
 import { useConfirm } from "./components/ConfirmDialog";
@@ -5787,7 +5787,7 @@ export default function App() {
                       borderBottomColor="app.border"
                       bg="app.toolbar"
                     >
-                      <Icon name="maximize" size={14} />
+                      <Icon name="maximize" size={ICON_SIZES.md} />
                       <chakra.span
                         fontSize="sm"
                         color="app.text"
@@ -5806,7 +5806,7 @@ export default function App() {
                         onClick={() => setLayoutMode("normal")}
                         title={t("editorRestoreTitle")}
                       >
-                        <Icon name="minimize" size={14} /> {t("editorFocusedLabel")}
+                        <Icon name="minimize" size={ICON_SIZES.md} /> {t("editorFocusedLabel")}
                       </Button>
                     </Flex>
                   )}
@@ -5893,7 +5893,7 @@ export default function App() {
                       borderBottomColor="app.border"
                       bg="app.toolbar"
                     >
-                      <Icon name="maximize" size={14} />
+                      <Icon name="maximize" size={ICON_SIZES.md} />
                       <chakra.span
                         fontSize="sm"
                         color="app.text"
@@ -5912,7 +5912,7 @@ export default function App() {
                         onClick={() => setLayoutMode("normal")}
                         title={t("resultRestoreTitle")}
                       >
-                        <Icon name="minimize" size={14} /> {t("resultMaximizedLabel")}
+                        <Icon name="minimize" size={ICON_SIZES.md} /> {t("resultMaximizedLabel")}
                       </Button>
                     </Flex>
                   )}
@@ -6005,7 +6005,7 @@ export default function App() {
                         bg="color-mix(in srgb, var(--accent) 8%, transparent)"
                         fontSize="sm"
                       >
-                        <Icon name="table" size={14} />
+                        <Icon name="table" size={ICON_SIZES.md} />
                         <chakra.span color="app.text">
                           {t("rowOpsBarSummary", {
                             inserts: tab.pendingInserts?.length ?? 0,
@@ -6718,7 +6718,7 @@ export default function App() {
                         borderColor="app.status.error"
                         flexShrink={0}
                       >
-                        <Icon name="warning" size={12} />
+                        <Icon name="warning" size={ICON_SIZES.sm} />
                         {t("listProduction")}
                       </chakra.span>
                     )}
@@ -6742,7 +6742,7 @@ export default function App() {
                         borderColor="app.borderStrong"
                         flexShrink={0}
                       >
-                        <Icon name="key" size={12} />
+                        <Icon name="key" size={ICON_SIZES.sm} />
                         {t("listReadOnly")}
                       </chakra.span>
                     )}
@@ -6799,7 +6799,7 @@ export default function App() {
               )}
               {sessionId && (
                 <Button variant="dangerOutline" size="sm" onClick={handleDisconnect}>
-                  <Icon name="unplug" size={14} />
+                  <Icon name="unplug" size={ICON_SIZES.md} />
                   {t("appDisconnect")}
                 </Button>
               )}

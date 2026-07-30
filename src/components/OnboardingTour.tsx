@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
 import { useFocusTrap, useReturnFocus } from "../keyboardNav";
 import { useT } from "../i18n";
-import { Icon, type IconName } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { Button } from "./ui";
 import {
   INITIAL_TOUR_STATE,
@@ -149,7 +149,7 @@ export function OnboardingTour({ onClose }: Props) {
                 transition={transitions.crossfade}
                 style={{ display: "inline-flex" }}
               >
-                <Icon name={current.icon} size={16} strokeWidth={1.5} />
+                <Icon name={current.icon} size={ICON_SIZES.md} strokeWidth={1.5} />
               </motion.div>
             </AnimatePresence>
           </Flex>
@@ -190,7 +190,7 @@ export function OnboardingTour({ onClose }: Props) {
           _hover={{ bg: "app.hover", color: "app.text" }}
           _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
         >
-          <Icon name="close" size={14} />
+          <Icon name="close" size={ICON_SIZES.md} />
         </chakra.button>
       </Flex>
 

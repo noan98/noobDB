@@ -3,7 +3,7 @@ import { chakra } from "@chakra-ui/react";
 import { CellValue } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { copyToClipboard } from "./clipboard";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { useToast } from "./Toast";
 import { Button, Switch } from "./ui";
@@ -296,7 +296,7 @@ export function CellValueViewer({
               _hover={{ color: "app.text", bg: "app.hover" }}
               _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
             >
-              <Icon name={copied ? "check" : "copy"} size={16} />
+              <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
             </chakra.button>
             {canEdit ? (
               <Button type="button" variant="primary" onClick={startEditing}>

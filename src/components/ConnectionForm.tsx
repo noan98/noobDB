@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod, SslMode } from "../api/tauri";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 
@@ -72,7 +72,7 @@ function PasswordInput({ value, onChange, hasStored, id }: PasswordInputProps) {
         aria-label={show ? t("formPasswordHide") : t("formPasswordShow")}
         title={show ? t("formPasswordHide") : t("formPasswordShow")}
       >
-        <Icon name={show ? "eye-off" : "eye"} size={16} />
+        <Icon name={show ? "eye-off" : "eye"} size={ICON_SIZES.md} />
       </chakra.button>
     </Box>
   );

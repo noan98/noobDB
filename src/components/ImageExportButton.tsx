@@ -4,7 +4,7 @@ import { downloadDir, join } from "@tauri-apps/api/path";
 import { useT } from "../i18n";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import {
   blobToBytes,
@@ -106,7 +106,7 @@ export function ImageExportButton({ makePng, makeSvg, filenameBase, size = "sm",
         title={t("imageExportButton")}
         aria-label={t("imageExportButton")}
       >
-        <Icon name="download" size={14} />
+        <Icon name="download" size={ICON_SIZES.md} />
         {!iconOnly && <span style={{ marginInlineStart: 6 }}>{t("imageExportButton")}</span>}
       </Button>
       {menu && (

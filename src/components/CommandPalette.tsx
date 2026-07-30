@@ -1,7 +1,7 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Modal } from "./Modal";
 import {
   flattenGroups,
@@ -123,7 +123,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
         bg="app.surface"
       >
         <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-          <Icon name="query" size={16} />
+          <Icon name="query" size={ICON_SIZES.md} />
         </Box>
         <chakra.input
           ref={inputRef}
@@ -280,7 +280,7 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
     >
       {item.icon && (
         <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-          <Icon name={item.icon} size={15} />
+          <Icon name={item.icon} size={ICON_SIZES.md} />
         </Box>
       )}
       <Flex direction="column" minW={0} flex="1" gap="1px">

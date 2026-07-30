@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type TableSchema } from "../api/tauri";
 import { useT } from "../i18n";
 import { buildObjectIndex, searchObjects, type ObjectEntry } from "../objectSearch";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 
@@ -132,7 +132,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
         bg="app.surface"
       >
         <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-          <Icon name="table" size={16} />
+          <Icon name="table" size={ICON_SIZES.md} />
         </Box>
         <chakra.input
           ref={inputRef}
@@ -262,7 +262,7 @@ function ResultRow({ entry, active, onMouseMove, onClick, ref }: RowProps) {
       css={{ scrollMarginBlock: "8px" }}
     >
       <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-        <Icon name={entry.kind === "column" ? "columns" : "table"} size={15} />
+        <Icon name={entry.kind === "column" ? "columns" : "table"} size={ICON_SIZES.md} />
       </Box>
       <Flex direction="column" minW={0} flex="1" gap="1px">
         <chakra.span fontSize="sm" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">

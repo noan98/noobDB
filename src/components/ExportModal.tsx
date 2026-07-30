@@ -9,7 +9,7 @@ import { Button, Input, Radio } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { copyToClipboard } from "./clipboard";
 import { buildExportContent, DEFAULT_SQL_BATCH } from "./exportPreview";
 
@@ -529,7 +529,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
               _hover={{ color: copied ? "app.status.success" : "app.text", bg: "app.hover" }}
               _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
             >
-              <Icon name={copied ? "check" : "copy"} size={15} />
+              <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
             </chakra.button>
           </chakra.div>
           <chakra.pre

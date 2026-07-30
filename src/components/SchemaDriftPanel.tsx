@@ -14,7 +14,7 @@ import {
 } from "../schemaDrift";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Select } from "./ui";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
 import { EmptyState } from "./EmptyState";
 
@@ -137,7 +137,7 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
                     align="center"
                     bg={selected ? "app.active" : undefined}
                   >
-                    <Icon name="clock" size={13} />
+                    <Icon name="clock" size={ICON_SIZES.sm} />
                     <Box flex="1" minWidth={0}>
                       <chakra.div fontSize="sm" fontWeight={600} color="app.text">
                         {formatCaptured(g.capturedAt)}
@@ -249,7 +249,7 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
           onClick={onCapture}
           title={canCapture ? t("schemaDriftCaptureHint") : t("schemaDriftNeedConnection")}
         >
-          <Icon name="refresh" size={13} /> {capturing ? t("schemaDriftCapturing") : t("schemaDriftCaptureNow")}
+          <Icon name="refresh" size={ICON_SIZES.sm} /> {capturing ? t("schemaDriftCapturing") : t("schemaDriftCaptureNow")}
         </Button>
         <Button variant="primary" onClick={onClose}>
           {t("schemaDriftClose")}

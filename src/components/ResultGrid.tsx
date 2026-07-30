@@ -2175,7 +2175,7 @@ function ColumnStatsMenu({
       onMouseDown={(e) => e.stopPropagation()}
     >
       <Box display="flex" alignItems="center" gap="1.5" minWidth={0}>
-        <Icon name={CELL_KIND_META[kind].icon} size={13} />
+        <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
         <chakra.div
           fontSize="var(--text-sm)"
           fontWeight={600}
@@ -4076,7 +4076,7 @@ export function DataGrid({
                             setDragOverColId(null);
                           }}
                         >
-                          <Icon name="columns" size={12} />
+                          <Icon name="columns" size={ICON_SIZES.sm} />
                         </chakra.span>
                         <chakra.button
                           type="button"
@@ -4115,7 +4115,7 @@ export function DataGrid({
                           aria-haspopup="dialog"
                           aria-expanded={filterMenu?.colIdx === colIdx}
                         >
-                          <Icon name="filter" size={12} strokeWidth={2.2} />
+                          <Icon name="filter" size={ICON_SIZES.sm} strokeWidth={2.2} />
                         </chakra.button>
                       </div>
                     ) : (
@@ -5607,7 +5607,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             onClick={onShowPivot}
             title={t("pivotShow")}
           >
-            <Icon name="table" size={14} /> {t("pivotShow")}
+            <Icon name="table" size={ICON_SIZES.md} /> {t("pivotShow")}
           </Button>
         )}
         {onShowChart && canExport && (
@@ -5619,7 +5619,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             onClick={onShowChart}
             title={t("chartShow")}
           >
-            <Icon name="er-diagram" size={14} /> {t("chartShow")}
+            <Icon name="er-diagram" size={ICON_SIZES.md} /> {t("chartShow")}
           </Button>
         )}
         {editable && tableColumns && pkIndices.length === 0 && (

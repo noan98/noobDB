@@ -12,7 +12,7 @@ import {
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Select } from "./ui";
 import { ExplainViewer } from "./ExplainViewer";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { EmptyState } from "./EmptyState";
 
 /**
@@ -141,7 +141,7 @@ export function PlanWatchPanel({
                       }
                     }}
                   >
-                    <Icon name="explain" size={13} />
+                    <Icon name="explain" size={ICON_SIZES.sm} />
                     <Box flex="1" minWidth={0}>
                       <chakra.div
                         fontSize="sm"
@@ -244,7 +244,7 @@ export function PlanWatchPanel({
                               gap="1.5"
                               color={c.severity === "warning" ? "app.textError" : "app.text"}
                             >
-                              {c.severity === "warning" && <Icon name="warning" size={13} />}
+                              {c.severity === "warning" && <Icon name="warning" size={ICON_SIZES.sm} />}
                               {t(CHANGE_KEY[c.kind], {
                                 object: c.object,
                                 before: c.before ?? "—",
@@ -313,7 +313,7 @@ export function PlanWatchPanel({
           onClick={onRefresh}
           title={canRefresh ? t("planWatchRefreshHint") : t("planWatchNeedConnection")}
         >
-          <Icon name="refresh" size={13} />{" "}
+          <Icon name="refresh" size={ICON_SIZES.sm} />{" "}
           {refreshing ? t("planWatchRefreshing") : t("planWatchRefresh")}
         </Button>
         <Button variant="primary" onClick={onClose}>
