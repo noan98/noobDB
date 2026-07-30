@@ -20,6 +20,7 @@ import {
   type MetricSeriesKey,
 } from "./serverMetrics";
 import { Checkbox, Select } from "./ui";
+import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
 
 /**
@@ -244,6 +245,32 @@ function MetricChart({
   );
 }
 
+/**
+ * `MetricChart` 1 枚分のロード中プレースホルダ (#846)。初回サンプル取得が
+ * 終わるまでは `hasSeriesData` が常に false になり本来の「データなし」空状態
+ * (`metricsNoSeriesData`) と見分けが付かないため、初回ロード中に限りタイトル/
+ * 凡例/チャート領域の構造をシマーで予兆表示する。ロード状態の ARIA 告知は
+ * ツールバーの `Spinner` (role="status") が担うため、ここは `aria-hidden`。
+ */
+function MetricChartSkeleton({ def }: { def: ChartDef }) {
+  const t = useT();
+  return (
+    <Box borderWidth="1px" borderColor="app.border" borderRadius="md" p="3" bg="app.surface" aria-hidden>
+      <Flex align="baseline" justify="space-between" gap="2" mb="1.5">
+        <chakra.h3 margin={0} fontSize="sm" fontWeight={600} color="app.text">
+          {t(def.titleKey)}
+        </chakra.h3>
+      </Flex>
+      <Flex gap="3.5" flexWrap="wrap" mb="1.5">
+        {def.series.map((s, i) => (
+          <Skeleton key={s.key} height="10px" style={{ width: "68px", animationDelay: `${i * 0.05}s` }} />
+        ))}
+      </Flex>
+      <Skeleton height="150px" />
+    </Box>
+  );
+}
+
 export function ServerMetricsPanel({
   sessionId,
   driver,
@@ -358,14 +385,19 @@ export function ServerMetricsPanel({
         </chakra.p>
       )}
 
-      {CHARTS.map((def) => (
-        <MetricChart
-          key={def.titleKey}
-          points={points}
-          def={def}
-          unitLabel={def.titleKey === "metricsChartThroughput" ? throughputUnit : t(def.unitKey)}
-        />
-      ))}
+      {!updatedAt && loading
+        ? // 初回ロード中 (まだ 1 度もサンプルを取得していない): 「データなし」
+          // 空状態と混同しないよう、チャートカードの構造をシマーで予兆表示する
+          // (#846)。
+          CHARTS.map((def) => <MetricChartSkeleton key={def.titleKey} def={def} />)
+        : CHARTS.map((def) => (
+            <MetricChart
+              key={def.titleKey}
+              points={points}
+              def={def}
+              unitLabel={def.titleKey === "metricsChartThroughput" ? throughputUnit : t(def.unitKey)}
+            />
+          ))}
     </Flex>
   );
 }

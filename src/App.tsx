@@ -68,6 +68,7 @@ import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
+import type { ResultViewKind } from "./components/ResultViewSwitch";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
@@ -241,6 +242,8 @@ import {
   monoFontStack,
   uiFontStack,
   themePresetDataTheme,
+  recordCommandPaletteUsage,
+  pruneCommandPaletteMru,
   type TabRestoreMode,
 } from "./settings";
 import { ThemeTransition } from "./components/ThemeTransition";
@@ -1604,6 +1607,23 @@ export default function App() {
   const patchTab = useCallback((id: string, patcher: (tab: Tab) => Tab) => {
     setTabs((prev) => prev.map((tt) => (tt.id === id ? patcher(tt) : tt)));
   }, []);
+
+  /**
+   * 結果パネルの表示 (グリッド / ピボット / チャート) を切り替える。3 択は排他な
+   * ので `showPivot` / `showChart` の 2 フラグを常に同時に確定させ、どちらも false
+   * のときがグリッドという不変条件を 1 か所に閉じ込める。グリッド・ピボット・
+   * チャートの各ツールバーに置いた `ResultViewSwitch` が共通でここを呼ぶ。
+   */
+  const setResultView = useCallback(
+    (tabId: string, view: ResultViewKind) => {
+      patchTab(tabId, (tt) => ({
+        ...tt,
+        showPivot: view === "pivot",
+        showChart: view === "chart",
+      }));
+    },
+    [patchTab],
+  );
 
   const detachStreamListener = useCallback((tabId: string) => {
     const un = streamUnlistenRef.current.get(tabId);
@@ -4649,6 +4669,9 @@ export default function App() {
       await handleDisconnectProfile(id);
       await api.deleteProfile(id);
       await refreshProfiles();
+      // コマンドパレット MRU (#845): 削除したプロファイルの候補 id が「最近使った
+      // 項目」に残ったままだと、二度と実在しないのに一覧に居座り続けてしまう。
+      pruneCommandPaletteMru((mruId) => mruId !== `conn:${id}`);
     }, "statusFailedDeleteProfile");
     setPendingDeleteProfileIds((cur) => {
       if (!cur.has(id)) return cur;
@@ -5603,6 +5626,15 @@ export default function App() {
     pinnedResults.length,
   ]);
 
+  // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
+  // の id は配列インデックス由来で、新しいクエリが実行されるたびに指す先が変わって
+  // しまい「最近使った項目」として記録しても意味が変わってしまうため対象外にする
+  // (接続・テーブル・スニペット・画面遷移の id はすべて安定な識別子)。
+  const handleCommandPaletteSelect = useCallback((item: CommandItem) => {
+    if (item.group === "history") return;
+    recordCommandPaletteUsage(item.id);
+  }, []);
+
   // Clean up any active listeners when the app unmounts.
   useEffect(() => {
     return () => {
@@ -5959,7 +5991,7 @@ export default function App() {
                   ) : tab.showChart && tab.result && !tab.streaming ? (
                     <ChartView
                       result={tab.result}
-                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: false }))}
+                      onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.showPivot && tab.result && !tab.streaming ? (
                     <PivotView
@@ -5967,7 +5999,7 @@ export default function App() {
                       driver={selectedProfile?.driver ?? "mysql"}
                       sourceSql={tab.lastExecutedSql}
                       onSendToEditor={openQueryInEditor}
-                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, showPivot: false }))}
+                      onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.preview ? (
                     <PreviewGrid
@@ -6014,10 +6046,10 @@ export default function App() {
                         </chakra.span>
                         <chakra.span flex="1" />
                         <Button type="button" variant="secondary" size="sm" onClick={() => discardRowOpsForTab(tab.id)} disabled={tab.applyingEdits}>
-                          {t("rowOpsDiscard")}
+                          <Icon name="close" size={14} /> {t("rowOpsDiscard")}
                         </Button>
                         <LoadingButton type="button" variant="success" size="sm" loading={tab.applyingEdits} onClick={() => applyEditsForTab(tab)}>
-                          {t("rowOpsApply")}
+                          <Icon name="check" size={14} /> {t("rowOpsApply")}
                         </LoadingButton>
                       </Flex>
                     )}
@@ -6062,12 +6094,7 @@ export default function App() {
                       onToggleDiffHighlight={() =>
                         patchTab(tab.id, (tt) => ({ ...tt, diffHighlight: !tt.diffHighlight }))
                       }
-                      onShowPivot={() =>
-                        patchTab(tab.id, (tt) => ({ ...tt, showPivot: true, showChart: false }))
-                      }
-                      onShowChart={() =>
-                        patchTab(tab.id, (tt) => ({ ...tt, showChart: true, showPivot: false }))
-                      }
+                      onChangeView={(v) => setResultView(tab.id, v)}
                       onSaveAsTable={
                         sessionId &&
                         !readOnly &&
@@ -7390,6 +7417,8 @@ export default function App() {
           {showCommandPalette && (
             <CommandPalette
               items={commandItems}
+              mruIds={settings.commandPaletteMru}
+              onSelectItem={handleCommandPaletteSelect}
               onClose={() => setShowCommandPalette(false)}
             />
           )}

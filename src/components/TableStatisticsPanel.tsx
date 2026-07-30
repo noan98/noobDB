@@ -18,6 +18,7 @@ import {
 } from "./tableSize";
 import { mapLimited } from "./mapLimited";
 import { Icon } from "./Icon";
+import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
 
@@ -306,7 +307,12 @@ export function TableStatisticsPanel({
               </tr>
             </thead>
             <tbody>
-              {sorted.map((r) => (
+              {loading && rows.length === 0 ? (
+                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+                // 避け、9 列の構造をシマーで予兆表示する (#846)。
+                <SkeletonTableRows columns={9} />
+              ) : (
+                sorted.map((r) => (
                 <tr key={r.name}>
                   <chakra.td css={tdCss}>
                     {onOpenTable ? (
@@ -356,8 +362,10 @@ export function TableStatisticsPanel({
                     </Box>
                   </chakra.td>
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
+            {!(loading && rows.length === 0) && (
             <tfoot>
               <tr>
                 <chakra.td css={{ ...tfootTdCss, textAlign: "left" }}>
@@ -373,6 +381,7 @@ export function TableStatisticsPanel({
                 <chakra.td css={tfootTdCss}>{formatBytes(totals.totalBytes)}</chakra.td>
               </tr>
             </tfoot>
+            )}
           </chakra.table>
         </Box>
       )}

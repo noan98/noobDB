@@ -70,6 +70,7 @@ import {
 } from "./cellConditionalFormat";
 import { accentFill, ACCENT_FILL_STOPS, readableInk } from "../colorScale";
 import { ExportModal, type FullExportContext } from "./ExportModal";
+import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
 import { Skeleton, shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
@@ -947,12 +948,11 @@ interface Props {
   /** 差分ハイライトのトグル切替。未指定ならトグル UI を出さない。 */
   onToggleDiffHighlight?: () => void;
   /**
-   * 結果をピボット表示へ切り替える。未指定ならツールバーにボタンを出さない。
-   * 差分トグルの右隣に並べ、結果パネル上部の独立行を持たない。
+   * 結果パネルの表示 (グリッド / ピボット / チャート) を切り替える。未指定なら
+   * ツールバーに切替セグメントを出さない。ピボット/チャート側の同じセグメントと
+   * 対になっていて、行が無い / ストリーミング中は Export と同じ条件で隠す。
    */
-  onShowPivot?: () => void;
-  /** 結果をチャート表示へ切り替える。未指定ならツールバーにボタンを出さない。 */
-  onShowChart?: () => void;
+  onChangeView?: (view: ResultViewKind) => void;
   /**
    * 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。App が
    * セッション・対象クエリ・データベースを確定させたときだけ渡す — 読み取り専用
@@ -4931,8 +4931,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   diffComparable,
   diffHighlightEnabled,
   onToggleDiffHighlight,
-  onShowPivot,
-  onShowChart,
+  onChangeView,
   onSaveAsTable,
   fullExport,
   lastEditAppliedAt,
@@ -5458,6 +5457,16 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         overflowY="hidden"
         scrollbarWidth="thin"
       >
+        {/*
+          グリッド / ピボット / チャートの表示切替。以前は「ピボット」「チャート」の
+          独立ボタンが差分トグルの右隣にあり、戻る導線は各ビュー側だけだったが、
+          3 択のセグメントへ寄せて往復を 1 か所にまとめる。ツールバー先頭 (最も
+          目に付く位置) に置き、表示条件は Export と同じ (ストリーミング中でなく
+          行がある)。
+        */}
+        {onChangeView && canExport && (
+          <ResultViewSwitch value="grid" onChange={onChangeView} />
+        )}
         <Tooltip
           focusableWrapper={!canExport}
           label={
@@ -5474,7 +5483,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             onClick={() => setShowExport(true)}
             disabled={!canExport}
           >
-            {t("exportButton")}
+            <Icon name="download" size={14} /> {t("exportButton")}
           </Button>
         </Tooltip>
         <Tooltip
@@ -5495,7 +5504,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             onClick={() => onSaveAsTable?.()}
             disabled={!canExport || !onSaveAsTable}
           >
-            {t("saveAsTableButton")}
+            <Icon name="table" size={14} /> {t("saveAsTableButton")}
           </Button>
         </Tooltip>
         {onSetAutoRefresh && (
@@ -5604,37 +5613,6 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               </chakra.span>
             )}
           </Box>
-          </Tooltip>
-        )}
-        {/*
-          ピボット / チャートへの切り替え。以前は結果グリッド上部の独立した行に
-          置いていたが、Export・自動更新・差分と同じツールバーへ寄せて縦の場所を
-          節約する。表示条件は Export と同じ (ストリーミング中でなく行がある)。
-        */}
-        {onShowPivot && canExport && (
-          <Tooltip label={t("pivotShow")}>
-            <Button
-              variant="secondary"
-              size="sm"
-              px="2.5"
-              flexShrink={0}
-              onClick={onShowPivot}
-            >
-              <Icon name="table" size={14} /> {t("pivotShow")}
-            </Button>
-          </Tooltip>
-        )}
-        {onShowChart && canExport && (
-          <Tooltip label={t("chartShow")}>
-            <Button
-              variant="secondary"
-              size="sm"
-              px="2.5"
-              flexShrink={0}
-              onClick={onShowChart}
-            >
-              <Icon name="er-diagram" size={14} /> {t("chartShow")}
-            </Button>
           </Tooltip>
         )}
         {editable && tableColumns && pkIndices.length === 0 && (
@@ -5759,7 +5737,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 onClick={onPreviewEdits}
                 disabled={!canPreview}
               >
-                {t("editPreviewButton")}
+                <Icon name="eye" size={14} /> {t("editPreviewButton")}
               </Button>
             </Tooltip>
             <Tooltip
@@ -5780,7 +5758,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 onClick={onApplyEdits}
                 disabled={!canApply}
               >
-                {t("editApplyButton")}
+                <Icon name="check" size={14} /> {t("editApplyButton")}
               </LoadingButton>
             </Tooltip>
             <Tooltip label={t("editCancelButtonTitle")}>
@@ -5790,7 +5768,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               px="2.5"
               onClick={() => setShowDiscardConfirm(true)}
             >
-              {t("editCancelButton")}
+              <Icon name="close" size={14} /> {t("editCancelButton")}
             </Button>
             </Tooltip>
           </Box>

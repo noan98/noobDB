@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Box, Flex, chakra } from "@chakra-ui/react";
+import { Box, Flex, VisuallyHidden, chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import type { ConnectionProfile } from "../api/tauri";
 import { useT } from "../i18n";
@@ -15,7 +15,7 @@ import {
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Select } from "./ui";
 import { Icon } from "./Icon";
-import { Spinner } from "./Spinner";
+import { SkeletonRow } from "./Skeleton";
 import { EmptyState } from "./EmptyState";
 
 /**
@@ -195,10 +195,20 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
                     {t("schemaDriftOmittedNote")}
                   </chakra.p>
                 ) : comparing ? (
-                  <Flex align="center" gap="2" color="app.textMuted" fontSize="sm">
-                    <Spinner size={14} />
-                    {t("schemaDriftComparing")}
-                  </Flex>
+                  // 差分計算中: 裸のスピナーではなく差分リストの構造 (行の予兆) を
+                  // シマーで示す (#846)。ロード状態自体は role="status" +
+                  // 視覚的に隠したテキストで支援技術へ伝える。
+                  <Box role="status" aria-live="polite">
+                    <VisuallyHidden>{t("schemaDriftComparing")}</VisuallyHidden>
+                    <Box aria-hidden display="flex" flexDirection="column" gap="1">
+                      {[82, 58, 70, 45].map((w, i) => (
+                        <SkeletonRow
+                          key={i}
+                          style={{ width: `${w}%`, animationDelay: `${i * 0.08}s`, opacity: 1 - i * 0.15 }}
+                        />
+                      ))}
+                    </Box>
+                  </Box>
                 ) : compareError ? (
                   <chakra.p m={0} fontSize="sm" color="app.textError">
                     {compareError}

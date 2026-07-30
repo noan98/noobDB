@@ -6,6 +6,7 @@ import { transitions } from "../motion";
 import { useReturnFocus, useRovingFocus } from "../keyboardNav";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { Tooltip } from "./Tooltip";
+import { Kbd } from "./Kbd";
 
 /**
  * メニュー本体を motion 化するラッパー。`transition` を Chakra のスタイルプロップに
@@ -210,17 +211,15 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
                 {entry.label}
               </chakra.span>
               {entry.shortcut && (
-                <chakra.kbd
+                <Kbd
+                  tone="muted"
                   flexShrink={0}
                   ml="3"
-                  fontSize="xs"
-                  fontFamily="inherit"
                   color={entry.danger ? "inherit" : "app.textMuted"}
                   opacity={entry.disabled ? 0.6 : 0.85}
-                  whiteSpace="nowrap"
                 >
                   {entry.shortcut}
-                </chakra.kbd>
+                </Kbd>
               )}
             </chakra.button>
           );
