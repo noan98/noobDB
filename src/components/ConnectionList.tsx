@@ -14,6 +14,7 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { computeTooltipPosition } from "./tooltipPosition";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
 import { normalizeChipColor } from "../profileIdentity";
 import {
@@ -1967,19 +1968,14 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const { width, height } = el.getBoundingClientRect();
-    const margin = 8;
-    let left = anchor.right + margin;
-    if (left + width + margin > window.innerWidth) {
-      left = anchor.left - margin - width;
-    }
-    left = Math.max(margin, left);
-    let top = anchor.top;
-    if (top + height + margin > window.innerHeight) {
-      top = window.innerHeight - margin - height;
-    }
-    top = Math.max(margin, top);
-    setPos({ left, top });
+    const size = el.getBoundingClientRect();
+    // 測定→クランプ→フリップは Tooltip プリミティブ (#814) と共有の
+    // `computeTooltipPosition` に一本化済み。行の高さ全体を対象に中央寄せすると
+    // 縦長の行ではカーソル位置から離れて見えるため、"right" + align="start" で
+    // 行の上端に揃える (元のインライン実装と同じ見た目)。
+    setPos(
+      computeTooltipPosition(anchor, size, "right", 8, { width: window.innerWidth, height: window.innerHeight }, "start"),
+    );
   }, [col, anchor]);
 
   const keyLabel =
