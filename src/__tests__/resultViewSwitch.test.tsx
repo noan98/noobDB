@@ -56,4 +56,28 @@ describe("ResultViewSwitch", () => {
       .map((r) => r.getAttribute("tabindex"));
     expect(tabIndexes).toEqual(["-1", "0", "-1"]);
   });
+
+  // tabIndex の静的値だけでは `useRovingFocus` がコンテナに配線されているかまでは
+  // 見えないため、実際のキー操作でフォーカスが動くことを固定する。
+  it("moves focus with the arrow keys, Home and End", () => {
+    renderWithProviders(<ResultViewSwitch value="grid" onChange={() => {}} />);
+    const [grid, pivot, chart] = screen.getAllByRole("radio");
+
+    grid.focus();
+    fireEvent.keyDown(grid, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(pivot);
+
+    fireEvent.keyDown(pivot, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(grid);
+
+    fireEvent.keyDown(grid, { key: "End" });
+    expect(document.activeElement).toBe(chart);
+
+    fireEvent.keyDown(chart, { key: "Home" });
+    expect(document.activeElement).toBe(grid);
+
+    // 端では巻き戻る (useRovingFocus の既定 wrap: true)。
+    fireEvent.keyDown(grid, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(chart);
+  });
 });

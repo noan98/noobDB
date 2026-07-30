@@ -90,13 +90,28 @@ export function ChartView({ result, onChangeView }: Props) {
   };
 
   if (!config || !model) {
+    // 数値列が無い空状態でも設定バーの位置に切替セグメントを残す。ここへ落ちる
+    // 結果 (数値列なし) でもピボットは COUNT 集計で意味を持つため、グリッドを
+    // 経由せずピボットへ直接移れるようにする。
     return (
-      <Flex h="100%" align="center" justify="center">
-        <EmptyState
-          icon="query"
-          title={t("chartNoNumeric")}
-          action={{ label: t("chartBackToTable"), onClick: () => onChangeView("grid") }}
-        />
+      <Flex direction="column" h="100%" minH={0} minW={0}>
+        <Flex
+          align="center"
+          px="3"
+          py="2"
+          flex="none"
+          borderBottomWidth="1px"
+          borderBottomColor="app.border"
+        >
+          <ResultViewSwitch value="chart" onChange={onChangeView} />
+        </Flex>
+        <Flex flex="1" minH={0} align="center" justify="center">
+          <EmptyState
+            icon="query"
+            title={t("chartNoNumeric")}
+            action={{ label: t("chartBackToTable"), onClick: () => onChangeView("grid") }}
+          />
+        </Flex>
       </Flex>
     );
   }

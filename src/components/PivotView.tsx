@@ -121,13 +121,27 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
   };
 
   if (!config || !model) {
+    // 集計できるデータが無い空状態でも、設定バーの位置に切替セグメントを残す
+    // (チャートへ直接移れるようにし、往復の導線をビューの状態に依らず一定にする)。
     return (
-      <Flex direction="column" h="100%" align="center" justify="center" gap="3" color="app.textMuted">
-        <Icon name="table" size={28} />
-        <chakra.span>{t("pivotNoData")}</chakra.span>
-        <Button type="button" variant="secondary" onClick={() => onChangeView("grid")}>
-          {t("chartBackToTable")}
-        </Button>
+      <Flex direction="column" h="100%" minH={0} minW={0}>
+        <Flex
+          align="center"
+          px="3"
+          py="2"
+          flex="none"
+          borderBottomWidth="1px"
+          borderBottomColor="app.border"
+        >
+          <ResultViewSwitch value="pivot" onChange={onChangeView} />
+        </Flex>
+        <Flex flex="1" minH={0} direction="column" align="center" justify="center" gap="3" color="app.textMuted">
+          <Icon name="table" size={28} />
+          <chakra.span>{t("pivotNoData")}</chakra.span>
+          <Button type="button" variant="secondary" onClick={() => onChangeView("grid")}>
+            {t("chartBackToTable")}
+          </Button>
+        </Flex>
       </Flex>
     );
   }
