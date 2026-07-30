@@ -78,6 +78,7 @@ import { deriveQueryPhase, formatElapsed } from "../queryRunState";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
 import { LoadingButton } from "./LoadingButton";
+import { Tooltip } from "./Tooltip";
 import {
   buildInsertClipboard,
   buildRowSql,
@@ -4869,17 +4870,18 @@ function StreamingBanner({
         )}
       </chakra.span>
       {onStop && (
-        <Button
-          variant="warning"
-          size="sm"
-          px="3"
-          py="0.5"
-          whiteSpace="nowrap"
-          onClick={onStop}
-          title={t("gridStopButtonTitle")}
-        >
-          {t("gridStopButton")}
-        </Button>
+        <Tooltip label={t("gridStopButtonTitle")}>
+          <Button
+            variant="warning"
+            size="sm"
+            px="3"
+            py="0.5"
+            whiteSpace="nowrap"
+            onClick={onStop}
+          >
+            {t("gridStopButton")}
+          </Button>
+        </Tooltip>
       )}
     </Box>
   );
@@ -5423,15 +5425,16 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           <chakra.span flex="1">
             {t("autoLimitApplied", { limit: autoLimitApplied! })}
           </chakra.span>
-          <Button
-            size="sm"
-            px="2.5"
-            whiteSpace="nowrap"
-            onClick={onFetchAllRows}
-            title={t("autoLimitFetchAllTitle")}
-          >
-            {t("autoLimitFetchAll")}
-          </Button>
+          <Tooltip label={t("autoLimitFetchAllTitle")}>
+            <Button
+              size="sm"
+              px="2.5"
+              whiteSpace="nowrap"
+              onClick={onFetchAllRows}
+            >
+              {t("autoLimitFetchAll")}
+            </Button>
+          </Tooltip>
         </Box>
       )}
       <Box
@@ -5461,12 +5464,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         {onChangeView && canExport && (
           <ResultViewSwitch value="grid" onChange={onChangeView} />
         )}
-        <Button
-          size="sm"
-          px="2.5"
-          onClick={() => setShowExport(true)}
-          disabled={!canExport}
-          title={
+        <Tooltip
+          focusableWrapper={!canExport}
+          label={
             canExport
               ? t("exportButtonTitle")
               : streaming
@@ -5474,14 +5474,18 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 : t("exportDisabledNoRows")
           }
         >
-          <Icon name="download" size={14} /> {t("exportButton")}
-        </Button>
-        <Button
-          size="sm"
-          px="2.5"
-          onClick={() => onSaveAsTable?.()}
-          disabled={!canExport || !onSaveAsTable}
-          title={
+          <Button
+            size="sm"
+            px="2.5"
+            onClick={() => setShowExport(true)}
+            disabled={!canExport}
+          >
+            <Icon name="download" size={14} /> {t("exportButton")}
+          </Button>
+        </Tooltip>
+        <Tooltip
+          focusableWrapper={!canExport || !onSaveAsTable}
+          label={
             streaming
               ? t("exportDisabledStreaming")
               : !canExport
@@ -5491,15 +5495,22 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                   : t("saveAsTableDisabledTitle")
           }
         >
-          <Icon name="table" size={14} /> {t("saveAsTableButton")}
-        </Button>
+          <Button
+            size="sm"
+            px="2.5"
+            onClick={() => onSaveAsTable?.()}
+            disabled={!canExport || !onSaveAsTable}
+          >
+            <Icon name="table" size={14} /> {t("saveAsTableButton")}
+          </Button>
+        </Tooltip>
         {onSetAutoRefresh && (
+          <Tooltip label={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}>
           <Box
             display="inline-flex"
             alignItems="center"
             gap="1.5"
             paddingLeft="2px"
-            title={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}
           >
             <chakra.label
               display="inline-flex"
@@ -5557,14 +5568,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               </chakra.span>
             )}
           </Box>
+          </Tooltip>
         )}
         {onToggleDiffHighlight && pkIndices.length > 0 && (
+          <Tooltip label={t("diffHighlightTitle")}>
           <Box
             display="inline-flex"
             alignItems="center"
             gap="1.5"
             paddingLeft="2px"
-            title={t("diffHighlightTitle")}
           >
             <chakra.label
               display="inline-flex"
@@ -5598,17 +5610,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               </chakra.span>
             )}
           </Box>
+          </Tooltip>
         )}
         {editable && tableColumns && pkIndices.length === 0 && (
-          <chakra.span
-            fontSize="xs"
-            color="app.textMuted"
-            fontStyle="italic"
-            paddingLeft="4px"
-            title={t("editNoPkHintTitle")}
-          >
-            {t("editNoPkHint")}
-          </chakra.span>
+          <Tooltip label={t("editNoPkHintTitle")}>
+            <chakra.span
+              fontSize="xs"
+              color="app.textMuted"
+              fontStyle="italic"
+              paddingLeft="4px"
+            >
+              {t("editNoPkHint")}
+            </chakra.span>
+          </Tooltip>
         )}
         {editableActive && (
           // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
@@ -5665,46 +5679,45 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               // Preview only handles one row at a time; surface that
               // limitation explicitly so users don't assume Apply has been
               // dry-run-validated for every edited row.
-              <chakra.span
-                role="note"
-                fontSize="xs"
-                color="app.textMuted"
-                fontStyle="italic"
-                whiteSpace="nowrap"
-                title={t("editPreviewMultiRowBannerTitle")}
-              >
-                {t("editPreviewMultiRowBanner")}
-              </chakra.span>
+              <Tooltip label={t("editPreviewMultiRowBannerTitle")}>
+                <chakra.span
+                  role="note"
+                  fontSize="xs"
+                  color="app.textMuted"
+                  fontStyle="italic"
+                  whiteSpace="nowrap"
+                >
+                  {t("editPreviewMultiRowBanner")}
+                </chakra.span>
+              </Tooltip>
             )}
-            <Button
-              variant="secondary"
-              size="sm"
-              px="1.5"
-              onClick={onUndoEdit}
-              disabled={!canUndo}
-              title={t("editUndoTitle")}
-              aria-label={t("editUndoTitle")}
-            >
-              <Icon name="undo" />
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              px="1.5"
-              onClick={onRedoEdit}
-              disabled={!canRedo}
-              title={t("editRedoTitle")}
-              aria-label={t("editRedoTitle")}
-            >
-              <Icon name="redo" />
-            </Button>
-            <Button
-              variant="warning"
-              size="sm"
-              px="2.5"
-              onClick={onPreviewEdits}
-              disabled={!canPreview}
-              title={
+            <Tooltip label={t("editUndoTitle")}>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                onClick={onUndoEdit}
+                disabled={!canUndo}
+                aria-label={t("editUndoTitle")}
+              >
+                <Icon name="undo" />
+              </Button>
+            </Tooltip>
+            <Tooltip label={t("editRedoTitle")}>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                onClick={onRedoEdit}
+                disabled={!canRedo}
+                aria-label={t("editRedoTitle")}
+              >
+                <Icon name="redo" />
+              </Button>
+            </Tooltip>
+            <Tooltip
+              focusableWrapper={!canPreview}
+              label={
                 hasInvalidEdit
                   ? t("editApplyDisabledInvalid")
                   : editedRowCount > 1
@@ -5714,16 +5727,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                       : t("editorPreviewTitle")
               }
             >
-              <Icon name="eye" size={14} /> {t("editPreviewButton")}
-            </Button>
-            <LoadingButton
-              variant="success"
-              size="sm"
-              px="2.5"
-              loading={applyingEdits}
-              onClick={onApplyEdits}
-              disabled={!canApply}
-              title={
+              <Button
+                variant="warning"
+                size="sm"
+                px="2.5"
+                onClick={onPreviewEdits}
+                disabled={!canPreview}
+              >
+                <Icon name="eye" size={14} /> {t("editPreviewButton")}
+              </Button>
+            </Tooltip>
+            <Tooltip
+              focusableWrapper={!canApply}
+              label={
                 hasInvalidEdit
                   ? t("editApplyDisabledInvalid")
                   : streaming
@@ -5731,17 +5747,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                     : t("editApplyButtonTitle")
               }
             >
-              <Icon name="check" size={14} /> {t("editApplyButton")}
-            </LoadingButton>
+              <LoadingButton
+                variant="success"
+                size="sm"
+                px="2.5"
+                loading={applyingEdits}
+                onClick={onApplyEdits}
+                disabled={!canApply}
+              >
+                <Icon name="check" size={14} /> {t("editApplyButton")}
+              </LoadingButton>
+            </Tooltip>
+            <Tooltip label={t("editCancelButtonTitle")}>
             <Button
               variant="secondary"
               size="sm"
               px="2.5"
               onClick={() => setShowDiscardConfirm(true)}
-              title={t("editCancelButtonTitle")}
             >
               <Icon name="close" size={14} /> {t("editCancelButton")}
             </Button>
+            </Tooltip>
           </Box>
               </motion.div>
             )}
@@ -5829,23 +5855,25 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           >
             {t("resultStatusBar", { rows: result.rows.length, ms: result.elapsed_ms })}
             {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
-              <chakra.span color="var(--text-warning)" marginLeft="6px" title={t("autoLimitApplied", { limit: autoLimitApplied })}>
-                LIMIT {autoLimitApplied}
-              </chakra.span>
+              <Tooltip label={t("autoLimitApplied", { limit: autoLimitApplied })}>
+                <chakra.span color="var(--text-warning)" marginLeft="6px">
+                  LIMIT {autoLimitApplied}
+                </chakra.span>
+              </Tooltip>
             )}
             {partialResult && (
-              <chakra.span
-                color="var(--text-warning)"
-                marginLeft="6px"
-                title={t(
+              <Tooltip
+                label={t(
                   partialResult.reason === "cancelled"
                     ? "partialResultCancelledTitle"
                     : "partialResultTimeoutTitle",
                   { rows: partialResult.rows },
                 )}
               >
-                {t("partialResultBadge")}
-              </chakra.span>
+                <chakra.span color="var(--text-warning)" marginLeft="6px">
+                  {t("partialResultBadge")}
+                </chakra.span>
+              </Tooltip>
             )}
           </chakra.span>
         )}
@@ -5880,34 +5908,36 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           aria-label={t("gridSearchAria")}
         />
         {onPinResult && (
-          <Button
-            variant="secondary"
-            size="sm"
-            px="1.5"
-            marginLeft="1.5"
-            flexShrink={0}
-            onClick={onPinResult}
-            disabled={!canPinResult}
-            title={t("pinResultTitle")}
-            aria-label={t("pinResultTitle")}
-          >
-            <Icon name="pin" />
-          </Button>
+          <Tooltip label={t("pinResultTitle")} focusableWrapper={!canPinResult}>
+            <Button
+              variant="secondary"
+              size="sm"
+              px="1.5"
+              marginLeft="1.5"
+              flexShrink={0}
+              onClick={onPinResult}
+              disabled={!canPinResult}
+              aria-label={t("pinResultTitle")}
+            >
+              <Icon name="pin" />
+            </Button>
+          </Tooltip>
         )}
         {onToggleMaximize && (
-          <Button
-            variant="secondary"
-            size="sm"
-            px="1.5"
-            marginLeft="1.5"
-            flexShrink={0}
-            onClick={onToggleMaximize}
-            title={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
-            aria-label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
-            aria-pressed={!!maximized}
-          >
-            <Icon name={maximized ? "minimize" : "maximize"} />
-          </Button>
+          <Tooltip label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}>
+            <Button
+              variant="secondary"
+              size="sm"
+              px="1.5"
+              marginLeft="1.5"
+              flexShrink={0}
+              onClick={onToggleMaximize}
+              aria-label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
+              aria-pressed={!!maximized}
+            >
+              <Icon name={maximized ? "minimize" : "maximize"} />
+            </Button>
+          </Tooltip>
         )}
       </Box>
       <AnimatePresence initial={false}>
@@ -5964,36 +5994,39 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 placeholder={t("gridFindPlaceholder")}
                 aria-label={t("gridFindInputAria")}
               />
-              <chakra.button
-                type="button"
-                css={FIND_TOGGLE_CSS}
-                aria-pressed={findCaseSensitive}
-                onClick={() => setFindCaseSensitive((v) => !v)}
-                title={t("gridFindCaseTitle")}
-                aria-label={t("gridFindCaseTitle")}
-              >
-                Aa
-              </chakra.button>
-              <chakra.button
-                type="button"
-                css={FIND_TOGGLE_CSS}
-                aria-pressed={findWholeCell}
-                onClick={() => setFindWholeCell((v) => !v)}
-                title={t("gridFindWholeTitle")}
-                aria-label={t("gridFindWholeTitle")}
-              >
-                =
-              </chakra.button>
-              <chakra.button
-                type="button"
-                css={FIND_TOGGLE_CSS}
-                aria-pressed={findRegex}
-                onClick={() => setFindRegex((v) => !v)}
-                title={t("gridFindRegexTitle")}
-                aria-label={t("gridFindRegexTitle")}
-              >
-                .*
-              </chakra.button>
+              <Tooltip label={t("gridFindCaseTitle")}>
+                <chakra.button
+                  type="button"
+                  css={FIND_TOGGLE_CSS}
+                  aria-pressed={findCaseSensitive}
+                  onClick={() => setFindCaseSensitive((v) => !v)}
+                  aria-label={t("gridFindCaseTitle")}
+                >
+                  Aa
+                </chakra.button>
+              </Tooltip>
+              <Tooltip label={t("gridFindWholeTitle")}>
+                <chakra.button
+                  type="button"
+                  css={FIND_TOGGLE_CSS}
+                  aria-pressed={findWholeCell}
+                  onClick={() => setFindWholeCell((v) => !v)}
+                  aria-label={t("gridFindWholeTitle")}
+                >
+                  =
+                </chakra.button>
+              </Tooltip>
+              <Tooltip label={t("gridFindRegexTitle")}>
+                <chakra.button
+                  type="button"
+                  css={FIND_TOGGLE_CSS}
+                  aria-pressed={findRegex}
+                  onClick={() => setFindRegex((v) => !v)}
+                  aria-label={t("gridFindRegexTitle")}
+                >
+                  .*
+                </chakra.button>
+              </Tooltip>
               <chakra.span
                 fontSize="xs"
                 fontFamily="mono"
@@ -6016,39 +6049,42 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                           total: findResult.matches.length,
                         })}
               </chakra.span>
-              <Button
-                variant="secondary"
-                size="sm"
-                px="1.5"
-                disabled={findResult.matches.length === 0}
-                onClick={() => findStep(-1)}
-                title={t("gridFindPrevTitle")}
-                aria-label={t("gridFindPrevTitle")}
-              >
-                ‹
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                px="1.5"
-                disabled={findResult.matches.length === 0}
-                onClick={() => findStep(1)}
-                title={t("gridFindNextTitle")}
-                aria-label={t("gridFindNextTitle")}
-              >
-                ›
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                px="1.5"
-                marginLeft="auto"
-                onClick={closeFind}
-                title={t("gridFindCloseTitle")}
-                aria-label={t("gridFindCloseTitle")}
-              >
-                <Icon name="close" />
-              </Button>
+              <Tooltip label={t("gridFindPrevTitle")} focusableWrapper={findResult.matches.length === 0}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="1.5"
+                  disabled={findResult.matches.length === 0}
+                  onClick={() => findStep(-1)}
+                  aria-label={t("gridFindPrevTitle")}
+                >
+                  ‹
+                </Button>
+              </Tooltip>
+              <Tooltip label={t("gridFindNextTitle")} focusableWrapper={findResult.matches.length === 0}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="1.5"
+                  disabled={findResult.matches.length === 0}
+                  onClick={() => findStep(1)}
+                  aria-label={t("gridFindNextTitle")}
+                >
+                  ›
+                </Button>
+              </Tooltip>
+              <Tooltip label={t("gridFindCloseTitle")}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="1.5"
+                  marginLeft="auto"
+                  onClick={closeFind}
+                  aria-label={t("gridFindCloseTitle")}
+                >
+                  <Icon name="close" />
+                </Button>
+              </Tooltip>
             </Box>
           </motion.div>
         )}
@@ -6165,25 +6201,26 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             disabled: boolean,
             onClick: () => void,
           ) => (
-            <chakra.button
-              aria-label={title}
-              title={title}
-              disabled={disabled}
-              onClick={onClick}
-              fontSize="xs"
-              px="1.5"
-              py="0.5"
-              border="1px solid var(--border)"
-              borderRadius="var(--radius-sm)"
-              background={disabled ? "transparent" : "var(--bg-input)"}
-              color={disabled ? "var(--text-muted)" : "var(--text)"}
-              cursor={disabled ? "not-allowed" : "pointer"}
-              _hover={disabled ? {} : { background: "var(--bg-muted)" }}
-              whiteSpace="nowrap"
-              lineHeight={1.4}
-            >
-              {label}
-            </chakra.button>
+            <Tooltip label={title} focusableWrapper={disabled}>
+              <chakra.button
+                aria-label={title}
+                disabled={disabled}
+                onClick={onClick}
+                fontSize="xs"
+                px="1.5"
+                py="0.5"
+                border="1px solid var(--border)"
+                borderRadius="var(--radius-sm)"
+                background={disabled ? "transparent" : "var(--bg-input)"}
+                color={disabled ? "var(--text-muted)" : "var(--text)"}
+                cursor={disabled ? "not-allowed" : "pointer"}
+                _hover={disabled ? {} : { background: "var(--bg-muted)" }}
+                whiteSpace="nowrap"
+                lineHeight={1.4}
+              >
+                {label}
+              </chakra.button>
+            </Tooltip>
           );
           const handleNext = () => {
             if (isLast && canLoadMore && !loadingMore) onLoadMore?.();
