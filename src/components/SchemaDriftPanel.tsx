@@ -17,6 +17,7 @@ import { Button, Select } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonRow } from "./Skeleton";
 import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
 
 /**
  * スキーマドリフト・タイムライン (#736) の閲覧パネル。プロファイルごとに
@@ -60,6 +61,10 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
   const [summary, setSummary] = useState<DriftSummary | null>(null);
   const [comparing, setComparing] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
+  // 再取得ボタン用のカウンタ。genA/genB は変えずに同じ比較をやり直したいだけなので、
+  // これを依存に含めてインクリメントすることで下の effect を再実行させる (#848)。
+  const [compareAttempt, setCompareAttempt] = useState(0);
+  const retryCompare = () => setCompareAttempt((n) => n + 1);
 
   const bothDiffable = useMemo(
     () => !!genA && !!genB && genA.id !== genB.id && canDiff(genA) && canDiff(genB),
@@ -104,8 +109,9 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
     };
     // 世代オブジェクト自体ではなく id だけを依存にする — `gens` (延いては genA/genB)
     // は state から毎回新しい参照で渡ってくるため、オブジェクト全体を依存にすると
-    // 同じ世代を選び続けていても再計算してしまう。
-  }, [genA?.id, genB?.id]);
+    // 同じ世代を選び続けていても再計算してしまう。compareAttempt は再取得ボタン
+    // 専用の依存で、同じ id のまま比較をやり直すために使う (#848)。
+  }, [genA?.id, genB?.id, compareAttempt]);
 
   return (
     <Modal onClose={onClose} width="980px">
@@ -210,9 +216,16 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
                     </Box>
                   </Box>
                 ) : compareError ? (
-                  <chakra.p m={0} fontSize="sm" color="app.textError">
-                    {compareError}
-                  </chakra.p>
+                  // 差分計算失敗: 隣接する世代タイムライン/セレクタは表示したまま
+                  // 保つため、この枠内だけを compact な EmptyState + 再取得導線に
+                  // 置き換える (#848)。
+                  <EmptyState
+                    compact
+                    illustration={errorIllustration(compareError)}
+                    icon="warning"
+                    title={compareError}
+                    action={{ label: t("schemaDriftRetry"), onClick: retryCompare }}
+                  />
                 ) : summary && summary.tables.length === 0 ? (
                   <chakra.p m={0} fontSize="sm" color="app.textMuted">
                     {t("schemaDriftNoChanges")}

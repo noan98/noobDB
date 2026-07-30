@@ -17,7 +17,9 @@ import {
   type TableStatSortKey,
 } from "./tableSize";
 import { mapLimited } from "./mapLimited";
+import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
+import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
@@ -252,17 +254,26 @@ export function TableStatisticsPanel({
       </Flex>
 
       {error ? (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("sizeLoadError", { error })}
-        </chakra.p>
+        // 取得失敗: errorHints の分類結果から共有イラストを割り当て、再取得導線を
+        // 添える (#848)。
+        <EmptyState
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("sizeLoadError", { error })}
+          action={{ label: t("sizeRetry"), onClick: () => void load() }}
+        />
       ) : rows.length === 0 && !loading ? (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-          {t("sizeEmpty")}
-        </chakra.p>
+        // データベースにテーブルが 1 件もない (フィルタ無関係の真の空):
+        // ResultGrid の「0 行」空状態と同じリッチなイラストで表現する (#847)。
+        <EmptyState
+          illustration={<NoResultsIllustration />}
+          icon="table"
+          title={t("sizeEmpty")}
+        />
       ) : sorted.length === 0 && !loading ? (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-          {t("sizeNoMatch")}
-        </chakra.p>
+        // 名前フィルタ/チェックボックス絞り込みで 0 件になったケース:
+        // 「検索一致なし」の軽量アイコンを compact で使う (#847)。
+        <EmptyState compact icon="search" title={t("sizeNoMatch")} />
       ) : (
         <Box overflowX="auto">
           <chakra.table width="100%" borderCollapse="collapse">

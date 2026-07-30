@@ -13,6 +13,8 @@ import {
   severityRole,
 } from "./advisor";
 import { copyToClipboard } from "./clipboard";
+import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
@@ -190,9 +192,14 @@ export function AdvisorPanel({
       </Flex>
 
       {error && (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("advisorError", { error })}
-        </chakra.p>
+        // 診断失敗: errorHints の分類結果から共有イラストを割り当て、既存の
+        // 実行/再実行ボタンと同じ導線を再取得アクションに配線する (#848)。
+        <EmptyState
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("advisorError", { error })}
+          action={{ label: t("advisorRetry"), onClick: () => void run() }}
+        />
       )}
 
       {report && report.skipped.length > 0 && (

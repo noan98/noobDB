@@ -1,4 +1,6 @@
+import type { ReactNode } from "react";
 import { chakra } from "@chakra-ui/react";
+import { illustrationForError } from "../errorHints";
 
 /**
  * 空状態 / オンボーディング向けの軽量インライン SVG イラスト。
@@ -295,4 +297,34 @@ export function SchemaLoadFailedIllustration({ size = 96 }: IllustrationProps) {
       </g>
     </Svg>
   );
+}
+
+/**
+ * エラーメッセージ → イラストの共有マッピング (#848)。
+ *
+ * 元は `ResultGrid` の「エラー種別 → イラスト」対応 (旧 ResultGrid.tsx:6113-6120)
+ * に直書きされていたが、失敗表示を `EmptyState` へ統一する各パネル (テーブル統計・
+ * サーバ情報・サーバメトリクス・プロセス一覧・クエリインスペクタ・スキーマドリフト・
+ * ER 図・アドバイザ) から共通利用するため、ここへ 1 箇所だけ切り出した。分類自体は
+ * `errorHints.illustrationForError` (純ロジック、イラスト非依存) が担い、本関数は
+ * その結果を実際のイラストコンポーネントへマッピングするだけの薄い層。
+ *
+ * `queryFailed` (構文エラー・制約違反などその他一般) には専用イラストが無いため
+ * `undefined` を返す — 呼び出し側は `EmptyState` の `icon="warning"` フォールバック
+ * (アイコンバッジ) に委ねればよい (`ResultGrid` と同じ扱い)。
+ */
+export function errorIllustration(message: string, size = 72): ReactNode | undefined {
+  const kind = illustrationForError(message);
+  switch (kind) {
+    case "connectionFailed":
+      return <ConnectionFailedIllustration size={size} />;
+    case "timeout":
+      return <TimeoutIllustration size={size} />;
+    case "permissionDenied":
+      return <PermissionDeniedIllustration size={size} />;
+    case "schemaLoadFailed":
+      return <SchemaLoadFailedIllustration size={size} />;
+    case "queryFailed":
+      return undefined;
+  }
 }

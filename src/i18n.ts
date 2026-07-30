@@ -114,6 +114,7 @@ const en = {
   schemaDriftPickTwo: "Pick two different snapshots to compare.",
   schemaDriftOmittedNote: "One of the selected snapshots was too large to store in full and can't be diffed in detail.",
   schemaDriftComparing: "Comparing...",
+  schemaDriftRetry: "Retry",
   schemaDriftNoChanges: "No differences between the selected snapshots.",
   schemaDriftTableAddedLabel: "table added",
   schemaDriftTableRemovedLabel: "table removed",
@@ -1739,6 +1740,7 @@ const en = {
   erDiagramEmpty: "This database has no tables to diagram.",
   erDiagramNoSession: "Connect to a database to view its ER diagram.",
   erDiagramError: "Failed to load the ER diagram: {error}",
+  erDiagramRetry: "Retry",
   erDiagramOpenTable: "Open {table} as a table tab",
   erDiagramSummary: "{tables} tables · {relationships} relationships",
   erDiagramTruncated:
@@ -1876,6 +1878,7 @@ const en = {
   processDesc:
     "Server-side connections and their running statements (MySQL processlist / PostgreSQL pg_stat_activity). Listing reads in-memory server state only, so polling is cheap. Select processes and kill them to terminate the connection.",
   processRefresh: "Refresh",
+  processRetry: "Retry",
   processUpdatedAt: "Updated {time}",
   processKillSelected: "Kill selected ({count})",
   processKillConfirmTitle: "Kill processes",
@@ -1909,6 +1912,7 @@ const en = {
   metricsDesc:
     "Server runtime metrics sampled at the polling interval and kept in memory for the last {mins} min. Connections, throughput, and lock waits are plotted over time; the buffer is in-memory only and stops when this panel is closed.",
   metricsLoadError: "Failed to load server metrics: {error}",
+  metricsRetry: "Retry",
   metricsNoSeriesData: "No data yet, or not reported by this server.",
   metricsChartConnections: "Connections",
   metricsChartThroughput: "Throughput",
@@ -1941,6 +1945,7 @@ const en = {
   inspectorIntervalSecs: "{secs}s",
   inspectorSampledAt: "Sampled {time}",
   inspectorLoadError: "Failed to sample query statistics: {error}",
+  inspectorRetry: "Retry",
   inspectorMemoryNote: "Collected data is kept in memory only and is discarded when the panel closes.",
   inspectorTabTail: "Live tail",
   inspectorTabStats: "Top queries",
@@ -2006,6 +2011,7 @@ const en = {
   advisorRerun: "Re-run",
   advisorRunning: "Analyzing schema…",
   advisorError: "Diagnosis failed: {error}",
+  advisorRetry: "Retry",
   advisorSummary: "{findings} finding(s) across {tables} table(s)",
   advisorNoFindings: "No schema health issues found across {tables} table(s). Nice and tidy.",
   advisorSeverityHigh: "High",
@@ -2079,6 +2085,7 @@ const en = {
   sizeDesc:
     "Per-table size, row and structure statistics for {database}, read from the engine's catalogs (no table scan). Click a column header to sort, or a table name to open it.",
   sizeRefresh: "Refresh",
+  sizeRetry: "Retry",
   sizeColName: "Table",
   sizeColRows: "Rows (est.)",
   sizeColColumns: "Columns",
@@ -2107,6 +2114,7 @@ const en = {
   serverInfoDesc:
     "Read-only server version and configuration variables. Active connections are shown in the process monitor.",
   serverInfoRefresh: "Refresh",
+  serverInfoRetry: "Retry",
   serverInfoVersion: "Version",
   serverInfoSearch: "Search variables",
   serverInfoColName: "Variable",
@@ -2318,6 +2326,7 @@ const ja: Dict = {
   schemaDriftPickTwo: "比較する 2 つの異なるスナップショットを選んでください。",
   schemaDriftOmittedNote: "選択したスナップショットの一方がサイズ超過のため全文を保存できておらず、詳細な差分表示はできません。",
   schemaDriftComparing: "比較中...",
+  schemaDriftRetry: "再試行",
   schemaDriftNoChanges: "選択したスナップショット間に差分はありません。",
   schemaDriftTableAddedLabel: "テーブル追加",
   schemaDriftTableRemovedLabel: "テーブル削除",
@@ -3939,6 +3948,7 @@ const ja: Dict = {
   erDiagramEmpty: "このデータベースには図示できるテーブルがありません。",
   erDiagramNoSession: "ER 図を表示するにはデータベースに接続してください。",
   erDiagramError: "ER 図の読み込みに失敗しました: {error}",
+  erDiagramRetry: "再試行",
   erDiagramOpenTable: "{table} をテーブルタブで開く",
   erDiagramSummary: "テーブル {tables} 件 · リレーション {relationships} 件",
   erDiagramTruncated:
@@ -4076,6 +4086,7 @@ const ja: Dict = {
   processDesc:
     "サーバ側の接続と実行中ステートメントの一覧です (MySQL processlist / PostgreSQL pg_stat_activity)。一覧の取得はサーバのメモリ上の状態を読むだけなので、ポーリングしても負荷はごく小さいです。プロセスを選択して kill すると接続を強制終了できます。",
   processRefresh: "更新",
+  processRetry: "再試行",
   processUpdatedAt: "{time} 更新",
   processKillSelected: "選択を kill ({count})",
   processKillConfirmTitle: "プロセスを強制終了",
@@ -4109,6 +4120,7 @@ const ja: Dict = {
   metricsDesc:
     "ポーリング間隔でサンプリングしたサーバランタイム統計を在メモリで直近 {mins} 分だけ保持します。接続数・スループット・ロック待ちを時系列で表示します。バッファは在メモリのみで、このパネルを閉じるとポーリングは停止します。",
   metricsLoadError: "サーバメトリクスの取得に失敗しました: {error}",
+  metricsRetry: "再試行",
   metricsNoSeriesData: "データがまだ無いか、このサーバでは報告されていません。",
   metricsChartConnections: "接続数",
   metricsChartThroughput: "スループット",
@@ -4141,6 +4153,7 @@ const ja: Dict = {
   inspectorIntervalSecs: "{secs} 秒",
   inspectorSampledAt: "{time} 取得",
   inspectorLoadError: "クエリ統計の取得に失敗しました: {error}",
+  inspectorRetry: "再試行",
   inspectorMemoryNote: "収集データは在メモリのみで、パネルを閉じると破棄されます。",
   inspectorTabTail: "ライブテール",
   inspectorTabStats: "上位クエリ",
@@ -4207,6 +4220,7 @@ const ja: Dict = {
   advisorRerun: "再実行",
   advisorRunning: "スキーマを解析中…",
   advisorError: "診断に失敗しました: {error}",
+  advisorRetry: "再試行",
   advisorSummary: "{tables} テーブル中 {findings} 件の指摘",
   advisorNoFindings: "{tables} テーブルを診断し、スキーマ健全性の問題は見つかりませんでした。良好です。",
   advisorSeverityHigh: "高",
@@ -4280,6 +4294,7 @@ const ja: Dict = {
   sizeDesc:
     "{database} のテーブルごとのサイズ・行数・構造 (列/インデックス/PK/FK) の統計です。エンジンのカタログから取得するためテーブルスキャンは発生しません。列見出しをクリックでソート、テーブル名をクリックで開きます。",
   sizeRefresh: "更新",
+  sizeRetry: "再試行",
   sizeColName: "テーブル",
   sizeColRows: "行数 (概算)",
   sizeColColumns: "列数",
@@ -4308,6 +4323,7 @@ const ja: Dict = {
   serverInfoDesc:
     "読み取り専用のサーババージョンと設定変数です。アクティブ接続はプロセスモニタで確認できます。",
   serverInfoRefresh: "更新",
+  serverInfoRetry: "再試行",
   serverInfoVersion: "バージョン",
   serverInfoSearch: "変数を検索",
   serverInfoColName: "変数",

@@ -7,7 +7,9 @@ import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import { formatProcessTime, pruneSelection, summarizeQuery } from "./processList";
 import { ServerMetricsPanel } from "./ServerMetricsPanel";
 import { useConfirm } from "./ConfirmDialog";
+import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
+import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Select } from "./ui";
@@ -301,13 +303,22 @@ export function ProcessListPanel({
       )}
 
       {error ? (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("processLoadError", { error })}
-        </chakra.p>
+        // 取得失敗: errorHints の分類結果から共有イラストを割り当て、再取得導線を
+        // 添える (#848)。
+        <EmptyState
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("processLoadError", { error })}
+          action={{ label: t("processRetry"), onClick: () => void load() }}
+        />
       ) : processes.length === 0 && !loading ? (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-          {t("processEmpty")}
-        </chakra.p>
+        // アクティブな接続/クエリが 1 件もない真の空状態: ResultGrid の
+        // 「0 行」空状態と同じリッチなイラストで表現する (#847)。
+        <EmptyState
+          illustration={<NoResultsIllustration />}
+          icon="server"
+          title={t("processEmpty")}
+        />
       ) : (
         <Box overflowX="auto">
           <chakra.table width="100%" borderCollapse="collapse">
