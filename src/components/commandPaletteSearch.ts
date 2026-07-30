@@ -7,10 +7,17 @@ import type { IconName } from "./Icon";
  * この結果を描画し、キーボードナビゲーションと実行だけを担う。
  */
 
-/** 候補のグループ種別。表示順は `GROUP_ORDER` で固定する。 */
-export type CommandGroup = "navigation" | "connections" | "tables" | "snippets" | "history";
+/**
+ * 候補のグループ種別。表示順は `GROUP_ORDER` で固定する。`mru` (#845、最近使った
+ * コマンド) は他グループのように `CommandItem.group` へ直接設定されることはなく、
+ * `groupCommands` が空クエリ時に他グループの候補を複製せず**先頭へ差し替え**て
+ * 合成する特別なグループなので `GROUP_ORDER` には含めない (詳細は `groupCommands`
+ * を参照)。
+ */
+export type CommandGroup = "mru" | "navigation" | "connections" | "tables" | "snippets" | "history";
 
-/** グループの表示順 (上から下)。空のグループは描画時に省かれる。 */
+/** グループの表示順 (上から下)。空のグループは描画時に省かれる。`mru` は含まない
+ *  (常に他グループより前、`groupCommands` が個別に prepend する)。 */
 export const GROUP_ORDER: CommandGroup[] = [
   "navigation",
   "connections",
@@ -18,6 +25,9 @@ export const GROUP_ORDER: CommandGroup[] = [
   "snippets",
   "history",
 ];
+
+/** MRU (最近使ったコマンド) として保持する最大件数。 */
+export const MAX_MRU_ITEMS = 8;
 
 /** パレットに並ぶ 1 候補。`run` は選択時 (Enter / クリック) に実行される。 */
 export interface CommandItem {
@@ -127,13 +137,82 @@ export function scoreItem(item: CommandItem, query: string): ScoredItem | null {
 }
 
 /**
+ * 破損した永続化データ (localStorage の壊れた JSON、他バージョンの形式など) から
+ * MRU id 配列を安全に復元する。文字列以外の要素は除去し、重複は最初の出現 (= より
+ * 新しい方) だけ残し、上限 `MAX_MRU_ITEMS` で切り詰める。純粋関数。
+ */
+export function sanitizeMruIds(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of input) {
+    if (typeof v !== "string" || v.length === 0 || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length >= MAX_MRU_ITEMS) break;
+  }
+  return out;
+}
+
+/**
+ * 候補を選択したときに MRU の先頭へ記録する (純粋: 新しい配列を返す)。既存の同一
+ * id は一旦除去してから先頭に挿入し (LRU: 最新が先頭)、上限を超えた古いものは
+ * 切り捨てる。
+ */
+export function recordMruUsage(mruIds: string[], id: string): string[] {
+  const rest = mruIds.filter((existing) => existing !== id);
+  return [id, ...rest].slice(0, MAX_MRU_ITEMS);
+}
+
+/**
+ * もう存在しない候補 (プロファイル削除など) の id を MRU から取り除く (純粋)。
+ * `isValid` に判定関数を渡す方式なので、「この 1 件だけ除外する」
+ * (`(id) => id !== deletedId`) でも「この集合に含まれるものだけ残す」
+ * (`(id) => validIds.has(id)`) でも呼び出し側の都合に合わせて使える。変化が
+ * なければ同じ配列インスタンスを返すので、呼び出し側は参照比較で永続化・
+ * 再描画をスキップできる。
+ */
+export function pruneMruIds(mruIds: string[], isValid: (id: string) => boolean): string[] {
+  const pruned = mruIds.filter(isValid);
+  return pruned.length === mruIds.length ? mruIds : pruned;
+}
+
+/**
+ * MRU id 順 (最新が先頭) で候補を引き当て、`mru` グループを合成する。`items` に
+ * 一致しない id (プロファイル削除・スニペット削除などで消えた候補) は静かに読み
+ * 飛ばす。候補が 1 件も引き当たらなければ `null`。
+ */
+function buildMruGroup(items: CommandItem[], mruIds: string[]): GroupedCommands | null {
+  if (mruIds.length === 0) return null;
+  const byId = new Map(items.map((item) => [item.id, item] as const));
+  const mruItems: ScoredItem[] = [];
+  for (const id of mruIds) {
+    const item = byId.get(id);
+    if (item) mruItems.push({ item, score: 0, ranges: [] });
+  }
+  return mruItems.length > 0 ? { group: "mru", items: mruItems } : null;
+}
+
+/**
  * 候補を query で絞り込み、`GROUP_ORDER` の順にグループ化して返す。query が
  * 非空のときは各グループ内をスコア降順 (同点は入力順を維持) で並べ替える。空の
  * グループは含めない。
+ *
+ * `mruIds` (#845、最近使ったコマンド) を渡すと、query が空のときだけ先頭に `mru`
+ * グループを合成する。同じ候補を 2 箇所に重複表示すると `CommandPalette` の DOM id /
+ * ref (`item.id` をキーに使う) が衝突するため、`mru` に含めた候補は元のグループ
+ * からは除外する (置き換え表示。重複表示ではない)。検索中 (query 非空) は MRU を
+ * 適用せず、通常の絞り込み結果だけを返す。
  */
-export function groupCommands(items: CommandItem[], query: string): GroupedCommands[] {
+export function groupCommands(
+  items: CommandItem[],
+  query: string,
+  mruIds: string[] = [],
+): GroupedCommands[] {
+  const mruIdSet = query === "" && mruIds.length > 0 ? new Set(mruIds) : null;
   const byGroup = new Map<CommandGroup, ScoredItem[]>();
   for (const item of items) {
+    if (mruIdSet?.has(item.id)) continue;
     const scored = scoreItem(item, query);
     if (!scored) continue;
     const arr = byGroup.get(item.group);
@@ -141,6 +220,10 @@ export function groupCommands(items: CommandItem[], query: string): GroupedComma
     else byGroup.set(item.group, [scored]);
   }
   const result: GroupedCommands[] = [];
+  if (mruIdSet) {
+    const mruGroup = buildMruGroup(items, mruIds);
+    if (mruGroup) result.push(mruGroup);
+  }
   for (const group of GROUP_ORDER) {
     const arr = byGroup.get(group);
     if (!arr || arr.length === 0) continue;

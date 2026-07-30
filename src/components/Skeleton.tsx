@@ -89,3 +89,50 @@ export const SkeletonRow = chakra("div", {
     "&::after": shimmerAfterCss,
   },
 });
+
+/** テーブル行スケルトンのバー幅パターン。視覚的な単調さを避けるため列/行の位置で
+ *  周期させる (`ConnectionList` の `SKELETON_ROW_WIDTHS` と同じ発想)。 */
+const TABLE_ROW_SKELETON_WIDTHS = [70, 45, 85, 60, 78, 52];
+
+/** 表構造を持つパネル (`ServerInfoPanel` / `TableStatisticsPanel` /
+ *  `ProcessListPanel` など) の初回ロード中に、`<tbody>` の中身だけを差し替える
+ *  行スケルトンヘルパー (#846)。実データの `<thead>` はそのまま表示し続けるため、
+ *  列見出しを消さずに構造の予兆だけを示せる。
+ *
+ *  `Skeleton` と同じシマー・`prefers-reduced-motion` 挙動を継承する。行ごとに
+ *  `opacity`/`animationDelay` を段階的にずらして奥行きを出す (`ResultGrid` の
+ *  grid-skeleton-row と同じ考え方)。ロード状態は呼び出し側の既存インジケータ
+ *  (ツールバーの `Spinner` など、`role="status"`) が ARIA で伝えるため、ここは
+ *  純粋に視覚的なプレースホルダとして `aria-hidden` を付ける。
+ *
+ * @public
+ */
+export function SkeletonTableRows({
+  columns,
+  rows = 6,
+}: {
+  /** 列数 (各行に敷くバーの数)。実データの `<thead>` の列数に合わせる。 */
+  columns: number;
+  /** 表示する行数。既定 6 (ResultGrid のストリーミングスケルトンに合わせる)。 */
+  rows?: number;
+}) {
+  return (
+    <>
+      {Array.from({ length: rows }, (_, ri) => (
+        <tr key={ri} aria-hidden style={{ opacity: 1 - ri * 0.12 }}>
+          {Array.from({ length: columns }, (_, ci) => (
+            <td key={ci} style={{ padding: "5px 10px" }}>
+              <Skeleton
+                height="13px"
+                style={{
+                  width: `${TABLE_ROW_SKELETON_WIDTHS[(ri + ci) % TABLE_ROW_SKELETON_WIDTHS.length]}%`,
+                  animationDelay: `${(ri * columns + ci) * 0.035}s`,
+                }}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}

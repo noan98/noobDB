@@ -316,7 +316,6 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
                       color="app.text"
                       borderColor="app.borderStrong"
                       fontWeight={700}
-                      letterSpacing="0.05em"
                     >
                       {t("historyStatusError")}
                     </TreeBadge>

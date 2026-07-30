@@ -6,6 +6,10 @@ import {
   flattenGroups,
   splitLabel,
   singleLine,
+  sanitizeMruIds,
+  recordMruUsage,
+  pruneMruIds,
+  MAX_MRU_ITEMS,
   GROUP_ORDER,
   type CommandItem,
 } from "../components/commandPaletteSearch";
@@ -181,6 +185,123 @@ describe("splitLabel", () => {
       { text: "rder_", highlighted: false },
       { text: "id", highlighted: true },
     ]);
+  });
+});
+
+describe("groupCommands: mru (#845)", () => {
+  const items: CommandItem[] = [
+    item({ id: "h1", group: "history", label: "select * from logs" }),
+    item({ id: "t1", group: "tables", label: "users" }),
+    item({ id: "n1", group: "navigation", label: "Open settings" }),
+    item({ id: "t2", group: "tables", label: "user_sessions" }),
+    item({ id: "s1", group: "snippets", label: "count users" }),
+  ];
+
+  it("prepends a mru group (in mruIds order) when the query is empty", () => {
+    const grouped = groupCommands(items, "", ["s1", "t2"]);
+    expect(grouped[0].group).toBe("mru");
+    expect(grouped[0].items.map((s) => s.item.id)).toEqual(["s1", "t2"]);
+  });
+
+  it("removes mru'd items from their original group instead of duplicating them", () => {
+    const grouped = groupCommands(items, "", ["t2"]);
+    const tables = grouped.find((g) => g.group === "tables")!;
+    // t2 now lives only in the mru group; t1 is untouched.
+    expect(tables.items.map((s) => s.item.id)).toEqual(["t1"]);
+    const mru = grouped.find((g) => g.group === "mru")!;
+    expect(mru.items.map((s) => s.item.id)).toEqual(["t2"]);
+  });
+
+  it("silently skips mru ids that no longer match any item", () => {
+    const grouped = groupCommands(items, "", ["gone", "t1"]);
+    const mru = grouped.find((g) => g.group === "mru")!;
+    expect(mru.items.map((s) => s.item.id)).toEqual(["t1"]);
+  });
+
+  it("omits the mru group entirely when no id matches", () => {
+    const grouped = groupCommands(items, "", ["gone"]);
+    expect(grouped.some((g) => g.group === "mru")).toBe(false);
+  });
+
+  it("omits the mru group when mruIds is empty", () => {
+    const grouped = groupCommands(items, "", []);
+    expect(grouped.some((g) => g.group === "mru")).toBe(false);
+  });
+
+  it("ignores mru entirely once the query is non-empty", () => {
+    const grouped = groupCommands(items, "user", ["t2"]);
+    expect(grouped.some((g) => g.group === "mru")).toBe(false);
+    // t2 is back in its normal group, matched by the query as usual.
+    const tables = grouped.find((g) => g.group === "tables")!;
+    expect(tables.items.map((s) => s.item.id).sort()).toEqual(["t1", "t2"]);
+  });
+
+  it("defaults to no mru section when mruIds is omitted", () => {
+    const grouped = groupCommands(items, "");
+    expect(grouped.some((g) => g.group === "mru")).toBe(false);
+  });
+});
+
+describe("sanitizeMruIds (#845)", () => {
+  it("returns an empty array for non-array input", () => {
+    expect(sanitizeMruIds(undefined)).toEqual([]);
+    expect(sanitizeMruIds(null)).toEqual([]);
+    expect(sanitizeMruIds("conn:a")).toEqual([]);
+    expect(sanitizeMruIds({ 0: "conn:a" })).toEqual([]);
+  });
+
+  it("drops non-string and empty-string entries", () => {
+    expect(sanitizeMruIds(["conn:a", 1, null, undefined, {}, "", "table:t"])).toEqual([
+      "conn:a",
+      "table:t",
+    ]);
+  });
+
+  it("de-duplicates, keeping only the first (most recent) occurrence", () => {
+    expect(sanitizeMruIds(["conn:a", "table:t", "conn:a"])).toEqual(["conn:a", "table:t"]);
+  });
+
+  it("clamps to MAX_MRU_ITEMS", () => {
+    const many = Array.from({ length: MAX_MRU_ITEMS + 3 }, (_, i) => `id:${i}`);
+    expect(sanitizeMruIds(many)).toEqual(many.slice(0, MAX_MRU_ITEMS));
+  });
+});
+
+describe("recordMruUsage (#845)", () => {
+  it("inserts a new id at the front", () => {
+    expect(recordMruUsage([], "conn:a")).toEqual(["conn:a"]);
+    expect(recordMruUsage(["conn:a"], "table:t")).toEqual(["table:t", "conn:a"]);
+  });
+
+  it("moves an existing id to the front instead of duplicating it", () => {
+    expect(recordMruUsage(["conn:a", "table:t", "snippet:s"], "table:t")).toEqual([
+      "table:t",
+      "conn:a",
+      "snippet:s",
+    ]);
+  });
+
+  it("truncates once the cap is exceeded, dropping the oldest entry", () => {
+    const full = Array.from({ length: MAX_MRU_ITEMS }, (_, i) => `id:${i}`);
+    const next = recordMruUsage(full, "id:new");
+    expect(next).toHaveLength(MAX_MRU_ITEMS);
+    expect(next[0]).toBe("id:new");
+    expect(next).not.toContain(`id:${MAX_MRU_ITEMS - 1}`);
+  });
+});
+
+describe("pruneMruIds (#845)", () => {
+  it("removes ids the predicate rejects", () => {
+    expect(pruneMruIds(["a", "b", "c"], (id) => id !== "b")).toEqual(["a", "c"]);
+  });
+
+  it("returns the same array instance when nothing is removed", () => {
+    const input = ["a", "b"];
+    expect(pruneMruIds(input, () => true)).toBe(input);
+  });
+
+  it("returns an empty array when every id is rejected", () => {
+    expect(pruneMruIds(["a", "b"], () => false)).toEqual([]);
   });
 });
 

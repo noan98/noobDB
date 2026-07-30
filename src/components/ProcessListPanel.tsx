@@ -8,6 +8,7 @@ import { formatProcessTime, pruneSelection, summarizeQuery } from "./processList
 import { ServerMetricsPanel } from "./ServerMetricsPanel";
 import { useConfirm } from "./ConfirmDialog";
 import { Icon, ICON_SIZES } from "./Icon";
+import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Select } from "./ui";
 import { useToast } from "./Toast";
@@ -330,43 +331,49 @@ export function ProcessListPanel({
               </tr>
             </thead>
             <tbody>
-              {processes.map((p) => (
-                <tr key={p.id}>
-                  <chakra.td css={tdCss}>
-                    <Checkbox
-                      checked={selected.has(p.id)}
-                      aria-label={t("processSelectRow", { id: p.id })}
-                      onChange={() => toggleOne(p.id)}
-                    />
-                  </chakra.td>
-                  <chakra.td css={tdCss}>
-                    {p.id}
-                    {p.is_self && (
-                      <chakra.span
-                        marginLeft="1.5"
-                        px="1.5"
-                        fontSize="var(--text-xs)"
-                        fontFamily="var(--font-sans)"
-                        color="var(--accent)"
-                        border="1px solid var(--accent)"
-                        borderRadius="var(--radius-sm)"
-                        title={t("processSelfBadgeTitle")}
-                      >
-                        {t("processSelfBadge")}
-                      </chakra.span>
-                    )}
-                  </chakra.td>
-                  <chakra.td css={tdCss}>{p.user ?? "–"}</chakra.td>
-                  <chakra.td css={tdCss}>{p.host ?? "–"}</chakra.td>
-                  <chakra.td css={tdCss}>{p.database ?? "–"}</chakra.td>
-                  <chakra.td css={tdCss}>{p.command ?? "–"}</chakra.td>
-                  <chakra.td css={tdCss}>{p.state ?? "–"}</chakra.td>
-                  <chakra.td css={tdCss}>{formatProcessTime(p.time_secs)}</chakra.td>
-                  <chakra.td css={queryTdCss} title={p.query ?? undefined}>
-                    {summarizeQuery(p.query)}
-                  </chakra.td>
-                </tr>
-              ))}
+              {loading && processes.length === 0 ? (
+                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+                // 避け、9 列の構造をシマーで予兆表示する (#846)。
+                <SkeletonTableRows columns={9} />
+              ) : (
+                processes.map((p) => (
+                  <tr key={p.id}>
+                    <chakra.td css={tdCss}>
+                      <Checkbox
+                        checked={selected.has(p.id)}
+                        aria-label={t("processSelectRow", { id: p.id })}
+                        onChange={() => toggleOne(p.id)}
+                      />
+                    </chakra.td>
+                    <chakra.td css={tdCss}>
+                      {p.id}
+                      {p.is_self && (
+                        <chakra.span
+                          marginLeft="1.5"
+                          px="1.5"
+                          fontSize="var(--text-xs)"
+                          fontFamily="var(--font-sans)"
+                          color="var(--accent)"
+                          border="1px solid var(--accent)"
+                          borderRadius="var(--radius-sm)"
+                          title={t("processSelfBadgeTitle")}
+                        >
+                          {t("processSelfBadge")}
+                        </chakra.span>
+                      )}
+                    </chakra.td>
+                    <chakra.td css={tdCss}>{p.user ?? "–"}</chakra.td>
+                    <chakra.td css={tdCss}>{p.host ?? "–"}</chakra.td>
+                    <chakra.td css={tdCss}>{p.database ?? "–"}</chakra.td>
+                    <chakra.td css={tdCss}>{p.command ?? "–"}</chakra.td>
+                    <chakra.td css={tdCss}>{p.state ?? "–"}</chakra.td>
+                    <chakra.td css={tdCss}>{formatProcessTime(p.time_secs)}</chakra.td>
+                    <chakra.td css={queryTdCss} title={p.query ?? undefined}>
+                      {summarizeQuery(p.query)}
+                    </chakra.td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </chakra.table>
         </Box>

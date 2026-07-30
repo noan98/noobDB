@@ -48,7 +48,11 @@
        --leading-snug    : UI ラベル・コンパクトな本文
        --leading-normal  : 標準本文
        --leading-relaxed : エディタなど長文 (CodeMirror と共有)
-     数値・SQL は等幅 (--font-mono) で桁揃えを優先する。 */
+     数値・SQL は等幅 (--font-mono) で桁揃えを優先する。
+     --tracking-wider は #817 のタイポグラフィ役割トークン (`theme.ts` の
+     `textStyles.overline`) 専用。上付きの小見出し (セクション見出し・ツリーの
+     グループヘッダー等) は各所で 0.04em〜0.06em の字間がバラバラに手書きされて
+     いたため、単一値 (0.05em) に統一する。 */
   --leading-tight: 1.25;
   --leading-snug: 1.4;
   --leading-normal: 1.55;
@@ -56,6 +60,7 @@
   --tracking-tight: -0.01em;
   --tracking-normal: 0;
   --tracking-wide: 0.02em;
+  --tracking-wider: 0.05em;
 
   /* Spacing scale (4px rhythm).
      フォントスケール (--font-scale) に追従させる (#327)。余白を固定 px のままに

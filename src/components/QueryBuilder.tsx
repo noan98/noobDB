@@ -36,12 +36,11 @@ const sectionCss: SystemStyleObject = {
   gap: "1.5",
   marginBottom: "2.5",
 };
+// タイポグラフィは `textStyles.overline` (#817) に一本化。以前は生の CSS 変数
+// (`var(--text-xs)` / `var(--text-muted)`) を直書きしており、他ファイルの
+// トークン参照 (`fontSize="2xs"` 等) や字間の値ともズレていた。
 const sectionTitleCss: SystemStyleObject = {
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
-  letterSpacing: "0.04em",
-  textTransform: "uppercase",
-  color: "var(--text-muted)",
+  textStyle: "overline",
 };
 const sectionRowCss: SystemStyleObject = {
   display: "flex",

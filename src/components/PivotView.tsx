@@ -6,6 +6,7 @@ import { useT } from "../i18n";
 import { SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
 import { Button, Checkbox, Select } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
+import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import {
   buildPivotModel,
   buildPivotSql,
@@ -31,7 +32,11 @@ interface Props {
   /** ピボット元の実行 SQL。GROUP BY 変換導線で使う (無ければ導線を出さない)。 */
   sourceSql?: string;
   onSendToEditor?: (sql: string) => void;
-  onClose: () => void;
+  /**
+   * 結果パネルの表示切替 (グリッド / ピボット / チャート)。設定バー先頭の
+   * `ResultViewSwitch` と、集計できるデータが無いときの空状態から呼ばれる。
+   */
+  onChangeView: (view: ResultViewKind) => void;
 }
 
 const AGGS: PivotAgg[] = ["sum", "avg", "count", "min", "max"];
@@ -76,7 +81,7 @@ const totalCss: SystemStyleObject = {
   borderTop: "2px solid var(--border)",
 };
 
-export function PivotView({ result, driver, sourceSql, onSendToEditor, onClose }: Props) {
+export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeView }: Props) {
   const t = useT();
   const [config, setConfig] = useState<PivotConfig | null>(() =>
     defaultPivotConfig(result.columns, result.rows),
@@ -116,13 +121,27 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onClose }
   };
 
   if (!config || !model) {
+    // 集計できるデータが無い空状態でも、設定バーの位置に切替セグメントを残す
+    // (チャートへ直接移れるようにし、往復の導線をビューの状態に依らず一定にする)。
     return (
-      <Flex direction="column" h="100%" align="center" justify="center" gap="3" color="app.textMuted">
-        <Icon name="table" size={28} />
-        <chakra.span>{t("pivotNoData")}</chakra.span>
-        <Button type="button" variant="secondary" onClick={onClose}>
-          {t("chartBackToTable")}
-        </Button>
+      <Flex direction="column" h="100%" minH={0} minW={0}>
+        <Flex
+          align="center"
+          px="3"
+          py="2"
+          flex="none"
+          borderBottomWidth="1px"
+          borderBottomColor="app.border"
+        >
+          <ResultViewSwitch value="pivot" onChange={onChangeView} />
+        </Flex>
+        <Flex flex="1" minH={0} direction="column" align="center" justify="center" gap="3" color="app.textMuted">
+          <Icon name="table" size={28} />
+          <chakra.span>{t("pivotNoData")}</chakra.span>
+          <Button type="button" variant="secondary" onClick={() => onChangeView("grid")}>
+            {t("chartBackToTable")}
+          </Button>
+        </Flex>
       </Flex>
     );
   }
@@ -184,9 +203,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onClose }
         flexWrap="wrap"
         fontSize="sm"
       >
-        <Button type="button" variant="secondary" size="sm" onClick={onClose}>
-          <Icon name="table" size={ICON_SIZES.md} /> {t("chartBackToTable")}
-        </Button>
+        <ResultViewSwitch value="pivot" onChange={onChangeView} />
         <Field label={t("pivotRowField")}>
           <Select value={config.rowField} onChange={(e) => setRowField(Number(e.target.value))} width="auto">
             {result.columns.map((c, i) => (

@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 import { DataGrid, GRID_CSS } from "./ResultGrid";
 import { Splitter } from "./Splitter";
 import { Button, Checkbox } from "./ui";
+import { Icon } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 
 const SYNC_SCROLL_STORAGE_KEY = "noobdb.preview.syncScroll";
@@ -305,7 +306,7 @@ export function PreviewGrid({
                 disabled={streaming}
                 title={t("editApplyButtonTitle")}
               >
-                {t("editApplyButton")}
+                <Icon name="check" size={14} /> {t("editApplyButton")}
               </LoadingButton>
             )}
             {onDiscardEdits && (
@@ -316,7 +317,7 @@ export function PreviewGrid({
                 onClick={onDiscardEdits}
                 title={t("editCancelButtonTitle")}
               >
-                {t("editCancelButton")}
+                <Icon name="close" size={14} /> {t("editCancelButton")}
               </Button>
             )}
           </Box>
@@ -413,11 +414,7 @@ export function PreviewGrid({
             >
               <chakra.header
                 padding="5px 10px"
-                fontSize="xs"
-                fontWeight={600}
-                letterSpacing="0.04em"
-                textTransform="uppercase"
-                color="app.textMuted"
+                textStyle="overline"
                 bg="app.header"
                 borderBottom="1px solid"
                 borderColor="app.border"
@@ -453,10 +450,7 @@ export function PreviewGrid({
             >
               <chakra.header
                 padding="5px 10px"
-                fontSize="xs"
-                fontWeight={600}
-                letterSpacing="0.04em"
-                textTransform="uppercase"
+                textStyle="overline"
                 color="app.textSuccess"
                 bg="app.header"
                 borderBottom="1px solid"

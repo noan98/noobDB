@@ -202,17 +202,7 @@ const TreeEmpty = chakra("div", {
 
 // クイックアクセスのセクション見出し (お気に入り / 最近)。
 const QuickAccessHeader = chakra("div", {
-  base: {
-    pt: "1.5",
-    pb: "0.5",
-    pl: "2",
-    pr: "2.5",
-    fontSize: "2xs",
-    fontWeight: 600,
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-    color: "app.textMuted",
-  },
+  base: { pt: "1.5", pb: "0.5", pl: "2", pr: "2.5", textStyle: "overline" },
 });
 
 /** 接続状態ドットの状態別 style。色は動的トークンの
@@ -1808,10 +1798,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                         pr="2.5"
                         pb="1.5"
                         pl="1.5"
-                        fontSize="xs"
-                        textTransform="uppercase"
-                        letterSpacing="0.06em"
-                        color="app.textMuted"
+                        textStyle="overline"
                         bg="app.surfaceMuted"
                         borderTop="1px solid"
                         borderTopColor="app.borderSubtle"
@@ -1886,10 +1873,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           pr="2.5"
                           pb="1.5"
                           pl="1.5"
-                          fontSize="xs"
-                          textTransform="uppercase"
-                          letterSpacing="0.06em"
-                          color="app.textMuted"
+                          textStyle="overline"
                           bg="app.surfaceMuted"
                           borderTop="1px solid"
                           borderTopColor="app.borderSubtle"
