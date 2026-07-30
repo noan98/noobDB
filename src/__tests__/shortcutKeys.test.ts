@@ -6,6 +6,7 @@ import {
   eventToCombo,
   findShortcutConflicts,
   formatCombo,
+  splitComboKeys,
 } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS, resolveShortcutBindings, SHORTCUT_SCOPES } from "../shortcuts";
 
@@ -66,6 +67,33 @@ describe("formatCombo", () => {
     expect(formatCombo("Mod+Enter")).toBe("Cmd/Ctrl+Enter");
     expect(formatCombo("Mod+Shift+Enter")).toBe("Cmd/Ctrl+Shift+Enter");
     expect(formatCombo("Mod+Alt+Enter")).toBe("Cmd/Ctrl+Alt/Option+Enter");
+  });
+});
+
+describe("splitComboKeys", () => {
+  it("splits a formatCombo output into individual keys", () => {
+    expect(splitComboKeys(formatCombo("Mod+Enter"))).toEqual(["Cmd/Ctrl", "Enter"]);
+    expect(splitComboKeys(formatCombo("Mod+Shift+Enter"))).toEqual([
+      "Cmd/Ctrl",
+      "Shift",
+      "Enter",
+    ]);
+    // "Alt/Option" 表記の "/" は "+" 分割の対象にならず、1 トークンのまま残る。
+    expect(splitComboKeys(formatCombo("Mod+Alt+Enter"))).toEqual([
+      "Cmd/Ctrl",
+      "Alt/Option",
+      "Enter",
+    ]);
+  });
+
+  it("returns a single-element array for a plain token without '+'", () => {
+    expect(splitComboKeys("Esc")).toEqual(["Esc"]);
+    expect(splitComboKeys("↑ ↓")).toEqual(["↑ ↓"]);
+  });
+
+  it("trims whitespace and drops empty tokens", () => {
+    expect(splitComboKeys(" Mod + Enter ")).toEqual(["Mod", "Enter"]);
+    expect(splitComboKeys("Mod++Enter")).toEqual(["Mod", "Enter"]);
   });
 });
 

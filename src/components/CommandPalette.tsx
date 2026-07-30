@@ -2,6 +2,7 @@ import { chakra, Box, Flex } from "@chakra-ui/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { Kbd } from "./Kbd";
 import { Modal } from "./Modal";
 import {
   flattenGroups,
@@ -227,19 +228,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
 function Hint({ keys, label }: { keys: string; label: string }) {
   return (
     <Flex align="center" gap="1.5">
-      <chakra.kbd
-        px="1.5"
-        py="1px"
-        borderRadius="sm"
-        borderWidth="1px"
-        borderColor="app.border"
-        bg="app.surface"
-        fontSize="xs"
-        fontFamily="inherit"
-        color="app.textSecondary"
-      >
-        {keys}
-      </chakra.kbd>
+      <Kbd>{keys}</Kbd>
       <chakra.span>{label}</chakra.span>
     </Flex>
   );
