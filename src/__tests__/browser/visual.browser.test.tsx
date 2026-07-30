@@ -115,7 +115,7 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", () => {
     it(`チャート (${theme})`, async () => {
       const root = await renderVisual(
         <div style={{ height: "420px" }}>
-          <ChartView result={RESULT} onClose={() => {}} />
+          <ChartView result={RESULT} onChangeView={() => {}} />
         </div>,
         theme,
       );
@@ -126,7 +126,7 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", () => {
     it(`チャート空状態 (${theme})`, async () => {
       const root = await renderVisual(
         <div style={{ height: "300px" }}>
-          <ChartView result={NO_NUMERIC_RESULT} onClose={() => {}} />
+          <ChartView result={NO_NUMERIC_RESULT} onChangeView={() => {}} />
         </div>,
         theme,
       );

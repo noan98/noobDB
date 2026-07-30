@@ -29,6 +29,8 @@ import { chakra } from "@chakra-ui/react";
  * | 転送 (イン/エクスポート両方向) | `transfer`  |
  * | ツール (補助ビュー集約)    | `tools`         |
  * | 検索 (値/横断検索)         | `search`        |
+ * | チャート (結果の可視化)    | `chart`         |
+ * | ピボット (クロス集計)      | `pivot`         |
  *
  * ## サイズ / ストローク規約
  *
@@ -92,6 +94,8 @@ export type IconName =
   | "binary"
   | "text"
   | "unplug"
+  | "chart"
+  | "pivot"
   | "maximize"
   | "minimize"
   | "mysql"
@@ -273,6 +277,25 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   filter: <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />,
+  // 結果の可視化 (チャート)。軸 + 棒で「テーブルではないビュー」を示す。
+  chart: (
+    <>
+      <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+      <rect width="4" height="8" x="7" y="11" rx="1" />
+      <rect width="4" height="12" x="14" y="7" rx="1" />
+    </>
+  ),
+  // ピボット (クロス集計)。見出し行/列を持つ表 + 本体の変換矢印で、`table` と
+  // 区別できる形にする。
+  pivot: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M3 9h18" />
+      <path d="M9 9v12" />
+      <path d="M13 15h5" />
+      <path d="m16 13 2 2-2 2" />
+    </>
+  ),
   "er-diagram": (
     <>
       <rect width="7" height="6" x="2" y="3" rx="1" />

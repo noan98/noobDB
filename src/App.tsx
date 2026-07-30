@@ -68,6 +68,7 @@ import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
+import type { ResultViewKind } from "./components/ResultViewSwitch";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
@@ -1604,6 +1605,23 @@ export default function App() {
   const patchTab = useCallback((id: string, patcher: (tab: Tab) => Tab) => {
     setTabs((prev) => prev.map((tt) => (tt.id === id ? patcher(tt) : tt)));
   }, []);
+
+  /**
+   * 結果パネルの表示 (グリッド / ピボット / チャート) を切り替える。3 択は排他な
+   * ので `showPivot` / `showChart` の 2 フラグを常に同時に確定させ、どちらも false
+   * のときがグリッドという不変条件を 1 か所に閉じ込める。グリッド・ピボット・
+   * チャートの各ツールバーに置いた `ResultViewSwitch` が共通でここを呼ぶ。
+   */
+  const setResultView = useCallback(
+    (tabId: string, view: ResultViewKind) => {
+      patchTab(tabId, (tt) => ({
+        ...tt,
+        showPivot: view === "pivot",
+        showChart: view === "chart",
+      }));
+    },
+    [patchTab],
+  );
 
   const detachStreamListener = useCallback((tabId: string) => {
     const un = streamUnlistenRef.current.get(tabId);
@@ -5959,7 +5977,7 @@ export default function App() {
                   ) : tab.showChart && tab.result && !tab.streaming ? (
                     <ChartView
                       result={tab.result}
-                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: false }))}
+                      onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.showPivot && tab.result && !tab.streaming ? (
                     <PivotView
@@ -5967,7 +5985,7 @@ export default function App() {
                       driver={selectedProfile?.driver ?? "mysql"}
                       sourceSql={tab.lastExecutedSql}
                       onSendToEditor={openQueryInEditor}
-                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, showPivot: false }))}
+                      onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.preview ? (
                     <PreviewGrid
@@ -6014,10 +6032,10 @@ export default function App() {
                         </chakra.span>
                         <chakra.span flex="1" />
                         <Button type="button" variant="secondary" size="sm" onClick={() => discardRowOpsForTab(tab.id)} disabled={tab.applyingEdits}>
-                          {t("rowOpsDiscard")}
+                          <Icon name="close" size={14} /> {t("rowOpsDiscard")}
                         </Button>
                         <LoadingButton type="button" variant="success" size="sm" loading={tab.applyingEdits} onClick={() => applyEditsForTab(tab)}>
-                          {t("rowOpsApply")}
+                          <Icon name="check" size={14} /> {t("rowOpsApply")}
                         </LoadingButton>
                       </Flex>
                     )}
@@ -6062,12 +6080,7 @@ export default function App() {
                       onToggleDiffHighlight={() =>
                         patchTab(tab.id, (tt) => ({ ...tt, diffHighlight: !tt.diffHighlight }))
                       }
-                      onShowPivot={() =>
-                        patchTab(tab.id, (tt) => ({ ...tt, showPivot: true, showChart: false }))
-                      }
-                      onShowChart={() =>
-                        patchTab(tab.id, (tt) => ({ ...tt, showChart: true, showPivot: false }))
-                      }
+                      onChangeView={(v) => setResultView(tab.id, v)}
                       onSaveAsTable={
                         sessionId &&
                         !readOnly &&
