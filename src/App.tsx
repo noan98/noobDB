@@ -241,6 +241,8 @@ import {
   monoFontStack,
   uiFontStack,
   themePresetDataTheme,
+  recordCommandPaletteUsage,
+  pruneCommandPaletteMru,
   type TabRestoreMode,
 } from "./settings";
 import { ThemeTransition } from "./components/ThemeTransition";
@@ -4649,6 +4651,9 @@ export default function App() {
       await handleDisconnectProfile(id);
       await api.deleteProfile(id);
       await refreshProfiles();
+      // コマンドパレット MRU (#845): 削除したプロファイルの候補 id が「最近使った
+      // 項目」に残ったままだと、二度と実在しないのに一覧に居座り続けてしまう。
+      pruneCommandPaletteMru((mruId) => mruId !== `conn:${id}`);
     }, "statusFailedDeleteProfile");
     setPendingDeleteProfileIds((cur) => {
       if (!cur.has(id)) return cur;
@@ -5602,6 +5607,15 @@ export default function App() {
     toggleTheme,
     pinnedResults.length,
   ]);
+
+  // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
+  // の id は配列インデックス由来で、新しいクエリが実行されるたびに指す先が変わって
+  // しまい「最近使った項目」として記録しても意味が変わってしまうため対象外にする
+  // (接続・テーブル・スニペット・画面遷移の id はすべて安定な識別子)。
+  const handleCommandPaletteSelect = useCallback((item: CommandItem) => {
+    if (item.group === "history") return;
+    recordCommandPaletteUsage(item.id);
+  }, []);
 
   // Clean up any active listeners when the app unmounts.
   useEffect(() => {
@@ -7390,6 +7404,8 @@ export default function App() {
           {showCommandPalette && (
             <CommandPalette
               items={commandItems}
+              mruIds={settings.commandPaletteMru}
+              onSelectItem={handleCommandPaletteSelect}
               onClose={() => setShowCommandPalette(false)}
             />
           )}
