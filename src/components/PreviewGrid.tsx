@@ -413,11 +413,7 @@ export function PreviewGrid({
             >
               <chakra.header
                 padding="5px 10px"
-                fontSize="xs"
-                fontWeight={600}
-                letterSpacing="0.04em"
-                textTransform="uppercase"
-                color="app.textMuted"
+                textStyle="overline"
                 bg="app.header"
                 borderBottom="1px solid"
                 borderColor="app.border"
@@ -453,10 +449,7 @@ export function PreviewGrid({
             >
               <chakra.header
                 padding="5px 10px"
-                fontSize="xs"
-                fontWeight={600}
-                letterSpacing="0.04em"
-                textTransform="uppercase"
+                textStyle="overline"
                 color="app.textSuccess"
                 bg="app.header"
                 borderBottom="1px solid"

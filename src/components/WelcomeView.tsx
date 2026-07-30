@@ -1,5 +1,6 @@
 import { useId } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
+import { Heading } from "./ui";
 import { motion } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../i18n";
@@ -140,9 +141,9 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
       <Flex direction="column" align="center" gap="1.5" maxW="46ch" textAlign="center">
         <Flex align="center" gap="2">
           <BrandMark size={26} />
-          <Text as="h2" fontWeight="700" fontSize="lg" color="app.text">
+          <Heading role="display">
             {t("welcomeTitle")}
-          </Text>
+          </Heading>
         </Flex>
         <Text color="app.textMuted" fontSize="sm" lineHeight="1.6">
           {t("welcomeSubtitle")}

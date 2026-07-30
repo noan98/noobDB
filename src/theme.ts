@@ -3,6 +3,7 @@ import {
   defaultConfig,
   defineConfig,
   defineRecipe,
+  defineTextStyles,
 } from "@chakra-ui/react";
 
 /**
@@ -78,6 +79,8 @@ const config = defineConfig({
         tight: { value: "var(--tracking-tight)" },
         normal: { value: "var(--tracking-normal)" },
         wide: { value: "var(--tracking-wide)" },
+        // 上付きの小見出し (overline/section label) 専用。#817。
+        wider: { value: "var(--tracking-wider)" },
       },
       // 4px リズムの余白スケール。ハーフステップ (0.5/1.5/2.5/3.5) は密度の高い
       // UI で多用される中間値 (2/6/10/14px) のブリッジで、px 直書きを排除する。
@@ -284,6 +287,80 @@ const config = defineConfig({
         },
       },
     },
+    // 見出し / ラベルのタイポグラフィ役割トークン (#817)。
+    //
+    // `fontSize="lg" fontWeight={600}` のような値の組み合わせがファイルごとに
+    // 手書きされ、`lg`+600 だったり `lg`+700 だったり、字間が 0.04em/0.05em/0.06em
+    // だったりと少しずつ揃わずドリフトしていた問題への対応。Chakra の `textStyle`
+    // prop は任意の要素 (`Box` は勿論、`Dialog.Title` のような他コンポーネントの
+    // ポリモーフィック要素にも) にそのまま適用できるため、`ui.tsx` の `Heading` /
+    // `SectionLabel` から使うだけでなく、DOM タグを変えられない箇所 (例: Ark UI の
+    // `Dialog.Title` は常に `h2`) にも同じ役割を後付けできる。
+    //
+    // 役割は 6 種:
+    //   - display    : 画面の顔となる最大級の見出し (ウェルカム画面タイトル等)
+    //   - heading    : モーダルタイトル・フォームの h2 など標準的な見出し
+    //   - subheading : fieldset の legend など、見出し配下のサブ見出し
+    //   - overline   : ツリーのグループヘッダー・グリッドのカラムヘッダーなど、
+    //                  全 CAPS + 字間広めの「上付きラベル」
+    //   - body       : 標準本文 (既定の `Text` と同じだが役割として明示したいとき用)
+    //   - caption    : ヘルプ文言・補足説明などの小さい muted テキスト
+    //
+    // 個々の要素に直接上書きしたい場合は `textStyle="heading"` の後ろに
+    // 追加の style prop (`color` など) を書けば、後勝ちでそちらが優先される
+    // (例: 色付きバッジの `textStyle="overline"` + 独自 `color`)。
+    textStyles: defineTextStyles({
+      display: {
+        value: {
+          fontSize: "xl",
+          fontWeight: "700",
+          lineHeight: "tight",
+          color: "app.text",
+        },
+      },
+      heading: {
+        value: {
+          fontSize: "lg",
+          fontWeight: "600",
+          lineHeight: "tight",
+          color: "app.text",
+        },
+      },
+      subheading: {
+        value: {
+          fontSize: "sm",
+          fontWeight: "600",
+          lineHeight: "snug",
+          color: "app.text",
+        },
+      },
+      overline: {
+        value: {
+          fontSize: "2xs",
+          fontWeight: "600",
+          lineHeight: "snug",
+          letterSpacing: "wider",
+          textTransform: "uppercase",
+          color: "app.textMuted",
+        },
+      },
+      body: {
+        value: {
+          fontSize: "sm",
+          fontWeight: "400",
+          lineHeight: "normal",
+          color: "app.text",
+        },
+      },
+      caption: {
+        value: {
+          fontSize: "xs",
+          fontWeight: "400",
+          lineHeight: "snug",
+          color: "app.textMuted",
+        },
+      },
+    }),
   },
 });
 
@@ -545,4 +622,31 @@ export const radioRecipe = defineRecipe({
     accentColor: "app.accent",
     _focusVisible: { outline: "none", boxShadow: focusRing },
   },
+});
+
+/**
+ * 見出し (`ui.tsx` の `Heading`)。上の `textStyles` (#817) を `role` variant 経由で
+ * 適用するだけの薄い recipe。`role` は `display` (最大級) / `heading` (既定、モーダル
+ * タイトル・フォーム h2 相当) / `subheading` (fieldset legend 等) の 3 段階。
+ * `overline`/`body`/`caption` は見出しタグを伴わない役割のためここには含めない
+ * (overline は `sectionLabelRecipe` / `SectionLabel` が担当)。
+ */
+export const headingRecipe = defineRecipe({
+  className: "app-heading",
+  base: { margin: 0 },
+  variants: {
+    role: {
+      display: { textStyle: "display" },
+      heading: { textStyle: "heading" },
+      subheading: { textStyle: "subheading" },
+    },
+  },
+  defaultVariants: { role: "heading" },
+});
+
+/** 上付きの小見出し (`ui.tsx` の `SectionLabel`)。`textStyles.overline` を適用する
+ *  だけの recipe (variant なし)。 */
+export const sectionLabelRecipe = defineRecipe({
+  className: "app-section-label",
+  base: { margin: 0, textStyle: "overline" },
 });

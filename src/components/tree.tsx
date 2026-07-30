@@ -125,15 +125,16 @@ export const TreeLabel = chakra("span", {
 });
 
 export const TreeBadge = chakra("span", {
+  // タイポグラフィ (fontSize/fontWeight/letterSpacing/textTransform/color) は
+  // `textStyles.overline` (#817) に一本化。背景・枠線・余白などのバッジ固有装飾は
+  // ここに残す。個々の呼び出し側 (数値カウント等) が `textTransform="none"` /
+  // `letterSpacing="0"` で上書きする既存の慣習はそのまま有効。
   base: {
-    fontSize: "2xs",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
+    textStyle: "overline",
     px: "1.5",
     py: "1px",
     borderRadius: "pill",
     bg: "app.surfaceMuted",
-    color: "app.textMuted",
     border: "1px solid",
     borderColor: "app.borderSubtle",
     flexShrink: 0,

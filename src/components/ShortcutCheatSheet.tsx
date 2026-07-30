@@ -47,14 +47,7 @@ export function ShortcutCheatSheet({ onClose }: ShortcutCheatSheetProps) {
             if (items.length === 0) return null;
             return (
               <Box key={category}>
-                <Box
-                  pb="1.5"
-                  fontSize="xs"
-                  fontWeight={700}
-                  textTransform="uppercase"
-                  letterSpacing="0.06em"
-                  color="app.textMuted"
-                >
+                <Box pb="1.5" textStyle="overline">
                   {t(SHORTCUT_CATEGORY_LABEL[category as ShortcutCategory])}
                 </Box>
                 <Flex direction="column">

@@ -102,10 +102,10 @@ const scoreValueCss: SystemStyleObject = {
   fontVariantNumeric: "tabular-nums",
 };
 const scoreBandCss: SystemStyleObject = {
-  fontSize: "var(--text-2xs)",
-  fontWeight: 600,
-  letterSpacing: "0.04em",
-  textTransform: "uppercase",
+  // タイポグラフィは `textStyles.overline` (#817) を共有しつつ、色だけは親の
+  // スコアバッジ (良否で色分け) から継承させたいので明示的に打ち消す。
+  textStyle: "overline",
+  color: "inherit",
   opacity: 0.85,
 };
 
@@ -303,10 +303,9 @@ function hintSevCss(sev: HintSeverity): SystemStyleObject {
   const color =
     sev === "info" ? "var(--accent)" : severityTokens(sev === "warning" ? "error" : "warning").text;
   return {
-    fontWeight: 600,
-    fontSize: "var(--text-2xs)",
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
+    // タイポグラフィは `textStyles.overline` (#817) を共有し、色だけは重大度別に
+    // 上書きする。
+    textStyle: "overline",
     color,
   };
 }

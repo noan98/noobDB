@@ -18,13 +18,7 @@ export const FormSection = chakra("section", {
  *  `<FieldLabel htmlFor="...">`、ラジオグループ等の見出し用途では
  *  `<FieldLabel as="div">` で使う。 */
 export const FieldLabel = chakra("label", {
-  base: {
-    fontSize: "xs",
-    fontWeight: 600,
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-    color: "app.textMuted",
-  },
+  base: { textStyle: "overline" },
 });
 
 /** 入力欄 + 参照ボタンの横並び。 */
