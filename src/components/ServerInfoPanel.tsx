@@ -4,6 +4,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { api, type ServerInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { Icon } from "./Icon";
+import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Input } from "./ui";
 
@@ -166,12 +167,18 @@ export function ServerInfoPanel({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((v) => (
-                <tr key={v.name}>
-                  <chakra.td css={nameTdCss}>{v.name}</chakra.td>
-                  <chakra.td css={valueTdCss}>{v.value}</chakra.td>
-                </tr>
-              ))}
+              {loading && variables.length === 0 ? (
+                // 初回ロード中 (まだ 1 件も取得していない): 「値」列が埋まる前の
+                // 裸のヘッダのみ表示を避け、行の構造をシマーで予兆表示する (#846)。
+                <SkeletonTableRows columns={2} />
+              ) : (
+                filtered.map((v) => (
+                  <tr key={v.name}>
+                    <chakra.td css={nameTdCss}>{v.name}</chakra.td>
+                    <chakra.td css={valueTdCss}>{v.value}</chakra.td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </chakra.table>
         </Box>

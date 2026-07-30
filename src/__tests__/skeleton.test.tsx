@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { renderWithProviders } from "./testUtils";
-import { Skeleton, SkeletonRow } from "../components/Skeleton";
+import { Skeleton, SkeletonRow, SkeletonTableRows } from "../components/Skeleton";
 
 /**
  * スケルトン UI プリミティブのユニットテスト。
@@ -86,5 +86,68 @@ describe("SkeletonRow (#537)", () => {
     expect(wrapper).toBeTruthy();
     const skeletonRows = wrapper!.querySelectorAll("div");
     expect(skeletonRows.length).toBe(2);
+  });
+});
+
+describe("SkeletonTableRows (#846)", () => {
+  it("renders the requested number of rows and columns inside a tbody", () => {
+    const { container } = renderWithProviders(
+      <table>
+        <tbody>
+          <SkeletonTableRows columns={3} rows={4} />
+        </tbody>
+      </table>,
+    );
+    const rows = container.querySelectorAll("tbody > tr");
+    expect(rows).toHaveLength(4);
+    rows.forEach((row) => {
+      expect(row.querySelectorAll("td")).toHaveLength(3);
+    });
+  });
+
+  it("defaults to 6 rows when `rows` is omitted", () => {
+    const { container } = renderWithProviders(
+      <table>
+        <tbody>
+          <SkeletonTableRows columns={2} />
+        </tbody>
+      </table>,
+    );
+    expect(container.querySelectorAll("tbody > tr")).toHaveLength(6);
+  });
+
+  it("marks every row as aria-hidden (decorative placeholder only)", () => {
+    const { container } = renderWithProviders(
+      <table>
+        <tbody>
+          <SkeletonTableRows columns={2} rows={3} />
+        </tbody>
+      </table>,
+    );
+    const rows = container.querySelectorAll("tbody > tr");
+    rows.forEach((row) => {
+      expect(row.getAttribute("aria-hidden")).toBe("true");
+    });
+  });
+
+  it("staggers animation-delay and opacity across rows/columns for visual depth", () => {
+    const { container } = renderWithProviders(
+      <table>
+        <tbody>
+          <SkeletonTableRows columns={2} rows={2} />
+        </tbody>
+      </table>,
+    );
+    const rows = container.querySelectorAll("tbody > tr");
+    // 1 行目は不透明、2 行目はわずかに薄くなる (奥行き演出)。
+    expect((rows[0] as HTMLElement).style.opacity).toBe("1");
+    expect((rows[1] as HTMLElement).style.opacity).toBe("0.88");
+    const bars = container.querySelectorAll("tbody > tr td > div");
+    expect(bars.length).toBe(4);
+    // 各バーの animationDelay が単調増加 (スタッガ) していること。
+    const delays = Array.from(bars).map((b) => parseFloat((b as HTMLElement).style.animationDelay));
+    for (let i = 1; i < delays.length; i++) {
+      expect(delays[i]).toBeGreaterThan(delays[i - 1]);
+    }
   });
 });
