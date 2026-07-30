@@ -61,3 +61,31 @@ describe("TableStatisticsPanel empty state (#847)", () => {
     });
   });
 });
+
+/**
+ * 取得失敗の共有イラスト + 再取得導線 (#848)。裸の赤テキストではなく共有
+ * `EmptyState` (タイトル + 再取得ボタン) で表示され、ボタンで `api.tableSizes`
+ * (等) が再度呼ばれることを固定する。
+ */
+describe("TableStatisticsPanel error state (#848)", () => {
+  it("shows the shared EmptyState title on load failure, and retries on click", async () => {
+    vi.mocked(api.tableSizes).mockRejectedValueOnce(new Error("connection refused"));
+
+    renderWithProviders(
+      <TableStatisticsPanel sessionId="s1" database="testdb" onClose={() => {}} />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(t("sizeLoadError", { error: "Error: connection refused" })),
+      ).toBeInTheDocument();
+    });
+    expect(api.tableSizes).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: t("sizeRetry") }));
+
+    await waitFor(() => {
+      expect(api.tableSizes).toHaveBeenCalledTimes(2);
+    });
+  });
+});

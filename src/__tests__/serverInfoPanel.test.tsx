@@ -23,6 +23,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { ServerInfoPanel } from "../components/ServerInfoPanel";
+import { api } from "../api/tauri";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,6 +51,32 @@ describe("ServerInfoPanel empty state (#847)", () => {
 
     await waitFor(() => {
       expect(screen.getByText(t("serverInfoEmpty"))).toBeInTheDocument();
+    });
+  });
+});
+
+/**
+ * 取得失敗の共有イラスト + 再取得導線 (#848)。裸の赤テキストではなく共有
+ * `EmptyState` (タイトル + 再取得ボタン) で表示され、ボタンで `api.serverInfo`
+ * が再度呼ばれることを固定する。
+ */
+describe("ServerInfoPanel error state (#848)", () => {
+  it("shows the shared EmptyState title on load failure, and retries on click", async () => {
+    vi.mocked(api.serverInfo).mockRejectedValueOnce(new Error("access denied"));
+
+    renderWithProviders(<ServerInfoPanel sessionId="s1" onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(t("serverInfoLoadError", { error: "Error: access denied" })),
+      ).toBeInTheDocument();
+    });
+    expect(api.serverInfo).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: t("serverInfoRetry") }));
+
+    await waitFor(() => {
+      expect(api.serverInfo).toHaveBeenCalledTimes(2);
     });
   });
 });

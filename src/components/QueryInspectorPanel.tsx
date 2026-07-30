@@ -12,6 +12,7 @@ import {
 } from "../settings";
 import { copyToClipboard } from "./clipboard";
 import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
 import { Icon } from "./Icon";
 import {
   computeStatDelta,
@@ -135,6 +136,9 @@ export function QueryInspectorPanel({
   const prevStatsRef = useRef<{ stats: StatementStat[]; at: number } | null>(null);
   const [rateFlagged, setRateFlagged] = useState<Set<string>>(new Set());
   const busyRef = useRef(false);
+  // 前提可否プローブのリクエスト世代カウンタ (再取得ボタンでの再実行時、旧要求の
+  // 応答が後から返ってきても上書きしないようにする。#848)。
+  const probeSeqRef = useRef(0);
 
   const nPlusOneOpts: NPlusOneOptions = useMemo(
     () => ({
@@ -144,9 +148,11 @@ export function QueryInspectorPanel({
     [settings.inspectorNPlusOneMinCount, settings.inspectorNPlusOneWindowMs],
   );
 
-  // 前提可否のプローブ。セッション切替時にやり直す。
-  useEffect(() => {
-    let cancelled = false;
+  // 前提可否のプローブ。セッション切替時、および取得失敗時の再取得ボタンから
+  // 呼び出される (#848)。世代カウンタで、古い呼び出しの応答が後から返っても
+  // 最新の状態を上書きしないようにする (useEffect の cancelled フラグと同じ意図)。
+  const probeSupport = useCallback(() => {
+    const seq = ++probeSeqRef.current;
     setSupport(null);
     setSupportError(null);
     setRecording(false);
@@ -159,15 +165,16 @@ export function QueryInspectorPanel({
     api
       .queryStatsSupport(sessionId)
       .then((s) => {
-        if (!cancelled) setSupport(s);
+        if (seq === probeSeqRef.current) setSupport(s);
       })
       .catch((e) => {
-        if (!cancelled) setSupportError(String(e));
+        if (seq === probeSeqRef.current) setSupportError(String(e));
       });
-    return () => {
-      cancelled = true;
-    };
   }, [sessionId]);
+
+  useEffect(() => {
+    probeSupport();
+  }, [probeSupport]);
 
   // support 確定時、利用不可のタブに留まっていたら利用可能な方へ自動で寄せる
   // (例: MySQL で events_statements consumer が無効だが digest は有効な縮退環境
@@ -331,9 +338,14 @@ export function QueryInspectorPanel({
       </chakra.p>
 
       {supportError && (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("inspectorLoadError", { error: supportError })}
-        </chakra.p>
+        // 前提可否プローブの失敗: 以降のパネル内容が一切表示できないため、
+        // 全体を置き換えるリッチな EmptyState + 再取得導線にする (#848)。
+        <EmptyState
+          illustration={errorIllustration(supportError)}
+          icon="warning"
+          title={t("inspectorLoadError", { error: supportError })}
+          action={{ label: t("inspectorRetry"), onClick: () => probeSupport() }}
+        />
       )}
       {support == null && supportError == null && <Spinner size={14} />}
 
@@ -439,9 +451,15 @@ export function QueryInspectorPanel({
           </Flex>
 
           {error && (
-            <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-              {t("inspectorLoadError", { error })}
-            </chakra.p>
+            // ポーリング中の取得失敗: 記録・タブ等の操作 UI は引き続き表示するため、
+            // 全体を置き換えない compact な EmptyState + 再取得導線で通知する (#848)。
+            <EmptyState
+              compact
+              illustration={errorIllustration(error)}
+              icon="warning"
+              title={t("inspectorLoadError", { error })}
+              action={{ label: t("inspectorRetry"), onClick: () => void tick() }}
+            />
           )}
 
           <Flex gap="2" borderBottom="1px solid" borderColor="app.border">

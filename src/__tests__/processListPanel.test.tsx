@@ -107,3 +107,31 @@ describe("ProcessListPanel loading skeleton (#846)", () => {
     expect(rows[0].getAttribute("aria-hidden")).toBeNull();
   });
 });
+
+/**
+ * 取得失敗の共有イラスト + 再取得導線 (#848)。裸の赤テキストではなく共有
+ * `EmptyState` (タイトル + 再取得ボタン) で表示され、ボタンで `api.listProcesses`
+ * が再度呼ばれることを固定する。
+ */
+describe("ProcessListPanel error state (#848)", () => {
+  it("shows the shared EmptyState title on load failure, and retries on click", async () => {
+    vi.mocked(api.listProcesses).mockRejectedValueOnce(new Error("connection lost"));
+
+    renderWithProviders(
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} onClose={() => {}} />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(t("processLoadError", { error: "Error: connection lost" })),
+      ).toBeInTheDocument();
+    });
+    expect(api.listProcesses).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: t("processRetry") }));
+
+    await waitFor(() => {
+      expect(api.listProcesses).toHaveBeenCalledTimes(2);
+    });
+  });
+});

@@ -39,14 +39,7 @@ import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
-import {
-  NoResultsIllustration,
-  ConnectionFailedIllustration,
-  TimeoutIllustration,
-  PermissionDeniedIllustration,
-  SchemaLoadFailedIllustration,
-} from "./illustrations";
-import { illustrationForError } from "../errorHints";
+import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
   type CellKind,
@@ -6110,14 +6103,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           emptyMessage={
             streaming ? undefined : queryError ? (
               <EmptyState
-                illustration={(() => {
-                  const kind = illustrationForError(queryError);
-                  if (kind === "connectionFailed") return <ConnectionFailedIllustration size={72} />;
-                  if (kind === "timeout") return <TimeoutIllustration size={72} />;
-                  if (kind === "permissionDenied") return <PermissionDeniedIllustration size={72} />;
-                  if (kind === "schemaLoadFailed") return <SchemaLoadFailedIllustration size={72} />;
-                  return undefined;
-                })()}
+                illustration={errorIllustration(queryError)}
                 icon="warning"
                 title={t("gridQueryError")}
                 description={queryError}

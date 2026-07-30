@@ -9,7 +9,7 @@ import { ServerMetricsPanel } from "./ServerMetricsPanel";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
-import { NoResultsIllustration } from "./illustrations";
+import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Select } from "./ui";
@@ -303,9 +303,14 @@ export function ProcessListPanel({
       )}
 
       {error ? (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("processLoadError", { error })}
-        </chakra.p>
+        // 取得失敗: errorHints の分類結果から共有イラストを割り当て、再取得導線を
+        // 添える (#848)。
+        <EmptyState
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("processLoadError", { error })}
+          action={{ label: t("processRetry"), onClick: () => void load() }}
+        />
       ) : processes.length === 0 && !loading ? (
         // アクティブな接続/クエリが 1 件もない真の空状態: ResultGrid の
         // 「0 行」空状態と同じリッチなイラストで表現する (#847)。

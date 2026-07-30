@@ -4,6 +4,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { api, type ServerInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
 import { Icon } from "./Icon";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
@@ -149,9 +150,14 @@ export function ServerInfoPanel({
       </Flex>
 
       {error ? (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("serverInfoLoadError", { error })}
-        </chakra.p>
+        // 取得失敗: errorHints の分類結果から共有イラストを割り当て、再取得導線を
+        // 添える (#848)。
+        <EmptyState
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("serverInfoLoadError", { error })}
+          action={{ label: t("serverInfoRetry"), onClick: () => void load() }}
+        />
       ) : filtered.length === 0 && !loading ? (
         // 検索フィルタで 0 件になったケース (variables 自体が空になることは通常
         // ない) のため、共有 EmptyState の compact レイアウトを「検索一致なし」の

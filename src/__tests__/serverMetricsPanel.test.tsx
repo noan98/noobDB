@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 import type { ServerMetrics } from "../api/tauri";
 
@@ -28,6 +28,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { ServerMetricsPanel } from "../components/ServerMetricsPanel";
+import { api } from "../api/tauri";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -38,6 +39,32 @@ describe("ServerMetricsPanel empty state (#847)", () => {
     renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
     await waitFor(() => {
       expect(screen.getAllByText(t("metricsNoSeriesData")).length).toBeGreaterThan(0);
+    });
+  });
+});
+
+/**
+ * ポーリング失敗の共有イラスト + 再取得導線 (#848)。裸の赤テキストではなく
+ * compact な共有 `EmptyState` (タイトル + 再取得ボタン) で表示され、ボタンで
+ * `api.serverMetrics` が再度呼ばれることを固定する。
+ */
+describe("ServerMetricsPanel error state (#848)", () => {
+  it("shows the shared EmptyState title on poll failure, and retries on click", async () => {
+    vi.mocked(api.serverMetrics).mockRejectedValueOnce(new Error("query timed out"));
+
+    renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(t("metricsLoadError", { error: "Error: query timed out" })),
+      ).toBeInTheDocument();
+    });
+    expect(api.serverMetrics).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: t("metricsRetry") }));
+
+    await waitFor(() => {
+      expect(api.serverMetrics).toHaveBeenCalledTimes(2);
     });
   });
 });

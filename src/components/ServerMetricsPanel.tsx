@@ -21,6 +21,7 @@ import {
 } from "./serverMetrics";
 import { Checkbox, Select } from "./ui";
 import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
 import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
 
@@ -381,9 +382,15 @@ export function ServerMetricsPanel({
       </Flex>
 
       {error && (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("metricsLoadError", { error })}
-        </chakra.p>
+        // ポーリング失敗: チャート自体は直前サンプルのまま表示を続けるため、全体を
+        // 置き換えない compact な EmptyState + 再取得導線で通知する (#848)。
+        <EmptyState
+          compact
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("metricsLoadError", { error })}
+          action={{ label: t("metricsRetry"), onClick: () => void load() }}
+        />
       )}
 
       {!updatedAt && loading

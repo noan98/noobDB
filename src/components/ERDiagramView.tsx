@@ -32,7 +32,9 @@ import {
   type ErLayoutDirection,
   type ErTableData,
 } from "./erDiagram";
+import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
+import { errorIllustration } from "./illustrations";
 import { mapLimited } from "./mapLimited";
 import { Button, Select } from "./ui";
 import { Spinner } from "./Spinner";
@@ -213,6 +215,10 @@ function ERDiagramInner({
   const [density, setDensity] = useState<ErLayoutDensity>("comfortable");
   const [nodes, setNodes, onNodesChange] = useNodesState<ErFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  // 再取得ボタン用のカウンタ (#848)。データベース一覧・グラフ取得のどちらの
+  // 失敗でも、これをインクリメントして両 effect を再実行させれば復旧できる。
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const retry = useCallback(() => setRetryAttempt((n) => n + 1), []);
   // Skip the fit-view animation on the first layout (initial mount already
   // fits via the `fitView` prop); animate only subsequent relayouts.
   const didLayoutOnce = useRef(false);
@@ -268,7 +274,9 @@ function ERDiagramInner({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, initialDatabase]);
+    // retryAttempt は再取得ボタン専用の依存 (#848): sessionId/initialDatabase を
+    // 変えずに同じ一覧取得をやり直したいだけ。
+  }, [sessionId, initialDatabase, retryAttempt]);
 
   const handleOpen = useCallback(
     (db: string, table: string) => {
@@ -338,7 +346,9 @@ function ERDiagramInner({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, database, setNodes, setEdges]);
+    // retryAttempt は再取得ボタン専用の依存 (#848): database を変えずに同じ
+    // グラフ取得をやり直したいだけ。
+  }, [sessionId, database, setNodes, setEdges, retryAttempt]);
 
   // Position the graph and feed React Flow. Re-runs when the layout direction or
   // density changes (cheap, no DB round-trip) and animates the viewport to the
@@ -494,8 +504,24 @@ function ERDiagramInner({
             {t("erDiagramLoading")}
           </Box>
         ) : error ? (
-          <Box py="4" px="6" color="var(--status-error)" fontSize="sm">
-            {t("erDiagramError", { error })}
+          // 取得失敗 (データベース一覧 or グラフ本体): errorHints の分類結果から
+          // 共有イラストを割り当て、再取得導線を添える (#848)。図の描画領域全体を
+          // 占めるため、ローディング表示と同じ中央寄せの absolute レイアウトにする。
+          <Box
+            position="absolute"
+            inset={0}
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+            overflowY="auto"
+            py="4"
+          >
+            <EmptyState
+              illustration={errorIllustration(error)}
+              icon="warning"
+              title={t("erDiagramError", { error })}
+              action={{ label: t("erDiagramRetry"), onClick: retry }}
+            />
           </Box>
         ) : nodes.length === 0 ? (
           <Box py="4" px="6" color="app.textMuted" fontSize="sm">
