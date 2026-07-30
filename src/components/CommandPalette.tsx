@@ -25,15 +25,26 @@ import {
  *
  * 候補データと実行ハンドラは `App.tsx` が `items` として組み立てて渡す
  * (接続・テーブル・スニペット・履歴・画面遷移)。パレットは候補を選択 (Enter /
- * クリック) すると `item.run()` を呼んだ直後に `onClose()` で自分を閉じる。
+ * クリック) すると `onSelectItem` (与えられていれば) → `item.run()` の順に呼び、
+ * `onClose()` で自分を閉じる。
+ * - **MRU (#845)**: `mruIds` (最新が先頭の `CommandItem.id` 配列) を渡すと、空
+ *   クエリ時に限り先頭へ「最近使った項目」セクションを合成する
+ *   (`commandPaletteSearch.ts` の `groupCommands`)。実行された候補は
+ *   `onSelectItem` 経由で呼び出し側 (`App.tsx`) が MRU へ記録する。永続化・
+ *   上限・破損データ耐性は `settings.ts` / `commandPaletteSearch.ts` の責務で、
+ *   このコンポーネントは受け取った id 配列を表示するだけ。
  */
 
 interface CommandPaletteProps {
   items: CommandItem[];
   onClose: () => void;
+  /** MRU (#845): 最近使った候補の id (最新が先頭)。空クエリ時のみ先頭セクションに反映。 */
+  mruIds?: string[];
+  /** MRU (#845): 候補を実行した (Enter / クリック) 直後に呼ばれる。呼び出し側が MRU を更新する。 */
+  onSelectItem?: (item: CommandItem) => void;
 }
 
-export function CommandPalette({ items, onClose }: CommandPaletteProps) {
+export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: CommandPaletteProps) {
   const t = useT();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -41,10 +52,11 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
-  const grouped = useMemo(() => groupCommands(items, query), [items, query]);
+  const grouped = useMemo(() => groupCommands(items, query, mruIds), [items, query, mruIds]);
   const flat = useMemo(() => flattenGroups(grouped), [grouped]);
 
   const groupLabel: Record<CommandGroup, string> = {
+    mru: t("cmdkGroupMru"),
     navigation: t("cmdkGroupNavigation"),
     connections: t("cmdkGroupConnections"),
     tables: t("cmdkGroupTables"),
@@ -69,6 +81,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
     if (!target) return;
     // 先に閉じてから実行する。run が確認ダイアログ等を開いてもパレットが残らない。
     onClose();
+    onSelectItem?.(target);
     target.run();
   };
 

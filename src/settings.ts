@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { pruneMruIds, recordMruUsage, sanitizeMruIds } from "./components/commandPaletteSearch";
 
 export type Theme = "light" | "dark";
 
@@ -207,6 +208,15 @@ export interface Settings {
    * 楽しみたいユーザ向けのアプリ内の逃げ道。
    */
   motionPreference: MotionPreference;
+  /**
+   * コマンドパレット (#845) の最近使った項目 (MRU)。`CommandItem.id` を最新順
+   * (先頭が最新) で保持する軽量な id 配列で、空クエリ時にパレット先頭の「最近使った
+   * 項目」セクションへ反映される。並び替え・上限クランプ・破損データ耐性は
+   * `components/commandPaletteSearch.ts` の純関数 (`recordMruUsage` /
+   * `sanitizeMruIds`) を共有する。プロファイル削除など候補が消えたときの無効 id
+   * 除外は `pruneCommandPaletteMru` を参照。
+   */
+  commandPaletteMru: string[];
 }
 
 /**
@@ -576,6 +586,9 @@ export const DEFAULT_PLAN_WATCH_ON_CONNECT = true;
 /** スキーマドリフト・タイムライン (#736) の接続時自動スナップショットは既定オン。 */
 export const DEFAULT_SCHEMA_DRIFT_ON_CONNECT = true;
 
+/** コマンドパレット MRU (#845) は既定で空 (未使用状態)。 */
+export const DEFAULT_COMMAND_PALETTE_MRU: string[] = [];
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -617,6 +630,7 @@ export const DEFAULT_SETTINGS: Settings = {
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
   schemaDriftOnConnect: DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
   motionPreference: DEFAULT_MOTION_PREFERENCE,
+  commandPaletteMru: DEFAULT_COMMAND_PALETTE_MRU,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -832,6 +846,7 @@ export function normalizeSettings(input: unknown): Settings {
     planWatchOnConnect?: unknown;
     schemaDriftOnConnect?: unknown;
     motionPreference?: unknown;
+    commandPaletteMru?: unknown;
   };
   return {
     syntaxColors: {
@@ -938,6 +953,7 @@ export function normalizeSettings(input: unknown): Settings {
         ? parsed.schemaDriftOnConnect
         : DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
     motionPreference: sanitizeMotionPreference(parsed.motionPreference, DEFAULT_MOTION_PREFERENCE),
+    commandPaletteMru: sanitizeMruIds(parsed.commandPaletteMru),
   };
 }
 
@@ -1354,6 +1370,32 @@ export function setPlanWatchOnConnect(value: boolean): void {
 export function setSchemaDriftOnConnect(value: boolean): void {
   if (current.schemaDriftOnConnect === value) return;
   current = { ...current, schemaDriftOnConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * コマンドパレット (#845) で候補を選択したときに MRU の先頭へ記録する。並び替え・
+ * 上限クランプは `recordMruUsage` (`components/commandPaletteSearch.ts`) を共有
+ * するため、ロジックの二重実装を避けている。
+ */
+export function recordCommandPaletteUsage(id: string): void {
+  const next = recordMruUsage(current.commandPaletteMru, id);
+  if (next === current.commandPaletteMru) return;
+  current = { ...current, commandPaletteMru: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * `isValid` が false を返す MRU の id を取り除く。プロファイル削除など、パレット
+ * 候補そのものが消えたときに呼び出し側 (`App.tsx`) から呼ぶ (`pruneMruIds` と
+ * 同じ参照比較で無変化なら永続化をスキップする)。
+ */
+export function pruneCommandPaletteMru(isValid: (id: string) => boolean): void {
+  const next = pruneMruIds(current.commandPaletteMru, isValid);
+  if (next === current.commandPaletteMru) return;
+  current = { ...current, commandPaletteMru: next };
   persist();
   listeners.forEach((cb) => cb());
 }
