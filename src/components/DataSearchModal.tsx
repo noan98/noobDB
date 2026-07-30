@@ -18,7 +18,7 @@ import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, Radio, Select } from "./ui";
 import { LoadingButton } from "./LoadingButton";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
 
 /**
@@ -521,7 +521,7 @@ export function DataSearchModal({
                             color="app.text"
                             _hover={{ bg: "app.rowHover" }}
                           >
-                            <Icon name="columns" size={13} />
+                            <Icon name="columns" size={ICON_SIZES.sm} />
                             <chakra.span fontSize="sm" fontFamily="mono" flex="1" minW={0} truncate>
                               {h.column}
                             </chakra.span>

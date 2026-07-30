@@ -1,7 +1,7 @@
 import { chakra, type HTMLChakraProps } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { semanticColorToken } from "../semanticColors";
 import { transitions, variants } from "../motion";
 import { TreeBadge } from "./tree";
@@ -61,13 +61,12 @@ export function ProductionBadge({
         borderColor="app.dangerBg"
         fontSize={compact ? "2xs" : "xs"}
         fontWeight={700}
-        letterSpacing="0.06em"
         px={compact ? "1.5" : "2"}
         py={compact ? "1px" : "0.5"}
         title={t("listProductionTitle")}
         {...rest}
       >
-        <Icon name="warning" size={compact ? 11 : 12} />
+        <Icon name="warning" size={ICON_SIZES.sm} />
         {t("listProduction")}
       </TreeBadge>
     </MotionSpan>
@@ -98,13 +97,12 @@ export function ReadOnlyBadge({
         borderColor={semanticColorToken("info", "border")}
         fontSize={compact ? "2xs" : "xs"}
         fontWeight={700}
-        letterSpacing="0.06em"
         px={compact ? "1.5" : "2"}
         py={compact ? "1px" : "0.5"}
         title={t("listReadOnlyTitle")}
         {...rest}
       >
-        <Icon name="key" size={compact ? 11 : 12} />
+        <Icon name="key" size={ICON_SIZES.sm} />
         {t("listReadOnly")}
       </TreeBadge>
     </MotionSpan>

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { chakra, Flex, type HTMLChakraProps } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { BrandMark } from "../brand";
 import { ProductionBadge, ProfileColorChip } from "./ProfileBadge";
 import { connectionBandColor, type TitleBarConnection } from "./titleBarContext";
@@ -121,17 +121,14 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
                 alignItems="center"
                 gap="3px"
                 flexShrink={0}
-                fontSize="var(--text-2xs)"
-                fontWeight={700}
-                textTransform="uppercase"
-                letterSpacing="0.06em"
+                textStyle="overline"
                 px="1.5"
                 py="1px"
                 borderRadius="pill"
                 bg="app.status.warning"
                 color="#fff"
               >
-                <Icon name="refresh" size={11} />
+                <Icon name="refresh" size={ICON_SIZES.sm} />
                 {t("statusReconnecting")}
               </chakra.span>
             )}

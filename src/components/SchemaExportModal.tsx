@@ -9,7 +9,7 @@ import { Button, Checkbox, Input, Radio, Switch } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { copyToClipboard } from "./clipboard";
 import { mapLimited } from "./mapLimited";
 import {
@@ -413,7 +413,7 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
                   _hover={{ color: "app.text", bg: "app.hover" }}
                   _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
                 >
-                  <Icon name={copied ? "check" : "copy"} size={14} />
+                  <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
                   <span>{copied ? t("gridCopied") : t("exportCopyAll")}</span>
                 </chakra.button>
               </chakra.div>

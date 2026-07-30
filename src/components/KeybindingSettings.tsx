@@ -63,14 +63,7 @@ const SmallButton = chakra("button", {
 });
 
 const CategoryHeading = chakra("div", {
-  base: {
-    pt: "1",
-    fontSize: "xs",
-    fontWeight: 700,
-    textTransform: "uppercase",
-    letterSpacing: "0.06em",
-    color: "app.textMuted",
-  },
+  base: { pt: "1", textStyle: "overline" },
 });
 
 const ConflictNote = chakra("span", {

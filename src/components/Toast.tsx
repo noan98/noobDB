@@ -10,7 +10,7 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Box, chakra } from "@chakra-ui/react";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { transitions } from "../motion";
 import { semanticColorToken, type SemanticRole } from "../semanticColors";
 
@@ -249,7 +249,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                     color={TONE_COLOR[toast.tone]}
                     aria-hidden
                   >
-                    <Icon name={toast.tone === "success" ? "check" : "warning"} size={16} />
+                    <Icon name={toast.tone === "success" ? "check" : "warning"} size={ICON_SIZES.md} />
                   </chakra.span>
                 )}
                 <chakra.span flex="1" minW={0} lineHeight="1.4" wordBreak="break-word">
@@ -299,7 +299,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   cursor="pointer"
                   _hover={{ color: "app.text", bg: "app.hover" }}
                 >
-                  <Icon name="close" size={13} />
+                  <Icon name="close" size={ICON_SIZES.sm} />
                 </chakra.button>
               </Box>
             </motion.div>

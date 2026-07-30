@@ -9,7 +9,7 @@ import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
 import { copyToClipboard } from "./clipboard";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
 import { useToast } from "./Toast";
@@ -36,12 +36,11 @@ const sectionCss: SystemStyleObject = {
   gap: "1.5",
   marginBottom: "2.5",
 };
+// タイポグラフィは `textStyles.overline` (#817) に一本化。以前は生の CSS 変数
+// (`var(--text-xs)` / `var(--text-muted)`) を直書きしており、他ファイルの
+// トークン参照 (`fontSize="2xs"` 等) や字間の値ともズレていた。
 const sectionTitleCss: SystemStyleObject = {
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
-  letterSpacing: "0.04em",
-  textTransform: "uppercase",
-  color: "var(--text-muted)",
+  textStyle: "overline",
 };
 const sectionRowCss: SystemStyleObject = {
   display: "flex",
@@ -669,7 +668,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                                   aria-label={t("qbRemove")}
                                   title={t("qbRemove")}
                                 >
-                                  <Icon name="close" size={12} />
+                                  <Icon name="close" size={ICON_SIZES.sm} />
                                 </chakra.button>
                               </chakra.td>
                             ))}
@@ -720,7 +719,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     title={t("qbRemove")}
                     disabled={setPairs.length <= 1}
                   >
-                    <Icon name="close" size={12} />
+                    <Icon name="close" size={ICON_SIZES.sm} />
                   </chakra.button>
                 </Box>
               ))}
@@ -758,7 +757,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     title={t("qbRemove")}
                     disabled={insertPairs.length <= 1}
                   >
-                    <Icon name="close" size={12} />
+                    <Icon name="close" size={ICON_SIZES.sm} />
                   </chakra.button>
                 </Box>
               ))}
@@ -819,7 +818,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     title={t("qbRemove")}
                     disabled={whereConditions.length <= 1}
                   >
-                    <Icon name="close" size={12} />
+                    <Icon name="close" size={ICON_SIZES.sm} />
                   </chakra.button>
                 </Box>
               ))}

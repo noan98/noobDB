@@ -18,7 +18,7 @@ import {
 } from "./tableSize";
 import { mapLimited } from "./mapLimited";
 import { EmptyState } from "./EmptyState";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
@@ -209,7 +209,7 @@ export function TableStatisticsPanel({
           aria-label={t("sizeClose")}
           title={t("sizeClose")}
         >
-          <Icon name="close" size={13} />
+          <Icon name="close" size={ICON_SIZES.sm} />
         </Button>
       </chakra.header>
 
@@ -219,7 +219,7 @@ export function TableStatisticsPanel({
 
       <Flex align="center" gap="3" flexWrap="wrap">
         <Button type="button" onClick={() => void load()} disabled={loading}>
-          <Icon name="refresh" size={13} /> {t("sizeRefresh")}
+          <Icon name="refresh" size={ICON_SIZES.sm} /> {t("sizeRefresh")}
         </Button>
         {loading && <Spinner size={14} />}
         <chakra.input

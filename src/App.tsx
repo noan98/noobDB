@@ -74,7 +74,7 @@ import { TitleBar } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
-import { Icon } from "./components/Icon";
+import { Icon, ICON_SIZES } from "./components/Icon";
 import { Button } from "./components/ui";
 import { LoadingButton } from "./components/LoadingButton";
 import { useConfirm } from "./components/ConfirmDialog";
@@ -5432,6 +5432,10 @@ export default function App() {
         label: t("cmdkActionNewQueryTab"),
         icon: "plus",
         keywords: "query tab editor クエリ タブ",
+        // #843: パレットの行末にもショートカットを表示し、実行しながら覚えられる
+        // ようにする。id/整形は `ContextMenu` と同じ `resolveShortcutBindings` +
+        // `formatCombo` の組で解決し、ユーザの再割り当て (#557) に自動追従する。
+        shortcut: formatCombo(shortcutBindings.newTab),
         run: () => handleNewTab(),
       });
       items.push({
@@ -5476,6 +5480,7 @@ export default function App() {
         label: t("cmdkActionSettings"),
         icon: "settings",
         keywords: "settings preferences 設定",
+        shortcut: formatCombo(shortcutBindings.openSettings),
         run: () => openFullView("settings"),
       },
       {
@@ -5484,6 +5489,7 @@ export default function App() {
         label: t("cmdkActionHelp"),
         icon: "help",
         keywords: "help docs ヘルプ",
+        shortcut: formatCombo(shortcutBindings.openHelp),
         run: () => openFullView("help"),
       },
       {
@@ -5508,6 +5514,7 @@ export default function App() {
         label: t("cmdkActionToggleTheme"),
         icon: theme === "dark" ? "sun" : "moon",
         keywords: "theme dark light テーマ ダーク ライト",
+        shortcut: formatCombo(shortcutBindings.toggleTheme),
         run: () => toggleTheme(),
       },
     );
@@ -5615,6 +5622,7 @@ export default function App() {
     theme,
     t,
     locale,
+    shortcutBindings,
     handleNewTab,
     handleDisconnect,
     handleConnect,
@@ -5819,7 +5827,7 @@ export default function App() {
                       borderBottomColor="app.border"
                       bg="app.toolbar"
                     >
-                      <Icon name="maximize" size={14} />
+                      <Icon name="maximize" size={ICON_SIZES.md} />
                       <chakra.span
                         fontSize="sm"
                         color="app.text"
@@ -5838,7 +5846,7 @@ export default function App() {
                         onClick={() => setLayoutMode("normal")}
                         title={t("editorRestoreTitle")}
                       >
-                        <Icon name="minimize" size={14} /> {t("editorFocusedLabel")}
+                        <Icon name="minimize" size={ICON_SIZES.md} /> {t("editorFocusedLabel")}
                       </Button>
                     </Flex>
                   )}
@@ -5925,7 +5933,7 @@ export default function App() {
                       borderBottomColor="app.border"
                       bg="app.toolbar"
                     >
-                      <Icon name="maximize" size={14} />
+                      <Icon name="maximize" size={ICON_SIZES.md} />
                       <chakra.span
                         fontSize="sm"
                         color="app.text"
@@ -5944,7 +5952,7 @@ export default function App() {
                         onClick={() => setLayoutMode("normal")}
                         title={t("resultRestoreTitle")}
                       >
-                        <Icon name="minimize" size={14} /> {t("resultMaximizedLabel")}
+                        <Icon name="minimize" size={ICON_SIZES.md} /> {t("resultMaximizedLabel")}
                       </Button>
                     </Flex>
                   )}
@@ -6037,7 +6045,7 @@ export default function App() {
                         bg="color-mix(in srgb, var(--accent) 8%, transparent)"
                         fontSize="sm"
                       >
-                        <Icon name="table" size={14} />
+                        <Icon name="table" size={ICON_SIZES.md} />
                         <chakra.span color="app.text">
                           {t("rowOpsBarSummary", {
                             inserts: tab.pendingInserts?.length ?? 0,
@@ -6046,10 +6054,10 @@ export default function App() {
                         </chakra.span>
                         <chakra.span flex="1" />
                         <Button type="button" variant="secondary" size="sm" onClick={() => discardRowOpsForTab(tab.id)} disabled={tab.applyingEdits}>
-                          <Icon name="close" size={14} /> {t("rowOpsDiscard")}
+                          <Icon name="close" size={ICON_SIZES.md} /> {t("rowOpsDiscard")}
                         </Button>
                         <LoadingButton type="button" variant="success" size="sm" loading={tab.applyingEdits} onClick={() => applyEditsForTab(tab)}>
-                          <Icon name="check" size={14} /> {t("rowOpsApply")}
+                          <Icon name="check" size={ICON_SIZES.md} /> {t("rowOpsApply")}
                         </LoadingButton>
                       </Flex>
                     )}
@@ -6731,9 +6739,7 @@ export default function App() {
                         display="inline-flex"
                         alignItems="center"
                         gap="1"
-                        fontSize="xs"
-                        textTransform="uppercase"
-                        letterSpacing="0.06em"
+                        textStyle="overline"
                         fontWeight={700}
                         px="2"
                         py="0.5"
@@ -6745,7 +6751,7 @@ export default function App() {
                         borderColor="app.status.error"
                         flexShrink={0}
                       >
-                        <Icon name="warning" size={12} />
+                        <Icon name="warning" size={ICON_SIZES.sm} />
                         {t("listProduction")}
                       </chakra.span>
                     )}
@@ -6755,9 +6761,7 @@ export default function App() {
                         display="inline-flex"
                         alignItems="center"
                         gap="1"
-                        fontSize="xs"
-                        textTransform="uppercase"
-                        letterSpacing="0.06em"
+                        textStyle="overline"
                         fontWeight={700}
                         px="2"
                         py="0.5"
@@ -6769,7 +6773,7 @@ export default function App() {
                         borderColor="app.borderStrong"
                         flexShrink={0}
                       >
-                        <Icon name="key" size={12} />
+                        <Icon name="key" size={ICON_SIZES.sm} />
                         {t("listReadOnly")}
                       </chakra.span>
                     )}
@@ -6826,7 +6830,7 @@ export default function App() {
               )}
               {sessionId && (
                 <Button variant="dangerOutline" size="sm" onClick={handleDisconnect}>
-                  <Icon name="unplug" size={14} />
+                  <Icon name="unplug" size={ICON_SIZES.md} />
                   {t("appDisconnect")}
                 </Button>
               )}
@@ -6936,10 +6940,8 @@ export default function App() {
               {isCritical && (
                 <chakra.span
                   flexShrink="0"
+                  textStyle="overline"
                   fontWeight={700}
-                  fontSize="xs"
-                  letterSpacing="0.04em"
-                  textTransform="uppercase"
                   px="7px"
                   py="0.5"
                   borderRadius="sm"

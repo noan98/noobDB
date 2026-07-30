@@ -14,6 +14,7 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { computeTooltipPosition } from "./tooltipPosition";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
 import { normalizeChipColor } from "../profileIdentity";
 import {
@@ -202,17 +203,7 @@ const TreeEmpty = chakra("div", {
 
 // クイックアクセスのセクション見出し (お気に入り / 最近)。
 const QuickAccessHeader = chakra("div", {
-  base: {
-    pt: "1.5",
-    pb: "0.5",
-    pl: "2",
-    pr: "2.5",
-    fontSize: "2xs",
-    fontWeight: 600,
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-    color: "app.textMuted",
-  },
+  base: { pt: "1.5", pb: "0.5", pl: "2", pr: "2.5", textStyle: "overline" },
 });
 
 /** 接続状態ドットの状態別 style。色は動的トークンの
@@ -1506,7 +1497,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                 display="inline-flex"
                 animation={refreshing ? "spinner-rotate var(--dur-spin) linear infinite" : undefined}
               >
-                <Icon name="refresh" size={13} />
+                <Icon name="refresh" size={ICON_SIZES.sm} />
               </chakra.span>
             </chakra.button>
           )}
@@ -1808,10 +1799,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                         pr="2.5"
                         pb="1.5"
                         pl="1.5"
-                        fontSize="xs"
-                        textTransform="uppercase"
-                        letterSpacing="0.06em"
-                        color="app.textMuted"
+                        textStyle="overline"
                         bg="app.surfaceMuted"
                         borderTop="1px solid"
                         borderTopColor="app.borderSubtle"
@@ -1886,10 +1874,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           pr="2.5"
                           pb="1.5"
                           pl="1.5"
-                          fontSize="xs"
-                          textTransform="uppercase"
-                          letterSpacing="0.06em"
-                          color="app.textMuted"
+                          textStyle="overline"
                           bg="app.surfaceMuted"
                           borderTop="1px solid"
                           borderTopColor="app.borderSubtle"
@@ -1967,19 +1952,14 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const { width, height } = el.getBoundingClientRect();
-    const margin = 8;
-    let left = anchor.right + margin;
-    if (left + width + margin > window.innerWidth) {
-      left = anchor.left - margin - width;
-    }
-    left = Math.max(margin, left);
-    let top = anchor.top;
-    if (top + height + margin > window.innerHeight) {
-      top = window.innerHeight - margin - height;
-    }
-    top = Math.max(margin, top);
-    setPos({ left, top });
+    const size = el.getBoundingClientRect();
+    // 測定→クランプ→フリップは Tooltip プリミティブ (#814) と共有の
+    // `computeTooltipPosition` に一本化済み。行の高さ全体を対象に中央寄せすると
+    // 縦長の行ではカーソル位置から離れて見えるため、"right" + align="start" で
+    // 行の上端に揃える (元のインライン実装と同じ見た目)。
+    setPos(
+      computeTooltipPosition(anchor, size, "right", 8, { width: window.innerWidth, height: window.innerHeight }, "start"),
+    );
   }, [col, anchor]);
 
   const keyLabel =

@@ -1,0 +1,281 @@
+import {
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type FocusEvent as ReactFocusEvent,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+} from "react";
+import { createPortal } from "react-dom";
+import { Box, chakra } from "@chakra-ui/react";
+import { AnimatePresence, motion } from "motion/react";
+import { transitions, variants } from "../motion";
+import { computeTooltipPosition, type TooltipPlacement } from "./tooltipPosition";
+
+export type { TooltipPlacement };
+
+/** `transition` は Chakra 自身のスタイルプロップ名と衝突するため — `ContextMenu` の
+ *  `MotionMenu` と同じく — motion へ明示的に forward する必要がある。 */
+const MotionBox = chakra(motion.div, {}, { forwardProps: ["transition"] });
+
+const OPEN_DELAY_MS = 400;
+const MARGIN_PX = 8;
+
+/**
+ * `Tooltip` がトリガーに要求する最小限のプロップ表面。実際に使う要素
+ * (Chakra の `Button`/`chakra.*`、native タグ) はいずれもこれらを問題なく
+ * 受け取れるが、@types/react 19 では `ReactElement` のプロップ型の既定値が
+ * `unknown` になったため、`cloneElement` を安全に型付けするためだけにここへ
+ * 書き出している。
+ */
+interface TriggerProps {
+  onMouseEnter?: (e: ReactMouseEvent) => void;
+  onMouseLeave?: (e: ReactMouseEvent) => void;
+  onFocus?: (e: ReactFocusEvent) => void;
+  onBlur?: (e: ReactFocusEvent) => void;
+  ref?: Ref<unknown>;
+}
+
+export interface TooltipProps {
+  /**
+   * ツールチップの中身。falsy (`undefined`/`""` を含む) のときは `children` を
+   * 一切変更せずそのまま描画する — リスナーも付けず、ポータルも作らない。呼び
+   * 出し側は条件付き/派生ラベルを分岐なしでそのまま渡せる (例:
+   * `<Tooltip label={disabledReason}>`)。
+   */
+  label?: ReactNode;
+  /**
+   * トリガー要素は 1 つだけ。`cloneElement` 経由で hover/focus ハンドラ・マージ
+   * 済み ref・`aria-describedby` を受け取るため、DOM ref と任意のプロップを
+   * forward できる要素である必要がある — 本コードベース全体で使っている
+   * `Button`/`chakra.*`/native タグはいずれも該当する。
+   */
+  children: ReactElement<TriggerProps>;
+  /**
+   * 優先する側。はみ出す場合は反対側へフリップしつつビューポート内へクランプ
+   * する (`computeTooltipPosition`、`ConnectionList` の `ColumnTooltip` と共有)。
+   * 既定は `"top"`。
+   */
+  placement?: TooltipPlacement;
+  /**
+   * 出現までの hover 遅延 (ms)。OS の慣習に倣い、ポインタが通り過ぎるだけで
+   * チラつかないようにする。フォーカス時は常に即時表示 (遅延なし) — a11y を
+   * 優先しており、タブ移動中は「まず hover して発見する」というステップが
+   * そもそも無いため、人為的な遅延を入れるとキーボードユーザだけが待たされる
+   * ことになる。既定 400。
+   */
+  openDelay?: number;
+  /**
+   * トリガーをフォーカス可能な `<span tabIndex={0}>` で包み、トリガー自体が
+   * 決してフォーカスを持てない場合でもキーボードユーザがツールチップへ到達
+   * できるようにする — 代表例は無効化されたボタンで、ブラウザはタブ順序から
+   * 除外するうえ (Chromium では) マウスイベントのディスパッチ自体からも除外
+   * する。これが無いと無効なトリガーのツールチップはキーボードで一切到達
+   * できない — まさに `ContextMenu` の「なぜこの項目が無効なのか」という
+   * #814 が解消しようとしているギャップそのもの。通常の (既にフォーカス/
+   * 有効化されている) トリガーではオフのまま (既定) にしておくこと — 無条件で
+   * 有効にすると、トリガー自身のタブストップの隣に冗長なタブストップが
+   * 増えてしまう。
+   */
+  focusableWrapper?: boolean;
+}
+
+/**
+ * 共有の hover/focus ツールチッププリミティブ (#814)。native `title=` を
+ * 置き換える — native title は (1) 表示まで約 1 秒かかる、(2) キーボード
+ * フォーカスでは一切表示されない (明確な a11y 欠陥)、(3) アプリのテーマ
+ * (ライト/ダーク) に関係なく無地の OS chrome として描画される、(4) ポインタが
+ * 少しでも動くと消える、という弱点を持つ。
+ *
+ * hover (`openDelay` 経過後) またはフォーカス (即時) で出現し、blur / マウス
+ * リーブ / Escape / スクロール / リサイズで消える。トリガーには吹き出しを指す
+ * `aria-describedby` を付与するので、支援技術はトリガー自身のアクセシブル名と
+ * 併せて読み上げる。`<body>` へのポータル経由で描画する点は `ContextMenu` と
+ * 同様で、祖先の `overflow: hidden`/スクロールコンテナに切り取られることが
+ * ない。位置決めは `computeTooltipPosition` (測定 → クランプ → フリップ) で、
+ * `ColumnTooltip` が持つ独自のスキーマ用ホバーカードと同じ計算を使っている。
+ *
+ * Motion (`variants.fadeScale` + `transitions.enter`) は出現アニメーションのみに
+ * 使う。`ContextMenu` と同じく退出アニメーションは無く、閉じるとバブルは即座に
+ * アンマウントされる — これだけ短命な要素では体感できる差にならない。
+ * reduced-motion はルートの `MotionConfig` (`motion.ts` 参照) により自動で
+ * 効く。
+ */
+export function Tooltip({
+  label,
+  children,
+  placement = "top",
+  openDelay = OPEN_DELAY_MS,
+  focusableWrapper = false,
+}: TooltipProps) {
+  const id = useId();
+  const anchorRef = useRef<HTMLElement | null>(null);
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearShowTimer = () => {
+    if (showTimer.current !== null) {
+      clearTimeout(showTimer.current);
+      showTimer.current = null;
+    }
+  };
+
+  const show = (delay: number) => {
+    clearShowTimer();
+    if (delay <= 0) {
+      setOpen(true);
+      return;
+    }
+    showTimer.current = setTimeout(() => setOpen(true), delay);
+  };
+
+  const hide = () => {
+    clearShowTimer();
+    setOpen(false);
+  };
+
+  useEffect(() => () => clearShowTimer(), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") hide();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    // スクロール/リサイズを無視すると、アンカーに追従も連動非表示もされない
+    // まま、古い位置に吹き出しが浮いた状態で残ってしまう。
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const anchor = anchorRef.current;
+    const bubble = bubbleRef.current;
+    if (!anchor || !bubble) return;
+    const anchorRect = anchor.getBoundingClientRect();
+    const { width, height } = bubble.getBoundingClientRect();
+    setPos(
+      computeTooltipPosition(anchorRect, { width, height }, placement, MARGIN_PX, {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }),
+    );
+  }, [open, placement, label]);
+
+  if (!label || !isValidElement(children)) return children ?? null;
+
+  const describedBy = open ? id : undefined;
+
+  const trigger = focusableWrapper ? (
+    <Box
+      as="span"
+      display="inline-block"
+      borderRadius="sm"
+      ref={anchorRef as Ref<HTMLSpanElement>}
+      tabIndex={0}
+      onMouseEnter={() => show(openDelay)}
+      onMouseLeave={hide}
+      onFocus={() => show(0)}
+      onBlur={hide}
+      aria-describedby={describedBy}
+      _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+    >
+      {children}
+    </Box>
+  ) : (
+    cloneElement(children, {
+      ref: mergeRefs(anchorRef, elementRef(children)),
+      onMouseEnter: composeHandler(children.props.onMouseEnter, () => show(openDelay)),
+      onMouseLeave: composeHandler(children.props.onMouseLeave, hide),
+      onFocus: composeHandler(children.props.onFocus, () => show(0)),
+      onBlur: composeHandler(children.props.onBlur, hide),
+      "aria-describedby": describedBy,
+    } as Partial<TriggerProps> & { "aria-describedby"?: string })
+  );
+
+  return (
+    <>
+      {trigger}
+      {createPortal(
+        <AnimatePresence>
+          {open && (
+            <MotionBox
+              ref={bubbleRef}
+              id={id}
+              role="tooltip"
+              position="fixed"
+              zIndex="popover"
+              maxWidth="280px"
+              bg="app.surface"
+              border="1px solid"
+              borderColor="app.borderStrong"
+              borderRadius="md"
+              boxShadow="md"
+              py="1"
+              px="2.5"
+              fontSize="sm"
+              color="app.text"
+              pointerEvents="none"
+              style={{
+                left: `${pos ? pos.left : 0}px`,
+                top: `${pos ? pos.top : 0}px`,
+                visibility: pos ? "visible" : "hidden",
+              }}
+              initial={variants.fadeScale.initial}
+              animate={variants.fadeScale.animate}
+              exit={variants.fadeScale.exit}
+              transition={transitions.enter}
+            >
+              {label}
+            </MotionBox>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+/** React が実行時に `ReactElement` のプロップへ付与する `ref` を読み取る
+ *  (公開のプロップ型には含まれない)。これにより、トリガーに既存の ref が
+ *  あっても `Tooltip` が測定用に必要とする ref と共存できる。 */
+function elementRef(element: ReactElement<TriggerProps>): Ref<unknown> | undefined {
+  return (element as unknown as { ref?: Ref<unknown> }).ref;
+}
+
+function mergeRefs<T>(...refs: Array<Ref<T> | undefined>): (node: T | null) => void {
+  return (node) => {
+    for (const ref of refs) {
+      if (!ref) continue;
+      if (typeof ref === "function") ref(node);
+      else (ref as { current: T | null }).current = node;
+    }
+  };
+}
+
+function composeHandler<E extends ReactMouseEvent | ReactFocusEvent>(
+  existing: ((e: E) => void) | undefined,
+  extra: (e: E) => void,
+): (e: E) => void {
+  return (e: E) => {
+    existing?.(e);
+    extra(e);
+  };
+}

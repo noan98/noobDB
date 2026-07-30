@@ -5,7 +5,7 @@ import { api, type ServerInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Input } from "./ui";
@@ -113,7 +113,7 @@ export function ServerInfoPanel({
           aria-label={t("serverInfoClose")}
           title={t("serverInfoClose")}
         >
-          <Icon name="close" size={13} />
+          <Icon name="close" size={ICON_SIZES.sm} />
         </Button>
       </chakra.header>
 
@@ -130,7 +130,7 @@ export function ServerInfoPanel({
 
       <Flex align="center" gap="3" flexWrap="wrap">
         <Button type="button" onClick={() => void load()} disabled={loading}>
-          <Icon name="refresh" size={13} /> {t("serverInfoRefresh")}
+          <Icon name="refresh" size={ICON_SIZES.sm} /> {t("serverInfoRefresh")}
         </Button>
         <Input
           type="search"

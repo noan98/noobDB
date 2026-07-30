@@ -305,6 +305,26 @@ describe("pruneMruIds (#845)", () => {
   });
 });
 
+describe("CommandItem.shortcut (#843)", () => {
+  it("carries the shortcut hint through scoring and grouping unchanged", () => {
+    const withShortcut = item({
+      id: "n1",
+      group: "navigation",
+      label: "New tab",
+      shortcut: "Cmd/Ctrl+T",
+    });
+    const scored = scoreItem(withShortcut, "");
+    expect(scored?.item.shortcut).toBe("Cmd/Ctrl+T");
+    const grouped = groupCommands([withShortcut], "");
+    expect(grouped[0].items[0].item.shortcut).toBe("Cmd/Ctrl+T");
+  });
+
+  it("is optional and left undefined when the caller omits it", () => {
+    const withoutShortcut = item({ id: "n2", group: "navigation", label: "Help" });
+    expect(withoutShortcut.shortcut).toBeUndefined();
+  });
+});
+
 describe("singleLine", () => {
   it("collapses whitespace and trims", () => {
     expect(singleLine("  select\n  *\tfrom users  ")).toBe("select * from users");

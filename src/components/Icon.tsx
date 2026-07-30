@@ -35,11 +35,18 @@ import { chakra } from "@chakra-ui/react";
  * ## サイズ / ストローク規約
  *
  * 呼び出し側はピクセル直値ではなく `ICON_SIZES` / `ICON_STROKE` のトークンを参照し、
- * 密度・タイポグラフィ基盤と歩調を合わせる。
- *   - `sm` (13px): 行内・ツリー行・バッジなど密な文脈。
- *   - `md` (16px): ツールバー/ボタンの既定。
- *   - `lg` (20px): 見出し・空状態など強調したい箇所。
+ * 密度・タイポグラフィ基盤と歩調を合わせる。`ICON_SIZES` は `App.css` の `--text-*` /
+ * `--space-*` と同じ `calc(px * var(--font-scale))` 形式の CSS 値で、設定のフォント
+ * サイズを大きくすると (`--font-scale` が増加すると) アイコンも比例して拡大する
+ * (#818)。呼び出し側はこれまで通り `size={ICON_SIZES.sm}` のように参照するだけで、
+ * font-scale 追従は自動的に付いてくる。
+ *   - `sm` (13px 相当): 行内・ツリー行・バッジなど密な文脈。
+ *   - `md` (16px 相当): ツールバー/ボタンの既定。
+ *   - `lg` (20px 相当): 見出し・空状態など強調したい箇所。
  * ストロークは既定 `regular` (2)。塗り glyph (ブランドロゴ) は対象外。
+ * なお、実寸が求められる大きめの強調アイコン (空状態イラストの主アイコンなど、
+ * `sm`/`md`/`lg` のどれとも噛み合わない 22px 超のもの) はこのトークン規約の対象外
+ * とし、引き続きピクセル直値を許容する。
  */
 export type IconName =
   | "sun"
@@ -104,10 +111,16 @@ export type IconName =
   | "search";
 
 /**
- * アイコンのサイズトークン (px)。呼び出し側はこの定数を参照し、密度/タイポグラフィ
- * 基盤と整合した一貫サイズで描画する。
+ * アイコンのサイズトークン。値は `App.css` の `--text-*` / `--space-*` と同じ
+ * `calc(px * var(--font-scale))` 形式の CSS 文字列で、設定のフォントサイズ
+ * (`--font-scale`) に比例してアイコン寸法が追従する (#818)。呼び出し側はこの定数を
+ * 参照し、密度/タイポグラフィ基盤と整合した一貫サイズで描画する。
  */
-export const ICON_SIZES = { sm: 13, md: 16, lg: 20 } as const;
+export const ICON_SIZES = {
+  sm: "calc(13px * var(--font-scale))",
+  md: "calc(16px * var(--font-scale))",
+  lg: "calc(20px * var(--font-scale))",
+} as const;
 /** アイコンサイズトークンのキー。呼び出し側が型安全に指定するための公開型。 @public */
 export type IconSizeToken = keyof typeof ICON_SIZES;
 
@@ -550,12 +563,13 @@ export function Icon({ name, size = "1em", strokeWidth = 2 }: IconProps) {
   // 明示的に px 文字列へ変換してトークン解決を回避する。
   // また `size="sm"` のようなサイズトークン名がそのまま渡ると Chakra が
   // `var(--chakra-sizes-sm)` (= 24rem) として解決し巨大化する。`ICON_SIZES` の
-  // キー (sm/md/lg) は px 値へ変換し、誤って巨大アイコンになるのを防ぐ。
+  // キー (sm/md/lg) は `calc(px * var(--font-scale))` の CSS 文字列へ変換し、
+  // 誤って巨大アイコンになるのを防ぎつつ font-scale 追従を効かせる (#818)。
   const dim =
     typeof size === "number"
       ? `${size}px`
       : size in ICON_SIZES
-        ? `${ICON_SIZES[size as IconSizeToken]}px`
+        ? ICON_SIZES[size as IconSizeToken]
         : size;
   const filled = FILLED_ICONS.has(name);
   return (

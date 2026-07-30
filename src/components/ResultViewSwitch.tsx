@@ -3,7 +3,7 @@ import { chakra } from "@chakra-ui/react";
 
 import { useT } from "../i18n";
 import { useRovingFocus } from "../keyboardNav";
-import { Icon, type IconName } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 
 /**
  * 結果パネルが表示している内容の種類。グリッド (素の結果表) / ピボット
@@ -103,7 +103,7 @@ export function ResultViewSwitch({ value, onChange }: Props) {
               boxShadow: "inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent)",
             }}
           >
-            <Icon name={v.icon} size={13} />
+            <Icon name={v.icon} size={ICON_SIZES.sm} />
             {label}
           </chakra.button>
         );

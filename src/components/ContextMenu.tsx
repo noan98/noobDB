@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { useReturnFocus, useRovingFocus } from "../keyboardNav";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
+import { Tooltip } from "./Tooltip";
 import { Kbd } from "./Kbd";
 
 /**
@@ -156,25 +157,28 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
-        {items.map((entry, i) =>
-          isSeparator(entry) ? (
-            <Box
-              key={`sep-${i}`}
-              role="separator"
-              h="1px"
-              my="1"
-              mx="1.5"
-              bg="app.borderSubtle"
-            />
-          ) : (
+        {items.map((entry, i) => {
+          if (isSeparator(entry)) {
+            return (
+              <Box
+                key={`sep-${i}`}
+                role="separator"
+                h="1px"
+                my="1"
+                mx="1.5"
+                bg="app.borderSubtle"
+              />
+            );
+          }
+          const button = (
             <chakra.button
-              key={`${entry.label}-${i}`}
               type="button"
               role="menuitem"
               display="flex"
               alignItems="center"
               gap="2"
               textAlign="left"
+              width="100%"
               bg="transparent"
               border="none"
               px="2.5"
@@ -184,7 +188,6 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               borderRadius="sm"
               cursor="pointer"
               disabled={entry.disabled}
-              title={entry.title}
               transitionProperty="background, color"
               transitionDuration="var(--dur-fast)"
               transitionTimingFunction="var(--ease)"
@@ -219,8 +222,26 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
                 </Kbd>
               )}
             </chakra.button>
-          ),
-        )}
+          );
+          // `entry.title` は項目が無効な「理由」を説明する (有効な項目では単なる
+          // 補足ヒント)。以前は native `title=` だったが、無効化されたボタンは
+          // そもそもフォーカスを持てないため、キーボードフォーカスでは一切
+          // 表示されないという実質的な a11y の穴があった。共有 `Tooltip`
+          // (#814) はこれを両方まとめて解消する: 有効な項目では通常どおり
+          // フォーカスで表示され、無効な項目は `focusableWrapper` によって
+          // フォーカス可能な代役を用意するので、Tab でも理由まで到達できる。
+          return (
+            <Fragment key={`${entry.label}-${i}`}>
+              {entry.title ? (
+                <Tooltip label={entry.title} placement="right" focusableWrapper={entry.disabled}>
+                  {button}
+                </Tooltip>
+              ) : (
+                button
+              )}
+            </Fragment>
+          );
+        })}
       </MotionMenu>
     </Box>,
     document.body,

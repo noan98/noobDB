@@ -1,7 +1,7 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Kbd } from "./Kbd";
 import { Modal } from "./Modal";
 import {
@@ -137,7 +137,7 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
         bg="app.surface"
       >
         <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-          <Icon name="query" size={16} />
+          <Icon name="query" size={ICON_SIZES.md} />
         </Box>
         <chakra.input
           ref={inputRef}
@@ -181,16 +181,7 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
         ) : (
           grouped.map((g) => (
             <Box key={g.group}>
-              <Box
-                px="4"
-                pt="2"
-                pb="1"
-                fontSize="xs"
-                fontWeight={700}
-                textTransform="uppercase"
-                letterSpacing="0.06em"
-                color="app.textMuted"
-              >
+              <Box px="4" pt="2" pb="1" textStyle="overline">
                 {groupLabel[g.group]}
               </Box>
               {g.items.map((scored) => {
@@ -282,7 +273,7 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
     >
       {item.icon && (
         <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-          <Icon name={item.icon} size={15} />
+          <Icon name={item.icon} size={ICON_SIZES.md} />
         </Box>
       )}
       <Flex direction="column" minW={0} flex="1" gap="1px">
@@ -315,6 +306,11 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
           </chakra.span>
         )}
       </Flex>
+      {item.shortcut && (
+        <Kbd tone="muted" flexShrink={0} color="app.textMuted">
+          {item.shortcut}
+        </Kbd>
+      )}
       {item.badges && item.badges.length > 0 && (
         <Flex gap="1" flexShrink={0}>
           {item.badges.map((badge) => (
@@ -329,17 +325,13 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
 function Badge({ children }: { children: ReactNode }) {
   return (
     <chakra.span
-      fontSize="xs"
+      textStyle="overline"
       px="1.5"
       py="1px"
       borderRadius="pill"
       borderWidth="1px"
       borderColor="app.border"
       bg="app.surface"
-      color="app.textMuted"
-      textTransform="uppercase"
-      letterSpacing="0.04em"
-      fontWeight={600}
       whiteSpace="nowrap"
     >
       {children}

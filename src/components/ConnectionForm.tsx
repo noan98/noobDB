@@ -4,8 +4,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod, SslMode } from "../api/tauri";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
-import { Button, Input, Select, Switch, Textarea } from "./ui";
+import { Icon, ICON_SIZES } from "./Icon";
+import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
@@ -72,7 +72,7 @@ function PasswordInput({ value, onChange, hasStored, id }: PasswordInputProps) {
         aria-label={show ? t("formPasswordHide") : t("formPasswordShow")}
         title={show ? t("formPasswordHide") : t("formPasswordShow")}
       >
-        <Icon name={show ? "eye-off" : "eye"} size={16} />
+        <Icon name={show ? "eye-off" : "eye"} size={ICON_SIZES.md} />
       </chakra.button>
     </Box>
   );
@@ -134,9 +134,9 @@ function Fieldset({ children }: { children: ReactNode }) {
 
 function Legend({ children }: { children: ReactNode }) {
   return (
-    <Box as="legend" fontWeight="600" fontSize="sm" px="1.5">
+    <Heading as="legend" role="subheading" px="1.5">
       {children}
-    </Box>
+    </Heading>
   );
 }
 
@@ -443,9 +443,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       p="4"
       overflowY="auto"
     >
-      <Box as="h2" gridColumn="span 2" m="0">
+      <Heading gridColumn="span 2">
         {initial?.id ? t("formEditTitle", { name: initial.name }) : t("formNewTitle")}
-      </Box>
+      </Heading>
 
       <Box gridColumn="span 2">
         <label htmlFor={`${fid}-name`}>{t("formName")}</label>

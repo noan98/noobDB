@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import type { ComponentProps, ReactNode } from "react";
 import { transitions, variants } from "../motion";
 import { Button } from "./ui";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 
 /**
  * Chakra の `Dialog` (ポータル + バックドロップ +
@@ -160,7 +160,8 @@ export function ModalHeader({
       }}
     >
       <Dialog.Title
-        css={{ margin: 0, minWidth: 0, fontSize: "lg", fontWeight: 600, color: "app.text" }}
+        textStyle="heading"
+        css={{ margin: 0, minWidth: 0 }}
         {...titleProps}
       >
         {children}
@@ -174,7 +175,7 @@ export function ModalHeader({
         title={closeLabel}
         css={{ flex: "none", minWidth: "28px", py: "1", px: "2", fontSize: "base", lineHeight: 1 }}
       >
-        <Icon name="close" size={13} />
+        <Icon name="close" size={ICON_SIZES.sm} />
       </Button>
     </Dialog.Header>
   );

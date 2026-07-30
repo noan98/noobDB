@@ -8,7 +8,7 @@ import {
   themePreviewGradient,
 } from "../themePresetPreview";
 import { useT, type I18nKey } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Input, Select, Switch } from "./ui";
@@ -1716,7 +1716,7 @@ export function SettingsView({ theme, onClose }: Props) {
               title={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
               aria-label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
             >
-              <Icon name={logCopied ? "check" : "copy"} size={15} />
+              <Icon name={logCopied ? "check" : "copy"} size={ICON_SIZES.md} />
             </SettingsLogsIconButton>
             <SettingsReset onClick={clearLogs} disabled={!logText}>
               {t("settingsLogsClear")}

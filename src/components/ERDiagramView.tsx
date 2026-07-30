@@ -33,7 +33,7 @@ import {
   type ErTableData,
 } from "./erDiagram";
 import { EmptyState } from "./EmptyState";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration } from "./illustrations";
 import { mapLimited } from "./mapLimited";
 import { Button, Select } from "./ui";
@@ -140,7 +140,7 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
         title={data.openTitle}
         aria-label={data.openTitle}
       >
-        <Icon name="table" size={13} />
+        <Icon name="table" size={ICON_SIZES.sm} />
         <chakra.span css={colNameCss} flex="1">
           {data.table}
         </chakra.span>
@@ -152,11 +152,11 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
               意味トークンで、--cell-date (日付型セル色) とは独立している (#717)。 */}
           {col.isPk ? (
             <chakra.span color="var(--key-accent)" title={data.pkTitle} display="inline-flex">
-              <Icon name="key" size={12} />
+              <Icon name="key" size={ICON_SIZES.sm} />
             </chakra.span>
           ) : col.isFk ? (
             <chakra.span color="var(--accent)" title={data.fkTitle} display="inline-flex">
-              <Icon name="link" size={12} />
+              <Icon name="link" size={ICON_SIZES.sm} />
             </chakra.span>
           ) : (
             <chakra.span width="12px" flexShrink={0} />
@@ -484,7 +484,7 @@ function ERDiagramInner({
           aria-label={t("erDiagramClose")}
           title={t("erDiagramClose")}
         >
-          <Icon name="close" size={13} />
+          <Icon name="close" size={ICON_SIZES.sm} />
         </Button>
       </chakra.header>
 

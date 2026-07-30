@@ -4,7 +4,7 @@ import type { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
 import type { BatchStatementResult } from "../sqlScript";
 import { Button, Switch } from "./ui";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
 
 /**
@@ -29,7 +29,7 @@ export function BatchResultsView({ results, running, onRerun, onClose }: Props) 
     <Flex direction="column" h="100%" minH={0} minW={0}>
       <Flex align="center" gap="3" px="3" py="2" flex="none" borderBottomWidth="1px" borderBottomColor="app.border" fontSize="sm" flexWrap="wrap">
         <Button type="button" variant="secondary" size="sm" onClick={onClose}>
-          <Icon name="query" size={14} /> {t("batchBackToResult")}
+          <Icon name="query" size={ICON_SIZES.md} /> {t("batchBackToResult")}
         </Button>
         <chakra.span color="app.text">
           {t("batchSummary", { total: results.length, ok: okCount, errors: errCount })}

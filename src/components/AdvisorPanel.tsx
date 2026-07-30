@@ -15,7 +15,7 @@ import {
 import { copyToClipboard } from "./clipboard";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
 import { useToast } from "./Toast";
@@ -156,7 +156,7 @@ export function AdvisorPanel({
           aria-label={t("advisorClose")}
           title={t("advisorClose")}
         >
-          <Icon name="close" size={13} />
+          <Icon name="close" size={ICON_SIZES.sm} />
         </Button>
       </chakra.header>
 
@@ -166,7 +166,7 @@ export function AdvisorPanel({
 
       <Flex align="center" gap="3" flexWrap="wrap">
         <Button type="button" variant="primary" onClick={run} disabled={running}>
-          <Icon name="refresh" size={13} />
+          <Icon name="refresh" size={ICON_SIZES.sm} />
           <chakra.span marginLeft="1.5">
             {report ? t("advisorRerun") : t("advisorRun")}
           </chakra.span>
@@ -296,7 +296,7 @@ export function AdvisorPanel({
                             aria-label={t("advisorCopyFix")}
                             title={t("advisorCopyFix")}
                           >
-                            <Icon name="copy" size={12} />
+                            <Icon name="copy" size={ICON_SIZES.sm} />
                           </Button>
                         </Flex>
                       </Box>
