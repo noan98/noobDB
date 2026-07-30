@@ -5,7 +5,7 @@ import { useT } from "../i18n";
 import { DataGrid, GRID_CSS } from "./ResultGrid";
 import { Splitter } from "./Splitter";
 import { Button, Checkbox } from "./ui";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 
 const SYNC_SCROLL_STORAGE_KEY = "noobdb.preview.syncScroll";
@@ -306,7 +306,7 @@ export function PreviewGrid({
                 disabled={streaming}
                 title={t("editApplyButtonTitle")}
               >
-                <Icon name="check" size={14} /> {t("editApplyButton")}
+                <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
               </LoadingButton>
             )}
             {onDiscardEdits && (
@@ -317,7 +317,7 @@ export function PreviewGrid({
                 onClick={onDiscardEdits}
                 title={t("editCancelButtonTitle")}
               >
-                <Icon name="close" size={14} /> {t("editCancelButton")}
+                <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
               </Button>
             )}
           </Box>
