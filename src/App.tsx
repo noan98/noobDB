@@ -6731,9 +6731,7 @@ export default function App() {
                         display="inline-flex"
                         alignItems="center"
                         gap="1"
-                        fontSize="xs"
-                        textTransform="uppercase"
-                        letterSpacing="0.06em"
+                        textStyle="overline"
                         fontWeight={700}
                         px="2"
                         py="0.5"
@@ -6755,9 +6753,7 @@ export default function App() {
                         display="inline-flex"
                         alignItems="center"
                         gap="1"
-                        fontSize="xs"
-                        textTransform="uppercase"
-                        letterSpacing="0.06em"
+                        textStyle="overline"
                         fontWeight={700}
                         px="2"
                         py="0.5"
@@ -6936,10 +6932,8 @@ export default function App() {
               {isCritical && (
                 <chakra.span
                   flexShrink="0"
+                  textStyle="overline"
                   fontWeight={700}
-                  fontSize="xs"
-                  letterSpacing="0.04em"
-                  textTransform="uppercase"
                   px="7px"
                   py="0.5"
                   borderRadius="sm"

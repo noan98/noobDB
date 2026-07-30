@@ -160,7 +160,8 @@ export function ModalHeader({
       }}
     >
       <Dialog.Title
-        css={{ margin: 0, minWidth: 0, fontSize: "lg", fontWeight: 600, color: "app.text" }}
+        textStyle="heading"
+        css={{ margin: 0, minWidth: 0 }}
         {...titleProps}
       >
         {children}

@@ -121,10 +121,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
                 alignItems="center"
                 gap="3px"
                 flexShrink={0}
-                fontSize="var(--text-2xs)"
-                fontWeight={700}
-                textTransform="uppercase"
-                letterSpacing="0.06em"
+                textStyle="overline"
                 px="1.5"
                 py="1px"
                 borderRadius="pill"

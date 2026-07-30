@@ -181,16 +181,7 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
         ) : (
           grouped.map((g) => (
             <Box key={g.group}>
-              <Box
-                px="4"
-                pt="2"
-                pb="1"
-                fontSize="xs"
-                fontWeight={700}
-                textTransform="uppercase"
-                letterSpacing="0.06em"
-                color="app.textMuted"
-              >
+              <Box px="4" pt="2" pb="1" textStyle="overline">
                 {groupLabel[g.group]}
               </Box>
               {g.items.map((scored) => {
@@ -329,17 +320,13 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
 function Badge({ children }: { children: ReactNode }) {
   return (
     <chakra.span
-      fontSize="xs"
+      textStyle="overline"
       px="1.5"
       py="1px"
       borderRadius="pill"
       borderWidth="1px"
       borderColor="app.border"
       bg="app.surface"
-      color="app.textMuted"
-      textTransform="uppercase"
-      letterSpacing="0.04em"
-      fontWeight={600}
       whiteSpace="nowrap"
     >
       {children}
