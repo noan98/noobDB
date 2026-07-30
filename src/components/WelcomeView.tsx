@@ -7,7 +7,7 @@ import { useT } from "../i18n";
 import { transitions } from "../motion";
 import { BrandMark } from "../brand";
 import { WelcomeIllustration } from "./illustrations";
-import { Icon, type IconName } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 
 // 既存 (EmptyState / SplashScreen) と同じく chakra でラップした motion 要素。
 // `transition` は Chakra のスタイルプロップに飲まれず motion へ渡すため
@@ -78,7 +78,7 @@ function WelcomeCard({ icon, title, description, onClick }: CardProps) {
         color="app.accent"
         aria-hidden
       >
-        <Icon name={icon} size={20} strokeWidth={1.5} />
+        <Icon name={icon} size={ICON_SIZES.lg} strokeWidth={1.5} />
       </Flex>
       <Text fontWeight="600" color="app.text" fontSize="sm">
         {title}

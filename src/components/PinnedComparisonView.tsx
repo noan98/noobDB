@@ -7,7 +7,7 @@ import { resultsComparable, type PinnedResult } from "../pinnedCompare";
 import { Button, Select } from "./ui";
 import { Switch } from "./Switch";
 import { Splitter } from "./Splitter";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { ResultGrid } from "./ResultGrid";
 
 /**
@@ -224,7 +224,7 @@ function Header({
         aria-label={t("pinCompareClose")}
         title={t("pinCompareClose")}
       >
-        <Icon name="close" size={13} />
+        <Icon name="close" size={ICON_SIZES.sm} />
       </Button>
     </chakra.header>
   );

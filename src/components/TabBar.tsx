@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useId, useMemo, useRef, useState } 
 import { Box, chakra, Input } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder } from "motion/react";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { transitions, variants } from "../motion";
 import { moveTabBy } from "../tabReorder";
 
@@ -293,7 +293,7 @@ export function TabBar({
           title={t("tabScrollLeft")}
           aria-label={t("tabScrollLeft")}
         >
-          <Icon name="chevron-left" size={16} />
+          <Icon name="chevron-left" size={ICON_SIZES.md} />
         </chakra.button>
       )}
       <Reorder.Group
@@ -447,7 +447,7 @@ export function TabBar({
                     onClose(tab.id);
                   }}
                 >
-                  <Icon name="close" size={13} />
+                  <Icon name="close" size={ICON_SIZES.sm} />
                 </chakra.button>
                 {isActive && (
                   <MotionIndicator
@@ -508,7 +508,7 @@ export function TabBar({
           title={t("tabScrollRight")}
           aria-label={t("tabScrollRight")}
         >
-          <Icon name="chevron-right" size={16} />
+          <Icon name="chevron-right" size={ICON_SIZES.md} />
         </chakra.button>
       )}
       {overflowing && (
@@ -533,7 +533,7 @@ export function TabBar({
             aria-haspopup="menu"
             aria-expanded={listOpen}
           >
-            <Icon name="list" size={16} />
+            <Icon name="list" size={ICON_SIZES.md} />
           </chakra.button>
           <AnimatePresence>
             {listOpen && (
@@ -605,7 +605,7 @@ export function TabBar({
                             }}
                           >
                             <chakra.span flexShrink={0} color={isActive ? "var(--ws-accent)" : "app.textMuted"} aria-hidden>
-                              <Icon name={tt.kind === "table" ? "table" : tt.kind === "explain" ? "explain" : "query"} size={14} />
+                              <Icon name={tt.kind === "table" ? "table" : tt.kind === "explain" ? "explain" : "query"} size={ICON_SIZES.md} />
                             </chakra.span>
                             <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" flex="1">
                               {tt.title}
@@ -651,7 +651,7 @@ export function TabBar({
         title={t("tabNew")}
         aria-label={t("tabNew")}
       >
-        <Icon name="plus" size={16} />
+        <Icon name="plus" size={ICON_SIZES.md} />
       </chakra.button>
       {onSplit && (
         <chakra.button
@@ -673,7 +673,7 @@ export function TabBar({
           title={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}
           aria-label={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}
         >
-          <Icon name={splitMode === "close" ? "close" : "columns"} size={15} />
+          <Icon name={splitMode === "close" ? "close" : "columns"} size={ICON_SIZES.md} />
         </chakra.button>
       )}
     </Box>

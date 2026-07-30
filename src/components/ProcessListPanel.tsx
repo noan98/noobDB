@@ -7,7 +7,7 @@ import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import { formatProcessTime, pruneSelection, summarizeQuery } from "./processList";
 import { ServerMetricsPanel } from "./ServerMetricsPanel";
 import { useConfirm } from "./ConfirmDialog";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Select } from "./ui";
@@ -228,7 +228,7 @@ export function ProcessListPanel({
           aria-label={t("processClose")}
           title={t("processClose")}
         >
-          <Icon name="close" size={13} />
+          <Icon name="close" size={ICON_SIZES.sm} />
         </Button>
       </chakra.header>
 
@@ -262,7 +262,7 @@ export function ProcessListPanel({
           {t("processKillSelected", { count: selected.size })}
         </Button>
         <Button type="button" onClick={() => void load()} disabled={loading}>
-          <Icon name="refresh" size={13} /> {t("processRefresh")}
+          <Icon name="refresh" size={ICON_SIZES.sm} /> {t("processRefresh")}
         </Button>
         <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" color="app.textSecondary">
           <Checkbox

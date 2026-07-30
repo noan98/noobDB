@@ -2173,7 +2173,7 @@ function ColumnStatsMenu({
       onMouseDown={(e) => e.stopPropagation()}
     >
       <Box display="flex" alignItems="center" gap="1.5" minWidth={0}>
-        <Icon name={CELL_KIND_META[kind].icon} size={13} />
+        <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
         <chakra.div
           fontSize="var(--text-sm)"
           fontWeight={600}
@@ -4074,7 +4074,7 @@ export function DataGrid({
                             setDragOverColId(null);
                           }}
                         >
-                          <Icon name="columns" size={12} />
+                          <Icon name="columns" size={ICON_SIZES.sm} />
                         </chakra.span>
                         <chakra.button
                           type="button"
@@ -4113,7 +4113,7 @@ export function DataGrid({
                           aria-haspopup="dialog"
                           aria-expanded={filterMenu?.colIdx === colIdx}
                         >
-                          <Icon name="filter" size={12} strokeWidth={2.2} />
+                          <Icon name="filter" size={ICON_SIZES.sm} strokeWidth={2.2} />
                         </chakra.button>
                       </div>
                     ) : (

@@ -18,7 +18,7 @@ import {
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
 import { Button, Checkbox, Input, PressableButton, Select } from "./ui";
 
@@ -800,7 +800,7 @@ export function SchemaCompareView({
           aria-label={t("schemaCompareClose")}
           title={t("schemaCompareClose")}
         >
-          <Icon name="close" size={13} />
+          <Icon name="close" size={ICON_SIZES.sm} />
         </Button>
       </chakra.header>
 
@@ -832,7 +832,7 @@ export function SchemaCompareView({
               title={t("schemaCompareSwap")}
               aria-label={t("schemaCompareSwap")}
             >
-              <Icon name="refresh" size={14} />
+              <Icon name="refresh" size={ICON_SIZES.md} />
             </Button>
             <SidePicker
               label={t("schemaCompareTarget")}

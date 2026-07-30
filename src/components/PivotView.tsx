@@ -5,7 +5,7 @@ import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
 import { Button, Checkbox, Select } from "./ui";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import {
   buildPivotModel,
@@ -248,7 +248,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
         </chakra.label>
         {canSendSql && (
           <Button type="button" variant="secondary" size="sm" onClick={sendSql} title={t("pivotSendSql")}>
-            <Icon name="query" size={14} /> {t("pivotSendSql")}
+            <Icon name="query" size={ICON_SIZES.md} /> {t("pivotSendSql")}
           </Button>
         )}
       </Flex>
