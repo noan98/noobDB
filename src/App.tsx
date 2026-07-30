@@ -5432,6 +5432,10 @@ export default function App() {
         label: t("cmdkActionNewQueryTab"),
         icon: "plus",
         keywords: "query tab editor クエリ タブ",
+        // #843: パレットの行末にもショートカットを表示し、実行しながら覚えられる
+        // ようにする。id/整形は `ContextMenu` と同じ `resolveShortcutBindings` +
+        // `formatCombo` の組で解決し、ユーザの再割り当て (#557) に自動追従する。
+        shortcut: formatCombo(shortcutBindings.newTab),
         run: () => handleNewTab(),
       });
       items.push({
@@ -5476,6 +5480,7 @@ export default function App() {
         label: t("cmdkActionSettings"),
         icon: "settings",
         keywords: "settings preferences 設定",
+        shortcut: formatCombo(shortcutBindings.openSettings),
         run: () => openFullView("settings"),
       },
       {
@@ -5484,6 +5489,7 @@ export default function App() {
         label: t("cmdkActionHelp"),
         icon: "help",
         keywords: "help docs ヘルプ",
+        shortcut: formatCombo(shortcutBindings.openHelp),
         run: () => openFullView("help"),
       },
       {
@@ -5508,6 +5514,7 @@ export default function App() {
         label: t("cmdkActionToggleTheme"),
         icon: theme === "dark" ? "sun" : "moon",
         keywords: "theme dark light テーマ ダーク ライト",
+        shortcut: formatCombo(shortcutBindings.toggleTheme),
         run: () => toggleTheme(),
       },
     );
@@ -5615,6 +5622,7 @@ export default function App() {
     theme,
     t,
     locale,
+    shortcutBindings,
     handleNewTab,
     handleDisconnect,
     handleConnect,
