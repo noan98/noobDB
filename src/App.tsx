@@ -6054,10 +6054,10 @@ export default function App() {
                         </chakra.span>
                         <chakra.span flex="1" />
                         <Button type="button" variant="secondary" size="sm" onClick={() => discardRowOpsForTab(tab.id)} disabled={tab.applyingEdits}>
-                          <Icon name="close" size={14} /> {t("rowOpsDiscard")}
+                          <Icon name="close" size={ICON_SIZES.md} /> {t("rowOpsDiscard")}
                         </Button>
                         <LoadingButton type="button" variant="success" size="sm" loading={tab.applyingEdits} onClick={() => applyEditsForTab(tab)}>
-                          <Icon name="check" size={14} /> {t("rowOpsApply")}
+                          <Icon name="check" size={ICON_SIZES.md} /> {t("rowOpsApply")}
                         </LoadingButton>
                       </Flex>
                     )}

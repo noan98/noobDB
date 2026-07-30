@@ -5480,7 +5480,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             onClick={() => setShowExport(true)}
             disabled={!canExport}
           >
-            <Icon name="download" size={14} /> {t("exportButton")}
+            <Icon name="download" size={ICON_SIZES.md} /> {t("exportButton")}
           </Button>
         </Tooltip>
         <Tooltip
@@ -5501,7 +5501,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             onClick={() => onSaveAsTable?.()}
             disabled={!canExport || !onSaveAsTable}
           >
-            <Icon name="table" size={14} /> {t("saveAsTableButton")}
+            <Icon name="table" size={ICON_SIZES.md} /> {t("saveAsTableButton")}
           </Button>
         </Tooltip>
         {onSetAutoRefresh && (
@@ -5734,7 +5734,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 onClick={onPreviewEdits}
                 disabled={!canPreview}
               >
-                <Icon name="eye" size={14} /> {t("editPreviewButton")}
+                <Icon name="eye" size={ICON_SIZES.md} /> {t("editPreviewButton")}
               </Button>
             </Tooltip>
             <Tooltip
@@ -5755,7 +5755,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 onClick={onApplyEdits}
                 disabled={!canApply}
               >
-                <Icon name="check" size={14} /> {t("editApplyButton")}
+                <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
               </LoadingButton>
             </Tooltip>
             <Tooltip label={t("editCancelButtonTitle")}>
@@ -5765,7 +5765,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               px="2.5"
               onClick={() => setShowDiscardConfirm(true)}
             >
-              <Icon name="close" size={14} /> {t("editCancelButton")}
+              <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
             </Button>
             </Tooltip>
           </Box>
