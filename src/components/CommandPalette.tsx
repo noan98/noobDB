@@ -315,6 +315,11 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
           </chakra.span>
         )}
       </Flex>
+      {item.shortcut && (
+        <Kbd tone="muted" flexShrink={0} color="app.textMuted">
+          {item.shortcut}
+        </Kbd>
+      )}
       {item.badges && item.badges.length > 0 && (
         <Flex gap="1" flexShrink={0}>
           {item.badges.map((badge) => (

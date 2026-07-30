@@ -44,6 +44,14 @@ export interface CommandItem {
   icon?: IconName;
   /** 行末に出す短いバッジ (本番 / 読み取り専用 / ドライバ名など)。 */
   badges?: string[];
+  /**
+   * 行末のキーボードショートカットヒント (#843)、例: `"Cmd/Ctrl+T"`。
+   * `ContextMenuItem.shortcut` と同型で、呼び出し側 (`App.tsx`) が
+   * `resolveShortcutBindings` + `formatCombo` (`shortcuts.ts` / `shortcutKeys.ts`)
+   * で解決した表示文字列を渡す。パレット自身はショートカット id を知らず文字列だけ
+   * 受け取って描画するため、ユーザによる再割り当て (#557) にも自動追従する。
+   */
+  shortcut?: string;
   /** 選択時の動作。パレットは実行後に自分を閉じる。 */
   run: () => void;
 }
