@@ -13,6 +13,7 @@ import {
   type ScanColumn,
 } from "./dataSearch";
 import { useConfirm } from "./ConfirmDialog";
+import { EmptyState } from "./EmptyState";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, Radio, Select } from "./ui";
@@ -410,9 +411,9 @@ export function DataSearchModal({
                     </chakra.label>
                   ))}
                   {filteredTables.length === 0 && (
-                    <chakra.span fontSize="sm" color="app.textMuted" p="1">
-                      {t("dataSearchNoFilterMatch")}
-                    </chakra.span>
+                    // テーブル名フィルタで 0 件になったケース: 「検索一致なし」の
+                    // 軽量アイコンを compact で使う (#847)。
+                    <EmptyState compact icon="search" title={t("dataSearchNoFilterMatch")} />
                   )}
                 </chakra.div>
                 <chakra.div fontSize="xs" color="app.textMuted" mt="1">
@@ -471,9 +472,9 @@ export function DataSearchModal({
             )}
 
             {finished && hitEntries.length === 0 && (
-              <chakra.div fontSize="sm" color="app.textMuted">
-                {t("dataSearchNoHits")}
-              </chakra.div>
+              // 全走査テーブルを終えて 1 件もヒットしなかったケース:
+              // 「検索一致なし」の軽量アイコンを compact で使う (#847)。
+              <EmptyState compact icon="search" title={t("dataSearchNoHits")} />
             )}
 
             {hitEntries.length > 0 && (

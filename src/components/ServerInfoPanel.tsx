@@ -3,6 +3,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type ServerInfo } from "../api/tauri";
 import { useT } from "../i18n";
+import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
@@ -152,9 +153,10 @@ export function ServerInfoPanel({
           {t("serverInfoLoadError", { error })}
         </chakra.p>
       ) : filtered.length === 0 && !loading ? (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-          {t("serverInfoEmpty")}
-        </chakra.p>
+        // 検索フィルタで 0 件になったケース (variables 自体が空になることは通常
+        // ない) のため、共有 EmptyState の compact レイアウトを「検索一致なし」の
+        // 軽量アイコン (icon="search") で使う (#847)。
+        <EmptyState compact icon="search" title={t("serverInfoEmpty")} />
       ) : (
         <Box overflowX="auto">
           <chakra.table width="100%" borderCollapse="collapse">

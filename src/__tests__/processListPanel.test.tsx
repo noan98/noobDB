@@ -48,6 +48,22 @@ describe("ProcessListPanel render smoke (#604)", () => {
 });
 
 /**
+ * 空状態の共有 EmptyState 化 (#847)。アクティブなプロセス/接続が 1 件もない
+ * 場合、素のグレーテキストではなく共有 `EmptyState` (アイコン + タイトル) で
+ * 表示されることを固定する。
+ */
+describe("ProcessListPanel empty state (#847)", () => {
+  it("shows the shared EmptyState (with its title) when there are no processes", async () => {
+    renderWithProviders(
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} onClose={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText(t("processEmpty"))).toBeInTheDocument();
+    });
+  });
+});
+
+/**
  * 初回ロード中のスケルトン行表示 (#846)。中央スピナーではなく行スケルトンで
  * 表構造を予兆表示し、データ到着後は実データ行へ差し替わることを確認する。
  */

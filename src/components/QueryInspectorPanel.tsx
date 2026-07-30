@@ -11,6 +11,7 @@ import {
   useSettings,
 } from "../settings";
 import { copyToClipboard } from "./clipboard";
+import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
 import {
   computeStatDelta,
@@ -494,9 +495,14 @@ export function QueryInspectorPanel({
                 </chakra.p>
               )}
               {tail.length === 0 ? (
-                <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-                  {recording ? t("inspectorTailEmpty") : t("inspectorTailIdle")}
-                </chakra.p>
+                // 記録前 (idle) と記録中だが未観測の 2 状態を、compact な
+                // EmptyState 1 つで表現する。record 中は「観測待ち」、idle は
+                // 「開始待ち」の意味合いでアイコンを変える (#847)。
+                <EmptyState
+                  compact
+                  icon={recording ? "clock" : "query"}
+                  title={recording ? t("inspectorTailEmpty") : t("inspectorTailIdle")}
+                />
               ) : (
                 <Box overflowX="auto">
                   <chakra.table width="100%" borderCollapse="collapse">
@@ -589,9 +595,12 @@ export function QueryInspectorPanel({
                 )}
               </Flex>
               {deltaRows.length === 0 ? (
-                <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-                  {recording ? t("inspectorStatsEmpty") : t("inspectorStatsIdle")}
-                </chakra.p>
+                // tail タブと同じ idle/recording の 2 状態表現 (#847)。
+                <EmptyState
+                  compact
+                  icon={recording ? "hash" : "query"}
+                  title={recording ? t("inspectorStatsEmpty") : t("inspectorStatsIdle")}
+                />
               ) : (
                 <Box overflowX="auto">
                   <chakra.table width="100%" borderCollapse="collapse">

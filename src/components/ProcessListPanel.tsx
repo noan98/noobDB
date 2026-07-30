@@ -7,7 +7,9 @@ import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import { formatProcessTime, pruneSelection, summarizeQuery } from "./processList";
 import { ServerMetricsPanel } from "./ServerMetricsPanel";
 import { useConfirm } from "./ConfirmDialog";
+import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
+import { NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Select } from "./ui";
@@ -305,9 +307,13 @@ export function ProcessListPanel({
           {t("processLoadError", { error })}
         </chakra.p>
       ) : processes.length === 0 && !loading ? (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-          {t("processEmpty")}
-        </chakra.p>
+        // アクティブな接続/クエリが 1 件もない真の空状態: ResultGrid の
+        // 「0 行」空状態と同じリッチなイラストで表現する (#847)。
+        <EmptyState
+          illustration={<NoResultsIllustration />}
+          icon="server"
+          title={t("processEmpty")}
+        />
       ) : (
         <Box overflowX="auto">
           <chakra.table width="100%" borderCollapse="collapse">

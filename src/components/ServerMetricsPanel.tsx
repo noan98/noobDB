@@ -20,6 +20,7 @@ import {
   type MetricSeriesKey,
 } from "./serverMetrics";
 import { Checkbox, Select } from "./ui";
+import { EmptyState } from "./EmptyState";
 import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
 
@@ -237,9 +238,9 @@ function MetricChart({
           })}
         </chakra.svg>
       ) : (
-        <chakra.p margin={0} py="6" textAlign="center" fontSize="sm" color="app.textMuted">
-          {t("metricsNoSeriesData")}
-        </chakra.p>
+        // 未報告/未対応の系列 (ドライバ差 or 初回サンプル未取得):
+        // 「データなし」系の軽量アイコンを compact で割り当てる (#847)。
+        <EmptyState compact icon="chart" title={t("metricsNoSeriesData")} />
       )}
     </Box>
   );
