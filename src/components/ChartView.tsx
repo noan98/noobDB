@@ -5,9 +5,9 @@ import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { CATEGORICAL, readableInk } from "../colorScale";
 import { durations, easings } from "../motion";
-import { Button, Checkbox, Select } from "./ui";
-import { Icon } from "./Icon";
+import { Checkbox, Select } from "./ui";
 import { ImageExportButton } from "./ImageExportButton";
+import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { EmptyState } from "./EmptyState";
 import {
@@ -41,7 +41,11 @@ import {
  */
 interface Props {
   result: QueryResult;
-  onClose: () => void;
+  /**
+   * 結果パネルの表示切替 (グリッド / ピボット / チャート)。設定バー先頭の
+   * `ResultViewSwitch` と、数値列が無いときの空状態アクションから呼ばれる。
+   */
+  onChangeView: (view: ResultViewKind) => void;
 }
 
 // 系列の配色は可視化共通のカテゴリスケール (CB セーフな順序付き離散色)。系列数が
@@ -52,7 +56,7 @@ const SERIES_COLORS = CATEGORICAL;
 // 同時にアニメートすることになり描画コストが嵩むため、静的描画に切り替える。
 const ANIM_MAX_ELEMENTS = 200;
 
-export function ChartView({ result, onClose }: Props) {
+export function ChartView({ result, onChangeView }: Props) {
   const t = useT();
   const numericCols = useMemo(
     () => inferNumericColumns(result.columns, result.rows),
@@ -91,7 +95,7 @@ export function ChartView({ result, onClose }: Props) {
         <EmptyState
           icon="query"
           title={t("chartNoNumeric")}
-          action={{ label: t("chartBackToTable"), onClick: onClose }}
+          action={{ label: t("chartBackToTable"), onClick: () => onChangeView("grid") }}
         />
       </Flex>
     );
@@ -112,9 +116,7 @@ export function ChartView({ result, onClose }: Props) {
     <Flex direction="column" h="100%" minH={0} minW={0}>
       {/* 設定バー */}
       <Flex align="center" gap="2.5" px="3" py="2" flex="none" borderBottomWidth="1px" borderBottomColor="app.border" flexWrap="wrap" fontSize="sm">
-        <Button type="button" variant="secondary" size="sm" onClick={onClose}>
-          <Icon name="table" size={14} /> {t("chartBackToTable")}
-        </Button>
+        <ResultViewSwitch value="chart" onChange={onChangeView} />
         <ImageExportButton
           filenameBase="chart"
           makePng={() => {

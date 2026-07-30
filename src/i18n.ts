@@ -915,6 +915,9 @@ const en = {
   exportPreview: "Preview",
   exportCopyAll: "Copy all",
   exportPreviewTruncated: "Showing the first {shown} of {total} rows.",
+  // 結果パネルの表示切替セグメント (グリッド / ピボット / チャート)。
+  resultViewSwitchAria: "Result view",
+  gridViewLabel: "Grid",
   // クエリ結果のチャート可視化。
   chartShow: "Chart",
   chartBackToTable: "Table",
@@ -3115,6 +3118,9 @@ const ja: Dict = {
   exportPreview: "プレビュー",
   exportCopyAll: "全文コピー",
   exportPreviewTruncated: "{total} 行中 先頭 {shown} 行を表示しています。",
+  // 結果パネルの表示切替セグメント (グリッド / ピボット / チャート)。
+  resultViewSwitchAria: "結果の表示形式",
+  gridViewLabel: "グリッド",
   // クエリ結果のチャート可視化。
   chartShow: "チャート",
   chartBackToTable: "テーブル",

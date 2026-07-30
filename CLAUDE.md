@@ -1146,7 +1146,11 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   serde 構造体と TS 型のズレを早期検出します (未知フィールドは破棄で前方互換)。
 - `components/` (接続・クエリ) — `ConnectionList`/`ConnectionForm` (接続)、`QueryEditor`
   (CodeMirror 6 + スキーマ補完 + リアルタイム構文チェック。後述の #704 lint 統合)、`QueryBuilder`、`ResultGrid`/`PreviewGrid`
-  (TanStack Table)、`TabBar`、`HistoryList`、`SnippetList`/`SnippetForm`、
+  (TanStack Table)、`ResultViewSwitch` (結果パネルの表示切替セグメント。グリッド /
+  ピボット / チャートの 3 択排他で、`ResultGrid`・`PivotView`・`ChartView` の各
+  ツールバー先頭に同じものを置き「今どれを見ているか」と往復導線を 1 か所に集約
+  する。App 側の受け口は `setResultView` で、`showPivot`/`showChart` の 2 フラグを
+  常に同時に確定させる)、`TabBar`、`HistoryList`、`SnippetList`/`SnippetForm`、
   `ExportModal`/`DumpModal`/`ImportModal`、`ExplainViewer`、`SettingsView`、
   `HelpView`、`DangerousQueryDialog`、`CellValueViewer`、`ERDiagramView`
   (`@xyflow/react` + `@dagrejs/dagre` による ER 図。レイアウト/グラフ構築の純ロジックは
