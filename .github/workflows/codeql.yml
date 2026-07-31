@@ -95,7 +95,7 @@ jobs:
       # 必ず 3 箇所同時に更新すること (Dependabot が 1 箇所だけ上げた PR は、他の
       # 2 箇所も揃えてからマージする)。
       - name: Autobuild
-        uses: github/codeql-action/autobuild@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/autobuild@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
