@@ -694,6 +694,17 @@ const en = {
   editorExplainTitle: "Run EXPLAIN FORMAT=JSON and visualize the query plan in a new tab.",
   editorHintDisabled: "Connect a session to run queries.",
   editorHintEmpty: "Type a SQL statement first.",
+  // Emergency query mode on read-only sessions.
+  editorEmergencyMode: "Emergency mode",
+  editorEmergencyModeTitle:
+    "Temporarily allow write statements on this read-only connection for urgent fixes. Enabling requires typing the connection name; the mode turns off on disconnect/reconnect.",
+  emergencyModeConfirmTitle: "Enable emergency query mode?",
+  emergencyModeConfirmBody:
+    "This connection is read-only. While emergency mode is on, write statements (UPDATE / DELETE / DDL, ...) run against \"{name}\" for real. Each write still asks for confirmation before it runs. The mode is per-session and turns off automatically on disconnect or reconnect.",
+  emergencyModeEnableButton: "Enable emergency mode",
+  statusEmergencyModeEnabled: "Emergency query mode enabled — write statements are now allowed on this read-only connection.",
+  statusEmergencyModeDisabled: "Emergency query mode disabled — the connection is read-only again.",
+  statusEmergencyModeError: "Failed to toggle emergency mode: {error}",
   statusFormatError: "Format failed: {error}",
   editorLintSyntaxError: "Possible syntax error",
   editorLintUnterminated: "Unterminated string or quoted identifier",
@@ -1641,6 +1652,10 @@ const en = {
   helpTypeToConfirmTitle: "Type-to-confirm gate for irreversible actions",
   helpTypeToConfirmDesc:
     "On a production connection, DROP/TRUNCATE and destructive sync plans stay disabled until you type the target's name (or a fixed word when it can't be resolved). Like confirm_writes, this is a UI safety net only — the backend does not enforce it.",
+
+  helpEmergencyModeTitle: "Emergency query mode (read-only override)",
+  helpEmergencyModeDesc:
+    "For urgent fixes, a read-only connection can temporarily allow write statements: turn on the toggle in the query editor toolbar and type the connection name to agree. While the mode is on, write statements run from the query panel are allowed by the backend (each one still asks for confirmation) — CSV import, sync apply and process KILL stay rejected. The mode lasts only for the current session and turns off automatically on disconnect or reconnect. The typed-name agreement is a UI safety net; for hard enforcement use database-side privileges.",
 
   helpSectionShortcuts: "Keyboard shortcuts",
   helpSectionShortcutsDesc:
@@ -2906,6 +2921,17 @@ const ja: Dict = {
   editorExplainTitle: "EXPLAIN FORMAT=JSON を実行し、実行計画を別タブでツリー表示します。",
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
   editorHintEmpty: "先に SQL を入力してください。",
+  // 読み取り専用セッションの緊急クエリ実行モード。
+  editorEmergencyMode: "緊急モード",
+  editorEmergencyModeTitle:
+    "読み取り専用接続で、緊急対応のための書き込み文を一時的に許可します。有効化には接続先名の入力が必要で、切断・再接続で自動的にオフに戻ります。",
+  emergencyModeConfirmTitle: "緊急クエリ実行モードを有効にしますか？",
+  emergencyModeConfirmBody:
+    "この接続は読み取り専用です。緊急モードが有効な間は、書き込み文 (UPDATE / DELETE / DDL など) が「{name}」に対して実際に実行されます。書き込みの実行時には毎回確認ダイアログが表示されます。モードはこのセッション限りで、切断・再接続すると自動的にオフに戻ります。",
+  emergencyModeEnableButton: "緊急モードを有効化",
+  statusEmergencyModeEnabled: "緊急クエリ実行モードを有効化しました — この読み取り専用接続で書き込み文を実行できます。",
+  statusEmergencyModeDisabled: "緊急クエリ実行モードを無効化しました — 接続は再び読み取り専用です。",
+  statusEmergencyModeError: "緊急モードの切替に失敗しました: {error}",
   statusFormatError: "整形に失敗しました: {error}",
   editorLintSyntaxError: "構文エラーの可能性があります",
   editorLintUnterminated: "文字列または引用符付き識別子が閉じられていません",
@@ -3849,6 +3875,10 @@ const ja: Dict = {
   helpTypeToConfirmTitle: "不可逆な操作のタイプ入力確認ゲート",
   helpTypeToConfirmDesc:
     "本番としてマークした接続では、DROP/TRUNCATE や破壊的な文を含む同期の適用前に、対象名 (特定できない場合は固定の確認ワード) を入力するまで実行ボタンが有効になりません。confirm_writes と同じく UI 上の安全網で、バックエンドでは強制されません。",
+
+  helpEmergencyModeTitle: "緊急クエリ実行モード (読み取り専用の一時解除)",
+  helpEmergencyModeDesc:
+    "緊急対応のため、読み取り専用接続でも一時的に書き込み文を実行できます。クエリエディタのツールバーでトグルをオンにし、接続先名を入力して合意すると有効になります。有効な間はクエリパネルからの書き込み文がバックエンドで許可されます (実行のたびに確認ダイアログは表示されます)。CSV インポート・同期適用・プロセス KILL は引き続き拒否されます。モードは現在のセッション限りで、切断・再接続すると自動的にオフに戻ります。接続先名による合意は UI 上の安全網であり、確実に書き込みを禁止したい場合は DB 側の権限設定を使ってください。",
 
   helpSectionShortcuts: "キーボードショートカット",
   helpSectionShortcutsDesc:

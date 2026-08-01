@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -241,6 +242,8 @@ pub async fn connect(
         profile_id,
         conn,
         read_only,
+        // 緊急クエリ実行モードは常にオフで開始する (有効化は明示的な IPC のみ)。
+        emergency_write: AtomicBool::new(false),
         skip_history,
         connect_options: opts,
         reconnect_ssh,
@@ -368,6 +371,10 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
         conn,
         connect_options: opts,
         read_only: old.read_only,
+        // 緊急クエリ実行モード (#emergency-mode) は引き継がず、再接続後は必ず
+        // オフへ戻す (安全側の既定)。フロントも reconnect 成功時に UI 状態を
+        // リセットしてこの挙動へ追従する。
+        emergency_write: AtomicBool::new(false),
         skip_history: old.skip_history,
         reconnect_ssh: old.reconnect_ssh.clone(),
         _tunnel: tunnel,

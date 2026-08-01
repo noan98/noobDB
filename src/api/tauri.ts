@@ -802,6 +802,16 @@ export const api = {
   /** 明示トランザクションを確定 (commit=true) / 破棄 (false) する。 */
   finishTransaction: (sessionId: string, commit: boolean) =>
     invoke<void>("finish_transaction", { sessionId, commit }),
+  /**
+   * 読み取り専用セッションの「緊急クエリ実行モード」を切り替える。有効な間は
+   * バックエンドの read-only ガードが SQL 実行経路 (run_query / トランザクション /
+   * ストリーミング) に限り書き込み文を通す。CSV インポート・同期適用・KILL の
+   * read-only 拒否は変わらない。有効化の合意 (接続先名のタイプ確認) はフロントの
+   * ダイアログが担う UI レベルの安全網で、フラグは切断・再接続で必ずオフに戻る。
+   * 読み書き可能なセッションでの有効化は InvalidInput で reject される。
+   */
+  setEmergencyMode: (sessionId: string, enabled: boolean) =>
+    invoke<void>("set_emergency_mode", { sessionId, enabled }),
 
   runQuery: (sessionId: string, sql: string, database?: string | null) =>
     invoke<QueryResult>("run_query", {

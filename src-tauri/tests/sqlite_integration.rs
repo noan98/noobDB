@@ -1097,6 +1097,108 @@ async fn read_only_session_rejects_transaction_writes() {
 }
 
 #[tokio::test]
+async fn emergency_mode_allows_writes_on_read_only_session() {
+    let path = seed_ro_fixture("emergency").await;
+    let (state, sid) = ro_state(&path).await;
+
+    // 有効化前: 書き込みは従来どおり拒否される。
+    let err = t::run_query_via_command(
+        &state,
+        &sid,
+        "UPDATE ro_t SET label = 'z' WHERE id = 1",
+        None,
+    )
+    .await
+    .expect_err("write must be rejected before emergency mode");
+    assert!(matches!(err, t::AppError::ReadOnly(_)));
+
+    // 緊急モードを有効化すると書き込みが通る。
+    t::set_emergency_mode_via_command(&state, &sid, true)
+        .await
+        .expect("enable emergency mode");
+    let res = t::run_query_via_command(
+        &state,
+        &sid,
+        "UPDATE ro_t SET label = 'z' WHERE id = 1",
+        None,
+    )
+    .await
+    .expect("emergency mode must allow the write");
+    assert_eq!(res.rows_affected, 1);
+
+    // 緊急モード中でも CSV インポートの read-only 拒否は変わらない (適用範囲は
+    // SQL 実行経路のみ)。
+    let session = state.get(&sid).await.expect("session");
+    assert!(t::ensure_import_writable(&session).is_err());
+
+    // 無効化すると再び拒否される。
+    t::set_emergency_mode_via_command(&state, &sid, false)
+        .await
+        .expect("disable emergency mode");
+    let err = t::run_query_via_command(&state, &sid, "DELETE FROM ro_t WHERE id = 1", None)
+        .await
+        .expect_err("write must be rejected after disabling emergency mode");
+    assert!(matches!(err, t::AppError::ReadOnly(_)));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn emergency_mode_resets_after_reconnect() {
+    let path = seed_ro_fixture("emergency_recon").await;
+    let (state, sid) = ro_state(&path).await;
+
+    t::set_emergency_mode_via_command(&state, &sid, true)
+        .await
+        .expect("enable emergency mode");
+
+    // 再接続はセッションを同 id のまま差し替えるが、緊急モードは引き継がれず
+    // オフに戻る (安全側の既定)。
+    t::reconnect_via_command(&state, &sid)
+        .await
+        .expect("reconnect");
+    let err = t::run_query_via_command(
+        &state,
+        &sid,
+        "UPDATE ro_t SET label = 'z' WHERE id = 1",
+        None,
+    )
+    .await
+    .expect_err("emergency mode must not survive reconnect");
+    assert!(matches!(err, t::AppError::ReadOnly(_)));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn emergency_mode_rejects_writable_and_unknown_sessions() {
+    let path = seed_ro_fixture("emergency_guard").await;
+
+    // 読み書き可能なセッションでの有効化は InvalidInput。
+    let opts = t::sqlite_options(path.to_str().unwrap());
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_session("rw_emg", conn, opts, /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let err = t::set_emergency_mode_via_command(&state, &sid, true)
+        .await
+        .expect_err("enabling on a writable session must fail");
+    assert!(matches!(err, t::AppError::InvalidInput(_)));
+    // 無効化は冪等な後始末として通る。
+    t::set_emergency_mode_via_command(&state, &sid, false)
+        .await
+        .expect("disabling is always allowed");
+
+    // 存在しないセッションは SessionNotFound。
+    let err = t::set_emergency_mode_via_command(&state, "no_such", true)
+        .await
+        .expect_err("unknown session must fail");
+    assert!(matches!(err, t::AppError::SessionNotFound(_)));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn read_only_session_rejects_csv_import() {
     let path = seed_ro_fixture("import").await;
     let opts = t::sqlite_options(path.to_str().unwrap());

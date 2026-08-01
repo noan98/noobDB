@@ -1352,6 +1352,25 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
+  // 緊急クエリ実行モードが有効なセッション id の集合。バックエンドの
+  // `Session.emergency_write` フラグ (真のガード) の UI ミラーで、有効化は
+  // 接続先名タイプ確認 → `api.setEmergencyMode` を経由する。バックエンドは
+  // 切断・再接続でフラグを必ずオフに戻すため、こちらも同じタイミングで
+  // エントリを落として同期を保つ (`clearEmergencyFor` 参照)。
+  const [emergencySessions, setEmergencySessions] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  // 対象セッションの緊急モード UI 状態を破棄する。切断・接続断・再接続成功
+  // (バックエンド側でフラグがオフに戻る) の後始末から呼ぶ。存在しない id には no-op。
+  const clearEmergencyFor = useCallback((sid: string | null) => {
+    if (!sid) return;
+    setEmergencySessions((cur) => {
+      if (!cur.has(sid)) return cur;
+      const next = new Set(cur);
+      next.delete(sid);
+      return next;
+    });
+  }, []);
   // Set when a connect fails with an SSH host-key mismatch (#682): drives the
   // recovery dialog that lets the user forget the stale key and reconnect.
   const [hostKeyMismatch, setHostKeyMismatch] = useState<
@@ -1570,6 +1589,51 @@ export default function App() {
   // The active session rejects writes when read-only: drives both the Query
   // Builder's disabled Run button and whether inline cell editing is offered.
   const readOnly = selectedProfile?.read_only ?? false;
+  // アクティブセッションで緊急クエリ実行モードが有効か。read-only 接続のクエリ
+  // パネルからの書き込み実行を一時的に許可する (バックエンドの
+  // `Session.emergency_write` が真のガードで、これはその UI ミラー)。
+  const emergencyMode = !!sessionId && emergencySessions.has(sessionId);
+  // 緊急クエリ実行モードの切替。有効化は「接続先名をタイプして合意」ゲート
+  // (#675 の typed-confirm と同じパターン) を通ってからバックエンドのフラグを
+  // 立てる。無効化は即時 (安全側へ倒す操作に確認は要らない)。
+  const handleToggleEmergencyMode = useCallback(async (next: boolean) => {
+    const sid = sessionId;
+    if (!sid || !selectedProfile) return;
+    if (next) {
+      // 接続先名が空のプロファイル (通常あり得ない) でも合意ゲートが自壊しない
+      // よう、共有フォールバック語へ倒す。
+      const name = resolveTypedConfirmTarget([selectedProfile.name]);
+      const ok = await confirm({
+        title: translate("emergencyModeConfirmTitle"),
+        message: translate("emergencyModeConfirmBody", { name }),
+        confirmLabel: translate("emergencyModeEnableButton"),
+        tone: "danger",
+        typedConfirmation: name,
+      });
+      if (!ok) return;
+    }
+    try {
+      await api.setEmergencyMode(sid, next);
+    } catch (e) {
+      setStatus({
+        kind: "key",
+        key: "statusEmergencyModeError",
+        vars: { error: String(e) },
+        error: true,
+      });
+      return;
+    }
+    setEmergencySessions((cur) => {
+      const nextSet = new Set(cur);
+      if (next) nextSet.add(sid);
+      else nextSet.delete(sid);
+      return nextSet;
+    });
+    setStatus({
+      kind: "key",
+      key: next ? "statusEmergencyModeEnabled" : "statusEmergencyModeDisabled",
+    });
+  }, [sessionId, selectedProfile, confirm]);
   // Per-pane autocomplete snapshot lookup against the shared cache.
   const schemaForDatabase = useCallback(
     (database: string | null | undefined): TableSchema[] | null => {
@@ -2490,6 +2554,7 @@ export default function App() {
     } catch (e) {
       console.warn(e);
     }
+    clearEmergencyFor(sessionId);
     setSessionId(null);
     setSelectedProfile(null);
     setImportTarget(null);
@@ -2503,7 +2568,7 @@ export default function App() {
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor]);
 
   // 特定の接続 (背景またはアクティブ) を再接続せずに閉じる (#複数同時接続)。
   // 背景接続ならアクティブなワークスペースには触れずバックエンドセッションだけ
@@ -2522,8 +2587,9 @@ export default function App() {
     } catch (e) {
       console.warn(e);
     }
+    clearEmergencyFor(entry.sessionId);
     toast.info(translate("toastDisconnected", { name: entry.profile.name }));
-  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast]);
+  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor]);
 
   // A query or preview failed because the connection dropped (server idle
   // timeout, network or VPN loss). Tear the now-dead session down the same way
@@ -2547,6 +2613,7 @@ export default function App() {
       if (oldSessionId) {
         try { await api.disconnect(oldSessionId); } catch (e) { console.warn(e); }
       }
+      clearEmergencyFor(oldSessionId);
       setSessionId(null);
       setSelectedProfile(null);
       setImportTarget(null);
@@ -2567,7 +2634,7 @@ export default function App() {
         setStatus({ kind: "key", key: "statusConnectionLost", error: true });
       }
     },
-    [closeAllTabs, persistTabsForProfile, removeOpenConnection],
+    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor],
   );
 
   // 指数バックオフで自動再接続を試みるループ (#712)。切れたセッションを **同じ
@@ -2604,7 +2671,10 @@ export default function App() {
           // バックエンドのセッションは張り直し済みで、背景接続として有効なまま
           // (切り替え先の表示を上書きしない)。
           if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
-          // 成功: セッションはその場で復活。タブ・グリッドはそのまま。
+          // 成功: セッションはその場で復活。タブ・グリッドはそのまま。バックエンドは
+          // 再接続でセッションを差し替え、緊急クエリ実行モードをオフに戻すため、
+          // UI ミラーも同期して外す (同じ session id が生き続けるので明示的に必要)。
+          clearEmergencyFor(oldSessionId);
           setErrorProfileId(null);
           setConnectionStatus("connected");
           setStatus({ kind: "idle" });
@@ -2622,7 +2692,7 @@ export default function App() {
       if (reconnectAbortRef.current) return;
       await tearDownLostSession(profile, oldSessionId, { gaveUpAfter: maxRetries });
     },
-    [persistTabsForProfile, tearDownLostSession, toast],
+    [persistTabsForProfile, tearDownLostSession, toast, clearEmergencyFor],
   );
 
   // 接続断 (クエリ失敗 / フォーカス時のヘルスチェック失敗) の統一ハンドラ。設定と
@@ -3736,7 +3806,10 @@ export default function App() {
     const batch = target.kind === "query" && isMultiStatement(sql);
     const findings =
       isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
-    const needsWriteApproval = requireWriteApproval && !isReadOnlySql(sql);
+    // 緊急クエリ実行モード中の書き込みは、本番の confirm_writes と同じく毎回
+    // 確認を要求する (read-only と明示した接続への書き込みは常に例外的な操作)。
+    const needsWriteApproval =
+      (requireWriteApproval || emergencyMode) && !isReadOnlySql(sql);
     if (findings.length > 0 || needsWriteApproval) {
       // Irreversible DROP/TRUNCATE on a production connection gets the
       // stronger "type the target name to confirm" gate (#675); everything
@@ -3793,6 +3866,7 @@ export default function App() {
     settings.autoLimitCount,
     settings.resultsInNewTab,
     selectedProfile?.driver,
+    emergencyMode,
   ]);
 
   const handleConfirmDangerous = useCallback(() => {
@@ -5889,6 +5963,8 @@ export default function App() {
                     builderSnapshot={tab.builderSnapshot}
                     onBuilderPersist={(snapshot) => updateTab(tab.id, { builderSnapshot: snapshot })}
                     readOnly={readOnly}
+                    emergencyMode={emergencyMode}
+                    onToggleEmergencyMode={(next) => void handleToggleEmergencyMode(next)}
                     queryHistory={queryHistory}
                     editorBindings={editorBindings}
                     focusMode={editorFocused}

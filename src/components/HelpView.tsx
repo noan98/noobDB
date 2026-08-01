@@ -149,6 +149,7 @@ const SECTIONS: Section[] = [
       { titleKey: "helpProductionTitle", descKey: "helpProductionDesc" },
       { titleKey: "helpConfirmWritesTitle", descKey: "helpConfirmWritesDesc" },
       { titleKey: "helpTypeToConfirmTitle", descKey: "helpTypeToConfirmDesc" },
+      { titleKey: "helpEmergencyModeTitle", descKey: "helpEmergencyModeDesc" },
     ],
   },
   {
