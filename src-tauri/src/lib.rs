@@ -88,10 +88,21 @@ pub mod __test_api {
             conn,
             connect_options: opts,
             read_only,
+            emergency_write: std::sync::atomic::AtomicBool::new(false),
             skip_history: true,
             reconnect_ssh: None,
             _tunnel: None,
         }
+    }
+
+    /// Drives the `set_emergency_mode` IPC command's core path (session lookup
+    /// + read-only precondition + flag flip) without a Tauri runtime.
+    pub async fn set_emergency_mode_via_command(
+        state: &AppState,
+        session_id: &str,
+        enabled: bool,
+    ) -> crate::error::Result<()> {
+        crate::commands::query::set_emergency_mode_inner(state, session_id, enabled).await
     }
 
     /// Drives the `reconnect` IPC command's core path (session lookup + in-place
@@ -332,6 +343,7 @@ pub fn run() {
             commands::query::run_in_transaction,
             commands::query::finish_transaction,
             commands::query::run_query_stream,
+            commands::query::set_emergency_mode,
             commands::query::preview_query_stream,
             commands::query::cancel_stream,
             commands::schema::list_databases,

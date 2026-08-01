@@ -16,6 +16,17 @@ use crate::state::{AppState, Session, StreamHandle, StreamKind};
 /// export path in `commands::export`).
 pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
     if session.read_only && !is_read_only_sql(sql) {
+        // 緊急クエリ実行モード: 読み取り専用セッションでも、ユーザが明示的に
+        // 有効化したときだけ書き込み文を通す (`set_emergency_mode` 参照)。
+        // 監査の手がかりとしてログには必ず残す。
+        if session.emergency_write_active() {
+            tracing::warn!(
+                session_id = %session.id,
+                sql = %sql_summary(sql),
+                "emergency mode: allowing a non-read-only statement on a read-only session"
+            );
+            return Ok(());
+        }
         tracing::warn!(
             session_id = %session.id,
             sql = %sql_summary(sql),
@@ -24,6 +35,56 @@ pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result
         return Err(AppError::ReadOnly(
             "read-only profile: only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed".into(),
         ));
+    }
+    Ok(())
+}
+
+/// 読み取り専用セッションの「緊急クエリ実行モード」を切り替える (#emergency-mode)。
+///
+/// 有効な間は `ensure_allowed_for_session` が書き込み文を通すため、緊急対応の
+/// UPDATE などを別プロファイルで繋ぎ直さずに実行できる。適用範囲は SQL 実行経路
+/// (`run_query` / `run_query_transaction` / `run_query_stream` / 明示トランザク
+/// ション) のみで、CSV インポート・同期適用・`kill_process` の read-only 拒否は
+/// 変わらない。フラグはセッション在命中のみ有効で、切断・再接続 (`reconnect` の
+/// セッション差し替え) で必ずオフに戻る。
+///
+/// 有効化の合意 (接続先名のタイプ確認) はフロントエンドのダイアログが担う UI
+/// レベルの安全網であり、`confirm_writes` と同じ強制レベル (CLAUDE.md 参照)。
+/// この IPC を直接呼べば確認なしに有効化できるため、確実な書き込み禁止には
+/// DB 側の権限設定を併用すること。
+#[tauri::command]
+pub async fn set_emergency_mode(
+    session_id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    set_emergency_mode_inner(state.inner(), &session_id, enabled).await
+}
+
+/// Core of [`set_emergency_mode`] decoupled from Tauri's `State` wrapper so
+/// integration tests can drive the exact command path. See [`run_query_inner`].
+pub(crate) async fn set_emergency_mode_inner(
+    state: &AppState,
+    session_id: &str,
+    enabled: bool,
+) -> Result<()> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    // 読み書き可能なセッションで有効化しても意味がない (ガード自体が無い) ので、
+    // フロント側の状態管理バグを早期に露見させるためエラーにする。無効化は
+    // 冪等な後始末として常に許可する。
+    if enabled && !session.read_only {
+        return Err(AppError::InvalidInput(
+            "emergency mode is only applicable to read-only sessions".into(),
+        ));
+    }
+    session.set_emergency_write(enabled);
+    if enabled {
+        tracing::warn!(session_id = %session.id, "emergency write mode enabled");
+    } else {
+        tracing::info!(session_id = %session.id, "emergency write mode disabled");
     }
     Ok(())
 }

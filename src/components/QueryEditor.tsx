@@ -53,6 +53,7 @@ import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
+import { Switch } from "./Switch";
 import { Button } from "./ui";
 import { MultiStateBadge, type BadgeState } from "./MultiStateBadge";
 import {
@@ -191,6 +192,14 @@ interface Props {
    * its Run button is disabled for write query kinds.
    */
   readOnly?: boolean;
+  /**
+   * 緊急クエリ実行モード (read-only セッションの一時的な書き込み許可) の現在値。
+   * `onToggleEmergencyMode` とセットで渡され、かつ `readOnly` のときだけ
+   * ツールバーにトグルを表示する。有効化の合意 (接続先名のタイプ確認) は App 側の
+   * ダイアログが担い、ここは表示と切替要求の通知のみ。
+   */
+  emergencyMode?: boolean;
+  onToggleEmergencyMode?: (next: boolean) => void;
   /**
    * 直近に実行したクエリの一覧 (最新が先頭)。エディタ 1 行目での ↑ / 末尾行での ↓
    * による履歴ナビゲーションに使う。未接続時などは空/undefined。
@@ -350,6 +359,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   builderSnapshot,
   onBuilderPersist,
   readOnly,
+  emergencyMode,
+  onToggleEmergencyMode,
   queryHistory,
   editorBindings,
   focusMode,
@@ -950,6 +961,33 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             </chakra.span>
             {t("editorBuilder")}
           </ToolbarButton>
+        )}
+        {/* 緊急クエリ実行モード (read-only セッション限定)。オンの間は書き込み文が
+            バックエンドの read-only ガードを通るため、危険色で常時目立たせる。 */}
+        {readOnly && sessionId && !explainMode && onToggleEmergencyMode && (
+          <chakra.span
+            display="inline-flex"
+            alignItems="center"
+            gap="1.5"
+            px="2"
+            py="0.5"
+            ml="1"
+            fontSize="xs"
+            fontWeight={emergencyMode ? 700 : 500}
+            color={emergencyMode ? "app.dangerFg" : "app.textMuted"}
+            bg={emergencyMode ? "app.dangerBg" : "transparent"}
+            border="1px solid"
+            borderColor={emergencyMode ? "app.dangerBg" : "app.border"}
+            borderRadius="pill"
+            title={t("editorEmergencyModeTitle")}
+          >
+            <Switch
+              size="sm"
+              checked={!!emergencyMode}
+              onChange={onToggleEmergencyMode}
+              label={t("editorEmergencyMode")}
+            />
+          </chakra.span>
         )}
         {onToggleFocus && (
           <>

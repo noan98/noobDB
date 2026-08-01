@@ -691,6 +691,21 @@ Vitest (`readOnlyGolden.test.ts`) で import、バックは統合テスト
   エントリポイントが `ensure_allowed_for_session` 経由で `is_read_only_sql` を通し、
   `import_csv` も `session.read_only` を拒否します。IPC を直接呼んでも書き込みは
   通りません。
+- **緊急クエリ実行モード** (`Session.emergency_write`) は read_only の唯一の
+  ランタイム例外です。読み取り専用セッションで緊急対応の書き込みが必要なとき、
+  クエリエディタのトグル → **接続先名のタイプ確認** (`ConfirmDialog` の
+  `typedConfirmation`、#675 と同じパターン) を経て IPC `set_emergency_mode` で
+  有効化すると、`ensure_allowed_for_session` が書き込み文を通します (通過は
+  `tracing::warn!` でログに残る)。適用範囲は SQL 実行経路のみで、`import_csv` /
+  `apply_sync_sql` / `kill_process` の read-only 拒否は変わりません。フラグは
+  `AtomicBool` としてセッション在命中のみ有効で、切断・`reconnect` のセッション
+  差し替えで必ずオフに戻ります (フロントの UI ミラー `emergencySessions` も同じ
+  タイミングでリセット)。緊急モード中の書き込みは、フロントの実行ゲートが
+  `confirm_writes` と同じ毎回の承認ダイアログを要求します。なお有効化の合意
+  (名前タイプ) は UI レベルの安全網であり、IPC を直接呼べば確認なしに有効化
+  できます — 確実な書き込み禁止には DB 側の権限設定を併用してください。
+  読み書き可能なセッションでの有効化要求は `InvalidInput` で拒否されます
+  (常時実行テスト: `tests/sqlite_integration.rs` の `emergency_mode_*`)。
 - `is_production` の接続確認と `confirm_writes` (本番接続での書き込み承認) は
   **UI レベルの安全網 (UX ガード)** です。`confirm_writes` の判定はフロントの実行
   ゲート (`App.tsx` の `analyzeDangerousSql` / `isReadOnlySql`) でのみ行われ、
@@ -1077,7 +1092,7 @@ fs プラグインを使わず capabilities を増やさないための経路で
   `ping_session` / `cancel_connect`
 - SSH known_hosts: `list_known_hosts` / `forget_host_key` / `trust_host_key`
 - クエリ: `run_query` / `run_query_transaction` / `run_query_stream` /
-  `preview_query_stream` / `cancel_stream`
+  `preview_query_stream` / `cancel_stream` / `set_emergency_mode`
 - 明示的トランザクション: `begin_transaction` / `run_in_transaction` /
   `finish_transaction`
 - スキーマ: `list_databases` / `list_tables` / `describe_table` /
