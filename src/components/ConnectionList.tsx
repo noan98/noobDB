@@ -16,7 +16,7 @@ import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { computeTooltipPosition } from "./tooltipPosition";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
-import { normalizeChipColor } from "../profileIdentity";
+import { driverColor, driverIconName, normalizeChipColor } from "../profileIdentity";
 import {
   databaseMaintenanceCommands,
   tableMaintenanceCommands,
@@ -110,39 +110,6 @@ function HighlightText({ text, query }: { text: string; query: string }) {
       {text.slice(idx + query.length)}
     </>
   );
-}
-
-/** ドライバ名 (プロファイルの自由文字列) を Icon のブランドロゴ名へ正規化する。
- *  未知のドライバは null を返し、呼び出し側で汎用アイコンへフォールバックする。 */
-function driverIconName(driver: string): IconName | null {
-  switch (driver.toLowerCase()) {
-    case "mysql":
-    case "mariadb":
-      return "mysql";
-    case "postgres":
-    case "postgresql":
-      return "postgres";
-    case "sqlite":
-    case "sqlite3":
-      return "sqlite";
-    default:
-      return null;
-  }
-}
-
-/** ドライバごとのブランドアクセント色。ライト/ダーク両テーマで視認できる中間色を
- *  選んでいる (暗い純正色だとダークテーマで沈むため)。 */
-function driverColor(driver: string): string {
-  switch (driverIconName(driver)) {
-    case "mysql":
-      return "#00758f";
-    case "postgres":
-      return "#3b82c4";
-    case "sqlite":
-      return "#0f9bdc";
-    default:
-      return "var(--accent)";
-  }
 }
 
 /** 保守コマンド種別ごとのメニューラベル i18n キー。#561。 */

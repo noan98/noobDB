@@ -1,10 +1,10 @@
 import { useId } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
 import { Heading } from "./ui";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../i18n";
-import { transitions } from "../motion";
+import { staggerContainer, transitions, variants } from "../motion";
 import { BrandMark } from "../brand";
 import { WelcomeIllustration } from "./illustrations";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
@@ -14,6 +14,9 @@ import { Icon, ICON_SIZES, type IconName } from "./Icon";
 // forwardProps で素通しする。
 const MotionRoot = chakra(motion.div, {}, { forwardProps: ["transition"] });
 const MotionDiv = chakra(motion.div, {}, { forwardProps: ["transition"] });
+// 主要導線カードの stagger (順次出現、#875) 用。variants を motion へ素通しする。
+const MotionRow = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionCardButton = chakra(motion.button, {}, { forwardProps: ["variants"] });
 
 interface Props {
   /** 「接続を追加」— 空の接続フォームを開く (ConnectionList の onCreate と同じ)。 */
@@ -43,8 +46,9 @@ interface CardProps {
 function WelcomeCard({ icon, title, description, onClick }: CardProps) {
   const descId = useId();
   return (
-    <chakra.button
+    <MotionCardButton
       type="button"
+      variants={variants.staggerItem}
       onClick={onClick}
       aria-label={title}
       aria-describedby={descId}
@@ -86,7 +90,7 @@ function WelcomeCard({ icon, title, description, onClick }: CardProps) {
       <Text id={descId} color="app.textMuted" fontSize="xs" lineHeight="1.5">
         {description}
       </Text>
-    </chakra.button>
+    </MotionCardButton>
   );
 }
 
@@ -100,6 +104,9 @@ function WelcomeCard({ icon, title, description, onClick }: CardProps) {
  */
 export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: Props) {
   const t = useT();
+  // stagger (#875) は MotionConfig が遅延まで打ち消さないため、reduced-motion
+  // では同時表示へ明示的にフォールバックする (motion.ts の staggerContainer 参照)。
+  const reduced = useReducedMotion() ?? false;
 
   const handlePickSqlite = async () => {
     const selected = await open({
@@ -150,7 +157,16 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
         </Text>
       </Flex>
 
-      <Flex wrap="wrap" justify="center" gap="3" maxW="900px">
+      <MotionRow
+        display="flex"
+        flexWrap="wrap"
+        justifyContent="center"
+        gap="3"
+        maxW="900px"
+        variants={staggerContainer(reduced)}
+        initial="initial"
+        animate="animate"
+      >
         <WelcomeCard
           icon="server"
           title={t("welcomeCreateConnectionTitle")}
@@ -169,7 +185,7 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
           description={t("welcomeStartTourDesc")}
           onClick={onStartTour}
         />
-      </Flex>
+      </MotionRow>
     </MotionRoot>
   );
 }

@@ -140,3 +140,39 @@ export function groupAvatarColor(name: string): string {
 export function groupAvatarForeground(name: string): string {
   return accentForeground(groupAvatarColor(name));
 }
+
+/**
+ * ドライバ名 (プロファイルの自由文字列) を `Icon` のブランドロゴ名へ正規化する。
+ * 未知のドライバは null を返し、呼び出し側で汎用アイコンへフォールバックする。
+ * `ConnectionList` (ツリー行) と `ProfileCardGrid` (#874 のカード表示) が共有する。
+ */
+export function driverIconName(driver: string): "mysql" | "postgres" | "sqlite" | null {
+  switch (driver.toLowerCase()) {
+    case "mysql":
+    case "mariadb":
+      return "mysql";
+    case "postgres":
+    case "postgresql":
+      return "postgres";
+    case "sqlite":
+    case "sqlite3":
+      return "sqlite";
+    default:
+      return null;
+  }
+}
+
+/** ドライバごとのブランドアクセント色。ライト/ダーク両テーマで視認できる中間色を
+ *  選んでいる (暗い純正色だとダークテーマで沈むため)。 */
+export function driverColor(driver: string): string {
+  switch (driverIconName(driver)) {
+    case "mysql":
+      return "#00758f";
+    case "postgres":
+      return "#3b82c4";
+    case "sqlite":
+      return "#0f9bdc";
+    default:
+      return "var(--accent)";
+  }
+}
