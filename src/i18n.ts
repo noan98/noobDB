@@ -218,12 +218,12 @@ const en = {
   settingsSqlLint: "SQL syntax check",
   settingsSqlLintHelp: "Underlines likely syntax errors in the editor as you type, before you run — a best-effort editing aid, not a safety check.",
   settingsSqlLintEnabled: "Enable syntax check",
-  settingsSqlLintEnabledHelp: "Reuse the editor's parse tree to flag misspelled statement keywords, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, unterminated strings/quotes and unterminated block comments, following the connected driver's dialect. Conservative by design — it prefers missing an error over a false positive. Turn off to hide all diagnostics.",
+  settingsSqlLintEnabledHelp: "Flags misspelled statement keywords, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
 
   settingsPreflightImpact: "Impact-row preflight",
   settingsPreflightImpactHelp: "For a plain UPDATE/DELETE in the editor, show a badge estimating how many rows it will affect — before you run — so an unexpected magnitude (or a whole-table write) is visible ahead of the confirmation dialog.",
   settingsPreflightImpactEnabled: "Show impact-row badge",
-  settingsPreflightImpactEnabledHelp: "Convert a simple single-table UPDATE/DELETE into a background SELECT COUNT(*) (debounced, read-only, never recorded in query history) and show the estimate near the Run button. Complex shapes (joins, subquery FROM, ORDER BY/LIMIT) degrade to \"can't estimate\". The number is a snapshot and may drift by run time. Turn off to skip the background count on heavy tables.",
+  settingsPreflightImpactEnabledHelp: "Counts the affected rows in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Complex queries (joins, subqueries, ORDER BY/LIMIT) show \"can't estimate\", and the count may drift by the time you run. Turn off to avoid background counts on heavy tables.",
 
   settingsPlanWatch: "Execution plan watch",
   settingsPlanWatchHelp: "Watched snippets keep EXPLAIN plan generations locally and flag structural regressions (index → full scan, join method changes, order-of-magnitude row estimates).",
@@ -253,11 +253,11 @@ const en = {
   settingsConnectTimeout: "Connect timeout (seconds)",
   settingsConnectTimeoutHelp: "Abort a connection attempt (SSH tunnel + database) that takes longer than this, instead of hanging on an unreachable host. Clamped to 5–300 seconds.",
   settingsAutoReconnect: "Auto-reconnect dropped connections",
-  settingsAutoReconnectHelp: "When a connection drops (idle timeout, network / VPN loss, SSH tunnel drop), reconnect automatically with the same profile using exponential backoff. A drop detected mid-transaction is never auto-reconnected — it surfaces an error so a partial commit can't happen. When off, a manual Reconnect button is shown instead.",
+  settingsAutoReconnectHelp: "When a connection drops (idle timeout, network/VPN loss, SSH tunnel drop), reconnects automatically with the same profile, waiting longer between attempts. A drop during a transaction shows an error instead, so a partial commit can't happen. When off, a manual Reconnect button appears.",
   settingsAutoReconnectMaxRetries: "Max reconnect attempts",
   settingsAutoReconnectMaxRetriesHelp: "How many times to retry (with growing backoff) before giving up and showing a manual Reconnect button.",
   settingsQueryNotifications: "Notify when a slow query finishes",
-  settingsQueryNotificationsHelp: "Show an OS desktop notification when a query finishes (success, error, cancelled, or timed out) while this window is not focused. Never includes the SQL text or result rows — only counts, timing, and a one-line error excerpt. Clicking the notification brings the window to the front.",
+  settingsQueryNotificationsHelp: "Shows an OS desktop notification when a query finishes (success, error, cancelled, or timed out) while the window is in the background. The notification contains only row counts, timing, and the first line of an error — never the SQL or its results. Clicking it brings the window to the front.",
   settingsQueryNotificationThreshold: "Notify after (seconds)",
   settingsQueryNotificationThresholdHelp: "Only notify for queries that took at least this long to finish.",
   notifyQueryDoneTitle: "Query finished",
@@ -288,7 +288,7 @@ const en = {
   settingsFontCustomPlaceholder: "e.g. JetBrains Mono",
   settingsFontSample: "The quick brown fox 0123",
   settingsThemePreset: "Theme preset",
-  settingsThemePresetHelp: "Switches the whole color palette. Presets are independent of the accent color, density and syntax colors. Solarized, High contrast and Colorblind-safe follow the light/dark toggle; dark-only presets (Dracula, Nord, One Dark) ignore it.",
+  settingsThemePresetHelp: "Switches the whole color palette. Accent color, density and syntax colors are kept as-is. Dracula, Nord and One Dark are dark-only; the other presets follow the light/dark toggle.",
   themePresetDefault: "Default",
   themePresetDracula: "Dracula",
   themePresetNord: "Nord",
@@ -329,12 +329,12 @@ const en = {
 
   settingsUpdates: "Updates",
   settingsUpdatesHelp:
-    "noobDB can update itself in place. Update artifacts and their manifest are signed, and an update whose signature fails verification is never applied. Downloading, installing, and restarting always require your approval — the app never restarts on its own.",
+    "noobDB can update itself in place. Updates are signed, and one that fails signature verification is never applied. Downloading and restarting always require your approval — the app never restarts on its own.",
   settingsCurrentVersion: "Current version: {version}",
   settingsVersionUnknown: "unknown",
   settingsAutoUpdateCheck: "Check for updates on startup",
   settingsAutoUpdateCheckHelp:
-    "Automatically check for a newer version when the app starts. Turn this off for offline or managed environments; you can still check manually below. A failed check (offline, unreachable manifest) is ignored silently and never blocks startup.",
+    "Checks for a newer version when the app starts. Turn it off for offline or managed environments — you can still check manually below. A failed check never blocks startup.",
   settingsCheckForUpdates: "Check for updates",
   settingsCheckingForUpdates: "Checking…",
   updateUpToDate: "You're on the latest version ({version}).",
@@ -1545,10 +1545,10 @@ const en = {
   helpTitle: "Feature guide",
   helpClose: "Close",
   helpIntro:
-    "What each feature does and—most importantly—whether running it changes the database. Check the badge on every entry before you click.",
-  helpImpactLabel: "Effect on the DB when run",
-  helpImpactYes: "Writes to the DB",
-  helpImpactNo: "No DB changes",
+    "What each feature does, and whether running it changes the database. Check the badge on an entry before you run it.",
+  helpImpactLabel: "DB impact",
+  helpImpactYes: "Writes",
+  helpImpactNo: "None",
   helpUsageTitle: "How to use",
   helpNoteLabel: "Note",
 
@@ -1571,17 +1571,17 @@ const en = {
 
   helpExplainTitle: "Explain",
   helpExplainDesc:
-    "Runs EXPLAIN FORMAT=JSON and shows the query plan. A heaviness score (0–100, Light/Medium/Heavy) combines the optimizer's estimated cost with detected risks (full scans, filesort, …) for an at-a-glance read of how heavy the query is — a relative guide, not a measured time. It inspects the optimizer only and never changes data.",
+    "Runs EXPLAIN FORMAT=JSON and shows the query plan. The heaviness score (0–100, Light/Medium/Heavy) combines the optimizer's estimated cost with detected risks (full scans, filesort, …). It is a relative guide, not a measured time. Data is never changed.",
 
   helpFormatTitle: "Format",
   helpFormatDesc:
-    "Reformats the SQL in the editor for readability. Touches the editor text only. The dump dialog's \"Format SQL\" option applies the same policy (2-space indent, keyword case preserved) to the saved file on the backend; minor dialect differences may remain since the backend uses a generic formatter.",
+    "Reformats the SQL in the editor for readability; only the editor text changes. The dump dialog's \"Format SQL\" option applies the same style (2-space indent, keyword case preserved) to the saved file. It uses a generic formatter, so minor dialect differences may remain.",
 
   helpSqlLintTitle: "Syntax check",
   helpSqlLintDesc:
-    "Underlines likely syntax errors in the editor as you type — misspelled statement keywords (e.g. SELEC), misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, unterminated strings/quotes and unterminated block comments — so you can fix them before running. It reuses the editor's own parse tree and follows the connected driver's dialect (MySQL / PostgreSQL / SQLite).",
+    "Underlines likely syntax errors as you type, so you can fix them before running: misspelled statement keywords (SELEC), misordered clauses (WHERE after ORDER BY), unmatched brackets, and unterminated strings or block comments. Follows the connected driver's dialect (MySQL / PostgreSQL / SQLite).",
   helpSqlLintNote:
-    "Best-effort editing aid, not a validity check: the parser is lenient, so many mistakes (mid-statement typos, missing commas) are not flagged, and it can't confirm the server will accept the query. It is deliberately conservative — it prefers missing an error over a false positive. Toggle it in Settings › SQL syntax check.",
+    "An editing aid, not a validity check. The parser is lenient, so mid-statement typos or missing commas are not flagged, and the server may still reject the query. Toggle it in Settings › SQL syntax check.",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
@@ -1636,11 +1636,11 @@ const en = {
 
   helpConfirmWritesTitle: "Write approval on production (confirm_writes)",
   helpConfirmWritesDesc:
-    "On a production connection, shows an approval dialog before running a non-read-only statement. This is a UI safety net to prevent accidents — unlike read-only it is NOT enforced in the backend, so calling the backend directly bypasses it. For hard enforcement, use read-only or database-side privileges.",
+    "On a production connection, shows an approval dialog before running a statement that writes. This is a UI safety net against accidents — unlike read-only, the backend does not enforce it. To block writes for certain, use read-only or database-side privileges.",
 
   helpTypeToConfirmTitle: "Type-to-confirm gate for irreversible actions",
   helpTypeToConfirmDesc:
-    "On a production connection, DROP/TRUNCATE (from the query editor or the connection tree) and applying a schema/data sync plan with destructive statements require typing the target name (or a fixed word when it can't be resolved) before the action button enables. Like confirm_writes, this is a UI safety net only — it is NOT enforced in the backend, so calling the backend directly bypasses it.",
+    "On a production connection, DROP/TRUNCATE and destructive sync plans stay disabled until you type the target's name (or a fixed word when it can't be resolved). Like confirm_writes, this is a UI safety net only — the backend does not enforce it.",
 
   helpSectionShortcuts: "Keyboard shortcuts",
   helpSectionShortcutsDesc:
@@ -2430,12 +2430,12 @@ const ja: Dict = {
   settingsSqlLint: "SQL 構文チェック",
   settingsSqlLintHelp: "入力中にエディタ上で構文エラーの可能性を下線表示します（実行前に気付けます）。ベストエフォートの編集支援であり、安全性の判定ではありません。",
   settingsSqlLintEnabled: "構文チェックを有効化",
-  settingsSqlLintEnabledHelp: "エディタのパースツリーを再利用し、文の先頭キーワードのタイポ・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列/引用符・未終端のブロックコメントを接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。オフにするとすべての診断を非表示にします。",
+  settingsSqlLintEnabledHelp: "文頭キーワードのタイポ・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
 
   settingsPreflightImpact: "影響行数プリフライト",
   settingsPreflightImpactHelp: "エディタの単純な UPDATE / DELETE に対し、実行前に「約 N 行に影響」というバッジを表示します。確認ダイアログより手前で、桁違いの影響やテーブル全行への書き込みに気付けます。",
   settingsPreflightImpactEnabled: "影響行数バッジを表示",
-  settingsPreflightImpactEnabledHelp: "単一テーブルの単純な UPDATE / DELETE を裏の SELECT COUNT(*) (デバウンス付き・読み取り専用・履歴に記録しない) に変換し、実行ボタン付近に推定件数を表示します。複雑な形状 (JOIN・サブクエリ FROM・ORDER BY / LIMIT) は「推定不可」に降格します。件数は実行時点とズレうるスナップショットです。重いテーブルへの裏 COUNT を避けたい場合はオフにできます。",
+  settingsPreflightImpactEnabledHelp: "対象行数をバックグラウンドで集計し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定件数を表示します。JOIN やサブクエリなど複雑なクエリは「推定不可」になり、件数も実行時点とはずれることがあります。重いテーブルでの集計を避けたい場合はオフにしてください。",
 
   settingsPlanWatch: "実行計画ウォッチ",
   settingsPlanWatchHelp: "ウォッチ登録したスニペットの EXPLAIN 計画をローカルに世代管理し、構造的なリグレッション (インデックス → フルスキャン・結合方式の変化・推定行数の桁違い) を検知します。",
@@ -2465,11 +2465,11 @@ const ja: Dict = {
   settingsConnectTimeout: "接続タイムアウト (秒)",
   settingsConnectTimeoutHelp: "接続確立 (SSH トンネル + データベース) がこの秒数を超えたら中断します。到達不能なホストで固まらないようにします。5〜300 秒にクランプされます。",
   settingsAutoReconnect: "接続断からの自動再接続",
-  settingsAutoReconnectHelp: "接続が切れたとき（アイドルタイムアウト、ネットワークや VPN の切断、SSH トンネル断）に、同じプロファイルで指数バックオフしながら自動再接続します。トランザクション中の断は、中途半端なコミットを避けるため自動再接続せずエラーにします。無効にすると手動の再接続ボタンを表示します。",
+  settingsAutoReconnectHelp: "接続が切れたとき (アイドルタイムアウト・ネットワークや VPN の切断・SSH トンネル断)、同じプロファイルで自動的に再接続します (再試行の間隔は徐々に延びます)。トランザクション中の切断は、中途半端なコミットを防ぐため再接続せずエラーにします。オフの場合は手動の再接続ボタンを表示します。",
   settingsAutoReconnectMaxRetries: "最大再接続回数",
   settingsAutoReconnectMaxRetriesHelp: "諦めて手動の再接続ボタンを表示するまでに、（待機を伸ばしながら）何回まで再試行するか。",
   settingsQueryNotifications: "時間のかかったクエリ完了時に通知",
-  settingsQueryNotificationsHelp: "このウィンドウが非フォーカスのときにクエリが完了（成功・エラー・キャンセル・タイムアウト）したら OS のデスクトップ通知を表示します。SQL 本文や結果データは一切含めず、件数・経過時間・エラーの先頭 1 行のみを表示します。通知をクリックするとウィンドウが前面に表示されます。",
+  settingsQueryNotificationsHelp: "ウィンドウが背面にあるときにクエリが完了 (成功・エラー・キャンセル・タイムアウト) すると、OS のデスクトップ通知を表示します。通知に含まれるのは件数・経過時間・エラーの先頭 1 行のみで、SQL 本文や結果データは含みません。クリックするとウィンドウを前面に表示します。",
   settingsQueryNotificationThreshold: "通知するまでの経過時間 (秒)",
   settingsQueryNotificationThresholdHelp: "この秒数以上かかったクエリの完了時のみ通知します。",
   notifyQueryDoneTitle: "クエリが完了しました",
@@ -2500,7 +2500,7 @@ const ja: Dict = {
   settingsFontCustomPlaceholder: "例: JetBrains Mono",
   settingsFontSample: "あいう The quick fox 0123",
   settingsThemePreset: "テーマプリセット",
-  settingsThemePresetHelp: "カラーパレット全体を切り替えます。プリセットはアクセント色・密度・シンタックス配色とは独立しています。Solarized・高コントラスト・色覚多様性対応はライト/ダークの切替に追従し、ダーク専用プリセット (Dracula / Nord / One Dark) は切替を無視します。",
+  settingsThemePresetHelp: "配色全体を切り替えます。アクセント色・表示密度・シンタックス配色はそのまま維持されます。Dracula / Nord / One Dark はダーク専用で、その他のプリセットはライト/ダーク切替に追従します。",
   themePresetDefault: "デフォルト",
   themePresetDracula: "Dracula",
   themePresetNord: "Nord",
@@ -2541,12 +2541,12 @@ const ja: Dict = {
 
   settingsUpdates: "アップデート",
   settingsUpdatesHelp:
-    "noobDB はアプリ自身をその場で更新できます。更新の成果物とマニフェストは署名されており、署名検証に失敗した更新は適用されません。ダウンロード・インストール・再起動は必ずあなたの承認が必要で、アプリが勝手に再起動することはありません。",
+    "アプリ内から新しいバージョンへ更新できます。更新ファイルは署名されており、署名検証に失敗した更新は適用されません。ダウンロードと再起動には毎回あなたの承認が必要で、アプリが勝手に再起動することはありません。",
   settingsCurrentVersion: "現在のバージョン: {version}",
   settingsVersionUnknown: "不明",
   settingsAutoUpdateCheck: "起動時に更新を確認する",
   settingsAutoUpdateCheckHelp:
-    "アプリ起動時に新しいバージョンを自動で確認します。オフラインや社内配布の環境ではオフにできます (下のボタンから手動確認は可能)。確認に失敗しても (オフライン・マニフェスト取得失敗) 静かに無視し、起動を妨げません。",
+    "アプリの起動時に新しいバージョンを自動で確認します。オフラインや社内配布の環境ではオフにしてください (下のボタンからいつでも手動確認できます)。確認に失敗しても起動は妨げません。",
   settingsCheckForUpdates: "更新を確認",
   settingsCheckingForUpdates: "確認中…",
   updateUpToDate: "最新バージョンです ({version})。",
@@ -3753,10 +3753,10 @@ const ja: Dict = {
   helpTitle: "機能ガイド",
   helpClose: "閉じる",
   helpIntro:
-    "各機能が何をするか、そして最も重要な「実行すると DB に変更が反映されるのか」を一覧できます。クリックする前に各項目のバッジを確認してください。",
-  helpImpactLabel: "実行による DB への影響",
-  helpImpactYes: "DB に反映される",
-  helpImpactNo: "DB に反映されない",
+    "各機能の説明と、実行したとき DB に変更が反映されるかどうかの一覧です。実行前に各項目のバッジを確認してください。",
+  helpImpactLabel: "DB への影響",
+  helpImpactYes: "反映される",
+  helpImpactNo: "反映されない",
   helpUsageTitle: "使用方法",
   helpNoteLabel: "注意",
 
@@ -3779,17 +3779,17 @@ const ja: Dict = {
 
   helpExplainTitle: "Explain",
   helpExplainDesc:
-    "EXPLAIN FORMAT=JSON を実行し、実行計画を表示します。重さスコア (0〜100、軽い/中程度/重い) は、オプティマイザの見積りコストと検出したリスク (フルスキャン・filesort など) を合成し、クエリの重さを一目で把握できるようにしたものです (実測時間ではなく相対的な目安)。オプティマイザを確認するだけで、データは変更しません。",
+    "EXPLAIN FORMAT=JSON を実行し、実行計画を表示します。重さスコア (0〜100、軽い/中程度/重い) は、オプティマイザの見積りコストと検出したリスク (フルスキャン・filesort など) から算出します。実測時間ではなく相対的な目安です。データは変更しません。",
 
   helpFormatTitle: "整形 (Format)",
   helpFormatDesc:
-    "エディタ内の SQL を読みやすく整形します。エディタのテキストを変更するだけです。ダンプダイアログの「SQL を整形」オプションは、保存ファイルにバックエンドで同じ方針 (2 スペース字下げ・キーワードのケースは保持) を適用します。バックエンドは汎用の整形器を使うため、方言差が一部残ることがあります。",
+    "エディタ内の SQL を読みやすく整形します。変更されるのはエディタのテキストだけです。ダンプダイアログの「SQL を整形」も同じスタイル (2 スペース字下げ・キーワードのケース保持) で保存ファイルを整形しますが、汎用の整形器のため方言による差が一部残ることがあります。",
 
   helpSqlLintTitle: "構文チェック",
   helpSqlLintDesc:
-    "入力中に、文の先頭キーワードのタイポ (SELEC など)・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列/引用符・未終端のブロックコメントといった構文エラーの可能性をエディタ上で下線表示し、実行前に修正できるようにします。エディタ自身のパースツリーを再利用し、接続中ドライバの方言 (MySQL / PostgreSQL / SQLite) に追従します。",
+    "入力中の SQL に含まれる構文エラーの可能性を下線で示し、実行前に修正できるようにします。検出対象は、文頭キーワードのタイポ (SELEC など)・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントです。接続中ドライバの方言 (MySQL / PostgreSQL / SQLite) に追従します。",
   helpSqlLintNote:
-    "ベストエフォートの編集支援であって妥当性の検証ではありません。パーサは寛容なため、文中のタイポやカンマ抜けなど多くの誤りは検出されず、サーバが実際に受理するかも保証しません。誤検出より見逃しを優先する保守的な判定です。設定 › SQL 構文チェック で切り替えられます。",
+    "あくまで編集支援であり、妥当性の検証ではありません。パーサは寛容なため、文中のタイポやカンマ抜けは検出できず、サーバが受理するかどうかも保証しません。設定の「SQL 構文チェック」でオン/オフできます。",
 
   helpQueryBuilderTitle: "Query Builder",
   helpQueryBuilderDesc:
@@ -3844,11 +3844,11 @@ const ja: Dict = {
 
   helpConfirmWritesTitle: "本番接続の書き込み承認 (confirm_writes)",
   helpConfirmWritesDesc:
-    "本番としてマークした接続で、読み取り専用でない文を実行する前に承認ダイアログを表示します。これは誤操作を防ぐための UI 上の安全網であり、読み取り専用 (read_only) のようにバックエンドで強制されるものではありません (バックエンドを直接呼べば回避できます)。確実に書き込みを禁止したい場合は、読み取り専用や DB 側の権限設定を使ってください。",
+    "本番としてマークした接続で、書き込みを伴う文の実行前に承認ダイアログを表示します。これは誤操作を防ぐ UI 上の安全網で、読み取り専用 (read_only) と違いバックエンドでは強制されません。確実に書き込みを禁止するには、読み取り専用や DB 側の権限設定を使ってください。",
 
   helpTypeToConfirmTitle: "不可逆な操作のタイプ入力確認ゲート",
   helpTypeToConfirmDesc:
-    "本番としてマークした接続で、DROP/TRUNCATE (クエリエディタ・接続ツリーのいずれも) や破壊的な文を含む同期適用を実行する前に、対象名 (特定できない場合は固定の確認ワード) を入力しないとボタンが有効化されない確認ステップを追加します。confirm_writes と同様、これは UI 上の安全網であり、バックエンドで強制されるものではありません (バックエンドを直接呼べば回避できます)。",
+    "本番としてマークした接続では、DROP/TRUNCATE や破壊的な文を含む同期の適用前に、対象名 (特定できない場合は固定の確認ワード) を入力するまで実行ボタンが有効になりません。confirm_writes と同じく UI 上の安全網で、バックエンドでは強制されません。",
 
   helpSectionShortcuts: "キーボードショートカット",
   helpSectionShortcutsDesc:
