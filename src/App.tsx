@@ -6342,6 +6342,10 @@ export default function App() {
         opacity={sidebarCollapsed ? 0 : 1}
         transition={sidebarResizing ? undefined : "opacity var(--dur-med) var(--ease)"}
         css={{ "& > *": { width: "var(--sidebar-width, 300px)" } }}
+        // 折りたたみ中は不可視 (幅 0 + opacity 0) でも DOM 上はフォーカス可能な
+        // ままなので、inert で配下のコントロールをタブ順から除外する (#873
+        // レビュー対応)。展開時は undefined で従来のフォーカス挙動を維持。
+        inert={sidebarCollapsed || undefined}
         {...(narrow && narrowSidebarOpen
           ? {
               position: "absolute" as const,
@@ -7075,6 +7079,10 @@ export default function App() {
                   // 個別の閉じるボタンを置かない (閉じるボタンの二重表示を避ける)。
                   <Flex direction="column" gap="3px">
                     <Flex align="baseline" gap="1.5">
+                      {/* text 色を地・subtle 色を文字にした反転チップ。コントラスト
+                          比は前景/背景の入替に対して対称なので、themeContrast.test.ts
+                          の error-text on error-subtle 検証 (base + 全プリセット) が
+                          このペアの AA も同時に保証する。 */}
                       <chakra.span
                         flex="none"
                         fontWeight={600}
