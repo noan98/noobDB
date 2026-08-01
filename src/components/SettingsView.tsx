@@ -949,7 +949,7 @@ export function SettingsView({ theme, onClose }: Props) {
 
   return (
     <>
-    <Modal onClose={onClose} width="988px">
+    <Modal onClose={onClose} width="1120px">
       <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
         {t("settingsTitle")}
       </ModalHeader>

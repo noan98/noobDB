@@ -14,8 +14,15 @@ import {
 type Key = Parameters<ReturnType<typeof useT>>[0];
 type Impact = "yes" | "no";
 
+// 広げたモーダル幅で 1 行が長くなりすぎないよう、カードは 2 カラムに折り返す
+// (狭いウィンドウでは minmax により自然に 1 カラムへフォールバック)。
 const HelpFeatureGrid = chakra("div", {
-  base: { display: "flex", flexDirection: "column", gap: "2", mt: "1.5" },
+  base: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+    gap: "2",
+    mt: "1.5",
+  },
 });
 
 const HelpFeature = chakra("article", {
@@ -193,7 +200,7 @@ export function HelpView({ onClose }: { onClose: () => void }) {
   const settings = useSettings();
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
   return (
-    <Modal onClose={onClose} width="760px">
+    <Modal onClose={onClose} width="920px">
       <ModalHeader onClose={onClose} closeLabel={t("helpClose")}>
         {t("helpTitle")}
       </ModalHeader>
