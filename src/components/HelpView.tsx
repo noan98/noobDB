@@ -19,7 +19,7 @@ type Impact = "yes" | "no";
 const HelpFeatureGrid = chakra("div", {
   base: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(min(320px, 100%), 1fr))",
     gap: "2",
     mt: "1.5",
   },
