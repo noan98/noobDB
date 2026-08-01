@@ -57,6 +57,8 @@ import {
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { WelcomeView } from "./components/WelcomeView";
+import { StreamProgressBar } from "./components/StreamProgressBar";
+import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
@@ -231,6 +233,7 @@ import { incomingForeignKeys } from "./fkNavigation";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
 import { workspaceSpineColor } from "./profileIdentity";
+import { semanticColorToken } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
@@ -5832,34 +5835,6 @@ export default function App() {
           onSplit={split ? () => closePane(pane.id) : splitPane}
           splitMode={split ? "close" : "split"}
         />
-        <AnimatePresence>
-          {tab?.streaming && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 2 }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={transitions.fade}
-              aria-hidden
-              style={{
-                position: "relative",
-                flexShrink: 0,
-                overflow: "hidden",
-                background: "color-mix(in srgb, var(--accent) 16%, transparent)",
-              }}
-            >
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  width: "35%",
-                  borderRadius: "var(--radius-pill)",
-                  background: "var(--accent)",
-                  animation: "query-progress-slide var(--dur-progress-loop) var(--ease) infinite",
-                }}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
         <Flex direction="column" flex="1" overflow="hidden">
           {tab ? (
             <Splitter
@@ -6032,6 +6007,11 @@ export default function App() {
                       </Button>
                     </Flex>
                   )}
+                  {/* ストリーミング実行中の indeterminate 進捗バー (#872)。結果
+                      ペイン上端に置き、クエリ実行・プレビューの双方で「動いて
+                      いる」ことをモーダル系進捗と同じ語彙で示す。running 信号は
+                      既存の tab.streaming (フッター tone と同源) を共有する。 */}
+                  <StreamProgressBar active={!!tab.streaming} />
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   {/* 結果パネルの種類が変わるとき (グリッド ⇔ EXPLAIN /
@@ -6330,12 +6310,19 @@ export default function App() {
       <Grid
         templateColumns={
           sidebarCollapsed || (narrow && narrowSidebarOpen)
-            ? "0 1fr"
+            ? "0px 1fr"
             : "var(--sidebar-width, 300px) 1fr"
         }
         flex="1"
         minH={0}
         position="relative"
+        // 折りたたみ↔展開の width トランジション (#873)。グリッドトラック
+        // (0px ↔ サイドバー幅) を補間する。リサイズドラッグ中は無効化して
+        // ハンドル操作のキビキビ感を保ち、reduced-motion は App.css の
+        // グローバルメディアクエリが transition を実質無効化する。
+        transition={
+          sidebarResizing ? undefined : "grid-template-columns var(--dur-med) var(--ease)"
+        }
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
       <Flex
@@ -6347,6 +6334,14 @@ export default function App() {
         borderRightWidth="1px"
         borderRightColor="app.border"
         bg="app.surface"
+        // 折りたたみ中は内容もフェードアウトさせる (#873)。トラック幅の補間
+        // (Grid 側) と重ねることで「スッと消える」印象にする。子要素の幅を
+        // サイドバー幅へ固定し、収縮中にテキストが再折返しでガタつかず右端
+        // から静かにクリップされるようにする (絶対配置のスパインはインライン
+        // style の width が勝つため影響しない)。
+        opacity={sidebarCollapsed ? 0 : 1}
+        transition={sidebarResizing ? undefined : "opacity var(--dur-med) var(--ease)"}
+        css={{ "& > *": { width: "var(--sidebar-width, 300px)" } }}
         {...(narrow && narrowSidebarOpen
           ? {
               position: "absolute" as const,
@@ -6648,12 +6643,19 @@ export default function App() {
         />
       )}
 
+      {/* 折りたたみ時の展開ボタン。サイドバーの width トランジション (#873) と
+          呼応して fadeScale で出入りさせ、即時のパチッとした切替を避ける。 */}
+      <AnimatePresence>
       {sidebarCollapsed && (
+        <motion.div
+          key="sidebar-expand"
+          initial={variants.fadeScale.initial}
+          animate={variants.fadeScale.animate}
+          exit={variants.fadeScale.exit}
+          transition={transitions.enter}
+          style={{ position: "absolute", top: "9px", left: "8px", zIndex: 46 }}
+        >
         <chakra.button
-          position="absolute"
-          top="9px"
-          left="8px"
-          zIndex={46}
           display="inline-flex"
           alignItems="center"
           justifyContent="center"
@@ -6675,7 +6677,9 @@ export default function App() {
         >
           <Icon name="chevron-right" />
         </chakra.button>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {narrow && narrowSidebarOpen && (
         <Box
@@ -6801,7 +6805,9 @@ export default function App() {
                   ? "color-mix(in srgb, var(--status-error) 16%, var(--bg-elevated))"
                   : "color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated))"
               }
-              transition="background var(--dur-med) var(--ease), border-color var(--dur-med) var(--ease)"
+              // padding-left はサイドバー折りたたみ (#873) で 46px ↔ 14px に
+              // 変わるため、トラック幅の補間と同じ時間で滑らかに追従させる。
+              transition="background var(--dur-med) var(--ease), border-color var(--dur-med) var(--ease), padding-left var(--dur-med) var(--ease)"
               css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
             >
               <Flex align="center" gap="2" overflow="hidden">
@@ -6948,7 +6954,9 @@ export default function App() {
                   onStartTour={handleStartTour}
                 />
               </Flex>
-            ) : (
+            ) : visibleProfiles.length === 0 ? (
+              // プロファイルはあるが全件が削除 Undo 待ちで非表示、という稀な
+              // 状態では従来どおりの未接続表示に留める。
               <Flex direction="column" flex="1" overflow="hidden">
                 <PaneEmpty>
                   <EmptyState
@@ -6958,6 +6966,18 @@ export default function App() {
                     description={t("editorHintDisabled")}
                   />
                 </PaneEmpty>
+              </Flex>
+            ) : (
+              // プロファイルがあるが未接続の空状態 (#874): 素の EmptyState の
+              // 代わりに、どこへ繋ぐかを一目で選べるプロファイルカードを並べる。
+              // カードは「入口」、サイドバーのツリーは常用ナビとして共存する。
+              <Flex direction="column" flex="1" overflow="hidden">
+                <ProfileCardGrid
+                  profiles={visibleProfiles}
+                  connectingId={connectingId}
+                  onConnect={(p) => void handleConnect(p)}
+                  onCreate={handleOpenCreateForm}
+                />
               </Flex>
             )}
           </>
@@ -6972,15 +6992,20 @@ export default function App() {
           const isError = tone === "error" || isCritical;
           const isWarning = tone === "warning";
           const isDismissible = isError || isWarning;
+          // 重大度の配色は Toast / Badge と同じ意味色トークン体系
+          // (semanticColors.ts、#664) を単一ソースにする (#876)。`text` 段階は
+          // 全テーマプリセットで通常背景基準の AA を満たすことが
+          // themeContrast.test.ts で固定済み。running のみ「処理中」の
+          // アクセント色で、意味色ファミリーの外に置く (Toast と同方針)。
           const toneColor =
             tone === "running"
               ? "app.accent"
               : tone === "success"
-                ? "app.status.success"
+                ? semanticColorToken("success", "text")
                 : isError
-                  ? "app.status.error"
+                  ? semanticColorToken("danger", "text")
                   : isWarning
-                    ? "app.status.warning"
+                    ? semanticColorToken("warning", "text")
                     : undefined;
           return (
             <Flex
@@ -6988,14 +7013,26 @@ export default function App() {
               gap="2"
               px="3.5"
               py="5px"
-              bg={isError ? "app.bgError" : isWarning ? "app.bgWarning" : "app.surfaceMuted"}
+              bg={
+                isError
+                  ? semanticColorToken("danger", "subtle")
+                  : isWarning
+                    ? semanticColorToken("warning", "subtle")
+                    : "app.surfaceMuted"
+              }
               borderTopWidth="1px"
               borderTopColor="app.border"
               borderLeftWidth="3px"
               borderLeftStyle="solid"
               borderLeftColor={toneColor ?? "transparent"}
               fontSize="sm"
-              color={isError ? "app.textError" : isWarning ? "app.textWarning" : "app.textSecondary"}
+              color={
+                isError
+                  ? semanticColorToken("danger", "text")
+                  : isWarning
+                    ? semanticColorToken("warning", "text")
+                    : "app.textSecondary"
+              }
             >
               <chakra.span
                 aria-hidden
@@ -7014,6 +7051,9 @@ export default function App() {
                 ) : null}
               </chakra.span>
               {isCritical && (
+                // 「重大」バッジは ProfileBadge の本番バッジと同じ danger ベタ塗り
+                // トークン (前景色の AA はトークン側で保証) で描き、独自の
+                // `#fff` 直書きを持たない (#876)。
                 <chakra.span
                   flexShrink="0"
                   textStyle="overline"
@@ -7021,8 +7061,8 @@ export default function App() {
                   px="7px"
                   py="0.5"
                   borderRadius="sm"
-                  bg="app.status.error"
-                  color="#fff"
+                  bg="app.dangerBg"
+                  color="app.dangerFg"
                 >
                   {t("statusSeverityCritical")}
                 </chakra.span>
@@ -7042,8 +7082,8 @@ export default function App() {
                         px="1.5"
                         py="1px"
                         borderRadius="sm"
-                        bg="app.textError"
-                        color="app.bgError"
+                        bg={semanticColorToken("danger", "text")}
+                        color={semanticColorToken("danger", "subtle")}
                       >
                         {t("errorHintLabel")}
                       </chakra.span>
@@ -7078,26 +7118,14 @@ export default function App() {
                 )}
               </Box>
               {reconnectProfile && isError && (
-                <chakra.button
-                  type="button"
+                // 再接続ボタンは独自の `#fff` + `--status-error` 直書きをやめ、
+                // 共通 Button の danger バリアント (theme.ts。hover 色も
+                // `app.dangerBgHover` トークンで一元管理) へ収斂する (#876)。
+                <Button
+                  variant="danger"
+                  size="sm"
                   flexShrink="0"
-                  display="inline-flex"
-                  alignItems="center"
-                  gap="5px"
-                  px="2.5"
-                  py="3px"
-                  fontSize="xs"
-                  fontWeight={500}
-                  color="#fff"
-                  bg="app.status.error"
-                  border="none"
-                  borderRadius="sm"
-                  cursor="pointer"
-                  css={{
-                    "&:hover:not(:disabled)": { background: "color-mix(in srgb, var(--status-error) 85%, #000)" },
-                    "&:disabled": { opacity: 0.7, cursor: "default" },
-                    "& .icon-svg": { width: "13px", height: "13px" },
-                  }}
+                  css={{ "& .icon-svg": { width: "13px", height: "13px" } }}
                   onClick={() => handleConnect(reconnectProfile)}
                   disabled={connectingId === reconnectProfile.id}
                   title={t("statusReconnectTitle", { name: reconnectProfile.name })}
@@ -7108,7 +7136,7 @@ export default function App() {
                     <Icon name="refresh" />
                   )}
                   {t("statusReconnect")}
-                </chakra.button>
+                </Button>
               )}
               {connectAttempt && (
                 <>

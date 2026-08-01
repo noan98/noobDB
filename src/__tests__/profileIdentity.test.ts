@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   chipForeground,
+  driverColor,
+  driverIconName,
   groupAvatarColor,
   groupAvatarForeground,
   groupInitials,
@@ -157,5 +159,26 @@ describe("workspaceSpineColor (#791)", () => {
       "var(--status-error)",
     );
     expect(workspaceSpineColor({ is_production: true, color: null })).toBe("var(--status-error)");
+  });
+});
+
+describe("driverIconName / driverColor (#874)", () => {
+  it("normalizes driver aliases to brand icon names", () => {
+    expect(driverIconName("mysql")).toBe("mysql");
+    expect(driverIconName("MariaDB")).toBe("mysql");
+    expect(driverIconName("PostgreSQL")).toBe("postgres");
+    expect(driverIconName("sqlite3")).toBe("sqlite");
+  });
+
+  it("returns null for unknown drivers so callers can fall back", () => {
+    expect(driverIconName("oracle")).toBeNull();
+    expect(driverIconName("")).toBeNull();
+  });
+
+  it("maps known drivers to brand colors and unknown ones to the accent", () => {
+    expect(driverColor("mysql")).toBe("#00758f");
+    expect(driverColor("postgres")).toBe("#3b82c4");
+    expect(driverColor("sqlite")).toBe("#0f9bdc");
+    expect(driverColor("oracle")).toBe("var(--accent)");
   });
 });

@@ -2204,6 +2204,12 @@ const en = {
   welcomeStartTourTitle: "See how it works",
   welcomeStartTourDesc: "A quick walkthrough from connecting to running your first query.",
 
+  // Profile cards on the disconnected start screen (#874)
+  profileCardsTitle: "Choose a connection",
+  profileCardsSubtitle:
+    "Pick a saved profile to connect, or create a new one. The sidebar tree stays available for everyday navigation.",
+  profileCardsNew: "New connection",
+
   onboardingTourTitle: "Getting started",
   onboardingCloseAria: "Close the tour",
   onboardingSkip: "Skip",
@@ -4427,6 +4433,12 @@ const ja: Dict = {
   welcomeOpenSqliteDesc: "既存の .db / .sqlite ファイルを選んで直接接続します。",
   welcomeStartTourTitle: "はじめかたを見る",
   welcomeStartTourDesc: "接続から最初のクエリ実行までの流れを簡単に紹介します。",
+
+  // 未接続スタート画面のプロファイルカード (#874)
+  profileCardsTitle: "接続先を選ぶ",
+  profileCardsSubtitle:
+    "保存済みのプロファイルを選んで接続するか、新しい接続を作成します。サイドバーのツリーは通常のナビゲーションとしてそのまま使えます。",
+  profileCardsNew: "新しい接続",
 
   onboardingTourTitle: "はじめかた",
   onboardingCloseAria: "ツアーを閉じる",
