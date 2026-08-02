@@ -14,6 +14,7 @@ import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Heading, Select } from "./ui";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 
 /**
  * プロセスモニタパネル: サーバ側のプロセス/接続一覧 (MySQL processlist /
@@ -217,18 +218,19 @@ export function ProcessListPanel({
         paddingBottom="2.5"
       >
         <Heading>{t("processTitle")}</Heading>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("processClose")}
-          title={t("processClose")}
-        >
-          <Icon name="close" size={ICON_SIZES.sm} />
-        </Button>
+        <Tooltip label={t("processClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("processClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       {showMetricsTab && (
@@ -251,15 +253,16 @@ export function ProcessListPanel({
       </chakra.p>
 
       <Flex align="center" gap="3" flexWrap="wrap">
-        <Button
-          type="button"
-          variant="danger"
-          disabled={readOnly || killing || selected.size === 0}
-          onClick={() => void killSelected()}
-          title={readOnly ? t("processReadOnlyHint") : undefined}
-        >
-          {t("processKillSelected", { count: selected.size })}
-        </Button>
+        <Tooltip label={readOnly ? t("processReadOnlyHint") : undefined} focusableWrapper={readOnly}>
+          <Button
+            type="button"
+            variant="danger"
+            disabled={readOnly || killing || selected.size === 0}
+            onClick={() => void killSelected()}
+          >
+            {t("processKillSelected", { count: selected.size })}
+          </Button>
+        </Tooltip>
         <Button type="button" onClick={() => void load()} disabled={loading}>
           <Icon name="refresh" size={ICON_SIZES.sm} /> {t("processRefresh")}
         </Button>
@@ -356,18 +359,19 @@ export function ProcessListPanel({
                     <chakra.td css={tdCss}>
                       {p.id}
                       {p.is_self && (
-                        <chakra.span
-                          marginLeft="1.5"
-                          px="1.5"
-                          fontSize="var(--text-xs)"
-                          fontFamily="var(--font-sans)"
-                          color="var(--accent)"
-                          border="1px solid var(--accent)"
-                          borderRadius="var(--radius-sm)"
-                          title={t("processSelfBadgeTitle")}
-                        >
-                          {t("processSelfBadge")}
-                        </chakra.span>
+                        <Tooltip label={t("processSelfBadgeTitle")} focusableWrapper>
+                          <chakra.span
+                            marginLeft="1.5"
+                            px="1.5"
+                            fontSize="var(--text-xs)"
+                            fontFamily="var(--font-sans)"
+                            color="var(--accent)"
+                            border="1px solid var(--accent)"
+                            borderRadius="var(--radius-sm)"
+                          >
+                            {t("processSelfBadge")}
+                          </chakra.span>
+                        </Tooltip>
                       )}
                     </chakra.td>
                     <chakra.td css={tdCss}>{p.user ?? "–"}</chakra.td>
@@ -376,9 +380,13 @@ export function ProcessListPanel({
                     <chakra.td css={tdCss}>{p.command ?? "–"}</chakra.td>
                     <chakra.td css={tdCss}>{p.state ?? "–"}</chakra.td>
                     <chakra.td css={tdCss}>{formatProcessTime(p.time_secs)}</chakra.td>
-                    <chakra.td css={queryTdCss} title={p.query ?? undefined}>
-                      {summarizeQuery(p.query)}
-                    </chakra.td>
+                    {p.query ? (
+                      <Tooltip label={p.query}>
+                        <chakra.td css={queryTdCss}>{summarizeQuery(p.query)}</chakra.td>
+                      </Tooltip>
+                    ) : (
+                      <chakra.td css={queryTdCss}>{summarizeQuery(p.query)}</chakra.td>
+                    )}
                   </tr>
                 ))
               )}

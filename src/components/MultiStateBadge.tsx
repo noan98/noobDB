@@ -2,6 +2,7 @@ import { chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode } from "react";
 import { transitions, variants } from "../motion";
+import { Tooltip } from "./Tooltip";
 
 /**
  * 状態キーに応じてラベル・色・アイコンが `motion` でアニメーション遷移する Badge。
@@ -111,12 +112,11 @@ export function MultiStateBadge<S extends string>({
   const current = states[state];
   const tone = TONE_TOKENS[current.tone];
 
-  return (
+  const button = (
     <chakra.button
       type="button"
       onClick={() => !disabled && onClick?.()}
       disabled={disabled}
-      title={title}
       aria-label={ariaLabel ?? current.srLabel ?? current.label}
       aria-live="polite"
       display="inline-flex"
@@ -181,5 +181,14 @@ export function MultiStateBadge<S extends string>({
         )}
       </MotionInner>
     </chakra.button>
+  );
+
+  // native `title=` を共有 Tooltip (#814) へ委譲する。disabled 時は
+  // `focusableWrapper` でキーボード到達も確保する。
+  if (!title) return button;
+  return (
+    <Tooltip label={title} focusableWrapper={disabled}>
+      {button}
+    </Tooltip>
   );
 }

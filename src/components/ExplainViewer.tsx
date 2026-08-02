@@ -4,6 +4,7 @@ import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Button } from "./ui";
 import { Spinner } from "./Spinner";
+import { Tooltip } from "./Tooltip";
 import {
   type Heat,
   type HintSeverity,
@@ -440,26 +441,29 @@ function NodeRow({
         onClick={() => onSelect(node.id)}
       >
         {hasChildren ? (
-          <chakra.button
-            css={caretButtonCss}
-            title={isCollapsed ? expandLabel : collapseLabel}
-            aria-label={isCollapsed ? expandLabel : collapseLabel}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle(node.id);
-            }}
-          >
-            {isCollapsed ? "▸" : "▾"}
-          </chakra.button>
+          <Tooltip label={isCollapsed ? expandLabel : collapseLabel}>
+            <chakra.button
+              css={caretButtonCss}
+              aria-label={isCollapsed ? expandLabel : collapseLabel}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggle(node.id);
+              }}
+            >
+              {isCollapsed ? "▸" : "▾"}
+            </chakra.button>
+          </Tooltip>
         ) : (
           <chakra.span css={caretBoxCss} aria-hidden />
         )}
         <chakra.span css={nodeLabelCss}>{node.label}</chakra.span>
         <chakra.span css={nodeBadgesCss}>
           {showHintMarker && (
-            <chakra.span css={hintBadgeCss(worstHint)} title={hintsLabel} aria-label={hintsLabel}>
-              !
-            </chakra.span>
+            <Tooltip label={hintsLabel} focusableWrapper>
+              <chakra.span css={hintBadgeCss(worstHint)} aria-label={hintsLabel}>
+                !
+              </chakra.span>
+            </Tooltip>
           )}
           {typeof access === "string" && (
             <chakra.span css={accessBadgeCss(access === "ALL")}>{access}</chakra.span>
@@ -599,21 +603,25 @@ export function ExplainViewer({ result, driver, streaming }: Props) {
       <Box css={treePaneCss}>
         <Box css={toolbarCss}>
           {score && (
-            <chakra.span
-              css={scoreBadgeCss(score.band)}
-              title={t("explainScoreTooltip", {
+            <Tooltip
+              label={t("explainScoreTooltip", {
                 cost: score.costMissing ? "—" : score.costScore,
                 risk: score.riskScore,
               })}
-              aria-label={t("explainScoreAria", {
-                score: score.score,
-                band: t(scoreBandLabelKey(score.band)),
-              })}
+              focusableWrapper
             >
-              <chakra.span>{t("explainScoreLabel")}</chakra.span>
-              <chakra.span css={scoreValueCss}>{score.score}</chakra.span>
-              <chakra.span css={scoreBandCss}>{t(scoreBandLabelKey(score.band))}</chakra.span>
-            </chakra.span>
+              <chakra.span
+                css={scoreBadgeCss(score.band)}
+                aria-label={t("explainScoreAria", {
+                  score: score.score,
+                  band: t(scoreBandLabelKey(score.band)),
+                })}
+              >
+                <chakra.span>{t("explainScoreLabel")}</chakra.span>
+                <chakra.span css={scoreValueCss}>{score.score}</chakra.span>
+                <chakra.span css={scoreBandCss}>{t(scoreBandLabelKey(score.band))}</chakra.span>
+              </chakra.span>
+            </Tooltip>
           )}
           {root.cost !== null && (
             <chakra.span css={totalCostCss}>
@@ -621,42 +629,38 @@ export function ExplainViewer({ result, driver, streaming }: Props) {
             </chakra.span>
           )}
           <chakra.span flex={1} />
-          <Button
-            size="sm"
-            px="2.5"
-            variant={view === "tree" ? "primary" : "secondary"}
-            onClick={() => setView("tree")}
-            title={t("explainViewTree")}
-          >
-            {t("explainViewTree")}
-          </Button>
-          <Button
-            size="sm"
-            px="2.5"
-            variant={view === "graph" ? "primary" : "secondary"}
-            onClick={() => setView("graph")}
-            title={t("explainViewGraph")}
-          >
-            {t("explainViewGraph")}
-          </Button>
+          <Tooltip label={t("explainViewTree")}>
+            <Button
+              size="sm"
+              px="2.5"
+              variant={view === "tree" ? "primary" : "secondary"}
+              onClick={() => setView("tree")}
+            >
+              {t("explainViewTree")}
+            </Button>
+          </Tooltip>
+          <Tooltip label={t("explainViewGraph")}>
+            <Button
+              size="sm"
+              px="2.5"
+              variant={view === "graph" ? "primary" : "secondary"}
+              onClick={() => setView("graph")}
+            >
+              {t("explainViewGraph")}
+            </Button>
+          </Tooltip>
           {view === "tree" && (
             <>
-              <Button
-                size="sm"
-                px="2.5"
-                onClick={() => setCollapsed(new Set())}
-                title={t("explainExpandAll")}
-              >
-                {t("explainExpandAll")}
-              </Button>
-              <Button
-                size="sm"
-                px="2.5"
-                onClick={() => setCollapsed(new Set(allIds))}
-                title={t("explainCollapseAll")}
-              >
-                {t("explainCollapseAll")}
-              </Button>
+              <Tooltip label={t("explainExpandAll")}>
+                <Button size="sm" px="2.5" onClick={() => setCollapsed(new Set())}>
+                  {t("explainExpandAll")}
+                </Button>
+              </Tooltip>
+              <Tooltip label={t("explainCollapseAll")}>
+                <Button size="sm" px="2.5" onClick={() => setCollapsed(new Set(allIds))}>
+                  {t("explainCollapseAll")}
+                </Button>
+              </Tooltip>
             </>
           )}
         </Box>

@@ -15,6 +15,7 @@ import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { computeTooltipPosition } from "./tooltipPosition";
+import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
 import { driverColor, driverIconName, normalizeChipColor } from "../profileIdentity";
 import {
@@ -339,6 +340,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const [hoveredColumn, setHoveredColumn] = useState<{ col: TableColumnInfo; rect: DOMRect } | null>(
     null,
   );
+  // スキーマツリー行 (DB/テーブル/インデックス/オブジェクト) の単純テキスト
+  // ツールチップは、`hoveredColumn`/`ColumnTooltip` と同じ「1 つの共有ツールチップ +
+  // イベント委譲」方式を汎用化した `useDelegatedTooltip` (`Tooltip.tsx`、#884) に
+  // 委譲する。行数に比例して Tooltip インスタンスを増やさない — ツリーは数百行
+  // 規模になりうるため、行ごとに hover リスナー付きコンポーネントを乗せる素朴な
+  // 全置換は性能リスクがある (#884 Issue が示す設計案の 1 つ)。
+  const { hovered: hoveredLabel, bind: treeTooltipProps } = useDelegatedTooltip();
   // Databases whose table list is currently being fetched, either by manual
   // expand (toggleDb) or by eager schema-search loading. Shared so that rapid
   // collapse / re-expand during an in-flight fetch can't re-issue the same
@@ -669,6 +677,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       window.removeEventListener("resize", clear);
     };
   }, [hoveredColumn]);
+
+  // このツリーの行 (DB/テーブル/インデックス/オブジェクト) は現状 `tabIndex` を
+  // 持たず (別 Issue のキーボードナビゲーション改善のスコープ)、`treeTooltipProps`
+  // (= `useDelegatedTooltip().bind`) はマウス hover のみに対応する — native title
+  // からの後退はなく、表示速度とテーマ追従だけを底上げする。
 
   // --- 接続 / グループの並べ替え (#786) ---
   //
@@ -1187,7 +1200,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         role="treeitem"
         onClick={() => onPickTable(refItem.database, refItem.table)}
         onContextMenu={(e) => handleTableContextMenu(e, refItem.database, refItem.table)}
-        title={`${refItem.database}.${refItem.table}`}
+        {...treeTooltipProps(`${refItem.database}.${refItem.table}`)}
         _hover={{ bg: "app.rowHover" }}
       >
         <TreeChevron aria-hidden style={{ visibility: "hidden" }}>▸</TreeChevron>
@@ -1201,20 +1214,21 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           </chakra.span>
         </TreeLabel>
         {star && onToggleFavorite && (
-          <chakra.button
-            type="button"
-            aria-label={t("quickAccessRemoveTitle")}
-            title={t("quickAccessRemoveTitle")}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFavorite(refItem.database, refItem.table);
-            }}
-            color="app.textMuted"
-            px="1"
-            _hover={{ color: "app.text" }}
-          >
-            <Icon name="close" size={ICON_SIZES.sm} />
-          </chakra.button>
+          <Tooltip label={t("quickAccessRemoveTitle")}>
+            <chakra.button
+              type="button"
+              aria-label={t("quickAccessRemoveTitle")}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFavorite(refItem.database, refItem.table);
+              }}
+              color="app.textMuted"
+              px="1"
+              _hover={{ color: "app.text" }}
+            >
+              <Icon name="close" size={ICON_SIZES.sm} />
+            </chakra.button>
+          </Tooltip>
         )}
       </TreeRow>
     );
@@ -1261,7 +1275,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                   pl="1"
                   role="treeitem"
                   onClick={() => onOpenObjectDefinition(db, o.kind, o.name, o.id)}
-                  title={`${o.name} — ${labels[kind] ?? kind}`}
+                  {...treeTooltipProps(`${o.name} — ${labels[kind] ?? kind}`)}
                   _hover={{ bg: "app.rowHover" }}
                 >
                   <TreeChevron visibility="hidden" aria-hidden />
@@ -1385,11 +1399,19 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           tabIndex={0}
           role="treeitem"
           aria-expanded={isOpen}
-          title={
+          // 共有 `Tooltip` (#814) で単純に包むと、この行自体が `AnimatePresence`
+          // の直接の子として追跡される `Reorder.Item` (ドラッグ並べ替え #786) のため、
+          // `TabBar` の `MotionTab` と同じ理由で開閉/並べ替えアニメーションが壊れる
+          // (`Tooltip` はトリガーを Fragment で包むため、間に挟むと `AnimatePresence`
+          // から見た直接の子が変わってしまう)。そのため行自体は `treeTooltipProps`
+          // (#884、下記スキーマツリー行と同じ「1 つの共有ツールチップ + 座標だけ
+          // 報告するイベント委譲」方式) を使う — ラッパ要素を増やさないので
+          // アニメーションに影響しない。
+          {...treeTooltipProps(
             p.driver === "sqlite"
               ? p.file_path ?? p.name
-              : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`
-          }
+              : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`,
+          )}
         >
           <TreeChevron transform={isOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
           {/* ドライバ別ブランドアイコン (MySQL/PostgreSQL/SQLite) でひと目で種別が
@@ -1425,7 +1447,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               fontSize="2xs"
               fontFamily="mono"
               color={isActive ? "app.textSecondary" : "app.textMuted"}
-              title={subtitle}
+              {...treeTooltipProps(subtitle)}
             >
               {subtitle}
             </chakra.span>
@@ -1438,49 +1460,51 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               アクティブな sessionId を対象にするため、背景接続の行に出すと別接続を
               更新してしまい紛らわしい (#複数同時接続)。背景接続は接続済みドットのみ。 */}
           {status === "connected" && isActive && (
-            <chakra.button
-              type="button"
-              flexShrink={0}
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              p="0.5"
-              color="app.textMuted"
-              bg="transparent"
-              border="none"
-              borderRadius="sm"
-              cursor="pointer"
-              _hover={refreshing ? undefined : { color: "app.text", bg: "var(--bg-hover, var(--bg-muted))" }}
-              _disabled={{ cursor: "default" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                void refreshSchema();
-              }}
-              disabled={refreshing}
-              title={t("treeRefreshTitle")}
-              aria-label={t("treeRefresh")}
-            >
-              <chakra.span
+            <Tooltip label={t("treeRefreshTitle")} focusableWrapper={refreshing}>
+              <chakra.button
+                type="button"
+                flexShrink={0}
                 display="inline-flex"
-                animation={refreshing ? "spinner-rotate var(--dur-spin) linear infinite" : undefined}
+                alignItems="center"
+                justifyContent="center"
+                p="0.5"
+                color="app.textMuted"
+                bg="transparent"
+                border="none"
+                borderRadius="sm"
+                cursor="pointer"
+                _hover={refreshing ? undefined : { color: "app.text", bg: "var(--bg-hover, var(--bg-muted))" }}
+                _disabled={{ cursor: "default" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void refreshSchema();
+                }}
+                disabled={refreshing}
+                aria-label={t("treeRefresh")}
               >
-                <Icon name="refresh" size={ICON_SIZES.sm} />
-              </chakra.span>
-            </chakra.button>
+                <chakra.span
+                  display="inline-flex"
+                  animation={refreshing ? "spinner-rotate var(--dur-spin) linear infinite" : undefined}
+                >
+                  <Icon name="refresh" size={ICON_SIZES.sm} />
+                </chakra.span>
+              </chakra.button>
+            </Tooltip>
           )}
-          <chakra.span
-            display="inline-block"
-            width="8px"
-            height="8px"
-            borderRadius="50%"
-            flexShrink={0}
-            transitionProperty="background, box-shadow"
-            transitionDuration="var(--dur-med)"
-            transitionTimingFunction="var(--ease)"
-            {...STATUS_DOT_STYLE[status]}
-            aria-label={statusLabel(status)}
-            title={statusLabel(status)}
-          />
+          <Tooltip label={statusLabel(status)} focusableWrapper>
+            <chakra.span
+              display="inline-block"
+              width="8px"
+              height="8px"
+              borderRadius="50%"
+              flexShrink={0}
+              transitionProperty="background, box-shadow"
+              transitionDuration="var(--dur-med)"
+              transitionTimingFunction="var(--ease)"
+              {...STATUS_DOT_STYLE[status]}
+              aria-label={statusLabel(status)}
+            />
+          </Tooltip>
         </MotionTreeRow>
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
@@ -1505,7 +1529,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       onContextMenu={(e) => handleDbContextMenu(e, db)}
                       role="treeitem"
                       aria-expanded={dbOpen}
-                      title={db}
+                      {...treeTooltipProps(db)}
                     >
                       <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
                       <TreeIcon color="#0ea5e9" aria-hidden><Icon name="database" /></TreeIcon>
@@ -1539,7 +1563,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                   onClick={() => toggleTable(db, tbl)}
                                   onDoubleClick={() => onPickTable(db, tbl)}
                                   onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
-                                  title={t("treeTableTitle")}
+                                  {...treeTooltipProps(t("treeTableTitle"))}
                                   _hover={{ bg: "app.rowHover" }}
                                 >
                                   <TreeChevron transform={tOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
@@ -1551,7 +1575,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                       fontSize="2xs"
                                       textTransform="none"
                                       letterSpacing="0"
-                                      title={`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`}
+                                      {...treeTooltipProps(`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`)}
                                     >
                                       {rowEstLabel}
                                     </TreeBadge>
@@ -1588,10 +1612,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             }
                                           >
                                             <TreeChevron visibility="hidden" aria-hidden />
+                                            {/* PK/FK アイコンと型バッジの native title は削除(#884)。行に
+                                                hover すると `ColumnTooltip` (下記 `hoveredColumn`) が
+                                                鍵種別・型を含む詳細を表示するため、ここで別に native
+                                                title を持つと同じ情報が二重に (かつ約 1 秒遅れで)
+                                                出てしまう。 */}
                                             <TreeIcon
                                               fontSize="xs"
                                               color={isPk ? "app.keyAccent" : isFk ? "app.accent" : "app.textMuted"}
-                                              title={isPk ? t("colPkTitle") : isFk ? t("colFkTitle") : undefined}
                                               aria-hidden
                                             >
                                               {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
@@ -1601,7 +1629,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                               fontFamily="mono"
                                               textTransform="lowercase"
                                               fontSize="2xs"
-                                              title={col.data_type}
                                             >
                                               {col.data_type}
                                             </TreeBadge>
@@ -1622,7 +1649,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             cursor="default"
                                             fontSize="sm"
                                             role="treeitem"
-                                            title={`${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`}
+                                            {...treeTooltipProps(
+                                              `${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`,
+                                            )}
                                           >
                                             <TreeChevron visibility="hidden" aria-hidden />
                                             <TreeIcon
@@ -1639,7 +1668,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                               <TreeBadge
                                                 fontSize="2xs"
                                                 textTransform="uppercase"
-                                                title={idx.name}
+                                                {...treeTooltipProps(idx.name)}
                                               >
                                                 {idx.primary ? t("indexBadgePk") : t("indexBadgeUnique")}
                                               </TreeBadge>
@@ -1897,6 +1926,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       )}
 
       {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
+      {hoveredLabel && <TooltipBubble label={hoveredLabel.label} anchor={hoveredLabel.rect} maxWidth="320px" />}
     </Flex>
   );
 }));
@@ -2002,3 +2032,4 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
     </Box>
   );
 }
+

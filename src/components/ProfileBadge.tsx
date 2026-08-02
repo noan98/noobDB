@@ -5,6 +5,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { semanticColorToken } from "../semanticColors";
 import { transitions, variants } from "../motion";
 import { TreeBadge } from "./tree";
+import { Tooltip } from "./Tooltip";
 import {
   groupAvatarColor,
   groupAvatarForeground,
@@ -52,23 +53,27 @@ export function ProductionBadge({
       transition={transitions.crossfade}
       display="inline-flex"
     >
-      <TreeBadge
-        display="inline-flex"
-        alignItems="center"
-        gap="1"
-        bg="app.dangerBg"
-        color="app.dangerFg"
-        borderColor="app.dangerBg"
-        fontSize={compact ? "2xs" : "xs"}
-        fontWeight={700}
-        px={compact ? "1.5" : "2"}
-        py={compact ? "1px" : "0.5"}
-        title={t("listProductionTitle")}
-        {...rest}
-      >
-        <Icon name="warning" size={ICON_SIZES.sm} />
-        {t("listProduction")}
-      </TreeBadge>
+      {/* TreeBadge は非対話の <span> でそもそもフォーカスを持てないため、
+          native title のままではキーボードで一切読めなかった。`focusableWrapper`
+          で読み取り専用のタブストップを与える (#814/#884)。 */}
+      <Tooltip label={t("listProductionTitle")} focusableWrapper>
+        <TreeBadge
+          display="inline-flex"
+          alignItems="center"
+          gap="1"
+          bg="app.dangerBg"
+          color="app.dangerFg"
+          borderColor="app.dangerBg"
+          fontSize={compact ? "2xs" : "xs"}
+          fontWeight={700}
+          px={compact ? "1.5" : "2"}
+          py={compact ? "1px" : "0.5"}
+          {...rest}
+        >
+          <Icon name="warning" size={ICON_SIZES.sm} />
+          {t("listProduction")}
+        </TreeBadge>
+      </Tooltip>
     </MotionSpan>
   );
 }
@@ -88,23 +93,24 @@ export function ReadOnlyBadge({
       transition={transitions.crossfade}
       display="inline-flex"
     >
-      <TreeBadge
-        display="inline-flex"
-        alignItems="center"
-        gap="1"
-        bg={semanticColorToken("info", "subtle")}
-        color={semanticColorToken("info", "text")}
-        borderColor={semanticColorToken("info", "border")}
-        fontSize={compact ? "2xs" : "xs"}
-        fontWeight={700}
-        px={compact ? "1.5" : "2"}
-        py={compact ? "1px" : "0.5"}
-        title={t("listReadOnlyTitle")}
-        {...rest}
-      >
-        <Icon name="key" size={ICON_SIZES.sm} />
-        {t("listReadOnly")}
-      </TreeBadge>
+      <Tooltip label={t("listReadOnlyTitle")} focusableWrapper>
+        <TreeBadge
+          display="inline-flex"
+          alignItems="center"
+          gap="1"
+          bg={semanticColorToken("info", "subtle")}
+          color={semanticColorToken("info", "text")}
+          borderColor={semanticColorToken("info", "border")}
+          fontSize={compact ? "2xs" : "xs"}
+          fontWeight={700}
+          px={compact ? "1.5" : "2"}
+          py={compact ? "1px" : "0.5"}
+          {...rest}
+        >
+          <Icon name="key" size={ICON_SIZES.sm} />
+          {t("listReadOnly")}
+        </TreeBadge>
+      </Tooltip>
     </MotionSpan>
   );
 }
@@ -153,11 +159,10 @@ export function ProfileColorChip({
   title?: string;
 }) {
   const normalized = normalizeChipColor(color);
-  return (
+  const chip = (
     <MotionSpan
       key={`chip-${normalized ?? "default"}`}
       aria-hidden
-      title={title}
       initial={variants.fadeScale.initial}
       animate={variants.fadeScale.animate}
       transition={transitions.crossfade}
@@ -171,6 +176,12 @@ export function ProfileColorChip({
       style={{ background: normalized ?? "var(--ws-accent, var(--accent))" }}
     />
   );
+  // このチップは `aria-hidden` の装飾要素なので、フォーカス可能にする
+  // `focusableWrapper` はあえて使わない (aria-hidden な要素にフォーカスを
+  // 持たせるのは a11y 上の逆効果)。マウスホバー時の表示速度・テーマ追従のみ
+  // 底上げする。
+  if (!title) return chip;
+  return <Tooltip label={title}>{chip}</Tooltip>;
 }
 
 /**

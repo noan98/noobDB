@@ -448,7 +448,7 @@ describe("セル値のリッチ表示 (#451)", () => {
     setRichCellRendering(true);
   });
 
-  it("JSON セルはコンパクトに整形され、title に原文を残す", () => {
+  it("JSON セルはコンパクトに整形され、hover で原文のツールチップを出す", () => {
     const cols: Column[] = [{ name: "meta", type_name: "JSON" }];
     const raw = '{ "a": 1,  "b": [2, 3] }';
     const { container } = renderWithProviders(
@@ -456,8 +456,14 @@ describe("セル値のリッチ表示 (#451)", () => {
     );
     const cell = container.querySelector("tbody td .cell-json");
     expect(cell?.textContent).toBe(formatJsonCompact(raw));
-    // 原文は title (コピー/編集で使う実値) に保持される。
-    expect(cell?.getAttribute("title")).toBe(raw);
+    // 原文は native title ではなく共有ツールチップ (#884、行×列に比例して増える
+    // ため native title/個別 Tooltip インスタンスではなく 1 つの共有バブル +
+    // イベント委譲) で hover 時に確認できる。
+    expect(cell?.getAttribute("title")).toBeNull();
+    if (cell) fireEvent.mouseEnter(cell);
+    // `toHaveTextContent` は空白を畳んで比較するため、連続空白を含む原文は
+    // 素の textContent 比較で厳密に確認する。
+    expect(screen.getByRole("tooltip").textContent).toBe(raw);
   });
 
   it("真偽値はピル型バッジ (cell-bool-badge) で描画される", () => {
@@ -483,14 +489,16 @@ describe("セル値のリッチ表示 (#451)", () => {
     expect(badge?.style.getPropertyValue("--enum-hue")).not.toBe("");
   });
 
-  it("日付列はロケール整形され、title に原文 (実値) を残す", () => {
+  it("日付列はロケール整形され、hover で原文 (実値) のツールチップを出す", () => {
     const cols: Column[] = [{ name: "created", type_name: "DATE" }];
     const { container } = renderWithProviders(
       <ResultGrid result={makeResult(cols, [["2026-06-01"]])} />,
     );
     const cell = container.querySelector("tbody td .cell-date");
     expect(cell?.textContent).toBe("Jun 1, 2026");
-    expect(cell?.getAttribute("title")).toBe("2026-06-01");
+    expect(cell?.getAttribute("title")).toBeNull();
+    if (cell) fireEvent.mouseEnter(cell);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("2026-06-01");
   });
 
   it("リッチ表示を OFF にすると素の値で描画される (整形なし)", () => {

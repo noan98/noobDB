@@ -55,6 +55,7 @@ import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
 import { Switch } from "./Switch";
 import { Button } from "./ui";
+import { Tooltip } from "./Tooltip";
 import { MultiStateBadge, type BadgeState } from "./MultiStateBadge";
 import {
   initialHistoryNav,
@@ -67,8 +68,15 @@ import {
 // 薄いラッパ。`Button` 自体を `motion.create` するとボタンの recipe (Chakra style props)
 // 経路が複雑になるため、`motion.span` を被せる方式で済ませている。span は inline-flex
 // で本体ボタンと同じレイアウト振る舞いを保つ。
-function ToolbarButton({ children, ...rest }: ComponentProps<typeof Button> & { children: ReactNode }) {
-  return (
+// `title` は native title ではなく共有 `Tooltip` (#814/#884) へこの共通ラッパ 1 か所で
+// 委譲する — 呼び出し側は従来どおり `title` を渡すだけでよい。`disabled` なボタンは
+// `focusableWrapper` でキーボード到達も確保する。
+function ToolbarButton({
+  children,
+  title,
+  ...rest
+}: ComponentProps<typeof Button> & { children: ReactNode }) {
+  const button = (
     <motion.span
       style={{ display: "inline-flex" }}
       whileHover={!rest.disabled ? { scale: 1.04 } : undefined}
@@ -77,6 +85,13 @@ function ToolbarButton({ children, ...rest }: ComponentProps<typeof Button> & { 
     >
       <Button {...rest}>{children}</Button>
     </motion.span>
+  );
+  return title ? (
+    <Tooltip label={title} focusableWrapper={rest.disabled}>
+      {button}
+    </Tooltip>
+  ) : (
+    button
   );
 }
 
@@ -979,13 +994,15 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             border="1px solid"
             borderColor={emergencyMode ? "app.dangerBg" : "app.border"}
             borderRadius="pill"
-            title={t("editorEmergencyModeTitle")}
           >
+            {/* native title だった全体の説明文は、`Switch` 自体が既に共有
+                Tooltip (#814) を内蔵しているのでその `title` プロップへ委譲する。 */}
             <Switch
               size="sm"
               checked={!!emergencyMode}
               onChange={onToggleEmergencyMode}
               label={t("editorEmergencyMode")}
+              title={t("editorEmergencyModeTitle")}
             />
           </chakra.span>
         )}

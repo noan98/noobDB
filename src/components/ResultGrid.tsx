@@ -71,7 +71,7 @@ import { deriveQueryPhase, formatElapsed } from "../queryRunState";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
 import { LoadingButton } from "./LoadingButton";
-import { Tooltip } from "./Tooltip";
+import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import {
   buildInsertClipboard,
   buildRowSql,
@@ -1651,17 +1651,18 @@ function ColumnFilterMenu({
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <chakra.div
-        fontSize="var(--text-sm)"
-        fontWeight={600}
-        color="app.text"
-        whiteSpace="nowrap"
-        overflow="hidden"
-        textOverflow="ellipsis"
-        title={columnName}
-      >
-        {columnName}
-      </chakra.div>
+      <Tooltip label={columnName} focusableWrapper>
+        <chakra.div
+          fontSize="var(--text-sm)"
+          fontWeight={600}
+          color="app.text"
+          whiteSpace="nowrap"
+          overflow="hidden"
+          textOverflow="ellipsis"
+        >
+          {columnName}
+        </chakra.div>
+      </Tooltip>
 
       <chakra.label display="flex" flexDirection="column" gap="3px">
         <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
@@ -1956,24 +1957,32 @@ function ColumnFilterMenu({
 
 /** 統計ポップオーバーの 1 行 (ラベル + 値)。 */
 function StatRow({ label, value, title }: { label: string; value: ReactNode; title?: string }) {
+  const valueSpan = (
+    <chakra.span
+      fontSize="var(--text-sm)"
+      fontFamily="mono"
+      color="app.text"
+      fontWeight={600}
+      textAlign="right"
+      overflow="hidden"
+      textOverflow="ellipsis"
+      whiteSpace="nowrap"
+    >
+      {value}
+    </chakra.span>
+  );
   return (
     <Box display="flex" alignItems="baseline" justifyContent="space-between" gap="2">
       <chakra.span fontSize="var(--text-xs)" color="app.textMuted" whiteSpace="nowrap">
         {label}
       </chakra.span>
-      <chakra.span
-        fontSize="var(--text-sm)"
-        fontFamily="mono"
-        color="app.text"
-        fontWeight={600}
-        textAlign="right"
-        overflow="hidden"
-        textOverflow="ellipsis"
-        whiteSpace="nowrap"
-        title={title}
-      >
-        {value}
-      </chakra.span>
+      {title ? (
+        <Tooltip label={title} focusableWrapper>
+          {valueSpan}
+        </Tooltip>
+      ) : (
+        valueSpan
+      )}
     </Box>
   );
 }
@@ -2121,24 +2130,25 @@ function ColumnStatsMenu({
   // `colorScale.ts` の `accentFill`/`ACCENT_FILL_STOPS` を `.cell-databar` と
   // 共有し、`color-mix(--accent)` の直書きを避ける (#718)。
   const nullBar = (
-    <Box
-      role="img"
-      aria-label={`${t("gridStatsNullRate")}: ${nullPct.toFixed(1)}%`}
-      title={`${nullPct.toFixed(1)}%`}
-      height="6px"
-      borderRadius="full"
-      overflow="hidden"
-      background="color-mix(in srgb, var(--text-muted) 18%, transparent)"
-    >
+    <Tooltip label={`${nullPct.toFixed(1)}%`} focusableWrapper>
       <Box
-        height="100%"
-        width="100%"
-        transformOrigin="left center"
-        style={{ transform: `scaleX(${nullPct / 100})` }}
-        background={accentFill(ACCENT_FILL_STOPS.nullRate)}
-        transition="transform var(--dur-med) var(--ease-out)"
-      />
-    </Box>
+        role="img"
+        aria-label={`${t("gridStatsNullRate")}: ${nullPct.toFixed(1)}%`}
+        height="6px"
+        borderRadius="full"
+        overflow="hidden"
+        background="color-mix(in srgb, var(--text-muted) 18%, transparent)"
+      >
+        <Box
+          height="100%"
+          width="100%"
+          transformOrigin="left center"
+          style={{ transform: `scaleX(${nullPct / 100})` }}
+          background={accentFill(ACCENT_FILL_STOPS.nullRate)}
+          transition="transform var(--dur-med) var(--ease-out)"
+        />
+      </Box>
+    </Tooltip>
   );
 
   return createPortal(
@@ -2167,17 +2177,18 @@ function ColumnStatsMenu({
     >
       <Box display="flex" alignItems="center" gap="1.5" minWidth={0}>
         <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
-        <chakra.div
-          fontSize="var(--text-sm)"
-          fontWeight={600}
-          color="app.text"
-          whiteSpace="nowrap"
-          overflow="hidden"
-          textOverflow="ellipsis"
-          title={columnName}
-        >
-          {columnName}
-        </chakra.div>
+        <Tooltip label={columnName} focusableWrapper>
+          <chakra.div
+            fontSize="var(--text-sm)"
+            fontWeight={600}
+            color="app.text"
+            whiteSpace="nowrap"
+            overflow="hidden"
+            textOverflow="ellipsis"
+          >
+            {columnName}
+          </chakra.div>
+        </Tooltip>
       </Box>
 
       <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
@@ -2545,6 +2556,13 @@ export function DataGrid({
   const toast = useToast();
   const { cellEditOnBlur, richCellRendering } = useSettings();
   const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
+  // セル内容の全文ツールチップ (省略記号で切れた値・条件付き書式のホバー説明
+  // など) は行×列に比例して大量に描画されうるため (仮想化されていても可視行 ×
+  // 列数のぶんだけ Tooltip インスタンスが乗る)、`ConnectionList` のスキーマ
+  // ツリーと同じ「1 つの共有ツールチップ + イベント委譲」方式
+  // (`useDelegatedTooltip`、#884) に一本化する。native title からの後退はなく
+  // (セルは元々 tabIndex を持たない)、表示速度とテーマ追従だけを底上げする。
+  const { hovered: hoveredCellTooltip, bind: cellTooltipProps } = useDelegatedTooltip();
 
   // グリッド系ショートカットの実効バインド (#681)。未指定のキーは今日の既定へ
   // フォールバックするので、`gridBindings` を渡さない呼び出し元 (プレビューの
@@ -2822,27 +2840,26 @@ export function DataGrid({
       const fkTable = fkInfo?.referenced_table ?? null;
       return {
         id: String(i),
+        // ヘッダーは列数ぶんしか描画されない (行数に比例しない) ため、他の列
+        // ヘッダー系コントロール (ソート/フィルタ/リサイズボタン等、後述) と
+        // 同じく共有 `Tooltip` を直接使ってよい (#884)。
         header: () => (
-          <span
-            className="th-content"
-            title={fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name}
-          >
-            <span className="th-label-row">
-              {fkTable && <span className="th-fk-badge">FK</span>}
-              <span className="th-name">{c.name}</span>
-              {/* カラム型アイコン。aria-label で SR にも型を伝える。
-                  名前の後ろに置き、ヘッダーのアクセシブル名が列名から始まるようにする。 */}
-              <span
-                className="th-type-icon"
-                role="img"
-                aria-label={t(CELL_KIND_META[kind].labelKey)}
-                title={t(CELL_KIND_META[kind].labelKey)}
-              >
-                <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
+          <Tooltip label={fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name} focusableWrapper>
+            <span className="th-content">
+              <span className="th-label-row">
+                {fkTable && <span className="th-fk-badge">FK</span>}
+                <span className="th-name">{c.name}</span>
+                {/* カラム型アイコン。aria-label で SR にも型を伝える。
+                    名前の後ろに置き、ヘッダーのアクセシブル名が列名から始まるようにする。 */}
+                <Tooltip label={t(CELL_KIND_META[kind].labelKey)} focusableWrapper>
+                  <span className="th-type-icon" role="img" aria-label={t(CELL_KIND_META[kind].labelKey)}>
+                    <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
+                  </span>
+                </Tooltip>
               </span>
+              <span className="th-type">{c.type_name}</span>
             </span>
-            <span className="th-type">{c.type_name}</span>
-          </span>
+          </Tooltip>
         ),
         accessorFn: (row) => row[String(i)],
         sortingFn: sortingFnForKind(kind),
@@ -2865,8 +2882,8 @@ export function DataGrid({
             return (
               <span
                 className={`cell-empty cell-empty-${emptyKind}`}
-                title={t(badge.labelKey)}
                 aria-label={t(badge.labelKey)}
+                {...cellTooltipProps(t(badge.labelKey))}
               >
                 {badge.glyph}
               </span>
@@ -2881,14 +2898,14 @@ export function DataGrid({
             const num = toNumber(v);
             if (mode === "off" || !stats || num === null) {
               return (
-                <span className={`cell-number ${extraClass}`} title={title}>
+                <span className={`cell-number ${extraClass}`} {...cellTooltipProps(title)}>
                   {display}
                 </span>
               );
             }
             if (mode === "bar") {
               return (
-                <span className="cell-cf-wrap" title={title}>
+                <span className="cell-cf-wrap" {...cellTooltipProps(title)}>
                   <span
                     className="cell-databar"
                     style={{ transform: `scaleX(${dataBarPercent(num, stats) / 100})` }}
@@ -2915,7 +2932,7 @@ export function DataGrid({
             // 不透明な塗りにし、`readableInk` で塗り色そのものから文字色を
             // 決めることで、テーマに関わらず十分なコントラストを確保する。
             return (
-              <span className="cell-cf-wrap" title={title} style={{ background: color }}>
+              <span className="cell-cf-wrap" {...cellTooltipProps(title)} style={{ background: color }}>
                 <span
                   className={`cell-number cell-cf-value ${extraClass}`}
                   style={{ color: readableInk(color) }}
@@ -2956,7 +2973,7 @@ export function DataGrid({
                 ? formatDateTimeDisplay(raw, locale)
                 : null;
             return formatted !== null ? (
-              <span className="cell-date" title={raw}>
+              <span className="cell-date" {...cellTooltipProps(raw)}>
                 {formatted}
               </span>
             ) : (
@@ -2968,7 +2985,7 @@ export function DataGrid({
             // グリッド内では空白を畳んだコンパクト表現にする (表示専用、原文は title)。
             const compact = richCellRendering ? formatJsonCompact(raw) : null;
             return compact !== null ? (
-              <span className="cell-json" title={raw}>
+              <span className="cell-json" {...cellTooltipProps(raw)}>
                 {compact}
               </span>
             ) : (
@@ -2979,10 +2996,12 @@ export function DataGrid({
             const raw = String(v);
             // 列挙値は値ごとに決まる色相でバッジ表示する (表示専用)。OFF 時は素の文字列。
             // 長い値は他の型と同じくグリッド CSS の ellipsis で省略されるため、
-            // title で元の文字列をホバー確認できるようにする (#647)。
+            // ホバーで元の文字列を確認できるようにする (#647)。行×列に比例して
+            // 描画されるため native title ではなく `cellTooltipProps` (共有
+            // ツールチップ + イベント委譲、#884) を使う。
             if (!richCellRendering) {
               return (
-                <span className="cell-string" title={raw}>
+                <span className="cell-string" {...cellTooltipProps(raw)}>
                   {raw}
                 </span>
               );
@@ -2990,7 +3009,7 @@ export function DataGrid({
             return (
               <span
                 className="cell-enum-badge"
-                title={raw}
+                {...cellTooltipProps(raw)}
                 style={{ "--enum-hue": enumBadgeHue(raw) } as CSSProperties}
               >
                 {raw}
@@ -3002,16 +3021,20 @@ export function DataGrid({
             const label = t("gridBlobBytes", { size: formatBytes(Math.floor(s.length / 2)) });
             const { preview } = truncateHexPreview(s);
             return (
-              <span className="cell-binary" title={`${label} — 0x${s}`}>
+              <span className="cell-binary" {...cellTooltipProps(`${label} — 0x${s}`)}>
                 <span className="cell-binary-tag">{label}</span>0x{preview}
               </span>
             );
           }
           // 既定 (string) カテゴリ。JSON/日時/バイナリ/列挙と同じく、グリッドの
-          // ellipsis で省略された長文をホバーで確認できるよう title を付ける (#647)。
+          // ellipsis で省略された長文をホバーで確認できるようにする。行×列に
+          // 比例して描画されるセルなので、native title ではなく共有ツールチップ +
+          // イベント委譲 (`cellTooltipProps`、#884) を使う — 可視行 (仮想化後) ×
+          // 列数ぶん `Tooltip` インスタンスを乗せる素朴な全置換は、スクロールの
+          // たびに大量のマウント/アンマウントを引き起こし性能リスクがあるため。
           const rawStr = String(v);
           return (
-            <span className="cell-string" title={rawStr}>
+            <span className="cell-string" {...cellTooltipProps(rawStr)}>
               {rawStr}
             </span>
           );
@@ -3753,7 +3776,11 @@ export function DataGrid({
               else cellRefs.current.delete(key);
             }}
             className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
-            title={
+            // マウス hover 用は行×列に比例するため native title ではなく
+            // `cellTooltipProps` (#884) に委譲する。キーボードでの同等手段は
+            // 既存の `gridInspector` ショートカット (`CellValueViewer`) が
+            // アクティブセルの全文を常に提供済みなので、後退にはならない。
+            {...cellTooltipProps(
               isEditingHere
                 ? undefined
                 : hasPending
@@ -3768,7 +3795,7 @@ export function DataGrid({
                       (kind === "string" || kind === "json") && String(v).length > 40
                       ? `${String(v)}\n(${t("gridCharCount", { count: String(v).length })})`
                       : String(v)
-            }
+            )}
             onMouseDown={(e) => {
               // Right-click opens the context menu (which can act on the current
               // selection, e.g. bulk edit) — never clear the selection here.
@@ -4050,77 +4077,81 @@ export function DataGrid({
                   >
                     {enableColumnControls ? (
                       <div className="th-inner">
-                        <chakra.span
-                          className="th-drag-grip"
-                          draggable
-                          role="button"
-                          tabIndex={-1}
-                          aria-label={t("gridDragColumn")}
-                          title={t("gridDragColumn")}
-                          onDragStart={(e) => {
-                            setDragColId(h.column.id);
-                            e.dataTransfer.effectAllowed = "move";
-                            e.dataTransfer.setData("text/plain", h.column.id);
-                          }}
-                          onDragEnd={() => {
-                            setDragColId(null);
-                            setDragOverColId(null);
-                          }}
-                        >
-                          <Icon name="columns" size={ICON_SIZES.sm} />
-                        </chakra.span>
-                        <chakra.button
-                          type="button"
-                          className="th-sort-button"
-                          onClick={h.column.getToggleSortingHandler()}
-                          title={sortTitle}
-                        >
-                          {flexRender(h.column.columnDef.header, h.getContext())}
-                          <chakra.span className="th-sort-indicator" aria-hidden>
-                            {sortDir === "asc" ? (
-                              <Icon name="sort-asc" size={ICON_SIZES.sm} />
-                            ) : sortDir === "desc" ? (
-                              <Icon name="sort-desc" size={ICON_SIZES.sm} />
-                            ) : null}
-                            {sortRank > 0 && (
-                              <chakra.span
-                                className="th-sort-rank"
-                                aria-label={t("gridSortPriority", { n: sortRank })}
-                              >
-                                {sortRank}
-                              </chakra.span>
-                            )}
+                        <Tooltip label={t("gridDragColumn")}>
+                          <chakra.span
+                            className="th-drag-grip"
+                            draggable
+                            role="button"
+                            tabIndex={-1}
+                            aria-label={t("gridDragColumn")}
+                            onDragStart={(e) => {
+                              setDragColId(h.column.id);
+                              e.dataTransfer.effectAllowed = "move";
+                              e.dataTransfer.setData("text/plain", h.column.id);
+                            }}
+                            onDragEnd={() => {
+                              setDragColId(null);
+                              setDragOverColId(null);
+                            }}
+                          >
+                            <Icon name="columns" size={ICON_SIZES.sm} />
                           </chakra.span>
-                        </chakra.button>
-                        <chakra.button
-                          type="button"
-                          className={`th-filter-button ${colFilterActive ? "is-active" : ""}`}
-                          onClick={(e) =>
-                            setFilterMenu({
-                              colIdx,
-                              anchor: e.currentTarget.getBoundingClientRect(),
-                            })
-                          }
-                          title={filterLabel}
-                          aria-label={filterLabel}
-                          aria-haspopup="dialog"
-                          aria-expanded={filterMenu?.colIdx === colIdx}
-                        >
-                          <Icon name="filter" size={ICON_SIZES.sm} strokeWidth={2.2} />
-                        </chakra.button>
+                        </Tooltip>
+                        <Tooltip label={sortTitle}>
+                          <chakra.button
+                            type="button"
+                            className="th-sort-button"
+                            onClick={h.column.getToggleSortingHandler()}
+                          >
+                            {flexRender(h.column.columnDef.header, h.getContext())}
+                            <chakra.span className="th-sort-indicator" aria-hidden>
+                              {sortDir === "asc" ? (
+                                <Icon name="sort-asc" size={ICON_SIZES.sm} />
+                              ) : sortDir === "desc" ? (
+                                <Icon name="sort-desc" size={ICON_SIZES.sm} />
+                              ) : null}
+                              {sortRank > 0 && (
+                                <chakra.span
+                                  className="th-sort-rank"
+                                  aria-label={t("gridSortPriority", { n: sortRank })}
+                                >
+                                  {sortRank}
+                                </chakra.span>
+                              )}
+                            </chakra.span>
+                          </chakra.button>
+                        </Tooltip>
+                        <Tooltip label={filterLabel}>
+                          <chakra.button
+                            type="button"
+                            className={`th-filter-button ${colFilterActive ? "is-active" : ""}`}
+                            onClick={(e) =>
+                              setFilterMenu({
+                                colIdx,
+                                anchor: e.currentTarget.getBoundingClientRect(),
+                              })
+                            }
+                            aria-label={filterLabel}
+                            aria-haspopup="dialog"
+                            aria-expanded={filterMenu?.colIdx === colIdx}
+                          >
+                            <Icon name="filter" size={ICON_SIZES.sm} strokeWidth={2.2} />
+                          </chakra.button>
+                        </Tooltip>
                       </div>
                     ) : (
                       flexRender(h.column.columnDef.header, h.getContext())
                     )}
                     {canResize && (
-                      <div
-                        className={`th-resize-handle ${isResizing ? "is-resizing" : ""}`}
-                        onMouseDown={h.getResizeHandler()}
-                        onTouchStart={h.getResizeHandler()}
-                        onDoubleClick={() => h.column.resetSize()}
-                        title={t("gridResizeColumn")}
-                        aria-hidden
-                      />
+                      <Tooltip label={t("gridResizeColumn")}>
+                        <div
+                          className={`th-resize-handle ${isResizing ? "is-resizing" : ""}`}
+                          onMouseDown={h.getResizeHandler()}
+                          onTouchStart={h.getResizeHandler()}
+                          onDoubleClick={() => h.column.resetSize()}
+                          aria-hidden
+                        />
+                      </Tooltip>
                     )}
                   </th>
                 );
@@ -4221,12 +4252,11 @@ export function DataGrid({
                     }
                   : {};
                 const label = t(FOOTER_FN_LABEL[fn]);
-                return (
+                const footerTd = (
                   <td
                     key={h.id}
                     style={pinStyle}
                     className={`grid-footer-cell col-${kind} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
-                    title={text ? `${label}: ${text}` : undefined}
                   >
                     {fn !== "none" && (
                       <span className="grid-footer-inner">
@@ -4243,6 +4273,15 @@ export function DataGrid({
                       </span>
                     )}
                   </td>
+                );
+                // 列数ぶんしか描画されない (行数には比例しない) ため、共有
+                // `Tooltip` を直接使う (#884)。
+                return text ? (
+                  <Tooltip key={h.id} label={`${label}: ${text}`} focusableWrapper>
+                    {footerTd}
+                  </Tooltip>
+                ) : (
+                  footerTd
                 );
               })}
               <td className="col-filler grid-footer-cell" aria-hidden />
@@ -4765,6 +4804,9 @@ export function DataGrid({
         );
       })()}
       {blurDialog}
+      {hoveredCellTooltip && (
+        <TooltipBubble label={hoveredCellTooltip.label} anchor={hoveredCellTooltip.rect} />
+      )}
     </>
   );
 }
