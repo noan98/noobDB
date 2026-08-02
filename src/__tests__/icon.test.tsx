@@ -41,6 +41,11 @@ describe("icon lexicon (#489)", () => {
     // 既存 3 段階からの昇順が保たれること (ピクセル直値の例外を無くした規約)。
     expect(pxOf(ICON_SIZES.lg)).toBeLessThan(pxOf(ICON_SIZES.xl));
     expect(pxOf(ICON_SIZES.xl)).toBeLessThan(pxOf(ICON_SIZES["2xl"]));
+    // 昇順だけでは xl=21 / 2xl=22 のような値でも通ってしまうため、#886 で
+    // 置換した実寸 (PivotView の 28px、EmptyState 非 compact と App.tsx の
+    // ドラッグフィードバックの 32px) を基準値として直接固定する。
+    expect(pxOf(ICON_SIZES.xl)).toBe(28);
+    expect(pxOf(ICON_SIZES["2xl"])).toBe(32);
   });
 
   it("exposes stroke tokens with regular as the default weight", () => {
