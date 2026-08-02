@@ -493,7 +493,7 @@ export function DataSearchModal({
                       gap="1"
                     >
                       <chakra.div display="flex" alignItems="center" justifyContent="space-between" gap="2">
-                        <chakra.span fontSize="sm" fontWeight={600} fontFamily="mono">
+                        <chakra.span textStyle="subheading" fontFamily="mono">
                           {entry.table}
                         </chakra.span>
                         <Button type="button" variant="ghost" onClick={() => openTableHits(entry)}>

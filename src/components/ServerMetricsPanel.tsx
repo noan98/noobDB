@@ -19,7 +19,7 @@ import {
   type MetricSample,
   type MetricSeriesKey,
 } from "./serverMetrics";
-import { Checkbox, Select } from "./ui";
+import { Checkbox, Heading, Select } from "./ui";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Skeleton } from "./Skeleton";
@@ -143,9 +143,9 @@ function MetricChart({
   return (
     <Box borderWidth="1px" borderColor="app.border" borderRadius="md" p="3" bg="app.surface">
       <Flex align="baseline" justify="space-between" gap="2" mb="1.5" flexWrap="wrap">
-        <chakra.h3 margin={0} fontSize="sm" fontWeight={600} color="app.text">
+        <Heading as="h3" role="subheading">
           {t(def.titleKey)}
-        </chakra.h3>
+        </Heading>
         <chakra.span fontSize="xs" color="app.textMuted">
           {unitLabel}
         </chakra.span>
@@ -259,9 +259,9 @@ function MetricChartSkeleton({ def }: { def: ChartDef }) {
   return (
     <Box borderWidth="1px" borderColor="app.border" borderRadius="md" p="3" bg="app.surface" aria-hidden>
       <Flex align="baseline" justify="space-between" gap="2" mb="1.5">
-        <chakra.h3 margin={0} fontSize="sm" fontWeight={600} color="app.text">
+        <Heading as="h3" role="subheading">
           {t(def.titleKey)}
-        </chakra.h3>
+        </Heading>
       </Flex>
       <Flex gap="3.5" flexWrap="wrap" mb="1.5">
         {def.series.map((s, i) => (

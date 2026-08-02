@@ -43,7 +43,7 @@ const HelpFeatureHead = chakra("div", {
     justifyContent: "space-between",
     gap: "3",
     flexWrap: "wrap",
-    "& h4": { margin: 0, fontSize: "md", fontWeight: 600, color: "app.text" },
+    "& h4": { margin: 0, textStyle: "subheading", fontSize: "md" },
   },
 });
 
@@ -52,7 +52,7 @@ const HelpFeatureDesc = chakra("p", {
 });
 
 const HelpUsageTitle = chakra("p", {
-  base: { margin: "10px 0 2px", fontSize: "sm", fontWeight: 600, color: "app.text" },
+  base: { margin: "10px 0 2px", textStyle: "subheading" },
 });
 
 const HelpSteps = chakra("ol", {
@@ -180,8 +180,7 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
       px="2"
       py="0.5"
       borderRadius="pill"
-      fontSize="xs"
-      fontWeight={600}
+      textStyle="overline"
       whiteSpace="nowrap"
       border="1px solid transparent"
       color={tone}

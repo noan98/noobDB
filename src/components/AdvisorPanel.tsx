@@ -17,7 +17,7 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
-import { Button } from "./ui";
+import { Button, Heading } from "./ui";
 import { useToast } from "./Toast";
 
 /**
@@ -48,8 +48,7 @@ const thCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border)",
   padding: "6px 10px",
   textAlign: "left",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
 };
@@ -69,8 +68,7 @@ function SeverityBadge({ severity }: { severity: HealthFinding["severity"] }) {
       display="inline-block"
       px="2"
       py="0.5"
-      fontSize="var(--text-xs)"
-      fontWeight={600}
+      textStyle="overline"
       lineHeight={1.4}
       borderRadius="var(--radius-sm)"
       whiteSpace="nowrap"
@@ -143,9 +141,7 @@ export function AdvisorPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("advisorTitle")}
-        </chakra.h2>
+        <Heading>{t("advisorTitle")}</Heading>
         <Button
           minWidth="28px"
           px="2"
@@ -212,7 +208,7 @@ export function AdvisorPanel({
           px="3"
           py="2.5"
         >
-          <chakra.div fontSize="sm" fontWeight={600} marginBottom="1">
+          <chakra.div textStyle="subheading" marginBottom="1">
             {t("advisorSkippedTitle")}
           </chakra.div>
           {report.skipped.map((s) => (
