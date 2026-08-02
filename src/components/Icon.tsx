@@ -577,7 +577,7 @@ export function Icon({ name, size = "1em", strokeWidth = 2 }: IconProps) {
   // 明示的に px 文字列へ変換してトークン解決を回避する。
   // また `size="sm"` のようなサイズトークン名がそのまま渡ると Chakra が
   // `var(--chakra-sizes-sm)` (= 24rem) として解決し巨大化する。`ICON_SIZES` の
-  // キー (sm/md/lg) は `calc(px * var(--font-scale))` の CSS 文字列へ変換し、
+  // キー (sm/md/lg/xl/2xl) は `calc(px * var(--font-scale))` の CSS 文字列へ変換し、
   // 誤って巨大アイコンになるのを防ぎつつ font-scale 追従を効かせる (#818)。
   const dim =
     typeof size === "number"
