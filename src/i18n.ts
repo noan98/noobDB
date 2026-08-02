@@ -1208,7 +1208,6 @@ const en = {
   colTipReferences: "References",
   colTipExtra: "Extra",
   colPkTitle: "Primary key",
-  colFkTitle: "Foreign key",
 
   tabNew: "New query tab",
   tabClose: "Close tab",
@@ -3441,7 +3440,6 @@ const ja: Dict = {
   colTipReferences: "参照先",
   colTipExtra: "追加情報",
   colPkTitle: "主キー",
-  colFkTitle: "外部キー",
 
   tabNew: "新しいクエリタブ",
   tabClose: "タブを閉じる",
