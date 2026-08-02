@@ -27,7 +27,7 @@ import {
   type NPlusOneOptions,
 } from "./queryInspector";
 import { Spinner } from "./Spinner";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Checkbox, Heading, Input, Select } from "./ui";
 import { useToast } from "./Toast";
 
 /**
@@ -58,8 +58,7 @@ const thCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border)",
   padding: "6px 10px",
   textAlign: "left",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
 };
@@ -92,9 +91,8 @@ function NPlusOneBadge({ title }: { title: string }) {
     <chakra.span
       marginLeft="1.5"
       px="1.5"
-      fontSize="var(--text-xs)"
       fontFamily="var(--font-sans)"
-      fontWeight={600}
+      textStyle="overline"
       color="var(--status-error)"
       border="1px solid var(--status-error)"
       borderRadius="var(--radius-sm)"
@@ -316,9 +314,7 @@ export function QueryInspectorPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("inspectorTitle")}
-        </chakra.h2>
+        <Heading>{t("inspectorTitle")}</Heading>
         <Button
           minWidth="28px"
           px="2"
@@ -415,7 +411,7 @@ export function QueryInspectorPanel({
               </chakra.span>
             )}
             {recording && (
-              <chakra.span fontSize="xs" color="var(--status-error)" fontWeight={600}>
+              <chakra.span textStyle="overline" color="var(--status-error)">
                 {t("inspectorRecordingBadge")}
               </chakra.span>
             )}

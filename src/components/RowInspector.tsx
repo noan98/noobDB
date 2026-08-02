@@ -108,7 +108,7 @@ export function RowInspector({
           borderColor="app.border"
           flexShrink={0}
         >
-          <chakra.span fontWeight={600} fontSize="sm" color="app.text" flex="1">
+          <chakra.span textStyle="subheading" flex="1">
             {t("gridRowInspectorTitle", { row: rowNumber })}
           </chakra.span>
           <chakra.button

@@ -22,7 +22,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button } from "./ui";
+import { Button, Heading } from "./ui";
 
 /**
  * テーブル/DB サイズ・構造統計ダッシュボード (#562 / #660)。指定データベースの
@@ -46,8 +46,7 @@ const thBase: SystemStyleObject = {
   background: "var(--bg-muted)",
   borderBottom: "1px solid var(--border)",
   padding: "6px 10px",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
   cursor: "pointer",
@@ -196,9 +195,7 @@ export function TableStatisticsPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("sizeTitle")} — {database}
-        </chakra.h2>
+        <Heading>{t("sizeTitle")} — {database}</Heading>
         <Button
           minWidth="28px"
           px="2"
