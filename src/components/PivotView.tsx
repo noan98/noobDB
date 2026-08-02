@@ -136,7 +136,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
           <ResultViewSwitch value="pivot" onChange={onChangeView} />
         </Flex>
         <Flex flex="1" minH={0} direction="column" align="center" justify="center" gap="3" color="app.textMuted">
-          <Icon name="table" size={28} />
+          <Icon name="table" size={ICON_SIZES.xl} />
           <chakra.span>{t("pivotNoData")}</chakra.span>
           <Button type="button" variant="secondary" onClick={() => onChangeView("grid")}>
             {t("chartBackToTable")}

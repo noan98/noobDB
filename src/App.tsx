@@ -7617,7 +7617,7 @@ export default function App() {
                 boxShadow: "var(--shadow-lg, 0 12px 40px rgba(0,0,0,0.3))",
               }}
             >
-              <Icon name={dragFeedback.accept ? "upload" : "warning"} size={32} />
+              <Icon name={dragFeedback.accept ? "upload" : "warning"} size={ICON_SIZES["2xl"]} />
               <chakra.span fontSize="lg" fontWeight={600}>
                 {dragFeedback.accept
                   ? t("dropOverlayTitle")
