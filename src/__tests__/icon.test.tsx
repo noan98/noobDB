@@ -27,7 +27,7 @@ describe("icon lexicon (#489)", () => {
     unmount();
   });
 
-  it("exposes ascending, font-scale-tracking size tokens (#818)", () => {
+  it("exposes ascending, font-scale-tracking size tokens (#818, #886)", () => {
     // 値は `calc(<px>px * var(--font-scale))` 形式の CSS 文字列。App.css の
     // --text-* / --space-* と同じ規約で、設定のフォントサイズにアイコンが追従する。
     const pxOf = (token: string) => {
@@ -37,6 +37,10 @@ describe("icon lexicon (#489)", () => {
     };
     expect(pxOf(ICON_SIZES.sm)).toBeLessThan(pxOf(ICON_SIZES.md));
     expect(pxOf(ICON_SIZES.md)).toBeLessThan(pxOf(ICON_SIZES.lg));
+    // #886: 22px 超の強調アイコン向けに追加した xl / 2xl も同じ calc() 形式で、
+    // 既存 3 段階からの昇順が保たれること (ピクセル直値の例外を無くした規約)。
+    expect(pxOf(ICON_SIZES.lg)).toBeLessThan(pxOf(ICON_SIZES.xl));
+    expect(pxOf(ICON_SIZES.xl)).toBeLessThan(pxOf(ICON_SIZES["2xl"]));
   });
 
   it("exposes stroke tokens with regular as the default weight", () => {

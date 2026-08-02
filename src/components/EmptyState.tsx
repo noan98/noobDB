@@ -3,7 +3,7 @@ import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { PressableButton } from "./ui";
-import { Icon, type IconName } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 
 /** ルートを motion 化するラッパー。`transition` を motion へ転送する
  *  (`TabBar` / `Modal` と同方式)。`Flex` のショートハンド (direction/align/justify)
@@ -104,7 +104,13 @@ export function EmptyState({
             bg="app.surfaceMuted"
             color="app.textSecondary"
           >
-            <Icon name={icon} size={compact ? 22 : 32} strokeWidth={1.5} />
+            {/* compact は既存の `lg` (20px 相当) に寄せる。旧値 22px との差はわずか
+                (2px) で、新トークンを 1 つ増やすコストに見合わないため (#886)。 */}
+            <Icon
+              name={icon}
+              size={compact ? ICON_SIZES.lg : ICON_SIZES["2xl"]}
+              strokeWidth={1.5}
+            />
           </Flex>
         )
       )}
