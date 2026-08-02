@@ -279,3 +279,118 @@ function composeHandler<E extends ReactMouseEvent | ReactFocusEvent>(
     extra(e);
   };
 }
+
+/**
+ * 行/セル単位で大量に描画される一覧 (`ResultGrid` のセル・`ConnectionList`
+ * のスキーマツリー行など) 向けの「1 つの共有ツールチップ + イベント委譲」
+ * プリミティブ (#884)。`Tooltip` は要素ごとに `cloneElement` でラップするため
+ * hover/focus の状態やタイマーも要素数だけ増える — 行/列数が数百〜数千に
+ * なりうる一覧でこれを素朴に適用すると、スクロールでの mount/unmount のたびに
+ * 多数の Tooltip インスタンスが生成/破棄されるコストが無視できない
+ * (#884 の Issue 本文が挙げる性能リスクそのもの)。
+ *
+ * 対して `useDelegatedTooltip` はマウント中の状態を 1 つだけ持ち、各行/セルは
+ * `bind(label)` が返す軽量な `onMouseEnter`/`onMouseLeave` だけを持つ。表示中の
+ * バブル自体は `TooltipBubble` (下記) の 1 インスタンスのみで、位置決めは
+ * `Tooltip` 本体と同じ `computeTooltipPosition` を再利用する (二重実装しない)。
+ *
+ * トレードオフ: 個々の要素は `cloneElement` で ref/focus/blur を注入されない
+ * ため、`focusableWrapper` のようなキーボード到達手段は無い。呼び出し側の行が
+ * 現状すでに `tabIndex` を持たない (キーボード操作対象外の) 一覧でのみ使うこと —
+ * キーボードで到達できる行に使う場合は、呼び出し側で別途 `onFocus`/`onBlur` を
+ * `bind` の戻り値にマージすること。
+ */
+export function useDelegatedTooltip() {
+  const [state, setState] = useState<{ label: string; rect: TooltipRectLike; target: EventTarget } | null>(
+    null,
+  );
+
+  // アンカーはイベント時点の座標スナップショットなので、スクロール/リサイズで
+  // 追従できずバブルだけが古い位置に浮いてしまう (`Tooltip` 本体・
+  // `ConnectionList` の `ColumnTooltip` と同じ理由)。
+  useEffect(() => {
+    if (!state) return;
+    const clear = () => setState(null);
+    window.addEventListener("scroll", clear, true);
+    window.addEventListener("resize", clear);
+    return () => {
+      window.removeEventListener("scroll", clear, true);
+      window.removeEventListener("resize", clear);
+    };
+  }, [state]);
+
+  const bind = (label: string | undefined | null) => {
+    if (!label) return undefined;
+    return {
+      onMouseEnter: (e: ReactMouseEvent<HTMLElement>) =>
+        setState({ label, rect: e.currentTarget.getBoundingClientRect(), target: e.currentTarget }),
+      onMouseLeave: (e: ReactMouseEvent<HTMLElement>) =>
+        setState((cur) => (cur?.target === e.currentTarget ? null : cur)),
+    };
+  };
+
+  return { hovered: state, bind };
+}
+
+/** `TooltipRect` と同じ形の最小サブセット。呼び出し側は `DOMRect` をそのまま渡せる。 */
+type TooltipRectLike = { top: number; left: number; right: number; bottom: number; width: number; height: number };
+
+/**
+ * `useDelegatedTooltip` が管理する単一の共有バブル本体。`Tooltip` 本体の
+ * バブルと見た目・位置決め (`computeTooltipPosition`) を共有する、Portal 経由の
+ * 表示専用コンポーネント。
+ */
+export function TooltipBubble({
+  label,
+  anchor,
+  placement = "top",
+  maxWidth = "280px",
+}: {
+  label: ReactNode;
+  anchor: TooltipRectLike;
+  placement?: TooltipPlacement;
+  maxWidth?: string;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const size = el.getBoundingClientRect();
+    setPos(
+      computeTooltipPosition(anchor, size, placement, MARGIN_PX, {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }),
+    );
+  }, [label, anchor, placement]);
+
+  return createPortal(
+    <Box
+      ref={ref}
+      role="tooltip"
+      position="fixed"
+      zIndex="popover"
+      maxWidth={maxWidth}
+      bg="app.surface"
+      border="1px solid"
+      borderColor="app.borderStrong"
+      borderRadius="md"
+      boxShadow="md"
+      py="1"
+      px="2.5"
+      fontSize="sm"
+      color="app.text"
+      pointerEvents="none"
+      style={{
+        left: `${pos ? pos.left : anchor.left}px`,
+        top: `${pos ? pos.top : anchor.top}px`,
+        visibility: pos ? "visible" : "hidden",
+      }}
+    >
+      {label}
+    </Box>,
+    document.body,
+  );
+}

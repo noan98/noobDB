@@ -29,6 +29,7 @@ import {
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Select } from "./ui";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 
 /**
  * ライブクエリ・インスペクタ (#746): 接続先 DB で「アプリ (ORM) が投げている
@@ -89,20 +90,21 @@ function oneLine(query: string, max = 300): string {
 
 function NPlusOneBadge({ title }: { title: string }) {
   return (
-    <chakra.span
-      marginLeft="1.5"
-      px="1.5"
-      fontSize="var(--text-xs)"
-      fontFamily="var(--font-sans)"
-      fontWeight={600}
-      color="var(--status-error)"
-      border="1px solid var(--status-error)"
-      borderRadius="var(--radius-sm)"
-      whiteSpace="nowrap"
-      title={title}
-    >
-      N+1
-    </chakra.span>
+    <Tooltip label={title} focusableWrapper>
+      <chakra.span
+        marginLeft="1.5"
+        px="1.5"
+        fontSize="var(--text-xs)"
+        fontFamily="var(--font-sans)"
+        fontWeight={600}
+        color="var(--status-error)"
+        border="1px solid var(--status-error)"
+        borderRadius="var(--radius-sm)"
+        whiteSpace="nowrap"
+      >
+        N+1
+      </chakra.span>
+    </Tooltip>
   );
 }
 
@@ -319,18 +321,19 @@ export function QueryInspectorPanel({
         <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
           {t("inspectorTitle")}
         </chakra.h2>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("inspectorClose")}
-          title={t("inspectorClose")}
-        >
-          <Icon name="close" size={ICON_SIZES.sm} />
-        </Button>
+        <Tooltip label={t("inspectorClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("inspectorClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
@@ -373,19 +376,21 @@ export function QueryInspectorPanel({
                 {t("inspectorStop")}
               </Button>
             ) : (
-              <Button
-                type="button"
-                variant="primary"
-                disabled={!support.live_tail && !support.statements}
-                onClick={() => void startRecording()}
-                title={
-                  !support.live_tail && !support.statements
-                    ? t("inspectorUnavailable")
-                    : undefined
+              <Tooltip
+                label={
+                  !support.live_tail && !support.statements ? t("inspectorUnavailable") : undefined
                 }
+                focusableWrapper={!support.live_tail && !support.statements}
               >
-                {t("inspectorStart")}
-              </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={!support.live_tail && !support.statements}
+                  onClick={() => void startRecording()}
+                >
+                  {t("inspectorStart")}
+                </Button>
+              </Tooltip>
             )}
             <chakra.label
               display="inline-flex"
@@ -545,9 +550,11 @@ export function QueryInspectorPanel({
                             <chakra.td css={tdCss}>
                               {new Date(e.observedAtMs).toLocaleTimeString()}
                               {e.running && (
-                                <chakra.span marginLeft="1.5" color="var(--accent)" title={t("inspectorRunningTitle")}>
-                                  ▶
-                                </chakra.span>
+                                <Tooltip label={t("inspectorRunningTitle")} focusableWrapper>
+                                  <chakra.span marginLeft="1.5" color="var(--accent)">
+                                    ▶
+                                  </chakra.span>
+                                </Tooltip>
                               )}
                             </chakra.td>
                             <chakra.td css={tdCss}>
@@ -560,28 +567,31 @@ export function QueryInspectorPanel({
                             {driver === "mysql" && (
                               <chakra.td css={numTdCss}>{e.rows_examined ?? "–"}</chakra.td>
                             )}
-                            <chakra.td css={queryTdCss} title={e.query}>
-                              {oneLine(e.query)}
-                              {finding && (
-                                <NPlusOneBadge
-                                  title={t("inspectorNPlusOneExplain", {
-                                    count: finding.count,
-                                    windowMs: finding.windowMs,
-                                  })}
-                                />
-                              )}
-                            </chakra.td>
+                            <Tooltip label={e.query}>
+                              <chakra.td css={queryTdCss}>
+                                {oneLine(e.query)}
+                                {finding && (
+                                  <NPlusOneBadge
+                                    title={t("inspectorNPlusOneExplain", {
+                                      count: finding.count,
+                                      windowMs: finding.windowMs,
+                                    })}
+                                  />
+                                )}
+                              </chakra.td>
+                            </Tooltip>
                             <chakra.td css={tdCss}>
-                              <Button
-                                minWidth="24px"
-                                px="1.5"
-                                py="0.5"
-                                onClick={() => void copySql(e.query)}
-                                aria-label={t("inspectorCopySql")}
-                                title={t("inspectorCopySql")}
-                              >
-                                <Icon name="copy" size={ICON_SIZES.sm} />
-                              </Button>
+                              <Tooltip label={t("inspectorCopySql")}>
+                                <Button
+                                  minWidth="24px"
+                                  px="1.5"
+                                  py="0.5"
+                                  onClick={() => void copySql(e.query)}
+                                  aria-label={t("inspectorCopySql")}
+                                >
+                                  <Icon name="copy" size={ICON_SIZES.sm} />
+                                </Button>
+                              </Tooltip>
                             </chakra.td>
                           </tr>
                         );
@@ -627,9 +637,9 @@ export function QueryInspectorPanel({
                         <chakra.th css={thCss}>{t("inspectorColCalls")}</chakra.th>
                         <chakra.th css={thCss}>{t("inspectorColTotalTime")}</chakra.th>
                         <chakra.th css={thCss}>{t("inspectorColMeanTime")}</chakra.th>
-                        <chakra.th css={thCss} title={t("inspectorMaxCumulativeTitle")}>
-                          {t("inspectorColMaxTime")}
-                        </chakra.th>
+                        <Tooltip label={t("inspectorMaxCumulativeTitle")} focusableWrapper>
+                          <chakra.th css={thCss}>{t("inspectorColMaxTime")}</chakra.th>
+                        </Tooltip>
                         <chakra.th css={thCss}>
                           {driver === "mysql"
                             ? t("inspectorColRowsExamined")
@@ -649,27 +659,30 @@ export function QueryInspectorPanel({
                           <chakra.td css={numTdCss}>{formatMs(r.maxTimeMs)}</chakra.td>
                           <chakra.td css={numTdCss}>{r.rows ?? "–"}</chakra.td>
                           <chakra.td css={tdCss}>{r.database ?? "–"}</chakra.td>
-                          <chakra.td css={queryTdCss} title={r.fingerprint}>
-                            {oneLine(r.fingerprint)}
-                            {rateFlagged.has(`${r.digest} ${r.database ?? ""}`) && (
-                              <NPlusOneBadge
-                                title={t("inspectorNPlusOneRateExplain", {
-                                  windowMs: settings.inspectorNPlusOneWindowMs,
-                                })}
-                              />
-                            )}
-                          </chakra.td>
+                          <Tooltip label={r.fingerprint}>
+                            <chakra.td css={queryTdCss}>
+                              {oneLine(r.fingerprint)}
+                              {rateFlagged.has(`${r.digest} ${r.database ?? ""}`) && (
+                                <NPlusOneBadge
+                                  title={t("inspectorNPlusOneRateExplain", {
+                                    windowMs: settings.inspectorNPlusOneWindowMs,
+                                  })}
+                                />
+                              )}
+                            </chakra.td>
+                          </Tooltip>
                           <chakra.td css={tdCss}>
-                            <Button
-                              minWidth="24px"
-                              px="1.5"
-                              py="0.5"
-                              onClick={() => void copySql(r.fingerprint)}
-                              aria-label={t("inspectorCopySql")}
-                              title={t("inspectorCopySql")}
-                            >
-                              <Icon name="copy" size={ICON_SIZES.sm} />
-                            </Button>
+                            <Tooltip label={t("inspectorCopySql")}>
+                              <Button
+                                minWidth="24px"
+                                px="1.5"
+                                py="0.5"
+                                onClick={() => void copySql(r.fingerprint)}
+                                aria-label={t("inspectorCopySql")}
+                              >
+                                <Icon name="copy" size={ICON_SIZES.sm} />
+                              </Button>
+                            </Tooltip>
                           </chakra.td>
                         </tr>
                       ))}

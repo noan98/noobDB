@@ -308,6 +308,7 @@ import {
   type SchemaDriftState,
   type SnapshotTable,
 } from "./schemaDrift";
+import { Tooltip } from "./components/Tooltip";
 
 type Theme = "light" | "dark";
 
@@ -409,9 +410,18 @@ function PaneEmpty({ children }: { children: ReactNode }) {
 }
 
 /** トップバーの密なアイコン専用ボタン。`Button` の既定 padding を詰めて
- *  正方形に近い当たり判定にし、アイコン文字のみを中央配置する。 */
-function IconButton(props: ComponentProps<typeof Button>) {
-  return <Button px="2" py="1" minW="28px" lineHeight="1" fontSize="base" {...props} />;
+ *  正方形に近い当たり判定にし、アイコン文字のみを中央配置する。
+ *  `title` は native title ではなく共有 `Tooltip` (#814/#884) へこの共通ラッパ
+ *  1 か所で委譲する — 呼び出し側は従来どおり `title` を渡すだけでよい。 */
+function IconButton({ title, ...props }: ComponentProps<typeof Button>) {
+  const button = <Button px="2" py="1" minW="28px" lineHeight="1" fontSize="base" {...props} />;
+  return title ? (
+    <Tooltip label={title} focusableWrapper={props.disabled}>
+      {button}
+    </Tooltip>
+  ) : (
+    button
+  );
 }
 
 /** ステータスバー脇の小さな状態ドット。色付きの円 + ハロー (box-shadow) で
@@ -5888,15 +5898,16 @@ export default function App() {
                         {tab.title}
                       </chakra.span>
                       <chakra.span flex="1" />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => setLayoutMode("normal")}
-                        title={t("editorRestoreTitle")}
-                      >
-                        <Icon name="minimize" size={ICON_SIZES.md} /> {t("editorFocusedLabel")}
-                      </Button>
+                      <Tooltip label={t("editorRestoreTitle")}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setLayoutMode("normal")}
+                        >
+                          <Icon name="minimize" size={ICON_SIZES.md} /> {t("editorFocusedLabel")}
+                        </Button>
+                      </Tooltip>
                     </Flex>
                   )}
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
@@ -5996,15 +6007,16 @@ export default function App() {
                         {tab.title}
                       </chakra.span>
                       <chakra.span flex="1" />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => setLayoutMode("normal")}
-                        title={t("resultRestoreTitle")}
-                      >
-                        <Icon name="minimize" size={ICON_SIZES.md} /> {t("resultMaximizedLabel")}
-                      </Button>
+                      <Tooltip label={t("resultRestoreTitle")}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setLayoutMode("normal")}
+                        >
+                          <Icon name="minimize" size={ICON_SIZES.md} /> {t("resultMaximizedLabel")}
+                        </Button>
+                      </Tooltip>
                     </Flex>
                   )}
                   {/* ストリーミング実行中の indeterminate 進捗バー (#872)。結果
@@ -6659,28 +6671,29 @@ export default function App() {
           transition={transitions.enter}
           style={{ position: "absolute", top: "9px", left: "8px", zIndex: 46 }}
         >
-        <chakra.button
-          display="inline-flex"
-          alignItems="center"
-          justifyContent="center"
-          width="28px"
-          height="28px"
-          p="0"
-          borderWidth="1px"
-          borderStyle="solid"
-          borderColor="app.border"
-          borderRadius="md"
-          bg="app.surface"
-          color="app.textSecondary"
-          cursor="pointer"
-          boxShadow="sm"
-          _hover={{ color: "app.text", bg: "app.hover" }}
-          onClick={toggleSidebar}
-          title={t("sidebarExpand")}
-          aria-label={t("sidebarExpand")}
-        >
-          <Icon name="chevron-right" />
-        </chakra.button>
+        <Tooltip label={t("sidebarExpand")}>
+          <chakra.button
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            width="28px"
+            height="28px"
+            p="0"
+            borderWidth="1px"
+            borderStyle="solid"
+            borderColor="app.border"
+            borderRadius="md"
+            bg="app.surface"
+            color="app.textSecondary"
+            cursor="pointer"
+            boxShadow="sm"
+            _hover={{ color: "app.text", bg: "app.hover" }}
+            onClick={toggleSidebar}
+            aria-label={t("sidebarExpand")}
+          >
+            <Icon name="chevron-right" />
+          </chakra.button>
+        </Tooltip>
         </motion.div>
       )}
       </AnimatePresence>
@@ -6820,48 +6833,50 @@ export default function App() {
                     <StatusDot variant="connected" />
                     <chakra.span fontWeight={600} fontSize="md">{selectedProfile.name}</chakra.span>
                     {selectedProfile.is_production && (
-                      <chakra.span
-                        title={t("listProductionTitle")}
-                        display="inline-flex"
-                        alignItems="center"
-                        gap="1"
-                        textStyle="overline"
-                        fontWeight={700}
-                        px="2"
-                        py="0.5"
-                        borderRadius="pill"
-                        bg="app.status.error"
-                        color="#fff"
-                        borderWidth="1px"
-                        borderStyle="solid"
-                        borderColor="app.status.error"
-                        flexShrink={0}
-                      >
-                        <Icon name="warning" size={ICON_SIZES.sm} />
-                        {t("listProduction")}
-                      </chakra.span>
+                      <Tooltip label={t("listProductionTitle")} focusableWrapper>
+                        <chakra.span
+                          display="inline-flex"
+                          alignItems="center"
+                          gap="1"
+                          textStyle="overline"
+                          fontWeight={700}
+                          px="2"
+                          py="0.5"
+                          borderRadius="pill"
+                          bg="app.status.error"
+                          color="#fff"
+                          borderWidth="1px"
+                          borderStyle="solid"
+                          borderColor="app.status.error"
+                          flexShrink={0}
+                        >
+                          <Icon name="warning" size={ICON_SIZES.sm} />
+                          {t("listProduction")}
+                        </chakra.span>
+                      </Tooltip>
                     )}
                     {selectedProfile.read_only && (
-                      <chakra.span
-                        title={t("listReadOnlyTitle")}
-                        display="inline-flex"
-                        alignItems="center"
-                        gap="1"
-                        textStyle="overline"
-                        fontWeight={700}
-                        px="2"
-                        py="0.5"
-                        borderRadius="pill"
-                        bg="var(--status-info, var(--bg-muted))"
-                        color="app.text"
-                        borderWidth="1px"
-                        borderStyle="solid"
-                        borderColor="app.borderStrong"
-                        flexShrink={0}
-                      >
-                        <Icon name="key" size={ICON_SIZES.sm} />
-                        {t("listReadOnly")}
-                      </chakra.span>
+                      <Tooltip label={t("listReadOnlyTitle")} focusableWrapper>
+                        <chakra.span
+                          display="inline-flex"
+                          alignItems="center"
+                          gap="1"
+                          textStyle="overline"
+                          fontWeight={700}
+                          px="2"
+                          py="0.5"
+                          borderRadius="pill"
+                          bg="var(--status-info, var(--bg-muted))"
+                          color="app.text"
+                          borderWidth="1px"
+                          borderStyle="solid"
+                          borderColor="app.borderStrong"
+                          flexShrink={0}
+                        >
+                          <Icon name="key" size={ICON_SIZES.sm} />
+                          {t("listReadOnly")}
+                        </chakra.span>
+                      </Tooltip>
                     )}
                     <chakra.span
                       color="app.textMuted"
@@ -6887,19 +6902,20 @@ export default function App() {
                 <Flex align="center" gap="2" mr="2.5">
                   {txActive ? (
                     <>
-                      <chakra.span
-                        fontSize="2xs"
-                        fontWeight={700}
-                        letterSpacing="0.06em"
-                        px="1.5"
-                        py="0.5"
-                        borderRadius="4px"
-                        bg="color-mix(in srgb, var(--status-warning) 18%, transparent)"
-                        color="var(--text-warning)"
-                        title={t("txActiveHelp")}
-                      >
-                        {t("txActiveBadge")}
-                      </chakra.span>
+                      <Tooltip label={t("txActiveHelp")} focusableWrapper>
+                        <chakra.span
+                          fontSize="2xs"
+                          fontWeight={700}
+                          letterSpacing="0.06em"
+                          px="1.5"
+                          py="0.5"
+                          borderRadius="4px"
+                          bg="color-mix(in srgb, var(--status-warning) 18%, transparent)"
+                          color="var(--text-warning)"
+                        >
+                          {t("txActiveBadge")}
+                        </chakra.span>
+                      </Tooltip>
                       <Button variant="success" size="sm" onClick={() => handleFinishTransaction(true)}>
                         {t("txCommit")}
                       </Button>
@@ -6908,9 +6924,11 @@ export default function App() {
                       </Button>
                     </>
                   ) : (
-                    <Button variant="secondary" size="sm" onClick={handleBeginTransaction} title={t("txBeginHelp")}>
-                      {t("txBegin")}
-                    </Button>
+                    <Tooltip label={t("txBeginHelp")}>
+                      <Button variant="secondary" size="sm" onClick={handleBeginTransaction}>
+                        {t("txBegin")}
+                      </Button>
+                    </Tooltip>
                   )}
                 </Flex>
               )}
@@ -7111,40 +7129,45 @@ export default function App() {
                     </chakra.span>
                   </Flex>
                 ) : (
-                  // 単一行ステータスは折り返さず省略記号で詰め、全文はホバー
-                  // (title) で確認できるようにする。フッターが複数行に
+                  // 単一行ステータスは折り返さず省略記号で詰め、全文は共有
+                  // Tooltip (#884) で確認できるようにする。フッターが複数行に
                   // 伸びてレイアウトが崩れるのを防ぐ。
-                  <chakra.span
-                    display="block"
-                    whiteSpace="nowrap"
-                    overflow="hidden"
-                    textOverflow="ellipsis"
-                    title={statusText}
-                  >
-                    {statusText}
-                  </chakra.span>
+                  <Tooltip label={statusText} focusableWrapper>
+                    <chakra.span
+                      display="block"
+                      whiteSpace="nowrap"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                    >
+                      {statusText}
+                    </chakra.span>
+                  </Tooltip>
                 )}
               </Box>
               {reconnectProfile && isError && (
                 // 再接続ボタンは独自の `#fff` + `--status-error` 直書きをやめ、
                 // 共通 Button の danger バリアント (theme.ts。hover 色も
                 // `app.dangerBgHover` トークンで一元管理) へ収斂する (#876)。
-                <Button
-                  variant="danger"
-                  size="sm"
-                  flexShrink="0"
-                  css={{ "& .icon-svg": { width: "13px", height: "13px" } }}
-                  onClick={() => handleConnect(reconnectProfile)}
-                  disabled={connectingId === reconnectProfile.id}
-                  title={t("statusReconnectTitle", { name: reconnectProfile.name })}
+                <Tooltip
+                  label={t("statusReconnectTitle", { name: reconnectProfile.name })}
+                  focusableWrapper={connectingId === reconnectProfile.id}
                 >
-                  {connectingId === reconnectProfile.id ? (
-                    <Spinner size={12} />
-                  ) : (
-                    <Icon name="refresh" />
-                  )}
-                  {t("statusReconnect")}
-                </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    flexShrink="0"
+                    css={{ "& .icon-svg": { width: "13px", height: "13px" } }}
+                    onClick={() => handleConnect(reconnectProfile)}
+                    disabled={connectingId === reconnectProfile.id}
+                  >
+                    {connectingId === reconnectProfile.id ? (
+                      <Spinner size={12} />
+                    ) : (
+                      <Icon name="refresh" />
+                    )}
+                    {t("statusReconnect")}
+                  </Button>
+                </Tooltip>
               )}
               {connectAttempt && (
                 <>
@@ -7159,27 +7182,29 @@ export default function App() {
                     <Spinner size={12} />
                     {t(connectPhaseI18nKey(connectAttempt.phase))}
                   </chakra.span>
-                  <chakra.button
-                    type="button"
-                    flexShrink="0"
-                    px="2.5"
-                    py="3px"
-                    fontSize="xs"
-                    fontWeight={500}
-                    border="1px solid"
-                    borderColor="app.border"
-                    borderRadius="sm"
-                    bg="transparent"
-                    cursor="pointer"
-                    css={{ "&:hover": { background: "var(--bg-muted)" } }}
-                    onClick={handleCancelConnect}
-                    title={t("connectCancel")}
-                  >
-                    {t("connectCancel")}
-                  </chakra.button>
+                  <Tooltip label={t("connectCancel")}>
+                    <chakra.button
+                      type="button"
+                      flexShrink="0"
+                      px="2.5"
+                      py="3px"
+                      fontSize="xs"
+                      fontWeight={500}
+                      border="1px solid"
+                      borderColor="app.border"
+                      borderRadius="sm"
+                      bg="transparent"
+                      cursor="pointer"
+                      css={{ "&:hover": { background: "var(--bg-muted)" } }}
+                      onClick={handleCancelConnect}
+                    >
+                      {t("connectCancel")}
+                    </chakra.button>
+                  </Tooltip>
                 </>
               )}
               {isDismissible && (
+                <Tooltip label={t("statusDismiss")}>
                 <chakra.button
                   type="button"
                   flexShrink="0"
@@ -7199,11 +7224,11 @@ export default function App() {
                   _hover={{ opacity: 1, bg: "app.hover" }}
                   css={{ "& .icon-svg": { width: "14px", height: "14px" } }}
                   onClick={() => setStatusDismissed(true)}
-                  title={t("statusDismiss")}
                   aria-label={t("statusDismiss")}
                 >
                   <Icon name="close" />
                 </chakra.button>
+                </Tooltip>
               )}
             </Flex>
           );

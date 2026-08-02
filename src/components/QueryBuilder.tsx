@@ -13,6 +13,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 
 /**
  * Query Builder のフォーム部のスタイル。各要素へ直接 `css` を適用する。
@@ -661,15 +662,16 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                             {selectColumns.map((c) => (
                               <chakra.td key={c}>
                                 <chakra.span css={selectedColNameCss}>{c}</chakra.span>
-                                <chakra.button
-                                  type="button"
-                                  css={chipRemoveCss}
-                                  onClick={() => removeSelectColumn(c)}
-                                  aria-label={t("qbRemove")}
-                                  title={t("qbRemove")}
-                                >
-                                  <Icon name="close" size={ICON_SIZES.sm} />
-                                </chakra.button>
+                                <Tooltip label={t("qbRemove")}>
+                                  <chakra.button
+                                    type="button"
+                                    css={chipRemoveCss}
+                                    onClick={() => removeSelectColumn(c)}
+                                    aria-label={t("qbRemove")}
+                                  >
+                                    <Icon name="close" size={ICON_SIZES.sm} />
+                                  </chakra.button>
+                                </Tooltip>
                               </chakra.td>
                             ))}
                           </tr>
@@ -711,16 +713,17 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     placeholder={t("qbValue")}
                     onChange={(e) => updatePair("set", i, { value: e.target.value })}
                   />
-                  <chakra.button
-                    type="button"
-                    css={iconBtnCss}
-                    onClick={() => removePair("set", i)}
-                    aria-label={t("qbRemove")}
-                    title={t("qbRemove")}
-                    disabled={setPairs.length <= 1}
-                  >
-                    <Icon name="close" size={ICON_SIZES.sm} />
-                  </chakra.button>
+                  <Tooltip label={t("qbRemove")} focusableWrapper={setPairs.length <= 1}>
+                    <chakra.button
+                      type="button"
+                      css={iconBtnCss}
+                      onClick={() => removePair("set", i)}
+                      aria-label={t("qbRemove")}
+                      disabled={setPairs.length <= 1}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </chakra.button>
+                  </Tooltip>
                 </Box>
               ))}
             </chakra.section>
@@ -749,16 +752,17 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     placeholder={t("qbValue")}
                     onChange={(e) => updatePair("insert", i, { value: e.target.value })}
                   />
-                  <chakra.button
-                    type="button"
-                    css={iconBtnCss}
-                    onClick={() => removePair("insert", i)}
-                    aria-label={t("qbRemove")}
-                    title={t("qbRemove")}
-                    disabled={insertPairs.length <= 1}
-                  >
-                    <Icon name="close" size={ICON_SIZES.sm} />
-                  </chakra.button>
+                  <Tooltip label={t("qbRemove")} focusableWrapper={insertPairs.length <= 1}>
+                    <chakra.button
+                      type="button"
+                      css={iconBtnCss}
+                      onClick={() => removePair("insert", i)}
+                      aria-label={t("qbRemove")}
+                      disabled={insertPairs.length <= 1}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </chakra.button>
+                  </Tooltip>
                 </Box>
               ))}
             </chakra.section>
@@ -810,16 +814,17 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     disabled={isNullOperator(c.operator)}
                     onChange={(e) => updateCondition(i, { value: e.target.value })}
                   />
-                  <chakra.button
-                    type="button"
-                    css={iconBtnCss}
-                    onClick={() => removeCondition(i)}
-                    aria-label={t("qbRemove")}
-                    title={t("qbRemove")}
-                    disabled={whereConditions.length <= 1}
-                  >
-                    <Icon name="close" size={ICON_SIZES.sm} />
-                  </chakra.button>
+                  <Tooltip label={t("qbRemove")} focusableWrapper={whereConditions.length <= 1}>
+                    <chakra.button
+                      type="button"
+                      css={iconBtnCss}
+                      onClick={() => removeCondition(i)}
+                      aria-label={t("qbRemove")}
+                      disabled={whereConditions.length <= 1}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </chakra.button>
+                  </Tooltip>
                 </Box>
               ))}
             </chakra.section>
@@ -852,13 +857,13 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           <chakra.section css={sectionCss}>
             <Box css={sectionTitleCss}>{t("qbPreview")}</Box>
             <Box css={previewWrapCss}>
-              <chakra.button
-                type="button"
-                css={previewCopyCss}
-                onClick={handleCopy}
-                aria-label={copied ? t("qbCopied") : t("qbCopy")}
-                title={copied ? t("qbCopied") : t("qbCopy")}
-              >
+              <Tooltip label={copied ? t("qbCopied") : t("qbCopy")}>
+                <chakra.button
+                  type="button"
+                  css={previewCopyCss}
+                  onClick={handleCopy}
+                  aria-label={copied ? t("qbCopied") : t("qbCopy")}
+                >
                 {copied ? (
                   <svg
                     width="14"
@@ -889,7 +894,8 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-5A1.5 1.5 0 0 0 3 3.5v5A1.5 1.5 0 0 0 4.5 10H6" />
                   </svg>
                 )}
-              </chakra.button>
+                </chakra.button>
+              </Tooltip>
               <SqlPreview sql={sql} driver={driver} />
             </Box>
           </chakra.section>
@@ -899,32 +905,34 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
       <ModalFooter>
         <Box flex={1} />
         {onPreview && kind !== "SELECT" && (
-          <Button variant="warning" onClick={handlePreview} title={t("editorPreviewTitle")}>
-            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
-                <circle cx="8" cy="8" r="2" />
-              </svg>
-            </chakra.span>
-            {t("qbPreviewRun")}
-          </Button>
+          <Tooltip label={t("editorPreviewTitle")}>
+            <Button variant="warning" onClick={handlePreview}>
+              <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
+                  <circle cx="8" cy="8" r="2" />
+                </svg>
+              </chakra.span>
+              {t("qbPreviewRun")}
+            </Button>
+          </Tooltip>
         )}
         {/* 実行はエディタの Run / 他モーダルの Execute と同じ「主要アクション =
             primary (アクセント色)」に統一する。success はセル編集 Apply などの
             DB 書き込み確定に限定する (theme.ts の variant 規約)。 */}
-        <Button
-          variant="primary"
-          onClick={handleExecute}
-          disabled={runBlockedByReadOnly}
-          title={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
+        <Tooltip
+          label={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
+          focusableWrapper={runBlockedByReadOnly}
         >
-          <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
-            </svg>
-          </chakra.span>
-          {t("qbExecute")}
-        </Button>
+          <Button variant="primary" onClick={handleExecute} disabled={runBlockedByReadOnly}>
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
+              </svg>
+            </chakra.span>
+            {t("qbExecute")}
+          </Button>
+        </Tooltip>
       </ModalFooter>
     </Modal>
   );

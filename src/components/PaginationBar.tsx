@@ -9,6 +9,7 @@ import {
 } from "../pagination";
 import { ICON_SIZES, Icon } from "./Icon";
 import { Spinner } from "./Spinner";
+import { Tooltip } from "./Tooltip";
 
 /**
  * table タブの結果グリッド下に置くページネーションバー。先頭/前/次/末尾の
@@ -85,24 +86,21 @@ export function PaginationBar({
       flex="none"
       flexWrap="wrap"
     >
-      <NavButton
-        type="button"
-        onClick={() => onGoToPage(1)}
-        disabled={!prevOk}
-        title={t("pageFirst")}
-        aria-label={t("pageFirst")}
-      >
-        «
-      </NavButton>
-      <NavButton
-        type="button"
-        onClick={() => onGoToPage(page - 1)}
-        disabled={!prevOk}
-        title={t("pagePrev")}
-        aria-label={t("pagePrev")}
-      >
-        <Icon name="chevron-left" size={ICON_SIZES.sm} />
-      </NavButton>
+      <Tooltip label={t("pageFirst")} focusableWrapper={!prevOk}>
+        <NavButton type="button" onClick={() => onGoToPage(1)} disabled={!prevOk} aria-label={t("pageFirst")}>
+          «
+        </NavButton>
+      </Tooltip>
+      <Tooltip label={t("pagePrev")} focusableWrapper={!prevOk}>
+        <NavButton
+          type="button"
+          onClick={() => onGoToPage(page - 1)}
+          disabled={!prevOk}
+          aria-label={t("pagePrev")}
+        >
+          <Icon name="chevron-left" size={ICON_SIZES.sm} />
+        </NavButton>
+      </Tooltip>
 
       <chakra.span display="inline-flex" alignItems="center" gap="1.5" minW="0">
         {t("pageLabel", { page })}
@@ -112,24 +110,26 @@ export function PaginationBar({
         {loading && <Spinner size={12} />}
       </chakra.span>
 
-      <NavButton
-        type="button"
-        onClick={() => onGoToPage(page + 1)}
-        disabled={!nextOk}
-        title={t("pageNext")}
-        aria-label={t("pageNext")}
-      >
-        <Icon name="chevron-right" size={ICON_SIZES.sm} />
-      </NavButton>
-      <NavButton
-        type="button"
-        onClick={() => totalPages != null && onGoToPage(totalPages)}
-        disabled={!lastOk}
-        title={t("pageLast")}
-        aria-label={t("pageLast")}
-      >
-        »
-      </NavButton>
+      <Tooltip label={t("pageNext")} focusableWrapper={!nextOk}>
+        <NavButton
+          type="button"
+          onClick={() => onGoToPage(page + 1)}
+          disabled={!nextOk}
+          aria-label={t("pageNext")}
+        >
+          <Icon name="chevron-right" size={ICON_SIZES.sm} />
+        </NavButton>
+      </Tooltip>
+      <Tooltip label={t("pageLast")} focusableWrapper={!lastOk}>
+        <NavButton
+          type="button"
+          onClick={() => totalPages != null && onGoToPage(totalPages)}
+          disabled={!lastOk}
+          aria-label={t("pageLast")}
+        >
+          »
+        </NavButton>
+      </Tooltip>
 
       <chakra.span color="app.textMuted" fontSize="xs">
         {range.to > 0 ? t("pageRowRange", { from: range.from, to: range.to }) : ""}

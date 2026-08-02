@@ -9,6 +9,7 @@ import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
+import { Tooltip } from "./Tooltip";
 import {
   activeSpecs,
   buildFkSelectSql,
@@ -271,20 +272,21 @@ export function TestDataModal({
             <chakra.div display="flex" flexDirection="column" gap="2">
               {specs.map((spec, i) => (
                 <chakra.div key={spec.column} display="flex" alignItems="center" gap="2" flexWrap="wrap">
-                  <chakra.span
-                    flex="0 0 200px"
-                    fontSize="sm"
-                    fontFamily="mono"
-                    overflow="hidden"
-                    textOverflow="ellipsis"
-                    whiteSpace="nowrap"
-                    title={`${spec.column} (${spec.dataType})`}
-                  >
-                    {spec.column}
-                    <chakra.span color="app.textMuted" ml="1.5" fontSize="2xs">
-                      {spec.dataType}
+                  <Tooltip label={`${spec.column} (${spec.dataType})`} focusableWrapper>
+                    <chakra.span
+                      flex="0 0 200px"
+                      fontSize="sm"
+                      fontFamily="mono"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                    >
+                      {spec.column}
+                      <chakra.span color="app.textMuted" ml="1.5" fontSize="2xs">
+                        {spec.dataType}
+                      </chakra.span>
                     </chakra.span>
-                  </chakra.span>
+                  </Tooltip>
                   <Select
                     minW="180px"
                     value={spec.strategy}
@@ -309,60 +311,64 @@ export function TestDataModal({
                     />
                   )}
                   {spec.strategy === "serial" && (
-                    <Input
-                      type="number"
-                      css={{ width: "100px" }}
-                      value={String(spec.serialStart)}
-                      onChange={(e) => {
-                        const n = Number(e.target.value);
-                        if (Number.isFinite(n)) updateSpec(i, { serialStart: Math.floor(n) });
-                      }}
-                      disabled={running}
-                      title={t("testDataSerialStart")}
-                      aria-label={t("testDataSerialStart")}
-                    />
+                    <Tooltip label={t("testDataSerialStart")} focusableWrapper={running}>
+                      <Input
+                        type="number"
+                        css={{ width: "100px" }}
+                        value={String(spec.serialStart)}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n)) updateSpec(i, { serialStart: Math.floor(n) });
+                        }}
+                        disabled={running}
+                        aria-label={t("testDataSerialStart")}
+                      />
+                    </Tooltip>
                   )}
                   {spec.strategy === "randomString" && (
-                    <Input
-                      type="number"
-                      min={1}
-                      css={{ width: "90px" }}
-                      value={String(spec.length)}
-                      onChange={(e) => {
-                        const n = Number(e.target.value);
-                        if (Number.isFinite(n) && n >= 1) updateSpec(i, { length: Math.floor(n) });
-                      }}
-                      disabled={running}
-                      title={t("testDataLength")}
-                      aria-label={t("testDataLength")}
-                    />
+                    <Tooltip label={t("testDataLength")} focusableWrapper={running}>
+                      <Input
+                        type="number"
+                        min={1}
+                        css={{ width: "90px" }}
+                        value={String(spec.length)}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          if (Number.isFinite(n) && n >= 1) updateSpec(i, { length: Math.floor(n) });
+                        }}
+                        disabled={running}
+                        aria-label={t("testDataLength")}
+                      />
+                    </Tooltip>
                   )}
                   {spec.strategy === "randomNumber" && (
                     <>
-                      <Input
-                        type="number"
-                        css={{ width: "100px" }}
-                        value={String(spec.min)}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (Number.isFinite(n)) updateSpec(i, { min: n });
-                        }}
-                        disabled={running}
-                        title={t("testDataMin")}
-                        aria-label={t("testDataMin")}
-                      />
-                      <Input
-                        type="number"
-                        css={{ width: "100px" }}
-                        value={String(spec.max)}
-                        onChange={(e) => {
-                          const n = Number(e.target.value);
-                          if (Number.isFinite(n)) updateSpec(i, { max: n });
-                        }}
-                        disabled={running}
-                        title={t("testDataMax")}
-                        aria-label={t("testDataMax")}
-                      />
+                      <Tooltip label={t("testDataMin")} focusableWrapper={running}>
+                        <Input
+                          type="number"
+                          css={{ width: "100px" }}
+                          value={String(spec.min)}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (Number.isFinite(n)) updateSpec(i, { min: n });
+                          }}
+                          disabled={running}
+                          aria-label={t("testDataMin")}
+                        />
+                      </Tooltip>
+                      <Tooltip label={t("testDataMax")} focusableWrapper={running}>
+                        <Input
+                          type="number"
+                          css={{ width: "100px" }}
+                          value={String(spec.max)}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (Number.isFinite(n)) updateSpec(i, { max: n });
+                          }}
+                          disabled={running}
+                          aria-label={t("testDataMax")}
+                        />
+                      </Tooltip>
                     </>
                   )}
                   {spec.nullable && spec.strategy !== "omit" && (

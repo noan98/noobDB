@@ -23,6 +23,7 @@ import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button } from "./ui";
+import { Tooltip } from "./Tooltip";
 
 /**
  * テーブル/DB サイズ・構造統計ダッシュボード (#562 / #660)。指定データベースの
@@ -199,18 +200,19 @@ export function TableStatisticsPanel({
         <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
           {t("sizeTitle")} — {database}
         </chakra.h2>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("sizeClose")}
-          title={t("sizeClose")}
-        >
-          <Icon name="close" size={ICON_SIZES.sm} />
-        </Button>
+        <Tooltip label={t("sizeClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("sizeClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
@@ -327,23 +329,24 @@ export function TableStatisticsPanel({
                 <tr key={r.name}>
                   <chakra.td css={tdCss}>
                     {onOpenTable ? (
-                      <chakra.button
-                        type="button"
-                        onClick={() => onOpenTable(r.name)}
-                        title={t("sizeOpenTable", { table: r.name })}
-                        css={{
-                          background: "none",
-                          border: "none",
-                          padding: 0,
-                          font: "inherit",
-                          color: "var(--accent)",
-                          cursor: "pointer",
-                          textAlign: "left",
-                          _hover: { textDecoration: "underline" },
-                        }}
-                      >
-                        {r.name}
-                      </chakra.button>
+                      <Tooltip label={t("sizeOpenTable", { table: r.name })}>
+                        <chakra.button
+                          type="button"
+                          onClick={() => onOpenTable(r.name)}
+                          css={{
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            font: "inherit",
+                            color: "var(--accent)",
+                            cursor: "pointer",
+                            textAlign: "left",
+                            _hover: { textDecoration: "underline" },
+                          }}
+                        >
+                          {r.name}
+                        </chakra.button>
+                      </Tooltip>
                     ) : (
                       r.name
                     )}
