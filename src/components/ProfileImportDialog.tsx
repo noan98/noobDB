@@ -63,7 +63,7 @@ export function ProfileImportDialog({ onConfirm, onCancel }: Props) {
                 mt="3px"
               />
               <chakra.span display="flex" flexDirection="column">
-                <chakra.span fontWeight={600} fontSize="sm">
+                <chakra.span textStyle="subheading">
                   {o.label}
                 </chakra.span>
                 <chakra.span fontSize="xs" color="app.textMuted">

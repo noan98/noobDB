@@ -36,7 +36,7 @@ import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration } from "./illustrations";
 import { mapLimited } from "./mapLimited";
-import { Button, Select } from "./ui";
+import { Button, Heading, Select } from "./ui";
 import { Spinner } from "./Spinner";
 import { ImageExportButton } from "./ImageExportButton";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
@@ -94,7 +94,7 @@ const cardHeaderCss: SystemStyleObject = {
   background: "var(--bg-muted)",
   borderBottom: "1px solid var(--border)",
   fontFamily: "var(--font-mono)",
-  fontWeight: 600,
+  textStyle: "subheading",
   color: "var(--text)",
   cursor: "pointer",
   textAlign: "left",
@@ -403,9 +403,7 @@ function ERDiagramInner({
         borderBottom="1px solid"
         borderColor="app.border"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("erDiagramTitle")}
-        </chakra.h2>
+        <Heading>{t("erDiagramTitle")}</Heading>
         {showDbPicker && (
           <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
             {t("erDiagramDatabase")}

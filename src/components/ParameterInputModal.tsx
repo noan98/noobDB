@@ -198,7 +198,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
         </chakra.div>
 
         <chakra.div display="flex" flexDirection="column" gap="3px">
-          <chakra.span fontSize="xs" color="app.textMuted" fontWeight={600}>
+          <chakra.span textStyle="overline">
             {t("parameterInputPreviewLabel")}
           </chakra.span>
           <Box

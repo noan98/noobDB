@@ -144,9 +144,7 @@ export function PlanWatchPanel({
                     <Icon name="explain" size={ICON_SIZES.sm} />
                     <Box flex="1" minWidth={0}>
                       <chakra.div
-                        fontSize="sm"
-                        fontWeight={600}
-                        color="app.text"
+                        textStyle="subheading"
                         overflow="hidden"
                         textOverflow="ellipsis"
                         whiteSpace="nowrap"
@@ -284,7 +282,7 @@ export function PlanWatchPanel({
                           borderBottom="1px solid"
                           borderBottomColor="app.borderSubtle"
                         >
-                          <chakra.span fontWeight={600}>{pane.label}</chakra.span>
+                          <chakra.span textStyle="subheading" fontSize="xs">{pane.label}</chakra.span>
                           {pane.gen && <chakra.span>{formatCaptured(pane.gen.capturedAt)}</chakra.span>}
                         </Flex>
                         <Flex flex="1" minHeight={0} direction="column">

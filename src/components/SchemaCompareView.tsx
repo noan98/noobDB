@@ -20,7 +20,7 @@ import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
 import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
-import { Button, Checkbox, Input, PressableButton, Select } from "./ui";
+import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
 
 /**
  * スキーマ比較ビューの本体スタイル。各要素へ直接 `css` を適用する。
@@ -45,8 +45,7 @@ const sideCss: SystemStyleObject = {
   "& select": { width: "100%" },
 };
 const sideLabelCss: SystemStyleObject = {
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
 };
 const sideErrorCss: SystemStyleObject = {
@@ -189,8 +188,7 @@ const statementHeadCss: SystemStyleObject = {
   marginBottom: "1.5",
 };
 const destructiveFlagCss: SystemStyleObject = {
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--status-error)",
 };
 const sqlCss: SystemStyleObject = {
@@ -239,8 +237,7 @@ function statusColors(status: DiffStatus): { color: string; borderColor: string 
 /** サマリ等のステータスチップ。 */
 function chipCss(status: DiffStatus): SystemStyleObject {
   return {
-    fontSize: "var(--text-xs)",
-    fontWeight: 600,
+    textStyle: "overline",
     padding: "3px 10px",
     borderRadius: "var(--radius-pill)",
     border: "1px solid var(--border)",
@@ -252,8 +249,7 @@ function chipCss(status: DiffStatus): SystemStyleObject {
 /** テーブル/カラム行のステータスバッジ。 */
 function badgeCss(status: DiffStatus): SystemStyleObject {
   return {
-    fontSize: "var(--text-xs)",
-    fontWeight: 600,
+    textStyle: "overline",
     padding: "1px 8px",
     borderRadius: "var(--radius-pill)",
     whiteSpace: "nowrap",
@@ -282,8 +278,7 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
 /** 同期文の種別バッジ。 */
 function kindCss(kind: SyncKind): SystemStyleObject {
   return {
-    fontSize: "var(--text-xs)",
-    fontWeight: 600,
+    textStyle: "overline",
     padding: "1px 8px",
     borderRadius: "var(--radius-pill)",
     border: "1px solid var(--border)",
@@ -787,9 +782,7 @@ export function SchemaCompareView({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("schemaCompareTitle")}
-        </chakra.h2>
+        <Heading>{t("schemaCompareTitle")}</Heading>
         <Button
           minWidth="28px"
           px="2"

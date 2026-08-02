@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
-import { Button, Input, Select, Textarea } from "./ui";
+import { Button, Heading, Input, Select, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 
 interface Props {
@@ -183,7 +183,7 @@ export function SnippetForm({
         p="3"
         borderRadius="md"
       >
-        <chakra.legend fontWeight={600} fontSize="sm" px="1.5">{t("snippetScope")}</chakra.legend>
+        <Heading as="legend" role="subheading" px="1.5">{t("snippetScope")}</Heading>
         <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3">
           <Box>
             <chakra.label htmlFor={`${fid}-scope-kind`}>{t("snippetScopeKind")}</chakra.label>

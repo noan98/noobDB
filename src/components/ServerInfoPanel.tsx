@@ -8,7 +8,7 @@ import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button, Input } from "./ui";
+import { Button, Heading, Input } from "./ui";
 
 /**
  * サーバ / 接続情報パネル (#563)。接続中サーバのバージョンと設定変数を読み取り専用で
@@ -25,8 +25,7 @@ const thCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border)",
   padding: "6px 10px",
   textAlign: "left",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
 };
@@ -100,9 +99,7 @@ export function ServerInfoPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("serverInfoTitle")}
-        </chakra.h2>
+        <Heading>{t("serverInfoTitle")}</Heading>
         <Button
           minWidth="28px"
           px="2"

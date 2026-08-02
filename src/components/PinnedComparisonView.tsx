@@ -4,7 +4,7 @@ import { Box, Flex, chakra } from "@chakra-ui/react";
 import type { QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { resultsComparable, type PinnedResult } from "../pinnedCompare";
-import { Button, Select } from "./ui";
+import { Button, Heading, Select } from "./ui";
 import { Switch } from "./Switch";
 import { Splitter } from "./Splitter";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -208,9 +208,7 @@ function Header({
       borderBottom="1px solid"
       borderColor="app.border"
     >
-      <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-        {t("pinCompareTitle")}
-      </chakra.h2>
+      <Heading>{t("pinCompareTitle")}</Heading>
       <chakra.span flex="1" />
       <Button size="sm" variant="secondary" onClick={onClear} disabled={clearDisabled} title={t("pinCompareClearAll")}>
         {t("pinCompareClearAll")}

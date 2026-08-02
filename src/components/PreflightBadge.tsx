@@ -82,8 +82,7 @@ export function PreflightBadge({ result }: Props) {
         bg={style.bg}
         color={style.fg}
         borderRadius="md"
-        fontSize="xs"
-        fontWeight={600}
+        textStyle="overline"
         whiteSpace="nowrap"
         flexShrink={0}
       >

@@ -145,7 +145,7 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
                   >
                     <Icon name="clock" size={ICON_SIZES.sm} />
                     <Box flex="1" minWidth={0}>
-                      <chakra.div fontSize="sm" fontWeight={600} color="app.text">
+                      <chakra.div textStyle="subheading">
                         {formatCaptured(g.capturedAt)}
                         {i === 0 && ` ${t("schemaDriftLatestSuffix")}`}
                       </chakra.div>

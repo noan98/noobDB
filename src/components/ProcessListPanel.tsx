@@ -12,7 +12,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button, Checkbox, Select } from "./ui";
+import { Button, Checkbox, Heading, Select } from "./ui";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 
@@ -40,8 +40,7 @@ const thCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border)",
   padding: "6px 10px",
   textAlign: "left",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
 };
@@ -218,9 +217,7 @@ export function ProcessListPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("processTitle")}
-        </chakra.h2>
+        <Heading>{t("processTitle")}</Heading>
         <Tooltip label={t("processClose")}>
           <Button
             minWidth="28px"

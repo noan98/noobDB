@@ -164,7 +164,7 @@ export function OnboardingTour({ onClose }: Props) {
                 exit={variants.slideUp.exit}
                 transition={transitions.crossfade}
               >
-                <Text fontWeight="600" fontSize="sm" color="app.text">
+                <Text textStyle="subheading">
                   {current.title}
                 </Text>
               </motion.div>
