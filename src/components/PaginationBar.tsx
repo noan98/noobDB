@@ -27,13 +27,19 @@ interface Props {
   onSetPageSize: (size: number) => void;
 }
 
+// コントロールの寸法は固定 px にせず、設定のフォントサイズ (--font-scale) に
+// 追従させる。固定だとフォント拡大時に select / input の値が縦に見切れる
+// (フォント・縦 padding はスケールするのに箱だけ 26px のままになるため)。
+const CONTROL_H = "calc(26px * var(--font-scale))";
+const CONTROL_MIN_W = "calc(60px * var(--font-scale))";
+
 const NavButton = chakra("button", {
   base: {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    minW: "28px",
-    h: "26px",
+    minW: "calc(28px * var(--font-scale))",
+    minH: CONTROL_H,
     px: "1.5",
     borderRadius: "6px",
     borderWidth: 0,
@@ -149,8 +155,8 @@ export function PaginationBar({
             if (e.key === "Enter") submitJump();
           }}
           disabled={loading}
-          w="60px"
-          h="26px"
+          w={CONTROL_MIN_W}
+          minH={CONTROL_H}
           px="1.5"
           borderWidth="1px"
           borderColor="app.border"
@@ -166,10 +172,10 @@ export function PaginationBar({
           value={pageSize}
           onChange={(e) => onSetPageSize(Number.parseInt(e.target.value, 10))}
           disabled={loading}
-          h="26px"
+          minH={CONTROL_H}
           // ネイティブ select の右側に描かれるドロップダウン矢印と数値が重なって
           // 見切れないよう、右パディングを広めに取り、最小幅も確保する。
-          minW="60px"
+          minW={CONTROL_MIN_W}
           pl="1.5"
           pr="5"
           borderWidth="1px"
