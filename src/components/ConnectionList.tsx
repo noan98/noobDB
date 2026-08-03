@@ -1560,13 +1560,26 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                   pl="1"
                                   role="treeitem"
                                   aria-expanded={tOpen}
-                                  onClick={() => toggleTable(db, tbl)}
                                   onDoubleClick={() => onPickTable(db, tbl)}
                                   onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
                                   {...treeTooltipProps(t("treeTableTitle"))}
                                   _hover={{ bg: "app.rowHover" }}
                                 >
-                                  <TreeChevron transform={tOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                                  {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
+                                      ダブルクリック (テーブルを開く) の前に click が 2 回発火して
+                                      カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
+                                      連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。 */}
+                                  <TreeChevron
+                                    transform={tOpen ? "rotate(90deg)" : undefined}
+                                    cursor="pointer"
+                                    _hover={{ color: "app.text" }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void toggleTable(db, tbl);
+                                    }}
+                                    onDoubleClick={(e) => e.stopPropagation()}
+                                    aria-hidden
+                                  >▸</TreeChevron>
                                   <TreeIcon color="app.textSecondary" aria-hidden><Icon name="table" /></TreeIcon>
                                   <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
                                   {rowEstLabel && (
