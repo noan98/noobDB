@@ -845,6 +845,13 @@ export const api = {
      * mutate data nor flood the history.
      */
     autoRefresh?: boolean;
+    /**
+     * When true, the backend enforces a read-only guard regardless of the
+     * session's profile. Used by cross-environment broadcast execution
+     * (#738), which fans one statement out to several sessions at once and
+     * must never let it write to any of them.
+     */
+    forceReadOnly?: boolean;
   }) =>
     invoke<void>("run_query_stream", {
       sessionId: params.sessionId,
@@ -856,6 +863,7 @@ export const api = {
       autoLimit: params.autoLimit ?? null,
       queryTimeoutSecs: params.queryTimeoutSecs ?? null,
       autoRefresh: params.autoRefresh ?? false,
+      forceReadOnly: params.forceReadOnly ?? false,
     }),
   previewQueryStream: (params: {
     sessionId: string;

@@ -164,6 +164,18 @@ interface Props {
   previewRunning?: boolean;
   onPreview?: (sql: string) => void;
   onExplain?: (sql: string) => void;
+  /**
+   * 環境横断ブロードキャスト実行 (#738)。渡されると「複数の接続で実行」ボタンが
+   * ツールバーに現れる。読み取り専用チェック・対象接続の選択・実行そのものは
+   * 呼び出し側 (`App.tsx` → `BroadcastModal`) が担い、ここは選択中/全文の SQL を
+   * 渡すだけ。
+   */
+  onBroadcast?: (sql: string) => void;
+  /**
+   * 同一ドライバの接続が他に開いているか (ブロードキャストの対象になり得るか)。
+   * false のときボタンは無効化され、ツールチップにその理由を出す。
+   */
+  broadcastAvailable?: boolean;
   onChange?: (sql: string) => void;
   onFormatError?: (error: string) => void;
   onSaveSnippet?: (sql: string) => void;
@@ -357,6 +369,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   previewRunning,
   onPreview,
   onExplain,
+  onBroadcast,
+  broadcastAvailable,
   onChange,
   onFormatError,
   onSaveSnippet,
@@ -809,6 +823,12 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     if (text !== null) onExplain(text);
   };
 
+  const broadcastSelectionOrAll = () => {
+    if (!onBroadcast) return;
+    const text = currentText();
+    if (text !== null) onBroadcast(text);
+  };
+
   const runLabel = explainMode
     ? t("editorExplain")
     : activeTable
@@ -961,6 +981,30 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               </svg>
             </chakra.span>
             {t("editorSaveSnippet")}
+          </ToolbarButton>
+        )}
+        {onBroadcast && !explainMode && (
+          <ToolbarButton
+            onClick={broadcastSelectionOrAll}
+            disabled={disabled || !hasContent || !broadcastAvailable}
+            title={
+              disabled
+                ? t("editorHintDisabled")
+                : !hasContent
+                  ? t("editorHintEmpty")
+                  : !broadcastAvailable
+                    ? t("broadcastDisabledSingle")
+                    : t("editorBroadcastTitle")
+            }
+          >
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none" />
+                <path d="M5.2 5.2a4 4 0 0 0 0 5.6M10.8 5.2a4 4 0 0 1 0 5.6" />
+                <path d="M2.8 2.8a7.6 7.6 0 0 0 0 10.4M13.2 2.8a7.6 7.6 0 0 1 0 10.4" />
+              </svg>
+            </chakra.span>
+            {t("editorBroadcast")}
           </ToolbarButton>
         )}
         {sessionId && !explainMode && (
