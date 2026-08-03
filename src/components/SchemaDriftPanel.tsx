@@ -270,7 +270,13 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
         {/* 無効時は「なぜ押せないか」を出すため、`focusableWrapper` でキーボード
             からも読めるようにする (無効ボタンはタブ順序から外れる)。 */}
         <Tooltip
-          label={canCapture ? t("schemaDriftCaptureHint") : t("schemaDriftNeedConnection")}
+          label={
+            capturing
+              ? t("schemaDriftCapturing")
+              : canCapture
+                ? t("schemaDriftCaptureHint")
+                : t("schemaDriftNeedConnection")
+          }
           focusableWrapper={!canCapture || capturing}
         >
           <Button variant="secondary" disabled={!canCapture || capturing} onClick={onCapture}>

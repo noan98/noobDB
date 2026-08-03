@@ -117,6 +117,39 @@ describe("Tooltip", () => {
     expect(describedText(button)).toBe("ボタンのヒント");
   });
 
+  it("親の hover 遅延が保留中でも、先に開いた子を後から蹴散らさない", () => {
+    // 親 (遅延あり) に入ってから子 (即時) へ移るケース。所有権を「表示予約の
+    // 時点」ではなく「実際に開く時点」で取ると、親の予約タイマーが後から発火して
+    // 子を閉じ親が出てしまう。
+    vi.useFakeTimers();
+    try {
+      renderWithProviders(
+        <Tooltip label="行のヒント" openDelay={400}>
+          <div>
+            row
+            <Tooltip label="ボタンのヒント" openDelay={0}>
+              <button type="button">copy</button>
+            </Tooltip>
+          </div>
+        </Tooltip>,
+      );
+      const row = screen.getByText(/row/);
+      const button = screen.getByRole("button", { name: "copy" });
+
+      fireEvent.mouseEnter(row);
+      // 親はまだ遅延中。この間に子へ入る。
+      fireEvent.mouseEnter(button);
+      expect(describedText(button)).toBe("ボタンのヒント");
+
+      // 親の予約は子の要求時に解除済みなので、遅延が明けても親は開かない。
+      act(() => void vi.advanceTimersByTime(1000));
+      expect(row.getAttribute("aria-describedby")).toBeNull();
+      expect(describedText(button)).toBe("ボタンのヒント");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ref を forward する関数コンポーネント (LoadingButton) にも適用できる", () => {
     // `cloneElement` で注入する測定用 ref が届かないトリガーだと、吹き出しは
     // 出るが位置が決まらない。プロジェクト内で使う代表的なラッパで確認する。

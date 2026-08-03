@@ -375,17 +375,21 @@ export function PreviewGrid({
           </chakra.span>
         )}
         {hasSnapshots && (
-          <Tooltip label={t("previewSyncScrollTitle")}>
-            <chakra.label
-              display="inline-flex"
-              alignItems="center"
-              gap="1.5"
-              marginLeft="auto"
-              color="app.textSecondary"
-              cursor="pointer"
-              userSelect="none"
-              whiteSpace="nowrap"
-            >
+          <chakra.label
+            display="inline-flex"
+            alignItems="center"
+            gap="1.5"
+            marginLeft="auto"
+            color="app.textSecondary"
+            cursor="pointer"
+            userSelect="none"
+            whiteSpace="nowrap"
+          >
+            {/* ツールチップはラベルではなくフォーカス対象の `Checkbox` (native
+                input) 側に付ける — `aria-describedby` はフォーカスを受け取る
+                コントロール自身に付いて初めて支援技術に読まれるうえ、ラベルは
+                フォーカスを受け取らないためキーボードでは一切表示されない。 */}
+            <Tooltip label={t("previewSyncScrollTitle")}>
               <Checkbox
                 margin="0"
                 checked={syncScroll}
@@ -395,9 +399,9 @@ export function PreviewGrid({
                   writeSyncScrollPref(v);
                 }}
               />
-              <chakra.span>{t("previewSyncScroll")}</chakra.span>
-            </chakra.label>
-          </Tooltip>
+            </Tooltip>
+            <chakra.span>{t("previewSyncScroll")}</chakra.span>
+          </chakra.label>
         )}
       </Box>
 

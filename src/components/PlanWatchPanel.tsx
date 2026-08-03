@@ -307,7 +307,15 @@ export function PlanWatchPanel({
         {/* 無効時は「なぜ押せないか」を出すため、`focusableWrapper` でキーボード
             からも読めるようにする (無効ボタンはタブ順序から外れる)。 */}
         <Tooltip
-          label={canRefresh ? t("planWatchRefreshHint") : t("planWatchNeedConnection")}
+          label={
+            !canRefresh
+              ? t("planWatchNeedConnection")
+              : refreshing
+                ? t("planWatchRefreshing")
+                : watched.length === 0
+                  ? t("planWatchEmptyTitle")
+                  : t("planWatchRefreshHint")
+          }
           focusableWrapper={!canRefresh || refreshing || watched.length === 0}
         >
           <Button

@@ -151,34 +151,37 @@ export function Tooltip({
     }
   };
 
-  // `claimTooltip`/`releaseTooltip` は同一性で現役かを判定するため、再レンダ
-  // しても変わらない安定した関数を 1 つだけ登録する。
-  const hideRef = useRef<() => void>(() => {});
-  const stableHide = useRef(() => hideRef.current());
-
-  const openNow = () => {
-    claimTooltip(stableHide.current);
-    setOpen(true);
-  };
+  // `claimTooltip`/`releaseTooltip` は関数の同一性で「現役かどうか」を判定する
+  // ため、`hide` は初回レンダで 1 つだけ作り以後ずっと同じものを使い回す (ref の
+  // 遅延初期化)。中身が触るのは ref と `setOpen` だけなので、クロージャが初回
+  // レンダのものでも挙動は変わらない。
+  const hideRef = useRef<(() => void) | null>(null);
+  if (hideRef.current === null) {
+    hideRef.current = () => {
+      clearShowTimer();
+      releaseTooltip(hideRef.current!);
+      setOpen(false);
+    };
+  }
+  const hide = hideRef.current;
 
   const show = (delay: number) => {
     clearShowTimer();
+    // 所有権は**表示予約の時点**で取る。hover 遅延の途中に子トリガーへ入ると
+    // 親の `onMouseLeave` は発火しない (React の enter/leave は行 → 子の移動で
+    // 親側を呼ばない) ため、`setTimeout` の発火時まで claim を遅らせると、
+    // 先に開いた子を親の予約が後から蹴散らして親が表示されてしまう。ここで
+    // claim すると子の要求が親の `hide` を呼び、親の予約タイマーも解除される。
+    claimTooltip(hide);
     if (delay <= 0) {
-      openNow();
+      setOpen(true);
       return;
     }
-    showTimer.current = setTimeout(openNow, delay);
+    showTimer.current = setTimeout(() => setOpen(true), delay);
   };
-
-  const hide = () => {
-    clearShowTimer();
-    releaseTooltip(stableHide.current);
-    setOpen(false);
-  };
-  hideRef.current = hide;
 
   useEffect(() => {
-    const close = stableHide.current;
+    const close = hideRef.current!;
     return () => {
       clearShowTimer();
       releaseTooltip(close);
