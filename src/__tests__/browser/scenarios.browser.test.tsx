@@ -441,3 +441,34 @@ describe("シナリオ: タブ復元と複数接続の切替 (実ブラウザ)",
     expect(invocationsOf("disconnect")).toEqual([]);
   });
 });
+
+describe("シナリオ: 接続ツリーのカラム展開 (実ブラウザ)", () => {
+  it("ダブルクリックではカラム一覧が開かず、チェブロンボタンのキーボード操作で開閉する", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await screen.getByRole("treeitem", { name: "appdb", exact: true }).click();
+    const tableRow = screen.getByRole("treeitem", { name: "fruits", exact: true });
+    await expect.element(tableRow).toBeVisible();
+
+    // ダブルクリックはテーブルタブを開くだけで、カラム一覧は展開されない (#892)。
+    // (旧実装は行クリックにトグルがあり、dblclick に先行する click x2 で展開されていた。)
+    await tableRow.dblClick();
+    await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();
+    await expect.element(screen.getByRole("treeitem", { name: "qty" })).not.toBeInTheDocument();
+
+    // チェブロンはネイティブ button として公開され、キーボード (Enter) で展開できる。
+    const chevron = screen.getByRole("button", {
+      name: t("treeToggleColumnsAria", { table: "fruits" }),
+      exact: true,
+    });
+    await expect.element(chevron).toBeVisible();
+    (chevron.element() as HTMLElement).focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByRole("treeitem", { name: "qty" })).toBeVisible();
+
+    // もう一度 Enter で折り畳まれる。
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByRole("treeitem", { name: "qty" })).not.toBeInTheDocument();
+  });
+});

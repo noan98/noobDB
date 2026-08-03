@@ -30,6 +30,7 @@ import {
   MotionTreeRow,
   TreeBadge,
   TreeChevron,
+  TreeChevronButton,
   TreeCollapse,
   TreeIcon,
   TreeLabel,
@@ -1559,14 +1560,36 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                 <TreeRow
                                   pl="1"
                                   role="treeitem"
+                                  /* 行のアクセシブルネームをテーブル名に固定する。既定の
+                                     content 由来の名前だと、内側のチェブロンボタンの
+                                     aria-label や行数バッジまで連結され、SR の読み上げと
+                                     ロール検索 (テスト含む) が不安定になるため。 */
+                                  aria-label={tbl}
                                   aria-expanded={tOpen}
-                                  onClick={() => toggleTable(db, tbl)}
                                   onDoubleClick={() => onPickTable(db, tbl)}
                                   onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
                                   {...treeTooltipProps(t("treeTableTitle"))}
                                   _hover={{ bg: "app.rowHover" }}
                                 >
-                                  <TreeChevron transform={tOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                                  {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
+                                      ダブルクリック (テーブルを開く) の前に click が 2 回発火して
+                                      カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
+                                      連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。
+                                      唯一の展開手段になったためネイティブ button として描画し、
+                                      キーボード (Enter/Space) と支援技術からも操作できるようにする
+                                      (行本体は現状 tabIndex を持たない — 上記のキーボードナビ方針
+                                      コメント参照)。 */}
+                                  <TreeChevronButton
+                                    type="button"
+                                    transform={tOpen ? "rotate(90deg)" : undefined}
+                                    aria-label={t("treeToggleColumnsAria", { table: tbl })}
+                                    aria-expanded={tOpen}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void toggleTable(db, tbl);
+                                    }}
+                                    onDoubleClick={(e) => e.stopPropagation()}
+                                  >▸</TreeChevronButton>
                                   <TreeIcon color="app.textSecondary" aria-hidden><Icon name="table" /></TreeIcon>
                                   <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
                                   {rowEstLabel && (
