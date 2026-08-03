@@ -1194,6 +1194,7 @@ const en = {
   indexBadgeUnique: "Unique",
   treeLoading: "Loading...",
   treeTableTitle: "Click ▸ to expand columns, double-click to SELECT * LIMIT 100",
+  treeToggleColumnsAria: "Expand or collapse columns of {table}",
   treeRowEstimateTitle:
     "Approximate row count from engine statistics (no COUNT(*) scan); may be stale",
   colTipType: "Type",
@@ -3426,6 +3427,7 @@ const ja: Dict = {
   indexBadgeUnique: "ユニーク",
   treeLoading: "読み込み中...",
   treeTableTitle: "▸ クリックでカラム展開、ダブルクリックで SELECT * LIMIT 100",
+  treeToggleColumnsAria: "{table} のカラム一覧を開閉",
   treeRowEstimateTitle:
     "統計情報に基づく概算レコード数 (COUNT(*) は実行していません)。古い可能性があります",
   colTipType: "型",
