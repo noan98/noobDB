@@ -29,6 +29,7 @@ import {
   historyStatusParam,
   HistoryStatusFilter,
 } from "./historyFilters";
+import { Tooltip } from "./Tooltip";
 
 // ステータス/期間の 2 択セグメント。SettingsView の SettingsSegment と同じ
 // 見た目のローカル版 (この 1 画面でしか使わないため共有コンポーネント化はしない)。
@@ -286,102 +287,105 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
                 animate={variants.fade.animate}
                 transition={transitions.crossfade}
               >
-                <TreeRow
-                  position="relative"
-                  role="treeitem"
-                  tabIndex={0}
-                  onClick={() => onRestore(h.sql)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onRestore(h.sql);
-                    }
-                  }}
-                  title={`${t("historyRestoreHint")}\n\n${h.sql}`}
-                  css={{
-                    "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
-                      opacity: 1,
-                      pointerEvents: "auto",
-                    },
-                  }}
-                >
-                  <TreeChevron visibility="hidden" aria-hidden />
-                  <TreeIcon color="app.accent" aria-hidden>
-                    <Icon name={failed ? "close" : "refresh"} />
-                  </TreeIcon>
-                  <TreeLabel fontFamily="mono">{oneLine(h.sql)}</TreeLabel>
-                  {failed && (
-                    <TreeBadge
-                      bg="var(--status-info, var(--bg-muted))"
-                      color="app.text"
-                      borderColor="app.borderStrong"
-                      fontWeight={700}
-                    >
-                      {t("historyStatusError")}
-                    </TreeBadge>
-                  )}
-                  {!failed && meta && <TreeBadge>{meta}</TreeBadge>}
-                  {h.elapsed_ms != null && <TreeBadge>{h.elapsed_ms} ms</TreeBadge>}
-                  <chakra.span
-                    data-row-actions=""
-                    position="absolute"
-                    top="0"
-                    right="0"
-                    bottom="0"
-                    display="flex"
-                    alignItems="center"
-                    gap="0.5"
-                    pl="4"
-                    pr="1.5"
-                    background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
-                    opacity={0}
-                    pointerEvents="none"
-                    transitionProperty="opacity"
-                    transitionDuration="var(--dur-fast)"
-                    transitionTimingFunction="var(--ease)"
+                <Tooltip label={`${t("historyRestoreHint")}\n\n${h.sql}`}>
+                  <TreeRow
+                    position="relative"
+                    role="treeitem"
+                    tabIndex={0}
+                    onClick={() => onRestore(h.sql)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onRestore(h.sql);
+                      }
+                    }}
+                    css={{
+                      "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
+                        opacity: 1,
+                        pointerEvents: "auto",
+                      },
+                    }}
                   >
-                    <chakra.button
-                      type="button"
-                      minW="0"
-                      w="24px"
-                      h="24px"
-                      p="0"
-                      display="inline-flex"
+                    <TreeChevron visibility="hidden" aria-hidden />
+                    <TreeIcon color="app.accent" aria-hidden>
+                      <Icon name={failed ? "close" : "refresh"} />
+                    </TreeIcon>
+                    <TreeLabel fontFamily="mono">{oneLine(h.sql)}</TreeLabel>
+                    {failed && (
+                      <TreeBadge
+                        bg="var(--status-info, var(--bg-muted))"
+                        color="app.text"
+                        borderColor="app.borderStrong"
+                        fontWeight={700}
+                      >
+                        {t("historyStatusError")}
+                      </TreeBadge>
+                    )}
+                    {!failed && meta && <TreeBadge>{meta}</TreeBadge>}
+                    {h.elapsed_ms != null && <TreeBadge>{h.elapsed_ms} ms</TreeBadge>}
+                    <chakra.span
+                      data-row-actions=""
+                      position="absolute"
+                      top="0"
+                      right="0"
+                      bottom="0"
+                      display="flex"
                       alignItems="center"
-                      justifyContent="center"
-                      color="app.textSecondary"
-                      _hover={{ color: "app.text" }}
-                      title={copiedId === h.id ? t("historyCopied") : t("historyCopySql")}
-                      aria-label={t("historyCopySql")}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleCopy(h.id, h.sql);
-                      }}
+                      gap="0.5"
+                      pl="4"
+                      pr="1.5"
+                      background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
+                      opacity={0}
+                      pointerEvents="none"
+                      transitionProperty="opacity"
+                      transitionDuration="var(--dur-fast)"
+                      transitionTimingFunction="var(--ease)"
                     >
-                      <Icon name={copiedId === h.id ? "check" : "copy"} size={ICON_SIZES.md} />
-                    </chakra.button>
-                    <chakra.button
-                      type="button"
-                      minW="0"
-                      w="24px"
-                      h="24px"
-                      p="0"
-                      display="inline-flex"
-                      alignItems="center"
-                      justifyContent="center"
-                      color="app.textSecondary"
-                      _hover={{ color: "app.text" }}
-                      title={t("historyOpenInNewTab")}
-                      aria-label={t("historyOpenInNewTab")}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenInNewTab(h.sql);
-                      }}
-                    >
-                      <Icon name="query" size={ICON_SIZES.md} />
-                    </chakra.button>
-                  </chakra.span>
-                </TreeRow>
+                      <Tooltip label={copiedId === h.id ? t("historyCopied") : t("historyCopySql")}>
+                        <chakra.button
+                          type="button"
+                          minW="0"
+                          w="24px"
+                          h="24px"
+                          p="0"
+                          display="inline-flex"
+                          alignItems="center"
+                          justifyContent="center"
+                          color="app.textSecondary"
+                          _hover={{ color: "app.text" }}
+                          aria-label={t("historyCopySql")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleCopy(h.id, h.sql);
+                          }}
+                        >
+                          <Icon name={copiedId === h.id ? "check" : "copy"} size={ICON_SIZES.md} />
+                        </chakra.button>
+                      </Tooltip>
+                      <Tooltip label={t("historyOpenInNewTab")}>
+                        <chakra.button
+                          type="button"
+                          minW="0"
+                          w="24px"
+                          h="24px"
+                          p="0"
+                          display="inline-flex"
+                          alignItems="center"
+                          justifyContent="center"
+                          color="app.textSecondary"
+                          _hover={{ color: "app.text" }}
+                          aria-label={t("historyOpenInNewTab")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenInNewTab(h.sql);
+                          }}
+                        >
+                          <Icon name="query" size={ICON_SIZES.md} />
+                        </chakra.button>
+                      </Tooltip>
+                    </chakra.span>
+                  </TreeRow>
+                </Tooltip>
                 <Box pt="0" pr="1.5" pb="1" pl="28px" fontSize="2xs" color="app.textMuted">
                   {formatTime(h.executed_at)}
                 </Box>

@@ -7,6 +7,7 @@ import { Splitter } from "./Splitter";
 import { Button, Checkbox } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
+import { Tooltip } from "./Tooltip";
 
 const SYNC_SCROLL_STORAGE_KEY = "noobdb.preview.syncScroll";
 
@@ -297,28 +298,30 @@ export function PreviewGrid({
               })}
             </chakra.span>
             {onApplyEdits && (
-              <LoadingButton
-                variant="success"
-                size="sm"
-                px="2.5"
-                loading={applyingEdits}
-                onClick={onApplyEdits}
-                disabled={streaming}
-                title={t("editApplyButtonTitle")}
-              >
-                <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
-              </LoadingButton>
+              <Tooltip label={t("editApplyButtonTitle")} focusableWrapper={streaming || applyingEdits}>
+                <LoadingButton
+                  variant="success"
+                  size="sm"
+                  px="2.5"
+                  loading={applyingEdits}
+                  onClick={onApplyEdits}
+                  disabled={streaming}
+                >
+                  <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
+                </LoadingButton>
+              </Tooltip>
             )}
             {onDiscardEdits && (
-              <Button
-                variant="secondary"
-                size="sm"
-                px="2.5"
-                onClick={onDiscardEdits}
-                title={t("editCancelButtonTitle")}
-              >
-                <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
-              </Button>
+              <Tooltip label={t("editCancelButtonTitle")}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="2.5"
+                  onClick={onDiscardEdits}
+                >
+                  <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
+                </Button>
+              </Tooltip>
             )}
           </Box>
         )}
@@ -328,18 +331,19 @@ export function PreviewGrid({
           </chakra.span>
         )}
         {streaming && onStop && (
-          <Button
-            variant="warning"
-            size="sm"
-            marginLeft="8px"
-            px="3"
-            py="0.5"
-            whiteSpace="nowrap"
-            onClick={onStop}
-            title={t("gridStopButtonTitle")}
-          >
-            {t("gridStopButton")}
-          </Button>
+          <Tooltip label={t("gridStopButtonTitle")}>
+            <Button
+              variant="warning"
+              size="sm"
+              marginLeft="8px"
+              px="3"
+              py="0.5"
+              whiteSpace="nowrap"
+              onClick={onStop}
+            >
+              {t("gridStopButton")}
+            </Button>
+          </Tooltip>
         )}
       </Box>
       <Box
@@ -380,17 +384,22 @@ export function PreviewGrid({
             cursor="pointer"
             userSelect="none"
             whiteSpace="nowrap"
-            title={t("previewSyncScrollTitle")}
           >
-            <Checkbox
-              margin="0"
-              checked={syncScroll}
-              onChange={(e) => {
-                const v = e.target.checked;
-                setSyncScroll(v);
-                writeSyncScrollPref(v);
-              }}
-            />
+            {/* ツールチップはラベルではなくフォーカス対象の `Checkbox` (native
+                input) 側に付ける — `aria-describedby` はフォーカスを受け取る
+                コントロール自身に付いて初めて支援技術に読まれるうえ、ラベルは
+                フォーカスを受け取らないためキーボードでは一切表示されない。 */}
+            <Tooltip label={t("previewSyncScrollTitle")}>
+              <Checkbox
+                margin="0"
+                checked={syncScroll}
+                onChange={(e) => {
+                  const v = e.target.checked;
+                  setSyncScroll(v);
+                  writeSyncScrollPref(v);
+                }}
+              />
+            </Tooltip>
             <chakra.span>{t("previewSyncScroll")}</chakra.span>
           </chakra.label>
         )}

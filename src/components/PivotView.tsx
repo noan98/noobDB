@@ -247,7 +247,9 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
           {t("pivotHeatmap")}
         </chakra.label>
         {canSendSql && (
-          <Button type="button" variant="secondary" size="sm" onClick={sendSql} title={t("pivotSendSql")}>
+          // ラベルはボタン内に可視テキストとして出ているため、native `title=` は
+          // 同じ文字列の重複だった (#884)。
+          <Button type="button" variant="secondary" size="sm" onClick={sendSql}>
             <Icon name="query" size={ICON_SIZES.md} /> {t("pivotSendSql")}
           </Button>
         )}

@@ -4,6 +4,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { transitions, variants } from "../motion";
 import { Button } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
+import { Tooltip } from "./Tooltip";
 
 /**
  * Chakra の `Dialog` (ポータル + バックドロップ +
@@ -166,17 +167,21 @@ export function ModalHeader({
       >
         {children}
       </Dialog.Title>
-      <Button
-        type="button"
-        variant="ghost"
-        onClick={onClose}
-        disabled={closeDisabled}
-        aria-label={closeLabel}
-        title={closeLabel}
-        css={{ flex: "none", minWidth: "28px", py: "1", px: "2", fontSize: "base", lineHeight: 1 }}
-      >
-        <Icon name="close" size={ICON_SIZES.sm} />
-      </Button>
+      {/* アイコンのみのクローズボタンなので、ラベルは共有 `Tooltip` (#884) で出す。
+          `closeDisabled` のときはブラウザがタブ順序から外すため
+          `focusableWrapper` でキーボードからも到達できるようにする。 */}
+      <Tooltip label={closeLabel} focusableWrapper={closeDisabled}>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={onClose}
+          disabled={closeDisabled}
+          aria-label={closeLabel}
+          css={{ flex: "none", minWidth: "28px", py: "1", px: "2", fontSize: "base", lineHeight: 1 }}
+        >
+          <Icon name="close" size={ICON_SIZES.sm} />
+        </Button>
+      </Tooltip>
     </Dialog.Header>
   );
 }

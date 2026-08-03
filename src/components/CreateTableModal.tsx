@@ -6,6 +6,7 @@ import { buildCreateTableSql, type ColumnDef } from "./createTable";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { Icon } from "./Icon";
+import { Tooltip } from "./Tooltip";
 
 /**
  * CREATE TABLE ウィザード。カラム定義をフォームで組み立て、方言に応じた
@@ -105,18 +106,19 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
               <Switch checked={c.unique} onChange={() => setCol(i, { unique: !c.unique })} />
               <Switch checked={c.autoIncrement} onChange={() => setCol(i, { autoIncrement: !c.autoIncrement })} />
               <Input value={c.defaultValue} onChange={(e) => setCol(i, { defaultValue: e.target.value })} placeholder={t("createTableColDefault")} />
-              <chakra.button
-                type="button"
-                onClick={() => removeCol(i)}
-                aria-label={t("createTableRemoveCol")}
-                title={t("createTableRemoveCol")}
-                color="app.textMuted"
-                _hover={{ color: "app.dangerFg" }}
-                disabled={columns.length <= 1}
-                px="1"
-              >
-                <Icon name="close" />
-              </chakra.button>
+              <Tooltip label={t("createTableRemoveCol")} focusableWrapper={columns.length <= 1}>
+                <chakra.button
+                  type="button"
+                  onClick={() => removeCol(i)}
+                  aria-label={t("createTableRemoveCol")}
+                  color="app.textMuted"
+                  _hover={{ color: "app.dangerFg" }}
+                  disabled={columns.length <= 1}
+                  px="1"
+                >
+                  <Icon name="close" />
+                </chakra.button>
+              </Tooltip>
             </chakra.div>
           ))}
           <Flex>

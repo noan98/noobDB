@@ -1242,6 +1242,31 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   が境界を固定)。エディタ集中/結果最大化はワークスペース単位 (`noobdb.layout.mode`) で
   永続化し、全画面オーバーレイは `App.css` の `pane-overlay-in` で出現させ
   reduced-motion で静止化する。
+- ツールチップ (#814/#884) — `components/Tooltip.tsx` が唯一の実装で、位置決めの
+  純ロジックは `components/tooltipPosition.ts` (`computeTooltipPosition`。測定 →
+  クランプ → フリップ) に分離してテストする。**新しい UI で native `title=` を
+  書かないこと** — native title は表示まで約 1 秒・**キーボードフォーカスでは
+  一切表示されない (a11y 欠陥)**・テーマ非追従・すぐ消える、という弱点がある。
+  使い分けは 2 つ:
+  - `<Tooltip label={...}>` — 通常のボタン/アイコン/ラベル。`cloneElement` で
+    hover/focus ハンドラ・ref・`aria-describedby` を注入するので DOM 構造は
+    変わらない。`label` が falsy なら何もせず `children` をそのまま返すため、
+    条件付きラベルを分岐なしで渡せる。**無効 (`disabled`) なトリガーにだけ**
+    `focusableWrapper` を付ける (ブラウザが無効要素をタブ順序から外すため)。
+    通常のフォーカス可能要素に付けると余計なタブストップが増える。
+  - `useDelegatedTooltip()` + `<TooltipBubble>` — 行/列/セル数に比例して大量に
+    描画される一覧 (`ResultGrid` のセル、`ConnectionList` のスキーマツリー行、
+    `ERDiagramView` の PK/FK アイコン)。共有状態 1 つ + `bind(label)` が返す
+    軽量なハンドラだけを各要素に付け、`Tooltip` インスタンスを増やさない。
+    hover 専用 (focus 非対応) なので、**キーボードで到達できる要素には使わない**。
+  同時に見える吹き出しは常に高々 1 つで、新しく開いたものが直前のものを閉じる
+  (`claimTooltip`/`releaseTooltip`)。行のツールチップの中にボタンのツールチップを
+  入れ子にしても native title と同じ「最も内側だけ」の見え方になる。複数行ラベル
+  (`ヒント\n\nSQL` など) は `white-space: pre-wrap` で改行を保つ。**唯一の例外は
+  `TabBar` のタブ本体**で、`AnimatePresence` の直接の子である必要があり `Tooltip`
+  の Fragment を挟むと退出アニメーションが壊れるため、意図的に native title の
+  ままにしている (理由はコード内コメントに明記)。挙動は `tooltip.test.tsx`
+  (開閉・a11y 結線・入れ子) が固定する。
 - `settings.ts` — `useSyncExternalStore` ベースの設定ストア。シンタックスカラー
   (`syntaxColors` light/dark)・プレビューハイライト色・表示行数 (`defaultDisplayCount` /
   `streamPrefetchSize`)・自動 LIMIT (`autoLimitEnabled` / `autoLimitCount`)・SQL 構文

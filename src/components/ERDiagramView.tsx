@@ -36,6 +36,7 @@ import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration } from "./illustrations";
 import { mapLimited } from "./mapLimited";
+import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { Button, Heading, Select } from "./ui";
 import { Spinner } from "./Spinner";
 import { ImageExportButton } from "./ImageExportButton";
@@ -127,35 +128,42 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
   // when the layout direction changes (#560): LR → left/right, TB → top/bottom.
   const targetPos = data.direction === "TB" ? Position.Top : Position.Left;
   const sourcePos = data.direction === "TB" ? Position.Bottom : Position.Right;
+  // PK/FK アイコンは 1 ノードあたり最大 `MAX_VISIBLE_COLUMNS` 行 × 最大
+  // `MAX_TABLES` ノード描画されうるため、行ごとに `Tooltip` を積まず「1 つの
+  // 共有ツールチップ + イベント委譲」(`useDelegatedTooltip`、#884) を使う。
+  // これらのアイコンは元々フォーカス対象ではない (行はキーボード操作対象外) ので、
+  // hover のみ対応でも native title からの後退はない。
+  const { hovered, bind } = useDelegatedTooltip();
   return (
     <Box css={cardCss}>
       {/* Handles are invisible anchors edges attach to. */}
       <Handle type="target" position={targetPos} style={{ opacity: 0 }} />
       <Handle type="source" position={sourcePos} style={{ opacity: 0 }} />
-      <chakra.button
-        type="button"
-        css={cardHeaderCss}
-        onClick={data.onOpen}
-        className="nodrag"
-        title={data.openTitle}
-        aria-label={data.openTitle}
-      >
-        <Icon name="table" size={ICON_SIZES.sm} />
-        <chakra.span css={colNameCss} flex="1">
-          {data.table}
-        </chakra.span>
-      </chakra.button>
+      <Tooltip label={data.openTitle}>
+        <chakra.button
+          type="button"
+          css={cardHeaderCss}
+          onClick={data.onOpen}
+          className="nodrag"
+          aria-label={data.openTitle}
+        >
+          <Icon name="table" size={ICON_SIZES.sm} />
+          <chakra.span css={colNameCss} flex="1">
+            {data.table}
+          </chakra.span>
+        </chakra.button>
+      </Tooltip>
       {data.columns.map((col) => (
         <Box key={col.name} css={colRowCss}>
           {/* PK の鍵アイコンは接続ツリー (ConnectionList) と同じ --key-accent の
               琥珀で統一する (FK は両者とも accent)。--key-accent は PK 表示専用の
               意味トークンで、--cell-date (日付型セル色) とは独立している (#717)。 */}
           {col.isPk ? (
-            <chakra.span color="var(--key-accent)" title={data.pkTitle} display="inline-flex">
+            <chakra.span color="var(--key-accent)" display="inline-flex" {...bind(data.pkTitle)}>
               <Icon name="key" size={ICON_SIZES.sm} />
             </chakra.span>
           ) : col.isFk ? (
-            <chakra.span color="var(--accent)" title={data.fkTitle} display="inline-flex">
+            <chakra.span color="var(--accent)" display="inline-flex" {...bind(data.fkTitle)}>
               <Icon name="link" size={ICON_SIZES.sm} />
             </chakra.span>
           ) : (
@@ -169,6 +177,7 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
       {data.hiddenColumns > 0 && (
         <Box css={moreRowCss}>+{data.hiddenColumns}</Box>
       )}
+      {hovered && <TooltipBubble label={hovered.label} anchor={hovered.rect} />}
     </Box>
   );
 }
@@ -472,18 +481,19 @@ function ERDiagramInner({
             />
           </chakra.span>
         )}
-        <Button
-          marginLeft={!loading && !error && nodes.length > 0 ? undefined : "auto"}
-          minWidth="28px"
-          px="2"
-          py="1"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("erDiagramClose")}
-          title={t("erDiagramClose")}
-        >
-          <Icon name="close" size={ICON_SIZES.sm} />
-        </Button>
+        <Tooltip label={t("erDiagramClose")}>
+          <Button
+            marginLeft={!loading && !error && nodes.length > 0 ? undefined : "auto"}
+            minWidth="28px"
+            px="2"
+            py="1"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("erDiagramClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} padding="8px 24px 0" fontSize="sm" color="app.textMuted">

@@ -28,6 +28,29 @@ const OPEN_DELAY_MS = 400;
 const MARGIN_PX = 8;
 
 /**
+ * 現在表示中のツールチップを閉じる関数 (アプリ全体で高々 1 つ)。ポインタは 1 つ
+ * しかないので、同時に 2 つ以上の吹き出しが見えている状態は常に不本意なもの
+ * ——特に**入れ子**にした場合 (一覧の行に行全体のツールチップを付け、その行の
+ * 中のアイコン/ボタンにも個別のツールチップを付ける、というのは #884 の置換で
+ * 頻出する形) に起きる。React の `onMouseEnter` は行 → 子要素の移動で行側の
+ * `onMouseLeave` を発火しないため、内側が開いても外側は開いたままになる。
+ * native `title=` は常に最も内側の 1 つだけを表示していたので、その挙動に
+ * 合わせて「新しく開いたものが直前のものを閉じる」ようにする。
+ */
+let activeClose: (() => void) | null = null;
+
+/** 表示を開始する側が呼ぶ。直前に開いていたツールチップがあれば閉じる。 */
+function claimTooltip(close: () => void) {
+  if (activeClose && activeClose !== close) activeClose();
+  activeClose = close;
+}
+
+/** 非表示にした側が呼ぶ。自分が現役でなければ何もしない。 */
+function releaseTooltip(close: () => void) {
+  if (activeClose === close) activeClose = null;
+}
+
+/**
  * `Tooltip` がトリガーに要求する最小限のプロップ表面。実際に使う要素
  * (Chakra の `Button`/`chakra.*`、native タグ) はいずれもこれらを問題なく
  * 受け取れるが、@types/react 19 では `ReactElement` のプロップ型の既定値が
@@ -128,8 +151,28 @@ export function Tooltip({
     }
   };
 
+  // `claimTooltip`/`releaseTooltip` は関数の同一性で「現役かどうか」を判定する
+  // ため、`hide` は初回レンダで 1 つだけ作り以後ずっと同じものを使い回す (ref の
+  // 遅延初期化)。中身が触るのは ref と `setOpen` だけなので、クロージャが初回
+  // レンダのものでも挙動は変わらない。
+  const hideRef = useRef<(() => void) | null>(null);
+  if (hideRef.current === null) {
+    hideRef.current = () => {
+      clearShowTimer();
+      releaseTooltip(hideRef.current!);
+      setOpen(false);
+    };
+  }
+  const hide = hideRef.current;
+
   const show = (delay: number) => {
     clearShowTimer();
+    // 所有権は**表示予約の時点**で取る。hover 遅延の途中に子トリガーへ入ると
+    // 親の `onMouseLeave` は発火しない (React の enter/leave は行 → 子の移動で
+    // 親側を呼ばない) ため、`setTimeout` の発火時まで claim を遅らせると、
+    // 先に開いた子を親の予約が後から蹴散らして親が表示されてしまう。ここで
+    // claim すると子の要求が親の `hide` を呼び、親の予約タイマーも解除される。
+    claimTooltip(hide);
     if (delay <= 0) {
       setOpen(true);
       return;
@@ -137,12 +180,13 @@ export function Tooltip({
     showTimer.current = setTimeout(() => setOpen(true), delay);
   };
 
-  const hide = () => {
-    clearShowTimer();
-    setOpen(false);
-  };
-
-  useEffect(() => () => clearShowTimer(), []);
+  useEffect(() => {
+    const close = hideRef.current!;
+    return () => {
+      clearShowTimer();
+      releaseTooltip(close);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -232,6 +276,10 @@ export function Tooltip({
               px="2.5"
               fontSize="sm"
               color="app.text"
+              // native title は改行をそのまま表示していたので、複数行ラベル
+              // (`ヒント\n\nSQL` 形式など) が 1 行に潰れないよう pre-wrap で受ける。
+              // 最大幅は据え置きなので、長い行は従来どおり折り返す (#884)。
+              whiteSpace="pre-wrap"
               pointerEvents="none"
               style={{
                 left: `${pos ? pos.left : 0}px`,
@@ -305,12 +353,16 @@ export function useDelegatedTooltip() {
     null,
   );
 
+  // 委譲側も `Tooltip` 本体と同じ「同時に見えるのは 1 つ」の登録簿に参加する
+  // (行の委譲ツールチップと、その行の中のボタンの `Tooltip` が二重に出ないように)。
+  const stableHide = useRef(() => setState(null));
+
   // アンカーはイベント時点の座標スナップショットなので、スクロール/リサイズで
   // 追従できずバブルだけが古い位置に浮いてしまう (`Tooltip` 本体・
   // `ConnectionList` の `ColumnTooltip` と同じ理由)。
   useEffect(() => {
     if (!state) return;
-    const clear = () => setState(null);
+    const clear = stableHide.current;
     window.addEventListener("scroll", clear, true);
     window.addEventListener("resize", clear);
     return () => {
@@ -319,13 +371,22 @@ export function useDelegatedTooltip() {
     };
   }, [state]);
 
+  useEffect(() => {
+    const close = stableHide.current;
+    return () => releaseTooltip(close);
+  }, []);
+
   const bind = (label: string | undefined | null) => {
     if (!label) return undefined;
     return {
-      onMouseEnter: (e: ReactMouseEvent<HTMLElement>) =>
-        setState({ label, rect: e.currentTarget.getBoundingClientRect(), target: e.currentTarget }),
-      onMouseLeave: (e: ReactMouseEvent<HTMLElement>) =>
-        setState((cur) => (cur?.target === e.currentTarget ? null : cur)),
+      onMouseEnter: (e: ReactMouseEvent<HTMLElement>) => {
+        claimTooltip(stableHide.current);
+        setState({ label, rect: e.currentTarget.getBoundingClientRect(), target: e.currentTarget });
+      },
+      onMouseLeave: (e: ReactMouseEvent<HTMLElement>) => {
+        releaseTooltip(stableHide.current);
+        setState((cur) => (cur?.target === e.currentTarget ? null : cur));
+      },
     };
   };
 
@@ -382,6 +443,7 @@ export function TooltipBubble({
       px="2.5"
       fontSize="sm"
       color="app.text"
+      whiteSpace="pre-wrap"
       pointerEvents="none"
       style={{
         left: `${pos ? pos.left : anchor.left}px`,

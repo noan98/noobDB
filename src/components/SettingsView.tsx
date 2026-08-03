@@ -104,6 +104,7 @@ import { ACCENT_PRESETS } from "../accent";
 import { checkForAppUpdate, getCurrentAppVersion } from "../updater";
 import { displayVersion } from "../updaterFormat";
 import { confirmAndInstallUpdate } from "./updatePrompt";
+import { Tooltip } from "./Tooltip";
 
 interface Props {
   theme: Theme;
@@ -1074,19 +1075,22 @@ export function SettingsView({ theme, onClose }: Props) {
                 t(THEME_PREVIEW_CHIP_LABEL_KEYS[chip]),
               ).join(" / ");
               return (
-                <ThemePresetCard
-                  key={p}
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => setThemePreset(p as ThemePreset)}
-                >
-                  <ThemePresetSwatchStrip
-                    aria-hidden="true"
-                    title={chipTitle}
-                    style={{ background: themePreviewGradient(colors) }}
-                  />
-                  <ThemePresetCardLabel>{t(THEME_PRESET_LABEL_KEYS[p])}</ThemePresetCardLabel>
-                </ThemePresetCard>
+                // ツールチップはスウォッチ帯ではなくカード (ボタン) 側に付ける —
+                // 帯は `aria-hidden` なので `aria-describedby` が支援技術へ届かず、
+                // フォーカスも受け取れないため (#884)。
+                <Tooltip key={p} label={chipTitle}>
+                  <ThemePresetCard
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setThemePreset(p as ThemePreset)}
+                  >
+                    <ThemePresetSwatchStrip
+                      aria-hidden="true"
+                      style={{ background: themePreviewGradient(colors) }}
+                    />
+                    <ThemePresetCardLabel>{t(THEME_PRESET_LABEL_KEYS[p])}</ThemePresetCardLabel>
+                  </ThemePresetCard>
+                </Tooltip>
               );
             })}
           </ThemePresetRow>
@@ -1102,25 +1106,26 @@ export function SettingsView({ theme, onClose }: Props) {
                   ? settings.accentColor === null
                   : settings.accentColor?.toLowerCase() === p.hex.toLowerCase();
               return (
-                <SettingsSwatch
-                  key={p.key}
-                  type="button"
-                  aria-pressed={selected}
-                  aria-label={t(ACCENT_LABEL_KEYS[p.key])}
-                  title={t(ACCENT_LABEL_KEYS[p.key])}
-                  data-default={p.hex === null ? "" : undefined}
-                  style={p.hex ? { background: p.hex } : undefined}
-                  onClick={() => setAccentColor(p.hex)}
-                />
+                <Tooltip key={p.key} label={t(ACCENT_LABEL_KEYS[p.key])}>
+                  <SettingsSwatch
+                    type="button"
+                    aria-pressed={selected}
+                    aria-label={t(ACCENT_LABEL_KEYS[p.key])}
+                    data-default={p.hex === null ? "" : undefined}
+                    style={p.hex ? { background: p.hex } : undefined}
+                    onClick={() => setAccentColor(p.hex)}
+                  />
+                </Tooltip>
               );
             })}
-            <SettingsColorInput
-              type="color"
-              aria-label={t("settingsAccentCustom")}
-              title={t("settingsAccentCustom")}
-              value={settings.accentColor ?? "#2563eb"}
-              onChange={(e) => setAccentColor(e.target.value)}
-            />
+            <Tooltip label={t("settingsAccentCustom")}>
+              <SettingsColorInput
+                type="color"
+                aria-label={t("settingsAccentCustom")}
+                value={settings.accentColor ?? "#2563eb"}
+                onChange={(e) => setAccentColor(e.target.value)}
+              />
+            </Tooltip>
           </SettingsSwatchRow>
           <SettingsHelpInline>{t("settingsAccentColorHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
@@ -1709,15 +1714,16 @@ export function SettingsView({ theme, onClose }: Props) {
             <SettingsReset onClick={loadLogs} disabled={logLoading}>
               {t("settingsLogsRefresh")}
             </SettingsReset>
-            <SettingsLogsIconButton
-              type="button"
-              onClick={copyLogs}
-              disabled={!logText}
-              title={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
-              aria-label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
-            >
-              <Icon name={logCopied ? "check" : "copy"} size={ICON_SIZES.md} />
-            </SettingsLogsIconButton>
+            <Tooltip label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")} focusableWrapper={!logText}>
+              <SettingsLogsIconButton
+                type="button"
+                onClick={copyLogs}
+                disabled={!logText}
+                aria-label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
+              >
+                <Icon name={logCopied ? "check" : "copy"} size={ICON_SIZES.md} />
+              </SettingsLogsIconButton>
+            </Tooltip>
             <SettingsReset onClick={clearLogs} disabled={!logText}>
               {t("settingsLogsClear")}
             </SettingsReset>

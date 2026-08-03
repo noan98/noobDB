@@ -17,6 +17,7 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
+import { Tooltip } from "./Tooltip";
 import { Button, Heading } from "./ui";
 import { useToast } from "./Toast";
 
@@ -142,18 +143,19 @@ export function AdvisorPanel({
         paddingBottom="2.5"
       >
         <Heading>{t("advisorTitle")}</Heading>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("advisorClose")}
-          title={t("advisorClose")}
-        >
-          <Icon name="close" size={ICON_SIZES.sm} />
-        </Button>
+        <Tooltip label={t("advisorClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("advisorClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
@@ -284,16 +286,17 @@ export function AdvisorPanel({
                           >
                             {t("advisorInsertFix")}
                           </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyFix(f.fix_ddl as string)}
-                            aria-label={t("advisorCopyFix")}
-                            title={t("advisorCopyFix")}
-                          >
-                            <Icon name="copy" size={ICON_SIZES.sm} />
-                          </Button>
+                          <Tooltip label={t("advisorCopyFix")}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => copyFix(f.fix_ddl as string)}
+                              aria-label={t("advisorCopyFix")}
+                            >
+                              <Icon name="copy" size={ICON_SIZES.sm} />
+                            </Button>
+                          </Tooltip>
                         </Flex>
                       </Box>
                     )}

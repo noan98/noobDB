@@ -13,6 +13,7 @@ import {
   type SchemaGeneration,
 } from "../schemaDrift";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Tooltip } from "./Tooltip";
 import { Button, Select } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonRow } from "./Skeleton";
@@ -266,14 +267,22 @@ export function SchemaDriftPanel({ profile, state, canCapture, capturing, onCapt
           {t("schemaDriftLocalOnlyNote")}
         </chakra.span>
         <Box flex="1" />
-        <Button
-          variant="secondary"
-          disabled={!canCapture || capturing}
-          onClick={onCapture}
-          title={canCapture ? t("schemaDriftCaptureHint") : t("schemaDriftNeedConnection")}
+        {/* 無効時は「なぜ押せないか」を出すため、`focusableWrapper` でキーボード
+            からも読めるようにする (無効ボタンはタブ順序から外れる)。 */}
+        <Tooltip
+          label={
+            capturing
+              ? t("schemaDriftCapturing")
+              : canCapture
+                ? t("schemaDriftCaptureHint")
+                : t("schemaDriftNeedConnection")
+          }
+          focusableWrapper={!canCapture || capturing}
         >
-          <Icon name="refresh" size={ICON_SIZES.sm} /> {capturing ? t("schemaDriftCapturing") : t("schemaDriftCaptureNow")}
-        </Button>
+          <Button variant="secondary" disabled={!canCapture || capturing} onClick={onCapture}>
+            <Icon name="refresh" size={ICON_SIZES.sm} /> {capturing ? t("schemaDriftCapturing") : t("schemaDriftCaptureNow")}
+          </Button>
+        </Tooltip>
         <Button variant="primary" onClick={onClose}>
           {t("schemaDriftClose")}
         </Button>

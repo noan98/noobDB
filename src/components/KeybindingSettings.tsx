@@ -24,6 +24,7 @@ import {
   SettingsSection,
   SettingsSectionHeader,
 } from "./settingsLayout";
+import { Tooltip } from "./Tooltip";
 
 const Row = chakra("div", {
   base: {
@@ -154,14 +155,15 @@ export function KeybindingSettings() {
                   >
                     {isRecording ? t("settingsShortcutRecording") : t("settingsShortcutRecord")}
                   </SmallButton>
-                  <SmallButton
-                    type="button"
-                    onClick={() => setShortcutBinding(s.id, null)}
-                    disabled={!overridden}
-                    title={t("settingsReset")}
-                  >
-                    {t("settingsReset")}
-                  </SmallButton>
+                  <Tooltip label={t("settingsReset")} focusableWrapper={!overridden}>
+                    <SmallButton
+                      type="button"
+                      onClick={() => setShortcutBinding(s.id, null)}
+                      disabled={!overridden}
+                    >
+                      {t("settingsReset")}
+                    </SmallButton>
+                  </Tooltip>
                 </Row>
               );
             })}
