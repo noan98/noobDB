@@ -123,6 +123,9 @@ const DumpModal = lazy(() =>
 const SchemaExportModal = lazy(() =>
   import("./components/SchemaExportModal").then((m) => ({ default: m.SchemaExportModal })),
 );
+const BroadcastModal = lazy(() =>
+  import("./components/BroadcastModal").then((m) => ({ default: m.BroadcastModal })),
+);
 const ProfileImportDialog = lazy(() =>
   import("./components/ProfileImportDialog").then((m) => ({ default: m.ProfileImportDialog })),
 );
@@ -1033,6 +1036,11 @@ export default function App() {
   // ピン留め結果の比較ビュー (#622)。保持はメモリのみ・上限あり (addPinned)。
   const [showCompareResults, setShowCompareResults] = useState(false);
   const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
+  // 環境横断ブロードキャスト実行 (#738)。非 null の間だけ `BroadcastModal` を
+  // マウントする — 対象接続の選択 → 実行 → 結果比較まで一貫してその内部で行う。
+  const [broadcastRequest, setBroadcastRequest] = useState<
+    { sql: string; tableColumns: TableColumnInfo[] | null } | null
+  >(null);
   // プロセスモニタパネル (processlist / pg_stat_activity + KILL) の開閉。
   const [showProcesses, setShowProcesses] = useState(false);
   // サーバ情報パネル (バージョン・設定変数) の開閉。#563。
@@ -3134,6 +3142,18 @@ export default function App() {
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
   ]);
+
+  // 環境横断ブロードキャスト実行 (#738): クエリエディタの「複数の接続で実行」から
+  // 呼ばれる。書き込み文はここで即座に拒否する (バックエンドの `forceReadOnly` は
+  // 二重の安全網)。対象接続の選択・本番確認・実行は `BroadcastModal` 側に任せ、
+  // ここでは要求を受け取ってモーダルを開くだけ。
+  const requestBroadcast = useCallback((sql: string, tab: Tab | null) => {
+    if (!isReadOnlySql(sql)) {
+      toast.error(translate("broadcastBlockedToast"));
+      return;
+    }
+    setBroadcastRequest({ sql, tableColumns: tab?.tableColumns ?? null });
+  }, [toast, translate]);
 
   // ---- Auto-refresh (scheduled re-execution) -------------------------------
   // Latest `runQueryInTab` / `sessionId` kept in refs so a long-lived timer
@@ -5923,6 +5943,14 @@ export default function App() {
                     onRun={(sql) => resolveParamsThen(tab, sql, "run")}
                     onPreview={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "preview")}
                     onExplain={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "explain")}
+                    onBroadcast={tab.kind === "explain" ? undefined : (sql) => requestBroadcast(sql, tab)}
+                    broadcastAvailable={
+                      !!sessionId &&
+                      !!selectedProfile &&
+                      openConnections.some(
+                        (c) => c.sessionId !== sessionId && c.profile.driver === selectedProfile.driver,
+                      )
+                    }
                     explainMode={tab.kind === "explain"}
                     onChange={(sql) => updateTab(tab.id, { sql })}
                     onPreflightImpact={(r) => preflightRef.current.set(tab.id, r)}
@@ -7315,6 +7343,27 @@ export default function App() {
             database={schemaExportTarget}
             driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             onClose={() => setSchemaExportTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {broadcastRequest && sessionId && selectedProfile && (
+          <BroadcastModal
+            sql={broadcastRequest.sql}
+            driver={selectedProfile.driver}
+            baselineSessionId={sessionId}
+            baselineProfile={selectedProfile}
+            candidates={openConnections.filter(
+              (c) => c.sessionId !== sessionId && c.profile.driver === selectedProfile.driver,
+            )}
+            tableColumns={broadcastRequest.tableColumns}
+            initialBatch={settings.defaultDisplayCount}
+            chunkSize={settings.streamPrefetchSize}
+            autoLimit={settings.autoLimitEnabled ? settings.autoLimitCount : null}
+            queryTimeoutSecs={settings.queryTimeoutSecs}
+            confirm={confirm}
+            onClose={() => setBroadcastRequest(null)}
           />
         )}
       </AnimatePresence>

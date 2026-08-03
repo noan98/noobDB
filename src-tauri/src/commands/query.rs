@@ -106,6 +106,23 @@ fn ensure_auto_refresh_read_only(sql: &str) -> Result<()> {
     Ok(())
 }
 
+/// Backend-enforced read-only guard for cross-environment broadcast execution
+/// (#738). A broadcast fans one statement out to several sessions at once
+/// (possibly across different profiles/permission levels), so the caller
+/// pins it to read-only regardless of any single session's `read_only` flag —
+/// mirroring [`ensure_auto_refresh_read_only`]'s reasoning for scheduled
+/// re-execution. The frontend already blocks non-read-only SQL before firing
+/// a broadcast, but this is the backend-enforced half of that guarantee.
+fn ensure_broadcast_read_only(sql: &str) -> Result<()> {
+    if !is_read_only_sql(sql) {
+        return Err(AppError::ReadOnly(
+            "broadcast execution allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Collapses `sql` to a short, single-line summary for logging. Never used at
 /// `info` level — the full statement (which may carry sensitive literals) is
 /// only ever surfaced at `debug` and is truncated here regardless.
@@ -383,6 +400,7 @@ pub async fn run_query_stream(
     auto_limit: Option<usize>,
     query_timeout_secs: Option<u64>,
     auto_refresh: Option<bool>,
+    force_read_only: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -394,6 +412,11 @@ pub async fn run_query_stream(
     let auto_refresh = auto_refresh.unwrap_or(false);
     if auto_refresh {
         ensure_auto_refresh_read_only(&sql)?;
+    }
+    // Cross-environment broadcast execution (#738) is read-only no matter the
+    // session, mirroring the auto-refresh guard above.
+    if force_read_only.unwrap_or(false) {
+        ensure_broadcast_read_only(&sql)?;
     }
     // `register_stream` をタスク本体の実行より前に完了させるためのゲート。
     // `tokio::spawn` は返り値の `JoinHandle` からしか `AbortHandle` を得られないため
@@ -1036,6 +1059,43 @@ mod tests {
                     Err(AppError::ReadOnly(_))
                 ),
                 "expected `{sql}` to be rejected for auto-refresh"
+            );
+        }
+    }
+
+    #[test]
+    fn broadcast_allows_read_only_statements() {
+        for sql in [
+            "SELECT * FROM users",
+            "  select 1",
+            "SHOW TABLES",
+            "DESCRIBE users",
+            "EXPLAIN SELECT 1",
+            "WITH t AS (SELECT 1) SELECT * FROM t",
+        ] {
+            assert!(
+                ensure_broadcast_read_only(sql).is_ok(),
+                "expected `{sql}` to be allowed for broadcast execution"
+            );
+        }
+    }
+
+    #[test]
+    fn broadcast_rejects_writes_and_ddl() {
+        for sql in [
+            "DELETE FROM users",
+            "UPDATE users SET name = 'x'",
+            "INSERT INTO users VALUES (1)",
+            "DROP TABLE users",
+            "TRUNCATE users",
+            // Stacked statement hiding a write behind a SELECT.
+            "SELECT 1; DELETE FROM users",
+            // Data-modifying CTE.
+            "WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
+        ] {
+            assert!(
+                matches!(ensure_broadcast_read_only(sql), Err(AppError::ReadOnly(_))),
+                "expected `{sql}` to be rejected for broadcast execution"
             );
         }
     }
