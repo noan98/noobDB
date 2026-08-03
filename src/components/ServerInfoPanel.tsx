@@ -8,6 +8,7 @@ import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
+import { Tooltip } from "./Tooltip";
 import { Button, Heading, Input } from "./ui";
 
 /**
@@ -100,18 +101,19 @@ export function ServerInfoPanel({
         paddingBottom="2.5"
       >
         <Heading>{t("serverInfoTitle")}</Heading>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("serverInfoClose")}
-          title={t("serverInfoClose")}
-        >
-          <Icon name="close" size={ICON_SIZES.sm} />
-        </Button>
+        <Tooltip label={t("serverInfoClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("serverInfoClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">

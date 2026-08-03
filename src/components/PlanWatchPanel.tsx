@@ -10,6 +10,7 @@ import {
   resultFromSnapshot,
 } from "./planDiff";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Tooltip } from "./Tooltip";
 import { Button, Select } from "./ui";
 import { ExplainViewer } from "./ExplainViewer";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -143,15 +144,16 @@ export function PlanWatchPanel({
                   >
                     <Icon name="explain" size={ICON_SIZES.sm} />
                     <Box flex="1" minWidth={0}>
-                      <chakra.div
-                        textStyle="subheading"
-                        overflow="hidden"
-                        textOverflow="ellipsis"
-                        whiteSpace="nowrap"
-                        title={w.snippet?.sql}
-                      >
-                        {w.snippet?.name ?? t("planWatchSnippetMissing")}
-                      </chakra.div>
+                      <Tooltip label={w.snippet?.sql} placement="bottom">
+                        <chakra.div
+                          textStyle="subheading"
+                          overflow="hidden"
+                          textOverflow="ellipsis"
+                          whiteSpace="nowrap"
+                        >
+                          {w.snippet?.name ?? t("planWatchSnippetMissing")}
+                        </chakra.div>
+                      </Tooltip>
                       <chakra.div fontSize="xs" color="app.textMuted">
                         {t("planWatchGenerationCount", { count: w.generations.length })}
                       </chakra.div>
@@ -205,14 +207,11 @@ export function PlanWatchPanel({
                     </chakra.label>
                     <Box flex="1" />
                     {active && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => onUnwatch(active.id)}
-                        title={t("planWatchUnwatchHint")}
-                      >
-                        {t("planWatchUnwatch")}
-                      </Button>
+                      <Tooltip label={t("planWatchUnwatchHint")}>
+                        <Button size="sm" variant="secondary" onClick={() => onUnwatch(active.id)}>
+                          {t("planWatchUnwatch")}
+                        </Button>
+                      </Tooltip>
                     )}
                   </Flex>
 
@@ -305,15 +304,21 @@ export function PlanWatchPanel({
           {t("planWatchLocalOnlyNote")}
         </chakra.span>
         <Box flex="1" />
-        <Button
-          variant="secondary"
-          disabled={!canRefresh || refreshing || watched.length === 0}
-          onClick={onRefresh}
-          title={canRefresh ? t("planWatchRefreshHint") : t("planWatchNeedConnection")}
+        {/* 無効時は「なぜ押せないか」を出すため、`focusableWrapper` でキーボード
+            からも読めるようにする (無効ボタンはタブ順序から外れる)。 */}
+        <Tooltip
+          label={canRefresh ? t("planWatchRefreshHint") : t("planWatchNeedConnection")}
+          focusableWrapper={!canRefresh || refreshing || watched.length === 0}
         >
-          <Icon name="refresh" size={ICON_SIZES.sm} />{" "}
-          {refreshing ? t("planWatchRefreshing") : t("planWatchRefresh")}
-        </Button>
+          <Button
+            variant="secondary"
+            disabled={!canRefresh || refreshing || watched.length === 0}
+            onClick={onRefresh}
+          >
+            <Icon name="refresh" size={ICON_SIZES.sm} />{" "}
+            {refreshing ? t("planWatchRefreshing") : t("planWatchRefresh")}
+          </Button>
+        </Tooltip>
         <Button variant="primary" onClick={onClose}>
           {t("planWatchClose")}
         </Button>

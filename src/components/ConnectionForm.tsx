@@ -7,6 +7,7 @@ import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
+import { Tooltip } from "./Tooltip";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value never reaches the frontend, so this
@@ -52,28 +53,29 @@ function PasswordInput({ value, onChange, hasStored, id }: PasswordInputProps) {
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
       />
-      <chakra.button
-        type="button"
-        position="absolute"
-        right="4px"
-        display="inline-flex"
-        alignItems="center"
-        justifyContent="center"
-        p="1"
-        border="none"
-        bg="transparent"
-        color="app.textMuted"
-        borderRadius="sm"
-        _hover={{ bg: "app.hover", color: "app.text" }}
-        // Keep the input focused so the toggle works while typing.
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => setShow((s) => !s)}
-        aria-pressed={show}
-        aria-label={show ? t("formPasswordHide") : t("formPasswordShow")}
-        title={show ? t("formPasswordHide") : t("formPasswordShow")}
-      >
-        <Icon name={show ? "eye-off" : "eye"} size={ICON_SIZES.md} />
-      </chakra.button>
+      <Tooltip label={show ? t("formPasswordHide") : t("formPasswordShow")}>
+        <chakra.button
+          type="button"
+          position="absolute"
+          right="4px"
+          display="inline-flex"
+          alignItems="center"
+          justifyContent="center"
+          p="1"
+          border="none"
+          bg="transparent"
+          color="app.textMuted"
+          borderRadius="sm"
+          _hover={{ bg: "app.hover", color: "app.text" }}
+          // Keep the input focused so the toggle works while typing.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setShow((s) => !s)}
+          aria-pressed={show}
+          aria-label={show ? t("formPasswordHide") : t("formPasswordShow")}
+        >
+          <Icon name={show ? "eye-off" : "eye"} size={ICON_SIZES.md} />
+        </chakra.button>
+      </Tooltip>
     </Box>
   );
 }
@@ -630,25 +632,25 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             <label htmlFor={`${fid}-color`}>{t("formColor")}</label>
             <Flex align="center" gap="2" flexWrap="wrap">
               {COLOR_PRESETS.map((c) => (
-                <chakra.button
-                  key={c}
-                  type="button"
-                  width="24px"
-                  height="24px"
-                  borderRadius="sm"
-                  border="2px solid"
-                  borderColor={color === c ? "app.text" : "transparent"}
-                  p={0}
-                  cursor="pointer"
-                  boxShadow="0 0 0 1px var(--border-strong)"
-                  bg={c}
-                  transitionProperty="background, color, border-color, box-shadow"
-                  transitionDuration="var(--dur-fast)"
-                  transitionTimingFunction="var(--ease)"
-                  onClick={() => setColor(c)}
-                  aria-label={c}
-                  title={c}
-                />
+                <Tooltip key={c} label={c}>
+                  <chakra.button
+                    type="button"
+                    width="24px"
+                    height="24px"
+                    borderRadius="sm"
+                    border="2px solid"
+                    borderColor={color === c ? "app.text" : "transparent"}
+                    p={0}
+                    cursor="pointer"
+                    boxShadow="0 0 0 1px var(--border-strong)"
+                    bg={c}
+                    transitionProperty="background, color, border-color, box-shadow"
+                    transitionDuration="var(--dur-fast)"
+                    transitionTimingFunction="var(--ease)"
+                    onClick={() => setColor(c)}
+                    aria-label={c}
+                  />
+                </Tooltip>
               ))}
               <input
                 id={`${fid}-color`}

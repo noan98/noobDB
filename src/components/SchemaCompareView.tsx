@@ -20,6 +20,7 @@ import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
 import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
+import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
 
 /**
@@ -783,18 +784,19 @@ export function SchemaCompareView({
         paddingBottom="2.5"
       >
         <Heading>{t("schemaCompareTitle")}</Heading>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("schemaCompareClose")}
-          title={t("schemaCompareClose")}
-        >
-          <Icon name="close" size={ICON_SIZES.sm} />
-        </Button>
+        <Tooltip label={t("schemaCompareClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("schemaCompareClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareDesc")}</chakra.p>
@@ -813,20 +815,21 @@ export function SchemaCompareView({
               onSelectDatabase={setDatabase}
               t={t}
             />
-            <Button
-              type="button"
-              minWidth="28px"
-              px="2"
-              py="1"
-              fontSize="base"
-              lineHeight={1}
-              marginBottom="1"
-              onClick={swap}
-              title={t("schemaCompareSwap")}
-              aria-label={t("schemaCompareSwap")}
-            >
-              <Icon name="refresh" size={ICON_SIZES.md} />
-            </Button>
+            <Tooltip label={t("schemaCompareSwap")}>
+              <Button
+                type="button"
+                minWidth="28px"
+                px="2"
+                py="1"
+                fontSize="base"
+                lineHeight={1}
+                marginBottom="1"
+                onClick={swap}
+                aria-label={t("schemaCompareSwap")}
+              >
+                <Icon name="refresh" size={ICON_SIZES.md} />
+              </Button>
+            </Tooltip>
             <SidePicker
               label={t("schemaCompareTarget")}
               side="target"

@@ -12,6 +12,7 @@ import { useToast } from "./Toast";
 import { Icon, ICON_SIZES } from "./Icon";
 import { copyToClipboard } from "./clipboard";
 import { buildExportContent, DEFAULT_SQL_BATCH } from "./exportPreview";
+import { Tooltip } from "./Tooltip";
 
 /** プレビュー欄に表示する最大行数 (コピーは全行が対象)。 */
 const PREVIEW_ROWS = 50;
@@ -506,31 +507,32 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
           <chakra.div display="flex" alignItems="center" gap="2">
             <FieldLabel as="div" mb={0}>{t("exportPreview")}</FieldLabel>
             <chakra.div flex="1" />
-            <chakra.button
-              type="button"
-              onClick={handleCopy}
-              disabled={rows.length === 0}
-              title={copied ? t("gridCopied") : t("exportCopyAll")}
-              aria-label={copied ? t("gridCopied") : t("exportCopyAll")}
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              w="28px"
-              h="28px"
-              color={copied ? "app.status.success" : "app.textMuted"}
-              bg="app.bgInput"
-              border="1px solid"
-              borderColor="app.border"
-              borderRadius="md"
-              cursor="pointer"
-              transitionProperty="color, background, border-color"
-              transitionDuration="var(--dur-fast)"
-              transitionTimingFunction="var(--ease)"
-              _hover={{ color: copied ? "app.status.success" : "app.text", bg: "app.hover" }}
-              _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-            >
-              <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
-            </chakra.button>
+            <Tooltip label={copied ? t("gridCopied") : t("exportCopyAll")} focusableWrapper={rows.length === 0}>
+              <chakra.button
+                type="button"
+                onClick={handleCopy}
+                disabled={rows.length === 0}
+                aria-label={copied ? t("gridCopied") : t("exportCopyAll")}
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                w="28px"
+                h="28px"
+                color={copied ? "app.status.success" : "app.textMuted"}
+                bg="app.bgInput"
+                border="1px solid"
+                borderColor="app.border"
+                borderRadius="md"
+                cursor="pointer"
+                transitionProperty="color, background, border-color"
+                transitionDuration="var(--dur-fast)"
+                transitionTimingFunction="var(--ease)"
+                _hover={{ color: copied ? "app.status.success" : "app.text", bg: "app.hover" }}
+                _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+              >
+                <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
+              </chakra.button>
+            </Tooltip>
           </chakra.div>
           <chakra.pre
             aria-label={t("exportPreview")}

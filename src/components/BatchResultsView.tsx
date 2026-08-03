@@ -6,6 +6,7 @@ import type { BatchStatementResult } from "../sqlScript";
 import { Button, Switch } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
+import { Tooltip } from "./Tooltip";
 
 /**
  * SQL スクリプトのバッチ実行の結果ビュー。文ごとに「SQL / 成否 / 影響行数 or
@@ -78,9 +79,11 @@ function StatementCard({
       <Flex align="center" gap="2" px="2.5" py="1.5" bg="app.surface" borderBottomWidth="1px" borderBottomColor="app.border">
         <chakra.span fontSize="xs" color="app.textMuted" fontFamily="mono">#{index}</chakra.span>
         <chakra.span w="9px" h="9px" borderRadius="full" bg={tone} flexShrink={0} />
-        <chakra.code fontSize="xs" color="app.text" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" flex="1" title={result.sql}>
-          {result.sql}
-        </chakra.code>
+        <Tooltip label={result.sql}>
+          <chakra.code fontSize="xs" color="app.text" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" flex="1">
+            {result.sql}
+          </chakra.code>
+        </Tooltip>
         <chakra.span fontSize="xs" color="app.textMuted" whiteSpace="nowrap">
           {result.status === "skipped"
             ? t("batchSkipped")

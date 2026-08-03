@@ -16,6 +16,7 @@ import {
   TOUR_STEP_COUNT,
   type TourState,
 } from "../onboarding";
+import { Tooltip } from "./Tooltip";
 
 // 既存 (ContextMenu / SplashScreen) と同じく chakra でラップした motion 要素。
 // `transition` を Chakra のスタイルプロップに飲まれず motion へ渡すため
@@ -171,27 +172,28 @@ export function OnboardingTour({ onClose }: Props) {
             </AnimatePresence>
           </chakra.div>
         </Flex>
-        <chakra.button
-          type="button"
-          onClick={onClose}
-          aria-label={t("onboardingCloseAria")}
-          title={t("onboardingCloseAria")}
-          display="inline-flex"
-          alignItems="center"
-          justifyContent="center"
-          boxSize="24px"
-          flexShrink={0}
-          p="0"
-          bg="transparent"
-          border="none"
-          borderRadius="sm"
-          color="app.textMuted"
-          cursor="pointer"
-          _hover={{ bg: "app.hover", color: "app.text" }}
-          _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
-        >
-          <Icon name="close" size={ICON_SIZES.md} />
-        </chakra.button>
+        <Tooltip label={t("onboardingCloseAria")}>
+          <chakra.button
+            type="button"
+            onClick={onClose}
+            aria-label={t("onboardingCloseAria")}
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            boxSize="24px"
+            flexShrink={0}
+            p="0"
+            bg="transparent"
+            border="none"
+            borderRadius="sm"
+            color="app.textMuted"
+            cursor="pointer"
+            _hover={{ bg: "app.hover", color: "app.text" }}
+            _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+          >
+            <Icon name="close" size={ICON_SIZES.md} />
+          </chakra.button>
+        </Tooltip>
       </Flex>
 
       <chakra.div overflow="hidden">

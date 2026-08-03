@@ -68,6 +68,9 @@ export function ResultViewSwitch({ value, onChange }: Props) {
       {VIEWS.map((v, i) => {
         const active = v.kind === value;
         const label = t(v.labelKey);
+        // ラベルはボタン内にテキストとして常に見えているため、以前の native
+        // `title=` は同じ文字列を重ねるだけだった (#884)。共有 `Tooltip` へ
+        // 置き換えず、そのまま削除している。
         return (
           <chakra.button
             key={v.kind}
@@ -75,7 +78,6 @@ export function ResultViewSwitch({ value, onChange }: Props) {
             role="radio"
             aria-checked={active}
             tabIndex={active ? 0 : -1}
-            title={label}
             onClick={() => {
               if (!active) onChange(v.kind);
             }}

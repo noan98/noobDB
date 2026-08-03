@@ -23,6 +23,7 @@ import {
 } from "./tree";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { readCollapsedSnippetFolders, writeCollapsedSnippetFolders } from "./snippetFolders";
+import { Tooltip } from "./Tooltip";
 
 interface Props {
   snippets: Snippet[];
@@ -149,39 +150,41 @@ export const SnippetList = memo(function SnippetList({
 
   const renderSnippet = (s: Snippet) => (
     <MotionTreeNode key={s.id} {...variants.fade} transition={transitions.crossfade}>
-      <TreeRow
-        role="treeitem"
-        tabIndex={0}
-        onDoubleClick={() => onInsert(s)}
-        onKeyDown={(e) => {
-          // Enter/Space は double-click と同じ「挿入」を実行。ダブルクリック
-          // 必須にすると誤発火を避けたい意図だが、キーボードでは明示的な押下
-          // なので 1 アクションで挿入する方が ARIA tree の慣習にも合う。
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onInsert(s);
-          }
-        }}
-        onContextMenu={(e) => handleContextMenu(e, s)}
-        title={`${t("snippetInsertHint")}\n\n${s.sql}`}
-      >
-        <TreeChevron visibility="hidden" aria-hidden />
-        <TreeIcon color="app.accent" aria-hidden><Icon name="snippet" /></TreeIcon>
-        <TreeLabel>{s.name}</TreeLabel>
-        {watchedPlanIds?.includes(s.id) && (
-          <TreeIcon
-            color="app.accent"
-            title={t("snippetWatchBadge")}
-            aria-label={t("snippetWatchBadge")}
-          >
-            <Icon name="explain" />
-          </TreeIcon>
-        )}
-        {s.tags.map((tag) => (
-          <TreeBadge key={tag} textTransform="none" letterSpacing="0" fontFamily="mono">{tag}</TreeBadge>
-        ))}
-        {s.driver && <TreeBadge>{s.driver}</TreeBadge>}
-      </TreeRow>
+      <Tooltip label={`${t("snippetInsertHint")}\n\n${s.sql}`}>
+        <TreeRow
+          role="treeitem"
+          tabIndex={0}
+          onDoubleClick={() => onInsert(s)}
+          onKeyDown={(e) => {
+            // Enter/Space は double-click と同じ「挿入」を実行。ダブルクリック
+            // 必須にすると誤発火を避けたい意図だが、キーボードでは明示的な押下
+            // なので 1 アクションで挿入する方が ARIA tree の慣習にも合う。
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onInsert(s);
+            }
+          }}
+          onContextMenu={(e) => handleContextMenu(e, s)}
+        >
+          <TreeChevron visibility="hidden" aria-hidden />
+          <TreeIcon color="app.accent" aria-hidden><Icon name="snippet" /></TreeIcon>
+          <TreeLabel>{s.name}</TreeLabel>
+          {watchedPlanIds?.includes(s.id) && (
+            <Tooltip label={t("snippetWatchBadge")}>
+              <TreeIcon
+                color="app.accent"
+                aria-label={t("snippetWatchBadge")}
+              >
+                <Icon name="explain" />
+              </TreeIcon>
+            </Tooltip>
+          )}
+          {s.tags.map((tag) => (
+            <TreeBadge key={tag} textTransform="none" letterSpacing="0" fontFamily="mono">{tag}</TreeBadge>
+          ))}
+          {s.driver && <TreeBadge>{s.driver}</TreeBadge>}
+        </TreeRow>
+      </Tooltip>
     </MotionTreeNode>
   );
 
@@ -197,16 +200,17 @@ export const SnippetList = memo(function SnippetList({
             flex="1"
           />
           {onOpenPlanWatch && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={onOpenPlanWatch}
-              title={t("snippetOpenPlanWatch")}
-              aria-label={t("snippetOpenPlanWatch")}
-              css={{ flex: "none", minWidth: "28px", px: "2", py: "1", lineHeight: 1 }}
-            >
-              <Icon name="explain" size={ICON_SIZES.sm} />
-            </Button>
+            <Tooltip label={t("snippetOpenPlanWatch")}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={onOpenPlanWatch}
+                aria-label={t("snippetOpenPlanWatch")}
+                css={{ flex: "none", minWidth: "28px", px: "2", py: "1", lineHeight: 1 }}
+              >
+                <Icon name="explain" size={ICON_SIZES.sm} />
+              </Button>
+            </Tooltip>
           )}
         </Box>
         {activeProfile && (

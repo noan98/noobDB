@@ -30,6 +30,7 @@ import {
   worstSeverity,
   type PlanNode,
 } from "./explainPlan";
+import { Tooltip } from "./Tooltip";
 
 /**
  * EXPLAIN プランのノードツリーを @xyflow/react + @dagrejs/dagre で node-link 図と
@@ -99,26 +100,28 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
     outline: data.selected ? "2px solid var(--accent)" : "none",
   };
   return (
-    <Box css={css} onClick={data.onSelect} title={data.label}>
-      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
-      <chakra.span css={labelCss}>{data.label}</chakra.span>
-      <chakra.span css={metaCss} opacity={0.92}>
-        {data.cost !== null && <span>cost {formatNumber(data.cost)}</span>}
-        {data.rows !== null && <span>{formatNumber(data.rows)} rows</span>}
-        {data.worstHint && data.worstHint !== "info" && (
-          <chakra.span
-            fontWeight={700}
-            px="4px"
-            borderRadius="var(--radius-sm)"
-            background={data.worstHint === "warning" ? "var(--status-error)" : "var(--status-warning)"}
-            color="#fff"
-          >
-            !
-          </chakra.span>
-        )}
-      </chakra.span>
-    </Box>
+    <Tooltip label={data.label}>
+      <Box css={css} onClick={data.onSelect}>
+        <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+        <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+        <chakra.span css={labelCss}>{data.label}</chakra.span>
+        <chakra.span css={metaCss} opacity={0.92}>
+          {data.cost !== null && <span>cost {formatNumber(data.cost)}</span>}
+          {data.rows !== null && <span>{formatNumber(data.rows)} rows</span>}
+          {data.worstHint && data.worstHint !== "info" && (
+            <chakra.span
+              fontWeight={700}
+              px="4px"
+              borderRadius="var(--radius-sm)"
+              background={data.worstHint === "warning" ? "var(--status-error)" : "var(--status-warning)"}
+              color="#fff"
+            >
+              !
+            </chakra.span>
+          )}
+        </chakra.span>
+      </Box>
+    </Tooltip>
   );
 }
 

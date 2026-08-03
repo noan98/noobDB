@@ -5,6 +5,7 @@ import type { Column } from "../api/tauri";
 import type { PendingInsertRow } from "./cellEdit";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton } from "./ui";
+import { Tooltip } from "./Tooltip";
 
 /**
  * 結果グリッドからの行追加で、新規行の各カラム値を入力するモーダル。確定すると
@@ -48,21 +49,22 @@ export function RowInsertModal({ table, columns, initialValues, onConfirm, onCan
         </chakra.p>
         {columns.map((c, i) => (
           <Flex key={c.name} align="center" gap="2.5">
-            <chakra.label
-              minW="160px"
-              fontSize="sm"
-              fontFamily="mono"
-              color="app.text"
-              overflow="hidden"
-              textOverflow="ellipsis"
-              whiteSpace="nowrap"
-              title={`${c.name} (${c.type_name})`}
-            >
-              {c.name}
-              <chakra.span color="app.textMuted" ml="1.5" fontSize="2xs">
-                {c.type_name}
-              </chakra.span>
-            </chakra.label>
+            <Tooltip label={`${c.name} (${c.type_name})`}>
+              <chakra.label
+                minW="160px"
+                fontSize="sm"
+                fontFamily="mono"
+                color="app.text"
+                overflow="hidden"
+                textOverflow="ellipsis"
+                whiteSpace="nowrap"
+              >
+                {c.name}
+                <chakra.span color="app.textMuted" ml="1.5" fontSize="2xs">
+                  {c.type_name}
+                </chakra.span>
+              </chakra.label>
+            </Tooltip>
             <Input
               ref={i === 0 ? firstRef : undefined}
               value={values[i] ?? ""}
