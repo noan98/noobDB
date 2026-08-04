@@ -119,7 +119,8 @@ export type IconName =
   | "mysql"
   | "postgres"
   | "sqlite"
-  | "search";
+  | "search"
+  | "flask";
 
 /**
  * アイコンのサイズトークン。値は `App.css` の `--text-*` / `--space-*` と同じ
@@ -548,6 +549,16 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <circle cx="11" cy="11" r="8" />
       <path d="m21 21-4.3-4.3" />
+    </>
+  ),
+  // サンドボックス (壊せる砂場、#747) 用のフラスコアイコン。
+  flask: (
+    <>
+      <path d="M10 2v7.31" />
+      <path d="M14 9.3V1.99" />
+      <path d="M8.5 2h7" />
+      <path d="M14 9.3a6.5 6.5 0 1 1-4 0" />
+      <path d="M5.52 16h12.96" />
     </>
   ),
   // ドライバのブランドロゴ (simple-icons, CC0 / 単一パスの塗り)。FILLED_ICONS 経由で

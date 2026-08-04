@@ -1654,6 +1654,11 @@ const en = {
     "Compares two connections' schemas (and table data) side by side and highlights the differences. Open it from the diff icon in the top toolbar.",
   helpSchemaCompareNote:
     "Comparing is read-only, but the generated sync DDL/DML can write — review it before applying.",
+  helpSandboxTitle: "Sandbox (branch)",
+  helpSandboxDesc:
+    "Copies selected tables' schema and data into a local SQLite file and opens it as an independent connection — a disposable branch you can experiment on freely. Create one from a database's right-click menu; open sandboxes appear in their own sidebar section, always shown with a violet badge. Review changes to compute the writeback SQL and (optionally) apply it back to the original connection; discarding deletes the local copy for good.",
+  helpSandboxNote:
+    "The sandbox always runs on local SQLite — a dialect approximation of the original database (type affinity and constraint support differ). It's for iterating on data-shaping logic, not for validating performance or dialect-specific features. Writing changes back goes through the same read-only guard, dangerous-query confirmation and (Diff/Sync) apply path as everything else, plus conflict detection against rows the original connection changed since the sandbox was created.",
 
   helpRunTitle: "Run",
   helpRunDesc:
@@ -2294,6 +2299,67 @@ const en = {
   onboardingStepMoreDesc:
     "Save frequent queries as snippets, revisit past runs in History, and press ? anytime for shortcuts.",
 
+  // サンドボックス (壊せる砂場・ブランチ、#747)
+  contextMenuCreateSandbox: "Create sandbox...",
+  sandboxSectionTitle: "Sandboxes",
+  sandboxMenuReview: "Review changes...",
+  sandboxMenuDiscard: "Discard",
+  sandboxDiscardConfirm:
+    'Discard sandbox "{name}"? Its local copy will be deleted and cannot be recovered. This never affects the original connection.',
+  sandboxTableCountTitle: "{count} table(s)",
+  sandboxBadge: "Sandbox",
+  sandboxBadgeTitle: "A sandbox: a local copy that never affects the original connection.",
+  sandboxCreateClose: "Close",
+  sandboxCreateTitle: "Create a sandbox",
+  sandboxCreateNote:
+    "Copies the selected tables (schema + data) into a local SQLite file and opens it as an independent connection. Nothing you do here ever touches the original connection unless you explicitly review and apply the changes back.",
+  sandboxCreateLimitationNote:
+    "The sandbox always runs on the local SQLite engine, which only approximates the original database's dialect (type affinity and constraint support differ). Use it to iterate on data-shaping logic, not to validate performance or dialect-specific features.",
+  sandboxCreateName: "Name",
+  sandboxCreateLoadingTables: "Loading tables...",
+  sandboxCreateNoTables: "No tables in this database.",
+  sandboxCreateTables: "Tables ({count} selected)",
+  sandboxCreateIncludeRelated: "Automatically include related tables (foreign keys)",
+  sandboxCreateRelatedPreview: "With related tables included: {count} table(s) total.",
+  sandboxCreateRowLimit: "Row limit per table",
+  sandboxCreateCancel: "Cancel",
+  sandboxCreateSubmit: "Create sandbox",
+  sandboxReviewClose: "Close",
+  sandboxReviewTitle: 'Review changes — "{name}"',
+  sandboxReviewLimitationNote:
+    "The sandbox is a local SQLite approximation of the original database's dialect. Review the generated SQL carefully before applying it back — especially schema changes, whose column types come from the sandbox's SQLite copy.",
+  sandboxReviewTarget: "Write back to:",
+  sandboxReviewNoTarget:
+    "No matching open connection. Open the original connection first to check for conflicts and apply changes.",
+  sandboxReviewLoading: "Computing differences...",
+  sandboxReviewSchemaChanges: "Schema changes since the snapshot:",
+  sandboxReviewSchemaExternalWarning:
+    "These tables also changed schema on the original connection since the snapshot: {tables}. Review carefully before applying.",
+  sandboxReviewTruncated: "capped at the row limit",
+  sandboxReviewConflictsUnchecked:
+    "Conflict check skipped (pick a target connection above to check for concurrent changes).",
+  sandboxReviewConflictsTitle: "{count} conflicting row(s) — choose how to resolve each one",
+  sandboxReviewExternalValue: "Current value on the original connection",
+  sandboxReviewExternalDeleted: "(deleted)",
+  sandboxReviewOverwrite: "Overwrite",
+  sandboxReviewSkip: "Skip",
+  sandboxReviewNoChanges: "No changes to write back.",
+  sandboxReviewUnresolvedConflicts: "{count} conflict(s) still need a resolution before generating SQL.",
+  sandboxReviewGeneratedTitle: "Generated {count} statement(s)",
+  sandboxReviewRefresh: "Refresh",
+  sandboxReviewGenerate: "Generate SQL",
+  sandboxApplyTitle: "Apply {count} statement(s)",
+  sandboxApplyConfirm:
+    'Apply {count} statement(s) to "{name}"? This modifies the original database ({destructive} destructive).',
+  sandboxApplyProductionConfirm: '"{name}" is a production connection. Apply changes anyway?',
+  sandboxApplyTypedConfirmTitle: "Confirm destructive apply on production",
+  sandboxApplyTypedConfirmBody:
+    '"{name}" is a production connection and this plan includes {destructive} destructive statement(s). This cannot be undone.',
+  sandboxApplyTypedConfirmOk: "Apply anyway",
+  sandboxApplyDone: "Applied {count} statement(s) to the original connection.",
+  toastSandboxCreated: 'Sandbox "{name}" created.',
+  toastSandboxDiscarded: 'Sandbox "{name}" discarded.',
+  toastSandboxNotOpen: 'Open sandbox "{name}" first to review its changes.',
   // タスクスケジューラ (#730)
   appTasks: "Tasks",
   taskManagerTitle: "Scheduled Tasks",
@@ -4021,6 +4087,11 @@ const ja: Dict = {
     "2 つの接続のスキーマ (およびテーブルデータ) を並べて比較し、差分を表示します。上部ツールバーの差分アイコンから開けます。",
   helpSchemaCompareNote:
     "比較自体は読み取りのみですが、生成される同期用 DDL/DML は書き込みを行うため、適用前に必ず内容を確認してください。",
+  helpSandboxTitle: "サンドボックス (壊せる砂場)",
+  helpSandboxDesc:
+    "選択したテーブルのスキーマ + データをローカル SQLite ファイルへコピーし、独立した接続として開きます — 自由に実験できる使い捨てのブランチです。データベースの右クリックメニューから作成でき、開いたサンドボックスはサイドバーの専用セクションに、常に violet 色のバッジ付きで表示されます。「変更を確認」で書き戻し SQL を計算し、必要なら元の接続へ適用できます。破棄するとローカルコピーは完全に削除されます。",
+  helpSandboxNote:
+    "サンドボックスは常にローカルの SQLite で動作し、元データベースの方言を近似したものにすぎません (型親和性・制約サポートが異なります)。データ変形ロジックの試行錯誤に使い、性能検証や方言固有機能の検証には使わないでください。書き戻しは他の操作と同じ読み取り専用ガード・危険クエリ確認・(Diff/Sync の) 適用経路を通り、加えてサンドボックス作成後に元の接続側で変更された行との競合検出も行います。",
 
   helpRunTitle: "Run",
   helpRunDesc:
@@ -4661,6 +4732,66 @@ const ja: Dict = {
   onboardingStepMoreDesc:
     "よく使うクエリはスニペットとして保存でき、過去の実行は履歴から見返せます。困ったときは ? キーでショートカット一覧を開けます。",
 
+  // サンドボックス (壊せる砂場・ブランチ、#747)
+  contextMenuCreateSandbox: "サンドボックスを作成...",
+  sandboxSectionTitle: "サンドボックス",
+  sandboxMenuReview: "変更を確認...",
+  sandboxMenuDiscard: "破棄",
+  sandboxDiscardConfirm:
+    "サンドボックス「{name}」を破棄しますか? ローカルコピーは削除され元に戻せません。元の接続には一切影響しません。",
+  sandboxTableCountTitle: "{count} テーブル",
+  sandboxBadge: "サンドボックス",
+  sandboxBadgeTitle: "サンドボックスです。接続先には一切影響しないローカルコピーです。",
+  sandboxCreateClose: "閉じる",
+  sandboxCreateTitle: "サンドボックスを作成",
+  sandboxCreateNote:
+    "選択したテーブル (スキーマ + データ) をローカルの SQLite ファイルへコピーし、独立した接続として開きます。ここでの操作は、明示的に変更を確認して適用しない限り、元の接続には一切影響しません。",
+  sandboxCreateLimitationNote:
+    "サンドボックスは常にローカルの SQLite エンジンで動作し、元データベースの方言を近似したものにすぎません (型親和性・制約サポートが異なります)。データ変形ロジックの試行錯誤に使い、性能検証や方言固有機能の検証には使わないでください。",
+  sandboxCreateName: "名前",
+  sandboxCreateLoadingTables: "テーブル一覧を読み込み中...",
+  sandboxCreateNoTables: "このデータベースにテーブルがありません。",
+  sandboxCreateTables: "テーブル ({count} 件選択)",
+  sandboxCreateIncludeRelated: "関連テーブル (外部キー) を自動的に含める",
+  sandboxCreateRelatedPreview: "関連テーブルを含めると: 合計 {count} テーブル。",
+  sandboxCreateRowLimit: "テーブルごとの行数上限",
+  sandboxCreateCancel: "キャンセル",
+  sandboxCreateSubmit: "サンドボックスを作成",
+  sandboxReviewClose: "閉じる",
+  sandboxReviewTitle: "変更を確認 — 「{name}」",
+  sandboxReviewLimitationNote:
+    "サンドボックスは元データベースの方言を近似したローカル SQLite です。書き戻す前に、生成された SQL — 特にスキーマ変更 (列の型はサンドボックスの SQLite コピー由来です) — を必ず確認してください。",
+  sandboxReviewTarget: "書き戻し先:",
+  sandboxReviewNoTarget:
+    "一致する接続が開かれていません。競合を確認し変更を適用するには、先に元の接続を開いてください。",
+  sandboxReviewLoading: "差分を計算しています...",
+  sandboxReviewSchemaChanges: "スナップショット以降のスキーマ変更:",
+  sandboxReviewSchemaExternalWarning:
+    "以下のテーブルはスナップショット以降、元の接続側でもスキーマが変更されています: {tables}。適用前によく確認してください。",
+  sandboxReviewTruncated: "行数上限で打ち切り",
+  sandboxReviewConflictsUnchecked: "競合チェックは未実施です (上で対象接続を選ぶと同時変更を検出できます)。",
+  sandboxReviewConflictsTitle: "{count} 件の競合行 — それぞれの解決方法を選んでください",
+  sandboxReviewExternalValue: "元の接続での現在値",
+  sandboxReviewExternalDeleted: "(削除済み)",
+  sandboxReviewOverwrite: "上書き",
+  sandboxReviewSkip: "スキップ",
+  sandboxReviewNoChanges: "書き戻す変更はありません。",
+  sandboxReviewUnresolvedConflicts: "SQL を生成する前に、あと {count} 件の競合を解決してください。",
+  sandboxReviewGeneratedTitle: "{count} 文を生成しました",
+  sandboxReviewRefresh: "再取得",
+  sandboxReviewGenerate: "SQL を生成",
+  sandboxApplyTitle: "{count} 文を適用",
+  sandboxApplyConfirm:
+    "{count} 文を「{name}」へ適用しますか? 元のデータベースが変更されます (破壊的操作 {destructive} 件)。",
+  sandboxApplyProductionConfirm: "「{name}」は本番接続です。それでも変更を適用しますか?",
+  sandboxApplyTypedConfirmTitle: "本番環境への破壊的な適用の確認",
+  sandboxApplyTypedConfirmBody:
+    "「{name}」は本番接続で、この適用には破壊的なステートメントが {destructive} 件含まれます。元に戻せません。",
+  sandboxApplyTypedConfirmOk: "それでも適用する",
+  sandboxApplyDone: "{count} 文を元の接続へ適用しました。",
+  toastSandboxCreated: "サンドボックス「{name}」を作成しました。",
+  toastSandboxDiscarded: "サンドボックス「{name}」を破棄しました。",
+  toastSandboxNotOpen: "サンドボックス「{name}」を開いてから変更を確認してください。",
   // タスクスケジューラ (#730)
   appTasks: "タスク",
   taskManagerTitle: "タスクスケジューラ",

@@ -9,6 +9,7 @@ mod error;
 mod history;
 mod logs;
 mod profiles;
+mod sandboxes;
 mod snippets;
 mod ssh;
 mod state;
@@ -47,7 +48,12 @@ pub mod __test_api {
     pub use crate::commands::logs::LogView;
     pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags};
     pub use crate::commands::query::CancelStreamResult;
+    pub use crate::commands::sandbox::{
+        filter_sandbox_data_diff, SandboxCreateResponse, SandboxSchemaDiffResult,
+        SandboxTableDiffResult,
+    };
     pub use crate::history::HistoryEntry;
+    pub use crate::sandboxes::SandboxRecord;
     pub use crate::snippets::{Snippet, SnippetScope};
 
     // `commands::import::CsvPreview` はコマンドモジュール内に定義されているが、
@@ -196,6 +202,111 @@ pub mod __test_api {
             statements,
         )
         .await
+    }
+
+    /// Drives the `create_sandbox` IPC command's core path without a Tauri
+    /// runtime (#747).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_sandbox_via_command(
+        state: &AppState,
+        source_session_id: &str,
+        source_database: Option<&str>,
+        name: &str,
+        tables: Vec<String>,
+        include_related: bool,
+        row_limit: Option<u64>,
+    ) -> crate::error::Result<SandboxCreateResponse> {
+        crate::commands::sandbox::create_sandbox_inner(
+            state,
+            source_session_id.to_string(),
+            source_database.map(str::to_string),
+            name.to_string(),
+            tables,
+            include_related,
+            row_limit,
+        )
+        .await
+    }
+
+    /// Drives the `discard_sandbox` IPC command's core path without a Tauri
+    /// runtime (#747).
+    pub async fn discard_sandbox_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        session_id: Option<&str>,
+    ) -> crate::error::Result<()> {
+        crate::commands::sandbox::discard_sandbox_inner(
+            state,
+            sandbox_id.to_string(),
+            session_id.map(str::to_string),
+        )
+        .await
+    }
+
+    /// Drives the `sandbox_table_diff` IPC command's core path without a
+    /// Tauri runtime (#747).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn sandbox_table_diff_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        table: &str,
+        source_session_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> crate::error::Result<SandboxTableDiffResult> {
+        crate::commands::sandbox::sandbox_table_diff_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            table.to_string(),
+            source_session_id.map(str::to_string),
+            limit,
+        )
+        .await
+    }
+
+    /// Drives the `sandbox_schema_diff` IPC command's core path without a
+    /// Tauri runtime (#747).
+    pub async fn sandbox_schema_diff_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        source_session_id: Option<&str>,
+    ) -> crate::error::Result<SandboxSchemaDiffResult> {
+        crate::commands::sandbox::sandbox_schema_diff_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            source_session_id.map(str::to_string),
+        )
+        .await
+    }
+
+    /// Drives the `sandbox_advance_base` IPC command's core path without a
+    /// Tauri runtime (#747).
+    pub async fn sandbox_advance_base_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        table: &str,
+        applied: DataDiff,
+        allow_delete: bool,
+    ) -> crate::error::Result<()> {
+        crate::commands::sandbox::sandbox_advance_base_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            table.to_string(),
+            applied,
+            allow_delete,
+        )
+        .await
+    }
+
+    /// Lists every sandbox's non-secret metadata (`list_sandboxes` IPC's core;
+    /// already Tauri-free so this just re-exports it for test symmetry).
+    pub fn list_sandboxes_via_command() -> crate::error::Result<Vec<SandboxRecord>> {
+        crate::commands::sandbox::list_sandboxes()
     }
 
     /// Drives the schema-health advisor's full command path
@@ -384,6 +495,13 @@ pub fn run() {
             commands::sync::generate_sync_sql,
             commands::sync::generate_data_sync_sql,
             commands::sync::apply_sync_sql,
+            commands::sandbox::create_sandbox,
+            commands::sandbox::list_sandboxes,
+            commands::sandbox::discard_sandbox,
+            commands::sandbox::sandbox_table_diff,
+            commands::sandbox::sandbox_schema_diff,
+            commands::sandbox::filter_sandbox_data_diff,
+            commands::sandbox::sandbox_advance_base,
             commands::profiles::list_profiles,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,

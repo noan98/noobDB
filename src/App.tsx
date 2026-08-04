@@ -14,6 +14,8 @@ import {
   type ProfileImportStrategy,
   PreviewResult,
   QueryResult,
+  type SandboxCreateResponse,
+  type SandboxRecord,
   Snippet,
   TableColumnInfo,
   TableSchema,
@@ -22,6 +24,9 @@ import {
   listenQueryStream,
   listenTaskRunEvents,
 } from "./api/tauri";
+import { SandboxCreateModal } from "./components/SandboxCreateModal";
+import { SandboxReviewModal } from "./components/SandboxReviewModal";
+import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
@@ -1297,6 +1302,12 @@ export default function App() {
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  // サンドボックス (壊せる砂場、#747) の一覧。`ConnectionList` の通常プロファイル
+  // ツリーとは独立した専用セクション (`SandboxSection`) に描画する — 詳細は
+  // `sandbox.ts` の `sandboxToProfile` のコメントを参照。
+  const [sandboxes, setSandboxes] = useState<SandboxRecord[]>([]);
+  const [sandboxCreateTarget, setSandboxCreateTarget] = useState<{ database: string } | null>(null);
+  const [sandboxReviewTarget, setSandboxReviewTarget] = useState<SandboxRecord | null>(null);
   // Profiles pending a delayed delete (#676 Undo). While an id is here the
   // profile is hidden from the sidebar but NOT yet deleted from the backend, so
   // "Undo" can cancel the pending delete and keep the OS-keyring secrets intact
@@ -1943,18 +1954,28 @@ export default function App() {
     }
   }, []);
 
+  // サンドボックス一覧の再取得 (#747)。失敗は静かに無視する — サンドボックスは
+  // 補助機能であり、一覧取得の失敗でアプリ起動をブロックすべきではない。
+  const refreshSandboxes = useCallback(async () => {
+    try {
+      setSandboxes(await api.listSandboxes());
+    } catch (e) {
+      console.warn(e);
+    }
+  }, []);
+
   useEffect(() => {
     // 初回ロード: プロファイル取得とスプラッシュの最小表示時間 (350ms) を
     // 競わせ、両方終わったらスプラッシュを畳む。瞬間表示によるちらつきを防ぐ。
     let alive = true;
     const minVisible = new Promise<void>((resolve) => setTimeout(resolve, 350));
-    Promise.all([refreshProfiles(), minVisible]).finally(() => {
+    Promise.all([refreshProfiles(), refreshSandboxes(), minVisible]).finally(() => {
       if (alive) setBooted(true);
     });
     return () => {
       alive = false;
     };
-  }, [refreshProfiles]);
+  }, [refreshProfiles, refreshSandboxes]);
 
   // 初回起動オンボーディング (#599): 起動が完了した時点でプロファイルが 0 件
   // (= 新規ユーザ) かつツアー未表示なら自動で開始する。既存ユーザ (プロファイル
@@ -2656,6 +2677,62 @@ export default function App() {
     clearEmergencyFor(entry.sessionId);
     toast.info(translate("toastDisconnected", { name: entry.profile.name }));
   }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor]);
+
+  // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
+  // (`sandboxToProfile`) を通常の `handleConnect` に渡すだけで、複数同時接続の
+  // レジストリ (`openConnections`)・タブ復元・バッジ表示など既存の仕組みへ
+  // そのまま乗る。
+  const handleOpenSandbox = useCallback(
+    (record: SandboxRecord) => {
+      void handleConnect(sandboxToProfile(record));
+    },
+    [handleConnect],
+  );
+
+  // `create_sandbox` はコピー直後の確認用に自前のセッションを開いて返すが、
+  // ここではそれを閉じて `handleConnect` に張り直させる — 複数同時接続の
+  // レジストリへ二重登録せず、他の接続と全く同じ経路 (背景接続の扱い・タブ
+  // 復元・エラーハンドリング) に乗せるため。
+  const handleSandboxCreated = useCallback(
+    async (res: SandboxCreateResponse) => {
+      api.disconnect(res.session_id).catch(() => {});
+      setSandboxes((prev) => [...prev.filter((s) => s.id !== res.sandbox.id), res.sandbox]);
+      setSandboxCreateTarget(null);
+      await handleConnect(sandboxToProfile(res.sandbox));
+      toast.success(translate("toastSandboxCreated", { name: res.sandbox.name }));
+    },
+    [handleConnect, toast],
+  );
+
+  const handleDiscardSandbox = useCallback(
+    async (record: SandboxRecord) => {
+      await handleDisconnectProfile(sandboxProfileId(record.id));
+      try {
+        await api.discardSandbox(record.id, null);
+        setSandboxes((prev) => prev.filter((s) => s.id !== record.id));
+        toast.info(translate("toastSandboxDiscarded", { name: record.name }));
+      } catch (e) {
+        toast.error(String(e));
+      }
+    },
+    [handleDisconnectProfile, toast],
+  );
+
+  // 差分計算はサンドボックス自身のセッションに対して行うため、開いていない
+  // (バックグラウンド接続にも無い) サンドボックスでは先に開かせる。
+  const handleReviewSandbox = useCallback(
+    (record: SandboxRecord) => {
+      const open = openConnectionsRef.current.find(
+        (c) => c.profile.id === sandboxProfileId(record.id),
+      );
+      if (!open) {
+        toast.error(translate("toastSandboxNotOpen", { name: record.name }));
+        return;
+      }
+      setSandboxReviewTarget(record);
+    },
+    [toast],
+  );
 
   // A query or preview failed because the connection dropped (server idle
   // timeout, network or VPN loss). Tear the now-dead session down the same way
@@ -6060,7 +6137,10 @@ export default function App() {
                       !!sessionId &&
                       !!selectedProfile &&
                       openConnections.some(
-                        (c) => c.sessionId !== sessionId && c.profile.driver === selectedProfile.driver,
+                        (c) =>
+                          c.sessionId !== sessionId &&
+                          c.profile.driver === selectedProfile.driver &&
+                          !isSandboxProfileId(c.profile.id),
                       )
                     }
                     explainMode={tab.kind === "explain"}
@@ -6454,6 +6534,7 @@ export default function App() {
                 name: selectedProfile.name,
                 color: selectedProfile.color ?? null,
                 isProduction: selectedProfile.is_production,
+                isSandbox: isSandboxProfileId(selectedProfile.id),
                 status: connectionStatus,
               }
             : null
@@ -6702,6 +6783,11 @@ export default function App() {
             onShowDatabaseSizes={handleShowDatabaseSizes}
             onCopyTableName={handleCopyTableName}
             onOpenObjectDefinition={handleOpenObjectDefinition}
+            onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
+            sandboxes={sandboxes}
+            onOpenSandbox={handleOpenSandbox}
+            onReviewSandbox={handleReviewSandbox}
+            onDiscardSandbox={handleDiscardSandbox}
           />
         ) : sidebarTab === "snippets" ? (
           <SnippetList
@@ -7468,6 +7554,34 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {sandboxCreateTarget && sessionId && selectedProfile && (
+          <SandboxCreateModal
+            key={sandboxCreateTarget.database}
+            sessionId={sessionId}
+            database={sandboxCreateTarget.database}
+            defaultName={`${selectedProfile.name} / ${sandboxCreateTarget.database}`}
+            onClose={() => setSandboxCreateTarget(null)}
+            onCreated={handleSandboxCreated}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {sandboxReviewTarget && (
+          <SandboxReviewModal
+            key={sandboxReviewTarget.id}
+            sandbox={sandboxReviewTarget}
+            sandboxSessionId={
+              openConnections.find((c) => c.profile.id === sandboxProfileId(sandboxReviewTarget.id))
+                ?.sessionId ?? ""
+            }
+            openConnections={openConnections.filter((c) => !isSandboxProfileId(c.profile.id))}
+            onClose={() => setSandboxReviewTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {broadcastRequest && sessionId && selectedProfile && (
           <BroadcastModal
             sql={broadcastRequest.sql}
@@ -7475,7 +7589,10 @@ export default function App() {
             baselineSessionId={sessionId}
             baselineProfile={selectedProfile}
             candidates={openConnections.filter(
-              (c) => c.sessionId !== sessionId && c.profile.driver === selectedProfile.driver,
+              (c) =>
+                c.sessionId !== sessionId &&
+                c.profile.driver === selectedProfile.driver &&
+                !isSandboxProfileId(c.profile.id),
             )}
             tableColumns={broadcastRequest.tableColumns}
             initialBatch={settings.defaultDisplayCount}

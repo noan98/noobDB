@@ -643,6 +643,64 @@ export interface DataDiff {
   target_count: number;
 }
 
+/**
+ * サンドボックス (壊せる砂場、#747) の非秘密メタデータ。実データはローカル
+ * SQLite ファイル (`file_path`) に持ち、`session_id` (作成/一覧取得後にセッション
+ * として開いたもの) を通じて通常のエディタ/グリッド UI でそのまま操作できる。
+ * `source_driver` は書き戻し SQL の方言 (`generateSyncSql` / `generateDataSyncSql`
+ * が使う `target_driver`) を決める。
+ */
+export interface SandboxRecord {
+  id: string;
+  name: string;
+  source_profile_id: string | null;
+  source_driver: DriverKind;
+  source_database: string | null;
+  /** 実データを持つテーブル名 (影の base スナップショットは含まない)。 */
+  tables: string[];
+  row_limit: number;
+  file_path: string;
+  created_at: string;
+  /** 行数上限に達し部分コピーになったテーブル。 */
+  truncated_tables: string[];
+}
+
+/** `createSandbox` の戻り値。`session_id` は通常のセッションと同様に扱える。 */
+export interface SandboxCreateResponse {
+  sandbox: SandboxRecord;
+  session_id: string;
+}
+
+/**
+ * データ書き戻しの行競合 1 件: サンドボックスと元 DB の双方が、コピー取得後に
+ * 同じ主キーの行を独立に変更した状態。`external_row` は元 DB の**現在の**値
+ * (元 DB 側で削除されていれば null)。
+ */
+export interface SandboxConflict {
+  key: CellValue[];
+  desired_status: RowStatus;
+  external_status: RowStatus;
+  external_row: CellValue[] | null;
+}
+
+/** `sandboxTableDiff` の戻り値。 */
+export interface SandboxTableDiffResult {
+  /** サンドボックスでの変更 (base 比較)。`generateDataSyncSql` にそのまま渡せる。 */
+  desired: DataDiff;
+  /** `source_checked` が false のときは常に空 (競合未検査、「競合なし」の意味ではない)。 */
+  conflicts: SandboxConflict[];
+  source_checked: boolean;
+}
+
+/** `sandboxSchemaDiff` の戻り値。 */
+export interface SandboxSchemaDiffResult {
+  /** サンドボックスでのスキーマ変更 (base 比較)。`generateSyncSql` にそのまま渡せる。 */
+  desired: SchemaDiff;
+  /** サンドボックス・元 DB の双方でスキーマが変わったテーブル名 (情報提供のみ)。 */
+  external_changed_tables: string[];
+  source_checked: boolean;
+}
+
 /** Application log contents plus the on-disk file path, for the Settings viewer. */
 export interface LogView {
   text: string;
@@ -1132,6 +1190,89 @@ export const api = {
       database: params.database ?? null,
       statements: params.statements,
     }).then((r) => parseResponse(schemas.numberResponse, r, "apply_sync_sql")),
+
+  /**
+   * サンドボックス (壊せる砂場、#747) を作成する。`sourceSessionId` の接続から
+   * `tables` (+ `includeRelated` なら FK の推移的閉包) をローカル SQLite へ
+   * コピーし、通常のセッションとして開いて返す。
+   */
+  createSandbox: (params: {
+    sourceSessionId: string;
+    sourceDatabase?: string | null;
+    name: string;
+    tables: string[];
+    includeRelated: boolean;
+    rowLimit?: number | null;
+  }) =>
+    invoke<SandboxCreateResponse>("create_sandbox", {
+      sourceSessionId: params.sourceSessionId,
+      sourceDatabase: params.sourceDatabase ?? null,
+      name: params.name,
+      tables: params.tables,
+      includeRelated: params.includeRelated,
+      rowLimit: params.rowLimit ?? null,
+    }).then((r) => parseResponse(schemas.sandboxCreateResponse, r, "create_sandbox")),
+  listSandboxes: () =>
+    invoke<SandboxRecord[]>("list_sandboxes").then((r) =>
+      parseResponse(schemas.sandboxRecordArray, r, "list_sandboxes"),
+    ),
+  /** サンドボックスを破棄する。開いていれば `sessionId` のセッションも閉じ、
+   *  ローカル SQLite ファイルを削除する。 */
+  discardSandbox: (sandboxId: string, sessionId?: string | null) =>
+    invoke<void>("discard_sandbox", { sandboxId, sessionId: sessionId ?? null }),
+  /** サンドボックスの 1 テーブル分のデータ差分 (書き戻し案 + 競合) を計算する。
+   *  `sourceSessionId` を渡すと元 DB の現在値と突き合わせて競合を検出する。 */
+  sandboxTableDiff: (params: {
+    sandboxId: string;
+    sandboxSessionId: string;
+    table: string;
+    sourceSessionId?: string | null;
+    limit?: number | null;
+  }) =>
+    invoke<SandboxTableDiffResult>("sandbox_table_diff", {
+      sandboxId: params.sandboxId,
+      sandboxSessionId: params.sandboxSessionId,
+      table: params.table,
+      sourceSessionId: params.sourceSessionId ?? null,
+      limit: params.limit ?? null,
+    }).then((r) => parseResponse(schemas.sandboxTableDiffResult, r, "sandbox_table_diff")),
+  /** サンドボックス全体のスキーマ差分 (書き戻し案 + 外部競合テーブル一覧) を計算する。 */
+  sandboxSchemaDiff: (params: {
+    sandboxId: string;
+    sandboxSessionId: string;
+    sourceSessionId?: string | null;
+  }) =>
+    invoke<SandboxSchemaDiffResult>("sandbox_schema_diff", {
+      sandboxId: params.sandboxId,
+      sandboxSessionId: params.sandboxSessionId,
+      sourceSessionId: params.sourceSessionId ?? null,
+    }).then((r) => parseResponse(schemas.sandboxSchemaDiffResult, r, "sandbox_schema_diff")),
+  /** 競合を「スキップ」解決した行を `diff` から取り除く。純粋な変換で副作用なし。 */
+  filterSandboxDataDiff: (diff: DataDiff, skipKeys: CellValue[][]) =>
+    invoke<DataDiff>("filter_sandbox_data_diff", { diff, skipKeys }).then((r) =>
+      parseResponse(schemas.dataDiff, r, "filter_sandbox_data_diff"),
+    ),
+  /**
+   * 書き戻しに成功した直後に呼び、サンドボックスの base スナップショットを
+   * 適用済みの行へ進める。呼ばないと、次回の差分計算で「サンドボックス側も
+   * 元 DB 側も変化した」という偽の競合が (実際にはもう一致している行に対して)
+   * 出続けてしまう。`applied` には実際に適用した SQL の生成元 (`generateDataSyncSql`
+   * に渡した後の) `DataDiff` を渡す。
+   */
+  sandboxAdvanceBase: (params: {
+    sandboxId: string;
+    sandboxSessionId: string;
+    table: string;
+    applied: DataDiff;
+    allowDelete: boolean;
+  }) =>
+    invoke<void>("sandbox_advance_base", {
+      sandboxId: params.sandboxId,
+      sandboxSessionId: params.sandboxSessionId,
+      table: params.table,
+      applied: params.applied,
+      allowDelete: params.allowDelete,
+    }),
 
   listProfiles: () =>
     invoke<ConnectionProfile[]>("list_profiles").then((r) =>

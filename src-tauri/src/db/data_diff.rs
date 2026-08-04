@@ -211,8 +211,10 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 }
 
 /// タグ付きのキー署名。整数 `1` と文字列 `"1"` を区別する (`compute_data_diff`
-/// のペアリングと同じ表現)。`generate_data_sync_sql` の重複キー再計算でも使う。
-fn key_signature(key: &[Value]) -> String {
+/// のペアリングと同じ表現)。`generate_data_sync_sql` の重複キー再計算に加え、
+/// `db::sandbox` の競合検出 (同じ base に対する 2 つの diff の突き合わせ) でも
+/// 同じ表現で PK を突き合わせるため `pub(crate)`。
+pub(crate) fn key_signature(key: &[Value]) -> String {
     key.iter()
         .map(|v| format!("{v:?}"))
         .collect::<Vec<_>>()

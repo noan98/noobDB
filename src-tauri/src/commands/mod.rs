@@ -11,6 +11,7 @@ pub mod logs;
 pub mod process;
 pub mod profiles;
 pub mod query;
+pub mod sandbox;
 pub mod schema;
 pub mod server;
 pub mod snippets;
