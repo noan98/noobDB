@@ -126,6 +126,10 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
   ],
   postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges", "formatSql"],
   sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql"],
+  // MSSQL (#729): `dump_database` is not implemented yet for this driver
+  // (backend returns `InvalidInput`, see `commands/dump.rs`) — no toggles to
+  // show. The modal can still be opened; running it just surfaces that error.
+  mssql: [],
 };
 
 type Status =

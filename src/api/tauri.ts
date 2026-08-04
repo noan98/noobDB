@@ -69,7 +69,7 @@ function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   });
 }
 
-export type DriverKind = "mysql" | "postgres" | "sqlite";
+export type DriverKind = "mysql" | "postgres" | "sqlite" | "mssql";
 
 export type SshAuthMethod = "key" | "agent" | "password";
 
@@ -743,6 +743,79 @@ export interface DumpOptions {
   formatSql?: boolean;
 }
 
+// --- タスクスケジューラ (#730) -------------------------------------------
+
+/** タスクが実行するアクション。読み取り専用に限定される (バックエンドが
+ *  作成時・実行時の両方で `sql` を検証する)。 */
+export type TaskAction =
+  | {
+      kind: "export_query";
+      sql: string;
+      database: string | null;
+      format: ExportFormat;
+      /** 出力先パス。`{date}` / `{datetime}` プレースホルダに対応 (UTC)。 */
+      output_path: string;
+      /** SQL INSERT 形式のときの対象テーブル名。他形式では無視。 */
+      sql_table?: string | null;
+      /** SQL INSERT 形式のときの 1 文あたり行数。他形式では無視。 */
+      sql_batch_size?: number | null;
+    }
+  | {
+      kind: "dump";
+      database: string;
+      output_path: string;
+      options: DumpOptions;
+    };
+
+/** タスクの発火スケジュール。時刻はすべて UTC で解釈する。 */
+export type TaskSchedule =
+  | { kind: "interval"; minutes: number }
+  | { kind: "daily"; hour: number; minute: number };
+
+export interface TaskDefinition {
+  id: string;
+  name: string;
+  profile_id: string;
+  action: TaskAction;
+  schedule: TaskSchedule;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_status: string | null;
+}
+
+export interface SaveTaskRequest {
+  id?: string | null;
+  name: string;
+  profile_id: string;
+  action: TaskAction;
+  schedule: TaskSchedule;
+  enabled: boolean;
+}
+
+/** 1 回分のタスク実行ログ (`task_runs.sqlite`、クエリ履歴とは別)。 */
+export interface TaskRun {
+  id: number;
+  task_id: string;
+  started_at: string;
+  finished_at: string;
+  status: string;
+  error: string | null;
+  output_path: string | null;
+  rows: number | null;
+  bytes: number | null;
+  elapsed_ms: number;
+  catch_up: boolean;
+}
+
+export interface SchedulerSettings {
+  /** true: アプリ非起動中に過ぎたスケジュールを次回起動時に 1 回だけ追い掛け
+   *  実行する。false (既定): 過ぎた分はスキップする。 */
+  catch_up_missed: boolean;
+}
+
 /**
  * Source data format for an import. CSV uses the delimiter/quote/header options;
  * JSON (array of objects) and NDJSON (one object per line) key rows by field
@@ -1395,6 +1468,45 @@ export const api = {
     invoke<number>("write_binary_file", { path, data: Array.from(data) }).then((r) =>
       parseResponse(schemas.numberResponse, r, "write_binary_file"),
     ),
+
+  // --- タスクスケジューラ (#730) ---
+
+  listTasks: () =>
+    invoke<TaskDefinition[]>("list_tasks").then((r) =>
+      parseResponse(schemas.taskDefinitionArray, r, "list_tasks"),
+    ),
+  saveTask: (req: SaveTaskRequest) =>
+    invoke<TaskDefinition>("save_task", { req }).then((r) =>
+      parseResponse(schemas.taskDefinition, r, "save_task"),
+    ),
+  deleteTask: (id: string) => invoke<void>("delete_task", { id }),
+  setTaskEnabled: (id: string, enabled: boolean) =>
+    invoke<TaskDefinition>("set_task_enabled", { id, enabled }).then((r) =>
+      parseResponse(schemas.taskDefinition, r, "set_task_enabled"),
+    ),
+  /** タスクを即座に 1 回実行する (有効/無効を問わない)。完了までブロックする —
+   *  ダンプ等は数分かかりうるので、呼び出し側で進行中表示を出すこと。 */
+  runTaskNow: (id: string) =>
+    invoke<TaskRun>("run_task_now", { id }).then((r) =>
+      parseResponse(schemas.taskRun, r, "run_task_now"),
+    ),
+  listTaskRuns: (taskId?: string | null, limit?: number) =>
+    invoke<TaskRun[]>("list_task_runs", {
+      taskId: taskId ?? null,
+      limit: limit ?? null,
+    }).then((r) => parseResponse(schemas.taskRunArray, r, "list_task_runs")),
+  clearTaskRuns: (taskId?: string | null) =>
+    invoke<number>("clear_task_runs", { taskId: taskId ?? null }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "clear_task_runs"),
+    ),
+  getSchedulerSettings: () =>
+    invoke<SchedulerSettings>("get_scheduler_settings").then((r) =>
+      parseResponse(schemas.schedulerSettings, r, "get_scheduler_settings"),
+    ),
+  setSchedulerSettings: (settings: SchedulerSettings) =>
+    invoke<SchedulerSettings>("set_scheduler_settings", { settings }).then((r) =>
+      parseResponse(schemas.schedulerSettings, r, "set_scheduler_settings"),
+    ),
 };
 
 /** `cancelStream` の戻り値 (#685)。`cancelled` が `false` のときはストリームが
@@ -1849,4 +1961,37 @@ export async function listenConnectProgress(
     );
     if (payload.attemptId === attemptId) onPhase(payload.phase);
   });
+}
+
+/** タスクスケジューラの実行完了 (#730)。`task-run:done` / `task-run:error` の
+ *  どちらでも同じ形。`status` で成否を判別する。 */
+export interface TaskRunEvent {
+  taskId: string;
+  taskName: string;
+  status: string;
+  message: string | null;
+  outputPath: string | null;
+  catchUp: boolean;
+}
+
+/**
+ * バックグラウンドスケジューラが発火させた `task-run:*` イベントをグローバルに
+ * 購読する (特定の `streamId` を持たない — アプリ起動中いつでも、どのタブからでも
+ * 発火しうるため)。App のマウント時に一度だけ購読して、失敗トースト/OS 通知と、
+ * タスク管理画面が開いていれば一覧の再読み込みに使う想定。
+ */
+export async function listenTaskRunEvents(handlers: {
+  onDone?: (e: TaskRunEvent) => void;
+  onError?: (e: TaskRunEvent) => void;
+}): Promise<UnlistenFn> {
+  const parse = (event: string, payload: unknown) =>
+    parseResponse<TaskRunEvent>(schemas.taskRunEvent, payload as TaskRunEvent, event);
+  return registerListeners([
+    listen<TaskRunEvent>("task-run:done", (e) => {
+      handlers.onDone?.(parse("task-run:done", e.payload));
+    }),
+    listen<TaskRunEvent>("task-run:error", (e) => {
+      handlers.onError?.(parse("task-run:error", e.payload));
+    }),
+  ]);
 }

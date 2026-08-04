@@ -131,6 +131,12 @@ const SECTIONS: Section[] = [
         impact: "no",
         noteKey: "helpSandboxNote",
       },
+      {
+        titleKey: "helpTaskSchedulerTitle",
+        descKey: "helpTaskSchedulerDesc",
+        impact: "no",
+        noteKey: "helpTaskSchedulerNote",
+      },
     ],
   },
   {

@@ -535,7 +535,11 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
         Value::Null => "NULL".to_string(),
         Value::Bool(b) => match driver {
             DriverKind::Postgres => (if *b { "TRUE" } else { "FALSE" }).to_string(),
-            DriverKind::Mysql | DriverKind::Sqlite => (if *b { "1" } else { "0" }).to_string(),
+            // T-SQL has no boolean type; `BIT` columns take 0/1 (same literal
+            // spelling as MySQL/SQLite's integer-backed booleans).
+            DriverKind::Mysql | DriverKind::Sqlite | DriverKind::Mssql => {
+                (if *b { "1" } else { "0" }).to_string()
+            }
         },
         Value::Int(i) => i.to_string(),
         Value::UInt(u) => u.to_string(),
@@ -560,7 +564,10 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
                             "'-Infinity'".to_string()
                         }
                     }
-                    DriverKind::Mysql | DriverKind::Sqlite => "NULL".to_string(),
+                    // SQL Server has no NaN/Infinity float literal either.
+                    DriverKind::Mysql | DriverKind::Sqlite | DriverKind::Mssql => {
+                        "NULL".to_string()
+                    }
                 }
             }
         }
@@ -568,6 +575,8 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
         Value::Bytes(hex) => match driver {
             DriverKind::Mysql | DriverKind::Sqlite => format!("X'{hex}'"),
             DriverKind::Postgres => format!("'\\x{hex}'"),
+            // T-SQL binary literal: an unquoted `0x` prefix.
+            DriverKind::Mssql => format!("0x{hex}"),
         },
     }
 }
@@ -575,7 +584,9 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
 fn quote_string(driver: DriverKind, s: &str) -> String {
     let escaped = match driver {
         DriverKind::Mysql => s.replace('\\', "\\\\").replace('\'', "''"),
-        DriverKind::Postgres | DriverKind::Sqlite => s.replace('\'', "''"),
+        // T-SQL, like PostgreSQL/SQLite, treats `\` as an ordinary character
+        // inside a string literal — only the quote char itself doubles.
+        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::Mssql => s.replace('\'', "''"),
     };
     format!("'{escaped}'")
 }
