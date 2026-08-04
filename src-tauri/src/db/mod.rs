@@ -303,6 +303,9 @@ impl Connection {
                     .await
             }
             Connection::DuckDb(c) => {
+                c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
+                    .await
+            }
             Connection::Mssql(c) => {
                 c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
                     .await
@@ -343,6 +346,9 @@ impl Connection {
                     .await
             }
             Connection::DuckDb(c) => {
+                c.import_rows(database, table, columns, rows, batch_size, on_progress)
+                    .await
+            }
             Connection::Mssql(c) => {
                 c.import_rows(database, table, columns, rows, batch_size, on_progress)
                     .await
@@ -404,8 +410,10 @@ impl Connection {
     ) -> Result<bool> {
         match self {
             Connection::MySql(c) => c.table_is_transactional(database, table).await,
-            Connection::Postgres(_) | Connection::Sqlite(_) | Connection::DuckDb(_) => Ok(true),
-            Connection::Postgres(_) | Connection::Sqlite(_) | Connection::Mssql(_) => Ok(true),
+            Connection::Postgres(_)
+            | Connection::Sqlite(_)
+            | Connection::DuckDb(_)
+            | Connection::Mssql(_) => Ok(true),
         }
     }
 
@@ -1140,7 +1148,7 @@ pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
 pub fn apply_auto_limit_for(driver: DriverKind, sql: &str, limit: usize) -> Option<String> {
     match driver {
         DriverKind::Mssql => apply_auto_limit_mssql(sql, limit),
-        DriverKind::Mysql | DriverKind::Postgres | DriverKind::Sqlite => {
+        DriverKind::Mysql | DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
             apply_auto_limit(sql, limit)
         }
     }

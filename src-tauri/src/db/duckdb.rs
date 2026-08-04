@@ -74,6 +74,10 @@ pub struct DuckDbConn {
     /// (`begin_transaction` / `execute_in_transaction` / `finish_transaction`).
     /// `None` when no transaction is active.
     tx: tokio::sync::Mutex<Option<duckdb::Connection>>,
+    /// Session init SQL (#522), re-applied to every cloned connection by
+    /// [`clone_conn`](Self::clone_conn) — see that method's doc comment for
+    /// why a DuckDB clone needs this independently of the seed connection.
+    init_sql: Option<String>,
 }
 
 impl DuckDbConn {
@@ -96,9 +100,10 @@ impl DuckDbConn {
             )));
         }
         let init_sql = init_sql_of(opts);
+        let init_sql_for_seed = init_sql.clone();
         let seed = run_blocking(move || -> Result<duckdb::Connection> {
             let conn = duckdb::Connection::open(&path)?;
-            if let Some(sql) = init_sql {
+            if let Some(sql) = init_sql_for_seed {
                 conn.execute_batch(&sql)?;
             }
             Ok(conn)
@@ -107,6 +112,7 @@ impl DuckDbConn {
         Ok(Self {
             seed: StdMutex::new(seed),
             tx: tokio::sync::Mutex::new(None),
+            init_sql,
         })
     }
 
@@ -123,15 +129,32 @@ impl DuckDbConn {
         *guard = None;
     }
 
-    /// Clones a fresh, private connection off `seed`. Cheap (no I/O beyond a
-    /// C API call to attach to the already-open database) so it's fine to
-    /// call synchronously from an async fn.
+    /// Clones a fresh, private connection off `seed` and re-applies session
+    /// init SQL (#522) to it. Unlike a network-based driver's connection pool
+    /// (where sqlx's `after_connect` hook runs once per physical connection
+    /// as the pool grows), a DuckDB clone does **not** inherit the original
+    /// connection's session-scoped state (`SET`/`PRAGMA` settings like
+    /// `search_path`/`memory_limit`) — each `try_clone()`'d connection starts
+    /// from DuckDB's defaults. So init SQL must be reapplied here on every
+    /// clone for the "runs on each physical connection" contract (CLAUDE.md
+    /// #522) to actually hold — otherwise only the one-off seed connection
+    /// from `connect` would ever see it, and every per-call clone used by the
+    /// rest of this module would silently skip it. Both `try_clone()` and a
+    /// short SET/PRAGMA batch are cheap, synchronous DuckDB C API calls (no
+    /// I/O), so — like the plain clone — this is safe to call directly from
+    /// async code without a `spawn_blocking` hop.
     fn clone_conn(&self) -> Result<duckdb::Connection> {
-        let guard = self
-            .seed
-            .lock()
-            .map_err(|_| AppError::Other("duckdb: connection lock poisoned".into()))?;
-        Ok(guard.try_clone()?)
+        let conn = {
+            let guard = self
+                .seed
+                .lock()
+                .map_err(|_| AppError::Other("duckdb: connection lock poisoned".into()))?;
+            guard.try_clone()?
+        };
+        if let Some(sql) = &self.init_sql {
+            conn.execute_batch(sql)?;
+        }
+        Ok(conn)
     }
 
     pub async fn execute(&self, sql: &str, _database: Option<&str>) -> Result<QueryResult> {
@@ -200,14 +223,19 @@ impl DuckDbConn {
 
     /// Runs `sql` on a fresh connection, streaming rows to `on_batch` in
     /// `initial_batch`/`chunk_size`-sized groups. The blocking DuckDB work
-    /// happens on a dedicated worker thread that pushes batches through an
-    /// unbounded channel; the async loop here calls `on_batch` in the normal
-    /// (non-blocking-thread) async context, so `on_batch` never needs to be
-    /// `Send`. Cancellation is best-effort: dropping the receiving loop (task
-    /// abort) stops *consuming* further batches immediately, and the RAII
-    /// guard around the worker's [`duckdb::InterruptHandle`] additionally
-    /// asks DuckDB itself to stop the in-flight query as soon as it next
-    /// checks for interruption.
+    /// happens on a dedicated worker thread that pushes batches through a
+    /// **bounded** channel (`STREAM_CHANNEL_CAPACITY`) via `blocking_send` —
+    /// unlike an unbounded channel, this backpressures the worker (and thus
+    /// DuckDB row fetching) to the pace `on_batch` actually drains at, so a
+    /// consumer that's slower than DuckDB can produce rows (e.g. writing each
+    /// batch to disk for an export) can't let unbounded in-flight batches
+    /// pile up in memory ahead of it. The async loop here calls `on_batch` in
+    /// the normal (non-blocking-thread) async context, so `on_batch` never
+    /// needs to be `Send`. Cancellation is best-effort: dropping the
+    /// receiving loop (task abort) stops *consuming* further batches
+    /// immediately, and the RAII guard around the worker's
+    /// [`duckdb::InterruptHandle`] additionally asks DuckDB itself to stop
+    /// the in-flight query as soon as it next checks for interruption.
     pub async fn execute_stream<F>(
         &self,
         sql: &str,
@@ -244,13 +272,16 @@ impl DuckDbConn {
         let interrupt = conn.interrupt_handle();
         let mut interrupt_guard = InterruptOnDrop::new(interrupt);
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamMsg>();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamMsg>(STREAM_CHANNEL_CAPACITY);
         let worker = tokio::task::spawn_blocking(move || {
             let outcome = (|| -> Result<u64> {
                 let mut stmt = conn.prepare(&sql_owned)?;
                 let mut duck_rows = stmt.query([])?;
                 let columns = duck_rows.as_ref().map(build_columns).unwrap_or_default();
-                if tx.send(StreamMsg::Columns(columns.clone())).is_err() {
+                if tx
+                    .blocking_send(StreamMsg::Columns(columns.clone()))
+                    .is_err()
+                {
                     return Ok(0);
                 }
                 let mut buffer: Vec<Vec<Value>> = Vec::new();
@@ -261,7 +292,7 @@ impl DuckDbConn {
                     if buffer.len() >= target {
                         total += buffer.len() as u64;
                         if tx
-                            .send(StreamMsg::Rows(std::mem::take(&mut buffer)))
+                            .blocking_send(StreamMsg::Rows(std::mem::take(&mut buffer)))
                             .is_err()
                         {
                             return Ok(total);
@@ -271,16 +302,16 @@ impl DuckDbConn {
                 }
                 if !buffer.is_empty() {
                     total += buffer.len() as u64;
-                    let _ = tx.send(StreamMsg::Rows(buffer));
+                    let _ = tx.blocking_send(StreamMsg::Rows(buffer));
                 }
                 Ok(total)
             })();
             match outcome {
                 Ok(total) => {
-                    let _ = tx.send(StreamMsg::Done(total));
+                    let _ = tx.blocking_send(StreamMsg::Done(total));
                 }
                 Err(e) => {
-                    let _ = tx.send(StreamMsg::Error(e));
+                    let _ = tx.blocking_send(StreamMsg::Error(e));
                 }
             }
         });
@@ -531,7 +562,13 @@ impl DuckDbConn {
     /// Runs `statements` sequentially inside a single transaction
     /// (all-or-nothing). DuckDB has transactional DDL (like PostgreSQL), so
     /// unlike MySQL a `CREATE TABLE` mixed into the batch rolls back cleanly
-    /// with the rest on failure.
+    /// with the rest on failure. Each statement is routed through the same
+    /// [`is_query_shape`] check [`run_sql_on`] uses — a `SELECT` mixed into
+    /// the batch (e.g. a user script that ends with a sanity-check query)
+    /// runs via `query()` and its rows are counted but otherwise discarded
+    /// (this API's contract is a single `rows_affected` total, not a
+    /// per-statement result set), rather than going through `execute()`,
+    /// which is meant for statements that don't return rows.
     pub async fn execute_transaction(
         &self,
         statements: &[String],
@@ -547,7 +584,17 @@ impl DuckDbConn {
             let result = (|| -> Result<u64> {
                 let mut affected = 0u64;
                 for sql in &statements {
-                    affected += conn.execute(sql, [])? as u64;
+                    affected += if is_query_shape(sql) {
+                        let mut stmt = conn.prepare(sql)?;
+                        let mut duck_rows = stmt.query([])?;
+                        let mut n = 0u64;
+                        while duck_rows.next()?.is_some() {
+                            n += 1;
+                        }
+                        n
+                    } else {
+                        conn.execute(sql, [])? as u64
+                    };
                 }
                 Ok(affected)
             })();
@@ -651,10 +698,10 @@ impl DuckDbConn {
         let table = table.to_string();
         run_blocking(move || -> Result<Vec<TableColumnInfo>> {
             let pk_cols = fetch_primary_key_columns(&conn, &db, &table)?;
-            let fks = fetch_foreign_keys(&conn, &db)?;
+            let fks = fetch_foreign_keys_for(&conn, &db, &table)?;
             let mut fk_by_col: std::collections::HashMap<String, (String, Option<String>)> =
                 std::collections::HashMap::new();
-            for fk in fks.into_iter().filter(|fk| fk.table == table) {
+            for fk in fks {
                 fk_by_col.insert(fk.column, (fk.referenced_table, fk.referenced_column));
             }
 
@@ -706,7 +753,7 @@ impl DuckDbConn {
         let db = db.to_string();
         let table = table.to_string();
         run_blocking(move || -> Result<Vec<IndexInfo>> {
-            let pk_cols = fetch_primary_key_for_ident(&conn, &table)?;
+            let pk_cols = fetch_primary_key_in_schema(&conn, &db, &table)?;
             let mut out = Vec::new();
             if !pk_cols.is_empty() {
                 out.push(IndexInfo {
@@ -892,8 +939,15 @@ impl DuckDbConn {
     }
 }
 
+/// Capacity of the bounded channel [`DuckDbConn::execute_stream`]'s worker
+/// thread uses to hand batches to the consuming async loop. A handful of
+/// in-flight batches is enough to keep the pipeline full without a slow
+/// consumer (e.g. streaming an export to a slow disk) letting DuckDB race
+/// ahead and buffer unbounded rows in memory.
+const STREAM_CHANNEL_CAPACITY: usize = 8;
+
 /// Message sent from the `execute_stream` worker thread to the consuming
-/// async loop over an unbounded channel (see [`DuckDbConn::execute_stream`]).
+/// async loop over a bounded channel (see [`DuckDbConn::execute_stream`]).
 enum StreamMsg {
     Columns(Vec<Column>),
     Rows(Vec<Vec<Value>>),
@@ -1119,11 +1173,13 @@ fn u128_to_value(n: u128) -> Value {
 
 /// Renders a nested DuckDB container value (`LIST`/`STRUCT`/`ARRAY`/`MAP`) as
 /// compact JSON text for display, since this app's wire format has no native
-/// container `Value` variant. Best-effort: huge (128-bit) integers nested
-/// inside a container are cast to `i64` (saturating to `String` when out of
-/// range would need `serde_json`'s arbitrary-precision feature, which this
-/// app doesn't enable) — only the top-level scalar path
-/// ([`duckdb_value_to_value`]) needs to be precise for those.
+/// container `Value` variant. Huge (128-bit) integers nested inside a
+/// container fall back to a JSON *string* of the exact value when they don't
+/// fit in `i64`/`u64` (this app doesn't enable `serde_json`'s
+/// arbitrary-precision feature, so a JSON number can't carry the full 128
+/// bits) — matching the top-level scalar path's ([`duckdb_value_to_value`])
+/// "typed first, string fallback" pattern instead of silently truncating to
+/// `0`.
 fn json_stringify(v: &DuckValue) -> String {
     serde_json::to_string(&duckdb_value_to_json(v)).unwrap_or_else(|_| format!("{v:?}"))
 }
@@ -1136,8 +1192,12 @@ fn duckdb_value_to_json(v: &DuckValue) -> serde_json::Value {
         DuckValue::SmallInt(n) => (*n).into(),
         DuckValue::Int(n) => (*n).into(),
         DuckValue::BigInt(n) => (*n).into(),
-        DuckValue::HugeInt(n) => i64::try_from(*n).unwrap_or(0).into(),
-        DuckValue::UHugeInt(n) => u64::try_from(*n).unwrap_or(0).into(),
+        DuckValue::HugeInt(n) => i64::try_from(*n)
+            .map(serde_json::Value::from)
+            .unwrap_or_else(|_| n.to_string().into()),
+        DuckValue::UHugeInt(n) => u64::try_from(*n)
+            .map(serde_json::Value::from)
+            .unwrap_or_else(|_| n.to_string().into()),
         DuckValue::UTinyInt(n) => (*n).into(),
         DuckValue::USmallInt(n) => (*n).into(),
         DuckValue::UInt(n) => (*n).into(),
@@ -1286,6 +1346,13 @@ fn fetch_primary_key_columns(
 /// so it's normalised first. Returns the columns in declaration order
 /// (`ORDER BY kcu.ordinal_position`), unlike the `HashSet` variant used for
 /// membership tests.
+///
+/// **Not schema-scoped**: the caller only has a bare table name parsed out of
+/// raw SQL (no schema qualifier to work with — `extract_target_table` doesn't
+/// resolve `search_path`), so this can return the wrong table's PK if two
+/// schemas both have a table of this name. Callers that *do* know the schema
+/// (e.g. [`DuckDbConn::list_indexes`]) should use
+/// [`fetch_primary_key_in_schema`] instead.
 fn fetch_primary_key_for_ident(conn: &duckdb::Connection, ident: &str) -> Result<Vec<String>> {
     let table = strip_identifier_quotes(ident);
     let mut stmt = conn.prepare(
@@ -1304,12 +1371,61 @@ fn fetch_primary_key_for_ident(conn: &duckdb::Connection, ident: &str) -> Result
     Ok(names)
 }
 
+/// Like [`fetch_primary_key_for_ident`], but scoped to `schema` — used by
+/// callers (e.g. [`DuckDbConn::list_indexes`]) that know exactly which schema
+/// they're introspecting, so a same-named table in a different schema can't
+/// leak its PK columns in.
+fn fetch_primary_key_in_schema(
+    conn: &duckdb::Connection,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT kcu.column_name \
+         FROM information_schema.table_constraints tc \
+         JOIN information_schema.key_column_usage kcu \
+           ON tc.constraint_name = kcu.constraint_name \
+          AND tc.table_schema = kcu.table_schema \
+          AND tc.table_name = kcu.table_name \
+         WHERE tc.constraint_type = 'PRIMARY KEY' \
+           AND tc.table_schema = ? AND tc.table_name = ? \
+         ORDER BY kcu.ordinal_position",
+    )?;
+    let names = stmt
+        .query_map(duckdb::params![schema, table], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(names)
+}
+
 /// Every foreign-key relationship in `schema`, via the SQL-standard
 /// `table_constraints` + `key_column_usage` + `referential_constraints`
 /// join. Composite keys share `constraint_name`; `ordinal_position` pairs a
 /// referencing column with its corresponding referenced column.
 fn fetch_foreign_keys(conn: &duckdb::Connection, schema: &str) -> Result<Vec<ForeignKey>> {
-    let mut stmt = conn.prepare(
+    fetch_foreign_keys_where(conn, "tc.table_schema = ?", duckdb::params![schema])
+}
+
+/// Like [`fetch_foreign_keys`], but scoped to a single `table` — used by
+/// [`DuckDbConn::columns`] so it doesn't have to pull (and then discard) every
+/// other table's foreign keys in the schema just to look up one table's.
+fn fetch_foreign_keys_for(
+    conn: &duckdb::Connection,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ForeignKey>> {
+    fetch_foreign_keys_where(
+        conn,
+        "tc.table_schema = ? AND kcu.table_name = ?",
+        duckdb::params![schema, table],
+    )
+}
+
+fn fetch_foreign_keys_where(
+    conn: &duckdb::Connection,
+    extra_where: &str,
+    params: &[&dyn duckdb::ToSql],
+) -> Result<Vec<ForeignKey>> {
+    let sql = format!(
         "SELECT kcu.table_name, kcu.column_name, ccu.table_name, ccu.column_name, \
                 tc.constraint_name \
          FROM information_schema.table_constraints tc \
@@ -1323,10 +1439,11 @@ fn fetch_foreign_keys(conn: &duckdb::Connection, schema: &str) -> Result<Vec<For
            ON rc.unique_constraint_name = ccu.constraint_name \
           AND rc.unique_constraint_schema = ccu.table_schema \
           AND kcu.ordinal_position = ccu.ordinal_position \
-         WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = ? \
-         ORDER BY kcu.table_name, tc.constraint_name, kcu.ordinal_position",
-    )?;
-    let mut duck_rows = stmt.query(duckdb::params![schema])?;
+         WHERE tc.constraint_type = 'FOREIGN KEY' AND {extra_where} \
+         ORDER BY kcu.table_name, tc.constraint_name, kcu.ordinal_position"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut duck_rows = stmt.query(params)?;
     let mut out = Vec::new();
     while let Some(row) = duck_rows.next()? {
         out.push(ForeignKey {
@@ -1521,6 +1638,86 @@ mod tests {
     fn duckdb_literal_escapes_quotes_and_null() {
         assert_eq!(duckdb_literal(None), "NULL");
         assert_eq!(duckdb_literal(Some("a'b")), "'a''b'");
+    }
+
+    #[test]
+    fn build_duckdb_insert_generates_multi_row_values() {
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let rows = vec![
+            vec![Some("1".to_string()), Some("a'b".to_string())],
+            vec![None, Some("c".to_string())],
+        ];
+        assert_eq!(
+            build_duckdb_insert("t", &cols, &rows),
+            "INSERT INTO \"t\" (\"id\", \"name\") VALUES (1,'a''b'),(NULL,'c')"
+        );
+    }
+
+    #[test]
+    fn build_duckdb_insert_handles_no_rows() {
+        let cols = vec!["id".to_string()];
+        assert_eq!(
+            build_duckdb_insert("t", &cols, &[]),
+            "INSERT INTO \"t\" (\"id\") VALUES "
+        );
+    }
+
+    #[test]
+    fn format_date32_renders_ymd() {
+        assert_eq!(format_date32(0), "1970-01-01");
+        assert_eq!(format_date32(365), "1971-01-01");
+        assert_eq!(format_date32(-1), "1969-12-31");
+    }
+
+    #[test]
+    fn format_time64_renders_hms_micros() {
+        use duckdb::types::TimeUnit;
+        // 1h 1m 1.5s = 3661.5s = 3_661_500_000 microseconds.
+        assert_eq!(
+            format_time64(TimeUnit::Microsecond, 3_661_500_000),
+            "01:01:01.500000"
+        );
+        assert_eq!(format_time64(TimeUnit::Second, 0), "00:00:00.000000");
+    }
+
+    #[test]
+    fn format_timestamp_renders_date_and_time() {
+        use duckdb::types::TimeUnit;
+        assert_eq!(
+            format_timestamp(TimeUnit::Microsecond, 0),
+            "1970-01-01 00:00:00.000000"
+        );
+        // 90061.25s after epoch = 1970-01-02 01:01:01.25.
+        assert_eq!(
+            format_timestamp(TimeUnit::Microsecond, 90_061_250_000),
+            "1970-01-02 01:01:01.250000"
+        );
+    }
+
+    #[test]
+    fn format_interval_renders_components() {
+        assert_eq!(format_interval(1, 2, 3), "1mon 2d 3ns");
+        assert_eq!(format_interval(0, 0, 0), "0mon 0d 0ns");
+    }
+
+    /// A `HugeInt`/`UHugeInt` nested inside a container (LIST/STRUCT/ARRAY/
+    /// MAP) that doesn't fit in i64/u64 must fall back to a JSON *string* of
+    /// the exact value, not silently saturate to `0` (#899 review nitpick —
+    /// `0` would be actively misleading, unlike a string that preserves the
+    /// real value even though it's no longer a JSON number).
+    #[test]
+    fn json_stringify_preserves_out_of_range_huge_ints_in_containers() {
+        let huge = i128::MAX;
+        let list = DuckValue::List(vec![DuckValue::HugeInt(huge)]);
+        assert_eq!(json_stringify(&list), format!("[\"{huge}\"]"));
+
+        let huge_u = u128::MAX;
+        let list_u = DuckValue::List(vec![DuckValue::UHugeInt(huge_u)]);
+        assert_eq!(json_stringify(&list_u), format!("[\"{huge_u}\"]"));
+
+        // In-range values still render as plain JSON numbers.
+        let list_small = DuckValue::List(vec![DuckValue::HugeInt(42)]);
+        assert_eq!(json_stringify(&list_small), "[42]");
     }
 
     #[test]

@@ -24,13 +24,29 @@ fn temp_db_path(tag: &str) -> PathBuf {
     p
 }
 
-/// Creates a valid (empty) DuckDB database file at `path`, removing any
-/// leftover file from a previous crashed run first. Unlike SQLite, DuckDB
-/// does not treat an empty/0-byte file as "not yet initialized" — it needs a
-/// real file header, so this opens (and immediately closes) a connection with
-/// the `duckdb` crate directly rather than just touching an empty file.
-fn create_empty_db(path: &std::path::Path) {
+/// Removes `path` and its DuckDB `.wal` write-ahead-log sidecar. The `.wal`
+/// file is created while a transaction is active and normally cleaned up on
+/// checkpoint/close, but a killed process or a test that panics before
+/// `conn.close()` can leave one behind — and a leftover `.wal` sitting next
+/// to a *fresh*, same-named `.duckdb` file from a later test run would make
+/// DuckDB replay stale WAL entries against unrelated data. Every test that
+/// tears down its own temp database should use this instead of a bare
+/// `std::fs::remove_file` on just the `.duckdb` file.
+fn remove_db_files(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
+    let mut wal = path.as_os_str().to_owned();
+    wal.push(".wal");
+    let _ = std::fs::remove_file(wal);
+}
+
+/// Creates a valid (empty) DuckDB database file at `path`, removing any
+/// leftover file (and `.wal` sidecar) from a previous crashed run first.
+/// Unlike SQLite, DuckDB does not treat an empty/0-byte file as "not yet
+/// initialized" — it needs a real file header, so this opens (and
+/// immediately closes) a connection with the `duckdb` crate directly rather
+/// than just touching an empty file.
+fn create_empty_db(path: &std::path::Path) {
+    remove_db_files(path);
     let conn = duckdb::Connection::open(path).expect("create duckdb file");
     drop(conn);
 }
@@ -134,7 +150,7 @@ async fn duckdb_roundtrip_against_tempfile() {
     );
 
     conn.close().await;
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 /// #687-style resilient import: skip-mode commits good rows and reports bad
@@ -204,7 +220,7 @@ async fn duckdb_resilient_import_skips_and_locates_bad_rows() {
     );
 
     conn.close().await;
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 /// Explicit-transaction path (backs inline cell-edit Apply): begin → several
@@ -258,7 +274,7 @@ async fn duckdb_explicit_transaction_commits_and_rolls_back() {
     );
 
     conn.close().await;
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 /// Streaming SELECT execution delivers columns once, then rows in the
@@ -317,7 +333,7 @@ async fn duckdb_execute_stream_delivers_batched_rows() {
     );
 
     conn.close().await;
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 /// Cancellation: aborting the Tokio task driving `execute_stream` — exactly
@@ -372,7 +388,7 @@ async fn duckdb_execute_stream_is_cancellable() {
     }
 
     conn.close().await;
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 /// Auto-LIMIT (`db::apply_auto_limit`, shared across all drivers) actually
@@ -398,7 +414,7 @@ async fn duckdb_auto_limit_caps_a_plain_select() {
     assert_eq!(res.rows.len(), 25);
 
     conn.close().await;
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 // ---------------------------------------------------------------------------
@@ -472,7 +488,7 @@ async fn duckdb_read_only_session_rejects_writes_via_ipc() {
     assert!(matches!(&rows[0][1], t::Value::String(s) if s == "a"));
     verify.close().await;
 
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 #[tokio::test]
@@ -496,7 +512,7 @@ async fn duckdb_read_only_session_allows_select_via_ipc() {
     .expect("read-only session must allow WITH ... SELECT");
     assert_eq!(cte.rows.len(), 1);
 
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 #[tokio::test]
@@ -517,7 +533,7 @@ async fn duckdb_read_only_session_rejects_transaction_writes() {
     .expect_err("a batch containing one write must be rejected wholesale");
     assert!(matches!(err, t::AppError::ReadOnly(_)));
 
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 #[tokio::test]
@@ -528,7 +544,7 @@ async fn duckdb_read_only_session_rejects_csv_import() {
     let err = t::ensure_import_writable(&session).expect_err("read-only must reject import");
     assert!(matches!(err, t::AppError::ReadOnly(_)));
 
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 /// A writable session (the common case) can freely mix reads and writes
@@ -560,7 +576,7 @@ async fn duckdb_writable_session_allows_writes_via_ipc() {
         .expect("select must succeed");
     assert!(matches!(&res.rows[0][0], t::Value::Int(1)));
 
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 /// DuckDB has no server processes to list/kill — mirrors
@@ -579,7 +595,7 @@ async fn duckdb_process_commands_are_unsupported() {
     assert!(matches!(err, t::AppError::InvalidInput(_)));
 
     conn.close().await;
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 /// Foreign-key introspection (used to draw ER-diagram edges) via the
@@ -610,7 +626,7 @@ async fn duckdb_foreign_keys_are_introspected() {
     assert_eq!(fk.referenced_column.as_deref(), Some("id"));
 
     conn.close().await;
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
 }
 
 /// Missing file_path (and a nonexistent path) must surface a clean
@@ -684,5 +700,59 @@ async fn duckdb_init_sql_runs_on_each_connection() {
     }
 
     conn.close().await;
-    let _ = std::fs::remove_file(&path);
+    remove_db_files(&path);
+}
+
+/// Same contract as `duckdb_init_sql_runs_on_each_connection`, but with a
+/// setting whose effect is *behaviorally* observable rather than just
+/// readable via `current_setting` — `SET search_path` changes how an
+/// unqualified table name resolves. This is the regression test for a
+/// CodeRabbit review finding on #899: `DuckDbConn::clone_conn` originally
+/// only cloned the connection and never re-applied init SQL to it, so only
+/// the one-off seed connection from `connect` ever saw `search_path` — every
+/// per-call clone (which is what every `execute()` actually runs on) would
+/// silently fall back to DuckDB's default search path and fail to resolve
+/// `t` unqualified.
+#[tokio::test]
+async fn duckdb_init_sql_search_path_resolves_on_each_cloned_connection() {
+    let path = temp_db_path("initsql_searchpath");
+    create_empty_db(&path);
+
+    // Set up a non-default schema with a table, using a connection with no
+    // init SQL so the fixture itself doesn't depend on the behavior under
+    // test.
+    let setup_opts = t::duckdb_options(path.to_str().unwrap());
+    let setup = t::connect(&setup_opts).await.expect("setup connect");
+    setup
+        .execute("CREATE SCHEMA s", None)
+        .await
+        .expect("create schema");
+    setup
+        .execute("CREATE TABLE s.t (id INTEGER)", None)
+        .await
+        .expect("create table");
+    setup
+        .execute("INSERT INTO s.t VALUES (7)", None)
+        .await
+        .expect("insert row");
+    setup.close().await;
+
+    let mut opts = t::duckdb_options(path.to_str().unwrap());
+    opts.init_sql = Some("SET search_path = 's';".to_string());
+    let conn = t::connect(&opts).await.expect("connect with init_sql");
+
+    // Unqualified `t` only resolves if `search_path` took effect on the
+    // connection actually running the query — repeat across several calls so
+    // more than one physical clone (see `db/duckdb.rs::clone_conn`) is
+    // exercised, not just the seed connection from `connect`.
+    for _ in 0..3 {
+        let res = conn
+            .execute("SELECT id FROM t", None)
+            .await
+            .expect("unqualified `t` should resolve via search_path on every clone");
+        assert_eq!(res.rows, vec![vec![t::Value::Int(7)]]);
+    }
+
+    conn.close().await;
+    remove_db_files(&path);
 }
