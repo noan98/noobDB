@@ -248,6 +248,7 @@ pub async fn connect(
         connect_options: opts,
         reconnect_ssh,
         _tunnel: tunnel,
+        local_temp_file: None,
     };
     let id = state.insert(session).await;
     tracing::info!(
@@ -317,6 +318,18 @@ pub async fn ping_session(session_id: String, state: State<'_, AppState>) -> Res
 pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Result<()> {
     if let Some(sess) = state.remove(&session_id).await {
         sess.conn.close().await;
+        // A local cross-connection query session (#740) is volatile by
+        // design — its backing temp file is deleted here regardless of
+        // whether the user exported a copy via "ファイルに保存" (`vacuum_into`
+        // writes an independent file and doesn't change this file's fate).
+        // Best-effort: a failed cleanup just leaves an orphaned temp file
+        // (already under the OS temp dir, which itself gets reclaimed
+        // eventually) rather than failing the disconnect.
+        if let Some(path) = &sess.local_temp_file {
+            if let Err(e) = std::fs::remove_file(path) {
+                tracing::warn!(session_id = %session_id, path = %path.display(), error = %e, "failed to remove local session temp file");
+            }
+        }
         // Session (and its tunnel) drops with the last Arc reference.
         tracing::info!(session_id = %session_id, "disconnected");
     } else {
@@ -378,6 +391,7 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
         skip_history: old.skip_history,
         reconnect_ssh: old.reconnect_ssh.clone(),
         _tunnel: tunnel,
+        local_temp_file: old.local_temp_file.clone(),
     };
 
     // Swap the live session for the new one, then close the old connection. The

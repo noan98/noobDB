@@ -28,9 +28,9 @@ pub mod __test_api {
     pub use crate::db::diff::{compute_schema_diff, ColumnDiff, DiffStatus, SchemaDiff, TableDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-        QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-        TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+        Column, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
+        QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable,
+        StatementStat, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
     };
     pub use crate::db::{
         is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
@@ -59,6 +59,14 @@ pub mod __test_api {
     // `commands::import::CsvPreview` はコマンドモジュール内に定義されているが、
     // フィクスチャ生成専用のため struct そのものを再公開する。
     pub use crate::commands::import::CsvPreview;
+
+    // ローカル横断クエリ (#740) — Tauri を経由せずに統合テストから駆動できるよう、
+    // 各 IPC ハンドラの `_inner` コア (State なし) を再公開する。
+    pub use crate::commands::local::{
+        create_local_session_inner, drop_local_table_inner, list_local_tables_inner,
+        register_local_table_inner, save_local_database_inner, RegisterLocalTableRequest,
+        MAX_LOCAL_TABLE_ROWS,
+    };
 
     // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
     // 生成専用のピンポイント再エクスポート。`preview_query_stream` の行イベント
@@ -99,6 +107,7 @@ pub mod __test_api {
             skip_history: true,
             reconnect_ssh: None,
             _tunnel: None,
+            local_temp_file: None,
         }
     }
 
@@ -425,6 +434,10 @@ pub fn run() {
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "noobDB starting");
 
+    // ローカル横断クエリ (#740) の一時 DB は前回起動のセッション寿命に紐づくため、
+    // 新しいプロセスの起動時点で前回分は必ず無効 — 異常終了で残った分をここで掃除する。
+    commands::local::cleanup_stale_local_files();
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // 長時間クエリ完了時の OS デスクトップ通知 (#707)。フロントは
@@ -522,6 +535,11 @@ pub fn run() {
             commands::import::import_csv,
             commands::file::read_text_file,
             commands::file::write_binary_file,
+            commands::local::create_local_session,
+            commands::local::register_local_table,
+            commands::local::list_local_tables,
+            commands::local::drop_local_table,
+            commands::local::save_local_database,
             commands::tasks::list_tasks,
             commands::tasks::save_task,
             commands::tasks::delete_task,

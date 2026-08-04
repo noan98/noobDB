@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use advisor::UnusedIndexStats;
 use types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, StatementStat, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    Column, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
+    QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, StatementStat,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -714,6 +714,74 @@ impl Connection {
             Connection::Postgres(c) => c.close().await,
             Connection::Sqlite(c) => c.close().await,
             Connection::Mssql(c) => c.close().await,
+        }
+    }
+
+    // ── ローカル横断クエリ (#740) ──
+    //
+    // Only meaningful on the local SQLite engine (see `commands/local.rs`);
+    // MySQL/Postgres sessions never receive these calls through normal IPC
+    // (the frontend only offers registration on a local session), but the
+    // dispatch is still total so a stray direct call fails clearly instead of
+    // panicking. Keeping these on the `Connection` enum — rather than as
+    // free functions reaching into `Connection::Sqlite` from the command
+    // layer — is what keeps a future local-engine swap (e.g. DuckDB, #709)
+    // to just a new match arm here.
+
+    /// Registers a result set as a local table (create + bulk insert +
+    /// provenance metadata, atomically). See
+    /// `db::sqlite::SqliteConn::register_local_table`.
+    pub async fn register_local_table(
+        &self,
+        meta: &LocalTableMeta,
+        columns: &[Column],
+        rows: &[Vec<Value>],
+    ) -> Result<()> {
+        match self {
+            Connection::Sqlite(c) => c.register_local_table(meta, columns, rows).await,
+            Connection::MySql(_) | Connection::Postgres(_) | Connection::Mssql(_) => {
+                Err(AppError::InvalidInput(
+                    "local table registration is only supported on the local SQLite engine".into(),
+                ))
+            }
+        }
+    }
+
+    /// Every table registered on this local session, newest first.
+    pub async fn list_local_tables(&self) -> Result<Vec<LocalTableMeta>> {
+        match self {
+            Connection::Sqlite(c) => c.list_local_tables().await,
+            Connection::MySql(_) | Connection::Postgres(_) | Connection::Mssql(_) => {
+                Err(AppError::InvalidInput(
+                    "local table listing is only supported on the local SQLite engine".into(),
+                ))
+            }
+        }
+    }
+
+    /// Drops a registered local table and its provenance entry.
+    pub async fn drop_local_table(&self, name: &str) -> Result<()> {
+        match self {
+            Connection::Sqlite(c) => c.drop_local_table(name).await,
+            Connection::MySql(_) | Connection::Postgres(_) | Connection::Mssql(_) => {
+                Err(AppError::InvalidInput(
+                    "dropping a local table is only supported on the local SQLite engine".into(),
+                ))
+            }
+        }
+    }
+
+    /// Persists a clean snapshot of the local database to `path` (the
+    /// explicit "ファイルに保存" escape hatch out of the default volatile
+    /// behavior).
+    pub async fn vacuum_into(&self, path: &str) -> Result<()> {
+        match self {
+            Connection::Sqlite(c) => c.vacuum_into(path).await,
+            Connection::MySql(_) | Connection::Postgres(_) | Connection::Mssql(_) => {
+                Err(AppError::InvalidInput(
+                    "saving to file is only supported on the local SQLite engine".into(),
+                ))
+            }
         }
     }
 }

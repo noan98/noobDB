@@ -336,6 +336,35 @@ pub enum StreamBatch {
     Rows(Vec<Vec<Value>>),
 }
 
+/// Provenance metadata for one table registered into the **local
+/// cross-connection query engine** (#740): a result set from any connection,
+/// copied in and given a name so it can be re-queried — or JOINed against
+/// tables copied from *other* connections — without touching the source
+/// database. Persisted by the driver alongside the local engine's own data
+/// (currently a per-session SQLite temp file, see `db::sqlite::SqliteConn::
+/// register_local_table`) in a hidden catalog table, so the sidebar list
+/// survives for the lifetime of the local session without separate
+/// `AppState` bookkeeping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalTableMeta {
+    pub name: String,
+    /// Display name of the source connection (profile name, or a fallback
+    /// label for an unsaved/ad-hoc connection). `None` when the source has
+    /// since been forgotten.
+    pub source_profile: Option<String>,
+    /// The SQL that produced the registered rows, kept verbatim so the
+    /// sidebar can show provenance.
+    pub source_sql: String,
+    /// Driver of the *source* connection (`mysql` / `postgres` / `sqlite`),
+    /// not the local engine itself.
+    pub source_driver: Option<String>,
+    /// Registration time, epoch milliseconds (matches the JS `Date.now()`
+    /// convention already used by the frontend's own timestamps).
+    pub fetched_at_ms: i64,
+    /// Row count captured at registration time.
+    pub row_count: i64,
+}
+
 /// Result of a "dry-run" preview: the SQL is executed inside a transaction
 /// that is rolled back afterwards, so the live database is unchanged.
 /// `before_rows` and `after_rows` are snapshots of the auto-detected target

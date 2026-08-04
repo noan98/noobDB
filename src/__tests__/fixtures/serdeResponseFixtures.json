@@ -212,6 +212,14 @@
     "started_at_ms": 1700000000000.0,
     "user": "app"
   },
+  "localTableMeta": {
+    "fetched_at_ms": 1700000000000,
+    "name": "r1",
+    "row_count": 42,
+    "source_driver": "mysql",
+    "source_profile": "prod-mysql",
+    "source_sql": "SELECT * FROM orders"
+  },
   "logView": {
     "path": "/home/user/.local/share/noobDB/noobdb.log",
     "text": "2026-01-01T00:00:00Z INFO noobdb starting"
