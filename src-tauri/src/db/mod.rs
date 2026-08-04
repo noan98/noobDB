@@ -92,6 +92,131 @@ impl DriverKind {
             DriverKind::Sqlite => "sqlite",
         }
     }
+
+    /// Parses the wire name back into a [`DriverKind`]. The inverse of
+    /// [`DriverKind::as_str`]. Used by the flight recorder (#735) to validate
+    /// that a stored capture's driver still matches the session it is being
+    /// undone against before trusting its literals/escaping.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "mysql" => Some(DriverKind::Mysql),
+            "postgres" => Some(DriverKind::Postgres),
+            "sqlite" => Some(DriverKind::Sqlite),
+            _ => None,
+        }
+    }
+}
+
+/// Coarse classification of a single write statement's shape (#735 DML flight
+/// recorder). Not a general-purpose SQL classifier — it only distinguishes the
+/// three DML kinds the recorder knows how to capture a before/after image for
+/// and reverse; everything else (`SELECT`, DDL, stacked statements, `REPLACE`,
+/// ...) is `Other`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteKind {
+    Insert,
+    Update,
+    Delete,
+    Other,
+}
+
+/// Classifies `sql` per [`WriteKind`]. Comments and string/quoted-identifier
+/// literals are masked first (reusing [`mask_for_analysis`], same as
+/// [`is_read_only_sql`]), and a statement packing more than one SQL statement
+/// ([`has_stacked_statements`]) is always `Other` — the flight recorder only
+/// ever captures a single, unambiguous write.
+pub fn classify_write_kind(sql: &str) -> WriteKind {
+    if has_stacked_statements(sql) {
+        return WriteKind::Other;
+    }
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_analysis(&orig);
+    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+    let body = masked_lower.trim();
+    if starts_with_word(body, "insert") {
+        WriteKind::Insert
+    } else if starts_with_word(body, "update") {
+        WriteKind::Update
+    } else if starts_with_word(body, "delete") {
+        WriteKind::Delete
+    } else {
+        WriteKind::Other
+    }
+}
+
+/// Default per-statement row cap for flight-recorder capture (#735) when the
+/// caller doesn't specify one. Mirrors the retention-row-count style default
+/// elsewhere in the codebase (e.g. history's `MAX_HISTORY_ROWS`) but scoped to
+/// a single write's affected-row window rather than total stored rows.
+pub const DEFAULT_CAPTURE_ROW_CAP: usize = 10_000;
+
+/// Result of attempting to capture a reversible before/after image around one
+/// write statement (#735 DML flight recorder). Always returned alongside the
+/// real [`QueryResult`] from [`Connection::capture_write`] — a capture that
+/// fails (unresolvable target table/PK, row count over the cap, ...) never
+/// blocks the write itself, since this is a best-effort safety net layered on
+/// top of the existing read-only guard, not a transactional guarantee.
+#[derive(Debug, Clone)]
+pub struct WriteCapture {
+    pub kind: WriteKind,
+    pub capturable: bool,
+    /// Human-readable (Japanese) reason when `capturable` is false.
+    pub reason: Option<String>,
+    pub table: Option<String>,
+    pub primary_key: Vec<String>,
+    pub columns: Vec<String>,
+    pub column_types: Vec<String>,
+    /// Rows removed/changed, keyed by primary key. Empty for `Insert`.
+    pub before_rows: Vec<Vec<Value>>,
+    /// Rows added/changed, keyed by primary key. Empty for `Delete`.
+    pub after_rows: Vec<Vec<Value>>,
+    pub rows_affected: u64,
+}
+
+impl WriteCapture {
+    fn not_capturable(kind: WriteKind, reason: impl Into<String>) -> Self {
+        WriteCapture {
+            kind,
+            capturable: false,
+            reason: Some(reason.into()),
+            table: None,
+            primary_key: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            before_rows: Vec::new(),
+            after_rows: Vec::new(),
+            rows_affected: 0,
+        }
+    }
+
+    fn not_capturable_with_meta(kind: WriteKind, reason: impl Into<String>, dry: &PreviewResult) -> Self {
+        WriteCapture {
+            kind,
+            capturable: false,
+            reason: Some(reason.into()),
+            table: dry.target_table.clone(),
+            primary_key: dry.primary_key.clone(),
+            columns: dry.columns.iter().map(|c| c.name.clone()).collect(),
+            column_types: dry.columns.iter().map(|c| c.type_name.clone()).collect(),
+            before_rows: Vec::new(),
+            after_rows: Vec::new(),
+            rows_affected: 0,
+        }
+    }
+}
+
+/// Tagged signature of a row's values, used to tell whether the same physical
+/// row appears in two row sets (e.g. an INSERT's before/after LIMIT-window
+/// scan). Mirrors `data_diff`'s private `key_signature` helper; kept as a
+/// separate copy here rather than exposing that one, since the two call sites
+/// have no other coupling.
+fn row_signature(values: &[Value]) -> String {
+    values
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
 }
 
 /// Returns the trimmed session-init SQL when present and it contains at least
@@ -662,6 +787,279 @@ impl Connection {
             Connection::Postgres(c) => c.close().await,
             Connection::Sqlite(c) => c.close().await,
         }
+    }
+
+    /// Executes a single write statement for real while attempting to record a
+    /// reversible before/after image of the rows it touches (#735 DML flight
+    /// recorder / one-click undo).
+    ///
+    /// Implemented once here (not per-driver) on top of the existing dry-run
+    /// preview ([`Connection::preview_execute_with_limit`], which runs the
+    /// statement in a transaction that is always rolled back) instead of
+    /// duplicating its WHERE/target-table/PK extraction — the real write
+    /// afterwards goes through the ordinary [`Connection::execute`] path.
+    ///
+    /// **The dry run's before/after snapshot is not trusted verbatim**: only
+    /// MySQL/PostgreSQL's preview narrows it to the statement's own `WHERE`
+    /// clause; SQLite's simpler implementation always re-scans the first
+    /// `row_cap` rows of the table by primary-key order for *both* snapshots,
+    /// regardless of `WHERE`. Rather than special-casing a driver, this method
+    /// re-derives which rows the statement *actually* touched by pairing
+    /// before/after on primary key and keeping only the pairs that changed
+    /// (`UPDATE`) or that appear on only one side (`INSERT`/`DELETE`) —
+    /// harmless no-ops on drivers that already narrowed the snapshot, and the
+    /// fix that makes this correct on SQLite. The result is then cross-checked
+    /// against the real write's authoritative `rows_affected`; any mismatch
+    /// (a row hid outside the `row_cap` window, an ambiguous shape) declines
+    /// capture rather than risk recording the wrong rows.
+    ///
+    /// **Known limitation (documented, not a bug):** because the snapshot
+    /// comes from a *separate* dry run rather than the same transaction as the
+    /// real write, there is a small window between the two in which another
+    /// client could change the same rows — the captured "after" image would
+    /// then not exactly match what the real write actually produced. This is
+    /// acceptable for a best-effort safety net (the far larger and more likely
+    /// drift window is between capture time and whenever the user chooses to
+    /// undo, which the undo path's conflict check is designed to catch
+    /// regardless). Capture failing for any reason (unresolvable target/PK,
+    /// ambiguous row identification, a malformed statement that only reveals
+    /// itself here) never blocks the write — it always still executes, just
+    /// uncaptured.
+    pub async fn capture_write(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_cap: usize,
+    ) -> Result<(QueryResult, WriteCapture)> {
+        let kind = classify_write_kind(sql);
+        if kind == WriteKind::Other {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable(
+                    kind,
+                    "対象外の文 (SELECT / DDL / 複数文など) のため記録できません",
+                ),
+            ));
+        }
+
+        let row_cap = row_cap.max(1);
+        let dry = match self.preview_execute_with_limit(sql, database, row_cap).await {
+            Ok(d) => d,
+            Err(_) => {
+                let result = self.execute(sql, database).await?;
+                return Ok((
+                    result,
+                    WriteCapture::not_capturable(kind, "対象テーブル/主キーを特定できませんでした"),
+                ));
+            }
+        };
+
+        if dry.target_table.is_none() {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable_with_meta(
+                    kind,
+                    "対象テーブルを特定できませんでした (複雑な JOIN 等)",
+                    &dry,
+                ),
+            ));
+        }
+        if dry.primary_key.is_empty() {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable_with_meta(kind, "対象テーブルに主キーがありません", &dry),
+            ));
+        }
+
+        let columns: Vec<String> = dry.columns.iter().map(|c| c.name.clone()).collect();
+        let column_types: Vec<String> = dry.columns.iter().map(|c| c.type_name.clone()).collect();
+        let table = dry.target_table.clone();
+        let primary_key = dry.primary_key.clone();
+        let pk_idx: Vec<usize> = primary_key
+            .iter()
+            .filter_map(|name| columns.iter().position(|c| c == name))
+            .collect();
+        if pk_idx.len() != primary_key.len() {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable_with_meta(kind, "主キー列を特定できませんでした", &dry),
+            ));
+        }
+        let pk_of = |row: &[Value]| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
+
+        let ambiguous_reason = "対象行を正確に特定できませんでした (対象行数が上限を超えている可能性があります)";
+
+        match kind {
+            WriteKind::Update => {
+                let after_by_key: std::collections::HashMap<String, Vec<Value>> = dry
+                    .after_rows
+                    .iter()
+                    .map(|r| (row_signature(&pk_of(r)), r.clone()))
+                    .collect();
+                let mut before_changed = Vec::new();
+                let mut after_changed = Vec::new();
+                for b in &dry.before_rows {
+                    if let Some(a) = after_by_key.get(&row_signature(&pk_of(b))) {
+                        if a != b {
+                            before_changed.push(b.clone());
+                            after_changed.push(a.clone());
+                        }
+                    }
+                }
+
+                let result = self.execute(sql, database).await?;
+
+                if before_changed.len() as u64 != result.rows_affected {
+                    return Ok((
+                        result,
+                        WriteCapture::not_capturable_with_meta(kind, ambiguous_reason, &dry),
+                    ));
+                }
+
+                Ok((
+                    result.clone(),
+                    WriteCapture {
+                        kind,
+                        capturable: true,
+                        reason: None,
+                        table,
+                        primary_key,
+                        columns,
+                        column_types,
+                        before_rows: before_changed,
+                        after_rows: after_changed,
+                        rows_affected: result.rows_affected,
+                    },
+                ))
+            }
+            WriteKind::Delete => {
+                let after_sigs: std::collections::HashSet<String> =
+                    dry.after_rows.iter().map(|r| row_signature(&pk_of(r))).collect();
+                let deleted_rows: Vec<Vec<Value>> = dry
+                    .before_rows
+                    .iter()
+                    .filter(|r| !after_sigs.contains(&row_signature(&pk_of(r))))
+                    .cloned()
+                    .collect();
+
+                let result = self.execute(sql, database).await?;
+
+                if deleted_rows.len() as u64 != result.rows_affected {
+                    return Ok((
+                        result,
+                        WriteCapture::not_capturable_with_meta(kind, ambiguous_reason, &dry),
+                    ));
+                }
+
+                Ok((
+                    result.clone(),
+                    WriteCapture {
+                        kind,
+                        capturable: true,
+                        reason: None,
+                        table,
+                        primary_key,
+                        columns,
+                        column_types,
+                        before_rows: deleted_rows,
+                        after_rows: Vec::new(),
+                        rows_affected: result.rows_affected,
+                    },
+                ))
+            }
+            WriteKind::Insert => {
+                let before_sigs: std::collections::HashSet<String> =
+                    dry.before_rows.iter().map(|r| row_signature(&pk_of(r))).collect();
+
+                let result = self.execute(sql, database).await?;
+
+                let new_rows: Vec<Vec<Value>> = dry
+                    .after_rows
+                    .iter()
+                    .filter(|r| !before_sigs.contains(&row_signature(&pk_of(r))))
+                    .cloned()
+                    .collect();
+
+                if new_rows.is_empty() || new_rows.len() as u64 != result.rows_affected {
+                    return Ok((
+                        result,
+                        WriteCapture::not_capturable_with_meta(
+                            kind,
+                            "挿入行を特定できませんでした (対象範囲外、または複数行 INSERT)",
+                            &dry,
+                        ),
+                    ));
+                }
+
+                Ok((
+                    result.clone(),
+                    WriteCapture {
+                        kind,
+                        capturable: true,
+                        reason: None,
+                        table,
+                        primary_key,
+                        columns,
+                        column_types,
+                        before_rows: Vec::new(),
+                        after_rows: new_rows,
+                        rows_affected: result.rows_affected,
+                    },
+                ))
+            }
+            WriteKind::Other => unreachable!("guarded above"),
+        }
+    }
+
+    /// Refetches the current values of specific rows by primary key. Used by
+    /// the flight recorder undo path (#735) to compare live data against a
+    /// captured after-image before applying the reverse SQL (conflict check).
+    ///
+    /// Builds `SELECT * FROM <table> WHERE (<pk predicate>) OR (<pk
+    /// predicate>) ...` — identifiers and literals are rendered through the
+    /// same escaping already used by schema/data sync ([`sync::quote_ident`] /
+    /// [`data_diff::sql_literal`]), so this introduces no new SQL-building
+    /// code path. A read, so it is safe to call regardless of the session's
+    /// read-only flag (the caller decides whether the *reverse write* is
+    /// allowed).
+    pub async fn fetch_rows_by_pk(
+        &self,
+        table: &str,
+        primary_key: &[String],
+        pk_rows: &[Vec<Value>],
+        database: Option<&str>,
+    ) -> Result<Vec<Vec<Value>>> {
+        if pk_rows.is_empty() || primary_key.is_empty() {
+            return Ok(Vec::new());
+        }
+        let driver = self.driver_kind();
+        let table_ident = sync::quote_ident(driver, table);
+        let predicate = pk_rows
+            .iter()
+            .map(|key| {
+                let clause = primary_key
+                    .iter()
+                    .zip(key.iter())
+                    .map(|(name, value)| {
+                        let ident = sync::quote_ident(driver, name);
+                        match value {
+                            Value::Null => format!("{ident} IS NULL"),
+                            _ => format!("{ident} = {}", data_diff::sql_literal(driver, value)),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" AND ");
+                format!("({clause})")
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let sql = format!("SELECT * FROM {table_ident} WHERE {predicate}");
+        let result = self.execute(&sql, database).await?;
+        Ok(result.rows)
     }
 }
 
@@ -1534,8 +1932,8 @@ fn is_aggregate_expr(item: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_auto_limit, has_stacked_statements, is_read_only_sql, is_session_init_sql,
-        mask_sensitive_var, sum_size_parts, SslMode,
+        apply_auto_limit, classify_write_kind, has_stacked_statements, is_read_only_sql,
+        is_session_init_sql, mask_sensitive_var, sum_size_parts, DriverKind, SslMode, WriteKind,
     };
 
     #[test]
@@ -2239,6 +2637,80 @@ mod tests {
         let sql = "SELECT a FROM t WHERE b=1";
         let out = apply_auto_limit(sql, 77).unwrap();
         assert_eq!(out, "SELECT a FROM t WHERE b=1 LIMIT 77", "got: {out}");
+    }
+
+    // #735 DML フライトレコーダの分類器。
+    #[test]
+    fn classify_write_kind_recognises_the_three_dml_kinds() {
+        assert_eq!(
+            classify_write_kind("INSERT INTO t (a) VALUES (1)"),
+            WriteKind::Insert
+        );
+        assert_eq!(
+            classify_write_kind("  update t set a=1 where id=1"),
+            WriteKind::Update
+        );
+        assert_eq!(
+            classify_write_kind("DELETE FROM t WHERE id=1"),
+            WriteKind::Delete
+        );
+    }
+
+    #[test]
+    fn classify_write_kind_treats_everything_else_as_other() {
+        for sql in [
+            "SELECT * FROM t",
+            "CREATE TABLE t (id INT)",
+            "DROP TABLE t",
+            "REPLACE INTO t (a) VALUES (1)",
+            "TRUNCATE t",
+            "",
+            "   ",
+        ] {
+            assert_eq!(
+                classify_write_kind(sql),
+                WriteKind::Other,
+                "expected `{sql}` to classify as Other"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_write_kind_rejects_stacked_statements() {
+        // A stacked statement is never captured, even if the first statement
+        // alone would classify as a DML kind — the flight recorder only ever
+        // captures a single, unambiguous write.
+        assert_eq!(
+            classify_write_kind("UPDATE t SET a=1; DROP TABLE t"),
+            WriteKind::Other
+        );
+        assert_eq!(
+            classify_write_kind("DELETE FROM t WHERE id=1; DELETE FROM t2"),
+            WriteKind::Other
+        );
+    }
+
+    #[test]
+    fn classify_write_kind_ignores_keywords_hidden_in_comments_and_strings() {
+        // A DML keyword living inside a comment or string literal must not be
+        // mistaken for the statement's leading keyword.
+        assert_eq!(
+            classify_write_kind("-- insert style guide\nSELECT * FROM t"),
+            WriteKind::Other
+        );
+        assert_eq!(
+            classify_write_kind("SELECT 'update me' FROM t"),
+            WriteKind::Other
+        );
+    }
+
+    #[test]
+    fn driver_kind_parse_round_trips_as_str() {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            assert_eq!(DriverKind::parse(d.as_str()), Some(d));
+        }
+        assert_eq!(DriverKind::parse("oracle"), None);
+        assert_eq!(DriverKind::parse(""), None);
     }
 }
 

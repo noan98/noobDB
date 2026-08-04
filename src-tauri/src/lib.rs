@@ -6,6 +6,7 @@
 mod commands;
 mod db;
 mod error;
+mod flight_recorder;
 mod history;
 mod logs;
 mod profiles;
@@ -31,9 +32,14 @@ pub mod __test_api {
         TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
     };
     pub use crate::db::{
-        is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
+        classify_write_kind, is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions,
+        DriverKind, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::error::AppError;
+    pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
+    pub use crate::flight_recorder::{
+        NewWriteCapture, WriteCaptureRecord, WriteCaptureSummary,
+    };
     pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshProfile};
     pub use crate::ssh::known_hosts::KnownHost;
     pub use crate::ssh::{SshConfig, SshTunnel};
@@ -146,6 +152,69 @@ pub mod __test_api {
     /// rows reach the driver.
     pub fn ensure_import_writable(session: &Session) -> crate::error::Result<()> {
         crate::commands::import::ensure_import_writable(session)
+    }
+
+    /// Drives the `run_captured_write` IPC command's core path (session
+    /// lookup + read-only guard + capture + history recording) without a
+    /// Tauri runtime (#735).
+    pub async fn run_captured_write_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        database: Option<&str>,
+        row_cap: Option<u32>,
+        retention_days: Option<u32>,
+    ) -> crate::error::Result<crate::commands::flight_recorder::CapturedWriteResponse> {
+        crate::commands::flight_recorder::run_captured_write_inner(
+            state,
+            session_id.to_string(),
+            sql.to_string(),
+            database.map(str::to_string),
+            row_cap,
+            retention_days,
+        )
+        .await
+    }
+
+    /// Drives the `undo_flight_record` IPC command's core path without a
+    /// Tauri runtime (#735).
+    pub async fn undo_flight_record_via_command(
+        state: &AppState,
+        session_id: &str,
+        id: i64,
+        force: bool,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoOutcome> {
+        crate::commands::flight_recorder::undo_flight_record_inner(
+            state,
+            session_id.to_string(),
+            id,
+            force,
+        )
+        .await
+    }
+
+    /// Drives the `preview_undo` IPC command's core path without a Tauri
+    /// runtime (#735).
+    pub async fn preview_undo_via_command(
+        state: &AppState,
+        session_id: &str,
+        id: i64,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoPreviewResponse> {
+        let (plan, _record) =
+            crate::commands::flight_recorder::plan_undo(state, session_id, id, false).await?;
+        Ok(crate::commands::flight_recorder::UndoPreviewResponse {
+            statements: plan.statements,
+            conflicts: plan.conflicts,
+            warnings: plan.warnings,
+        })
+    }
+
+    /// Lists flight-recorder captures directly against the store, for tests
+    /// that need to find a capture's id after `run_captured_write_via_command`.
+    pub async fn list_flight_records_for_tests(
+        profile_id: Option<&str>,
+    ) -> crate::error::Result<Vec<crate::flight_recorder::WriteCaptureSummary>> {
+        crate::flight_recorder::store::list(profile_id, 100).await
     }
 
     /// Drives the `kill_process` IPC command's core path (session lookup +
@@ -381,6 +450,12 @@ pub fn run() {
             commands::snippets::delete_snippet,
             commands::history::list_history,
             commands::history::clear_history,
+            commands::flight_recorder::run_captured_write,
+            commands::flight_recorder::precheck_captured_write,
+            commands::flight_recorder::list_flight_records,
+            commands::flight_recorder::clear_flight_records,
+            commands::flight_recorder::preview_undo,
+            commands::flight_recorder::undo_flight_record,
             commands::logs::read_logs,
             commands::logs::clear_logs,
             commands::export::export_query_result,

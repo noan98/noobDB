@@ -266,6 +266,55 @@ export const logView = z.object({
   path: z.string().nullable(),
 });
 
+// #735 DML フライトレコーダ / Undo。
+const writeKind = z.enum(["insert", "update", "delete", "other"]);
+
+export const capturedWriteResponse = z.object({
+  result: queryResult,
+  capturable: z.boolean(),
+  reason: z.string().nullable(),
+  captureId: z.number().nullable(),
+});
+
+export const writeCapturePrecheck = z.object({
+  capturable: z.boolean(),
+  reason: z.string().nullable(),
+  estimatedRows: z.number().nullable(),
+});
+
+export const writeCaptureSummary = z.object({
+  id: z.number(),
+  profile_id: z.string().nullable(),
+  driver: z.string(),
+  database: z.string().nullable(),
+  table: z.string(),
+  kind: writeKind,
+  sql: z.string(),
+  rows_affected: z.number(),
+  captured_at: z.string(),
+  undone: z.boolean(),
+});
+export const writeCaptureSummaryArray = z.array(writeCaptureSummary);
+
+const undoConflict = z.object({
+  key: z.array(cellValue),
+  expected: z.array(cellValue).nullable(),
+  current: z.array(cellValue).nullable(),
+});
+
+export const undoPreviewResponse = z.object({
+  statements: z.array(z.string()),
+  conflicts: z.array(undoConflict),
+  warnings: z.array(z.string()),
+});
+
+export const undoOutcome = z.object({
+  applied: z.boolean(),
+  rowsAffected: z.number(),
+  conflicts: z.array(undoConflict),
+  warnings: z.array(z.string()),
+});
+
 const diffStatus = z.enum(["source_only", "target_only", "different", "same"]);
 
 const columnDiff = z.object({

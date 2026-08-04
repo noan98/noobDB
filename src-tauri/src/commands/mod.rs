@@ -4,6 +4,7 @@ pub mod diff;
 pub mod dump;
 pub mod export;
 pub mod file;
+pub mod flight_recorder;
 pub mod history;
 pub mod import;
 pub mod inspector;
