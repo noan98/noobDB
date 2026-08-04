@@ -42,9 +42,10 @@ use t::{
     PreviewMetaEvent, PreviewResult, ProcessInfo, ProfileWithSecretFlags, QueryResult,
     QueryStatsSupport, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
     ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet,
-    SnippetScope, SshAuthMethod, SshProfile, SslMode, StatementStat, StreamCancelledEvent,
-    StreamColumnsEvent, StreamDoneEvent, StreamErrorEvent, StreamRowsEvent, SyncKind, SyncPlan,
-    SyncStatement, TableColumnInfo, TableDiff, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementStat,
+    StreamCancelledEvent, StreamColumnsEvent, StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
+    SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableDiff, TableRowEstimate, TableSchema,
+    TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -211,6 +212,15 @@ fn build_fixtures() -> serde_json::Value {
         user: "deploy".into(),
         auth_method: SshAuthMethod::Key,
         private_key_path: PathBuf::from("/home/deploy/.ssh/id_ed25519"),
+        // #708: exposes the bastion-hop field so the zod ⇔ serde golden also
+        // covers a chained (2-hop) profile, not just a direct one.
+        jump: Some(SshJumpProfile {
+            host: "bastion.example.com".into(),
+            port: 2222,
+            user: "ops".into(),
+            auth_method: SshAuthMethod::Password,
+            private_key_path: PathBuf::new(),
+        }),
     };
     let connection_profile_inner = ConnectionProfile {
         id: "abc12345".into(),
@@ -239,6 +249,8 @@ fn build_fixtures() -> serde_json::Value {
         has_db_password: true,
         has_ssh_passphrase: false,
         has_ssh_password: false,
+        has_ssh_jump_passphrase: false,
+        has_ssh_jump_password: true,
     };
 
     let snippet = Snippet {

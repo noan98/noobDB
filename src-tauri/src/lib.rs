@@ -34,9 +34,10 @@ pub mod __test_api {
         is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
     };
     pub use crate::error::AppError;
-    pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshProfile};
+    pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshJumpProfile, SshProfile};
+    pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
-    pub use crate::ssh::{SshConfig, SshTunnel};
+    pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
     // zod ⇔ serde ゴールデン (#824) が代表インスタンスを組み立てるための追加の
@@ -337,6 +338,7 @@ pub fn run() {
             commands::ssh::list_known_hosts,
             commands::ssh::forget_host_key,
             commands::ssh::trust_host_key,
+            commands::ssh::resolve_ssh_config_host,
             commands::query::run_query,
             commands::query::run_query_transaction,
             commands::query::begin_transaction,

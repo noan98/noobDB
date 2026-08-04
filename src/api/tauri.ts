@@ -103,12 +103,31 @@ export interface SessionInitSettings {
   init_sql?: string | null;
 }
 
+/**
+ * The bastion/jump hop of a 2-hop SSH tunnel (#708). Structurally the same
+ * shape as {@link SshProfile} minus its own `jump` — chains are capped at one
+ * bastion hop (2 SSH hops total) for now.
+ */
+export interface SshJumpProfile {
+  host: string;
+  port: number;
+  user: string;
+  auth_method: SshAuthMethod;
+  private_key_path: string;
+}
+
 export interface SshProfile {
   host: string;
   port: number;
   user: string;
   auth_method: SshAuthMethod;
   private_key_path: string;
+  /**
+   * Optional bastion/jump hop dialed *before* this one (#708 multi-hop
+   * tunnel, ProxyJump-equivalent). `null`/omitted for a direct (single-hop)
+   * tunnel, including every profile saved before this field existed.
+   */
+  jump?: SshJumpProfile | null;
 }
 
 export interface ConnectionProfile extends TlsSettings, SessionInitSettings {
@@ -151,11 +170,37 @@ export interface ConnectionProfile extends TlsSettings, SessionInitSettings {
   has_ssh_passphrase?: boolean;
   /** Whether an SSH password is stored in the keyring. See `has_db_password`. */
   has_ssh_password?: boolean;
+  /** Whether a jump/bastion hop passphrase is stored (#708). */
+  has_ssh_jump_passphrase?: boolean;
+  /** Whether a jump/bastion hop password is stored (#708). */
+  has_ssh_jump_password?: boolean;
 }
 
-export interface SshRequest extends SshProfile {
+/** The bastion/jump hop of a connect request, carrying its own credentials. */
+export interface SshJumpRequest extends SshJumpProfile {
   passphrase?: string;
   password?: string;
+}
+
+export interface SshRequest extends Omit<SshProfile, "jump"> {
+  passphrase?: string;
+  password?: string;
+  jump?: SshJumpRequest | null;
+}
+
+/**
+ * What `resolveSshConfigHost` can prefill from a `~/.ssh/config` `Host` alias
+ * (#708). `jump_*` fields are only present when the alias's `ProxyJump`
+ * directive could be parsed into a `host[:port]`.
+ */
+export interface ResolvedSshAlias {
+  host_name: string | null;
+  port: number | null;
+  user: string | null;
+  identity_file: string | null;
+  jump_host: string | null;
+  jump_port: number | null;
+  jump_user: string | null;
 }
 
 export interface ConnectRequest extends TlsSettings, SessionInitSettings {
@@ -190,6 +235,9 @@ export interface SaveProfileRequest extends TlsSettings, SessionInitSettings {
   db_password?: string;
   ssh_passphrase?: string;
   ssh_password?: string;
+  /** Jump/bastion hop secrets (#708); same `undefined`/empty-clears semantics. */
+  ssh_jump_passphrase?: string;
+  ssh_jump_password?: string;
   group: string | null;
   color: string | null;
   is_production: boolean;
@@ -791,6 +839,16 @@ export const api = {
    */
   trustHostKey: (host: string, port: number, fingerprint: string) =>
     invoke<void>("trust_host_key", { host, port, fingerprint }),
+  /**
+   * Resolve `HostName` / `Port` / `User` / `IdentityFile` / `ProxyJump` for
+   * `alias` from the user's `~/.ssh/config`, for the connection form's "load
+   * from SSH config" action (#708). Read-only and best-effort: `null` covers
+   * both "no ~/.ssh/config" and "no matching Host block", not just one.
+   */
+  resolveSshConfigHost: (alias: string) =>
+    invoke<ResolvedSshAlias | null>("resolve_ssh_config_host", { alias }).then((r) =>
+      r === null ? null : parseResponse(schemas.resolvedSshAlias, r, "resolve_ssh_config_host"),
+    ),
   /** 明示トランザクションを開始する。 */
   beginTransaction: (sessionId: string, database?: string | null) =>
     invoke<void>("begin_transaction", { sessionId, database: database ?? null }),

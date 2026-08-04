@@ -135,6 +135,21 @@ export const knownHost = z.object({
 });
 export const knownHostArray = z.array(knownHost);
 
+/**
+ * What `resolve_ssh_config_host` can prefill from a `~/.ssh/config` `Host`
+ * alias (#708): the target hop's fields plus (when `ProxyJump` is set) the
+ * jump hop's host/port/user.
+ */
+export const resolvedSshAlias = z.object({
+  host_name: z.string().nullable(),
+  port: z.number().nullable(),
+  user: z.string().nullable(),
+  identity_file: z.string().nullable(),
+  jump_host: z.string().nullable(),
+  jump_port: z.number().nullable(),
+  jump_user: z.string().nullable(),
+});
+
 /** ライブクエリ・インスペクタ (#746) の前提可否 + 縮退理由コード。 */
 export const queryStatsSupport = z.object({
   live_tail: z.boolean(),
@@ -190,12 +205,24 @@ export const previewResult = z.object({
   truncated: z.boolean(),
 });
 
+// #708: 踏み台/ジャンプホスト (2 段目まで)。SshProfile と同形だが自身の jump は
+// 持たない (チェーンは 1 段のジャンプホストまでに制限)。
+const sshJumpProfile = z.object({
+  host: z.string(),
+  port: z.number(),
+  user: z.string(),
+  auth_method: z.enum(["key", "agent", "password"]),
+  private_key_path: z.string(),
+});
+
 const sshProfile = z.object({
   host: z.string(),
   port: z.number(),
   user: z.string(),
   auth_method: z.enum(["key", "agent", "password"]),
   private_key_path: z.string(),
+  // 旧プロファイル (#708 以前) には無いフィールドなので optional/nullable。
+  jump: sshJumpProfile.nullable().optional(),
 });
 
 export const connectionProfile = z.object({
@@ -229,6 +256,10 @@ export const connectionProfile = z.object({
   has_db_password: z.boolean().optional(),
   has_ssh_passphrase: z.boolean().optional(),
   has_ssh_password: z.boolean().optional(),
+  // ジャンプホストの秘密が設定済みか (#708)。profile.ssh.jump が無いプロファイルでは
+  // 意味を持たないが、常に含まれる。
+  has_ssh_jump_passphrase: z.boolean().optional(),
+  has_ssh_jump_password: z.boolean().optional(),
 });
 
 const snippetScope = z.discriminatedUnion("kind", [
