@@ -254,6 +254,63 @@ pub struct ProcessInfo {
     pub is_self: bool,
 }
 
+/// One database user / role for the users & privileges panel (#732). MySQL
+/// identifies a principal by a `(user, host)` pair (the same user name can
+/// have several host-scoped accounts with different privileges), so `host`
+/// is `Some`; PostgreSQL roles have no host component and always report
+/// `None`. SQLite has no user/permission model — the frontend hides the
+/// panel entirely, and the driver returns an error instead of an empty list
+/// (matching [`ProcessInfo`]'s "unsupported" convention for direct IPC
+/// callers).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbUserInfo {
+    pub name: String,
+    /// MySQL account host pattern (e.g. `%`, `localhost`). `None` for PostgreSQL.
+    pub host: Option<String>,
+    /// Human-readable role attributes. MySQL exposes just `SUPER` (the only
+    /// global attribute this panel reads out of `mysql.user`); PostgreSQL
+    /// exposes the relevant `pg_roles` attribute set (`SUPERUSER` /
+    /// `CREATEDB` / `CREATEROLE` / `LOGIN` / `REPLICATION` / `BYPASSRLS`).
+    pub attributes: Vec<String>,
+    /// PostgreSQL role membership (`pg_auth_members`) — roles this role is a
+    /// member of. Always empty for MySQL, which has no role graph.
+    pub member_of: Vec<String>,
+    pub is_superuser: bool,
+    pub can_login: bool,
+}
+
+/// One table's (or the whole-database default's) CRUD + DDL privilege flags
+/// for a single user/role — one row of the privilege matrix. `table` is `"*"`
+/// for the database-wide default row (MySQL `mysql.user` global grants) and
+/// `"<db>.<table>"` for a per-table grant (PostgreSQL's `<db>` here is really
+/// the schema, matching how [`super::Connection::tables`] already overloads
+/// "database" to mean "schema" for PostgreSQL throughout this codebase).
+///
+/// `ddl` bundles the schema-altering grants each driver actually exposes at
+/// this granularity: MySQL `CREATE`/`ALTER`/`DROP`/`INDEX`/`REFERENCES`;
+/// PostgreSQL `TRUNCATE`/`REFERENCES`/`TRIGGER` (PostgreSQL grants
+/// `CREATE`/`ALTER`/`DROP TABLE` through schema ownership, not per-table
+/// `GRANT`, so those are out of scope for this per-table matrix — see
+/// `db::privileges` module docs).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TablePrivilegeRow {
+    pub table: String,
+    pub select: bool,
+    pub insert: bool,
+    pub update: bool,
+    pub delete: bool,
+    pub ddl: bool,
+}
+
+/// The full privilege matrix for one user/role: an optional database-wide
+/// default row (`global`, MySQL only — PostgreSQL has no equivalent concept)
+/// plus one row per table with an explicit grant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserPrivileges {
+    pub global: Option<TablePrivilegeRow>,
+    pub tables: Vec<TablePrivilegeRow>,
+}
+
 /// ライブクエリ・インスペクタ (#746) の前提可否プローブ。ライブテールと
 /// digest 集計それぞれについて「使えるか」と、使えないときの**機械可読な理由
 /// コード**を返す。黙って空にせず理由を表示して縮退するため (#587 の教訓)、

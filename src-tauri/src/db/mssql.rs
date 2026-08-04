@@ -38,9 +38,10 @@ use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::advisor::UnusedIndexStats;
 use super::types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges,
+    Value,
 };
 use super::{DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
@@ -1172,6 +1173,27 @@ impl MssqlConn {
     pub async fn statement_stats(&self) -> Result<Vec<StatementStat>> {
         Err(AppError::InvalidInput(
             "statement statistics are not yet supported for MSSQL".into(),
+        ))
+    }
+
+    /// #732 のユーザ / 権限管理パネルは未実装 (モジュール doc 参照)。MySQL/
+    /// PostgreSQL 同様 `sys.server_principals` / `sys.database_permissions` から
+    /// 実装できるが、本 PR のスコープ外。SQLite の `list_db_users` と同じ「空では
+    /// なくエラーで非対応を明示する」方針を踏襲する。
+    pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
+        Err(AppError::InvalidInput(
+            "users are not yet supported for MSSQL".into(),
+        ))
+    }
+
+    /// See [`MssqlConn::list_db_users`].
+    pub async fn user_privileges(
+        &self,
+        _user: &str,
+        _host: Option<&str>,
+    ) -> Result<UserPrivileges> {
+        Err(AppError::InvalidInput(
+            "users are not yet supported for MSSQL".into(),
         ))
     }
 

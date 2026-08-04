@@ -116,6 +116,32 @@ export const processInfo = z.object({
   is_self: z.boolean(),
 });
 
+/** データベースユーザ / ロール 1 件 (ユーザ・権限管理パネル #732)。 */
+export const dbUserInfo = z.object({
+  name: z.string(),
+  host: z.string().nullable(),
+  attributes: z.array(z.string()),
+  member_of: z.array(z.string()),
+  is_superuser: z.boolean(),
+  can_login: z.boolean(),
+});
+
+/** 権限マトリクスの 1 行 (テーブル単位、または `*` の DB 全体既定行)。 */
+export const tablePrivilegeRow = z.object({
+  table: z.string(),
+  select: z.boolean(),
+  insert: z.boolean(),
+  update: z.boolean(),
+  delete: z.boolean(),
+  ddl: z.boolean(),
+});
+
+/** 1 ユーザ/ロール分の権限マトリクス全体。 */
+export const userPrivileges = z.object({
+  global: tablePrivilegeRow.nullable(),
+  tables: z.array(tablePrivilegeRow),
+});
+
 /** サーバランタイムの軽量メトリクス 1 サンプル (監視ダッシュボード #731)。 */
 export const serverMetrics = z.object({
   connections: z.number().nullable(),
@@ -519,6 +545,8 @@ export const connectPhaseEvent = z.object({
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
 export const stringResponse = z.string();
+/** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
+export const nullableStringResponse = z.string().nullable();
 
 /** `cancel_stream` の戻り値。中断できた行数 (#685) を運ぶため単純な bool から
  *  拡張されている。 */
@@ -543,6 +571,7 @@ export const tableRowEstimateArray = z.array(tableRowEstimate);
 export const tableSizeInfoArray = z.array(tableSizeInfo);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
+export const dbUserInfoArray = z.array(dbUserInfo);
 export const liveQueryArray = z.array(liveQuery);
 export const statementStatArray = z.array(statementStat);
 export const schemaObjectArray = z.array(schemaObject);

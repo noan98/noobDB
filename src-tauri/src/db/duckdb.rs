@@ -49,9 +49,10 @@ use duckdb::types::{Type as DuckType, Value as DuckValue};
 
 use super::advisor::UnusedIndexStats;
 use super::types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges,
+    Value,
 };
 use super::{init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
@@ -626,6 +627,27 @@ impl DuckDbConn {
             Ok(names)
         })
         .await
+    }
+
+    /// DuckDB has no server-side user accounts (file-backed, like SQLite);
+    /// surfaces the same explicit "unsupported" error as
+    /// [`super::sqlite::SqliteConn::list_db_users`] so the IPC layer and UI
+    /// treat both file drivers identically.
+    pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
+        Err(AppError::InvalidInput(
+            "users are not supported for DuckDB (file-backed, no server-side accounts)".into(),
+        ))
+    }
+
+    /// See [`DuckDbConn::list_db_users`].
+    pub async fn user_privileges(
+        &self,
+        _user: &str,
+        _host: Option<&str>,
+    ) -> Result<UserPrivileges> {
+        Err(AppError::InvalidInput(
+            "users are not supported for DuckDB (file-backed, no server-side accounts)".into(),
+        ))
     }
 
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {

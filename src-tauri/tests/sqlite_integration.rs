@@ -1251,6 +1251,53 @@ async fn writable_session_allows_writes_via_ipc() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// ユーザ / 権限管理コマンドの常時実行テスト (外部サーバ不要、#732)。
+/// - SQLite ドライバは一覧・権限取得とも「非対応」エラーを返す (list_processes と
+///   同じ「空ではなくエラーで縮退を明示する」方針)。
+/// - `apply_privilege_sql` は read_only セッションではドライバに到達する前に
+///   `AppError::ReadOnly` を返し、statements が空なら `AppError::InvalidInput` を返す
+///   (`apply_sync_sql` と全く同じガード順序)。
+#[tokio::test]
+async fn sqlite_users_commands_unsupported_and_read_only_guarded() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_users_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // Driver-level: SQLite has no user/permission model.
+    assert!(matches!(
+        conn.list_db_users().await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        conn.user_privileges("alice", None).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+
+    // Command-level: a read-only session is rejected before the driver runs.
+    let session = t::make_session("users_ro", conn, opts.clone(), /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    assert!(matches!(
+        t::apply_privilege_sql_via_command(&state, &sid, None, vec!["DROP USER x".into()]).await,
+        Err(t::AppError::ReadOnly(_))
+    ));
+
+    // Writable session, empty statement list: rejected before touching the driver.
+    let conn2 = t::connect(&opts).await.expect("connect 2");
+    let session2 = t::make_session("users_rw", conn2, opts, /* read_only */ false);
+    let sid2 = state.insert(session2).await;
+    assert!(matches!(
+        t::apply_privilege_sql_via_command(&state, &sid2, None, vec![]).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+
+    let _ = std::fs::remove_file(&path);
+}
+
 /// プロセス監視コマンドの常時実行テスト (外部サーバ不要)。
 /// - SQLite ドライバは list/kill とも「非対応」エラーを返す。
 /// - read_only セッションでは kill コマンドのバックエンドガードがドライバ到達前に

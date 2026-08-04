@@ -10,6 +10,7 @@ pub mod import;
 pub mod inspector;
 pub mod local;
 pub mod logs;
+pub mod privileges;
 pub mod process;
 pub mod profiles;
 pub mod query;
