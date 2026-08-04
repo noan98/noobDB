@@ -65,6 +65,15 @@ fn key_sig(values: &[Value]) -> String {
         .join("\u{1f}")
 }
 
+/// Extracts the primary-key values from `row` at `pk_idx`, or `None` if `row`
+/// is shorter than expected. `WriteCaptureRecord` round-trips through JSON in
+/// the local SQLite store, so a corrupted/truncated row (or a `columns`
+/// mismatch after a schema change) must never panic here — the caller skips
+/// the row (with a warning) instead (#735 review follow-up).
+fn key_of(row: &[Value], pk_idx: &[usize]) -> Option<Vec<Value>> {
+    pk_idx.iter().map(|&i| row.get(i).cloned()).collect()
+}
+
 /// Builds the reverse-SQL plan for `record`. `current_rows` are the live rows
 /// re-fetched by primary key (via `Connection::fetch_rows_by_pk`, in the same
 /// `columns` order as the capture) — pass an empty slice for any primary key
@@ -98,11 +107,18 @@ pub fn build_undo_plan(
         };
     }
 
+    let mut warnings: Vec<String> = Vec::new();
     let current_by_key: HashMap<String, Vec<Value>> = current_rows
         .iter()
-        .map(|row| {
-            let key: Vec<Value> = pk_idx.iter().map(|&i| row[i].clone()).collect();
-            (key_sig(&key), row.clone())
+        .filter_map(|row| match key_of(row, &pk_idx) {
+            Some(key) => Some((key_sig(&key), row.clone())),
+            None => {
+                warnings.push(
+                    "現在のデータの一部の行が想定より短く、キーを特定できませんでした (無視して続行します)"
+                        .to_string(),
+                );
+                None
+            }
         })
         .collect();
 
@@ -113,7 +129,11 @@ pub fn build_undo_plan(
         WriteKind::Insert => {
             // Undo = DELETE the row the original INSERT created.
             for after in &record.after_rows {
-                let key: Vec<Value> = pk_idx.iter().map(|&i| after[i].clone()).collect();
+                let Some(key) = key_of(after, &pk_idx) else {
+                    warnings
+                        .push("退避された挿入行の一部が壊れているためスキップしました".to_string());
+                    continue;
+                };
                 let current = current_by_key.get(&key_sig(&key)).cloned();
                 match current {
                     None => {
@@ -153,7 +173,11 @@ pub fn build_undo_plan(
         WriteKind::Delete => {
             // Undo = INSERT the row the original DELETE removed.
             for before in &record.before_rows {
-                let key: Vec<Value> = pk_idx.iter().map(|&i| before[i].clone()).collect();
+                let Some(key) = key_of(before, &pk_idx) else {
+                    warnings
+                        .push("退避された削除行の一部が壊れているためスキップしました".to_string());
+                    continue;
+                };
                 let current = current_by_key.get(&key_sig(&key)).cloned();
                 match current {
                     None => {
@@ -196,7 +220,11 @@ pub fn build_undo_plan(
             for i in 0..n {
                 let before = &record.before_rows[i];
                 let after = &record.after_rows[i];
-                let key: Vec<Value> = pk_idx.iter().map(|&i| before[i].clone()).collect();
+                let Some(key) = key_of(before, &pk_idx) else {
+                    warnings
+                        .push("退避された更新行の一部が壊れているためスキップしました".to_string());
+                    continue;
+                };
                 let current = current_by_key.get(&key_sig(&key)).cloned();
                 match current {
                     None => {
@@ -256,13 +284,14 @@ pub fn build_undo_plan(
     let driver = match DriverKind::parse(&record.driver) {
         Some(d) => d,
         None => {
+            warnings.push(format!(
+                "記録されたドライバ '{}' を解釈できませんでした",
+                record.driver
+            ));
             return UndoPlan {
                 statements: Vec::new(),
                 conflicts,
-                warnings: vec![format!(
-                    "記録されたドライバ '{}' を解釈できませんでした",
-                    record.driver
-                )],
+                warnings,
             };
         }
     };
@@ -284,11 +313,12 @@ pub fn build_undo_plan(
     // which is exactly the recorded row this specific undo action is about —
     // not a general destructive-sync toggle.
     let plan = generate_data_sync_sql(&diff, true);
+    warnings.extend(plan.warnings);
 
     UndoPlan {
         statements: plan.statements.into_iter().map(|s| s.sql).collect(),
         conflicts,
-        warnings: plan.warnings,
+        warnings,
     }
 }
 
@@ -449,6 +479,40 @@ mod tests {
             forced.statements.is_empty(),
             "nothing sensible to UPDATE when the row is gone, even with force"
         );
+    }
+
+    #[test]
+    fn truncated_stored_row_is_skipped_with_a_warning_instead_of_panicking() {
+        // #735 レビュー対応: 保存済み行 (JSON 往復) が壊れていて primary_key の
+        // 列位置より短い場合、direct index の panic ではなく警告付きスキップに
+        // なることを固定する。primary_key を columns の 2 番目 ("name") に
+        // 向けることで、1 要素しかない壊れた行がその列位置を持たない状況を
+        // 実際に再現する (id 列だけの主キーだと壊れた行の index 0 は残って
+        // しまい、key_of が偶然成功してしまうため)。
+        let mut r = record(WriteKind::Insert);
+        r.primary_key = vec!["name".to_string()];
+        r.after_rows = vec![vec![Value::Int(1)]]; // "name" 列が欠落した壊れた行
+        let plan = build_undo_plan(&r, &[], false);
+        assert!(plan.statements.is_empty());
+        assert!(plan.conflicts.is_empty());
+        assert!(!plan.warnings.is_empty());
+    }
+
+    #[test]
+    fn truncated_current_row_is_skipped_with_a_warning_instead_of_panicking() {
+        // primary_key を "name" (columns の index 1) に向け、1 要素しかない
+        // 壊れた current 行がその列位置を欠いた状態を再現する (id だけの主キー
+        // だと index 0 が残ってしまい key_of が成功してしまうため)。
+        let mut r = record(WriteKind::Update);
+        r.primary_key = vec!["name".to_string()];
+        r.before_rows = vec![row(1, "alice")];
+        r.after_rows = vec![row(1, "alice2")];
+        let current = vec![vec![Value::Int(1)]]; // 壊れた現在行
+        let plan = build_undo_plan(&r, &current, false);
+        // The malformed current row is dropped from `current_by_key`, so the
+        // target key resolves to "row is gone" instead.
+        assert_eq!(plan.conflicts.len(), 1);
+        assert!(!plan.warnings.is_empty());
     }
 
     #[test]

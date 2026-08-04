@@ -11,9 +11,10 @@ use crate::state::AppState;
 
 /// Hard cap on rows read per side for a data comparison. Data sync targets
 /// master / configuration tables; bulk tables are out of scope and would make
-/// the diff (and the generated DML) unwieldy.
-const MAX_DATA_ROWS: usize = 5000;
-const DEFAULT_DATA_ROWS: usize = 1000;
+/// the diff (and the generated DML) unwieldy. `pub(crate)`: `commands::sandbox`
+/// applies the same cap to its (structurally identical) desired/conflict diffs.
+pub(crate) const MAX_DATA_ROWS: usize = 5000;
+pub(crate) const DEFAULT_DATA_ROWS: usize = 1000;
 
 /// Fetches every table in `db` paired with its full column metadata. This is
 /// N+1 by design (one `columns` round trip per table); acceptable for an
@@ -135,8 +136,9 @@ mod tests {
 
 /// Builds `SELECT <cols> FROM <table> ORDER BY <pk> LIMIT <n>` with identifiers
 /// quoted for `driver`. The explicit column list (taken from the source) keeps
-/// both sides' rows aligned even if column order differs.
-fn select_rows_sql(
+/// both sides' rows aligned even if column order differs. `pub(crate)`: reused
+/// by `commands::sandbox` for its base/live/external row reads (same shape).
+pub(crate) fn select_rows_sql(
     driver: DriverKind,
     table: &str,
     columns: &[String],

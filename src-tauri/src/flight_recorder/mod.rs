@@ -28,7 +28,15 @@ pub mod undo;
 use serde::{Deserialize, Serialize};
 
 use crate::db::types::Value;
-use crate::db::WriteKind;
+use crate::db::{DriverKind, WriteCapture, WriteKind};
+
+/// Default retention window (days) for captures, used whenever a caller
+/// doesn't specify one explicitly. Mirrors the frontend setting's own
+/// default (`DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS` in `settings.ts`) — kept
+/// as a single source here so the two capture entry points
+/// (`commands::query::spawn_captured_write` and
+/// `commands::flight_recorder::run_captured_write_inner`) can't drift apart.
+pub const DEFAULT_RETENTION_DAYS: i64 = 30;
 
 /// A persisted capture of one write statement's before/after image. Mirrors
 /// the `write_capture` table; `id`/`captured_at` are filled in by the store.
@@ -110,6 +118,56 @@ impl From<&WriteCaptureRecord> for WriteCaptureSummary {
             rows_affected: r.rows_affected,
             captured_at: r.captured_at.clone(),
             undone: r.undone,
+        }
+    }
+}
+
+/// Persists a capturable write to the local store, honoring `skip_history`
+/// (same policy as query history — a session flagged `skip_history` records
+/// nothing) and defaulting the retention window via [`DEFAULT_RETENTION_DAYS`]
+/// when the caller doesn't specify one. Best-effort: a store failure is
+/// logged and returns `None`, never propagated — the write itself already
+/// happened by the time this runs, so there is nothing to roll back.
+///
+/// Shared by the two capture entry points
+/// (`commands::query::spawn_captured_write`, used by the editor's single-
+/// statement run, and `commands::flight_recorder::run_captured_write_inner`,
+/// the dedicated IPC command) so the persistence policy — and its defaults —
+/// live in exactly one place instead of two copies drifting apart.
+#[allow(clippy::too_many_arguments)]
+pub async fn persist_capture(
+    skip_history: bool,
+    profile_id: Option<String>,
+    driver: DriverKind,
+    database: Option<String>,
+    sql: String,
+    capture: &WriteCapture,
+    retention_days: Option<i64>,
+) -> Option<i64> {
+    if !capture.capturable || skip_history {
+        return None;
+    }
+    let new = NewWriteCapture {
+        profile_id,
+        driver: driver.as_str().to_string(),
+        database,
+        table: capture.table.clone().unwrap_or_default(),
+        kind: capture.kind,
+        sql,
+        primary_key: capture.primary_key.clone(),
+        columns: capture.columns.clone(),
+        column_types: capture.column_types.clone(),
+        before_rows: capture.before_rows.clone(),
+        after_rows: capture.after_rows.clone(),
+        rows_affected: capture.rows_affected as i64,
+        captured_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let retention = retention_days.unwrap_or(DEFAULT_RETENTION_DAYS);
+    match store::record(new, retention).await {
+        Ok(id) => Some(id),
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to persist flight recorder capture");
+            None
         }
     }
 }

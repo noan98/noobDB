@@ -8,6 +8,7 @@ import { Button, PressableButton } from "./ui";
 import { useConfirm } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
+import { Tooltip } from "./Tooltip";
 
 /**
  * DML フライトレコーダ (#735) の一覧・巻き戻しパネル。`HistoryList` のツール
@@ -207,16 +208,17 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
                 >
                   <Icon name={KIND_ICON[entry.kind]} size={ICON_SIZES.sm} aria-hidden />
                   <Box flex="1" minWidth={0}>
-                    <chakra.div
-                      fontFamily="mono"
-                      fontSize="sm"
-                      title={entry.sql}
-                      overflow="hidden"
-                      textOverflow="ellipsis"
-                      whiteSpace="nowrap"
-                    >
-                      {oneLine(entry.sql)}
-                    </chakra.div>
+                    <Tooltip label={entry.sql}>
+                      <chakra.div
+                        fontFamily="mono"
+                        fontSize="sm"
+                        overflow="hidden"
+                        textOverflow="ellipsis"
+                        whiteSpace="nowrap"
+                      >
+                        {oneLine(entry.sql)}
+                      </chakra.div>
+                    </Tooltip>
                     <chakra.div fontSize="2xs" color="app.textMuted">
                       {entry.table} · {formatCaptured(entry.captured_at)} ·{" "}
                       {t("flightRecorderRowsAffected", { rows: entry.rows_affected })}

@@ -16,6 +16,15 @@ describe("isSingleCapturableStatement", () => {
     expect(isSingleCapturableStatement("   ")).toBe(false);
   });
 
+  it("rejects REPLACE and TRUNCATE, mirroring the backend's classify_write_kind", () => {
+    // Symmetry with `db::classify_write_kind`'s own test
+    // (`classify_write_kind_treats_everything_else_as_other`): `REPLACE INTO`
+    // and `TRUNCATE` are not one of the three captured DML kinds.
+    expect(isSingleCapturableStatement("REPLACE INTO t (a) VALUES (1)")).toBe(false);
+    expect(isSingleCapturableStatement("TRUNCATE t")).toBe(false);
+    expect(isSingleCapturableStatement("TRUNCATE TABLE t")).toBe(false);
+  });
+
   it("rejects a multi-statement script even if the first statement is a DML write", () => {
     expect(isSingleCapturableStatement("UPDATE t SET a=1; DELETE FROM t2")).toBe(false);
     expect(isSingleCapturableStatement("INSERT INTO t (a) VALUES (1); SELECT 1")).toBe(false);

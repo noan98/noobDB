@@ -116,6 +116,49 @@ export function ReadOnlyBadge({
 }
 
 /**
+ * サンドボックス (壊せる砂場、#747) のセッションを示すバッジ。専用色 (violet 系。
+ * `titleBarContext.ts` の `SANDBOX_BAND_COLOR` と同じ値) で常時明示し、「このタブは
+ * 接続先へ一切影響しないローカルコピーである」ことをひと目で伝える。production/
+ * read-only とは意味論的に独立 (両立しうる) なため `ProfileBadges` には含めず、
+ * 呼び出し側 (`ConnectionList` / `TitleBar`) が個別に描画する。
+ */
+export function SandboxBadge({
+  compact,
+  ...rest
+}: ProfileBadgeStyleProps & HTMLChakraProps<"span">) {
+  const t = useT();
+  return (
+    <MotionSpan
+      key="sandbox-badge"
+      initial={variants.fadeScale.initial}
+      animate={variants.fadeScale.animate}
+      exit={variants.fadeScale.exit}
+      transition={transitions.crossfade}
+      display="inline-flex"
+    >
+      <Tooltip label={t("sandboxBadgeTitle")} focusableWrapper>
+        <TreeBadge
+          display="inline-flex"
+          alignItems="center"
+          gap="1"
+          bg="rgba(139, 92, 246, 0.16)"
+          color="#8b5cf6"
+          borderColor="rgba(139, 92, 246, 0.5)"
+          fontSize={compact ? "2xs" : "xs"}
+          fontWeight={700}
+          px={compact ? "1.5" : "2"}
+          py={compact ? "1px" : "0.5"}
+          {...rest}
+        >
+          <Icon name="flask" size={ICON_SIZES.sm} />
+          {t("sandboxBadge")}
+        </TreeBadge>
+      </Tooltip>
+    </MotionSpan>
+  );
+}
+
+/**
  * `is_production` / `read_only` の 2 フラグから該当バッジをまとめて描画する。
  * どちらも false なら何も描画しない。切替時 (プロファイル変更でフラグが変わる)
  * は `AnimatePresence` でクロスフェードする。
@@ -123,19 +166,23 @@ export function ReadOnlyBadge({
 export function ProfileBadges({
   isProduction,
   readOnly,
+  sandbox,
   compact,
   gap = "1",
 }: {
   isProduction: boolean;
   readOnly: boolean;
+  /** サンドボックスのセッション/プロファイルなら true (#747)。 */
+  sandbox?: boolean;
   compact?: boolean;
   gap?: string;
 }) {
   const kinds = profileBadgeKinds({ is_production: isProduction, read_only: readOnly });
-  if (kinds.length === 0) return null;
+  if (kinds.length === 0 && !sandbox) return null;
   return (
     <chakra.span display="inline-flex" alignItems="center" gap={gap}>
       <AnimatePresence initial={false}>
+        {sandbox && <SandboxBadge compact={compact} />}
         {kinds.includes("production") && <ProductionBadge compact={compact} />}
         {kinds.includes("readOnly") && <ReadOnlyBadge compact={compact} />}
       </AnimatePresence>

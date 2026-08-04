@@ -217,6 +217,21 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshKeyPath, setSshKeyPath] = useState(initial?.ssh?.private_key_path ?? "");
   const [sshPassphrase, setSshPassphrase] = useState("");
   const [sshPassword, setSshPassword] = useState("");
+  const [loadingSshConfig, setLoadingSshConfig] = useState(false);
+
+  // Bastion/jump hop (#708 multi-hop tunnel — capped at one jump hop, 2 SSH
+  // hops total). Mirrors the main SSH fields above; only the auth-method-
+  // specific secret fields differ (their own keyring kind, `_hop0`).
+  const [useSshJump, setUseSshJump] = useState(!!initial?.ssh?.jump);
+  const [sshJumpHost, setSshJumpHost] = useState(initial?.ssh?.jump?.host ?? "");
+  const [sshJumpPort, setSshJumpPort] = useState(String(initial?.ssh?.jump?.port ?? 22));
+  const [sshJumpUser, setSshJumpUser] = useState(initial?.ssh?.jump?.user ?? "");
+  const [sshJumpAuthMethod, setSshJumpAuthMethod] = useState<SshAuthMethod>(
+    initial?.ssh?.jump?.auth_method ?? "key",
+  );
+  const [sshJumpKeyPath, setSshJumpKeyPath] = useState(initial?.ssh?.jump?.private_key_path ?? "");
+  const [sshJumpPassphrase, setSshJumpPassphrase] = useState("");
+  const [sshJumpPassword, setSshJumpPassword] = useState("");
 
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -256,6 +271,62 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       defaultPath,
     });
     if (typeof selected === "string") setSshKeyPath(selected);
+  };
+
+  const pickJumpKeyFile = async () => {
+    let defaultPath: string | undefined;
+    try {
+      defaultPath = sshJumpKeyPath.trim()
+        ? await dirname(sshJumpKeyPath)
+        : await join(await homeDir(), ".ssh");
+    } catch {
+      defaultPath = undefined;
+    }
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: t("formPickKeyTitle"),
+      defaultPath,
+    });
+    if (typeof selected === "string") setSshJumpKeyPath(selected);
+  };
+
+  // Resolves the alias currently typed into the SSH Host field against
+  // ~/.ssh/config (#708) and prefills HostName / Port / User / IdentityFile,
+  // plus the jump-host section when a ProxyJump directive was found. Values
+  // are copied once — later edits to ~/.ssh/config have no effect on the
+  // saved profile.
+  const handleLoadSshConfig = async () => {
+    setError(null);
+    setMessage(null);
+    const alias = sshHost.trim();
+    if (!alias) return;
+    setLoadingSshConfig(true);
+    try {
+      const resolved = await api.resolveSshConfigHost(alias);
+      if (!resolved) {
+        setError(t("formSshConfigNoMatch", { alias }));
+        return;
+      }
+      if (resolved.host_name) setSshHost(resolved.host_name);
+      if (resolved.port !== null) setSshPort(String(resolved.port));
+      if (resolved.user) setSshUser(resolved.user);
+      if (resolved.identity_file) {
+        setSshAuthMethod("key");
+        setSshKeyPath(resolved.identity_file);
+      }
+      if (resolved.jump_host) {
+        setUseSshJump(true);
+        setSshJumpHost(resolved.jump_host);
+        if (resolved.jump_port !== null) setSshJumpPort(String(resolved.jump_port));
+        if (resolved.jump_user) setSshJumpUser(resolved.jump_user);
+      }
+      setMessage(t("formSshConfigLoaded", { alias }));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoadingSshConfig(false);
+    }
   };
 
   const pickCertFile = async (set: (path: string) => void, current: string) => {
@@ -334,6 +405,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
             passphrase: sshAuthMethod === "key" ? sshPassphrase : "",
             password: sshAuthMethod === "password" ? sshPassword : "",
+            jump: useSshJump
+              ? {
+                  host: sshJumpHost,
+                  port: Number(sshJumpPort),
+                  user: sshJumpUser,
+                  auth_method: sshJumpAuthMethod,
+                  private_key_path: sshJumpAuthMethod === "key" ? sshJumpKeyPath : "",
+                  passphrase: sshJumpAuthMethod === "key" ? sshJumpPassphrase : "",
+                  password: sshJumpAuthMethod === "password" ? sshJumpPassword : "",
+                }
+              : null,
           }
         : null,
       file_path: null,
@@ -367,6 +449,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     }
     if (useSsh && parsePort(sshPort) === null) {
       setError(t("formInvalidSshPort"));
+      return false;
+    }
+    if (useSsh && useSshJump && parsePort(sshJumpPort) === null) {
+      setError(t("formInvalidSshJumpPort"));
       return false;
     }
     return true;
@@ -406,6 +492,15 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               user: sshUser,
               auth_method: sshAuthMethod,
               private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
+              jump: useSshJump
+                ? {
+                    host: sshJumpHost,
+                    port: Number(sshJumpPort),
+                    user: sshJumpUser,
+                    auth_method: sshJumpAuthMethod,
+                    private_key_path: sshJumpAuthMethod === "key" ? sshJumpKeyPath : "",
+                  }
+                : null,
             }
           : null,
         db_password: isFileBacked || password === "" ? undefined : password,
@@ -416,6 +511,14 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         ssh_password:
           !isFileBacked && useSsh && sshAuthMethod === "password" && sshPassword !== ""
             ? sshPassword
+            : undefined,
+        ssh_jump_passphrase:
+          !isFileBacked && useSsh && useSshJump && sshJumpAuthMethod === "key" && sshJumpPassphrase !== ""
+            ? sshJumpPassphrase
+            : undefined,
+        ssh_jump_password:
+          !isFileBacked && useSsh && useSshJump && sshJumpAuthMethod === "password" && sshJumpPassword !== ""
+            ? sshJumpPassword
             : undefined,
         group: group.trim() || null,
         color: color || null,
@@ -722,7 +825,19 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
                 <Box>
                   <label htmlFor={`${fid}-ssh-host`}>{t("formSshHost")}</label>
-                  <Input id={`${fid}-ssh-host`} value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                  <Flex gap="2" align="end">
+                    <Input id={`${fid}-ssh-host`} value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                    <Tooltip label={t("formSshLoadFromConfigHelp")}>
+                      <LoadingButton
+                        type="button"
+                        loading={loadingSshConfig}
+                        onClick={handleLoadSshConfig}
+                        disabled={!sshHost.trim()}
+                      >
+                        {t("formSshLoadFromConfig")}
+                      </LoadingButton>
+                    </Tooltip>
+                  </Flex>
                 </Box>
                 <Box>
                   <label htmlFor={`${fid}-ssh-port`}>{t("formPort")}</label>
@@ -787,6 +902,100 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   {t("formSshAgentHelp")}
                 </Text>
               )}
+
+              <Box mt="3" pt="3" borderTop="1px solid" borderColor="app.border">
+                <Flex display="inline-flex" align="center" gap="1.5" fontSize="12px">
+                  <Switch checked={useSshJump} onChange={setUseSshJump} size="sm" label={t("formUseSshJump")} />
+                </Flex>
+                <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+                  {t("formSshJumpHelp")}
+                </Text>
+                {useSshJump && (
+                  <Box mt="2">
+                    <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
+                      <Box>
+                        <label htmlFor={`${fid}-ssh-jump-host`}>{t("formSshJumpHost")}</label>
+                        <Input
+                          id={`${fid}-ssh-jump-host`}
+                          value={sshJumpHost}
+                          onChange={(e) => setSshJumpHost(e.target.value)}
+                        />
+                      </Box>
+                      <Box>
+                        <label htmlFor={`${fid}-ssh-jump-port`}>{t("formPort")}</label>
+                        <Input
+                          id={`${fid}-ssh-jump-port`}
+                          type="text"
+                          inputMode="numeric"
+                          value={sshJumpPort}
+                          onChange={(e) => setSshJumpPort(e.target.value.replace(/[^0-9]/g, ""))}
+                        />
+                      </Box>
+                    </Box>
+                    <Box mt="2">
+                      <label htmlFor={`${fid}-ssh-jump-user`}>{t("formSshJumpUser")}</label>
+                      <Input
+                        id={`${fid}-ssh-jump-user`}
+                        value={sshJumpUser}
+                        onChange={(e) => setSshJumpUser(e.target.value)}
+                      />
+                    </Box>
+                    <Box mt="2">
+                      <label htmlFor={`${fid}-ssh-jump-auth`}>{t("formSshJumpAuthMethod")}</label>
+                      <Select
+                        id={`${fid}-ssh-jump-auth`}
+                        value={sshJumpAuthMethod}
+                        onChange={(e) => setSshJumpAuthMethod(e.target.value as SshAuthMethod)}
+                      >
+                        <option value="key">{t("formSshAuthKey")}</option>
+                        <option value="agent">{t("formSshAuthAgent")}</option>
+                        <option value="password">{t("formSshAuthPassword")}</option>
+                      </Select>
+                    </Box>
+                    {sshJumpAuthMethod === "key" && (
+                      <>
+                        <Box mt="2">
+                          <label htmlFor={`${fid}-ssh-jump-key-path`}>{t("formPrivateKeyPath")}</label>
+                          <Flex gap="2" align="end">
+                            <Input
+                              id={`${fid}-ssh-jump-key-path`}
+                              value={sshJumpKeyPath}
+                              onChange={(e) => setSshJumpKeyPath(e.target.value)}
+                              placeholder="C:\\Users\\you\\.ssh\\id_ed25519"
+                            />
+                            <Button type="button" onClick={pickJumpKeyFile}>{t("formBrowse")}</Button>
+                          </Flex>
+                        </Box>
+                        <Box mt="2">
+                          <label htmlFor={`${fid}-ssh-jump-passphrase`}>{t("formSshJumpPassphrase")}</label>
+                          <PasswordInput
+                            id={`${fid}-ssh-jump-passphrase`}
+                            value={sshJumpPassphrase}
+                            onChange={setSshJumpPassphrase}
+                            hasStored={!!initial?.has_ssh_jump_passphrase}
+                          />
+                        </Box>
+                      </>
+                    )}
+                    {sshJumpAuthMethod === "password" && (
+                      <Box mt="2">
+                        <label htmlFor={`${fid}-ssh-jump-password`}>{t("formSshJumpPassword")}</label>
+                        <PasswordInput
+                          id={`${fid}-ssh-jump-password`}
+                          value={sshJumpPassword}
+                          onChange={setSshJumpPassword}
+                          hasStored={!!initial?.has_ssh_jump_password}
+                        />
+                      </Box>
+                    )}
+                    {sshJumpAuthMethod === "agent" && (
+                      <Text color="app.textMuted" fontSize="11px" mt="2" mb="0">
+                        {t("formSshAgentHelp")}
+                      </Text>
+                    )}
+                  </Box>
+                )}
+              </Box>
             </>
           )}
         </Fieldset>

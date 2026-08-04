@@ -10,6 +10,7 @@ mod flight_recorder;
 mod history;
 mod logs;
 mod profiles;
+mod sandboxes;
 mod snippets;
 mod ssh;
 mod state;
@@ -28,9 +29,9 @@ pub mod __test_api {
     pub use crate::db::diff::{compute_schema_diff, ColumnDiff, DiffStatus, SchemaDiff, TableDiff};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-        QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-        TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+        Column, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
+        QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable,
+        StatementStat, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
     };
     pub use crate::db::{
         classify_write_kind, is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions,
@@ -39,9 +40,10 @@ pub mod __test_api {
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
     pub use crate::flight_recorder::{NewWriteCapture, WriteCaptureRecord, WriteCaptureSummary};
-    pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshProfile};
+    pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshJumpProfile, SshProfile};
+    pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
-    pub use crate::ssh::{SshConfig, SshTunnel};
+    pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
     // zod ⇔ serde ゴールデン (#824) が代表インスタンスを組み立てるための追加の
@@ -51,12 +53,25 @@ pub mod __test_api {
     pub use crate::commands::logs::LogView;
     pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags};
     pub use crate::commands::query::CancelStreamResult;
+    pub use crate::commands::sandbox::{
+        filter_sandbox_data_diff, SandboxCreateResponse, SandboxSchemaDiffResult,
+        SandboxTableDiffResult,
+    };
     pub use crate::history::HistoryEntry;
+    pub use crate::sandboxes::SandboxRecord;
     pub use crate::snippets::{Snippet, SnippetScope};
 
     // `commands::import::CsvPreview` はコマンドモジュール内に定義されているが、
     // フィクスチャ生成専用のため struct そのものを再公開する。
     pub use crate::commands::import::CsvPreview;
+
+    // ローカル横断クエリ (#740) — Tauri を経由せずに統合テストから駆動できるよう、
+    // 各 IPC ハンドラの `_inner` コア (State なし) を再公開する。
+    pub use crate::commands::local::{
+        create_local_session_inner, drop_local_table_inner, list_local_tables_inner,
+        register_local_table_inner, save_local_database_inner, RegisterLocalTableRequest,
+        MAX_LOCAL_TABLE_ROWS,
+    };
 
     // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
     // 生成専用のピンポイント再エクスポート。`preview_query_stream` の行イベント
@@ -97,6 +112,7 @@ pub mod __test_api {
             skip_history: true,
             reconnect_ssh: None,
             _tunnel: None,
+            local_temp_file: None,
         }
     }
 
@@ -265,6 +281,111 @@ pub mod __test_api {
         .await
     }
 
+    /// Drives the `create_sandbox` IPC command's core path without a Tauri
+    /// runtime (#747).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_sandbox_via_command(
+        state: &AppState,
+        source_session_id: &str,
+        source_database: Option<&str>,
+        name: &str,
+        tables: Vec<String>,
+        include_related: bool,
+        row_limit: Option<u64>,
+    ) -> crate::error::Result<SandboxCreateResponse> {
+        crate::commands::sandbox::create_sandbox_inner(
+            state,
+            source_session_id.to_string(),
+            source_database.map(str::to_string),
+            name.to_string(),
+            tables,
+            include_related,
+            row_limit,
+        )
+        .await
+    }
+
+    /// Drives the `discard_sandbox` IPC command's core path without a Tauri
+    /// runtime (#747).
+    pub async fn discard_sandbox_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        session_id: Option<&str>,
+    ) -> crate::error::Result<()> {
+        crate::commands::sandbox::discard_sandbox_inner(
+            state,
+            sandbox_id.to_string(),
+            session_id.map(str::to_string),
+        )
+        .await
+    }
+
+    /// Drives the `sandbox_table_diff` IPC command's core path without a
+    /// Tauri runtime (#747).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn sandbox_table_diff_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        table: &str,
+        source_session_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> crate::error::Result<SandboxTableDiffResult> {
+        crate::commands::sandbox::sandbox_table_diff_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            table.to_string(),
+            source_session_id.map(str::to_string),
+            limit,
+        )
+        .await
+    }
+
+    /// Drives the `sandbox_schema_diff` IPC command's core path without a
+    /// Tauri runtime (#747).
+    pub async fn sandbox_schema_diff_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        source_session_id: Option<&str>,
+    ) -> crate::error::Result<SandboxSchemaDiffResult> {
+        crate::commands::sandbox::sandbox_schema_diff_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            source_session_id.map(str::to_string),
+        )
+        .await
+    }
+
+    /// Drives the `sandbox_advance_base` IPC command's core path without a
+    /// Tauri runtime (#747).
+    pub async fn sandbox_advance_base_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        table: &str,
+        applied: DataDiff,
+        allow_delete: bool,
+    ) -> crate::error::Result<()> {
+        crate::commands::sandbox::sandbox_advance_base_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            table.to_string(),
+            applied,
+            allow_delete,
+        )
+        .await
+    }
+
+    /// Lists every sandbox's non-secret metadata (`list_sandboxes` IPC's core;
+    /// already Tauri-free so this just re-exports it for test symmetry).
+    pub fn list_sandboxes_via_command() -> crate::error::Result<Vec<SandboxRecord>> {
+        crate::commands::sandbox::list_sandboxes()
+    }
+
     /// Drives the schema-health advisor's full command path
     /// (`commands::advisor`) without Tauri: collects table / column / index /
     /// foreign-key metadata and unused-index stats from a live connection and
@@ -381,6 +502,10 @@ pub fn run() {
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "noobDB starting");
 
+    // ローカル横断クエリ (#740) の一時 DB は前回起動のセッション寿命に紐づくため、
+    // 新しいプロセスの起動時点で前回分は必ず無効 — 異常終了で残った分をここで掃除する。
+    commands::local::cleanup_stale_local_files();
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // 長時間クエリ完了時の OS デスクトップ通知 (#707)。フロントは
@@ -418,6 +543,7 @@ pub fn run() {
             commands::ssh::list_known_hosts,
             commands::ssh::forget_host_key,
             commands::ssh::trust_host_key,
+            commands::ssh::resolve_ssh_config_host,
             commands::query::run_query,
             commands::query::run_query_transaction,
             commands::query::begin_transaction,
@@ -451,6 +577,13 @@ pub fn run() {
             commands::sync::generate_sync_sql,
             commands::sync::generate_data_sync_sql,
             commands::sync::apply_sync_sql,
+            commands::sandbox::create_sandbox,
+            commands::sandbox::list_sandboxes,
+            commands::sandbox::discard_sandbox,
+            commands::sandbox::sandbox_table_diff,
+            commands::sandbox::sandbox_schema_diff,
+            commands::sandbox::filter_sandbox_data_diff,
+            commands::sandbox::sandbox_advance_base,
             commands::profiles::list_profiles,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,
@@ -477,6 +610,11 @@ pub fn run() {
             commands::import::import_csv,
             commands::file::read_text_file,
             commands::file::write_binary_file,
+            commands::local::create_local_session,
+            commands::local::register_local_table,
+            commands::local::list_local_tables,
+            commands::local::drop_local_table,
+            commands::local::save_local_database,
             commands::tasks::list_tasks,
             commands::tasks::save_task,
             commands::tasks::delete_task,

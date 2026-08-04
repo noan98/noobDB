@@ -5,7 +5,6 @@ use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::{decode_secret_key, PrivateKey};
 
 use super::handler::ClientHandler;
-use super::SshConfig;
 use crate::error::{AppError, Result};
 use crate::profiles::SshAuthMethod;
 
@@ -41,58 +40,72 @@ async fn best_supported_rsa_hash(session: &Session) -> Option<russh::keys::HashA
         .flatten()
 }
 
-/// Authenticate an already-connected SSH session using the method in `cfg`.
-pub async fn authenticate(session: &mut Session, cfg: &SshConfig) -> Result<()> {
-    tracing::debug!(method = ?cfg.auth_method, user = %cfg.user, "ssh: authenticating");
-    match cfg.auth_method {
-        SshAuthMethod::Key => authenticate_key(session, cfg).await,
-        SshAuthMethod::Agent => authenticate_agent(session, cfg).await,
-        SshAuthMethod::Password => authenticate_password(session, cfg).await,
+/// Authenticate an already-connected SSH session with the given credentials.
+///
+/// Split out from [`super::SshConfig`] into discrete fields (#708) so both a
+/// direct hop and a bastion/jump hop (whose credentials live in the smaller
+/// `SshJumpConfig`) can share this single implementation without either
+/// borrowing from the other's type.
+pub async fn authenticate(
+    session: &mut Session,
+    user: &str,
+    auth_method: SshAuthMethod,
+    private_key_path: &Path,
+    passphrase: &str,
+    password: &str,
+) -> Result<()> {
+    tracing::debug!(method = ?auth_method, user = %user, "ssh: authenticating");
+    match auth_method {
+        SshAuthMethod::Key => authenticate_key(session, user, private_key_path, passphrase).await,
+        SshAuthMethod::Agent => authenticate_agent(session, user).await,
+        SshAuthMethod::Password => authenticate_password(session, user, password).await,
     }
 }
 
-async fn authenticate_key(session: &mut Session, cfg: &SshConfig) -> Result<()> {
-    let passphrase = if cfg.passphrase.is_empty() {
+async fn authenticate_key(
+    session: &mut Session,
+    user: &str,
+    private_key_path: &Path,
+    passphrase: &str,
+) -> Result<()> {
+    let passphrase = if passphrase.is_empty() {
         None
     } else {
-        Some(cfg.passphrase.as_str())
+        Some(passphrase)
     };
-    let key = load_private_key(&cfg.private_key_path, passphrase)?;
+    let key = load_private_key(private_key_path, passphrase)?;
     let hash_alg = best_supported_rsa_hash(session).await;
 
     let authed = session
-        .authenticate_publickey(
-            &cfg.user,
-            russh::keys::PrivateKeyWithHashAlg::new(key, hash_alg),
-        )
+        .authenticate_publickey(user, russh::keys::PrivateKeyWithHashAlg::new(key, hash_alg))
         .await
         .map_err(|e| {
-            tracing::error!(user = %cfg.user, error = %e, "ssh: public-key auth error");
+            tracing::error!(user = %user, error = %e, "ssh: public-key auth error");
             AppError::Ssh(format!("ssh auth error: {e}"))
         })?;
     if !authed.success() {
-        tracing::warn!(user = %cfg.user, "ssh: public-key authentication rejected");
+        tracing::warn!(user = %user, "ssh: public-key authentication rejected");
         return Err(AppError::Ssh("ssh authentication failed".into()));
     }
     Ok(())
 }
 
-async fn authenticate_password(session: &mut Session, cfg: &SshConfig) -> Result<()> {
+async fn authenticate_password(session: &mut Session, user: &str, password: &str) -> Result<()> {
     let authed = session
-        .authenticate_password(&cfg.user, cfg.password.clone())
+        .authenticate_password(user, password.to_string())
         .await
         .map_err(|e| {
-            tracing::error!(user = %cfg.user, error = %e, "ssh: password auth error");
+            tracing::error!(user = %user, error = %e, "ssh: password auth error");
             AppError::Ssh(format!("ssh auth error: {e}"))
         })?;
     if !authed.success() {
-        tracing::warn!(user = %cfg.user, "ssh: password authentication rejected");
+        tracing::warn!(user = %user, "ssh: password authentication rejected");
         return Err(AppError::Ssh("ssh password authentication failed".into()));
     }
     Ok(())
 }
 
-async fn authenticate_agent(session: &mut Session, cfg: &SshConfig) -> Result<()> {
+async fn authenticate_agent(session: &mut Session, user: &str) -> Result<()> {
     // The agent client is platform specific (Unix socket vs. Windows named
     // pipe), but the auth loop below is identical, so connect here and hand
     // the concrete stream type to the generic helper.
@@ -103,7 +116,7 @@ async fn authenticate_agent(session: &mut Session, cfg: &SshConfig) -> Result<()
                 "failed to connect to ssh-agent (check SSH_AUTH_SOCK and that an agent is running): {e}"
             ))
         })?;
-        agent_auth_loop(session, cfg, agent).await
+        agent_auth_loop(session, user, agent).await
     }
     #[cfg(windows)]
     {
@@ -118,11 +131,11 @@ async fn authenticate_agent(session: &mut Session, cfg: &SshConfig) -> Result<()
                      Ensure the 'OpenSSH Authentication Agent' service is running (Pageant is not supported): {e}"
                 ))
             })?;
-        agent_auth_loop(session, cfg, agent).await
+        agent_auth_loop(session, user, agent).await
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = (session, cfg);
+        let _ = (session, user);
         Err(AppError::Ssh(
             "ssh-agent authentication is not supported on this platform".into(),
         ))
@@ -132,7 +145,7 @@ async fn authenticate_agent(session: &mut Session, cfg: &SshConfig) -> Result<()
 /// Try every identity the agent holds until one authenticates.
 async fn agent_auth_loop<S>(
     session: &mut Session,
-    cfg: &SshConfig,
+    user: &str,
     mut agent: AgentClient<S>,
 ) -> Result<()>
 where
@@ -152,10 +165,10 @@ where
     for id in identities {
         let public_key = id.public_key().into_owned();
         let result = session
-            .authenticate_publickey_with(&cfg.user, public_key, hash_alg, &mut agent)
+            .authenticate_publickey_with(user, public_key, hash_alg, &mut agent)
             .await
             .map_err(|e| {
-                tracing::error!(user = %cfg.user, error = %e, "ssh: agent auth error");
+                tracing::error!(user = %user, error = %e, "ssh: agent auth error");
                 AppError::Ssh(format!("ssh-agent auth error: {e}"))
             })?;
         if result.success() {
@@ -163,7 +176,7 @@ where
         }
     }
 
-    tracing::warn!(user = %cfg.user, "ssh: agent authentication rejected for all identities");
+    tracing::warn!(user = %user, "ssh: agent authentication rejected for all identities");
     Err(AppError::Ssh(
         "ssh-agent authentication failed for all identities".into(),
     ))

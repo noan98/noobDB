@@ -29,6 +29,10 @@ import {
   DEFAULT_DISPLAY_COUNT,
   DEFAULT_FLIGHT_RECORDER_ROW_CAP,
   DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS,
+  MIN_FLIGHT_RECORDER_ROW_CAP,
+  MAX_FLIGHT_RECORDER_ROW_CAP,
+  MIN_FLIGHT_RECORDER_RETENTION_DAYS,
+  MAX_FLIGHT_RECORDER_RETENTION_DAYS,
   DEFAULT_FONT_SIZE_PX,
   DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   DEFAULT_QUERY_TIMEOUT_SECS,
@@ -841,13 +845,27 @@ export function SettingsView({ theme, onClose }: Props) {
   };
   const commitFlightRowCap = () => {
     const n = Number.parseInt(flightRowCapInput, 10);
-    if (Number.isFinite(n) && n > 0) setFlightRecorderRowCap(n);
-    else setFlightRowCapInput(String(settings.flightRecorderRowCap));
+    if (
+      Number.isSafeInteger(n) &&
+      n >= MIN_FLIGHT_RECORDER_ROW_CAP &&
+      n <= MAX_FLIGHT_RECORDER_ROW_CAP
+    ) {
+      setFlightRecorderRowCap(n);
+    } else {
+      setFlightRowCapInput(String(settings.flightRecorderRowCap));
+    }
   };
   const commitFlightRetention = () => {
     const n = Number.parseInt(flightRetentionInput, 10);
-    if (Number.isFinite(n) && n >= 0) setFlightRecorderRetentionDays(n);
-    else setFlightRetentionInput(String(settings.flightRecorderRetentionDays));
+    if (
+      Number.isSafeInteger(n) &&
+      n >= MIN_FLIGHT_RECORDER_RETENTION_DAYS &&
+      n <= MAX_FLIGHT_RECORDER_RETENTION_DAYS
+    ) {
+      setFlightRecorderRetentionDays(n);
+    } else {
+      setFlightRetentionInput(String(settings.flightRecorderRetentionDays));
+    }
   };
   const commitFontSize = () => {
     const n = Number.parseInt(fontSizeInput, 10);
@@ -1379,7 +1397,8 @@ export function SettingsView({ theme, onClose }: Props) {
           <Input
             id="settings-flight-recorder-row-cap"
             type="number"
-            min={1}
+            min={MIN_FLIGHT_RECORDER_ROW_CAP}
+            max={MAX_FLIGHT_RECORDER_ROW_CAP}
             step={100}
             value={flightRowCapInput}
             placeholder={String(DEFAULT_FLIGHT_RECORDER_ROW_CAP)}
@@ -1401,7 +1420,8 @@ export function SettingsView({ theme, onClose }: Props) {
           <Input
             id="settings-flight-recorder-retention"
             type="number"
-            min={0}
+            min={MIN_FLIGHT_RECORDER_RETENTION_DAYS}
+            max={MAX_FLIGHT_RECORDER_RETENTION_DAYS}
             step={1}
             value={flightRetentionInput}
             placeholder={String(DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS)}

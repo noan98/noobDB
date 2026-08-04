@@ -1954,6 +1954,94 @@ async fn fetch_rows_by_pk_returns_only_matching_rows() {
 }
 
 #[tokio::test]
+async fn fetch_rows_by_pk_chunks_large_key_lists() {
+    // #735 レビュー対応: 1 SELECT に全件を OR 連結すると SQLite の式ツリー
+    // 深さ上限に触れうるため、実装はチャンク分割している。チャンクサイズ
+    // (200) を跨ぐ件数を渡しても正しく全件返ることを固定する。
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_flight_chunk_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE big (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create table");
+
+    const N: i64 = 450; // > 2 chunks at CHUNK_SIZE=200
+    for id in 1..=N {
+        conn.execute(&format!("INSERT INTO big (id) VALUES ({id})"), None)
+            .await
+            .expect("seed");
+    }
+
+    let keys: Vec<Vec<t::Value>> = (1..=N).map(|id| vec![t::Value::Int(id)]).collect();
+    let rows = conn
+        .fetch_rows_by_pk("big", &["id".to_string()], &keys, None)
+        .await
+        .expect("fetch_rows_by_pk");
+    assert_eq!(rows.len(), N as usize);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_declines_when_primary_key_signature_is_duplicated() {
+    // #735 レビュー対応: SQLite は INTEGER PRIMARY KEY 以外の主キーに NULL を
+    // 許すため、複数行が同一 (NULL) シグネチャに畳まれることがある。この状況
+    // では UPDATE の before/after ペアリングを誤りかねないため、記録を辞退
+    // しつつ実行自体は行うことを固定する。
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_flight_duppk_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect");
+    conn.execute(
+        "CREATE TABLE dup (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create table");
+    conn.execute("INSERT INTO dup (id, name) VALUES (NULL, 'a')", None)
+        .await
+        .expect("seed");
+    conn.execute("INSERT INTO dup (id, name) VALUES (NULL, 'b')", None)
+        .await
+        .expect("seed");
+
+    let (result, capture) = conn
+        .capture_write("UPDATE dup SET name = 'c' WHERE name = 'a'", None, 100)
+        .await
+        .expect("capture_write");
+
+    assert_eq!(result.rows_affected, 1, "the write must still apply");
+    assert!(
+        !capture.capturable,
+        "duplicate PK signature must decline capture"
+    );
+    assert!(capture.reason.is_some());
+
+    let live = conn
+        .execute("SELECT name FROM dup WHERE name = 'c'", None)
+        .await
+        .expect("select");
+    assert_eq!(live.rows.len(), 1);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn undo_plan_round_trips_a_real_capture_and_a_real_conflict_check() {
     // Wires `capture_write` → `build_undo_plan` → `fetch_rows_by_pk` together
     // against a real SQLite connection, without touching the on-disk flight
@@ -2038,8 +2126,21 @@ async fn undo_plan_round_trips_a_real_capture_and_a_real_conflict_check() {
         captured_at: "2026-01-01T00:00:01Z".to_string(),
         undone: false,
     };
+    // record2's own before_rows drive its pk_values — reusing record1's would
+    // happen to work here (both target id=1) but is the wrong derivation in
+    // general (#735 review follow-up).
+    let pk_idx2 = record2
+        .primary_key
+        .iter()
+        .filter_map(|n| record2.columns.iter().position(|c| c == n))
+        .collect::<Vec<_>>();
+    let pk_values2: Vec<Vec<t::Value>> = record2
+        .before_rows
+        .iter()
+        .map(|r| pk_idx2.iter().map(|&i| r[i].clone()).collect())
+        .collect();
     let current2 = conn
-        .fetch_rows_by_pk("t", &record2.primary_key, &pk_values, None)
+        .fetch_rows_by_pk("t", &record2.primary_key, &pk_values2, None)
         .await
         .expect("fetch current");
     let without_force = t::build_undo_plan(&record2, &current2, false);
@@ -2090,7 +2191,11 @@ async fn read_only_session_rejects_captured_write() {
 }
 
 #[tokio::test]
-async fn undo_rejects_unknown_capture_id_and_wrong_driver() {
+async fn undo_rejects_unknown_capture_id() {
+    // 記録済みドライバ/プロファイルの照合そのものは (実ストアを介さない)
+    // `commands::flight_recorder::tests::ensure_record_matches_session` の
+    // ユニットテストがカバーする。ここは実セッション経由での「存在しない id」
+    // 拒否のみを対象とする。
     let path = seed_ro_fixture("flight_undo_unknown").await;
     let opts = t::sqlite_options(path.to_str().unwrap());
     let conn = t::connect(&opts).await.expect("connect");

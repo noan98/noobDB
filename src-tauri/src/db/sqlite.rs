@@ -6,9 +6,10 @@ use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::advisor::UnusedIndexStats;
 use super::types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    Column, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
+    QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable,
+    StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
+    Value,
 };
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
@@ -423,6 +424,170 @@ impl SqliteConn {
         }
         tx.commit().await?;
         Ok(affected)
+    }
+
+    // ── ローカル横断クエリ (#740) ──
+    //
+    // これらは「駆動元セッションを持たない特殊セッション」(commands/local.rs が
+    // 開く一時 SQLite ファイル) 専用の操作で、`Connection` の enum ディスパッチには
+    // 乗るが MySQL/Postgres バリアントでは非対応として短絡する (db/mod.rs 参照)。
+    // 将来ローカルエンジンを DuckDB 等へ差し替える場合も、この enum 面だけを
+    // 差し替えれば commands 層は無改修で済む設計。
+
+    /// 結果セットを 1 つのローカルテーブルとして登録する (#740)。同名テーブルの
+    /// 再登録は上書き。カラムは型を宣言せず作成する — SQLite は無型宣言のカラムに
+    /// BLOB affinity (無変換) を与えるため、`bind_local_value` で型付きのまま
+    /// bind した値がそのまま (数値なら数値、BLOB なら実バイト列、NULL なら NULL) 格納され、
+    /// テキスト往復での型強制変換 (`import_rows` の文字列ベース経路) を経ない
+    /// 高精度な型マッピングになる。テーブル作成・行 INSERT・メタデータ upsert を
+    /// 単一トランザクションにまとめ、途中失敗で中途半端な登録が残らないようにする。
+    pub async fn register_local_table(
+        &self,
+        meta: &LocalTableMeta,
+        columns: &[Column],
+        rows: &[Vec<Value>],
+    ) -> Result<()> {
+        if columns.is_empty() {
+            return Err(AppError::InvalidInput("登録するカラムがありません".into()));
+        }
+        let table_ident = quote_ident(&meta.name);
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(&c.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TABLE IF NOT EXISTS {LOCAL_META_TABLE} (
+                name TEXT PRIMARY KEY,
+                source_profile TEXT,
+                source_sql TEXT NOT NULL,
+                source_driver TEXT,
+                fetched_at_ms INTEGER NOT NULL,
+                row_count INTEGER NOT NULL
+            )"
+        )))
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TABLE IF EXISTS {table_ident}"
+        )))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TABLE {table_ident} ({cols_sql})"
+        )))
+        .execute(&mut *tx)
+        .await?;
+
+        let ncols = columns.len();
+        if !rows.is_empty() {
+            // SQLite's default bound-variable limit is conservative
+            // (historically 999); keep each statement comfortably under it.
+            let max_rows = (900 / ncols.max(1)).max(1);
+            for chunk in rows.chunks(max_rows) {
+                let sql = build_insert_sql(&table_ident, &cols_sql, ncols, chunk.len());
+                let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+                for row in chunk {
+                    for ci in 0..ncols {
+                        q = bind_local_value(q, row.get(ci));
+                    }
+                }
+                q.execute(&mut *tx).await?;
+            }
+        }
+
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO {LOCAL_META_TABLE}
+                (name, source_profile, source_sql, source_driver, fetched_at_ms, row_count)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(name) DO UPDATE SET
+                source_profile = excluded.source_profile,
+                source_sql = excluded.source_sql,
+                source_driver = excluded.source_driver,
+                fetched_at_ms = excluded.fetched_at_ms,
+                row_count = excluded.row_count"
+        )))
+        .bind(&meta.name)
+        .bind(&meta.source_profile)
+        .bind(&meta.source_sql)
+        .bind(&meta.source_driver)
+        .bind(meta.fetched_at_ms)
+        .bind(meta.row_count)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Every table registered via [`SqliteConn::register_local_table`] on this
+    /// session, newest first. Returns an empty list (not an error) when nothing
+    /// has been registered yet — the catalog table doesn't exist until the
+    /// first registration.
+    pub async fn list_local_tables(&self) -> Result<Vec<LocalTableMeta>> {
+        let mut conn = self.pool.acquire().await?;
+        if !local_meta_table_exists(&mut *conn).await? {
+            return Ok(Vec::new());
+        }
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT name, source_profile, source_sql, source_driver, fetched_at_ms, row_count
+             FROM {LOCAL_META_TABLE} ORDER BY fetched_at_ms DESC"
+        )))
+        .fetch_all(&mut *conn)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| LocalTableMeta {
+                name: r.try_get("name").unwrap_or_default(),
+                source_profile: r.try_get("source_profile").unwrap_or(None),
+                source_sql: r.try_get("source_sql").unwrap_or_default(),
+                source_driver: r.try_get("source_driver").unwrap_or(None),
+                fetched_at_ms: r.try_get("fetched_at_ms").unwrap_or_default(),
+                row_count: r.try_get("row_count").unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    /// Drops a registered local table and its catalog entry. Both parts are
+    /// no-ops (not errors) when already absent, so a caller can call this
+    /// idempotently.
+    pub async fn drop_local_table(&self, name: &str) -> Result<()> {
+        let table_ident = quote_ident(name);
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TABLE IF EXISTS {table_ident}"
+        )))
+        .execute(&mut *tx)
+        .await?;
+        if local_meta_table_exists(&mut *tx).await? {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {LOCAL_META_TABLE} WHERE name = ?"
+            )))
+            .bind(name)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Writes a clean, self-contained snapshot of this local database to
+    /// `path` via `VACUUM INTO` — the explicit "ファイルに保存" persistence
+    /// escape hatch (#740). The live session (and its temp backing file)
+    /// stays volatile regardless; this only creates an independent copy.
+    pub async fn vacuum_into(&self, path: &str) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("VACUUM INTO ?")
+            .bind(path)
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
     }
 
     pub async fn databases(&self) -> Result<Vec<String>> {
@@ -1116,6 +1281,72 @@ async fn fetch_primary_key(pool: &SqlitePool, target: &str) -> Result<Vec<String
 /// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
 fn quote_ident(name: &str) -> String {
     super::sync::quote_ident(super::DriverKind::Sqlite, name)
+}
+
+/// Catalog table name for local-table provenance metadata (#740). Prefixed
+/// with `__noobdb_` to keep it out of the way of a user's own table names in
+/// the schema tree / autocomplete; `tables()` doesn't filter it out (SQLite
+/// has no reserved-name convention like `sqlite_%` for user tables), so it is
+/// intentionally the one implementation detail that leaks into the local
+/// session's own table list — acceptable since local sessions are internal.
+const LOCAL_META_TABLE: &str = "__noobdb_local_meta";
+
+/// True when the local-table catalog table exists on this connection/
+/// transaction. Generic over the executor so both a plain pool connection and
+/// an in-flight transaction can call it — the catalog is created lazily on
+/// first registration, so a fresh local session has no such table yet, and
+/// that must read as "no local tables" rather than a SQL error.
+async fn local_meta_table_exists<'e, E>(exec: E) -> Result<bool>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    let found: Option<SqliteRow> =
+        sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .bind(LOCAL_META_TABLE)
+            .fetch_optional(exec)
+            .await?;
+    Ok(found.is_some())
+}
+
+/// Binds one of our cross-driver `Value` variants onto a local-table INSERT,
+/// preserving its concrete type rather than coercing through text (#740):
+/// `Int`/`UInt`/`Float`/`Bool` bind as their native SQLite storage class,
+/// `Bytes` decodes the hex wire form back to a real BLOB, and `String` (which
+/// is also how every driver already renders datetimes) binds as TEXT. Because
+/// the destination columns are declared without a type (see
+/// `register_local_table`), SQLite gives them BLOB affinity — i.e. no
+/// coercion — so whatever concrete type is bound here is exactly what gets
+/// stored, round-tripping precisely on a later re-query.
+fn bind_local_value<'q>(
+    q: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
+    v: Option<&'q Value>,
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
+    match v {
+        None | Some(Value::Null) => q.bind(Option::<String>::None),
+        Some(Value::Bool(b)) => q.bind(*b),
+        Some(Value::Int(i)) => q.bind(*i),
+        Some(Value::UInt(u)) => {
+            if *u <= i64::MAX as u64 {
+                q.bind(*u as i64)
+            } else {
+                // SQLite has no unsigned 64-bit storage class; a value beyond
+                // i64::MAX would overflow on bind, so fall back to its exact
+                // decimal text form (still round-trips as a value, just not
+                // as INTEGER storage). Practically never hit — MySQL's own
+                // BIGINT UNSIGNED max is the only source of such values.
+                q.bind(u.to_string())
+            }
+        }
+        Some(Value::Float(f)) => q.bind(*f),
+        Some(Value::String(s)) => q.bind(s.clone()),
+        Some(Value::Bytes(hex)) => match data_encoding::HEXLOWER.decode(hex.as_bytes()) {
+            Ok(bytes) => q.bind(bytes),
+            // Malformed hex shouldn't happen (drivers always emit lowercase
+            // hex for `Value::Bytes`), but fail soft into text rather than
+            // erroring the whole registration over one odd cell.
+            Err(_) => q.bind(hex.clone()),
+        },
+    }
 }
 
 fn strip_identifier_quotes(s: &str) -> String {

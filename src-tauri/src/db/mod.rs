@@ -5,6 +5,7 @@ pub mod format;
 pub mod mssql;
 pub mod mysql;
 pub mod postgres;
+pub mod sandbox;
 pub mod sqlite;
 pub mod sync;
 pub mod types;
@@ -14,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use advisor::UnusedIndexStats;
 use types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, StatementStat, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    Column, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
+    QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, StatementStat,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -963,6 +964,40 @@ impl Connection {
         let ambiguous_reason =
             "対象行を正確に特定できませんでした (対象行数が上限を超えている可能性があります)";
 
+        // 重複した主キーシグネチャの防御 (#735 レビュー対応): SQLite は
+        // INTEGER PRIMARY KEY 以外の主キーに NULL を許すため、複数の行が同じ
+        // シグネチャに畳まれることがある (`db::data_diff` の `key_unreliable`
+        // と同じ懸念)。UPDATE 経路はこのシグネチャを鍵にした HashMap で
+        // before/after をペアリングするため、重複があると後勝ちで別の行の
+        // after 値を誤って紐付けかねない。DELETE/INSERT 側も HashSet の
+        // 有無判定だけで多重度を見ないため、同様に誤判定しうる。before/after
+        // いずれかで重複が見つかったら、正確に特定できないとして記録を辞退する
+        // (書き込み自体は必ず実行する)。
+        fn has_duplicate_pk_signature(rows: &[Vec<Value>], pk_idx: &[usize]) -> bool {
+            let mut seen = std::collections::HashSet::with_capacity(rows.len());
+            for row in rows {
+                let sig =
+                    row_signature(&pk_idx.iter().map(|&i| row[i].clone()).collect::<Vec<_>>());
+                if !seen.insert(sig) {
+                    return true;
+                }
+            }
+            false
+        }
+        if has_duplicate_pk_signature(&dry.before_rows, &pk_idx)
+            || has_duplicate_pk_signature(&dry.after_rows, &pk_idx)
+        {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable_with_meta(
+                    kind,
+                    "主キーが重複しており対象行を正確に特定できませんでした",
+                    &dry,
+                ),
+            ));
+        }
+
         match kind {
             WriteKind::Update => {
                 let after_by_key: std::collections::HashMap<String, Vec<Value>> = dry
@@ -1112,30 +1147,108 @@ impl Connection {
         if pk_rows.is_empty() || primary_key.is_empty() {
             return Ok(Vec::new());
         }
+        // #735 レビュー対応: 1 SELECT に全 pk_rows 分の `(...)  OR (...)` を
+        // 詰め込むと、SQLite の式ツリー深さ上限 (既定 1000、`SQLITE_LIMIT_
+        // EXPR_DEPTH`) を Undo 対象行数が多いときに超えてクエリ自体が失敗しうる。
+        // 固定件数ずつチャンク分割し、複数 SELECT の結果を連結することで
+        // 1 クエリあたりの式ツリーを浅く保つ。
+        const CHUNK_SIZE: usize = 200;
         let driver = self.driver_kind();
         let table_ident = sync::quote_ident(driver, table);
-        let predicate = pk_rows
-            .iter()
-            .map(|key| {
-                let clause = primary_key
-                    .iter()
-                    .zip(key.iter())
-                    .map(|(name, value)| {
-                        let ident = sync::quote_ident(driver, name);
-                        match value {
-                            Value::Null => format!("{ident} IS NULL"),
-                            _ => format!("{ident} = {}", data_diff::sql_literal(driver, value)),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" AND ");
-                format!("({clause})")
-            })
-            .collect::<Vec<_>>()
-            .join(" OR ");
-        let sql = format!("SELECT * FROM {table_ident} WHERE {predicate}");
-        let result = self.execute(&sql, database).await?;
-        Ok(result.rows)
+        let mut all_rows = Vec::with_capacity(pk_rows.len());
+        for chunk in pk_rows.chunks(CHUNK_SIZE) {
+            let predicate = chunk
+                .iter()
+                .map(|key| {
+                    let clause = primary_key
+                        .iter()
+                        .zip(key.iter())
+                        .map(|(name, value)| {
+                            let ident = sync::quote_ident(driver, name);
+                            match value {
+                                Value::Null => format!("{ident} IS NULL"),
+                                _ => format!("{ident} = {}", data_diff::sql_literal(driver, value)),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" AND ");
+                    format!("({clause})")
+                })
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            let sql = format!("SELECT * FROM {table_ident} WHERE {predicate}");
+            let result = self.execute(&sql, database).await?;
+            all_rows.extend(result.rows);
+        }
+        Ok(all_rows)
+    }
+
+    // ── ローカル横断クエリ (#740) ──
+    //
+    // Only meaningful on the local SQLite engine (see `commands/local.rs`);
+    // MySQL/Postgres sessions never receive these calls through normal IPC
+    // (the frontend only offers registration on a local session), but the
+    // dispatch is still total so a stray direct call fails clearly instead of
+    // panicking. Keeping these on the `Connection` enum — rather than as
+    // free functions reaching into `Connection::Sqlite` from the command
+    // layer — is what keeps a future local-engine swap (e.g. DuckDB, #709)
+    // to just a new match arm here.
+
+    /// Registers a result set as a local table (create + bulk insert +
+    /// provenance metadata, atomically). See
+    /// `db::sqlite::SqliteConn::register_local_table`.
+    pub async fn register_local_table(
+        &self,
+        meta: &LocalTableMeta,
+        columns: &[Column],
+        rows: &[Vec<Value>],
+    ) -> Result<()> {
+        match self {
+            Connection::Sqlite(c) => c.register_local_table(meta, columns, rows).await,
+            Connection::MySql(_) | Connection::Postgres(_) | Connection::Mssql(_) => {
+                Err(AppError::InvalidInput(
+                    "local table registration is only supported on the local SQLite engine".into(),
+                ))
+            }
+        }
+    }
+
+    /// Every table registered on this local session, newest first.
+    pub async fn list_local_tables(&self) -> Result<Vec<LocalTableMeta>> {
+        match self {
+            Connection::Sqlite(c) => c.list_local_tables().await,
+            Connection::MySql(_) | Connection::Postgres(_) | Connection::Mssql(_) => {
+                Err(AppError::InvalidInput(
+                    "local table listing is only supported on the local SQLite engine".into(),
+                ))
+            }
+        }
+    }
+
+    /// Drops a registered local table and its provenance entry.
+    pub async fn drop_local_table(&self, name: &str) -> Result<()> {
+        match self {
+            Connection::Sqlite(c) => c.drop_local_table(name).await,
+            Connection::MySql(_) | Connection::Postgres(_) | Connection::Mssql(_) => {
+                Err(AppError::InvalidInput(
+                    "dropping a local table is only supported on the local SQLite engine".into(),
+                ))
+            }
+        }
+    }
+
+    /// Persists a clean snapshot of the local database to `path` (the
+    /// explicit "ファイルに保存" escape hatch out of the default volatile
+    /// behavior).
+    pub async fn vacuum_into(&self, path: &str) -> Result<()> {
+        match self {
+            Connection::Sqlite(c) => c.vacuum_into(path).await,
+            Connection::MySql(_) | Connection::Postgres(_) | Connection::Mssql(_) => {
+                Err(AppError::InvalidInput(
+                    "saving to file is only supported on the local SQLite engine".into(),
+                ))
+            }
+        }
     }
 }
 
@@ -2880,7 +2993,12 @@ mod tests {
 
     #[test]
     fn driver_kind_parse_round_trips_as_str() {
-        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+        for d in [
+            DriverKind::Mysql,
+            DriverKind::Postgres,
+            DriverKind::Sqlite,
+            DriverKind::Mssql,
+        ] {
             assert_eq!(DriverKind::parse(d.as_str()), Some(d));
         }
         assert_eq!(DriverKind::parse("oracle"), None);

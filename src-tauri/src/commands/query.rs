@@ -459,6 +459,7 @@ pub async fn run_query_stream(
                     .map(|n| n as usize)
                     .unwrap_or(crate::db::DEFAULT_CAPTURE_ROW_CAP),
                 capture_retention_days.map(|n| n as i64),
+                query_timeout_secs,
                 delivered_rows_for_task,
             )
             .await;
@@ -691,6 +692,7 @@ async fn spawn_captured_write(
     database: Option<String>,
     row_cap: usize,
     retention_days: Option<i64>,
+    query_timeout_secs: Option<u64>,
     delivered_rows: Arc<AtomicU64>,
 ) {
     tracing::debug!(
@@ -701,10 +703,22 @@ async fn spawn_captured_write(
         "captured write starting"
     );
     let started = std::time::Instant::now();
-    let outcome = session
+    let exec = session
         .conn
-        .capture_write(&sql, database.as_deref(), row_cap)
-        .await;
+        .capture_write(&sql, database.as_deref(), row_cap);
+    // Same timeout treatment as the ordinary streaming path (`spawn_query_stream`):
+    // without this, a captured write could hang indefinitely — the capture
+    // step itself runs a dry-run preview *and* the real write, so it is at
+    // least as susceptible to a stuck query as a normal execution.
+    let outcome = match query_timeout_secs {
+        Some(secs) if secs > 0 => {
+            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                Ok(res) => res,
+                Err(_) => Err(AppError::Timeout(secs)),
+            }
+        }
+        _ => exec.await,
+    };
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     match &outcome {
@@ -736,27 +750,16 @@ async fn spawn_captured_write(
                 );
             }
 
-            if capture.capturable && !session.skip_history {
-                let new = crate::flight_recorder::NewWriteCapture {
-                    profile_id: session.profile_id.clone(),
-                    driver: session.conn.driver_kind().as_str().to_string(),
-                    database: database.clone(),
-                    table: capture.table.clone().unwrap_or_default(),
-                    kind: capture.kind,
-                    sql: sql.clone(),
-                    primary_key: capture.primary_key.clone(),
-                    columns: capture.columns.clone(),
-                    column_types: capture.column_types.clone(),
-                    before_rows: capture.before_rows.clone(),
-                    after_rows: capture.after_rows.clone(),
-                    rows_affected: capture.rows_affected as i64,
-                    captured_at: chrono::Utc::now().to_rfc3339(),
-                };
-                let retention = retention_days.unwrap_or(30);
-                if let Err(e) = crate::flight_recorder::store::record(new, retention).await {
-                    tracing::warn!(error = %e, "failed to persist flight recorder capture");
-                }
-            }
+            crate::flight_recorder::persist_capture(
+                session.skip_history,
+                session.profile_id.clone(),
+                session.conn.driver_kind(),
+                database.clone(),
+                sql.clone(),
+                capture,
+                retention_days,
+            )
+            .await;
         }
         Err(e) => {
             tracing::warn!(
@@ -770,7 +773,7 @@ async fn spawn_captured_write(
                 StreamErrorEvent {
                     stream_id: stream_id.clone(),
                     error: e.to_string(),
-                    timed_out: false,
+                    timed_out: matches!(e, AppError::Timeout(_)),
                     connection_lost: e.is_connection_lost(),
                     delivered_rows: delivered_rows.load(Ordering::SeqCst),
                 },

@@ -94,4 +94,25 @@ pub struct SshProfile {
     /// Path to the private key. Empty/unused for `agent` and `password`.
     #[serde(default)]
     pub private_key_path: PathBuf,
+    /// Optional bastion/jump hop dialed *before* this hop (#708 multi-hop
+    /// tunnel, ProxyJump-equivalent). When set, the tunnel opens
+    /// jump -> `host` -> (remote DB) instead of connecting to `host` directly.
+    /// Capped at one jump hop (2 SSH hops total) for now; `None` for profiles
+    /// saved before this field existed (single-hop, unchanged behavior).
+    #[serde(default)]
+    pub jump: Option<SshJumpProfile>,
+}
+
+/// The bastion/jump hop of a 2-hop SSH tunnel (#708). Structurally the same
+/// shape as [`SshProfile`] minus its own `jump` (chains are capped at one
+/// bastion hop) since it is always the *first* hop dialed directly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshJumpProfile {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    #[serde(default)]
+    pub auth_method: SshAuthMethod,
+    #[serde(default)]
+    pub private_key_path: PathBuf,
 }

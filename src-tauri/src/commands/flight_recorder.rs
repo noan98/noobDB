@@ -20,14 +20,10 @@ use crate::db::types::{QueryResult, Value};
 use crate::db::{classify_write_kind, DriverKind, WriteKind, DEFAULT_CAPTURE_ROW_CAP};
 use crate::error::{AppError, Result};
 use crate::flight_recorder::undo::{build_undo_plan, UndoConflict};
-use crate::flight_recorder::{store as flight_store, NewWriteCapture, WriteCaptureSummary};
+use crate::flight_recorder::{persist_capture, store as flight_store, WriteCaptureSummary};
 use crate::state::AppState;
 
 use super::query::{ensure_allowed_for_session, record_write_history, run_query_transaction_inner};
-
-/// Default retention window (days) for captures, mirroring the frontend
-/// setting's default. Only used when the caller doesn't pass one.
-const DEFAULT_RETENTION_DAYS: i64 = 30;
 
 #[derive(Debug, Serialize)]
 pub struct CapturedWriteResponse {
@@ -117,31 +113,16 @@ pub(crate) async fn run_captured_write_inner(
 
     let (result, capture) = outcome?;
 
-    let mut capture_id: Option<i64> = None;
-    if capture.capturable && !session.skip_history {
-        let new = NewWriteCapture {
-            profile_id: session.profile_id.clone(),
-            driver: session.conn.driver_kind().as_str().to_string(),
-            database: database.clone(),
-            table: capture.table.clone().unwrap_or_default(),
-            kind: capture.kind,
-            sql: sql.clone(),
-            primary_key: capture.primary_key.clone(),
-            columns: capture.columns.clone(),
-            column_types: capture.column_types.clone(),
-            before_rows: capture.before_rows.clone(),
-            after_rows: capture.after_rows.clone(),
-            rows_affected: capture.rows_affected as i64,
-            captured_at: chrono::Utc::now().to_rfc3339(),
-        };
-        let retention = retention_days
-            .map(|d| d as i64)
-            .unwrap_or(DEFAULT_RETENTION_DAYS);
-        match flight_store::record(new, retention).await {
-            Ok(id) => capture_id = Some(id),
-            Err(e) => tracing::warn!(error = %e, "failed to persist flight recorder capture"),
-        }
-    }
+    let capture_id = persist_capture(
+        session.skip_history,
+        session.profile_id.clone(),
+        session.conn.driver_kind(),
+        database.clone(),
+        sql.clone(),
+        &capture,
+        retention_days.map(|d| d as i64),
+    )
+    .await;
 
     Ok(CapturedWriteResponse {
         result,
@@ -359,13 +340,11 @@ pub(crate) async fn plan_undo(
             "この操作は既に元に戻されています".into(),
         ));
     }
-    let driver = DriverKind::parse(&record.driver)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown driver: {}", record.driver)))?;
-    if driver != session.conn.driver_kind() {
-        return Err(AppError::InvalidInput(
-            "接続先のドライバが記録時と異なります".into(),
-        ));
-    }
+    ensure_record_matches_session(
+        &record,
+        session.profile_id.as_deref(),
+        session.conn.driver_kind(),
+    )?;
 
     let pk_idx: Vec<usize> = record
         .primary_key
@@ -381,9 +360,12 @@ pub(crate) async fn plan_undo(
         WriteKind::Insert => &record.after_rows,
         _ => &record.before_rows,
     };
+    // 保存済み行が壊れている (JSON 破損・列削除後の再実行など) 場合に direct
+    // index で panic しないよう `get()` を使い、キーを特定できない行は無視する
+    // (`build_undo_plan` 側が同じ行を独立に検出して警告付きスキップする)。
     let pk_values: Vec<Vec<Value>> = reference_rows
         .iter()
-        .map(|r| pk_idx.iter().map(|&i| r[i].clone()).collect())
+        .filter_map(|r| pk_idx.iter().map(|&i| r.get(i).cloned()).collect())
         .collect();
     let current_rows = session
         .conn
@@ -397,4 +379,100 @@ pub(crate) async fn plan_undo(
 
     let plan = build_undo_plan(&record, &current_rows, force);
     Ok((plan, record))
+}
+
+/// Validates that a stored capture (`record`) can be undone against the
+/// session it is being applied to: same driver (the reverse SQL's literal
+/// escaping is driver-specific — applying it against the wrong driver could
+/// produce invalid or, worse, differently-interpreted SQL) **and** same
+/// profile (#735 review follow-up: a capture from one connection must never
+/// be replayed against an unrelated one, even an ad-hoc session that happens
+/// to use the same driver). `record.profile_id` is `None` for a capture taken
+/// on an ad-hoc (profile-less) connection, so this only matches another
+/// ad-hoc session — never a saved profile.
+fn ensure_record_matches_session(
+    record: &crate::flight_recorder::WriteCaptureRecord,
+    session_profile_id: Option<&str>,
+    session_driver: DriverKind,
+) -> Result<()> {
+    let record_driver = DriverKind::parse(&record.driver)
+        .ok_or_else(|| AppError::InvalidInput(format!("unknown driver: {}", record.driver)))?;
+    if record_driver != session_driver {
+        return Err(AppError::InvalidInput(
+            "接続先のドライバが記録時と異なります".into(),
+        ));
+    }
+    if record.profile_id.as_deref() != session_profile_id {
+        return Err(AppError::InvalidInput(
+            "接続先のプロファイルが記録時と異なります".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::WriteKind;
+    use crate::flight_recorder::WriteCaptureRecord;
+
+    fn record(driver: &str, profile_id: Option<&str>) -> WriteCaptureRecord {
+        WriteCaptureRecord {
+            id: 1,
+            profile_id: profile_id.map(str::to_string),
+            driver: driver.to_string(),
+            database: None,
+            table: "t".to_string(),
+            kind: WriteKind::Update,
+            sql: String::new(),
+            primary_key: vec!["id".to_string()],
+            columns: vec!["id".to_string()],
+            column_types: vec!["INTEGER".to_string()],
+            before_rows: Vec::new(),
+            after_rows: Vec::new(),
+            rows_affected: 0,
+            captured_at: "2026-01-01T00:00:00Z".to_string(),
+            undone: false,
+        }
+    }
+
+    #[test]
+    fn matches_when_driver_and_profile_agree() {
+        let r = record("sqlite", Some("p1"));
+        assert!(ensure_record_matches_session(&r, Some("p1"), DriverKind::Sqlite).is_ok());
+    }
+
+    #[test]
+    fn matches_when_both_are_ad_hoc_without_a_profile() {
+        let r = record("sqlite", None);
+        assert!(ensure_record_matches_session(&r, None, DriverKind::Sqlite).is_ok());
+    }
+
+    #[test]
+    fn rejects_driver_mismatch() {
+        let r = record("mysql", Some("p1"));
+        let err = ensure_record_matches_session(&r, Some("p1"), DriverKind::Sqlite).unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn rejects_profile_mismatch_even_with_the_same_driver() {
+        let r = record("sqlite", Some("p1"));
+        let err = ensure_record_matches_session(&r, Some("p2"), DriverKind::Sqlite).unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn rejects_ad_hoc_capture_replayed_against_a_saved_profile() {
+        let r = record("sqlite", None);
+        let err = ensure_record_matches_session(&r, Some("p1"), DriverKind::Sqlite).unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn rejects_unknown_stored_driver_string() {
+        let r = record("oracle", Some("p1"));
+        let err = ensure_record_matches_session(&r, Some("p1"), DriverKind::Sqlite).unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+    }
 }
