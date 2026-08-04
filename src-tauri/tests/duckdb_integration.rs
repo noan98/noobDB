@@ -486,10 +486,11 @@ async fn duckdb_read_only_session_rejects_writes_via_ipc() {
     // state after closing a session already does so via a *fresh* connection
     // opened *after* the prior one's `close()`, so this is the only place
     // that had two connections alive to the same file at once.
-    let rows = t::run_query_via_command(&state, &sid, "SELECT id, label FROM ro_t ORDER BY id", None)
-        .await
-        .expect("select after rejected writes")
-        .rows;
+    let rows =
+        t::run_query_via_command(&state, &sid, "SELECT id, label FROM ro_t ORDER BY id", None)
+            .await
+            .expect("select after rejected writes")
+            .rows;
     assert_eq!(rows.len(), 1, "no write should have landed");
     assert!(matches!(&rows[0][1], t::Value::String(s) if s == "a"));
 

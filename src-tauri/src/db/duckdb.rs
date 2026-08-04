@@ -1642,6 +1642,11 @@ mod tests {
 
     #[test]
     fn build_duckdb_insert_generates_multi_row_values() {
+        // Every cell is always quoted as a text literal, even a
+        // numeric-looking one like "1" — `build_duckdb_insert` relies on
+        // DuckDB's implicit cast of an untyped string literal to the
+        // destination column's type (module docs), it doesn't attempt to
+        // detect numeric cells and emit them bare.
         let cols = vec!["id".to_string(), "name".to_string()];
         let rows = vec![
             vec![Some("1".to_string()), Some("a'b".to_string())],
@@ -1649,7 +1654,7 @@ mod tests {
         ];
         assert_eq!(
             build_duckdb_insert("t", &cols, &rows),
-            "INSERT INTO \"t\" (\"id\", \"name\") VALUES (1,'a''b'),(NULL,'c')"
+            "INSERT INTO \"t\" (\"id\", \"name\") VALUES ('1','a''b'),(NULL,'c')"
         );
     }
 
