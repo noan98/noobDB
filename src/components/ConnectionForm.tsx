@@ -103,6 +103,7 @@ function defaultPortFor(driver: DriverKind): number {
     case "postgres": return 5432;
     case "sqlite": return 0;
     case "duckdb": return 0;
+    case "mssql": return 1433;
   }
 }
 
@@ -112,11 +113,18 @@ function defaultUserFor(driver: DriverKind): string {
     case "postgres": return "postgres";
     case "sqlite": return "";
     case "duckdb": return "";
+    case "mssql": return "sa";
   }
 }
 
 function normalizeDriver(driver: string | undefined): DriverKind {
-  if (driver === "postgres" || driver === "sqlite" || driver === "mysql" || driver === "duckdb") {
+  if (
+    driver === "postgres" ||
+    driver === "sqlite" ||
+    driver === "mysql" ||
+    driver === "duckdb" ||
+    driver === "mssql"
+  ) {
     return driver;
   }
   return "mysql";
@@ -477,6 +485,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <option value="postgres">{t("formDriverPostgres")}</option>
           <option value="sqlite">{t("formDriverSqlite")}</option>
           <option value="duckdb">{t("formDriverDuckDb")}</option>
+          <option value="mssql">{t("formDriverMssql")}</option>
         </Select>
       </Box>
 
@@ -507,7 +516,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         </Fieldset>
       ) : (
         <Fieldset>
-          <Legend>{driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}</Legend>
+          <Legend>
+            {driver === "postgres"
+              ? t("formPostgresLegend")
+              : driver === "mssql"
+                ? t("formMssqlLegend")
+                : t("formMysqlLegend")}
+          </Legend>
           <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
             <Box>
               <label htmlFor={`${fid}-host`}>{t("formHost")}</label>
@@ -807,7 +822,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             value={initSql}
             onChange={(e) => setInitSql(e.target.value)}
             placeholder={
-              isFileBacked ? t("formInitSqlPlaceholderSqlite") : t("formInitSqlPlaceholder")
+              driver === "sqlite"
+                ? t("formInitSqlPlaceholderSqlite")
+                : driver === "duckdb"
+                  ? t("formInitSqlPlaceholderDuckDb")
+                  : t("formInitSqlPlaceholder")
             }
             rows={3}
             css={{ fontFamily: "var(--font-mono)", resize: "vertical", width: "100%" }}

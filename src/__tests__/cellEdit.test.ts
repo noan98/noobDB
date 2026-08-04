@@ -354,6 +354,15 @@ describe("buildRowSql", () => {
       expect(
         buildRowSql(baseRowSql({ driver: "sqlite", columns, rows }), "insert"),
       ).toEqual(['INSERT INTO "tbl" ("id", "data") VALUES (1, X\'deadbeef\');']);
+      // DuckDB's BLOB literal escapes every byte individually
+      // ('\xde\xad\xbe\xef'), unlike PostgreSQL's bytea (one `\x` prefix for
+      // the whole string, '\xdeadbeef') — a multi-byte value like this is the
+      // only way to distinguish the two formats.
+      expect(
+        buildRowSql(baseRowSql({ driver: "duckdb", columns, rows }), "insert"),
+      ).toEqual([
+        'INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xde\\xad\\xbe\\xef\');',
+      ]);
     });
 
     it("treats PostgreSQL BYTEA as a BLOB-family column (regression: #修正4)", () => {

@@ -282,7 +282,7 @@ const tableDiff = z.object({
   columns: z.array(columnDiff),
 });
 
-const driverKind = z.enum(["mysql", "postgres", "sqlite", "duckdb"]);
+const driverKind = z.enum(["mysql", "postgres", "sqlite", "duckdb", "mssql"]);
 
 export const schemaDiff = z.object({
   source_driver: driverKind,
@@ -544,6 +544,93 @@ export const dumpCancelledEvent = z.object({
   streamId: z.string(),
   deliveredRows: z.number(),
 });
+
+// --- タスクスケジューラ (#730) ---------------------------------------------
+
+const dumpOptions = z.object({
+  singleTransaction: z.boolean(),
+  routines: z.boolean(),
+  events: z.boolean(),
+  triggers: z.boolean(),
+  addDropTable: z.boolean(),
+  extendedInsert: z.boolean(),
+  completeInsert: z.boolean(),
+  noData: z.boolean(),
+  noCreateInfo: z.boolean(),
+  noOwner: z.boolean().optional(),
+  noPrivileges: z.boolean().optional(),
+  pgSchema: z.string().nullable().optional(),
+  formatSql: z.boolean().optional(),
+});
+
+const exportFormat = z.enum(["csv", "json", "ndjson", "markdown", "sql"]);
+
+const taskAction = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("export_query"),
+    sql: z.string(),
+    database: z.string().nullable(),
+    format: exportFormat,
+    output_path: z.string(),
+    sql_table: z.string().nullable().optional(),
+    sql_batch_size: z.number().nullable().optional(),
+  }),
+  z.object({
+    kind: z.literal("dump"),
+    database: z.string(),
+    output_path: z.string(),
+    options: dumpOptions,
+  }),
+]);
+
+const taskSchedule = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("interval"), minutes: z.number() }),
+  z.object({ kind: z.literal("daily"), hour: z.number(), minute: z.number() }),
+]);
+
+export const taskDefinition = z.object({
+  id: z.string(),
+  name: z.string(),
+  profile_id: z.string(),
+  action: taskAction,
+  schedule: taskSchedule,
+  enabled: z.boolean(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  next_run_at: z.string().nullable(),
+  last_run_at: z.string().nullable(),
+  last_status: z.string().nullable(),
+});
+
+export const taskRun = z.object({
+  id: z.number(),
+  task_id: z.string(),
+  started_at: z.string(),
+  finished_at: z.string(),
+  status: z.string(),
+  error: z.string().nullable(),
+  output_path: z.string().nullable(),
+  rows: z.number().nullable(),
+  bytes: z.number().nullable(),
+  elapsed_ms: z.number(),
+  catch_up: z.boolean(),
+});
+
+export const schedulerSettings = z.object({
+  catch_up_missed: z.boolean(),
+});
+
+export const taskRunEvent = z.object({
+  taskId: z.string(),
+  taskName: z.string(),
+  status: z.string(),
+  message: z.string().nullable(),
+  outputPath: z.string().nullable(),
+  catchUp: z.boolean(),
+});
+
+export const taskDefinitionArray = z.array(taskDefinition);
+export const taskRunArray = z.array(taskRun);
 
 // 全件ストリーミングエクスポートのイベント。
 export const exportProgressEvent = z.object({

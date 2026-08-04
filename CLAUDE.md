@@ -139,6 +139,8 @@ NOOBDB_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/testdb \
   cargo test --test mysql_integration
 NOOBDB_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/testdb \
   cargo test --test postgres_integration
+NOOBDB_TEST_MSSQL_URL=mssql://sa:YourStrong!Passw0rd@127.0.0.1:1433/testdb \
+  cargo test --test mssql_integration
 ```
 
 SSH トンネル統合テスト (`tests/ssh_integration.rs`、#331) は `NOOBDB_TEST_SSH_URL`
@@ -525,10 +527,11 @@ knip は「エクスポートされているがどこからも import されな�
 
 ## アーキテクチャ
 
-noobDB は MySQL / PostgreSQL / SQLite に対応した軽量デスクトップ DB クライアントで、
-SSH トンネルをファーストクラスでサポートします。Rust バックエンド (`rust-version`
-1.77、edition 2021) は `sqlx` 0.9 (`tls-rustls`)、`russh` 0.61、`keyring` 3 などに
-依存しています。
+noobDB は MySQL / PostgreSQL / SQLite / Microsoft SQL Server (#729) に対応した
+軽量デスクトップ DB クライアントで、SSH トンネルをファーストクラスでサポートします。
+Rust バックエンド (`rust-version` 1.77、edition 2021) は `sqlx` 0.9 (`tls-rustls`、
+MySQL/PostgreSQL/SQLite の 3 ドライバが使う)、MSSQL 専用の `tiberius` 0.12、
+`russh` 0.61、`keyring` 3 などに依存しています。
 
 ### 2 プロセス構成
 
@@ -547,8 +550,10 @@ SSH トンネルをファーストクラスでサポートします。Rust バ�
 ### ドライバのディスパッチ: `enum Connection`
 
 DB レイヤは意図的に手書きの enum で実装されており、トレイトオブジェクトではありません。
-`src-tauri/src/db/mod.rs` の `db::Connection` は `MySql` / `Postgres` / `Sqlite` の
-3 バリアントを持ち、各操作 (`execute`, `begin_transaction` / `execute_in_transaction` /
+`src-tauri/src/db/mod.rs` の `db::Connection` は `MySql` / `Postgres` / `Sqlite` /
+`Mssql` の 4 バリアントを持ち (`Mssql` だけ `Box<mssql::MssqlConn>` — `tiberius::Client`
+が sqlx の他 3 ドライバよりずっと大きく `clippy::large_enum_variant` に当たるため)、
+各操作 (`execute`, `begin_transaction` / `execute_in_transaction` /
 `finish_transaction` / `transaction_active`, `health_check`,
 `preview_execute_with_limit`, `execute_stream`, `import_rows`, `execute_transaction`,
 `databases`, `tables`, `columns`, `schema_overview`, `foreign_keys`, `schema_objects`,
@@ -559,8 +564,40 @@ DB レイヤは意図的に手書きの enum で実装されており、トレ�
 SSH やセッション層には触らないでください — それらはドライバに依存しません。`schema_objects` /
 `object_definition` (ビュー・ルーチン・トリガーの列挙と DDL 取得)、`list_indexes`、
 `table_row_estimates` (統計情報ベースの概算行数)、`list_processes` / `kill_process`
-(MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity`) もこの enum 表面の一部で、SQLite では
-多くがサーバ機能非対応のため空や no-op で短絡します。
+(MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity` / MSSQL `sys.dm_exec_sessions`
++ `sys.dm_exec_requests` / `KILL <spid>`) もこの enum 表面の一部で、SQLite では多くが
+サーバ機能非対応のため空や no-op で短絡します。
+
+**MSSQL ドライバ (`db/mssql.rs`、#729) は他 3 ドライバと異なり sqlx を使いません**
+(sqlx に MSSQL バックエンドが無いため)。代わりに素の TDS クライアント `tiberius` を
+直接使い、コネクションプールも `sqlx::Pool` ではなく本モジュール内に手書きの極小プール
+(`MssqlPool` — `std::sync::Mutex<Vec<Client>>` の idle リスト + `tokio::sync::Semaphore`
+で同時接続数を制限。同期 Mutex を使うのは `PooledConn` の `Drop` から async を経由せずに
+接続をプールへ返せるようにするため) を実装しています。エラー型も `AppError::Sqlx` では
+なく専用の `AppError::Mssql(#[from] tiberius::error::Error)` です。他ドライバとの主な
+差分:
+
+- **スキーマ introspection は `dbo` スキーマに限定**しています。MSSQL は 1 データベース
+  内に複数スキーマを持てますが、既存の「1 データベース = 1 名前空間」という他ドライバの
+  抽象 (sync/export/import が生成する識別子はすべて単一パート想定) を崩さないための
+  意図的なスコープ縮小です (`db/mssql.rs` のモジュール doc に詳細)。フロント側の
+  `db.table` 参照もすべて `db.[dbo].table` の 3 パートで組み立てます
+  (`cellEdit.ts`/`QueryBuilder.tsx`/`tableMaintenance.ts`/`createTable.ts` の
+  `qualified`/`qualifiedTableRef`/`tableRef`/`qualifiedName` を参照)。
+- **識別子クオートは `[ident]`** (`db::sync::quote_ident` の `DriverKind::Mssql` 分岐、
+  フロントは `sqlDialect.ts::quoteIdentFor`)。**自動 LIMIT は `TOP (n)`** を
+  `SELECT [DISTINCT]` の直後に挿入する専用実装 `db::apply_auto_limit_mssql`
+  (`db::apply_auto_limit_for` がドライバで振り分け) — `WITH` (CTE) は対象外
+  (「型を惑わせるより何もしない」方針、doc 参照)。フロントの `QueryBuilder.tsx` も
+  同じ TOP 方式で生成する。
+- **`server_metrics` / `query_stats_support` (ライブクエリ・インスペクタ) /
+  `unused_indexes` は未実装**(SQLite と同じ `unsupported_driver` 縮退)。`dump_database`
+  も未対応 (`commands/dump.rs` が `InvalidInput` を返す)。いずれも本 Issue の受け入れ
+  条件の範囲外 — 将来 `sys.dm_exec_*` 系 DMV で実装可能。
+- **統合テストは `tests/mssql_integration.rs`**、`NOOBDB_TEST_MSSQL_URL`
+  (`mssql://user:pass@host:port/db`) 環境変数ゲート (未設定ならスキップ)。CI の
+  サービスコンテナは未追加 (ローカル/手動実行のみ、他ドライバと同じ導入パターンを
+  踏襲すれば追加可能)。
 
 `db::types::{Value, Column, QueryResult, TableColumnInfo, TableSchema,
 PreviewResult, StreamBatch}` がドライバ横断のワイヤフォーマットです。`Value` は

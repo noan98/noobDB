@@ -29,12 +29,30 @@ const TYPE_SUGGESTIONS: Record<DriverKind, string[]> = {
   postgres: ["INTEGER", "BIGINT", "VARCHAR(255)", "TEXT", "TIMESTAMPTZ", "DATE", "NUMERIC(10,2)", "BOOLEAN", "JSONB", "UUID"],
   sqlite: ["INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC"],
   duckdb: ["INTEGER", "BIGINT", "VARCHAR", "TEXT", "TIMESTAMP", "DATE", "DECIMAL(10,2)", "BOOLEAN", "BLOB"],
+  mssql: [
+    "INT",
+    "BIGINT",
+    "NVARCHAR(255)",
+    "NVARCHAR(MAX)",
+    "DATETIME2",
+    "DATE",
+    "DECIMAL(10,2)",
+    "BIT",
+    "UNIQUEIDENTIFIER",
+  ],
 };
 
 function emptyColumn(driver: DriverKind): ColumnDef {
   return {
     name: "",
-    type: driver === "sqlite" ? "TEXT" : driver === "duckdb" ? "VARCHAR" : "VARCHAR(255)",
+    type:
+      driver === "sqlite"
+        ? "TEXT"
+        : driver === "duckdb"
+          ? "VARCHAR"
+          : driver === "mssql"
+            ? "NVARCHAR(255)"
+            : "VARCHAR(255)",
     notNull: false,
     primaryKey: false,
     unique: false,

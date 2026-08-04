@@ -90,7 +90,7 @@ impl Drop for PartialFileCleanup {
 
 /// Checkbox-selected `mysqldump` flags. The frontend sends every field, so the
 /// defaults here only matter for forward compatibility if a field is omitted.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DumpOptions {
     /// `--single-transaction`: dump within one transaction (consistent InnoDB
@@ -266,7 +266,7 @@ async fn spawn_dump(
 /// earlier backup the user is overwriting): the partial output lives on the
 /// temp file, which `PartialFileCleanup` removes, leaving `final_path` intact.
 #[allow(clippy::too_many_arguments)]
-async fn run_dump(
+pub(crate) async fn run_dump(
     app: &AppHandle,
     session: &Session,
     stream_id: &str,
@@ -330,6 +330,13 @@ async fn run_dump(
         DriverKind::DuckDb => {
             return Err(AppError::InvalidInput(
                 "database dump is not yet supported for DuckDB".into(),
+            ))
+        }
+        // #729 のスコープ外 (mysqldump / pg_dump に相当する外部ダンプツールの
+        // MSSQL 対応は別 Issue)。
+        DriverKind::Mssql => {
+            return Err(AppError::InvalidInput(
+                "database dump is not yet supported for MSSQL".into(),
             ))
         }
     };

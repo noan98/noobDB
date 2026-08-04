@@ -333,6 +333,48 @@ fn modify_column(
                 table, src.name
             ));
         }
+        DriverKind::Mssql => {
+            // T-SQL's `ALTER COLUMN` rewrites type + nullability together in a
+            // single statement (unlike PostgreSQL's per-facet form), so one
+            // statement covers both. Constraint-bearing facets fall back to
+            // warnings: SQL Server `DEFAULT`s are separately *named*
+            // constraints that introspection does not carry a name for, so a
+            // DROP/ADD CONSTRAINT cannot be generated safely; PK/FK reshaping
+            // needs the same manual constraint juggling as the other drivers.
+            let type_or_null_changed = changed_fields
+                .iter()
+                .any(|f| f == "data_type" || f == "nullable");
+            if type_or_null_changed {
+                let null_clause = if src.nullable { "NULL" } else { "NOT NULL" };
+                statements.push(SyncStatement {
+                    sql: format!(
+                        "ALTER TABLE {tident} ALTER COLUMN {cident} {} {null_clause}",
+                        src.data_type
+                    ),
+                    table: table.to_string(),
+                    kind: SyncKind::AlterColumn,
+                    destructive: false,
+                });
+            }
+            if changed_fields.iter().any(|f| f == "default") {
+                warnings.push(format!(
+                    "{}.{}: SQL Server の DEFAULT は名前付き制約のため自動生成の対象外です。\
+                     既存の DEFAULT 制約を DROP CONSTRAINT してから ADD CONSTRAINT ... \
+                     DEFAULT ... FOR {} を手動実行してください。",
+                    table, src.name, src.name
+                ));
+            }
+            if changed_fields
+                .iter()
+                .any(|f| f == "key" || f == "foreign_key")
+            {
+                warnings.push(format!(
+                    "{}.{}: キー / 外部キーの差分は自動生成の対象外です。必要に応じて手動で \
+                     ALTER TABLE ... ADD/DROP CONSTRAINT を実行してください。",
+                    table, src.name
+                ));
+            }
+        }
     }
 }
 
@@ -434,6 +476,9 @@ pub(crate) fn quote_ident(driver: DriverKind, name: &str) -> String {
         DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
             format!("\"{}\"", name.replace('"', "\"\""))
         }
+        // T-SQL bracket quoting; an embedded `]` doubles to `]]` (mirrors the
+        // other drivers' embedded-quote-char doubling).
+        DriverKind::Mssql => format!("[{}]", name.replace(']', "]]")),
     }
 }
 

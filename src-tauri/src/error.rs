@@ -58,6 +58,12 @@ pub enum AppError {
     #[error("duckdb error: {0}")]
     DuckDb(#[from] duckdb::Error),
 
+    /// SQL Server (`tiberius`) 固有のエラー。MySQL/PostgreSQL/SQLite の 3 ドライバは
+    /// すべて sqlx 経由 (`AppError::Sqlx`) だが、MSSQL は sqlx 非対応のため
+    /// `tiberius` を直接使っており (#729)、別バリアントが要る。
+    #[error("mssql error: {0}")]
+    Mssql(#[from] tiberius::error::Error),
+
     #[error("serde error: {0}")]
     Serde(#[from] serde_json::Error),
 
@@ -79,6 +85,7 @@ impl AppError {
     /// it and offer a reconnect instead of leaving it stuck on "connected".
     pub fn is_connection_lost(&self) -> bool {
         matches!(self, AppError::Sqlx(e) if sqlx_is_connection_lost(e))
+            || matches!(self, AppError::Mssql(e) if mssql_is_connection_lost(e))
     }
 
     /// A stable, machine-readable discriminant for this error, serialized
@@ -113,6 +120,8 @@ impl AppError {
             // every failure reports the same generic `db` kind as a plain
             // sqlx SQL error, matching the SQLite driver's error surface.
             AppError::DuckDb(_) => "db",
+            AppError::Mssql(e) if mssql_is_connection_lost(e) => "connectionLost",
+            AppError::Mssql(_) => "db",
             AppError::Serde(_) => "serde",
             AppError::Keyring(_) => "keyring",
             AppError::ConfigDir => "configDir",
@@ -148,6 +157,18 @@ fn sqlx_is_connection_lost(e: &sqlx::Error) -> bool {
         }
         _ => false,
     }
+}
+
+/// Classifies a `tiberius::error::Error` as a dropped/closed connection,
+/// mirroring [`sqlx_is_connection_lost`] for the MSSQL driver (#729): I/O and
+/// TLS-handshake failures mean the transport is gone, everything else (a
+/// server-reported error, a protocol/encoding mismatch, ...) is a normal
+/// usage/SQL failure and must not trigger a reconnect.
+fn mssql_is_connection_lost(e: &tiberius::error::Error) -> bool {
+    matches!(
+        e,
+        tiberius::error::Error::Io { .. } | tiberius::error::Error::Tls(_)
+    )
 }
 
 impl From<russh::Error> for AppError {
