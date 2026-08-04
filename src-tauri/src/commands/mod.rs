@@ -17,3 +17,4 @@ pub mod server;
 pub mod snippets;
 pub mod ssh;
 pub mod sync;
+pub mod tasks;

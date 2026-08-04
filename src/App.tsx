@@ -20,6 +20,7 @@ import {
   listenConnectProgress,
   listenPreviewStream,
   listenQueryStream,
+  listenTaskRunEvents,
 } from "./api/tauri";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
@@ -44,6 +45,7 @@ import {
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
+import type { AlterStatement } from "./components/alterTable";
 import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import { quoteIdentFor } from "./components/sqlDialect";
@@ -144,6 +146,9 @@ const CreateTableModal = lazy(() =>
 const RenameTableDialog = lazy(() =>
   import("./components/RenameTableDialog").then((m) => ({ default: m.RenameTableDialog })),
 );
+const AlterTableModal = lazy(() =>
+  import("./components/AlterTableModal").then((m) => ({ default: m.AlterTableModal })),
+);
 const SaveAsTableModal = lazy(() =>
   import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
 );
@@ -167,6 +172,9 @@ const HelpView = lazy(() =>
 );
 const SettingsView = lazy(() =>
   import("./components/SettingsView").then((m) => ({ default: m.SettingsView })),
+);
+const TaskManager = lazy(() =>
+  import("./components/TaskManager").then((m) => ({ default: m.TaskManager })),
 );
 const SchemaCompareView = lazy(() =>
   import("./components/SchemaCompareView").then((m) => ({ default: m.SchemaCompareView })),
@@ -1027,6 +1035,7 @@ export default function App() {
     ],
   );
   const [showSettings, setShowSettings] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   // 初回起動オンボーディングツアー (#599)。ウェルカム画面の「はじめかたを見る」
   // からの手動起動、および新規ユーザ (プロファイル 0 件・未表示) への自動起動の
@@ -1199,6 +1208,36 @@ export default function App() {
   useEffect(() => {
     registerNotificationClickFocus();
   }, []);
+
+  // タスクスケジューラ (#730): バックグラウンドで発火した実行結果をアプリ起動中
+  // ずっと購読する (タスク管理画面を開いていなくても失敗に気付けるように)。
+  // 失敗のみトースト + OS 通知で知らせる — 成功は「実行履歴」で確認できれば十分で、
+  // 定期実行のたびに通知するとノイズになる。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    void listenTaskRunEvents({
+      onError: (e) => {
+        const message = e.message ?? "";
+        toast.error(translate("taskRunFailed", { name: e.taskName, error: message }));
+        void isAppWindowFocused().then((focused) => {
+          if (!focused) {
+            void sendQueryNotification(
+              translate("taskRunNotifyTitle", { name: e.taskName }),
+              firstLineForNotification(message || translate("taskLastError")),
+            );
+          }
+        });
+      },
+    }).then((un) => {
+      if (active) unlisten = un;
+      else un();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [toast]);
 
   // アプリ内自動更新 (#705): 起動時に一度だけ更新を確認する (設定でオフにできる)。
   // ベストエフォート — オフライン/マニフェスト取得失敗は静かに無視して起動を
@@ -1460,7 +1499,7 @@ export default function App() {
   const overlayOpenRef = useRef(false);
   useEffect(() => {
     overlayOpenRef.current =
-      showForm || showSettings || showHelp || showCompare || showCompareResults || showErd ||
+      showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
       showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm ||
       showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
   });
@@ -1502,6 +1541,8 @@ export default function App() {
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
+  // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
+  const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
   // 新規行追加モーダル: 対象タブ ID。null で閉じる。
@@ -1523,6 +1564,7 @@ export default function App() {
       setShowDataSearch(false);
       setCreateTableDb(null);
       setRenameTarget(null);
+      setAlterTableTarget(null);
       setSaveAsTableRequest(null);
       setRowInsertTabId(null);
     }
@@ -2343,10 +2385,13 @@ export default function App() {
     await closeAllTabs();
     // 旧セッションの DB 名を持ったまま各モーダルが新しい sessionId で開き続けない
     // よう、切替時も handleDisconnect / tearDownLostSession と同じく閉じる。
+    // AlterTableModal (#794) も database/table を旧セッション基準で保持したまま
+    // 別接続へ ALTER が飛ぶ事故を防ぐため同様に閉じる。
     setImportTarget(null);
     setDumpTarget(null);
     setSchemaExportTarget(null);
     setErrorProfileId(null);
+    setAlterTableTarget(null);
     setConnectionStatus("connected");
     setSessionId(target.sessionId);
     setSelectedProfile(target.profile);
@@ -4620,6 +4665,69 @@ export default function App() {
     }
   }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl]);
 
+  // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
+  // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
+  // (CreateTableModal の `onSendToEditor` と同じ流儀)。
+  const handleAlterTableToEditor = useCallback((sql: string) => {
+    setAlterTableTarget(null);
+    openQueryInEditor(sql);
+  }, [openQueryInEditor]);
+
+  // 列編集ダイアログの適用: 生成された複数の ALTER TABLE / CREATE INDEX 文をまとめて
+  // 確認ダイアログでプレビューし、承認後に `run_query_transaction` (単一トランザクション。
+  // PostgreSQL は all-or-nothing、MySQL は DDL の暗黙コミットにより best-effort 逐次 —
+  // CLAUDE.md「MySQL の DDL は非原子」を参照) で実行する。破壊的判定は各文の
+  // `destructive` フラグ (`alterTable.ts` が構造化して返す) を直接見る — SQL
+  // テキストへの正規表現マッチには依存しない。DROP COLUMN を含む場合は破壊的操作
+  // として TRUNCATE/DROP TABLE と同じくタイプ入力の強確認ゲート (#675) を本番接続に
+  // 限り追加する。読み取り専用セッションでは AlterTableModal 側で実行ボタンを
+  // 無効化しているが、IPC 自体もバックエンドの read_only ガードで拒否される。
+  // モーダルは実行成功後にのみ閉じる — 失敗時 (SQL エラー等) は開いたままにして
+  // ユーザが編集内容を失わずに調整・再実行できるようにする。
+  const handleAlterTableRun = useCallback(async (statements: AlterStatement[]) => {
+    const target = alterTableTarget;
+    if (!target || !sessionId || statements.length === 0) return;
+    const destructive = statements.some((s) => s.destructive);
+    const sqls = statements.map((s) => s.sql);
+    const ok = await confirm({
+      title: translate("alterTableConfirmTitle", { table: target.table }),
+      message: maintenanceMessage(
+        <>
+          {translate("alterTableConfirmBody")}
+          <br />
+          <br />
+          <chakra.code
+            display="block"
+            fontFamily="var(--font-mono)"
+            fontSize="sm"
+            whiteSpace="pre-wrap"
+            wordBreak="break-all"
+          >
+            {sqls.join("\n")}
+          </chakra.code>
+        </>,
+      ),
+      confirmLabel: translate("alterTableConfirmOk"),
+      tone: destructive ? "danger" : "primary",
+      typedConfirmation: destructive && selectedProfile?.is_production ? target.table : undefined,
+    });
+    if (!ok) return;
+    try {
+      await api.runQueryTransaction(sessionId, sqls, target.database);
+      invalidateSchemaCache(target.database);
+      connectionListRef.current?.refreshSchema();
+      toast.success(translate("alterTableSuccess", { table: target.table }));
+      setAlterTableTarget(null);
+      // リネーム/DROP された可能性があるので、開いている対象テーブルのタブは閉じて
+      // 新しい定義で開き直せるようにする (handleRenameTableSubmit/handleDropTable と同じ方針)。
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
+        .forEach((tt) => handleCloseTabRef.current(tt.id));
+    } catch (e) {
+      toast.error(translate("statusQueryError", { error: String(e) }));
+    }
+  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache]);
+
   // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
   // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
@@ -5102,7 +5210,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -5234,7 +5342,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
+  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -5281,7 +5389,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
+        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet
       ) {
         return;
@@ -5318,6 +5426,7 @@ export default function App() {
     activeTab,
     showForm,
     showSettings,
+    showTasks,
     showHelp,
     showCompare,
     showCompareResults,
@@ -5395,7 +5504,7 @@ export default function App() {
         }
       }
       // チートシート以外のオーバーレイが開いているときは介入しない。
-      if (showForm || showSettings || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
+      if (showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
         return;
       }
       e.preventDefault();
@@ -5403,7 +5512,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showForm, showSettings, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
+  }, [showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
 
   // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
   // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。
@@ -5412,7 +5521,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
+        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
@@ -5450,6 +5559,7 @@ export default function App() {
     layoutMode,
     showForm,
     showSettings,
+    showTasks,
     showHelp,
     showCompare,
     showCompareResults,
@@ -5474,16 +5584,18 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "queryInspector" | "advisor" | "compareResults" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "tasks" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "queryInspector" | "advisor" | "compareResults" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
+    setShowTasks(false);
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
+    else if (view === "tasks") setShowTasks(true);
     else if (view === "help") setShowHelp(true);
     else if (view === "compare") setShowCompare(true);
     else if (view === "erDiagram") setShowErd(true);
@@ -6593,6 +6705,7 @@ export default function App() {
             onTruncateTable={handleTruncateTable}
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
+            onAlterTable={(database, table) => setAlterTableTarget({ database, table })}
             onRunTableMaintenance={handleRunTableMaintenance}
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
             onShowDatabaseSizes={handleShowDatabaseSizes}
@@ -6614,6 +6727,7 @@ export default function App() {
         ) : (
           <HistoryList
             activeProfile={selectedProfile}
+            sessionId={sessionId}
             reloadKey={historyReloadKey}
             onRestore={handleRestoreHistory}
             onOpenInNewTab={handleOpenHistoryInNewTab}
@@ -6638,6 +6752,13 @@ export default function App() {
             aria-label={t("appThemeToggle")}
           >
             <Icon name={theme === "dark" ? "sun" : "moon"} />
+          </IconButton>
+          <IconButton
+            onClick={() => openFullView("tasks")}
+            title={t("appTasks")}
+            aria-label={t("appTasks")}
+          >
+            <Icon name="clock" />
           </IconButton>
           <IconButton
             onClick={() => openFullView("help")}
@@ -7414,6 +7535,23 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {alterTableTarget && sessionId && (
+          <Suspense fallback={null}>
+            <AlterTableModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={alterTableTarget.database}
+              table={alterTableTarget.table}
+              readOnly={readOnly}
+              onRun={handleAlterTableRun}
+              onSendToEditor={handleAlterTableToEditor}
+              onClose={() => setAlterTableTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {saveAsTableRequest && sessionId && (
           <Suspense fallback={null}>
             <SaveAsTableModal
@@ -7649,6 +7787,11 @@ export default function App() {
         <AnimatePresence>
           {showSettings && (
             <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showTasks && (
+            <TaskManager profiles={profiles} onClose={() => setShowTasks(false)} />
           )}
         </AnimatePresence>
         <AnimatePresence>

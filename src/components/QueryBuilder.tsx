@@ -302,25 +302,33 @@ export function quoteValue(driver: string, raw: string): string {
   if (/^null$/i.test(v)) return "NULL";
   if (/^-?\d+(\.\d+)?$/.test(v)) return v;
   if (/^(true|false)$/i.test(v)) {
-    // SQLite has no native boolean literal — emit 1/0 instead of TRUE/FALSE.
-    if (driver === "sqlite") return v.toLowerCase() === "true" ? "1" : "0";
+    // SQLite/MSSQL have no native boolean literal — emit 1/0 instead of
+    // TRUE/FALSE (T-SQL `BIT` columns take 0/1; see `cellEdit.ts`'s
+    // `literalFromCellValue`).
+    if (driver === "sqlite" || driver === "mssql") return v.toLowerCase() === "true" ? "1" : "0";
     return v.toUpperCase();
   }
   // バックスラッシュの二重化は MySQL のみ必要。PostgreSQL (既定の
-  // standard_conforming_strings = on) と SQLite ではバックスラッシュは
+  // standard_conforming_strings = on)・SQLite・MSSQL ではバックスラッシュは
   // ただの文字なので、二重化すると値が変わってしまい (例: C:\temp が
   // C:\\temp として保存され)、WHERE 句が既存行に一致しなくなる。
   // cellEdit.ts の quoteString / db/data_diff.rs の quote_string と方針を揃える。
   const escaped =
     driver === "mysql" ? v.replace(/\\/g, "\\\\").replace(/'/g, "''") : v.replace(/'/g, "''");
-  return "'" + escaped + "'";
+  return (driver === "mssql" ? "N" : "") + "'" + escaped + "'";
 }
 
 function tableRef(driver: string, database: string, table: string): string {
   const tbl = table ? quoteIdentFor(driver, table) : "<table>";
   // SQLite has a single namespace per connection — no database qualifier.
   if (driver === "sqlite") return tbl;
-  if (database) return `${quoteIdentFor(driver, database)}.${tbl}`;
+  if (database) {
+    // MSSQL (#729): introspection is scoped to the `dbo` schema (see
+    // `db/mssql.rs`), so the 3-part `database.dbo.table` form is needed —
+    // a bare `database.table` is invalid/ambiguous T-SQL.
+    if (driver === "mssql") return `${quoteIdentFor(driver, database)}.[dbo].${tbl}`;
+    return `${quoteIdentFor(driver, database)}.${tbl}`;
+  }
   return tbl;
 }
 
@@ -371,7 +379,15 @@ function buildSql(
         ? "*"
         : selectColumns.map((c) => quoteIdentFor(driver, c)).join(", ");
       const trimmedLimit = limit.trim();
-      const limitClause = limitEnabled && trimmedLimit && /^\d+$/.test(trimmedLimit) ? ` LIMIT ${trimmedLimit}` : "";
+      const hasLimit = limitEnabled && trimmedLimit && /^\d+$/.test(trimmedLimit);
+      // MSSQL (#729) has no `LIMIT` keyword; the equivalent, `TOP (n)`, goes
+      // right after `SELECT` instead of trailing the statement (mirrors
+      // `apply_auto_limit_mssql` on the backend).
+      if (driver === "mssql") {
+        const topClause = hasLimit ? `TOP (${trimmedLimit}) ` : "";
+        return `SELECT ${topClause}${cols} FROM ${ref}${where};`;
+      }
+      const limitClause = hasLimit ? ` LIMIT ${trimmedLimit}` : "";
       return `SELECT ${cols} FROM ${ref}${where}${limitClause};`;
     }
     case "UPDATE": {

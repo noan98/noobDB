@@ -80,7 +80,11 @@ fn key_sig(values: &[Value]) -> String {
 /// from the desired before-value, not blindly overwriting whatever changed).
 /// A row with nothing sensible to do (e.g. an `UPDATE` undo whose target row
 /// no longer exists at all) never gets a statement, `force` or not.
-pub fn build_undo_plan(record: &WriteCaptureRecord, current_rows: &[Vec<Value>], force: bool) -> UndoPlan {
+pub fn build_undo_plan(
+    record: &WriteCaptureRecord,
+    current_rows: &[Vec<Value>],
+    force: bool,
+) -> UndoPlan {
     let pk_idx: Vec<usize> = record
         .primary_key
         .iter()
@@ -209,7 +213,12 @@ pub fn build_undo_plan(record: &WriteCaptureRecord, current_rows: &[Vec<Value>],
                             key,
                             source: Some(before.clone()),
                             target: Some(cur),
-                            changed_columns: changed_columns(&record.columns, &pk_idx, before, after),
+                            changed_columns: changed_columns(
+                                &record.columns,
+                                &pk_idx,
+                                before,
+                                after,
+                            ),
                             key_unreliable: false,
                         });
                     }
@@ -225,7 +234,12 @@ pub fn build_undo_plan(record: &WriteCaptureRecord, current_rows: &[Vec<Value>],
                                 key,
                                 source: Some(before.clone()),
                                 target: Some(cur.clone()),
-                                changed_columns: changed_columns(&record.columns, &pk_idx, before, &cur),
+                                changed_columns: changed_columns(
+                                    &record.columns,
+                                    &pk_idx,
+                                    before,
+                                    &cur,
+                                ),
                                 key_unreliable: false,
                             });
                         }
@@ -282,7 +296,12 @@ pub fn build_undo_plan(record: &WriteCaptureRecord, current_rows: &[Vec<Value>],
 /// `columns` order. Mirrors `db::data_diff`'s private helper of the same
 /// purpose; `generate_data_sync_sql` needs this list on the `Different`
 /// `RowDiff` to know which columns to `SET`.
-fn changed_columns(columns: &[String], pk_idx: &[usize], before: &[Value], after: &[Value]) -> Vec<String> {
+fn changed_columns(
+    columns: &[String],
+    pk_idx: &[usize],
+    before: &[Value],
+    after: &[Value],
+) -> Vec<String> {
     let mut changed = Vec::new();
     for (i, name) in columns.iter().enumerate() {
         if pk_idx.contains(&i) {
@@ -330,7 +349,10 @@ mod tests {
         let current = vec![row(1, "alice")];
         let plan = build_undo_plan(&r, &current, false);
         assert!(plan.conflicts.is_empty());
-        assert_eq!(plan.statements, vec![r#"DELETE FROM "users" WHERE "id" = 1"#]);
+        assert_eq!(
+            plan.statements,
+            vec![r#"DELETE FROM "users" WHERE "id" = 1"#]
+        );
     }
 
     #[test]
@@ -353,7 +375,10 @@ mod tests {
 
         let forced = build_undo_plan(&r, &current, true);
         assert_eq!(forced.conflicts.len(), 1);
-        assert_eq!(forced.statements, vec![r#"DELETE FROM "users" WHERE "id" = 1"#]);
+        assert_eq!(
+            forced.statements,
+            vec![r#"DELETE FROM "users" WHERE "id" = 1"#]
+        );
     }
 
     #[test]

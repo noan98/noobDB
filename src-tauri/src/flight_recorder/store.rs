@@ -174,7 +174,11 @@ pub async fn list(profile_id: Option<&str>, limit: i64) -> Result<Vec<WriteCaptu
     list_in(pool().await?, profile_id, limit).await
 }
 
-async fn list_in(pool: &SqlitePool, profile_id: Option<&str>, limit: i64) -> Result<Vec<WriteCaptureSummary>> {
+async fn list_in(
+    pool: &SqlitePool,
+    profile_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<WriteCaptureSummary>> {
     let mut sql = String::from(
         "SELECT id, profile_id, driver, \"database\", table_name, kind, \"sql\",
                 rows_affected, captured_at, undone
@@ -266,7 +270,8 @@ fn row_to_record(r: SqliteRow) -> Result<WriteCaptureRecord> {
     let primary_key: Vec<String> = serde_json::from_str(&r.try_get::<String, _>("primary_key")?)?;
     let columns: Vec<String> = serde_json::from_str(&r.try_get::<String, _>("columns")?)?;
     let column_types: Vec<String> = serde_json::from_str(&r.try_get::<String, _>("column_types")?)?;
-    let before_rows: Vec<Vec<Value>> = serde_json::from_str(&r.try_get::<String, _>("before_rows")?)?;
+    let before_rows: Vec<Vec<Value>> =
+        serde_json::from_str(&r.try_get::<String, _>("before_rows")?)?;
     let after_rows: Vec<Vec<Value>> = serde_json::from_str(&r.try_get::<String, _>("after_rows")?)?;
     Ok(WriteCaptureRecord {
         id: r.try_get("id")?,

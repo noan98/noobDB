@@ -55,7 +55,15 @@ pub async fn run_captured_write(
     retention_days: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<CapturedWriteResponse> {
-    run_captured_write_inner(state.inner(), session_id, sql, database, row_cap, retention_days).await
+    run_captured_write_inner(
+        state.inner(),
+        session_id,
+        sql,
+        database,
+        row_cap,
+        retention_days,
+    )
+    .await
 }
 
 pub(crate) async fn run_captured_write_inner(
@@ -72,9 +80,14 @@ pub(crate) async fn run_captured_write_inner(
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     ensure_allowed_for_session(&session, &sql)?;
 
-    let row_cap = row_cap.map(|n| n as usize).unwrap_or(DEFAULT_CAPTURE_ROW_CAP);
+    let row_cap = row_cap
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_CAPTURE_ROW_CAP);
     let started = std::time::Instant::now();
-    let outcome = session.conn.capture_write(&sql, database.as_deref(), row_cap).await;
+    let outcome = session
+        .conn
+        .capture_write(&sql, database.as_deref(), row_cap)
+        .await;
     let elapsed_ms = started.elapsed().as_millis() as i64;
 
     match &outcome {
@@ -121,7 +134,9 @@ pub(crate) async fn run_captured_write_inner(
             rows_affected: capture.rows_affected as i64,
             captured_at: chrono::Utc::now().to_rfc3339(),
         };
-        let retention = retention_days.map(|d| d as i64).unwrap_or(DEFAULT_RETENTION_DAYS);
+        let retention = retention_days
+            .map(|d| d as i64)
+            .unwrap_or(DEFAULT_RETENTION_DAYS);
         match flight_store::record(new, retention).await {
             Ok(id) => capture_id = Some(id),
             Err(e) => tracing::warn!(error = %e, "failed to persist flight recorder capture"),
@@ -161,7 +176,9 @@ pub async fn precheck_captured_write(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    let row_cap = row_cap.map(|n| n as usize).unwrap_or(DEFAULT_CAPTURE_ROW_CAP);
+    let row_cap = row_cap
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_CAPTURE_ROW_CAP);
     let kind = classify_write_kind(&sql);
     if kind == WriteKind::Other {
         return Ok(WriteCapturePrecheck {
@@ -170,7 +187,11 @@ pub async fn precheck_captured_write(
             estimated_rows: None,
         });
     }
-    match session.conn.preview_execute_with_limit(&sql, database.as_deref(), row_cap).await {
+    match session
+        .conn
+        .preview_execute_with_limit(&sql, database.as_deref(), row_cap)
+        .await
+    {
         Ok(dry) => {
             let capturable = dry.target_table.is_some()
                 && !dry.primary_key.is_empty()
@@ -366,7 +387,12 @@ pub(crate) async fn plan_undo(
         .collect();
     let current_rows = session
         .conn
-        .fetch_rows_by_pk(&record.table, &record.primary_key, &pk_values, record.database.as_deref())
+        .fetch_rows_by_pk(
+            &record.table,
+            &record.primary_key,
+            &pk_values,
+            record.database.as_deref(),
+        )
         .await?;
 
     let plan = build_undo_plan(&record, &current_rows, force);

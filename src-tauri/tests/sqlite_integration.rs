@@ -1741,7 +1741,10 @@ async fn sqlite_advisor_flags_expected_rules() {
 
 async fn flight_fixture(tag: &str) -> (PathBuf, t::Connection) {
     let mut path = std::env::temp_dir();
-    path.push(format!("noobdb_sqlite_flight_{tag}_{}.db", std::process::id()));
+    path.push(format!(
+        "noobdb_sqlite_flight_{tag}_{}.db",
+        std::process::id()
+    ));
     let _ = std::fs::remove_file(&path);
     std::fs::File::create(&path).expect("create temp sqlite file");
     let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
@@ -1820,7 +1823,10 @@ async fn capture_write_records_delete_before_image() {
         .execute("SELECT COUNT(*) AS n FROM t WHERE id = 2", None)
         .await
         .expect("select");
-    assert!(matches!(&live.rows[0][0], t::Value::Int(0) | t::Value::UInt(0)));
+    assert!(matches!(
+        &live.rows[0][0],
+        t::Value::Int(0) | t::Value::UInt(0)
+    ));
 
     conn.close().await;
     let _ = std::fs::remove_file(&path);
@@ -1858,7 +1864,10 @@ async fn capture_write_marks_tableless_pk_target_as_not_capturable_but_still_exe
     // identifier), so capture must decline — but the write itself must still
     // go through unchanged (capture failing never blocks a write).
     let mut path = std::env::temp_dir();
-    path.push(format!("noobdb_sqlite_flight_nopk_{}.db", std::process::id()));
+    path.push(format!(
+        "noobdb_sqlite_flight_nopk_{}.db",
+        std::process::id()
+    ));
     let _ = std::fs::remove_file(&path);
     std::fs::File::create(&path).expect("create temp sqlite file");
     let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
@@ -1910,7 +1919,10 @@ async fn capture_write_declines_ddl_and_select_but_still_executes() {
         )
         .await
         .expect("select");
-    assert!(matches!(&live.rows[0][0], t::Value::Int(1) | t::Value::UInt(1)));
+    assert!(matches!(
+        &live.rows[0][0],
+        t::Value::Int(1) | t::Value::UInt(1)
+    ));
 
     conn.close().await;
     let _ = std::fs::remove_file(&path);
@@ -2031,11 +2043,22 @@ async fn undo_plan_round_trips_a_real_capture_and_a_real_conflict_check() {
         .await
         .expect("fetch current");
     let without_force = t::build_undo_plan(&record2, &current2, false);
-    assert_eq!(without_force.conflicts.len(), 1, "the concurrent change must surface as a conflict");
-    assert!(without_force.statements.is_empty(), "no statement applied without force");
+    assert_eq!(
+        without_force.conflicts.len(),
+        1,
+        "the concurrent change must surface as a conflict"
+    );
+    assert!(
+        without_force.statements.is_empty(),
+        "no statement applied without force"
+    );
 
     let forced = t::build_undo_plan(&record2, &current2, true);
-    assert_eq!(forced.statements.len(), 1, "force must still produce a statement");
+    assert_eq!(
+        forced.statements.len(),
+        1,
+        "force must still produce a statement"
+    );
 
     conn.close().await;
     let _ = std::fs::remove_file(&path);

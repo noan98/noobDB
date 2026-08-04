@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::types::{Column, QueryResult, StreamBatch, Value};
-use crate::db::{apply_auto_limit, is_read_only_sql};
+use crate::db::{apply_auto_limit_for, is_read_only_sql};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
@@ -447,14 +447,17 @@ pub async fn run_query_stream(
     let capture_requested = capture.unwrap_or(false) && !auto_refresh;
     let handle = tokio::spawn(async move {
         let _ = ready_rx.await;
-        if capture_requested && crate::db::classify_write_kind(&sql) != crate::db::WriteKind::Other {
+        if capture_requested && crate::db::classify_write_kind(&sql) != crate::db::WriteKind::Other
+        {
             spawn_captured_write(
                 app,
                 session,
                 stream_id_for_task,
                 sql,
                 database,
-                capture_row_cap.map(|n| n as usize).unwrap_or(crate::db::DEFAULT_CAPTURE_ROW_CAP),
+                capture_row_cap
+                    .map(|n| n as usize)
+                    .unwrap_or(crate::db::DEFAULT_CAPTURE_ROW_CAP),
                 capture_retention_days.map(|n| n as i64),
                 delivered_rows_for_task,
             )
@@ -516,7 +519,7 @@ async fn spawn_query_stream(
     // is eligible. `sql` stays the original so history records what the user
     // actually typed; only `effective_sql` carries the injected cap.
     let (effective_sql, applied_auto_limit) = match auto_limit {
-        Some(n) => match apply_auto_limit(&sql, n) {
+        Some(n) => match apply_auto_limit_for(session.conn.driver_kind(), &sql, n) {
             Some(rewritten) => (rewritten, Some(n as u64)),
             None => (sql.clone(), None),
         },
@@ -679,6 +682,7 @@ async fn spawn_query_stream(
 /// success, a capturable write is persisted to the local flight-recorder
 /// store (best-effort; failing to persist never fails the run, the write
 /// already happened).
+#[allow(clippy::too_many_arguments)]
 async fn spawn_captured_write(
     app: AppHandle,
     session: Arc<Session>,
