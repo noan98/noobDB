@@ -24,11 +24,16 @@ pub mod __test_api {
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
     pub use crate::db::diff::{compute_schema_diff, ColumnDiff, DiffStatus, SchemaDiff, TableDiff};
+    pub use crate::db::privileges::{
+        generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
+        generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
+    };
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-        QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-        TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+        Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo,
+        QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable,
+        StatementStat, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableSchema,
+        TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::{
         is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
@@ -189,6 +194,25 @@ pub mod __test_api {
         statements: Vec<String>,
     ) -> crate::error::Result<u64> {
         crate::commands::sync::apply_sync_sql_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            statements,
+        )
+        .await
+    }
+
+    /// Drives the `apply_privilege_sql` IPC command's core path (session
+    /// lookup + read-only guard + empty-statement guard + transactional
+    /// apply) without a Tauri runtime, mirroring
+    /// [`apply_sync_sql_via_command`].
+    pub async fn apply_privilege_sql_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        statements: Vec<String>,
+    ) -> crate::error::Result<u64> {
+        crate::commands::privileges::apply_privilege_sql_inner(
             state,
             session_id.to_string(),
             database.map(str::to_string),
@@ -360,6 +384,14 @@ pub fn run() {
             commands::server::server_metrics,
             commands::process::list_processes,
             commands::process::kill_process,
+            commands::privileges::list_db_users,
+            commands::privileges::list_user_privileges,
+            commands::privileges::generate_create_user_sql,
+            commands::privileges::generate_drop_user_sql,
+            commands::privileges::generate_alter_password_sql,
+            commands::privileges::generate_grant_sql,
+            commands::privileges::generate_revoke_sql,
+            commands::privileges::apply_privilege_sql,
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,
             commands::inspector::sample_statement_stats,

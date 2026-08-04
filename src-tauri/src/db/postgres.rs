@@ -8,9 +8,10 @@ use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 use super::{columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
@@ -521,6 +522,116 @@ impl PostgresConn {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Roles for the users & permissions panel (#732), read from `pg_roles`
+    /// (+ `pg_auth_members` for role membership). PostgreSQL roles have no
+    /// host component — they are cluster-wide.
+    pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolcanlogin, \
+             rolreplication, rolbypassrls \
+             FROM pg_catalog.pg_roles ORDER BY rolname",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut users = Vec::with_capacity(rows.len());
+        for r in rows {
+            let name: String = r.try_get(0).unwrap_or_default();
+            let is_super: bool = r.try_get(1).unwrap_or(false);
+            let createdb: bool = r.try_get(2).unwrap_or(false);
+            let createrole: bool = r.try_get(3).unwrap_or(false);
+            let can_login: bool = r.try_get(4).unwrap_or(false);
+            let replication: bool = r.try_get(5).unwrap_or(false);
+            let bypassrls: bool = r.try_get(6).unwrap_or(false);
+            let mut attributes = Vec::new();
+            if is_super {
+                attributes.push("SUPERUSER".to_string());
+            }
+            if createdb {
+                attributes.push("CREATEDB".to_string());
+            }
+            if createrole {
+                attributes.push("CREATEROLE".to_string());
+            }
+            if can_login {
+                attributes.push("LOGIN".to_string());
+            }
+            if replication {
+                attributes.push("REPLICATION".to_string());
+            }
+            if bypassrls {
+                attributes.push("BYPASSRLS".to_string());
+            }
+            // Membership is a second round trip per role; the roster is
+            // server accounts (not app data), so this N+1 pattern stays
+            // cheap in practice.
+            let member_of: Vec<String> = sqlx::query_scalar(
+                "SELECT r2.rolname FROM pg_auth_members m \
+                 JOIN pg_roles r1 ON m.member = r1.oid \
+                 JOIN pg_roles r2 ON m.roleid = r2.oid \
+                 WHERE r1.rolname = $1 ORDER BY r2.rolname",
+            )
+            .bind(&name)
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+            users.push(DbUserInfo {
+                name,
+                host: None,
+                attributes,
+                member_of,
+                is_superuser: is_super,
+                can_login,
+            });
+        }
+        Ok(users)
+    }
+
+    /// The privilege matrix for one PostgreSQL role, read from
+    /// `information_schema.role_table_grants` (`grantee` matches the role;
+    /// the standard view already resolves membership-derived grants, not
+    /// just directly-owned ones). PostgreSQL has no database-wide "global"
+    /// grant equivalent to MySQL's `mysql.user` columns — `CREATE`/`ALTER`/
+    /// `DROP TABLE` are governed by schema ownership/`CREATE` privilege, not
+    /// per-table `GRANT` — so `global` is always `None` here.
+    pub async fn user_privileges(&self, user: &str, _host: Option<&str>) -> Result<UserPrivileges> {
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT table_schema, table_name, privilege_type \
+             FROM information_schema.role_table_grants \
+             WHERE grantee = $1 ORDER BY table_schema, table_name",
+        )
+        .bind(user)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut map: std::collections::BTreeMap<String, TablePrivilegeRow> =
+            std::collections::BTreeMap::new();
+        for r in rows {
+            let schema: String = r.try_get(0).unwrap_or_default();
+            let table: String = r.try_get(1).unwrap_or_default();
+            let priv_type: String = r.try_get(2).unwrap_or_default();
+            let key = format!("{schema}.{table}");
+            let entry = map.entry(key.clone()).or_insert_with(|| TablePrivilegeRow {
+                table: key,
+                select: false,
+                insert: false,
+                update: false,
+                delete: false,
+                ddl: false,
+            });
+            match priv_type.as_str() {
+                "SELECT" => entry.select = true,
+                "INSERT" => entry.insert = true,
+                "UPDATE" => entry.update = true,
+                "DELETE" => entry.delete = true,
+                "TRUNCATE" | "REFERENCES" | "TRIGGER" => entry.ddl = true,
+                _ => {}
+            }
+        }
+        Ok(UserPrivileges {
+            global: None,
+            tables: map.into_values().collect(),
+        })
     }
 
     /// ライブクエリ・インスペクタ (#746) の前提可否プローブ。ライブテールは

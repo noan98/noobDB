@@ -407,6 +407,65 @@ export interface ProcessInfo {
 }
 
 /**
+ * データベースユーザ / ロール 1 件 (ユーザ・権限管理パネル #732)。MySQL は
+ * `(user, host)` の組でアカウントを識別する (同じユーザ名でもホストごとに別の
+ * 権限を持てる) ため `host` を持つ。PostgreSQL のロールはホストの概念を持たず
+ * 常に `null`。SQLite はユーザ概念を持たず、UI は導線ごと非表示にする。
+ */
+export interface DbUserInfo {
+  name: string;
+  host: string | null;
+  /** MySQL は `SUPER` のみ。PostgreSQL は SUPERUSER/CREATEDB/CREATEROLE/LOGIN/
+   *  REPLICATION/BYPASSRLS のうち該当するもの。 */
+  attributes: string[];
+  /** PostgreSQL のロール所属 (`pg_auth_members`)。MySQL は常に空配列。 */
+  member_of: string[];
+  is_superuser: boolean;
+  can_login: boolean;
+}
+
+/**
+ * 権限マトリクスの 1 行。`table` は DB 全体既定行 (MySQL の `mysql.user` グローバル
+ * 権限) では `"*"`、テーブル単位の GRANT では `"<db>.<table>"`。`ddl` は各ドライバが
+ * テーブル単位で実際に GRANT できるスキーマ変更系権限をまとめたもの (MySQL:
+ * CREATE/ALTER/DROP/INDEX/REFERENCES、PostgreSQL: TRUNCATE/REFERENCES/TRIGGER —
+ * PostgreSQL の CREATE/ALTER/DROP TABLE はスキーマ所有権で制御されテーブル単位の
+ * GRANT 対象ではないため対象外)。
+ */
+export interface TablePrivilegeRow {
+  table: string;
+  select: boolean;
+  insert: boolean;
+  update: boolean;
+  delete: boolean;
+  ddl: boolean;
+}
+
+/** 1 ユーザ/ロール分の権限マトリクス全体。`global` は MySQL のみ (PostgreSQL は
+ *  DB 全体既定に相当する概念を持たないため常に `null`)。 */
+export interface UserPrivileges {
+  global: TablePrivilegeRow | null;
+  tables: TablePrivilegeRow[];
+}
+
+/** GRANT/REVOKE の対象と権限フラグ (`generateGrantSql`/`generateRevokeSql` の入力)。
+ *  `table` を省略すると DB/スキーマ全体が対象になる (MySQL `db.*` / PostgreSQL
+ *  `ALL TABLES IN SCHEMA`)。 */
+export interface GrantSpec {
+  user: string;
+  host?: string | null;
+  database: string;
+  table?: string | null;
+  flags: {
+    select: boolean;
+    insert: boolean;
+    update: boolean;
+    delete: boolean;
+    ddl: boolean;
+  };
+}
+
+/**
  * サーバランタイムの軽量メトリクス 1 サンプル (#731)。監視ダッシュボードが一定
  * 間隔でポーリングし、在メモリのリングバッファに蓄積して接続数 / QPS / ロック待ちを
  * 時系列グラフ化する。ゲージ (瞬時値) とカウンタ (累積値) が混在し、QPS/TPS などの
@@ -1059,6 +1118,83 @@ export const api = {
       database: params.database ?? null,
       statements: params.statements,
     }).then((r) => parseResponse(schemas.numberResponse, r, "apply_sync_sql")),
+
+  // --- ユーザ / 権限管理 (#732) ---------------------------------------------
+  //
+  // Diff/Sync (`generateSyncSql` → `applySyncSql`) と同じ「生成とプレビュー →
+  // 確認 → 適用」の分離パターン。SQL 生成 (create/drop/alterPassword/grant/
+  // revoke) は副作用なしの純コマンドで、`applyPrivilegeSql` だけがセッションを
+  // 介して実際に SQL を実行する。パスワードを含みうる SQL 文はクエリ履歴・ログの
+  // どちらにも記録されない (バックエンド `apply_privilege_sql` が
+  // `run_query_transaction` ではなく `execute_transaction` を直接呼ぶため)。
+  /** サーバ側のユーザ (MySQL) / ロール (PostgreSQL) 一覧を取得する。読み取りの
+   *  みなので read_only セッションでも可。SQLite は非対応でエラーを返す。 */
+  listDbUsers: (sessionId: string) =>
+    invoke<DbUserInfo[]>("list_db_users", { sessionId }).then((r) =>
+      parseResponse(schemas.dbUserInfoArray, r, "list_db_users"),
+    ),
+  /** 指定ユーザ/ロールの CRUD+DDL 権限マトリクスを取得する。読み取りのみ。 */
+  listUserPrivileges: (sessionId: string, user: string, host?: string | null) =>
+    invoke<UserPrivileges>("list_user_privileges", {
+      sessionId,
+      user,
+      host: host ?? null,
+    }).then((r) => parseResponse(schemas.userPrivileges, r, "list_user_privileges")),
+  /** `CREATE USER` / `CREATE ROLE` の SQL を生成する (純粋、副作用なし)。 */
+  generateCreateUserSql: (
+    driver: DriverKind,
+    spec: { name: string; host?: string | null; password?: string | null },
+  ) =>
+    invoke<string>("generate_create_user_sql", {
+      driver,
+      spec: { name: spec.name, host: spec.host ?? null, password: spec.password ?? null },
+    }).then((r) => parseResponse(schemas.stringResponse, r, "generate_create_user_sql")),
+  /** `DROP USER` / `DROP ROLE` の SQL を生成する (純粋)。 */
+  generateDropUserSql: (driver: DriverKind, name: string, host?: string | null) =>
+    invoke<string>("generate_drop_user_sql", { driver, name, host: host ?? null }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "generate_drop_user_sql"),
+    ),
+  /** `ALTER USER ... IDENTIFIED BY` / `ALTER ROLE ... PASSWORD` の SQL を生成する
+   *  (純粋)。生成された SQL 文字列自体にパスワードが埋め込まれる点に注意 —
+   *  呼び出し側はこれをログや履歴に残してはいけない。 */
+  generateAlterPasswordSql: (
+    driver: DriverKind,
+    name: string,
+    host: string | null,
+    password: string,
+  ) =>
+    invoke<string>("generate_alter_password_sql", { driver, name, host, password }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "generate_alter_password_sql"),
+    ),
+  /** `GRANT <privs> ON ... TO ...` の SQL を生成する (純粋)。選択された権限が無い
+   *  ときは `null` (生成する文が無い)。 */
+  generateGrantSql: (driver: DriverKind, spec: GrantSpec) =>
+    invoke<string | null>("generate_grant_sql", {
+      driver,
+      spec: { ...spec, host: spec.host ?? null, table: spec.table ?? null },
+    }).then((r) => parseResponse(schemas.nullableStringResponse, r, "generate_grant_sql")),
+  /** `REVOKE <privs> ON ... FROM ...` の SQL を生成する (純粋)。`null` は
+   *  `generateGrantSql` と同じ意味。 */
+  generateRevokeSql: (driver: DriverKind, spec: GrantSpec) =>
+    invoke<string | null>("generate_revoke_sql", {
+      driver,
+      spec: { ...spec, host: spec.host ?? null, table: spec.table ?? null },
+    }).then((r) => parseResponse(schemas.nullableStringResponse, r, "generate_revoke_sql")),
+  /**
+   * 確認済みの SQL 文 (CREATE USER / DROP USER / ALTER ... PASSWORD / GRANT /
+   * REVOKE) を 1 トランザクションで適用する。`applySyncSql` と同じガード
+   * (read_only セッション拒否・空文拒否) を持ち、クエリ履歴には一切記録しない。
+   */
+  applyPrivilegeSql: (params: {
+    sessionId: string;
+    database?: string | null;
+    statements: string[];
+  }) =>
+    invoke<number>("apply_privilege_sql", {
+      sessionId: params.sessionId,
+      database: params.database ?? null,
+      statements: params.statements,
+    }).then((r) => parseResponse(schemas.numberResponse, r, "apply_privilege_sql")),
 
   listProfiles: () =>
     invoke<ConnectionProfile[]>("list_profiles").then((r) =>

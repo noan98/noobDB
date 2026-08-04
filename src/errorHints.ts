@@ -41,8 +41,12 @@ export function illustrationForError(raw: string): ErrorIllustrationKind {
   // タイムアウト: Rust バックエンドの AppError::Timeout の文言と sqlx の pool タイムアウト
   // (上の接続失敗パターンに一致しない、クエリ/ロック等のタイムアウトのみここに残る)。
   if (/timed? ?out|timeout/i.test(raw)) return "timeout";
-  // 権限不足: 認証失敗 / アクセス拒否
-  if (/access denied|authentication failed|password authentication failed|permission denied|insufficient privilege/i.test(raw))
+  // 権限不足: 認証失敗 / アクセス拒否 / 個別操作の権限不足
+  if (
+    /access denied|authentication failed|password authentication failed|permission denied|insufficient privilege|command denied to user|must be owner of|must be superuser/i.test(
+      raw,
+    )
+  )
     return "permissionDenied";
   // スキーマ系: テーブル/カラム/データベースが存在しない
   if (
@@ -74,6 +78,17 @@ const PATTERNS: { test: RegExp; key: I18nKey }[] = [
   {
     test: /access denied|authentication failed|password authentication failed/i,
     key: "errorHintAccessDenied",
+  },
+  // Insufficient privilege for a specific operation (as opposed to auth
+  // failing outright) — MySQL's "<STMT> command denied to user" wording
+  // (SELECT/INSERT/UPDATE/DELETE/CREATE/... on mysql.user itself, a table, or
+  // a database), and PostgreSQL's "permission denied for ..." /
+  // "must be owner of ..." / "must be superuser" (#732: surfaces when the
+  // Users & permissions panel's own `mysql.user`/`pg_roles` reads, or a
+  // GRANT/REVOKE apply, hit an under-privileged session).
+  {
+    test: /command denied to user|permission denied for|must be owner of|must be superuser|insufficient privilege/i,
+    key: "errorHintInsufficientPrivilege",
   },
   // Connection dropped mid-session (server closed an idle connection, socket
   // broke, network/VPN drop). Must precede the generic "can't connect" pattern

@@ -4,6 +4,7 @@ pub mod diff;
 pub mod format;
 pub mod mysql;
 pub mod postgres;
+pub mod privileges;
 pub mod sqlite;
 pub mod sync;
 pub mod types;
@@ -13,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use advisor::UnusedIndexStats;
 use types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, StatementStat, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -603,6 +604,30 @@ impl Connection {
             Connection::MySql(c) => c.kill_process(id).await,
             Connection::Postgres(c) => c.kill_process(id).await,
             Connection::Sqlite(c) => c.kill_process(id).await,
+        }
+    }
+
+    /// Server accounts/roles for the users & permissions panel (#732): MySQL
+    /// `mysql.user`, PostgreSQL `pg_roles`. SQLite has no user model — the
+    /// frontend hides the panel entirely, and this returns an error instead
+    /// of an empty list for direct IPC callers (matching
+    /// [`Connection::list_processes`]'s "unsupported" convention).
+    pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
+        match self {
+            Connection::MySql(c) => c.list_db_users().await,
+            Connection::Postgres(c) => c.list_db_users().await,
+            Connection::Sqlite(c) => c.list_db_users().await,
+        }
+    }
+
+    /// The CRUD + DDL privilege matrix for one user/role (see
+    /// [`UserPrivileges`]). `host` narrows a MySQL account (`user@host`);
+    /// ignored by other drivers.
+    pub async fn user_privileges(&self, user: &str, host: Option<&str>) -> Result<UserPrivileges> {
+        match self {
+            Connection::MySql(c) => c.user_privileges(user, host).await,
+            Connection::Postgres(c) => c.user_privileges(user, host).await,
+            Connection::Sqlite(c) => c.user_privileges(user, host).await,
         }
     }
 

@@ -6,9 +6,10 @@ use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::advisor::UnusedIndexStats;
 use super::types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges,
+    Value,
 };
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
@@ -455,6 +456,26 @@ impl SqliteConn {
         Err(AppError::InvalidInput(
             "killing processes is not supported for SQLite (file-backed, no server processes)"
                 .into(),
+        ))
+    }
+
+    /// SQLite has no user/permission model — file access control is entirely
+    /// the OS's. The frontend hides the users panel for SQLite connections;
+    /// this is the backstop for direct IPC calls.
+    pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
+        Err(AppError::InvalidInput(
+            "users are not supported for SQLite (file-backed, no server-side accounts)".into(),
+        ))
+    }
+
+    /// See [`SqliteConn::list_db_users`].
+    pub async fn user_privileges(
+        &self,
+        _user: &str,
+        _host: Option<&str>,
+    ) -> Result<UserPrivileges> {
+        Err(AppError::InvalidInput(
+            "users are not supported for SQLite (file-backed, no server-side accounts)".into(),
         ))
     }
 
