@@ -22,6 +22,8 @@
     "file_path": null,
     "group": "production",
     "has_db_password": true,
+    "has_ssh_jump_passphrase": false,
+    "has_ssh_jump_password": true,
     "has_ssh_passphrase": false,
     "has_ssh_password": false,
     "host": "db.example.com",
@@ -35,6 +37,13 @@
     "ssh": {
       "auth_method": "key",
       "host": "jump.example.com",
+      "jump": {
+        "auth_method": "password",
+        "host": "bastion.example.com",
+        "port": 2222,
+        "private_key_path": "",
+        "user": "ops"
+      },
       "port": 22,
       "private_key_path": "/home/deploy/.ssh/id_ed25519",
       "user": "deploy"
@@ -211,6 +220,14 @@
     "running": true,
     "started_at_ms": 1700000000000.0,
     "user": "app"
+  },
+  "localTableMeta": {
+    "fetched_at_ms": 1700000000000,
+    "name": "r1",
+    "row_count": 42,
+    "source_driver": "mysql",
+    "source_profile": "prod-mysql",
+    "source_sql": "SELECT * FROM orders"
   },
   "logView": {
     "path": "/home/user/.local/share/noobDB/noobdb.log",

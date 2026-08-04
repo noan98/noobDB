@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::db::{is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
 use crate::profiles::{secrets, SshAuthMethod};
-use crate::ssh::{SshConfig, SshPhase, SshTunnel};
+use crate::ssh::{SshConfig, SshJumpConfig, SshPhase, SshTunnel};
 use crate::state::{new_session_id, AppState, Session, SessionId};
 
 /// Default overall deadline (seconds) for a whole connection attempt when the
@@ -169,6 +169,28 @@ pub struct SshRequest {
     /// it is loaded from the keyring.
     #[serde(default)]
     pub password: String,
+    /// Optional bastion/jump hop dialed before `host` (#708 multi-hop tunnel).
+    #[serde(default)]
+    pub jump: Option<SshJumpRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SshJumpRequest {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    #[serde(default)]
+    pub auth_method: SshAuthMethod,
+    #[serde(default)]
+    pub private_key_path: std::path::PathBuf,
+    /// If empty and profile_id is set, the passphrase is loaded from keyring
+    /// (kind `ssh_passphrase_hop0`, distinct from the main hop's).
+    #[serde(default)]
+    pub passphrase: String,
+    /// Password for `auth_method == Password`. If empty and profile_id is set,
+    /// it is loaded from the keyring (kind `ssh_password_hop0`).
+    #[serde(default)]
+    pub password: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -248,6 +270,7 @@ pub async fn connect(
         connect_options: opts,
         reconnect_ssh,
         _tunnel: tunnel,
+        local_temp_file: None,
     };
     let id = state.insert(session).await;
     tracing::info!(
@@ -317,6 +340,18 @@ pub async fn ping_session(session_id: String, state: State<'_, AppState>) -> Res
 pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Result<()> {
     if let Some(sess) = state.remove(&session_id).await {
         sess.conn.close().await;
+        // A local cross-connection query session (#740) is volatile by
+        // design — its backing temp file is deleted here regardless of
+        // whether the user exported a copy via "ファイルに保存" (`vacuum_into`
+        // writes an independent file and doesn't change this file's fate).
+        // Best-effort: a failed cleanup just leaves an orphaned temp file
+        // (already under the OS temp dir, which itself gets reclaimed
+        // eventually) rather than failing the disconnect.
+        if let Some(path) = &sess.local_temp_file {
+            if let Err(e) = std::fs::remove_file(path) {
+                tracing::warn!(session_id = %session_id, path = %path.display(), error = %e, "failed to remove local session temp file");
+            }
+        }
         // Session (and its tunnel) drops with the last Arc reference.
         tracing::info!(session_id = %session_id, "disconnected");
     } else {
@@ -378,6 +413,7 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
         skip_history: old.skip_history,
         reconnect_ssh: old.reconnect_ssh.clone(),
         _tunnel: tunnel,
+        local_temp_file: old.local_temp_file.clone(),
     };
 
     // Swap the live session for the new one, then close the old connection. The
@@ -412,6 +448,21 @@ async fn reopen_transport(
                     cfg.password = p;
                 }
             }
+            // Same re-resolution for the bastion/jump hop, if this tunnel is
+            // chained (#708) — its secrets live under a distinct keyring kind
+            // (`_hop0`) from the main hop's above.
+            if let Some(jump) = cfg.jump.as_mut() {
+                if jump.passphrase.is_empty() {
+                    if let Some(p) = secrets::get_ssh_jump_passphrase(pid)? {
+                        jump.passphrase = p;
+                    }
+                }
+                if jump.password.is_empty() {
+                    if let Some(p) = secrets::get_ssh_jump_password(pid)? {
+                        jump.password = p;
+                    }
+                }
+            }
         }
         let t = SshTunnel::open(&cfg).await?;
         // The stored options point at the old (now-dead) tunnel's local port;
@@ -441,6 +492,19 @@ fn reconnect_ssh_from(req: &ConnectRequest) -> Option<SshConfig> {
         password: String::new(),
         remote_host: req.host.clone(),
         remote_port: req.port,
+        // Same "blank the secrets" treatment as the main hop above — reopen_transport
+        // re-resolves the jump hop's passphrase/password from the keyring too (#708).
+        jump: ssh.jump.as_ref().map(|j| {
+            Box::new(SshJumpConfig {
+                host: j.host.clone(),
+                port: j.port,
+                user: j.user.clone(),
+                auth_method: j.auth_method,
+                private_key_path: j.private_key_path.clone(),
+                passphrase: String::new(),
+                password: String::new(),
+            })
+        }),
     })
 }
 
@@ -541,6 +605,18 @@ async fn build_options(
     let (tunnel, host, port) = if let Some(ssh) = &req.ssh {
         let passphrase = resolve_passphrase(req, ssh)?;
         let ssh_password = resolve_ssh_password(req, ssh)?;
+        let jump = match &ssh.jump {
+            Some(j) => Some(Box::new(SshJumpConfig {
+                host: j.host.clone(),
+                port: j.port,
+                user: j.user.clone(),
+                auth_method: j.auth_method,
+                private_key_path: j.private_key_path.clone(),
+                passphrase: resolve_jump_passphrase(req, j)?,
+                password: resolve_jump_password(req, j)?,
+            })),
+            None => None,
+        };
         let cfg = SshConfig {
             host: ssh.host.clone(),
             port: ssh.port,
@@ -551,6 +627,7 @@ async fn build_options(
             password: ssh_password,
             remote_host: req.host.clone(),
             remote_port: req.port,
+            jump,
         };
         // Map the tunnel's connect/auth phases onto our connect phases so the UI
         // can tell "stuck on the tunnel" apart from "stuck on SSH auth" (#684).
@@ -614,6 +691,36 @@ fn resolve_ssh_password(req: &ConnectRequest, ssh: &SshRequest) -> Result<String
     }
     if let Some(id) = &req.profile_id {
         if let Some(p) = secrets::get_ssh_password(id)? {
+            return Ok(p);
+        }
+    }
+    Ok(String::new())
+}
+
+/// Same resolution rule as [`resolve_passphrase`], but for the bastion/jump
+/// hop's keyring entry (kind `ssh_passphrase_hop0`, #708) — kept separate from
+/// the main hop's `ssh_passphrase` so a profile with a jump host doesn't need
+/// (and can't accidentally reuse) the same secret for both hops.
+fn resolve_jump_passphrase(req: &ConnectRequest, jump: &SshJumpRequest) -> Result<String> {
+    if !jump.passphrase.is_empty() {
+        return Ok(jump.passphrase.clone());
+    }
+    if let Some(id) = &req.profile_id {
+        if let Some(p) = secrets::get_ssh_jump_passphrase(id)? {
+            return Ok(p);
+        }
+    }
+    Ok(String::new())
+}
+
+/// Same resolution rule as [`resolve_ssh_password`], but for the bastion/jump
+/// hop's keyring entry (kind `ssh_password_hop0`, #708).
+fn resolve_jump_password(req: &ConnectRequest, jump: &SshJumpRequest) -> Result<String> {
+    if !jump.password.is_empty() {
+        return Ok(jump.password.clone());
+    }
+    if let Some(id) = &req.profile_id {
+        if let Some(p) = secrets::get_ssh_jump_password(id)? {
             return Ok(p);
         }
     }
@@ -703,6 +810,7 @@ mod tests {
             private_key_path: std::path::PathBuf::from("/keys/id"),
             passphrase: "phrase".into(),
             password: "pw".into(),
+            jump: None,
         };
         let cfg = reconnect_ssh_from(&req_with_ssh(Some(ssh))).expect("tunneled -> Some");
         // Non-secret SSH parameters are captured verbatim...
@@ -719,5 +827,41 @@ mod tests {
         // reconnect time), so nothing sensitive lingers on the session (#712).
         assert!(cfg.passphrase.is_empty());
         assert!(cfg.password.is_empty());
+        assert!(cfg.jump.is_none());
+    }
+
+    // #708: a chained (bastion + target) request carries the jump hop through
+    // reconnect_ssh_from with its own secrets blanked, independent of the
+    // target hop's.
+    #[test]
+    fn reconnect_ssh_from_captures_jump_hop_and_blanks_its_secrets_too() {
+        let ssh = SshRequest {
+            host: "internal-ssh".into(),
+            port: 22,
+            user: "app".into(),
+            auth_method: SshAuthMethod::Key,
+            private_key_path: std::path::PathBuf::from("/keys/target"),
+            passphrase: "target-phrase".into(),
+            password: String::new(),
+            jump: Some(SshJumpRequest {
+                host: "bastion.example.com".into(),
+                port: 2222,
+                user: "ops".into(),
+                auth_method: SshAuthMethod::Password,
+                private_key_path: std::path::PathBuf::new(),
+                passphrase: String::new(),
+                password: "jump-pw".into(),
+            }),
+        };
+        let cfg = reconnect_ssh_from(&req_with_ssh(Some(ssh))).expect("tunneled -> Some");
+        let jump = cfg.jump.expect("jump hop captured");
+        assert_eq!(jump.host, "bastion.example.com");
+        assert_eq!(jump.port, 2222);
+        assert_eq!(jump.user, "ops");
+        assert_eq!(jump.auth_method, SshAuthMethod::Password);
+        // Secrets for both hops are dropped, not just the target's.
+        assert!(cfg.passphrase.is_empty());
+        assert!(jump.passphrase.is_empty());
+        assert!(jump.password.is_empty());
     }
 }

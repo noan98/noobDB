@@ -401,6 +401,15 @@ pub async fn run_query_stream(
     query_timeout_secs: Option<u64>,
     auto_refresh: Option<bool>,
     force_read_only: Option<bool>,
+    // #735 DML フライトレコーダ。true かつ単文の INSERT/UPDATE/DELETE のとき、
+    // 通常のストリーミング実行の代わりに `Connection::capture_write` 経由で
+    // before/after イメージの記録を試みつつ実行する (`spawn_captured_write`)。
+    // 記録の成否に関わらず書き込み自体は行われ、`query-stream:*` イベントは
+    // 通常経路と同じ形で emit されるためフロントの購読側 (`onDone`/`onError`)
+    // に変更は不要。
+    capture: Option<bool>,
+    capture_row_cap: Option<u32>,
+    capture_retention_days: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -435,8 +444,27 @@ pub async fn run_query_stream(
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
     let stream_id_for_task = stream_id.clone();
     let delivered_rows_for_task = delivered_rows.clone();
+    let capture_requested = capture.unwrap_or(false) && !auto_refresh;
     let handle = tokio::spawn(async move {
         let _ = ready_rx.await;
+        if capture_requested && crate::db::classify_write_kind(&sql) != crate::db::WriteKind::Other
+        {
+            spawn_captured_write(
+                app,
+                session,
+                stream_id_for_task,
+                sql,
+                database,
+                capture_row_cap
+                    .map(|n| n as usize)
+                    .unwrap_or(crate::db::DEFAULT_CAPTURE_ROW_CAP),
+                capture_retention_days.map(|n| n as i64),
+                query_timeout_secs,
+                delivered_rows_for_task,
+            )
+            .await;
+            return;
+        }
         spawn_query_stream(
             app,
             session,
@@ -640,6 +668,128 @@ async fn spawn_query_stream(
     if !auto_refresh {
         record_history(&session, &sql, database.as_deref(), &result).await;
     }
+
+    if let Some(state) = app.try_state::<AppState>() {
+        state.forget_stream(&stream_id).await;
+    }
+}
+
+/// The `run_query_stream` capture-enabled sibling of [`spawn_query_stream`]
+/// (#735 DML flight recorder). Instead of streaming a result set, this
+/// executes a single INSERT/UPDATE/DELETE via [`crate::db::Connection::
+/// capture_write`] and emits the *same* `query-stream:done` / `:error`
+/// events `spawn_query_stream` would have — so the frontend's existing
+/// `onDone`/`onError` subscription handles both paths without change. On
+/// success, a capturable write is persisted to the local flight-recorder
+/// store (best-effort; failing to persist never fails the run, the write
+/// already happened).
+#[allow(clippy::too_many_arguments)]
+async fn spawn_captured_write(
+    app: AppHandle,
+    session: Arc<Session>,
+    stream_id: String,
+    sql: String,
+    database: Option<String>,
+    row_cap: usize,
+    retention_days: Option<i64>,
+    query_timeout_secs: Option<u64>,
+    delivered_rows: Arc<AtomicU64>,
+) {
+    tracing::debug!(
+        session_id = %session.id,
+        stream_id = %stream_id,
+        database = ?database,
+        sql = %sql_summary(&sql),
+        "captured write starting"
+    );
+    let started = std::time::Instant::now();
+    let exec = session
+        .conn
+        .capture_write(&sql, database.as_deref(), row_cap);
+    // Same timeout treatment as the ordinary streaming path (`spawn_query_stream`):
+    // without this, a captured write could hang indefinitely — the capture
+    // step itself runs a dry-run preview *and* the real write, so it is at
+    // least as susceptible to a stuck query as a normal execution.
+    let outcome = match query_timeout_secs {
+        Some(secs) if secs > 0 => {
+            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                Ok(res) => res,
+                Err(_) => Err(AppError::Timeout(secs)),
+            }
+        }
+        _ => exec.await,
+    };
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    match &outcome {
+        Ok((result, capture)) => {
+            tracing::debug!(
+                session_id = %session.id,
+                stream_id = %stream_id,
+                elapsed_ms,
+                rows = result.rows_affected,
+                capturable = capture.capturable,
+                "captured write completed"
+            );
+            if let Err(e) = app.emit(
+                EV_QUERY_DONE,
+                StreamDoneEvent {
+                    stream_id: stream_id.clone(),
+                    total_rows: 0,
+                    rows_affected: result.rows_affected,
+                    elapsed_ms,
+                    has_columns: false,
+                    applied_auto_limit: None,
+                },
+            ) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %e,
+                    "failed to emit done event (captured write)"
+                );
+            }
+
+            crate::flight_recorder::persist_capture(
+                session.skip_history,
+                session.profile_id.clone(),
+                session.conn.driver_kind(),
+                database.clone(),
+                sql.clone(),
+                capture,
+                retention_days,
+            )
+            .await;
+        }
+        Err(e) => {
+            tracing::warn!(
+                session_id = %session.id,
+                stream_id = %stream_id,
+                error = %e,
+                "captured write failed"
+            );
+            if let Err(emit_err) = app.emit(
+                EV_QUERY_ERROR,
+                StreamErrorEvent {
+                    stream_id: stream_id.clone(),
+                    error: e.to_string(),
+                    timed_out: matches!(e, AppError::Timeout(_)),
+                    connection_lost: e.is_connection_lost(),
+                    delivered_rows: delivered_rows.load(Ordering::SeqCst),
+                },
+            ) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %emit_err,
+                    "failed to emit error event (captured write)"
+                );
+            }
+        }
+    }
+
+    let result_for_history: Result<QueryResult> = outcome.map(|(r, _)| r);
+    record_history(&session, &sql, database.as_deref(), &result_for_history).await;
 
     if let Some(state) = app.try_state::<AppState>() {
         state.forget_stream(&stream_id).await;

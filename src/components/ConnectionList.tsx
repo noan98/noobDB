@@ -1,9 +1,11 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
 import { AnimatePresence, Reorder } from "motion/react";
-import { api, ConnectionProfile, IndexInfo, SchemaObject, TableColumnInfo } from "../api/tauri";
+import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
+import { isSandboxShadowTableName } from "../sandbox";
+import { SandboxSection } from "./SandboxSection";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
@@ -39,6 +41,15 @@ import {
 } from "./tree";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
+
+/** `api.listTables` に薄く重ねて、サンドボックス (#747) の影テーブル
+ *  (`db::sandbox::shadow_table_name` の予約プレフィックス) をツリー・検索・
+ *  クイックアクセスなどこのコンポーネント内のあらゆる利用箇所から一律に隠す。
+ *  非サンドボックスの通常セッションでは該当テーブルが存在しないため無害。 */
+async function listVisibleTables(sessionId: string, db: string): Promise<string[]> {
+  const list = await api.listTables(sessionId, db);
+  return list.filter((t) => !isSandboxShadowTableName(t));
+}
 
 /** localStorage に永続化するグループ表示順序のキー (#786)。触られていない
  *  グループはアルファベット順の既定挙動のままなので、ドラッグ/キーボードで
@@ -252,6 +263,14 @@ interface Props {
   onRunDatabaseMaintenance?: (database: string, command: MaintenanceCommand) => void;
   /** DB ノードからサイズ・統計ダッシュボードを開く。#562。 */
   onShowDatabaseSizes?: (database: string) => void;
+  /** DB ノードからサンドボックス (壊せる砂場) 作成ダイアログを開く。#747。 */
+  onCreateSandbox?: (database: string) => void;
+  /** 作成済みサンドボックス一覧 (#747)。専用セクションとして通常のプロファイル
+   *  ツリーとは別に描画する (`SandboxSection`)。 */
+  sandboxes?: SandboxRecord[];
+  onOpenSandbox?: (record: SandboxRecord) => void;
+  onReviewSandbox?: (record: SandboxRecord) => void;
+  onDiscardSandbox?: (record: SandboxRecord) => void;
   /** テーブル名をクリップボードへコピー。 */
   onCopyTableName?: (table: string) => void;
   /** スキーマオブジェクトの定義を開く。`id` は同名衝突を避ける一意識別子。 */
@@ -307,6 +326,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
   onShowDatabaseSizes,
+  onCreateSandbox,
+  sandboxes,
+  onOpenSandbox,
+  onReviewSandbox,
+  onDiscardSandbox,
   onCopyTableName,
   onOpenObjectDefinition,
   selectLimit,
@@ -444,7 +468,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       await Promise.all(
         existingOpenDbs.map(async (db) => {
           try {
-            nextTables[db] = await api.listTables(targetSessionId, db);
+            nextTables[db] = await listVisibleTables(targetSessionId, db);
           } catch {
             // Skip a database that failed to list; re-expanding retries it.
             failedTableDbs.add(db);
@@ -559,7 +583,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       await Promise.all(
         openDbs.map(async (db) => {
           try {
-            nextTables[db] = await api.listTables(targetSessionId, db);
+            nextTables[db] = await listVisibleTables(targetSessionId, db);
           } catch {
             // Skip a database that failed to list; re-expanding retries it.
           }
@@ -948,6 +972,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (onShowDatabaseSizes) {
       items.push({ label: t("sizeMenuLabel"), onSelect: () => onShowDatabaseSizes(db) });
     }
+    if (onCreateSandbox) {
+      items.push({ label: t("contextMenuCreateSandbox"), onSelect: () => onCreateSandbox(db) });
+    }
     // DB 全体の保守コマンド (#561)。SQLite/PostgreSQL のみ対象 (MySQL はグローバル
     // 保守文が無いため空)。データは消さないが書き込み/ロックを伴うため read_only で無効化。
     if (onRunDatabaseMaintenance) {
@@ -1006,7 +1033,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (tablesInFlightRef.current.has(db)) return;
     tablesInFlightRef.current.add(db);
     try {
-      const list = await api.listTables(sessionId, db);
+      const list = await listVisibleTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
       void loadRowEstimates(sessionId, db);
       // 非テーブルのスキーマオブジェクトもベストエフォートで取得する。
@@ -1124,8 +1151,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     for (const db of databases) {
       if (tables[db] !== undefined || tablesInFlightRef.current.has(db)) continue;
       tablesInFlightRef.current.add(db);
-      api
-        .listTables(sessionId, db)
+      listVisibleTables(sessionId, db)
         .then((list) => setTables((prev) => ({ ...prev, [db]: list })))
         .catch(() => {})
         .finally(() => tablesInFlightRef.current.delete(db));
@@ -1955,6 +1981,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             })()
           )}
         </Box>
+      )}
+
+      {sandboxes && sandboxes.length > 0 && onOpenSandbox && onReviewSandbox && onDiscardSandbox && (
+        <SandboxSection
+          sandboxes={sandboxes}
+          activeProfileId={activeProfileId}
+          openProfileIds={openProfileIds}
+          connectingId={connectingId}
+          onOpen={onOpenSandbox}
+          onReview={onReviewSandbox}
+          onDiscard={onDiscardSandbox}
+        />
       )}
 
       {menu && (

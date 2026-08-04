@@ -21,9 +21,9 @@ import { z } from "zod";
 
 /** `Value` のワイヤフォーマット。`#[serde(untagged)]` なので素のプリミティブ。
  *  BLOB は 16 進文字列 (`Value::Bytes`) として string に乗る (CLAUDE.md 参照)。 */
-const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
+export const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
 
-const column = z.object({
+export const column = z.object({
   name: z.string(),
   type_name: z.string(),
 });
@@ -135,6 +135,21 @@ export const knownHost = z.object({
 });
 export const knownHostArray = z.array(knownHost);
 
+/**
+ * What `resolve_ssh_config_host` can prefill from a `~/.ssh/config` `Host`
+ * alias (#708): the target hop's fields plus (when `ProxyJump` is set) the
+ * jump hop's host/port/user.
+ */
+export const resolvedSshAlias = z.object({
+  host_name: z.string().nullable(),
+  port: z.number().nullable(),
+  user: z.string().nullable(),
+  identity_file: z.string().nullable(),
+  jump_host: z.string().nullable(),
+  jump_port: z.number().nullable(),
+  jump_user: z.string().nullable(),
+});
+
 /** ライブクエリ・インスペクタ (#746) の前提可否 + 縮退理由コード。 */
 export const queryStatsSupport = z.object({
   live_tail: z.boolean(),
@@ -190,12 +205,24 @@ export const previewResult = z.object({
   truncated: z.boolean(),
 });
 
+// #708: 踏み台/ジャンプホスト (2 段目まで)。SshProfile と同形だが自身の jump は
+// 持たない (チェーンは 1 段のジャンプホストまでに制限)。
+const sshJumpProfile = z.object({
+  host: z.string(),
+  port: z.number(),
+  user: z.string(),
+  auth_method: z.enum(["key", "agent", "password"]),
+  private_key_path: z.string(),
+});
+
 const sshProfile = z.object({
   host: z.string(),
   port: z.number(),
   user: z.string(),
   auth_method: z.enum(["key", "agent", "password"]),
   private_key_path: z.string(),
+  // 旧プロファイル (#708 以前) には無いフィールドなので optional/nullable。
+  jump: sshJumpProfile.nullable().optional(),
 });
 
 export const connectionProfile = z.object({
@@ -229,6 +256,10 @@ export const connectionProfile = z.object({
   has_db_password: z.boolean().optional(),
   has_ssh_passphrase: z.boolean().optional(),
   has_ssh_password: z.boolean().optional(),
+  // ジャンプホストの秘密が設定済みか (#708)。profile.ssh.jump が無いプロファイルでは
+  // 意味を持たないが、常に含まれる。
+  has_ssh_jump_passphrase: z.boolean().optional(),
+  has_ssh_jump_password: z.boolean().optional(),
 });
 
 const snippetScope = z.discriminatedUnion("kind", [
@@ -264,6 +295,55 @@ export const historyEntry = z.object({
 export const logView = z.object({
   text: z.string(),
   path: z.string().nullable(),
+});
+
+// #735 DML フライトレコーダ / Undo。
+const writeKind = z.enum(["insert", "update", "delete", "other"]);
+
+export const capturedWriteResponse = z.object({
+  result: queryResult,
+  capturable: z.boolean(),
+  reason: z.string().nullable(),
+  captureId: z.number().nullable(),
+});
+
+export const writeCapturePrecheck = z.object({
+  capturable: z.boolean(),
+  reason: z.string().nullable(),
+  estimatedRows: z.number().nullable(),
+});
+
+export const writeCaptureSummary = z.object({
+  id: z.number(),
+  profile_id: z.string().nullable(),
+  driver: z.string(),
+  database: z.string().nullable(),
+  table: z.string(),
+  kind: writeKind,
+  sql: z.string(),
+  rows_affected: z.number(),
+  captured_at: z.string(),
+  undone: z.boolean(),
+});
+export const writeCaptureSummaryArray = z.array(writeCaptureSummary);
+
+const undoConflict = z.object({
+  key: z.array(cellValue),
+  expected: z.array(cellValue).nullable(),
+  current: z.array(cellValue).nullable(),
+});
+
+export const undoPreviewResponse = z.object({
+  statements: z.array(z.string()),
+  conflicts: z.array(undoConflict),
+  warnings: z.array(z.string()),
+});
+
+export const undoOutcome = z.object({
+  applied: z.boolean(),
+  rowsAffected: z.number(),
+  conflicts: z.array(undoConflict),
+  warnings: z.array(z.string()),
 });
 
 const diffStatus = z.enum(["source_only", "target_only", "different", "same"]);
@@ -332,6 +412,46 @@ export const dataDiff = z.object({
   target_count: z.number(),
 });
 
+/** サンドボックス (壊せる砂場、#747) の非秘密メタデータ。 */
+export const sandboxRecord = z.object({
+  id: z.string(),
+  name: z.string(),
+  source_profile_id: z.string().nullable(),
+  source_driver: driverKind,
+  source_database: z.string().nullable(),
+  tables: z.array(z.string()),
+  row_limit: z.number(),
+  file_path: z.string(),
+  created_at: z.string(),
+  truncated_tables: z.array(z.string()),
+});
+
+export const sandboxRecordArray = z.array(sandboxRecord);
+
+export const sandboxCreateResponse = z.object({
+  sandbox: sandboxRecord,
+  session_id: z.string(),
+});
+
+const sandboxConflict = z.object({
+  key: z.array(cellValue),
+  desired_status: z.enum(["source_only", "target_only", "different"]),
+  external_status: z.enum(["source_only", "target_only", "different"]),
+  external_row: z.array(cellValue).nullable(),
+});
+
+export const sandboxTableDiffResult = z.object({
+  desired: dataDiff,
+  conflicts: z.array(sandboxConflict),
+  source_checked: z.boolean(),
+});
+
+export const sandboxSchemaDiffResult = z.object({
+  desired: schemaDiff,
+  external_changed_tables: z.array(z.string()),
+  source_checked: z.boolean(),
+});
+
 // スキーマ健全性アドバイザ (#741)。RuleId / Severity はバックの serde 表現
 // (snake_case / lowercase) に一致させる。
 const advisorSeverity = z.enum(["high", "medium", "low"]);
@@ -374,6 +494,18 @@ export const csvPreview = z.object({
 });
 
 export const connectResult = z.object({ session_id: z.string() });
+
+/** ローカル横断クエリ (#740) — ローカルテーブルの由来メタデータ。 */
+export const localTableMeta = z.object({
+  name: z.string(),
+  source_profile: z.string().nullable(),
+  source_sql: z.string(),
+  source_driver: z.string().nullable(),
+  fetched_at_ms: z.number(),
+  row_count: z.number(),
+});
+
+export const localTableMetaArray = z.array(localTableMeta);
 
 /** `connect-progress:phase` イベント: 接続確立のフェーズ進捗 (#684)。
  *  phase は "preparing" / "tunnel_connecting" / "tunnel_authenticating" /

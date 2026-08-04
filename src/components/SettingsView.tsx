@@ -27,6 +27,12 @@ import {
   DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   DEFAULT_DISPLAY_COUNT,
+  DEFAULT_FLIGHT_RECORDER_ROW_CAP,
+  DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS,
+  MIN_FLIGHT_RECORDER_ROW_CAP,
+  MAX_FLIGHT_RECORDER_ROW_CAP,
+  MIN_FLIGHT_RECORDER_RETENTION_DAYS,
+  MAX_FLIGHT_RECORDER_RETENTION_DAYS,
   DEFAULT_FONT_SIZE_PX,
   DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   DEFAULT_QUERY_TIMEOUT_SECS,
@@ -95,6 +101,9 @@ import {
   setSchemaDriftOnConnect,
   setSqlLintEnabled,
   setPreflightImpactEnabled,
+  setFlightRecorderEnabled,
+  setFlightRecorderRowCap,
+  setFlightRecorderRetentionDays,
   setStreamPrefetchSize,
   setSyntaxColor,
   setTabRestoreMode,
@@ -625,6 +634,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-sql-lint", titleKey: "settingsSqlLint" },
   { id: "settings-sec-preflight-impact", titleKey: "settingsPreflightImpact" },
   { id: "settings-sec-plan-watch", titleKey: "settingsPlanWatch" },
+  { id: "settings-sec-flight-recorder", titleKey: "settingsFlightRecorder" },
   { id: "settings-sec-result-grid", titleKey: "settingsResultGridMode" },
   { id: "settings-sec-safety", titleKey: "settingsSafety" },
   { id: "settings-sec-notifications", titleKey: "settingsNotifications" },
@@ -766,6 +776,12 @@ export function SettingsView({ theme, onClose }: Props) {
   const [notifyThresholdInput, setNotifyThresholdInput] = useState(
     String(settings.queryNotificationThresholdSecs),
   );
+  const [flightRowCapInput, setFlightRowCapInput] = useState(
+    String(settings.flightRecorderRowCap),
+  );
+  const [flightRetentionInput, setFlightRetentionInput] = useState(
+    String(settings.flightRecorderRetentionDays),
+  );
   useEffect(() => setDisplayInput(String(settings.defaultDisplayCount)), [settings.defaultDisplayCount]);
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
@@ -782,6 +798,14 @@ export function SettingsView({ theme, onClose }: Props) {
   useEffect(
     () => setNotifyThresholdInput(String(settings.queryNotificationThresholdSecs)),
     [settings.queryNotificationThresholdSecs],
+  );
+  useEffect(
+    () => setFlightRowCapInput(String(settings.flightRecorderRowCap)),
+    [settings.flightRecorderRowCap],
+  );
+  useEffect(
+    () => setFlightRetentionInput(String(settings.flightRecorderRetentionDays)),
+    [settings.flightRecorderRetentionDays],
   );
 
   const commitDisplay = () => {
@@ -818,6 +842,30 @@ export function SettingsView({ theme, onClose }: Props) {
     const n = Number.parseInt(reconnectRetriesInput, 10);
     if (Number.isFinite(n)) setAutoReconnectMaxRetries(n);
     else setReconnectRetriesInput(String(settings.autoReconnectMaxRetries));
+  };
+  const commitFlightRowCap = () => {
+    const n = Number.parseInt(flightRowCapInput, 10);
+    if (
+      Number.isSafeInteger(n) &&
+      n >= MIN_FLIGHT_RECORDER_ROW_CAP &&
+      n <= MAX_FLIGHT_RECORDER_ROW_CAP
+    ) {
+      setFlightRecorderRowCap(n);
+    } else {
+      setFlightRowCapInput(String(settings.flightRecorderRowCap));
+    }
+  };
+  const commitFlightRetention = () => {
+    const n = Number.parseInt(flightRetentionInput, 10);
+    if (
+      Number.isSafeInteger(n) &&
+      n >= MIN_FLIGHT_RECORDER_RETENTION_DAYS &&
+      n <= MAX_FLIGHT_RECORDER_RETENTION_DAYS
+    ) {
+      setFlightRecorderRetentionDays(n);
+    } else {
+      setFlightRetentionInput(String(settings.flightRecorderRetentionDays));
+    }
   };
   const commitFontSize = () => {
     const n = Number.parseInt(fontSizeInput, 10);
@@ -1322,6 +1370,72 @@ export function SettingsView({ theme, onClose }: Props) {
             {t("settingsSchemaDriftOnConnectHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection id="settings-sec-flight-recorder" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsFlightRecorder")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsFlightRecorderHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-flight-recorder-enabled">
+            <Switch
+              id="settings-flight-recorder-enabled"
+              checked={settings.flightRecorderEnabled}
+              onChange={setFlightRecorderEnabled}
+            />
+            {t("settingsFlightRecorderEnabled")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsFlightRecorderEnabledHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-flight-recorder-row-cap">
+            {t("settingsFlightRecorderRowCap")}
+          </chakra.label>
+          <Input
+            id="settings-flight-recorder-row-cap"
+            type="number"
+            min={MIN_FLIGHT_RECORDER_ROW_CAP}
+            max={MAX_FLIGHT_RECORDER_ROW_CAP}
+            step={100}
+            value={flightRowCapInput}
+            placeholder={String(DEFAULT_FLIGHT_RECORDER_ROW_CAP)}
+            disabled={!settings.flightRecorderEnabled}
+            onChange={(e) => setFlightRowCapInput(e.target.value)}
+            onBlur={commitFlightRowCap}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsHelpInline>
+            {t("settingsFlightRecorderRowCapHelp")}
+          </SettingsHelpInline>
+        </SettingsNumberRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-flight-recorder-retention">
+            {t("settingsFlightRecorderRetentionDays")}
+          </chakra.label>
+          <Input
+            id="settings-flight-recorder-retention"
+            type="number"
+            min={MIN_FLIGHT_RECORDER_RETENTION_DAYS}
+            max={MAX_FLIGHT_RECORDER_RETENTION_DAYS}
+            step={1}
+            value={flightRetentionInput}
+            placeholder={String(DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS)}
+            disabled={!settings.flightRecorderEnabled}
+            onChange={(e) => setFlightRetentionInput(e.target.value)}
+            onBlur={commitFlightRetention}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsHelpInline>
+            {t("settingsFlightRecorderRetentionDaysHelp")}
+          </SettingsHelpInline>
+        </SettingsNumberRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-result-grid" scrollMarginTop="8px">

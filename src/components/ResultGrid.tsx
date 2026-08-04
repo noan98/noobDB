@@ -952,6 +952,12 @@ interface Props {
    */
   onSaveAsTable?: () => void;
   /**
+   * 結果セットをローカル横断クエリエンジンへ「ローカルテーブルとして登録」する
+   * (#740)。App がセッション種別・在メモリ行を確定させたときだけ渡す — 表示条件
+   * (canExport/streaming) は Export・`onSaveAsTable` と揃える。
+   */
+  onRegisterLocalTable?: () => void;
+  /**
    * 全件ストリーミングエクスポートのコンテキスト。提供されると ExportModal に
    * 「全件 (再実行)」モードが現れる。
    */
@@ -4965,6 +4971,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onToggleDiffHighlight,
   onChangeView,
   onSaveAsTable,
+  onRegisterLocalTable,
   fullExport,
   lastEditAppliedAt,
   applyingEdits,
@@ -5537,6 +5544,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             disabled={!canExport || !onSaveAsTable}
           >
             <Icon name="table" size={ICON_SIZES.md} /> {t("saveAsTableButton")}
+          </Button>
+        </Tooltip>
+        <Tooltip
+          focusableWrapper={!canExport || !onRegisterLocalTable}
+          label={
+            streaming
+              ? t("exportDisabledStreaming")
+              : !canExport
+                ? t("exportDisabledNoRows")
+                : onRegisterLocalTable
+                  ? t("registerLocalTableButtonTitle")
+                  : t("registerLocalTableDisabledTitle")
+          }
+        >
+          <Button
+            size="sm"
+            px="2.5"
+            onClick={() => onRegisterLocalTable?.()}
+            disabled={!canExport || !onRegisterLocalTable}
+          >
+            <Icon name="database" size={ICON_SIZES.md} /> {t("registerLocalTableButton")}
           </Button>
         </Tooltip>
         {onSetAutoRefresh && (

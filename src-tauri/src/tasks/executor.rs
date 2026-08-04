@@ -13,7 +13,9 @@ use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Manager};
 
 use super::{TaskAction, TaskDefinition};
-use crate::commands::connection::{connect, disconnect, ConnectRequest, SshRequest};
+use crate::commands::connection::{
+    connect, disconnect, ConnectRequest, SshJumpRequest, SshRequest,
+};
 use crate::commands::dump;
 use crate::commands::export;
 use crate::db::{is_read_only_sql, DriverKind};
@@ -191,6 +193,8 @@ fn driver_kind_of(driver: &str) -> Result<DriverKind, AppError> {
 /// 読み取り専用に固定する多重の安全網 (#730)。
 fn build_connect_request(profile: &ConnectionProfile) -> Result<ConnectRequest, AppError> {
     let driver = driver_kind_of(&profile.driver)?;
+    // ジャンプホスト (#708) も同じく秘密は常に空にし、`connect` 側が
+    // `profile_id` から keyring (kind `_hop0`) を解決する。
     let ssh = profile.ssh.as_ref().map(|s| SshRequest {
         host: s.host.clone(),
         port: s.port,
@@ -199,6 +203,15 @@ fn build_connect_request(profile: &ConnectionProfile) -> Result<ConnectRequest, 
         private_key_path: s.private_key_path.clone(),
         passphrase: String::new(),
         password: String::new(),
+        jump: s.jump.as_ref().map(|j| SshJumpRequest {
+            host: j.host.clone(),
+            port: j.port,
+            user: j.user.clone(),
+            auth_method: j.auth_method,
+            private_key_path: j.private_key_path.clone(),
+            passphrase: String::new(),
+            password: String::new(),
+        }),
     });
     Ok(ConnectRequest {
         profile_id: Some(profile.id.clone()),

@@ -4,7 +4,7 @@ import { chakra, Flex, type HTMLChakraProps } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { BrandMark } from "../brand";
-import { ProductionBadge, ProfileColorChip } from "./ProfileBadge";
+import { ProductionBadge, ProfileColorChip, SandboxBadge } from "./ProfileBadge";
 import { connectionBandColor, type TitleBarConnection } from "./titleBarContext";
 import { Tooltip } from "./Tooltip";
 
@@ -121,6 +121,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
               </chakra.span>
             </Tooltip>
             {connection.isProduction && <ProductionBadge compact />}
+            {connection.isSandbox && <SandboxBadge compact />}
             {/* 自動再接続中はアンビエントなバッジで状態を示す (#600)。帯色も警告色になる。 */}
             {connection.status === "reconnecting" && (
               <Tooltip label={t("statusReconnecting")} focusableWrapper>

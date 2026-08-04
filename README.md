@@ -10,7 +10,10 @@ Rust で書かれた軽量なデスクトップ DB クライアントで、SSH �
   `duckdb` クレート経由)
 - ローカルポートフォワーディングによる **SSH トンネル** (`russh`) — MySQL / PostgreSQL
   - 秘密鍵認証 (パスフレーズ対応) / **ssh-agent** / **パスワード認証** の 3 方式
-  - 初回信頼方式 (TOFU) の known_hosts ファイル (`%APPDATA%/noobDB/known_hosts`)
+  - **踏み台 (ジャンプホスト) 経由の多段トンネル** (最大 2 ホップ) と、
+    `~/.ssh/config` のエイリアスから HostName / Port / User / IdentityFile /
+    ProxyJump を読み込むフォーム補助
+  - 初回信頼方式 (TOFU) の known_hosts ファイル (`%APPDATA%/noobDB/known_hosts`、段ごとに記録)
 - 接続プロファイルは `%APPDATA%/noobDB/profiles.json` に保存 (グループ・色・本番フラグなど)
 - DB のパスワード・SSH 鍵のパスフレーズ・SSH パスワードは OS の資格情報ストアに保存
   (`keyring` クレート経由。Windows 資格情報マネージャー等)
