@@ -4,6 +4,7 @@ pub mod diff;
 pub mod format;
 pub mod mysql;
 pub mod postgres;
+pub mod sandbox;
 pub mod sqlite;
 pub mod sync;
 pub mod types;

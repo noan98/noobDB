@@ -332,6 +332,46 @@ export const dataDiff = z.object({
   target_count: z.number(),
 });
 
+/** サンドボックス (壊せる砂場、#747) の非秘密メタデータ。 */
+export const sandboxRecord = z.object({
+  id: z.string(),
+  name: z.string(),
+  source_profile_id: z.string().nullable(),
+  source_driver: driverKind,
+  source_database: z.string().nullable(),
+  tables: z.array(z.string()),
+  row_limit: z.number(),
+  file_path: z.string(),
+  created_at: z.string(),
+  truncated_tables: z.array(z.string()),
+});
+
+export const sandboxRecordArray = z.array(sandboxRecord);
+
+export const sandboxCreateResponse = z.object({
+  sandbox: sandboxRecord,
+  session_id: z.string(),
+});
+
+const sandboxConflict = z.object({
+  key: z.array(cellValue),
+  desired_status: z.enum(["source_only", "target_only", "different"]),
+  external_status: z.enum(["source_only", "target_only", "different"]),
+  external_row: z.array(cellValue).nullable(),
+});
+
+export const sandboxTableDiffResult = z.object({
+  desired: dataDiff,
+  conflicts: z.array(sandboxConflict),
+  source_checked: z.boolean(),
+});
+
+export const sandboxSchemaDiffResult = z.object({
+  desired: schemaDiff,
+  external_changed_tables: z.array(z.string()),
+  source_checked: z.boolean(),
+});
+
 // スキーマ健全性アドバイザ (#741)。RuleId / Severity はバックの serde 表現
 // (snake_case / lowercase) に一致させる。
 const advisorSeverity = z.enum(["high", "medium", "low"]);

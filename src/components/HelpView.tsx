@@ -125,6 +125,12 @@ const SECTIONS: Section[] = [
         impact: "no",
         noteKey: "helpSchemaCompareNote",
       },
+      {
+        titleKey: "helpSandboxTitle",
+        descKey: "helpSandboxDesc",
+        impact: "no",
+        noteKey: "helpSandboxNote",
+      },
     ],
   },
   {
