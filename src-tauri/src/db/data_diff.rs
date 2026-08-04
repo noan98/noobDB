@@ -533,8 +533,12 @@ fn pk_predicate(driver: DriverKind, primary_key: &[String], key: &[Value]) -> St
 pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
     match value {
         Value::Null => "NULL".to_string(),
+        // DuckDB's dialect is PostgreSQL-like: `TRUE`/`FALSE` keyword literals
+        // rather than the `1`/`0` integers MySQL/SQLite accept for BOOLEAN.
         Value::Bool(b) => match driver {
-            DriverKind::Postgres => (if *b { "TRUE" } else { "FALSE" }).to_string(),
+            DriverKind::Postgres | DriverKind::DuckDb => {
+                (if *b { "TRUE" } else { "FALSE" }).to_string()
+            }
             // T-SQL has no boolean type; `BIT` columns take 0/1 (same literal
             // spelling as MySQL/SQLite's integer-backed booleans).
             DriverKind::Mysql | DriverKind::Sqlite | DriverKind::Mssql => {
@@ -555,7 +559,7 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
                 // text, so fall back to NULL there (same policy as
                 // `commands/dump.rs::sqlite_literal`).
                 match driver {
-                    DriverKind::Postgres => {
+                    DriverKind::Postgres | DriverKind::DuckDb => {
                         if f.is_nan() {
                             "'NaN'".to_string()
                         } else if *f > 0.0 {
@@ -574,7 +578,17 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
         Value::String(s) => quote_string(driver, s),
         Value::Bytes(hex) => match driver {
             DriverKind::Mysql | DriverKind::Sqlite => format!("X'{hex}'"),
+            // PostgreSQL bytea hex format: a single `\x` prefix followed by
+            // every hex digit.
             DriverKind::Postgres => format!("'\\x{hex}'"),
+            // DuckDB's BLOB literal escape is per-*byte*, not per-string like
+            // PostgreSQL's bytea — each byte needs its own `\x` escape
+            // (`'\xAB\x12'`, not `'\xAB12'`). Passing a PostgreSQL-shaped
+            // literal silently mis-parses (DuckDB reads only the first byte
+            // of the escape and treats the rest as literal ASCII), which
+            // would corrupt written BLOB values, so this gets its own
+            // per-byte-escaped branch instead of sharing PostgreSQL's.
+            DriverKind::DuckDb => duckdb_blob_literal(hex),
             // T-SQL binary literal: an unquoted `0x` prefix.
             DriverKind::Mssql => format!("0x{hex}"),
         },
@@ -584,11 +598,32 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
 fn quote_string(driver: DriverKind, s: &str) -> String {
     let escaped = match driver {
         DriverKind::Mysql => s.replace('\\', "\\\\").replace('\'', "''"),
-        // T-SQL, like PostgreSQL/SQLite, treats `\` as an ordinary character
-        // inside a string literal — only the quote char itself doubles.
-        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::Mssql => s.replace('\'', "''"),
+        // T-SQL, like PostgreSQL/SQLite/DuckDB, treats `\` as an ordinary
+        // character inside a string literal — only the quote char itself
+        // doubles.
+        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => {
+            s.replace('\'', "''")
+        }
     };
     format!("'{escaped}'")
+}
+
+/// Renders `hex` (a lowercase hex string, per this app's `Value::Bytes` wire
+/// format) as a DuckDB BLOB literal: `'\xAB\x12...'`, with each byte pair
+/// getting its own `\x` escape (unlike PostgreSQL's bytea, which uses one
+/// `\x` prefix for the whole string). `hex` always has an even length (it
+/// comes from hex-encoding bytes), so `chunks(2)` never leaves a short chunk.
+fn duckdb_blob_literal(hex: &str) -> String {
+    let mut out = String::with_capacity(hex.len() * 2 + 3);
+    out.push('\'');
+    for byte in hex.as_bytes().chunks(2) {
+        out.push_str("\\x");
+        // Safe: `hex` is produced by `data_encoding::HEXLOWER`, so every
+        // chunk is ASCII hex and this can't panic on invalid UTF-8 boundary.
+        out.push_str(std::str::from_utf8(byte).unwrap_or(""));
+    }
+    out.push('\'');
+    out
 }
 
 #[cfg(test)]
@@ -702,6 +737,26 @@ mod tests {
         assert_eq!(
             sql_literal(DriverKind::Postgres, &Value::Bytes("ab12".to_string())),
             "'\\xab12'"
+        );
+    }
+
+    /// DuckDB's BLOB literal escapes each byte individually (`'\xAB\x12'`),
+    /// unlike PostgreSQL's bytea (`'\xAB12'`, one `\x` prefix for the whole
+    /// string) — a multi-byte value is the only way to tell the two formats
+    /// apart, so this must not collapse to a single-byte fixture.
+    #[test]
+    fn duckdb_blob_literal_escapes_every_byte() {
+        assert_eq!(
+            sql_literal(DriverKind::DuckDb, &Value::Bytes("ab12".to_string())),
+            "'\\xab\\x12'"
+        );
+        assert_eq!(
+            sql_literal(DriverKind::DuckDb, &Value::Bytes("deadbeef".to_string())),
+            "'\\xde\\xad\\xbe\\xef'"
+        );
+        assert_eq!(
+            sql_literal(DriverKind::DuckDb, &Value::Bytes(String::new())),
+            "''"
         );
     }
 

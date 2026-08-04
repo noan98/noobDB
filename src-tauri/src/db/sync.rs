@@ -271,7 +271,10 @@ fn modify_column(
                 ));
             }
         }
-        DriverKind::Postgres => {
+        // DuckDB's `ALTER COLUMN` dialect matches PostgreSQL's (`ALTER
+        // COLUMN col TYPE t` / `SET`/`DROP NOT NULL` / `SET`/`DROP DEFAULT`),
+        // so it shares this branch (#709).
+        DriverKind::Postgres | DriverKind::DuckDb => {
             let mut emitted = false;
             if changed_fields.iter().any(|f| f == "data_type") {
                 statements.push(pg_alter(
@@ -470,7 +473,9 @@ fn mysql_quote_default(d: &str) -> String {
 pub(crate) fn quote_ident(driver: DriverKind, name: &str) -> String {
     match driver {
         DriverKind::Mysql => format!("`{}`", name.replace('`', "``")),
-        DriverKind::Postgres | DriverKind::Sqlite => format!("\"{}\"", name.replace('"', "\"\"")),
+        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
+            format!("\"{}\"", name.replace('"', "\"\""))
+        }
         // T-SQL bracket quoting; an embedded `]` doubles to `]]` (mirrors the
         // other drivers' embedded-quote-char doubling).
         DriverKind::Mssql => format!("[{}]", name.replace(']', "]]")),

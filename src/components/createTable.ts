@@ -57,6 +57,8 @@ function qualifiedName(driver: string, database: string | null | undefined, tabl
 /**
  * フォーム定義から CREATE TABLE 文を生成する。空のテーブル名/カラム名はそのまま
  * (UI 側でバリデーション)。SQLite の `INTEGER PRIMARY KEY AUTOINCREMENT` 特殊形に対応。
+ * DuckDB の自動採番は `CREATE SEQUENCE` を伴う複数文になるため、戻り値は常に単一の
+ * `CREATE TABLE` 文とは限らない (先行するシーケンス定義文が付く場合がある)。
  */
 export function buildCreateTableSql(driver: string, form: CreateTableForm): string {
   const cols = form.columns;
@@ -70,7 +72,14 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
     pkCols[0].autoIncrement &&
     cols.filter((c) => c.autoIncrement).length === 1;
 
-  const lines: string[] = cols.map((c) => columnLine(driver, c, { sqliteAutoPk }));
+  // DuckDB は `GENERATED ... AS IDENTITY` (PostgreSQL 由来の SQL 標準構文) を
+  // サポートしないため、自動採番カラムごとに `CREATE SEQUENCE` を先行発行し、列
+  // 定義側は `DEFAULT nextval('...')` で参照する (`columnLine` が両方組み立てる)。
+  const duckDbSequenceStatements: string[] = [];
+
+  const lines: string[] = cols.map((c) =>
+    columnLine(driver, c, { sqliteAutoPk }, form.table, duckDbSequenceStatements),
+  );
 
   // テーブルレベル PRIMARY KEY (SQLite 自動採番の特殊形を除く)。
   if (pkCols.length > 0 && !sqliteAutoPk) {
@@ -79,13 +88,23 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
   }
 
   const name = qualifiedName(driver, form.database, form.table);
-  return `CREATE TABLE ${name} (\n  ${lines.join(",\n  ")}\n);`;
+  const createTable = `CREATE TABLE ${name} (\n  ${lines.join(",\n  ")}\n);`;
+  return duckDbSequenceStatements.length > 0
+    ? `${duckDbSequenceStatements.join("\n")}\n${createTable}`
+    : createTable;
+}
+
+/** `table_col_seq` (DuckDB の自動採番カラムが使う `CREATE SEQUENCE` の名前)。 */
+function duckDbSequenceName(table: string, colName: string): string {
+  return `${table || "t"}_${colName || "col"}_seq`;
 }
 
 function columnLine(
   driver: string,
   col: ColumnDef,
   opts: { sqliteAutoPk: boolean },
+  table: string,
+  duckDbSequenceStatements: string[],
 ): string {
   const name = quoteIdentFor(driver, col.name);
   const parts: string[] = [name];
@@ -107,6 +126,15 @@ function columnLine(
   // NOT NULL: テーブルレベル PK が NOT NULL を含意するが、明示指定も尊重する。
   if (col.notNull) parts.push("NOT NULL");
   if (col.unique && !col.primaryKey) parts.push("UNIQUE");
+
+  // DuckDB の自動採番: `CREATE SEQUENCE` + `DEFAULT nextval('...')`。ユーザが
+  // 別途入力した DEFAULT 値より優先する (採番と手動 DEFAULT は両立しない見なし)。
+  if (col.autoIncrement && driver === "duckdb") {
+    const seqName = duckDbSequenceName(table, col.name);
+    duckDbSequenceStatements.push(`CREATE SEQUENCE ${quoteIdentFor(driver, seqName)};`);
+    parts.push(`DEFAULT nextval(${quoteString(driver, seqName)})`);
+    return parts.join(" ");
+  }
 
   if (col.autoIncrement) {
     if (driver === "mysql") parts.push("AUTO_INCREMENT");

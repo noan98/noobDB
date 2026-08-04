@@ -126,6 +126,9 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
   ],
   postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges", "formatSql"],
   sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql"],
+  // #709: DuckDB dump isn't implemented yet on the backend (it errors with a
+  // clear message) — no toggles apply until that lands.
+  duckdb: [],
   // MSSQL (#729): `dump_database` is not implemented yet for this driver
   // (backend returns `InvalidInput`, see `commands/dump.rs`) — no toggles to
   // show. The modal can still be opened; running it just surfaces that error.

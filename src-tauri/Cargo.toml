@@ -79,6 +79,12 @@ sqlx = { version = "0.9", default-features = false, features = [
     "json",
     "rust_decimal",
 ] }
+# DuckDB (#709)。分析用途のファイルベース DB。公式 Rust バインディングは同期 API
+# (sqlx 非対応) のため、`db/duckdb.rs` が `spawn_blocking` 越しに橋渡しする。
+# "bundled" feature は libduckdb を C++ ソースからビルドして静的リンクするため
+# システムに DuckDB を別途インストールする必要が無い (ビルドは重いがランタイム
+# 依存はゼロになる。README のビルド前提に合わせた選択)。
+duckdb = { version = "1", features = ["bundled"] }
 
 # SSH
 russh = "0.62"

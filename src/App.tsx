@@ -8053,10 +8053,13 @@ export default function App() {
               disabled:
                 !sessionId ||
                 selectedProfile?.driver === "sqlite" ||
+                selectedProfile?.driver === "duckdb" ||
                 selectedProfile?.driver === "mssql",
               title: !sessionId
                 ? t("appToolsNeedsSession")
-                : selectedProfile?.driver === "sqlite" || selectedProfile?.driver === "mssql"
+                : selectedProfile?.driver === "sqlite" ||
+                    selectedProfile?.driver === "duckdb" ||
+                    selectedProfile?.driver === "mssql"
                   ? t("appUsersUnsupported")
                   : undefined,
             },

@@ -71,7 +71,7 @@ fn privilege_keywords(driver: DriverKind, flags: PrivilegeFlags) -> Vec<&'static
             DriverKind::Postgres => out.extend(POSTGRES_DDL_KEYWORDS),
             // See the module doc: users & permissions is not yet implemented
             // for these drivers, so no generator is reachable from the UI.
-            DriverKind::Sqlite | DriverKind::Mssql => {}
+            DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => {}
         }
     }
     out
@@ -151,7 +151,7 @@ pub fn generate_create_user_sql(driver: DriverKind, spec: &UserSpec) -> String {
                 None => format!("CREATE ROLE {ident} LOGIN"),
             }
         }
-        DriverKind::Sqlite | DriverKind::Mssql => String::new(),
+        DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => String::new(),
     }
 }
 
@@ -160,7 +160,7 @@ pub fn generate_drop_user_sql(driver: DriverKind, name: &str, host: Option<&str>
     match driver {
         DriverKind::Mysql => format!("DROP USER {}", mysql_account(name, host)),
         DriverKind::Postgres => format!("DROP ROLE {}", quote_ident(DriverKind::Postgres, name)),
-        DriverKind::Sqlite | DriverKind::Mssql => String::new(),
+        DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => String::new(),
     }
 }
 
@@ -183,7 +183,7 @@ pub fn generate_alter_password_sql(
             quote_ident(DriverKind::Postgres, name),
             pg_literal(password)
         ),
-        DriverKind::Sqlite | DriverKind::Mssql => String::new(),
+        DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => String::new(),
     }
 }
 
@@ -230,7 +230,7 @@ fn render_grant_or_revoke(
                 ),
             }
         }
-        DriverKind::Sqlite | DriverKind::Mssql => String::new(),
+        DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => String::new(),
     })
 }
 

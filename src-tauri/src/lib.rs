@@ -35,12 +35,12 @@ pub mod __test_api {
     pub use crate::db::types::{
         Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
         ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
-        ServerVariable, StatementStat, TableColumnInfo, TablePrivilegeRow, TableRowEstimate,
-        TableSchema, TableSizeInfo, UserPrivileges, Value,
+        ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
+        TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::{
-        classify_write_kind, is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions,
-        DriverKind, SslMode, WriteCapture, WriteKind,
+        apply_auto_limit, classify_write_kind, is_read_only_sql, is_session_init_sql, Connection,
+        DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
@@ -454,6 +454,24 @@ pub mod __test_api {
             password: String::new(),
             database: None,
             driver: DriverKind::Sqlite,
+            file_path: Some(path.to_string()),
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+        }
+    }
+
+    /// Build DuckDB connect options from a filesystem path (#709).
+    pub fn duckdb_options(path: &str) -> DbConnectOptions {
+        DbConnectOptions {
+            host: String::new(),
+            port: 0,
+            user: String::new(),
+            password: String::new(),
+            database: None,
+            driver: DriverKind::DuckDb,
             file_path: Some(path.to_string()),
             ssl_mode: None,
             ssl_root_cert: None,

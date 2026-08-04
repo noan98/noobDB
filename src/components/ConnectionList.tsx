@@ -1385,10 +1385,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       rowBg = undefined;
     }
     const subtitle =
-      p.driver === "sqlite"
+      p.driver === "sqlite" || p.driver === "duckdb"
         ? p.file_path
           ? p.file_path.split(/[/\\]/).pop() || p.file_path
-          : "SQLite"
+          : p.driver === "duckdb"
+            ? "DuckDB"
+            : "SQLite"
         : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
     const driverIcon = driverIconName(p.driver);
@@ -1446,7 +1448,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           // 報告するイベント委譲」方式) を使う — ラッパ要素を増やさないので
           // アニメーションに影響しない。
           {...treeTooltipProps(
-            p.driver === "sqlite"
+            p.driver === "sqlite" || p.driver === "duckdb"
               ? p.file_path ?? p.name
               : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`,
           )}

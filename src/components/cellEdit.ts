@@ -242,12 +242,13 @@ function qualifiedTableRef(driver: string, database: string, table: string): str
 export function quoteString(driver: string, s: string): string {
   // Single quotes are doubled in every dialect. Backslash is only special
   // inside MySQL string literals; Postgres/SQLite (with the default
-  // `standard_conforming_strings = on`) and MSSQL treat it as an ordinary
-  // character, so doubling it there would corrupt the stored value (and break
-  // PK matching when a key contains a backslash). Mirror `quoteIdentFor`'s
-  // convention of treating unknown drivers as MySQL.
+  // `standard_conforming_strings = on`), DuckDB (Postgres-like
+  // standard-conforming strings), and MSSQL treat it as an ordinary
+  // character, so doubling it there would corrupt the stored value (and
+  // break PK matching when a key contains a backslash). Mirror
+  // `quoteIdentFor`'s convention of treating unknown drivers as MySQL.
   const escaped =
-    driver === "postgres" || driver === "sqlite" || driver === "mssql"
+    driver === "postgres" || driver === "sqlite" || driver === "duckdb" || driver === "mssql"
       ? s.replace(/'/g, "''")
       : s.replace(/\\/g, "\\\\").replace(/'/g, "''");
   // MSSQL: an `N` prefix marks the literal as (n)varchar/unicode, matching
@@ -513,19 +514,37 @@ export function buildDeleteStatements(input: {
 /**
  * Renders a BLOB cell value (carried as a bare hex string, per CLAUDE.md's
  * `Value::Bytes`) as a driver-appropriate binary literal:
- *   - PostgreSQL: `'\xDEADBEEF'` (bytea hex input; backslash is literal under
- *     the default `standard_conforming_strings = on`)
+ *   - PostgreSQL: `'\xDEADBEEF'` (bytea hex input; one `\x` prefix for the
+ *     whole string; backslash is literal under standard-conforming strings)
+ *   - DuckDB:     `'\xDE\xAD\xBE\xEF'` (BLOB literal — unlike PostgreSQL's
+ *     bytea, DuckDB escapes *every byte* individually; see `duckDbBlobLiteral`)
  *   - SQLite:     `X'DEADBEEF'` (blob literal)
  *   - MySQL:      `0xDEADBEEF` (hex literal; an empty blob has no `0x` form, so
  *     it falls back to the empty string `''`)
  */
 function blobLiteral(driver: string, hex: string): string {
   if (driver === "postgres") return "'\\x" + hex + "'";
+  if (driver === "duckdb") return duckDbBlobLiteral(hex);
   if (driver === "sqlite") return "X'" + hex + "'";
   // MySQL and MSSQL (#729, `db::data_diff::sql_literal`'s `0x{hex}`) share
   // the same unquoted `0x...` binary literal syntax, so both fall through
   // to this default.
   return hex.length > 0 ? "0x" + hex : "''";
+}
+
+/**
+ * DuckDB BLOB literal: each byte pair gets its own `\x` escape
+ * (`'\xAB\x12'`), unlike PostgreSQL's bytea (one `\x` prefix for the whole
+ * string, `'\xAB12'`) — mirrors `duckdb_blob_literal` in
+ * `src-tauri/src/db/data_diff.rs`. `hex` always has an even length (it comes
+ * from hex-encoding bytes), so pairing by 2 never leaves a short chunk.
+ */
+function duckDbBlobLiteral(hex: string): string {
+  let out = "'";
+  for (let i = 0; i < hex.length; i += 2) {
+    out += "\\x" + hex.slice(i, i + 2);
+  }
+  return out + "'";
 }
 
 /**

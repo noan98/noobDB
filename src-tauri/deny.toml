@@ -67,6 +67,10 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "CDLA-Permissive-2.0",
+    # DuckDB (#709) の依存ツリー (duckdb → arrow-array/arrow-select →
+    # ahash → const-random → tiny-keccak) が引き込む。パブリックドメイン
+    # 相当の最大限に寛容なライセンス。
+    "CC0-1.0",
 ]
 # ライセンス判定の信頼度しきい値。1.0 に近いほど厳密。
 confidence-threshold = 0.8
