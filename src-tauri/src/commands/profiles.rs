@@ -31,6 +31,13 @@ pub struct SaveProfileRequest {
     /// Same semantics for the SSH password (password auth method).
     #[serde(default)]
     pub ssh_password: Option<String>,
+    /// Same `Some`/`None`/empty-clears semantics, for the bastion/jump hop's
+    /// passphrase (#708). Independent of `ssh_passphrase` above.
+    #[serde(default)]
+    pub ssh_jump_passphrase: Option<String>,
+    /// Same semantics, for the bastion/jump hop's password.
+    #[serde(default)]
+    pub ssh_jump_password: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
     #[serde(default)]
@@ -75,6 +82,11 @@ pub struct ProfileWithSecretFlags {
     pub has_db_password: bool,
     pub has_ssh_passphrase: bool,
     pub has_ssh_password: bool,
+    /// Whether a jump/bastion hop passphrase is stored (#708). Only
+    /// meaningful when `profile.ssh.jump` is set.
+    pub has_ssh_jump_passphrase: bool,
+    /// Whether a jump/bastion hop password is stored (#708).
+    pub has_ssh_jump_password: bool,
 }
 
 #[tauri::command]
@@ -86,11 +98,15 @@ pub async fn list_profiles() -> Result<Vec<ProfileWithSecretFlags>> {
             let has_db_password = secrets::has_db_password(&profile.id);
             let has_ssh_passphrase = secrets::has_ssh_passphrase(&profile.id);
             let has_ssh_password = secrets::has_ssh_password(&profile.id);
+            let has_ssh_jump_passphrase = secrets::has_ssh_jump_passphrase(&profile.id);
+            let has_ssh_jump_password = secrets::has_ssh_jump_password(&profile.id);
             ProfileWithSecretFlags {
                 profile,
                 has_db_password,
                 has_ssh_passphrase,
                 has_ssh_password,
+                has_ssh_jump_passphrase,
+                has_ssh_jump_password,
             }
         })
         .collect())
@@ -174,6 +190,24 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
         } else {
             tracing::debug!(profile_id = %id, secret = "ssh_password", "setting secret");
             secrets::set_ssh_password(&id, &pw)?;
+        }
+    }
+    if let Some(pp) = req.ssh_jump_passphrase {
+        if pp.is_empty() {
+            tracing::debug!(profile_id = %id, secret = "ssh_passphrase_hop0", "clearing secret");
+            secrets::delete_ssh_jump_passphrase(&id)?;
+        } else {
+            tracing::debug!(profile_id = %id, secret = "ssh_passphrase_hop0", "setting secret");
+            secrets::set_ssh_jump_passphrase(&id, &pp)?;
+        }
+    }
+    if let Some(pw) = req.ssh_jump_password {
+        if pw.is_empty() {
+            tracing::debug!(profile_id = %id, secret = "ssh_password_hop0", "clearing secret");
+            secrets::delete_ssh_jump_password(&id)?;
+        } else {
+            tracing::debug!(profile_id = %id, secret = "ssh_password_hop0", "setting secret");
+            secrets::set_ssh_jump_password(&id, &pw)?;
         }
     }
     Ok(profile)

@@ -217,6 +217,19 @@ export interface Settings {
    * 除外は `pruneCommandPaletteMru` を参照。
    */
   commandPaletteMru: string[];
+  /**
+   * DML フライトレコーダ (#735)。既定オン。オンのとき、クエリエディタから
+   * 単文の INSERT/UPDATE/DELETE を実行すると、ローカル専用ストア
+   * (`flight_recorder.sqlite`) に before/after イメージを退避し、履歴パネルの
+   * 「巻き戻し」から逆 SQL でワンクリック Undo できる。ベストエフォートの保険で
+   * あり (対象テーブル/主キーが特定できない文・DDL は記録対象外)、退避行数の
+   * 上限を超える書き込みは記録されず通常どおり実行だけされる。
+   */
+  flightRecorderEnabled: boolean;
+  /** 1 回の書き込みで退避する対象行数の上限。超えると記録なしで実行する。 */
+  flightRecorderRowCap: number;
+  /** 退避した before/after イメージの保持期間 (日数)。0 は無期限。 */
+  flightRecorderRetentionDays: number;
 }
 
 /**
@@ -589,6 +602,15 @@ export const DEFAULT_SCHEMA_DRIFT_ON_CONNECT = true;
 /** コマンドパレット MRU (#845) は既定で空 (未使用状態)。 */
 export const DEFAULT_COMMAND_PALETTE_MRU: string[] = [];
 
+/** DML フライトレコーダ (#735) は既定オン、行数上限 1 万・保持 30 日。 */
+export const DEFAULT_FLIGHT_RECORDER_ENABLED = true;
+export const DEFAULT_FLIGHT_RECORDER_ROW_CAP = 10_000;
+export const MIN_FLIGHT_RECORDER_ROW_CAP = 1;
+export const MAX_FLIGHT_RECORDER_ROW_CAP = 100_000;
+export const DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS = 30;
+export const MIN_FLIGHT_RECORDER_RETENTION_DAYS = 0;
+export const MAX_FLIGHT_RECORDER_RETENTION_DAYS = 3_650;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -631,6 +653,9 @@ export const DEFAULT_SETTINGS: Settings = {
   schemaDriftOnConnect: DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
   motionPreference: DEFAULT_MOTION_PREFERENCE,
   commandPaletteMru: DEFAULT_COMMAND_PALETTE_MRU,
+  flightRecorderEnabled: DEFAULT_FLIGHT_RECORDER_ENABLED,
+  flightRecorderRowCap: DEFAULT_FLIGHT_RECORDER_ROW_CAP,
+  flightRecorderRetentionDays: DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -847,6 +872,9 @@ export function normalizeSettings(input: unknown): Settings {
     schemaDriftOnConnect?: unknown;
     motionPreference?: unknown;
     commandPaletteMru?: unknown;
+    flightRecorderEnabled?: unknown;
+    flightRecorderRowCap?: unknown;
+    flightRecorderRetentionDays?: unknown;
   };
   return {
     syntaxColors: {
@@ -954,6 +982,22 @@ export function normalizeSettings(input: unknown): Settings {
         : DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
     motionPreference: sanitizeMotionPreference(parsed.motionPreference, DEFAULT_MOTION_PREFERENCE),
     commandPaletteMru: sanitizeMruIds(parsed.commandPaletteMru),
+    flightRecorderEnabled:
+      typeof parsed.flightRecorderEnabled === "boolean"
+        ? parsed.flightRecorderEnabled
+        : DEFAULT_FLIGHT_RECORDER_ENABLED,
+    flightRecorderRowCap: sanitizeIntInRange(
+      parsed.flightRecorderRowCap,
+      DEFAULT_FLIGHT_RECORDER_ROW_CAP,
+      MIN_FLIGHT_RECORDER_ROW_CAP,
+      MAX_FLIGHT_RECORDER_ROW_CAP,
+    ),
+    flightRecorderRetentionDays: sanitizeIntInRange(
+      parsed.flightRecorderRetentionDays,
+      DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS,
+      MIN_FLIGHT_RECORDER_RETENTION_DAYS,
+      MAX_FLIGHT_RECORDER_RETENTION_DAYS,
+    ),
   };
 }
 
@@ -1370,6 +1414,39 @@ export function setPlanWatchOnConnect(value: boolean): void {
 export function setSchemaDriftOnConnect(value: boolean): void {
   if (current.schemaDriftOnConnect === value) return;
   current = { ...current, schemaDriftOnConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setFlightRecorderEnabled(value: boolean): void {
+  if (current.flightRecorderEnabled === value) return;
+  current = { ...current, flightRecorderEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setFlightRecorderRowCap(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.flightRecorderRowCap,
+    MIN_FLIGHT_RECORDER_ROW_CAP,
+    MAX_FLIGHT_RECORDER_ROW_CAP,
+  );
+  if (next === current.flightRecorderRowCap) return;
+  current = { ...current, flightRecorderRowCap: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setFlightRecorderRetentionDays(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.flightRecorderRetentionDays,
+    MIN_FLIGHT_RECORDER_RETENTION_DAYS,
+    MAX_FLIGHT_RECORDER_RETENTION_DAYS,
+  );
+  if (next === current.flightRecorderRetentionDays) return;
+  current = { ...current, flightRecorderRetentionDays: next };
   persist();
   listeners.forEach((cb) => cb());
 }

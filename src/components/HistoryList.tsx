@@ -5,6 +5,7 @@ import { I18nKey, useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Icon, ICON_SIZES } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { FlightRecorderPanel } from "./FlightRecorderPanel";
 import { Checkbox, Input, PressableButton } from "./ui";
 import {
   MotionTreeNode,
@@ -82,6 +83,8 @@ const PERIOD_FILTER_LABEL_KEYS: Record<HistoryPeriodFilter, I18nKey> = {
 
 interface Props {
   activeProfile: ConnectionProfile | null;
+  /** アクティブなセッション。DML フライトレコーダの巻き戻し (#735) の適用先。 */
+  sessionId: string | null;
   /** Bumped by the parent to force a reload (e.g. after a query runs). */
   reloadKey: number;
   onRestore: (sql: string) => void;
@@ -107,10 +110,11 @@ function formatTime(iso: string): string {
 
 // memo 化して App.tsx の高頻度な再レンダリングから切り離す。props は親で
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
-export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey, onRestore, onOpenInNewTab, onNewQuery }: Props) {
+export const HistoryList = memo(function HistoryList({ activeProfile, sessionId, reloadKey, onRestore, onOpenInNewTab, onNewQuery }: Props) {
   const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
+  const [flightRecorderOpen, setFlightRecorderOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -244,12 +248,22 @@ export const HistoryList = memo(function HistoryList({ activeProfile, reloadKey,
         </FilterSegment>
       </TreeSearch>
 
-      {entries.length > 0 && (
-        <TreeSearch borderTop="none" pt={0}>
+      <TreeSearch borderTop="none" pt={0} display="flex" gap="1.5">
+        <PressableButton type="button" variant="secondary" onClick={() => setFlightRecorderOpen(true)}>
+          <Icon name="undo" size={ICON_SIZES.sm} /> {t("flightRecorderTitle")}
+        </PressableButton>
+        {entries.length > 0 && (
           <PressableButton type="button" variant="danger" onClick={handleClear}>
             {t("historyClear")}
           </PressableButton>
-        </TreeSearch>
+        )}
+      </TreeSearch>
+      {flightRecorderOpen && (
+        <FlightRecorderPanel
+          profileId={activeProfile?.id ?? null}
+          sessionId={sessionId}
+          onClose={() => setFlightRecorderOpen(false)}
+        />
       )}
 
       {error ? (

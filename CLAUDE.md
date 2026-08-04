@@ -832,6 +832,61 @@ accept タスクの `JoinHandle` は構造体が所有しています。**`impl 
 再接続で別の鍵 = MITM が提示されたら再び不一致として拒否されます。#682 レビュー対応。
 メッセージから fingerprint を取れない場合のみ従来の forget + TOFU にフォールバック)。
 
+### 多段 SSH トンネル (ProxyJump 相当) と ~/.ssh/config の読み込み (#708)
+
+`SshTunnel` は踏み台 (bastion/jump ホスト) を 1 段だけ経由する多段構成に対応します
+(ローカル → 踏み台 → 最終 SSH ホスト → DB、計 2 ホップまで)。プロトコルレベルで
+`direct-tcpip` を入れ子にする実装ではなく、**既存のローカルポートフォワード
+プリミティブをそのままチェーンする**設計です: 踏み台の `SshTunnel` を先に開いて
+ローカルポートを得た後、最終ホップの SSH セッションは (踏み台の実アドレスではなく)
+`127.0.0.1:<踏み台の local_port>` へダイヤルして張ります。ホスト鍵の検証/記録は
+**ダイヤル先ではなく各ホップ自身の実 `host:port`** を使うため (`ClientHandler::new`
+に渡す識別子と実際に接続するソケットアドレスを分離)、known_hosts には従来どおり
+段ごとの実サーバが `host:port fingerprint` で記録されます。
+
+- **型**: `SshConfig` (`ssh/tunnel.rs`) に `jump: Option<Box<SshJumpConfig>>` を
+  追加。`SshJumpConfig` は `SshConfig` から `remote_host`/`remote_port` と自身の
+  `jump` を除いた同形の構造体 (踏み台は常に「次のホップの実アドレス」へ転送する
+  ため `remote_*` は暗黙)。プロファイル側も対称に `SshProfile.jump:
+  Option<SshJumpProfile>` を持ちます。
+- **ライフタイム/Drop 順序**: `SshTunnel` は自身の `_upstream: Option<Box<SshTunnel>>`
+  を**構造体の最後のフィールド**として保持します。Rust の構造体フィールドは
+  **宣言順に drop される**ため、`impl Drop` 本体 (accept タスク/転送タスクの
+  abort) が走った後、`_session` (この段の SSH セッション) → `_upstream`
+  (踏み台。再帰的に同じ Drop を辿る) の順で閉じます。これにより「DB 接続 → 末段
+  (target) → 先頭段 (bastion)」の順序が保証され、既存の「トンネルは DB 接続より
+  先に drop しない」不変条件がチェーン全体へ自然に拡張されます。
+- **エラーの段別属性化**: `ssh::tunnel::tag_hop_error` (非公開) が `AppError::Ssh`
+  / `AppError::SshKey` のメッセージへ `[jump host <host>:<port>]` /
+  `[ssh host <host>:<port>]` のプレフィックスを付けます。`kind()` は変えない
+  (フロントの分類は従来どおり `ssh`) — メッセージだけがどちらの段の失敗かを示す
+  手がかりを増やします。`AppError::SshHostKeyMismatch` は元々 `host`/`port` を
+  持つため追加のタグ付けは不要で、その `host`/`port` は常に**実際に不一致が
+  起きた段**の識別子です (フロントの `parseHostKeyFingerprints` がメッセージから
+  これを抽出し、`App.tsx` の再信頼フローはプロファイルの主 SSH ホストではなく
+  こちらを使います — 踏み台側で鍵が変わった場合に正しいエンドポイントを
+  pin できるようにするため)。
+- **秘密情報**: 踏み台の passphrase / password は既存の `ssh_passphrase` /
+  `ssh_password` (最終ホップ用、後方互換のため名前は据え置き) とは別の keyring
+  kind (`ssh_passphrase_hop0` / `ssh_password_hop0`、`profiles/secrets.rs`) に
+  保存します。`profiles::secrets::delete_all` も両方を消します。
+- **reconnect (#712) との整合**: `Session.reconnect_ssh: Option<SshConfig>` は
+  `jump` を含めたまま非秘密フィールドのみを保持し (`reconnect_ssh_from` が両
+  ホップの secrets を空文字にする)、`reopen_transport` が再接続時に**踏み台側も**
+  keyring から再解決します。
+- **`~/.ssh/config` の読み込み**: `ssh::config_parser` (パス非依存の純粋パーサ、
+  副作用なし) が `Host` ブロックから `HostName` / `Port` / `User` /
+  `IdentityFile` / `ProxyJump` を解決します。ワイルドカードパターン・`Include`・
+  `Match` は非対応、"first obtained value wins" という OpenSSH 本来の規則には
+  従います。IPC `resolve_ssh_config_host(alias)` (`commands/ssh.rs`) が
+  `~/.ssh/config` (`%USERPROFILE%\.ssh\config`) を読んで解決し、`ProxyJump` は
+  `config_parser::parse_proxy_jump` で最初の 1 ホップのみ `host`/`port`/`user` に
+  分解します (本アプリのトンネルが 2 ホップまでのため)。**読み取り専用・保存時
+  一度きりのコピー**であり、接続時に設定ファイルを再参照することはありません。
+  `ConnectionForm` の「SSH ホスト」欄にエイリアスを入力して
+  「~/.ssh/config から読み込む」を押すと、解決された値 (と `ProxyJump` があれば
+  踏み台欄) がフォームへ展開されます。
+
 ### セッション
 
 `AppState` (`state.rs`) は `RwLock<HashMap<SessionId, Arc<Session>>>` と、進行中の
@@ -1037,6 +1092,67 @@ best-effort 逐次のため整合します。**スキーマ変更の原子性が
   セッションへの適用は拒否します。MySQL は DDL の暗黙コミットのため best-effort 逐次、
   他ドライバは all-or-nothing。
 
+### サンドボックス (壊せる砂場・ブランチ、#747)
+
+選択したテーブル群 (+ 任意で FK の推移的閉包) をローカル SQLite ファイルへコピーし、
+独立したセッションとして開く機能です。既存のエディタ/グリッド/セル編集 UI をそのまま
+使え、何をしても元の接続には一切影響しません。差分計算・SQL 生成・適用は新規コマンドを
+最小限に留め、既存の Diff/Sync 機能 (`generate_sync_sql` / `generate_data_sync_sql` /
+`apply_sync_sql`) をそのまま再利用します — サンドボックスの書き戻しは、元 DB から見れば
+ただの sync apply です。
+
+- `db/sandbox.rs`: 純粋・ドライバ非依存のロジック。テーブルごとに複製する
+  「凍結された base スナップショット」の命名規約 (`shadow_table_name` =
+  `__noobdb_sandbox_base__<table>` プレフィックス、`is_shadow_table_name` でテーブル
+  ツリーから隠す判定に使う)、行数上限のクランプ (`clamp_row_limit`、既定 5,000 / 上限
+  100,000)、FK 推移的閉包 (`fk_closure`。参照先方向のみの片方向 — `schemaExport.ts` の
+  双方向閉包とは意図的に異なる)、`Value` → `import_rows` 用セル文字列変換
+  (`value_to_cell` / `row_to_cells`)、**競合検出** (`detect_conflicts` — サンドボックス側
+  [live vs base] の diff と元 DB 側 [current vs base] の diff を同じ base に対して
+  計算し、両方に現れる主キーを競合として突き合わせる)、競合を「スキップ」解決した行を
+  除く `filter_out_keys`、スキーマの外部競合テーブル一覧 `schema_conflict_tables` を
+  持ちます。
+- `sandboxes/store.rs`: サンドボックスの非秘密メタデータ (`SandboxRecord`: 名前・
+  ソースプロファイル/ドライバ/DB・テーブル一覧・行数上限・SQLite ファイルパス・作成日時)
+  を `sandboxes.json` に永続化する、`profiles::store` / `snippets::store` と同じ
+  JSON ファイルストアパターン。SQLite ファイル自体は `<data_dir>/sandboxes/<id>.sqlite`。
+- `commands/sandbox.rs`:
+  - `create_sandbox`: 選択テーブル (+ FK 閉包) の列メタデータを取得し、
+    `compute_schema_diff` + `generate_sync_sql` を **SQLite 方言**で走らせて
+    CREATE TABLE 一式を生成・実行 (テーブルごとに実名 + `shadow_table_name` の 2 つを
+    作成)、行データは `import_rows` で両方へ投入します。作成した SQLite 接続はそのまま
+    通常のセッションとして `AppState` に登録して返します。
+  - `list_sandboxes` / `discard_sandbox` (セッションを閉じ、SQLite ファイル + メタデータを
+    削除)。
+  - `sandbox_table_diff` / `sandbox_schema_diff`: サンドボックスの live テーブルと
+    shadow (base) テーブルを比較した「書き戻し案」(`desired`。`target_driver` は元 DB の
+    ドライバなので、そのまま `generate_data_sync_sql` / `generate_sync_sql` に渡せる) と、
+    任意で渡された元 DB セッションの現在値を同じ base と比較した「外部変更」を
+    `detect_conflicts` / `schema_conflict_tables` で突き合わせた競合情報を返します。
+  - `filter_sandbox_data_diff`: 競合を「スキップ」解決した行を desired diff から除く
+    純粋コマンド (`generate_data_sync_sql` へ渡す前にフロントが呼ぶ)。
+  - `sandbox_advance_base`: 書き戻し成功後に呼び、適用済みの行だけ shadow (base) を
+    現在値へ進めます。呼ばないと、同じ行が次回の差分計算で「サンドボックス側も元 DB
+    側も変化した」という偽の競合として出続けます (`allow_delete` を
+    `generate_data_sync_sql` と揃え、実際に削除されなかった `TargetOnly` 行の base は
+    残す)。
+  - 適用そのものは新規コマンドを作らず、既存の `apply_sync_sql` をそのまま使います
+    (read_only セッション拒否・トランザクション適用などの安全網もそのまま効きます)。
+- フロントは `sandbox.ts` の純ロジック (影テーブル判定・行数上限クランプ・FK 閉包の
+  プレビュー・競合解決状態の集計) に加え、**`SandboxRecord` を非永続の合成
+  `ConnectionProfile` に変換する `sandboxToProfile`** が肝です。これにより、
+  サンドボックスは `save_profile` を一切経由せずに複数同時接続レジストリ
+  (`openConnections`)・タブ復元・切替など既存の仕組みへそのまま乗ります (`id` は
+  `sandbox:<id>` という予約プレフィックスで通常のプロファイル id と衝突しません)。
+  接続先への無影響を常時明示するため、専用色 (violet、`SANDBOX_BAND_COLOR`) と
+  `SandboxBadge` (タイトルバー下端の帯・バッジ) で他の接続と視覚的に区別します。
+  UI は `ConnectionList` の DB 右クリックメニューから開く `SandboxCreateModal`
+  (テーブル選択・FK 自動追加・行数上限・方言近似の限界を明記)、サイドバーの専用
+  セクション `SandboxSection` (通常のプロファイルツリー/並べ替えとは独立 — 詳細は
+  同コンポーネントのコメント)、変更確認・書き戻しの `SandboxReviewModal` (スキーマ/
+  データ差分表示・競合行ごとの上書き/スキップ選択・SQL 生成プレビュー・適用。本番
+  接続への適用は `SchemaCompareView` と同じ型入力確認を経由) の 3 つです。
+
 ### プロセス管理
 
 `commands/process.rs` の `list_processes` / `kill_process` が、サーバのアクティブな
@@ -1081,6 +1197,54 @@ CRUD+DDL 権限マトリクスを閲覧・編集する機能です。Diff/Sync (
 - 権限不足エラー (MySQL "command denied to user" / PostgreSQL "permission denied
   for ..." / "must be owner of ..." / "must be superuser") のヒントを `errorHints.ts`
   に追加しています (`errorHintInsufficientPrivilege`)。
+### ローカル横断クエリ (#740)
+
+複数接続の結果セットをローカルエンジンへ取り込み、異種 DB 間 JOIN・再分析を 1 アプリ内で
+完結させる機能です。第 1 候補は DuckDB (#709) でしたが、本実装は #709 に先行しないため
+**既にフル依存済みの組み込み SQLite をインメモリ相当 (一時ファイル) で使う縮退構成**を
+採用しています。将来 DuckDB へ差し替える場合は `db::Connection` の `Sqlite` 版
+`register_local_table` / `list_local_tables` / `drop_local_table` / `vacuum_into` を
+新バリアントへ実装し直すだけで、`commands/local.rs` (IPC 層) は無改修で済む設計です。
+
+- **「ローカル」接続 = 駆動元セッションを持たない特殊セッション**。`create_local_session`
+  が OS 標準の一時領域 (`std::env::temp_dir()/noobdb-local/`) に空の SQLite ファイルを
+  touch し、既存の `Connection::Sqlite` としてそのまま開きます。以降のクエリ実行は
+  **既存の `run_query` / `run_query_stream` 等をそのまま再利用**し、新しい実行経路は
+  一切増やしていません。フロント (`App.tsx`) はこの「ローカル」を実在しない擬似
+  `ConnectionProfile` (`id: "__local__"`、`driver: "sqlite"`) として扱い、`handleConnect`
+  内で `id` を見て `api.connect` の代わりに `api.createLocalSession` を呼ぶ以外は、
+  複数同時接続のタブ切替・タブ復元・エディタ・グリッド・エクスポートを他の接続と
+  完全に共有します。
+- **登録**: `register_local_table` が `db::types::{Column, Value}` (既存のワイヤ
+  フォーマットそのもの) を受け取り、`db::sqlite::SqliteConn::register_local_table` が
+  1 トランザクションで「テーブル作成 (無型宣言 = BLOB affinity で値を無変換のまま保持) →
+  行 INSERT (`Value` を文字列往復させず直接 bind — `Bytes` は実 BLOB に、`Int`/`Float`/
+  `Bool` はそれぞれの storage class に、`Null` は SQL NULL に) → 由来メタデータ upsert」
+  まで行います。無型宣言のカラムは SQLite の BLOB affinity (無変換) を利用しており、
+  型付き `Value` から文字列を経由しない分、CSV インポート系の文字列ベース経路より
+  高精度に往復します。取り込み対象は**在メモリの取得済み行のみ**で、上限
+  `MAX_LOCAL_TABLE_ROWS = 200_000` (バックエンド `commands/local.rs` とフロント
+  `components/localQuery.ts` の同名定数で表現) を超える登録はバックエンドが拒否します。
+- **由来メタデータ**は隠しカタログテーブル `__noobdb_local_meta` (ローカル DB 自身の中、
+  初回登録時に遅延作成) に保存し、`LocalTableMeta` (元の接続名・実行 SQL・ドライバ・
+  登録日時・行数) として `list_local_tables` で返します。セッション固有の `AppState`
+  側の別管理は持たず、ローカル DB ファイル自体がこの状態の単一の情報源です。
+- **既定揮発 / 明示操作でのみ永続化**: バッキングファイルは OS 標準の一時領域に置き、
+  `disconnect` 時に削除します (`Session.local_temp_file` の有無で「ローカルセッション
+  かどうか」を判別)。アプリ異常終了で削除が走らなくても、次回起動時に
+  `commands::local::cleanup_stale_local_files` が同ディレクトリを丸ごと掃除します
+  (前回起動のセッションはどのみち全て無効なので安全)。「ファイルに保存」は
+  `save_local_database` → SQLite の `VACUUM INTO` で独立したスナップショットファイルを
+  書き出すだけで、元のセッション自体の揮発性は変えません。
+- **UI**: `ResultGrid` の「ローカルに登録」ボタン (`RegisterLocalTableModal` で名前確認
+  + 件数/上限/プライバシー注記を表示) と、サイドバーの「ローカル」タブ
+  (`LocalTablesPanel`。登録済みテーブルの由来一覧・削除・ファイル保存)。安全性/
+  プライバシーの明示 (外部送信なし、ここでの書き込みは元接続に反映されない) は
+  モーダル文言に集約しています。
+- 統合テストは `tests/local_query_integration.rs` に集約 (SQLite ベースで外部サーバ
+  不要・常時実行)。異種「接続」2 つ (別々の temp SQLite ファイルで模擬) からの登録 →
+  JOIN、BLOB/NULL/日時の往復、上限行数超過の拒否、非ローカルセッションへの誤呼び出し
+  拒否、`VACUUM INTO` によるファイル保存を検証します。
 
 ### ログシステム
 
@@ -1163,6 +1327,7 @@ fs プラグインを使わず capabilities を増やさないための経路で
 - 接続: `test_connection` / `connect` / `disconnect` / `reconnect` /
   `ping_session` / `cancel_connect`
 - SSH known_hosts: `list_known_hosts` / `forget_host_key` / `trust_host_key`
+- SSH config: `resolve_ssh_config_host` (`~/.ssh/config` エイリアス解決。#708)
 - クエリ: `run_query` / `run_query_transaction` / `run_query_stream` /
   `preview_query_stream` / `cancel_stream` / `set_emergency_mode`
 - 明示的トランザクション: `begin_transaction` / `run_in_transaction` /
@@ -1176,6 +1341,9 @@ fs プラグインを使わず capabilities を増やさないための経路で
   `generate_grant_sql` / `generate_revoke_sql` / `apply_privilege_sql`
 - 比較・同期 (Diff/Sync): `compare_schema` / `compare_table_data` /
   `generate_sync_sql` / `generate_data_sync_sql` / `apply_sync_sql`
+- サンドボックス (壊せる砂場、#747): `create_sandbox` / `list_sandboxes` /
+  `discard_sandbox` / `sandbox_table_diff` / `sandbox_schema_diff` /
+  `filter_sandbox_data_diff` / `sandbox_advance_base`
 - プロファイル: `list_profiles` / `save_profile` / `delete_profile` /
   `export_profiles` / `import_profiles`
 - スニペット: `list_snippets` / `save_snippet` / `delete_snippet`
@@ -1258,6 +1426,9 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   (CREATE TABLE ウィザード。`createTable.ts`)、`RowInsertModal` / `RowInspector` /
   `RenameTableDialog` (行追加・行インスペクタ・テーブル名変更)、`SchemaCompareView`
   (スキーマ/データ比較 → 同期 SQL 生成 UI。バックの Diff/Sync コマンドを駆動)、
+  `SandboxCreateModal` / `SandboxSection` / `SandboxReviewModal` (壊せる砂場・ブランチ
+  #747。作成・サイドバー専用セクション・変更確認 → 書き戻し。純ロジックは
+  `sandbox.ts`、詳細はアーキテクチャの「サンドボックス」節を参照)、
   `ProcessListPanel` (プロセス監視・KILL。`processList.ts`)、`UsersPanel` (ユーザ /
   権限管理 #732。MySQL ユーザ・PostgreSQL ロールの一覧とテーブル単位権限マトリクスの
   閲覧・GRANT/REVOKE 編集。SQL 生成 → プレビュー → 確認 → 適用のフロー)、`ProfileImportDialog`

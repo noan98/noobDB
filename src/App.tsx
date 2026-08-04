@@ -11,9 +11,12 @@ import {
   ConnectionProfile,
   DriverKind,
   ForeignKey,
+  type LocalTableMeta,
   type ProfileImportStrategy,
   PreviewResult,
   QueryResult,
+  type SandboxCreateResponse,
+  type SandboxRecord,
   Snippet,
   TableColumnInfo,
   TableSchema,
@@ -22,6 +25,9 @@ import {
   listenQueryStream,
   listenTaskRunEvents,
 } from "./api/tauri";
+import { SandboxCreateModal } from "./components/SandboxCreateModal";
+import { SandboxReviewModal } from "./components/SandboxReviewModal";
+import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
@@ -67,6 +73,7 @@ import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
 import { HistoryList } from "./components/HistoryList";
+import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
@@ -152,6 +159,9 @@ const AlterTableModal = lazy(() =>
 const SaveAsTableModal = lazy(() =>
   import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
 );
+const RegisterLocalTableModal = lazy(() =>
+  import("./components/RegisterLocalTableModal").then((m) => ({ default: m.RegisterLocalTableModal })),
+);
 const HostKeyMismatchDialog = lazy(() =>
   import("./components/HostKeyMismatchDialog").then((m) => ({ default: m.HostKeyMismatchDialog })),
 );
@@ -223,6 +233,7 @@ import {
 } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
+import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
 import {
@@ -462,8 +473,8 @@ function StatusDot({ variant }: { variant: "connected" | "idle" }) {
  * サイドバーの切替タブ key。Connections / Snippets / History の 3 種。
  * 配列順がタブの並び順 = 矢印キーでのフォーカス移動順になる。
  */
-type SidebarTab = "connections" | "snippets" | "history";
-const SIDEBAR_TAB_ORDER: readonly SidebarTab[] = ["connections", "snippets", "history"];
+type SidebarTab = "connections" | "snippets" | "history" | "local";
+const SIDEBAR_TAB_ORDER: readonly SidebarTab[] = ["connections", "snippets", "history", "local"];
 const sidebarTabId = (key: SidebarTab) => `sidebar-tab-${key}`;
 const sidebarPanelId = (key: SidebarTab) => `sidebar-panel-${key}`;
 
@@ -977,6 +988,43 @@ function emptyPreview(): PreviewResult {
   };
 }
 
+/**
+ * ローカル横断クエリ (#740) の擬似プロファイル ID。`profiles.json` には一切
+ * 保存されず (`api.listProfiles` の結果には現れない)、フロント限定の識別子。
+ * `handleConnect` がこの id を特別扱いして `api.createLocalSession` を呼ぶことで、
+ * 複数同時接続の切替・タブ復元など既存のセッション管理をそのまま再利用する
+ * (ローカル専用の別経路を新設しない)。
+ */
+const LOCAL_PROFILE_ID = "__local__";
+
+function isLocalProfile(profile: Pick<ConnectionProfile, "id">): boolean {
+  return profile.id === LOCAL_PROFILE_ID;
+}
+
+/** ローカル接続の擬似プロファイル。`driver: "sqlite"` によりエディタの方言補完・
+ *  結果グリッドの SQL 生成が通常の SQLite 接続と同じに揃う。`skip_history: true`
+ *  はプロファイルを持たないセッションの履歴 (`profile_id: null`) で通常の
+ *  プロファイル単位フィルタ UI を汚さないため。 */
+function makeLocalProfile(name: string): ConnectionProfile {
+  return {
+    id: LOCAL_PROFILE_ID,
+    name,
+    driver: "sqlite",
+    host: "",
+    port: 0,
+    user: "",
+    database: null,
+    ssh: null,
+    group: null,
+    color: "#64748b",
+    is_production: false,
+    confirm_writes: false,
+    read_only: false,
+    skip_history: true,
+    file_path: null,
+  };
+}
+
 export default function App() {
   const t = useT();
   // `t` 自体は識別子が安定なので、ロケール切替でコマンドパレット候補の文言メモが
@@ -1303,6 +1351,12 @@ export default function App() {
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  // サンドボックス (壊せる砂場、#747) の一覧。`ConnectionList` の通常プロファイル
+  // ツリーとは独立した専用セクション (`SandboxSection`) に描画する — 詳細は
+  // `sandbox.ts` の `sandboxToProfile` のコメントを参照。
+  const [sandboxes, setSandboxes] = useState<SandboxRecord[]>([]);
+  const [sandboxCreateTarget, setSandboxCreateTarget] = useState<{ database: string } | null>(null);
+  const [sandboxReviewTarget, setSandboxReviewTarget] = useState<SandboxRecord | null>(null);
   // Profiles pending a delayed delete (#676 Undo). While an id is here the
   // profile is hidden from the sidebar but NOT yet deleted from the backend, so
   // "Undo" can cancel the pending delete and keep the OS-keyring secrets intact
@@ -1324,6 +1378,7 @@ export default function App() {
     connections: null,
     snippets: null,
     history: null,
+    local: null,
   });
   const handleSidebarTabKeyDown = useCallback(
     (current: SidebarTab) => (e: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -1550,6 +1605,21 @@ export default function App() {
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
+  // ローカル横断クエリ (#740): 駆動元セッションを持たない「ローカル」接続。アプリ
+  // 起動後、初めて使われたときに一度だけ作成し (`ensureLocalSession`)、以後は
+  // アクティブな接続の切替とは独立に生存し続ける — `sessionId` (現在アクティブな
+  // 接続) が変わっても/null になってもリセットしない。
+  const [localSessionId, setLocalSessionId] = useState<string | null>(null);
+  const localSessionIdRef = useRef<string | null>(null);
+  useEffect(() => { localSessionIdRef.current = localSessionId; }, [localSessionId]);
+  const [localTables, setLocalTables] = useState<LocalTableMeta[]>([]);
+  const [localTablesLoading, setLocalTablesLoading] = useState(false);
+  // 結果グリッドの「ローカルに登録」モーダル: 対象。null で閉じる。
+  const [registerLocalRequest, setRegisterLocalRequest] = useState<{
+    columns: Column[];
+    rows: CellValue[][];
+    sourceSql: string;
+  } | null>(null);
   // 新規行追加モーダル: 対象タブ ID。null で閉じる。
   const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
   // 行の複製 (#820): モーダルを開く際の初期値の種。通常の「行を追加」では null。
@@ -1949,18 +2019,28 @@ export default function App() {
     }
   }, []);
 
+  // サンドボックス一覧の再取得 (#747)。失敗は静かに無視する — サンドボックスは
+  // 補助機能であり、一覧取得の失敗でアプリ起動をブロックすべきではない。
+  const refreshSandboxes = useCallback(async () => {
+    try {
+      setSandboxes(await api.listSandboxes());
+    } catch (e) {
+      console.warn(e);
+    }
+  }, []);
+
   useEffect(() => {
     // 初回ロード: プロファイル取得とスプラッシュの最小表示時間 (350ms) を
     // 競わせ、両方終わったらスプラッシュを畳む。瞬間表示によるちらつきを防ぐ。
     let alive = true;
     const minVisible = new Promise<void>((resolve) => setTimeout(resolve, 350));
-    Promise.all([refreshProfiles(), minVisible]).finally(() => {
+    Promise.all([refreshProfiles(), refreshSandboxes(), minVisible]).finally(() => {
       if (alive) setBooted(true);
     });
     return () => {
       alive = false;
     };
-  }, [refreshProfiles]);
+  }, [refreshProfiles, refreshSandboxes]);
 
   // 初回起動オンボーディング (#599): 起動が完了した時点でプロファイルが 0 件
   // (= 新規ユーザ) かつツアー未表示なら自動で開始する。既存ユーザ (プロファイル
@@ -2413,6 +2493,29 @@ export default function App() {
     toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
   }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast]);
 
+  // ローカル横断クエリ (#740): ローカルセッションを (無ければ) 作成して id を返す。
+  // 既にあれば再利用する。`handleConnect` がこれを参照するため、その定義より前に
+  // 置く必要がある (useCallback の依存配列は定義時に評価されるため)。
+  //
+  // 「ローカル」接続はヘッダの通常の切断ボタン (`handleDisconnect`) やバックグラウンド
+  // 接続の切断 (`handleDisconnectProfile`) など、ここが関知しない複数の経路から
+  // `api.disconnect` されうる (通常の接続と同じ経路を再利用しているため、あえて
+  // ここだけ特別扱いしていない)。そのため保持している id が実は死んでいる可能性が
+  // あり、再利用前に `pingSession` で生存確認し、死んでいれば (or 未作成なら) 新規に
+  // 作り直す — こうすることで切断経路側を local 専用に分岐させずに済む。
+  const ensureLocalSession = useCallback(async () => {
+    const cached = localSessionIdRef.current;
+    if (cached) {
+      const alive = await api.pingSession(cached).catch(() => false);
+      if (alive) return cached;
+      setLocalTables([]);
+    }
+    const id = await api.createLocalSession();
+    setLocalSessionId(id);
+    localSessionIdRef.current = id;
+    return id;
+  }, []);
+
   const handleConnect = useCallback(async (profile: ConnectionProfile) => {
     // 既にアクティブな接続なら何もしない (誤クリックで張り直さない)。
     if (sessionId && selectedProfile?.id === profile.id) return;
@@ -2474,23 +2577,29 @@ export default function App() {
         profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
           ? profile.driver
           : "mysql";
-      const res = await api.connect(
-        {
-          profile_id: profile.id,
-          driver,
-          host: profile.host,
-          port: profile.port,
-          user: profile.user,
-          password: "",
-          database: profile.database,
-          ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-          file_path: profile.file_path,
-          read_only: profile.read_only,
-          skip_history: profile.skip_history,
-        },
-        attemptId,
-        settings.connectTimeoutSecs,
-      );
+      // ローカル横断クエリ (#740): 「ローカル」擬似プロファイルは駆動元を持たない
+      // ため通常の `api.connect` を呼ばず、既存 (または新規) のローカルセッション
+      // をそのまま使う。以降 (setSessionId 以下) は通常の接続と完全に同じ経路 —
+      // 複数接続レジストリ・タブ復元・エディタ/グリッドはすべて共有する。
+      const res = isLocalProfile(profile)
+        ? { session_id: await ensureLocalSession() }
+        : await api.connect(
+            {
+              profile_id: profile.id,
+              driver,
+              host: profile.host,
+              port: profile.port,
+              user: profile.user,
+              password: "",
+              database: profile.database,
+              ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
+              file_path: profile.file_path,
+              read_only: profile.read_only,
+              skip_history: profile.skip_history,
+            },
+            attemptId,
+            settings.connectTimeoutSecs,
+          );
       setSessionId(res.session_id);
       setSelectedProfile(profile);
       // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -2558,6 +2667,7 @@ export default function App() {
     persistTabsForProfile,
     switchToOpenConnection,
     upsertOpenConnection,
+    ensureLocalSession,
     settings.connectTimeoutSecs,
     settings.confirmProductionConnect,
     settings.tabRestoreMode,
@@ -2576,18 +2686,27 @@ export default function App() {
   // rejected, keeping the mismatch dialog up instead of silently trusting it.
   // If the fingerprint can't be parsed from the message (unexpected format), fall
   // back to forget + TOFU so recovery is still possible.
+  //
+  // The failing endpoint comes from the *parsed message*, not the profile's
+  // static `ssh.host`/`ssh.port` (#708): with a chained (bastion + target)
+  // tunnel, the mismatch can be on either hop, and the backend always names the
+  // hop that actually failed. Falling back to the profile's main SSH host only
+  // when parsing fails keeps this correct for both direct and chained tunnels.
   const handleReTrustHostKey = useCallback(async () => {
     const mismatch = hostKeyMismatch;
     const ssh = mismatch?.profile.ssh;
     if (!mismatch || !ssh) return;
     const { profile } = mismatch;
-    const approved = parseHostKeyFingerprints(mismatch.message)?.actual;
+    const parsed = parseHostKeyFingerprints(mismatch.message);
+    const approved = parsed?.actual;
+    const targetHost = parsed?.host ?? ssh.host;
+    const targetPort = parsed?.port ?? ssh.port;
     setReTrustingHostKey(true);
     try {
       if (approved) {
-        await api.trustHostKey(ssh.host, ssh.port, approved);
+        await api.trustHostKey(targetHost, targetPort, approved);
       } else {
-        await api.forgetHostKey(ssh.host, ssh.port);
+        await api.forgetHostKey(targetHost, targetPort);
       }
       setHostKeyMismatch(null);
       toast.success(translate("hostKeyReTrustedToast", { name: profile.name }));
@@ -2662,6 +2781,62 @@ export default function App() {
     clearEmergencyFor(entry.sessionId);
     toast.info(translate("toastDisconnected", { name: entry.profile.name }));
   }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor]);
+
+  // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
+  // (`sandboxToProfile`) を通常の `handleConnect` に渡すだけで、複数同時接続の
+  // レジストリ (`openConnections`)・タブ復元・バッジ表示など既存の仕組みへ
+  // そのまま乗る。
+  const handleOpenSandbox = useCallback(
+    (record: SandboxRecord) => {
+      void handleConnect(sandboxToProfile(record));
+    },
+    [handleConnect],
+  );
+
+  // `create_sandbox` はコピー直後の確認用に自前のセッションを開いて返すが、
+  // ここではそれを閉じて `handleConnect` に張り直させる — 複数同時接続の
+  // レジストリへ二重登録せず、他の接続と全く同じ経路 (背景接続の扱い・タブ
+  // 復元・エラーハンドリング) に乗せるため。
+  const handleSandboxCreated = useCallback(
+    async (res: SandboxCreateResponse) => {
+      api.disconnect(res.session_id).catch(() => {});
+      setSandboxes((prev) => [...prev.filter((s) => s.id !== res.sandbox.id), res.sandbox]);
+      setSandboxCreateTarget(null);
+      await handleConnect(sandboxToProfile(res.sandbox));
+      toast.success(translate("toastSandboxCreated", { name: res.sandbox.name }));
+    },
+    [handleConnect, toast],
+  );
+
+  const handleDiscardSandbox = useCallback(
+    async (record: SandboxRecord) => {
+      await handleDisconnectProfile(sandboxProfileId(record.id));
+      try {
+        await api.discardSandbox(record.id, null);
+        setSandboxes((prev) => prev.filter((s) => s.id !== record.id));
+        toast.info(translate("toastSandboxDiscarded", { name: record.name }));
+      } catch (e) {
+        toast.error(String(e));
+      }
+    },
+    [handleDisconnectProfile, toast],
+  );
+
+  // 差分計算はサンドボックス自身のセッションに対して行うため、開いていない
+  // (バックグラウンド接続にも無い) サンドボックスでは先に開かせる。
+  const handleReviewSandbox = useCallback(
+    (record: SandboxRecord) => {
+      const open = openConnectionsRef.current.find(
+        (c) => c.profile.id === sandboxProfileId(record.id),
+      );
+      if (!open) {
+        toast.error(translate("toastSandboxNotOpen", { name: record.name }));
+        return;
+      }
+      setSandboxReviewTarget(record);
+    },
+    [toast],
+  );
 
   // A query or preview failed because the connection dropped (server idle
   // timeout, network or VPN loss). Tear the now-dead session down the same way
@@ -3174,6 +3349,11 @@ export default function App() {
         autoLimit,
         queryTimeoutSecs: timeoutSecs,
         autoRefresh,
+        // DML フライトレコーダ (#735): 単文の INSERT/UPDATE/DELETE のみ対象。
+        // 自動リフレッシュ (常に読み取り専用) は対象外。
+        capture: settings.flightRecorderEnabled && !autoRefresh && isSingleCapturableStatement(sql),
+        captureRowCap: settings.flightRecorderRowCap,
+        captureRetentionDays: settings.flightRecorderRetentionDays,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
@@ -3188,6 +3368,9 @@ export default function App() {
     cancelStreamForTab,
     invalidateSchemaCache,
     notifyQueryOutcome,
+    settings.flightRecorderEnabled,
+    settings.flightRecorderRowCap,
+    settings.flightRecorderRetentionDays,
     selectedProfile?.database,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
@@ -4740,6 +4923,99 @@ export default function App() {
     })();
   }, [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast]);
 
+  // ローカル横断クエリ (#740) ――――――――――――――――――――――――――――――――
+  //
+  // 「ローカル」接続はセッション管理としては通常の接続と同じ (`api.createLocalSession`
+  // が返す通常の `SessionId` を、通常の接続と同じ `handleConnect` 経由で複数接続
+  // レジストリに載せる) だが、登録済みテーブル一覧の取得・結果グリッドからの登録
+  // だけがこのセクション固有の処理。`ensureLocalSession` 自体は `handleConnect` が
+  // 参照するため、それより前で定義している。
+
+  const refreshLocalTables = useCallback(async (sid: string) => {
+    setLocalTablesLoading(true);
+    try {
+      const tables = await api.listLocalTables(sid);
+      setLocalTables(tables);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setLocalTablesLoading(false);
+    }
+  }, [toast]);
+
+  // 結果グリッドの「ローカルに登録」ボタン: 名前を確認するモーダルを開く。
+  const handleRegisterLocalTable = useCallback((result: QueryResult, sourceSql: string) => {
+    setRegisterLocalRequest({ columns: result.columns, rows: result.rows, sourceSql });
+  }, []);
+
+  const handleConfirmRegisterLocalTable = useCallback((tableName: string) => {
+    const req = registerLocalRequest;
+    setRegisterLocalRequest(null);
+    if (!req) return;
+    void (async () => {
+      try {
+        const sid = await ensureLocalSession();
+        await api.registerLocalTable({
+          sessionId: sid,
+          tableName,
+          columns: req.columns,
+          rows: req.rows,
+          sourceProfile: selectedProfile?.name ?? null,
+          sourceSql: req.sourceSql,
+          sourceDriver: selectedProfile?.driver ?? null,
+        });
+        await refreshLocalTables(sid);
+        toast.success(translate("localRegisterSuccess", { rows: req.rows.length, table: tableName }));
+      } catch (e) {
+        toast.error(String(e));
+      }
+    })();
+  }, [registerLocalRequest, ensureLocalSession, refreshLocalTables, selectedProfile, toast]);
+
+  // サイドバー「ローカル」パネルの「ローカル接続を開く」/「ローカルに切替」。
+  const handleOpenLocalConnection = useCallback(() => {
+    void handleConnect(makeLocalProfile(translate("localConnectionName")));
+  }, [handleConnect]);
+
+  const handleDropLocalTable = useCallback((tableName: string) => {
+    const sid = localSessionIdRef.current;
+    if (!sid) return;
+    void (async () => {
+      try {
+        await api.dropLocalTable(sid, tableName);
+        await refreshLocalTables(sid);
+      } catch (e) {
+        toast.error(String(e));
+      }
+    })();
+  }, [refreshLocalTables, toast]);
+
+  const handleSaveLocalDatabase = useCallback(() => {
+    const sid = localSessionIdRef.current;
+    if (!sid) return;
+    void (async () => {
+      const path = await saveFileDialog({
+        defaultPath: "noobdb-local.sqlite",
+        title: translate("localPanelSaveToFileTitle"),
+        filters: [{ name: "SQLite", extensions: ["sqlite", "db"] }],
+      });
+      if (typeof path !== "string" || !path) return;
+      try {
+        await api.saveLocalDatabase(sid, path);
+        toast.success(translate("localPanelSaveToFileSuccess", { path }));
+      } catch (e) {
+        toast.error(String(e));
+      }
+    })();
+  }, [toast]);
+
+  // ローカルセッションに登録済みのテーブル一覧は、そのセッションが (別画面操作の
+  // 副作用として) 初めて生まれたときに一度読み込んでおく。以降は登録/削除の都度
+  // 明示的に再取得する (ポーリングはしない)。
+  useEffect(() => {
+    if (localSessionId) void refreshLocalTables(localSessionId);
+  }, [localSessionId, refreshLocalTables]);
+
   // テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
   // 生成済み SQL を確認ダイアログで提示し、承認後に既存のクエリ経路で実行する。
   // データは消さないが書き込み/ロックを伴うため、本番接続では追加警告を出す。
@@ -6069,7 +6345,10 @@ export default function App() {
                       !!sessionId &&
                       !!selectedProfile &&
                       openConnections.some(
-                        (c) => c.sessionId !== sessionId && c.profile.driver === selectedProfile.driver,
+                        (c) =>
+                          c.sessionId !== sessionId &&
+                          c.profile.driver === selectedProfile.driver &&
+                          !isSandboxProfileId(c.profile.id),
                       )
                     }
                     explainMode={tab.kind === "explain"}
@@ -6333,6 +6612,11 @@ export default function App() {
                               })
                           : undefined
                       }
+                      onRegisterLocalTable={
+                        sessionId && tab.result
+                          ? () => handleRegisterLocalTable(tab.result as QueryResult, tab.lastExecutedSql)
+                          : undefined
+                      }
                       onClearEdits={() => clearEditsForTab(tab.id)}
                       onUndoEdit={() => undoCellEditForTab(tab.id)}
                       onRedoEdit={() => redoCellEditForTab(tab.id)}
@@ -6463,6 +6747,7 @@ export default function App() {
                 name: selectedProfile.name,
                 color: selectedProfile.color ?? null,
                 isProduction: selectedProfile.is_production,
+                isSandbox: isSandboxProfileId(selectedProfile.id),
                 status: connectionStatus,
               }
             : null
@@ -6580,7 +6865,9 @@ export default function App() {
               ? t("appSnippets")
               : sidebarTab === "history"
                 ? t("appHistory")
-                : t("appConnections")}
+                : sidebarTab === "local"
+                  ? t("appLocal")
+                  : t("appConnections")}
           </chakra.span>
           <Flex gap="1" align="center">
             <IconButton
@@ -6659,6 +6946,15 @@ export default function App() {
           >
             {t("sidebarTabHistory")}
           </SidebarTabButton>
+          <SidebarTabButton
+            ref={(el) => { sidebarTabRefs.current.local = el; }}
+            tabKey="local"
+            active={sidebarTab === "local"}
+            onActivate={() => setSidebarTab("local")}
+            onKeyDown={handleSidebarTabKeyDown("local")}
+          >
+            {t("sidebarTabLocal")}
+          </SidebarTabButton>
         </Flex>
         <Box
           role="tabpanel"
@@ -6711,6 +7007,11 @@ export default function App() {
             onShowDatabaseSizes={handleShowDatabaseSizes}
             onCopyTableName={handleCopyTableName}
             onOpenObjectDefinition={handleOpenObjectDefinition}
+            onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
+            sandboxes={sandboxes}
+            onOpenSandbox={handleOpenSandbox}
+            onReviewSandbox={handleReviewSandbox}
+            onDiscardSandbox={handleDiscardSandbox}
           />
         ) : sidebarTab === "snippets" ? (
           <SnippetList
@@ -6724,13 +7025,24 @@ export default function App() {
             onTogglePlanWatch={selectedProfile ? handleTogglePlanWatch : undefined}
             onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
           />
-        ) : (
+        ) : sidebarTab === "history" ? (
           <HistoryList
             activeProfile={selectedProfile}
+            sessionId={sessionId}
             reloadKey={historyReloadKey}
             onRestore={handleRestoreHistory}
             onOpenInNewTab={handleOpenHistoryInNewTab}
             onNewQuery={sessionId ? handleNewTab : undefined}
+          />
+        ) : (
+          <LocalTablesPanel
+            hasSession={!!localSessionId}
+            isActive={!!sessionId && selectedProfile?.id === LOCAL_PROFILE_ID}
+            tables={localTables}
+            loading={localTablesLoading}
+            onOpenLocal={handleOpenLocalConnection}
+            onDropTable={handleDropLocalTable}
+            onSaveToFile={handleSaveLocalDatabase}
           />
         )}
         </Box>
@@ -7485,6 +7797,34 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {sandboxCreateTarget && sessionId && selectedProfile && (
+          <SandboxCreateModal
+            key={sandboxCreateTarget.database}
+            sessionId={sessionId}
+            database={sandboxCreateTarget.database}
+            defaultName={`${selectedProfile.name} / ${sandboxCreateTarget.database}`}
+            onClose={() => setSandboxCreateTarget(null)}
+            onCreated={handleSandboxCreated}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {sandboxReviewTarget && (
+          <SandboxReviewModal
+            key={sandboxReviewTarget.id}
+            sandbox={sandboxReviewTarget}
+            sandboxSessionId={
+              openConnections.find((c) => c.profile.id === sandboxProfileId(sandboxReviewTarget.id))
+                ?.sessionId ?? ""
+            }
+            openConnections={openConnections.filter((c) => !isSandboxProfileId(c.profile.id))}
+            onClose={() => setSandboxReviewTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {broadcastRequest && sessionId && selectedProfile && (
           <BroadcastModal
             sql={broadcastRequest.sql}
@@ -7492,7 +7832,10 @@ export default function App() {
             baselineSessionId={sessionId}
             baselineProfile={selectedProfile}
             candidates={openConnections.filter(
-              (c) => c.sessionId !== sessionId && c.profile.driver === selectedProfile.driver,
+              (c) =>
+                c.sessionId !== sessionId &&
+                c.profile.driver === selectedProfile.driver &&
+                !isSandboxProfileId(c.profile.id),
             )}
             tableColumns={broadcastRequest.tableColumns}
             initialBatch={settings.defaultDisplayCount}
@@ -7568,6 +7911,19 @@ export default function App() {
               sourceSql={saveAsTableRequest.sql}
               onConfirm={handleSaveAsTableConfirm}
               onClose={() => setSaveAsTableRequest(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {registerLocalRequest && (
+          <Suspense fallback={null}>
+            <RegisterLocalTableModal
+              rowCount={registerLocalRequest.rows.length}
+              existingTables={localTables.map((tbl) => tbl.name)}
+              onConfirm={handleConfirmRegisterLocalTable}
+              onClose={() => setRegisterLocalRequest(null)}
             />
           </Suspense>
         )}

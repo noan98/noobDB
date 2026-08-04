@@ -77,6 +77,16 @@ pub struct Session {
     /// Held to keep the tunnel alive for the lifetime of this session.
     /// Dropping the Session drops this and cleans the tunnel up.
     pub _tunnel: Option<SshTunnel>,
+    /// Set only for a **local cross-connection query** session (#740): the
+    /// path of its temp-file-backed SQLite database. Its presence is how
+    /// commands recognize "this session is the local engine, not a driven
+    /// connection" (`commands::local` checks it before allowing table
+    /// registration), and `disconnect` uses it to delete the backing file —
+    /// local sessions are volatile by default, so nothing survives past
+    /// disconnect unless the user explicitly exported a copy first
+    /// (`vacuum_into` / "ファイルに保存", which writes an independent file and
+    /// does not change this session's own volatility).
+    pub local_temp_file: Option<std::path::PathBuf>,
 }
 
 impl Session {

@@ -126,10 +126,27 @@ const SECTIONS: Section[] = [
         noteKey: "helpSchemaCompareNote",
       },
       {
+        titleKey: "helpSandboxTitle",
+        descKey: "helpSandboxDesc",
+        impact: "no",
+        noteKey: "helpSandboxNote",
+      },
+      {
         titleKey: "helpTaskSchedulerTitle",
         descKey: "helpTaskSchedulerDesc",
         impact: "no",
         noteKey: "helpTaskSchedulerNote",
+      },
+      {
+        titleKey: "helpFlightRecorderTitle",
+        descKey: "helpFlightRecorderDesc",
+        impact: "no",
+        stepKeys: [
+          "helpFlightRecorderStep1",
+          "helpFlightRecorderStep2",
+          "helpFlightRecorderStep3",
+        ],
+        noteKey: "helpFlightRecorderNote",
       },
     ],
   },
