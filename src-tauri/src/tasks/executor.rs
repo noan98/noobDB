@@ -13,7 +13,9 @@ use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Manager};
 
 use super::{TaskAction, TaskDefinition};
-use crate::commands::connection::{connect, disconnect, ConnectRequest, SshJumpRequest, SshRequest};
+use crate::commands::connection::{
+    connect, disconnect, ConnectRequest, SshJumpRequest, SshRequest,
+};
 use crate::commands::dump;
 use crate::commands::export;
 use crate::db::{is_read_only_sql, DriverKind};
