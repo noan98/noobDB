@@ -20,6 +20,7 @@ import {
   listenConnectProgress,
   listenPreviewStream,
   listenQueryStream,
+  listenTaskRunEvents,
 } from "./api/tauri";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
@@ -171,6 +172,9 @@ const HelpView = lazy(() =>
 );
 const SettingsView = lazy(() =>
   import("./components/SettingsView").then((m) => ({ default: m.SettingsView })),
+);
+const TaskManager = lazy(() =>
+  import("./components/TaskManager").then((m) => ({ default: m.TaskManager })),
 );
 const SchemaCompareView = lazy(() =>
   import("./components/SchemaCompareView").then((m) => ({ default: m.SchemaCompareView })),
@@ -1030,6 +1034,7 @@ export default function App() {
     ],
   );
   const [showSettings, setShowSettings] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   // 初回起動オンボーディングツアー (#599)。ウェルカム画面の「はじめかたを見る」
   // からの手動起動、および新規ユーザ (プロファイル 0 件・未表示) への自動起動の
@@ -1202,6 +1207,36 @@ export default function App() {
   useEffect(() => {
     registerNotificationClickFocus();
   }, []);
+
+  // タスクスケジューラ (#730): バックグラウンドで発火した実行結果をアプリ起動中
+  // ずっと購読する (タスク管理画面を開いていなくても失敗に気付けるように)。
+  // 失敗のみトースト + OS 通知で知らせる — 成功は「実行履歴」で確認できれば十分で、
+  // 定期実行のたびに通知するとノイズになる。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    void listenTaskRunEvents({
+      onError: (e) => {
+        const message = e.message ?? "";
+        toast.error(translate("taskRunFailed", { name: e.taskName, error: message }));
+        void isAppWindowFocused().then((focused) => {
+          if (!focused) {
+            void sendQueryNotification(
+              translate("taskRunNotifyTitle", { name: e.taskName }),
+              firstLineForNotification(message || translate("taskLastError")),
+            );
+          }
+        });
+      },
+    }).then((un) => {
+      if (active) unlisten = un;
+      else un();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [toast]);
 
   // アプリ内自動更新 (#705): 起動時に一度だけ更新を確認する (設定でオフにできる)。
   // ベストエフォート — オフライン/マニフェスト取得失敗は静かに無視して起動を
@@ -1463,7 +1498,7 @@ export default function App() {
   const overlayOpenRef = useRef(false);
   useEffect(() => {
     overlayOpenRef.current =
-      showForm || showSettings || showHelp || showCompare || showCompareResults || showErd ||
+      showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
       showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm ||
       showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
   });
@@ -5166,7 +5201,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -5298,7 +5333,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
+  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -5345,7 +5380,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
+        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet
       ) {
         return;
@@ -5382,6 +5417,7 @@ export default function App() {
     activeTab,
     showForm,
     showSettings,
+    showTasks,
     showHelp,
     showCompare,
     showCompareResults,
@@ -5459,7 +5495,7 @@ export default function App() {
         }
       }
       // チートシート以外のオーバーレイが開いているときは介入しない。
-      if (showForm || showSettings || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
+      if (showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
         return;
       }
       e.preventDefault();
@@ -5467,7 +5503,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showForm, showSettings, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
+  }, [showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
 
   // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
   // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。
@@ -5476,7 +5512,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
+        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
@@ -5514,6 +5550,7 @@ export default function App() {
     layoutMode,
     showForm,
     showSettings,
+    showTasks,
     showHelp,
     showCompare,
     showCompareResults,
@@ -5538,16 +5575,18 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "queryInspector" | "advisor" | "compareResults" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "tasks" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "queryInspector" | "advisor" | "compareResults" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
+    setShowTasks(false);
     setShowHelp(false);
     setShowCompare(false);
     setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
+    else if (view === "tasks") setShowTasks(true);
     else if (view === "help") setShowHelp(true);
     else if (view === "compare") setShowCompare(true);
     else if (view === "erDiagram") setShowErd(true);
@@ -6705,6 +6744,13 @@ export default function App() {
             <Icon name={theme === "dark" ? "sun" : "moon"} />
           </IconButton>
           <IconButton
+            onClick={() => openFullView("tasks")}
+            title={t("appTasks")}
+            aria-label={t("appTasks")}
+          >
+            <Icon name="clock" />
+          </IconButton>
+          <IconButton
             onClick={() => openFullView("help")}
             title={t("appHelp")}
             aria-label={t("appHelp")}
@@ -7731,6 +7777,11 @@ export default function App() {
         <AnimatePresence>
           {showSettings && (
             <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showTasks && (
+            <TaskManager profiles={profiles} onClose={() => setShowTasks(false)} />
           )}
         </AnimatePresence>
         <AnimatePresence>

@@ -12,6 +12,7 @@ mod profiles;
 mod snippets;
 mod ssh;
 mod state;
+mod tasks;
 
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
@@ -333,6 +334,13 @@ pub fn run() {
 
     let result = builder
         .manage(state::AppState::default())
+        // タスクスケジューラ (#730)。アプリ起動中のみ発火するバックグラウンド
+        // Tokio タスクとして常駐する。状態は tasks.json / task_runs.sqlite の
+        // ディスク上のみに持つため、AppState への追加は不要。
+        .setup(|app| {
+            tasks::scheduler::spawn(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::connection::test_connection,
             commands::connection::connect,
@@ -396,6 +404,15 @@ pub fn run() {
             commands::import::import_csv,
             commands::file::read_text_file,
             commands::file::write_binary_file,
+            commands::tasks::list_tasks,
+            commands::tasks::save_task,
+            commands::tasks::delete_task,
+            commands::tasks::set_task_enabled,
+            commands::tasks::run_task_now,
+            commands::tasks::list_task_runs,
+            commands::tasks::clear_task_runs,
+            commands::tasks::get_scheduler_settings,
+            commands::tasks::set_scheduler_settings,
         ])
         .run(tauri::generate_context!());
 
