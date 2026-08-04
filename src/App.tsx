@@ -44,6 +44,7 @@ import {
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
+import type { AlterStatement } from "./components/alterTable";
 import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import { quoteIdentFor } from "./components/sqlDialect";
@@ -1527,6 +1528,7 @@ export default function App() {
       setShowDataSearch(false);
       setCreateTableDb(null);
       setRenameTarget(null);
+      setAlterTableTarget(null);
       setSaveAsTableRequest(null);
       setRowInsertTabId(null);
     }
@@ -2347,10 +2349,13 @@ export default function App() {
     await closeAllTabs();
     // 旧セッションの DB 名を持ったまま各モーダルが新しい sessionId で開き続けない
     // よう、切替時も handleDisconnect / tearDownLostSession と同じく閉じる。
+    // AlterTableModal (#794) も database/table を旧セッション基準で保持したまま
+    // 別接続へ ALTER が飛ぶ事故を防ぐため同様に閉じる。
     setImportTarget(null);
     setDumpTarget(null);
     setSchemaExportTarget(null);
     setErrorProfileId(null);
+    setAlterTableTarget(null);
     setConnectionStatus("connected");
     setSessionId(target.sessionId);
     setSelectedProfile(target.profile);
@@ -4627,14 +4632,19 @@ export default function App() {
   // 列編集ダイアログの適用: 生成された複数の ALTER TABLE / CREATE INDEX 文をまとめて
   // 確認ダイアログでプレビューし、承認後に `run_query_transaction` (単一トランザクション。
   // PostgreSQL は all-or-nothing、MySQL は DDL の暗黙コミットにより best-effort 逐次 —
-  // CLAUDE.md「MySQL の DDL は非原子」を参照) で実行する。DROP COLUMN を含む場合は
-  // 破壊的操作として TRUNCATE/DROP TABLE と同じくタイプ入力の強確認ゲート (#675) を
-  // 本番接続に限り追加する。読み取り専用セッションでは AlterTableModal 側で実行ボタンを
+  // CLAUDE.md「MySQL の DDL は非原子」を参照) で実行する。破壊的判定は各文の
+  // `destructive` フラグ (`alterTable.ts` が構造化して返す) を直接見る — SQL
+  // テキストへの正規表現マッチには依存しない。DROP COLUMN を含む場合は破壊的操作
+  // として TRUNCATE/DROP TABLE と同じくタイプ入力の強確認ゲート (#675) を本番接続に
+  // 限り追加する。読み取り専用セッションでは AlterTableModal 側で実行ボタンを
   // 無効化しているが、IPC 自体もバックエンドの read_only ガードで拒否される。
-  const handleAlterTableRun = useCallback(async (statements: string[]) => {
+  // モーダルは実行成功後にのみ閉じる — 失敗時 (SQL エラー等) は開いたままにして
+  // ユーザが編集内容を失わずに調整・再実行できるようにする。
+  const handleAlterTableRun = useCallback(async (statements: AlterStatement[]) => {
     const target = alterTableTarget;
     if (!target || !sessionId || statements.length === 0) return;
-    const destructive = statements.some((s) => /\bDROP COLUMN\b/i.test(s));
+    const destructive = statements.some((s) => s.destructive);
+    const sqls = statements.map((s) => s.sql);
     const ok = await confirm({
       title: translate("alterTableConfirmTitle", { table: target.table }),
       message: maintenanceMessage(
@@ -4649,7 +4659,7 @@ export default function App() {
             whiteSpace="pre-wrap"
             wordBreak="break-all"
           >
-            {statements.join("\n")}
+            {sqls.join("\n")}
           </chakra.code>
         </>,
       ),
@@ -4658,12 +4668,12 @@ export default function App() {
       typedConfirmation: destructive && selectedProfile?.is_production ? target.table : undefined,
     });
     if (!ok) return;
-    setAlterTableTarget(null);
     try {
-      await api.runQueryTransaction(sessionId, statements, target.database);
+      await api.runQueryTransaction(sessionId, sqls, target.database);
       invalidateSchemaCache(target.database);
       connectionListRef.current?.refreshSchema();
       toast.success(translate("alterTableSuccess", { table: target.table }));
+      setAlterTableTarget(null);
       // リネーム/DROP された可能性があるので、開いている対象テーブルのタブは閉じて
       // 新しい定義で開き直せるようにする (handleRenameTableSubmit/handleDropTable と同じ方針)。
       tabsRef.current

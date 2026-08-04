@@ -7,7 +7,7 @@ import {
 } from "../components/alterTable";
 
 function baseline(over: Partial<ExistingColumnBaseline>): ExistingColumnBaseline {
-  return { name: "c", type: "int", notNull: false, defaultValue: "", ...over };
+  return { name: "c", type: "int", notNull: false, defaultValue: "", extra: "", ...over };
 }
 
 function edit(over: Partial<ExistingColumnEdit>): ExistingColumnEdit {
@@ -133,6 +133,56 @@ describe("buildAlterPlan: rename / modify — MySQL", () => {
     expect(plan.statements).toHaveLength(0);
     expect(plan.unsupported).toHaveLength(0);
   });
+
+  it("falls back to the baseline type when the type field is left blank", () => {
+    // #896 CodeRabbit レビュー対応の回帰テスト (PostgreSQL 分岐と対で確認)。
+    const plan = buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [baseline({ name: "amount", type: "int", notNull: false, defaultValue: "" })],
+        existing: [edit({ original: "amount", name: "amount", type: "  ", notNull: true, defaultValue: "" })],
+      }),
+    );
+    expect(plan.statements).toHaveLength(1);
+    expect(plan.statements[0].sql).toBe(
+      "ALTER TABLE `shop`.`users` CHANGE COLUMN `amount` `amount` int NOT NULL;",
+    );
+  });
+
+  it("preserves AUTO_INCREMENT (and other EXTRA attributes) verbatim across CHANGE COLUMN", () => {
+    // #896 CodeRabbit レビュー対応: CHANGE COLUMN は元々 auto_increment などの
+    // 付随属性を保持しないため、baseline.extra を逐語で付け足す
+    // (db/sync.rs::column_def と同じ方針)。
+    const plan = buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [baseline({ name: "id", type: "int", notNull: true, defaultValue: "", extra: "auto_increment" })],
+        existing: [edit({ original: "id", name: "id", type: "bigint", notNull: true, defaultValue: "" })],
+      }),
+    );
+    expect(plan.statements).toHaveLength(1);
+    expect(plan.statements[0].sql).toBe(
+      "ALTER TABLE `shop`.`users` CHANGE COLUMN `id` `id` bigint NOT NULL auto_increment;",
+    );
+  });
+
+  it("preserves EXTRA even when only the name changes (rename goes through CHANGE COLUMN once facets differ)", () => {
+    const plan = buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [
+          baseline({ name: "created", type: "timestamp", notNull: false, extra: "on update CURRENT_TIMESTAMP" }),
+        ],
+        existing: [
+          edit({ original: "created", name: "created_at", type: "timestamp", notNull: true }),
+        ],
+      }),
+    );
+    expect(plan.statements).toHaveLength(1);
+    expect(plan.statements[0].sql).toBe(
+      "ALTER TABLE `shop`.`users` CHANGE COLUMN `created` `created_at` timestamp NOT NULL on update CURRENT_TIMESTAMP;",
+    );
+  });
 });
 
 describe("buildAlterPlan: rename / modify — PostgreSQL", () => {
@@ -187,7 +237,7 @@ describe("buildAlterPlan: rename / modify — PostgreSQL", () => {
     expect(plan.statements[0].sql).toBe('ALTER TABLE "shop"."users" ALTER COLUMN "status" DROP DEFAULT;');
   });
 
-  it("warns via key/foreign_key style separation is not applicable; type-only diffs stay isolated", () => {
+  it("a type-only diff emits a single isolated ALTER COLUMN ... TYPE (no NOT NULL/DEFAULT statements)", () => {
     const plan = buildAlterPlan(
       "postgres",
       form({
@@ -197,6 +247,22 @@ describe("buildAlterPlan: rename / modify — PostgreSQL", () => {
     );
     expect(plan.statements).toHaveLength(1);
     expect(plan.statements[0].sql).toBe('ALTER TABLE "shop"."users" ALTER COLUMN "v" TYPE bigint;');
+  });
+
+  it("falls back to the baseline type instead of emitting a broken 'TYPE ;' when the type field is left blank", () => {
+    // #896 CodeRabbit レビュー対応: 型欄を空にしたまま他のフィールド (ここでは
+    // NOT NULL) だけ変えると、以前は `ALTER COLUMN "v" TYPE ;` という不正な SQL を
+    // 生成していた。空欄は「未編集 (baseline のまま)」として扱われるべき。
+    const plan = buildAlterPlan(
+      "postgres",
+      form({
+        baseline: [baseline({ name: "v", type: "int", notNull: false })],
+        existing: [edit({ original: "v", name: "v", type: "  ", notNull: true })],
+      }),
+    );
+    const sqls = plan.statements.map((s) => s.sql);
+    expect(sqls).not.toContain('ALTER TABLE "shop"."users" ALTER COLUMN "v" TYPE ;');
+    expect(sqls).toEqual(['ALTER TABLE "shop"."users" ALTER COLUMN "v" SET NOT NULL;']);
   });
 });
 

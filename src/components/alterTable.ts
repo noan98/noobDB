@@ -11,8 +11,13 @@
 // (MySQL は 1 文でまとめて書き換え、PostgreSQL は facet ごとに個別の
 // `ALTER COLUMN`、SQLite は列のインプレース変更が不可) を踏襲するが、こちらは
 // 2 スキーマの diff ではなく単一テーブルのフォーム入力 (baseline vs 編集後) から
-// 直接組み立てる — フォームは常に列の「フル定義」を保持しているため、MySQL の
-// `MODIFY`/`CHANGE COLUMN` が要求する完全な列定義を毎回自然に満たせる。
+// 直接組み立てる — フォームは型/NOT NULL/DEFAULT については常に列の完全な定義を
+// 保持しているため、MySQL の `MODIFY`/`CHANGE COLUMN` が要求するそれらのフル指定を
+// 毎回自然に満たせる。ただし MySQL の `extra` (`auto_increment`・
+// `on update CURRENT_TIMESTAMP` 等、`information_schema.COLUMNS.EXTRA` 由来) は
+// `CHANGE COLUMN` 実行時に baseline の値を逐語で付け足して保持するが、それ以外の
+// 付随属性 (文字セット/照合順序・`COMMENT`・生成列式など。`describeTable` が
+// そもそも取得しない) は保持できない — フル対応ではなく最小対応であることに注意。
 //
 // 生成した文言 (未対応の変更の通知など) は理由コードのみを返し、実際の文字列化は
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
@@ -31,6 +36,14 @@ export interface ExistingColumnBaseline {
    * 式そのもののことがある。
    */
   defaultValue: string;
+  /**
+   * MySQL の `information_schema.COLUMNS.EXTRA` (`auto_increment` /
+   * `on update CURRENT_TIMESTAMP` 等、無ければ空文字)。`CHANGE COLUMN` で列を
+   * 再定義する際に逐語で付け足し、AUTO_INCREMENT 等が消えないようにする
+   * (`db/sync.rs::column_def` と同じ「MySQL のみ extra を逐語で追加」方針)。
+   * MySQL 以外では常に空文字で無視される。
+   */
+  extra: string;
 }
 
 /**
@@ -155,7 +168,11 @@ function planExistingColumn(
 
   const newName = edit.name.trim() || baseline.name;
   const renamed = newName !== baseline.name;
-  const typeChanged = edit.type.trim() !== baseline.type.trim();
+  // 型欄が空欄のときは baseline の型へフォールバックする (MySQL の
+  // CHANGE/MODIFY と同じ規則)。フォールバックせず空文字をそのまま使うと
+  // PostgreSQL の `ALTER COLUMN ... TYPE ;` のような不正 SQL を生成してしまう。
+  const newType = edit.type.trim() || baseline.type.trim();
+  const typeChanged = newType !== baseline.type.trim();
   const nullChanged = edit.notNull !== baseline.notNull;
   const defaultChanged = edit.defaultValue.trim() !== baseline.defaultValue.trim();
   const facetsChanged = typeChanged || nullChanged || defaultChanged;
@@ -177,10 +194,15 @@ function planExistingColumn(
     // CHANGE COLUMN は rename + 再定義を 1 文でまかなえる。未変更フィールドも
     // baseline (= edit の初期値) 由来のまま含まれるので、MySQL の
     // 「MODIFY/CHANGE は常にフル定義が必要」という制約を自然に満たす。
-    const parts = [newIdent, edit.type.trim() || baseline.type];
+    const parts = [newIdent, newType];
     if (edit.notNull) parts.push("NOT NULL");
     const def = formatDefaultForEdit(driver, edit.defaultValue);
     if (def !== null) parts.push(`DEFAULT ${def}`);
+    // `extra` (auto_increment・on update CURRENT_TIMESTAMP 等) は
+    // フォーム編集の対象外なので baseline の値を逐語で保持する — 付けないと
+    // CHANGE COLUMN で AUTO_INCREMENT 等が黙って消えてしまう
+    // (`db/sync.rs::column_def` と同じ方針)。
+    if (baseline.extra.trim()) parts.push(baseline.extra.trim());
     statements.push({
       sql: `ALTER TABLE ${tIdent} CHANGE COLUMN ${oldIdent} ${parts.join(" ")};`,
       kind: renamed ? "renameColumn" : "modifyColumn",
@@ -199,7 +221,7 @@ function planExistingColumn(
     }
     if (typeChanged) {
       statements.push({
-        sql: `ALTER TABLE ${tIdent} ALTER COLUMN ${newIdent} TYPE ${edit.type.trim()};`,
+        sql: `ALTER TABLE ${tIdent} ALTER COLUMN ${newIdent} TYPE ${newType};`,
         kind: "modifyColumn",
         destructive: false,
       });
@@ -276,7 +298,7 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
 
   for (const idx of form.indexes) {
     const name = idx.name.trim();
-    const cols = idx.columns.filter((c) => c.trim().length > 0);
+    const cols = idx.columns.map((c) => c.trim()).filter((c) => c.length > 0);
     if (!name || cols.length === 0) continue;
     const colList = cols.map((c) => quoteIdentFor(driver, c)).join(", ");
     const keyword = idx.unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";

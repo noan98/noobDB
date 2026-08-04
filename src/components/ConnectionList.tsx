@@ -239,7 +239,7 @@ interface Props {
   onShowCreateTable?: (database: string, table: string) => void;
   /** DB ノードから新規テーブル作成ウィザードを開く。 */
   onCreateTable?: (database: string) => void;
-  /** テーブル保守操作: TRUNCATE / DROP / RENAME。read_only では無効化される。 */
+  /** テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794)。read_only では無効化される。 */
   onTruncateTable?: (database: string, table: string) => void;
   onDropTable?: (database: string, table: string) => void;
   onRenameTable?: (database: string, table: string) => void;
@@ -868,8 +868,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (onCopyTableName) {
       items.push({ label: t("contextMenuCopyTableName"), onSelect: () => onCopyTableName(tbl) });
     }
-    // テーブル保守操作: TRUNCATE / DROP / RENAME。破壊的なので read_only では
-    // 無効化し、実行時は呼び出し側 (App) が確認ダイアログを挟む。
+    // テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794)。破壊的なので
+    // read_only では無効化し、実行時は呼び出し側 (App) が確認ダイアログを挟む。
     if (onTruncateTable || onDropTable || onRenameTable || onAlterTable) {
       const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
       items.push({ separator: true });

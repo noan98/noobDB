@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { api, type DriverKind, type TableColumnInfo } from "../api/tauri";
@@ -22,7 +22,10 @@ import { Tooltip } from "./Tooltip";
  * SQL をプレビューする。DDL 生成の純ロジックは `alterTable.ts` (方言別テスト付き)、
  * UI 構成は `CreateTableModal` と同じ流儀。read_only セッションでは実行ボタンを
  * 無効化する (バックエンドも write を拒否する)。実行そのものは呼び出し側 (App) が
- * `run_query_transaction` を通し、危険操作確認 (typedConfirmation) もそこで挟む。
+ * `run_query_transaction` を通し、危険操作確認 (typedConfirmation) もそこで挟む —
+ * `onRun` には (SQL 文字列ではなく) 生成済みの `AlterStatement[]` をそのまま渡し、
+ * 破壊的判定 (`DROP COLUMN` を含むか) は各文の `destructive` フラグを見て行う
+ * (SQL テキストの正規表現マッチには依存しない)。
  */
 interface Props {
   sessionId: string;
@@ -30,9 +33,20 @@ interface Props {
   database: string;
   table: string;
   readOnly: boolean;
-  onRun: (statements: string[]) => void;
+  onRun: (statements: AlterStatement[]) => void;
   onSendToEditor: (sql: string) => void;
   onClose: () => void;
+}
+
+/** `added`/`indexes` 行のローカル state に付ける安定 id。React key 用のみで
+ *  `buildAlterPlan` へ渡す前に取り除く (フォーム行の並び替えは無いが、削除で
+ *  配列インデックスがズレたときに入力途中の行の React state — IME 変換中の
+ *  文字列や focus など — が別の行へ取り違えられないようにする)。 */
+interface AddedColumnRow extends NewColumn {
+  id: string;
+}
+interface IndexRow extends IndexDef {
+  id: string;
 }
 
 function emptyNewColumn(driver: DriverKind): NewColumn {
@@ -49,8 +63,11 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<ExistingColumnBaseline[]>([]);
   const [existing, setExisting] = useState<ExistingColumnEdit[]>([]);
-  const [added, setAdded] = useState<NewColumn[]>([]);
-  const [indexes, setIndexes] = useState<IndexDef[]>([]);
+  const [added, setAdded] = useState<AddedColumnRow[]>([]);
+  const [indexes, setIndexes] = useState<IndexRow[]>([]);
+  // `added`/`indexes` 行の React key を配列インデックスに頼らないための採番。
+  const rowIdCounter = useRef(0);
+  const nextRowId = () => `row${++rowIdCounter.current}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +82,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
           type: c.data_type,
           notNull: !c.nullable,
           defaultValue: c.default ?? "",
+          extra: c.extra,
         }));
         setBaseline(base);
         setExisting(
@@ -91,16 +109,21 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
 
   const setExistingAt = (i: number, patch: Partial<ExistingColumnEdit>) =>
     setExisting((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const toggleDrop = (i: number) => setExistingAt(i, { drop: !existing[i].drop });
+  // `existing[i].drop` を外側のクロージャから読まず、setState の関数更新内で
+  // 反転させる (setExistingAt と同じ流儀に統一。連続クリックや古いレンダの
+  // クロージャから stale な値を反転させてしまう余地をなくす)。
+  const toggleDrop = (i: number) =>
+    setExisting((rows) => rows.map((r, idx) => (idx === i ? { ...r, drop: !r.drop } : r)));
 
   const setAddedAt = (i: number, patch: Partial<NewColumn>) =>
     setAdded((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const addNewColumn = () => setAdded((rows) => [...rows, emptyNewColumn(driver)]);
+  const addNewColumn = () =>
+    setAdded((rows) => [...rows, { id: nextRowId(), ...emptyNewColumn(driver) }]);
   const removeNewColumn = (i: number) => setAdded((rows) => rows.filter((_, idx) => idx !== i));
 
   const setIndexAt = (i: number, patch: Partial<IndexDef>) =>
     setIndexes((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const addIndex = () => setIndexes((rows) => [...rows, emptyIndex()]);
+  const addIndex = () => setIndexes((rows) => [...rows, { id: nextRowId(), ...emptyIndex() }]);
   const removeIndex = (i: number) => setIndexes((rows) => rows.filter((_, idx) => idx !== i));
   const toggleIndexColumn = (i: number, col: string) =>
     setIndexes((rows) =>
@@ -112,15 +135,25 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
     );
 
   // インデックスの列選択肢: 削除予定でない既存列 (リネーム後の名前) + 名前が
-  // 入力済みの新規列。
+  // 入力済みの新規列。既存列をリネームせず新規列が同名を再利用するような
+  // 縁のケースで重複しうるため `Set` で去重する。
   const availableColumns = useMemo(() => {
     const kept = existing.filter((e) => !e.drop).map((e) => e.name.trim() || e.original);
     const addedNames = added.map((c) => c.name.trim()).filter((n) => n.length > 0);
-    return [...kept, ...addedNames];
+    return [...new Set([...kept, ...addedNames])];
   }, [existing, added]);
 
   const plan = useMemo(
-    () => buildAlterPlan(driver, { database, table, baseline, existing, added, indexes }),
+    () =>
+      buildAlterPlan(driver, {
+        database,
+        table,
+        baseline,
+        existing,
+        // id は React key 専用のローカル state なので、純ロジックへ渡す前に取り除く。
+        added: added.map((r) => ({ name: r.name, type: r.type, notNull: r.notNull, defaultValue: r.defaultValue })),
+        indexes: indexes.map((r) => ({ name: r.name, columns: r.columns, unique: r.unique })),
+      }),
     [driver, database, table, baseline, existing, added, indexes],
   );
   const statements = plan.statements;
@@ -148,6 +181,11 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               <chakra.span fontSize="xs" fontWeight="600" color="app.textMuted">
                 {t("alterTableExistingSection")}
               </chakra.span>
+              {driver === "mysql" && (
+                <chakra.span fontSize="xs" color="app.textMuted">
+                  {t("alterTableMysqlExtraNote")}
+                </chakra.span>
+              )}
               <chakra.div
                 display="grid"
                 gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr auto"
@@ -190,6 +228,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                     checked={row.notNull}
                     onChange={() => setExistingAt(i, { notNull: !row.notNull })}
                     disabled={row.drop}
+                    aria-label={t("alterTableNotNullAria", { column: row.original })}
                   />
                   <span />
                   <Input
@@ -220,7 +259,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               </chakra.span>
               {added.map((c, i) => (
                 <chakra.div
-                  key={i}
+                  key={c.id}
                   display="grid"
                   gridTemplateColumns="1.3fr 1.3fr auto 1.2fr auto"
                   gap="1.5"
@@ -228,7 +267,11 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                 >
                   <Input value={c.name} onChange={(e) => setAddedAt(i, { name: e.target.value })} placeholder="column" />
                   <Input value={c.type} onChange={(e) => setAddedAt(i, { type: e.target.value })} />
-                  <Switch checked={c.notNull} onChange={() => setAddedAt(i, { notNull: !c.notNull })} />
+                  <Switch
+                    checked={c.notNull}
+                    onChange={() => setAddedAt(i, { notNull: !c.notNull })}
+                    aria-label={t("alterTableNotNullNewAria", { n: i + 1 })}
+                  />
                   <Input
                     value={c.defaultValue}
                     onChange={(e) => setAddedAt(i, { defaultValue: e.target.value })}
@@ -259,7 +302,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               </chakra.span>
               {indexes.map((idx, i) => (
                 <chakra.div
-                  key={i}
+                  key={idx.id}
                   display="flex"
                   flexDirection="column"
                   gap="1.5"
@@ -373,7 +416,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
           type="button"
           variant="primary"
           disabled={!valid || readOnly}
-          onClick={() => onRun(statements.map((s: AlterStatement) => s.sql))}
+          onClick={() => onRun(statements)}
         >
           {t("alterTableRun")}
         </PressableButton>
