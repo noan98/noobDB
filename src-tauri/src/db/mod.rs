@@ -2,6 +2,7 @@ pub mod advisor;
 pub mod data_diff;
 pub mod diff;
 pub mod format;
+pub mod mssql;
 pub mod mysql;
 pub mod postgres;
 pub mod privileges;
@@ -81,6 +82,10 @@ pub enum DriverKind {
     Mysql,
     Postgres,
     Sqlite,
+    /// Microsoft SQL Server (#729). Backed by `tiberius` rather than `sqlx` —
+    /// see `db/mssql.rs` for the driver module and `AppError::Mssql` for the
+    /// dedicated error variant.
+    Mssql,
 }
 
 impl DriverKind {
@@ -91,6 +96,7 @@ impl DriverKind {
             DriverKind::Mysql => "mysql",
             DriverKind::Postgres => "postgres",
             DriverKind::Sqlite => "sqlite",
+            DriverKind::Mssql => "mssql",
         }
     }
 }
@@ -123,6 +129,12 @@ pub enum Connection {
     MySql(mysql::MySqlConn),
     Postgres(postgres::PostgresConn),
     Sqlite(sqlite::SqliteConn),
+    // Boxed: `MssqlConn` embeds `tiberius::Client`'s TDS connection state
+    // directly (no internal `Arc`/pool indirection at the top level like the
+    // sqlx-backed drivers), making it far larger than the other three
+    // variants — `clippy::large_enum_variant` flags the resulting padding on
+    // every `Connection` value.
+    Mssql(Box<mssql::MssqlConn>),
 }
 
 /// A single row skipped by a resilient (skip-mode) import: its 0-based index
@@ -150,6 +162,7 @@ impl Connection {
             Connection::MySql(_) => DriverKind::Mysql,
             Connection::Postgres(_) => DriverKind::Postgres,
             Connection::Sqlite(_) => DriverKind::Sqlite,
+            Connection::Mssql(_) => DriverKind::Mssql,
         }
     }
 
@@ -160,6 +173,9 @@ impl Connection {
                 postgres::PostgresConn::connect(opts).await?,
             )),
             DriverKind::Sqlite => Ok(Connection::Sqlite(sqlite::SqliteConn::connect(opts).await?)),
+            DriverKind::Mssql => Ok(Connection::Mssql(Box::new(
+                mssql::MssqlConn::connect(opts).await?,
+            ))),
         }
     }
 
@@ -168,6 +184,7 @@ impl Connection {
             Connection::MySql(c) => c.execute(sql, database).await,
             Connection::Postgres(c) => c.execute(sql, database).await,
             Connection::Sqlite(c) => c.execute(sql, database).await,
+            Connection::Mssql(c) => c.execute(sql, database).await,
         }
     }
 
@@ -180,6 +197,7 @@ impl Connection {
             Connection::MySql(c) => c.tx_begin(database).await,
             Connection::Postgres(c) => c.tx_begin(database).await,
             Connection::Sqlite(c) => c.tx_begin(database).await,
+            Connection::Mssql(c) => c.tx_begin(database).await,
         }
     }
 
@@ -190,6 +208,7 @@ impl Connection {
             Connection::MySql(c) => c.tx_execute(sql).await,
             Connection::Postgres(c) => c.tx_execute(sql).await,
             Connection::Sqlite(c) => c.tx_execute(sql).await,
+            Connection::Mssql(c) => c.tx_execute(sql).await,
         }
     }
 
@@ -200,6 +219,7 @@ impl Connection {
             Connection::MySql(c) => c.tx_finish(commit).await,
             Connection::Postgres(c) => c.tx_finish(commit).await,
             Connection::Sqlite(c) => c.tx_finish(commit).await,
+            Connection::Mssql(c) => c.tx_finish(commit).await,
         }
     }
 
@@ -209,6 +229,7 @@ impl Connection {
             Connection::MySql(c) => c.tx_active().await,
             Connection::Postgres(c) => c.tx_active().await,
             Connection::Sqlite(c) => c.tx_active().await,
+            Connection::Mssql(c) => c.tx_active().await,
         }
     }
 
@@ -231,6 +252,7 @@ impl Connection {
             Connection::MySql(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
             Connection::Postgres(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
             Connection::Sqlite(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
+            Connection::Mssql(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
         }
     }
 
@@ -255,6 +277,10 @@ impl Connection {
                     .await
             }
             Connection::Sqlite(c) => {
+                c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
+                    .await
+            }
+            Connection::Mssql(c) => {
                 c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
                     .await
             }
@@ -293,6 +319,10 @@ impl Connection {
                 c.import_rows(database, table, columns, rows, batch_size, on_progress)
                     .await
             }
+            Connection::Mssql(c) => {
+                c.import_rows(database, table, columns, rows, batch_size, on_progress)
+                    .await
+            }
         }
     }
 
@@ -311,6 +341,7 @@ impl Connection {
             Connection::MySql(c) => c.try_insert_chunk(database, table, columns, rows).await,
             Connection::Postgres(c) => c.try_insert_chunk(database, table, columns, rows).await,
             Connection::Sqlite(c) => c.try_insert_chunk(database, table, columns, rows).await,
+            Connection::Mssql(c) => c.try_insert_chunk(database, table, columns, rows).await,
         }
     }
 
@@ -331,6 +362,7 @@ impl Connection {
             Connection::MySql(c) => c.probe_failing_row(database, table, columns, rows).await,
             Connection::Postgres(c) => c.probe_failing_row(database, table, columns, rows).await,
             Connection::Sqlite(c) => c.probe_failing_row(database, table, columns, rows).await,
+            Connection::Mssql(c) => c.probe_failing_row(database, table, columns, rows).await,
         }
     }
 
@@ -346,7 +378,7 @@ impl Connection {
     ) -> Result<bool> {
         match self {
             Connection::MySql(c) => c.table_is_transactional(database, table).await,
-            Connection::Postgres(_) | Connection::Sqlite(_) => Ok(true),
+            Connection::Postgres(_) | Connection::Sqlite(_) | Connection::Mssql(_) => Ok(true),
         }
     }
 
@@ -436,6 +468,7 @@ impl Connection {
             Connection::MySql(c) => c.execute_transaction(statements, database).await,
             Connection::Postgres(c) => c.execute_transaction(statements, database).await,
             Connection::Sqlite(c) => c.execute_transaction(statements, database).await,
+            Connection::Mssql(c) => c.execute_transaction(statements, database).await,
         }
     }
 
@@ -444,6 +477,7 @@ impl Connection {
             Connection::MySql(c) => c.databases().await,
             Connection::Postgres(c) => c.databases().await,
             Connection::Sqlite(c) => c.databases().await,
+            Connection::Mssql(c) => c.databases().await,
         }
     }
 
@@ -452,6 +486,7 @@ impl Connection {
             Connection::MySql(c) => c.tables(db).await,
             Connection::Postgres(c) => c.tables(db).await,
             Connection::Sqlite(c) => c.tables(db).await,
+            Connection::Mssql(c) => c.tables(db).await,
         }
     }
 
@@ -460,6 +495,7 @@ impl Connection {
             Connection::MySql(c) => c.columns(db, table).await,
             Connection::Postgres(c) => c.columns(db, table).await,
             Connection::Sqlite(c) => c.columns(db, table).await,
+            Connection::Mssql(c) => c.columns(db, table).await,
         }
     }
 
@@ -472,6 +508,7 @@ impl Connection {
             Connection::MySql(c) => c.schema_overview(db).await,
             Connection::Postgres(c) => c.schema_overview(db).await,
             Connection::Sqlite(c) => c.schema_overview(db).await,
+            Connection::Mssql(c) => c.schema_overview(db).await,
         }
     }
 
@@ -485,6 +522,7 @@ impl Connection {
             Connection::MySql(c) => c.foreign_keys(db).await,
             Connection::Postgres(c) => c.foreign_keys(db).await,
             Connection::Sqlite(c) => c.foreign_keys(db).await,
+            Connection::Mssql(c) => c.foreign_keys(db).await,
         }
     }
 
@@ -497,6 +535,7 @@ impl Connection {
             Connection::MySql(c) => c.schema_objects(db).await,
             Connection::Postgres(c) => c.schema_objects(db).await,
             Connection::Sqlite(c) => c.schema_objects(db).await,
+            Connection::Mssql(c) => c.schema_objects(db).await,
         }
     }
 
@@ -514,6 +553,7 @@ impl Connection {
             Connection::MySql(c) => c.object_definition(db, kind, name).await,
             Connection::Postgres(c) => c.object_definition(db, kind, name, id).await,
             Connection::Sqlite(c) => c.object_definition(db, kind, name).await,
+            Connection::Mssql(c) => c.object_definition(db, kind, name).await,
         }
     }
 
@@ -526,6 +566,7 @@ impl Connection {
             Connection::MySql(c) => c.list_indexes(db, table).await,
             Connection::Postgres(c) => c.list_indexes(db, table).await,
             Connection::Sqlite(c) => c.list_indexes(db, table).await,
+            Connection::Mssql(c) => c.list_indexes(db, table).await,
         }
     }
 
@@ -540,6 +581,7 @@ impl Connection {
             Connection::MySql(c) => c.table_row_estimates(db).await,
             Connection::Postgres(c) => c.table_row_estimates(db).await,
             Connection::Sqlite(c) => c.table_row_estimates(db).await,
+            Connection::Mssql(c) => c.table_row_estimates(db).await,
         }
     }
 
@@ -554,6 +596,7 @@ impl Connection {
             Connection::MySql(c) => c.table_sizes(db).await,
             Connection::Postgres(c) => c.table_sizes(db).await,
             Connection::Sqlite(c) => c.table_sizes(db).await,
+            Connection::Mssql(c) => c.table_sizes(db).await,
         }
     }
 
@@ -567,6 +610,7 @@ impl Connection {
             Connection::MySql(c) => c.server_info().await,
             Connection::Postgres(c) => c.server_info().await,
             Connection::Sqlite(c) => c.server_info().await,
+            Connection::Mssql(c) => c.server_info().await,
         }
     }
 
@@ -581,6 +625,7 @@ impl Connection {
             Connection::MySql(c) => c.server_metrics().await,
             Connection::Postgres(c) => c.server_metrics().await,
             Connection::Sqlite(c) => c.server_metrics().await,
+            Connection::Mssql(c) => c.server_metrics().await,
         }
     }
 
@@ -593,6 +638,7 @@ impl Connection {
             Connection::MySql(c) => c.list_processes().await,
             Connection::Postgres(c) => c.list_processes().await,
             Connection::Sqlite(c) => c.list_processes().await,
+            Connection::Mssql(c) => c.list_processes().await,
         }
     }
 
@@ -604,19 +650,23 @@ impl Connection {
             Connection::MySql(c) => c.kill_process(id).await,
             Connection::Postgres(c) => c.kill_process(id).await,
             Connection::Sqlite(c) => c.kill_process(id).await,
+            Connection::Mssql(c) => c.kill_process(id).await,
         }
     }
 
     /// Server accounts/roles for the users & permissions panel (#732): MySQL
-    /// `mysql.user`, PostgreSQL `pg_roles`. SQLite has no user model — the
-    /// frontend hides the panel entirely, and this returns an error instead
-    /// of an empty list for direct IPC callers (matching
-    /// [`Connection::list_processes`]'s "unsupported" convention).
+    /// `mysql.user`, PostgreSQL `pg_roles`. SQLite has no user model, and MSSQL
+    /// is not yet implemented (could read `sys.server_principals` /
+    /// `sys.database_permissions`, out of scope for this PR) — both return an
+    /// error instead of an empty list for direct IPC callers (matching
+    /// [`Connection::list_processes`]'s "unsupported" convention), and the
+    /// frontend hides the panel entirely for SQLite.
     pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
         match self {
             Connection::MySql(c) => c.list_db_users().await,
             Connection::Postgres(c) => c.list_db_users().await,
             Connection::Sqlite(c) => c.list_db_users().await,
+            Connection::Mssql(c) => c.list_db_users().await,
         }
     }
 
@@ -628,6 +678,7 @@ impl Connection {
             Connection::MySql(c) => c.user_privileges(user, host).await,
             Connection::Postgres(c) => c.user_privileges(user, host).await,
             Connection::Sqlite(c) => c.user_privileges(user, host).await,
+            Connection::Mssql(c) => c.user_privileges(user, host).await,
         }
     }
 
@@ -640,6 +691,7 @@ impl Connection {
             Connection::MySql(c) => c.query_stats_support().await,
             Connection::Postgres(c) => c.query_stats_support().await,
             Connection::Sqlite(c) => c.query_stats_support().await,
+            Connection::Mssql(c) => c.query_stats_support().await,
         }
     }
 
@@ -653,6 +705,7 @@ impl Connection {
             Connection::MySql(c) => c.live_queries().await,
             Connection::Postgres(c) => c.live_queries().await,
             Connection::Sqlite(c) => c.live_queries().await,
+            Connection::Mssql(c) => c.live_queries().await,
         }
     }
 
@@ -665,6 +718,7 @@ impl Connection {
             Connection::MySql(c) => c.statement_stats().await,
             Connection::Postgres(c) => c.statement_stats().await,
             Connection::Sqlite(c) => c.statement_stats().await,
+            Connection::Mssql(c) => c.statement_stats().await,
         }
     }
 
@@ -678,6 +732,7 @@ impl Connection {
             Connection::MySql(c) => c.unused_indexes(db).await,
             Connection::Postgres(c) => c.unused_indexes(db).await,
             Connection::Sqlite(c) => c.unused_indexes(db).await,
+            Connection::Mssql(c) => c.unused_indexes(db).await,
         }
     }
 
@@ -686,6 +741,7 @@ impl Connection {
             Connection::MySql(c) => c.close().await,
             Connection::Postgres(c) => c.close().await,
             Connection::Sqlite(c) => c.close().await,
+            Connection::Mssql(c) => c.close().await,
         }
     }
 }
@@ -1051,6 +1107,104 @@ pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
     }
     let mut out: String = orig[..end].iter().collect();
     out.push_str(&format!(" LIMIT {limit}"));
+    out.extend(orig[end..].iter());
+    Some(out)
+}
+
+/// Driver-aware entry point for the automatic row cap: MySQL / PostgreSQL /
+/// SQLite all understand a trailing `LIMIT n` and go through
+/// [`apply_auto_limit`] unchanged, but Microsoft SQL Server (#729) has no
+/// `LIMIT` keyword — the equivalent is `TOP (n)` spliced right after the
+/// leading `SELECT` (and `DISTINCT`, if present). Callers that know the
+/// target driver (`commands::query`) should use this instead of calling
+/// [`apply_auto_limit`] directly.
+pub fn apply_auto_limit_for(driver: DriverKind, sql: &str, limit: usize) -> Option<String> {
+    match driver {
+        DriverKind::Mssql => apply_auto_limit_mssql(sql, limit),
+        DriverKind::Mysql | DriverKind::Postgres | DriverKind::Sqlite => {
+            apply_auto_limit(sql, limit)
+        }
+    }
+}
+
+/// `TOP (n)` variant of [`apply_auto_limit`] for Microsoft SQL Server (#729).
+/// Shares the same eligibility checks (masked/lowercased body, write-keyword
+/// scan, aggregate-only detection) but rewrites by inserting `TOP (n)` right
+/// after the leading `SELECT` [`DISTINCT`] keywords rather than appending a
+/// trailing clause, because that is where T-SQL's row-cap syntax lives
+/// (`SELECT [DISTINCT] TOP (n) ...`).
+///
+/// **Deliberately conservative beyond what [`apply_auto_limit`] checks**:
+/// only a bare `SELECT ...` is rewritten. `WITH ... SELECT` (CTEs) are left
+/// untouched (`None`) — unlike a trailing `LIMIT`, `TOP` must be spliced
+/// right after the *specific* `SELECT` keyword that starts the outermost
+/// query, and locating that (as opposed to the first `SELECT` textually,
+/// which is typically inside the CTE body) is not attempted here. This is
+/// the same "when in doubt, don't rewrite" philosophy as the rest of this
+/// module. A statement that already contains `TOP`, `OFFSET`, or `FETCH`
+/// (T-SQL's `OFFSET ... FETCH NEXT ... ROWS ONLY` pagination clause) is left
+/// alone, same as an existing `LIMIT`/`OFFSET` on the other drivers.
+pub fn apply_auto_limit_mssql(sql: &str, limit: usize) -> Option<String> {
+    if limit == 0 {
+        return None;
+    }
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_analysis(&orig);
+    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+
+    let body = masked_lower
+        .trim()
+        .trim_end_matches(|c: char| c == ';' || c.is_whitespace())
+        .trim_start();
+    if body.is_empty() {
+        return None;
+    }
+    // `WITH ...` (CTEs) intentionally unsupported here — see doc comment.
+    if !starts_with_word(body, "select") {
+        return None;
+    }
+    if contains_word(body, "top") || contains_word(body, "offset") || contains_word(body, "fetch") {
+        return None;
+    }
+    for kw in ["insert", "update", "delete", "into"] {
+        if contains_word(body, kw) {
+            return None;
+        }
+    }
+    if has_locking_clause(body) {
+        return None;
+    }
+    if is_aggregate_only(body) {
+        return None;
+    }
+
+    // Locate the leading `SELECT` (and optional `DISTINCT`) in the
+    // *untrimmed* masked/lowercased text, so indices still line up with
+    // `orig`. `body` above was only used for the eligibility checks. Compares
+    // `Vec<char>` slices throughout (never byte-slices the `String`) so this
+    // stays correct even if a non-ASCII identifier appears later in the SQL.
+    let full: Vec<char> = masked_lower.chars().collect();
+    let mut start = 0usize;
+    while start < full.len() && full[start].is_whitespace() {
+        start += 1;
+    }
+    // `body` starting with "select" guarantees this prefix is present.
+    let mut end = start + "select".len();
+    let mut after_ws = end;
+    while after_ws < full.len() && full[after_ws].is_whitespace() {
+        after_ws += 1;
+    }
+    let distinct: Vec<char> = "distinct".chars().collect();
+    if full.len() >= after_ws + distinct.len()
+        && full[after_ws..after_ws + distinct.len()] == distinct[..]
+        && (after_ws + distinct.len() == full.len()
+            || !is_word_char(full[after_ws + distinct.len()]))
+    {
+        end = after_ws + distinct.len();
+    }
+
+    let mut out: String = orig[..end].iter().collect();
+    out.push_str(&format!(" TOP ({limit})"));
     out.extend(orig[end..].iter());
     Some(out)
 }

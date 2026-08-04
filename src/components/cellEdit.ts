@@ -34,6 +34,11 @@ const NUMERIC_TYPES = new Set([
   "DECIMAL",
   "NEWDECIMAL",
   "NUMERIC",
+  // MSSQL (#729): `db/mssql.rs::mssql_type_name` reports lowercase names,
+  // uppercased at the call sites below — MONEY/SMALLMONEY have no MySQL/
+  // Postgres/SQLite equivalent already in this set.
+  "MONEY",
+  "SMALLMONEY",
 ]);
 
 const BINARY_TYPES = new Set([
@@ -47,6 +52,8 @@ const BINARY_TYPES = new Set([
   // で報告するため、ここに含めないと編集不可の防御をすり抜けて hex 文字列が
   // そのままテキストとして書き込まれ、元のバイナリ値を破壊してしまう。
   "BYTEA",
+  // MSSQL (#729) の非推奨バイナリ型。
+  "IMAGE",
 ]);
 
 /**
@@ -222,21 +229,31 @@ function qualifiedTableRef(driver: string, database: string, table: string): str
   // SQLite has a single namespace per connection — the synthetic "main"
   // database label is for the UI tree, not the SQL itself.
   if (driver === "sqlite") return quoteIdentFor(driver, table);
+  // MSSQL (#729): the backend's schema introspection is scoped to the `dbo`
+  // schema (see `db/mssql.rs` module doc), so a 2-part `database.table`
+  // reference is ambiguous/invalid T-SQL — it needs the 3-part
+  // `database.dbo.table` form.
+  if (driver === "mssql") {
+    return `${quoteIdentFor(driver, database)}.[dbo].${quoteIdentFor(driver, table)}`;
+  }
   return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 
 export function quoteString(driver: string, s: string): string {
   // Single quotes are doubled in every dialect. Backslash is only special
-  // inside MySQL string literals; Postgres (with the default
-  // `standard_conforming_strings = on`) and SQLite treat it as an ordinary
+  // inside MySQL string literals; Postgres/SQLite (with the default
+  // `standard_conforming_strings = on`) and MSSQL treat it as an ordinary
   // character, so doubling it there would corrupt the stored value (and break
   // PK matching when a key contains a backslash). Mirror `quoteIdentFor`'s
   // convention of treating unknown drivers as MySQL.
   const escaped =
-    driver === "postgres" || driver === "sqlite"
+    driver === "postgres" || driver === "sqlite" || driver === "mssql"
       ? s.replace(/'/g, "''")
       : s.replace(/\\/g, "\\\\").replace(/'/g, "''");
-  return "'" + escaped + "'";
+  // MSSQL: an `N` prefix marks the literal as (n)varchar/unicode, matching
+  // `db::mssql::mssql_literal` on the backend.
+  const prefix = driver === "mssql" ? "N" : "";
+  return prefix + "'" + escaped + "'";
 }
 
 /**
@@ -246,7 +263,13 @@ export function quoteString(driver: string, s: string): string {
  */
 export function literalFromCellValue(driver: string, v: CellValue): string {
   if (v === null || v === undefined) return "NULL";
-  if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
+  if (typeof v === "boolean") {
+    // T-SQL has no TRUE/FALSE keyword before SQL Server 2022; `BIT` columns
+    // take 0/1 (same spelling MySQL/SQLite use for their integer-backed
+    // booleans, and what `db::data_diff::sql_literal` emits for MSSQL).
+    if (driver === "mssql") return v ? "1" : "0";
+    return v ? "TRUE" : "FALSE";
+  }
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : "NULL";
   return quoteString(driver, String(v));
 }
@@ -273,6 +296,13 @@ function literalFromInput(driver: string, raw: string, col: Column): string {
     const lc = trimmed.toLowerCase();
     if (lc === "true" || lc === "1") return "TRUE";
     if (lc === "false" || lc === "0") return "FALSE";
+  }
+  // MSSQL `BIT` (reported as type_name "bit" → "BIT" here): no TRUE/FALSE
+  // keyword, see `literalFromCellValue`.
+  if (t === "BIT") {
+    const lc = trimmed.toLowerCase();
+    if (lc === "true" || lc === "1") return "1";
+    if (lc === "false" || lc === "0") return "0";
   }
   return quoteString(driver, raw);
 }
@@ -492,6 +522,9 @@ export function buildDeleteStatements(input: {
 function blobLiteral(driver: string, hex: string): string {
   if (driver === "postgres") return "'\\x" + hex + "'";
   if (driver === "sqlite") return "X'" + hex + "'";
+  // MySQL and MSSQL (#729, `db::data_diff::sql_literal`'s `0x{hex}`) share
+  // the same unquoted `0x...` binary literal syntax, so both fall through
+  // to this default.
   return hex.length > 0 ? "0x" + hex : "''";
 }
 
