@@ -476,17 +476,22 @@ async fn duckdb_read_only_session_rejects_writes_via_ipc() {
     }
 
     // The guard rejects before reaching the driver, so nothing changed.
-    let verify = t::connect(&t::duckdb_options(path.to_str().unwrap()))
-        .await
-        .expect("connect (verify)");
-    let rows = verify
-        .execute("SELECT id, label FROM ro_t ORDER BY id", None)
+    // Verify through the *existing* read-only session (a plain SELECT, which
+    // it allows) rather than opening a second, independent
+    // `duckdb::Connection` to the same file: on Windows DuckDB's file
+    // locking rejects a second handle onto a `.duckdb` file that's still
+    // open elsewhere in the same process ("File is already open ... in
+    // duckdb_integration-*.exe"), unlike Linux which tolerated it — see the
+    // #899 CI review. Every other test in this file that needs to inspect
+    // state after closing a session already does so via a *fresh* connection
+    // opened *after* the prior one's `close()`, so this is the only place
+    // that had two connections alive to the same file at once.
+    let rows = t::run_query_via_command(&state, &sid, "SELECT id, label FROM ro_t ORDER BY id", None)
         .await
         .expect("select after rejected writes")
         .rows;
     assert_eq!(rows.len(), 1, "no write should have landed");
     assert!(matches!(&rows[0][1], t::Value::String(s) if s == "a"));
-    verify.close().await;
 
     remove_db_files(&path);
 }
@@ -736,6 +741,15 @@ async fn duckdb_init_sql_search_path_resolves_on_each_cloned_connection() {
         .await
         .expect("insert row");
     setup.close().await;
+    // `Connection::close(&self)` only clears a held transaction connection
+    // (see its doc comment) — it does *not* drop the seed connection, so
+    // `setup` still holds the file open until this binding is actually
+    // dropped. Without this, the `t::connect` below would open a second,
+    // independent handle onto the same `.duckdb` file while `setup`'s is
+    // still alive, which fails on Windows ("File is already open ... in
+    // duckdb_integration-*.exe") the same way the #899 CI review flagged for
+    // `duckdb_read_only_session_rejects_writes_via_ipc`.
+    drop(setup);
 
     let mut opts = t::duckdb_options(path.to_str().unwrap());
     opts.init_sql = Some("SET search_path = 's';".to_string());
