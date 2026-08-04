@@ -1187,7 +1187,11 @@ impl MssqlConn {
     }
 
     /// See [`MssqlConn::list_db_users`].
-    pub async fn user_privileges(&self, _user: &str, _host: Option<&str>) -> Result<UserPrivileges> {
+    pub async fn user_privileges(
+        &self,
+        _user: &str,
+        _host: Option<&str>,
+    ) -> Result<UserPrivileges> {
         Err(AppError::InvalidInput(
             "users are not yet supported for MSSQL".into(),
         ))
