@@ -7,6 +7,7 @@ pub mod file;
 pub mod history;
 pub mod import;
 pub mod inspector;
+pub mod local;
 pub mod logs;
 pub mod process;
 pub mod profiles;

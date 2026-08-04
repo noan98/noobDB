@@ -38,7 +38,7 @@ use t::{
     CsvPreview, DataDiff, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
-    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LogView, PreviewDoneEvent,
+    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PreviewDoneEvent,
     PreviewMetaEvent, PreviewResult, ProcessInfo, ProfileWithSecretFlags, QueryResult,
     QueryStatsSupport, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
     ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet,
@@ -282,6 +282,15 @@ fn build_fixtures() -> serde_json::Value {
         session_id: "abcd1234".into(),
     };
 
+    let local_table_meta = LocalTableMeta {
+        name: "r1".into(),
+        source_profile: Some("prod-mysql".into()),
+        source_sql: "SELECT * FROM orders".into(),
+        source_driver: Some("mysql".into()),
+        fetched_at_ms: 1_700_000_000_000,
+        row_count: 42,
+    };
+
     let profile_import_result = ImportResult {
         imported: 3,
         skipped: 1,
@@ -489,6 +498,7 @@ fn build_fixtures() -> serde_json::Value {
         "logView": log_view,
         "csvPreview": csv_preview,
         "connectResult": connect_result,
+        "localTableMeta": local_table_meta,
         "profileImportResult": profile_import_result,
         "cancelStreamResponse": cancel_stream_response,
         "knownHost": known_host,

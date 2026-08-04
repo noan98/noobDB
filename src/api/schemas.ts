@@ -21,9 +21,9 @@ import { z } from "zod";
 
 /** `Value` のワイヤフォーマット。`#[serde(untagged)]` なので素のプリミティブ。
  *  BLOB は 16 進文字列 (`Value::Bytes`) として string に乗る (CLAUDE.md 参照)。 */
-const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
+export const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
 
-const column = z.object({
+export const column = z.object({
   name: z.string(),
   type_name: z.string(),
 });
@@ -374,6 +374,18 @@ export const csvPreview = z.object({
 });
 
 export const connectResult = z.object({ session_id: z.string() });
+
+/** ローカル横断クエリ (#740) — ローカルテーブルの由来メタデータ。 */
+export const localTableMeta = z.object({
+  name: z.string(),
+  source_profile: z.string().nullable(),
+  source_sql: z.string(),
+  source_driver: z.string().nullable(),
+  fetched_at_ms: z.number(),
+  row_count: z.number(),
+});
+
+export const localTableMetaArray = z.array(localTableMeta);
 
 /** `connect-progress:phase` イベント: 接続確立のフェーズ進捗 (#684)。
  *  phase は "preparing" / "tunnel_connecting" / "tunnel_authenticating" /

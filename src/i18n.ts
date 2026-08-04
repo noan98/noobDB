@@ -15,6 +15,7 @@ const en = {
   appSnippets: "Snippets",
   appNewSnippet: "New snippet",
   appHistory: "History",
+  appLocal: "Local",
 
   titleBarMinimize: "Minimize",
   titleBarMaximize: "Maximize",
@@ -26,6 +27,7 @@ const en = {
   sidebarTabConnections: "Connections",
   sidebarTabSnippets: "Snippets",
   sidebarTabHistory: "History",
+  sidebarTabLocal: "Local",
   sidebarTablistAria: "Sidebar sections",
   sidebarCollapse: "Collapse sidebar",
   sidebarExpand: "Expand sidebar",
@@ -986,6 +988,43 @@ const en = {
   saveAsTablePreviewEmpty: "Enter a table name to preview the SQL.",
   saveAsTableConfirm: "Create table",
   saveAsTableSuccess: "Created table \"{table}\" from the result set.",
+  // ローカル横断クエリ (#740): 結果セットをローカル SQLite エンジンへ登録し、
+  // 複数接続の結果を横断で再クエリ/JOIN する。
+  registerLocalTableButton: "Register locally",
+  registerLocalTableButtonTitle:
+    "Register this result as a local table, so it can be re-queried or JOINed against other connections' results",
+  registerLocalTableDisabledTitle:
+    "Register this result as a local table (unavailable on this connection).",
+  localConnectionName: "Local",
+  localRegisterTitle: "Register as local table",
+  localRegisterClose: "Close",
+  localRegisterNameLabel: "Local table name",
+  localRegisterNamePlaceholder: "r1",
+  localRegisterNameExists:
+    "A local table named \"{table}\" already exists — registering will overwrite it.",
+  localRegisterRowCount: "{rows} rows will be registered.",
+  localRegisterRowCapExceeded: "Exceeds the {max}-row limit for local registration.",
+  localRegisterScopeNote:
+    "Only the rows already fetched into this grid are used. For the full result set, export then import instead.",
+  localRegisterPrivacyNote: "Processed entirely on your machine. Nothing is sent anywhere.",
+  localRegisterWriteWarning:
+    "This is an independent local copy — edits made here (e.g. UPDATE) never reach the original connection.",
+  localRegisterConfirm: "Register",
+  localRegisterSuccess: "Registered {rows} rows as local table \"{table}\".",
+  localPanelHint:
+    "Register result sets from any connection here to re-query or JOIN them across connections, entirely on your machine. Local tables are volatile by default — they're discarded when the app closes, unless you save them to a file.",
+  localPanelOpen: "Open local connection",
+  localPanelSwitchedIn: "Switch to local",
+  localPanelSaveToFile: "Save to file",
+  localPanelSaveToFileTitle: "Save the local database as a standalone file (persists it)",
+  localPanelSaveToFileSuccess: "Saved the local database to {path}.",
+  localPanelEmptyTitle: "No local tables yet",
+  localPanelEmptyDescription:
+    "Use \"Register locally\" on a result grid to bring rows from any connection in here.",
+  localPanelRowCount: "{rows} rows",
+  localPanelSourceLabel: "from {name}",
+  localPanelDropTable: "Drop local table",
+  localPanelLoading: "Loading…",
   // SQL スクリプトのバッチ実行。
   statusBatchRunning: "Running script ({total} statements)...",
   statusBatchDone: "Script done: {ok} ok, {errors} error(s) of {total}",
@@ -2282,6 +2321,7 @@ const ja: Dict = {
   appSnippets: "スニペット",
   appNewSnippet: "新規スニペット",
   appHistory: "履歴",
+  appLocal: "ローカル",
 
   titleBarMinimize: "最小化",
   titleBarMaximize: "最大化",
@@ -2293,6 +2333,7 @@ const ja: Dict = {
   sidebarTabConnections: "接続",
   sidebarTabSnippets: "スニペット",
   sidebarTabHistory: "履歴",
+  sidebarTabLocal: "ローカル",
   sidebarTablistAria: "サイドバーのセクション",
   sidebarCollapse: "サイドバーを折りたたむ",
   sidebarExpand: "サイドバーを開く",
@@ -3253,6 +3294,41 @@ const ja: Dict = {
   saveAsTablePreviewEmpty: "テーブル名を入力すると SQL がプレビューされます。",
   saveAsTableConfirm: "テーブルを作成",
   saveAsTableSuccess: "結果セットからテーブル「{table}」を作成しました。",
+  // ローカル横断クエリ (#740): 結果セットをローカル SQLite エンジンへ登録し、
+  // 複数接続の結果を横断で再クエリ/JOIN する。
+  registerLocalTableButton: "ローカルに登録",
+  registerLocalTableButtonTitle:
+    "この結果をローカルテーブルとして登録します。他の接続の結果と横断で再クエリ・JOIN できます",
+  registerLocalTableDisabledTitle: "この結果をローカルテーブルとして登録します (この接続では利用できません)。",
+  localConnectionName: "ローカル",
+  localRegisterTitle: "ローカルテーブルとして登録",
+  localRegisterClose: "閉じる",
+  localRegisterNameLabel: "ローカルテーブル名",
+  localRegisterNamePlaceholder: "r1",
+  localRegisterNameExists: "ローカルテーブル「{table}」は既に存在します — 登録すると上書きされます。",
+  localRegisterRowCount: "{rows} 行を登録します。",
+  localRegisterRowCapExceeded: "ローカル登録の上限 {max} 行を超えています。",
+  localRegisterScopeNote:
+    "このグリッドに取得済みの行のみが対象です。全件が必要な場合はエクスポート → インポートをご利用ください。",
+  localRegisterPrivacyNote: "すべてこの端末内だけで処理されます。外部へは一切送信されません。",
+  localRegisterWriteWarning:
+    "独立したローカルコピーです — ここでの UPDATE 等の変更は、元の接続先には一切反映されません。",
+  localRegisterConfirm: "登録",
+  localRegisterSuccess: "{rows} 行をローカルテーブル「{table}」として登録しました。",
+  localPanelHint:
+    "任意の接続の結果セットをここへ登録すると、接続をまたいで再クエリ・JOIN できます。すべてこの端末内だけで完結します。ローカルテーブルは既定で揮発し (アプリ終了で破棄)、ファイルに保存すると永続化できます。",
+  localPanelOpen: "ローカル接続を開く",
+  localPanelSwitchedIn: "ローカルに切替中",
+  localPanelSaveToFile: "ファイルに保存",
+  localPanelSaveToFileTitle: "ローカル DB を独立したファイルとして保存します (永続化)",
+  localPanelSaveToFileSuccess: "ローカル DB を {path} に保存しました。",
+  localPanelEmptyTitle: "登録済みのローカルテーブルはありません",
+  localPanelEmptyDescription:
+    "結果グリッドの「ローカルに登録」から、任意の接続の行をここへ取り込めます。",
+  localPanelRowCount: "{rows} 行",
+  localPanelSourceLabel: "由来: {name}",
+  localPanelDropTable: "ローカルテーブルを削除",
+  localPanelLoading: "読み込み中…",
   // SQL スクリプトのバッチ実行。
   statusBatchRunning: "スクリプトを実行中 ({total} 文)...",
   statusBatchDone: "スクリプト完了: {total} 文中 成功 {ok} / エラー {errors}",
