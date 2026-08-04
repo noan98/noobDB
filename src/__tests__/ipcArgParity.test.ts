@@ -378,6 +378,9 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
         "queryTimeoutSecs",
         "autoRefresh",
         "forceReadOnly",
+        "capture",
+        "captureRowCap",
+        "captureRetentionDays",
       ].sort(),
     );
     // `export_query_result` は引数の間にコメント行を挟む。コメント除去が効いているか確認。

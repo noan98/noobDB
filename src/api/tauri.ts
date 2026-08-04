@@ -302,6 +302,58 @@ export interface HistoryEntry {
   executed_at: string;
 }
 
+/** #735 DML フライトレコーダの書き込み種別。`db::WriteKind` の wire 表現。 */
+export type WriteKind = "insert" | "update" | "delete" | "other";
+
+/** `run_captured_write` / `run_query_stream` (capture 有効時) の戻り値。 */
+export interface CapturedWriteResponse {
+  result: QueryResult;
+  capturable: boolean;
+  reason: string | null;
+  captureId: number | null;
+}
+
+/** `precheck_captured_write` — 実行前に記録可否/推定行数を知るための下見。 */
+export interface WriteCapturePrecheck {
+  capturable: boolean;
+  reason: string | null;
+  estimatedRows: number | null;
+}
+
+/** `list_flight_records` の 1 件。行データ本体は含まない一覧用サマリ。 */
+export interface WriteCaptureSummary {
+  id: number;
+  profile_id: string | null;
+  driver: string;
+  database: string | null;
+  table: string;
+  kind: WriteKind;
+  sql: string;
+  rows_affected: number;
+  captured_at: string;
+  undone: boolean;
+}
+
+/** Undo プレビュー/適用で検出される 1 行の競合。 */
+export interface UndoConflict {
+  key: CellValue[];
+  expected: CellValue[] | null;
+  current: CellValue[] | null;
+}
+
+export interface UndoPreviewResponse {
+  statements: string[];
+  conflicts: UndoConflict[];
+  warnings: string[];
+}
+
+export interface UndoOutcome {
+  applied: boolean;
+  rowsAffected: number;
+  conflicts: UndoConflict[];
+  warnings: string[];
+}
+
 export interface Column {
   name: string;
   type_name: string;
@@ -1107,6 +1159,18 @@ export const api = {
      * must never let it write to any of them.
      */
     forceReadOnly?: boolean;
+    /**
+     * DML フライトレコーダ (#735)。true かつ単文の INSERT/UPDATE/DELETE の
+     * ときだけ、通常のストリーミング実行の代わりにバックエンドが
+     * `capture_write` 経由で before/after イメージの記録を試みつつ実行する。
+     * `query-stream:*` イベントの形は変わらないため、この関数の呼び出し側
+     * (`onDone`/`onError` 購読) は変更不要。
+     */
+    capture?: boolean;
+    /** 1 回の書き込みで退避する対象行数の上限。 */
+    captureRowCap?: number | null;
+    /** 退避した before/after イメージの保持期間 (日数)。 */
+    captureRetentionDays?: number | null;
   }) =>
     invoke<void>("run_query_stream", {
       sessionId: params.sessionId,
@@ -1119,6 +1183,9 @@ export const api = {
       queryTimeoutSecs: params.queryTimeoutSecs ?? null,
       autoRefresh: params.autoRefresh ?? false,
       forceReadOnly: params.forceReadOnly ?? false,
+      capture: params.capture ?? false,
+      captureRowCap: params.captureRowCap ?? null,
+      captureRetentionDays: params.captureRetentionDays ?? null,
     }),
   previewQueryStream: (params: {
     sessionId: string;
@@ -1591,6 +1658,69 @@ export const api = {
   writeBinaryFile: (path: string, data: Uint8Array) =>
     invoke<number>("write_binary_file", { path, data: Array.from(data) }).then((r) =>
       parseResponse(schemas.numberResponse, r, "write_binary_file"),
+    ),
+
+  /**
+   * DML フライトレコーダ (#735)。単文の INSERT/UPDATE/DELETE を実行しつつ
+   * before/after イメージの記録を試みる。記録の成否 (`capturable`) に関わらず
+   * 書き込み自体は常に行われる — 記録はベストエフォートの保険。
+   */
+  runCapturedWrite: (params: {
+    sessionId: string;
+    sql: string;
+    database?: string | null;
+    rowCap?: number | null;
+    retentionDays?: number | null;
+  }) =>
+    invoke<CapturedWriteResponse>("run_captured_write", {
+      sessionId: params.sessionId,
+      sql: params.sql,
+      database: params.database ?? null,
+      rowCap: params.rowCap ?? null,
+      retentionDays: params.retentionDays ?? null,
+    }).then((r) => parseResponse(schemas.capturedWriteResponse, r, "run_captured_write")),
+
+  /** 実行前に「この文は記録できるか・約何行が対象か」を副作用なしで確認する。 */
+  precheckCapturedWrite: (params: {
+    sessionId: string;
+    sql: string;
+    database?: string | null;
+    rowCap?: number | null;
+  }) =>
+    invoke<WriteCapturePrecheck>("precheck_captured_write", {
+      sessionId: params.sessionId,
+      sql: params.sql,
+      database: params.database ?? null,
+      rowCap: params.rowCap ?? null,
+    }).then((r) => parseResponse(schemas.writeCapturePrecheck, r, "precheck_captured_write")),
+
+  listFlightRecords: (profileId?: string | null, limit?: number | null) =>
+    invoke<WriteCaptureSummary[]>("list_flight_records", {
+      profileId: profileId ?? null,
+      limit: limit ?? null,
+    }).then((r) => parseResponse(schemas.writeCaptureSummaryArray, r, "list_flight_records")),
+
+  clearFlightRecords: (profileId?: string | null) =>
+    invoke<number>("clear_flight_records", { profileId: profileId ?? null }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "clear_flight_records"),
+    ),
+
+  /** 巻き戻しの逆 SQL・競合を副作用なしで確認する (適用前のレビュー用)。 */
+  previewUndo: (sessionId: string, id: number) =>
+    invoke<UndoPreviewResponse>("preview_undo", { sessionId, id }).then((r) =>
+      parseResponse(schemas.undoPreviewResponse, r, "preview_undo"),
+    ),
+
+  /**
+   * 巻き戻しの逆 SQL を適用する。競合があり `force` が false のときは何も
+   * 適用せず競合一覧を返す (`applied: false`) — 呼び出し側は競合を提示して
+   * `force: true` で再呼び出しするか、諦めるかをユーザに選ばせる。既存の
+   * `run_query_transaction` 経路 (all-or-nothing・read-only ガード・履歴記録)
+   * をそのまま通る。
+   */
+  undoFlightRecord: (sessionId: string, id: number, force: boolean) =>
+    invoke<UndoOutcome>("undo_flight_record", { sessionId, id, force }).then((r) =>
+      parseResponse(schemas.undoOutcome, r, "undo_flight_record"),
     ),
 
   // --- タスクスケジューラ (#730) ---

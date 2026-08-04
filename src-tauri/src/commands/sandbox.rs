@@ -300,6 +300,10 @@ pub(crate) async fn create_sandbox_inner(
         skip_history: true,
         connect_options: opts,
         reconnect_ssh: None,
+        // サンドボックスの裏ファイルは `SandboxRecord`/`sandboxes::store` が
+        // ライフサイクルを管理する永続ファイルで、#740 のローカル横断クエリの
+        // 揮発性一時ファイルとは異なり切断時に自動削除してはいけない。
+        local_temp_file: None,
         _tunnel: None,
     };
     let session_id = state.insert(session).await;

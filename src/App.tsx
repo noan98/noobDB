@@ -230,6 +230,7 @@ import {
 } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
+import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
 import {
@@ -3342,6 +3343,11 @@ export default function App() {
         autoLimit,
         queryTimeoutSecs: timeoutSecs,
         autoRefresh,
+        // DML フライトレコーダ (#735): 単文の INSERT/UPDATE/DELETE のみ対象。
+        // 自動リフレッシュ (常に読み取り専用) は対象外。
+        capture: settings.flightRecorderEnabled && !autoRefresh && isSingleCapturableStatement(sql),
+        captureRowCap: settings.flightRecorderRowCap,
+        captureRetentionDays: settings.flightRecorderRetentionDays,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
@@ -3356,6 +3362,9 @@ export default function App() {
     cancelStreamForTab,
     invalidateSchemaCache,
     notifyQueryOutcome,
+    settings.flightRecorderEnabled,
+    settings.flightRecorderRowCap,
+    settings.flightRecorderRetentionDays,
     selectedProfile?.database,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
@@ -7010,6 +7019,7 @@ export default function App() {
         ) : sidebarTab === "history" ? (
           <HistoryList
             activeProfile={selectedProfile}
+            sessionId={sessionId}
             reloadKey={historyReloadKey}
             onRestore={handleRestoreHistory}
             onOpenInNewTab={handleOpenHistoryInNewTab}

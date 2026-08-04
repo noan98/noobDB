@@ -1724,3 +1724,489 @@ async fn sqlite_advisor_flags_expected_rules() {
     conn.close().await;
     let _ = std::fs::remove_file(&p);
 }
+
+// ---------------------------------------------------------------------------
+// #735 DML フライトレコーダ: `Connection::capture_write` / `fetch_rows_by_pk`
+//
+// ここではドライバ層 (`Connection`) を直接駆動する — コマンド層
+// (`run_captured_write` / `undo_flight_record`) はローカルの
+// `flight_recorder.sqlite` に永続化するため、`history` 統合テストと同じ理由
+// (実データディレクトリを cargo test で汚さない) でコマンド層の永続化パス
+// 自体は統合テスト対象から外し、`flight_recorder::store` 側のインメモリ
+// pool を使ったユニットテスト (`src/flight_recorder/store.rs`) でカバーする。
+// 純粋なリバース SQL 生成/競合検出は `src/flight_recorder/undo.rs` の
+// ユニットテストでカバー済み。ここは実 SQLite に対する capture_write /
+// fetch_rows_by_pk の実地検証が担当領域。
+// ---------------------------------------------------------------------------
+
+async fn flight_fixture(tag: &str) -> (PathBuf, t::Connection) {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_flight_{tag}_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect");
+    conn.execute(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create table");
+    conn.execute("INSERT INTO t (id, name) VALUES (1, 'alice')", None)
+        .await
+        .expect("seed");
+    conn.execute("INSERT INTO t (id, name) VALUES (2, 'bob')", None)
+        .await
+        .expect("seed");
+    (path, conn)
+}
+
+#[tokio::test]
+async fn capture_write_records_update_before_after_and_applies_the_real_write() {
+    let (path, conn) = flight_fixture("update").await;
+
+    let (result, capture) = conn
+        .capture_write("UPDATE t SET name = 'alice2' WHERE id = 1", None, 100)
+        .await
+        .expect("capture_write");
+
+    assert_eq!(result.rows_affected, 1, "the real UPDATE must have applied");
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    assert_eq!(capture.kind, t::WriteKind::Update);
+    assert_eq!(capture.table.as_deref(), Some("t"));
+    assert_eq!(capture.primary_key, vec!["id".to_string()]);
+    assert_eq!(capture.before_rows.len(), 1);
+    assert_eq!(capture.after_rows.len(), 1);
+    let name_idx = capture.columns.iter().position(|c| c == "name").unwrap();
+    assert_eq!(
+        capture.before_rows[0][name_idx],
+        t::Value::String("alice".to_string())
+    );
+    assert_eq!(
+        capture.after_rows[0][name_idx],
+        t::Value::String("alice2".to_string())
+    );
+
+    // The real write actually happened (this is not a dry run).
+    let live = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert!(matches!(&live.rows[0][0], t::Value::String(s) if s == "alice2"));
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_records_delete_before_image() {
+    let (path, conn) = flight_fixture("delete").await;
+
+    let (result, capture) = conn
+        .capture_write("DELETE FROM t WHERE id = 2", None, 100)
+        .await
+        .expect("capture_write");
+
+    assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    assert_eq!(capture.kind, t::WriteKind::Delete);
+    assert_eq!(capture.before_rows.len(), 1);
+    assert!(capture.after_rows.is_empty());
+    let id_idx = capture.columns.iter().position(|c| c == "id").unwrap();
+    assert_eq!(capture.before_rows[0][id_idx], t::Value::Int(2));
+
+    let live = conn
+        .execute("SELECT COUNT(*) AS n FROM t WHERE id = 2", None)
+        .await
+        .expect("select");
+    assert!(matches!(
+        &live.rows[0][0],
+        t::Value::Int(0) | t::Value::UInt(0)
+    ));
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_records_insert_after_image_via_pk_diff() {
+    let (path, conn) = flight_fixture("insert").await;
+
+    let (result, capture) = conn
+        .capture_write("INSERT INTO t (id, name) VALUES (3, 'carol')", None, 100)
+        .await
+        .expect("capture_write");
+
+    assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    assert_eq!(capture.kind, t::WriteKind::Insert);
+    assert!(capture.before_rows.is_empty());
+    assert_eq!(capture.after_rows.len(), 1);
+    let id_idx = capture.columns.iter().position(|c| c == "id").unwrap();
+    let name_idx = capture.columns.iter().position(|c| c == "name").unwrap();
+    assert_eq!(capture.after_rows[0][id_idx], t::Value::Int(3));
+    assert_eq!(
+        capture.after_rows[0][name_idx],
+        t::Value::String("carol".to_string())
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_marks_tableless_pk_target_as_not_capturable_but_still_executes() {
+    // A table with no primary key can't be safely undone (no stable row
+    // identifier), so capture must decline — but the write itself must still
+    // go through unchanged (capture failing never blocks a write).
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_flight_nopk_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE logs (msg TEXT NOT NULL)", None)
+        .await
+        .expect("create table");
+    conn.execute("INSERT INTO logs (msg) VALUES ('hello')", None)
+        .await
+        .expect("seed");
+
+    let (result, capture) = conn
+        .capture_write("UPDATE logs SET msg = 'bye' WHERE msg = 'hello'", None, 100)
+        .await
+        .expect("capture_write");
+
+    assert_eq!(result.rows_affected, 1, "write must still apply");
+    assert!(!capture.capturable);
+    assert!(capture.reason.is_some());
+
+    let live = conn
+        .execute("SELECT msg FROM logs", None)
+        .await
+        .expect("select");
+    assert!(matches!(&live.rows[0][0], t::Value::String(s) if s == "bye"));
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_declines_ddl_and_select_but_still_executes() {
+    let (path, conn) = flight_fixture("other").await;
+
+    let (result, capture) = conn
+        .capture_write("CREATE TABLE extra (id INTEGER)", None, 100)
+        .await
+        .expect("capture_write");
+    assert_eq!(capture.kind, t::WriteKind::Other);
+    assert!(!capture.capturable);
+    assert!(result.rows_affected == 0 || result.rows_affected == 1); // driver-dependent, unused here
+
+    // DDL must actually have run.
+    let live = conn
+        .execute(
+            "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='extra'",
+            None,
+        )
+        .await
+        .expect("select");
+    assert!(matches!(
+        &live.rows[0][0],
+        t::Value::Int(1) | t::Value::UInt(1)
+    ));
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn fetch_rows_by_pk_returns_only_matching_rows() {
+    let (path, conn) = flight_fixture("fetchpk").await;
+
+    let rows = conn
+        .fetch_rows_by_pk(
+            "t",
+            &["id".to_string()],
+            &[vec![t::Value::Int(1)], vec![t::Value::Int(2)]],
+            None,
+        )
+        .await
+        .expect("fetch_rows_by_pk");
+    assert_eq!(rows.len(), 2);
+
+    let none = conn
+        .fetch_rows_by_pk("t", &["id".to_string()], &[vec![t::Value::Int(999)]], None)
+        .await
+        .expect("fetch_rows_by_pk");
+    assert!(none.is_empty());
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn fetch_rows_by_pk_chunks_large_key_lists() {
+    // #735 レビュー対応: 1 SELECT に全件を OR 連結すると SQLite の式ツリー
+    // 深さ上限に触れうるため、実装はチャンク分割している。チャンクサイズ
+    // (200) を跨ぐ件数を渡しても正しく全件返ることを固定する。
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_flight_chunk_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE big (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create table");
+
+    const N: i64 = 450; // > 2 chunks at CHUNK_SIZE=200
+    for id in 1..=N {
+        conn.execute(&format!("INSERT INTO big (id) VALUES ({id})"), None)
+            .await
+            .expect("seed");
+    }
+
+    let keys: Vec<Vec<t::Value>> = (1..=N).map(|id| vec![t::Value::Int(id)]).collect();
+    let rows = conn
+        .fetch_rows_by_pk("big", &["id".to_string()], &keys, None)
+        .await
+        .expect("fetch_rows_by_pk");
+    assert_eq!(rows.len(), N as usize);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_declines_when_primary_key_signature_is_duplicated() {
+    // #735 レビュー対応: SQLite は INTEGER PRIMARY KEY 以外の主キーに NULL を
+    // 許すため、複数行が同一 (NULL) シグネチャに畳まれることがある。この状況
+    // では UPDATE の before/after ペアリングを誤りかねないため、記録を辞退
+    // しつつ実行自体は行うことを固定する。
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_flight_duppk_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect");
+    conn.execute(
+        "CREATE TABLE dup (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create table");
+    conn.execute("INSERT INTO dup (id, name) VALUES (NULL, 'a')", None)
+        .await
+        .expect("seed");
+    conn.execute("INSERT INTO dup (id, name) VALUES (NULL, 'b')", None)
+        .await
+        .expect("seed");
+
+    let (result, capture) = conn
+        .capture_write("UPDATE dup SET name = 'c' WHERE name = 'a'", None, 100)
+        .await
+        .expect("capture_write");
+
+    assert_eq!(result.rows_affected, 1, "the write must still apply");
+    assert!(
+        !capture.capturable,
+        "duplicate PK signature must decline capture"
+    );
+    assert!(capture.reason.is_some());
+
+    let live = conn
+        .execute("SELECT name FROM dup WHERE name = 'c'", None)
+        .await
+        .expect("select");
+    assert_eq!(live.rows.len(), 1);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn undo_plan_round_trips_a_real_capture_and_a_real_conflict_check() {
+    // Wires `capture_write` → `build_undo_plan` → `fetch_rows_by_pk` together
+    // against a real SQLite connection, without touching the on-disk flight
+    // recorder store (module docs above explain why).
+    let (path, conn) = flight_fixture("roundtrip").await;
+
+    let (_result, capture) = conn
+        .capture_write("UPDATE t SET name = 'alice2' WHERE id = 1", None, 100)
+        .await
+        .expect("capture_write");
+    assert!(capture.capturable);
+
+    let record = t::WriteCaptureRecord {
+        id: 1,
+        profile_id: None,
+        driver: "sqlite".to_string(),
+        database: None,
+        table: capture.table.clone().unwrap(),
+        kind: capture.kind,
+        sql: "UPDATE t SET name = 'alice2' WHERE id = 1".to_string(),
+        primary_key: capture.primary_key.clone(),
+        columns: capture.columns.clone(),
+        column_types: capture.column_types.clone(),
+        before_rows: capture.before_rows.clone(),
+        after_rows: capture.after_rows.clone(),
+        rows_affected: capture.rows_affected as i64,
+        captured_at: "2026-01-01T00:00:00Z".to_string(),
+        undone: false,
+    };
+
+    // No further drift since capture: undo restores the before-value cleanly.
+    let pk_idx = record
+        .primary_key
+        .iter()
+        .filter_map(|n| record.columns.iter().position(|c| c == n))
+        .collect::<Vec<_>>();
+    let pk_values: Vec<Vec<t::Value>> = record
+        .before_rows
+        .iter()
+        .map(|r| pk_idx.iter().map(|&i| r[i].clone()).collect())
+        .collect();
+    let current = conn
+        .fetch_rows_by_pk("t", &record.primary_key, &pk_values, None)
+        .await
+        .expect("fetch current");
+    let plan = t::build_undo_plan(&record, &current, false);
+    assert!(plan.conflicts.is_empty());
+    assert_eq!(plan.statements.len(), 1);
+
+    for stmt in &plan.statements {
+        conn.execute(stmt, None).await.expect("apply undo");
+    }
+    let restored = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert!(matches!(&restored.rows[0][0], t::Value::String(s) if s == "alice"));
+
+    // Now simulate a conflicting concurrent change after capture, before undo.
+    let (_result2, capture2) = conn
+        .capture_write("UPDATE t SET name = 'alice3' WHERE id = 1", None, 100)
+        .await
+        .expect("capture_write");
+    conn.execute("UPDATE t SET name = 'carol' WHERE id = 1", None)
+        .await
+        .expect("simulate a concurrent change after capture");
+
+    let record2 = t::WriteCaptureRecord {
+        id: 2,
+        profile_id: None,
+        driver: "sqlite".to_string(),
+        database: None,
+        table: capture2.table.clone().unwrap(),
+        kind: capture2.kind,
+        sql: "UPDATE t SET name = 'alice3' WHERE id = 1".to_string(),
+        primary_key: capture2.primary_key.clone(),
+        columns: capture2.columns.clone(),
+        column_types: capture2.column_types.clone(),
+        before_rows: capture2.before_rows.clone(),
+        after_rows: capture2.after_rows.clone(),
+        rows_affected: capture2.rows_affected as i64,
+        captured_at: "2026-01-01T00:00:01Z".to_string(),
+        undone: false,
+    };
+    // record2's own before_rows drive its pk_values — reusing record1's would
+    // happen to work here (both target id=1) but is the wrong derivation in
+    // general (#735 review follow-up).
+    let pk_idx2 = record2
+        .primary_key
+        .iter()
+        .filter_map(|n| record2.columns.iter().position(|c| c == n))
+        .collect::<Vec<_>>();
+    let pk_values2: Vec<Vec<t::Value>> = record2
+        .before_rows
+        .iter()
+        .map(|r| pk_idx2.iter().map(|&i| r[i].clone()).collect())
+        .collect();
+    let current2 = conn
+        .fetch_rows_by_pk("t", &record2.primary_key, &pk_values2, None)
+        .await
+        .expect("fetch current");
+    let without_force = t::build_undo_plan(&record2, &current2, false);
+    assert_eq!(
+        without_force.conflicts.len(),
+        1,
+        "the concurrent change must surface as a conflict"
+    );
+    assert!(
+        without_force.statements.is_empty(),
+        "no statement applied without force"
+    );
+
+    let forced = t::build_undo_plan(&record2, &current2, true);
+    assert_eq!(
+        forced.statements.len(),
+        1,
+        "force must still produce a statement"
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// #735 コマンド層: 読み取り専用ガード・存在しないレコードの拒否
+// (永続化を伴わない経路のみ; 理由は上のコメント参照)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn read_only_session_rejects_captured_write() {
+    let path = seed_ro_fixture("flight_ro").await;
+    let (state, sid) = ro_state(&path).await;
+
+    let err = t::run_captured_write_via_command(
+        &state,
+        &sid,
+        "UPDATE ro_t SET label = 'z' WHERE id = 1",
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect_err("read-only session must reject a captured write");
+    assert!(matches!(err, t::AppError::ReadOnly(_)));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn undo_rejects_unknown_capture_id() {
+    // 記録済みドライバ/プロファイルの照合そのものは (実ストアを介さない)
+    // `commands::flight_recorder::tests::ensure_record_matches_session` の
+    // ユニットテストがカバーする。ここは実セッション経由での「存在しない id」
+    // 拒否のみを対象とする。
+    let path = seed_ro_fixture("flight_undo_unknown").await;
+    let opts = t::sqlite_options(path.to_str().unwrap());
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_session("undo_sess", conn, opts, /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let err = t::undo_flight_record_via_command(&state, &sid, 999_999, false)
+        .await
+        .expect_err("undoing a nonexistent capture id must fail");
+    assert!(matches!(err, t::AppError::InvalidInput(_)));
+
+    let _ = std::fs::remove_file(&path);
+}

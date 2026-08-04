@@ -137,6 +137,17 @@ const SECTIONS: Section[] = [
         impact: "no",
         noteKey: "helpTaskSchedulerNote",
       },
+      {
+        titleKey: "helpFlightRecorderTitle",
+        descKey: "helpFlightRecorderDesc",
+        impact: "no",
+        stepKeys: [
+          "helpFlightRecorderStep1",
+          "helpFlightRecorderStep2",
+          "helpFlightRecorderStep3",
+        ],
+        noteKey: "helpFlightRecorderNote",
+      },
     ],
   },
   {
