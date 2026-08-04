@@ -139,6 +139,8 @@ NOOBDB_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/testdb \
   cargo test --test mysql_integration
 NOOBDB_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/testdb \
   cargo test --test postgres_integration
+NOOBDB_TEST_MSSQL_URL=mssql://sa:YourStrong!Passw0rd@127.0.0.1:1433/testdb \
+  cargo test --test mssql_integration
 ```
 
 SSH トンネル統合テスト (`tests/ssh_integration.rs`、#331) は `NOOBDB_TEST_SSH_URL`
@@ -525,10 +527,11 @@ knip は「エクスポートされているがどこからも import されな�
 
 ## アーキテクチャ
 
-noobDB は MySQL / PostgreSQL / SQLite に対応した軽量デスクトップ DB クライアントで、
-SSH トンネルをファーストクラスでサポートします。Rust バックエンド (`rust-version`
-1.77、edition 2021) は `sqlx` 0.9 (`tls-rustls`)、`russh` 0.61、`keyring` 3 などに
-依存しています。
+noobDB は MySQL / PostgreSQL / SQLite / Microsoft SQL Server (#729) に対応した
+軽量デスクトップ DB クライアントで、SSH トンネルをファーストクラスでサポートします。
+Rust バックエンド (`rust-version` 1.77、edition 2021) は `sqlx` 0.9 (`tls-rustls`、
+MySQL/PostgreSQL/SQLite の 3 ドライバが使う)、MSSQL 専用の `tiberius` 0.12、
+`russh` 0.61、`keyring` 3 などに依存しています。
 
 ### 2 プロセス構成
 
@@ -547,8 +550,10 @@ SSH トンネルをファーストクラスでサポートします。Rust バ�
 ### ドライバのディスパッチ: `enum Connection`
 
 DB レイヤは意図的に手書きの enum で実装されており、トレイトオブジェクトではありません。
-`src-tauri/src/db/mod.rs` の `db::Connection` は `MySql` / `Postgres` / `Sqlite` の
-3 バリアントを持ち、各操作 (`execute`, `begin_transaction` / `execute_in_transaction` /
+`src-tauri/src/db/mod.rs` の `db::Connection` は `MySql` / `Postgres` / `Sqlite` /
+`Mssql` の 4 バリアントを持ち (`Mssql` だけ `Box<mssql::MssqlConn>` — `tiberius::Client`
+が sqlx の他 3 ドライバよりずっと大きく `clippy::large_enum_variant` に当たるため)、
+各操作 (`execute`, `begin_transaction` / `execute_in_transaction` /
 `finish_transaction` / `transaction_active`, `health_check`,
 `preview_execute_with_limit`, `execute_stream`, `import_rows`, `execute_transaction`,
 `databases`, `tables`, `columns`, `schema_overview`, `foreign_keys`, `schema_objects`,
@@ -559,8 +564,40 @@ DB レイヤは意図的に手書きの enum で実装されており、トレ�
 SSH やセッション層には触らないでください — それらはドライバに依存しません。`schema_objects` /
 `object_definition` (ビュー・ルーチン・トリガーの列挙と DDL 取得)、`list_indexes`、
 `table_row_estimates` (統計情報ベースの概算行数)、`list_processes` / `kill_process`
-(MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity`) もこの enum 表面の一部で、SQLite では
-多くがサーバ機能非対応のため空や no-op で短絡します。
+(MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity` / MSSQL `sys.dm_exec_sessions`
++ `sys.dm_exec_requests` / `KILL <spid>`) もこの enum 表面の一部で、SQLite では多くが
+サーバ機能非対応のため空や no-op で短絡します。
+
+**MSSQL ドライバ (`db/mssql.rs`、#729) は他 3 ドライバと異なり sqlx を使いません**
+(sqlx に MSSQL バックエンドが無いため)。代わりに素の TDS クライアント `tiberius` を
+直接使い、コネクションプールも `sqlx::Pool` ではなく本モジュール内に手書きの極小プール
+(`MssqlPool` — `std::sync::Mutex<Vec<Client>>` の idle リスト + `tokio::sync::Semaphore`
+で同時接続数を制限。同期 Mutex を使うのは `PooledConn` の `Drop` から async を経由せずに
+接続をプールへ返せるようにするため) を実装しています。エラー型も `AppError::Sqlx` では
+なく専用の `AppError::Mssql(#[from] tiberius::error::Error)` です。他ドライバとの主な
+差分:
+
+- **スキーマ introspection は `dbo` スキーマに限定**しています。MSSQL は 1 データベース
+  内に複数スキーマを持てますが、既存の「1 データベース = 1 名前空間」という他ドライバの
+  抽象 (sync/export/import が生成する識別子はすべて単一パート想定) を崩さないための
+  意図的なスコープ縮小です (`db/mssql.rs` のモジュール doc に詳細)。フロント側の
+  `db.table` 参照もすべて `db.[dbo].table` の 3 パートで組み立てます
+  (`cellEdit.ts`/`QueryBuilder.tsx`/`tableMaintenance.ts`/`createTable.ts` の
+  `qualified`/`qualifiedTableRef`/`tableRef`/`qualifiedName` を参照)。
+- **識別子クオートは `[ident]`** (`db::sync::quote_ident` の `DriverKind::Mssql` 分岐、
+  フロントは `sqlDialect.ts::quoteIdentFor`)。**自動 LIMIT は `TOP (n)`** を
+  `SELECT [DISTINCT]` の直後に挿入する専用実装 `db::apply_auto_limit_mssql`
+  (`db::apply_auto_limit_for` がドライバで振り分け) — `WITH` (CTE) は対象外
+  (「型を惑わせるより何もしない」方針、doc 参照)。フロントの `QueryBuilder.tsx` も
+  同じ TOP 方式で生成する。
+- **`server_metrics` / `query_stats_support` (ライブクエリ・インスペクタ) /
+  `unused_indexes` は未実装**(SQLite と同じ `unsupported_driver` 縮退)。`dump_database`
+  も未対応 (`commands/dump.rs` が `InvalidInput` を返す)。いずれも本 Issue の受け入れ
+  条件の範囲外 — 将来 `sys.dm_exec_*` 系 DMV で実装可能。
+- **統合テストは `tests/mssql_integration.rs`**、`NOOBDB_TEST_MSSQL_URL`
+  (`mssql://user:pass@host:port/db`) 環境変数ゲート (未設定ならスキップ)。CI の
+  サービスコンテナは未追加 (ローカル/手動実行のみ、他ドライバと同じ導入パターンを
+  踏襲すれば追加可能)。
 
 `db::types::{Value, Column, QueryResult, TableColumnInfo, TableSchema,
 PreviewResult, StreamBatch}` がドライバ横断のワイヤフォーマットです。`Value` は
@@ -1009,6 +1046,55 @@ best-effort 逐次のため整合します。**スキーマ変更の原子性が
 読み取り専用セッションを明示的に拒否します (SQL 文ではないので `is_read_only_sql` の
 経路外、コマンド側で別途ガード)。SQLite はサーバプロセスを持たないため空を返します。
 なお #587 で `performance_schema` 無効時に MySQL のプロセス一覧が空になる問題を修正済み。
+
+### ローカル横断クエリ (#740)
+
+複数接続の結果セットをローカルエンジンへ取り込み、異種 DB 間 JOIN・再分析を 1 アプリ内で
+完結させる機能です。第 1 候補は DuckDB (#709) でしたが、本実装は #709 に先行しないため
+**既にフル依存済みの組み込み SQLite をインメモリ相当 (一時ファイル) で使う縮退構成**を
+採用しています。将来 DuckDB へ差し替える場合は `db::Connection` の `Sqlite` 版
+`register_local_table` / `list_local_tables` / `drop_local_table` / `vacuum_into` を
+新バリアントへ実装し直すだけで、`commands/local.rs` (IPC 層) は無改修で済む設計です。
+
+- **「ローカル」接続 = 駆動元セッションを持たない特殊セッション**。`create_local_session`
+  が OS 標準の一時領域 (`std::env::temp_dir()/noobdb-local/`) に空の SQLite ファイルを
+  touch し、既存の `Connection::Sqlite` としてそのまま開きます。以降のクエリ実行は
+  **既存の `run_query` / `run_query_stream` 等をそのまま再利用**し、新しい実行経路は
+  一切増やしていません。フロント (`App.tsx`) はこの「ローカル」を実在しない擬似
+  `ConnectionProfile` (`id: "__local__"`、`driver: "sqlite"`) として扱い、`handleConnect`
+  内で `id` を見て `api.connect` の代わりに `api.createLocalSession` を呼ぶ以外は、
+  複数同時接続のタブ切替・タブ復元・エディタ・グリッド・エクスポートを他の接続と
+  完全に共有します。
+- **登録**: `register_local_table` が `db::types::{Column, Value}` (既存のワイヤ
+  フォーマットそのもの) を受け取り、`db::sqlite::SqliteConn::register_local_table` が
+  1 トランザクションで「テーブル作成 (無型宣言 = BLOB affinity で値を無変換のまま保持) →
+  行 INSERT (`Value` を文字列往復させず直接 bind — `Bytes` は実 BLOB に、`Int`/`Float`/
+  `Bool` はそれぞれの storage class に、`Null` は SQL NULL に) → 由来メタデータ upsert」
+  まで行います。無型宣言のカラムは SQLite の BLOB affinity (無変換) を利用しており、
+  型付き `Value` から文字列を経由しない分、CSV インポート系の文字列ベース経路より
+  高精度に往復します。取り込み対象は**在メモリの取得済み行のみ**で、上限
+  `MAX_LOCAL_TABLE_ROWS = 200_000` (バックエンド `commands/local.rs` とフロント
+  `components/localQuery.ts` の同名定数で表現) を超える登録はバックエンドが拒否します。
+- **由来メタデータ**は隠しカタログテーブル `__noobdb_local_meta` (ローカル DB 自身の中、
+  初回登録時に遅延作成) に保存し、`LocalTableMeta` (元の接続名・実行 SQL・ドライバ・
+  登録日時・行数) として `list_local_tables` で返します。セッション固有の `AppState`
+  側の別管理は持たず、ローカル DB ファイル自体がこの状態の単一の情報源です。
+- **既定揮発 / 明示操作でのみ永続化**: バッキングファイルは OS 標準の一時領域に置き、
+  `disconnect` 時に削除します (`Session.local_temp_file` の有無で「ローカルセッション
+  かどうか」を判別)。アプリ異常終了で削除が走らなくても、次回起動時に
+  `commands::local::cleanup_stale_local_files` が同ディレクトリを丸ごと掃除します
+  (前回起動のセッションはどのみち全て無効なので安全)。「ファイルに保存」は
+  `save_local_database` → SQLite の `VACUUM INTO` で独立したスナップショットファイルを
+  書き出すだけで、元のセッション自体の揮発性は変えません。
+- **UI**: `ResultGrid` の「ローカルに登録」ボタン (`RegisterLocalTableModal` で名前確認
+  + 件数/上限/プライバシー注記を表示) と、サイドバーの「ローカル」タブ
+  (`LocalTablesPanel`。登録済みテーブルの由来一覧・削除・ファイル保存)。安全性/
+  プライバシーの明示 (外部送信なし、ここでの書き込みは元接続に反映されない) は
+  モーダル文言に集約しています。
+- 統合テストは `tests/local_query_integration.rs` に集約 (SQLite ベースで外部サーバ
+  不要・常時実行)。異種「接続」2 つ (別々の temp SQLite ファイルで模擬) からの登録 →
+  JOIN、BLOB/NULL/日時の往復、上限行数超過の拒否、非ローカルセッションへの誤呼び出し
+  拒否、`VACUUM INTO` によるファイル保存を検証します。
 
 ### ログシステム
 
