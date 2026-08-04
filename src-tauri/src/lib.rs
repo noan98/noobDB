@@ -226,6 +226,12 @@ pub mod __test_api {
             .or_else(|| parse_tcp_url(url, "postgresql://", 5432, DriverKind::Postgres))
     }
 
+    /// Naive parser for `mssql://user:password@host:port/database` used in
+    /// tests (#729).
+    pub fn parse_mssql_url(url: &str) -> Option<DbConnectOptions> {
+        parse_tcp_url(url, "mssql://", 1433, DriverKind::Mssql)
+    }
+
     /// Build SQLite connect options from a filesystem path.
     pub fn sqlite_options(path: &str) -> DbConnectOptions {
         DbConnectOptions {

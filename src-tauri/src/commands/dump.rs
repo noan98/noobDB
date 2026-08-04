@@ -318,6 +318,13 @@ async fn run_dump(
             )
             .await?
         }
+        // #729 のスコープ外 (mysqldump / pg_dump に相当する外部ダンプツールの
+        // MSSQL 対応は別 Issue)。
+        DriverKind::Mssql => {
+            return Err(AppError::InvalidInput(
+                "database dump is not yet supported for MSSQL".into(),
+            ))
+        }
     };
 
     // 整形オプションが有効なら、書き出した SQL を整形して保存し直す (#546)。整形も
