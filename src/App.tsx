@@ -2679,18 +2679,27 @@ export default function App() {
   // rejected, keeping the mismatch dialog up instead of silently trusting it.
   // If the fingerprint can't be parsed from the message (unexpected format), fall
   // back to forget + TOFU so recovery is still possible.
+  //
+  // The failing endpoint comes from the *parsed message*, not the profile's
+  // static `ssh.host`/`ssh.port` (#708): with a chained (bastion + target)
+  // tunnel, the mismatch can be on either hop, and the backend always names the
+  // hop that actually failed. Falling back to the profile's main SSH host only
+  // when parsing fails keeps this correct for both direct and chained tunnels.
   const handleReTrustHostKey = useCallback(async () => {
     const mismatch = hostKeyMismatch;
     const ssh = mismatch?.profile.ssh;
     if (!mismatch || !ssh) return;
     const { profile } = mismatch;
-    const approved = parseHostKeyFingerprints(mismatch.message)?.actual;
+    const parsed = parseHostKeyFingerprints(mismatch.message);
+    const approved = parsed?.actual;
+    const targetHost = parsed?.host ?? ssh.host;
+    const targetPort = parsed?.port ?? ssh.port;
     setReTrustingHostKey(true);
     try {
       if (approved) {
-        await api.trustHostKey(ssh.host, ssh.port, approved);
+        await api.trustHostKey(targetHost, targetPort, approved);
       } else {
-        await api.forgetHostKey(ssh.host, ssh.port);
+        await api.forgetHostKey(targetHost, targetPort);
       }
       setHostKeyMismatch(null);
       toast.success(translate("hostKeyReTrustedToast", { name: profile.name }));

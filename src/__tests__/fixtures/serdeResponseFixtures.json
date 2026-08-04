@@ -22,6 +22,8 @@
     "file_path": null,
     "group": "production",
     "has_db_password": true,
+    "has_ssh_jump_passphrase": false,
+    "has_ssh_jump_password": true,
     "has_ssh_passphrase": false,
     "has_ssh_password": false,
     "host": "db.example.com",
@@ -35,6 +37,13 @@
     "ssh": {
       "auth_method": "key",
       "host": "jump.example.com",
+      "jump": {
+        "auth_method": "password",
+        "host": "bastion.example.com",
+        "port": 2222,
+        "private_key_path": "",
+        "user": "ops"
+      },
       "port": 22,
       "private_key_path": "/home/deploy/.ssh/id_ed25519",
       "user": "deploy"
