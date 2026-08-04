@@ -1163,6 +1163,40 @@ best-effort 逐次のため整合します。**スキーマ変更の原子性が
 経路外、コマンド側で別途ガード)。SQLite はサーバプロセスを持たないため空を返します。
 なお #587 で `performance_schema` 無効時に MySQL のプロセス一覧が空になる問題を修正済み。
 
+### ユーザ / 権限管理 (#732)
+
+MySQL ユーザ (`mysql.user` + `mysql.tables_priv`) / PostgreSQL ロール (`pg_roles` +
+`information_schema.role_table_grants`) の一覧と、選択したユーザ/ロールのテーブル単位
+CRUD+DDL 権限マトリクスを閲覧・編集する機能です。Diff/Sync (`db::sync` /
+`commands::sync`) と同じ「SQL 生成 (純粋) → プレビュー → 確認 → 適用」の分離パターンを
+踏襲します。
+
+- `db/privileges.rs`: `CREATE USER` / `DROP USER` / `ALTER USER ... PASSWORD` /
+  `GRANT` / `REVOKE` を方言別に生成する副作用なしの純ロジック。識別子クオートは
+  `db::sync::quote_ident` を共有し、単体テストでドライバ別の生成 SQL を固定しています。
+  DDL チェックボックスは各ドライバがテーブル単位で実際に `GRANT` できるスキーマ変更系
+  権限をまとめたもの (MySQL: `CREATE`/`ALTER`/`DROP`/`INDEX`/`REFERENCES`、PostgreSQL:
+  `TRUNCATE`/`REFERENCES`/`TRIGGER` — PostgreSQL の `CREATE`/`ALTER`/`DROP TABLE` は
+  テーブル単位の `GRANT` ではなくスキーマ所有権 / `CREATE ON SCHEMA` で制御されるため
+  対象外)。
+- `db::Connection::list_db_users` / `user_privileges` が `mysql.user` / `pg_roles` を
+  読む読み取り専用の introspection です。SQLite はユーザ概念を持たないため
+  `list_processes` と同じ「空ではなくエラーで非対応を明示する」方針で `AppError` を
+  返し、フロントはこの機能の導線自体を出しません。
+- `commands/privileges.rs::apply_privilege_sql` は `apply_sync_sql_inner` と同じく
+  `execute_transaction` を直接呼び、`run_query_transaction` の履歴記録経路を経由しません
+  — `CREATE USER`/`ALTER USER ... PASSWORD` はパスワードを SQL リテラルとして含みうる
+  ため、クエリ履歴にもログにも一切残しません。読み取り専用セッションは
+  `kill_process` と同じくコマンド側で明示的に拒否します (`is_read_only_sql` を通らない
+  経路のため)。
+- フロント (`UsersPanel.tsx`) は MySQL の `mysql.user` グローバル (`*.*`) 権限行を
+  意図的に**表示専用**にしています — このパネルが編集するのは選択中データベースの
+  テーブル単位権限 (`GRANT ... ON db.table`) で、スコープが異なるサーバ全体権限を
+  誤って書き換えてしまう事故を避けるためです。`DROP USER` は typed confirmation 付きの
+  danger 確認、`REVOKE` を含む権限変更は danger 確認、それ以外は primary 確認を経ます。
+- 権限不足エラー (MySQL "command denied to user" / PostgreSQL "permission denied
+  for ..." / "must be owner of ..." / "must be superuser") のヒントを `errorHints.ts`
+  に追加しています (`errorHintInsufficientPrivilege`)。
 ### ローカル横断クエリ (#740)
 
 複数接続の結果セットをローカルエンジンへ取り込み、異種 DB 間 JOIN・再分析を 1 アプリ内で
@@ -1302,6 +1336,9 @@ fs プラグインを使わず capabilities を増やさないための経路で
   `schema_overview` / `foreign_keys` / `list_indexes` / `list_schema_objects` /
   `get_object_definition` / `table_row_estimates`
 - プロセス管理: `list_processes` / `kill_process`
+- ユーザ / 権限管理: `list_db_users` / `list_user_privileges` /
+  `generate_create_user_sql` / `generate_drop_user_sql` / `generate_alter_password_sql` /
+  `generate_grant_sql` / `generate_revoke_sql` / `apply_privilege_sql`
 - 比較・同期 (Diff/Sync): `compare_schema` / `compare_table_data` /
   `generate_sync_sql` / `generate_data_sync_sql` / `apply_sync_sql`
 - サンドボックス (壊せる砂場、#747): `create_sandbox` / `list_sandboxes` /
@@ -1392,7 +1429,9 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `SandboxCreateModal` / `SandboxSection` / `SandboxReviewModal` (壊せる砂場・ブランチ
   #747。作成・サイドバー専用セクション・変更確認 → 書き戻し。純ロジックは
   `sandbox.ts`、詳細はアーキテクチャの「サンドボックス」節を参照)、
-  `ProcessListPanel` (プロセス監視・KILL。`processList.ts`)、`ProfileImportDialog`
+  `ProcessListPanel` (プロセス監視・KILL。`processList.ts`)、`UsersPanel` (ユーザ /
+  権限管理 #732。MySQL ユーザ・PostgreSQL ロールの一覧とテーブル単位権限マトリクスの
+  閲覧・GRANT/REVOKE 編集。SQL 生成 → プレビュー → 確認 → 適用のフロー)、`ProfileImportDialog`
   (プロファイルインポートの ID 衝突解決)、`ShortcutCheatSheet` (`?` キーのチートシート。
   `shortcuts.ts` が単一ソース)、`TitleBar` (Tauri `decorations: false` のカスタム
   ウィンドウクローム。色決定は `titleBarContext.ts`)、`PlanWatchPanel` (実行計画

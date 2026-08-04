@@ -7,9 +7,10 @@ use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef}
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
+    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 use super::{
     build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode,
@@ -1079,6 +1080,112 @@ impl MySqlConn {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Server accounts for the users & permissions panel (#732), read from
+    /// `mysql.user`. Requires `SELECT` on the `mysql` database (typically an
+    /// admin-only grant) — a session without it surfaces the resulting sqlx
+    /// error as-is; `errorHints.ts` maps the "command denied" wording to a
+    /// hint.
+    pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
+        let rows: Vec<MySqlRow> =
+            sqlx::query("SELECT User, Host, Super_priv FROM mysql.user ORDER BY User, Host")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let is_super = r
+                    .try_get::<String, _>(2)
+                    .map(|v| v.eq_ignore_ascii_case("Y"))
+                    .unwrap_or(false);
+                DbUserInfo {
+                    name: r.try_get(0).unwrap_or_default(),
+                    host: r.try_get::<Option<String>, _>(1).ok().flatten(),
+                    attributes: if is_super {
+                        vec!["SUPER".to_string()]
+                    } else {
+                        Vec::new()
+                    },
+                    member_of: Vec::new(),
+                    is_superuser: is_super,
+                    // `mysql.user` also has an `account_locked` column this
+                    // panel does not read; login is reported as always
+                    // allowed (best-effort — matching the minimal scope of
+                    // the rest of this driver's introspection).
+                    can_login: true,
+                }
+            })
+            .collect())
+    }
+
+    /// The privilege matrix for one MySQL account: database-wide grants from
+    /// `mysql.user`'s `Y`/`N` columns (the "global" row) plus per-table
+    /// grants from `mysql.tables_priv` (`Table_priv` is a comma-separated
+    /// `SET` column). `host` defaults to `%` (MySQL's "any host" wildcard)
+    /// when not given.
+    pub async fn user_privileges(&self, user: &str, host: Option<&str>) -> Result<UserPrivileges> {
+        let host = host.unwrap_or("%");
+        let global_row: Option<MySqlRow> = sqlx::query(
+            "SELECT Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv, \
+             Alter_priv, Drop_priv, Index_priv, References_priv \
+             FROM mysql.user WHERE User = ? AND Host = ?",
+        )
+        .bind(user)
+        .bind(host)
+        .fetch_optional(&self.pool)
+        .await?;
+        let global = global_row.map(|r| {
+            let yn = |i: usize| {
+                r.try_get::<String, _>(i)
+                    .map(|v| v.eq_ignore_ascii_case("Y"))
+                    .unwrap_or(false)
+            };
+            TablePrivilegeRow {
+                table: "*".to_string(),
+                select: yn(0),
+                insert: yn(1),
+                update: yn(2),
+                delete: yn(3),
+                ddl: yn(4) || yn(5) || yn(6) || yn(7) || yn(8),
+            }
+        });
+
+        let table_rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT Db, Table_name, Table_priv FROM mysql.tables_priv \
+             WHERE User = ? AND Host = ? ORDER BY Db, Table_name",
+        )
+        .bind(user)
+        .bind(host)
+        .fetch_all(&self.pool)
+        .await?;
+        let tables = table_rows
+            .into_iter()
+            .map(|r| {
+                let db: String = r.try_get(0).unwrap_or_default();
+                let table: String = r.try_get(1).unwrap_or_default();
+                let priv_set: String = r.try_get(2).unwrap_or_default();
+                let has = |name: &str| {
+                    priv_set
+                        .split(',')
+                        .any(|p| p.trim().eq_ignore_ascii_case(name))
+                };
+                TablePrivilegeRow {
+                    table: format!("{db}.{table}"),
+                    select: has("Select"),
+                    insert: has("Insert"),
+                    update: has("Update"),
+                    delete: has("Delete"),
+                    ddl: has("Create")
+                        || has("Alter")
+                        || has("Drop")
+                        || has("Index")
+                        || has("References"),
+                }
+            })
+            .collect();
+
+        Ok(UserPrivileges { global, tables })
     }
 
     pub async fn tables(&self, db: &str) -> Result<Vec<String>> {
