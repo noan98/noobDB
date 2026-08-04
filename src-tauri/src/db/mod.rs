@@ -1265,11 +1265,9 @@ impl Connection {
             Connection::MySql(_)
             | Connection::Postgres(_)
             | Connection::DuckDb(_)
-            | Connection::Mssql(_) => {
-                Err(AppError::InvalidInput(
-                    "local table registration is only supported on the local SQLite engine".into(),
-                ))
-            }
+            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+                "local table registration is only supported on the local SQLite engine".into(),
+            )),
         }
     }
 
@@ -1280,11 +1278,9 @@ impl Connection {
             Connection::MySql(_)
             | Connection::Postgres(_)
             | Connection::DuckDb(_)
-            | Connection::Mssql(_) => {
-                Err(AppError::InvalidInput(
-                    "local table listing is only supported on the local SQLite engine".into(),
-                ))
-            }
+            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+                "local table listing is only supported on the local SQLite engine".into(),
+            )),
         }
     }
 
@@ -1295,11 +1291,9 @@ impl Connection {
             Connection::MySql(_)
             | Connection::Postgres(_)
             | Connection::DuckDb(_)
-            | Connection::Mssql(_) => {
-                Err(AppError::InvalidInput(
-                    "dropping a local table is only supported on the local SQLite engine".into(),
-                ))
-            }
+            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+                "dropping a local table is only supported on the local SQLite engine".into(),
+            )),
         }
     }
 
@@ -1312,11 +1306,9 @@ impl Connection {
             Connection::MySql(_)
             | Connection::Postgres(_)
             | Connection::DuckDb(_)
-            | Connection::Mssql(_) => {
-                Err(AppError::InvalidInput(
-                    "saving to file is only supported on the local SQLite engine".into(),
-                ))
-            }
+            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+                "saving to file is only supported on the local SQLite engine".into(),
+            )),
         }
     }
 }
