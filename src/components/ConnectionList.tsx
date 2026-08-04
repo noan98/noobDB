@@ -1348,10 +1348,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       rowBg = undefined;
     }
     const subtitle =
-      p.driver === "sqlite"
+      p.driver === "sqlite" || p.driver === "duckdb"
         ? p.file_path
           ? p.file_path.split(/[/\\]/).pop() || p.file_path
-          : "SQLite"
+          : p.driver === "duckdb"
+            ? "DuckDB"
+            : "SQLite"
         : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
     const driverIcon = driverIconName(p.driver);

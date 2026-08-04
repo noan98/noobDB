@@ -318,6 +318,20 @@ async fn run_dump(
             )
             .await?
         }
+        // #709: DuckDB has no `sqlite_master`-style catalog table carrying
+        // verbatim `CREATE TABLE` DDL the way SQLite does, so `dump_sqlite`'s
+        // approach doesn't translate directly. A dedicated DuckDB dump path
+        // (e.g. reconstructing DDL from `information_schema` /
+        // `duckdb_tables()`, or shelling out to DuckDB's own `EXPORT
+        // DATABASE`) is left for a follow-up — not part of #709's accepted
+        // scope (connect/stream/schema-tree/read-only/cell-edit/import/
+        // export). Every other capability works; only whole-database dump is
+        // unavailable for now.
+        DriverKind::DuckDb => {
+            return Err(AppError::InvalidInput(
+                "database dump is not yet supported for DuckDB".into(),
+            ))
+        }
     };
 
     // 整形オプションが有効なら、書き出した SQL を整形して保存し直す (#546)。整形も

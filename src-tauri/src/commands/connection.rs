@@ -509,13 +509,15 @@ async fn build_options(
 
     // File-backed drivers don't have a host/port/user/password and can't
     // be tunneled, so short-circuit before touching credentials or SSH.
-    if matches!(req.driver, DriverKind::Sqlite) {
+    // DuckDB (#709) is file-backed exactly like SQLite: same `file_path`
+    // requirement, no SSH tunnel, no TLS.
+    if matches!(req.driver, DriverKind::Sqlite | DriverKind::DuckDb) {
         let file_path = req
             .file_path
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| AppError::InvalidInput("SQLite file path is required".into()))?;
+            .ok_or_else(|| AppError::InvalidInput("file path is required".into()))?;
         let opts = DbConnectOptions {
             host: String::new(),
             port: 0,

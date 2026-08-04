@@ -228,12 +228,13 @@ function qualifiedTableRef(driver: string, database: string, table: string): str
 export function quoteString(driver: string, s: string): string {
   // Single quotes are doubled in every dialect. Backslash is only special
   // inside MySQL string literals; Postgres (with the default
-  // `standard_conforming_strings = on`) and SQLite treat it as an ordinary
-  // character, so doubling it there would corrupt the stored value (and break
-  // PK matching when a key contains a backslash). Mirror `quoteIdentFor`'s
-  // convention of treating unknown drivers as MySQL.
+  // `standard_conforming_strings = on`), SQLite, and DuckDB (Postgres-like
+  // standard-conforming strings) treat it as an ordinary character, so
+  // doubling it there would corrupt the stored value (and break PK matching
+  // when a key contains a backslash). Mirror `quoteIdentFor`'s convention of
+  // treating unknown drivers as MySQL.
   const escaped =
-    driver === "postgres" || driver === "sqlite"
+    driver === "postgres" || driver === "sqlite" || driver === "duckdb"
       ? s.replace(/'/g, "''")
       : s.replace(/\\/g, "\\\\").replace(/'/g, "''");
   return "'" + escaped + "'";
@@ -483,14 +484,14 @@ export function buildDeleteStatements(input: {
 /**
  * Renders a BLOB cell value (carried as a bare hex string, per CLAUDE.md's
  * `Value::Bytes`) as a driver-appropriate binary literal:
- *   - PostgreSQL: `'\xDEADBEEF'` (bytea hex input; backslash is literal under
- *     the default `standard_conforming_strings = on`)
+ *   - PostgreSQL / DuckDB: `'\xDEADBEEF'` (bytea/BLOB hex input; backslash is
+ *     literal under standard-conforming strings)
  *   - SQLite:     `X'DEADBEEF'` (blob literal)
  *   - MySQL:      `0xDEADBEEF` (hex literal; an empty blob has no `0x` form, so
  *     it falls back to the empty string `''`)
  */
 function blobLiteral(driver: string, hex: string): string {
-  if (driver === "postgres") return "'\\x" + hex + "'";
+  if (driver === "postgres" || driver === "duckdb") return "'\\x" + hex + "'";
   if (driver === "sqlite") return "X'" + hex + "'";
   return hex.length > 0 ? "0x" + hex : "''";
 }

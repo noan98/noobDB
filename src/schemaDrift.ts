@@ -66,7 +66,7 @@ export interface SchemaDriftState {
 export const EMPTY_SCHEMA_DRIFT: SchemaDriftState = { generations: [] };
 
 function isDriver(v: unknown): v is DriverKind {
-  return v === "mysql" || v === "postgres" || v === "sqlite";
+  return v === "mysql" || v === "postgres" || v === "sqlite" || v === "duckdb";
 }
 
 function isValidGeneration(v: unknown): v is SchemaGeneration {

@@ -69,7 +69,7 @@ function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   });
 }
 
-export type DriverKind = "mysql" | "postgres" | "sqlite";
+export type DriverKind = "mysql" | "postgres" | "sqlite" | "duckdb";
 
 export type SshAuthMethod = "key" | "agent" | "password";
 

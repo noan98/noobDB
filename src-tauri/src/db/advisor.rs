@@ -533,7 +533,7 @@ fn drop_index_ddl(driver: DriverKind, table: &str, index: &str) -> String {
             quote_ident(driver, index),
             quote_ident(driver, table)
         ),
-        DriverKind::Postgres | DriverKind::Sqlite => {
+        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
             format!("DROP INDEX {};", quote_ident(driver, index))
         }
     }

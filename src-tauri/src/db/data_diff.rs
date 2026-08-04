@@ -531,8 +531,12 @@ fn pk_predicate(driver: DriverKind, primary_key: &[String], key: &[Value]) -> St
 pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
     match value {
         Value::Null => "NULL".to_string(),
+        // DuckDB's dialect is PostgreSQL-like: `TRUE`/`FALSE` keyword literals
+        // rather than the `1`/`0` integers MySQL/SQLite accept for BOOLEAN.
         Value::Bool(b) => match driver {
-            DriverKind::Postgres => (if *b { "TRUE" } else { "FALSE" }).to_string(),
+            DriverKind::Postgres | DriverKind::DuckDb => {
+                (if *b { "TRUE" } else { "FALSE" }).to_string()
+            }
             DriverKind::Mysql | DriverKind::Sqlite => (if *b { "1" } else { "0" }).to_string(),
         },
         Value::Int(i) => i.to_string(),
@@ -549,7 +553,7 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
                 // text, so fall back to NULL there (same policy as
                 // `commands/dump.rs::sqlite_literal`).
                 match driver {
-                    DriverKind::Postgres => {
+                    DriverKind::Postgres | DriverKind::DuckDb => {
                         if f.is_nan() {
                             "'NaN'".to_string()
                         } else if *f > 0.0 {
@@ -563,9 +567,12 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
             }
         }
         Value::String(s) => quote_string(driver, s),
+        // DuckDB's BLOB literal uses the same `'\x...'` escape as PostgreSQL's
+        // bytea (implicitly cast to BLOB in an INSERT/UPDATE's typed target),
+        // not the `X'...'` hex-string form MySQL/SQLite accept.
         Value::Bytes(hex) => match driver {
             DriverKind::Mysql | DriverKind::Sqlite => format!("X'{hex}'"),
-            DriverKind::Postgres => format!("'\\x{hex}'"),
+            DriverKind::Postgres | DriverKind::DuckDb => format!("'\\x{hex}'"),
         },
     }
 }
@@ -573,7 +580,7 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
 fn quote_string(driver: DriverKind, s: &str) -> String {
     let escaped = match driver {
         DriverKind::Mysql => s.replace('\\', "\\\\").replace('\'', "''"),
-        DriverKind::Postgres | DriverKind::Sqlite => s.replace('\'', "''"),
+        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => s.replace('\'', "''"),
     };
     format!("'{escaped}'")
 }

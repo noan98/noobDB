@@ -52,6 +52,12 @@ pub enum AppError {
     #[error("sqlx error: {0}")]
     Sqlx(#[from] sqlx::Error),
 
+    /// DuckDB (#709) is not sqlx-backed (its official binding is a
+    /// synchronous C API wrapper — see `db/duckdb.rs`), so it gets its own
+    /// error variant rather than folding into [`AppError::Sqlx`].
+    #[error("duckdb error: {0}")]
+    DuckDb(#[from] duckdb::Error),
+
     #[error("serde error: {0}")]
     Serde(#[from] serde_json::Error),
 
@@ -102,6 +108,11 @@ impl AppError {
             AppError::Io(_) => "io",
             AppError::Sqlx(e) if sqlx_is_connection_lost(e) => "connectionLost",
             AppError::Sqlx(_) => "db",
+            // DuckDB is file-backed (no network/server round trip), so there
+            // is no analogous "connection lost" condition to distinguish —
+            // every failure reports the same generic `db` kind as a plain
+            // sqlx SQL error, matching the SQLite driver's error surface.
+            AppError::DuckDb(_) => "db",
             AppError::Serde(_) => "serde",
             AppError::Keyring(_) => "keyring",
             AppError::ConfigDir => "configDir",
