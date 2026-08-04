@@ -109,6 +109,13 @@ sqlformat = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.10"
+tiberius = { version = "0.12.3", default-features = false, features = ["rustls", "chrono", "rust_decimal", "tds73"] }
+# tiberius (SQL Server ドライバ、#729) は生の TCP ストリームを `AsyncRead + AsyncWrite`
+# (futures 版) として要求するため、tokio の `AsyncRead`/`AsyncWrite` (tokio 版) を
+# 変換する `compat()` / `compat_write()` に tokio-util の "compat" feature が要る。
+# 依存グラフ上は既に 0.7.18 が推移的に解決されているが、明示依存にして意図を残す
+# (default-features は不要な io/codec/net feature を削るため無効化)。
+tokio-util = { version = "0.7", default-features = false, features = ["compat"] }
 
 # keyring のネイティブバックエンドはターゲット OS ごとに有効化する。これにより
 # ビルド中のターゲットに不要なバックエンド (とその推移依存) が依存グラフから外れる。

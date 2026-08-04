@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MySQL, PostgreSQL, SQLite } from "@codemirror/lang-sql";
+import { MSSQL, MySQL, PostgreSQL, SQLite } from "@codemirror/lang-sql";
 import {
   codeMirrorSqlDialectFor,
   isSystemDatabase,
@@ -18,9 +18,14 @@ describe("quoteIdentFor", () => {
     expect(quoteIdentFor("sqlite", "col")).toBe('"col"');
   });
 
+  it("uses square brackets for MSSQL", () => {
+    expect(quoteIdentFor("mssql", "col")).toBe("[col]");
+  });
+
   it("escapes the quoting character by doubling it", () => {
     expect(quoteIdentFor("mysql", "a`b")).toBe("`a``b`");
     expect(quoteIdentFor("postgres", 'a"b')).toBe('"a""b"');
+    expect(quoteIdentFor("mssql", "a]b")).toBe("[a]]b]");
   });
 });
 
@@ -39,6 +44,14 @@ describe("isSystemDatabase", () => {
     expect(isSystemDatabase("postgres", "information_schema")).toBe(false);
     expect(isSystemDatabase("sqlite", "main")).toBe(false);
   });
+
+  it("flags MSSQL's 4 built-in system databases case-insensitively", () => {
+    expect(isSystemDatabase("mssql", "master")).toBe(true);
+    expect(isSystemDatabase("mssql", "TempDB")).toBe(true);
+    expect(isSystemDatabase("mssql", "model")).toBe(true);
+    expect(isSystemDatabase("mssql", "msdb")).toBe(true);
+    expect(isSystemDatabase("mssql", "app_db")).toBe(false);
+  });
 });
 
 describe("sqlFormatterLanguageFor", () => {
@@ -46,6 +59,7 @@ describe("sqlFormatterLanguageFor", () => {
     expect(sqlFormatterLanguageFor("postgres")).toBe("postgresql");
     expect(sqlFormatterLanguageFor("sqlite")).toBe("sqlite");
     expect(sqlFormatterLanguageFor("mysql")).toBe("mysql");
+    expect(sqlFormatterLanguageFor("mssql")).toBe("tsql");
     expect(sqlFormatterLanguageFor("unknown")).toBe("mysql");
   });
 });
@@ -55,6 +69,7 @@ describe("codeMirrorSqlDialectFor", () => {
     expect(codeMirrorSqlDialectFor("postgres")).toBe(PostgreSQL);
     expect(codeMirrorSqlDialectFor("sqlite")).toBe(SQLite);
     expect(codeMirrorSqlDialectFor("mysql")).toBe(MySQL);
+    expect(codeMirrorSqlDialectFor("mssql")).toBe(MSSQL);
     expect(codeMirrorSqlDialectFor("unknown")).toBe(MySQL);
   });
 });
