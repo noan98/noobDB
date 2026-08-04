@@ -144,6 +144,9 @@ const CreateTableModal = lazy(() =>
 const RenameTableDialog = lazy(() =>
   import("./components/RenameTableDialog").then((m) => ({ default: m.RenameTableDialog })),
 );
+const AlterTableModal = lazy(() =>
+  import("./components/AlterTableModal").then((m) => ({ default: m.AlterTableModal })),
+);
 const SaveAsTableModal = lazy(() =>
   import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
 );
@@ -1501,6 +1504,8 @@ export default function App() {
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
+  // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
+  const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
   // 新規行追加モーダル: 対象タブ ID。null で閉じる。
@@ -4611,6 +4616,64 @@ export default function App() {
     }
   }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl]);
 
+  // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
+  // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
+  // (CreateTableModal の `onSendToEditor` と同じ流儀)。
+  const handleAlterTableToEditor = useCallback((sql: string) => {
+    setAlterTableTarget(null);
+    openQueryInEditor(sql);
+  }, [openQueryInEditor]);
+
+  // 列編集ダイアログの適用: 生成された複数の ALTER TABLE / CREATE INDEX 文をまとめて
+  // 確認ダイアログでプレビューし、承認後に `run_query_transaction` (単一トランザクション。
+  // PostgreSQL は all-or-nothing、MySQL は DDL の暗黙コミットにより best-effort 逐次 —
+  // CLAUDE.md「MySQL の DDL は非原子」を参照) で実行する。DROP COLUMN を含む場合は
+  // 破壊的操作として TRUNCATE/DROP TABLE と同じくタイプ入力の強確認ゲート (#675) を
+  // 本番接続に限り追加する。読み取り専用セッションでは AlterTableModal 側で実行ボタンを
+  // 無効化しているが、IPC 自体もバックエンドの read_only ガードで拒否される。
+  const handleAlterTableRun = useCallback(async (statements: string[]) => {
+    const target = alterTableTarget;
+    if (!target || !sessionId || statements.length === 0) return;
+    const destructive = statements.some((s) => /\bDROP COLUMN\b/i.test(s));
+    const ok = await confirm({
+      title: translate("alterTableConfirmTitle", { table: target.table }),
+      message: maintenanceMessage(
+        <>
+          {translate("alterTableConfirmBody")}
+          <br />
+          <br />
+          <chakra.code
+            display="block"
+            fontFamily="var(--font-mono)"
+            fontSize="sm"
+            whiteSpace="pre-wrap"
+            wordBreak="break-all"
+          >
+            {statements.join("\n")}
+          </chakra.code>
+        </>,
+      ),
+      confirmLabel: translate("alterTableConfirmOk"),
+      tone: destructive ? "danger" : "primary",
+      typedConfirmation: destructive && selectedProfile?.is_production ? target.table : undefined,
+    });
+    if (!ok) return;
+    setAlterTableTarget(null);
+    try {
+      await api.runQueryTransaction(sessionId, statements, target.database);
+      invalidateSchemaCache(target.database);
+      connectionListRef.current?.refreshSchema();
+      toast.success(translate("alterTableSuccess", { table: target.table }));
+      // リネーム/DROP された可能性があるので、開いている対象テーブルのタブは閉じて
+      // 新しい定義で開き直せるようにする (handleRenameTableSubmit/handleDropTable と同じ方針)。
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
+        .forEach((tt) => handleCloseTabRef.current(tt.id));
+    } catch (e) {
+      toast.error(translate("statusQueryError", { error: String(e) }));
+    }
+  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache]);
+
   // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
   // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
@@ -6584,6 +6647,7 @@ export default function App() {
             onTruncateTable={handleTruncateTable}
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
+            onAlterTable={(database, table) => setAlterTableTarget({ database, table })}
             onRunTableMaintenance={handleRunTableMaintenance}
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
             onShowDatabaseSizes={handleShowDatabaseSizes}
@@ -7399,6 +7463,23 @@ export default function App() {
               table={renameTarget.table}
               onConfirm={handleRenameTableSubmit}
               onCancel={() => setRenameTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {alterTableTarget && sessionId && (
+          <Suspense fallback={null}>
+            <AlterTableModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={alterTableTarget.database}
+              table={alterTableTarget.table}
+              readOnly={readOnly}
+              onRun={handleAlterTableRun}
+              onSendToEditor={handleAlterTableToEditor}
+              onClose={() => setAlterTableTarget(null)}
             />
           </Suspense>
         )}

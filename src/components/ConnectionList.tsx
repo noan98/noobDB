@@ -243,6 +243,8 @@ interface Props {
   onTruncateTable?: (database: string, table: string) => void;
   onDropTable?: (database: string, table: string) => void;
   onRenameTable?: (database: string, table: string) => void;
+  /** 列の追加/変更/削除/リネームとインデックス作成の GUI ダイアログを開く (#794)。read_only では無効化。 */
+  onAlterTable?: (database: string, table: string) => void;
   /** テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
    *  生成済み SQL を渡し、確認 + 実行は呼び出し側 (App) が担う。read_only では無効化。 */
   onRunTableMaintenance?: (database: string, table: string, command: MaintenanceCommand) => void;
@@ -301,6 +303,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onTruncateTable,
   onDropTable,
   onRenameTable,
+  onAlterTable,
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
   onShowDatabaseSizes,
@@ -867,13 +870,21 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     }
     // テーブル保守操作: TRUNCATE / DROP / RENAME。破壊的なので read_only では
     // 無効化し、実行時は呼び出し側 (App) が確認ダイアログを挟む。
-    if (onTruncateTable || onDropTable || onRenameTable) {
+    if (onTruncateTable || onDropTable || onRenameTable || onAlterTable) {
       const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
       items.push({ separator: true });
       if (onRenameTable) {
         items.push({
           label: t("contextMenuRenameTable"),
           onSelect: () => onRenameTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+        });
+      }
+      if (onAlterTable) {
+        items.push({
+          label: t("contextMenuAlterTable"),
+          onSelect: () => onAlterTable(db, tbl),
           disabled: activeReadOnly,
           title: roTitle,
         });
