@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::types::{Column, QueryResult, StreamBatch, Value};
-use crate::db::{apply_auto_limit, is_read_only_sql};
+use crate::db::{apply_auto_limit_for, is_read_only_sql};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
@@ -492,7 +492,7 @@ async fn spawn_query_stream(
     // is eligible. `sql` stays the original so history records what the user
     // actually typed; only `effective_sql` carries the injected cap.
     let (effective_sql, applied_auto_limit) = match auto_limit {
-        Some(n) => match apply_auto_limit(&sql, n) {
+        Some(n) => match apply_auto_limit_for(session.conn.driver_kind(), &sql, n) {
             Some(rewritten) => (rewritten, Some(n as u64)),
             None => (sql.clone(), None),
         },
