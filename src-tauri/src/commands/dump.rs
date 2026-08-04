@@ -90,7 +90,7 @@ impl Drop for PartialFileCleanup {
 
 /// Checkbox-selected `mysqldump` flags. The frontend sends every field, so the
 /// defaults here only matter for forward compatibility if a field is omitted.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DumpOptions {
     /// `--single-transaction`: dump within one transaction (consistent InnoDB
@@ -266,7 +266,7 @@ async fn spawn_dump(
 /// earlier backup the user is overwriting): the partial output lives on the
 /// temp file, which `PartialFileCleanup` removes, leaving `final_path` intact.
 #[allow(clippy::too_many_arguments)]
-async fn run_dump(
+pub(crate) async fn run_dump(
     app: &AppHandle,
     session: &Session,
     stream_id: &str,

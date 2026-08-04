@@ -4,13 +4,15 @@ import { describe, expect, it } from "vitest";
 // 不要)。ストリーミングイベントを emit する Rust ファイルは
 // `src-tauri/src/commands/query.rs` (`query-stream:*`・`preview-stream:*`・各
 // `*-cancelled`)・`dump.rs` (`dump-stream:*`)・`export.rs` (`export-stream:*`)・
-// `import.rs` (`csv-import:*`)・`connection.rs` (`connect-progress:phase`) の 5 つに
-// 限られる (他の `commands/*.rs` にイベント名リテラルが無いことは実装時に grep で確認済み)。
+// `import.rs` (`csv-import:*`)・`connection.rs` (`connect-progress:phase`)・
+// `tasks/scheduler.rs` (`task-run:*`。#730) の 6 つに限られる (他の `commands/*.rs`
+// にイベント名リテラルが無いことは実装時に grep で確認済み)。
 import connectionRs from "../../src-tauri/src/commands/connection.rs?raw";
 import dumpRs from "../../src-tauri/src/commands/dump.rs?raw";
 import exportRs from "../../src-tauri/src/commands/export.rs?raw";
 import importRs from "../../src-tauri/src/commands/import.rs?raw";
 import queryRs from "../../src-tauri/src/commands/query.rs?raw";
+import schedulerRs from "../../src-tauri/src/tasks/scheduler.rs?raw";
 import tauriTs from "../api/tauri.ts?raw";
 
 // ストリーミングイベント名のフロント (`tauri.ts` の `listen(...)`) ↔ バック
@@ -71,7 +73,14 @@ function extractListenedEvents(tauriTs: string): Set<string> {
   return events;
 }
 
-const emitted = extractEmittedEvents([queryRs, dumpRs, exportRs, importRs, connectionRs]);
+const emitted = extractEmittedEvents([
+  queryRs,
+  dumpRs,
+  exportRs,
+  importRs,
+  connectionRs,
+  schedulerRs,
+]);
 const listened = extractListenedEvents(tauriTs);
 
 // 片側にのみ正当に存在してよいイベント名の明示的な許可リスト。
@@ -131,16 +140,21 @@ describe("ストリーミングイベント名パリティ (Rust emit ↔ tauri.
     // 形 (別名の定数・変数など) で emit されると抽出から漏れてパリティ検証が素通り
     // するため、ここで規約として固定する。`event` は行バッチ emit ヘルパの転送
     // パラメータ (呼び出し元が EV_* 定数を渡すため、定数経路で抽出済み) の許可。
+    // `event_name` も同型: `scheduler.rs::execute_and_log` が成否で
+    // `EV_TASK_RUN_DONE` / `EV_TASK_RUN_ERROR` のどちらかを束ねてから emit する
+    // ローカル変数で、値自体は EV_* 定数経路で既に抽出済み (#730)。
     const offenders = extractEmitFirstArgs([
       queryRs,
       dumpRs,
       exportRs,
       importRs,
       connectionRs,
+      schedulerRs,
     ]).filter((arg) => {
       if (arg.startsWith('"')) return false;
       if (/^EV_[A-Z0-9_]+$/.test(arg)) return false;
       if (arg === "event") return false;
+      if (arg === "event_name") return false;
       return true;
     });
     expect(
