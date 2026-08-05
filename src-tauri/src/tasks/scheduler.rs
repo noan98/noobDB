@@ -250,10 +250,13 @@ mod tests {
         // なので JoinHandle は持たず、短いポーリングで待つ)。
         for _ in 0..200 {
             if ran.load(Ordering::SeqCst) {
-                return;
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        panic!("spawn_detached で投入したタスクが実行されなかった");
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "spawn_detached で投入したタスクが実行されなかった"
+        );
     }
 }
