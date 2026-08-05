@@ -42,7 +42,7 @@ pub struct TaskRunEvent {
 /// スケジューラを起動する。`app` の生存期間 (= アプリのプロセス) と同じだけ
 /// バックグラウンドで動き続ける。
 pub fn spawn(app: AppHandle) {
-    tokio::spawn(async move {
+    spawn_detached(async move {
         let mut is_startup = true;
         loop {
             if let Err(e) = tick(&app, is_startup).await {
@@ -52,6 +52,31 @@ pub fn spawn(app: AppHandle) {
             tokio::time::sleep(std::time::Duration::from_secs(TICK_SECS)).await;
         }
     });
+}
+
+/// 常駐ループを Tauri のグローバル非同期ランタイムへ投げっぱなしで起動する。
+///
+/// **`tokio::spawn` を使ってはいけない。** [`spawn`] は `lib.rs::run()` の
+/// `setup` フックから呼ばれるが、Tauri は `setup` を**イベントループの
+/// `Ready` ハンドラ (= メインスレッド)** から呼び出しており、そこには Tokio
+/// ランタイムのコンテキストが入っていない (`tauri::app::setup` は
+/// `async_runtime::block_on` を経由しない)。`tokio::spawn` はスレッドローカルの
+/// ランタイムハンドルを要求するため、この位置では
+/// "there is no reactor running" で panic する。`setup` はウィンドウ生成の**後**に
+/// 呼ばれるので、症状は「真っ白なウィンドウが一瞬出てからプロセスが即終了」
+/// (v0.9.0 のインストール後クラッシュの原因)。リリースビルドは
+/// `windows_subsystem = "windows"` でコンソールを持たないため panic メッセージも
+/// 表示されない。
+///
+/// `tauri::async_runtime::spawn` は Tauri が持つグローバルランタイムのハンドルへ
+/// 直接投げるためランタイム外から呼んでも安全で、投入後のタスク内では
+/// (ランタイムコンテキストが入るので) `tokio::spawn` / `tokio::time::sleep` を
+/// そのまま使える。
+fn spawn_detached<F>(fut: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tauri::async_runtime::spawn(fut);
 }
 
 /// 1 回分の tick: 期限が来た有効なタスクをすべて実行に回す。`is_startup` は
@@ -192,4 +217,46 @@ fn update_last_run_mirror(id: &str, started_at: &str, status: &str) -> Result<()
         t.last_run_at = Some(started_at);
         t.last_status = Some(status);
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// `spawn_detached` が **Tokio ランタイムの外** (通常の同期スレッド) から
+    /// 呼ばれても panic しないことを固定する回帰テスト (v0.9.0 の起動即クラッシュ)。
+    ///
+    /// 本番の [`spawn`] は Tauri の `setup` フック = イベントループのメイン
+    /// スレッドから呼ばれ、そこにはランタイムコンテキストが入っていない。この
+    /// テスト関数も `#[tokio::test]` ではない素の `#[test]` なので同じ条件を
+    /// 再現しており、実装を `tokio::spawn` に戻すと
+    /// "there is no reactor running" で落ちる。
+    #[test]
+    fn spawn_detached_works_outside_a_tokio_runtime() {
+        assert!(
+            tokio::runtime::Handle::try_current().is_err(),
+            "このテストはランタイム外から呼ばれる前提 (#[tokio::test] にしないこと)"
+        );
+
+        let ran = Arc::new(AtomicBool::new(false));
+        let flag = ran.clone();
+        spawn_detached(async move {
+            flag.store(true, Ordering::SeqCst);
+        });
+
+        // 投入したタスクが実際にランタイム上で走ることまで確認する (投げっぱなし
+        // なので JoinHandle は持たず、短いポーリングで待つ)。
+        for _ in 0..200 {
+            if ran.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "spawn_detached で投入したタスクが実行されなかった"
+        );
+    }
 }

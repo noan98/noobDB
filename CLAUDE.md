@@ -547,6 +547,31 @@ MySQL/PostgreSQL/SQLite の 3 ドライバが使う)、MSSQL 専用の `tiberius
   ハンドラを登録し、`AppState` を Tauri 管理ステートとしてインストールします。
   `tracing` でログを出力し、`main.rs` は薄いシムで `noobdb_lib::run()` を呼ぶだけです。
 
+#### `setup` フックでは `tokio::spawn` を使わないこと
+
+`lib.rs::run()` の `.setup(...)` フックは、Tauri がイベントループの `Ready`
+ハンドラ (= **メインスレッド**) から呼び出します (`tauri::app::setup`)。ここには
+**Tokio ランタイムのコンテキストが入っていません** — Tauri は `setup` を
+`async_runtime::block_on` で包まないためです。したがって `setup` の中で
+`tokio::spawn` / `tokio::time` などスレッドローカルのランタイムハンドルを要求する
+API を呼ぶと `there is no reactor running, must be called from the context of a
+Tokio 1.x runtime` で **panic** します。**`setup` から常駐タスクを起動するときは
+`tauri::async_runtime::spawn` を使ってください** (グローバルランタイムのハンドルへ
+直接投げるためランタイム外から呼んでも安全。投入後のタスク内では通常どおり
+`tokio::spawn` / `tokio::time::sleep` が使えます)。IPC コマンドハンドラ
+(`#[tauri::command] async fn`) は Tauri の非同期ランタイム上で実行されるため、
+そちらでの `tokio::spawn` は従来どおり問題ありません (`commands/query.rs` などの
+ストリーミング経路)。
+
+この panic は**ウィンドウ生成の後**に起きます (`tauri::app::setup` は設定ファイルの
+ウィンドウを先に build してからユーザの `setup` を呼ぶ) — 症状は「真っ白なウィンドウが
+一瞬表示された直後にプロセスが終了」で、リリースビルドは
+`windows_subsystem = "windows"` によりコンソールを持たないため panic メッセージも
+表示されません (v0.9.0 のインストール後クラッシュの原因)。`tracing` のログにも
+残らないため、`<data_dir>/noobdb.log` は `noobDB starting` で途切れます。回帰テストは
+`tasks/scheduler.rs` の `spawn_detached_works_outside_a_tokio_runtime` (素の
+`#[test]` = ランタイム外から呼ぶことで本番と同じ条件を再現) が固定しています。
+
 ### ドライバのディスパッチ: `enum Connection`
 
 DB レイヤは意図的に手書きの enum で実装されており、トレイトオブジェクトではありません。
