@@ -175,16 +175,33 @@ CI は 2 つのワークフローに分かれています:
   変更領域 (frontend / rust / workflow) を判定し、ジョブ単位の `if:` で出し分け
   します (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
   ジョブを skip させる方式。push イベントでは paths-filter が git 履歴比較を行う
-  ため `changes` ジョブは checkout してから filter を実行します)。frontend ジョブは `pnpm run build` に続けて
+  ため `changes` ジョブは checkout してから filter を実行します)。`frontend`
+  ジョブ (チェック名 `frontend (build + browser tests)`) は
+  typecheck/build・実ブラウザでの描画/ビジュアル回帰テストの両方を 1 ジョブに
+  まとめています (#908。旧来は `frontend` / `frontend-visual` の 2 ジョブに分かれて
+  いましたが、両ジョブが独立して `pnpm install --frozen-lockfile` を実行し Vite の
+  依存プリバンドルも別個にコールドスタートしていた重複 — Rust ジョブ側の同型の
+  重複を解消した #796 の横展開対象 — を統合で解消しました。詳細な判断根拠は
+  `ci.yml` の `frontend` ジョブ直前のコメントを参照)。ジョブ本体は
+  `pnpm run build` に続けて
   `pnpm run bundle-size` (バンドルサイズ計測 → Job Summary。#443)、`pnpm run knip`
-  (未使用エクスポート/到達不能コード検出。#470)、`pnpm test` (Vitest) を実行します。
+  (未使用エクスポート/到達不能コード検出。#470)、`pnpm test --coverage` (Vitest
+  jsdom + カバレッジ閾値)、さらに `pnpm exec playwright install` +
+  `pnpm test:browser` (Vitest ブラウザモード。#306) を順に実行します。
   バンドルサイズはカバレッジと同じく当面は閾値による fail を設けず可視化のみで、
   `dist/` の JS/CSS の gzip 後サイズを Node 標準の zlib だけで集計します
   (`scripts/bundle-size.mjs`、size-limit 等の追加ツールは増やしません)。pnpm は
   各ジョブで `corepack enable` により用意し、`pnpm`
   ストアを `actions/cache` でキャッシュします (`actions/setup-node` の `cache: npm`
-  は使いません)。`paths-filter` は `package-lock.json` ではなく `pnpm-lock.yaml` を
-  監視します。Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
+  は使いません)。`frontend` ジョブは加えて Vite の依存プリバンドルキャッシュ
+  (`node_modules/.vite`) と Playwright の Chromium バイナリ (`~/.cache/ms-playwright`)
+  も `actions/cache` でブランチ跨ぎに温めます (#908。ブラウザテスト側の
+  「install/トランスパイル部」の壁時計短縮が目的で、pnpm store キャッシュと同じ
+  パターンでキー付けします)。`paths-filter` は `package-lock.json` ではなく
+  `pnpm-lock.yaml` を監視します。**旧チェック名 `frontend (typecheck + build)` /
+  `frontend (browser render + visual)` を必須チェックに指定していた場合は、新しい
+  `frontend (build + browser tests)` へ設定し直してください** (#908 のジョブ統合で
+  チェック名が変わったため)。Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL 8 と PostgreSQL 16 のサービスコンテナに対し `cargo llvm-cov nextest`
@@ -414,11 +431,16 @@ SQL の安全網・リテラル生成・方言判定など安全性に直結す�
   **`.github/workflows/visual-baseline.yml` の手動トリガ (`workflow_dispatch`)** を
   対象ブランチで実行してベースラインを再生成・コミットします。失敗時の実測/差分
   画像 (`*-actual.png` / `*-diff.png`) は `.gitignore` 済みでコミットされません。
-- CI では `ci.yml` の **`frontend (browser render + visual)` ジョブ**が Playwright の
-  Chromium を導入して `pnpm test:browser` を実行します (jsdom の `frontend` ジョブ
-  とは別ジョブ)。現状はスモークのみが走り、ビジュアル回帰はベースライン整備後に
+- CI では `ci.yml` の **`frontend` ジョブ (チェック名 `frontend (build + browser
+  tests)`)** が、jsdom 単体テスト等の後続ステップとして Playwright の Chromium を
+  導入して `pnpm test:browser` を実行します。旧来は jsdom 側と別ジョブ
+  (`frontend-visual`) でしたが、pnpm install・Vite トランスパイルの重複を解消する
+  ため 1 ジョブに統合しています (#908。詳細は前掲の CI セクションと `ci.yml` の
+  コメントを参照)。現状はスモークのみが走り、ビジュアル回帰はベースライン整備後に
   `VITE_RUN_VISUAL=1` で有効化する想定です。**必須チェックを設定する場合はこの
-  ジョブ名にも注意**してください。
+  ジョブ名 (`frontend (build + browser tests)`) を指定してください** (旧
+  `frontend (typecheck + build)` / `frontend (browser render + visual)` は
+  #908 で消えています)。
 - 既知の限界: Chromium 上の検証であり、Tauri が実際に使う webview (Linux: WebKitGTK
   / Windows: WebView2) とは描画エンジンが異なります。移行に伴う Web 層のレイアウト/
   見た目退行は十分捕捉できますが、実 webview 固有の描画差はカバー範囲外です
