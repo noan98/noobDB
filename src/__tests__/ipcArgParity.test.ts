@@ -1,26 +1,21 @@
 import { describe, expect, it } from "vitest";
 // `ipcCommandParity.test.ts` と同じ `?raw` インポートパターン。バックエンドの
-// コマンド実装は `src-tauri/src/commands/*.rs` に散らばっているため、全ファイルを
-// 個別に取り込む。
-import advisorRs from "../../src-tauri/src/commands/advisor.rs?raw";
-import connectionRs from "../../src-tauri/src/commands/connection.rs?raw";
-import diffRs from "../../src-tauri/src/commands/diff.rs?raw";
-import dumpRs from "../../src-tauri/src/commands/dump.rs?raw";
-import exportRs from "../../src-tauri/src/commands/export.rs?raw";
-import fileRs from "../../src-tauri/src/commands/file.rs?raw";
-import historyRs from "../../src-tauri/src/commands/history.rs?raw";
-import importRs from "../../src-tauri/src/commands/import.rs?raw";
-import inspectorRs from "../../src-tauri/src/commands/inspector.rs?raw";
-import logsRs from "../../src-tauri/src/commands/logs.rs?raw";
-import processRs from "../../src-tauri/src/commands/process.rs?raw";
-import profilesRs from "../../src-tauri/src/commands/profiles.rs?raw";
-import queryRs from "../../src-tauri/src/commands/query.rs?raw";
-import schemaRs from "../../src-tauri/src/commands/schema.rs?raw";
-import serverRs from "../../src-tauri/src/commands/server.rs?raw";
-import snippetsRs from "../../src-tauri/src/commands/snippets.rs?raw";
-import sshRs from "../../src-tauri/src/commands/ssh.rs?raw";
-import syncRs from "../../src-tauri/src/commands/sync.rs?raw";
+// コマンド実装は `src-tauri/src/commands/*.rs` に散らばっている。
+//
+// かつては各ファイルを個別に `import ... from ".../xxx.rs?raw"` で列挙していたが
+// (#921)、新しいコマンドモジュールを追加したときにここへの追記を忘れると、その
+// モジュールのコマンドは静かに引数パリティ検査から漏れてしまう (実際に advisor 系
+// テストのみが動いていた時期に privileges/sandbox/flight_recorder/local/tasks の
+// 5 モジュールが漏れていた)。`import.meta.glob` で `commands/*.rs` を機械的に
+// 全件取り込むことで、モジュール追加時の追記漏れ自体を構造的に無くす。
+import libRs from "../../src-tauri/src/lib.rs?raw";
 import tauriTs from "../api/tauri.ts?raw";
+
+const commandModules = import.meta.glob("../../src-tauri/src/commands/*.rs", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+}) as Record<string, string>;
 
 // IPC コマンドの「引数名」ドリフト検出 (#825)。
 //
@@ -183,12 +178,63 @@ function snakeToCamel(s: string): string {
 }
 
 /**
+ * `lib.rs` の `generate_handler![...]` ブロックから登録済みコマンド名を抽出する。
+ * `ipcCommandParity.test.ts` の同名関数と同じロジック (意図的な複製 — 各テスト
+ * ファイルは自己完結させる方針、`splitTopLevel` 等の他ヘルパーも共有していない)。
+ * ここでは「lib.rs に登録されているのに `rustSources` (= commands/*.rs の自動
+ * 列挙) 側で 1 件も引数を抽出できていないコマンドが無いか」の取りこぼし検知にのみ使う。
+ */
+function extractRegisteredCommands(source: string): Set<string> {
+  const start = source.indexOf("generate_handler![");
+  if (start === -1) {
+    throw new Error("lib.rs から generate_handler! ブロックが見つからない");
+  }
+  const open = source.indexOf("[", start);
+  const close = source.indexOf("]", open);
+  if (open === -1 || close === -1) {
+    throw new Error("generate_handler! のブラケットが閉じていない");
+  }
+  const block = source.slice(open + 1, close);
+
+  const commands = new Set<string>();
+  for (const rawLine of block.split("\n")) {
+    const line = rawLine.replace(/\/\/.*$/, "").trim();
+    if (line === "") continue;
+    for (const entry of line.split(",")) {
+      const trimmed = entry.trim();
+      if (trimmed === "") continue;
+      const segments = trimmed.split("::");
+      const name = segments[segments.length - 1].trim();
+      if (name !== "") commands.add(name);
+    }
+  }
+  return commands;
+}
+
+/**
  * Tauri が自動注入する特殊な引数の型かどうか。これらはフロントから渡されない
  * (invoke の引数オブジェクトに現れない) ので、パラメータ名パリティの対象から除外する。
  */
 function isInjectedArgType(rustType: string): boolean {
   const head = rustType.trim().split(/[<\s]/)[0];
   return head === "State" || head === "AppHandle" || head === "Window" || head === "WebviewWindow";
+}
+
+/**
+ * 行コメント (`//` / `///` / `//!`) の中身を同じ長さの空白に置き換える (改行・
+ * 非コメント行はそのまま)。インデックスが元の `source` と完全に一致するので、
+ * ここで得た文字列は「コメント中の見た目だけの `#[tauri::command]` 誤検出」を
+ * 避けるための走査専用に使い、実際のスライスは常に元の `source` から行う。
+ * ドキュメントコメントが「この関数は `#[tauri::command]` の薄いラッパ」のように
+ * 属性を**説明文中で言及する**ケース (`query.rs::run_query_inner` 等の委譲先
+ * ヘルパー doc) があり、素朴な文字列走査だとその言及自体を属性だと誤認して
+ * 直後の `fn` を持たないヘルパーへ迷い込む (最悪 `{` が見つからず例外)。
+ */
+function stripLineComments(source: string): string {
+  return source
+    .split("\n")
+    .map((line) => (line.trimStart().startsWith("//") ? line.replace(/./g, " ") : line))
+    .join("\n");
 }
 
 /**
@@ -199,9 +245,10 @@ function isInjectedArgType(rustType: string): boolean {
  */
 function extractRustCommandParams(source: string): Map<string, string[]> {
   const result = new Map<string, string[]>();
+  const scanSource = stripLineComments(source);
   const attrRe = /#\[tauri::command\]/g;
   let attrMatch: RegExpExecArray | null;
-  while ((attrMatch = attrRe.exec(source)) !== null) {
+  while ((attrMatch = attrRe.exec(scanSource)) !== null) {
     const start = attrMatch.index;
     // 関数本体の開始 `{` まで (パラメータの型に `{` は現れない) を対象にする。
     const braceIdx = source.indexOf("{", start);
@@ -320,26 +367,7 @@ function extractInvokedArgs(tauriTs: string): Map<string, Set<string>> {
  */
 const KNOWN_DIFFERENCES: Record<string, { onlyInBackend?: string[]; onlyInFrontend?: string[] }> = {};
 
-const rustSources = [
-  advisorRs,
-  connectionRs,
-  diffRs,
-  dumpRs,
-  exportRs,
-  fileRs,
-  historyRs,
-  importRs,
-  inspectorRs,
-  logsRs,
-  processRs,
-  profilesRs,
-  queryRs,
-  schemaRs,
-  serverRs,
-  snippetsRs,
-  sshRs,
-  syncRs,
-];
+const rustSources = Object.values(commandModules);
 
 const backendParams = new Map<string, string[]>();
 for (const src of rustSources) {
@@ -390,6 +418,19 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
     // 引数を一切取らないコマンドは空配列。
     expect(backendParams.get("read_logs")).toEqual([]);
     expect(backendParams.get("list_profiles")).toEqual([]);
+  });
+
+  it("lib.rs に登録済みのコマンドが rustSources の自動列挙から漏れていない (取りこぼし検知、#921)", () => {
+    // `rustSources` を `commands/*.rs` の import.meta.glob で自動導出しているため
+    // 通常は起こり得ないが、コマンドが commands/ 以外のファイルに定義される・
+    // ファイル名が glob パターンから外れる、といった将来の変更で再びモジュール
+    // 単位の取りこぼしが起きないよう、lib.rs 登録集合を正として突き合わせる。
+    const registered = extractRegisteredCommands(libRs);
+    const missing = [...registered].filter((name) => !backendParams.has(name)).sort();
+    expect(
+      missing,
+      `rustSources (commands/*.rs) から引数情報を抽出できていない登録コマンド: ${missing.join(", ")}`,
+    ).toEqual([]);
   });
 
   it("バックエンドとフロントエンドの双方に存在するコマンドの引数キー集合が一致する", () => {
