@@ -65,7 +65,11 @@ export function isEditableColumnType(typeName: string): boolean {
   return !BINARY_TYPES.has(typeName.toUpperCase());
 }
 
-type EditTypeKind = "number" | "date" | "datetime" | "time" | "boolean" | "other";
+/**
+ * Broad value-shape buckets a column falls into for edit-time validation and
+ * for the right-click "set value" shortcuts (`quickSetValues.ts`).
+ */
+export type EditTypeKind = "number" | "date" | "datetime" | "time" | "boolean" | "other";
 
 /**
  * Buckets a column's reported type name into the broad kinds we validate
@@ -75,7 +79,7 @@ type EditTypeKind = "number" | "date" | "datetime" | "time" | "boolean" | "other
  * `"other"`, which is never rejected — a false reject (blocking a valid edit)
  * is worse than letting the server have the final say.
  */
-function classifyEditType(typeName: string): EditTypeKind {
+export function classifyEditType(typeName: string): EditTypeKind {
   const base = typeName
     .toUpperCase()
     .replace(/\(.*$/, "")
@@ -120,7 +124,8 @@ function errorKeyForKind(kind: EditTypeKind): I18nKey | null {
  * for the destination column. Mirrors `literalFromInput`'s conventions: the
  * literal `NULL` keyword clears a column, and numeric/temporal/boolean
  * columns require a well-formed value (or `NULL` when the column allows it).
- * String-like columns are never rejected here.
+ * String-like columns are never rejected here — including an empty box, which
+ * means the empty string `''` rather than NULL.
  */
 export function validateCellInput(
   raw: string,
@@ -133,10 +138,16 @@ export function validateCellInput(
     return nullable ? null : "editInvalidNotNull";
   }
   if (trimmed === "") {
+    // An empty edit box on a string-like column is the empty string literal
+    // `''` (that is what `literalFromInput` builds), NOT SQL NULL — so it is
+    // a legal value even on a NOT NULL column and must not be reported as a
+    // nullability violation. The right-click "set to empty string" shortcut
+    // (`quickSetValues.ts`) relies on this.
+    if (kind === "other") return null;
+    // Other kinds have no empty literal: they need a real value, or NULL when
+    // the column allows it.
     if (!nullable) return "editInvalidNotNull";
-    // On a nullable column an empty value only makes sense for string-like
-    // types; numeric/temporal/boolean columns need a real value or NULL.
-    return kind === "other" ? null : errorKeyForKind(kind);
+    return errorKeyForKind(kind);
   }
   switch (kind) {
     case "number":

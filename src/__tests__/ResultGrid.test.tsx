@@ -1228,3 +1228,180 @@ describe("行の複製 (#820)", () => {
     expect(screen.queryByText(t("gridDuplicateRow"))).toBeNull();
   });
 });
+
+// セル右クリックの「値をセット」ショートカット。どの値がメニューに出るか自体は
+// `quickSetValues.test.ts` が純ロジックとして固定するので、ここでは
+// 「メニューに現れ、選ぶと編集バッファへ正しく載る」配線だけを見る。
+describe("セル値のクイックセット", () => {
+  beforeEach(() => setLocale("en"));
+
+  const columns: Column[] = [
+    { name: "id", type_name: "INT" },
+    { name: "name", type_name: "VARCHAR" },
+    { name: "qty", type_name: "INT" },
+  ];
+  const tableColumns: TableColumnInfo[] = [
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "name",
+      data_type: "varchar",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "qty",
+      data_type: "int",
+      nullable: false,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+  ];
+  const result = makeResult(columns, [[1, "banana", 5]]);
+
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  function renderGrid(onSetCellEdit = vi.fn()) {
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={result}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={onSetCellEdit}
+      />,
+    );
+    return { container, onSetCellEdit };
+  }
+
+  it("「NULL をセット」で編集バッファに NULL を載せる", async () => {
+    const user = userEvent.setup();
+    const { container, onSetCellEdit } = renderGrid();
+    fireEvent.contextMenu(dataCells(container)[0][1]);
+
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetNull") }));
+
+    expect(onSetCellEdit).toHaveBeenCalledWith(rowEditKey([1, "banana", 5], [0], 0), 1, "NULL");
+  });
+
+  it("文字列列では「空文字をセット」を、数値列では「0 をセット」を出す", async () => {
+    const { container } = renderGrid();
+
+    fireEvent.contextMenu(dataCells(container)[0][1]);
+    expect(await screen.findByRole("menuitem", { name: t("gridQuickSetEmpty") })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetZero") })).toBeNull();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.contextMenu(dataCells(container)[0][2]);
+    expect(await screen.findByRole("menuitem", { name: t("gridQuickSetZero") })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetEmpty") })).toBeNull();
+  });
+
+  it("NOT NULL 列では NULL の項目を無効化する", async () => {
+    const { container } = renderGrid();
+    fireEvent.contextMenu(dataCells(container)[0][2]);
+
+    const item = await screen.findByRole("menuitem", { name: t("gridQuickSetNull") });
+    expect(item).toBeDisabled();
+  });
+
+  it("すでにその値のセルへセットすると編集を積まずに取り消す", async () => {
+    const user = userEvent.setup();
+    const onSetCellEdit = vi.fn();
+    // qty がすでに 0 の行。「0 をセット」は無変更なので、編集を積む代わりに
+    // (その列に保留中の編集があればそれを消す) null が渡る。
+    const zeroRow = makeResult(columns, [[1, "banana", 0]]);
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={zeroRow}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={onSetCellEdit}
+      />,
+    );
+    fireEvent.contextMenu(dataCells(container)[0][2]);
+
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetZero") }));
+    expect(onSetCellEdit).toHaveBeenCalledWith(rowEditKey([1, "banana", 0], [0], 0), 2, null);
+  });
+
+  it("矩形選択の中のセルから選ぶと選択範囲全体へ適用する", async () => {
+    const user = userEvent.setup();
+    const onBulkEdit = vi.fn();
+    // name が編集可能な 2 行。name 列で 2 セルの範囲を選択する。
+    const twoRows = makeResult(columns, [
+      [1, "banana", 5],
+      [2, "cherry", 7],
+    ]);
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={twoRows}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={vi.fn()}
+        onBulkEdit={onBulkEdit}
+      />,
+    );
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][1]);
+    fireEvent.keyDown(cells[0][1], { key: "ArrowDown", shiftKey: true });
+    expect(container.querySelectorAll("td.is-selected-cell")).toHaveLength(2);
+
+    fireEvent.contextMenu(cells[0][1]);
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetNull") }));
+
+    expect(onBulkEdit).toHaveBeenCalledWith([
+      { rowKey: rowEditKey([1, "banana", 5], [0], 0), colIdx: 1, value: "NULL" },
+      { rowKey: rowEditKey([2, "cherry", 7], [0], 1), colIdx: 1, value: "NULL" },
+    ]);
+  });
+
+  it("編集不可の列 (PK) ではクイックセットを出さない", () => {
+    const { container } = renderGrid();
+    fireEvent.contextMenu(dataCells(container)[0][0]);
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetNull") })).toBeNull();
+  });
+
+  it("保留中の編集があるセルだけ「編集を取り消す」を出す", async () => {
+    const user = userEvent.setup();
+    const onSetCellEdit = vi.fn();
+    const rowKey = rowEditKey([1, "banana", 5], [0], 0);
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={result}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={onSetCellEdit}
+        pendingEdits={{ [rowKey]: { 1: "cherry" } }}
+      />,
+    );
+    const cells = dataCells(container);
+
+    // 編集が無い列には出ない。
+    fireEvent.contextMenu(cells[0][2]);
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetRevert") })).toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    fireEvent.contextMenu(cells[0][1]);
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetRevert") }));
+    expect(onSetCellEdit).toHaveBeenCalledWith(rowKey, 1, null);
+  });
+});

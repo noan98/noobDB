@@ -1525,6 +1525,20 @@ const en = {
   gridBulkEditAppliedSkipped:
     "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
   gridBulkEditNoneApplied: "No cells were edited (read-only columns or invalid value)",
+  // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
+  gridQuickSetNull: "Set to NULL",
+  gridQuickSetEmpty: "Set to empty string",
+  gridQuickSetEmptyNote: "The empty string '' — not NULL",
+  gridQuickSetZero: "Set to 0",
+  gridQuickSetTrue: "Set to true",
+  gridQuickSetFalse: "Set to false",
+  gridQuickSetNow: "Set to current date & time",
+  gridQuickSetToday: "Set to today's date",
+  gridQuickSetCurrentTime: "Set to current time",
+  gridQuickSetNowNote: "Taken from this computer's clock, not the database server's",
+  gridQuickSetSelectionNote: "Applies to all {count} selected cells",
+  gridQuickSetInvalid: "That value is not valid for this column",
+  gridQuickSetRevert: "Discard this cell's pending edit",
   // 結果差分ハイライト (#597)
   diffHighlightLabel: "Diff",
   diffHighlightAria: "Highlight changes from the previous run of this query",
@@ -4122,6 +4136,20 @@ const ja: Dict = {
   gridBulkEditAppliedSkipped:
     "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
   gridBulkEditNoneApplied: "編集されたセルはありません (編集不可列または不正な値)",
+  // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
+  gridQuickSetNull: "NULL をセット",
+  gridQuickSetEmpty: "空文字をセット",
+  gridQuickSetEmptyNote: "NULL ではなく空文字列 '' です",
+  gridQuickSetZero: "0 をセット",
+  gridQuickSetTrue: "true をセット",
+  gridQuickSetFalse: "false をセット",
+  gridQuickSetNow: "現在日時をセット",
+  gridQuickSetToday: "今日の日付をセット",
+  gridQuickSetCurrentTime: "現在時刻をセット",
+  gridQuickSetNowNote: "DB サーバではなく、この PC の時計を使います",
+  gridQuickSetSelectionNote: "選択中の {count} セルすべてに適用します",
+  gridQuickSetInvalid: "この列にはセットできない値です",
+  gridQuickSetRevert: "このセルの編集を取り消す",
   // 結果差分ハイライト (#597)
   diffHighlightLabel: "差分",
   diffHighlightAria: "このクエリの前回実行からの変化をハイライト",
