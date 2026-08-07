@@ -1374,6 +1374,52 @@ describe("セル値のクイックセット", () => {
     ]);
   });
 
+  // BIT はドライバで意味が変わるので、グリッドが driver を渡していることを見る
+  // (どう出し分けるかの判定自体は quickSetValues.test.ts が固定する)。
+  it("BIT 列の候補はセッションのドライバで変わる", async () => {
+    const bitColumns: Column[] = [
+      { name: "id", type_name: "INT" },
+      { name: "flag", type_name: "BIT" },
+    ];
+    const bitTableColumns = tableColumns
+      .filter((c) => c.name === "id")
+      .concat({
+        name: "flag",
+        data_type: "bit",
+        nullable: true,
+        key: "",
+        default: null,
+        extra: "",
+        referenced_table: null,
+        referenced_column: null,
+      });
+    const bitResult = makeResult(bitColumns, [[1, true]]);
+    const render = (driver: string) =>
+      renderWithProviders(
+        <ResultGrid
+          result={bitResult}
+          editable
+          driver={driver}
+          tableColumns={bitTableColumns}
+          onSetCellEdit={vi.fn()}
+        />,
+      );
+
+    // MSSQL の BIT は真偽型そのもの。
+    const mssql = render("mssql");
+    fireEvent.contextMenu(dataCells(mssql.container)[0][1]);
+    expect(await screen.findByRole("menuitem", { name: t("gridQuickSetTrue") })).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    mssql.unmount();
+
+    // PostgreSQL の BIT はビット列なので true/false も空文字も出さない。
+    const pg = render("postgres");
+    fireEvent.contextMenu(dataCells(pg.container)[0][1]);
+    expect(await screen.findByRole("menuitem", { name: t("gridQuickSetNull") })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetTrue") })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetEmpty") })).toBeNull();
+  });
+
   it("編集不可の列 (PK) ではクイックセットを出さない", () => {
     const { container } = renderGrid();
     fireEvent.contextMenu(dataCells(container)[0][0]);

@@ -1,6 +1,6 @@
-import type { CellValue, Column, TableColumnInfo } from "../api/tauri";
+import type { Column, TableColumnInfo } from "../api/tauri";
 import type { I18nKey } from "../i18n";
-import { cellValueFromInput, classifyEditType, type EditTypeKind } from "./cellEdit";
+import { classifyEditType, type EditTypeKind } from "./cellEdit";
 
 /**
  * Right-click "set value" shortcuts for the result grid (`ResultGrid`'s cell
@@ -82,6 +82,21 @@ export function resolveDynamicValue(dynamic: QuickSetDynamic, now: Date): string
   }
 }
 
+/** `BIT` on a driver where it is *not* a boolean but a bit string. */
+function isBitStringDriver(driver: string | undefined): boolean {
+  // PostgreSQL / DuckDB `BIT(n)` holds a string of bits ('10110000'), not a
+  // truth value: `TRUE`/`FALSE` are invalid literals for it and so is `''`
+  // (there is no zero-length `bit(n)`). Everywhere else — MSSQL, where BIT *is*
+  // the boolean type, plus MySQL/SQLite where 1/0 is a valid BIT value —
+  // true/false is both meaningful and safe (`literalFromInput` emits 1/0).
+  return driver === "postgres" || driver === "duckdb";
+}
+
+const BOOLEAN_OPTIONS: QuickSetOption[] = [
+  { id: "true", labelKey: "gridQuickSetTrue", value: "true" },
+  { id: "false", labelKey: "gridQuickSetFalse", value: "false" },
+];
+
 /**
  * The shortcuts offered for one column, in menu order.
  *
@@ -94,6 +109,12 @@ export function resolveDynamicValue(dynamic: QuickSetDynamic, now: Date): string
  *   - date / time / datetime → the corresponding "now" value
  *   - anything else (string-like) → the empty string
  *
+ * `BIT` is the one type whose meaning depends on the driver, so it is decided
+ * here rather than in `classifyEditType` (which sees only the type name): see
+ * `isBitStringDriver`. On a bit-string driver nothing but NULL is offered —
+ * neither `true`/`false` nor `''` is a valid bit-string literal, and suggesting
+ * a value that is guaranteed to fail at Apply is worse than suggesting none.
+ *
  * `meta` supplies nullability; when it is missing the column is treated as
  * nullable, matching `validateEdit`'s permissive default.
  */
@@ -101,6 +122,8 @@ export function quickSetOptions(input: {
   column: Column;
   meta?: TableColumnInfo | null;
   now: Date;
+  /** Session driver, for the `BIT` split above. Unknown/absent → not a bit string. */
+  driver?: string;
 }): QuickSetOption[] {
   const kind: EditTypeKind = classifyEditType(input.column.type_name);
   const nullable = input.meta?.nullable ?? true;
@@ -112,15 +135,19 @@ export function quickSetOptions(input: {
       disabledReason: nullable ? undefined : "editInvalidNotNull",
     },
   ];
+  // `classifyEditType` buckets BIT as "other" (it cannot know the driver), so
+  // intercept it before the string-like default would offer the empty string.
+  const base = input.column.type_name.toUpperCase().replace(/\(.*$/, "").trim();
+  if (base === "BIT") {
+    if (!isBitStringDriver(input.driver)) options.push(...BOOLEAN_OPTIONS);
+    return options;
+  }
   switch (kind) {
     case "number":
       options.push({ id: "zero", labelKey: "gridQuickSetZero", value: "0" });
       break;
     case "boolean":
-      options.push(
-        { id: "true", labelKey: "gridQuickSetTrue", value: "true" },
-        { id: "false", labelKey: "gridQuickSetFalse", value: "false" },
-      );
+      options.push(...BOOLEAN_OPTIONS);
       break;
     case "date":
       options.push({
@@ -161,20 +188,3 @@ export function quickSetOptions(input: {
   return options;
 }
 
-/**
- * Whether applying `value` to a cell currently holding `current` would be a
- * no-op — i.e. the shortcut sets the value the row already has.
- *
- * Compared through `cellValueFromInput` (the same coercion an applied edit
- * goes through) rather than by raw text, so "NULL" on an already-NULL cell and
- * "0" on a cell holding the number 0 both count as unchanged. Callers clear the
- * cell's buffered edit instead of recording one, which keeps the pending-edit
- * count honest and lets a shortcut undo an earlier edit.
- */
-export function quickSetIsNoop(value: string, col: Column, current: CellValue): boolean {
-  const next = cellValueFromInput(value, col);
-  const nextNull = next === null || next === undefined;
-  const currentNull = current === null || current === undefined;
-  if (nextNull || currentNull) return nextNull && currentNull;
-  return String(next) === String(current);
-}

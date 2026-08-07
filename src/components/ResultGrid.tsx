@@ -77,6 +77,7 @@ import {
   buildRowSql,
   countEditedCells,
   countEditedRows,
+  editIsNoop,
   isEditableColumnType,
   resolvePkIndices,
   rowEditKey,
@@ -86,7 +87,7 @@ import {
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
-import { quickSetIsNoop, quickSetOptions, resolveDynamicValue } from "./quickSetValues";
+import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
 import type { ServerFilter, ServerFilterOp, ServerSort, ServerSortDirection } from "./serverBrowse";
 import { diffResultRows } from "../resultDiff";
 import {
@@ -3277,12 +3278,19 @@ export function DataGrid({
       isColEditable: (c) => editableColumns?.[c] ?? false,
       validate: (c, v) => validateEdit?.(c, v) ?? null,
     });
-    if (plan.applied.length === 0) {
+    if (plan.applied.length === 0 && plan.unchanged.length === 0) {
       toast.error(t("gridBulkEditNoneApplied"));
       return;
     }
-    onBulkEdit(plan.applied);
-    const skipped = plan.skippedReadonly + plan.skippedInvalid;
+    // `unchanged` は「すでにその値」のセル。新しい編集は積まないが、そこに残って
+    // いる保留編集は解除したいので `applied` と一緒に渡す。
+    onBulkEdit([...plan.applied, ...plan.unchanged]);
+    if (plan.applied.length === 0) {
+      toast.info(t("gridBulkEditAllUnchanged", { cells: plan.unchanged.length }));
+      return;
+    }
+    const skipped =
+      plan.skippedReadonly + plan.skippedInvalid + plan.unchanged.length;
     if (skipped > 0) {
       toast.info(
         t("gridBulkEditAppliedSkipped", { cells: plan.applied.length, skipped }),
@@ -3366,11 +3374,7 @@ export function DataGrid({
     // Setting the value the cell already holds clears any buffered edit
     // instead of recording a no-op one.
     const rowKey = rowEditKey(row, pkIndices ?? [], rowIdx);
-    onSetCellEdit(
-      rowKey,
-      colIdx,
-      quickSetIsNoop(value, col, row[colIdx]) ? null : value,
-    );
+    onSetCellEdit(rowKey, colIdx, editIsNoop(value, col, row[colIdx]) ? null : value);
   };
 
   // Live aggregate of the selected rectangle, surfaced to the parent's status
@@ -4456,7 +4460,7 @@ export function DataGrid({
                 selectedCells > 1
                   ? t("gridQuickSetSelectionNote", { count: selectedCells })
                   : null;
-              const items = quickSetOptions({ column: col, meta, now: new Date() }).map(
+              const items = quickSetOptions({ column: col, meta, now: new Date(), driver: rowSqlDriver }).map(
                 (opt) => {
                   const note = opt.noteKey ? t(opt.noteKey) : null;
                   const title = opt.disabledReason

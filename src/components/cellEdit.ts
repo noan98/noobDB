@@ -355,6 +355,25 @@ export function cellValueFromInput(raw: string, col: Column): CellValue {
 }
 
 /**
+ * Whether buffering `raw` for a cell currently holding `current` would be a
+ * no-op — i.e. the edit sets the value the row already has.
+ *
+ * Compared through `cellValueFromInput` (the same coercion an applied edit goes
+ * through) rather than by raw text, so "NULL" on an already-NULL cell and "0"
+ * on a cell holding the number 0 both count as unchanged. Callers clear the
+ * cell's buffered edit instead of recording one, which keeps the pending-edit
+ * count honest, avoids emitting `SET col = <same value>` at Apply, and lets the
+ * action undo an earlier edit on that cell.
+ */
+export function editIsNoop(raw: string, col: Column, current: CellValue): boolean {
+  const next = cellValueFromInput(raw, col);
+  const nextNull = next === null || next === undefined;
+  const currentNull = current === null || current === undefined;
+  if (nextNull || currentNull) return nextNull && currentNull;
+  return String(next) === String(current);
+}
+
+/**
  * Applies buffered edits (and optional pending-delete keys) to a copy of the
  * result rows, returning a new rows array. Used after a successful Apply to
  * reflect committed changes in place — edited cells take their new value (via

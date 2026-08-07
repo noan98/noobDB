@@ -1525,6 +1525,7 @@ const en = {
   gridBulkEditAppliedSkipped:
     "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
   gridBulkEditNoneApplied: "No cells were edited (read-only columns or invalid value)",
+  gridBulkEditAllUnchanged: "All {cells} cells already held that value — nothing to edit",
   // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
   gridQuickSetNull: "Set to NULL",
   gridQuickSetEmpty: "Set to empty string",
@@ -4136,6 +4137,7 @@ const ja: Dict = {
   gridBulkEditAppliedSkipped:
     "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
   gridBulkEditNoneApplied: "編集されたセルはありません (編集不可列または不正な値)",
+  gridBulkEditAllUnchanged: "選択した {cells} セルはすべてすでにその値です — 変更はありません",
   // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
   gridQuickSetNull: "NULL をセット",
   gridQuickSetEmpty: "空文字をセット",

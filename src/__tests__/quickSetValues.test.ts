@@ -4,11 +4,10 @@ import {
   formatLocalDate,
   formatLocalDateTime,
   formatLocalTime,
-  quickSetIsNoop,
   quickSetOptions,
   resolveDynamicValue,
 } from "../components/quickSetValues";
-import { validateCellInput } from "../components/cellEdit";
+import { editIsNoop, validateCellInput } from "../components/cellEdit";
 
 // セル右クリックの「値をセット」ショートカット (NULL / 空文字 / 0 / true / false /
 // 現在日時) の純ロジック。ここで生成される値は「ユーザが手で打てたはずの生文字列」
@@ -35,8 +34,8 @@ function meta(name: string, nullable: boolean): TableColumnInfo {
 // 日付がずれるため、ローカル成分を指定して生成する。
 const NOW = new Date(2024, 2, 5, 7, 8, 9);
 
-function ids(column: Column, m: TableColumnInfo | null = null) {
-  return quickSetOptions({ column, meta: m, now: NOW }).map((o) => o.id);
+function ids(column: Column, m: TableColumnInfo | null = null, driver?: string) {
+  return quickSetOptions({ column, meta: m, now: NOW, driver }).map((o) => o.id);
 }
 
 describe("quickSetOptions", () => {
@@ -70,6 +69,22 @@ describe("quickSetOptions", () => {
     expect(ids(col("a", "TIME"))).toEqual(["null", "now"]);
     expect(ids(col("a", "DATETIME"))).toEqual(["null", "now"]);
     expect(ids(col("a", "TIMESTAMP(3)"))).toEqual(["null", "now"]);
+  });
+
+  // BIT はドライバで意味が変わる唯一の型。MSSQL では真偽型そのもの
+  // (`literalFromInput` が 1/0 へ落とす) だが、PostgreSQL / DuckDB では
+  // ビット列 ('10110000') なので true/false も空文字も不正なリテラルになる。
+  it("BIT 列は真偽型として扱う (MSSQL / MySQL / SQLite)", () => {
+    expect(ids(col("a", "BIT"), null, "mssql")).toEqual(["null", "true", "false"]);
+    expect(ids(col("a", "bit"), null, "mysql")).toEqual(["null", "true", "false"]);
+    expect(ids(col("a", "BIT(1)"), null, "sqlite")).toEqual(["null", "true", "false"]);
+  });
+
+  it("ビット列ドライバの BIT 列では NULL 以外を出さない", () => {
+    expect(ids(col("a", "BIT"), null, "postgres")).toEqual(["null"]);
+    expect(ids(col("a", "BIT(8)"), null, "duckdb")).toEqual(["null"]);
+    // 空文字を出してしまうと bit(n) では必ず Apply が失敗する。
+    expect(ids(col("a", "BIT(8)"), null, "postgres")).not.toContain("empty");
   });
 
   it("日時系の値は列の粒度に合わせて整形する", () => {
@@ -123,24 +138,24 @@ describe("resolveDynamicValue", () => {
   });
 });
 
-describe("quickSetIsNoop", () => {
+describe("editIsNoop (クイックセットの無変更判定)", () => {
   it("すでに NULL のセルへの NULL セットは無変更", () => {
-    expect(quickSetIsNoop("NULL", col("a", "VARCHAR"), null)).toBe(true);
-    expect(quickSetIsNoop("NULL", col("a", "VARCHAR"), "x")).toBe(false);
+    expect(editIsNoop("NULL", col("a", "VARCHAR"), null)).toBe(true);
+    expect(editIsNoop("NULL", col("a", "VARCHAR"), "x")).toBe(false);
   });
 
   it("値の型を跨いでも確定後の値で比較する", () => {
-    expect(quickSetIsNoop("0", col("a", "INT"), 0)).toBe(true);
-    expect(quickSetIsNoop("0", col("a", "INT"), 1)).toBe(false);
-    expect(quickSetIsNoop("true", col("a", "BOOLEAN"), true)).toBe(true);
-    expect(quickSetIsNoop("false", col("a", "BOOLEAN"), true)).toBe(false);
+    expect(editIsNoop("0", col("a", "INT"), 0)).toBe(true);
+    expect(editIsNoop("0", col("a", "INT"), 1)).toBe(false);
+    expect(editIsNoop("true", col("a", "BOOLEAN"), true)).toBe(true);
+    expect(editIsNoop("false", col("a", "BOOLEAN"), true)).toBe(false);
     // BIGINT/DECIMAL は精度維持のため文字列で届く。
-    expect(quickSetIsNoop("0", col("a", "BIGINT"), "0")).toBe(true);
+    expect(editIsNoop("0", col("a", "BIGINT"), "0")).toBe(true);
   });
 
   it("空文字と NULL は別物として扱う", () => {
-    expect(quickSetIsNoop("", col("a", "VARCHAR"), null)).toBe(false);
-    expect(quickSetIsNoop("", col("a", "VARCHAR"), "")).toBe(true);
-    expect(quickSetIsNoop("NULL", col("a", "VARCHAR"), "")).toBe(false);
+    expect(editIsNoop("", col("a", "VARCHAR"), null)).toBe(false);
+    expect(editIsNoop("", col("a", "VARCHAR"), "")).toBe(true);
+    expect(editIsNoop("NULL", col("a", "VARCHAR"), "")).toBe(false);
   });
 });
