@@ -1472,6 +1472,29 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `cellFormat.ts` (JSON コンパクト表記・日時のロケール整形。**表示専用**で実値は不変)、
   `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用。色は下記
   `colorScale.ts` を参照)。
+- セル値のクイックセット — `quickSetValues.ts`。結果グリッドのセル右クリックに出る
+  「NULL をセット」「空文字をセット」「0 をセット」「true/false をセット」「現在日時を
+  セット」の**純ロジック** (どの列にどの候補を出すか + 生成する生文字列)。生成値は
+  「ユーザが編集ボックスに手で打てたはずの文字列」に限定してあるため、下流の
+  `validateCellInput` / `literalFromInput` / `cellValueFromInput` がそのまま効き、
+  **DB への新しい経路を一切増やさない** (既存のインラインセル編集バッファに載るだけで、
+  確定は従来どおり Apply)。適用範囲は一括編集ダイアログ (#596) と同じ判定で、クリック
+  したセルが矩形選択の内側なら選択範囲全体 (`planBulkCellEdit` 経由)、そうでなければ
+  そのセル 1 つ。時刻系の候補は**クリック時点**の時計で組み直す (メニューを開いたまま
+  時間が経っても古い値を書かない)。NOT NULL 列では NULL の項目を「消す」のではなく
+  **理由付きで無効化**して制約を可視化する。`BIT` はドライバで意味が変わる唯一の型で、
+  MSSQL では真偽型そのもの (MySQL/SQLite も 1/0 が有効) だが PostgreSQL / DuckDB では
+  ビット列 (`'10110000'`) なので `true`/`false` も空文字も不正なリテラルになる。
+  `classifyEditType` は型名しか見られないためこの分岐は `quickSetOptions` 側に置き、
+  ビット列ドライバでは NULL 以外を出さない (必ず Apply で失敗する候補を出すくらいなら
+  出さない)。
+  「すでにその値」のセットは `cellEdit.ts` の **`editIsNoop`** が検出し、保留編集を積む
+  代わりに解除する。この判定は単一セル経路と `planBulkCellEdit` (矩形選択・一括編集
+  ダイアログ #596) の**両方**が共有し、後者は該当セルを `applied` ではなく
+  `unchanged` (`value: null` = 解除) へ回す。`BulkEditTarget.value` の `null` は
+  「値ではなく解除」を意味し、App の `setBulkCellEditsForTab` が単一セルの
+  `setCellEditForTab` と同じ削除処理を行う — 無変更の `SET col = <同じ値>` を Apply で
+  発行せず、保留編集の件数表示も実際に変わるセルだけを数えるため。
 - データ可視化カラースケール (#525) — `colorScale.ts` が、データを色で符号化する表面
   (チャート系列・ヒートマップ・データバー・将来のコスト/NULL 率ミニバー) が共有する
   **単一のスケール体系**を純ロジックとして定義する。**sequential** (単一色相の連続、CB
