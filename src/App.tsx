@@ -4411,9 +4411,26 @@ export default function App() {
       patchTab(tabId, (tt) => {
         const next: PendingEdits = {};
         for (const k of Object.keys(tt.pendingEdits)) next[k] = { ...tt.pendingEdits[k] };
+        // `value === null` は「セルがすでにその値なので、残っている保留編集を
+        // 解除する」意味 (`planBulkCellEdit` の `unchanged`)。単一セル編集の
+        // `setCellEditForTab` と同じ削除処理を行う。
+        let changed = false;
         for (const e of edits) {
-          next[e.rowKey] = { ...(next[e.rowKey] ?? {}), [e.colIdx]: e.value };
+          const row = { ...(next[e.rowKey] ?? {}) };
+          if (e.value === null) {
+            if (row[e.colIdx] === undefined) continue;
+            delete row[e.colIdx];
+          } else {
+            if (row[e.colIdx] === e.value) continue;
+            row[e.colIdx] = e.value;
+          }
+          changed = true;
+          if (Object.keys(row).length === 0) delete next[e.rowKey];
+          else next[e.rowKey] = row;
         }
+        // 解除対象がどこにも無かった場合は Undo スナップショットを積まない
+        // (何も変わらないのに Undo が 1 手消費されるのを避ける)。
+        if (!changed) return tt;
         const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
         return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: [] };
       });

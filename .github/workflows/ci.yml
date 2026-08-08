@@ -298,7 +298,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップ
       # (rust-cache のツールチェーン情報取得など) より前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: sccache
 
@@ -434,7 +434,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: cargo-deny
 
@@ -493,7 +493,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: sccache
 
@@ -608,12 +608,12 @@ jobs:
       # cargo-nextest / cargo-llvm-cov の導入は DL 律速で、上の sshd / TLS DB 起動と
       # CPU を食い合わないため重ねて走らせる。
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: cargo-nextest
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: cargo-llvm-cov
 
@@ -738,7 +738,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: sccache
 
@@ -833,7 +833,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: sccache
 
@@ -870,7 +870,7 @@ jobs:
             sccache-${{ runner.os }}-windows-test-
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: cargo-nextest
 
