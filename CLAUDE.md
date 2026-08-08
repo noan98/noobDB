@@ -172,8 +172,8 @@ CI は 2 つのワークフローに分かれています:
   ジョブを走らせて全 PR ブランチがフォールバック復元できる main スコープを温めます
   (これが無いと新規 PR ブランチの初回 Rust ビルドは毎回コールド)。マージ後の main
   の健全性確認も兼ねます。`dorny/paths-filter` で
-  変更領域 (frontend / rust / workflow) を判定し、ジョブ単位の `if:` で出し分け
-  します (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
+  変更領域 (frontend / rust / workflow / crosslang) を判定し、ジョブ単位の `if:` で
+  出し分けします (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
   ジョブを skip させる方式。push イベントでは paths-filter が git 履歴比較を行う
   ため `changes` ジョブは checkout してから filter を実行します)。`frontend`
   ジョブ (チェック名 `frontend (build + browser tests)`) は
@@ -201,11 +201,37 @@ CI は 2 つのワークフローに分かれています:
   `pnpm-lock.yaml` を監視します。**旧チェック名 `frontend (typecheck + build)` /
   `frontend (browser render + visual)` を必須チェックに指定していた場合は、新しい
   `frontend (build + browser tests)` へ設定し直してください** (#908 のジョブ統合で
-  チェック名が変わったため)。Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
+  チェック名が変わったため)。
+
+  **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` /
+  `ipcArgParity.test.ts` / `streamEventParity.test.ts` (`?raw` インポートで
+  `src-tauri/src/lib.rs` / `commands/*.rs` / `tasks/scheduler.rs` を読む) と
+  `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
+  `schemaParity.test.ts` (Rust の統合テストと共有するフィクスチャ
+  `src/__tests__/fixtures/*.json` を検証する) は「相手言語のソースを実行時に読む」
+  言語横断のパリティ/ゴールデンテストです。これらは元々 `frontend` ジョブの
+  `pnpm test` に含まれていたため `frontend==true` (`src/**` の変更) でしか走らず、
+  `src-tauri/**` のみを変更する PR ではまさにその変更を捕まえるべきテストが
+  1 本も実行されないという穴がありました (#853)。対応として、対象 7 ファイルだけを
+  `pnpm vitest run <files...>` でピンポイントに実行する軽量な専用ジョブ
+  `crosslang parity` を新設し、起動条件を `frontend==true || rust==true` の OR に
+  しています (`frontend` ジョブとテストが重複しますが、対象を絞っているため数秒
+  程度と軽量で、重複コストよりカバレッジの穴を塞ぐ価値を優先しました)。逆方向
+  (Rust 側のゴールデンテスト `serde_schema_parity.rs` / `read_only_golden.rs` /
+  `error_kind_golden.rs` / `error_hint_golden.rs` が `include_str!` で読む共有
+  フィクスチャだけを変更する PR で `rust (test)` がスキップされる問題) は
+  `changes` ジョブに追加した `crosslang` フィルタ (`src/__tests__/fixtures/**`
+  限定) を `rust (test)` の `if:` へ OR で足すことで塞いでいます。**必須チェックを
+  設定する場合はこの `crosslang parity` ジョブも対象に含めてください。**
+
+  Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL 8 と PostgreSQL 16 のサービスコンテナに対し `cargo llvm-cov nextest`
-  (カバレッジ計装下で nextest を実走) を実行します。`rust (test)` は加えて
+  (カバレッジ計装下で nextest を実走) を実行します。起動条件は通常の
+  `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
+  も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを
+  確実に実走させるため)。`rust (test)` は加えて
   `scripts/ci-setup-sshd.sh` で apt の `openssh-server` を 127.0.0.1:2222 に立て、
   `NOOBDB_TEST_SSH_URL` / `NOOBDB_TEST_SSH_KEY` を `$GITHUB_ENV` に渡すことで SSH
   トンネル統合テスト (#331) も実走します (サービスコンテナはイメージ pull が要るため
@@ -266,16 +292,40 @@ CI は 2 つのワークフローに分かれています:
   するため、リリースノートは後から編集します)。`releaseDraft: true` に戻しては
   いけません — tauri-action は true だと未公開ドラフトしかタグ名で探さないため、
   公開済みリリースがあると成果物が誰にも見えない別ドラフトへ迷子になります
-  (v0.8.2 で発生)。`main` への push でもキャッシュ温め目的でビルドが走ります。ビルド後の
-  `Report bundle artifact sizes` ステップが、出荷バイナリ (NSIS インストーラ・
-  `.exe`、将来の `.dmg` / `.AppImage` / `.deb`) のサイズを Job Summary に出力します
-  (#549)。これは JS/CSS を測るバンドルサイズ可視化 (#443) の**アプリ本体版**で、方針も
-  同じく**当面は閾値で fail させず可視化のみ** (カバレッジ #482 と同じ漸進方針)。
-  追加ツールは増やさず `stat` + `awk` のシェル標準機能だけで集計し、cache-warm /
-  リリースの両ビルド経路の後に `if: always()` で 1 回測ります。macOS/Linux バンドルを
-  追加したら (本 Epic の別 Issue) `.dmg` / `.AppImage` / `.deb` のグロブが自動的に
-  対象へ含まれます。起動時間の監視は計測の安定性が難しいため本 Issue のスコープ外
-  (任意/将来拡張) としています。
+  (v0.8.2 で発生)。`main` への push でもキャッシュ温め目的でビルドが走ります。
+  ビルド後の `Report bundle artifact sizes` ステップが、出荷バイナリ (NSIS
+  インストーラ・`.exe`、将来の `.dmg` / `.AppImage` / `.deb`) のサイズを Job
+  Summary に出力します (#549)。これは JS/CSS を測るバンドルサイズ可視化 (#443) の
+  **アプリ本体版**で、方針も同じく**当面は閾値で fail させず可視化のみ**
+  (カバレッジ #482 と同じ漸進方針)。追加ツールは増やさず `stat` + `awk` の
+  シェル標準機能だけで集計し、cache-warm / リリースの両ビルド経路の後に
+  `if: always()` で 1 回測ります。macOS/Linux バンドルを追加したら (本 Epic の
+  別 Issue) `.dmg` / `.AppImage` / `.deb` のグロブが自動的に対象へ含まれます。
+  起動時間の監視は計測の安定性が難しいため本 Issue のスコープ外 (任意/将来拡張)
+  としています。
+  **キャッシュ温めビルドはパス変更でゲートされます (#919)。** `ci.yml` と同型の
+  `changes` ジョブ (`dorny/paths-filter`) を追加し、`rust` (`src-tauri/**`) /
+  `frontend` (`src/**` など、`ci.yml` の `frontend` フィルタと同じ集合) の
+  いずれも変更されていない**タグ以外の main push** では `build` ジョブ自体を
+  skip します — README / CLAUDE.md / 無関係な workflow ファイルのみの push で
+  90 分タイムアウトの Windows ランナーが浪費されるのを防ぎます。`changes`
+  ジョブは push イベントでは git 履歴比較を行うため checkout してから filter を
+  実行します (`ci.yml` の `changes` ジョブと同じ配慮、`fetch-depth: 2`)。
+  **ゲート対象はキャッシュ温めビルドのみ**で、キャッシュ温めの本来の目的
+  (タグビルドの初回コールド回避) を壊さないよう、以下の 2 経路はゲートを完全に
+  迂回して常に `build` ジョブを実行します:
+  - **タグ push** (`refs/tags/v*`): リリースビルドそのものであり、`changes`
+    ジョブは比較対象コミットが無く意味を持たないため、`changes` 自体をこの
+    条件で実行しません (`changes` の `if:` で除外)。
+  - **`workflow_dispatch`** (手動実行): 明示的な手動トリガの意図を尊重し、
+    変更内容に関わらず常にビルドします。
+  `build` ジョブの `if:` は `always() && (tag push || workflow_dispatch ||
+  changes.outputs.rust == 'true' || changes.outputs.frontend == 'true')` で、
+  `always()` は「`changes` が (タグ/手動実行で) skip されたときに `needs:` の
+  既定動作 (`success()` 相当) で `build` まで連鎖 skip されてしまう」のを防ぐ
+  ためのものです — 実際の実行可否は続く OR 条件が判定します。`changes` ジョブが
+  何らかの理由で失敗した場合は outputs が空になり OR 条件が偽になるため、
+  main push では安全側 (skip) に倒れます。
 
 Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`, `libxdo-dev`,
