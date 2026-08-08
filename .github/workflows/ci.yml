@@ -77,12 +77,49 @@ jobs:
             crosslang:
               - 'src/__tests__/fixtures/**'
 
+  # フロントエンドの typecheck/build/lint/単体テストと、実ブラウザでの描画/
+  # ビジュアル回帰テストを 1 ジョブに統合している (#908)。旧来は `frontend` と
+  # `frontend-visual` の 2 ジョブに分かれていたが、両ジョブが独立して
+  # `pnpm install --frozen-lockfile` を実行し、Vite の依存プリバンドル (esbuild)
+  # によるソース変換もそれぞれ別個に行っていたため、フロント資産の重複処理
+  # (pnpm install ×2・トランスパイル ×2) が発生していた (Rust ジョブ側の同型の
+  # 重複を解消した #796 の横展開)。
+  #
+  # #796 は「Rust の単体/統合テストは実フロント資産を必要としない
+  # (dist/index.html のスタブで足りる)」性質を利用して重複ビルドそのものを
+  # 消したが、本ジョブ (旧 frontend-visual) は実際にコンポーネントをレンダリング
+  # するため dist/ のスタブ化は使えない。加えて `pnpm run build` (本番ビルド、
+  # tsc + Rollup) と `pnpm test:browser` (Vitest ブラウザモード、Vite dev サーバの
+  # 依存プリバンドルキャッシュ `node_modules/.vite` を使う) はそもそも別パイプラインで
+  # 成果物 (dist/) を共有できないため、dist/ をジョブ間で受け渡す方式では重複を
+  # 解消できない。そのため「1 ジョブに統合し、pnpm install とセットアップを 1 回に
+  # 集約する」方式を採用した (#796 の「不要な作業自体を無くす」方針を、こちらでは
+  # 「両ジョブが必要とする作業を 1 回にまとめる」形で踏襲している)。
+  #
+  # トレードオフ (要検討事項): 旧 `frontend` / `frontend-visual` は並列実行だった
+  # ため壁時計は max(typecheck+build 系, ブラウザテスト系) だったが、統合後は
+  # 直列実行の合計になる。実測ではいずれも Rust 側ジョブ (特に `rust (test)` の
+  # MySQL/PostgreSQL 統合テスト + カバレッジ計装) がワークフロー全体の
+  # クリティカルパスであり、フロント側を直列化しても全体の壁時計時間への影響は
+  # 小さいと判断した。一方でブラウザテスト側の「install/トランスパイル部」
+  # (pnpm install の再実行・Vite 依存プリバンドルのコールドスタート) は統合により
+  # 実行そのものが 1 回に減り (同一ジョブ内で node_modules・ファイルシステム
+  # キャッシュが確実に温まった状態から始まる)、加えて Playwright の Chromium
+  # バイナリも actions/cache で永続化したため、キャッシュヒット時は再ダウンロード
+  # も避けられる。
+  #
+  # 必須チェック名への影響: 旧来の `frontend (typecheck + build)` と
+  # `frontend (browser render + visual)` の 2 つのチェック名は本統合で消え、
+  # 単一の `frontend (build + browser tests)` に置き換わる。GitHub のブランチ
+  # 保護で必須チェックにこれらの旧名を指定していた場合は、新しいジョブ名へ
+  # 設定し直す必要がある (ブランチ保護設定はリポジトリのコードで管理していない
+  # ため、本 PR のマージ後に GitHub 側の設定を手動更新する)。
   frontend:
-    name: frontend (typecheck + build)
+    name: frontend (build + browser tests)
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
       # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
@@ -117,6 +154,21 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
+      # Vite の依存プリバンドルキャッシュ (`node_modules/.vite`)。`pnpm run build`
+      # (Rollup 本番ビルド) はこのディレクトリを使わないため typecheck/build 側の
+      # 高速化には寄与しないが、後段の `pnpm test:browser` (Vitest ブラウザモード
+      # = Vite dev サーバ) の esbuild 依存プリバンドルはこのキャッシュを再利用
+      # できる。pnpm install の直後 (node_modules 確立後) に配置し、pnpm store
+      # キャッシュと同じくブランチ跨ぎ (main push によるキャッシュ温め含む) で有効。
+      - name: Cache Vite dependency pre-bundle
+        id: vite-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.vite
+          key: ${{ runner.os }}-vite-deps-${{ hashFiles('pnpm-lock.yaml', 'vite.config.ts', 'vitest.browser.config.ts') }}
+          restore-keys: |
+            ${{ runner.os }}-vite-deps-
+
       - name: Type-check and build
         run: pnpm run build
 
@@ -138,71 +190,41 @@ jobs:
       - name: Unit tests (Vitest) + coverage threshold
         run: pnpm test --coverage
 
-      # ジョブ所要時間とキャッシュヒット有無を Job Summary へ出力する (#565)。
-      # バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで fail
-      # させない。ビルド時間退行 (キャッシュミス・依存増) の早期発見が目的。
-      - name: Job timing & cache summary (#565)
-        if: always()
-        run: |
-          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
-          {
-            echo "### frontend (typecheck + build) 所要時間・キャッシュ"
-            echo ""
-            echo "| 項目 | 値 |"
-            echo "| --- | --- |"
-            echo "| 所要時間 | ${ELAPSED} 秒 |"
-            echo "| pnpm store キャッシュヒット | ${{ steps.pnpm-cache.outputs.cache-hit }} |"
-            echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # 実ブラウザ (Vitest ブラウザモード / Playwright + headless Chromium) で主要画面の
-  # レンダリングとビジュアル回帰を検証する (#306)。jsdom の純ロジックテスト
-  # (frontend ジョブ) とは実行環境が異なるため別ジョブに分離している。Chakra UI
-  # 全面移行 (#271) のレイアウト/テーマ追従の退行を実 CSS で捕まえる受け皿。
-  #
-  # ビジュアル回帰のベースライン PNG は CI と同一環境 (この ubuntu-latest /
-  # Chromium) で生成・コミットする運用 (.github/workflows/visual-baseline.yml の
-  # workflow_dispatch で更新)。ローカル (macOS/Windows) の描画差による false
-  # positive を避けるため、ベースライン生成は常にこの環境で行う。
-  frontend-visual:
-    name: frontend (browser render + visual)
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 20
-
-      - name: Enable pnpm (corepack)
-        run: corepack enable
-
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
-
-      - name: Cache pnpm store
+      # Playwright の Chromium バイナリ本体をキャッシュする。`--with-deps` が
+      # 導入する OS 側の共有ライブラリ (apt) はキャッシュ対象外 (ランナー単位の
+      # システム状態のため actions/cache に馴染まない) だが、バイナリ本体
+      # (数十〜100MB超) の再ダウンロードはこれで避けられる。キーは pnpm-lock.yaml
+      # のハッシュに追従させ、Playwright の更新時は自動的に新しいキャッシュキーへ
+      # 切り替わる。
+      - name: Cache Playwright browsers
+        id: playwright-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.PNPM_STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
+            ${{ runner.os }}-playwright-
 
       # Playwright の Chromium とシステム依存を導入する。--only-shell で headless
-      # 実行に必要な chromium-headless-shell のみを入れて軽量化する。
+      # 実行に必要な chromium-headless-shell のみを入れて軽量化する。バイナリ本体は
+      # 上の Cache Playwright browsers でキャッシュヒットしていれば再ダウンロードを
+      # スキップする。
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps --only-shell chromium
 
+      # 実ブラウザ (Vitest ブラウザモード / Playwright + headless Chromium) で
+      # 主要画面のレンダリングとビジュアル回帰を検証する (#306)。上の jsdom 単体
+      # テストとは実行環境が異なるが、node_modules・Vite/Playwright のキャッシュは
+      # このジョブの前段で既に温まっているため、旧 frontend-visual ジョブが個別に
+      # 行っていた pnpm install / セットアップの再実行は不要になった (#908)。
+      # Chakra UI 全面移行 (#271) のレイアウト/テーマ追従の退行を実 CSS で捕まえる
+      # 受け皿。
+      #
+      # ビジュアル回帰のベースライン PNG は CI と同一環境 (この ubuntu-latest /
+      # Chromium) で生成・コミットする運用 (.github/workflows/visual-baseline.yml の
+      # workflow_dispatch で更新)。ローカル (macOS/Windows) の描画差による false
+      # positive を避けるため、ベースライン生成は常にこの環境で行う。
+      #
       # 主要画面のレンダリングスモーク (screens.browser.test.tsx) を実行する。
       # ビジュアル回帰 (visual.browser.test.tsx) は VITE_RUN_VISUAL=1 のときだけ走る
       # ため、ここでは既定でスキップされる (ベースライン PNG が無い環境では
@@ -212,6 +234,24 @@ jobs:
       - name: Browser render smoke (Vitest)
         run: pnpm test:browser
 
+      # ジョブ所要時間とキャッシュヒット有無を Job Summary へ出力する (#565)。
+      # バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで fail
+      # させない。ビルド時間退行 (キャッシュミス・依存増) の早期発見が目的。
+      - name: Job timing & cache summary (#565)
+        if: always()
+        run: |
+          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
+          {
+            echo "### frontend (build + browser tests) 所要時間・キャッシュ"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "| --- | --- |"
+            echo "| 所要時間 | ${ELAPSED} 秒 |"
+            echo "| pnpm store キャッシュヒット | ${{ steps.pnpm-cache.outputs.cache-hit }} |"
+            echo "| Vite 依存プリバンドルキャッシュヒット | ${{ steps.vite-cache.outputs.cache-hit }} |"
+            echo "| Playwright ブラウザキャッシュヒット | ${{ steps.playwright-cache.outputs.cache-hit }} |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
   # 言語横断のパリティ/ゴールデンテスト専用の軽量ジョブ (#853)。
   #
   # 背景: `ipcCommandParity.test.ts` / `ipcArgParity.test.ts` /
@@ -246,7 +286,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
