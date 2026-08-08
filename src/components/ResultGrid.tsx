@@ -77,6 +77,7 @@ import {
   buildRowSql,
   countEditedCells,
   countEditedRows,
+  editIsNoop,
   isEditableColumnType,
   resolvePkIndices,
   rowEditKey,
@@ -86,6 +87,7 @@ import {
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
+import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
 import type { ServerFilter, ServerFilterOp, ServerSort, ServerSortDirection } from "./serverBrowse";
 import { diffResultRows } from "../resultDiff";
 import {
@@ -3255,31 +3257,40 @@ export function DataGrid({
     }
   };
 
-  // Apply the bulk-edit dialog's single value to every selected cell (#596).
+  // Buffer one value across a rectangle of cells (#596). Shared by the
+  // bulk-edit dialog and the right-click "set value" shortcuts, so both paths
+  // get the same editability/validity rules and the same result toast.
   // Editability and per-cell type validity are decided by `planBulkCellEdit`;
   // skipped cells (read-only column or invalid value) are surfaced via a toast.
-  const applyBulkEdit = () => {
-    if (!bulkEdit || !onBulkEdit) {
-      setBulkEdit(null);
-      return;
-    }
+  const applyValueToCells = (
+    rowIndices: number[],
+    colIndices: number[],
+    value: string,
+  ) => {
+    if (!onBulkEdit) return;
     const plan = planBulkCellEdit({
       rows,
       columns,
       pkIndices: pkIndices ?? [],
-      rowIndices: bulkEdit.rowIndices,
-      colIndices: bulkEdit.colIndices,
-      value: bulkEdit.value,
+      rowIndices,
+      colIndices,
+      value,
       isColEditable: (c) => editableColumns?.[c] ?? false,
       validate: (c, v) => validateEdit?.(c, v) ?? null,
     });
-    setBulkEdit(null);
-    if (plan.applied.length === 0) {
+    if (plan.applied.length === 0 && plan.unchanged.length === 0) {
       toast.error(t("gridBulkEditNoneApplied"));
       return;
     }
-    onBulkEdit(plan.applied);
-    const skipped = plan.skippedReadonly + plan.skippedInvalid;
+    // `unchanged` は「すでにその値」のセル。新しい編集は積まないが、そこに残って
+    // いる保留編集は解除したいので `applied` と一緒に渡す。
+    onBulkEdit([...plan.applied, ...plan.unchanged]);
+    if (plan.applied.length === 0) {
+      toast.info(t("gridBulkEditAllUnchanged", { cells: plan.unchanged.length }));
+      return;
+    }
+    const skipped =
+      plan.skippedReadonly + plan.skippedInvalid + plan.unchanged.length;
     if (skipped > 0) {
       toast.info(
         t("gridBulkEditAppliedSkipped", { cells: plan.applied.length, skipped }),
@@ -3287,6 +3298,14 @@ export function DataGrid({
     } else {
       toast.success(t("gridBulkEditApplied", { cells: plan.applied.length }));
     }
+  };
+
+  // Apply the bulk-edit dialog's single value to every selected cell (#596).
+  const applyBulkEdit = () => {
+    const pending = bulkEdit;
+    setBulkEdit(null);
+    if (!pending) return;
+    applyValueToCells(pending.rowIndices, pending.colIndices, pending.value);
   };
 
   const visibleRows = table.getRowModel().rows;
@@ -3323,6 +3342,40 @@ export function DataGrid({
     const colIdSet = new Set(visibleColIds.slice(c0, c1 + 1));
     return { r0, r1, c0, c1, rowIndexSet, colIdSet };
   }, [selection, visibleRows, visibleColIds]);
+
+  /**
+   * Applies a right-click "set value" shortcut (`quickSetValues.ts`).
+   *
+   * Scope mirrors the bulk-edit dialog: when the clicked cell sits inside an
+   * active rectangular selection, the value goes to the whole rectangle;
+   * otherwise it goes to just that cell. Either way the change is *buffered*
+   * like any inline edit — nothing reaches the database until Apply.
+   */
+  const applyQuickSet = (rowIdx: number, colIdx: number, value: string) => {
+    const inSelection =
+      !!selectionRect &&
+      selectionRect.rowIndexSet.has(rowIdx) &&
+      selectionRect.colIdSet.has(colIdx);
+    if (inSelection && onBulkEdit) {
+      applyValueToCells(
+        visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
+        visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
+        value,
+      );
+      return;
+    }
+    const col = columns[colIdx];
+    const row = rows[rowIdx];
+    if (!col || !row || !onSetCellEdit) return;
+    if (validateEdit?.(colIdx, value)) {
+      toast.error(t("gridQuickSetInvalid"));
+      return;
+    }
+    // Setting the value the cell already holds clears any buffered edit
+    // instead of recording a no-op one.
+    const rowKey = rowEditKey(row, pkIndices ?? [], rowIdx);
+    onSetCellEdit(rowKey, colIdx, editIsNoop(value, col, row[colIdx]) ? null : value);
+  };
 
   // Live aggregate of the selected rectangle, surfaced to the parent's status
   // bar (#523). Null when there is no multi-cell range so the summary hides.
@@ -4383,6 +4436,75 @@ export function DataGrid({
                   },
                 ]
               : []),
+            // 値のワンクリック設定: NULL / 空文字 / 0 / true / false / 現在日時
+            // といった「毎回手で打つのが煩わしい定番値」を列の型に応じて出す。
+            // 表示条件はインライン編集そのもの (編集可能な列 + PK 解決済み) と
+            // 同じで、書き込みではなく既存の pending 編集バッファに載せる。
+            ...(() => {
+              const colEditable =
+                editable && (editableColumns?.[copyMenu.colIdx] ?? false) && !!onSetCellEdit;
+              if (!colEditable) return [];
+              const col = columns[copyMenu.colIdx];
+              if (!col) return [];
+              const meta = columnMeta?.find((m) => m.name === col.name) ?? null;
+              // 矩形選択がクリックしたセルを含むときは選択範囲全体が対象。
+              // ラベルは短いまま、対象範囲はツールチップで伝える。
+              const selectedCells =
+                selectionRect &&
+                selectionRect.rowIndexSet.has(copyMenu.rowIdx) &&
+                selectionRect.colIdSet.has(copyMenu.colIdx) &&
+                onBulkEdit
+                  ? selectionRect.rowIndexSet.size * selectionRect.colIdSet.size
+                  : 0;
+              const scopeNote =
+                selectedCells > 1
+                  ? t("gridQuickSetSelectionNote", { count: selectedCells })
+                  : null;
+              const items = quickSetOptions({ column: col, meta, now: new Date(), driver: rowSqlDriver }).map(
+                (opt) => {
+                  const note = opt.noteKey ? t(opt.noteKey) : null;
+                  const title = opt.disabledReason
+                    ? t(opt.disabledReason)
+                    : [scopeNote, note].filter(Boolean).join("\n\n") || undefined;
+                  return {
+                    label: t(opt.labelKey),
+                    title,
+                    disabled: !!opt.disabledReason,
+                    onSelect: () => {
+                      const rk = copyMenu.rowIdx;
+                      const ck = copyMenu.colIdx;
+                      // 時刻系はメニューを開いてから選ぶまでの間に古くなるので、
+                      // 確定した瞬間の時計で組み立て直す。
+                      const value = opt.dynamic
+                        ? resolveDynamicValue(opt.dynamic, new Date())
+                        : opt.value;
+                      setCopyMenu(null);
+                      applyQuickSet(rk, ck, value);
+                    },
+                  };
+                },
+              );
+              // 保留中の編集があるセルだけ、その 1 セルぶんを取り消す導線を足す
+              // (Undo は編集履歴全体を 1 手戻すので、狙ったセルだけ戻したいとき用)。
+              const rowKey = rowEditKey(
+                rows[copyMenu.rowIdx] ?? [],
+                pkIndices ?? [],
+                copyMenu.rowIdx,
+              );
+              if (pendingEdits?.[rowKey]?.[copyMenu.colIdx] !== undefined) {
+                items.push({
+                  label: t("gridQuickSetRevert"),
+                  title: undefined,
+                  disabled: false,
+                  onSelect: () => {
+                    const ck = copyMenu.colIdx;
+                    setCopyMenu(null);
+                    onSetCellEdit?.(rowKey, ck, null);
+                  },
+                });
+              }
+              return [{ separator: true as const }, ...items];
+            })(),
             // 一括編集 (#596): 矩形選択がある編集可能なテーブルでのみ、
             // 「選択セルに値を設定」を出す。PK が無いテーブルは行を特定できないため非表示。
             ...(onBulkEdit && editable && selectionRect && (pkIndices?.length ?? 0) > 0
