@@ -52,6 +52,10 @@ jobs:
           filters: |
             frontend:
               - 'src/**'
+              # vite.config.ts で publicDir を無効化していないため、public/ 配下
+              # (brand-icon.svg 等) はそのままビルド成果物に入る。ここに入れないと
+              # public/ だけを変えた main push でキャッシュ温めビルドが skip される。
+              - 'public/**'
               - 'index.html'
               - 'package.json'
               - 'pnpm-lock.yaml'
