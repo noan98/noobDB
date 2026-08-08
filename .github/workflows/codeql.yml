@@ -89,15 +89,17 @@ jobs:
       # 設定を後続ステップが読むため)。一部のステップだけバージョンが上がると
       # 「Loaded a configuration file for version 'X', but running version 'Y'」の
       # 設定エラーになる。この事故は v4.37.0 (init のみ)・v4.37.1 (analyze のみ)・
-      # v4.37.3 (analyze のみ) で繰り返し発生しており、その都度 3 ステップを同一
-      # バージョンへ揃えて復旧している (現在は v4.37.3)。**codeql-action は単一
-      # リポジトリなので、init / autobuild / analyze は同じコミット SHA を指す**のが
-      # 正しい状態。バージョンを上げるときは必ず 3 箇所同時に更新すること
-      # (Dependabot が 1 箇所だけ上げた PR は、他の 2 箇所も揃えてからマージする)。
+      # v4.37.3 (analyze のみ)・v4.37.4 (init のみ) で繰り返し発生しており、その都度
+      # 3 ステップを同一バージョンへ揃えて復旧している (現在は v4.37.4)。
+      # **codeql-action は単一リポジトリなので、init / autobuild / analyze は同じ
+      # コミット SHA を指す**のが正しい状態。バージョンを上げるときは必ず 3 箇所
+      # 同時に更新すること。Dependabot が 1 箇所ずつ別 PR を出して事故が再発するのを
+      # 防ぐため、`.github/dependabot.yml` の `codeql-action` グループで
+      # `github/codeql-action*` の更新を 1 本の PR にまとめている。
       - name: Autobuild
-        uses: github/codeql-action/autobuild@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        uses: github/codeql-action/autobuild@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
           category: "/language:${{ matrix.language }}"
