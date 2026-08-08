@@ -40,6 +40,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       rust: ${{ steps.filter.outputs.rust }}
       workflow: ${{ steps.filter.outputs.workflow }}
+      crosslang: ${{ steps.filter.outputs.crosslang }}
     steps:
       # pull_request イベントでは paths-filter は API 比較で checkout 不要だが、
       # push (main) イベントではローカルの git 履歴を比較するため checkout が必要。
@@ -67,6 +68,14 @@ jobs:
               - 'vitest.browser.config.ts'
             rust:
               - 'src-tauri/**'
+            # #853: 言語横断のゴールデン/パリティテスト (Rust 側の
+            # serde_schema_parity.rs / read_only_golden.rs / error_kind_golden.rs /
+            # error_hint_golden.rs) が include_str! で読む共有フィクスチャだけが
+            # 変わった PR は frontend==true だが rust==false になるため、
+            # `rust (test)` ジョブの if: にこの crosslang を OR で足して確実に
+            # 実走させる (詳細は下の `crosslang parity` ジョブのコメント参照)。
+            crosslang:
+              - 'src/__tests__/fixtures/**'
 
   frontend:
     name: frontend (typecheck + build)
@@ -202,6 +211,81 @@ jobs:
       # `env: VITE_RUN_VISUAL: "1"` を足してビジュアル回帰も必須化できる。
       - name: Browser render smoke (Vitest)
         run: pnpm test:browser
+
+  # 言語横断のパリティ/ゴールデンテスト専用の軽量ジョブ (#853)。
+  #
+  # 背景: `ipcCommandParity.test.ts` / `ipcArgParity.test.ts` /
+  # `streamEventParity.test.ts` は `?raw` インポートで src-tauri 側のソース
+  # (`lib.rs` / `commands/*.rs` / `tasks/scheduler.rs`) を読み、`readOnlyGolden.test.ts` /
+  # `errorKindGolden.test.ts` / `errorHintGolden.test.ts` / `schemaParity.test.ts` は
+  # Rust の統合テスト (`read_only_golden.rs` 等) と共有するフィクスチャ
+  # (`src/__tests__/fixtures/*.json`) を検証する。いずれも「相手言語の変更を捕まえる」
+  # のが目的だが、従来は Vitest 一式として `frontend` ジョブにのみ含まれていたため
+  # `src-tauri/**` のみを変更する PR では `frontend==false` となり、まさにその変更を
+  # 検証すべきパリティテストが 1 本も走らなかった。
+  #
+  # 対応方針 (Issue #853 の (a) を採用): このジョブを新設し、対象の Vitest ファイル
+  # だけをピンポイントで実行する。起動条件は `frontend==true || rust==true` の OR
+  # (Issue が推奨する方式そのまま) — 両言語のどちらの変更でも確実に起動する。
+  # 「frontend ジョブとテストが重複するのでは」という点は許容する: frontend
+  # ジョブは `frontend==true` のときしか走らないためパリティ観点では不十分であり、
+  # 逆に crosslang ジョブは対象 7 ファイルのみで数秒 (`pnpm vitest run` 実測) と
+  # 極めて軽量なため、重複コストよりカバレッジの穴を塞ぐ価値を優先する。
+  #
+  # 逆方向 (Rust 側のゴールデンテストがフロントのフィクスチャ変更を見逃す問題) は
+  # このジョブだけでは塞げない — `serde_schema_parity.rs` / `read_only_golden.rs` /
+  # `error_kind_golden.rs` / `error_hint_golden.rs` は `rust (test)` ジョブの中で
+  # 実行されるため、`src/__tests__/fixtures/**` だけを変更する PR
+  # (`rust==false`) では引き続きスキップされてしまう。これは上の `changes` ジョブに
+  # 追加した `crosslang` フィルタ (フィクスチャパス限定) を `rust (test)` の if: へ
+  # OR で足すことで塞ぐ (そちらのコメント参照)。
+  crosslang-parity:
+    name: crosslang parity
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # 言語横断のパリティ/ゴールデンテストのみをピンポイントで実行する。
+      # 型チェック・ビルド・knip・カバレッジは `frontend` ジョブの専管なので
+      # ここでは行わない (このジョブの役割は起動条件の穴埋めのみ)。
+      - name: Cross-language parity/golden tests (Vitest)
+        run: >-
+          pnpm vitest run
+          src/__tests__/ipcCommandParity.test.ts
+          src/__tests__/ipcArgParity.test.ts
+          src/__tests__/streamEventParity.test.ts
+          src/__tests__/readOnlyGolden.test.ts
+          src/__tests__/errorKindGolden.test.ts
+          src/__tests__/errorHintGolden.test.ts
+          src/__tests__/schemaParity.test.ts
 
   rust-fmt:
     name: rust (fmt)
@@ -403,7 +487,15 @@ jobs:
   rust-test:
     name: rust (test)
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
+    # #853: 通常の rust==true / workflow==true に加え、crosslang==true
+    # (src/__tests__/fixtures/** の変更) でも起動する。このジョブが実行する
+    # `cargo llvm-cov nextest` には Rust 側の言語横断ゴールデンテスト
+    # (serde_schema_parity.rs / read_only_golden.rs / error_kind_golden.rs /
+    # error_hint_golden.rs。いずれも include_str! で共有フィクスチャを読む) が
+    # 含まれており、フィクスチャだけを変更する PR (src-tauri/** は無変更 =
+    # rust==false) でもこの OR がないとまさにその変更を検証すべきテストが
+    # 1 本もスキップされてしまう。
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

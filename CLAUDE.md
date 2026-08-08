@@ -172,8 +172,8 @@ CI は 2 つのワークフローに分かれています:
   ジョブを走らせて全 PR ブランチがフォールバック復元できる main スコープを温めます
   (これが無いと新規 PR ブランチの初回 Rust ビルドは毎回コールド)。マージ後の main
   の健全性確認も兼ねます。`dorny/paths-filter` で
-  変更領域 (frontend / rust / workflow) を判定し、ジョブ単位の `if:` で出し分け
-  します (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
+  変更領域 (frontend / rust / workflow / crosslang) を判定し、ジョブ単位の `if:` で
+  出し分けします (ワークフロー丸ごとスキップにすると必須チェックが「待機中」で固まるため、
   ジョブを skip させる方式。push イベントでは paths-filter が git 履歴比較を行う
   ため `changes` ジョブは checkout してから filter を実行します)。frontend ジョブは `pnpm run build` に続けて
   `pnpm run bundle-size` (バンドルサイズ計測 → Job Summary。#443)、`pnpm run knip`
@@ -184,11 +184,37 @@ CI は 2 つのワークフローに分かれています:
   各ジョブで `corepack enable` により用意し、`pnpm`
   ストアを `actions/cache` でキャッシュします (`actions/setup-node` の `cache: npm`
   は使いません)。`paths-filter` は `package-lock.json` ではなく `pnpm-lock.yaml` を
-  監視します。Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
+  監視します。
+
+  **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` /
+  `ipcArgParity.test.ts` / `streamEventParity.test.ts` (`?raw` インポートで
+  `src-tauri/src/lib.rs` / `commands/*.rs` / `tasks/scheduler.rs` を読む) と
+  `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
+  `schemaParity.test.ts` (Rust の統合テストと共有するフィクスチャ
+  `src/__tests__/fixtures/*.json` を検証する) は「相手言語のソースを実行時に読む」
+  言語横断のパリティ/ゴールデンテストです。これらは元々 `frontend` ジョブの
+  `pnpm test` に含まれていたため `frontend==true` (`src/**` の変更) でしか走らず、
+  `src-tauri/**` のみを変更する PR ではまさにその変更を捕まえるべきテストが
+  1 本も実行されないという穴がありました (#853)。対応として、対象 7 ファイルだけを
+  `pnpm vitest run <files...>` でピンポイントに実行する軽量な専用ジョブ
+  `crosslang parity` を新設し、起動条件を `frontend==true || rust==true` の OR に
+  しています (`frontend` ジョブとテストが重複しますが、対象を絞っているため数秒
+  程度と軽量で、重複コストよりカバレッジの穴を塞ぐ価値を優先しました)。逆方向
+  (Rust 側のゴールデンテスト `serde_schema_parity.rs` / `read_only_golden.rs` /
+  `error_kind_golden.rs` / `error_hint_golden.rs` が `include_str!` で読む共有
+  フィクスチャだけを変更する PR で `rust (test)` がスキップされる問題) は
+  `changes` ジョブに追加した `crosslang` フィルタ (`src/__tests__/fixtures/**`
+  限定) を `rust (test)` の `if:` へ OR で足すことで塞いでいます。**必須チェックを
+  設定する場合はこの `crosslang parity` ジョブも対象に含めてください。**
+
+  Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL 8 と PostgreSQL 16 のサービスコンテナに対し `cargo llvm-cov nextest`
-  (カバレッジ計装下で nextest を実走) を実行します。`rust (test)` は加えて
+  (カバレッジ計装下で nextest を実走) を実行します。起動条件は通常の
+  `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
+  も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを
+  確実に実走させるため)。`rust (test)` は加えて
   `scripts/ci-setup-sshd.sh` で apt の `openssh-server` を 127.0.0.1:2222 に立て、
   `NOOBDB_TEST_SSH_URL` / `NOOBDB_TEST_SSH_KEY` を `$GITHUB_ENV` に渡すことで SSH
   トンネル統合テスト (#331) も実走します (サービスコンテナはイメージ pull が要るため
