@@ -78,11 +78,28 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
+/// Retention cap (#822): history behaves like a ring buffer capped at this many
+/// rows across all profiles combined. Bounds disk usage for long-lived
+/// installs without needing a manual "clear history" habit. Oldest rows (by
+/// insertion order, i.e. `id`) are evicted first. Chosen generously so normal
+/// day-to-day usage keeps months of history before anything is dropped.
+const MAX_HISTORY_ROWS: i64 = 10_000;
+
 pub async fn record(entry: NewHistoryEntry) -> Result<()> {
     record_in(pool().await?, entry).await
 }
 
 async fn record_in(pool: &SqlitePool, entry: NewHistoryEntry) -> Result<()> {
+    record_in_with_cap(pool, entry, MAX_HISTORY_ROWS).await
+}
+
+/// Same as `record_in` but with an explicit retention cap, so tests can
+/// exercise the real insert-then-evict path without inserting 10,000+ rows.
+async fn record_in_with_cap(
+    pool: &SqlitePool,
+    entry: NewHistoryEntry,
+    max_rows: i64,
+) -> Result<()> {
     sqlx::query(
         "INSERT INTO query_history
             (profile_id, driver, \"database\", \"sql\", \"rows\", rows_affected,
@@ -101,25 +118,52 @@ async fn record_in(pool: &SqlitePool, entry: NewHistoryEntry) -> Result<()> {
     .bind(entry.executed_at)
     .execute(pool)
     .await?;
+    enforce_retention(pool, max_rows).await?;
+    Ok(())
+}
+
+/// Deletes the oldest rows (by `id`, i.e. insertion order) beyond `max_rows`.
+/// Cheap even run on every insert: `id` is the primary key, so the inner
+/// `ORDER BY id DESC LIMIT` is an index-only scan bounded by `max_rows`.
+async fn enforce_retention(pool: &SqlitePool, max_rows: i64) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM query_history
+            WHERE id NOT IN (
+                SELECT id FROM query_history ORDER BY id DESC LIMIT ?
+            )",
+    )
+    .bind(max_rows.max(1))
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
 /// Lists history newest-first. When `profile_id` is `Some`, only that profile's
 /// rows are returned; `search` does a case-insensitive substring match on the
-/// SQL text. `limit` caps the number of rows.
+/// SQL text. `status` filters to `"ok"` or `"error"` exactly. `from`/`to` are
+/// RFC3339 timestamp bounds (inclusive) compared lexically against
+/// `executed_at`, matching the storage format. `limit` caps the number of rows.
+#[allow(clippy::too_many_arguments)]
 pub async fn list(
     profile_id: Option<&str>,
     limit: i64,
     search: Option<&str>,
+    status: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
 ) -> Result<Vec<HistoryEntry>> {
-    list_in(pool().await?, profile_id, limit, search).await
+    list_in(pool().await?, profile_id, limit, search, status, from, to).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn list_in(
     pool: &SqlitePool,
     profile_id: Option<&str>,
     limit: i64,
     search: Option<&str>,
+    status: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
 ) -> Result<Vec<HistoryEntry>> {
     let mut sql = String::from(
         "SELECT id, profile_id, driver, \"database\", \"sql\", \"rows\",
@@ -134,11 +178,21 @@ async fn list_in(
     if like.is_some() {
         conds.push("\"sql\" LIKE ? ESCAPE '\\'");
     }
+    if status.is_some() {
+        conds.push("status = ?");
+    }
+    // Timestamps are stored as UTC RFC3339, so lexical comparison is
+    // chronological (same property the ORDER BY below relies on).
+    if from.is_some() {
+        conds.push("executed_at >= ?");
+    }
+    if to.is_some() {
+        conds.push("executed_at <= ?");
+    }
     if !conds.is_empty() {
         sql.push_str(" WHERE ");
         sql.push_str(&conds.join(" AND "));
     }
-    // Timestamps are stored as UTC RFC3339, so lexical order is chronological.
     sql.push_str(" ORDER BY executed_at DESC, id DESC LIMIT ?");
 
     let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -147,6 +201,15 @@ async fn list_in(
     }
     if let Some(l) = like {
         q = q.bind(l);
+    }
+    if let Some(s) = status {
+        q = q.bind(s.to_string());
+    }
+    if let Some(f) = from {
+        q = q.bind(f.to_string());
+    }
+    if let Some(t) = to {
+        q = q.bind(t.to_string());
     }
     q = q.bind(limit.max(1));
 
@@ -256,12 +319,16 @@ mod tests {
             .await
             .unwrap();
 
-        let all = list_in(&pool, None, 100, None).await.unwrap();
+        let all = list_in(&pool, None, 100, None, None, None, None)
+            .await
+            .unwrap();
         assert_eq!(all.len(), 3);
         // Newest executed_at first.
         assert_eq!(all[0].sql, "SELECT 3");
 
-        let p1 = list_in(&pool, Some("p1"), 100, None).await.unwrap();
+        let p1 = list_in(&pool, Some("p1"), 100, None, None, None, None)
+            .await
+            .unwrap();
         assert_eq!(p1.len(), 2);
         assert!(p1.iter().all(|e| e.profile_id.as_deref() == Some("p1")));
     }
@@ -288,12 +355,16 @@ mod tests {
         .await
         .unwrap();
 
-        let hits = list_in(&pool, None, 100, Some("users")).await.unwrap();
+        let hits = list_in(&pool, None, 100, Some("users"), None, None, None)
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].sql, "SELECT * FROM users");
 
         // `_` must be matched literally, not as a wildcard.
-        let underscore = list_in(&pool, None, 100, Some("a_b")).await.unwrap();
+        let underscore = list_in(&pool, None, 100, Some("a_b"), None, None, None)
+            .await
+            .unwrap();
         assert_eq!(underscore.len(), 1);
         assert_eq!(underscore[0].sql, "SELECT a_b FROM t");
     }
@@ -310,10 +381,175 @@ mod tests {
 
         let removed = clear_in(&pool, Some("p1")).await.unwrap();
         assert_eq!(removed, 1);
-        assert_eq!(list_in(&pool, None, 100, None).await.unwrap().len(), 1);
+        assert_eq!(
+            list_in(&pool, None, 100, None, None, None, None)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
 
         let removed_all = clear_in(&pool, None).await.unwrap();
         assert_eq!(removed_all, 1);
-        assert!(list_in(&pool, None, 100, None).await.unwrap().is_empty());
+        assert!(list_in(&pool, None, 100, None, None, None, None)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    fn entry_with_status(profile: &str, sql: &str, at: &str, status: &str) -> NewHistoryEntry {
+        let mut e = entry(profile, sql, at);
+        e.status = status.to_string();
+        e
+    }
+
+    #[tokio::test]
+    async fn filters_by_status() {
+        let pool = temp_pool().await;
+        record_in(
+            &pool,
+            entry_with_status("p1", "SELECT 1", "2026-01-01T00:00:00Z", "ok"),
+        )
+        .await
+        .unwrap();
+        record_in(
+            &pool,
+            entry_with_status("p1", "SELECT 2", "2026-01-02T00:00:00Z", "error"),
+        )
+        .await
+        .unwrap();
+        record_in(
+            &pool,
+            entry_with_status("p1", "SELECT 3", "2026-01-03T00:00:00Z", "ok"),
+        )
+        .await
+        .unwrap();
+
+        let ok_only = list_in(&pool, None, 100, None, Some("ok"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(ok_only.len(), 2);
+        assert!(ok_only.iter().all(|e| e.status == "ok"));
+
+        let err_only = list_in(&pool, None, 100, None, Some("error"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(err_only.len(), 1);
+        assert_eq!(err_only[0].sql, "SELECT 2");
+    }
+
+    #[tokio::test]
+    async fn filters_by_date_range() {
+        let pool = temp_pool().await;
+        record_in(&pool, entry("p1", "SELECT 1", "2026-01-01T00:00:00Z"))
+            .await
+            .unwrap();
+        record_in(&pool, entry("p1", "SELECT 2", "2026-01-05T00:00:00Z"))
+            .await
+            .unwrap();
+        record_in(&pool, entry("p1", "SELECT 3", "2026-01-10T00:00:00Z"))
+            .await
+            .unwrap();
+
+        // Inclusive lower bound only.
+        let from_only = list_in(
+            &pool,
+            None,
+            100,
+            None,
+            None,
+            Some("2026-01-05T00:00:00Z"),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(from_only.len(), 2);
+        assert!(from_only.iter().all(|e| e.sql != "SELECT 1"));
+
+        // Inclusive upper bound only.
+        let to_only = list_in(
+            &pool,
+            None,
+            100,
+            None,
+            None,
+            None,
+            Some("2026-01-05T00:00:00Z"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(to_only.len(), 2);
+        assert!(to_only.iter().all(|e| e.sql != "SELECT 3"));
+
+        // Both bounds narrow to the single row in between (inclusive on the
+        // exact boundary value too).
+        let both = list_in(
+            &pool,
+            None,
+            100,
+            None,
+            None,
+            Some("2026-01-05T00:00:00Z"),
+            Some("2026-01-05T00:00:00Z"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(both.len(), 1);
+        assert_eq!(both[0].sql, "SELECT 2");
+    }
+
+    #[tokio::test]
+    async fn record_in_evicts_oldest_rows_past_the_cap() {
+        let pool = temp_pool().await;
+        // Exercise the real record path (insert-then-evict) with a small cap
+        // instead of the production 10_000, so the test stays fast.
+        for i in 0..5 {
+            record_in_with_cap(
+                &pool,
+                entry(
+                    "p1",
+                    &format!("SELECT {i}"),
+                    &format!("2026-01-01T00:00:{i:02}Z"),
+                ),
+                3,
+            )
+            .await
+            .unwrap();
+        }
+
+        let remaining = list_in(&pool, None, 100, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(remaining.len(), 3);
+        let sqls: Vec<&str> = remaining.iter().map(|e| e.sql.as_str()).collect();
+        // The two oldest (by insertion order / id) were evicted; the three
+        // most recently inserted survive.
+        assert!(!sqls.contains(&"SELECT 0"));
+        assert!(!sqls.contains(&"SELECT 1"));
+        assert!(sqls.contains(&"SELECT 2"));
+        assert!(sqls.contains(&"SELECT 3"));
+        assert!(sqls.contains(&"SELECT 4"));
+    }
+
+    #[tokio::test]
+    async fn record_in_never_evicts_when_under_the_cap() {
+        let pool = temp_pool().await;
+        for i in 0..3 {
+            record_in_with_cap(
+                &pool,
+                entry(
+                    "p1",
+                    &format!("SELECT {i}"),
+                    &format!("2026-01-01T00:00:{i:02}Z"),
+                ),
+                10,
+            )
+            .await
+            .unwrap();
+        }
+        let remaining = list_in(&pool, None, 100, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(remaining.len(), 3);
     }
 }

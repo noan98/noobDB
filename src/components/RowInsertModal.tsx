@@ -5,6 +5,7 @@ import type { Column } from "../api/tauri";
 import type { PendingInsertRow } from "./cellEdit";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton } from "./ui";
+import { Tooltip } from "./Tooltip";
 
 /**
  * 結果グリッドからの行追加で、新規行の各カラム値を入力するモーダル。確定すると
@@ -14,13 +15,19 @@ import { Button, Input, PressableButton } from "./ui";
 interface Props {
   table: string;
   columns: Column[];
+  /**
+   * 既存行の値を種にフォームを開くときの初期値 (行の複製、#820)。
+   * 列インデックスをキーにした文字列値で、`onConfirm` が返す形式と同じ
+   * `PendingInsertRow`。未指定 (通常の「行を追加」) なら従来どおり空欄で開く。
+   */
+  initialValues?: PendingInsertRow;
   onConfirm: (row: PendingInsertRow) => void;
   onCancel: () => void;
 }
 
-export function RowInsertModal({ table, columns, onConfirm, onCancel }: Props) {
+export function RowInsertModal({ table, columns, initialValues, onConfirm, onCancel }: Props) {
   const t = useT();
-  const [values, setValues] = useState<Record<number, string>>({});
+  const [values, setValues] = useState<Record<number, string>>(initialValues ?? {});
   const firstRef = useRef<HTMLInputElement>(null);
 
   const submit = () => {
@@ -42,21 +49,22 @@ export function RowInsertModal({ table, columns, onConfirm, onCancel }: Props) {
         </chakra.p>
         {columns.map((c, i) => (
           <Flex key={c.name} align="center" gap="2.5">
-            <chakra.label
-              minW="160px"
-              fontSize="sm"
-              fontFamily="mono"
-              color="app.text"
-              overflow="hidden"
-              textOverflow="ellipsis"
-              whiteSpace="nowrap"
-              title={`${c.name} (${c.type_name})`}
-            >
-              {c.name}
-              <chakra.span color="app.textMuted" ml="1.5" fontSize="2xs">
-                {c.type_name}
-              </chakra.span>
-            </chakra.label>
+            <Tooltip label={`${c.name} (${c.type_name})`}>
+              <chakra.label
+                minW="160px"
+                fontSize="sm"
+                fontFamily="mono"
+                color="app.text"
+                overflow="hidden"
+                textOverflow="ellipsis"
+                whiteSpace="nowrap"
+              >
+                {c.name}
+                <chakra.span color="app.textMuted" ml="1.5" fontSize="2xs">
+                  {c.type_name}
+                </chakra.span>
+              </chakra.label>
+            </Tooltip>
             <Input
               ref={i === 0 ? firstRef : undefined}
               value={values[i] ?? ""}

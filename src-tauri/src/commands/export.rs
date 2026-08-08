@@ -23,7 +23,7 @@ const DEFAULT_SQL_TABLE: &str = "exported_table";
 /// 1 つの `INSERT` 文へまとめる行数の既定上限。`batch_size` が未指定/0 のときに使う。
 const DEFAULT_SQL_BATCH: usize = 100;
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExportFormat {
     Csv,
@@ -43,7 +43,7 @@ pub enum ExportFormat {
 /// SQL INSERT 形式の出力に必要なパラメータ (対象テーブル・ドライバ・バッチサイズ)。
 /// CSV/JSON/NDJSON/Markdown では使われない。
 #[derive(Debug, Clone)]
-struct SqlExportOpts {
+pub(crate) struct SqlExportOpts {
     driver: DriverKind,
     table: String,
     batch_size: usize,
@@ -52,7 +52,11 @@ struct SqlExportOpts {
 impl SqlExportOpts {
     /// コマンド引数から SQL 出力用パラメータを組み立てる。空テーブル名は
     /// `DEFAULT_SQL_TABLE`、0/未指定のバッチは `DEFAULT_SQL_BATCH` にフォールバックする。
-    fn build(driver: Option<DriverKind>, table: Option<String>, batch_size: Option<usize>) -> Self {
+    pub(crate) fn build(
+        driver: Option<DriverKind>,
+        table: Option<String>,
+        batch_size: Option<usize>,
+    ) -> Self {
         let table = table
             .map(|t| t.trim().to_string())
             .filter(|t| !t.is_empty())
@@ -432,31 +436,35 @@ const EV_EXPORT_PROGRESS: &str = "export-stream:progress";
 const EV_EXPORT_DONE: &str = "export-stream:done";
 const EV_EXPORT_ERROR: &str = "export-stream:error";
 
+// 構造体・フィールドの `pub` は #825 の zod ⇔ serde ゴールデン
+// (`serde_schema_parity.rs`) が `__test_api` 経由で代表インスタンスを組み立てる
+// ためのもの。IPC 経路としては引き続き非公開モジュール内に留まる (#824 の
+// LogView と同じ最小限の可視性拡張パターン)。
 #[derive(Serialize, Clone)]
-struct ExportProgressEvent {
+pub struct ExportProgressEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    rows: u64,
+    pub stream_id: String,
+    pub rows: u64,
 }
 
 #[derive(Serialize, Clone)]
-struct ExportDoneEvent {
+pub struct ExportDoneEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    rows: u64,
-    bytes: u64,
+    pub stream_id: String,
+    pub rows: u64,
+    pub bytes: u64,
 }
 
 #[derive(Serialize, Clone)]
-struct ExportErrorEvent {
+pub struct ExportErrorEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    message: String,
+    pub stream_id: String,
+    pub message: String,
     /// Rows already written to the output file before the run failed.
     /// Informational only — a failed/cancelled export always deletes its
     /// partial output file (see [`PartialFileCleanup`]), but the UI can still
     /// use this to explain how far the run got (#685).
-    rows: u64,
+    pub rows: u64,
 }
 
 /// Incremental file writer for the streaming export. Writes the header (CSV) or
@@ -617,6 +625,107 @@ impl Drop for PartialFileCleanup {
     }
 }
 
+/// Re-run `sql` against `session` and stream the full result set to `path`.
+/// Shared by the `export_query_stream` command's background task and the task
+/// scheduler (#730) — the command wraps this with `export-stream:*` event
+/// emission, the scheduler awaits it directly and folds the outcome into a run
+/// log entry. Owns the output file end-to-end: creates it up front (so a bad
+/// path surfaces as an `Err` from this call), and on any non-success path
+/// (query error, timeout, or the caller dropping this future via cancellation)
+/// deletes the partial file via [`PartialFileCleanup`]. `on_progress` receives
+/// the cumulative row count after each batch (best-effort; the caller decides
+/// whether to emit an event, update a counter, or do nothing).
+///
+/// Returns `(rows, bytes)` on success. Does **not** check read-only-ness or
+/// session permissions — callers must do that (both current call sites do).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_export_to_file(
+    session: &crate::state::Session,
+    sql: &str,
+    database: Option<&str>,
+    format: ExportFormat,
+    path: &str,
+    sql_table: Option<String>,
+    sql_batch_size: Option<usize>,
+    initial_batch: usize,
+    chunk_size: usize,
+    query_timeout_secs: Option<u64>,
+    mut on_progress: impl FnMut(u64),
+) -> Result<(u64, u64)> {
+    // SQL 形式のドライバはセッション (実接続) の方言を使う。
+    let sql_opts =
+        SqlExportOpts::build(Some(session.conn.driver_kind()), sql_table, sql_batch_size);
+
+    // Create the file up front so a bad path surfaces immediately rather than
+    // after the query has already started running. JSON 形式では実行クエリを
+    // 出力に同梱する (sink 側で JSON のときだけ反映)。
+    let sink = StreamExportSink::with_query(path, format, Some(sql.to_string()), sql_opts)?;
+    let shared = Arc::new(Mutex::new(Some(sink)));
+    // ファイルは既に作成済み (`with_query` 内)。正常完了以外の経路 (エラー/タイムアウト/
+    // キャンセル) では Drop で自動的に削除される。
+    let mut cleanup = PartialFileCleanup::new(path);
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let sink_cb = shared.clone();
+    let counter_cb = counter.clone();
+    let exec =
+        session
+            .conn
+            .execute_stream(sql, database, initial_batch, chunk_size, move |batch| {
+                let mut guard = sink_cb
+                    .lock()
+                    .map_err(|_| AppError::Other("export sink lock poisoned".into()))?;
+                let sink = guard
+                    .as_mut()
+                    .ok_or_else(|| AppError::Other("export sink already finished".into()))?;
+                match batch {
+                    StreamBatch::Columns(columns) => sink.on_columns(columns)?,
+                    StreamBatch::Rows(rows) => {
+                        let n = sink.on_rows(&rows)?;
+                        let total = counter_cb.fetch_add(n as u64, Ordering::SeqCst) + n as u64;
+                        on_progress(total);
+                    }
+                }
+                Ok(())
+            });
+
+    let result = match query_timeout_secs {
+        Some(secs) if secs > 0 => {
+            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                Ok(res) => res,
+                Err(_) => Err(AppError::Timeout(secs)),
+            }
+        }
+        _ => exec.await,
+    };
+
+    match result {
+        Ok(_) => {
+            let sink = shared.lock().ok().and_then(|mut g| g.take());
+            match sink.map(|s| s.finish()) {
+                Some(Ok(bytes)) => {
+                    // 出力が完全に書き終わったので、以降 Drop されてもファイルは消さない。
+                    cleanup.commit();
+                    Ok((counter.load(Ordering::SeqCst), bytes))
+                }
+                // finish (JSON の閉じ括弧書き込み等) 失敗。cleanup は未 commit の
+                // ままなので、関数末尾での Drop が部分ファイルを削除する。
+                Some(Err(e)) => Err(e),
+                None => Err(AppError::Other("export sink already finished".into())),
+            }
+        }
+        Err(e) => {
+            // 実行がエラー/タイムアウトになった。sink を drop するだけでよく、部分
+            // ファイルの削除は cleanup が関数末尾の Drop で行う (cancel/abort による
+            // future drop でも同じ Drop 経路を通るため、そちらもここで担保される)。
+            if let Ok(mut g) = shared.lock() {
+                g.take();
+            }
+            Err(e)
+        }
+    }
+}
+
 /// Re-run `sql` and stream the full result set to `path`. Progress is
 /// reported via `export-stream:*` events keyed by `stream_id`; `cancel_stream`
 /// aborts it and returns the connection to the pool. Only read-only (SELECT)
@@ -656,16 +765,6 @@ pub async fn export_query_stream(
         ));
     }
 
-    // SQL 形式のドライバはセッション (実接続) の方言を使う。
-    let sql_opts = SqlExportOpts::build(Some(session.conn.driver_kind()), table, batch_size);
-
-    // Create the file up front so a bad path surfaces synchronously to the caller.
-    // JSON 形式では実行クエリを出力に同梱する (sink 側で JSON のときだけ反映)。
-    let sink = StreamExportSink::with_query(&path, format, Some(sql.clone()), sql_opts)?;
-    let shared = Arc::new(Mutex::new(Some(sink)));
-    // ファイルは既に作成済み (`with_query` 内)。正常完了以外の経路 (エラー/タイムアウト/
-    // キャンセル) では Drop で自動的に削除される。
-    let cleanup = PartialFileCleanup::new(&path);
     // Shared with `AppState` so `cancel_stream` can read how many rows had
     // already been written when it aborts this task (#685).
     let counter = Arc::new(AtomicU64::new(0));
@@ -686,11 +785,13 @@ pub async fn export_query_stream(
             stream_id_for_task,
             sql,
             database,
+            format,
+            path,
+            table,
+            batch_size,
             initial_batch,
             chunk_size,
             query_timeout_secs,
-            shared,
-            cleanup,
             counter_for_task,
         )
         .await;
@@ -717,99 +818,59 @@ async fn spawn_export_stream(
     stream_id: String,
     sql: String,
     database: Option<String>,
+    format: ExportFormat,
+    path: String,
+    sql_table: Option<String>,
+    sql_batch_size: Option<usize>,
     initial_batch: usize,
     chunk_size: usize,
     query_timeout_secs: Option<u64>,
-    shared: Arc<Mutex<Option<StreamExportSink>>>,
-    mut cleanup: PartialFileCleanup,
     counter: Arc<AtomicU64>,
 ) {
     let emit_app = app.clone();
     let emit_id = stream_id.clone();
-    let sink_cb = shared.clone();
     let counter_cb = counter.clone();
 
-    let exec = session.conn.execute_stream(
+    let result = run_export_to_file(
+        &session,
         &sql,
         database.as_deref(),
+        format,
+        &path,
+        sql_table,
+        sql_batch_size,
         initial_batch,
         chunk_size,
-        move |batch| {
-            let mut guard = sink_cb
-                .lock()
-                .map_err(|_| AppError::Other("export sink lock poisoned".into()))?;
-            let sink = guard
-                .as_mut()
-                .ok_or_else(|| AppError::Other("export sink already finished".into()))?;
-            match batch {
-                StreamBatch::Columns(columns) => sink.on_columns(columns)?,
-                StreamBatch::Rows(rows) => {
-                    let n = sink.on_rows(&rows)?;
-                    let total = counter_cb.fetch_add(n as u64, Ordering::SeqCst) + n as u64;
-                    // Progress is best-effort; a failed emit shouldn't abort the export.
-                    let _ = emit_app.emit(
-                        EV_EXPORT_PROGRESS,
-                        ExportProgressEvent {
-                            stream_id: emit_id.clone(),
-                            rows: total,
-                        },
-                    );
-                }
-            }
-            Ok(())
+        query_timeout_secs,
+        move |total| {
+            // AppState の StreamHandle.delivered_rows と同期させ、cancel_stream が
+            // 現在までの行数を報告できるようにする。
+            counter_cb.store(total, Ordering::SeqCst);
+            // Progress is best-effort; a failed emit shouldn't abort the export.
+            let _ = emit_app.emit(
+                EV_EXPORT_PROGRESS,
+                ExportProgressEvent {
+                    stream_id: emit_id.clone(),
+                    rows: total,
+                },
+            );
         },
-    );
-
-    let result = match query_timeout_secs {
-        Some(secs) if secs > 0 => {
-            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
-                Ok(res) => res,
-                Err(_) => Err(AppError::Timeout(secs)),
-            }
-        }
-        _ => exec.await,
-    };
+    )
+    .await;
 
     match result {
-        Ok(_) => {
-            let sink = shared.lock().ok().and_then(|mut g| g.take());
-            match sink.map(|s| s.finish()) {
-                Some(Ok(bytes)) => {
-                    // 出力が完全に書き終わったので、以降 Drop されてもファイルは消さない。
-                    cleanup.commit();
-                    let rows = counter.load(Ordering::SeqCst);
-                    tracing::info!(stream_id = %stream_id, rows, bytes, "streaming export complete");
-                    let _ = app.emit(
-                        EV_EXPORT_DONE,
-                        ExportDoneEvent {
-                            stream_id: stream_id.clone(),
-                            rows,
-                            bytes,
-                        },
-                    );
-                }
-                Some(Err(e)) => {
-                    // finish (JSON の閉じ括弧書き込み等) 失敗。cleanup は未 commit の
-                    // ままなので、関数末尾での Drop が部分ファイルを削除する。
-                    let _ = app.emit(
-                        EV_EXPORT_ERROR,
-                        ExportErrorEvent {
-                            stream_id: stream_id.clone(),
-                            message: e.to_string(),
-                            rows: counter.load(Ordering::SeqCst),
-                        },
-                    );
-                }
-                None => {}
-            }
+        Ok((rows, bytes)) => {
+            tracing::info!(stream_id = %stream_id, rows, bytes, "streaming export complete");
+            let _ = app.emit(
+                EV_EXPORT_DONE,
+                ExportDoneEvent {
+                    stream_id: stream_id.clone(),
+                    rows,
+                    bytes,
+                },
+            );
         }
         Err(e) => {
-            // 実行がエラー/タイムアウトになった。sink を drop するだけでよく、部分
-            // ファイルの削除は cleanup が関数末尾の Drop で行う (cancel/abort による
-            // future drop でも同じ Drop 経路を通るため、そちらもここで担保される)。
-            if let Ok(mut g) = shared.lock() {
-                g.take();
-            }
             let _ = app.emit(
                 EV_EXPORT_ERROR,
                 ExportErrorEvent {
@@ -824,8 +885,6 @@ async fn spawn_export_stream(
     if let Some(state) = app.try_state::<AppState>() {
         state.forget_stream(&stream_id).await;
     }
-    // `cleanup` はここ (関数末尾) で drop される。abort によりこの関数の実行自体が
-    // 途中で打ち切られた場合も、future の drop に伴い同じ Drop 実装が走る。
 }
 
 #[cfg(test)]

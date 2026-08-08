@@ -1,7 +1,8 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
+import { Kbd } from "./Kbd";
 import { Modal } from "./Modal";
 import {
   flattenGroups,
@@ -24,15 +25,26 @@ import {
  *
  * 候補データと実行ハンドラは `App.tsx` が `items` として組み立てて渡す
  * (接続・テーブル・スニペット・履歴・画面遷移)。パレットは候補を選択 (Enter /
- * クリック) すると `item.run()` を呼んだ直後に `onClose()` で自分を閉じる。
+ * クリック) すると `onSelectItem` (与えられていれば) → `item.run()` の順に呼び、
+ * `onClose()` で自分を閉じる。
+ * - **MRU (#845)**: `mruIds` (最新が先頭の `CommandItem.id` 配列) を渡すと、空
+ *   クエリ時に限り先頭へ「最近使った項目」セクションを合成する
+ *   (`commandPaletteSearch.ts` の `groupCommands`)。実行された候補は
+ *   `onSelectItem` 経由で呼び出し側 (`App.tsx`) が MRU へ記録する。永続化・
+ *   上限・破損データ耐性は `settings.ts` / `commandPaletteSearch.ts` の責務で、
+ *   このコンポーネントは受け取った id 配列を表示するだけ。
  */
 
 interface CommandPaletteProps {
   items: CommandItem[];
   onClose: () => void;
+  /** MRU (#845): 最近使った候補の id (最新が先頭)。空クエリ時のみ先頭セクションに反映。 */
+  mruIds?: string[];
+  /** MRU (#845): 候補を実行した (Enter / クリック) 直後に呼ばれる。呼び出し側が MRU を更新する。 */
+  onSelectItem?: (item: CommandItem) => void;
 }
 
-export function CommandPalette({ items, onClose }: CommandPaletteProps) {
+export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: CommandPaletteProps) {
   const t = useT();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -40,10 +52,11 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
-  const grouped = useMemo(() => groupCommands(items, query), [items, query]);
+  const grouped = useMemo(() => groupCommands(items, query, mruIds), [items, query, mruIds]);
   const flat = useMemo(() => flattenGroups(grouped), [grouped]);
 
   const groupLabel: Record<CommandGroup, string> = {
+    mru: t("cmdkGroupMru"),
     navigation: t("cmdkGroupNavigation"),
     connections: t("cmdkGroupConnections"),
     tables: t("cmdkGroupTables"),
@@ -68,6 +81,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
     if (!target) return;
     // 先に閉じてから実行する。run が確認ダイアログ等を開いてもパレットが残らない。
     onClose();
+    onSelectItem?.(target);
     target.run();
   };
 
@@ -123,7 +137,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
         bg="app.surface"
       >
         <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-          <Icon name="query" size={16} />
+          <Icon name="query" size={ICON_SIZES.md} />
         </Box>
         <chakra.input
           ref={inputRef}
@@ -167,16 +181,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
         ) : (
           grouped.map((g) => (
             <Box key={g.group}>
-              <Box
-                px="4"
-                pt="2"
-                pb="1"
-                fontSize="xs"
-                fontWeight={700}
-                textTransform="uppercase"
-                letterSpacing="0.06em"
-                color="app.textMuted"
-              >
+              <Box px="4" pt="2" pb="1" textStyle="overline">
                 {groupLabel[g.group]}
               </Box>
               {g.items.map((scored) => {
@@ -227,19 +232,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps) {
 function Hint({ keys, label }: { keys: string; label: string }) {
   return (
     <Flex align="center" gap="1.5">
-      <chakra.kbd
-        px="1.5"
-        py="1px"
-        borderRadius="sm"
-        borderWidth="1px"
-        borderColor="app.border"
-        bg="app.surface"
-        fontSize="xs"
-        fontFamily="inherit"
-        color="app.textSecondary"
-      >
-        {keys}
-      </chakra.kbd>
+      <Kbd>{keys}</Kbd>
       <chakra.span>{label}</chakra.span>
     </Flex>
   );
@@ -280,7 +273,7 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
     >
       {item.icon && (
         <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-          <Icon name={item.icon} size={15} />
+          <Icon name={item.icon} size={ICON_SIZES.md} />
         </Box>
       )}
       <Flex direction="column" minW={0} flex="1" gap="1px">
@@ -313,6 +306,11 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
           </chakra.span>
         )}
       </Flex>
+      {item.shortcut && (
+        <Kbd tone="muted" flexShrink={0} color="app.textMuted">
+          {item.shortcut}
+        </Kbd>
+      )}
       {item.badges && item.badges.length > 0 && (
         <Flex gap="1" flexShrink={0}>
           {item.badges.map((badge) => (
@@ -327,17 +325,13 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
 function Badge({ children }: { children: ReactNode }) {
   return (
     <chakra.span
-      fontSize="xs"
+      textStyle="overline"
       px="1.5"
       py="1px"
       borderRadius="pill"
       borderWidth="1px"
       borderColor="app.border"
       bg="app.surface"
-      color="app.textMuted"
-      textTransform="uppercase"
-      letterSpacing="0.04em"
-      fontWeight={600}
       whiteSpace="nowrap"
     >
       {children}

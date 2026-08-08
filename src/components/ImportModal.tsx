@@ -24,6 +24,7 @@ import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 
 interface Props {
   sessionId: string;
@@ -538,27 +539,29 @@ export function ImportModal({ sessionId, database, table, onClose, onImported, i
                   gap="2"
                   key={col.name}
                 >
-                  <chakra.span
-                    flex="0 0 40%"
-                    fontSize="md"
-                    fontFamily="mono"
-                    overflow="hidden"
-                    textOverflow="ellipsis"
-                    whiteSpace="nowrap"
-                    title={col.data_type}
-                  >
-                    {col.name}
-                    {col.key === "PRI" && (
-                      <chakra.span
-                        fontSize="xs"
-                        ml="1"
-                        color="app.cell.date"
-                        title={t("colPkTitle")}
-                      >
-                        <Icon name="key" />
-                      </chakra.span>
-                    )}
-                  </chakra.span>
+                  <Tooltip label={col.data_type}>
+                    <chakra.span
+                      flex="0 0 40%"
+                      fontSize="md"
+                      fontFamily="mono"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                    >
+                      {col.name}
+                      {col.key === "PRI" && (
+                        <Tooltip label={t("colPkTitle")}>
+                          <chakra.span
+                            fontSize="xs"
+                            ml="1"
+                            color="app.cell.date"
+                          >
+                            <Icon name="key" />
+                          </chakra.span>
+                        </Tooltip>
+                      )}
+                    </chakra.span>
+                  </Tooltip>
                   <Select
                     flex="1"
                     minW={0}

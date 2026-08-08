@@ -11,16 +11,23 @@ import {
   ConnectionProfile,
   DriverKind,
   ForeignKey,
+  type LocalTableMeta,
   type ProfileImportStrategy,
   PreviewResult,
   QueryResult,
+  type SandboxCreateResponse,
+  type SandboxRecord,
   Snippet,
   TableColumnInfo,
   TableSchema,
   listenConnectProgress,
   listenPreviewStream,
   listenQueryStream,
+  listenTaskRunEvents,
 } from "./api/tauri";
+import { SandboxCreateModal } from "./components/SandboxCreateModal";
+import { SandboxReviewModal } from "./components/SandboxReviewModal";
+import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
@@ -44,28 +51,41 @@ import {
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
+import type { AlterStatement } from "./components/alterTable";
+import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import { quoteIdentFor } from "./components/sqlDialect";
+import {
+  applyServerBrowse,
+  type ServerFilter,
+  type ServerFilterOp,
+  type ServerSort,
+  type ServerSortDirection,
+} from "./components/serverBrowse";
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { WelcomeView } from "./components/WelcomeView";
+import { StreamProgressBar } from "./components/StreamProgressBar";
+import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { useToast } from "./components/Toast";
 import { SnippetList } from "./components/SnippetList";
 import { HistoryList } from "./components/HistoryList";
+import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
+import type { ResultViewKind } from "./components/ResultViewSwitch";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
-import { Icon } from "./components/Icon";
+import { Icon, ICON_SIZES } from "./components/Icon";
 import { Button } from "./components/ui";
 import { LoadingButton } from "./components/LoadingButton";
 import { useConfirm } from "./components/ConfirmDialog";
@@ -103,11 +123,17 @@ const TestDataModal = lazy(() =>
 const PlanWatchPanel = lazy(() =>
   import("./components/PlanWatchPanel").then((m) => ({ default: m.PlanWatchPanel })),
 );
+const SchemaDriftPanel = lazy(() =>
+  import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
+);
 const DumpModal = lazy(() =>
   import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
 );
 const SchemaExportModal = lazy(() =>
   import("./components/SchemaExportModal").then((m) => ({ default: m.SchemaExportModal })),
+);
+const BroadcastModal = lazy(() =>
+  import("./components/BroadcastModal").then((m) => ({ default: m.BroadcastModal })),
 );
 const ProfileImportDialog = lazy(() =>
   import("./components/ProfileImportDialog").then((m) => ({ default: m.ProfileImportDialog })),
@@ -118,11 +144,23 @@ const PaginationBar = lazy(() =>
 const ObjectSearchModal = lazy(() =>
   import("./components/ObjectSearchModal").then((m) => ({ default: m.ObjectSearchModal })),
 );
+const DataSearchModal = lazy(() =>
+  import("./components/DataSearchModal").then((m) => ({ default: m.DataSearchModal })),
+);
 const CreateTableModal = lazy(() =>
   import("./components/CreateTableModal").then((m) => ({ default: m.CreateTableModal })),
 );
 const RenameTableDialog = lazy(() =>
   import("./components/RenameTableDialog").then((m) => ({ default: m.RenameTableDialog })),
+);
+const AlterTableModal = lazy(() =>
+  import("./components/AlterTableModal").then((m) => ({ default: m.AlterTableModal })),
+);
+const SaveAsTableModal = lazy(() =>
+  import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
+);
+const RegisterLocalTableModal = lazy(() =>
+  import("./components/RegisterLocalTableModal").then((m) => ({ default: m.RegisterLocalTableModal })),
 );
 const HostKeyMismatchDialog = lazy(() =>
   import("./components/HostKeyMismatchDialog").then((m) => ({ default: m.HostKeyMismatchDialog })),
@@ -145,6 +183,9 @@ const HelpView = lazy(() =>
 const SettingsView = lazy(() =>
   import("./components/SettingsView").then((m) => ({ default: m.SettingsView })),
 );
+const TaskManager = lazy(() =>
+  import("./components/TaskManager").then((m) => ({ default: m.TaskManager })),
+);
 const SchemaCompareView = lazy(() =>
   import("./components/SchemaCompareView").then((m) => ({ default: m.SchemaCompareView })),
 );
@@ -156,6 +197,9 @@ const PinnedComparisonView = lazy(() =>
 );
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
+);
+const UsersPanel = lazy(() =>
+  import("./components/UsersPanel").then((m) => ({ default: m.UsersPanel })),
 );
 const TableStatisticsPanel = lazy(() =>
   import("./components/TableStatisticsPanel").then((m) => ({ default: m.TableStatisticsPanel })),
@@ -189,6 +233,7 @@ import {
 } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
+import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
 import {
@@ -213,8 +258,9 @@ import { incomingForeignKeys } from "./fkNavigation";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
 import { workspaceSpineColor } from "./profileIdentity";
+import { semanticColorToken } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
-import { comboMatchesEvent } from "./shortcutKeys";
+import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
 import {
   useSettings,
@@ -224,6 +270,8 @@ import {
   monoFontStack,
   uiFontStack,
   themePresetDataTheme,
+  recordCommandPaletteUsage,
+  pruneCommandPaletteMru,
   type TabRestoreMode,
 } from "./settings";
 import { ThemeTransition } from "./components/ThemeTransition";
@@ -270,6 +318,22 @@ import {
   watchedIds,
   type PlanWatchState,
 } from "./planWatch";
+import {
+  buildDriftDetail,
+  buildSnapshotPayload,
+  canDiff,
+  captureGeneration,
+  diffIndexes,
+  EMPTY_SCHEMA_DRIFT,
+  loadSchemaDrift,
+  recordSnapshotGeneration,
+  saveSchemaDrift,
+  summarizeDrift,
+  toDiffInput,
+  type SchemaDriftState,
+  type SnapshotTable,
+} from "./schemaDrift";
+import { Tooltip } from "./components/Tooltip";
 
 type Theme = "light" | "dark";
 
@@ -371,9 +435,18 @@ function PaneEmpty({ children }: { children: ReactNode }) {
 }
 
 /** トップバーの密なアイコン専用ボタン。`Button` の既定 padding を詰めて
- *  正方形に近い当たり判定にし、アイコン文字のみを中央配置する。 */
-function IconButton(props: ComponentProps<typeof Button>) {
-  return <Button px="2" py="1" minW="28px" lineHeight="1" fontSize="base" {...props} />;
+ *  正方形に近い当たり判定にし、アイコン文字のみを中央配置する。
+ *  `title` は native title ではなく共有 `Tooltip` (#814/#884) へこの共通ラッパ
+ *  1 か所で委譲する — 呼び出し側は従来どおり `title` を渡すだけでよい。 */
+function IconButton({ title, ...props }: ComponentProps<typeof Button>) {
+  const button = <Button px="2" py="1" minW="28px" lineHeight="1" fontSize="base" {...props} />;
+  return title ? (
+    <Tooltip label={title} focusableWrapper={props.disabled}>
+      {button}
+    </Tooltip>
+  ) : (
+    button
+  );
 }
 
 /** ステータスバー脇の小さな状態ドット。色付きの円 + ハロー (box-shadow) で
@@ -400,8 +473,8 @@ function StatusDot({ variant }: { variant: "connected" | "idle" }) {
  * サイドバーの切替タブ key。Connections / Snippets / History の 3 種。
  * 配列順がタブの並び順 = 矢印キーでのフォーカス移動順になる。
  */
-type SidebarTab = "connections" | "snippets" | "history";
-const SIDEBAR_TAB_ORDER: readonly SidebarTab[] = ["connections", "snippets", "history"];
+type SidebarTab = "connections" | "snippets" | "history" | "local";
+const SIDEBAR_TAB_ORDER: readonly SidebarTab[] = ["connections", "snippets", "history", "local"];
 const sidebarTabId = (key: SidebarTab) => `sidebar-tab-${key}`;
 const sidebarPanelId = (key: SidebarTab) => `sidebar-panel-${key}`;
 
@@ -539,6 +612,15 @@ interface Tab {
    * `table_row_estimates` から取得して設定する。未取得/不明なら null/undefined。
    */
   rowEstimateTotal?: number | null;
+  /**
+   * サーバ側ソート (#792): table タブのヘッダーメニューから適用した全件ソート。
+   * `paginatable` base SQL への注入 (`applyServerBrowse`) と再フェッチは
+   * `goToPageInTab` が担う。In-memory only (タブを閉じれば消える。ワークスペース
+   * 復元では引き継がない)。
+   */
+  serverSort?: ServerSort | null;
+  /** サーバ側フィルタ (#792): table タブのヘッダーメニューから適用した全件 WHERE。 */
+  serverFilter?: ServerFilter | null;
   /**
    * エディタのカーソル/選択 (ドキュメントオフセット、#678)。復元時にエディタへ
    * 流し込む初期値であり、以後のライブ値は `editorSelectionRef` (再レンダ回避のため
@@ -683,6 +765,21 @@ function newPaneId(): string {
 
 function newStreamId(tabId: string): string {
   return `${tabId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * table タブの総ページ数目安 (#792)。`rowEstimateTotal` は統計情報ベースの全件
+ * 概算行数なので、サーバ側フィルタ (WHERE) 適用中はもはや正しい母数ではない —
+ * 誤って小さすぎる総ページ数を表示しないよう、その場合は未知 (null) として扱い
+ * `canGoNext` の「直近ページが満杯なら続きがありそう」フォールバックに委ねる。
+ * ソートのみ (WHERE なし) なら行数は変わらないので、そのまま概算を使う。
+ */
+function tableTotalPagesEstimate(
+  tab: Pick<Tab, "serverFilter" | "rowEstimateTotal">,
+  pageSize: number,
+): number | null {
+  if (tab.serverFilter) return null;
+  return estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
 }
 
 function qualifiedTableSql(driver: string, database: string, table: string): string {
@@ -891,6 +988,43 @@ function emptyPreview(): PreviewResult {
   };
 }
 
+/**
+ * ローカル横断クエリ (#740) の擬似プロファイル ID。`profiles.json` には一切
+ * 保存されず (`api.listProfiles` の結果には現れない)、フロント限定の識別子。
+ * `handleConnect` がこの id を特別扱いして `api.createLocalSession` を呼ぶことで、
+ * 複数同時接続の切替・タブ復元など既存のセッション管理をそのまま再利用する
+ * (ローカル専用の別経路を新設しない)。
+ */
+const LOCAL_PROFILE_ID = "__local__";
+
+function isLocalProfile(profile: Pick<ConnectionProfile, "id">): boolean {
+  return profile.id === LOCAL_PROFILE_ID;
+}
+
+/** ローカル接続の擬似プロファイル。`driver: "sqlite"` によりエディタの方言補完・
+ *  結果グリッドの SQL 生成が通常の SQLite 接続と同じに揃う。`skip_history: true`
+ *  はプロファイルを持たないセッションの履歴 (`profile_id: null`) で通常の
+ *  プロファイル単位フィルタ UI を汚さないため。 */
+function makeLocalProfile(name: string): ConnectionProfile {
+  return {
+    id: LOCAL_PROFILE_ID,
+    name,
+    driver: "sqlite",
+    host: "",
+    port: 0,
+    user: "",
+    database: null,
+    ssh: null,
+    group: null,
+    color: "#64748b",
+    is_production: false,
+    confirm_writes: false,
+    read_only: false,
+    skip_history: true,
+    file_path: null,
+  };
+}
+
 export default function App() {
   const t = useT();
   // `t` 自体は識別子が安定なので、ロケール切替でコマンドパレット候補の文言メモが
@@ -951,6 +1085,7 @@ export default function App() {
     ],
   );
   const [showSettings, setShowSettings] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   // 初回起動オンボーディングツアー (#599)。ウェルカム画面の「はじめかたを見る」
   // からの手動起動、および新規ユーザ (プロファイル 0 件・未表示) への自動起動の
@@ -961,8 +1096,16 @@ export default function App() {
   // ピン留め結果の比較ビュー (#622)。保持はメモリのみ・上限あり (addPinned)。
   const [showCompareResults, setShowCompareResults] = useState(false);
   const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
+  // 環境横断ブロードキャスト実行 (#738)。非 null の間だけ `BroadcastModal` を
+  // マウントする — 対象接続の選択 → 実行 → 結果比較まで一貫してその内部で行う。
+  const [broadcastRequest, setBroadcastRequest] = useState<
+    { sql: string; tableColumns: TableColumnInfo[] | null } | null
+  >(null);
   // プロセスモニタパネル (processlist / pg_stat_activity + KILL) の開閉。
   const [showProcesses, setShowProcesses] = useState(false);
+  // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
+  // 編集) の開閉。#732。ユーザ概念を持たない SQLite では導線を出さない。
+  const [showUsers, setShowUsers] = useState(false);
   // サーバ情報パネル (バージョン・設定変数) の開閉。#563。
   const [showServerInfo, setShowServerInfo] = useState(false);
   // ライブクエリ・インスペクタ (ライブテール + digest 集計) の開閉。#746。
@@ -977,6 +1120,8 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   // スキーマ横断のグローバルオブジェクト検索の開閉。
   const [showObjectSearch, setShowObjectSearch] = useState(false);
+  // DB 全体からの値検索 (#748) の開閉。
+  const [showDataSearch, setShowDataSearch] = useState(false);
   // `?` キーで開くショートカット チートシートの開閉。
   const [showCheatSheet, setShowCheatSheet] = useState(false);
   // エディタ/結果のレイアウトモード (#618)。`result` は結果パネルの全画面化
@@ -1117,6 +1262,36 @@ export default function App() {
     registerNotificationClickFocus();
   }, []);
 
+  // タスクスケジューラ (#730): バックグラウンドで発火した実行結果をアプリ起動中
+  // ずっと購読する (タスク管理画面を開いていなくても失敗に気付けるように)。
+  // 失敗のみトースト + OS 通知で知らせる — 成功は「実行履歴」で確認できれば十分で、
+  // 定期実行のたびに通知するとノイズになる。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    void listenTaskRunEvents({
+      onError: (e) => {
+        const message = e.message ?? "";
+        toast.error(translate("taskRunFailed", { name: e.taskName, error: message }));
+        void isAppWindowFocused().then((focused) => {
+          if (!focused) {
+            void sendQueryNotification(
+              translate("taskRunNotifyTitle", { name: e.taskName }),
+              firstLineForNotification(message || translate("taskLastError")),
+            );
+          }
+        });
+      },
+    }).then((un) => {
+      if (active) unlisten = un;
+      else un();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [toast]);
+
   // アプリ内自動更新 (#705): 起動時に一度だけ更新を確認する (設定でオフにできる)。
   // ベストエフォート — オフライン/マニフェスト取得失敗は静かに無視して起動を
   // ブロックしない。更新があればユーザ承認制の確認ダイアログを出し、承認された
@@ -1137,7 +1312,6 @@ export default function App() {
       cancelled = true;
     };
     // 起動時に一度だけ。t/toast/confirm はレンダー間で安定なので依存に含めない。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Lock the cursor while dragging so it doesn't flicker off the thin handle.
@@ -1177,6 +1351,12 @@ export default function App() {
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  // サンドボックス (壊せる砂場、#747) の一覧。`ConnectionList` の通常プロファイル
+  // ツリーとは独立した専用セクション (`SandboxSection`) に描画する — 詳細は
+  // `sandbox.ts` の `sandboxToProfile` のコメントを参照。
+  const [sandboxes, setSandboxes] = useState<SandboxRecord[]>([]);
+  const [sandboxCreateTarget, setSandboxCreateTarget] = useState<{ database: string } | null>(null);
+  const [sandboxReviewTarget, setSandboxReviewTarget] = useState<SandboxRecord | null>(null);
   // Profiles pending a delayed delete (#676 Undo). While an id is here the
   // profile is hidden from the sidebar but NOT yet deleted from the backend, so
   // "Undo" can cancel the pending delete and keep the OS-keyring secrets intact
@@ -1198,6 +1378,7 @@ export default function App() {
     connections: null,
     snippets: null,
     history: null,
+    local: null,
   });
   const handleSidebarTabKeyDown = useCallback(
     (current: SidebarTab) => (e: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -1292,6 +1473,25 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [errorProfileId, setErrorProfileId] = useState<string | null>(null);
+  // 緊急クエリ実行モードが有効なセッション id の集合。バックエンドの
+  // `Session.emergency_write` フラグ (真のガード) の UI ミラーで、有効化は
+  // 接続先名タイプ確認 → `api.setEmergencyMode` を経由する。バックエンドは
+  // 切断・再接続でフラグを必ずオフに戻すため、こちらも同じタイミングで
+  // エントリを落として同期を保つ (`clearEmergencyFor` 参照)。
+  const [emergencySessions, setEmergencySessions] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  // 対象セッションの緊急モード UI 状態を破棄する。切断・接続断・再接続成功
+  // (バックエンド側でフラグがオフに戻る) の後始末から呼ぶ。存在しない id には no-op。
+  const clearEmergencyFor = useCallback((sid: string | null) => {
+    if (!sid) return;
+    setEmergencySessions((cur) => {
+      if (!cur.has(sid)) return cur;
+      const next = new Set(cur);
+      next.delete(sid);
+      return next;
+    });
+  }, []);
   // Set when a connect fails with an SSH host-key mismatch (#682): drives the
   // recovery dialog that lets the user forget the stale key and reconnect.
   const [hostKeyMismatch, setHostKeyMismatch] = useState<
@@ -1351,6 +1551,31 @@ export default function App() {
   useEffect(() => { panesRef.current = panes; }, [panes]);
   const activePaneIdRef = useRef<string | null>(activePaneId);
   useEffect(() => { activePaneIdRef.current = activePaneId; }, [activePaneId]);
+  // 新規タブ・タブ切替・接続直後のエディタ自動フォーカス (#816) が、モーダル/オーバー
+  // レイ表示中にフォーカスを奪わないためのガード。F6 巡回 / Esc 復元ハンドラが使う
+  // 判定集合と揃える (これらの状態の間はタブワークスペース自体が描画されないか、
+  // 前面にモーダルが乗っている)。依存配列なしの effect で毎レンダ最新値に同期し、
+  // requestAnimationFrame 越しの非同期フォーカス実行時点の値を参照できるようにする。
+  const overlayOpenRef = useRef(false);
+  useEffect(() => {
+    overlayOpenRef.current =
+      showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
+      showProcesses || showUsers || showServerInfo || showQueryInspector || showSizes || showSnippetForm ||
+      showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
+  });
+  // アクティブになったタブがクエリタブのときだけ、次フレームでエディタへ
+  // フォーカスする (#816)。setState 直後はまだ DOM 未反映のため
+  // requestAnimationFrame 越しに呼ぶ (サイドバータブのフォーカス移動と同じ
+  // パターン、#1219 付近参照)。F6 巡回 (paneFocusCursorRef) や
+  // フォーカストラップ (keyboardNav.ts) の状態には触れない — こちらは
+  // フォーカスを直接移すだけの単発処理。
+  const focusEditorIfQueryTab = useCallback((paneId: string | null, tabKind: TabKind | undefined) => {
+    if (!paneId || tabKind !== "query") return;
+    requestAnimationFrame(() => {
+      if (overlayOpenRef.current) return;
+      editorRefs.current.get(paneId)?.focus();
+    });
+  }, []);
   // Right-click target for the tab move/close menu (viewport coords).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   // サイドバーヘッダの「プロファイル転送」ボタン直下に出すインポート/エクスポート
@@ -1376,8 +1601,29 @@ export default function App() {
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
+  // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
+  const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
+  // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
+  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
+  // ローカル横断クエリ (#740): 駆動元セッションを持たない「ローカル」接続。アプリ
+  // 起動後、初めて使われたときに一度だけ作成し (`ensureLocalSession`)、以後は
+  // アクティブな接続の切替とは独立に生存し続ける — `sessionId` (現在アクティブな
+  // 接続) が変わっても/null になってもリセットしない。
+  const [localSessionId, setLocalSessionId] = useState<string | null>(null);
+  const localSessionIdRef = useRef<string | null>(null);
+  useEffect(() => { localSessionIdRef.current = localSessionId; }, [localSessionId]);
+  const [localTables, setLocalTables] = useState<LocalTableMeta[]>([]);
+  const [localTablesLoading, setLocalTablesLoading] = useState(false);
+  // 結果グリッドの「ローカルに登録」モーダル: 対象。null で閉じる。
+  const [registerLocalRequest, setRegisterLocalRequest] = useState<{
+    columns: Column[];
+    rows: CellValue[][];
+    sourceSql: string;
+  } | null>(null);
   // 新規行追加モーダル: 対象タブ ID。null で閉じる。
   const [rowInsertTabId, setRowInsertTabId] = useState<string | null>(null);
+  // 行の複製 (#820): モーダルを開く際の初期値の種。通常の「行を追加」では null。
+  const [rowInsertSeed, setRowInsertSeed] = useState<PendingInsertRow | null>(null);
   // 明示トランザクション: 現在のセッションでトランザクションが有効か。実行経路の
   // 振り分けにコールバックから参照するため ref も併せ持つ。
   const [txActive, setTxActive] = useState(false);
@@ -1390,8 +1636,11 @@ export default function App() {
   useEffect(() => {
     if (!sessionId) {
       setShowObjectSearch(false);
+      setShowDataSearch(false);
       setCreateTableDb(null);
       setRenameTarget(null);
+      setAlterTableTarget(null);
+      setSaveAsTableRequest(null);
       setRowInsertTabId(null);
     }
   }, [sessionId]);
@@ -1479,6 +1728,51 @@ export default function App() {
   // The active session rejects writes when read-only: drives both the Query
   // Builder's disabled Run button and whether inline cell editing is offered.
   const readOnly = selectedProfile?.read_only ?? false;
+  // アクティブセッションで緊急クエリ実行モードが有効か。read-only 接続のクエリ
+  // パネルからの書き込み実行を一時的に許可する (バックエンドの
+  // `Session.emergency_write` が真のガードで、これはその UI ミラー)。
+  const emergencyMode = !!sessionId && emergencySessions.has(sessionId);
+  // 緊急クエリ実行モードの切替。有効化は「接続先名をタイプして合意」ゲート
+  // (#675 の typed-confirm と同じパターン) を通ってからバックエンドのフラグを
+  // 立てる。無効化は即時 (安全側へ倒す操作に確認は要らない)。
+  const handleToggleEmergencyMode = useCallback(async (next: boolean) => {
+    const sid = sessionId;
+    if (!sid || !selectedProfile) return;
+    if (next) {
+      // 接続先名が空のプロファイル (通常あり得ない) でも合意ゲートが自壊しない
+      // よう、共有フォールバック語へ倒す。
+      const name = resolveTypedConfirmTarget([selectedProfile.name]);
+      const ok = await confirm({
+        title: translate("emergencyModeConfirmTitle"),
+        message: translate("emergencyModeConfirmBody", { name }),
+        confirmLabel: translate("emergencyModeEnableButton"),
+        tone: "danger",
+        typedConfirmation: name,
+      });
+      if (!ok) return;
+    }
+    try {
+      await api.setEmergencyMode(sid, next);
+    } catch (e) {
+      setStatus({
+        kind: "key",
+        key: "statusEmergencyModeError",
+        vars: { error: String(e) },
+        error: true,
+      });
+      return;
+    }
+    setEmergencySessions((cur) => {
+      const nextSet = new Set(cur);
+      if (next) nextSet.add(sid);
+      else nextSet.delete(sid);
+      return nextSet;
+    });
+    setStatus({
+      kind: "key",
+      key: next ? "statusEmergencyModeEnabled" : "statusEmergencyModeDisabled",
+    });
+  }, [sessionId, selectedProfile, confirm]);
   // Per-pane autocomplete snapshot lookup against the shared cache.
   const schemaForDatabase = useCallback(
     (database: string | null | undefined): TableSchema[] | null => {
@@ -1516,6 +1810,23 @@ export default function App() {
   const patchTab = useCallback((id: string, patcher: (tab: Tab) => Tab) => {
     setTabs((prev) => prev.map((tt) => (tt.id === id ? patcher(tt) : tt)));
   }, []);
+
+  /**
+   * 結果パネルの表示 (グリッド / ピボット / チャート) を切り替える。3 択は排他な
+   * ので `showPivot` / `showChart` の 2 フラグを常に同時に確定させ、どちらも false
+   * のときがグリッドという不変条件を 1 か所に閉じ込める。グリッド・ピボット・
+   * チャートの各ツールバーに置いた `ResultViewSwitch` が共通でここを呼ぶ。
+   */
+  const setResultView = useCallback(
+    (tabId: string, view: ResultViewKind) => {
+      patchTab(tabId, (tt) => ({
+        ...tt,
+        showPivot: view === "pivot",
+        showChart: view === "chart",
+      }));
+    },
+    [patchTab],
+  );
 
   const detachStreamListener = useCallback((tabId: string) => {
     const un = streamUnlistenRef.current.get(tabId);
@@ -1562,7 +1873,10 @@ export default function App() {
   const selectTab = useCallback((paneId: string, tabId: string) => {
     setActivePaneId(paneId);
     setPanes((prev) => prev.map((p) => (p.id === paneId ? { ...p, activeTabId: tabId } : p)));
-  }, []);
+    // 切り替え先がクエリタブならエディタへ自動フォーカスする (#816)。table/explain
+    // タブへの切替では発火しない。
+    focusEditorIfQueryTab(paneId, tabsRef.current.find((t) => t.id === tabId)?.kind);
+  }, [focusEditorIfQueryTab]);
 
   // Append a freshly built tab to a pane (the focused pane by default) and make
   // it active there. Used by every "open in a new tab" entry point.
@@ -1705,18 +2019,28 @@ export default function App() {
     }
   }, []);
 
+  // サンドボックス一覧の再取得 (#747)。失敗は静かに無視する — サンドボックスは
+  // 補助機能であり、一覧取得の失敗でアプリ起動をブロックすべきではない。
+  const refreshSandboxes = useCallback(async () => {
+    try {
+      setSandboxes(await api.listSandboxes());
+    } catch (e) {
+      console.warn(e);
+    }
+  }, []);
+
   useEffect(() => {
     // 初回ロード: プロファイル取得とスプラッシュの最小表示時間 (350ms) を
     // 競わせ、両方終わったらスプラッシュを畳む。瞬間表示によるちらつきを防ぐ。
     let alive = true;
     const minVisible = new Promise<void>((resolve) => setTimeout(resolve, 350));
-    Promise.all([refreshProfiles(), minVisible]).finally(() => {
+    Promise.all([refreshProfiles(), refreshSandboxes(), minVisible]).finally(() => {
       if (alive) setBooted(true);
     });
     return () => {
       alive = false;
     };
-  }, [refreshProfiles]);
+  }, [refreshProfiles, refreshSandboxes]);
 
   // 初回起動オンボーディング (#599): 起動が完了した時点でプロファイルが 0 件
   // (= 新規ユーザ) かつツアー未表示なら自動で開始する。既存ユーザ (プロファイル
@@ -1971,6 +2295,82 @@ export default function App() {
     if (sessionId && selectedProfile) void refreshPlanWatches(sessionId, selectedProfile);
   }, [sessionId, selectedProfile, refreshPlanWatches]);
 
+  // スキーマドリフト・タイムライン (#736): アクティブプロファイルのスナップ
+  // ショット状態と閲覧パネル。
+  const [schemaDrift, setSchemaDrift] = useState<SchemaDriftState>(EMPTY_SCHEMA_DRIFT);
+  const [schemaDriftOpen, setSchemaDriftOpen] = useState(false);
+  const [schemaDriftCapturing, setSchemaDriftCapturing] = useState(false);
+  useEffect(() => {
+    const id = selectedProfile?.id ?? null;
+    setSchemaDrift(id ? loadSchemaDrift(id) : EMPTY_SCHEMA_DRIFT);
+  }, [selectedProfile?.id]);
+  const schemaDriftInFlightRef = useRef<Set<string>>(new Set());
+
+  /**
+   * プロファイルの既定データベースのスキーマ (テーブル・列・インデックス) を
+   * 取得して世代として記録する。前世代とフィンガープリントが異なるときだけ
+   * `diffSchemaSnapshots` (セッション不要、`compute_schema_diff` を流用) で
+   * 差分を計算し、控えめなトーストで要約を知らせる。読み取り操作のみで
+   * クエリ履歴は汚さない。デフォルトデータベースが無いプロファイル (SQLite の
+   * 空パス等) では静かに何もしない。
+   */
+  const captureSchemaSnapshot = useCallback(
+    async (sid: string, profile: ConnectionProfile) => {
+      const database = profile.database;
+      if (!database) return;
+      if (schemaDriftInFlightRef.current.has(profile.id)) return;
+      schemaDriftInFlightRef.current.add(profile.id);
+      setSchemaDriftCapturing(true);
+      try {
+        const tableNames = await api.listTables(sid, database);
+        const tables: SnapshotTable[] = [];
+        for (const name of tableNames) {
+          try {
+            const [columns, indexes] = await Promise.all([
+              api.describeTable(sid, database, name),
+              api.listIndexes(sid, database, name),
+            ]);
+            tables.push({ name, columns, indexes });
+          } catch {
+            // 個々のテーブルの取得失敗はベストエフォートでスキップする
+            // (一部テーブルの権限不足などで全体を止めない)。
+          }
+        }
+        const payload = buildSnapshotPayload(profile.driver as DriverKind, database, tables);
+        const gen = captureGeneration(payload);
+        const rec = recordSnapshotGeneration(loadSchemaDrift(profile.id), gen);
+        if (!rec.added) return;
+        saveSchemaDrift(profile.id, rec.state);
+        if (activeProfileIdRef.current === profile.id) setSchemaDrift(rec.state);
+        if (!rec.prev || !canDiff(rec.prev) || !canDiff(gen)) return;
+        const source = toDiffInput(rec.prev);
+        const target = toDiffInput(gen);
+        if (!source || !target) return;
+        const diff = await api.diffSchemaSnapshots({
+          sourceDriver: rec.prev.driver,
+          targetDriver: gen.driver,
+          source,
+          target,
+        });
+        const summary = summarizeDrift(diff, diffIndexes(rec.prev, gen));
+        if (summary.tables.length > 0) {
+          toast.info(translate("schemaDriftChangedToast", { detail: buildDriftDetail(summary) }));
+        }
+      } catch (e) {
+        toast.error(translate("schemaDriftRefreshFailedToast", { error: String(e) }));
+      } finally {
+        schemaDriftInFlightRef.current.delete(profile.id);
+        setSchemaDriftCapturing(false);
+      }
+    },
+    [toast],
+  );
+
+  const handleOpenSchemaDrift = useCallback(() => setSchemaDriftOpen(true), []);
+  const handleCaptureSchemaDrift = useCallback(() => {
+    if (sessionId && selectedProfile) void captureSchemaSnapshot(sessionId, selectedProfile);
+  }, [sessionId, selectedProfile, captureSchemaSnapshot]);
+
   // 最近開いたテーブルを記録する。`handleOpenTable` から呼ばれ、永続化も行う。
   const recordRecentTableOpen = useCallback((database: string, table: string) => {
     const id = selectedProfile?.id;
@@ -2070,10 +2470,13 @@ export default function App() {
     await closeAllTabs();
     // 旧セッションの DB 名を持ったまま各モーダルが新しい sessionId で開き続けない
     // よう、切替時も handleDisconnect / tearDownLostSession と同じく閉じる。
+    // AlterTableModal (#794) も database/table を旧セッション基準で保持したまま
+    // 別接続へ ALTER が飛ぶ事故を防ぐため同様に閉じる。
     setImportTarget(null);
     setDumpTarget(null);
     setSchemaExportTarget(null);
     setErrorProfileId(null);
+    setAlterTableTarget(null);
     setConnectionStatus("connected");
     setSessionId(target.sessionId);
     setSelectedProfile(target.profile);
@@ -2089,6 +2492,29 @@ export default function App() {
     setStatus({ kind: "idle" });
     toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
   }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast]);
+
+  // ローカル横断クエリ (#740): ローカルセッションを (無ければ) 作成して id を返す。
+  // 既にあれば再利用する。`handleConnect` がこれを参照するため、その定義より前に
+  // 置く必要がある (useCallback の依存配列は定義時に評価されるため)。
+  //
+  // 「ローカル」接続はヘッダの通常の切断ボタン (`handleDisconnect`) やバックグラウンド
+  // 接続の切断 (`handleDisconnectProfile`) など、ここが関知しない複数の経路から
+  // `api.disconnect` されうる (通常の接続と同じ経路を再利用しているため、あえて
+  // ここだけ特別扱いしていない)。そのため保持している id が実は死んでいる可能性が
+  // あり、再利用前に `pingSession` で生存確認し、死んでいれば (or 未作成なら) 新規に
+  // 作り直す — こうすることで切断経路側を local 専用に分岐させずに済む。
+  const ensureLocalSession = useCallback(async () => {
+    const cached = localSessionIdRef.current;
+    if (cached) {
+      const alive = await api.pingSession(cached).catch(() => false);
+      if (alive) return cached;
+      setLocalTables([]);
+    }
+    const id = await api.createLocalSession();
+    setLocalSessionId(id);
+    localSessionIdRef.current = id;
+    return id;
+  }, []);
 
   const handleConnect = useCallback(async (profile: ConnectionProfile) => {
     // 既にアクティブな接続なら何もしない (誤クリックで張り直さない)。
@@ -2151,23 +2577,29 @@ export default function App() {
         profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
           ? profile.driver
           : "mysql";
-      const res = await api.connect(
-        {
-          profile_id: profile.id,
-          driver,
-          host: profile.host,
-          port: profile.port,
-          user: profile.user,
-          password: "",
-          database: profile.database,
-          ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-          file_path: profile.file_path,
-          read_only: profile.read_only,
-          skip_history: profile.skip_history,
-        },
-        attemptId,
-        settings.connectTimeoutSecs,
-      );
+      // ローカル横断クエリ (#740): 「ローカル」擬似プロファイルは駆動元を持たない
+      // ため通常の `api.connect` を呼ばず、既存 (または新規) のローカルセッション
+      // をそのまま使う。以降 (setSessionId 以下) は通常の接続と完全に同じ経路 —
+      // 複数接続レジストリ・タブ復元・エディタ/グリッドはすべて共有する。
+      const res = isLocalProfile(profile)
+        ? { session_id: await ensureLocalSession() }
+        : await api.connect(
+            {
+              profile_id: profile.id,
+              driver,
+              host: profile.host,
+              port: profile.port,
+              user: profile.user,
+              password: "",
+              database: profile.database,
+              ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
+              file_path: profile.file_path,
+              read_only: profile.read_only,
+              skip_history: profile.skip_history,
+            },
+            attemptId,
+            settings.connectTimeoutSecs,
+          );
       setSessionId(res.session_id);
       setSelectedProfile(profile);
       // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -2204,6 +2636,12 @@ export default function App() {
       if (settings.planWatchOnConnect) {
         void refreshPlanWatches(res.session_id, profile);
       }
+      // スキーマドリフト・タイムライン (#736): 設定が有効なら、接続確立直後に
+      // スキーマスナップショットを背景で取得し、前回接続時からの変化を検知する
+      // (接続をブロックしない)。
+      if (settings.schemaDriftOnConnect) {
+        void captureSchemaSnapshot(res.session_id, profile);
+      }
     } catch (e) {
       // 接続失敗時は表示状態を実態 (未接続) に合わせる。sessionId は既に null に
       // なっているが selectedProfile を旧プロファイルのままにすると、ヘッダが
@@ -2229,11 +2667,14 @@ export default function App() {
     persistTabsForProfile,
     switchToOpenConnection,
     upsertOpenConnection,
+    ensureLocalSession,
     settings.connectTimeoutSecs,
     settings.confirmProductionConnect,
     settings.tabRestoreMode,
     settings.planWatchOnConnect,
     refreshPlanWatches,
+    settings.schemaDriftOnConnect,
+    captureSchemaSnapshot,
     toast,
     confirm,
   ]);
@@ -2245,18 +2686,27 @@ export default function App() {
   // rejected, keeping the mismatch dialog up instead of silently trusting it.
   // If the fingerprint can't be parsed from the message (unexpected format), fall
   // back to forget + TOFU so recovery is still possible.
+  //
+  // The failing endpoint comes from the *parsed message*, not the profile's
+  // static `ssh.host`/`ssh.port` (#708): with a chained (bastion + target)
+  // tunnel, the mismatch can be on either hop, and the backend always names the
+  // hop that actually failed. Falling back to the profile's main SSH host only
+  // when parsing fails keeps this correct for both direct and chained tunnels.
   const handleReTrustHostKey = useCallback(async () => {
     const mismatch = hostKeyMismatch;
     const ssh = mismatch?.profile.ssh;
     if (!mismatch || !ssh) return;
     const { profile } = mismatch;
-    const approved = parseHostKeyFingerprints(mismatch.message)?.actual;
+    const parsed = parseHostKeyFingerprints(mismatch.message);
+    const approved = parsed?.actual;
+    const targetHost = parsed?.host ?? ssh.host;
+    const targetPort = parsed?.port ?? ssh.port;
     setReTrustingHostKey(true);
     try {
       if (approved) {
-        await api.trustHostKey(ssh.host, ssh.port, approved);
+        await api.trustHostKey(targetHost, targetPort, approved);
       } else {
-        await api.forgetHostKey(ssh.host, ssh.port);
+        await api.forgetHostKey(targetHost, targetPort);
       }
       setHostKeyMismatch(null);
       toast.success(translate("hostKeyReTrustedToast", { name: profile.name }));
@@ -2295,6 +2745,7 @@ export default function App() {
     } catch (e) {
       console.warn(e);
     }
+    clearEmergencyFor(sessionId);
     setSessionId(null);
     setSelectedProfile(null);
     setImportTarget(null);
@@ -2308,7 +2759,7 @@ export default function App() {
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor]);
 
   // 特定の接続 (背景またはアクティブ) を再接続せずに閉じる (#複数同時接続)。
   // 背景接続ならアクティブなワークスペースには触れずバックエンドセッションだけ
@@ -2327,8 +2778,65 @@ export default function App() {
     } catch (e) {
       console.warn(e);
     }
+    clearEmergencyFor(entry.sessionId);
     toast.info(translate("toastDisconnected", { name: entry.profile.name }));
-  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast]);
+  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor]);
+
+  // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
+  // (`sandboxToProfile`) を通常の `handleConnect` に渡すだけで、複数同時接続の
+  // レジストリ (`openConnections`)・タブ復元・バッジ表示など既存の仕組みへ
+  // そのまま乗る。
+  const handleOpenSandbox = useCallback(
+    (record: SandboxRecord) => {
+      void handleConnect(sandboxToProfile(record));
+    },
+    [handleConnect],
+  );
+
+  // `create_sandbox` はコピー直後の確認用に自前のセッションを開いて返すが、
+  // ここではそれを閉じて `handleConnect` に張り直させる — 複数同時接続の
+  // レジストリへ二重登録せず、他の接続と全く同じ経路 (背景接続の扱い・タブ
+  // 復元・エラーハンドリング) に乗せるため。
+  const handleSandboxCreated = useCallback(
+    async (res: SandboxCreateResponse) => {
+      api.disconnect(res.session_id).catch(() => {});
+      setSandboxes((prev) => [...prev.filter((s) => s.id !== res.sandbox.id), res.sandbox]);
+      setSandboxCreateTarget(null);
+      await handleConnect(sandboxToProfile(res.sandbox));
+      toast.success(translate("toastSandboxCreated", { name: res.sandbox.name }));
+    },
+    [handleConnect, toast],
+  );
+
+  const handleDiscardSandbox = useCallback(
+    async (record: SandboxRecord) => {
+      await handleDisconnectProfile(sandboxProfileId(record.id));
+      try {
+        await api.discardSandbox(record.id, null);
+        setSandboxes((prev) => prev.filter((s) => s.id !== record.id));
+        toast.info(translate("toastSandboxDiscarded", { name: record.name }));
+      } catch (e) {
+        toast.error(String(e));
+      }
+    },
+    [handleDisconnectProfile, toast],
+  );
+
+  // 差分計算はサンドボックス自身のセッションに対して行うため、開いていない
+  // (バックグラウンド接続にも無い) サンドボックスでは先に開かせる。
+  const handleReviewSandbox = useCallback(
+    (record: SandboxRecord) => {
+      const open = openConnectionsRef.current.find(
+        (c) => c.profile.id === sandboxProfileId(record.id),
+      );
+      if (!open) {
+        toast.error(translate("toastSandboxNotOpen", { name: record.name }));
+        return;
+      }
+      setSandboxReviewTarget(record);
+    },
+    [toast],
+  );
 
   // A query or preview failed because the connection dropped (server idle
   // timeout, network or VPN loss). Tear the now-dead session down the same way
@@ -2352,6 +2860,7 @@ export default function App() {
       if (oldSessionId) {
         try { await api.disconnect(oldSessionId); } catch (e) { console.warn(e); }
       }
+      clearEmergencyFor(oldSessionId);
       setSessionId(null);
       setSelectedProfile(null);
       setImportTarget(null);
@@ -2372,7 +2881,7 @@ export default function App() {
         setStatus({ kind: "key", key: "statusConnectionLost", error: true });
       }
     },
-    [closeAllTabs, persistTabsForProfile, removeOpenConnection],
+    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor],
   );
 
   // 指数バックオフで自動再接続を試みるループ (#712)。切れたセッションを **同じ
@@ -2409,7 +2918,10 @@ export default function App() {
           // バックエンドのセッションは張り直し済みで、背景接続として有効なまま
           // (切り替え先の表示を上書きしない)。
           if (reconnectAbortRef.current) { reconnectingRef.current = false; return; }
-          // 成功: セッションはその場で復活。タブ・グリッドはそのまま。
+          // 成功: セッションはその場で復活。タブ・グリッドはそのまま。バックエンドは
+          // 再接続でセッションを差し替え、緊急クエリ実行モードをオフに戻すため、
+          // UI ミラーも同期して外す (同じ session id が生き続けるので明示的に必要)。
+          clearEmergencyFor(oldSessionId);
           setErrorProfileId(null);
           setConnectionStatus("connected");
           setStatus({ kind: "idle" });
@@ -2427,7 +2939,7 @@ export default function App() {
       if (reconnectAbortRef.current) return;
       await tearDownLostSession(profile, oldSessionId, { gaveUpAfter: maxRetries });
     },
-    [persistTabsForProfile, tearDownLostSession, toast],
+    [persistTabsForProfile, tearDownLostSession, toast, clearEmergencyFor],
   );
 
   // 接続断 (クエリ失敗 / フォーカス時のヘルスチェック失敗) の統一ハンドラ。設定と
@@ -2762,6 +3274,26 @@ export default function App() {
         if (!autoRefresh) {
           void notifyQueryOutcome("done", elapsedMs, { rows: hasColumns ? totalRows : rowsAffected });
         }
+        // 実行完了時に結果グリッドへフォーカスを渡し、キーボード完結フロー
+        // (実行→結果閲覧→コピー) を繋げる (#816)。エディタの Cmd/Ctrl+Enter
+        // キーマップ経由の実行 (= 完了直前までエディタにフォーカスがあった) の
+        // ときだけ発火し、ツールバーのボタンクリックでの実行では奪わない。
+        // 自動リフレッシュの tick・結果セットの無い DML・完了時点で既に別タブへ
+        // 切り替わっている場合は対象外。F6 巡回 (paneFocusCursorRef) やフォーカス
+        // トラップ (keyboardNav.ts) の状態には触れない一度きりの focus() 呼び出し
+        // なので干渉しない。
+        if (!autoRefresh && hasColumns) {
+          const focusedInEditor = !!(document.activeElement as HTMLElement | null)?.closest(".cm-editor");
+          if (focusedInEditor) {
+            requestAnimationFrame(() => {
+              if (overlayOpenRef.current) return;
+              const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+              if (owner && owner.activeTabId === tabId) {
+                resultGridRefs.current.get(owner.id)?.focus();
+              }
+            });
+          }
+        }
       },
       onError: ({ error, timedOut, connectionLost, deliveredRows }) => {
         patchTab(tabId, (tt) => ({
@@ -2817,6 +3349,11 @@ export default function App() {
         autoLimit,
         queryTimeoutSecs: timeoutSecs,
         autoRefresh,
+        // DML フライトレコーダ (#735): 単文の INSERT/UPDATE/DELETE のみ対象。
+        // 自動リフレッシュ (常に読み取り専用) は対象外。
+        capture: settings.flightRecorderEnabled && !autoRefresh && isSingleCapturableStatement(sql),
+        captureRowCap: settings.flightRecorderRowCap,
+        captureRetentionDays: settings.flightRecorderRetentionDays,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
@@ -2831,11 +3368,26 @@ export default function App() {
     cancelStreamForTab,
     invalidateSchemaCache,
     notifyQueryOutcome,
+    settings.flightRecorderEnabled,
+    settings.flightRecorderRowCap,
+    settings.flightRecorderRetentionDays,
     selectedProfile?.database,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
   ]);
+
+  // 環境横断ブロードキャスト実行 (#738): クエリエディタの「複数の接続で実行」から
+  // 呼ばれる。書き込み文はここで即座に拒否する (バックエンドの `forceReadOnly` は
+  // 二重の安全網)。対象接続の選択・本番確認・実行は `BroadcastModal` 側に任せ、
+  // ここでは要求を受け取ってモーダルを開くだけ。
+  const requestBroadcast = useCallback((sql: string, tab: Tab | null) => {
+    if (!isReadOnlySql(sql)) {
+      toast.error(translate("broadcastBlockedToast"));
+      return;
+    }
+    setBroadcastRequest({ sql, tableColumns: tab?.tableColumns ?? null });
+  }, [toast, translate]);
 
   // ---- Auto-refresh (scheduled re-execution) -------------------------------
   // Latest `runQueryInTab` / `sessionId` kept in refs so a long-lived timer
@@ -2991,12 +3543,22 @@ export default function App() {
         setTabs([tab]);
         setPanes([{ id: paneId, tabIds: [tab.id], activeTabId: tab.id }]);
         setActivePaneId(paneId);
+        // 復元対象が無く新規クエリタブへ落ちた場合も接続直後の自動フォーカス
+        // (#816) を適用する。
+        focusEditorIfQueryTab(paneId, tab.kind);
         return;
       }
       setTabs(allTabs);
       setPanes(builtPanes);
       const activePaneIdx = Math.min(Math.max(0, ws.activePane), builtPanes.length - 1);
-      setActivePaneId(builtPanes[activePaneIdx].id);
+      const activePane = builtPanes[activePaneIdx];
+      setActivePaneId(activePane.id);
+      // 接続直後にタブを復元した結果、アクティブなタブがクエリタブならエディタへ
+      // 自動フォーカスする (#816)。table/explain タブが復元先だと発火しない。
+      focusEditorIfQueryTab(
+        activePane.id,
+        allTabs.find((tt) => tt.id === activePane.activeTabId)?.kind,
+      );
       // Re-run the initial table query for restored table tabs so the user
       // immediately sees data instead of an empty grid.
       for (const tab of allTabs) {
@@ -3020,7 +3582,7 @@ export default function App() {
         );
       }
     },
-    [runQueryInTab, settings.defaultDisplayCount, toast],
+    [runQueryInTab, settings.defaultDisplayCount, toast, focusEditorIfQueryTab],
   );
 
   useEffect(() => {
@@ -3246,7 +3808,16 @@ export default function App() {
   // ページネーション: table タブの `paginatable` base SQL から N ページ目を
   // 取得して結果を**置き換える** (loadMore は追記、こちらはページ送り)。ページング用の
   // 内部クエリは `api.runQuery` 経由なので履歴を汚さない (CLAUDE.md のクエリ履歴方針)。
-  const goToPageInTab = useCallback(async (tabId: string, page: number, sizeOverride?: number) => {
+  // `browseOverride` はサーバ側ソート/フィルタの適用/解除 (#792) から呼ばれる経路専用:
+  // 通常のページ送り (undefined) は現在の `tab.serverSort`/`serverFilter` を使い回すが、
+  // 適用/解除の瞬間は「ページ番号は変わらず 1 のまま」でも再フェッチが要るため、
+  // `force` で target===現在ページの早期リターンを無効化する。
+  const goToPageInTab = useCallback(async (
+    tabId: string,
+    page: number,
+    sizeOverride?: number,
+    browseOverride?: { sort?: ServerSort | null; filter?: ServerFilter | null; force?: boolean },
+  ) => {
     if (!sessionId) return;
     const tab = tabsRef.current.find((tt) => tt.id === tabId);
     if (
@@ -3258,11 +3829,15 @@ export default function App() {
     ) {
       return;
     }
+    const nextSort = browseOverride && "sort" in browseOverride ? browseOverride.sort ?? null : tab.serverSort ?? null;
+    const nextFilter = browseOverride && "filter" in browseOverride ? browseOverride.filter ?? null : tab.serverFilter ?? null;
     const pageSize = Math.max(1, sizeOverride ?? tab.pageSize ?? tab.previewRowLimit);
-    const total = estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
+    const total = tableTotalPagesEstimate({ serverFilter: nextFilter, rowEstimateTotal: tab.rowEstimateTotal }, pageSize);
     const target = clampPage(page, total);
-    if (target === (tab.page ?? 1) && tab.result) return;
-    const sql = buildPageSql(tab.paginatable, pageSize, target);
+    if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const effectiveBase = applyServerBrowse(tab.paginatable, driver, nextFilter, nextSort);
+    const sql = buildPageSql(effectiveBase, pageSize, target);
     patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
     try {
       const res = await api.runQuery(sessionId, sql, tab.database ?? null);
@@ -3274,6 +3849,8 @@ export default function App() {
         partialResult: null,
         page: target,
         pageSize,
+        serverSort: nextSort,
+        serverFilter: nextFilter,
         loadingMore: false,
         // ページングは置換なので、無限スクロールの load-more は無効化する。
         canLoadMore: false,
@@ -3301,12 +3878,30 @@ export default function App() {
         error: true,
       });
     }
-  }, [sessionId, patchTab]);
+  }, [sessionId, patchTab, selectedProfile?.driver]);
 
   // ページサイズを変更し、1 ページ目から取り直す。状態反映のレースを避けるため、
   // 新サイズを goToPageInTab に直接渡す。
   const setPageSizeInTab = useCallback((tabId: string, size: number) => {
     void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
+  }, [goToPageInTab]);
+
+  // サーバ側ソート (#792): ヘッダーメニューから列の昇順/降順/解除を選ぶと、1 ページ目
+  // から再フェッチする。単一列のみ (複数列 ORDER BY は最小セットの対象外)。
+  const setServerSortInTab = useCallback((tabId: string, column: string, direction: ServerSortDirection | null) => {
+    const next: ServerSort | null = direction ? { column, direction } : null;
+    void goToPageInTab(tabId, 1, undefined, { sort: next, force: true });
+  }, [goToPageInTab]);
+
+  // サーバ側フィルタ (#792): ヘッダーメニューから条件を適用/解除すると、1 ページ目
+  // から再フェッチする。単一条件のみ (複数条件の AND/OR は最小セットの対象外)。
+  const setServerFilterInTab = useCallback((
+    tabId: string,
+    column: string,
+    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+  ) => {
+    const next: ServerFilter | null = filter ? { column, ...filter } : null;
+    void goToPageInTab(tabId, 1, undefined, { filter: next, force: true });
   }, [goToPageInTab]);
 
   // SQL スクリプト (複数文) のバッチ実行。文ごとに順次実行し、各文の結果
@@ -3478,7 +4073,10 @@ export default function App() {
     const batch = target.kind === "query" && isMultiStatement(sql);
     const findings =
       isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
-    const needsWriteApproval = requireWriteApproval && !isReadOnlySql(sql);
+    // 緊急クエリ実行モード中の書き込みは、本番の confirm_writes と同じく毎回
+    // 確認を要求する (read-only と明示した接続への書き込みは常に例外的な操作)。
+    const needsWriteApproval =
+      (requireWriteApproval || emergencyMode) && !isReadOnlySql(sql);
     if (findings.length > 0 || needsWriteApproval) {
       // Irreversible DROP/TRUNCATE on a production connection gets the
       // stronger "type the target name to confirm" gate (#675); everything
@@ -3535,6 +4133,7 @@ export default function App() {
     settings.autoLimitCount,
     settings.resultsInNewTab,
     selectedProfile?.driver,
+    emergencyMode,
   ]);
 
   const handleConfirmDangerous = useCallback(() => {
@@ -3721,7 +4320,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
@@ -3734,7 +4333,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
@@ -3812,9 +4411,26 @@ export default function App() {
       patchTab(tabId, (tt) => {
         const next: PendingEdits = {};
         for (const k of Object.keys(tt.pendingEdits)) next[k] = { ...tt.pendingEdits[k] };
+        // `value === null` は「セルがすでにその値なので、残っている保留編集を
+        // 解除する」意味 (`planBulkCellEdit` の `unchanged`)。単一セル編集の
+        // `setCellEditForTab` と同じ削除処理を行う。
+        let changed = false;
         for (const e of edits) {
-          next[e.rowKey] = { ...(next[e.rowKey] ?? {}), [e.colIdx]: e.value };
+          const row = { ...(next[e.rowKey] ?? {}) };
+          if (e.value === null) {
+            if (row[e.colIdx] === undefined) continue;
+            delete row[e.colIdx];
+          } else {
+            if (row[e.colIdx] === e.value) continue;
+            row[e.colIdx] = e.value;
+          }
+          changed = true;
+          if (Object.keys(row).length === 0) delete next[e.rowKey];
+          else next[e.rowKey] = row;
         }
+        // 解除対象がどこにも無かった場合は Undo スナップショットを積まない
+        // (何も変わらないのに Undo が 1 手消費されるのを避ける)。
+        if (!changed) return tt;
         const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
         return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: [] };
       });
@@ -3974,7 +4590,10 @@ export default function App() {
       // 新規行はサーバが採番する PK (AUTO_INCREMENT など) を取り込む必要があるため、
       // ここだけは再取得して反映する。
       const limit = Math.max(1, settings.defaultDisplayCount);
-      patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
+      // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
+      // サーバ側ソート/フィルタの表示 (#792) も解除しておく (SQL 未適用のままバッジ
+      // だけ残るのを防ぐ)。
+      patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [], serverSort: null, serverFilter: null }));
       runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
     } else {
       patchTab(tabId, (tt) => {
@@ -4039,14 +4658,22 @@ export default function App() {
     });
   }, [patchTab]);
 
-  // 新規行追加モーダルを開く。
+  // 新規行追加モーダルを開く (空欄から)。
   const requestInsertRowForTab = useCallback((tabId: string) => {
+    setRowInsertSeed(null);
+    setRowInsertTabId(tabId);
+  }, []);
+
+  // 行の複製 (#820): 選択行の値を種に同じモーダルを開く。
+  const requestDuplicateRowForTab = useCallback((tabId: string, row: PendingInsertRow) => {
+    setRowInsertSeed(row);
     setRowInsertTabId(tabId);
   }, []);
 
   // モーダルで確定した新規行を保留に追加する。
   const addInsertRowForTab = useCallback((tabId: string, row: PendingInsertRow) => {
     setRowInsertTabId(null);
+    setRowInsertSeed(null);
     patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
   }, [patchTab]);
 
@@ -4235,6 +4862,177 @@ export default function App() {
     }
   }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl]);
 
+  // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
+  // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
+  // (CreateTableModal の `onSendToEditor` と同じ流儀)。
+  const handleAlterTableToEditor = useCallback((sql: string) => {
+    setAlterTableTarget(null);
+    openQueryInEditor(sql);
+  }, [openQueryInEditor]);
+
+  // 列編集ダイアログの適用: 生成された複数の ALTER TABLE / CREATE INDEX 文をまとめて
+  // 確認ダイアログでプレビューし、承認後に `run_query_transaction` (単一トランザクション。
+  // PostgreSQL は all-or-nothing、MySQL は DDL の暗黙コミットにより best-effort 逐次 —
+  // CLAUDE.md「MySQL の DDL は非原子」を参照) で実行する。破壊的判定は各文の
+  // `destructive` フラグ (`alterTable.ts` が構造化して返す) を直接見る — SQL
+  // テキストへの正規表現マッチには依存しない。DROP COLUMN を含む場合は破壊的操作
+  // として TRUNCATE/DROP TABLE と同じくタイプ入力の強確認ゲート (#675) を本番接続に
+  // 限り追加する。読み取り専用セッションでは AlterTableModal 側で実行ボタンを
+  // 無効化しているが、IPC 自体もバックエンドの read_only ガードで拒否される。
+  // モーダルは実行成功後にのみ閉じる — 失敗時 (SQL エラー等) は開いたままにして
+  // ユーザが編集内容を失わずに調整・再実行できるようにする。
+  const handleAlterTableRun = useCallback(async (statements: AlterStatement[]) => {
+    const target = alterTableTarget;
+    if (!target || !sessionId || statements.length === 0) return;
+    const destructive = statements.some((s) => s.destructive);
+    const sqls = statements.map((s) => s.sql);
+    const ok = await confirm({
+      title: translate("alterTableConfirmTitle", { table: target.table }),
+      message: maintenanceMessage(
+        <>
+          {translate("alterTableConfirmBody")}
+          <br />
+          <br />
+          <chakra.code
+            display="block"
+            fontFamily="var(--font-mono)"
+            fontSize="sm"
+            whiteSpace="pre-wrap"
+            wordBreak="break-all"
+          >
+            {sqls.join("\n")}
+          </chakra.code>
+        </>,
+      ),
+      confirmLabel: translate("alterTableConfirmOk"),
+      tone: destructive ? "danger" : "primary",
+      typedConfirmation: destructive && selectedProfile?.is_production ? target.table : undefined,
+    });
+    if (!ok) return;
+    try {
+      await api.runQueryTransaction(sessionId, sqls, target.database);
+      invalidateSchemaCache(target.database);
+      connectionListRef.current?.refreshSchema();
+      toast.success(translate("alterTableSuccess", { table: target.table }));
+      setAlterTableTarget(null);
+      // リネーム/DROP された可能性があるので、開いている対象テーブルのタブは閉じて
+      // 新しい定義で開き直せるようにする (handleRenameTableSubmit/handleDropTable と同じ方針)。
+      tabsRef.current
+        .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
+        .forEach((tt) => handleCloseTabRef.current(tt.id));
+    } catch (e) {
+      toast.error(translate("statusQueryError", { error: String(e) }));
+    }
+  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache]);
+
+  // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
+  // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
+  // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
+  const handleSaveAsTableConfirm = useCallback((newName: string) => {
+    const req = saveAsTableRequest;
+    setSaveAsTableRequest(null);
+    if (!req) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const ddl = buildCreateTableAsSql(driver, req.database, newName, req.sql);
+    void (async () => {
+      const success = await runMaintenanceDdl(ddl, req.database);
+      if (success) toast.success(translate("saveAsTableSuccess", { table: newName }));
+    })();
+  }, [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast]);
+
+  // ローカル横断クエリ (#740) ――――――――――――――――――――――――――――――――
+  //
+  // 「ローカル」接続はセッション管理としては通常の接続と同じ (`api.createLocalSession`
+  // が返す通常の `SessionId` を、通常の接続と同じ `handleConnect` 経由で複数接続
+  // レジストリに載せる) だが、登録済みテーブル一覧の取得・結果グリッドからの登録
+  // だけがこのセクション固有の処理。`ensureLocalSession` 自体は `handleConnect` が
+  // 参照するため、それより前で定義している。
+
+  const refreshLocalTables = useCallback(async (sid: string) => {
+    setLocalTablesLoading(true);
+    try {
+      const tables = await api.listLocalTables(sid);
+      setLocalTables(tables);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setLocalTablesLoading(false);
+    }
+  }, [toast]);
+
+  // 結果グリッドの「ローカルに登録」ボタン: 名前を確認するモーダルを開く。
+  const handleRegisterLocalTable = useCallback((result: QueryResult, sourceSql: string) => {
+    setRegisterLocalRequest({ columns: result.columns, rows: result.rows, sourceSql });
+  }, []);
+
+  const handleConfirmRegisterLocalTable = useCallback((tableName: string) => {
+    const req = registerLocalRequest;
+    setRegisterLocalRequest(null);
+    if (!req) return;
+    void (async () => {
+      try {
+        const sid = await ensureLocalSession();
+        await api.registerLocalTable({
+          sessionId: sid,
+          tableName,
+          columns: req.columns,
+          rows: req.rows,
+          sourceProfile: selectedProfile?.name ?? null,
+          sourceSql: req.sourceSql,
+          sourceDriver: selectedProfile?.driver ?? null,
+        });
+        await refreshLocalTables(sid);
+        toast.success(translate("localRegisterSuccess", { rows: req.rows.length, table: tableName }));
+      } catch (e) {
+        toast.error(String(e));
+      }
+    })();
+  }, [registerLocalRequest, ensureLocalSession, refreshLocalTables, selectedProfile, toast]);
+
+  // サイドバー「ローカル」パネルの「ローカル接続を開く」/「ローカルに切替」。
+  const handleOpenLocalConnection = useCallback(() => {
+    void handleConnect(makeLocalProfile(translate("localConnectionName")));
+  }, [handleConnect]);
+
+  const handleDropLocalTable = useCallback((tableName: string) => {
+    const sid = localSessionIdRef.current;
+    if (!sid) return;
+    void (async () => {
+      try {
+        await api.dropLocalTable(sid, tableName);
+        await refreshLocalTables(sid);
+      } catch (e) {
+        toast.error(String(e));
+      }
+    })();
+  }, [refreshLocalTables, toast]);
+
+  const handleSaveLocalDatabase = useCallback(() => {
+    const sid = localSessionIdRef.current;
+    if (!sid) return;
+    void (async () => {
+      const path = await saveFileDialog({
+        defaultPath: "noobdb-local.sqlite",
+        title: translate("localPanelSaveToFileTitle"),
+        filters: [{ name: "SQLite", extensions: ["sqlite", "db"] }],
+      });
+      if (typeof path !== "string" || !path) return;
+      try {
+        await api.saveLocalDatabase(sid, path);
+        toast.success(translate("localPanelSaveToFileSuccess", { path }));
+      } catch (e) {
+        toast.error(String(e));
+      }
+    })();
+  }, [toast]);
+
+  // ローカルセッションに登録済みのテーブル一覧は、そのセッションが (別画面操作の
+  // 副作用として) 初めて生まれたときに一度読み込んでおく。以降は登録/削除の都度
+  // 明示的に再取得する (ポーリングはしない)。
+  useEffect(() => {
+    if (localSessionId) void refreshLocalTables(localSessionId);
+  }, [localSessionId, refreshLocalTables]);
+
   // テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
   // 生成済み SQL を確認ダイアログで提示し、承認後に既存のクエリ経路で実行する。
   // データは消さないが書き込み/ロックを伴うため、本番接続では追加警告を出す。
@@ -4304,7 +5102,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false);
     setShowSnippetForm(false);
     setSizesTarget(database);
@@ -4341,7 +5139,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(false);
     setShowForm(true);
@@ -4353,7 +5151,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -4367,7 +5165,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -4385,6 +5183,9 @@ export default function App() {
       await handleDisconnectProfile(id);
       await api.deleteProfile(id);
       await refreshProfiles();
+      // コマンドパレット MRU (#845): 削除したプロファイルの候補 id が「最近使った
+      // 項目」に残ったままだと、二度と実在しないのに一覧に居座り続けてしまう。
+      pruneCommandPaletteMru((mruId) => mruId !== `conn:${id}`);
     }, "statusFailedDeleteProfile");
     setPendingDeleteProfileIds((cur) => {
       if (!cur.has(id)) return cur;
@@ -4499,7 +5300,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -4513,7 +5314,7 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowForm(false);
     setShowSnippetForm(true);
@@ -4539,11 +5340,30 @@ export default function App() {
     if (tab && tab.paginatable) {
       const limit = Math.max(1, tab.previewRowLimit || settings.defaultDisplayCount);
       runQueryInTab(tab.id, `${tab.paginatable} LIMIT ${limit}`, tab.paginatable);
+      // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
+      // サーバ側ソート/フィルタの表示 (#792) を state 側でも解除しておく — SQL は
+      // 未適用なのに「適用中」バッジが残るのを防ぐ。
+      patchTab(tab.id, (tt) => ({ ...tt, serverSort: null, serverFilter: null }));
     }
-  }, [runQueryInTab, settings.defaultDisplayCount]);
+  }, [runQueryInTab, settings.defaultDisplayCount, patchTab]);
 
   const handleNewTab = useCallback((paneId?: string) => {
-    addTab(makeQueryTab(), paneId);
+    const tab = makeQueryTab();
+    addTab(tab, paneId);
+    // 新規タブは常にクエリタブなので、生成先のペインが確定次第エディタへ自動
+    // フォーカスする (#816)。addTab は既存ペインが 0 件のとき新規ペイン ID を
+    // 内部 (setPanes 更新関数) で生成するため、渡した paneId をそのまま使わず
+    // 実際にタブを収めたペインを tabIds から逆引きする (activateTab と同じ手法)。
+    // panesRef は setPanes 後の useEffect で更新されるため (commit と同期の
+    // callback ref ではない)、1 フレームだと未反映のことがあり、二重
+    // requestAnimationFrame で effect の反映を待ってから読む。
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (overlayOpenRef.current) return;
+        const owner = panesRef.current.find((p) => p.tabIds.includes(tab.id));
+        if (owner) editorRefs.current.get(owner.id)?.focus();
+      });
+    });
   }, [addTab]);
 
   /**
@@ -4680,7 +5500,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showUsers || showServerInfo || showQueryInspector || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -4756,7 +5576,7 @@ export default function App() {
         // 次/前ページが実在するときだけ送る。存在しないページを取りに行かない
         // (#681 レビュー対応)。
         const pageSize = tab.pageSize ?? tab.previewRowLimit;
-        const totalPages = estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
+        const totalPages = tableTotalPagesEstimate(tab, pageSize);
         const page = tab.page ?? 1;
         const canAdvance = pageNext
           ? canGoNext(page, totalPages, tab.result?.rows.length ?? 0, pageSize)
@@ -4812,7 +5632,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showHelp, showCompare, showCompareResults, showErd, showProcesses, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
+  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showProcesses, showUsers, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -4859,8 +5679,8 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
-        showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet
+        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showUsers || showServerInfo || showQueryInspector || showSizes ||
+        showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet
       ) {
         return;
       }
@@ -4896,17 +5716,20 @@ export default function App() {
     activeTab,
     showForm,
     showSettings,
+    showTasks,
     showHelp,
     showCompare,
     showCompareResults,
     showErd,
     showProcesses,
+    showUsers,
     showServerInfo,
     showQueryInspector,
     showSizes,
     showSnippetForm,
     showCommandPalette,
     showObjectSearch,
+    showDataSearch,
     showCheatSheet,
     undoCellEditForTab,
     redoCellEditForTab,
@@ -4972,7 +5795,7 @@ export default function App() {
         }
       }
       // チートシート以外のオーバーレイが開いているときは介入しない。
-      if (showForm || showSettings || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
+      if (showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showSnippetForm || showCommandPalette) {
         return;
       }
       e.preventDefault();
@@ -4980,7 +5803,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [showForm, showSettings, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
+  }, [showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showSnippetForm, showCommandPalette]);
 
   // 結果最大化 (Cmd/Ctrl+Shift+M) / エディタ集中 (Cmd/Ctrl+Shift+E) のトグルと、
   // どちらかが有効なときの Esc での復元。他のオーバーレイ表示中は介入しない。
@@ -4989,8 +5812,8 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
-        showForm || showSettings || showHelp || showCompare || showCompareResults || showErd || showProcesses || showServerInfo || showQueryInspector || showSizes ||
-        showSnippetForm || showCommandPalette || showObjectSearch || showCheatSheet;
+        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showUsers || showServerInfo || showQueryInspector || showSizes ||
+        showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
         e.preventDefault();
@@ -5027,17 +5850,20 @@ export default function App() {
     layoutMode,
     showForm,
     showSettings,
+    showTasks,
     showHelp,
     showCompare,
     showCompareResults,
     showErd,
     showProcesses,
+    showUsers,
     showServerInfo,
     showQueryInspector,
     showSizes,
     showSnippetForm,
     showCommandPalette,
     showObjectSearch,
+    showDataSearch,
     showCheatSheet,
   ]);
 
@@ -5050,20 +5876,23 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "help" | "compare" | "erDiagram" | "processes" | "serverInfo" | "queryInspector" | "advisor" | "compareResults" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "tasks" | "help" | "compare" | "erDiagram" | "processes" | "users" | "serverInfo" | "queryInspector" | "advisor" | "compareResults" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
+    setShowTasks(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowCompareResults(false);
+    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
     setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
+    else if (view === "tasks") setShowTasks(true);
     else if (view === "help") setShowHelp(true);
     else if (view === "compare") setShowCompare(true);
     else if (view === "erDiagram") setShowErd(true);
     else if (view === "processes") setShowProcesses(true);
+    else if (view === "users") setShowUsers(true);
     else if (view === "serverInfo") setShowServerInfo(true);
     else if (view === "queryInspector") setShowQueryInspector(true);
     else if (view === "advisor") setShowAdvisor(true);
@@ -5124,6 +5953,10 @@ export default function App() {
         label: t("cmdkActionNewQueryTab"),
         icon: "plus",
         keywords: "query tab editor クエリ タブ",
+        // #843: パレットの行末にもショートカットを表示し、実行しながら覚えられる
+        // ようにする。id/整形は `ContextMenu` と同じ `resolveShortcutBindings` +
+        // `formatCombo` の組で解決し、ユーザの再割り当て (#557) に自動追従する。
+        shortcut: formatCombo(shortcutBindings.newTab),
         run: () => handleNewTab(),
       });
       items.push({
@@ -5143,6 +5976,14 @@ export default function App() {
           keywords: "schema export ai markdown claude llm スキーマ 出力 エクスポート",
           run: () => setSchemaExportTarget(paletteDatabase),
         });
+        items.push({
+          id: "nav:data-search",
+          group: "navigation",
+          label: t("cmdkActionDataSearch"),
+          icon: "search",
+          keywords: "data search value grep find 値 検索 データ 横断",
+          run: () => setShowDataSearch(true),
+        });
       }
     }
     items.push(
@@ -5160,6 +6001,7 @@ export default function App() {
         label: t("cmdkActionSettings"),
         icon: "settings",
         keywords: "settings preferences 設定",
+        shortcut: formatCombo(shortcutBindings.openSettings),
         run: () => openFullView("settings"),
       },
       {
@@ -5168,6 +6010,7 @@ export default function App() {
         label: t("cmdkActionHelp"),
         icon: "help",
         keywords: "help docs ヘルプ",
+        shortcut: formatCombo(shortcutBindings.openHelp),
         run: () => openFullView("help"),
       },
       {
@@ -5192,6 +6035,7 @@ export default function App() {
         label: t("cmdkActionToggleTheme"),
         icon: theme === "dark" ? "sun" : "moon",
         keywords: "theme dark light テーマ ダーク ライト",
+        shortcut: formatCombo(shortcutBindings.toggleTheme),
         run: () => toggleTheme(),
       },
     );
@@ -5299,6 +6143,7 @@ export default function App() {
     theme,
     t,
     locale,
+    shortcutBindings,
     handleNewTab,
     handleDisconnect,
     handleConnect,
@@ -5309,6 +6154,15 @@ export default function App() {
     toggleTheme,
     pinnedResults.length,
   ]);
+
+  // コマンドパレット MRU (#845): 実行された候補を記録する。履歴 (`history:${index}`)
+  // の id は配列インデックス由来で、新しいクエリが実行されるたびに指す先が変わって
+  // しまい「最近使った項目」として記録しても意味が変わってしまうため対象外にする
+  // (接続・テーブル・スニペット・画面遷移の id はすべて安定な識別子)。
+  const handleCommandPaletteSelect = useCallback((item: CommandItem) => {
+    if (item.group === "history") return;
+    recordCommandPaletteUsage(item.id);
+  }, []);
 
   // Clean up any active listeners when the app unmounts.
   useEffect(() => {
@@ -5425,34 +6279,6 @@ export default function App() {
           onSplit={split ? () => closePane(pane.id) : splitPane}
           splitMode={split ? "close" : "split"}
         />
-        <AnimatePresence>
-          {tab?.streaming && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 2 }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={transitions.fade}
-              aria-hidden
-              style={{
-                position: "relative",
-                flexShrink: 0,
-                overflow: "hidden",
-                background: "color-mix(in srgb, var(--accent) 16%, transparent)",
-              }}
-            >
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  width: "35%",
-                  borderRadius: "var(--radius-pill)",
-                  background: "var(--accent)",
-                  animation: "query-progress-slide var(--dur-progress-loop) var(--ease) infinite",
-                }}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
         <Flex direction="column" flex="1" overflow="hidden">
           {tab ? (
             <Splitter
@@ -5494,7 +6320,7 @@ export default function App() {
                       borderBottomColor="app.border"
                       bg="app.toolbar"
                     >
-                      <Icon name="maximize" size={14} />
+                      <Icon name="maximize" size={ICON_SIZES.md} />
                       <chakra.span
                         fontSize="sm"
                         color="app.text"
@@ -5506,15 +6332,16 @@ export default function App() {
                         {tab.title}
                       </chakra.span>
                       <chakra.span flex="1" />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => setLayoutMode("normal")}
-                        title={t("editorRestoreTitle")}
-                      >
-                        <Icon name="minimize" size={14} /> {t("editorFocusedLabel")}
-                      </Button>
+                      <Tooltip label={t("editorRestoreTitle")}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setLayoutMode("normal")}
+                        >
+                          <Icon name="minimize" size={ICON_SIZES.md} /> {t("editorFocusedLabel")}
+                        </Button>
+                      </Tooltip>
                     </Flex>
                   )}
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
@@ -5530,6 +6357,17 @@ export default function App() {
                     onRun={(sql) => resolveParamsThen(tab, sql, "run")}
                     onPreview={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "preview")}
                     onExplain={tab.kind === "explain" ? undefined : (sql) => resolveParamsThen(tab, sql, "explain")}
+                    onBroadcast={tab.kind === "explain" ? undefined : (sql) => requestBroadcast(sql, tab)}
+                    broadcastAvailable={
+                      !!sessionId &&
+                      !!selectedProfile &&
+                      openConnections.some(
+                        (c) =>
+                          c.sessionId !== sessionId &&
+                          c.profile.driver === selectedProfile.driver &&
+                          !isSandboxProfileId(c.profile.id),
+                      )
+                    }
                     explainMode={tab.kind === "explain"}
                     onChange={(sql) => updateTab(tab.id, { sql })}
                     onPreflightImpact={(r) => preflightRef.current.set(tab.id, r)}
@@ -5556,6 +6394,8 @@ export default function App() {
                     builderSnapshot={tab.builderSnapshot}
                     onBuilderPersist={(snapshot) => updateTab(tab.id, { builderSnapshot: snapshot })}
                     readOnly={readOnly}
+                    emergencyMode={emergencyMode}
+                    onToggleEmergencyMode={(next) => void handleToggleEmergencyMode(next)}
                     queryHistory={queryHistory}
                     editorBindings={editorBindings}
                     focusMode={editorFocused}
@@ -5600,7 +6440,7 @@ export default function App() {
                       borderBottomColor="app.border"
                       bg="app.toolbar"
                     >
-                      <Icon name="maximize" size={14} />
+                      <Icon name="maximize" size={ICON_SIZES.md} />
                       <chakra.span
                         fontSize="sm"
                         color="app.text"
@@ -5612,17 +6452,23 @@ export default function App() {
                         {tab.title}
                       </chakra.span>
                       <chakra.span flex="1" />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => setLayoutMode("normal")}
-                        title={t("resultRestoreTitle")}
-                      >
-                        <Icon name="minimize" size={14} /> {t("resultMaximizedLabel")}
-                      </Button>
+                      <Tooltip label={t("resultRestoreTitle")}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setLayoutMode("normal")}
+                        >
+                          <Icon name="minimize" size={ICON_SIZES.md} /> {t("resultMaximizedLabel")}
+                        </Button>
+                      </Tooltip>
                     </Flex>
                   )}
+                  {/* ストリーミング実行中の indeterminate 進捗バー (#872)。結果
+                      ペイン上端に置き、クエリ実行・プレビューの双方で「動いて
+                      いる」ことをモーダル系進捗と同じ語彙で示す。running 信号は
+                      既存の tab.streaming (フッター tone と同源) を共有する。 */}
+                  <StreamProgressBar active={!!tab.streaming} />
                   <Box flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
                 <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
                   {/* 結果パネルの種類が変わるとき (グリッド ⇔ EXPLAIN /
@@ -5666,7 +6512,7 @@ export default function App() {
                   ) : tab.showChart && tab.result && !tab.streaming ? (
                     <ChartView
                       result={tab.result}
-                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: false }))}
+                      onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.showPivot && tab.result && !tab.streaming ? (
                     <PivotView
@@ -5674,7 +6520,7 @@ export default function App() {
                       driver={selectedProfile?.driver ?? "mysql"}
                       sourceSql={tab.lastExecutedSql}
                       onSendToEditor={openQueryInEditor}
-                      onClose={() => patchTab(tab.id, (tt) => ({ ...tt, showPivot: false }))}
+                      onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.preview ? (
                     <PreviewGrid
@@ -5699,28 +6545,6 @@ export default function App() {
                     />
                   ) : (
                     <Flex direction="column" h="100%" minH={0} minW={0}>
-                    {tab.result && tab.result.rows.length > 0 && !tab.streaming && (
-                      <Flex justify="flex-end" gap="2" px="2.5" py="1" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => patchTab(tab.id, (tt) => ({ ...tt, showPivot: true, showChart: false }))}
-                          title={t("pivotShow")}
-                        >
-                          <Icon name="table" size={14} /> {t("pivotShow")}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => patchTab(tab.id, (tt) => ({ ...tt, showChart: true, showPivot: false }))}
-                          title={t("chartShow")}
-                        >
-                          <Icon name="er-diagram" size={14} /> {t("chartShow")}
-                        </Button>
-                      </Flex>
-                    )}
                     {tab.kind === "table" && !readOnly &&
                       ((tab.pendingInserts?.length ?? 0) > 0 || (tab.pendingDeletes?.length ?? 0) > 0) && (
                       <Flex
@@ -5734,7 +6558,7 @@ export default function App() {
                         bg="color-mix(in srgb, var(--accent) 8%, transparent)"
                         fontSize="sm"
                       >
-                        <Icon name="table" size={14} />
+                        <Icon name="table" size={ICON_SIZES.md} />
                         <chakra.span color="app.text">
                           {t("rowOpsBarSummary", {
                             inserts: tab.pendingInserts?.length ?? 0,
@@ -5743,10 +6567,10 @@ export default function App() {
                         </chakra.span>
                         <chakra.span flex="1" />
                         <Button type="button" variant="secondary" size="sm" onClick={() => discardRowOpsForTab(tab.id)} disabled={tab.applyingEdits}>
-                          {t("rowOpsDiscard")}
+                          <Icon name="close" size={ICON_SIZES.md} /> {t("rowOpsDiscard")}
                         </Button>
                         <LoadingButton type="button" variant="success" size="sm" loading={tab.applyingEdits} onClick={() => applyEditsForTab(tab)}>
-                          {t("rowOpsApply")}
+                          <Icon name="check" size={ICON_SIZES.md} /> {t("rowOpsApply")}
                         </LoadingButton>
                       </Flex>
                     )}
@@ -5769,6 +6593,7 @@ export default function App() {
                       pendingDeleteKeys={tab.pendingDeletes ? new Set(tab.pendingDeletes) : undefined}
                       onToggleRowDelete={tab.kind === "table" && !readOnly ? (key) => toggleRowDeleteForTab(tab.id, key) : undefined}
                       onRequestInsertRow={tab.kind === "table" && !readOnly ? () => requestInsertRowForTab(tab.id) : undefined}
+                      onDuplicateRow={tab.kind === "table" && !readOnly ? (row) => requestDuplicateRowForTab(tab.id, row) : undefined}
                       autoLimitApplied={tab.autoLimitApplied}
                       partialResult={tab.partialResult ?? null}
                       onFetchAllRows={() => fetchAllForTab(tab)}
@@ -5789,6 +6614,25 @@ export default function App() {
                       diffHighlightEnabled={tab.diffHighlight ?? false}
                       onToggleDiffHighlight={() =>
                         patchTab(tab.id, (tt) => ({ ...tt, diffHighlight: !tt.diffHighlight }))
+                      }
+                      onChangeView={(v) => setResultView(tab.id, v)}
+                      onSaveAsTable={
+                        sessionId &&
+                        !readOnly &&
+                        tab.lastExecutedSql &&
+                        isCtasEligibleSql(tab.lastExecutedSql) &&
+                        (tab.database ?? selectedProfile?.database)
+                          ? () =>
+                              setSaveAsTableRequest({
+                                sql: tab.lastExecutedSql,
+                                database: (tab.database ?? selectedProfile?.database) as string,
+                              })
+                          : undefined
+                      }
+                      onRegisterLocalTable={
+                        sessionId && tab.result
+                          ? () => handleRegisterLocalTable(tab.result as QueryResult, tab.lastExecutedSql)
+                          : undefined
                       }
                       onClearEdits={() => clearEditsForTab(tab.id)}
                       onUndoEdit={() => undoCellEditForTab(tab.id)}
@@ -5824,12 +6668,34 @@ export default function App() {
                       onRunStatsQuery={
                         sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
                       }
+                      serverSort={tab.kind === "table" ? tab.serverSort ?? null : undefined}
+                      serverFilter={tab.kind === "table" ? tab.serverFilter ?? null : undefined}
+                      onSetServerSort={
+                        tab.kind === "table" && sessionId && tab.paginatable
+                          ? (column, direction) => setServerSortInTab(tab.id, column, direction)
+                          : undefined
+                      }
+                      onSetServerFilter={
+                        tab.kind === "table" && sessionId && tab.paginatable
+                          ? (column, filter) => setServerFilterInTab(tab.id, column, filter)
+                          : undefined
+                      }
                       fullExport={
                         sessionId && (tab.kind === "table" ? tab.paginatable : tab.lastExecutedSql)
                           ? {
                               sessionId,
                               // table タブは LIMIT を持たない base SQL を再実行して全件出す。
-                              sql: tab.kind === "table" ? (tab.paginatable as string) : tab.lastExecutedSql,
+                              // アクティブなサーバ側ソート/フィルタ (#792) があれば、画面に
+                              // 見えている条件と食い違わないよう同じ WHERE/ORDER BY を効かせる。
+                              sql:
+                                tab.kind === "table"
+                                  ? applyServerBrowse(
+                                      tab.paginatable as string,
+                                      selectedProfile?.driver ?? "mysql",
+                                      tab.serverFilter ?? null,
+                                      tab.serverSort ?? null,
+                                    )
+                                  : tab.lastExecutedSql,
                               initialBatch: Math.max(1, settings.defaultDisplayCount),
                               chunkSize: Math.max(1, settings.streamPrefetchSize),
                             }
@@ -5846,10 +6712,7 @@ export default function App() {
                         page={tab.page ?? 1}
                         pageSize={tab.pageSize ?? tab.previewRowLimit}
                         rowsOnPage={tab.result.rows.length}
-                        totalPages={estimatedTotalPages(
-                          tab.rowEstimateTotal ?? null,
-                          tab.pageSize ?? tab.previewRowLimit,
-                        )}
+                        totalPages={tableTotalPagesEstimate(tab, tab.pageSize ?? tab.previewRowLimit)}
                         loading={tab.loadingMore}
                         onGoToPage={(p) => goToPageInTab(tab.id, p)}
                         onSetPageSize={(s) => setPageSizeInTab(tab.id, s)}
@@ -5901,6 +6764,7 @@ export default function App() {
                 name: selectedProfile.name,
                 color: selectedProfile.color ?? null,
                 isProduction: selectedProfile.is_production,
+                isSandbox: isSandboxProfileId(selectedProfile.id),
                 status: connectionStatus,
               }
             : null
@@ -5909,12 +6773,19 @@ export default function App() {
       <Grid
         templateColumns={
           sidebarCollapsed || (narrow && narrowSidebarOpen)
-            ? "0 1fr"
+            ? "0px 1fr"
             : "var(--sidebar-width, 300px) 1fr"
         }
         flex="1"
         minH={0}
         position="relative"
+        // 折りたたみ↔展開の width トランジション (#873)。グリッドトラック
+        // (0px ↔ サイドバー幅) を補間する。リサイズドラッグ中は無効化して
+        // ハンドル操作のキビキビ感を保ち、reduced-motion は App.css の
+        // グローバルメディアクエリが transition を実質無効化する。
+        transition={
+          sidebarResizing ? undefined : "grid-template-columns var(--dur-med) var(--ease)"
+        }
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
       <Flex
@@ -5926,6 +6797,18 @@ export default function App() {
         borderRightWidth="1px"
         borderRightColor="app.border"
         bg="app.surface"
+        // 折りたたみ中は内容もフェードアウトさせる (#873)。トラック幅の補間
+        // (Grid 側) と重ねることで「スッと消える」印象にする。子要素の幅を
+        // サイドバー幅へ固定し、収縮中にテキストが再折返しでガタつかず右端
+        // から静かにクリップされるようにする (絶対配置のスパインはインライン
+        // style の width が勝つため影響しない)。
+        opacity={sidebarCollapsed ? 0 : 1}
+        transition={sidebarResizing ? undefined : "opacity var(--dur-med) var(--ease)"}
+        css={{ "& > *": { width: "var(--sidebar-width, 300px)" } }}
+        // 折りたたみ中は不可視 (幅 0 + opacity 0) でも DOM 上はフォーカス可能な
+        // ままなので、inert で配下のコントロールをタブ順から除外する (#873
+        // レビュー対応)。展開時は undefined で従来のフォーカス挙動を維持。
+        inert={sidebarCollapsed || undefined}
         {...(narrow && narrowSidebarOpen
           ? {
               position: "absolute" as const,
@@ -5999,7 +6882,9 @@ export default function App() {
               ? t("appSnippets")
               : sidebarTab === "history"
                 ? t("appHistory")
-                : t("appConnections")}
+                : sidebarTab === "local"
+                  ? t("appLocal")
+                  : t("appConnections")}
           </chakra.span>
           <Flex gap="1" align="center">
             <IconButton
@@ -6035,7 +6920,7 @@ export default function App() {
                   <Icon name="transfer" />
                 </IconButton>
                 <IconButton
-                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowCompareResults(false); setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false); setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                   title={t("appNew")}
                   aria-label={t("appNew")}
                 >
@@ -6077,6 +6962,15 @@ export default function App() {
             onKeyDown={handleSidebarTabKeyDown("history")}
           >
             {t("sidebarTabHistory")}
+          </SidebarTabButton>
+          <SidebarTabButton
+            ref={(el) => { sidebarTabRefs.current.local = el; }}
+            tabKey="local"
+            active={sidebarTab === "local"}
+            onActivate={() => setSidebarTab("local")}
+            onKeyDown={handleSidebarTabKeyDown("local")}
+          >
+            {t("sidebarTabLocal")}
           </SidebarTabButton>
         </Flex>
         <Box
@@ -6124,11 +7018,17 @@ export default function App() {
             onTruncateTable={handleTruncateTable}
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
+            onAlterTable={(database, table) => setAlterTableTarget({ database, table })}
             onRunTableMaintenance={handleRunTableMaintenance}
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
             onShowDatabaseSizes={handleShowDatabaseSizes}
             onCopyTableName={handleCopyTableName}
             onOpenObjectDefinition={handleOpenObjectDefinition}
+            onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
+            sandboxes={sandboxes}
+            onOpenSandbox={handleOpenSandbox}
+            onReviewSandbox={handleReviewSandbox}
+            onDiscardSandbox={handleDiscardSandbox}
           />
         ) : sidebarTab === "snippets" ? (
           <SnippetList
@@ -6142,13 +7042,24 @@ export default function App() {
             onTogglePlanWatch={selectedProfile ? handleTogglePlanWatch : undefined}
             onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
           />
-        ) : (
+        ) : sidebarTab === "history" ? (
           <HistoryList
             activeProfile={selectedProfile}
+            sessionId={sessionId}
             reloadKey={historyReloadKey}
             onRestore={handleRestoreHistory}
             onOpenInNewTab={handleOpenHistoryInNewTab}
             onNewQuery={sessionId ? handleNewTab : undefined}
+          />
+        ) : (
+          <LocalTablesPanel
+            hasSession={!!localSessionId}
+            isActive={!!sessionId && selectedProfile?.id === LOCAL_PROFILE_ID}
+            tables={localTables}
+            loading={localTablesLoading}
+            onOpenLocal={handleOpenLocalConnection}
+            onDropTable={handleDropLocalTable}
+            onSaveToFile={handleSaveLocalDatabase}
           />
         )}
         </Box>
@@ -6169,6 +7080,13 @@ export default function App() {
             aria-label={t("appThemeToggle")}
           >
             <Icon name={theme === "dark" ? "sun" : "moon"} />
+          </IconButton>
+          <IconButton
+            onClick={() => openFullView("tasks")}
+            title={t("appTasks")}
+            aria-label={t("appTasks")}
+          >
+            <Icon name="clock" />
           </IconButton>
           <IconButton
             onClick={() => openFullView("help")}
@@ -6227,34 +7145,44 @@ export default function App() {
         />
       )}
 
+      {/* 折りたたみ時の展開ボタン。サイドバーの width トランジション (#873) と
+          呼応して fadeScale で出入りさせ、即時のパチッとした切替を避ける。 */}
+      <AnimatePresence>
       {sidebarCollapsed && (
-        <chakra.button
-          position="absolute"
-          top="9px"
-          left="8px"
-          zIndex={46}
-          display="inline-flex"
-          alignItems="center"
-          justifyContent="center"
-          width="28px"
-          height="28px"
-          p="0"
-          borderWidth="1px"
-          borderStyle="solid"
-          borderColor="app.border"
-          borderRadius="md"
-          bg="app.surface"
-          color="app.textSecondary"
-          cursor="pointer"
-          boxShadow="sm"
-          _hover={{ color: "app.text", bg: "app.hover" }}
-          onClick={toggleSidebar}
-          title={t("sidebarExpand")}
-          aria-label={t("sidebarExpand")}
+        <motion.div
+          key="sidebar-expand"
+          initial={variants.fadeScale.initial}
+          animate={variants.fadeScale.animate}
+          exit={variants.fadeScale.exit}
+          transition={transitions.enter}
+          style={{ position: "absolute", top: "9px", left: "8px", zIndex: 46 }}
         >
-          <Icon name="chevron-right" />
-        </chakra.button>
+        <Tooltip label={t("sidebarExpand")}>
+          <chakra.button
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            width="28px"
+            height="28px"
+            p="0"
+            borderWidth="1px"
+            borderStyle="solid"
+            borderColor="app.border"
+            borderRadius="md"
+            bg="app.surface"
+            color="app.textSecondary"
+            cursor="pointer"
+            boxShadow="sm"
+            _hover={{ color: "app.text", bg: "app.hover" }}
+            onClick={toggleSidebar}
+            aria-label={t("sidebarExpand")}
+          >
+            <Icon name="chevron-right" />
+          </chakra.button>
+        </Tooltip>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {narrow && narrowSidebarOpen && (
         <Box
@@ -6297,6 +7225,14 @@ export default function App() {
             driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             readOnly={selectedProfile?.read_only ?? false}
             onClose={() => setShowProcesses(false)}
+          />
+        ) : showUsers && sessionId ? (
+          <UsersPanel
+            sessionId={sessionId}
+            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+            database={activeTab?.database ?? selectedProfile?.database ?? null}
+            readOnly={selectedProfile?.read_only ?? false}
+            onClose={() => setShowUsers(false)}
           />
         ) : showServerInfo && sessionId ? (
           <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
@@ -6380,7 +7316,9 @@ export default function App() {
                   ? "color-mix(in srgb, var(--status-error) 16%, var(--bg-elevated))"
                   : "color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated))"
               }
-              transition="background var(--dur-med) var(--ease), border-color var(--dur-med) var(--ease)"
+              // padding-left はサイドバー折りたたみ (#873) で 46px ↔ 14px に
+              // 変わるため、トラック幅の補間と同じ時間で滑らかに追従させる。
+              transition="background var(--dur-med) var(--ease), border-color var(--dur-med) var(--ease), padding-left var(--dur-med) var(--ease)"
               css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
             >
               <Flex align="center" gap="2" overflow="hidden">
@@ -6389,52 +7327,50 @@ export default function App() {
                     <StatusDot variant="connected" />
                     <chakra.span fontWeight={600} fontSize="md">{selectedProfile.name}</chakra.span>
                     {selectedProfile.is_production && (
-                      <chakra.span
-                        title={t("listProductionTitle")}
-                        display="inline-flex"
-                        alignItems="center"
-                        gap="1"
-                        fontSize="xs"
-                        textTransform="uppercase"
-                        letterSpacing="0.06em"
-                        fontWeight={700}
-                        px="2"
-                        py="0.5"
-                        borderRadius="pill"
-                        bg="app.status.error"
-                        color="#fff"
-                        borderWidth="1px"
-                        borderStyle="solid"
-                        borderColor="app.status.error"
-                        flexShrink={0}
-                      >
-                        <Icon name="warning" size={12} />
-                        {t("listProduction")}
-                      </chakra.span>
+                      <Tooltip label={t("listProductionTitle")} focusableWrapper>
+                        <chakra.span
+                          display="inline-flex"
+                          alignItems="center"
+                          gap="1"
+                          textStyle="overline"
+                          fontWeight={700}
+                          px="2"
+                          py="0.5"
+                          borderRadius="pill"
+                          bg="app.status.error"
+                          color="#fff"
+                          borderWidth="1px"
+                          borderStyle="solid"
+                          borderColor="app.status.error"
+                          flexShrink={0}
+                        >
+                          <Icon name="warning" size={ICON_SIZES.sm} />
+                          {t("listProduction")}
+                        </chakra.span>
+                      </Tooltip>
                     )}
                     {selectedProfile.read_only && (
-                      <chakra.span
-                        title={t("listReadOnlyTitle")}
-                        display="inline-flex"
-                        alignItems="center"
-                        gap="1"
-                        fontSize="xs"
-                        textTransform="uppercase"
-                        letterSpacing="0.06em"
-                        fontWeight={700}
-                        px="2"
-                        py="0.5"
-                        borderRadius="pill"
-                        bg="var(--status-info, var(--bg-muted))"
-                        color="app.text"
-                        borderWidth="1px"
-                        borderStyle="solid"
-                        borderColor="app.borderStrong"
-                        flexShrink={0}
-                      >
-                        <Icon name="key" size={12} />
-                        {t("listReadOnly")}
-                      </chakra.span>
+                      <Tooltip label={t("listReadOnlyTitle")} focusableWrapper>
+                        <chakra.span
+                          display="inline-flex"
+                          alignItems="center"
+                          gap="1"
+                          textStyle="overline"
+                          fontWeight={700}
+                          px="2"
+                          py="0.5"
+                          borderRadius="pill"
+                          bg="var(--status-info, var(--bg-muted))"
+                          color="app.text"
+                          borderWidth="1px"
+                          borderStyle="solid"
+                          borderColor="app.borderStrong"
+                          flexShrink={0}
+                        >
+                          <Icon name="key" size={ICON_SIZES.sm} />
+                          {t("listReadOnly")}
+                        </chakra.span>
+                      </Tooltip>
                     )}
                     <chakra.span
                       color="app.textMuted"
@@ -6460,19 +7396,20 @@ export default function App() {
                 <Flex align="center" gap="2" mr="2.5">
                   {txActive ? (
                     <>
-                      <chakra.span
-                        fontSize="2xs"
-                        fontWeight={700}
-                        letterSpacing="0.06em"
-                        px="1.5"
-                        py="0.5"
-                        borderRadius="4px"
-                        bg="color-mix(in srgb, var(--status-warning) 18%, transparent)"
-                        color="var(--text-warning)"
-                        title={t("txActiveHelp")}
-                      >
-                        {t("txActiveBadge")}
-                      </chakra.span>
+                      <Tooltip label={t("txActiveHelp")} focusableWrapper>
+                        <chakra.span
+                          fontSize="2xs"
+                          fontWeight={700}
+                          letterSpacing="0.06em"
+                          px="1.5"
+                          py="0.5"
+                          borderRadius="4px"
+                          bg="color-mix(in srgb, var(--status-warning) 18%, transparent)"
+                          color="var(--text-warning)"
+                        >
+                          {t("txActiveBadge")}
+                        </chakra.span>
+                      </Tooltip>
                       <Button variant="success" size="sm" onClick={() => handleFinishTransaction(true)}>
                         {t("txCommit")}
                       </Button>
@@ -6481,15 +7418,17 @@ export default function App() {
                       </Button>
                     </>
                   ) : (
-                    <Button variant="secondary" size="sm" onClick={handleBeginTransaction} title={t("txBeginHelp")}>
-                      {t("txBegin")}
-                    </Button>
+                    <Tooltip label={t("txBeginHelp")}>
+                      <Button variant="secondary" size="sm" onClick={handleBeginTransaction}>
+                        {t("txBegin")}
+                      </Button>
+                    </Tooltip>
                   )}
                 </Flex>
               )}
               {sessionId && (
                 <Button variant="dangerOutline" size="sm" onClick={handleDisconnect}>
-                  <Icon name="unplug" size={14} />
+                  <Icon name="unplug" size={ICON_SIZES.md} />
                   {t("appDisconnect")}
                 </Button>
               )}
@@ -6531,7 +7470,9 @@ export default function App() {
                   onStartTour={handleStartTour}
                 />
               </Flex>
-            ) : (
+            ) : visibleProfiles.length === 0 ? (
+              // プロファイルはあるが全件が削除 Undo 待ちで非表示、という稀な
+              // 状態では従来どおりの未接続表示に留める。
               <Flex direction="column" flex="1" overflow="hidden">
                 <PaneEmpty>
                   <EmptyState
@@ -6541,6 +7482,18 @@ export default function App() {
                     description={t("editorHintDisabled")}
                   />
                 </PaneEmpty>
+              </Flex>
+            ) : (
+              // プロファイルがあるが未接続の空状態 (#874): 素の EmptyState の
+              // 代わりに、どこへ繋ぐかを一目で選べるプロファイルカードを並べる。
+              // カードは「入口」、サイドバーのツリーは常用ナビとして共存する。
+              <Flex direction="column" flex="1" overflow="hidden">
+                <ProfileCardGrid
+                  profiles={visibleProfiles}
+                  connectingId={connectingId}
+                  onConnect={(p) => void handleConnect(p)}
+                  onCreate={handleOpenCreateForm}
+                />
               </Flex>
             )}
           </>
@@ -6555,15 +7508,20 @@ export default function App() {
           const isError = tone === "error" || isCritical;
           const isWarning = tone === "warning";
           const isDismissible = isError || isWarning;
+          // 重大度の配色は Toast / Badge と同じ意味色トークン体系
+          // (semanticColors.ts、#664) を単一ソースにする (#876)。`text` 段階は
+          // 全テーマプリセットで通常背景基準の AA を満たすことが
+          // themeContrast.test.ts で固定済み。running のみ「処理中」の
+          // アクセント色で、意味色ファミリーの外に置く (Toast と同方針)。
           const toneColor =
             tone === "running"
               ? "app.accent"
               : tone === "success"
-                ? "app.status.success"
+                ? semanticColorToken("success", "text")
                 : isError
-                  ? "app.status.error"
+                  ? semanticColorToken("danger", "text")
                   : isWarning
-                    ? "app.status.warning"
+                    ? semanticColorToken("warning", "text")
                     : undefined;
           return (
             <Flex
@@ -6571,14 +7529,26 @@ export default function App() {
               gap="2"
               px="3.5"
               py="5px"
-              bg={isError ? "app.bgError" : isWarning ? "app.bgWarning" : "app.surfaceMuted"}
+              bg={
+                isError
+                  ? semanticColorToken("danger", "subtle")
+                  : isWarning
+                    ? semanticColorToken("warning", "subtle")
+                    : "app.surfaceMuted"
+              }
               borderTopWidth="1px"
               borderTopColor="app.border"
               borderLeftWidth="3px"
               borderLeftStyle="solid"
               borderLeftColor={toneColor ?? "transparent"}
               fontSize="sm"
-              color={isError ? "app.textError" : isWarning ? "app.textWarning" : "app.textSecondary"}
+              color={
+                isError
+                  ? semanticColorToken("danger", "text")
+                  : isWarning
+                    ? semanticColorToken("warning", "text")
+                    : "app.textSecondary"
+              }
             >
               <chakra.span
                 aria-hidden
@@ -6597,17 +7567,18 @@ export default function App() {
                 ) : null}
               </chakra.span>
               {isCritical && (
+                // 「重大」バッジは ProfileBadge の本番バッジと同じ danger ベタ塗り
+                // トークン (前景色の AA はトークン側で保証) で描き、独自の
+                // `#fff` 直書きを持たない (#876)。
                 <chakra.span
                   flexShrink="0"
+                  textStyle="overline"
                   fontWeight={700}
-                  fontSize="xs"
-                  letterSpacing="0.04em"
-                  textTransform="uppercase"
                   px="7px"
                   py="0.5"
                   borderRadius="sm"
-                  bg="app.status.error"
-                  color="#fff"
+                  bg="app.dangerBg"
+                  color="app.dangerFg"
                 >
                   {t("statusSeverityCritical")}
                 </chakra.span>
@@ -6620,6 +7591,10 @@ export default function App() {
                   // 個別の閉じるボタンを置かない (閉じるボタンの二重表示を避ける)。
                   <Flex direction="column" gap="3px">
                     <Flex align="baseline" gap="1.5">
+                      {/* text 色を地・subtle 色を文字にした反転チップ。コントラスト
+                          比は前景/背景の入替に対して対称なので、themeContrast.test.ts
+                          の error-text on error-subtle 検証 (base + 全プリセット) が
+                          このペアの AA も同時に保証する。 */}
                       <chakra.span
                         flex="none"
                         fontWeight={600}
@@ -6627,8 +7602,8 @@ export default function App() {
                         px="1.5"
                         py="1px"
                         borderRadius="sm"
-                        bg="app.textError"
-                        color="app.bgError"
+                        bg={semanticColorToken("danger", "text")}
+                        color={semanticColorToken("danger", "subtle")}
                       >
                         {t("errorHintLabel")}
                       </chakra.span>
@@ -6648,52 +7623,45 @@ export default function App() {
                     </chakra.span>
                   </Flex>
                 ) : (
-                  // 単一行ステータスは折り返さず省略記号で詰め、全文はホバー
-                  // (title) で確認できるようにする。フッターが複数行に
+                  // 単一行ステータスは折り返さず省略記号で詰め、全文は共有
+                  // Tooltip (#884) で確認できるようにする。フッターが複数行に
                   // 伸びてレイアウトが崩れるのを防ぐ。
-                  <chakra.span
-                    display="block"
-                    whiteSpace="nowrap"
-                    overflow="hidden"
-                    textOverflow="ellipsis"
-                    title={statusText}
-                  >
-                    {statusText}
-                  </chakra.span>
+                  <Tooltip label={statusText} focusableWrapper>
+                    <chakra.span
+                      display="block"
+                      whiteSpace="nowrap"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                    >
+                      {statusText}
+                    </chakra.span>
+                  </Tooltip>
                 )}
               </Box>
               {reconnectProfile && isError && (
-                <chakra.button
-                  type="button"
-                  flexShrink="0"
-                  display="inline-flex"
-                  alignItems="center"
-                  gap="5px"
-                  px="2.5"
-                  py="3px"
-                  fontSize="xs"
-                  fontWeight={500}
-                  color="#fff"
-                  bg="app.status.error"
-                  border="none"
-                  borderRadius="sm"
-                  cursor="pointer"
-                  css={{
-                    "&:hover:not(:disabled)": { background: "color-mix(in srgb, var(--status-error) 85%, #000)" },
-                    "&:disabled": { opacity: 0.7, cursor: "default" },
-                    "& .icon-svg": { width: "13px", height: "13px" },
-                  }}
-                  onClick={() => handleConnect(reconnectProfile)}
-                  disabled={connectingId === reconnectProfile.id}
-                  title={t("statusReconnectTitle", { name: reconnectProfile.name })}
+                // 再接続ボタンは独自の `#fff` + `--status-error` 直書きをやめ、
+                // 共通 Button の danger バリアント (theme.ts。hover 色も
+                // `app.dangerBgHover` トークンで一元管理) へ収斂する (#876)。
+                <Tooltip
+                  label={t("statusReconnectTitle", { name: reconnectProfile.name })}
+                  focusableWrapper={connectingId === reconnectProfile.id}
                 >
-                  {connectingId === reconnectProfile.id ? (
-                    <Spinner size={12} />
-                  ) : (
-                    <Icon name="refresh" />
-                  )}
-                  {t("statusReconnect")}
-                </chakra.button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    flexShrink="0"
+                    css={{ "& .icon-svg": { width: "13px", height: "13px" } }}
+                    onClick={() => handleConnect(reconnectProfile)}
+                    disabled={connectingId === reconnectProfile.id}
+                  >
+                    {connectingId === reconnectProfile.id ? (
+                      <Spinner size={12} />
+                    ) : (
+                      <Icon name="refresh" />
+                    )}
+                    {t("statusReconnect")}
+                  </Button>
+                </Tooltip>
               )}
               {connectAttempt && (
                 <>
@@ -6708,27 +7676,29 @@ export default function App() {
                     <Spinner size={12} />
                     {t(connectPhaseI18nKey(connectAttempt.phase))}
                   </chakra.span>
-                  <chakra.button
-                    type="button"
-                    flexShrink="0"
-                    px="2.5"
-                    py="3px"
-                    fontSize="xs"
-                    fontWeight={500}
-                    border="1px solid"
-                    borderColor="app.border"
-                    borderRadius="sm"
-                    bg="transparent"
-                    cursor="pointer"
-                    css={{ "&:hover": { background: "var(--bg-muted)" } }}
-                    onClick={handleCancelConnect}
-                    title={t("connectCancel")}
-                  >
-                    {t("connectCancel")}
-                  </chakra.button>
+                  <Tooltip label={t("connectCancel")}>
+                    <chakra.button
+                      type="button"
+                      flexShrink="0"
+                      px="2.5"
+                      py="3px"
+                      fontSize="xs"
+                      fontWeight={500}
+                      border="1px solid"
+                      borderColor="app.border"
+                      borderRadius="sm"
+                      bg="transparent"
+                      cursor="pointer"
+                      css={{ "&:hover": { background: "var(--bg-muted)" } }}
+                      onClick={handleCancelConnect}
+                    >
+                      {t("connectCancel")}
+                    </chakra.button>
+                  </Tooltip>
                 </>
               )}
               {isDismissible && (
+                <Tooltip label={t("statusDismiss")}>
                 <chakra.button
                   type="button"
                   flexShrink="0"
@@ -6748,11 +7718,11 @@ export default function App() {
                   _hover={{ opacity: 1, bg: "app.hover" }}
                   css={{ "& .icon-svg": { width: "14px", height: "14px" } }}
                   onClick={() => setStatusDismissed(true)}
-                  title={t("statusDismiss")}
                   aria-label={t("statusDismiss")}
                 >
                   <Icon name="close" />
                 </chakra.button>
+                </Tooltip>
               )}
             </Flex>
           );
@@ -6808,6 +7778,19 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {schemaDriftOpen && selectedProfile && (
+          <SchemaDriftPanel
+            profile={selectedProfile}
+            state={schemaDrift}
+            canCapture={sessionId !== null}
+            capturing={schemaDriftCapturing}
+            onCapture={handleCaptureSchemaDrift}
+            onClose={() => setSchemaDriftOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {dumpTarget && sessionId && (
           <DumpModal
             sessionId={sessionId}
@@ -6826,6 +7809,58 @@ export default function App() {
             database={schemaExportTarget}
             driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
             onClose={() => setSchemaExportTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {sandboxCreateTarget && sessionId && selectedProfile && (
+          <SandboxCreateModal
+            key={sandboxCreateTarget.database}
+            sessionId={sessionId}
+            database={sandboxCreateTarget.database}
+            defaultName={`${selectedProfile.name} / ${sandboxCreateTarget.database}`}
+            onClose={() => setSandboxCreateTarget(null)}
+            onCreated={handleSandboxCreated}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {sandboxReviewTarget && (
+          <SandboxReviewModal
+            key={sandboxReviewTarget.id}
+            sandbox={sandboxReviewTarget}
+            sandboxSessionId={
+              openConnections.find((c) => c.profile.id === sandboxProfileId(sandboxReviewTarget.id))
+                ?.sessionId ?? ""
+            }
+            openConnections={openConnections.filter((c) => !isSandboxProfileId(c.profile.id))}
+            onClose={() => setSandboxReviewTarget(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {broadcastRequest && sessionId && selectedProfile && (
+          <BroadcastModal
+            sql={broadcastRequest.sql}
+            driver={selectedProfile.driver}
+            baselineSessionId={sessionId}
+            baselineProfile={selectedProfile}
+            candidates={openConnections.filter(
+              (c) =>
+                c.sessionId !== sessionId &&
+                c.profile.driver === selectedProfile.driver &&
+                !isSandboxProfileId(c.profile.id),
+            )}
+            tableColumns={broadcastRequest.tableColumns}
+            initialBatch={settings.defaultDisplayCount}
+            chunkSize={settings.streamPrefetchSize}
+            autoLimit={settings.autoLimitEnabled ? settings.autoLimitCount : null}
+            queryTimeoutSecs={settings.queryTimeoutSecs}
+            confirm={confirm}
+            onClose={() => setBroadcastRequest(null)}
           />
         )}
       </AnimatePresence>
@@ -6867,6 +7902,51 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {alterTableTarget && sessionId && (
+          <Suspense fallback={null}>
+            <AlterTableModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={alterTableTarget.database}
+              table={alterTableTarget.table}
+              readOnly={readOnly}
+              onRun={handleAlterTableRun}
+              onSendToEditor={handleAlterTableToEditor}
+              onClose={() => setAlterTableTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {saveAsTableRequest && sessionId && (
+          <Suspense fallback={null}>
+            <SaveAsTableModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={saveAsTableRequest.database}
+              sourceSql={saveAsTableRequest.sql}
+              onConfirm={handleSaveAsTableConfirm}
+              onClose={() => setSaveAsTableRequest(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {registerLocalRequest && (
+          <Suspense fallback={null}>
+            <RegisterLocalTableModal
+              rowCount={registerLocalRequest.rows.length}
+              existingTables={localTables.map((tbl) => tbl.name)}
+              onConfirm={handleConfirmRegisterLocalTable}
+              onClose={() => setRegisterLocalRequest(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {hostKeyMismatch && (
           <Suspense fallback={null}>
             <HostKeyMismatchDialog
@@ -6889,8 +7969,9 @@ export default function App() {
               <RowInsertModal
                 table={insTab.table}
                 columns={insTab.result.columns}
+                initialValues={rowInsertSeed ?? undefined}
                 onConfirm={(row) => addInsertRowForTab(insTab.id, row)}
-                onCancel={() => setRowInsertTabId(null)}
+                onCancel={() => { setRowInsertTabId(null); setRowInsertSeed(null); }}
               />
             </Suspense>
           );
@@ -6932,7 +8013,13 @@ export default function App() {
             title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
           },
           { separator: true },
-          { label: t("tabClose"), onSelect: () => handleCloseTab(tabMenu.tabId), danger: true },
+          {
+            label: t("tabClose"),
+            icon: "close",
+            shortcut: formatCombo(shortcutBindings.closeTab),
+            onSelect: () => handleCloseTab(tabMenu.tabId),
+            danger: true,
+          },
         ];
         return (
           <ContextMenu x={tabMenu.x} y={tabMenu.y} items={items} onClose={() => setTabMenu(null)} />
@@ -6971,6 +8058,26 @@ export default function App() {
                 ? t("appToolsNeedsSession")
                 : selectedProfile?.driver === "sqlite"
                   ? t("appProcessesUnsupported")
+                  : undefined,
+            },
+            {
+              label: t("appUsers"),
+              onSelect: () => openFullView("users"),
+              // ユーザ概念を持たない SQLite に加え、MSSQL も未実装 (#729) のため
+              // 導線を出さない (#732。list_db_users がハードエラーを返す駆動でエラー
+              // トーストになるのを避ける。processes/queryInspector と異なり MSSQL は
+              // まだ理由コード付きの緩やかな縮退を返さないため menu レベルで隠す)。
+              disabled:
+                !sessionId ||
+                selectedProfile?.driver === "sqlite" ||
+                selectedProfile?.driver === "duckdb" ||
+                selectedProfile?.driver === "mssql",
+              title: !sessionId
+                ? t("appToolsNeedsSession")
+                : selectedProfile?.driver === "sqlite" ||
+                    selectedProfile?.driver === "duckdb" ||
+                    selectedProfile?.driver === "mssql"
+                  ? t("appUsersUnsupported")
                   : undefined,
             },
             {
@@ -7020,6 +8127,16 @@ export default function App() {
               title: !sessionId ? t("appToolsNeedsSession") : undefined,
             },
             {
+              label: t("appSchemaDrift"),
+              onSelect: handleOpenSchemaDrift,
+              disabled: !sessionId || !selectedProfile?.database,
+              title: !sessionId
+                ? t("appToolsNeedsSession")
+                : !selectedProfile?.database
+                  ? t("appSchemaDriftUnsupported")
+                  : undefined,
+            },
+            {
               label: t("appPinCompare", { count: pinnedResults.length }),
               onSelect: () => openFullView("compareResults"),
               disabled: pinnedResults.length === 0,
@@ -7035,6 +8152,8 @@ export default function App() {
           {showCommandPalette && (
             <CommandPalette
               items={commandItems}
+              mruIds={settings.commandPaletteMru}
+              onSelectItem={handleCommandPaletteSelect}
               onClose={() => setShowCommandPalette(false)}
             />
           )}
@@ -7050,11 +8169,29 @@ export default function App() {
           )}
         </AnimatePresence>
         <AnimatePresence>
+          {showDataSearch && sessionId && paletteDatabase && (
+            <DataSearchModal
+              sessionId={sessionId}
+              database={paletteDatabase}
+              driver={selectedProfile?.driver ?? "mysql"}
+              isProduction={selectedProfile?.is_production ?? false}
+              profileName={selectedProfile?.name ?? ""}
+              onOpenHit={(sql, title) => openAndRunQuery(sql, title)}
+              onClose={() => setShowDataSearch(false)}
+            />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
           {showCheatSheet && <ShortcutCheatSheet onClose={() => setShowCheatSheet(false)} />}
         </AnimatePresence>
         <AnimatePresence>
           {showSettings && (
             <SettingsView theme={theme} onClose={() => setShowSettings(false)} />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showTasks && (
+            <TaskManager profiles={profiles} onClose={() => setShowTasks(false)} />
           )}
         </AnimatePresence>
         <AnimatePresence>
@@ -7106,7 +8243,7 @@ export default function App() {
                 boxShadow: "var(--shadow-lg, 0 12px 40px rgba(0,0,0,0.3))",
               }}
             >
-              <Icon name={dragFeedback.accept ? "upload" : "warning"} size={32} />
+              <Icon name={dragFeedback.accept ? "upload" : "warning"} size={ICON_SIZES["2xl"]} />
               <chakra.span fontSize="lg" fontWeight={600}>
                 {dragFeedback.accept
                   ? t("dropOverlayTitle")

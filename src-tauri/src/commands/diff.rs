@@ -11,9 +11,10 @@ use crate::state::AppState;
 
 /// Hard cap on rows read per side for a data comparison. Data sync targets
 /// master / configuration tables; bulk tables are out of scope and would make
-/// the diff (and the generated DML) unwieldy.
-const MAX_DATA_ROWS: usize = 5000;
-const DEFAULT_DATA_ROWS: usize = 1000;
+/// the diff (and the generated DML) unwieldy. `pub(crate)`: `commands::sandbox`
+/// applies the same cap to its (structurally identical) desired/conflict diffs.
+pub(crate) const MAX_DATA_ROWS: usize = 5000;
+pub(crate) const DEFAULT_DATA_ROWS: usize = 1000;
 
 /// Fetches every table in `db` paired with its full column metadata. This is
 /// N+1 by design (one `columns` round trip per table); acceptable for an
@@ -75,10 +76,69 @@ pub async fn compare_schema(
     ))
 }
 
+/// Diffs two schema snapshots captured independently of any live session
+/// (schema drift timeline, #736). A thin, session-less passthrough to
+/// `compute_schema_diff`: the frontend captures `TableColumns` snapshots via
+/// `list_tables` + `describe_table` (mirroring what `compare_schema` collects
+/// live above) into `localStorage` on every connect, then calls this command
+/// to compare any two stored generations — including the current snapshot
+/// against the immediately preceding one, to detect drift right after
+/// connecting. Pure and synchronous like `sync::generate_sync_sql`; no
+/// `AppState` needed since both sides are supplied by the caller.
+#[tauri::command]
+pub fn diff_schema_snapshots(
+    source_driver: DriverKind,
+    target_driver: DriverKind,
+    source: Vec<TableColumns>,
+    target: Vec<TableColumns>,
+) -> SchemaDiff {
+    compute_schema_diff(source_driver, target_driver, &source, &target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::diff::DiffStatus;
+    use crate::db::types::TableColumnInfo;
+
+    fn col(name: &str, data_type: &str) -> TableColumnInfo {
+        TableColumnInfo {
+            name: name.to_string(),
+            data_type: data_type.to_string(),
+            nullable: true,
+            key: String::new(),
+            default: None,
+            extra: String::new(),
+            referenced_table: None,
+            referenced_column: None,
+        }
+    }
+
+    #[test]
+    fn diff_schema_snapshots_diffs_two_snapshots_without_a_session() {
+        let source = vec![TableColumns {
+            name: "orders".to_string(),
+            columns: vec![col("id", "int")],
+        }];
+        let target = vec![TableColumns {
+            name: "orders".to_string(),
+            columns: vec![col("id", "int"), col("total", "numeric(10,2)")],
+        }];
+        let diff = diff_schema_snapshots(DriverKind::Mysql, DriverKind::Mysql, source, target);
+        assert_eq!(diff.tables.len(), 1);
+        assert_eq!(diff.tables[0].name, "orders");
+        assert_eq!(diff.tables[0].status, DiffStatus::Different);
+        assert_eq!(diff.tables[0].columns.len(), 1);
+        assert_eq!(diff.tables[0].columns[0].name, "total");
+        assert_eq!(diff.tables[0].columns[0].status, DiffStatus::TargetOnly);
+    }
+}
+
 /// Builds `SELECT <cols> FROM <table> ORDER BY <pk> LIMIT <n>` with identifiers
 /// quoted for `driver`. The explicit column list (taken from the source) keeps
-/// both sides' rows aligned even if column order differs.
-fn select_rows_sql(
+/// both sides' rows aligned even if column order differs. `pub(crate)`: reused
+/// by `commands::sandbox` for its base/live/external row reads (same shape).
+pub(crate) fn select_rows_sql(
     driver: DriverKind,
     table: &str,
     columns: &[String],

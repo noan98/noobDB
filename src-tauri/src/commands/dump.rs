@@ -24,34 +24,38 @@ const EV_DUMP_PROGRESS: &str = "dump-stream:progress";
 const EV_DUMP_DONE: &str = "dump-stream:done";
 const EV_DUMP_ERROR: &str = "dump-stream:error";
 
+// 構造体・フィールドの `pub` は #825 の zod ⇔ serde ゴールデン
+// (`serde_schema_parity.rs`) が `__test_api` 経由で代表インスタンスを組み立てる
+// ためのもの。IPC 経路としては引き続き非公開モジュール内に留まる (#824 の
+// LogView と同じ最小限の可視性拡張パターン)。
 #[derive(Debug, Serialize, Clone)]
-struct DumpProgressEvent {
+pub struct DumpProgressEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    bytes: u64,
+    pub stream_id: String,
+    pub bytes: u64,
     #[serde(rename = "elapsedMs")]
-    elapsed_ms: u64,
+    pub elapsed_ms: u64,
     /// Processed / total tables for the SQLite path; `null` for external tools
     /// where only bytes are known (#686).
-    tables: Option<u64>,
+    pub tables: Option<u64>,
     #[serde(rename = "tablesTotal")]
-    tables_total: Option<u64>,
+    pub tables_total: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct DumpDoneEvent {
+pub struct DumpDoneEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    bytes: u64,
+    pub stream_id: String,
+    pub bytes: u64,
     #[serde(rename = "elapsedMs")]
-    elapsed_ms: u64,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct DumpErrorEvent {
+pub struct DumpErrorEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    error: String,
+    pub stream_id: String,
+    pub error: String,
 }
 
 /// RAII guard that deletes a partially written dump file unless `commit`ted.
@@ -86,7 +90,7 @@ impl Drop for PartialFileCleanup {
 
 /// Checkbox-selected `mysqldump` flags. The frontend sends every field, so the
 /// defaults here only matter for forward compatibility if a field is omitted.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DumpOptions {
     /// `--single-transaction`: dump within one transaction (consistent InnoDB
@@ -262,7 +266,7 @@ async fn spawn_dump(
 /// earlier backup the user is overwriting): the partial output lives on the
 /// temp file, which `PartialFileCleanup` removes, leaving `final_path` intact.
 #[allow(clippy::too_many_arguments)]
-async fn run_dump(
+pub(crate) async fn run_dump(
     app: &AppHandle,
     session: &Session,
     stream_id: &str,
@@ -313,6 +317,27 @@ async fn run_dump(
                 started,
             )
             .await?
+        }
+        // #709: DuckDB has no `sqlite_master`-style catalog table carrying
+        // verbatim `CREATE TABLE` DDL the way SQLite does, so `dump_sqlite`'s
+        // approach doesn't translate directly. A dedicated DuckDB dump path
+        // (e.g. reconstructing DDL from `information_schema` /
+        // `duckdb_tables()`, or shelling out to DuckDB's own `EXPORT
+        // DATABASE`) is left for a follow-up — not part of #709's accepted
+        // scope (connect/stream/schema-tree/read-only/cell-edit/import/
+        // export). Every other capability works; only whole-database dump is
+        // unavailable for now.
+        DriverKind::DuckDb => {
+            return Err(AppError::InvalidInput(
+                "database dump is not yet supported for DuckDB".into(),
+            ))
+        }
+        // #729 のスコープ外 (mysqldump / pg_dump に相当する外部ダンプツールの
+        // MSSQL 対応は別 Issue)。
+        DriverKind::Mssql => {
+            return Err(AppError::InvalidInput(
+                "database dump is not yet supported for MSSQL".into(),
+            ))
         }
     };
 

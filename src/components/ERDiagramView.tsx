@@ -32,9 +32,12 @@ import {
   type ErLayoutDirection,
   type ErTableData,
 } from "./erDiagram";
-import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
+import { Icon, ICON_SIZES } from "./Icon";
+import { errorIllustration } from "./illustrations";
 import { mapLimited } from "./mapLimited";
-import { Button, Select } from "./ui";
+import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
+import { Button, Heading, Select } from "./ui";
 import { Spinner } from "./Spinner";
 import { ImageExportButton } from "./ImageExportButton";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
@@ -92,7 +95,7 @@ const cardHeaderCss: SystemStyleObject = {
   background: "var(--bg-muted)",
   borderBottom: "1px solid var(--border)",
   fontFamily: "var(--font-mono)",
-  fontWeight: 600,
+  textStyle: "subheading",
   color: "var(--text)",
   cursor: "pointer",
   textAlign: "left",
@@ -125,36 +128,43 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
   // when the layout direction changes (#560): LR → left/right, TB → top/bottom.
   const targetPos = data.direction === "TB" ? Position.Top : Position.Left;
   const sourcePos = data.direction === "TB" ? Position.Bottom : Position.Right;
+  // PK/FK アイコンは 1 ノードあたり最大 `MAX_VISIBLE_COLUMNS` 行 × 最大
+  // `MAX_TABLES` ノード描画されうるため、行ごとに `Tooltip` を積まず「1 つの
+  // 共有ツールチップ + イベント委譲」(`useDelegatedTooltip`、#884) を使う。
+  // これらのアイコンは元々フォーカス対象ではない (行はキーボード操作対象外) ので、
+  // hover のみ対応でも native title からの後退はない。
+  const { hovered, bind } = useDelegatedTooltip();
   return (
     <Box css={cardCss}>
       {/* Handles are invisible anchors edges attach to. */}
       <Handle type="target" position={targetPos} style={{ opacity: 0 }} />
       <Handle type="source" position={sourcePos} style={{ opacity: 0 }} />
-      <chakra.button
-        type="button"
-        css={cardHeaderCss}
-        onClick={data.onOpen}
-        className="nodrag"
-        title={data.openTitle}
-        aria-label={data.openTitle}
-      >
-        <Icon name="table" size={13} />
-        <chakra.span css={colNameCss} flex="1">
-          {data.table}
-        </chakra.span>
-      </chakra.button>
+      <Tooltip label={data.openTitle}>
+        <chakra.button
+          type="button"
+          css={cardHeaderCss}
+          onClick={data.onOpen}
+          className="nodrag"
+          aria-label={data.openTitle}
+        >
+          <Icon name="table" size={ICON_SIZES.sm} />
+          <chakra.span css={colNameCss} flex="1">
+            {data.table}
+          </chakra.span>
+        </chakra.button>
+      </Tooltip>
       {data.columns.map((col) => (
         <Box key={col.name} css={colRowCss}>
           {/* PK の鍵アイコンは接続ツリー (ConnectionList) と同じ --key-accent の
               琥珀で統一する (FK は両者とも accent)。--key-accent は PK 表示専用の
               意味トークンで、--cell-date (日付型セル色) とは独立している (#717)。 */}
           {col.isPk ? (
-            <chakra.span color="var(--key-accent)" title={data.pkTitle} display="inline-flex">
-              <Icon name="key" size={12} />
+            <chakra.span color="var(--key-accent)" display="inline-flex" {...bind(data.pkTitle)}>
+              <Icon name="key" size={ICON_SIZES.sm} />
             </chakra.span>
           ) : col.isFk ? (
-            <chakra.span color="var(--accent)" title={data.fkTitle} display="inline-flex">
-              <Icon name="link" size={12} />
+            <chakra.span color="var(--accent)" display="inline-flex" {...bind(data.fkTitle)}>
+              <Icon name="link" size={ICON_SIZES.sm} />
             </chakra.span>
           ) : (
             <chakra.span width="12px" flexShrink={0} />
@@ -167,6 +177,7 @@ function ErTableNode({ data }: NodeProps<ErFlowNode>) {
       {data.hiddenColumns > 0 && (
         <Box css={moreRowCss}>+{data.hiddenColumns}</Box>
       )}
+      {hovered && <TooltipBubble label={hovered.label} anchor={hovered.rect} />}
     </Box>
   );
 }
@@ -213,6 +224,10 @@ function ERDiagramInner({
   const [density, setDensity] = useState<ErLayoutDensity>("comfortable");
   const [nodes, setNodes, onNodesChange] = useNodesState<ErFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  // 再取得ボタン用のカウンタ (#848)。データベース一覧・グラフ取得のどちらの
+  // 失敗でも、これをインクリメントして両 effect を再実行させれば復旧できる。
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const retry = useCallback(() => setRetryAttempt((n) => n + 1), []);
   // Skip the fit-view animation on the first layout (initial mount already
   // fits via the `fitView` prop); animate only subsequent relayouts.
   const didLayoutOnce = useRef(false);
@@ -268,7 +283,9 @@ function ERDiagramInner({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, initialDatabase]);
+    // retryAttempt は再取得ボタン専用の依存 (#848): sessionId/initialDatabase を
+    // 変えずに同じ一覧取得をやり直したいだけ。
+  }, [sessionId, initialDatabase, retryAttempt]);
 
   const handleOpen = useCallback(
     (db: string, table: string) => {
@@ -338,7 +355,9 @@ function ERDiagramInner({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, database, setNodes, setEdges]);
+    // retryAttempt は再取得ボタン専用の依存 (#848): database を変えずに同じ
+    // グラフ取得をやり直したいだけ。
+  }, [sessionId, database, setNodes, setEdges, retryAttempt]);
 
   // Position the graph and feed React Flow. Re-runs when the layout direction or
   // density changes (cheap, no DB round-trip) and animates the viewport to the
@@ -393,9 +412,7 @@ function ERDiagramInner({
         borderBottom="1px solid"
         borderColor="app.border"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("erDiagramTitle")}
-        </chakra.h2>
+        <Heading>{t("erDiagramTitle")}</Heading>
         {showDbPicker && (
           <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
             {t("erDiagramDatabase")}
@@ -464,18 +481,19 @@ function ERDiagramInner({
             />
           </chakra.span>
         )}
-        <Button
-          marginLeft={!loading && !error && nodes.length > 0 ? undefined : "auto"}
-          minWidth="28px"
-          px="2"
-          py="1"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("erDiagramClose")}
-          title={t("erDiagramClose")}
-        >
-          <Icon name="close" size={13} />
-        </Button>
+        <Tooltip label={t("erDiagramClose")}>
+          <Button
+            marginLeft={!loading && !error && nodes.length > 0 ? undefined : "auto"}
+            minWidth="28px"
+            px="2"
+            py="1"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("erDiagramClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} padding="8px 24px 0" fontSize="sm" color="app.textMuted">
@@ -494,8 +512,24 @@ function ERDiagramInner({
             {t("erDiagramLoading")}
           </Box>
         ) : error ? (
-          <Box py="4" px="6" color="var(--status-error)" fontSize="sm">
-            {t("erDiagramError", { error })}
+          // 取得失敗 (データベース一覧 or グラフ本体): errorHints の分類結果から
+          // 共有イラストを割り当て、再取得導線を添える (#848)。図の描画領域全体を
+          // 占めるため、ローディング表示と同じ中央寄せの absolute レイアウトにする。
+          <Box
+            position="absolute"
+            inset={0}
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+            overflowY="auto"
+            py="4"
+          >
+            <EmptyState
+              illustration={errorIllustration(error)}
+              icon="warning"
+              title={t("erDiagramError", { error })}
+              action={{ label: t("erDiagramRetry"), onClick: retry }}
+            />
           </Box>
         ) : nodes.length === 0 ? (
           <Box py="4" px="6" color="app.textMuted" fontSize="sm">

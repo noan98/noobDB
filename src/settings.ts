@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { pruneMruIds, recordMruUsage, sanitizeMruIds } from "./components/commandPaletteSearch";
 
 export type Theme = "light" | "dark";
 
@@ -189,6 +190,15 @@ export interface Settings {
    */
   planWatchOnConnect: boolean;
   /**
+   * スキーマドリフト・タイムライン (#736): 接続確立時にそのプロファイルの
+   * スキーマスナップショットを自動取得し、前回接続時のスナップショットと比較
+   * して変化があれば検知する。既定オン。スナップショット取得
+   * (`listTables`/`describeTable`/`listIndexes`) は読み取り操作のみで履歴も
+   * 汚さないが、テーブル数の多いスキーマでの接続直後の負荷を避けたい場合は
+   * オフにできる。
+   */
+  schemaDriftOnConnect: boolean;
+  /**
    * アプリ内モーション量コントロール (#787)。既定は `system` で、これまでどおり
    * OS の `prefers-reduced-motion` に追従する (`main.tsx` の
    * `MotionConfig reducedMotion="user"` + `App.css` の
@@ -198,6 +208,28 @@ export interface Settings {
    * 楽しみたいユーザ向けのアプリ内の逃げ道。
    */
   motionPreference: MotionPreference;
+  /**
+   * コマンドパレット (#845) の最近使った項目 (MRU)。`CommandItem.id` を最新順
+   * (先頭が最新) で保持する軽量な id 配列で、空クエリ時にパレット先頭の「最近使った
+   * 項目」セクションへ反映される。並び替え・上限クランプ・破損データ耐性は
+   * `components/commandPaletteSearch.ts` の純関数 (`recordMruUsage` /
+   * `sanitizeMruIds`) を共有する。プロファイル削除など候補が消えたときの無効 id
+   * 除外は `pruneCommandPaletteMru` を参照。
+   */
+  commandPaletteMru: string[];
+  /**
+   * DML フライトレコーダ (#735)。既定オン。オンのとき、クエリエディタから
+   * 単文の INSERT/UPDATE/DELETE を実行すると、ローカル専用ストア
+   * (`flight_recorder.sqlite`) に before/after イメージを退避し、履歴パネルの
+   * 「巻き戻し」から逆 SQL でワンクリック Undo できる。ベストエフォートの保険で
+   * あり (対象テーブル/主キーが特定できない文・DDL は記録対象外)、退避行数の
+   * 上限を超える書き込みは記録されず通常どおり実行だけされる。
+   */
+  flightRecorderEnabled: boolean;
+  /** 1 回の書き込みで退避する対象行数の上限。超えると記録なしで実行する。 */
+  flightRecorderRowCap: number;
+  /** 退避した before/after イメージの保持期間 (日数)。0 は無期限。 */
+  flightRecorderRetentionDays: number;
 }
 
 /**
@@ -564,6 +596,21 @@ export const DEFAULT_PREFLIGHT_IMPACT_ENABLED = true;
 /** 実行計画ウォッチ (#743) の接続時自動チェックは既定オン。 */
 export const DEFAULT_PLAN_WATCH_ON_CONNECT = true;
 
+/** スキーマドリフト・タイムライン (#736) の接続時自動スナップショットは既定オン。 */
+export const DEFAULT_SCHEMA_DRIFT_ON_CONNECT = true;
+
+/** コマンドパレット MRU (#845) は既定で空 (未使用状態)。 */
+export const DEFAULT_COMMAND_PALETTE_MRU: string[] = [];
+
+/** DML フライトレコーダ (#735) は既定オン、行数上限 1 万・保持 30 日。 */
+export const DEFAULT_FLIGHT_RECORDER_ENABLED = true;
+export const DEFAULT_FLIGHT_RECORDER_ROW_CAP = 10_000;
+export const MIN_FLIGHT_RECORDER_ROW_CAP = 1;
+export const MAX_FLIGHT_RECORDER_ROW_CAP = 100_000;
+export const DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS = 30;
+export const MIN_FLIGHT_RECORDER_RETENTION_DAYS = 0;
+export const MAX_FLIGHT_RECORDER_RETENTION_DAYS = 3_650;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -603,7 +650,12 @@ export const DEFAULT_SETTINGS: Settings = {
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
+  schemaDriftOnConnect: DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
   motionPreference: DEFAULT_MOTION_PREFERENCE,
+  commandPaletteMru: DEFAULT_COMMAND_PALETTE_MRU,
+  flightRecorderEnabled: DEFAULT_FLIGHT_RECORDER_ENABLED,
+  flightRecorderRowCap: DEFAULT_FLIGHT_RECORDER_ROW_CAP,
+  flightRecorderRetentionDays: DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS,
 };
 
 /** Clamps the auto-reconnect retry count to the allowed range. */
@@ -817,7 +869,12 @@ export function normalizeSettings(input: unknown): Settings {
     sqlLintEnabled?: unknown;
     preflightImpactEnabled?: unknown;
     planWatchOnConnect?: unknown;
+    schemaDriftOnConnect?: unknown;
     motionPreference?: unknown;
+    commandPaletteMru?: unknown;
+    flightRecorderEnabled?: unknown;
+    flightRecorderRowCap?: unknown;
+    flightRecorderRetentionDays?: unknown;
   };
   return {
     syntaxColors: {
@@ -919,7 +976,28 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.planWatchOnConnect === "boolean"
         ? parsed.planWatchOnConnect
         : DEFAULT_PLAN_WATCH_ON_CONNECT,
+    schemaDriftOnConnect:
+      typeof parsed.schemaDriftOnConnect === "boolean"
+        ? parsed.schemaDriftOnConnect
+        : DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
     motionPreference: sanitizeMotionPreference(parsed.motionPreference, DEFAULT_MOTION_PREFERENCE),
+    commandPaletteMru: sanitizeMruIds(parsed.commandPaletteMru),
+    flightRecorderEnabled:
+      typeof parsed.flightRecorderEnabled === "boolean"
+        ? parsed.flightRecorderEnabled
+        : DEFAULT_FLIGHT_RECORDER_ENABLED,
+    flightRecorderRowCap: sanitizeIntInRange(
+      parsed.flightRecorderRowCap,
+      DEFAULT_FLIGHT_RECORDER_ROW_CAP,
+      MIN_FLIGHT_RECORDER_ROW_CAP,
+      MAX_FLIGHT_RECORDER_ROW_CAP,
+    ),
+    flightRecorderRetentionDays: sanitizeIntInRange(
+      parsed.flightRecorderRetentionDays,
+      DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS,
+      MIN_FLIGHT_RECORDER_RETENTION_DAYS,
+      MAX_FLIGHT_RECORDER_RETENTION_DAYS,
+    ),
   };
 }
 
@@ -1329,6 +1407,72 @@ export function setPreflightImpactEnabled(value: boolean): void {
 export function setPlanWatchOnConnect(value: boolean): void {
   if (current.planWatchOnConnect === value) return;
   current = { ...current, planWatchOnConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setSchemaDriftOnConnect(value: boolean): void {
+  if (current.schemaDriftOnConnect === value) return;
+  current = { ...current, schemaDriftOnConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setFlightRecorderEnabled(value: boolean): void {
+  if (current.flightRecorderEnabled === value) return;
+  current = { ...current, flightRecorderEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setFlightRecorderRowCap(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.flightRecorderRowCap,
+    MIN_FLIGHT_RECORDER_ROW_CAP,
+    MAX_FLIGHT_RECORDER_ROW_CAP,
+  );
+  if (next === current.flightRecorderRowCap) return;
+  current = { ...current, flightRecorderRowCap: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setFlightRecorderRetentionDays(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.flightRecorderRetentionDays,
+    MIN_FLIGHT_RECORDER_RETENTION_DAYS,
+    MAX_FLIGHT_RECORDER_RETENTION_DAYS,
+  );
+  if (next === current.flightRecorderRetentionDays) return;
+  current = { ...current, flightRecorderRetentionDays: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * コマンドパレット (#845) で候補を選択したときに MRU の先頭へ記録する。並び替え・
+ * 上限クランプは `recordMruUsage` (`components/commandPaletteSearch.ts`) を共有
+ * するため、ロジックの二重実装を避けている。
+ */
+export function recordCommandPaletteUsage(id: string): void {
+  const next = recordMruUsage(current.commandPaletteMru, id);
+  if (next === current.commandPaletteMru) return;
+  current = { ...current, commandPaletteMru: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * `isValid` が false を返す MRU の id を取り除く。プロファイル削除など、パレット
+ * 候補そのものが消えたときに呼び出し側 (`App.tsx`) から呼ぶ (`pruneMruIds` と
+ * 同じ参照比較で無変化なら永続化をスキップする)。
+ */
+export function pruneCommandPaletteMru(isValid: (id: string) => boolean): void {
+  const next = pruneMruIds(current.commandPaletteMru, isValid);
+  if (next === current.commandPaletteMru) return;
+  current = { ...current, commandPaletteMru: next };
   persist();
   listeners.forEach((cb) => cb());
 }

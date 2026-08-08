@@ -85,7 +85,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
 
@@ -167,7 +167,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
 
@@ -257,7 +257,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップ
       # (rust-cache のツールチェーン情報取得など) より前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: sccache
 
@@ -393,7 +393,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: cargo-deny
 
@@ -452,7 +452,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: sccache
 
@@ -528,6 +528,9 @@ jobs:
       # タイミング安全性を優先して直列のまま critical path に残していたが、公式仕様では
       # background ステップの env はそれを含む wait 以降で利用可能なので、sshd も
       # background 化して Rust ツール導入 (DL 律速) と重ねられる (#771)。
+      # TLS 統合テスト用 DB セットアップ (#520/#795、下記) がフォールバックで
+      # apt-get install する場合の dpkg ロック競合を避けるため、ここで同じ apt 完了を
+      # 待ってから起動する。
       - name: Wait for apt (openssh-server needed by sshd)
         wait: [apt]
 
@@ -543,31 +546,53 @@ jobs:
         background: true
         run: bash scripts/ci-setup-sshd.sh
 
-      # cargo-nextest / cargo-llvm-cov の導入は DL 律速で、上の sshd 起動と CPU を
-      # 食い合わないため background の sshd と重ねて走らせる。
+      # 実 TLS サーバに対する統合テスト (#520 の既知ギャップ、#795) 用に、自己署名
+      # CA + サーバ証明書を生成し、TLS 必須の MySQL/PostgreSQL を別ポート
+      # (3307/5433) で起動する。下の「MySQL/PostgreSQL サービスコンテナ (平文)」とは
+      # 別の独立したインスタンスで、サービスコンテナは変更しない — サービスコンテナは
+      # 他のどのステップよりも前に起動するため証明書を後から渡せず、加えて
+      # `services:` には `command:` (エントリポイント引数上書き) が無く公式 postgres
+      # イメージへ `-c ssl=on` のような起動引数を渡す手段が無いため、サービス
+      # コンテナへの TLS 導入は最小侵襲にならないと判断した (詳細は
+      # scripts/ci-setup-tls-db.sh 冒頭のコメントと CLAUDE.md の
+      # 「TLS 統合テスト方針」を参照)。mysql-server/postgresql は ubuntu-latest
+      # ランナーに既定でプリインストール済みのため、通常はこの background 起動が
+      # 追加の apt ダウンロードを伴わず高速に完了する。sshd と同じく apt 完了後に
+      # background 起動し、下のツール導入と重ねる。
+      - name: Setup TLS test databases (TLS integration #520/#795)
+        id: tlsdb
+        background: true
+        run: bash scripts/ci-setup-tls-db.sh
+
+      # cargo-nextest / cargo-llvm-cov の導入は DL 律速で、上の sshd / TLS DB 起動と
+      # CPU を食い合わないため重ねて走らせる。
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: cargo-nextest
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: cargo-llvm-cov
 
-      # 残る background (sshd = $GITHUB_ENV の SSH 接続情報) の完了を nextest の直前で
-      # 待ち合わせる。sshd の env はこの wait 以降で利用可能になり、SSH トンネル統合
-      # テスト (#331) が nextest で正しく実走する。dist/ は上のスタブステップで既に
-      # 用意済み。sshd が失敗した場合はこの wait でジョブが fail する (公式仕様)。
-      - name: Wait for background setup (sshd)
-        wait: [sshd]
+      # 残る background (sshd = SSH 接続情報 / tlsdb = TLS DB 接続情報。いずれも
+      # $GITHUB_ENV 経由) の完了を nextest の直前で待ち合わせる。両者の env は
+      # この wait 以降で利用可能になり、SSH トンネル統合テスト (#331) と TLS 統合
+      # テスト (#520/#795) が nextest で正しく実走する。dist/ は上のスタブステップで
+      # 既に用意済み。sshd/tlsdb のいずれかが失敗した場合はこの wait でジョブが
+      # fail する (公式仕様)。
+      - name: Wait for background setup (sshd, TLS test DBs)
+        wait: [sshd, tlsdb]
 
       # nextest を llvm-cov 計装下で実行し、カバレッジ生データのみ収集する
       # (--no-report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
       # 両ドライバの統合テストを CI で実走させる。SQLite は環境変数不要で常に走る。
-      # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY は background の「Setup test sshd」が
-      # $GITHUB_ENV へ書き込み、直前の wait: [sshd] 以降で参照可能になるため、
-      # SSH トンネル統合テスト (#331) もここで実走する。
+      # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY と
+      # NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA
+      # は、それぞれ background の「Setup test sshd」/「Setup TLS test databases」が
+      # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb] 以降で参照可能になるため、
+      # SSH トンネル統合テスト (#331) と TLS 統合テスト (#520/#795) もここで実走する。
       - name: cargo llvm-cov nextest
         working-directory: src-tauri
         env:
@@ -672,7 +697,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: sccache
 
@@ -767,7 +792,7 @@ jobs:
       # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
       # 前に sccache 本体を導入する。
       - name: Install sccache
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: sccache
 
@@ -804,7 +829,7 @@ jobs:
             sccache-${{ runner.os }}-windows-test-
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
           tool: cargo-nextest
 

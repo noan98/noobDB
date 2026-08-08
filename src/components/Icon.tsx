@@ -28,15 +28,36 @@ import { chakra } from "@chakra-ui/react";
  * | 切断 (接続解除)            | `unplug`        |
  * | 転送 (イン/エクスポート両方向) | `transfer`  |
  * | ツール (補助ビュー集約)    | `tools`         |
+ * | 検索 (値/横断検索)         | `search`        |
+ * | チャート (結果の可視化)    | `chart`         |
+ * | ピボット (クロス集計)      | `pivot`         |
  *
  * ## サイズ / ストローク規約
  *
  * 呼び出し側はピクセル直値ではなく `ICON_SIZES` / `ICON_STROKE` のトークンを参照し、
- * 密度・タイポグラフィ基盤と歩調を合わせる。
- *   - `sm` (13px): 行内・ツリー行・バッジなど密な文脈。
- *   - `md` (16px): ツールバー/ボタンの既定。
- *   - `lg` (20px): 見出し・空状態など強調したい箇所。
+ * 密度・タイポグラフィ基盤と歩調を合わせる。`ICON_SIZES` は `App.css` の `--text-*` /
+ * `--space-*` と同じ `calc(px * var(--font-scale))` 形式の CSS 値で、設定のフォント
+ * サイズを大きくすると (`--font-scale` が増加すると) アイコンも比例して拡大する
+ * (#818)。呼び出し側はこれまで通り `size={ICON_SIZES.sm}` のように参照するだけで、
+ * font-scale 追従は自動的に付いてくる。
+ *   - `sm` (13px 相当): 行内・ツリー行・バッジなど密な文脈。
+ *   - `md` (16px 相当): ツールバー/ボタンの既定。
+ *   - `lg` (20px 相当): 見出し・空状態など強調したい箇所。
+ *   - `xl` (28px 相当): ピボット/チャートの空状態など、`lg` よりもう一段強調したい
+ *     単発の大アイコン。
+ *   - `2xl` (32px 相当): `EmptyState` の主アイコンやドラッグ&ドロップのフィード
+ *     バックなど、最も大きい強調表示。
  * ストロークは既定 `regular` (2)。塗り glyph (ブランドロゴ) は対象外。
+ *
+ * **例外なくトークンを使う方針 (#886)**: #818 導入時点では 22px 超の一部の強調
+ * アイコン (空状態の主アイコン・ピボット空状態・ドラッグフィードバック) が
+ * `sm`/`md`/`lg` のどれとも噛み合わずピクセル直値のまま残っていた。#886 で
+ * `xl` / `2xl` を追加してこれらもトークン化し、**呼び出し側にピクセル直値を許容
+ * する例外は無くした**。理由は、据え置いた場合その箇所だけが `--font-scale` に
+ * 追従せず、フォントサイズ設定を上げたときに周囲のテキストとの比率が崩れるため。
+ * 段階が増える (3 → 5) デメリットより、規約の一貫性と font-scale 追従を優先した。
+ * 新しいサイズが要る場合は既存 5 段階のいずれかに寄せられないかをまず検討し、
+ * どうしても収まらないときに限り新トークンの追加を検討すること。
  */
 export type IconName =
   | "sun"
@@ -91,17 +112,30 @@ export type IconName =
   | "binary"
   | "text"
   | "unplug"
+  | "chart"
+  | "pivot"
   | "maximize"
   | "minimize"
   | "mysql"
   | "postgres"
-  | "sqlite";
+  | "sqlite"
+  | "search"
+  | "flask";
 
 /**
- * アイコンのサイズトークン (px)。呼び出し側はこの定数を参照し、密度/タイポグラフィ
- * 基盤と整合した一貫サイズで描画する。
+ * アイコンのサイズトークン。値は `App.css` の `--text-*` / `--space-*` と同じ
+ * `calc(px * var(--font-scale))` 形式の CSS 文字列で、設定のフォントサイズ
+ * (`--font-scale`) に比例してアイコン寸法が追従する (#818)。呼び出し側はこの定数を
+ * 参照し、密度/タイポグラフィ基盤と整合した一貫サイズで描画する。`xl` / `2xl` は
+ * 22px 超の強調アイコン向けに #886 で追加し、ピクセル直値の例外を無くした。
  */
-export const ICON_SIZES = { sm: 13, md: 16, lg: 20 } as const;
+export const ICON_SIZES = {
+  sm: "calc(13px * var(--font-scale))",
+  md: "calc(16px * var(--font-scale))",
+  lg: "calc(20px * var(--font-scale))",
+  xl: "calc(28px * var(--font-scale))",
+  "2xl": "calc(32px * var(--font-scale))",
+} as const;
 /** アイコンサイズトークンのキー。呼び出し側が型安全に指定するための公開型。 @public */
 export type IconSizeToken = keyof typeof ICON_SIZES;
 
@@ -271,6 +305,25 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   filter: <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />,
+  // 結果の可視化 (チャート)。軸 + 棒で「テーブルではないビュー」を示す。
+  chart: (
+    <>
+      <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+      <rect width="4" height="8" x="7" y="11" rx="1" />
+      <rect width="4" height="12" x="14" y="7" rx="1" />
+    </>
+  ),
+  // ピボット (クロス集計)。見出し行/列を持つ表 + 本体の変換矢印で、`table` と
+  // 区別できる形にする。
+  pivot: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M3 9h18" />
+      <path d="M9 9v12" />
+      <path d="M13 15h5" />
+      <path d="m16 13 2 2-2 2" />
+    </>
+  ),
   "er-diagram": (
     <>
       <rect width="7" height="6" x="2" y="3" rx="1" />
@@ -491,6 +544,23 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
     </>
   ),
+  // 検索: 虫眼鏡 (DB 全体からの値検索 #748 のコマンドパレット項目・入力欄で使用)。
+  search: (
+    <>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </>
+  ),
+  // サンドボックス (壊せる砂場、#747) 用のフラスコアイコン。
+  flask: (
+    <>
+      <path d="M10 2v7.31" />
+      <path d="M14 9.3V1.99" />
+      <path d="M8.5 2h7" />
+      <path d="M14 9.3a6.5 6.5 0 1 1-4 0" />
+      <path d="M5.52 16h12.96" />
+    </>
+  ),
   // ドライバのブランドロゴ (simple-icons, CC0 / 単一パスの塗り)。FILLED_ICONS 経由で
   // fill 描画される。MySQL=イルカ / PostgreSQL=ゾウ / SQLite=羽根。
   mysql: (
@@ -518,12 +588,13 @@ export function Icon({ name, size = "1em", strokeWidth = 2 }: IconProps) {
   // 明示的に px 文字列へ変換してトークン解決を回避する。
   // また `size="sm"` のようなサイズトークン名がそのまま渡ると Chakra が
   // `var(--chakra-sizes-sm)` (= 24rem) として解決し巨大化する。`ICON_SIZES` の
-  // キー (sm/md/lg) は px 値へ変換し、誤って巨大アイコンになるのを防ぐ。
+  // キー (sm/md/lg/xl/2xl) は `calc(px * var(--font-scale))` の CSS 文字列へ変換し、
+  // 誤って巨大アイコンになるのを防ぎつつ font-scale 追従を効かせる (#818)。
   const dim =
     typeof size === "number"
       ? `${size}px`
       : size in ICON_SIZES
-        ? `${ICON_SIZES[size as IconSizeToken]}px`
+        ? ICON_SIZES[size as IconSizeToken]
         : size;
   const filled = FILLED_ICONS.has(name);
   return (

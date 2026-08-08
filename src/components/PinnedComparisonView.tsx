@@ -4,10 +4,11 @@ import { Box, Flex, chakra } from "@chakra-ui/react";
 import type { QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { resultsComparable, type PinnedResult } from "../pinnedCompare";
-import { Button, Select } from "./ui";
+import { Tooltip } from "./Tooltip";
+import { Button, Heading, Select } from "./ui";
 import { Switch } from "./Switch";
 import { Splitter } from "./Splitter";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { ResultGrid } from "./ResultGrid";
 
 /**
@@ -169,7 +170,9 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
         )}
         <chakra.span flex="1" />
         {right && (
-          <Button size="sm" variant="secondary" onClick={() => onUnpin(right.id)} title={t("pinCompareUnpin")}>
+          // ラベルはボタン内に可視テキストとして出ているため、native `title=` は
+          // 同じ文字列の重複だった (#884)。
+          <Button size="sm" variant="secondary" onClick={() => onUnpin(right.id)}>
             {t("pinCompareUnpin")}
           </Button>
         )}
@@ -208,24 +211,24 @@ function Header({
       borderBottom="1px solid"
       borderColor="app.border"
     >
-      <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-        {t("pinCompareTitle")}
-      </chakra.h2>
+      <Heading>{t("pinCompareTitle")}</Heading>
       <chakra.span flex="1" />
-      <Button size="sm" variant="secondary" onClick={onClear} disabled={clearDisabled} title={t("pinCompareClearAll")}>
+      {/* 同上 — 可視テキストと同じ文字列の native `title=` は削除する (#884)。 */}
+      <Button size="sm" variant="secondary" onClick={onClear} disabled={clearDisabled}>
         {t("pinCompareClearAll")}
       </Button>
-      <Button
-        minWidth="28px"
-        px="2"
-        py="1"
-        lineHeight={1}
-        onClick={onClose}
-        aria-label={t("pinCompareClose")}
-        title={t("pinCompareClose")}
-      >
-        <Icon name="close" size={13} />
-      </Button>
+      <Tooltip label={t("pinCompareClose")}>
+        <Button
+          minWidth="28px"
+          px="2"
+          py="1"
+          lineHeight={1}
+          onClick={onClose}
+          aria-label={t("pinCompareClose")}
+        >
+          <Icon name="close" size={ICON_SIZES.sm} />
+        </Button>
+      </Tooltip>
     </chakra.header>
   );
 }

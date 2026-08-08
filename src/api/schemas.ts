@@ -21,9 +21,9 @@ import { z } from "zod";
 
 /** `Value` のワイヤフォーマット。`#[serde(untagged)]` なので素のプリミティブ。
  *  BLOB は 16 進文字列 (`Value::Bytes`) として string に乗る (CLAUDE.md 参照)。 */
-const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
+export const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
 
-const column = z.object({
+export const column = z.object({
   name: z.string(),
   type_name: z.string(),
 });
@@ -116,6 +116,32 @@ export const processInfo = z.object({
   is_self: z.boolean(),
 });
 
+/** データベースユーザ / ロール 1 件 (ユーザ・権限管理パネル #732)。 */
+export const dbUserInfo = z.object({
+  name: z.string(),
+  host: z.string().nullable(),
+  attributes: z.array(z.string()),
+  member_of: z.array(z.string()),
+  is_superuser: z.boolean(),
+  can_login: z.boolean(),
+});
+
+/** 権限マトリクスの 1 行 (テーブル単位、または `*` の DB 全体既定行)。 */
+export const tablePrivilegeRow = z.object({
+  table: z.string(),
+  select: z.boolean(),
+  insert: z.boolean(),
+  update: z.boolean(),
+  delete: z.boolean(),
+  ddl: z.boolean(),
+});
+
+/** 1 ユーザ/ロール分の権限マトリクス全体。 */
+export const userPrivileges = z.object({
+  global: tablePrivilegeRow.nullable(),
+  tables: z.array(tablePrivilegeRow),
+});
+
 /** サーバランタイムの軽量メトリクス 1 サンプル (監視ダッシュボード #731)。 */
 export const serverMetrics = z.object({
   connections: z.number().nullable(),
@@ -134,6 +160,21 @@ export const knownHost = z.object({
   fingerprint: z.string(),
 });
 export const knownHostArray = z.array(knownHost);
+
+/**
+ * What `resolve_ssh_config_host` can prefill from a `~/.ssh/config` `Host`
+ * alias (#708): the target hop's fields plus (when `ProxyJump` is set) the
+ * jump hop's host/port/user.
+ */
+export const resolvedSshAlias = z.object({
+  host_name: z.string().nullable(),
+  port: z.number().nullable(),
+  user: z.string().nullable(),
+  identity_file: z.string().nullable(),
+  jump_host: z.string().nullable(),
+  jump_port: z.number().nullable(),
+  jump_user: z.string().nullable(),
+});
 
 /** ライブクエリ・インスペクタ (#746) の前提可否 + 縮退理由コード。 */
 export const queryStatsSupport = z.object({
@@ -190,12 +231,24 @@ export const previewResult = z.object({
   truncated: z.boolean(),
 });
 
+// #708: 踏み台/ジャンプホスト (2 段目まで)。SshProfile と同形だが自身の jump は
+// 持たない (チェーンは 1 段のジャンプホストまでに制限)。
+const sshJumpProfile = z.object({
+  host: z.string(),
+  port: z.number(),
+  user: z.string(),
+  auth_method: z.enum(["key", "agent", "password"]),
+  private_key_path: z.string(),
+});
+
 const sshProfile = z.object({
   host: z.string(),
   port: z.number(),
   user: z.string(),
   auth_method: z.enum(["key", "agent", "password"]),
   private_key_path: z.string(),
+  // 旧プロファイル (#708 以前) には無いフィールドなので optional/nullable。
+  jump: sshJumpProfile.nullable().optional(),
 });
 
 export const connectionProfile = z.object({
@@ -229,6 +282,10 @@ export const connectionProfile = z.object({
   has_db_password: z.boolean().optional(),
   has_ssh_passphrase: z.boolean().optional(),
   has_ssh_password: z.boolean().optional(),
+  // ジャンプホストの秘密が設定済みか (#708)。profile.ssh.jump が無いプロファイルでは
+  // 意味を持たないが、常に含まれる。
+  has_ssh_jump_passphrase: z.boolean().optional(),
+  has_ssh_jump_password: z.boolean().optional(),
 });
 
 const snippetScope = z.discriminatedUnion("kind", [
@@ -266,6 +323,55 @@ export const logView = z.object({
   path: z.string().nullable(),
 });
 
+// #735 DML フライトレコーダ / Undo。
+const writeKind = z.enum(["insert", "update", "delete", "other"]);
+
+export const capturedWriteResponse = z.object({
+  result: queryResult,
+  capturable: z.boolean(),
+  reason: z.string().nullable(),
+  captureId: z.number().nullable(),
+});
+
+export const writeCapturePrecheck = z.object({
+  capturable: z.boolean(),
+  reason: z.string().nullable(),
+  estimatedRows: z.number().nullable(),
+});
+
+export const writeCaptureSummary = z.object({
+  id: z.number(),
+  profile_id: z.string().nullable(),
+  driver: z.string(),
+  database: z.string().nullable(),
+  table: z.string(),
+  kind: writeKind,
+  sql: z.string(),
+  rows_affected: z.number(),
+  captured_at: z.string(),
+  undone: z.boolean(),
+});
+export const writeCaptureSummaryArray = z.array(writeCaptureSummary);
+
+const undoConflict = z.object({
+  key: z.array(cellValue),
+  expected: z.array(cellValue).nullable(),
+  current: z.array(cellValue).nullable(),
+});
+
+export const undoPreviewResponse = z.object({
+  statements: z.array(z.string()),
+  conflicts: z.array(undoConflict),
+  warnings: z.array(z.string()),
+});
+
+export const undoOutcome = z.object({
+  applied: z.boolean(),
+  rowsAffected: z.number(),
+  conflicts: z.array(undoConflict),
+  warnings: z.array(z.string()),
+});
+
 const diffStatus = z.enum(["source_only", "target_only", "different", "same"]);
 
 const columnDiff = z.object({
@@ -282,7 +388,7 @@ const tableDiff = z.object({
   columns: z.array(columnDiff),
 });
 
-const driverKind = z.enum(["mysql", "postgres", "sqlite"]);
+const driverKind = z.enum(["mysql", "postgres", "sqlite", "duckdb", "mssql"]);
 
 export const schemaDiff = z.object({
   source_driver: driverKind,
@@ -332,6 +438,46 @@ export const dataDiff = z.object({
   target_count: z.number(),
 });
 
+/** サンドボックス (壊せる砂場、#747) の非秘密メタデータ。 */
+export const sandboxRecord = z.object({
+  id: z.string(),
+  name: z.string(),
+  source_profile_id: z.string().nullable(),
+  source_driver: driverKind,
+  source_database: z.string().nullable(),
+  tables: z.array(z.string()),
+  row_limit: z.number(),
+  file_path: z.string(),
+  created_at: z.string(),
+  truncated_tables: z.array(z.string()),
+});
+
+export const sandboxRecordArray = z.array(sandboxRecord);
+
+export const sandboxCreateResponse = z.object({
+  sandbox: sandboxRecord,
+  session_id: z.string(),
+});
+
+const sandboxConflict = z.object({
+  key: z.array(cellValue),
+  desired_status: z.enum(["source_only", "target_only", "different"]),
+  external_status: z.enum(["source_only", "target_only", "different"]),
+  external_row: z.array(cellValue).nullable(),
+});
+
+export const sandboxTableDiffResult = z.object({
+  desired: dataDiff,
+  conflicts: z.array(sandboxConflict),
+  source_checked: z.boolean(),
+});
+
+export const sandboxSchemaDiffResult = z.object({
+  desired: schemaDiff,
+  external_changed_tables: z.array(z.string()),
+  source_checked: z.boolean(),
+});
+
 // スキーマ健全性アドバイザ (#741)。RuleId / Severity はバックの serde 表現
 // (snake_case / lowercase) に一致させる。
 const advisorSeverity = z.enum(["high", "medium", "low"]);
@@ -375,6 +521,18 @@ export const csvPreview = z.object({
 
 export const connectResult = z.object({ session_id: z.string() });
 
+/** ローカル横断クエリ (#740) — ローカルテーブルの由来メタデータ。 */
+export const localTableMeta = z.object({
+  name: z.string(),
+  source_profile: z.string().nullable(),
+  source_sql: z.string(),
+  source_driver: z.string().nullable(),
+  fetched_at_ms: z.number(),
+  row_count: z.number(),
+});
+
+export const localTableMetaArray = z.array(localTableMeta);
+
 /** `connect-progress:phase` イベント: 接続確立のフェーズ進捗 (#684)。
  *  phase は "preparing" / "tunnel_connecting" / "tunnel_authenticating" /
  *  "db_connecting" のいずれか (バック ConnectPhase::label と一致)。 */
@@ -387,6 +545,8 @@ export const connectPhaseEvent = z.object({
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
 export const stringResponse = z.string();
+/** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
+export const nullableStringResponse = z.string().nullable();
 
 /** `cancel_stream` の戻り値。中断できた行数 (#685) を運ぶため単純な bool から
  *  拡張されている。 */
@@ -411,6 +571,7 @@ export const tableRowEstimateArray = z.array(tableRowEstimate);
 export const tableSizeInfoArray = z.array(tableSizeInfo);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
+export const dbUserInfoArray = z.array(dbUserInfo);
 export const liveQueryArray = z.array(liveQuery);
 export const statementStatArray = z.array(statementStat);
 export const schemaObjectArray = z.array(schemaObject);
@@ -545,6 +706,93 @@ export const dumpCancelledEvent = z.object({
   deliveredRows: z.number(),
 });
 
+// --- タスクスケジューラ (#730) ---------------------------------------------
+
+const dumpOptions = z.object({
+  singleTransaction: z.boolean(),
+  routines: z.boolean(),
+  events: z.boolean(),
+  triggers: z.boolean(),
+  addDropTable: z.boolean(),
+  extendedInsert: z.boolean(),
+  completeInsert: z.boolean(),
+  noData: z.boolean(),
+  noCreateInfo: z.boolean(),
+  noOwner: z.boolean().optional(),
+  noPrivileges: z.boolean().optional(),
+  pgSchema: z.string().nullable().optional(),
+  formatSql: z.boolean().optional(),
+});
+
+const exportFormat = z.enum(["csv", "json", "ndjson", "markdown", "sql"]);
+
+const taskAction = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("export_query"),
+    sql: z.string(),
+    database: z.string().nullable(),
+    format: exportFormat,
+    output_path: z.string(),
+    sql_table: z.string().nullable().optional(),
+    sql_batch_size: z.number().nullable().optional(),
+  }),
+  z.object({
+    kind: z.literal("dump"),
+    database: z.string(),
+    output_path: z.string(),
+    options: dumpOptions,
+  }),
+]);
+
+const taskSchedule = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("interval"), minutes: z.number() }),
+  z.object({ kind: z.literal("daily"), hour: z.number(), minute: z.number() }),
+]);
+
+export const taskDefinition = z.object({
+  id: z.string(),
+  name: z.string(),
+  profile_id: z.string(),
+  action: taskAction,
+  schedule: taskSchedule,
+  enabled: z.boolean(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  next_run_at: z.string().nullable(),
+  last_run_at: z.string().nullable(),
+  last_status: z.string().nullable(),
+});
+
+export const taskRun = z.object({
+  id: z.number(),
+  task_id: z.string(),
+  started_at: z.string(),
+  finished_at: z.string(),
+  status: z.string(),
+  error: z.string().nullable(),
+  output_path: z.string().nullable(),
+  rows: z.number().nullable(),
+  bytes: z.number().nullable(),
+  elapsed_ms: z.number(),
+  catch_up: z.boolean(),
+});
+
+export const schedulerSettings = z.object({
+  catch_up_missed: z.boolean(),
+});
+
+export const taskRunEvent = z.object({
+  taskId: z.string(),
+  taskName: z.string(),
+  status: z.string(),
+  message: z.string().nullable(),
+  outputPath: z.string().nullable(),
+  catchUp: z.boolean(),
+});
+
+export const taskDefinitionArray = z.array(taskDefinition);
+export const taskRunArray = z.array(taskRun);
+
 // 全件ストリーミングエクスポートのイベント。
 export const exportProgressEvent = z.object({
   streamId: z.string(),
@@ -598,7 +846,6 @@ export function parseResponse<T>(
     return result.data as T;
   }
   if (DEV) {
-    // eslint-disable-next-line no-console
     console.error(
       `[IPC] "${command}" のレスポンスがスキーマ検証に失敗しました:\n${formatIssues(
         result.error,

@@ -105,9 +105,47 @@ pub fn delete_ssh_password(profile_id: &str) -> Result<()> {
     delete_secret(profile_id, "ssh_password")
 }
 
+/// The bastion/jump hop's secrets (#708) use a `_hop0` suffix so they live
+/// alongside — never collide with — the main SSH hop's `ssh_passphrase` /
+/// `ssh_password` entries above, which keep their pre-#708 kind names for
+/// backward compatibility with profiles saved before multi-hop existed.
+pub fn set_ssh_jump_passphrase(profile_id: &str, passphrase: &str) -> Result<()> {
+    set_secret(profile_id, "ssh_passphrase_hop0", passphrase)
+}
+
+pub fn get_ssh_jump_passphrase(profile_id: &str) -> Result<Option<String>> {
+    get_secret(profile_id, "ssh_passphrase_hop0")
+}
+
+pub fn has_ssh_jump_passphrase(profile_id: &str) -> bool {
+    has_secret(profile_id, "ssh_passphrase_hop0")
+}
+
+pub fn delete_ssh_jump_passphrase(profile_id: &str) -> Result<()> {
+    delete_secret(profile_id, "ssh_passphrase_hop0")
+}
+
+pub fn set_ssh_jump_password(profile_id: &str, password: &str) -> Result<()> {
+    set_secret(profile_id, "ssh_password_hop0", password)
+}
+
+pub fn get_ssh_jump_password(profile_id: &str) -> Result<Option<String>> {
+    get_secret(profile_id, "ssh_password_hop0")
+}
+
+pub fn has_ssh_jump_password(profile_id: &str) -> bool {
+    has_secret(profile_id, "ssh_password_hop0")
+}
+
+pub fn delete_ssh_jump_password(profile_id: &str) -> Result<()> {
+    delete_secret(profile_id, "ssh_password_hop0")
+}
+
 pub fn delete_all(profile_id: &str) -> Result<()> {
     delete_db_password(profile_id)?;
     delete_ssh_passphrase(profile_id)?;
     delete_ssh_password(profile_id)?;
+    delete_ssh_jump_passphrase(profile_id)?;
+    delete_ssh_jump_password(profile_id)?;
     Ok(())
 }

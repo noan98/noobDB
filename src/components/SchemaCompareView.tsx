@@ -18,8 +18,10 @@ import {
 import { useT } from "../i18n";
 import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
-import { Icon } from "./Icon";
-import { Button, Checkbox, Input, PressableButton, Select } from "./ui";
+import { Icon, ICON_SIZES } from "./Icon";
+import { MigrationExportModal } from "./MigrationExportModal";
+import { Tooltip } from "./Tooltip";
+import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
 
 /**
  * スキーマ比較ビューの本体スタイル。各要素へ直接 `css` を適用する。
@@ -44,8 +46,7 @@ const sideCss: SystemStyleObject = {
   "& select": { width: "100%" },
 };
 const sideLabelCss: SystemStyleObject = {
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
 };
 const sideErrorCss: SystemStyleObject = {
@@ -188,8 +189,7 @@ const statementHeadCss: SystemStyleObject = {
   marginBottom: "1.5",
 };
 const destructiveFlagCss: SystemStyleObject = {
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--status-error)",
 };
 const sqlCss: SystemStyleObject = {
@@ -238,8 +238,7 @@ function statusColors(status: DiffStatus): { color: string; borderColor: string 
 /** サマリ等のステータスチップ。 */
 function chipCss(status: DiffStatus): SystemStyleObject {
   return {
-    fontSize: "var(--text-xs)",
-    fontWeight: 600,
+    textStyle: "overline",
     padding: "3px 10px",
     borderRadius: "var(--radius-pill)",
     border: "1px solid var(--border)",
@@ -251,8 +250,7 @@ function chipCss(status: DiffStatus): SystemStyleObject {
 /** テーブル/カラム行のステータスバッジ。 */
 function badgeCss(status: DiffStatus): SystemStyleObject {
   return {
-    fontSize: "var(--text-xs)",
-    fontWeight: 600,
+    textStyle: "overline",
     padding: "1px 8px",
     borderRadius: "var(--radius-pill)",
     whiteSpace: "nowrap",
@@ -281,8 +279,7 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
 /** 同期文の種別バッジ。 */
 function kindCss(kind: SyncKind): SystemStyleObject {
   return {
-    fontSize: "var(--text-xs)",
-    fontWeight: 600,
+    textStyle: "overline",
     padding: "1px 8px",
     borderRadius: "var(--radius-pill)",
     border: "1px solid var(--border)",
@@ -303,7 +300,9 @@ function statementCss(destructive: boolean): SystemStyleObject {
 
 type Side = "source" | "target";
 
-function coerceDriver(driver: string): DriverKind {
+/** `ConnectionProfile.driver` (プレーンな `string`) を `DriverKind` へ絞り込む。
+ *  `MigrationExportModal` (#744) もヘッダのメタ情報生成で共有する。 */
+export function coerceDriver(driver: string): DriverKind {
   return driver === "postgres" || driver === "sqlite" ? driver : "mysql";
 }
 
@@ -646,10 +645,19 @@ export function SchemaCompareView({
     });
   }, []);
 
+  const sourceProfile = useMemo(
+    () => profiles.find((p) => p.id === source.profileId) ?? null,
+    [profiles, source.profileId],
+  );
   const targetProfile = useMemo(
     () => profiles.find((p) => p.id === target.profileId) ?? null,
     [profiles, target.profileId],
   );
+
+  // マイグレーションとして保存 (#744)。schema 系プラン (`generate_sync_sql` の
+  // 出力) だけが対象 — down 側の生成が `compare_schema` の再実行を要するため、
+  // データ同期プラン (`planKind === "data"`) はスコープ外。
+  const [migrationExportOpen, setMigrationExportOpen] = useState(false);
 
   const applyPlan = useCallback(async () => {
     if (!plan || !targetProfile || !target.database) return;
@@ -775,21 +783,20 @@ export function SchemaCompareView({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("schemaCompareTitle")}
-        </chakra.h2>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("schemaCompareClose")}
-          title={t("schemaCompareClose")}
-        >
-          <Icon name="close" size={13} />
-        </Button>
+        <Heading>{t("schemaCompareTitle")}</Heading>
+        <Tooltip label={t("schemaCompareClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("schemaCompareClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareDesc")}</chakra.p>
@@ -808,20 +815,21 @@ export function SchemaCompareView({
               onSelectDatabase={setDatabase}
               t={t}
             />
-            <Button
-              type="button"
-              minWidth="28px"
-              px="2"
-              py="1"
-              fontSize="base"
-              lineHeight={1}
-              marginBottom="1"
-              onClick={swap}
-              title={t("schemaCompareSwap")}
-              aria-label={t("schemaCompareSwap")}
-            >
-              <Icon name="refresh" size={14} />
-            </Button>
+            <Tooltip label={t("schemaCompareSwap")}>
+              <Button
+                type="button"
+                minWidth="28px"
+                px="2"
+                py="1"
+                fontSize="base"
+                lineHeight={1}
+                marginBottom="1"
+                onClick={swap}
+                aria-label={t("schemaCompareSwap")}
+              >
+                <Icon name="refresh" size={ICON_SIZES.md} />
+              </Button>
+            </Tooltip>
             <SidePicker
               label={t("schemaCompareTarget")}
               side="target"
@@ -980,7 +988,7 @@ export function SchemaCompareView({
                         ))}
                       </chakra.ul>
                       <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
-                      <Box css={actionsCss}>
+                      <Box css={actionsCss} display="flex" gap="2" flexWrap="wrap">
                         <PressableButton
                           variant="primary"
                           onClick={applyPlan}
@@ -990,6 +998,14 @@ export function SchemaCompareView({
                             ? t("schemaCompareApplying")
                             : t("schemaCompareApply", { count: selectedCount })}
                         </PressableButton>
+                        {planKind === "schema" && (
+                          <Button
+                            type="button"
+                            onClick={() => setMigrationExportOpen(true)}
+                          >
+                            {t("schemaCompareSaveMigration")}
+                          </Button>
+                        )}
                       </Box>
                     </>
                   )}
@@ -1008,6 +1024,27 @@ export function SchemaCompareView({
       )}
       {confirmDialog}
       {typedConfirmDialog}
+      {migrationExportOpen &&
+        plan &&
+        planKind === "schema" &&
+        sourceProfile &&
+        targetProfile &&
+        source.sessionId &&
+        source.database &&
+        target.sessionId &&
+        target.database && (
+          <MigrationExportModal
+            plan={plan}
+            allowDestructive={allowDestructive}
+            sourceSessionId={source.sessionId}
+            sourceDatabase={source.database}
+            sourceProfile={sourceProfile}
+            targetSessionId={target.sessionId}
+            targetDatabase={target.database}
+            targetProfile={targetProfile}
+            onClose={() => setMigrationExportOpen(false)}
+          />
+        )}
     </Box>
   );
 }

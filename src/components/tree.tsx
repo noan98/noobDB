@@ -17,8 +17,9 @@ const TREE_ROW_TRANSITION = {
   transitionTimingFunction: "var(--ease)",
 } as const;
 
-/** キーボードフォーカスリング。動的アクセントへ追従させるため CSS 変数を直接参照。 */
-const FOCUS_RING = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
+/** キーボードフォーカスリング。動的アクセントへ追従させるため CSS 変数を直接参照。
+ *  行内の操作要素 (`TreeChevronButton`) も同じリングを共有する。 */
+const TREE_FOCUS_RING = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
 
 export const TreePane = chakra("div", {
   base: { display: "flex", flexDirection: "column", overflow: "hidden", flex: 1 },
@@ -59,7 +60,7 @@ export const TreeRow = chakra("div", {
     borderLeft: "2px solid transparent",
     ...TREE_ROW_TRANSITION,
     _hover: { bg: "app.hover" },
-    _focusVisible: { outline: "none", boxShadow: FOCUS_RING },
+    _focusVisible: { outline: "none", boxShadow: TREE_FOCUS_RING },
   },
 });
 
@@ -90,23 +91,42 @@ export const MotionTreeRow = chakra(
       borderLeft: "2px solid transparent",
       ...TREE_ROW_TRANSITION,
       _hover: { bg: "app.hover" },
-      _focusVisible: { outline: "none", boxShadow: FOCUS_RING },
+      _focusVisible: { outline: "none", boxShadow: TREE_FOCUS_RING },
     },
   },
   { forwardProps: ["transition"] },
 );
 
-export const TreeChevron = chakra("span", {
+const TREE_CHEVRON_BASE = {
+  display: "inline-block",
+  width: "14px",
+  textAlign: "center",
+  color: "app.textMuted",
+  fontSize: "2xs",
+  flexShrink: 0,
+  transitionProperty: "transform",
+  transitionDuration: "var(--dur-fast)",
+  transitionTimingFunction: "var(--ease)",
+} as const;
+
+export const TreeChevron = chakra("span", { base: TREE_CHEVRON_BASE });
+
+/**
+ * 操作可能なチェブロン。見た目は `TreeChevron` と同じだが、ネイティブ `button` として
+ * 描画してキーボード (Enter/Space) と支援技術から開閉トグルを実行できるようにする。
+ * テーブル行のようにトグルがチェブロンに限定される場所で使い、利用側は
+ * `aria-label` / `aria-expanded` を必ず渡すこと (装飾のみの `TreeChevron` と違い
+ * `aria-hidden` にしない)。
+ */
+export const TreeChevronButton = chakra("button", {
   base: {
-    display: "inline-block",
-    width: "14px",
-    textAlign: "center",
-    color: "app.textMuted",
-    fontSize: "2xs",
-    flexShrink: 0,
-    transitionProperty: "transform",
-    transitionDuration: "var(--dur-fast)",
-    transitionTimingFunction: "var(--ease)",
+    ...TREE_CHEVRON_BASE,
+    bg: "transparent",
+    border: "none",
+    p: "0",
+    cursor: "pointer",
+    _hover: { color: "app.text" },
+    _focusVisible: { outline: "none", boxShadow: TREE_FOCUS_RING },
   },
 });
 
@@ -125,15 +145,16 @@ export const TreeLabel = chakra("span", {
 });
 
 export const TreeBadge = chakra("span", {
+  // タイポグラフィ (fontSize/fontWeight/letterSpacing/textTransform/color) は
+  // `textStyles.overline` (#817) に一本化。背景・枠線・余白などのバッジ固有装飾は
+  // ここに残す。個々の呼び出し側 (数値カウント等) が `textTransform="none"` /
+  // `letterSpacing="0"` で上書きする既存の慣習はそのまま有効。
   base: {
-    fontSize: "2xs",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
+    textStyle: "overline",
     px: "1.5",
     py: "1px",
     borderRadius: "pill",
     bg: "app.surfaceMuted",
-    color: "app.textMuted",
     border: "1px solid",
     borderColor: "app.borderSubtle",
     flexShrink: 0,

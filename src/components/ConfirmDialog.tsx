@@ -165,9 +165,7 @@ function ConfirmDialog({
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <chakra.label
               htmlFor="confirm-dialog-type-confirm-input"
-              fontSize="sm"
-              fontWeight={600}
-              color="app.text"
+              textStyle="subheading"
             >
               {t("typeToConfirmLabel", { target: typedConfirmation })}
             </chakra.label>

@@ -14,8 +14,15 @@ import {
 type Key = Parameters<ReturnType<typeof useT>>[0];
 type Impact = "yes" | "no";
 
+// 広げたモーダル幅で 1 行が長くなりすぎないよう、カードは 2 カラムに折り返す
+// (狭いウィンドウでは minmax により自然に 1 カラムへフォールバック)。
 const HelpFeatureGrid = chakra("div", {
-  base: { display: "flex", flexDirection: "column", gap: "2", mt: "1.5" },
+  base: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(min(320px, 100%), 1fr))",
+    gap: "2",
+    mt: "1.5",
+  },
 });
 
 const HelpFeature = chakra("article", {
@@ -36,7 +43,7 @@ const HelpFeatureHead = chakra("div", {
     justifyContent: "space-between",
     gap: "3",
     flexWrap: "wrap",
-    "& h4": { margin: 0, fontSize: "md", fontWeight: 600, color: "app.text" },
+    "& h4": { margin: 0, textStyle: "subheading", fontSize: "md" },
   },
 });
 
@@ -45,7 +52,7 @@ const HelpFeatureDesc = chakra("p", {
 });
 
 const HelpUsageTitle = chakra("p", {
-  base: { margin: "10px 0 2px", fontSize: "sm", fontWeight: 600, color: "app.text" },
+  base: { margin: "10px 0 2px", textStyle: "subheading" },
 });
 
 const HelpSteps = chakra("ol", {
@@ -118,6 +125,29 @@ const SECTIONS: Section[] = [
         impact: "no",
         noteKey: "helpSchemaCompareNote",
       },
+      {
+        titleKey: "helpSandboxTitle",
+        descKey: "helpSandboxDesc",
+        impact: "no",
+        noteKey: "helpSandboxNote",
+      },
+      {
+        titleKey: "helpTaskSchedulerTitle",
+        descKey: "helpTaskSchedulerDesc",
+        impact: "no",
+        noteKey: "helpTaskSchedulerNote",
+      },
+      {
+        titleKey: "helpFlightRecorderTitle",
+        descKey: "helpFlightRecorderDesc",
+        impact: "no",
+        stepKeys: [
+          "helpFlightRecorderStep1",
+          "helpFlightRecorderStep2",
+          "helpFlightRecorderStep3",
+        ],
+        noteKey: "helpFlightRecorderNote",
+      },
     ],
   },
   {
@@ -142,6 +172,7 @@ const SECTIONS: Section[] = [
       { titleKey: "helpProductionTitle", descKey: "helpProductionDesc" },
       { titleKey: "helpConfirmWritesTitle", descKey: "helpConfirmWritesDesc" },
       { titleKey: "helpTypeToConfirmTitle", descKey: "helpTypeToConfirmDesc" },
+      { titleKey: "helpEmergencyModeTitle", descKey: "helpEmergencyModeDesc" },
     ],
   },
   {
@@ -172,8 +203,7 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
       px="2"
       py="0.5"
       borderRadius="pill"
-      fontSize="xs"
-      fontWeight={600}
+      textStyle="overline"
       whiteSpace="nowrap"
       border="1px solid transparent"
       color={tone}
@@ -193,7 +223,7 @@ export function HelpView({ onClose }: { onClose: () => void }) {
   const settings = useSettings();
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
   return (
-    <Modal onClose={onClose} width="760px">
+    <Modal onClose={onClose} width="920px">
       <ModalHeader onClose={onClose} closeLabel={t("helpClose")}>
         {t("helpTitle")}
       </ModalHeader>

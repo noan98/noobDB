@@ -132,7 +132,7 @@ export function DangerousQueryDialog({
                   borderRadius="md"
                   bg="app.toolbar"
                 >
-                  <chakra.span fontWeight={600} color="app.text">
+                  <chakra.span textStyle="subheading">
                     {t(KIND_LABEL_KEYS[f.kind])}
                   </chakra.span>
                   <chakra.span fontSize="sm" color="app.textMuted" fontFamily="mono">
@@ -181,9 +181,7 @@ export function DangerousQueryDialog({
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <chakra.label
               htmlFor="dangerous-type-confirm-input"
-              fontSize="sm"
-              fontWeight={600}
-              color="app.text"
+              textStyle="subheading"
             >
               {t("typeToConfirmLabel", { target: typedConfirmTarget })}
             </chakra.label>

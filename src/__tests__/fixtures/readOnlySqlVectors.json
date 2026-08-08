@@ -49,6 +49,13 @@
     { "sql": ";", "readOnly": false, "note": "セミコロンのみ" },
     { "sql": "REPLACE INTO users (id) VALUES (1)", "readOnly": false, "note": "REPLACE INTO は許可プレフィックスでなく弾かれる" },
 
+    { "sql": "SELECT TOP (10) * FROM [dbo].[users]", "readOnly": true, "note": "MSSQL: TOP + ブラケット識別子" },
+    { "sql": "SELECT * FROM [dbo].[users] WITH (NOLOCK)", "readOnly": true, "note": "MSSQL: NOLOCK テーブルヒントは読み取りロック回避であり書き込みではない" },
+    { "sql": "SELECT * FROM users WHERE [order] = 1", "readOnly": true, "note": "MSSQL: 予約語をブラケットで囲んだ識別子" },
+    { "sql": "EXEC sp_helpdb", "readOnly": false, "note": "MSSQL: EXEC は許可プレフィックスでなく弾かれる (CALL と同方針)" },
+    { "sql": "EXECUTE dbo.my_proc", "readOnly": false, "note": "MSSQL: EXECUTE も同様に弾かれる" },
+    { "sql": "SELECT * FROM users; EXEC sp_x", "readOnly": false, "note": "MSSQL: SELECT の後ろに隠れた EXEC (スタック)" },
+
     { "sql": "SELECT $$delete from users$$ AS s", "readOnly": true, "note": "ドル引用 ($$...$$) 内の write キーワードはマスクされる" },
     { "sql": "SELECT $tag$drop table x; -- $tag$ AS s", "readOnly": true, "note": "タグ付きドル引用 ($tag$...$tag$) 内の DDL/セミコロンはマスクされる" },
     { "sql": "SELECT $$a; b$$ AS s", "readOnly": true, "note": "ドル引用内のセミコロンは文区切りでない" },

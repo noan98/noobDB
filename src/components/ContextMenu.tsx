@@ -1,9 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { useReturnFocus, useRovingFocus } from "../keyboardNav";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
+import { Tooltip } from "./Tooltip";
+import { Kbd } from "./Kbd";
 
 /**
  * メニュー本体を motion 化するラッパー。`transition` を Chakra のスタイルプロップに
@@ -29,6 +32,15 @@ export interface ContextMenuItem {
   disabled?: boolean;
   /** Tooltip — handy for explaining why an item is disabled. */
   title?: string;
+  /** Leading icon (#815). Reserve for primary/frequent actions — most items go without one. */
+  icon?: IconName;
+  /**
+   * Right-aligned key hint (#815), e.g. `"Cmd/Ctrl+C"`. Callers resolve this from
+   * `shortcuts.ts`'s `resolveShortcutBindings` + `shortcutKeys.ts`'s `formatCombo`
+   * (the same pair `ShortcutCheatSheet` uses) so the hint tracks user rebinding —
+   * `ContextMenu` itself stays display-only and doesn't know about shortcut ids.
+   */
+  shortcut?: string;
 }
 
 export interface ContextMenuSeparator {
@@ -145,23 +157,28 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
-        {items.map((entry, i) =>
-          isSeparator(entry) ? (
-            <Box
-              key={`sep-${i}`}
-              role="separator"
-              h="1px"
-              my="1"
-              mx="1.5"
-              bg="app.borderSubtle"
-            />
-          ) : (
+        {items.map((entry, i) => {
+          if (isSeparator(entry)) {
+            return (
+              <Box
+                key={`sep-${i}`}
+                role="separator"
+                h="1px"
+                my="1"
+                mx="1.5"
+                bg="app.borderSubtle"
+              />
+            );
+          }
+          const button = (
             <chakra.button
-              key={`${entry.label}-${i}`}
               type="button"
               role="menuitem"
-              display="block"
+              display="flex"
+              alignItems="center"
+              gap="2"
               textAlign="left"
+              width="100%"
               bg="transparent"
               border="none"
               px="2.5"
@@ -171,7 +188,6 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               borderRadius="sm"
               cursor="pointer"
               disabled={entry.disabled}
-              title={entry.title}
               transitionProperty="background, color"
               transitionDuration="var(--dur-fast)"
               transitionTimingFunction="var(--ease)"
@@ -186,10 +202,46 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               }}
               onClick={() => activate(entry)}
             >
-              {entry.label}
+              {entry.icon && (
+                <Box flexShrink={0} opacity={entry.disabled ? 0.6 : 0.85} aria-hidden>
+                  <Icon name={entry.icon} size={ICON_SIZES.sm} />
+                </Box>
+              )}
+              <chakra.span flex="1" minW="0">
+                {entry.label}
+              </chakra.span>
+              {entry.shortcut && (
+                <Kbd
+                  tone="muted"
+                  flexShrink={0}
+                  ml="3"
+                  color={entry.danger ? "inherit" : "app.textMuted"}
+                  opacity={entry.disabled ? 0.6 : 0.85}
+                >
+                  {entry.shortcut}
+                </Kbd>
+              )}
             </chakra.button>
-          ),
-        )}
+          );
+          // `entry.title` は項目が無効な「理由」を説明する (有効な項目では単なる
+          // 補足ヒント)。以前は native `title=` だったが、無効化されたボタンは
+          // そもそもフォーカスを持てないため、キーボードフォーカスでは一切
+          // 表示されないという実質的な a11y の穴があった。共有 `Tooltip`
+          // (#814) はこれを両方まとめて解消する: 有効な項目では通常どおり
+          // フォーカスで表示され、無効な項目は `focusableWrapper` によって
+          // フォーカス可能な代役を用意するので、Tab でも理由まで到達できる。
+          return (
+            <Fragment key={`${entry.label}-${i}`}>
+              {entry.title ? (
+                <Tooltip label={entry.title} placement="right" focusableWrapper={entry.disabled}>
+                  {button}
+                </Tooltip>
+              ) : (
+                button
+              )}
+            </Fragment>
+          );
+        })}
       </MotionMenu>
     </Box>,
     document.body,

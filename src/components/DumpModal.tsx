@@ -9,6 +9,7 @@ import { Button, Input, Switch } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 
 let dumpStreamSeq = 0;
 /** Unique stream id per dump run so progress events / cancel target it (#686). */
@@ -125,6 +126,13 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
   ],
   postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges", "formatSql"],
   sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql"],
+  // #709: DuckDB dump isn't implemented yet on the backend (it errors with a
+  // clear message) — no toggles apply until that lands.
+  duckdb: [],
+  // MSSQL (#729): `dump_database` is not implemented yet for this driver
+  // (backend returns `InvalidInput`, see `commands/dump.rs`) — no toggles to
+  // show. The modal can still be opened; running it just surfaces that error.
+  mssql: [],
 };
 
 type Status =
@@ -276,42 +284,42 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
             rowGap="1.5" columnGap="4"
           >
             {visibleRows.map((row) => (
-              <chakra.div
-                key={row.key}
-                display="flex"
-                alignItems="flex-start"
-                gap="2"
-                py="1"
-                cursor={isRunning ? "not-allowed" : "pointer"}
-                userSelect="none"
-                title={t(row.hint)}
-                onClick={(e) => {
-                  if (isRunning) return;
-                  // Switch 自身のクリックはコンポーネント側で処理されるので、
-                  // ラッパーは text 部分のクリックだけを引き受ける。
-                  if (e.target instanceof HTMLElement && e.target.closest("button[role=switch]")) {
-                    return;
-                  }
-                  toggle(row.key);
-                }}
-              >
-                <chakra.span mt="0.5" flex="none">
-                  <Switch
-                    checked={!!options[row.key]}
-                    onChange={() => toggle(row.key)}
-                    disabled={isRunning}
-                    size="sm"
-                  />
-                </chakra.span>
-                <chakra.span display="flex" flexDirection="column" gap="0.5" minW={0}>
-                  <chakra.span fontSize="md" color="app.text">
-                    {t(row.label)}
+              <Tooltip key={row.key} label={t(row.hint)}>
+                <chakra.div
+                  display="flex"
+                  alignItems="flex-start"
+                  gap="2"
+                  py="1"
+                  cursor={isRunning ? "not-allowed" : "pointer"}
+                  userSelect="none"
+                  onClick={(e) => {
+                    if (isRunning) return;
+                    // Switch 自身のクリックはコンポーネント側で処理されるので、
+                    // ラッパーは text 部分のクリックだけを引き受ける。
+                    if (e.target instanceof HTMLElement && e.target.closest("button[role=switch]")) {
+                      return;
+                    }
+                    toggle(row.key);
+                  }}
+                >
+                  <chakra.span mt="0.5" flex="none">
+                    <Switch
+                      checked={!!options[row.key]}
+                      onChange={() => toggle(row.key)}
+                      disabled={isRunning}
+                      size="sm"
+                    />
                   </chakra.span>
-                  <chakra.span fontSize="xs" color="app.textMuted" lineHeight={1.4}>
-                    {t(row.hint)}
+                  <chakra.span display="flex" flexDirection="column" gap="0.5" minW={0}>
+                    <chakra.span fontSize="md" color="app.text">
+                      {t(row.label)}
+                    </chakra.span>
+                    <chakra.span fontSize="xs" color="app.textMuted" lineHeight={1.4}>
+                      {t(row.hint)}
+                    </chakra.span>
                   </chakra.span>
-                </chakra.span>
-              </chakra.div>
+                </chakra.div>
+              </Tooltip>
             ))}
           </chakra.div>
           {driver === "postgres" && (

@@ -7,8 +7,9 @@ import { useT } from "../i18n";
 import { transitions } from "../motion";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import type { CellKind } from "./cellTypeMeta";
+import { Tooltip } from "./Tooltip";
 
 interface Props {
   /** Column metadata (names) for the inspected row. */
@@ -108,70 +109,73 @@ export function RowInspector({
           borderColor="app.border"
           flexShrink={0}
         >
-          <chakra.span fontWeight={600} fontSize="sm" color="app.text" flex="1">
+          <chakra.span textStyle="subheading" flex="1">
             {t("gridRowInspectorTitle", { row: rowNumber })}
           </chakra.span>
-          <chakra.button
-            type="button"
-            display="inline-flex"
-            alignItems="center"
-            justifyContent="center"
-            w="24px"
-            h="24px"
-            border="none"
-            bg="transparent"
-            color="app.textMuted"
-            borderRadius="sm"
-            cursor="pointer"
-            _hover={{ bg: "app.hover", color: "app.text" }}
-            _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-            disabled={!hasPrev}
-            onClick={onPrev}
-            title={t("gridInspectorPrev")}
-            aria-label={t("gridInspectorPrev")}
-          >
-            <Icon name="chevron-left" size={16} />
-          </chakra.button>
-          <chakra.button
-            type="button"
-            display="inline-flex"
-            alignItems="center"
-            justifyContent="center"
-            w="24px"
-            h="24px"
-            border="none"
-            bg="transparent"
-            color="app.textMuted"
-            borderRadius="sm"
-            cursor="pointer"
-            _hover={{ bg: "app.hover", color: "app.text" }}
-            _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-            disabled={!hasNext}
-            onClick={onNext}
-            title={t("gridInspectorNext")}
-            aria-label={t("gridInspectorNext")}
-          >
-            <Icon name="chevron-right" size={16} />
-          </chakra.button>
-          <chakra.button
-            type="button"
-            display="inline-flex"
-            alignItems="center"
-            justifyContent="center"
-            w="24px"
-            h="24px"
-            border="none"
-            bg="transparent"
-            color="app.textMuted"
-            borderRadius="sm"
-            cursor="pointer"
-            _hover={{ bg: "app.hover", color: "app.text" }}
-            onClick={onClose}
-            title={t("gridInspectorClose")}
-            aria-label={t("gridInspectorClose")}
-          >
-            <Icon name="close" size={16} />
-          </chakra.button>
+          <Tooltip label={t("gridInspectorPrev")} focusableWrapper={!hasPrev}>
+            <chakra.button
+              type="button"
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              w="24px"
+              h="24px"
+              border="none"
+              bg="transparent"
+              color="app.textMuted"
+              borderRadius="sm"
+              cursor="pointer"
+              _hover={{ bg: "app.hover", color: "app.text" }}
+              _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
+              disabled={!hasPrev}
+              onClick={onPrev}
+              aria-label={t("gridInspectorPrev")}
+            >
+              <Icon name="chevron-left" size={ICON_SIZES.md} />
+            </chakra.button>
+          </Tooltip>
+          <Tooltip label={t("gridInspectorNext")} focusableWrapper={!hasNext}>
+            <chakra.button
+              type="button"
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              w="24px"
+              h="24px"
+              border="none"
+              bg="transparent"
+              color="app.textMuted"
+              borderRadius="sm"
+              cursor="pointer"
+              _hover={{ bg: "app.hover", color: "app.text" }}
+              _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
+              disabled={!hasNext}
+              onClick={onNext}
+              aria-label={t("gridInspectorNext")}
+            >
+              <Icon name="chevron-right" size={ICON_SIZES.md} />
+            </chakra.button>
+          </Tooltip>
+          <Tooltip label={t("gridInspectorClose")}>
+            <chakra.button
+              type="button"
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              w="24px"
+              h="24px"
+              border="none"
+              bg="transparent"
+              color="app.textMuted"
+              borderRadius="sm"
+              cursor="pointer"
+              _hover={{ bg: "app.hover", color: "app.text" }}
+              onClick={onClose}
+              aria-label={t("gridInspectorClose")}
+            >
+              <Icon name="close" size={ICON_SIZES.md} />
+            </chakra.button>
+          </Tooltip>
         </Box>
 
         <Box flex="1" overflowY="auto" css={{ scrollbarWidth: "thin" }} px="3" py="2">
@@ -198,40 +202,42 @@ export function RowInspector({
                   borderColor="app.borderSubtle"
                 >
                   <Box display="flex" alignItems="center" gap="1.5">
-                    <chakra.span
-                      flex="1"
-                      fontSize="xs"
-                      fontFamily="mono"
-                      color="app.textMuted"
-                      overflow="hidden"
-                      textOverflow="ellipsis"
-                      whiteSpace="nowrap"
-                      title={`${col.name} — ${col.type_name}`}
-                    >
-                      {col.name}
-                    </chakra.span>
-                    <chakra.button
-                      type="button"
-                      display="inline-flex"
-                      alignItems="center"
-                      justifyContent="center"
-                      w="20px"
-                      h="20px"
-                      border="none"
-                      bg="transparent"
-                      color="app.textMuted"
-                      borderRadius="sm"
-                      cursor="pointer"
-                      flexShrink={0}
-                      _hover={{ bg: "app.hover", color: "app.text" }}
-                      _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-                      disabled={isNull}
-                      onClick={() => void copyField(display)}
-                      title={t("gridInspectorCopyField")}
-                      aria-label={t("gridInspectorCopyField")}
-                    >
-                      <Icon name="copy" size={13} />
-                    </chakra.button>
+                    <Tooltip label={`${col.name} — ${col.type_name}`}>
+                      <chakra.span
+                        flex="1"
+                        fontSize="xs"
+                        fontFamily="mono"
+                        color="app.textMuted"
+                        overflow="hidden"
+                        textOverflow="ellipsis"
+                        whiteSpace="nowrap"
+                      >
+                        {col.name}
+                      </chakra.span>
+                    </Tooltip>
+                    <Tooltip label={t("gridInspectorCopyField")} focusableWrapper={isNull}>
+                      <chakra.button
+                        type="button"
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        w="20px"
+                        h="20px"
+                        border="none"
+                        bg="transparent"
+                        color="app.textMuted"
+                        borderRadius="sm"
+                        cursor="pointer"
+                        flexShrink={0}
+                        _hover={{ bg: "app.hover", color: "app.text" }}
+                        _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+                        disabled={isNull}
+                        onClick={() => void copyField(display)}
+                        aria-label={t("gridInspectorCopyField")}
+                      >
+                        <Icon name="copy" size={ICON_SIZES.sm} />
+                      </chakra.button>
+                    </Tooltip>
                   </Box>
                   {isNull ? (
                     <chakra.span fontSize="sm" fontStyle="italic" color="app.textMuted">

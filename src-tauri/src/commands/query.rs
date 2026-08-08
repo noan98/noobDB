@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::types::{Column, QueryResult, StreamBatch, Value};
-use crate::db::{apply_auto_limit, is_read_only_sql};
+use crate::db::{apply_auto_limit_for, is_read_only_sql};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
@@ -16,6 +16,17 @@ use crate::state::{AppState, Session, StreamHandle, StreamKind};
 /// export path in `commands::export`).
 pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
     if session.read_only && !is_read_only_sql(sql) {
+        // 緊急クエリ実行モード: 読み取り専用セッションでも、ユーザが明示的に
+        // 有効化したときだけ書き込み文を通す (`set_emergency_mode` 参照)。
+        // 監査の手がかりとしてログには必ず残す。
+        if session.emergency_write_active() {
+            tracing::warn!(
+                session_id = %session.id,
+                sql = %sql_summary(sql),
+                "emergency mode: allowing a non-read-only statement on a read-only session"
+            );
+            return Ok(());
+        }
         tracing::warn!(
             session_id = %session.id,
             sql = %sql_summary(sql),
@@ -24,6 +35,56 @@ pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result
         return Err(AppError::ReadOnly(
             "read-only profile: only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed".into(),
         ));
+    }
+    Ok(())
+}
+
+/// 読み取り専用セッションの「緊急クエリ実行モード」を切り替える (#emergency-mode)。
+///
+/// 有効な間は `ensure_allowed_for_session` が書き込み文を通すため、緊急対応の
+/// UPDATE などを別プロファイルで繋ぎ直さずに実行できる。適用範囲は SQL 実行経路
+/// (`run_query` / `run_query_transaction` / `run_query_stream` / 明示トランザク
+/// ション) のみで、CSV インポート・同期適用・`kill_process` の read-only 拒否は
+/// 変わらない。フラグはセッション在命中のみ有効で、切断・再接続 (`reconnect` の
+/// セッション差し替え) で必ずオフに戻る。
+///
+/// 有効化の合意 (接続先名のタイプ確認) はフロントエンドのダイアログが担う UI
+/// レベルの安全網であり、`confirm_writes` と同じ強制レベル (CLAUDE.md 参照)。
+/// この IPC を直接呼べば確認なしに有効化できるため、確実な書き込み禁止には
+/// DB 側の権限設定を併用すること。
+#[tauri::command]
+pub async fn set_emergency_mode(
+    session_id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    set_emergency_mode_inner(state.inner(), &session_id, enabled).await
+}
+
+/// Core of [`set_emergency_mode`] decoupled from Tauri's `State` wrapper so
+/// integration tests can drive the exact command path. See [`run_query_inner`].
+pub(crate) async fn set_emergency_mode_inner(
+    state: &AppState,
+    session_id: &str,
+    enabled: bool,
+) -> Result<()> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    // 読み書き可能なセッションで有効化しても意味がない (ガード自体が無い) ので、
+    // フロント側の状態管理バグを早期に露見させるためエラーにする。無効化は
+    // 冪等な後始末として常に許可する。
+    if enabled && !session.read_only {
+        return Err(AppError::InvalidInput(
+            "emergency mode is only applicable to read-only sessions".into(),
+        ));
+    }
+    session.set_emergency_write(enabled);
+    if enabled {
+        tracing::warn!(session_id = %session.id, "emergency write mode enabled");
+    } else {
+        tracing::info!(session_id = %session.id, "emergency write mode disabled");
     }
     Ok(())
 }
@@ -39,6 +100,23 @@ fn ensure_auto_refresh_read_only(sql: &str) -> Result<()> {
     if !is_read_only_sql(sql) {
         return Err(AppError::ReadOnly(
             "auto-refresh allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Backend-enforced read-only guard for cross-environment broadcast execution
+/// (#738). A broadcast fans one statement out to several sessions at once
+/// (possibly across different profiles/permission levels), so the caller
+/// pins it to read-only regardless of any single session's `read_only` flag —
+/// mirroring [`ensure_auto_refresh_read_only`]'s reasoning for scheduled
+/// re-execution. The frontend already blocks non-read-only SQL before firing
+/// a broadcast, but this is the backend-enforced half of that guarantee.
+fn ensure_broadcast_read_only(sql: &str) -> Result<()> {
+    if !is_read_only_sql(sql) {
+        return Err(AppError::ReadOnly(
+            "broadcast execution allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
                 .into(),
         ));
     }
@@ -227,59 +305,63 @@ pub async fn finish_transaction(
     Ok(())
 }
 
+// 構造体・フィールドの `pub` は #825 の zod ⇔ serde ゴールデン
+// (`serde_schema_parity.rs`) が `__test_api` 経由で代表インスタンスを組み立てる
+// ためのもの。IPC 経路としては引き続き非公開モジュール内に留まる (#824 の
+// LogView と同じ最小限の可視性拡張パターン)。
 #[derive(Debug, Serialize, Clone)]
-struct StreamColumnsEvent {
+pub struct StreamColumnsEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    columns: Vec<Column>,
+    pub stream_id: String,
+    pub columns: Vec<Column>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct StreamRowsEvent {
+pub struct StreamRowsEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    rows: Vec<Vec<Value>>,
+    pub stream_id: String,
+    pub rows: Vec<Vec<Value>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct StreamDoneEvent {
+pub struct StreamDoneEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
+    pub stream_id: String,
     #[serde(rename = "totalRows")]
-    total_rows: u64,
+    pub total_rows: u64,
     #[serde(rename = "rowsAffected")]
-    rows_affected: u64,
+    pub rows_affected: u64,
     #[serde(rename = "elapsedMs")]
-    elapsed_ms: u64,
+    pub elapsed_ms: u64,
     /// True when the result had columns (a SELECT-shaped statement). False
     /// for INSERT/UPDATE/etc. so the UI can show "rows affected" instead.
     #[serde(rename = "hasColumns")]
-    has_columns: bool,
+    pub has_columns: bool,
     /// The row cap that was auto-injected for this run, or `null` when none was
     /// applied. Lets the UI show a "auto LIMIT N applied" badge.
     #[serde(rename = "appliedAutoLimit")]
-    applied_auto_limit: Option<u64>,
+    pub applied_auto_limit: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct StreamErrorEvent {
+pub struct StreamErrorEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
-    error: String,
+    pub stream_id: String,
+    pub error: String,
     /// True when the run was aborted by the execution-timeout guard rather than
     /// failing in the database, so the UI can show a dedicated timeout message.
     #[serde(rename = "timedOut")]
-    timed_out: bool,
+    pub timed_out: bool,
     /// True when the failure means the DB connection was lost (server closed it,
     /// socket broke, network dropped). Lets the UI drop the now-dead session and
     /// prompt a reconnect instead of leaving it stuck on "connected".
     #[serde(rename = "connectionLost")]
-    connection_lost: bool,
+    pub connection_lost: bool,
     /// Rows already delivered to the frontend (via `:rows`/`:before-rows`/
     /// `:after-rows` batches) before the run failed. Lets the UI tell a
     /// partial result apart from a complete one on timeout/error (#685).
     #[serde(rename = "deliveredRows")]
-    delivered_rows: u64,
+    pub delivered_rows: u64,
 }
 
 /// Emitted once by `cancel_stream` when it successfully claims an active
@@ -288,11 +370,11 @@ struct StreamErrorEvent {
 /// `export-stream:cancelled`) is chosen from the stream's registered
 /// [`StreamKind`] so the right listener picks it up (#685).
 #[derive(Debug, Serialize, Clone)]
-struct StreamCancelledEvent {
+pub struct StreamCancelledEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
+    pub stream_id: String,
     #[serde(rename = "deliveredRows")]
-    delivered_rows: u64,
+    pub delivered_rows: u64,
 }
 
 const EV_QUERY_COLS: &str = "query-stream:columns";
@@ -318,6 +400,16 @@ pub async fn run_query_stream(
     auto_limit: Option<usize>,
     query_timeout_secs: Option<u64>,
     auto_refresh: Option<bool>,
+    force_read_only: Option<bool>,
+    // #735 DML フライトレコーダ。true かつ単文の INSERT/UPDATE/DELETE のとき、
+    // 通常のストリーミング実行の代わりに `Connection::capture_write` 経由で
+    // before/after イメージの記録を試みつつ実行する (`spawn_captured_write`)。
+    // 記録の成否に関わらず書き込み自体は行われ、`query-stream:*` イベントは
+    // 通常経路と同じ形で emit されるためフロントの購読側 (`onDone`/`onError`)
+    // に変更は不要。
+    capture: Option<bool>,
+    capture_row_cap: Option<u32>,
+    capture_retention_days: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -329,6 +421,11 @@ pub async fn run_query_stream(
     let auto_refresh = auto_refresh.unwrap_or(false);
     if auto_refresh {
         ensure_auto_refresh_read_only(&sql)?;
+    }
+    // Cross-environment broadcast execution (#738) is read-only no matter the
+    // session, mirroring the auto-refresh guard above.
+    if force_read_only.unwrap_or(false) {
+        ensure_broadcast_read_only(&sql)?;
     }
     // `register_stream` をタスク本体の実行より前に完了させるためのゲート。
     // `tokio::spawn` は返り値の `JoinHandle` からしか `AbortHandle` を得られないため
@@ -347,8 +444,27 @@ pub async fn run_query_stream(
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
     let stream_id_for_task = stream_id.clone();
     let delivered_rows_for_task = delivered_rows.clone();
+    let capture_requested = capture.unwrap_or(false) && !auto_refresh;
     let handle = tokio::spawn(async move {
         let _ = ready_rx.await;
+        if capture_requested && crate::db::classify_write_kind(&sql) != crate::db::WriteKind::Other
+        {
+            spawn_captured_write(
+                app,
+                session,
+                stream_id_for_task,
+                sql,
+                database,
+                capture_row_cap
+                    .map(|n| n as usize)
+                    .unwrap_or(crate::db::DEFAULT_CAPTURE_ROW_CAP),
+                capture_retention_days.map(|n| n as i64),
+                query_timeout_secs,
+                delivered_rows_for_task,
+            )
+            .await;
+            return;
+        }
         spawn_query_stream(
             app,
             session,
@@ -404,7 +520,7 @@ async fn spawn_query_stream(
     // is eligible. `sql` stays the original so history records what the user
     // actually typed; only `effective_sql` carries the injected cap.
     let (effective_sql, applied_auto_limit) = match auto_limit {
-        Some(n) => match apply_auto_limit(&sql, n) {
+        Some(n) => match apply_auto_limit_for(session.conn.driver_kind(), &sql, n) {
             Some(rewritten) => (rewritten, Some(n as u64)),
             None => (sql.clone(), None),
         },
@@ -558,6 +674,128 @@ async fn spawn_query_stream(
     }
 }
 
+/// The `run_query_stream` capture-enabled sibling of [`spawn_query_stream`]
+/// (#735 DML flight recorder). Instead of streaming a result set, this
+/// executes a single INSERT/UPDATE/DELETE via [`crate::db::Connection::
+/// capture_write`] and emits the *same* `query-stream:done` / `:error`
+/// events `spawn_query_stream` would have — so the frontend's existing
+/// `onDone`/`onError` subscription handles both paths without change. On
+/// success, a capturable write is persisted to the local flight-recorder
+/// store (best-effort; failing to persist never fails the run, the write
+/// already happened).
+#[allow(clippy::too_many_arguments)]
+async fn spawn_captured_write(
+    app: AppHandle,
+    session: Arc<Session>,
+    stream_id: String,
+    sql: String,
+    database: Option<String>,
+    row_cap: usize,
+    retention_days: Option<i64>,
+    query_timeout_secs: Option<u64>,
+    delivered_rows: Arc<AtomicU64>,
+) {
+    tracing::debug!(
+        session_id = %session.id,
+        stream_id = %stream_id,
+        database = ?database,
+        sql = %sql_summary(&sql),
+        "captured write starting"
+    );
+    let started = std::time::Instant::now();
+    let exec = session
+        .conn
+        .capture_write(&sql, database.as_deref(), row_cap);
+    // Same timeout treatment as the ordinary streaming path (`spawn_query_stream`):
+    // without this, a captured write could hang indefinitely — the capture
+    // step itself runs a dry-run preview *and* the real write, so it is at
+    // least as susceptible to a stuck query as a normal execution.
+    let outcome = match query_timeout_secs {
+        Some(secs) if secs > 0 => {
+            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                Ok(res) => res,
+                Err(_) => Err(AppError::Timeout(secs)),
+            }
+        }
+        _ => exec.await,
+    };
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    match &outcome {
+        Ok((result, capture)) => {
+            tracing::debug!(
+                session_id = %session.id,
+                stream_id = %stream_id,
+                elapsed_ms,
+                rows = result.rows_affected,
+                capturable = capture.capturable,
+                "captured write completed"
+            );
+            if let Err(e) = app.emit(
+                EV_QUERY_DONE,
+                StreamDoneEvent {
+                    stream_id: stream_id.clone(),
+                    total_rows: 0,
+                    rows_affected: result.rows_affected,
+                    elapsed_ms,
+                    has_columns: false,
+                    applied_auto_limit: None,
+                },
+            ) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %e,
+                    "failed to emit done event (captured write)"
+                );
+            }
+
+            crate::flight_recorder::persist_capture(
+                session.skip_history,
+                session.profile_id.clone(),
+                session.conn.driver_kind(),
+                database.clone(),
+                sql.clone(),
+                capture,
+                retention_days,
+            )
+            .await;
+        }
+        Err(e) => {
+            tracing::warn!(
+                session_id = %session.id,
+                stream_id = %stream_id,
+                error = %e,
+                "captured write failed"
+            );
+            if let Err(emit_err) = app.emit(
+                EV_QUERY_ERROR,
+                StreamErrorEvent {
+                    stream_id: stream_id.clone(),
+                    error: e.to_string(),
+                    timed_out: matches!(e, AppError::Timeout(_)),
+                    connection_lost: e.is_connection_lost(),
+                    delivered_rows: delivered_rows.load(Ordering::SeqCst),
+                },
+            ) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %emit_err,
+                    "failed to emit error event (captured write)"
+                );
+            }
+        }
+    }
+
+    let result_for_history: Result<QueryResult> = outcome.map(|(r, _)| r);
+    record_history(&session, &sql, database.as_deref(), &result_for_history).await;
+
+    if let Some(state) = app.try_state::<AppState>() {
+        state.forget_stream(&stream_id).await;
+    }
+}
+
 /// Persists one executed statement to the query history. Best-effort: failures
 /// are logged but never surfaced to the caller, and sessions flagged
 /// `skip_history` are skipped entirely. Only the streaming run path records
@@ -643,19 +881,19 @@ pub(crate) async fn record_write_history(
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct PreviewMetaEvent {
+pub struct PreviewMetaEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
+    pub stream_id: String,
     #[serde(rename = "targetTable")]
-    target_table: Option<String>,
-    columns: Vec<Column>,
+    pub target_table: Option<String>,
+    pub columns: Vec<Column>,
     #[serde(rename = "primaryKey")]
-    primary_key: Vec<String>,
+    pub primary_key: Vec<String>,
     #[serde(rename = "rowsAffected")]
-    rows_affected: u64,
+    pub rows_affected: u64,
     #[serde(rename = "elapsedMs")]
-    elapsed_ms: u64,
-    truncated: bool,
+    pub elapsed_ms: u64,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -666,9 +904,9 @@ struct PreviewRowsEvent {
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct PreviewDoneEvent {
+pub struct PreviewDoneEvent {
     #[serde(rename = "streamId")]
-    stream_id: String,
+    pub stream_id: String,
 }
 
 const EV_PREVIEW_META: &str = "preview-stream:meta";
@@ -971,6 +1209,43 @@ mod tests {
                     Err(AppError::ReadOnly(_))
                 ),
                 "expected `{sql}` to be rejected for auto-refresh"
+            );
+        }
+    }
+
+    #[test]
+    fn broadcast_allows_read_only_statements() {
+        for sql in [
+            "SELECT * FROM users",
+            "  select 1",
+            "SHOW TABLES",
+            "DESCRIBE users",
+            "EXPLAIN SELECT 1",
+            "WITH t AS (SELECT 1) SELECT * FROM t",
+        ] {
+            assert!(
+                ensure_broadcast_read_only(sql).is_ok(),
+                "expected `{sql}` to be allowed for broadcast execution"
+            );
+        }
+    }
+
+    #[test]
+    fn broadcast_rejects_writes_and_ddl() {
+        for sql in [
+            "DELETE FROM users",
+            "UPDATE users SET name = 'x'",
+            "INSERT INTO users VALUES (1)",
+            "DROP TABLE users",
+            "TRUNCATE users",
+            // Stacked statement hiding a write behind a SELECT.
+            "SELECT 1; DELETE FROM users",
+            // Data-modifying CTE.
+            "WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
+        ] {
+            assert!(
+                matches!(ensure_broadcast_read_only(sql), Err(AppError::ReadOnly(_))),
+                "expected `{sql}` to be rejected for broadcast execution"
             );
         }
     }

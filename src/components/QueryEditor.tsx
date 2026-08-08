@@ -53,7 +53,9 @@ import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
+import { Switch } from "./Switch";
 import { Button } from "./ui";
+import { Tooltip } from "./Tooltip";
 import { MultiStateBadge, type BadgeState } from "./MultiStateBadge";
 import {
   initialHistoryNav,
@@ -66,8 +68,15 @@ import {
 // 薄いラッパ。`Button` 自体を `motion.create` するとボタンの recipe (Chakra style props)
 // 経路が複雑になるため、`motion.span` を被せる方式で済ませている。span は inline-flex
 // で本体ボタンと同じレイアウト振る舞いを保つ。
-function ToolbarButton({ children, ...rest }: ComponentProps<typeof Button> & { children: ReactNode }) {
-  return (
+// `title` は native title ではなく共有 `Tooltip` (#814/#884) へこの共通ラッパ 1 か所で
+// 委譲する — 呼び出し側は従来どおり `title` を渡すだけでよい。`disabled` なボタンは
+// `focusableWrapper` でキーボード到達も確保する。
+function ToolbarButton({
+  children,
+  title,
+  ...rest
+}: ComponentProps<typeof Button> & { children: ReactNode }) {
+  const button = (
     <motion.span
       style={{ display: "inline-flex" }}
       whileHover={!rest.disabled ? { scale: 1.04 } : undefined}
@@ -76,6 +85,13 @@ function ToolbarButton({ children, ...rest }: ComponentProps<typeof Button> & { 
     >
       <Button {...rest}>{children}</Button>
     </motion.span>
+  );
+  return title ? (
+    <Tooltip label={title} focusableWrapper={rest.disabled}>
+      {button}
+    </Tooltip>
+  ) : (
+    button
   );
 }
 
@@ -148,6 +164,18 @@ interface Props {
   previewRunning?: boolean;
   onPreview?: (sql: string) => void;
   onExplain?: (sql: string) => void;
+  /**
+   * 環境横断ブロードキャスト実行 (#738)。渡されると「複数の接続で実行」ボタンが
+   * ツールバーに現れる。読み取り専用チェック・対象接続の選択・実行そのものは
+   * 呼び出し側 (`App.tsx` → `BroadcastModal`) が担い、ここは選択中/全文の SQL を
+   * 渡すだけ。
+   */
+  onBroadcast?: (sql: string) => void;
+  /**
+   * 同一ドライバの接続が他に開いているか (ブロードキャストの対象になり得るか)。
+   * false のときボタンは無効化され、ツールチップにその理由を出す。
+   */
+  broadcastAvailable?: boolean;
   onChange?: (sql: string) => void;
   onFormatError?: (error: string) => void;
   onSaveSnippet?: (sql: string) => void;
@@ -191,6 +219,14 @@ interface Props {
    * its Run button is disabled for write query kinds.
    */
   readOnly?: boolean;
+  /**
+   * 緊急クエリ実行モード (read-only セッションの一時的な書き込み許可) の現在値。
+   * `onToggleEmergencyMode` とセットで渡され、かつ `readOnly` のときだけ
+   * ツールバーにトグルを表示する。有効化の合意 (接続先名のタイプ確認) は App 側の
+   * ダイアログが担い、ここは表示と切替要求の通知のみ。
+   */
+  emergencyMode?: boolean;
+  onToggleEmergencyMode?: (next: boolean) => void;
   /**
    * 直近に実行したクエリの一覧 (最新が先頭)。エディタ 1 行目での ↑ / 末尾行での ↓
    * による履歴ナビゲーションに使う。未接続時などは空/undefined。
@@ -333,6 +369,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   previewRunning,
   onPreview,
   onExplain,
+  onBroadcast,
+  broadcastAvailable,
   onChange,
   onFormatError,
   onSaveSnippet,
@@ -350,6 +388,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   builderSnapshot,
   onBuilderPersist,
   readOnly,
+  emergencyMode,
+  onToggleEmergencyMode,
   queryHistory,
   editorBindings,
   focusMode,
@@ -652,7 +692,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     preflightSqlRef.current = initPreflightText;
     setPreflightSql(initPreflightText);
     return () => view.destroy();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const schemaKey = schemaTable
@@ -674,7 +713,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     // `databaseSchema` is a stable reference from the parent's cache: it only
     // changes identity on (re)fetch or when the editor's database changes, so
     // depending on it directly is both correct and cheap.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schemaKey, driver, databaseSchema, defaultDatabase]);
 
   // 構文チェックのオン/オフ、または診断メッセージ (言語切替) が変わったら lint
@@ -686,7 +724,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     view.dispatch({
       effects: lintCompartment.reconfigure(buildLintExtension(sqlLintEnabled)),
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     sqlLintEnabled,
     lintMessages.syntaxError,
@@ -706,7 +743,6 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       ),
     });
     // bindingsRef は毎レンダ更新されるため、コンボ文字列の変化を依存に使う。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runCombo, runStatementCombo, previewCombo, formatCombo]);
 
   // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と
@@ -785,6 +821,12 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     if (!onExplain) return;
     const text = currentText();
     if (text !== null) onExplain(text);
+  };
+
+  const broadcastSelectionOrAll = () => {
+    if (!onBroadcast) return;
+    const text = currentText();
+    if (text !== null) onBroadcast(text);
   };
 
   const runLabel = explainMode
@@ -941,6 +983,30 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             {t("editorSaveSnippet")}
           </ToolbarButton>
         )}
+        {onBroadcast && !explainMode && (
+          <ToolbarButton
+            onClick={broadcastSelectionOrAll}
+            disabled={disabled || !hasContent || !broadcastAvailable}
+            title={
+              disabled
+                ? t("editorHintDisabled")
+                : !hasContent
+                  ? t("editorHintEmpty")
+                  : !broadcastAvailable
+                    ? t("broadcastDisabledSingle")
+                    : t("editorBroadcastTitle")
+            }
+          >
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none" />
+                <path d="M5.2 5.2a4 4 0 0 0 0 5.6M10.8 5.2a4 4 0 0 1 0 5.6" />
+                <path d="M2.8 2.8a7.6 7.6 0 0 0 0 10.4M13.2 2.8a7.6 7.6 0 0 1 0 10.4" />
+              </svg>
+            </chakra.span>
+            {t("editorBroadcast")}
+          </ToolbarButton>
+        )}
         {sessionId && !explainMode && (
           <ToolbarButton
             onClick={() => setShowBuilder(true)}
@@ -954,6 +1020,35 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             </chakra.span>
             {t("editorBuilder")}
           </ToolbarButton>
+        )}
+        {/* 緊急クエリ実行モード (read-only セッション限定)。オンの間は書き込み文が
+            バックエンドの read-only ガードを通るため、危険色で常時目立たせる。 */}
+        {readOnly && sessionId && !explainMode && onToggleEmergencyMode && (
+          <chakra.span
+            display="inline-flex"
+            alignItems="center"
+            gap="1.5"
+            px="2"
+            py="0.5"
+            ml="1"
+            fontSize="xs"
+            fontWeight={emergencyMode ? 700 : 500}
+            color={emergencyMode ? "app.dangerFg" : "app.textMuted"}
+            bg={emergencyMode ? "app.dangerBg" : "transparent"}
+            border="1px solid"
+            borderColor={emergencyMode ? "app.dangerBg" : "app.border"}
+            borderRadius="pill"
+          >
+            {/* native title だった全体の説明文は、`Switch` 自体が既に共有
+                Tooltip (#814) を内蔵しているのでその `title` プロップへ委譲する。 */}
+            <Switch
+              size="sm"
+              checked={!!emergencyMode}
+              onChange={onToggleEmergencyMode}
+              label={t("editorEmergencyMode")}
+              title={t("editorEmergencyModeTitle")}
+            />
+          </chakra.span>
         )}
         {onToggleFocus && (
           <>

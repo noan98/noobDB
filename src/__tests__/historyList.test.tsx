@@ -29,6 +29,7 @@ describe("HistoryList render smoke (#604)", () => {
     renderWithProviders(
       <HistoryList
         activeProfile={makeProfile()}
+        sessionId={null}
         reloadKey={0}
         onRestore={() => {}}
         onOpenInNewTab={() => {}}
@@ -46,6 +47,7 @@ describe("HistoryList render smoke (#604)", () => {
     renderWithProviders(
       <HistoryList
         activeProfile={null}
+        sessionId={null}
         reloadKey={0}
         onRestore={() => {}}
         onOpenInNewTab={() => {}}

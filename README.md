@@ -6,10 +6,14 @@ Rust で書かれた軽量なデスクトップ DB クライアントで、SSH �
 
 ### 接続
 
-- MySQL / PostgreSQL / SQLite 接続 (`sqlx` + `rustls`)
+- MySQL / PostgreSQL / SQLite / DuckDB 接続 (`sqlx` + `rustls`。DuckDB は同期 API の
+  `duckdb` クレート経由)
 - ローカルポートフォワーディングによる **SSH トンネル** (`russh`) — MySQL / PostgreSQL
   - 秘密鍵認証 (パスフレーズ対応) / **ssh-agent** / **パスワード認証** の 3 方式
-  - 初回信頼方式 (TOFU) の known_hosts ファイル (`%APPDATA%/noobDB/known_hosts`)
+  - **踏み台 (ジャンプホスト) 経由の多段トンネル** (最大 2 ホップ) と、
+    `~/.ssh/config` のエイリアスから HostName / Port / User / IdentityFile /
+    ProxyJump を読み込むフォーム補助
+  - 初回信頼方式 (TOFU) の known_hosts ファイル (`%APPDATA%/noobDB/known_hosts`、段ごとに記録)
 - 接続プロファイルは `%APPDATA%/noobDB/profiles.json` に保存 (グループ・色・本番フラグなど)
 - DB のパスワード・SSH 鍵のパスフレーズ・SSH パスワードは OS の資格情報ストアに保存
   (`keyring` クレート経由。Windows 資格情報マネージャー等)
@@ -40,7 +44,9 @@ Rust で書かれた軽量なデスクトップ DB クライアントで、SSH �
 
 - スキーマブラウザ: データベース / テーブル / カラム / インデックス / 外部キー
   - PostgreSQL では UI の「データベース」階層にスキーマ (例: `public`) が表示されます
-  - SQLite では「データベース」階層は `main` 固定で、ファイル 1 つ = 1 DB として扱います
+  - SQLite / DuckDB では「データベース」階層は `main` 固定で、ファイル 1 つ = 1 DB として
+    扱います (DuckDB はファイルベースの分析用 DB。ドライラン/読み取り専用ガード/自動
+    LIMIT などの安全網はドライバ非依存で共通に効きます)
 - ビュー・ルーチン・トリガーの列挙と DDL 取得、概算行数 (統計ベース)
 - **ER 図** (`@xyflow/react` + dagre)、結果の**グラフ化** (SVG 描画)
 - CREATE TABLE ウィザード、行追加 / 行インスペクタ、テーブル名変更・TRUNCATE / DROP
@@ -175,8 +181,9 @@ NOOBDB_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/testdb \
   cargo test --test postgres_integration
 ```
 
-SQLite の統合テスト (`tests/sqlite_integration.rs`) は外部サーバを必要とせず、
-一時ファイルに対して常に実行されます。SSH トンネルの統合テスト
+SQLite / DuckDB の統合テスト (`tests/sqlite_integration.rs` /
+`tests/duckdb_integration.rs`) は外部サーバを必要とせず、一時ファイルに対して常に
+実行されます。SSH トンネルの統合テスト
 (`tests/ssh_integration.rs`) は `NOOBDB_TEST_SSH_URL` が設定されているときだけ実走します
 (`scripts/ci-setup-sshd.sh` でローカル用 sshd を立てられます)。
 

@@ -138,6 +138,29 @@ async function runAxe(screen: string): Promise<axe.Result[]> {
       .poll(() => getComputedStyle(dialog).opacity, { timeout: 5_000 })
       .toBe("1");
   }
+  // ダイアログの初期フォーカス (Modal の `initialFocusEl`、例: 設定画面の閉じる
+  // ボタン) は `Tooltip` (#884) の focus トリガーを即座に発火させ、「Close」の
+  // 吹き出しが hover 無しで出現する。`Tooltip` はモーション (JS 駆動の opacity
+  // フェードイン) で出現するため、フェード途中 (半透明のブレンド色) で axe を
+  // 実行すると color-contrast が過渡的な色を拾って誤判定する (CI と手元で失敗
+  // する前景色が実行ごとに異なるのが証拠)。フォーカス起因のツールチップは
+  // `document.activeElement` を blur すれば即座にアンマウントされる
+  // (`Tooltip.tsx`: 退出アニメーションは無く閉じると即アンマウントされる) ため、
+  // まず blur してツールチップが消えるのを待つ。何らかの理由で消えなかった
+  // 場合に備え、opacity が "1" に安定するまで待つフォールバックも同じ poll に
+  // 含めておく。
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
+  await expect
+    .poll(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        return tooltip === null || getComputedStyle(tooltip).opacity === "1";
+      },
+      { timeout: 2_000 },
+    )
+    .toBe(true);
   const results = await axe.run(document, {
     runOnly: { type: "rule", values: [...AXE_RULES] },
     // 実験的ルール等は runOnly 指定なので混入しない。結果は違反のみ使う。

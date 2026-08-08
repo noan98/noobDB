@@ -1,9 +1,13 @@
 pub mod advisor;
 pub mod data_diff;
 pub mod diff;
+pub mod duckdb;
 pub mod format;
+pub mod mssql;
 pub mod mysql;
 pub mod postgres;
+pub mod privileges;
+pub mod sandbox;
 pub mod sqlite;
 pub mod sync;
 pub mod types;
@@ -13,9 +17,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use advisor::UnusedIndexStats;
 use types::{
-    Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, StatementStat, StreamBatch,
-    TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+    Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
+    ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
+    StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -80,6 +85,14 @@ pub enum DriverKind {
     Mysql,
     Postgres,
     Sqlite,
+    /// DuckDB (#709): a file-backed analytical database, addressed the same
+    /// way as SQLite (`file_path`, no host/port/user/password, no SSH/TLS).
+    /// `rename_all = "lowercase"` above already serializes this as `"duckdb"`.
+    DuckDb,
+    /// Microsoft SQL Server (#729). Backed by `tiberius` rather than `sqlx` —
+    /// see `db/mssql.rs` for the driver module and `AppError::Mssql` for the
+    /// dedicated error variant.
+    Mssql,
 }
 
 impl DriverKind {
@@ -90,8 +103,141 @@ impl DriverKind {
             DriverKind::Mysql => "mysql",
             DriverKind::Postgres => "postgres",
             DriverKind::Sqlite => "sqlite",
+            DriverKind::DuckDb => "duckdb",
+            DriverKind::Mssql => "mssql",
         }
     }
+
+    /// Parses the wire name back into a [`DriverKind`]. The inverse of
+    /// [`DriverKind::as_str`]. Used by the flight recorder (#735) to validate
+    /// that a stored capture's driver still matches the session it is being
+    /// undone against before trusting its literals/escaping.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "mysql" => Some(DriverKind::Mysql),
+            "postgres" => Some(DriverKind::Postgres),
+            "sqlite" => Some(DriverKind::Sqlite),
+            "duckdb" => Some(DriverKind::DuckDb),
+            "mssql" => Some(DriverKind::Mssql),
+            _ => None,
+        }
+    }
+}
+
+/// Coarse classification of a single write statement's shape (#735 DML flight
+/// recorder). Not a general-purpose SQL classifier — it only distinguishes the
+/// three DML kinds the recorder knows how to capture a before/after image for
+/// and reverse; everything else (`SELECT`, DDL, stacked statements, `REPLACE`,
+/// ...) is `Other`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteKind {
+    Insert,
+    Update,
+    Delete,
+    Other,
+}
+
+/// Classifies `sql` per [`WriteKind`]. Comments and string/quoted-identifier
+/// literals are masked first (reusing [`mask_for_analysis`], same as
+/// [`is_read_only_sql`]), and a statement packing more than one SQL statement
+/// ([`has_stacked_statements`]) is always `Other` — the flight recorder only
+/// ever captures a single, unambiguous write.
+pub fn classify_write_kind(sql: &str) -> WriteKind {
+    if has_stacked_statements(sql) {
+        return WriteKind::Other;
+    }
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_analysis(&orig);
+    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+    let body = masked_lower.trim();
+    if starts_with_word(body, "insert") {
+        WriteKind::Insert
+    } else if starts_with_word(body, "update") {
+        WriteKind::Update
+    } else if starts_with_word(body, "delete") {
+        WriteKind::Delete
+    } else {
+        WriteKind::Other
+    }
+}
+
+/// Default per-statement row cap for flight-recorder capture (#735) when the
+/// caller doesn't specify one. Mirrors the retention-row-count style default
+/// elsewhere in the codebase (e.g. history's `MAX_HISTORY_ROWS`) but scoped to
+/// a single write's affected-row window rather than total stored rows.
+pub const DEFAULT_CAPTURE_ROW_CAP: usize = 10_000;
+
+/// Result of attempting to capture a reversible before/after image around one
+/// write statement (#735 DML flight recorder). Always returned alongside the
+/// real [`QueryResult`] from [`Connection::capture_write`] — a capture that
+/// fails (unresolvable target table/PK, row count over the cap, ...) never
+/// blocks the write itself, since this is a best-effort safety net layered on
+/// top of the existing read-only guard, not a transactional guarantee.
+#[derive(Debug, Clone)]
+pub struct WriteCapture {
+    pub kind: WriteKind,
+    pub capturable: bool,
+    /// Human-readable (Japanese) reason when `capturable` is false.
+    pub reason: Option<String>,
+    pub table: Option<String>,
+    pub primary_key: Vec<String>,
+    pub columns: Vec<String>,
+    pub column_types: Vec<String>,
+    /// Rows removed/changed, keyed by primary key. Empty for `Insert`.
+    pub before_rows: Vec<Vec<Value>>,
+    /// Rows added/changed, keyed by primary key. Empty for `Delete`.
+    pub after_rows: Vec<Vec<Value>>,
+    pub rows_affected: u64,
+}
+
+impl WriteCapture {
+    fn not_capturable(kind: WriteKind, reason: impl Into<String>) -> Self {
+        WriteCapture {
+            kind,
+            capturable: false,
+            reason: Some(reason.into()),
+            table: None,
+            primary_key: Vec::new(),
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            before_rows: Vec::new(),
+            after_rows: Vec::new(),
+            rows_affected: 0,
+        }
+    }
+
+    fn not_capturable_with_meta(
+        kind: WriteKind,
+        reason: impl Into<String>,
+        dry: &PreviewResult,
+    ) -> Self {
+        WriteCapture {
+            kind,
+            capturable: false,
+            reason: Some(reason.into()),
+            table: dry.target_table.clone(),
+            primary_key: dry.primary_key.clone(),
+            columns: dry.columns.iter().map(|c| c.name.clone()).collect(),
+            column_types: dry.columns.iter().map(|c| c.type_name.clone()).collect(),
+            before_rows: Vec::new(),
+            after_rows: Vec::new(),
+            rows_affected: 0,
+        }
+    }
+}
+
+/// Tagged signature of a row's values, used to tell whether the same physical
+/// row appears in two row sets (e.g. an INSERT's before/after LIMIT-window
+/// scan). Mirrors `data_diff`'s private `key_signature` helper; kept as a
+/// separate copy here rather than exposing that one, since the two call sites
+/// have no other coupling.
+fn row_signature(values: &[Value]) -> String {
+    values
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
 }
 
 /// Returns the trimmed session-init SQL when present and it contains at least
@@ -122,6 +268,19 @@ pub enum Connection {
     MySql(mysql::MySqlConn),
     Postgres(postgres::PostgresConn),
     Sqlite(sqlite::SqliteConn),
+    // Boxed: `DuckDbConn` carries a `std::sync::Mutex<duckdb::Connection>` +
+    // a `tokio::sync::Mutex<Option<duckdb::Connection>>` inline, which makes
+    // it noticeably larger than the sqlx-backed variants —
+    // `clippy::large_enum_variant` flags the resulting padding on every
+    // `Connection` value (Windows clippy catches this; Linux's build didn't
+    // regress but the lint is architecture-independent).
+    DuckDb(Box<duckdb::DuckDbConn>),
+    // Boxed: `MssqlConn` embeds `tiberius::Client`'s TDS connection state
+    // directly (no internal `Arc`/pool indirection at the top level like the
+    // sqlx-backed drivers), making it far larger than the other three
+    // variants — `clippy::large_enum_variant` flags the resulting padding on
+    // every `Connection` value.
+    Mssql(Box<mssql::MssqlConn>),
 }
 
 /// A single row skipped by a resilient (skip-mode) import: its 0-based index
@@ -149,6 +308,8 @@ impl Connection {
             Connection::MySql(_) => DriverKind::Mysql,
             Connection::Postgres(_) => DriverKind::Postgres,
             Connection::Sqlite(_) => DriverKind::Sqlite,
+            Connection::DuckDb(_) => DriverKind::DuckDb,
+            Connection::Mssql(_) => DriverKind::Mssql,
         }
     }
 
@@ -159,6 +320,12 @@ impl Connection {
                 postgres::PostgresConn::connect(opts).await?,
             )),
             DriverKind::Sqlite => Ok(Connection::Sqlite(sqlite::SqliteConn::connect(opts).await?)),
+            DriverKind::DuckDb => Ok(Connection::DuckDb(Box::new(
+                duckdb::DuckDbConn::connect(opts).await?,
+            ))),
+            DriverKind::Mssql => Ok(Connection::Mssql(Box::new(
+                mssql::MssqlConn::connect(opts).await?,
+            ))),
         }
     }
 
@@ -167,6 +334,8 @@ impl Connection {
             Connection::MySql(c) => c.execute(sql, database).await,
             Connection::Postgres(c) => c.execute(sql, database).await,
             Connection::Sqlite(c) => c.execute(sql, database).await,
+            Connection::DuckDb(c) => c.execute(sql, database).await,
+            Connection::Mssql(c) => c.execute(sql, database).await,
         }
     }
 
@@ -179,6 +348,8 @@ impl Connection {
             Connection::MySql(c) => c.tx_begin(database).await,
             Connection::Postgres(c) => c.tx_begin(database).await,
             Connection::Sqlite(c) => c.tx_begin(database).await,
+            Connection::DuckDb(c) => c.tx_begin(database).await,
+            Connection::Mssql(c) => c.tx_begin(database).await,
         }
     }
 
@@ -189,6 +360,8 @@ impl Connection {
             Connection::MySql(c) => c.tx_execute(sql).await,
             Connection::Postgres(c) => c.tx_execute(sql).await,
             Connection::Sqlite(c) => c.tx_execute(sql).await,
+            Connection::DuckDb(c) => c.tx_execute(sql).await,
+            Connection::Mssql(c) => c.tx_execute(sql).await,
         }
     }
 
@@ -199,6 +372,8 @@ impl Connection {
             Connection::MySql(c) => c.tx_finish(commit).await,
             Connection::Postgres(c) => c.tx_finish(commit).await,
             Connection::Sqlite(c) => c.tx_finish(commit).await,
+            Connection::DuckDb(c) => c.tx_finish(commit).await,
+            Connection::Mssql(c) => c.tx_finish(commit).await,
         }
     }
 
@@ -208,6 +383,8 @@ impl Connection {
             Connection::MySql(c) => c.tx_active().await,
             Connection::Postgres(c) => c.tx_active().await,
             Connection::Sqlite(c) => c.tx_active().await,
+            Connection::DuckDb(c) => c.tx_active().await,
+            Connection::Mssql(c) => c.tx_active().await,
         }
     }
 
@@ -230,6 +407,8 @@ impl Connection {
             Connection::MySql(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
             Connection::Postgres(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
             Connection::Sqlite(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
+            Connection::DuckDb(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
+            Connection::Mssql(c) => c.preview_execute_with_limit(sql, database, row_limit).await,
         }
     }
 
@@ -254,6 +433,14 @@ impl Connection {
                     .await
             }
             Connection::Sqlite(c) => {
+                c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
+                    .await
+            }
+            Connection::DuckDb(c) => {
+                c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
+                    .await
+            }
+            Connection::Mssql(c) => {
                 c.execute_stream(sql, database, initial_batch, chunk_size, on_batch)
                     .await
             }
@@ -292,6 +479,14 @@ impl Connection {
                 c.import_rows(database, table, columns, rows, batch_size, on_progress)
                     .await
             }
+            Connection::DuckDb(c) => {
+                c.import_rows(database, table, columns, rows, batch_size, on_progress)
+                    .await
+            }
+            Connection::Mssql(c) => {
+                c.import_rows(database, table, columns, rows, batch_size, on_progress)
+                    .await
+            }
         }
     }
 
@@ -310,6 +505,8 @@ impl Connection {
             Connection::MySql(c) => c.try_insert_chunk(database, table, columns, rows).await,
             Connection::Postgres(c) => c.try_insert_chunk(database, table, columns, rows).await,
             Connection::Sqlite(c) => c.try_insert_chunk(database, table, columns, rows).await,
+            Connection::DuckDb(c) => c.try_insert_chunk(database, table, columns, rows).await,
+            Connection::Mssql(c) => c.try_insert_chunk(database, table, columns, rows).await,
         }
     }
 
@@ -330,6 +527,8 @@ impl Connection {
             Connection::MySql(c) => c.probe_failing_row(database, table, columns, rows).await,
             Connection::Postgres(c) => c.probe_failing_row(database, table, columns, rows).await,
             Connection::Sqlite(c) => c.probe_failing_row(database, table, columns, rows).await,
+            Connection::DuckDb(c) => c.probe_failing_row(database, table, columns, rows).await,
+            Connection::Mssql(c) => c.probe_failing_row(database, table, columns, rows).await,
         }
     }
 
@@ -345,7 +544,10 @@ impl Connection {
     ) -> Result<bool> {
         match self {
             Connection::MySql(c) => c.table_is_transactional(database, table).await,
-            Connection::Postgres(_) | Connection::Sqlite(_) => Ok(true),
+            Connection::Postgres(_)
+            | Connection::Sqlite(_)
+            | Connection::DuckDb(_)
+            | Connection::Mssql(_) => Ok(true),
         }
     }
 
@@ -435,6 +637,8 @@ impl Connection {
             Connection::MySql(c) => c.execute_transaction(statements, database).await,
             Connection::Postgres(c) => c.execute_transaction(statements, database).await,
             Connection::Sqlite(c) => c.execute_transaction(statements, database).await,
+            Connection::DuckDb(c) => c.execute_transaction(statements, database).await,
+            Connection::Mssql(c) => c.execute_transaction(statements, database).await,
         }
     }
 
@@ -443,6 +647,8 @@ impl Connection {
             Connection::MySql(c) => c.databases().await,
             Connection::Postgres(c) => c.databases().await,
             Connection::Sqlite(c) => c.databases().await,
+            Connection::DuckDb(c) => c.databases().await,
+            Connection::Mssql(c) => c.databases().await,
         }
     }
 
@@ -451,6 +657,8 @@ impl Connection {
             Connection::MySql(c) => c.tables(db).await,
             Connection::Postgres(c) => c.tables(db).await,
             Connection::Sqlite(c) => c.tables(db).await,
+            Connection::DuckDb(c) => c.tables(db).await,
+            Connection::Mssql(c) => c.tables(db).await,
         }
     }
 
@@ -459,6 +667,8 @@ impl Connection {
             Connection::MySql(c) => c.columns(db, table).await,
             Connection::Postgres(c) => c.columns(db, table).await,
             Connection::Sqlite(c) => c.columns(db, table).await,
+            Connection::DuckDb(c) => c.columns(db, table).await,
+            Connection::Mssql(c) => c.columns(db, table).await,
         }
     }
 
@@ -471,6 +681,8 @@ impl Connection {
             Connection::MySql(c) => c.schema_overview(db).await,
             Connection::Postgres(c) => c.schema_overview(db).await,
             Connection::Sqlite(c) => c.schema_overview(db).await,
+            Connection::DuckDb(c) => c.schema_overview(db).await,
+            Connection::Mssql(c) => c.schema_overview(db).await,
         }
     }
 
@@ -484,6 +696,8 @@ impl Connection {
             Connection::MySql(c) => c.foreign_keys(db).await,
             Connection::Postgres(c) => c.foreign_keys(db).await,
             Connection::Sqlite(c) => c.foreign_keys(db).await,
+            Connection::DuckDb(c) => c.foreign_keys(db).await,
+            Connection::Mssql(c) => c.foreign_keys(db).await,
         }
     }
 
@@ -496,6 +710,8 @@ impl Connection {
             Connection::MySql(c) => c.schema_objects(db).await,
             Connection::Postgres(c) => c.schema_objects(db).await,
             Connection::Sqlite(c) => c.schema_objects(db).await,
+            Connection::DuckDb(c) => c.schema_objects(db).await,
+            Connection::Mssql(c) => c.schema_objects(db).await,
         }
     }
 
@@ -513,6 +729,8 @@ impl Connection {
             Connection::MySql(c) => c.object_definition(db, kind, name).await,
             Connection::Postgres(c) => c.object_definition(db, kind, name, id).await,
             Connection::Sqlite(c) => c.object_definition(db, kind, name).await,
+            Connection::DuckDb(c) => c.object_definition(db, kind, name).await,
+            Connection::Mssql(c) => c.object_definition(db, kind, name).await,
         }
     }
 
@@ -525,6 +743,8 @@ impl Connection {
             Connection::MySql(c) => c.list_indexes(db, table).await,
             Connection::Postgres(c) => c.list_indexes(db, table).await,
             Connection::Sqlite(c) => c.list_indexes(db, table).await,
+            Connection::DuckDb(c) => c.list_indexes(db, table).await,
+            Connection::Mssql(c) => c.list_indexes(db, table).await,
         }
     }
 
@@ -539,6 +759,8 @@ impl Connection {
             Connection::MySql(c) => c.table_row_estimates(db).await,
             Connection::Postgres(c) => c.table_row_estimates(db).await,
             Connection::Sqlite(c) => c.table_row_estimates(db).await,
+            Connection::DuckDb(c) => c.table_row_estimates(db).await,
+            Connection::Mssql(c) => c.table_row_estimates(db).await,
         }
     }
 
@@ -553,6 +775,8 @@ impl Connection {
             Connection::MySql(c) => c.table_sizes(db).await,
             Connection::Postgres(c) => c.table_sizes(db).await,
             Connection::Sqlite(c) => c.table_sizes(db).await,
+            Connection::DuckDb(c) => c.table_sizes(db).await,
+            Connection::Mssql(c) => c.table_sizes(db).await,
         }
     }
 
@@ -566,6 +790,8 @@ impl Connection {
             Connection::MySql(c) => c.server_info().await,
             Connection::Postgres(c) => c.server_info().await,
             Connection::Sqlite(c) => c.server_info().await,
+            Connection::DuckDb(c) => c.server_info().await,
+            Connection::Mssql(c) => c.server_info().await,
         }
     }
 
@@ -580,6 +806,8 @@ impl Connection {
             Connection::MySql(c) => c.server_metrics().await,
             Connection::Postgres(c) => c.server_metrics().await,
             Connection::Sqlite(c) => c.server_metrics().await,
+            Connection::DuckDb(c) => c.server_metrics().await,
+            Connection::Mssql(c) => c.server_metrics().await,
         }
     }
 
@@ -592,6 +820,8 @@ impl Connection {
             Connection::MySql(c) => c.list_processes().await,
             Connection::Postgres(c) => c.list_processes().await,
             Connection::Sqlite(c) => c.list_processes().await,
+            Connection::DuckDb(c) => c.list_processes().await,
+            Connection::Mssql(c) => c.list_processes().await,
         }
     }
 
@@ -603,6 +833,38 @@ impl Connection {
             Connection::MySql(c) => c.kill_process(id).await,
             Connection::Postgres(c) => c.kill_process(id).await,
             Connection::Sqlite(c) => c.kill_process(id).await,
+            Connection::DuckDb(c) => c.kill_process(id).await,
+            Connection::Mssql(c) => c.kill_process(id).await,
+        }
+    }
+
+    /// Server accounts/roles for the users & permissions panel (#732): MySQL
+    /// `mysql.user`, PostgreSQL `pg_roles`. SQLite has no user model, and MSSQL
+    /// is not yet implemented (could read `sys.server_principals` /
+    /// `sys.database_permissions`, out of scope for this PR) — both return an
+    /// error instead of an empty list for direct IPC callers (matching
+    /// [`Connection::list_processes`]'s "unsupported" convention), and the
+    /// frontend hides the panel entirely for SQLite.
+    pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
+        match self {
+            Connection::MySql(c) => c.list_db_users().await,
+            Connection::Postgres(c) => c.list_db_users().await,
+            Connection::Sqlite(c) => c.list_db_users().await,
+            Connection::DuckDb(c) => c.list_db_users().await,
+            Connection::Mssql(c) => c.list_db_users().await,
+        }
+    }
+
+    /// The CRUD + DDL privilege matrix for one user/role (see
+    /// [`UserPrivileges`]). `host` narrows a MySQL account (`user@host`);
+    /// ignored by other drivers.
+    pub async fn user_privileges(&self, user: &str, host: Option<&str>) -> Result<UserPrivileges> {
+        match self {
+            Connection::MySql(c) => c.user_privileges(user, host).await,
+            Connection::Postgres(c) => c.user_privileges(user, host).await,
+            Connection::Sqlite(c) => c.user_privileges(user, host).await,
+            Connection::DuckDb(c) => c.user_privileges(user, host).await,
+            Connection::Mssql(c) => c.user_privileges(user, host).await,
         }
     }
 
@@ -615,6 +877,8 @@ impl Connection {
             Connection::MySql(c) => c.query_stats_support().await,
             Connection::Postgres(c) => c.query_stats_support().await,
             Connection::Sqlite(c) => c.query_stats_support().await,
+            Connection::DuckDb(c) => c.query_stats_support().await,
+            Connection::Mssql(c) => c.query_stats_support().await,
         }
     }
 
@@ -628,6 +892,8 @@ impl Connection {
             Connection::MySql(c) => c.live_queries().await,
             Connection::Postgres(c) => c.live_queries().await,
             Connection::Sqlite(c) => c.live_queries().await,
+            Connection::DuckDb(c) => c.live_queries().await,
+            Connection::Mssql(c) => c.live_queries().await,
         }
     }
 
@@ -640,6 +906,8 @@ impl Connection {
             Connection::MySql(c) => c.statement_stats().await,
             Connection::Postgres(c) => c.statement_stats().await,
             Connection::Sqlite(c) => c.statement_stats().await,
+            Connection::DuckDb(c) => c.statement_stats().await,
+            Connection::Mssql(c) => c.statement_stats().await,
         }
     }
 
@@ -653,6 +921,8 @@ impl Connection {
             Connection::MySql(c) => c.unused_indexes(db).await,
             Connection::Postgres(c) => c.unused_indexes(db).await,
             Connection::Sqlite(c) => c.unused_indexes(db).await,
+            Connection::DuckDb(c) => c.unused_indexes(db).await,
+            Connection::Mssql(c) => c.unused_indexes(db).await,
         }
     }
 
@@ -661,6 +931,416 @@ impl Connection {
             Connection::MySql(c) => c.close().await,
             Connection::Postgres(c) => c.close().await,
             Connection::Sqlite(c) => c.close().await,
+            Connection::DuckDb(c) => c.close().await,
+            Connection::Mssql(c) => c.close().await,
+        }
+    }
+
+    /// Executes a single write statement for real while attempting to record a
+    /// reversible before/after image of the rows it touches (#735 DML flight
+    /// recorder / one-click undo).
+    ///
+    /// Implemented once here (not per-driver) on top of the existing dry-run
+    /// preview ([`Connection::preview_execute_with_limit`], which runs the
+    /// statement in a transaction that is always rolled back) instead of
+    /// duplicating its WHERE/target-table/PK extraction — the real write
+    /// afterwards goes through the ordinary [`Connection::execute`] path.
+    ///
+    /// **The dry run's before/after snapshot is not trusted verbatim**: only
+    /// MySQL/PostgreSQL's preview narrows it to the statement's own `WHERE`
+    /// clause; SQLite's simpler implementation always re-scans the first
+    /// `row_cap` rows of the table by primary-key order for *both* snapshots,
+    /// regardless of `WHERE`. Rather than special-casing a driver, this method
+    /// re-derives which rows the statement *actually* touched by pairing
+    /// before/after on primary key and keeping only the pairs that changed
+    /// (`UPDATE`) or that appear on only one side (`INSERT`/`DELETE`) —
+    /// harmless no-ops on drivers that already narrowed the snapshot, and the
+    /// fix that makes this correct on SQLite. The result is then cross-checked
+    /// against the real write's authoritative `rows_affected`; any mismatch
+    /// (a row hid outside the `row_cap` window, an ambiguous shape) declines
+    /// capture rather than risk recording the wrong rows.
+    ///
+    /// **Known limitation (documented, not a bug):** because the snapshot
+    /// comes from a *separate* dry run rather than the same transaction as the
+    /// real write, there is a small window between the two in which another
+    /// client could change the same rows — the captured "after" image would
+    /// then not exactly match what the real write actually produced. This is
+    /// acceptable for a best-effort safety net (the far larger and more likely
+    /// drift window is between capture time and whenever the user chooses to
+    /// undo, which the undo path's conflict check is designed to catch
+    /// regardless). Capture failing for any reason (unresolvable target/PK,
+    /// ambiguous row identification, a malformed statement that only reveals
+    /// itself here) never blocks the write — it always still executes, just
+    /// uncaptured.
+    pub async fn capture_write(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        row_cap: usize,
+    ) -> Result<(QueryResult, WriteCapture)> {
+        let kind = classify_write_kind(sql);
+        if kind == WriteKind::Other {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable(
+                    kind,
+                    "対象外の文 (SELECT / DDL / 複数文など) のため記録できません",
+                ),
+            ));
+        }
+
+        let row_cap = row_cap.max(1);
+        let dry = match self
+            .preview_execute_with_limit(sql, database, row_cap)
+            .await
+        {
+            Ok(d) => d,
+            Err(_) => {
+                let result = self.execute(sql, database).await?;
+                return Ok((
+                    result,
+                    WriteCapture::not_capturable(kind, "対象テーブル/主キーを特定できませんでした"),
+                ));
+            }
+        };
+
+        if dry.target_table.is_none() {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable_with_meta(
+                    kind,
+                    "対象テーブルを特定できませんでした (複雑な JOIN 等)",
+                    &dry,
+                ),
+            ));
+        }
+        if dry.primary_key.is_empty() {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable_with_meta(
+                    kind,
+                    "対象テーブルに主キーがありません",
+                    &dry,
+                ),
+            ));
+        }
+
+        let columns: Vec<String> = dry.columns.iter().map(|c| c.name.clone()).collect();
+        let column_types: Vec<String> = dry.columns.iter().map(|c| c.type_name.clone()).collect();
+        let table = dry.target_table.clone();
+        let primary_key = dry.primary_key.clone();
+        let pk_idx: Vec<usize> = primary_key
+            .iter()
+            .filter_map(|name| columns.iter().position(|c| c == name))
+            .collect();
+        if pk_idx.len() != primary_key.len() {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable_with_meta(
+                    kind,
+                    "主キー列を特定できませんでした",
+                    &dry,
+                ),
+            ));
+        }
+        let pk_of =
+            |row: &[Value]| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
+
+        let ambiguous_reason =
+            "対象行を正確に特定できませんでした (対象行数が上限を超えている可能性があります)";
+
+        // 重複した主キーシグネチャの防御 (#735 レビュー対応): SQLite は
+        // INTEGER PRIMARY KEY 以外の主キーに NULL を許すため、複数の行が同じ
+        // シグネチャに畳まれることがある (`db::data_diff` の `key_unreliable`
+        // と同じ懸念)。UPDATE 経路はこのシグネチャを鍵にした HashMap で
+        // before/after をペアリングするため、重複があると後勝ちで別の行の
+        // after 値を誤って紐付けかねない。DELETE/INSERT 側も HashSet の
+        // 有無判定だけで多重度を見ないため、同様に誤判定しうる。before/after
+        // いずれかで重複が見つかったら、正確に特定できないとして記録を辞退する
+        // (書き込み自体は必ず実行する)。
+        fn has_duplicate_pk_signature(rows: &[Vec<Value>], pk_idx: &[usize]) -> bool {
+            let mut seen = std::collections::HashSet::with_capacity(rows.len());
+            for row in rows {
+                let sig =
+                    row_signature(&pk_idx.iter().map(|&i| row[i].clone()).collect::<Vec<_>>());
+                if !seen.insert(sig) {
+                    return true;
+                }
+            }
+            false
+        }
+        if has_duplicate_pk_signature(&dry.before_rows, &pk_idx)
+            || has_duplicate_pk_signature(&dry.after_rows, &pk_idx)
+        {
+            let result = self.execute(sql, database).await?;
+            return Ok((
+                result,
+                WriteCapture::not_capturable_with_meta(
+                    kind,
+                    "主キーが重複しており対象行を正確に特定できませんでした",
+                    &dry,
+                ),
+            ));
+        }
+
+        match kind {
+            WriteKind::Update => {
+                let after_by_key: std::collections::HashMap<String, Vec<Value>> = dry
+                    .after_rows
+                    .iter()
+                    .map(|r| (row_signature(&pk_of(r)), r.clone()))
+                    .collect();
+                let mut before_changed = Vec::new();
+                let mut after_changed = Vec::new();
+                for b in &dry.before_rows {
+                    if let Some(a) = after_by_key.get(&row_signature(&pk_of(b))) {
+                        if a != b {
+                            before_changed.push(b.clone());
+                            after_changed.push(a.clone());
+                        }
+                    }
+                }
+
+                let result = self.execute(sql, database).await?;
+
+                if before_changed.len() as u64 != result.rows_affected {
+                    return Ok((
+                        result,
+                        WriteCapture::not_capturable_with_meta(kind, ambiguous_reason, &dry),
+                    ));
+                }
+
+                Ok((
+                    result.clone(),
+                    WriteCapture {
+                        kind,
+                        capturable: true,
+                        reason: None,
+                        table,
+                        primary_key,
+                        columns,
+                        column_types,
+                        before_rows: before_changed,
+                        after_rows: after_changed,
+                        rows_affected: result.rows_affected,
+                    },
+                ))
+            }
+            WriteKind::Delete => {
+                let after_sigs: std::collections::HashSet<String> = dry
+                    .after_rows
+                    .iter()
+                    .map(|r| row_signature(&pk_of(r)))
+                    .collect();
+                let deleted_rows: Vec<Vec<Value>> = dry
+                    .before_rows
+                    .iter()
+                    .filter(|r| !after_sigs.contains(&row_signature(&pk_of(r))))
+                    .cloned()
+                    .collect();
+
+                let result = self.execute(sql, database).await?;
+
+                if deleted_rows.len() as u64 != result.rows_affected {
+                    return Ok((
+                        result,
+                        WriteCapture::not_capturable_with_meta(kind, ambiguous_reason, &dry),
+                    ));
+                }
+
+                Ok((
+                    result.clone(),
+                    WriteCapture {
+                        kind,
+                        capturable: true,
+                        reason: None,
+                        table,
+                        primary_key,
+                        columns,
+                        column_types,
+                        before_rows: deleted_rows,
+                        after_rows: Vec::new(),
+                        rows_affected: result.rows_affected,
+                    },
+                ))
+            }
+            WriteKind::Insert => {
+                let before_sigs: std::collections::HashSet<String> = dry
+                    .before_rows
+                    .iter()
+                    .map(|r| row_signature(&pk_of(r)))
+                    .collect();
+
+                let result = self.execute(sql, database).await?;
+
+                let new_rows: Vec<Vec<Value>> = dry
+                    .after_rows
+                    .iter()
+                    .filter(|r| !before_sigs.contains(&row_signature(&pk_of(r))))
+                    .cloned()
+                    .collect();
+
+                if new_rows.is_empty() || new_rows.len() as u64 != result.rows_affected {
+                    return Ok((
+                        result,
+                        WriteCapture::not_capturable_with_meta(
+                            kind,
+                            "挿入行を特定できませんでした (対象範囲外、または複数行 INSERT)",
+                            &dry,
+                        ),
+                    ));
+                }
+
+                Ok((
+                    result.clone(),
+                    WriteCapture {
+                        kind,
+                        capturable: true,
+                        reason: None,
+                        table,
+                        primary_key,
+                        columns,
+                        column_types,
+                        before_rows: Vec::new(),
+                        after_rows: new_rows,
+                        rows_affected: result.rows_affected,
+                    },
+                ))
+            }
+            WriteKind::Other => unreachable!("guarded above"),
+        }
+    }
+
+    /// Refetches the current values of specific rows by primary key. Used by
+    /// the flight recorder undo path (#735) to compare live data against a
+    /// captured after-image before applying the reverse SQL (conflict check).
+    ///
+    /// Builds `SELECT * FROM <table> WHERE (<pk predicate>) OR (<pk
+    /// predicate>) ...` — identifiers and literals are rendered through the
+    /// same escaping already used by schema/data sync ([`sync::quote_ident`] /
+    /// [`data_diff::sql_literal`]), so this introduces no new SQL-building
+    /// code path. A read, so it is safe to call regardless of the session's
+    /// read-only flag (the caller decides whether the *reverse write* is
+    /// allowed).
+    pub async fn fetch_rows_by_pk(
+        &self,
+        table: &str,
+        primary_key: &[String],
+        pk_rows: &[Vec<Value>],
+        database: Option<&str>,
+    ) -> Result<Vec<Vec<Value>>> {
+        if pk_rows.is_empty() || primary_key.is_empty() {
+            return Ok(Vec::new());
+        }
+        // #735 レビュー対応: 1 SELECT に全 pk_rows 分の `(...)  OR (...)` を
+        // 詰め込むと、SQLite の式ツリー深さ上限 (既定 1000、`SQLITE_LIMIT_
+        // EXPR_DEPTH`) を Undo 対象行数が多いときに超えてクエリ自体が失敗しうる。
+        // 固定件数ずつチャンク分割し、複数 SELECT の結果を連結することで
+        // 1 クエリあたりの式ツリーを浅く保つ。
+        const CHUNK_SIZE: usize = 200;
+        let driver = self.driver_kind();
+        let table_ident = sync::quote_ident(driver, table);
+        let mut all_rows = Vec::with_capacity(pk_rows.len());
+        for chunk in pk_rows.chunks(CHUNK_SIZE) {
+            let predicate = chunk
+                .iter()
+                .map(|key| {
+                    let clause = primary_key
+                        .iter()
+                        .zip(key.iter())
+                        .map(|(name, value)| {
+                            let ident = sync::quote_ident(driver, name);
+                            match value {
+                                Value::Null => format!("{ident} IS NULL"),
+                                _ => format!("{ident} = {}", data_diff::sql_literal(driver, value)),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" AND ");
+                    format!("({clause})")
+                })
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            let sql = format!("SELECT * FROM {table_ident} WHERE {predicate}");
+            let result = self.execute(&sql, database).await?;
+            all_rows.extend(result.rows);
+        }
+        Ok(all_rows)
+    }
+
+    // ── ローカル横断クエリ (#740) ──
+    //
+    // Only meaningful on the local SQLite engine (see `commands/local.rs`);
+    // MySQL/Postgres sessions never receive these calls through normal IPC
+    // (the frontend only offers registration on a local session), but the
+    // dispatch is still total so a stray direct call fails clearly instead of
+    // panicking. Keeping these on the `Connection` enum — rather than as
+    // free functions reaching into `Connection::Sqlite` from the command
+    // layer — is what keeps a future local-engine swap (e.g. DuckDB, #709)
+    // to just a new match arm here.
+
+    /// Registers a result set as a local table (create + bulk insert +
+    /// provenance metadata, atomically). See
+    /// `db::sqlite::SqliteConn::register_local_table`.
+    pub async fn register_local_table(
+        &self,
+        meta: &LocalTableMeta,
+        columns: &[Column],
+        rows: &[Vec<Value>],
+    ) -> Result<()> {
+        match self {
+            Connection::Sqlite(c) => c.register_local_table(meta, columns, rows).await,
+            Connection::MySql(_)
+            | Connection::Postgres(_)
+            | Connection::DuckDb(_)
+            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+                "local table registration is only supported on the local SQLite engine".into(),
+            )),
+        }
+    }
+
+    /// Every table registered on this local session, newest first.
+    pub async fn list_local_tables(&self) -> Result<Vec<LocalTableMeta>> {
+        match self {
+            Connection::Sqlite(c) => c.list_local_tables().await,
+            Connection::MySql(_)
+            | Connection::Postgres(_)
+            | Connection::DuckDb(_)
+            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+                "local table listing is only supported on the local SQLite engine".into(),
+            )),
+        }
+    }
+
+    /// Drops a registered local table and its provenance entry.
+    pub async fn drop_local_table(&self, name: &str) -> Result<()> {
+        match self {
+            Connection::Sqlite(c) => c.drop_local_table(name).await,
+            Connection::MySql(_)
+            | Connection::Postgres(_)
+            | Connection::DuckDb(_)
+            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+                "dropping a local table is only supported on the local SQLite engine".into(),
+            )),
+        }
+    }
+
+    /// Persists a clean snapshot of the local database to `path` (the
+    /// explicit "ファイルに保存" escape hatch out of the default volatile
+    /// behavior).
+    pub async fn vacuum_into(&self, path: &str) -> Result<()> {
+        match self {
+            Connection::Sqlite(c) => c.vacuum_into(path).await,
+            Connection::MySql(_)
+            | Connection::Postgres(_)
+            | Connection::DuckDb(_)
+            | Connection::Mssql(_) => Err(AppError::InvalidInput(
+                "saving to file is only supported on the local SQLite engine".into(),
+            )),
         }
     }
 }
@@ -1026,6 +1706,104 @@ pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
     }
     let mut out: String = orig[..end].iter().collect();
     out.push_str(&format!(" LIMIT {limit}"));
+    out.extend(orig[end..].iter());
+    Some(out)
+}
+
+/// Driver-aware entry point for the automatic row cap: MySQL / PostgreSQL /
+/// SQLite all understand a trailing `LIMIT n` and go through
+/// [`apply_auto_limit`] unchanged, but Microsoft SQL Server (#729) has no
+/// `LIMIT` keyword — the equivalent is `TOP (n)` spliced right after the
+/// leading `SELECT` (and `DISTINCT`, if present). Callers that know the
+/// target driver (`commands::query`) should use this instead of calling
+/// [`apply_auto_limit`] directly.
+pub fn apply_auto_limit_for(driver: DriverKind, sql: &str, limit: usize) -> Option<String> {
+    match driver {
+        DriverKind::Mssql => apply_auto_limit_mssql(sql, limit),
+        DriverKind::Mysql | DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
+            apply_auto_limit(sql, limit)
+        }
+    }
+}
+
+/// `TOP (n)` variant of [`apply_auto_limit`] for Microsoft SQL Server (#729).
+/// Shares the same eligibility checks (masked/lowercased body, write-keyword
+/// scan, aggregate-only detection) but rewrites by inserting `TOP (n)` right
+/// after the leading `SELECT` [`DISTINCT`] keywords rather than appending a
+/// trailing clause, because that is where T-SQL's row-cap syntax lives
+/// (`SELECT [DISTINCT] TOP (n) ...`).
+///
+/// **Deliberately conservative beyond what [`apply_auto_limit`] checks**:
+/// only a bare `SELECT ...` is rewritten. `WITH ... SELECT` (CTEs) are left
+/// untouched (`None`) — unlike a trailing `LIMIT`, `TOP` must be spliced
+/// right after the *specific* `SELECT` keyword that starts the outermost
+/// query, and locating that (as opposed to the first `SELECT` textually,
+/// which is typically inside the CTE body) is not attempted here. This is
+/// the same "when in doubt, don't rewrite" philosophy as the rest of this
+/// module. A statement that already contains `TOP`, `OFFSET`, or `FETCH`
+/// (T-SQL's `OFFSET ... FETCH NEXT ... ROWS ONLY` pagination clause) is left
+/// alone, same as an existing `LIMIT`/`OFFSET` on the other drivers.
+pub fn apply_auto_limit_mssql(sql: &str, limit: usize) -> Option<String> {
+    if limit == 0 {
+        return None;
+    }
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_analysis(&orig);
+    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+
+    let body = masked_lower
+        .trim()
+        .trim_end_matches(|c: char| c == ';' || c.is_whitespace())
+        .trim_start();
+    if body.is_empty() {
+        return None;
+    }
+    // `WITH ...` (CTEs) intentionally unsupported here — see doc comment.
+    if !starts_with_word(body, "select") {
+        return None;
+    }
+    if contains_word(body, "top") || contains_word(body, "offset") || contains_word(body, "fetch") {
+        return None;
+    }
+    for kw in ["insert", "update", "delete", "into"] {
+        if contains_word(body, kw) {
+            return None;
+        }
+    }
+    if has_locking_clause(body) {
+        return None;
+    }
+    if is_aggregate_only(body) {
+        return None;
+    }
+
+    // Locate the leading `SELECT` (and optional `DISTINCT`) in the
+    // *untrimmed* masked/lowercased text, so indices still line up with
+    // `orig`. `body` above was only used for the eligibility checks. Compares
+    // `Vec<char>` slices throughout (never byte-slices the `String`) so this
+    // stays correct even if a non-ASCII identifier appears later in the SQL.
+    let full: Vec<char> = masked_lower.chars().collect();
+    let mut start = 0usize;
+    while start < full.len() && full[start].is_whitespace() {
+        start += 1;
+    }
+    // `body` starting with "select" guarantees this prefix is present.
+    let mut end = start + "select".len();
+    let mut after_ws = end;
+    while after_ws < full.len() && full[after_ws].is_whitespace() {
+        after_ws += 1;
+    }
+    let distinct: Vec<char> = "distinct".chars().collect();
+    if full.len() >= after_ws + distinct.len()
+        && full[after_ws..after_ws + distinct.len()] == distinct[..]
+        && (after_ws + distinct.len() == full.len()
+            || !is_word_char(full[after_ws + distinct.len()]))
+    {
+        end = after_ws + distinct.len();
+    }
+
+    let mut out: String = orig[..end].iter().collect();
+    out.push_str(&format!(" TOP ({limit})"));
     out.extend(orig[end..].iter());
     Some(out)
 }
@@ -1534,8 +2312,8 @@ fn is_aggregate_expr(item: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_auto_limit, has_stacked_statements, is_read_only_sql, is_session_init_sql,
-        mask_sensitive_var, sum_size_parts, SslMode,
+        apply_auto_limit, classify_write_kind, has_stacked_statements, is_read_only_sql,
+        is_session_init_sql, mask_sensitive_var, sum_size_parts, DriverKind, SslMode, WriteKind,
     };
 
     #[test]
@@ -2239,6 +3017,86 @@ mod tests {
         let sql = "SELECT a FROM t WHERE b=1";
         let out = apply_auto_limit(sql, 77).unwrap();
         assert_eq!(out, "SELECT a FROM t WHERE b=1 LIMIT 77", "got: {out}");
+    }
+
+    // #735 DML フライトレコーダの分類器。
+    #[test]
+    fn classify_write_kind_recognises_the_three_dml_kinds() {
+        assert_eq!(
+            classify_write_kind("INSERT INTO t (a) VALUES (1)"),
+            WriteKind::Insert
+        );
+        assert_eq!(
+            classify_write_kind("  update t set a=1 where id=1"),
+            WriteKind::Update
+        );
+        assert_eq!(
+            classify_write_kind("DELETE FROM t WHERE id=1"),
+            WriteKind::Delete
+        );
+    }
+
+    #[test]
+    fn classify_write_kind_treats_everything_else_as_other() {
+        for sql in [
+            "SELECT * FROM t",
+            "CREATE TABLE t (id INT)",
+            "DROP TABLE t",
+            "REPLACE INTO t (a) VALUES (1)",
+            "TRUNCATE t",
+            "",
+            "   ",
+        ] {
+            assert_eq!(
+                classify_write_kind(sql),
+                WriteKind::Other,
+                "expected `{sql}` to classify as Other"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_write_kind_rejects_stacked_statements() {
+        // A stacked statement is never captured, even if the first statement
+        // alone would classify as a DML kind — the flight recorder only ever
+        // captures a single, unambiguous write.
+        assert_eq!(
+            classify_write_kind("UPDATE t SET a=1; DROP TABLE t"),
+            WriteKind::Other
+        );
+        assert_eq!(
+            classify_write_kind("DELETE FROM t WHERE id=1; DELETE FROM t2"),
+            WriteKind::Other
+        );
+    }
+
+    #[test]
+    fn classify_write_kind_ignores_keywords_hidden_in_comments_and_strings() {
+        // A DML keyword living inside a comment or string literal must not be
+        // mistaken for the statement's leading keyword.
+        assert_eq!(
+            classify_write_kind("-- insert style guide\nSELECT * FROM t"),
+            WriteKind::Other
+        );
+        assert_eq!(
+            classify_write_kind("SELECT 'update me' FROM t"),
+            WriteKind::Other
+        );
+    }
+
+    #[test]
+    fn driver_kind_parse_round_trips_as_str() {
+        for d in [
+            DriverKind::Mysql,
+            DriverKind::Postgres,
+            DriverKind::Sqlite,
+            DriverKind::DuckDb,
+            DriverKind::Mssql,
+        ] {
+            assert_eq!(DriverKind::parse(d.as_str()), Some(d));
+        }
+        assert_eq!(DriverKind::parse("oracle"), None);
+        assert_eq!(DriverKind::parse(""), None);
     }
 }
 

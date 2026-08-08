@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
@@ -53,6 +53,17 @@ pub struct Session {
     /// When true, the query commands reject any non-read-only SQL before
     /// it reaches the driver. Set at connect time from the profile flag.
     pub read_only: bool,
+    /// Emergency-write override for a read-only session (#emergency-mode).
+    /// While set, `ensure_allowed_for_session` lets non-read-only SQL through
+    /// on this session so an operator can run an urgent fix without
+    /// reconnecting under a different profile. Toggled at runtime via the
+    /// `set_emergency_mode` IPC (the UI gates enabling behind a
+    /// type-the-connection-name confirmation) and intentionally *not*
+    /// persisted: a fresh `Session` — including the in-place swap done by
+    /// `reconnect` — always starts with the override off. Only the SQL query
+    /// paths honor it; CSV import, sync apply and `kill_process` keep
+    /// rejecting read-only sessions regardless.
+    pub emergency_write: AtomicBool,
     /// When true, statements run on this session are NOT written to the
     /// query history. Set at connect time from the profile flag.
     pub skip_history: bool,
@@ -66,6 +77,29 @@ pub struct Session {
     /// Held to keep the tunnel alive for the lifetime of this session.
     /// Dropping the Session drops this and cleans the tunnel up.
     pub _tunnel: Option<SshTunnel>,
+    /// Set only for a **local cross-connection query** session (#740): the
+    /// path of its temp-file-backed SQLite database. Its presence is how
+    /// commands recognize "this session is the local engine, not a driven
+    /// connection" (`commands::local` checks it before allowing table
+    /// registration), and `disconnect` uses it to delete the backing file —
+    /// local sessions are volatile by default, so nothing survives past
+    /// disconnect unless the user explicitly exported a copy first
+    /// (`vacuum_into` / "ファイルに保存", which writes an independent file and
+    /// does not change this session's own volatility).
+    pub local_temp_file: Option<std::path::PathBuf>,
+}
+
+impl Session {
+    /// True when the emergency-write override is currently on. Relaxed-enough
+    /// ordering is fine — the flag is an independent boolean with no other
+    /// memory it must synchronize with — but SeqCst keeps it trivially correct.
+    pub fn emergency_write_active(&self) -> bool {
+        self.emergency_write.load(Ordering::SeqCst)
+    }
+
+    pub fn set_emergency_write(&self, enabled: bool) {
+        self.emergency_write.store(enabled, Ordering::SeqCst);
+    }
 }
 
 #[derive(Default)]

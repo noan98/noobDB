@@ -119,6 +119,39 @@ export const transitions = {
   progress: { duration: durations.slow, ease: easings.out },
 } satisfies Record<string, Transition>;
 
+/**
+ * stagger (協調した順次出現) の間隔トークン (#875)。リストの一括出現で
+ * 子アイテムを何秒刻みでずらすか / 先頭を何秒待たせるかの単一ソース。
+ * 各リストがインラインで数値を持たないよう、必ずここを参照する。
+ */
+export const staggerTiming = {
+  /** 子アイテム間の出現間隔 (秒)。 */
+  each: 0.035,
+  /** コンテナ出現から最初の子までの待ち (秒)。 */
+  delay: 0.04,
+} as const;
+
+/**
+ * stagger コンテナの variants を返す (#875)。子要素には `variants.staggerItem`
+ * を渡し、コンテナ側で `initial="initial" animate="animate"` を指定すると
+ * 子へ variant が伝播して順次出現する。
+ *
+ * `reduced` に true を渡すと stagger を無効化し全子要素を同時表示へフォール
+ * バックする。`MotionConfig reducedMotion` は transform を自動抑制するが
+ * **stagger の遅延そのものは打ち消さない**ため、適用側が
+ * `useReducedMotion()` (MotionConfig の設定も反映される) の値を渡すこと。
+ */
+export function staggerContainer(reduced: boolean): Variants {
+  return {
+    initial: {},
+    animate: {
+      transition: reduced
+        ? { staggerChildren: 0, delayChildren: 0 }
+        : { staggerChildren: staggerTiming.each, delayChildren: staggerTiming.delay },
+    },
+  };
+}
+
 /** よく使う variants。`AnimatePresence` と組み合わせて使う。 */
 export const variants = {
   /** 透明度のみ。 */
@@ -164,5 +197,14 @@ export const variants = {
     initial: { height: 0, opacity: 0, overflow: "hidden" },
     animate: { height: "auto", opacity: 1, transitionEnd: { overflow: "visible" } },
     exit: { height: 0, opacity: 0, overflow: "hidden" },
+  },
+  /**
+   * stagger コンテナの子アイテム (#875)。`staggerContainer()` を variants に
+   * 持つ親の配下に置くと、variant 伝播で順次フェードインする。y の微小移動は
+   * reduced-motion 時に MotionConfig が自動で抑制する。
+   */
+  staggerItem: {
+    initial: { opacity: 0, y: 4 },
+    animate: { opacity: 1, y: 0, transition: transitions.enter },
   },
 } satisfies Record<string, Variants>;

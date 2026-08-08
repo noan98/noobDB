@@ -11,7 +11,9 @@ import {
   useSettings,
 } from "../settings";
 import { copyToClipboard } from "./clipboard";
-import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
+import { Icon, ICON_SIZES } from "./Icon";
 import {
   computeStatDelta,
   detectNPlusOne,
@@ -25,8 +27,9 @@ import {
   type NPlusOneOptions,
 } from "./queryInspector";
 import { Spinner } from "./Spinner";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Checkbox, Heading, Input, Select } from "./ui";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 
 /**
  * ライブクエリ・インスペクタ (#746): 接続先 DB で「アプリ (ORM) が投げている
@@ -56,8 +59,7 @@ const thCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border)",
   padding: "6px 10px",
   textAlign: "left",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
 };
@@ -87,20 +89,20 @@ function oneLine(query: string, max = 300): string {
 
 function NPlusOneBadge({ title }: { title: string }) {
   return (
-    <chakra.span
-      marginLeft="1.5"
-      px="1.5"
-      fontSize="var(--text-xs)"
-      fontFamily="var(--font-sans)"
-      fontWeight={600}
-      color="var(--status-error)"
-      border="1px solid var(--status-error)"
-      borderRadius="var(--radius-sm)"
-      whiteSpace="nowrap"
-      title={title}
-    >
-      N+1
-    </chakra.span>
+    <Tooltip label={title} focusableWrapper>
+      <chakra.span
+        marginLeft="1.5"
+        px="1.5"
+        fontFamily="var(--font-sans)"
+        textStyle="overline"
+        color="var(--status-error)"
+        border="1px solid var(--status-error)"
+        borderRadius="var(--radius-sm)"
+        whiteSpace="nowrap"
+      >
+        N+1
+      </chakra.span>
+    </Tooltip>
   );
 }
 
@@ -134,6 +136,9 @@ export function QueryInspectorPanel({
   const prevStatsRef = useRef<{ stats: StatementStat[]; at: number } | null>(null);
   const [rateFlagged, setRateFlagged] = useState<Set<string>>(new Set());
   const busyRef = useRef(false);
+  // 前提可否プローブのリクエスト世代カウンタ (再取得ボタンでの再実行時、旧要求の
+  // 応答が後から返ってきても上書きしないようにする。#848)。
+  const probeSeqRef = useRef(0);
 
   const nPlusOneOpts: NPlusOneOptions = useMemo(
     () => ({
@@ -143,9 +148,11 @@ export function QueryInspectorPanel({
     [settings.inspectorNPlusOneMinCount, settings.inspectorNPlusOneWindowMs],
   );
 
-  // 前提可否のプローブ。セッション切替時にやり直す。
-  useEffect(() => {
-    let cancelled = false;
+  // 前提可否のプローブ。セッション切替時、および取得失敗時の再取得ボタンから
+  // 呼び出される (#848)。世代カウンタで、古い呼び出しの応答が後から返っても
+  // 最新の状態を上書きしないようにする (useEffect の cancelled フラグと同じ意図)。
+  const probeSupport = useCallback(() => {
+    const seq = ++probeSeqRef.current;
     setSupport(null);
     setSupportError(null);
     setRecording(false);
@@ -158,15 +165,16 @@ export function QueryInspectorPanel({
     api
       .queryStatsSupport(sessionId)
       .then((s) => {
-        if (!cancelled) setSupport(s);
+        if (seq === probeSeqRef.current) setSupport(s);
       })
       .catch((e) => {
-        if (!cancelled) setSupportError(String(e));
+        if (seq === probeSeqRef.current) setSupportError(String(e));
       });
-    return () => {
-      cancelled = true;
-    };
   }, [sessionId]);
+
+  useEffect(() => {
+    probeSupport();
+  }, [probeSupport]);
 
   // support 確定時、利用不可のタブに留まっていたら利用可能な方へ自動で寄せる
   // (例: MySQL で events_statements consumer が無効だが digest は有効な縮退環境
@@ -308,21 +316,20 @@ export function QueryInspectorPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("inspectorTitle")}
-        </chakra.h2>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("inspectorClose")}
-          title={t("inspectorClose")}
-        >
-          <Icon name="close" size={13} />
-        </Button>
+        <Heading>{t("inspectorTitle")}</Heading>
+        <Tooltip label={t("inspectorClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("inspectorClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
@@ -330,9 +337,14 @@ export function QueryInspectorPanel({
       </chakra.p>
 
       {supportError && (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("inspectorLoadError", { error: supportError })}
-        </chakra.p>
+        // 前提可否プローブの失敗: 以降のパネル内容が一切表示できないため、
+        // 全体を置き換えるリッチな EmptyState + 再取得導線にする (#848)。
+        <EmptyState
+          illustration={errorIllustration(supportError)}
+          icon="warning"
+          title={t("inspectorLoadError", { error: supportError })}
+          action={{ label: t("inspectorRetry"), onClick: () => probeSupport() }}
+        />
       )}
       {support == null && supportError == null && <Spinner size={14} />}
 
@@ -360,19 +372,21 @@ export function QueryInspectorPanel({
                 {t("inspectorStop")}
               </Button>
             ) : (
-              <Button
-                type="button"
-                variant="primary"
-                disabled={!support.live_tail && !support.statements}
-                onClick={() => void startRecording()}
-                title={
-                  !support.live_tail && !support.statements
-                    ? t("inspectorUnavailable")
-                    : undefined
+              <Tooltip
+                label={
+                  !support.live_tail && !support.statements ? t("inspectorUnavailable") : undefined
                 }
+                focusableWrapper={!support.live_tail && !support.statements}
               >
-                {t("inspectorStart")}
-              </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={!support.live_tail && !support.statements}
+                  onClick={() => void startRecording()}
+                >
+                  {t("inspectorStart")}
+                </Button>
+              </Tooltip>
             )}
             <chakra.label
               display="inline-flex"
@@ -402,7 +416,7 @@ export function QueryInspectorPanel({
               </chakra.span>
             )}
             {recording && (
-              <chakra.span fontSize="xs" color="var(--status-error)" fontWeight={600}>
+              <chakra.span textStyle="overline" color="var(--status-error)">
                 {t("inspectorRecordingBadge")}
               </chakra.span>
             )}
@@ -438,9 +452,15 @@ export function QueryInspectorPanel({
           </Flex>
 
           {error && (
-            <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-              {t("inspectorLoadError", { error })}
-            </chakra.p>
+            // ポーリング中の取得失敗: 記録・タブ等の操作 UI は引き続き表示するため、
+            // 全体を置き換えない compact な EmptyState + 再取得導線で通知する (#848)。
+            <EmptyState
+              compact
+              illustration={errorIllustration(error)}
+              icon="warning"
+              title={t("inspectorLoadError", { error })}
+              action={{ label: t("inspectorRetry"), onClick: () => void tick() }}
+            />
           )}
 
           <Flex gap="2" borderBottom="1px solid" borderColor="app.border">
@@ -494,9 +514,14 @@ export function QueryInspectorPanel({
                 </chakra.p>
               )}
               {tail.length === 0 ? (
-                <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-                  {recording ? t("inspectorTailEmpty") : t("inspectorTailIdle")}
-                </chakra.p>
+                // 記録前 (idle) と記録中だが未観測の 2 状態を、compact な
+                // EmptyState 1 つで表現する。record 中は「観測待ち」、idle は
+                // 「開始待ち」の意味合いでアイコンを変える (#847)。
+                <EmptyState
+                  compact
+                  icon={recording ? "clock" : "query"}
+                  title={recording ? t("inspectorTailEmpty") : t("inspectorTailIdle")}
+                />
               ) : (
                 <Box overflowX="auto">
                   <chakra.table width="100%" borderCollapse="collapse">
@@ -521,9 +546,11 @@ export function QueryInspectorPanel({
                             <chakra.td css={tdCss}>
                               {new Date(e.observedAtMs).toLocaleTimeString()}
                               {e.running && (
-                                <chakra.span marginLeft="1.5" color="var(--accent)" title={t("inspectorRunningTitle")}>
-                                  ▶
-                                </chakra.span>
+                                <Tooltip label={t("inspectorRunningTitle")} focusableWrapper>
+                                  <chakra.span marginLeft="1.5" color="var(--accent)">
+                                    ▶
+                                  </chakra.span>
+                                </Tooltip>
                               )}
                             </chakra.td>
                             <chakra.td css={tdCss}>
@@ -536,28 +563,31 @@ export function QueryInspectorPanel({
                             {driver === "mysql" && (
                               <chakra.td css={numTdCss}>{e.rows_examined ?? "–"}</chakra.td>
                             )}
-                            <chakra.td css={queryTdCss} title={e.query}>
-                              {oneLine(e.query)}
-                              {finding && (
-                                <NPlusOneBadge
-                                  title={t("inspectorNPlusOneExplain", {
-                                    count: finding.count,
-                                    windowMs: finding.windowMs,
-                                  })}
-                                />
-                              )}
-                            </chakra.td>
+                            <Tooltip label={e.query}>
+                              <chakra.td css={queryTdCss}>
+                                {oneLine(e.query)}
+                                {finding && (
+                                  <NPlusOneBadge
+                                    title={t("inspectorNPlusOneExplain", {
+                                      count: finding.count,
+                                      windowMs: finding.windowMs,
+                                    })}
+                                  />
+                                )}
+                              </chakra.td>
+                            </Tooltip>
                             <chakra.td css={tdCss}>
-                              <Button
-                                minWidth="24px"
-                                px="1.5"
-                                py="0.5"
-                                onClick={() => void copySql(e.query)}
-                                aria-label={t("inspectorCopySql")}
-                                title={t("inspectorCopySql")}
-                              >
-                                <Icon name="copy" size={12} />
-                              </Button>
+                              <Tooltip label={t("inspectorCopySql")}>
+                                <Button
+                                  minWidth="24px"
+                                  px="1.5"
+                                  py="0.5"
+                                  onClick={() => void copySql(e.query)}
+                                  aria-label={t("inspectorCopySql")}
+                                >
+                                  <Icon name="copy" size={ICON_SIZES.sm} />
+                                </Button>
+                              </Tooltip>
                             </chakra.td>
                           </tr>
                         );
@@ -589,9 +619,12 @@ export function QueryInspectorPanel({
                 )}
               </Flex>
               {deltaRows.length === 0 ? (
-                <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-                  {recording ? t("inspectorStatsEmpty") : t("inspectorStatsIdle")}
-                </chakra.p>
+                // tail タブと同じ idle/recording の 2 状態表現 (#847)。
+                <EmptyState
+                  compact
+                  icon={recording ? "hash" : "query"}
+                  title={recording ? t("inspectorStatsEmpty") : t("inspectorStatsIdle")}
+                />
               ) : (
                 <Box overflowX="auto">
                   <chakra.table width="100%" borderCollapse="collapse">
@@ -600,9 +633,9 @@ export function QueryInspectorPanel({
                         <chakra.th css={thCss}>{t("inspectorColCalls")}</chakra.th>
                         <chakra.th css={thCss}>{t("inspectorColTotalTime")}</chakra.th>
                         <chakra.th css={thCss}>{t("inspectorColMeanTime")}</chakra.th>
-                        <chakra.th css={thCss} title={t("inspectorMaxCumulativeTitle")}>
-                          {t("inspectorColMaxTime")}
-                        </chakra.th>
+                        <Tooltip label={t("inspectorMaxCumulativeTitle")} focusableWrapper>
+                          <chakra.th css={thCss}>{t("inspectorColMaxTime")}</chakra.th>
+                        </Tooltip>
                         <chakra.th css={thCss}>
                           {driver === "mysql"
                             ? t("inspectorColRowsExamined")
@@ -622,27 +655,30 @@ export function QueryInspectorPanel({
                           <chakra.td css={numTdCss}>{formatMs(r.maxTimeMs)}</chakra.td>
                           <chakra.td css={numTdCss}>{r.rows ?? "–"}</chakra.td>
                           <chakra.td css={tdCss}>{r.database ?? "–"}</chakra.td>
-                          <chakra.td css={queryTdCss} title={r.fingerprint}>
-                            {oneLine(r.fingerprint)}
-                            {rateFlagged.has(`${r.digest} ${r.database ?? ""}`) && (
-                              <NPlusOneBadge
-                                title={t("inspectorNPlusOneRateExplain", {
-                                  windowMs: settings.inspectorNPlusOneWindowMs,
-                                })}
-                              />
-                            )}
-                          </chakra.td>
+                          <Tooltip label={r.fingerprint}>
+                            <chakra.td css={queryTdCss}>
+                              {oneLine(r.fingerprint)}
+                              {rateFlagged.has(`${r.digest} ${r.database ?? ""}`) && (
+                                <NPlusOneBadge
+                                  title={t("inspectorNPlusOneRateExplain", {
+                                    windowMs: settings.inspectorNPlusOneWindowMs,
+                                  })}
+                                />
+                              )}
+                            </chakra.td>
+                          </Tooltip>
                           <chakra.td css={tdCss}>
-                            <Button
-                              minWidth="24px"
-                              px="1.5"
-                              py="0.5"
-                              onClick={() => void copySql(r.fingerprint)}
-                              aria-label={t("inspectorCopySql")}
-                              title={t("inspectorCopySql")}
-                            >
-                              <Icon name="copy" size={12} />
-                            </Button>
+                            <Tooltip label={t("inspectorCopySql")}>
+                              <Button
+                                minWidth="24px"
+                                px="1.5"
+                                py="0.5"
+                                onClick={() => void copySql(r.fingerprint)}
+                                aria-label={t("inspectorCopySql")}
+                              >
+                                <Icon name="copy" size={ICON_SIZES.sm} />
+                              </Button>
+                            </Tooltip>
                           </chakra.td>
                         </tr>
                       ))}

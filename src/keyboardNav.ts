@@ -17,10 +17,6 @@
 
 import { useCallback, useEffect, useRef } from "react";
 
-// ---------------------------------------------------------------------------
-// useReturnFocus
-// ---------------------------------------------------------------------------
-
 /**
  * マウント時にフォーカスしていた要素を記憶し、アンマウント時に返す。
  *
@@ -39,16 +35,13 @@ import { useCallback, useEffect, useRef } from "react";
  * ```
  */
 export function useReturnFocus(): void {
-  // コンポーネントマウント時点でのアクティブ要素を保存する。
   // ref なので再レンダリングをトリガーしない。
   const returnTo = useRef<Element | null>(null);
 
   useEffect(() => {
-    // マウント時に「今フォーカスがある要素」を記憶する。
     returnTo.current = document.activeElement;
 
     return () => {
-      // アンマウント時に、記憶した要素がまだ DOM に存在すればフォーカスを返す。
       const el = returnTo.current;
       if (el && el instanceof HTMLElement && document.contains(el)) {
         el.focus();
@@ -56,10 +49,6 @@ export function useReturnFocus(): void {
     };
   }, []);
 }
-
-// ---------------------------------------------------------------------------
-// useFocusTrap
-// ---------------------------------------------------------------------------
 
 /**
  * 指定したコンテナ内でフォーカスをトラップし、Tab / Shift+Tab でコンテナ内を
@@ -141,10 +130,6 @@ export function useFocusTrap(
   }, [containerRef]);
 }
 
-// ---------------------------------------------------------------------------
-// useRovingFocus
-// ---------------------------------------------------------------------------
-
 /**
  * WAI-ARIA の roving tabindex パターンを実装するフック。
  *
@@ -153,6 +138,13 @@ export function useFocusTrap(
  * 先頭/末尾でラップする (wrap=true の場合)。
  *
  * Home/End キーで先頭/末尾へジャンプする。
+ *
+ * 加えて、印字可能な 1 文字キー (修飾キー無し) で **先頭文字ジャンプ
+ * (type-ahead)** を行う (#815)。押した文字から始まる項目の `textContent` を、
+ * 現在フォーカス中の項目の次から循環的に探して移動する。連続入力の蓄積は行わず
+ * 常に最後に押した 1 文字だけで判定するため、同じ文字を繰り返し押すと一致項目間を
+ * 巡回する (ネイティブ `<select>` の type-ahead に近い体感)。Arrow/Home/End とは
+ * 対象キーが重ならないため既存の挙動と衝突しない。
  *
  * @param containerRef - ナビゲーション対象コンテナの ref
  * @param itemSelector - フォーカス可能な項目を選ぶ CSS セレクタ
@@ -191,8 +183,13 @@ export function useRovingFocus(
         (isHorizontal && e.key === "ArrowLeft");
       const isHome = e.key === "Home";
       const isEnd = e.key === "End";
+      // 印字可能な単一文字のみ対象。修飾キー (Ctrl/Alt/Meta) 付きはショートカット
+      // 用途と衝突しうるため除外する (Shift は "A" 等の大文字入力に必要なので許可)。
+      const isTypeahead =
+        !isNext && !isPrev && !isHome && !isEnd &&
+        e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
 
-      if (!isNext && !isPrev && !isHome && !isEnd) return;
+      if (!isNext && !isPrev && !isHome && !isEnd && !isTypeahead) return;
 
       const container = containerRef.current;
       if (!container) return;
@@ -201,6 +198,23 @@ export function useRovingFocus(
         container.querySelectorAll<HTMLElement>(itemSelector),
       );
       if (items.length === 0) return;
+
+      if (isTypeahead) {
+        const needle = e.key.toLowerCase();
+        const idx = items.indexOf(document.activeElement as HTMLElement);
+        const n = items.length;
+        for (let step = 1; step <= n; step++) {
+          const candidate = items[(idx + step + n) % n];
+          const text = (candidate.textContent ?? "").trim().toLowerCase();
+          if (text.startsWith(needle)) {
+            e.preventDefault();
+            candidate.focus();
+            return;
+          }
+        }
+        // 一致なし: 何もしない (デフォルト挙動を妨げない)。
+        return;
+      }
 
       e.preventDefault();
 

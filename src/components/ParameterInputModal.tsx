@@ -10,6 +10,7 @@ import {
 } from "../queryParams";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, PressableButton } from "./ui";
+import { Tooltip } from "./Tooltip";
 
 /** Per-parameter draft: the typed value and how it's rendered into SQL. */
 interface Draft {
@@ -148,14 +149,15 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                 gap="2"
                 alignItems="center"
               >
-                <chakra.code
-                  fontSize="sm"
-                  color="app.text"
-                  whiteSpace="nowrap"
-                  overflow="hidden"
-                  textOverflow="ellipsis"
-                  title={`{{${name}}}`}
-                >{`{{${name}}}`}</chakra.code>
+                <Tooltip label={`{{${name}}}`}>
+                  <chakra.code
+                    fontSize="sm"
+                    color="app.text"
+                    whiteSpace="nowrap"
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                  >{`{{${name}}}`}</chakra.code>
+                </Tooltip>
                 <chakra.select
                   css={FIELD_CSS}
                   value={d?.type ?? "text"}
@@ -198,7 +200,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
         </chakra.div>
 
         <chakra.div display="flex" flexDirection="column" gap="3px">
-          <chakra.span fontSize="xs" color="app.textMuted" fontWeight={600}>
+          <chakra.span textStyle="overline">
             {t("parameterInputPreviewLabel")}
           </chakra.span>
           <Box

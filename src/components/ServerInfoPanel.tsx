@@ -3,9 +3,13 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type ServerInfo } from "../api/tauri";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
+import { Icon, ICON_SIZES } from "./Icon";
+import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button, Input } from "./ui";
+import { Tooltip } from "./Tooltip";
+import { Button, Heading, Input } from "./ui";
 
 /**
  * サーバ / 接続情報パネル (#563)。接続中サーバのバージョンと設定変数を読み取り専用で
@@ -22,8 +26,7 @@ const thCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border)",
   padding: "6px 10px",
   textAlign: "left",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
 };
@@ -97,21 +100,20 @@ export function ServerInfoPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("serverInfoTitle")}
-        </chakra.h2>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("serverInfoClose")}
-          title={t("serverInfoClose")}
-        >
-          <Icon name="close" size={13} />
-        </Button>
+        <Heading>{t("serverInfoTitle")}</Heading>
+        <Tooltip label={t("serverInfoClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("serverInfoClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
@@ -127,7 +129,7 @@ export function ServerInfoPanel({
 
       <Flex align="center" gap="3" flexWrap="wrap">
         <Button type="button" onClick={() => void load()} disabled={loading}>
-          <Icon name="refresh" size={13} /> {t("serverInfoRefresh")}
+          <Icon name="refresh" size={ICON_SIZES.sm} /> {t("serverInfoRefresh")}
         </Button>
         <Input
           type="search"
@@ -147,13 +149,19 @@ export function ServerInfoPanel({
       </Flex>
 
       {error ? (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("serverInfoLoadError", { error })}
-        </chakra.p>
+        // 取得失敗: errorHints の分類結果から共有イラストを割り当て、再取得導線を
+        // 添える (#848)。
+        <EmptyState
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("serverInfoLoadError", { error })}
+          action={{ label: t("serverInfoRetry"), onClick: () => void load() }}
+        />
       ) : filtered.length === 0 && !loading ? (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-          {t("serverInfoEmpty")}
-        </chakra.p>
+        // 検索フィルタで 0 件になったケース (variables 自体が空になることは通常
+        // ない) のため、共有 EmptyState の compact レイアウトを「検索一致なし」の
+        // 軽量アイコン (icon="search") で使う (#847)。
+        <EmptyState compact icon="search" title={t("serverInfoEmpty")} />
       ) : (
         <Box overflowX="auto">
           <chakra.table width="100%" borderCollapse="collapse">
@@ -166,12 +174,18 @@ export function ServerInfoPanel({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((v) => (
-                <tr key={v.name}>
-                  <chakra.td css={nameTdCss}>{v.name}</chakra.td>
-                  <chakra.td css={valueTdCss}>{v.value}</chakra.td>
-                </tr>
-              ))}
+              {loading && variables.length === 0 ? (
+                // 初回ロード中 (まだ 1 件も取得していない): 「値」列が埋まる前の
+                // 裸のヘッダのみ表示を避け、行の構造をシマーで予兆表示する (#846)。
+                <SkeletonTableRows columns={2} />
+              ) : (
+                filtered.map((v) => (
+                  <tr key={v.name}>
+                    <chakra.td css={nameTdCss}>{v.name}</chakra.td>
+                    <chakra.td css={valueTdCss}>{v.value}</chakra.td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </chakra.table>
         </Box>

@@ -3,6 +3,7 @@ import { useT } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import { preflightTone, type PreflightTone } from "./preflight";
 import type { PreflightResult } from "./usePreflight";
+import { Tooltip } from "./Tooltip";
 
 /**
  * 実行前の影響行数プリフライト (#737) のバッジ。エディタツールバーの実行ボタン付近に、
@@ -62,34 +63,38 @@ export function PreflightBadge({ result }: Props) {
 
   const style = TONE_STYLE[tone];
 
+  // このバッジ自体は非対話 (`role="status"`) でフォーカス不能なため、native
+  // `title=` のツールチップはキーボードでは元々一切読めなかった。共有 `Tooltip`
+  // (#814) の `focusableWrapper` で読み取り専用のタブストップを与え、内容
+  // (推定である旨の説明) をキーボードでも読めるようにする。
   return (
-    <chakra.span
-      role="status"
-      aria-live="polite"
-      title={title}
-      display="inline-flex"
-      alignItems="center"
-      gap="1.5"
-      px="2.5"
-      py="1.5"
-      border="1px solid"
-      borderColor={style.border}
-      bg={style.bg}
-      color={style.fg}
-      borderRadius="md"
-      fontSize="xs"
-      fontWeight={600}
-      whiteSpace="nowrap"
-      flexShrink={0}
-    >
-      <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-        {/* 影響 = 対象行を表す簡素な行アイコン。 */}
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="2" y="3" width="12" height="10" rx="1.5" />
-          <path d="M2 6.5h12M6 3v10" />
-        </svg>
+    <Tooltip label={title} focusableWrapper>
+      <chakra.span
+        role="status"
+        aria-live="polite"
+        display="inline-flex"
+        alignItems="center"
+        gap="1.5"
+        px="2.5"
+        py="1.5"
+        border="1px solid"
+        borderColor={style.border}
+        bg={style.bg}
+        color={style.fg}
+        borderRadius="md"
+        textStyle="overline"
+        whiteSpace="nowrap"
+        flexShrink={0}
+      >
+        <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+          {/* 影響 = 対象行を表す簡素な行アイコン。 */}
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="3" width="12" height="10" rx="1.5" />
+            <path d="M2 6.5h12M6 3v10" />
+          </svg>
+        </chakra.span>
+        {label}
       </chakra.span>
-      {label}
-    </chakra.span>
+    </Tooltip>
   );
 }

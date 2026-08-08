@@ -69,6 +69,24 @@ describe("buildCreateTableSql", () => {
     expect(sql).toContain('"label" TEXT NOT NULL');
   });
 
+  it("emits a CREATE SEQUENCE + DEFAULT nextval for DuckDB auto-increment (no GENERATED AS IDENTITY)", () => {
+    const sql = buildCreateTableSql("duckdb", {
+      table: "t",
+      columns: [
+        col({ name: "id", type: "BIGINT", primaryKey: true, autoIncrement: true }),
+        col({ name: "label", type: "VARCHAR", notNull: true }),
+      ],
+    });
+    expect(sql).toContain('CREATE SEQUENCE "t_id_seq";');
+    expect(sql).toContain('"id" BIGINT DEFAULT nextval(\'t_id_seq\')');
+    expect(sql).toContain('PRIMARY KEY ("id")');
+    expect(sql).not.toContain("GENERATED");
+    expect(sql).not.toContain("IDENTITY(");
+    // The sequence statement precedes CREATE TABLE (must exist before the
+    // column default references it).
+    expect(sql.indexOf("CREATE SEQUENCE")).toBeLessThan(sql.indexOf("CREATE TABLE"));
+  });
+
   it("supports a composite primary key", () => {
     const sql = buildCreateTableSql("mysql", {
       table: "t",

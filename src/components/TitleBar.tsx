@@ -2,19 +2,22 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { chakra, Flex, type HTMLChakraProps } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { BrandMark } from "../brand";
-import { ProductionBadge, ProfileColorChip } from "./ProfileBadge";
+import { ProductionBadge, ProfileColorChip, SandboxBadge } from "./ProfileBadge";
 import { connectionBandColor, type TitleBarConnection } from "./titleBarContext";
+import { Tooltip } from "./Tooltip";
 
 export type { TitleBarConnection } from "./titleBarContext";
 
 const appWindow = getCurrentWindow();
 
 /** A window control button (minimize / maximize / close). Mirrors the platform
- *  window buttons; the close button overrides `_hover` with the destructive red. */
-function TitleControl(props: HTMLChakraProps<"button">) {
-  return (
+ *  window buttons; the close button overrides `_hover` with the destructive red.
+ *  `title` は native title ではなく共有 `Tooltip` (#814/#884) へ委譲する — 表示済みの
+ *  `aria-label` はそのまま残す。 */
+function TitleControl({ title, ...props }: HTMLChakraProps<"button">) {
+  const button = (
     <chakra.button
       type="button"
       width="46px"
@@ -34,6 +37,7 @@ function TitleControl(props: HTMLChakraProps<"button">) {
       {...props}
     />
   );
+  return title ? <Tooltip label={title}>{button}</Tooltip> : button;
 }
 
 /**
@@ -100,40 +104,43 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
             {/* プロファイルカラーの丸チップ (#663)。ConnectionList / 本番接続確認
                 ダイアログと同じ `ProfileColorChip` を共有する。 */}
             <ProfileColorChip color={connection.color} size={9} />
-            <chakra.span
-              fontSize="var(--text-sm)"
-              fontWeight="600"
-              color="app.text"
-              overflow="hidden"
-              textOverflow="ellipsis"
-              whiteSpace="nowrap"
-              maxW="220px"
-              title={connection.name}
-            >
-              {connection.name}
-            </chakra.span>
+            {/* 省略記号で切れる可能性がある接続名。全文は Tooltip で確認できる
+                (#884)。`focusableWrapper` — この span 自体は非対話でフォーカス
+                不能なため。 */}
+            <Tooltip label={connection.name} focusableWrapper>
+              <chakra.span
+                fontSize="var(--text-sm)"
+                fontWeight="600"
+                color="app.text"
+                overflow="hidden"
+                textOverflow="ellipsis"
+                whiteSpace="nowrap"
+                maxW="220px"
+              >
+                {connection.name}
+              </chakra.span>
+            </Tooltip>
             {connection.isProduction && <ProductionBadge compact />}
+            {connection.isSandbox && <SandboxBadge compact />}
             {/* 自動再接続中はアンビエントなバッジで状態を示す (#600)。帯色も警告色になる。 */}
             {connection.status === "reconnecting" && (
-              <chakra.span
-                title={t("statusReconnecting")}
-                display="inline-flex"
-                alignItems="center"
-                gap="3px"
-                flexShrink={0}
-                fontSize="var(--text-2xs)"
-                fontWeight={700}
-                textTransform="uppercase"
-                letterSpacing="0.06em"
-                px="1.5"
-                py="1px"
-                borderRadius="pill"
-                bg="app.status.warning"
-                color="#fff"
-              >
-                <Icon name="refresh" size={11} />
-                {t("statusReconnecting")}
-              </chakra.span>
+              <Tooltip label={t("statusReconnecting")} focusableWrapper>
+                <chakra.span
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="3px"
+                  flexShrink={0}
+                  textStyle="overline"
+                  px="1.5"
+                  py="1px"
+                  borderRadius="pill"
+                  bg="app.status.warning"
+                  color="#fff"
+                >
+                  <Icon name="refresh" size={ICON_SIZES.sm} />
+                  {t("statusReconnecting")}
+                </chakra.span>
+              </Tooltip>
             )}
           </Flex>
         )}

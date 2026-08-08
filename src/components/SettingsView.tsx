@@ -8,7 +8,7 @@ import {
   themePreviewGradient,
 } from "../themePresetPreview";
 import { useT, type I18nKey } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Input, Select, Switch } from "./ui";
@@ -27,6 +27,12 @@ import {
   DEFAULT_AUTO_LIMIT_COUNT,
   DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   DEFAULT_DISPLAY_COUNT,
+  DEFAULT_FLIGHT_RECORDER_ROW_CAP,
+  DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS,
+  MIN_FLIGHT_RECORDER_ROW_CAP,
+  MAX_FLIGHT_RECORDER_ROW_CAP,
+  MIN_FLIGHT_RECORDER_RETENTION_DAYS,
+  MAX_FLIGHT_RECORDER_RETENTION_DAYS,
   DEFAULT_FONT_SIZE_PX,
   DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   DEFAULT_QUERY_TIMEOUT_SECS,
@@ -92,8 +98,12 @@ import {
   setResultGridPageSize,
   setRichCellRendering,
   setPlanWatchOnConnect,
+  setSchemaDriftOnConnect,
   setSqlLintEnabled,
   setPreflightImpactEnabled,
+  setFlightRecorderEnabled,
+  setFlightRecorderRowCap,
+  setFlightRecorderRetentionDays,
   setStreamPrefetchSize,
   setSyntaxColor,
   setTabRestoreMode,
@@ -103,6 +113,7 @@ import { ACCENT_PRESETS } from "../accent";
 import { checkForAppUpdate, getCurrentAppVersion } from "../updater";
 import { displayVersion } from "../updaterFormat";
 import { confirmAndInstallUpdate } from "./updatePrompt";
+import { Tooltip } from "./Tooltip";
 
 interface Props {
   theme: Theme;
@@ -623,6 +634,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-sql-lint", titleKey: "settingsSqlLint" },
   { id: "settings-sec-preflight-impact", titleKey: "settingsPreflightImpact" },
   { id: "settings-sec-plan-watch", titleKey: "settingsPlanWatch" },
+  { id: "settings-sec-flight-recorder", titleKey: "settingsFlightRecorder" },
   { id: "settings-sec-result-grid", titleKey: "settingsResultGridMode" },
   { id: "settings-sec-safety", titleKey: "settingsSafety" },
   { id: "settings-sec-notifications", titleKey: "settingsNotifications" },
@@ -764,6 +776,12 @@ export function SettingsView({ theme, onClose }: Props) {
   const [notifyThresholdInput, setNotifyThresholdInput] = useState(
     String(settings.queryNotificationThresholdSecs),
   );
+  const [flightRowCapInput, setFlightRowCapInput] = useState(
+    String(settings.flightRecorderRowCap),
+  );
+  const [flightRetentionInput, setFlightRetentionInput] = useState(
+    String(settings.flightRecorderRetentionDays),
+  );
   useEffect(() => setDisplayInput(String(settings.defaultDisplayCount)), [settings.defaultDisplayCount]);
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
@@ -780,6 +798,14 @@ export function SettingsView({ theme, onClose }: Props) {
   useEffect(
     () => setNotifyThresholdInput(String(settings.queryNotificationThresholdSecs)),
     [settings.queryNotificationThresholdSecs],
+  );
+  useEffect(
+    () => setFlightRowCapInput(String(settings.flightRecorderRowCap)),
+    [settings.flightRecorderRowCap],
+  );
+  useEffect(
+    () => setFlightRetentionInput(String(settings.flightRecorderRetentionDays)),
+    [settings.flightRecorderRetentionDays],
   );
 
   const commitDisplay = () => {
@@ -816,6 +842,30 @@ export function SettingsView({ theme, onClose }: Props) {
     const n = Number.parseInt(reconnectRetriesInput, 10);
     if (Number.isFinite(n)) setAutoReconnectMaxRetries(n);
     else setReconnectRetriesInput(String(settings.autoReconnectMaxRetries));
+  };
+  const commitFlightRowCap = () => {
+    const n = Number.parseInt(flightRowCapInput, 10);
+    if (
+      Number.isSafeInteger(n) &&
+      n >= MIN_FLIGHT_RECORDER_ROW_CAP &&
+      n <= MAX_FLIGHT_RECORDER_ROW_CAP
+    ) {
+      setFlightRecorderRowCap(n);
+    } else {
+      setFlightRowCapInput(String(settings.flightRecorderRowCap));
+    }
+  };
+  const commitFlightRetention = () => {
+    const n = Number.parseInt(flightRetentionInput, 10);
+    if (
+      Number.isSafeInteger(n) &&
+      n >= MIN_FLIGHT_RECORDER_RETENTION_DAYS &&
+      n <= MAX_FLIGHT_RECORDER_RETENTION_DAYS
+    ) {
+      setFlightRecorderRetentionDays(n);
+    } else {
+      setFlightRetentionInput(String(settings.flightRecorderRetentionDays));
+    }
   };
   const commitFontSize = () => {
     const n = Number.parseInt(fontSizeInput, 10);
@@ -948,7 +998,7 @@ export function SettingsView({ theme, onClose }: Props) {
 
   return (
     <>
-    <Modal onClose={onClose} width="988px">
+    <Modal onClose={onClose} width="1120px">
       <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
         {t("settingsTitle")}
       </ModalHeader>
@@ -1073,19 +1123,22 @@ export function SettingsView({ theme, onClose }: Props) {
                 t(THEME_PREVIEW_CHIP_LABEL_KEYS[chip]),
               ).join(" / ");
               return (
-                <ThemePresetCard
-                  key={p}
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => setThemePreset(p as ThemePreset)}
-                >
-                  <ThemePresetSwatchStrip
-                    aria-hidden="true"
-                    title={chipTitle}
-                    style={{ background: themePreviewGradient(colors) }}
-                  />
-                  <ThemePresetCardLabel>{t(THEME_PRESET_LABEL_KEYS[p])}</ThemePresetCardLabel>
-                </ThemePresetCard>
+                // ツールチップはスウォッチ帯ではなくカード (ボタン) 側に付ける —
+                // 帯は `aria-hidden` なので `aria-describedby` が支援技術へ届かず、
+                // フォーカスも受け取れないため (#884)。
+                <Tooltip key={p} label={chipTitle}>
+                  <ThemePresetCard
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setThemePreset(p as ThemePreset)}
+                  >
+                    <ThemePresetSwatchStrip
+                      aria-hidden="true"
+                      style={{ background: themePreviewGradient(colors) }}
+                    />
+                    <ThemePresetCardLabel>{t(THEME_PRESET_LABEL_KEYS[p])}</ThemePresetCardLabel>
+                  </ThemePresetCard>
+                </Tooltip>
               );
             })}
           </ThemePresetRow>
@@ -1101,25 +1154,26 @@ export function SettingsView({ theme, onClose }: Props) {
                   ? settings.accentColor === null
                   : settings.accentColor?.toLowerCase() === p.hex.toLowerCase();
               return (
-                <SettingsSwatch
-                  key={p.key}
-                  type="button"
-                  aria-pressed={selected}
-                  aria-label={t(ACCENT_LABEL_KEYS[p.key])}
-                  title={t(ACCENT_LABEL_KEYS[p.key])}
-                  data-default={p.hex === null ? "" : undefined}
-                  style={p.hex ? { background: p.hex } : undefined}
-                  onClick={() => setAccentColor(p.hex)}
-                />
+                <Tooltip key={p.key} label={t(ACCENT_LABEL_KEYS[p.key])}>
+                  <SettingsSwatch
+                    type="button"
+                    aria-pressed={selected}
+                    aria-label={t(ACCENT_LABEL_KEYS[p.key])}
+                    data-default={p.hex === null ? "" : undefined}
+                    style={p.hex ? { background: p.hex } : undefined}
+                    onClick={() => setAccentColor(p.hex)}
+                  />
+                </Tooltip>
               );
             })}
-            <SettingsColorInput
-              type="color"
-              aria-label={t("settingsAccentCustom")}
-              title={t("settingsAccentCustom")}
-              value={settings.accentColor ?? "#2563eb"}
-              onChange={(e) => setAccentColor(e.target.value)}
-            />
+            <Tooltip label={t("settingsAccentCustom")}>
+              <SettingsColorInput
+                type="color"
+                aria-label={t("settingsAccentCustom")}
+                value={settings.accentColor ?? "#2563eb"}
+                onChange={(e) => setAccentColor(e.target.value)}
+              />
+            </Tooltip>
           </SettingsSwatchRow>
           <SettingsHelpInline>{t("settingsAccentColorHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
@@ -1296,6 +1350,92 @@ export function SettingsView({ theme, onClose }: Props) {
             {t("settingsPlanWatchOnConnectHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection id="settings-sec-schema-drift" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsSchemaDrift")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsSchemaDriftHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-schema-drift-on-connect">
+            <Switch
+              id="settings-schema-drift-on-connect"
+              checked={settings.schemaDriftOnConnect}
+              onChange={setSchemaDriftOnConnect}
+            />
+            {t("settingsSchemaDriftOnConnect")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsSchemaDriftOnConnectHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+      </SettingsSection>
+
+      <SettingsSection id="settings-sec-flight-recorder" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <chakra.h3>{t("settingsFlightRecorder")}</chakra.h3>
+        </SettingsSectionHeader>
+        <SettingsHelp>{t("settingsFlightRecorderHelp")}</SettingsHelp>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-flight-recorder-enabled">
+            <Switch
+              id="settings-flight-recorder-enabled"
+              checked={settings.flightRecorderEnabled}
+              onChange={setFlightRecorderEnabled}
+            />
+            {t("settingsFlightRecorderEnabled")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsFlightRecorderEnabledHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-flight-recorder-row-cap">
+            {t("settingsFlightRecorderRowCap")}
+          </chakra.label>
+          <Input
+            id="settings-flight-recorder-row-cap"
+            type="number"
+            min={MIN_FLIGHT_RECORDER_ROW_CAP}
+            max={MAX_FLIGHT_RECORDER_ROW_CAP}
+            step={100}
+            value={flightRowCapInput}
+            placeholder={String(DEFAULT_FLIGHT_RECORDER_ROW_CAP)}
+            disabled={!settings.flightRecorderEnabled}
+            onChange={(e) => setFlightRowCapInput(e.target.value)}
+            onBlur={commitFlightRowCap}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsHelpInline>
+            {t("settingsFlightRecorderRowCapHelp")}
+          </SettingsHelpInline>
+        </SettingsNumberRow>
+        <SettingsNumberRow>
+          <chakra.label htmlFor="settings-flight-recorder-retention">
+            {t("settingsFlightRecorderRetentionDays")}
+          </chakra.label>
+          <Input
+            id="settings-flight-recorder-retention"
+            type="number"
+            min={MIN_FLIGHT_RECORDER_RETENTION_DAYS}
+            max={MAX_FLIGHT_RECORDER_RETENTION_DAYS}
+            step={1}
+            value={flightRetentionInput}
+            placeholder={String(DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS)}
+            disabled={!settings.flightRecorderEnabled}
+            onChange={(e) => setFlightRetentionInput(e.target.value)}
+            onBlur={commitFlightRetention}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <SettingsHelpInline>
+            {t("settingsFlightRecorderRetentionDaysHelp")}
+          </SettingsHelpInline>
+        </SettingsNumberRow>
       </SettingsSection>
 
       <SettingsSection id="settings-sec-result-grid" scrollMarginTop="8px">
@@ -1688,15 +1828,16 @@ export function SettingsView({ theme, onClose }: Props) {
             <SettingsReset onClick={loadLogs} disabled={logLoading}>
               {t("settingsLogsRefresh")}
             </SettingsReset>
-            <SettingsLogsIconButton
-              type="button"
-              onClick={copyLogs}
-              disabled={!logText}
-              title={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
-              aria-label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
-            >
-              <Icon name={logCopied ? "check" : "copy"} size={15} />
-            </SettingsLogsIconButton>
+            <Tooltip label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")} focusableWrapper={!logText}>
+              <SettingsLogsIconButton
+                type="button"
+                onClick={copyLogs}
+                disabled={!logText}
+                aria-label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
+              >
+                <Icon name={logCopied ? "check" : "copy"} size={ICON_SIZES.md} />
+              </SettingsLogsIconButton>
+            </Tooltip>
             <SettingsReset onClick={clearLogs} disabled={!logText}>
               {t("settingsLogsClear")}
             </SettingsReset>

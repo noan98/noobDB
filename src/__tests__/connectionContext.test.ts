@@ -48,4 +48,27 @@ describe("connectionBandColor (#466)", () => {
       connectionBandColor({ name: "prod", color: null, isProduction: true, status: "disconnected" }),
     ).toBe("var(--status-error)");
   });
+
+  it("uses the sandbox color, overriding the profile color (#747)", () => {
+    expect(
+      connectionBandColor({
+        name: "sbx",
+        color: "#22c55e",
+        isProduction: false,
+        isSandbox: true,
+      }),
+    ).toBe("#8b5cf6");
+  });
+
+  it("still prioritizes reconnecting over sandbox", () => {
+    expect(
+      connectionBandColor({
+        name: "sbx",
+        color: null,
+        isProduction: false,
+        isSandbox: true,
+        status: "reconnecting",
+      }),
+    ).toBe("var(--status-warning)");
+  });
 });

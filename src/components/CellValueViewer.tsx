@@ -3,10 +3,11 @@ import { chakra } from "@chakra-ui/react";
 import { CellValue } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { copyToClipboard } from "./clipboard";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { useToast } from "./Toast";
 import { Button, Switch } from "./ui";
+import { Tooltip } from "./Tooltip";
 
 interface Props {
   /** Column name, shown in the modal header. */
@@ -272,32 +273,33 @@ export function CellValueViewer({
               </chakra.span>
             )}
             <chakra.div flex="1" />
-            <chakra.button
-              type="button"
-              onClick={handleCopy}
-              disabled={isNull}
-              title={copied ? t("gridCopied") : t("cellViewerCopy")}
-              aria-label={copied ? t("gridCopied") : t("cellViewerCopy")}
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              w="34px"
-              h="34px"
-              p={0}
-              color="app.textMuted"
-              bg="app.bgInput"
-              border="1px solid"
-              borderColor="app.border"
-              borderRadius="md"
-              cursor="pointer"
-              transitionProperty="color, background, border-color"
-              transitionDuration="var(--dur-fast)"
-              transitionTimingFunction="var(--ease)"
-              _hover={{ color: "app.text", bg: "app.hover" }}
-              _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-            >
-              <Icon name={copied ? "check" : "copy"} size={16} />
-            </chakra.button>
+            <Tooltip label={copied ? t("gridCopied") : t("cellViewerCopy")} focusableWrapper={isNull}>
+              <chakra.button
+                type="button"
+                onClick={handleCopy}
+                disabled={isNull}
+                aria-label={copied ? t("gridCopied") : t("cellViewerCopy")}
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                w="34px"
+                h="34px"
+                p={0}
+                color="app.textMuted"
+                bg="app.bgInput"
+                border="1px solid"
+                borderColor="app.border"
+                borderRadius="md"
+                cursor="pointer"
+                transitionProperty="color, background, border-color"
+                transitionDuration="var(--dur-fast)"
+                transitionTimingFunction="var(--ease)"
+                _hover={{ color: "app.text", bg: "app.hover" }}
+                _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+              >
+                <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
+              </chakra.button>
+            </Tooltip>
             {canEdit ? (
               <Button type="button" variant="primary" onClick={startEditing}>
                 {t("cellViewerEdit")}

@@ -13,9 +13,12 @@ import {
   severityRole,
 } from "./advisor";
 import { copyToClipboard } from "./clipboard";
-import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
-import { Button } from "./ui";
+import { Tooltip } from "./Tooltip";
+import { Button, Heading } from "./ui";
 import { useToast } from "./Toast";
 
 /**
@@ -46,8 +49,7 @@ const thCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border)",
   padding: "6px 10px",
   textAlign: "left",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
 };
@@ -67,8 +69,7 @@ function SeverityBadge({ severity }: { severity: HealthFinding["severity"] }) {
       display="inline-block"
       px="2"
       py="0.5"
-      fontSize="var(--text-xs)"
-      fontWeight={600}
+      textStyle="overline"
       lineHeight={1.4}
       borderRadius="var(--radius-sm)"
       whiteSpace="nowrap"
@@ -141,21 +142,20 @@ export function AdvisorPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("advisorTitle")}
-        </chakra.h2>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("advisorClose")}
-          title={t("advisorClose")}
-        >
-          <Icon name="close" size={13} />
-        </Button>
+        <Heading>{t("advisorTitle")}</Heading>
+        <Tooltip label={t("advisorClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("advisorClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
@@ -164,7 +164,7 @@ export function AdvisorPanel({
 
       <Flex align="center" gap="3" flexWrap="wrap">
         <Button type="button" variant="primary" onClick={run} disabled={running}>
-          <Icon name="refresh" size={13} />
+          <Icon name="refresh" size={ICON_SIZES.sm} />
           <chakra.span marginLeft="1.5">
             {report ? t("advisorRerun") : t("advisorRun")}
           </chakra.span>
@@ -190,9 +190,14 @@ export function AdvisorPanel({
       </Flex>
 
       {error && (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("advisorError", { error })}
-        </chakra.p>
+        // 診断失敗: errorHints の分類結果から共有イラストを割り当て、既存の
+        // 実行/再実行ボタンと同じ導線を再取得アクションに配線する (#848)。
+        <EmptyState
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("advisorError", { error })}
+          action={{ label: t("advisorRetry"), onClick: () => void run() }}
+        />
       )}
 
       {report && report.skipped.length > 0 && (
@@ -205,7 +210,7 @@ export function AdvisorPanel({
           px="3"
           py="2.5"
         >
-          <chakra.div fontSize="sm" fontWeight={600} marginBottom="1">
+          <chakra.div textStyle="subheading" marginBottom="1">
             {t("advisorSkippedTitle")}
           </chakra.div>
           {report.skipped.map((s) => (
@@ -281,16 +286,17 @@ export function AdvisorPanel({
                           >
                             {t("advisorInsertFix")}
                           </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyFix(f.fix_ddl as string)}
-                            aria-label={t("advisorCopyFix")}
-                            title={t("advisorCopyFix")}
-                          >
-                            <Icon name="copy" size={12} />
-                          </Button>
+                          <Tooltip label={t("advisorCopyFix")}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => copyFix(f.fix_ddl as string)}
+                              aria-label={t("advisorCopyFix")}
+                            >
+                              <Icon name="copy" size={ICON_SIZES.sm} />
+                            </Button>
+                          </Tooltip>
                         </Flex>
                       </Box>
                     )}

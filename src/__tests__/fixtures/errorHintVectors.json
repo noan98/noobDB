@@ -27,6 +27,10 @@
     { "id": "access-denied-postgres", "note": "PostgreSQL パスワード認証失敗", "backendKind": "sqlxProtocol", "message": "password authentication failed for user \"admin\"", "hintKey": "errorHintAccessDenied", "illustration": "permissionDenied" },
     { "id": "access-denied-generic", "note": "汎用認証失敗", "backendKind": "sqlxProtocol", "message": "authentication failed", "hintKey": "errorHintAccessDenied", "illustration": "permissionDenied" },
 
+    { "id": "insufficient-privilege-mysql-command-denied", "note": "MySQL 個別操作の権限不足 (#732 ユーザ一覧・GRANT/REVOKE 実行時想定)", "backendKind": "sqlxProtocol", "message": "SELECT command denied to user 'app'@'%' for table 'orders'", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
+    { "id": "insufficient-privilege-postgres-permission-denied", "note": "PostgreSQL 個別操作の権限不足", "backendKind": "sqlxProtocol", "message": "permission denied for table orders", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
+    { "id": "insufficient-privilege-postgres-must-be-owner", "note": "PostgreSQL 所有者権限不足 (ALTER 等)", "backendKind": "sqlxProtocol", "message": "must be owner of table orders", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
+
     { "id": "connection-lost-gone-away", "note": "MySQL server has gone away", "backendKind": "sqlxProtocol", "message": "MySQL server has gone away", "hintKey": "errorHintConnectionLost", "illustration": "connectionFailed" },
     { "id": "connection-lost-lost-connection", "note": "MySQL Lost connection during query", "backendKind": "sqlxProtocol", "message": "Lost connection to MySQL server during query", "hintKey": "errorHintConnectionLost", "illustration": "connectionFailed" },
     { "id": "connection-lost-broken-pipe", "note": "broken pipe", "backendKind": "sqlxProtocol", "message": "Error reading result set's header: broken pipe", "hintKey": "errorHintConnectionLost", "illustration": "connectionFailed" },
@@ -50,7 +54,7 @@
     { "id": "native-config-dir", "note": "AppError::ConfigDir はヒント対象外 (引数なし)", "backendKind": "native", "variant": "ConfigDir", "arg": null, "message": "config dir not found", "hintKey": null, "illustration": "queryFailed" },
     { "id": "native-other", "note": "AppError::Other はヒント対象外", "backendKind": "native", "variant": "Other", "arg": "export sink already finished", "message": "export sink already finished", "hintKey": null, "illustration": "queryFailed" },
 
-    { "id": "permission-denied-generic-no-hint", "note": "illustrationForError は permission denied を permissionDenied に分類するが、matchErrorHint の PATTERNS には該当エントリが無くヒントは null (既知の非対称。errorHintAccessDenied は access denied/authentication failed 系のみを見ている)", "backendKind": "sqlxProtocol", "message": "permission denied for table users", "hintKey": null, "illustration": "permissionDenied" },
-    { "id": "insufficient-privilege-no-hint", "note": "同上。insufficient privilege も illustration のみ permissionDenied でヒントは null", "backendKind": "sqlxProtocol", "message": "insufficient privilege to execute this command", "hintKey": null, "illustration": "permissionDenied" }
+    { "id": "permission-denied-generic-hint", "note": "#732 で errorHintInsufficientPrivilege を追加し、illustrationForError と matchErrorHint の非対称 (illustration のみ permissionDenied でヒントは null) を解消した", "backendKind": "sqlxProtocol", "message": "permission denied for table users", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
+    { "id": "insufficient-privilege-generic-hint", "note": "同上。insufficient privilege も errorHintInsufficientPrivilege に分類されるようになった", "backendKind": "sqlxProtocol", "message": "insufficient privilege to execute this command", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" }
   ]
 }

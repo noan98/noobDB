@@ -9,7 +9,7 @@ import { Button, Checkbox, Input, Radio, Switch } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { copyToClipboard } from "./clipboard";
 import { mapLimited } from "./mapLimited";
 import {
@@ -18,6 +18,7 @@ import {
   expandWithFkRelated,
   type SchemaExportTable,
 } from "./schemaExport";
+import { Tooltip } from "./Tooltip";
 
 /** プレビュー欄に表示する最大行数 (コピー/保存は全文が対象)。 */
 const PREVIEW_LINES = 200;
@@ -127,7 +128,6 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
       cancelled = true;
     };
     // マウント時に一度だけ実行する。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 実効出力集合。選択モードで「FK 関連も含める」が ON なら選択の FK 推移的閉包。
@@ -351,17 +351,18 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
                           {tb.name}
                         </chakra.span>
                         {autoAdded && (
-                          <chakra.span
-                            flex="none"
-                            fontSize="2xs"
-                            px="1.5"
-                            borderRadius="sm"
-                            bg="app.rowHover"
-                            color="app.textMuted"
-                            title={t("schemaExportAutoAdded")}
-                          >
-                            FK
-                          </chakra.span>
+                          <Tooltip label={t("schemaExportAutoAdded")}>
+                            <chakra.span
+                              flex="none"
+                              fontSize="2xs"
+                              px="1.5"
+                              borderRadius="sm"
+                              bg="app.rowHover"
+                              color="app.textMuted"
+                            >
+                              FK
+                            </chakra.span>
+                          </Tooltip>
                         )}
                       </chakra.label>
                     );
@@ -389,34 +390,35 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
                   {t("exportPreview")}
                 </FieldLabel>
                 <chakra.div flex="1" />
-                <chakra.button
-                  type="button"
-                  onClick={handleCopy}
-                  disabled={!hasOutput}
-                  title={copied ? t("gridCopied") : t("exportCopyAll")}
-                  aria-label={copied ? t("gridCopied") : t("exportCopyAll")}
-                  display="inline-flex"
-                  alignItems="center"
-                  justifyContent="center"
-                  gap="1.5"
-                  py="1"
-                  px="2"
-                  color="app.textMuted"
-                  bg="app.bgInput"
-                  border="1px solid"
-                  borderColor="app.border"
-                  borderRadius="md"
-                  fontSize="xs"
-                  cursor="pointer"
-                  transitionProperty="color, background, border-color"
-                  transitionDuration="var(--dur-fast)"
-                  transitionTimingFunction="var(--ease)"
-                  _hover={{ color: "app.text", bg: "app.hover" }}
-                  _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-                >
-                  <Icon name={copied ? "check" : "copy"} size={14} />
-                  <span>{copied ? t("gridCopied") : t("exportCopyAll")}</span>
-                </chakra.button>
+                <Tooltip label={copied ? t("gridCopied") : t("exportCopyAll")} focusableWrapper={!hasOutput}>
+                  <chakra.button
+                    type="button"
+                    onClick={handleCopy}
+                    disabled={!hasOutput}
+                    aria-label={copied ? t("gridCopied") : t("exportCopyAll")}
+                    display="inline-flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    gap="1.5"
+                    py="1"
+                    px="2"
+                    color="app.textMuted"
+                    bg="app.bgInput"
+                    border="1px solid"
+                    borderColor="app.border"
+                    borderRadius="md"
+                    fontSize="xs"
+                    cursor="pointer"
+                    transitionProperty="color, background, border-color"
+                    transitionDuration="var(--dur-fast)"
+                    transitionTimingFunction="var(--ease)"
+                    _hover={{ color: "app.text", bg: "app.hover" }}
+                    _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+                  >
+                    <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
+                    <span>{copied ? t("gridCopied") : t("exportCopyAll")}</span>
+                  </chakra.button>
+                </Tooltip>
               </chakra.div>
               <chakra.pre
                 aria-label={t("exportPreview")}

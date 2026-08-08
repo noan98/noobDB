@@ -3,8 +3,9 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import { useT } from "../i18n";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import {
   blobToBytes,
@@ -96,19 +97,20 @@ export function ImageExportButton({ makePng, makeSvg, filenameBase, size = "sm",
 
   return (
     <>
-      <Button
-        ref={btnRef}
-        type="button"
-        variant="secondary"
-        size={size}
-        onClick={openMenu}
-        disabled={busy}
-        title={t("imageExportButton")}
-        aria-label={t("imageExportButton")}
-      >
-        <Icon name="download" size={14} />
-        {!iconOnly && <span style={{ marginInlineStart: 6 }}>{t("imageExportButton")}</span>}
-      </Button>
+      <Tooltip label={t("imageExportButton")} focusableWrapper={busy}>
+        <Button
+          ref={btnRef}
+          type="button"
+          variant="secondary"
+          size={size}
+          onClick={openMenu}
+          disabled={busy}
+          aria-label={t("imageExportButton")}
+        >
+          <Icon name="download" size={ICON_SIZES.md} />
+          {!iconOnly && <span style={{ marginInlineStart: 6 }}>{t("imageExportButton")}</span>}
+        </Button>
+      </Tooltip>
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />
       )}

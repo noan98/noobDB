@@ -6,12 +6,15 @@
 mod commands;
 mod db;
 mod error;
+mod flight_recorder;
 mod history;
 mod logs;
 mod profiles;
+mod sandboxes;
 mod snippets;
 mod ssh;
 mod state;
+mod tasks;
 
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
@@ -23,20 +26,72 @@ pub mod __test_api {
     pub use crate::db::data_diff::{
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
-    pub use crate::db::diff::{compute_schema_diff, DiffStatus, SchemaDiff};
+    pub use crate::db::diff::{compute_schema_diff, ColumnDiff, DiffStatus, SchemaDiff, TableDiff};
+    pub use crate::db::privileges::{
+        generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
+        generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
+    };
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
-        QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-        TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, Value,
+        Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
+        ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
+        ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
+        TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::{
-        is_read_only_sql, is_session_init_sql, Connection, DbConnectOptions, DriverKind, SslMode,
+        apply_auto_limit, classify_write_kind, is_read_only_sql, is_session_init_sql, Connection,
+        DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::error::AppError;
-    pub use crate::profiles::SshAuthMethod;
-    pub use crate::ssh::{SshConfig, SshTunnel};
+    pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
+    pub use crate::flight_recorder::{NewWriteCapture, WriteCaptureRecord, WriteCaptureSummary};
+    pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshJumpProfile, SshProfile};
+    pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
+    pub use crate::ssh::known_hosts::KnownHost;
+    pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
+
+    // zod ⇔ serde ゴールデン (#824) が代表インスタンスを組み立てるための追加の
+    // レスポンス/永続化型の再エクスポート。いずれも非公開モジュール配下にあるため、
+    // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
+    pub use crate::commands::connection::ConnectResponse;
+    pub use crate::commands::logs::LogView;
+    pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags};
+    pub use crate::commands::query::CancelStreamResult;
+    pub use crate::commands::sandbox::{
+        filter_sandbox_data_diff, SandboxCreateResponse, SandboxSchemaDiffResult,
+        SandboxTableDiffResult,
+    };
+    pub use crate::history::HistoryEntry;
+    pub use crate::sandboxes::SandboxRecord;
+    pub use crate::snippets::{Snippet, SnippetScope};
+
+    // `commands::import::CsvPreview` はコマンドモジュール内に定義されているが、
+    // フィクスチャ生成専用のため struct そのものを再公開する。
+    pub use crate::commands::import::CsvPreview;
+
+    // ローカル横断クエリ (#740) — Tauri を経由せずに統合テストから駆動できるよう、
+    // 各 IPC ハンドラの `_inner` コア (State なし) を再公開する。
+    pub use crate::commands::local::{
+        create_local_session_inner, drop_local_table_inner, list_local_tables_inner,
+        register_local_table_inner, save_local_database_inner, RegisterLocalTableRequest,
+        MAX_LOCAL_TABLE_ROWS,
+    };
+
+    // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
+    // 生成専用のピンポイント再エクスポート。`preview_query_stream` の行イベント
+    // (PreviewRowsEvent) は `StreamRowsEvent` と同一シェイプのため個別公開せず、
+    // フィクスチャは共有する (前者は非公開のまま)。
+    pub use crate::commands::connection::ConnectPhaseEvent;
+    pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
+    pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
+    pub use crate::commands::import::{
+        ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
+    };
+    pub use crate::commands::query::{
+        PreviewDoneEvent, PreviewMetaEvent, StreamCancelledEvent, StreamColumnsEvent,
+        StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
+    };
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
@@ -58,10 +113,22 @@ pub mod __test_api {
             conn,
             connect_options: opts,
             read_only,
+            emergency_write: std::sync::atomic::AtomicBool::new(false),
             skip_history: true,
             reconnect_ssh: None,
             _tunnel: None,
+            local_temp_file: None,
         }
+    }
+
+    /// Drives the `set_emergency_mode` IPC command's core path (session lookup
+    /// + read-only precondition + flag flip) without a Tauri runtime.
+    pub async fn set_emergency_mode_via_command(
+        state: &AppState,
+        session_id: &str,
+        enabled: bool,
+    ) -> crate::error::Result<()> {
+        crate::commands::query::set_emergency_mode_inner(state, session_id, enabled).await
     }
 
     /// Drives the `reconnect` IPC command's core path (session lookup + in-place
@@ -105,6 +172,69 @@ pub mod __test_api {
     /// rows reach the driver.
     pub fn ensure_import_writable(session: &Session) -> crate::error::Result<()> {
         crate::commands::import::ensure_import_writable(session)
+    }
+
+    /// Drives the `run_captured_write` IPC command's core path (session
+    /// lookup + read-only guard + capture + history recording) without a
+    /// Tauri runtime (#735).
+    pub async fn run_captured_write_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        database: Option<&str>,
+        row_cap: Option<u32>,
+        retention_days: Option<u32>,
+    ) -> crate::error::Result<crate::commands::flight_recorder::CapturedWriteResponse> {
+        crate::commands::flight_recorder::run_captured_write_inner(
+            state,
+            session_id.to_string(),
+            sql.to_string(),
+            database.map(str::to_string),
+            row_cap,
+            retention_days,
+        )
+        .await
+    }
+
+    /// Drives the `undo_flight_record` IPC command's core path without a
+    /// Tauri runtime (#735).
+    pub async fn undo_flight_record_via_command(
+        state: &AppState,
+        session_id: &str,
+        id: i64,
+        force: bool,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoOutcome> {
+        crate::commands::flight_recorder::undo_flight_record_inner(
+            state,
+            session_id.to_string(),
+            id,
+            force,
+        )
+        .await
+    }
+
+    /// Drives the `preview_undo` IPC command's core path without a Tauri
+    /// runtime (#735).
+    pub async fn preview_undo_via_command(
+        state: &AppState,
+        session_id: &str,
+        id: i64,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoPreviewResponse> {
+        let (plan, _record) =
+            crate::commands::flight_recorder::plan_undo(state, session_id, id, false).await?;
+        Ok(crate::commands::flight_recorder::UndoPreviewResponse {
+            statements: plan.statements,
+            conflicts: plan.conflicts,
+            warnings: plan.warnings,
+        })
+    }
+
+    /// Lists flight-recorder captures directly against the store, for tests
+    /// that need to find a capture's id after `run_captured_write_via_command`.
+    pub async fn list_flight_records_for_tests(
+        profile_id: Option<&str>,
+    ) -> crate::error::Result<Vec<crate::flight_recorder::WriteCaptureSummary>> {
+        crate::flight_recorder::store::list(profile_id, 100).await
     }
 
     /// Drives the `kill_process` IPC command's core path (session lookup +
@@ -156,6 +286,130 @@ pub mod __test_api {
         .await
     }
 
+    /// Drives the `apply_privilege_sql` IPC command's core path (session
+    /// lookup + read-only guard + empty-statement guard + transactional
+    /// apply) without a Tauri runtime, mirroring
+    /// [`apply_sync_sql_via_command`].
+    pub async fn apply_privilege_sql_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        statements: Vec<String>,
+    ) -> crate::error::Result<u64> {
+        crate::commands::privileges::apply_privilege_sql_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            statements,
+        )
+        .await
+    }
+
+    /// Drives the `create_sandbox` IPC command's core path without a Tauri
+    /// runtime (#747).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_sandbox_via_command(
+        state: &AppState,
+        source_session_id: &str,
+        source_database: Option<&str>,
+        name: &str,
+        tables: Vec<String>,
+        include_related: bool,
+        row_limit: Option<u64>,
+    ) -> crate::error::Result<SandboxCreateResponse> {
+        crate::commands::sandbox::create_sandbox_inner(
+            state,
+            source_session_id.to_string(),
+            source_database.map(str::to_string),
+            name.to_string(),
+            tables,
+            include_related,
+            row_limit,
+        )
+        .await
+    }
+
+    /// Drives the `discard_sandbox` IPC command's core path without a Tauri
+    /// runtime (#747).
+    pub async fn discard_sandbox_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        session_id: Option<&str>,
+    ) -> crate::error::Result<()> {
+        crate::commands::sandbox::discard_sandbox_inner(
+            state,
+            sandbox_id.to_string(),
+            session_id.map(str::to_string),
+        )
+        .await
+    }
+
+    /// Drives the `sandbox_table_diff` IPC command's core path without a
+    /// Tauri runtime (#747).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn sandbox_table_diff_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        table: &str,
+        source_session_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> crate::error::Result<SandboxTableDiffResult> {
+        crate::commands::sandbox::sandbox_table_diff_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            table.to_string(),
+            source_session_id.map(str::to_string),
+            limit,
+        )
+        .await
+    }
+
+    /// Drives the `sandbox_schema_diff` IPC command's core path without a
+    /// Tauri runtime (#747).
+    pub async fn sandbox_schema_diff_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        source_session_id: Option<&str>,
+    ) -> crate::error::Result<SandboxSchemaDiffResult> {
+        crate::commands::sandbox::sandbox_schema_diff_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            source_session_id.map(str::to_string),
+        )
+        .await
+    }
+
+    /// Drives the `sandbox_advance_base` IPC command's core path without a
+    /// Tauri runtime (#747).
+    pub async fn sandbox_advance_base_via_command(
+        state: &AppState,
+        sandbox_id: &str,
+        sandbox_session_id: &str,
+        table: &str,
+        applied: DataDiff,
+        allow_delete: bool,
+    ) -> crate::error::Result<()> {
+        crate::commands::sandbox::sandbox_advance_base_inner(
+            state,
+            sandbox_id.to_string(),
+            sandbox_session_id.to_string(),
+            table.to_string(),
+            applied,
+            allow_delete,
+        )
+        .await
+    }
+
+    /// Lists every sandbox's non-secret metadata (`list_sandboxes` IPC's core;
+    /// already Tauri-free so this just re-exports it for test symmetry).
+    pub fn list_sandboxes_via_command() -> crate::error::Result<Vec<SandboxRecord>> {
+        crate::commands::sandbox::list_sandboxes()
+    }
+
     /// Drives the schema-health advisor's full command path
     /// (`commands::advisor`) without Tauri: collects table / column / index /
     /// foreign-key metadata and unused-index stats from a live connection and
@@ -185,6 +439,12 @@ pub mod __test_api {
             .or_else(|| parse_tcp_url(url, "postgresql://", 5432, DriverKind::Postgres))
     }
 
+    /// Naive parser for `mssql://user:password@host:port/database` used in
+    /// tests (#729).
+    pub fn parse_mssql_url(url: &str) -> Option<DbConnectOptions> {
+        parse_tcp_url(url, "mssql://", 1433, DriverKind::Mssql)
+    }
+
     /// Build SQLite connect options from a filesystem path.
     pub fn sqlite_options(path: &str) -> DbConnectOptions {
         DbConnectOptions {
@@ -194,6 +454,24 @@ pub mod __test_api {
             password: String::new(),
             database: None,
             driver: DriverKind::Sqlite,
+            file_path: Some(path.to_string()),
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+        }
+    }
+
+    /// Build DuckDB connect options from a filesystem path (#709).
+    pub fn duckdb_options(path: &str) -> DbConnectOptions {
+        DbConnectOptions {
+            host: String::new(),
+            port: 0,
+            user: String::new(),
+            password: String::new(),
+            database: None,
+            driver: DriverKind::DuckDb,
             file_path: Some(path.to_string()),
             ssl_mode: None,
             ssl_root_cert: None,
@@ -266,6 +544,10 @@ pub fn run() {
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "noobDB starting");
 
+    // ローカル横断クエリ (#740) の一時 DB は前回起動のセッション寿命に紐づくため、
+    // 新しいプロセスの起動時点で前回分は必ず無効 — 異常終了で残った分をここで掃除する。
+    commands::local::cleanup_stale_local_files();
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // 長時間クエリ完了時の OS デスクトップ通知 (#707)。フロントは
@@ -286,6 +568,13 @@ pub fn run() {
 
     let result = builder
         .manage(state::AppState::default())
+        // タスクスケジューラ (#730)。アプリ起動中のみ発火するバックグラウンド
+        // Tokio タスクとして常駐する。状態は tasks.json / task_runs.sqlite の
+        // ディスク上のみに持つため、AppState への追加は不要。
+        .setup(|app| {
+            tasks::scheduler::spawn(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::connection::test_connection,
             commands::connection::connect,
@@ -296,12 +585,14 @@ pub fn run() {
             commands::ssh::list_known_hosts,
             commands::ssh::forget_host_key,
             commands::ssh::trust_host_key,
+            commands::ssh::resolve_ssh_config_host,
             commands::query::run_query,
             commands::query::run_query_transaction,
             commands::query::begin_transaction,
             commands::query::run_in_transaction,
             commands::query::finish_transaction,
             commands::query::run_query_stream,
+            commands::query::set_emergency_mode,
             commands::query::preview_query_stream,
             commands::query::cancel_stream,
             commands::schema::list_databases,
@@ -318,15 +609,31 @@ pub fn run() {
             commands::server::server_metrics,
             commands::process::list_processes,
             commands::process::kill_process,
+            commands::privileges::list_db_users,
+            commands::privileges::list_user_privileges,
+            commands::privileges::generate_create_user_sql,
+            commands::privileges::generate_drop_user_sql,
+            commands::privileges::generate_alter_password_sql,
+            commands::privileges::generate_grant_sql,
+            commands::privileges::generate_revoke_sql,
+            commands::privileges::apply_privilege_sql,
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,
             commands::inspector::sample_statement_stats,
             commands::advisor::analyze_schema_health,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
+            commands::diff::diff_schema_snapshots,
             commands::sync::generate_sync_sql,
             commands::sync::generate_data_sync_sql,
             commands::sync::apply_sync_sql,
+            commands::sandbox::create_sandbox,
+            commands::sandbox::list_sandboxes,
+            commands::sandbox::discard_sandbox,
+            commands::sandbox::sandbox_table_diff,
+            commands::sandbox::sandbox_schema_diff,
+            commands::sandbox::filter_sandbox_data_diff,
+            commands::sandbox::sandbox_advance_base,
             commands::profiles::list_profiles,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,
@@ -338,6 +645,12 @@ pub fn run() {
             commands::snippets::delete_snippet,
             commands::history::list_history,
             commands::history::clear_history,
+            commands::flight_recorder::run_captured_write,
+            commands::flight_recorder::precheck_captured_write,
+            commands::flight_recorder::list_flight_records,
+            commands::flight_recorder::clear_flight_records,
+            commands::flight_recorder::preview_undo,
+            commands::flight_recorder::undo_flight_record,
             commands::logs::read_logs,
             commands::logs::clear_logs,
             commands::export::export_query_result,
@@ -347,6 +660,20 @@ pub fn run() {
             commands::import::import_csv,
             commands::file::read_text_file,
             commands::file::write_binary_file,
+            commands::local::create_local_session,
+            commands::local::register_local_table,
+            commands::local::list_local_tables,
+            commands::local::drop_local_table,
+            commands::local::save_local_database,
+            commands::tasks::list_tasks,
+            commands::tasks::save_task,
+            commands::tasks::delete_task,
+            commands::tasks::set_task_enabled,
+            commands::tasks::run_task_now,
+            commands::tasks::list_task_runs,
+            commands::tasks::clear_task_runs,
+            commands::tasks::get_scheduler_settings,
+            commands::tasks::set_scheduler_settings,
         ])
         .run(tauri::generate_context!());
 

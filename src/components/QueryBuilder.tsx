@@ -9,10 +9,11 @@ import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
 import { copyToClipboard } from "./clipboard";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
 import { useToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 
 /**
  * Query Builder のフォーム部のスタイル。各要素へ直接 `css` を適用する。
@@ -36,12 +37,11 @@ const sectionCss: SystemStyleObject = {
   gap: "1.5",
   marginBottom: "2.5",
 };
+// タイポグラフィは `textStyles.overline` (#817) に一本化。以前は生の CSS 変数
+// (`var(--text-xs)` / `var(--text-muted)`) を直書きしており、他ファイルの
+// トークン参照 (`fontSize="2xs"` 等) や字間の値ともズレていた。
 const sectionTitleCss: SystemStyleObject = {
-  fontSize: "var(--text-xs)",
-  fontWeight: 600,
-  letterSpacing: "0.04em",
-  textTransform: "uppercase",
-  color: "var(--text-muted)",
+  textStyle: "overline",
 };
 const sectionRowCss: SystemStyleObject = {
   display: "flex",
@@ -302,25 +302,33 @@ export function quoteValue(driver: string, raw: string): string {
   if (/^null$/i.test(v)) return "NULL";
   if (/^-?\d+(\.\d+)?$/.test(v)) return v;
   if (/^(true|false)$/i.test(v)) {
-    // SQLite has no native boolean literal — emit 1/0 instead of TRUE/FALSE.
-    if (driver === "sqlite") return v.toLowerCase() === "true" ? "1" : "0";
+    // SQLite/MSSQL have no native boolean literal — emit 1/0 instead of
+    // TRUE/FALSE (T-SQL `BIT` columns take 0/1; see `cellEdit.ts`'s
+    // `literalFromCellValue`).
+    if (driver === "sqlite" || driver === "mssql") return v.toLowerCase() === "true" ? "1" : "0";
     return v.toUpperCase();
   }
   // バックスラッシュの二重化は MySQL のみ必要。PostgreSQL (既定の
-  // standard_conforming_strings = on) と SQLite ではバックスラッシュは
+  // standard_conforming_strings = on)・SQLite・MSSQL ではバックスラッシュは
   // ただの文字なので、二重化すると値が変わってしまい (例: C:\temp が
   // C:\\temp として保存され)、WHERE 句が既存行に一致しなくなる。
   // cellEdit.ts の quoteString / db/data_diff.rs の quote_string と方針を揃える。
   const escaped =
     driver === "mysql" ? v.replace(/\\/g, "\\\\").replace(/'/g, "''") : v.replace(/'/g, "''");
-  return "'" + escaped + "'";
+  return (driver === "mssql" ? "N" : "") + "'" + escaped + "'";
 }
 
 function tableRef(driver: string, database: string, table: string): string {
   const tbl = table ? quoteIdentFor(driver, table) : "<table>";
   // SQLite has a single namespace per connection — no database qualifier.
   if (driver === "sqlite") return tbl;
-  if (database) return `${quoteIdentFor(driver, database)}.${tbl}`;
+  if (database) {
+    // MSSQL (#729): introspection is scoped to the `dbo` schema (see
+    // `db/mssql.rs`), so the 3-part `database.dbo.table` form is needed —
+    // a bare `database.table` is invalid/ambiguous T-SQL.
+    if (driver === "mssql") return `${quoteIdentFor(driver, database)}.[dbo].${tbl}`;
+    return `${quoteIdentFor(driver, database)}.${tbl}`;
+  }
   return tbl;
 }
 
@@ -371,7 +379,15 @@ function buildSql(
         ? "*"
         : selectColumns.map((c) => quoteIdentFor(driver, c)).join(", ");
       const trimmedLimit = limit.trim();
-      const limitClause = limitEnabled && trimmedLimit && /^\d+$/.test(trimmedLimit) ? ` LIMIT ${trimmedLimit}` : "";
+      const hasLimit = limitEnabled && trimmedLimit && /^\d+$/.test(trimmedLimit);
+      // MSSQL (#729) has no `LIMIT` keyword; the equivalent, `TOP (n)`, goes
+      // right after `SELECT` instead of trailing the statement (mirrors
+      // `apply_auto_limit_mssql` on the backend).
+      if (driver === "mssql") {
+        const topClause = hasLimit ? `TOP (${trimmedLimit}) ` : "";
+        return `SELECT ${topClause}${cols} FROM ${ref}${where};`;
+      }
+      const limitClause = hasLimit ? ` LIMIT ${trimmedLimit}` : "";
       return `SELECT ${cols} FROM ${ref}${where}${limitClause};`;
     }
     case "UPDATE": {
@@ -443,7 +459,6 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
       })
       .catch((e) => { if (!cancelled) setLoadError(String(e)); });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   useEffect(() => {
@@ -462,7 +477,6 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
       .catch((e) => { if (!cancelled) setLoadError(String(e)); })
       .finally(() => { if (!cancelled) setLoadingTables(false); });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, database]);
 
   useEffect(() => {
@@ -664,15 +678,16 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                             {selectColumns.map((c) => (
                               <chakra.td key={c}>
                                 <chakra.span css={selectedColNameCss}>{c}</chakra.span>
-                                <chakra.button
-                                  type="button"
-                                  css={chipRemoveCss}
-                                  onClick={() => removeSelectColumn(c)}
-                                  aria-label={t("qbRemove")}
-                                  title={t("qbRemove")}
-                                >
-                                  <Icon name="close" size={12} />
-                                </chakra.button>
+                                <Tooltip label={t("qbRemove")}>
+                                  <chakra.button
+                                    type="button"
+                                    css={chipRemoveCss}
+                                    onClick={() => removeSelectColumn(c)}
+                                    aria-label={t("qbRemove")}
+                                  >
+                                    <Icon name="close" size={ICON_SIZES.sm} />
+                                  </chakra.button>
+                                </Tooltip>
                               </chakra.td>
                             ))}
                           </tr>
@@ -714,16 +729,17 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     placeholder={t("qbValue")}
                     onChange={(e) => updatePair("set", i, { value: e.target.value })}
                   />
-                  <chakra.button
-                    type="button"
-                    css={iconBtnCss}
-                    onClick={() => removePair("set", i)}
-                    aria-label={t("qbRemove")}
-                    title={t("qbRemove")}
-                    disabled={setPairs.length <= 1}
-                  >
-                    <Icon name="close" size={12} />
-                  </chakra.button>
+                  <Tooltip label={t("qbRemove")} focusableWrapper={setPairs.length <= 1}>
+                    <chakra.button
+                      type="button"
+                      css={iconBtnCss}
+                      onClick={() => removePair("set", i)}
+                      aria-label={t("qbRemove")}
+                      disabled={setPairs.length <= 1}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </chakra.button>
+                  </Tooltip>
                 </Box>
               ))}
             </chakra.section>
@@ -752,16 +768,17 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     placeholder={t("qbValue")}
                     onChange={(e) => updatePair("insert", i, { value: e.target.value })}
                   />
-                  <chakra.button
-                    type="button"
-                    css={iconBtnCss}
-                    onClick={() => removePair("insert", i)}
-                    aria-label={t("qbRemove")}
-                    title={t("qbRemove")}
-                    disabled={insertPairs.length <= 1}
-                  >
-                    <Icon name="close" size={12} />
-                  </chakra.button>
+                  <Tooltip label={t("qbRemove")} focusableWrapper={insertPairs.length <= 1}>
+                    <chakra.button
+                      type="button"
+                      css={iconBtnCss}
+                      onClick={() => removePair("insert", i)}
+                      aria-label={t("qbRemove")}
+                      disabled={insertPairs.length <= 1}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </chakra.button>
+                  </Tooltip>
                 </Box>
               ))}
             </chakra.section>
@@ -813,16 +830,17 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     disabled={isNullOperator(c.operator)}
                     onChange={(e) => updateCondition(i, { value: e.target.value })}
                   />
-                  <chakra.button
-                    type="button"
-                    css={iconBtnCss}
-                    onClick={() => removeCondition(i)}
-                    aria-label={t("qbRemove")}
-                    title={t("qbRemove")}
-                    disabled={whereConditions.length <= 1}
-                  >
-                    <Icon name="close" size={12} />
-                  </chakra.button>
+                  <Tooltip label={t("qbRemove")} focusableWrapper={whereConditions.length <= 1}>
+                    <chakra.button
+                      type="button"
+                      css={iconBtnCss}
+                      onClick={() => removeCondition(i)}
+                      aria-label={t("qbRemove")}
+                      disabled={whereConditions.length <= 1}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </chakra.button>
+                  </Tooltip>
                 </Box>
               ))}
             </chakra.section>
@@ -855,13 +873,13 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           <chakra.section css={sectionCss}>
             <Box css={sectionTitleCss}>{t("qbPreview")}</Box>
             <Box css={previewWrapCss}>
-              <chakra.button
-                type="button"
-                css={previewCopyCss}
-                onClick={handleCopy}
-                aria-label={copied ? t("qbCopied") : t("qbCopy")}
-                title={copied ? t("qbCopied") : t("qbCopy")}
-              >
+              <Tooltip label={copied ? t("qbCopied") : t("qbCopy")}>
+                <chakra.button
+                  type="button"
+                  css={previewCopyCss}
+                  onClick={handleCopy}
+                  aria-label={copied ? t("qbCopied") : t("qbCopy")}
+                >
                 {copied ? (
                   <svg
                     width="14"
@@ -892,7 +910,8 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-5A1.5 1.5 0 0 0 3 3.5v5A1.5 1.5 0 0 0 4.5 10H6" />
                   </svg>
                 )}
-              </chakra.button>
+                </chakra.button>
+              </Tooltip>
               <SqlPreview sql={sql} driver={driver} />
             </Box>
           </chakra.section>
@@ -902,32 +921,34 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
       <ModalFooter>
         <Box flex={1} />
         {onPreview && kind !== "SELECT" && (
-          <Button variant="warning" onClick={handlePreview} title={t("editorPreviewTitle")}>
-            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
-                <circle cx="8" cy="8" r="2" />
-              </svg>
-            </chakra.span>
-            {t("qbPreviewRun")}
-          </Button>
+          <Tooltip label={t("editorPreviewTitle")}>
+            <Button variant="warning" onClick={handlePreview}>
+              <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
+                  <circle cx="8" cy="8" r="2" />
+                </svg>
+              </chakra.span>
+              {t("qbPreviewRun")}
+            </Button>
+          </Tooltip>
         )}
         {/* 実行はエディタの Run / 他モーダルの Execute と同じ「主要アクション =
             primary (アクセント色)」に統一する。success はセル編集 Apply などの
             DB 書き込み確定に限定する (theme.ts の variant 規約)。 */}
-        <Button
-          variant="primary"
-          onClick={handleExecute}
-          disabled={runBlockedByReadOnly}
-          title={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
+        <Tooltip
+          label={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
+          focusableWrapper={runBlockedByReadOnly}
         >
-          <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
-            </svg>
-          </chakra.span>
-          {t("qbExecute")}
-        </Button>
+          <Button variant="primary" onClick={handleExecute} disabled={runBlockedByReadOnly}>
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
+              </svg>
+            </chakra.span>
+            {t("qbExecute")}
+          </Button>
+        </Tooltip>
       </ModalFooter>
     </Modal>
   );
@@ -1030,7 +1051,6 @@ function SqlPreview({ sql, driver }: SqlPreviewProps) {
       view.destroy();
       viewRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driver]);
 
   useEffect(() => {

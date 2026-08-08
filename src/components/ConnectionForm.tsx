@@ -4,9 +4,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import { api, ConnectionProfile, DriverKind, SshAuthMethod, SslMode } from "../api/tauri";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
-import { Button, Input, Select, Switch, Textarea } from "./ui";
+import { Icon, ICON_SIZES } from "./Icon";
+import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
+import { Tooltip } from "./Tooltip";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value never reaches the frontend, so this
@@ -52,28 +53,29 @@ function PasswordInput({ value, onChange, hasStored, id }: PasswordInputProps) {
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
       />
-      <chakra.button
-        type="button"
-        position="absolute"
-        right="4px"
-        display="inline-flex"
-        alignItems="center"
-        justifyContent="center"
-        p="1"
-        border="none"
-        bg="transparent"
-        color="app.textMuted"
-        borderRadius="sm"
-        _hover={{ bg: "app.hover", color: "app.text" }}
-        // Keep the input focused so the toggle works while typing.
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => setShow((s) => !s)}
-        aria-pressed={show}
-        aria-label={show ? t("formPasswordHide") : t("formPasswordShow")}
-        title={show ? t("formPasswordHide") : t("formPasswordShow")}
-      >
-        <Icon name={show ? "eye-off" : "eye"} size={16} />
-      </chakra.button>
+      <Tooltip label={show ? t("formPasswordHide") : t("formPasswordShow")}>
+        <chakra.button
+          type="button"
+          position="absolute"
+          right="4px"
+          display="inline-flex"
+          alignItems="center"
+          justifyContent="center"
+          p="1"
+          border="none"
+          bg="transparent"
+          color="app.textMuted"
+          borderRadius="sm"
+          _hover={{ bg: "app.hover", color: "app.text" }}
+          // Keep the input focused so the toggle works while typing.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setShow((s) => !s)}
+          aria-pressed={show}
+          aria-label={show ? t("formPasswordHide") : t("formPasswordShow")}
+        >
+          <Icon name={show ? "eye-off" : "eye"} size={ICON_SIZES.md} />
+        </chakra.button>
+      </Tooltip>
     </Box>
   );
 }
@@ -100,6 +102,8 @@ function defaultPortFor(driver: DriverKind): number {
     case "mysql": return 3306;
     case "postgres": return 5432;
     case "sqlite": return 0;
+    case "duckdb": return 0;
+    case "mssql": return 1433;
   }
 }
 
@@ -108,11 +112,21 @@ function defaultUserFor(driver: DriverKind): string {
     case "mysql": return "root";
     case "postgres": return "postgres";
     case "sqlite": return "";
+    case "duckdb": return "";
+    case "mssql": return "sa";
   }
 }
 
 function normalizeDriver(driver: string | undefined): DriverKind {
-  if (driver === "postgres" || driver === "sqlite" || driver === "mysql") return driver;
+  if (
+    driver === "postgres" ||
+    driver === "sqlite" ||
+    driver === "mysql" ||
+    driver === "duckdb" ||
+    driver === "mssql"
+  ) {
+    return driver;
+  }
   return "mysql";
 }
 
@@ -134,9 +148,9 @@ function Fieldset({ children }: { children: ReactNode }) {
 
 function Legend({ children }: { children: ReactNode }) {
   return (
-    <Box as="legend" fontWeight="600" fontSize="sm" px="1.5">
+    <Heading as="legend" role="subheading" px="1.5">
       {children}
-    </Box>
+    </Heading>
   );
 }
 
@@ -211,13 +225,30 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshKeyPath, setSshKeyPath] = useState(initial?.ssh?.private_key_path ?? "");
   const [sshPassphrase, setSshPassphrase] = useState("");
   const [sshPassword, setSshPassword] = useState("");
+  const [loadingSshConfig, setLoadingSshConfig] = useState(false);
+
+  // Bastion/jump hop (#708 multi-hop tunnel — capped at one jump hop, 2 SSH
+  // hops total). Mirrors the main SSH fields above; only the auth-method-
+  // specific secret fields differ (their own keyring kind, `_hop0`).
+  const [useSshJump, setUseSshJump] = useState(!!initial?.ssh?.jump);
+  const [sshJumpHost, setSshJumpHost] = useState(initial?.ssh?.jump?.host ?? "");
+  const [sshJumpPort, setSshJumpPort] = useState(String(initial?.ssh?.jump?.port ?? 22));
+  const [sshJumpUser, setSshJumpUser] = useState(initial?.ssh?.jump?.user ?? "");
+  const [sshJumpAuthMethod, setSshJumpAuthMethod] = useState<SshAuthMethod>(
+    initial?.ssh?.jump?.auth_method ?? "key",
+  );
+  const [sshJumpKeyPath, setSshJumpKeyPath] = useState(initial?.ssh?.jump?.private_key_path ?? "");
+  const [sshJumpPassphrase, setSshJumpPassphrase] = useState("");
+  const [sshJumpPassword, setSshJumpPassword] = useState("");
 
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isFileBacked = driver === "sqlite";
+  // DuckDB (#709) is file-backed exactly like SQLite: same `file_path`
+  // requirement, no host/port/user/password, no SSH tunnel, no TLS.
+  const isFileBacked = driver === "sqlite" || driver === "duckdb";
 
   const handleDriverChange = (next: DriverKind) => {
     if (next === driver) return;
@@ -250,6 +281,62 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       defaultPath,
     });
     if (typeof selected === "string") setSshKeyPath(selected);
+  };
+
+  const pickJumpKeyFile = async () => {
+    let defaultPath: string | undefined;
+    try {
+      defaultPath = sshJumpKeyPath.trim()
+        ? await dirname(sshJumpKeyPath)
+        : await join(await homeDir(), ".ssh");
+    } catch {
+      defaultPath = undefined;
+    }
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: t("formPickKeyTitle"),
+      defaultPath,
+    });
+    if (typeof selected === "string") setSshJumpKeyPath(selected);
+  };
+
+  // Resolves the alias currently typed into the SSH Host field against
+  // ~/.ssh/config (#708) and prefills HostName / Port / User / IdentityFile,
+  // plus the jump-host section when a ProxyJump directive was found. Values
+  // are copied once — later edits to ~/.ssh/config have no effect on the
+  // saved profile.
+  const handleLoadSshConfig = async () => {
+    setError(null);
+    setMessage(null);
+    const alias = sshHost.trim();
+    if (!alias) return;
+    setLoadingSshConfig(true);
+    try {
+      const resolved = await api.resolveSshConfigHost(alias);
+      if (!resolved) {
+        setError(t("formSshConfigNoMatch", { alias }));
+        return;
+      }
+      if (resolved.host_name) setSshHost(resolved.host_name);
+      if (resolved.port !== null) setSshPort(String(resolved.port));
+      if (resolved.user) setSshUser(resolved.user);
+      if (resolved.identity_file) {
+        setSshAuthMethod("key");
+        setSshKeyPath(resolved.identity_file);
+      }
+      if (resolved.jump_host) {
+        setUseSshJump(true);
+        setSshJumpHost(resolved.jump_host);
+        if (resolved.jump_port !== null) setSshJumpPort(String(resolved.jump_port));
+        if (resolved.jump_user) setSshJumpUser(resolved.jump_user);
+      }
+      setMessage(t("formSshConfigLoaded", { alias }));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoadingSshConfig(false);
+    }
   };
 
   const pickCertFile = async (set: (path: string) => void, current: string) => {
@@ -286,10 +373,16 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       multiple: false,
       directory: false,
       title: t("formPickDbFileTitle"),
-      filters: [
-        { name: t("formSqliteFileFilter"), extensions: ["db", "sqlite", "sqlite3"] },
-        { name: t("formAnyFileFilter"), extensions: ["*"] },
-      ],
+      filters:
+        driver === "duckdb"
+          ? [
+              { name: t("formDuckDbFileFilter"), extensions: ["duckdb", "db"] },
+              { name: t("formAnyFileFilter"), extensions: ["*"] },
+            ]
+          : [
+              { name: t("formSqliteFileFilter"), extensions: ["db", "sqlite", "sqlite3"] },
+              { name: t("formAnyFileFilter"), extensions: ["*"] },
+            ],
     });
     if (typeof selected === "string") setFilePath(selected);
   };
@@ -328,6 +421,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
             passphrase: sshAuthMethod === "key" ? sshPassphrase : "",
             password: sshAuthMethod === "password" ? sshPassword : "",
+            jump: useSshJump
+              ? {
+                  host: sshJumpHost,
+                  port: Number(sshJumpPort),
+                  user: sshJumpUser,
+                  auth_method: sshJumpAuthMethod,
+                  private_key_path: sshJumpAuthMethod === "key" ? sshJumpKeyPath : "",
+                  passphrase: sshJumpAuthMethod === "key" ? sshJumpPassphrase : "",
+                  password: sshJumpAuthMethod === "password" ? sshJumpPassword : "",
+                }
+              : null,
           }
         : null,
       file_path: null,
@@ -361,6 +465,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     }
     if (useSsh && parsePort(sshPort) === null) {
       setError(t("formInvalidSshPort"));
+      return false;
+    }
+    if (useSsh && useSshJump && parsePort(sshJumpPort) === null) {
+      setError(t("formInvalidSshJumpPort"));
       return false;
     }
     return true;
@@ -400,6 +508,15 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               user: sshUser,
               auth_method: sshAuthMethod,
               private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
+              jump: useSshJump
+                ? {
+                    host: sshJumpHost,
+                    port: Number(sshJumpPort),
+                    user: sshJumpUser,
+                    auth_method: sshJumpAuthMethod,
+                    private_key_path: sshJumpAuthMethod === "key" ? sshJumpKeyPath : "",
+                  }
+                : null,
             }
           : null,
         db_password: isFileBacked || password === "" ? undefined : password,
@@ -410,6 +527,14 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         ssh_password:
           !isFileBacked && useSsh && sshAuthMethod === "password" && sshPassword !== ""
             ? sshPassword
+            : undefined,
+        ssh_jump_passphrase:
+          !isFileBacked && useSsh && useSshJump && sshJumpAuthMethod === "key" && sshJumpPassphrase !== ""
+            ? sshJumpPassphrase
+            : undefined,
+        ssh_jump_password:
+          !isFileBacked && useSsh && useSshJump && sshJumpAuthMethod === "password" && sshJumpPassword !== ""
+            ? sshJumpPassword
             : undefined,
         group: group.trim() || null,
         color: color || null,
@@ -443,9 +568,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       p="4"
       overflowY="auto"
     >
-      <Box as="h2" gridColumn="span 2" m="0">
+      <Heading gridColumn="span 2">
         {initial?.id ? t("formEditTitle", { name: initial.name }) : t("formNewTitle")}
-      </Box>
+      </Heading>
 
       <Box gridColumn="span 2">
         <label htmlFor={`${fid}-name`}>{t("formName")}</label>
@@ -462,31 +587,45 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <option value="mysql">{t("formDriverMysql")}</option>
           <option value="postgres">{t("formDriverPostgres")}</option>
           <option value="sqlite">{t("formDriverSqlite")}</option>
+          <option value="duckdb">{t("formDriverDuckDb")}</option>
+          <option value="mssql">{t("formDriverMssql")}</option>
         </Select>
       </Box>
 
       {isFileBacked ? (
         <Fieldset>
-          <Legend>{t("formSqliteLegend")}</Legend>
+          <Legend>{driver === "duckdb" ? t("formDuckDbLegend") : t("formSqliteLegend")}</Legend>
           <Box>
-            <label htmlFor={`${fid}-sqlite-path`}>{t("formSqliteFilePath")}</label>
+            <label htmlFor={`${fid}-sqlite-path`}>
+              {driver === "duckdb" ? t("formDuckDbFilePath") : t("formSqliteFilePath")}
+            </label>
             <Flex gap="2" align="end">
               <Input
                 id={`${fid}-sqlite-path`}
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
-                placeholder={t("formSqliteFilePathPlaceholder")}
+                placeholder={
+                  driver === "duckdb"
+                    ? t("formDuckDbFilePathPlaceholder")
+                    : t("formSqliteFilePathPlaceholder")
+                }
               />
               <Button type="button" onClick={pickDbFile}>{t("formBrowse")}</Button>
             </Flex>
             <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
-              {t("formSqliteFilePathHelp")}
+              {driver === "duckdb" ? t("formDuckDbFilePathHelp") : t("formSqliteFilePathHelp")}
             </Text>
           </Box>
         </Fieldset>
       ) : (
         <Fieldset>
-          <Legend>{driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}</Legend>
+          <Legend>
+            {driver === "postgres"
+              ? t("formPostgresLegend")
+              : driver === "mssql"
+                ? t("formMssqlLegend")
+                : t("formMysqlLegend")}
+          </Legend>
           <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
             <Box>
               <label htmlFor={`${fid}-host`}>{t("formHost")}</label>
@@ -630,25 +769,25 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             <label htmlFor={`${fid}-color`}>{t("formColor")}</label>
             <Flex align="center" gap="2" flexWrap="wrap">
               {COLOR_PRESETS.map((c) => (
-                <chakra.button
-                  key={c}
-                  type="button"
-                  width="24px"
-                  height="24px"
-                  borderRadius="sm"
-                  border="2px solid"
-                  borderColor={color === c ? "app.text" : "transparent"}
-                  p={0}
-                  cursor="pointer"
-                  boxShadow="0 0 0 1px var(--border-strong)"
-                  bg={c}
-                  transitionProperty="background, color, border-color, box-shadow"
-                  transitionDuration="var(--dur-fast)"
-                  transitionTimingFunction="var(--ease)"
-                  onClick={() => setColor(c)}
-                  aria-label={c}
-                  title={c}
-                />
+                <Tooltip key={c} label={c}>
+                  <chakra.button
+                    type="button"
+                    width="24px"
+                    height="24px"
+                    borderRadius="sm"
+                    border="2px solid"
+                    borderColor={color === c ? "app.text" : "transparent"}
+                    p={0}
+                    cursor="pointer"
+                    boxShadow="0 0 0 1px var(--border-strong)"
+                    bg={c}
+                    transitionProperty="background, color, border-color, box-shadow"
+                    transitionDuration="var(--dur-fast)"
+                    transitionTimingFunction="var(--ease)"
+                    onClick={() => setColor(c)}
+                    aria-label={c}
+                  />
+                </Tooltip>
               ))}
               <input
                 id={`${fid}-color`}
@@ -709,7 +848,19 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
                 <Box>
                   <label htmlFor={`${fid}-ssh-host`}>{t("formSshHost")}</label>
-                  <Input id={`${fid}-ssh-host`} value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                  <Flex gap="2" align="end">
+                    <Input id={`${fid}-ssh-host`} value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                    <Tooltip label={t("formSshLoadFromConfigHelp")}>
+                      <LoadingButton
+                        type="button"
+                        loading={loadingSshConfig}
+                        onClick={handleLoadSshConfig}
+                        disabled={!sshHost.trim()}
+                      >
+                        {t("formSshLoadFromConfig")}
+                      </LoadingButton>
+                    </Tooltip>
+                  </Flex>
                 </Box>
                 <Box>
                   <label htmlFor={`${fid}-ssh-port`}>{t("formPort")}</label>
@@ -774,6 +925,100 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   {t("formSshAgentHelp")}
                 </Text>
               )}
+
+              <Box mt="3" pt="3" borderTop="1px solid" borderColor="app.border">
+                <Flex display="inline-flex" align="center" gap="1.5" fontSize="12px">
+                  <Switch checked={useSshJump} onChange={setUseSshJump} size="sm" label={t("formUseSshJump")} />
+                </Flex>
+                <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+                  {t("formSshJumpHelp")}
+                </Text>
+                {useSshJump && (
+                  <Box mt="2">
+                    <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
+                      <Box>
+                        <label htmlFor={`${fid}-ssh-jump-host`}>{t("formSshJumpHost")}</label>
+                        <Input
+                          id={`${fid}-ssh-jump-host`}
+                          value={sshJumpHost}
+                          onChange={(e) => setSshJumpHost(e.target.value)}
+                        />
+                      </Box>
+                      <Box>
+                        <label htmlFor={`${fid}-ssh-jump-port`}>{t("formPort")}</label>
+                        <Input
+                          id={`${fid}-ssh-jump-port`}
+                          type="text"
+                          inputMode="numeric"
+                          value={sshJumpPort}
+                          onChange={(e) => setSshJumpPort(e.target.value.replace(/[^0-9]/g, ""))}
+                        />
+                      </Box>
+                    </Box>
+                    <Box mt="2">
+                      <label htmlFor={`${fid}-ssh-jump-user`}>{t("formSshJumpUser")}</label>
+                      <Input
+                        id={`${fid}-ssh-jump-user`}
+                        value={sshJumpUser}
+                        onChange={(e) => setSshJumpUser(e.target.value)}
+                      />
+                    </Box>
+                    <Box mt="2">
+                      <label htmlFor={`${fid}-ssh-jump-auth`}>{t("formSshJumpAuthMethod")}</label>
+                      <Select
+                        id={`${fid}-ssh-jump-auth`}
+                        value={sshJumpAuthMethod}
+                        onChange={(e) => setSshJumpAuthMethod(e.target.value as SshAuthMethod)}
+                      >
+                        <option value="key">{t("formSshAuthKey")}</option>
+                        <option value="agent">{t("formSshAuthAgent")}</option>
+                        <option value="password">{t("formSshAuthPassword")}</option>
+                      </Select>
+                    </Box>
+                    {sshJumpAuthMethod === "key" && (
+                      <>
+                        <Box mt="2">
+                          <label htmlFor={`${fid}-ssh-jump-key-path`}>{t("formPrivateKeyPath")}</label>
+                          <Flex gap="2" align="end">
+                            <Input
+                              id={`${fid}-ssh-jump-key-path`}
+                              value={sshJumpKeyPath}
+                              onChange={(e) => setSshJumpKeyPath(e.target.value)}
+                              placeholder="C:\\Users\\you\\.ssh\\id_ed25519"
+                            />
+                            <Button type="button" onClick={pickJumpKeyFile}>{t("formBrowse")}</Button>
+                          </Flex>
+                        </Box>
+                        <Box mt="2">
+                          <label htmlFor={`${fid}-ssh-jump-passphrase`}>{t("formSshJumpPassphrase")}</label>
+                          <PasswordInput
+                            id={`${fid}-ssh-jump-passphrase`}
+                            value={sshJumpPassphrase}
+                            onChange={setSshJumpPassphrase}
+                            hasStored={!!initial?.has_ssh_jump_passphrase}
+                          />
+                        </Box>
+                      </>
+                    )}
+                    {sshJumpAuthMethod === "password" && (
+                      <Box mt="2">
+                        <label htmlFor={`${fid}-ssh-jump-password`}>{t("formSshJumpPassword")}</label>
+                        <PasswordInput
+                          id={`${fid}-ssh-jump-password`}
+                          value={sshJumpPassword}
+                          onChange={setSshJumpPassword}
+                          hasStored={!!initial?.has_ssh_jump_password}
+                        />
+                      </Box>
+                    )}
+                    {sshJumpAuthMethod === "agent" && (
+                      <Text color="app.textMuted" fontSize="11px" mt="2" mb="0">
+                        {t("formSshAgentHelp")}
+                      </Text>
+                    )}
+                  </Box>
+                )}
+              </Box>
             </>
           )}
         </Fieldset>
@@ -786,7 +1031,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             value={initSql}
             onChange={(e) => setInitSql(e.target.value)}
             placeholder={
-              isFileBacked ? t("formInitSqlPlaceholderSqlite") : t("formInitSqlPlaceholder")
+              driver === "sqlite"
+                ? t("formInitSqlPlaceholderSqlite")
+                : driver === "duckdb"
+                  ? t("formInitSqlPlaceholderDuckDb")
+                  : t("formInitSqlPlaceholder")
             }
             rows={3}
             css={{ fontFamily: "var(--font-mono)", resize: "vertical", width: "100%" }}

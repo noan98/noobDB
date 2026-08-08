@@ -2,6 +2,7 @@ import { chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { useId, type KeyboardEvent, type ReactNode } from "react";
 import { springs } from "../motion";
+import { Tooltip } from "./Tooltip";
 
 /**
  * `motion` の `layout` を使って thumb をスプリングアニメーションで動かす
@@ -85,7 +86,6 @@ export function Switch({
       aria-labelledby={labelledBy}
       aria-describedby={ariaDescribedBy}
       aria-label={ariaLabel}
-      title={title}
       disabled={disabled}
       onClick={() => !disabled && onChange(!checked)}
       onKeyDown={handleKey}
@@ -130,7 +130,18 @@ export function Switch({
     </chakra.button>
   );
 
-  if (label === undefined) return button;
+  // native `title=` を共有 Tooltip (#814) へ委譲する。disabled 時は
+  // `focusableWrapper` でキーボード到達も確保する (無効な button は
+  // フォーカス自体を持てないため)。
+  const trigger = title ? (
+    <Tooltip label={title} focusableWrapper={disabled}>
+      {button}
+    </Tooltip>
+  ) : (
+    button
+  );
+
+  if (label === undefined) return trigger;
 
   return (
     <chakra.span
@@ -147,7 +158,7 @@ export function Switch({
         onChange(!checked);
       }}
     >
-      {button}
+      {trigger}
       <chakra.span id={internalLabelId} fontSize="inherit" color="inherit">
         {label}
       </chakra.span>

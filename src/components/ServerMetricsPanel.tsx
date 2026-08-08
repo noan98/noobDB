@@ -19,7 +19,10 @@ import {
   type MetricSample,
   type MetricSeriesKey,
 } from "./serverMetrics";
-import { Checkbox, Select } from "./ui";
+import { Checkbox, Heading, Select } from "./ui";
+import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
+import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
 
 /**
@@ -140,9 +143,9 @@ function MetricChart({
   return (
     <Box borderWidth="1px" borderColor="app.border" borderRadius="md" p="3" bg="app.surface">
       <Flex align="baseline" justify="space-between" gap="2" mb="1.5" flexWrap="wrap">
-        <chakra.h3 margin={0} fontSize="sm" fontWeight={600} color="app.text">
+        <Heading as="h3" role="subheading">
           {t(def.titleKey)}
-        </chakra.h3>
+        </Heading>
         <chakra.span fontSize="xs" color="app.textMuted">
           {unitLabel}
         </chakra.span>
@@ -236,10 +239,36 @@ function MetricChart({
           })}
         </chakra.svg>
       ) : (
-        <chakra.p margin={0} py="6" textAlign="center" fontSize="sm" color="app.textMuted">
-          {t("metricsNoSeriesData")}
-        </chakra.p>
+        // 未報告/未対応の系列 (ドライバ差 or 初回サンプル未取得):
+        // 「データなし」系の軽量アイコンを compact で割り当てる (#847)。
+        <EmptyState compact icon="chart" title={t("metricsNoSeriesData")} />
       )}
+    </Box>
+  );
+}
+
+/**
+ * `MetricChart` 1 枚分のロード中プレースホルダ (#846)。初回サンプル取得が
+ * 終わるまでは `hasSeriesData` が常に false になり本来の「データなし」空状態
+ * (`metricsNoSeriesData`) と見分けが付かないため、初回ロード中に限りタイトル/
+ * 凡例/チャート領域の構造をシマーで予兆表示する。ロード状態の ARIA 告知は
+ * ツールバーの `Spinner` (role="status") が担うため、ここは `aria-hidden`。
+ */
+function MetricChartSkeleton({ def }: { def: ChartDef }) {
+  const t = useT();
+  return (
+    <Box borderWidth="1px" borderColor="app.border" borderRadius="md" p="3" bg="app.surface" aria-hidden>
+      <Flex align="baseline" justify="space-between" gap="2" mb="1.5">
+        <Heading as="h3" role="subheading">
+          {t(def.titleKey)}
+        </Heading>
+      </Flex>
+      <Flex gap="3.5" flexWrap="wrap" mb="1.5">
+        {def.series.map((s, i) => (
+          <Skeleton key={s.key} height="10px" style={{ width: "68px", animationDelay: `${i * 0.05}s` }} />
+        ))}
+      </Flex>
+      <Skeleton height="150px" />
     </Box>
   );
 }
@@ -353,19 +382,30 @@ export function ServerMetricsPanel({
       </Flex>
 
       {error && (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("metricsLoadError", { error })}
-        </chakra.p>
+        // ポーリング失敗: チャート自体は直前サンプルのまま表示を続けるため、全体を
+        // 置き換えない compact な EmptyState + 再取得導線で通知する (#848)。
+        <EmptyState
+          compact
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("metricsLoadError", { error })}
+          action={{ label: t("metricsRetry"), onClick: () => void load() }}
+        />
       )}
 
-      {CHARTS.map((def) => (
-        <MetricChart
-          key={def.titleKey}
-          points={points}
-          def={def}
-          unitLabel={def.titleKey === "metricsChartThroughput" ? throughputUnit : t(def.unitKey)}
-        />
-      ))}
+      {!updatedAt && loading
+        ? // 初回ロード中 (まだ 1 度もサンプルを取得していない): 「データなし」
+          // 空状態と混同しないよう、チャートカードの構造をシマーで予兆表示する
+          // (#846)。
+          CHARTS.map((def) => <MetricChartSkeleton key={def.titleKey} def={def} />)
+        : CHARTS.map((def) => (
+            <MetricChart
+              key={def.titleKey}
+              points={points}
+              def={def}
+              unitLabel={def.titleKey === "metricsChartThroughput" ? throughputUnit : t(def.unitKey)}
+            />
+          ))}
     </Flex>
   );
 }

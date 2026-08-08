@@ -9,6 +9,7 @@ import {
 } from "../pagination";
 import { ICON_SIZES, Icon } from "./Icon";
 import { Spinner } from "./Spinner";
+import { Tooltip } from "./Tooltip";
 
 /**
  * table タブの結果グリッド下に置くページネーションバー。先頭/前/次/末尾の
@@ -26,13 +27,19 @@ interface Props {
   onSetPageSize: (size: number) => void;
 }
 
+// コントロールの寸法は固定 px にせず、設定のフォントサイズ (--font-scale) に
+// 追従させる。固定だとフォント拡大時に select / input の値が縦に見切れる
+// (フォント・縦 padding はスケールするのに箱だけ 26px のままになるため)。
+const CONTROL_H = "calc(26px * var(--font-scale))";
+const CONTROL_MIN_W = "calc(60px * var(--font-scale))";
+
 const NavButton = chakra("button", {
   base: {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    minW: "28px",
-    h: "26px",
+    minW: "calc(28px * var(--font-scale))",
+    minH: CONTROL_H,
     px: "1.5",
     borderRadius: "6px",
     borderWidth: 0,
@@ -85,24 +92,21 @@ export function PaginationBar({
       flex="none"
       flexWrap="wrap"
     >
-      <NavButton
-        type="button"
-        onClick={() => onGoToPage(1)}
-        disabled={!prevOk}
-        title={t("pageFirst")}
-        aria-label={t("pageFirst")}
-      >
-        «
-      </NavButton>
-      <NavButton
-        type="button"
-        onClick={() => onGoToPage(page - 1)}
-        disabled={!prevOk}
-        title={t("pagePrev")}
-        aria-label={t("pagePrev")}
-      >
-        <Icon name="chevron-left" size={ICON_SIZES.sm} />
-      </NavButton>
+      <Tooltip label={t("pageFirst")} focusableWrapper={!prevOk}>
+        <NavButton type="button" onClick={() => onGoToPage(1)} disabled={!prevOk} aria-label={t("pageFirst")}>
+          «
+        </NavButton>
+      </Tooltip>
+      <Tooltip label={t("pagePrev")} focusableWrapper={!prevOk}>
+        <NavButton
+          type="button"
+          onClick={() => onGoToPage(page - 1)}
+          disabled={!prevOk}
+          aria-label={t("pagePrev")}
+        >
+          <Icon name="chevron-left" size={ICON_SIZES.sm} />
+        </NavButton>
+      </Tooltip>
 
       <chakra.span display="inline-flex" alignItems="center" gap="1.5" minW="0">
         {t("pageLabel", { page })}
@@ -112,24 +116,26 @@ export function PaginationBar({
         {loading && <Spinner size={12} />}
       </chakra.span>
 
-      <NavButton
-        type="button"
-        onClick={() => onGoToPage(page + 1)}
-        disabled={!nextOk}
-        title={t("pageNext")}
-        aria-label={t("pageNext")}
-      >
-        <Icon name="chevron-right" size={ICON_SIZES.sm} />
-      </NavButton>
-      <NavButton
-        type="button"
-        onClick={() => totalPages != null && onGoToPage(totalPages)}
-        disabled={!lastOk}
-        title={t("pageLast")}
-        aria-label={t("pageLast")}
-      >
-        »
-      </NavButton>
+      <Tooltip label={t("pageNext")} focusableWrapper={!nextOk}>
+        <NavButton
+          type="button"
+          onClick={() => onGoToPage(page + 1)}
+          disabled={!nextOk}
+          aria-label={t("pageNext")}
+        >
+          <Icon name="chevron-right" size={ICON_SIZES.sm} />
+        </NavButton>
+      </Tooltip>
+      <Tooltip label={t("pageLast")} focusableWrapper={!lastOk}>
+        <NavButton
+          type="button"
+          onClick={() => totalPages != null && onGoToPage(totalPages)}
+          disabled={!lastOk}
+          aria-label={t("pageLast")}
+        >
+          »
+        </NavButton>
+      </Tooltip>
 
       <chakra.span color="app.textMuted" fontSize="xs">
         {range.to > 0 ? t("pageRowRange", { from: range.from, to: range.to }) : ""}
@@ -149,8 +155,8 @@ export function PaginationBar({
             if (e.key === "Enter") submitJump();
           }}
           disabled={loading}
-          w="60px"
-          h="26px"
+          w={CONTROL_MIN_W}
+          minH={CONTROL_H}
           px="1.5"
           borderWidth="1px"
           borderColor="app.border"
@@ -166,10 +172,10 @@ export function PaginationBar({
           value={pageSize}
           onChange={(e) => onSetPageSize(Number.parseInt(e.target.value, 10))}
           disabled={loading}
-          h="26px"
+          minH={CONTROL_H}
           // ネイティブ select の右側に描かれるドロップダウン矢印と数値が重なって
           // 見切れないよう、右パディングを広めに取り、最小幅も確保する。
-          minW="60px"
+          minW={CONTROL_MIN_W}
           pl="1.5"
           pr="5"
           borderWidth="1px"

@@ -448,7 +448,7 @@ describe("セル値のリッチ表示 (#451)", () => {
     setRichCellRendering(true);
   });
 
-  it("JSON セルはコンパクトに整形され、title に原文を残す", () => {
+  it("JSON セルはコンパクトに整形され、hover で原文のツールチップを出す", () => {
     const cols: Column[] = [{ name: "meta", type_name: "JSON" }];
     const raw = '{ "a": 1,  "b": [2, 3] }';
     const { container } = renderWithProviders(
@@ -456,8 +456,14 @@ describe("セル値のリッチ表示 (#451)", () => {
     );
     const cell = container.querySelector("tbody td .cell-json");
     expect(cell?.textContent).toBe(formatJsonCompact(raw));
-    // 原文は title (コピー/編集で使う実値) に保持される。
-    expect(cell?.getAttribute("title")).toBe(raw);
+    // 原文は native title ではなく共有ツールチップ (#884、行×列に比例して増える
+    // ため native title/個別 Tooltip インスタンスではなく 1 つの共有バブル +
+    // イベント委譲) で hover 時に確認できる。
+    expect(cell?.getAttribute("title")).toBeNull();
+    if (cell) fireEvent.mouseEnter(cell);
+    // `toHaveTextContent` は空白を畳んで比較するため、連続空白を含む原文は
+    // 素の textContent 比較で厳密に確認する。
+    expect(screen.getByRole("tooltip").textContent).toBe(raw);
   });
 
   it("真偽値はピル型バッジ (cell-bool-badge) で描画される", () => {
@@ -483,14 +489,16 @@ describe("セル値のリッチ表示 (#451)", () => {
     expect(badge?.style.getPropertyValue("--enum-hue")).not.toBe("");
   });
 
-  it("日付列はロケール整形され、title に原文 (実値) を残す", () => {
+  it("日付列はロケール整形され、hover で原文 (実値) のツールチップを出す", () => {
     const cols: Column[] = [{ name: "created", type_name: "DATE" }];
     const { container } = renderWithProviders(
       <ResultGrid result={makeResult(cols, [["2026-06-01"]])} />,
     );
     const cell = container.querySelector("tbody td .cell-date");
     expect(cell?.textContent).toBe("Jun 1, 2026");
-    expect(cell?.getAttribute("title")).toBe("2026-06-01");
+    expect(cell?.getAttribute("title")).toBeNull();
+    if (cell) fireEvent.mouseEnter(cell);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("2026-06-01");
   });
 
   it("リッチ表示を OFF にすると素の値で描画される (整形なし)", () => {
@@ -592,9 +600,6 @@ describe("column sizing persistence", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 列レイアウト永続化 (順序 / 表示 / ピン)
-// ─────────────────────────────────────────────────────────────────────────────
 describe("列レイアウト永続化 (#447 / #463)", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -657,9 +662,6 @@ describe("列レイアウト永続化 (#447 / #463)", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 集計フッター行 (#645)
-// ─────────────────────────────────────────────────────────────────────────────
 describe("集計フッター行 (#645)", () => {
   beforeEach(() => {
     setLocale("en");
@@ -733,9 +735,6 @@ describe("集計フッター行 (#645)", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 複数列ソート
-// ─────────────────────────────────────────────────────────────────────────────
 describe("複数列ソート (#479)", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -807,9 +806,6 @@ describe("複数列ソート (#479)", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// キーボードセルナビゲーション
-// ─────────────────────────────────────────────────────────────────────────────
 describe("キーボードセルナビゲーション (#406)", () => {
   beforeEach(() => {
     // 直前の describe で永続化した列レイアウト (ピン/順序) が同一 result shape の
@@ -984,9 +980,6 @@ describe("キーボードセルナビゲーション (#406)", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 行インスペクタ
-// ─────────────────────────────────────────────────────────────────────────────
 describe("行インスペクタ (#462)", () => {
   beforeEach(() => setLocale("en"));
 
@@ -1151,5 +1144,310 @@ describe("ResultGrid 結果内検索 (#644)", () => {
     const input2 = screen.getByLabelText(t("gridFindInputAria")) as HTMLInputElement;
     expect(input2.value).toBe("a");
     expect(document.activeElement).toBe(input2);
+  });
+});
+
+// 行の複製 (#820): 行コンテキストメニューから選択行の値を種に
+// `onDuplicateRow` を呼ぶ配線。RowInsertModal の初期値変換 (rowInsertModal.test.tsx)
+// とは別に、ここでは「どの値がどの列インデックスへ渡るか」の配線だけを固定する。
+describe("行の複製 (#820)", () => {
+  beforeEach(() => setLocale("en"));
+
+  const columns: Column[] = [
+    { name: "id", type_name: "INT" },
+    { name: "name", type_name: "VARCHAR" },
+    { name: "note", type_name: "TEXT" },
+  ];
+  const tableColumns: TableColumnInfo[] = [
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "name",
+      data_type: "varchar",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "note",
+      data_type: "text",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+  ];
+  const result = makeResult(columns, [[1, "banana", null]]);
+
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  it("行コンテキストメニューの「行を複製」で選択行の値を初期値に onDuplicateRow を呼ぶ", async () => {
+    const user = userEvent.setup();
+    const onDuplicateRow = vi.fn();
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={result}
+        editable
+        tableColumns={tableColumns}
+        onDuplicateRow={onDuplicateRow}
+      />,
+    );
+    const cells = dataCells(container);
+    fireEvent.contextMenu(cells[0][1]);
+
+    const item = await screen.findByRole("menuitem", { name: t("gridDuplicateRow") });
+    await user.click(item);
+
+    // NULL の列 (note) はキー自体を省く — フォーム上は空欄 = 未設定になる。
+    expect(onDuplicateRow).toHaveBeenCalledWith({ 0: "1", 1: "banana" });
+  });
+
+  it("onDuplicateRow が未指定ならメニュー項目を出さない", () => {
+    const { container } = renderWithProviders(
+      <ResultGrid result={result} editable tableColumns={tableColumns} />,
+    );
+    const cells = dataCells(container);
+    fireEvent.contextMenu(cells[0][1]);
+    expect(screen.queryByText(t("gridDuplicateRow"))).toBeNull();
+  });
+});
+
+// セル右クリックの「値をセット」ショートカット。どの値がメニューに出るか自体は
+// `quickSetValues.test.ts` が純ロジックとして固定するので、ここでは
+// 「メニューに現れ、選ぶと編集バッファへ正しく載る」配線だけを見る。
+describe("セル値のクイックセット", () => {
+  beforeEach(() => setLocale("en"));
+
+  const columns: Column[] = [
+    { name: "id", type_name: "INT" },
+    { name: "name", type_name: "VARCHAR" },
+    { name: "qty", type_name: "INT" },
+  ];
+  const tableColumns: TableColumnInfo[] = [
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "name",
+      data_type: "varchar",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "qty",
+      data_type: "int",
+      nullable: false,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+  ];
+  const result = makeResult(columns, [[1, "banana", 5]]);
+
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  function renderGrid(onSetCellEdit = vi.fn()) {
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={result}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={onSetCellEdit}
+      />,
+    );
+    return { container, onSetCellEdit };
+  }
+
+  it("「NULL をセット」で編集バッファに NULL を載せる", async () => {
+    const user = userEvent.setup();
+    const { container, onSetCellEdit } = renderGrid();
+    fireEvent.contextMenu(dataCells(container)[0][1]);
+
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetNull") }));
+
+    expect(onSetCellEdit).toHaveBeenCalledWith(rowEditKey([1, "banana", 5], [0], 0), 1, "NULL");
+  });
+
+  it("文字列列では「空文字をセット」を、数値列では「0 をセット」を出す", async () => {
+    const { container } = renderGrid();
+
+    fireEvent.contextMenu(dataCells(container)[0][1]);
+    expect(await screen.findByRole("menuitem", { name: t("gridQuickSetEmpty") })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetZero") })).toBeNull();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.contextMenu(dataCells(container)[0][2]);
+    expect(await screen.findByRole("menuitem", { name: t("gridQuickSetZero") })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetEmpty") })).toBeNull();
+  });
+
+  it("NOT NULL 列では NULL の項目を無効化する", async () => {
+    const { container } = renderGrid();
+    fireEvent.contextMenu(dataCells(container)[0][2]);
+
+    const item = await screen.findByRole("menuitem", { name: t("gridQuickSetNull") });
+    expect(item).toBeDisabled();
+  });
+
+  it("すでにその値のセルへセットすると編集を積まずに取り消す", async () => {
+    const user = userEvent.setup();
+    const onSetCellEdit = vi.fn();
+    // qty がすでに 0 の行。「0 をセット」は無変更なので、編集を積む代わりに
+    // (その列に保留中の編集があればそれを消す) null が渡る。
+    const zeroRow = makeResult(columns, [[1, "banana", 0]]);
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={zeroRow}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={onSetCellEdit}
+      />,
+    );
+    fireEvent.contextMenu(dataCells(container)[0][2]);
+
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetZero") }));
+    expect(onSetCellEdit).toHaveBeenCalledWith(rowEditKey([1, "banana", 0], [0], 0), 2, null);
+  });
+
+  it("矩形選択の中のセルから選ぶと選択範囲全体へ適用する", async () => {
+    const user = userEvent.setup();
+    const onBulkEdit = vi.fn();
+    // name が編集可能な 2 行。name 列で 2 セルの範囲を選択する。
+    const twoRows = makeResult(columns, [
+      [1, "banana", 5],
+      [2, "cherry", 7],
+    ]);
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={twoRows}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={vi.fn()}
+        onBulkEdit={onBulkEdit}
+      />,
+    );
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][1]);
+    fireEvent.keyDown(cells[0][1], { key: "ArrowDown", shiftKey: true });
+    expect(container.querySelectorAll("td.is-selected-cell")).toHaveLength(2);
+
+    fireEvent.contextMenu(cells[0][1]);
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetNull") }));
+
+    expect(onBulkEdit).toHaveBeenCalledWith([
+      { rowKey: rowEditKey([1, "banana", 5], [0], 0), colIdx: 1, value: "NULL" },
+      { rowKey: rowEditKey([2, "cherry", 7], [0], 1), colIdx: 1, value: "NULL" },
+    ]);
+  });
+
+  // BIT はドライバで意味が変わるので、グリッドが driver を渡していることを見る
+  // (どう出し分けるかの判定自体は quickSetValues.test.ts が固定する)。
+  it("BIT 列の候補はセッションのドライバで変わる", async () => {
+    const bitColumns: Column[] = [
+      { name: "id", type_name: "INT" },
+      { name: "flag", type_name: "BIT" },
+    ];
+    const bitTableColumns = tableColumns
+      .filter((c) => c.name === "id")
+      .concat({
+        name: "flag",
+        data_type: "bit",
+        nullable: true,
+        key: "",
+        default: null,
+        extra: "",
+        referenced_table: null,
+        referenced_column: null,
+      });
+    const bitResult = makeResult(bitColumns, [[1, true]]);
+    const render = (driver: string) =>
+      renderWithProviders(
+        <ResultGrid
+          result={bitResult}
+          editable
+          driver={driver}
+          tableColumns={bitTableColumns}
+          onSetCellEdit={vi.fn()}
+        />,
+      );
+
+    // MSSQL の BIT は真偽型そのもの。
+    const mssql = render("mssql");
+    fireEvent.contextMenu(dataCells(mssql.container)[0][1]);
+    expect(await screen.findByRole("menuitem", { name: t("gridQuickSetTrue") })).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    mssql.unmount();
+
+    // PostgreSQL の BIT はビット列なので true/false も空文字も出さない。
+    const pg = render("postgres");
+    fireEvent.contextMenu(dataCells(pg.container)[0][1]);
+    expect(await screen.findByRole("menuitem", { name: t("gridQuickSetNull") })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetTrue") })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetEmpty") })).toBeNull();
+  });
+
+  it("編集不可の列 (PK) ではクイックセットを出さない", () => {
+    const { container } = renderGrid();
+    fireEvent.contextMenu(dataCells(container)[0][0]);
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetNull") })).toBeNull();
+  });
+
+  it("保留中の編集があるセルだけ「編集を取り消す」を出す", async () => {
+    const user = userEvent.setup();
+    const onSetCellEdit = vi.fn();
+    const rowKey = rowEditKey([1, "banana", 5], [0], 0);
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={result}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={onSetCellEdit}
+        pendingEdits={{ [rowKey]: { 1: "cherry" } }}
+      />,
+    );
+    const cells = dataCells(container);
+
+    // 編集が無い列には出ない。
+    fireEvent.contextMenu(cells[0][2]);
+    expect(screen.queryByRole("menuitem", { name: t("gridQuickSetRevert") })).toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    fireEvent.contextMenu(cells[0][1]);
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetRevert") }));
+    expect(onSetCellEdit).toHaveBeenCalledWith(rowKey, 1, null);
   });
 });

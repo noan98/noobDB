@@ -17,9 +17,13 @@ import {
   type TableStatSortKey,
 } from "./tableSize";
 import { mapLimited } from "./mapLimited";
-import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
+import { Icon, ICON_SIZES } from "./Icon";
+import { errorIllustration, NoResultsIllustration } from "./illustrations";
+import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button } from "./ui";
+import { Button, Heading } from "./ui";
+import { Tooltip } from "./Tooltip";
 
 /**
  * テーブル/DB サイズ・構造統計ダッシュボード (#562 / #660)。指定データベースの
@@ -43,8 +47,7 @@ const thBase: SystemStyleObject = {
   background: "var(--bg-muted)",
   borderBottom: "1px solid var(--border)",
   padding: "6px 10px",
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
+  textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
   cursor: "pointer",
@@ -193,21 +196,20 @@ export function TableStatisticsPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <chakra.h2 margin={0} fontSize="lg" fontWeight={600} color="app.text">
-          {t("sizeTitle")} — {database}
-        </chakra.h2>
-        <Button
-          minWidth="28px"
-          px="2"
-          py="1"
-          fontSize="base"
-          lineHeight={1}
-          onClick={onClose}
-          aria-label={t("sizeClose")}
-          title={t("sizeClose")}
-        >
-          <Icon name="close" size={13} />
-        </Button>
+        <Heading>{t("sizeTitle")} — {database}</Heading>
+        <Tooltip label={t("sizeClose")}>
+          <Button
+            minWidth="28px"
+            px="2"
+            py="1"
+            fontSize="base"
+            lineHeight={1}
+            onClick={onClose}
+            aria-label={t("sizeClose")}
+          >
+            <Icon name="close" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
@@ -216,7 +218,7 @@ export function TableStatisticsPanel({
 
       <Flex align="center" gap="3" flexWrap="wrap">
         <Button type="button" onClick={() => void load()} disabled={loading}>
-          <Icon name="refresh" size={13} /> {t("sizeRefresh")}
+          <Icon name="refresh" size={ICON_SIZES.sm} /> {t("sizeRefresh")}
         </Button>
         {loading && <Spinner size={14} />}
         <chakra.input
@@ -251,17 +253,26 @@ export function TableStatisticsPanel({
       </Flex>
 
       {error ? (
-        <chakra.p margin={0} fontSize="sm" color="var(--status-error)">
-          {t("sizeLoadError", { error })}
-        </chakra.p>
+        // 取得失敗: errorHints の分類結果から共有イラストを割り当て、再取得導線を
+        // 添える (#848)。
+        <EmptyState
+          illustration={errorIllustration(error)}
+          icon="warning"
+          title={t("sizeLoadError", { error })}
+          action={{ label: t("sizeRetry"), onClick: () => void load() }}
+        />
       ) : rows.length === 0 && !loading ? (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-          {t("sizeEmpty")}
-        </chakra.p>
+        // データベースにテーブルが 1 件もない (フィルタ無関係の真の空):
+        // ResultGrid の「0 行」空状態と同じリッチなイラストで表現する (#847)。
+        <EmptyState
+          illustration={<NoResultsIllustration />}
+          icon="table"
+          title={t("sizeEmpty")}
+        />
       ) : sorted.length === 0 && !loading ? (
-        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-          {t("sizeNoMatch")}
-        </chakra.p>
+        // 名前フィルタ/チェックボックス絞り込みで 0 件になったケース:
+        // 「検索一致なし」の軽量アイコンを compact で使う (#847)。
+        <EmptyState compact icon="search" title={t("sizeNoMatch")} />
       ) : (
         <Box overflowX="auto">
           <chakra.table width="100%" borderCollapse="collapse">
@@ -306,27 +317,33 @@ export function TableStatisticsPanel({
               </tr>
             </thead>
             <tbody>
-              {sorted.map((r) => (
+              {loading && rows.length === 0 ? (
+                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+                // 避け、9 列の構造をシマーで予兆表示する (#846)。
+                <SkeletonTableRows columns={9} />
+              ) : (
+                sorted.map((r) => (
                 <tr key={r.name}>
                   <chakra.td css={tdCss}>
                     {onOpenTable ? (
-                      <chakra.button
-                        type="button"
-                        onClick={() => onOpenTable(r.name)}
-                        title={t("sizeOpenTable", { table: r.name })}
-                        css={{
-                          background: "none",
-                          border: "none",
-                          padding: 0,
-                          font: "inherit",
-                          color: "var(--accent)",
-                          cursor: "pointer",
-                          textAlign: "left",
-                          _hover: { textDecoration: "underline" },
-                        }}
-                      >
-                        {r.name}
-                      </chakra.button>
+                      <Tooltip label={t("sizeOpenTable", { table: r.name })}>
+                        <chakra.button
+                          type="button"
+                          onClick={() => onOpenTable(r.name)}
+                          css={{
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            font: "inherit",
+                            color: "var(--accent)",
+                            cursor: "pointer",
+                            textAlign: "left",
+                            _hover: { textDecoration: "underline" },
+                          }}
+                        >
+                          {r.name}
+                        </chakra.button>
+                      </Tooltip>
                     ) : (
                       r.name
                     )}
@@ -356,8 +373,10 @@ export function TableStatisticsPanel({
                     </Box>
                   </chakra.td>
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
+            {!(loading && rows.length === 0) && (
             <tfoot>
               <tr>
                 <chakra.td css={{ ...tfootTdCss, textAlign: "left" }}>
@@ -373,6 +392,7 @@ export function TableStatisticsPanel({
                 <chakra.td css={tfootTdCss}>{formatBytes(totals.totalBytes)}</chakra.td>
               </tr>
             </tfoot>
+            )}
           </chakra.table>
         </Box>
       )}

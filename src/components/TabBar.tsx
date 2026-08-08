@@ -2,9 +2,10 @@ import { forwardRef, useCallback, useEffect, useId, useMemo, useRef, useState } 
 import { Box, chakra, Input } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder } from "motion/react";
 import { useT } from "../i18n";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { transitions, variants } from "../motion";
 import { moveTabBy } from "../tabReorder";
+import { Tooltip } from "./Tooltip";
 
 // キーボードフォーカスリング (App.css のフォーカス表現と一致、動的アクセントへ追従)。
 const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
@@ -276,25 +277,26 @@ export function TabBar({
       overflow="visible"
     >
       {overflow.left && (
-        <chakra.button
-          display="inline-flex"
-          alignItems="center"
-          justifyContent="center"
-          w="26px"
-          border="none"
-          borderRight="1px solid"
-          borderRightColor="app.border"
-          bg="app.surfaceMuted"
-          color="app.textMuted"
-          cursor="pointer"
-          flexShrink={0}
-          _hover={{ bg: "app.hover", color: "app.text" }}
-          onClick={() => scrollBy(-1)}
-          title={t("tabScrollLeft")}
-          aria-label={t("tabScrollLeft")}
-        >
-          <Icon name="chevron-left" size={16} />
-        </chakra.button>
+        <Tooltip label={t("tabScrollLeft")}>
+          <chakra.button
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            w="26px"
+            border="none"
+            borderRight="1px solid"
+            borderRightColor="app.border"
+            bg="app.surfaceMuted"
+            color="app.textMuted"
+            cursor="pointer"
+            flexShrink={0}
+            _hover={{ bg: "app.hover", color: "app.text" }}
+            onClick={() => scrollBy(-1)}
+            aria-label={t("tabScrollLeft")}
+          >
+            <Icon name="chevron-left" size={ICON_SIZES.md} />
+          </chakra.button>
+        </Tooltip>
       )}
       <Reorder.Group
         ref={scrollRef}
@@ -347,6 +349,17 @@ export function TabBar({
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
                 onKeyDown={handleTabKeyDown(tab.id)}
+                // タブ自体 (省略される長い名前のフルテキスト) は意図的に native
+                // `title=` のまま残す (#884)。この要素は `AnimatePresence` が
+                // 直接の子として追跡して開閉アニメーションを駆動しつつ、同時に
+                // `Reorder.Item` としてドラッグ対象にもなっている。共有
+                // `Tooltip` はトリガーを `<>{trigger}{portal}</>` という
+                // Fragment で包むため、間に挟むと `AnimatePresence` から見た
+                // 直接の子がこの Fragment になり、退出アニメーション
+                // (exit props の注入) が届かなくなってタブを閉じたときの
+                // アニメーションが壊れる。低頻度 (開いているタブ数だけ) の
+                // 装飾的な補足情報のため、実害の小さいこの 1 箇所のみ native
+                // title を残す判断とする。
                 title={title}
                 initial={{ opacity: 0, width: 0 }}
                 animate={{ opacity: 1, width: "auto" }}
@@ -406,49 +419,51 @@ export function TabBar({
                   {tab.title}
                 </chakra.span>
                 {tab.dirty && (
-                  <chakra.span
+                  <Tooltip label={t("tabDirty")} focusableWrapper>
+                    <chakra.span
+                      display="inline-flex"
+                      alignItems="center"
+                      justifyContent="center"
+                      w="12px"
+                      fontSize="2xs"
+                      lineHeight="1"
+                      color="app.accent"
+                      flexShrink={0}
+                      aria-label={t("tabDirty")}
+                    >
+                      ●
+                    </chakra.span>
+                  </Tooltip>
+                )}
+                <Tooltip label={t("tabClose")}>
+                  <chakra.button
                     display="inline-flex"
                     alignItems="center"
                     justifyContent="center"
-                    w="12px"
-                    fontSize="2xs"
+                    w="18px"
+                    h="18px"
+                    p="0"
+                    border="none"
+                    bg="transparent"
+                    color="app.textMuted"
+                    borderRadius="sm"
+                    fontSize="xs"
                     lineHeight="1"
-                    color="app.accent"
+                    cursor="pointer"
                     flexShrink={0}
-                    title={t("tabDirty")}
-                    aria-label={t("tabDirty")}
+                    transitionProperty="background, color, border-color, box-shadow"
+                    transitionDuration="var(--dur-fast)"
+                    transitionTimingFunction="var(--ease)"
+                    _hover={{ bg: isActive ? "app.active" : "app.hover", color: "app.text" }}
+                    aria-label={t("tabClose")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onClose(tab.id);
+                    }}
                   >
-                    ●
-                  </chakra.span>
-                )}
-                <chakra.button
-                  display="inline-flex"
-                  alignItems="center"
-                  justifyContent="center"
-                  w="18px"
-                  h="18px"
-                  p="0"
-                  border="none"
-                  bg="transparent"
-                  color="app.textMuted"
-                  borderRadius="sm"
-                  fontSize="xs"
-                  lineHeight="1"
-                  cursor="pointer"
-                  flexShrink={0}
-                  transitionProperty="background, color, border-color, box-shadow"
-                  transitionDuration="var(--dur-fast)"
-                  transitionTimingFunction="var(--ease)"
-                  _hover={{ bg: isActive ? "app.active" : "app.hover", color: "app.text" }}
-                  aria-label={t("tabClose")}
-                  title={t("tabClose")}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onClose(tab.id);
-                  }}
-                >
-                  <Icon name="close" size={13} />
-                </chakra.button>
+                    <Icon name="close" size={ICON_SIZES.sm} />
+                  </chakra.button>
+                </Tooltip>
                 {isActive && (
                   <MotionIndicator
                     layoutId={indicatorId}
@@ -491,50 +506,52 @@ export function TabBar({
         </AnimatePresence>
       </Reorder.Group>
       {overflow.right && (
-        <chakra.button
-          display="inline-flex"
-          alignItems="center"
-          justifyContent="center"
-          w="26px"
-          border="none"
-          borderLeft="1px solid"
-          borderLeftColor="app.border"
-          bg="app.surfaceMuted"
-          color="app.textMuted"
-          cursor="pointer"
-          flexShrink={0}
-          _hover={{ bg: "app.hover", color: "app.text" }}
-          onClick={() => scrollBy(1)}
-          title={t("tabScrollRight")}
-          aria-label={t("tabScrollRight")}
-        >
-          <Icon name="chevron-right" size={16} />
-        </chakra.button>
-      )}
-      {overflowing && (
-        <Box position="relative" flexShrink={0} display="inline-flex">
+        <Tooltip label={t("tabScrollRight")}>
           <chakra.button
-            ref={listBtnRef}
             display="inline-flex"
             alignItems="center"
             justifyContent="center"
-            w="30px"
-            h="100%"
+            w="26px"
             border="none"
             borderLeft="1px solid"
             borderLeftColor="app.border"
-            bg={listOpen ? "app.active" : "app.surfaceMuted"}
-            color={listOpen ? "app.text" : "app.textMuted"}
+            bg="app.surfaceMuted"
+            color="app.textMuted"
             cursor="pointer"
+            flexShrink={0}
             _hover={{ bg: "app.hover", color: "app.text" }}
-            onClick={() => setListOpen((v) => !v)}
-            title={t("tabListAll")}
-            aria-label={t("tabListAll")}
-            aria-haspopup="menu"
-            aria-expanded={listOpen}
+            onClick={() => scrollBy(1)}
+            aria-label={t("tabScrollRight")}
           >
-            <Icon name="list" size={16} />
+            <Icon name="chevron-right" size={ICON_SIZES.md} />
           </chakra.button>
+        </Tooltip>
+      )}
+      {overflowing && (
+        <Box position="relative" flexShrink={0} display="inline-flex">
+          <Tooltip label={t("tabListAll")}>
+            <chakra.button
+              ref={listBtnRef}
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              w="30px"
+              h="100%"
+              border="none"
+              borderLeft="1px solid"
+              borderLeftColor="app.border"
+              bg={listOpen ? "app.active" : "app.surfaceMuted"}
+              color={listOpen ? "app.text" : "app.textMuted"}
+              cursor="pointer"
+              _hover={{ bg: "app.hover", color: "app.text" }}
+              onClick={() => setListOpen((v) => !v)}
+              aria-label={t("tabListAll")}
+              aria-haspopup="menu"
+              aria-expanded={listOpen}
+            >
+              <Icon name="list" size={ICON_SIZES.md} />
+            </chakra.button>
+          </Tooltip>
           <AnimatePresence>
             {listOpen && (
               <motion.div
@@ -605,7 +622,7 @@ export function TabBar({
                             }}
                           >
                             <chakra.span flexShrink={0} color={isActive ? "var(--ws-accent)" : "app.textMuted"} aria-hidden>
-                              <Icon name={tt.kind === "table" ? "table" : tt.kind === "explain" ? "explain" : "query"} size={14} />
+                              <Icon name={tt.kind === "table" ? "table" : tt.kind === "explain" ? "explain" : "query"} size={ICON_SIZES.md} />
                             </chakra.span>
                             <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" flex="1">
                               {tt.title}
@@ -626,34 +643,7 @@ export function TabBar({
           </AnimatePresence>
         </Box>
       )}
-      <chakra.button
-        display="inline-flex"
-        alignItems="center"
-        justifyContent="center"
-        w="30px"
-        border="none"
-        borderLeft="1px solid"
-        borderLeftColor="app.border"
-        bg="app.surfaceMuted"
-        color="app.textMuted"
-        fontSize="lg"
-        lineHeight="1"
-        cursor="pointer"
-        borderRadius="0"
-        flexShrink={0}
-        transitionProperty="background, color, border-color, box-shadow"
-        transitionDuration="var(--dur-fast)"
-        transitionTimingFunction="var(--ease)"
-        _hover={{ bg: "app.hover", color: "app.text" }}
-        _disabled={{ opacity: 0.5, cursor: "not-allowed" }}
-        onClick={onNew}
-        disabled={disabled}
-        title={t("tabNew")}
-        aria-label={t("tabNew")}
-      >
-        <Icon name="plus" size={16} />
-      </chakra.button>
-      {onSplit && (
+      <Tooltip label={t("tabNew")} focusableWrapper={disabled}>
         <chakra.button
           display="inline-flex"
           alignItems="center"
@@ -664,17 +654,46 @@ export function TabBar({
           borderLeftColor="app.border"
           bg="app.surfaceMuted"
           color="app.textMuted"
+          fontSize="lg"
           lineHeight="1"
           cursor="pointer"
           borderRadius="0"
           flexShrink={0}
+          transitionProperty="background, color, border-color, box-shadow"
+          transitionDuration="var(--dur-fast)"
+          transitionTimingFunction="var(--ease)"
           _hover={{ bg: "app.hover", color: "app.text" }}
-          onClick={onSplit}
-          title={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}
-          aria-label={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}
+          _disabled={{ opacity: 0.5, cursor: "not-allowed" }}
+          onClick={onNew}
+          disabled={disabled}
+          aria-label={t("tabNew")}
         >
-          <Icon name={splitMode === "close" ? "close" : "columns"} size={15} />
+          <Icon name="plus" size={ICON_SIZES.md} />
         </chakra.button>
+      </Tooltip>
+      {onSplit && (
+        <Tooltip label={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}>
+          <chakra.button
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            w="30px"
+            border="none"
+            borderLeft="1px solid"
+            borderLeftColor="app.border"
+            bg="app.surfaceMuted"
+            color="app.textMuted"
+            lineHeight="1"
+            cursor="pointer"
+            borderRadius="0"
+            flexShrink={0}
+            _hover={{ bg: "app.hover", color: "app.text" }}
+            onClick={onSplit}
+            aria-label={splitMode === "close" ? t("tabClosePane") : t("tabSplit")}
+          >
+            <Icon name={splitMode === "close" ? "close" : "columns"} size={ICON_SIZES.md} />
+          </chakra.button>
+        </Tooltip>
       )}
     </Box>
   );

@@ -25,7 +25,7 @@ import {
 import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
-import { comboMatchesEvent } from "../shortcutKeys";
+import { comboMatchesEvent, formatCombo } from "../shortcutKeys";
 import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact, rawValueTitle } from "./cellFormat";
 import {
   AUTO_REFRESH_INTERVAL_OPTIONS,
@@ -39,19 +39,13 @@ import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
 import { ContextMenu } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
-import {
-  NoResultsIllustration,
-  ConnectionFailedIllustration,
-  TimeoutIllustration,
-  PermissionDeniedIllustration,
-  SchemaLoadFailedIllustration,
-} from "./illustrations";
-import { illustrationForError } from "../errorHints";
+import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
   type CellKind,
   CELL_KIND_META,
   classifyEmptyValue,
+  classifyTypeName,
   EMPTY_BADGE,
   resolveBoolTruthy,
   truncateHexPreview,
@@ -69,6 +63,7 @@ import {
 } from "./cellConditionalFormat";
 import { accentFill, ACCENT_FILL_STOPS, readableInk } from "../colorScale";
 import { ExportModal, type FullExportContext } from "./ExportModal";
+import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Spinner } from "./Spinner";
 import { Skeleton, shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
@@ -76,19 +71,24 @@ import { deriveQueryPhase, formatElapsed } from "../queryRunState";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
 import { LoadingButton } from "./LoadingButton";
+import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import {
   buildInsertClipboard,
   buildRowSql,
   countEditedCells,
   countEditedRows,
+  editIsNoop,
   isEditableColumnType,
   resolvePkIndices,
   rowEditKey,
   validateCellInput,
   type PendingEdits,
+  type PendingInsertRow,
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
+import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
+import type { ServerFilter, ServerFilterOp, ServerSort, ServerSortDirection } from "./serverBrowse";
 import { diffResultRows } from "../resultDiff";
 import {
   buildFkJumpSql,
@@ -234,7 +234,9 @@ export const GRID_CSS: SystemStyleObject = {
     fontWeight: 700,
     fontFamily: "var(--font-sans, sans-serif)",
     lineHeight: 1.4,
-    letterSpacing: "0.04em",
+    // 字間は overline ラベルの単一トークン (#817) に揃える。色はアクセント色の
+    // ままにしたいので `textStyle` は使わず値だけ共有する。
+    letterSpacing: "var(--tracking-wider)",
     color: "var(--accent)",
     background: "color-mix(in srgb, var(--accent) 12%, transparent)",
     border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
@@ -303,7 +305,7 @@ export const GRID_CSS: SystemStyleObject = {
     fontWeight: 600,
     fontStyle: "normal",
     lineHeight: 1.5,
-    letterSpacing: "0.04em",
+    letterSpacing: "var(--tracking-wider)",
     color: "var(--text-null)",
     background: "color-mix(in srgb, var(--text-null) 14%, transparent)",
     border: "1px solid color-mix(in srgb, var(--text-null) 38%, transparent)",
@@ -319,7 +321,7 @@ export const GRID_CSS: SystemStyleObject = {
     fontSize: "var(--text-2xs)",
     fontWeight: 600,
     lineHeight: 1.5,
-    letterSpacing: "0.04em",
+    letterSpacing: "var(--tracking-wider)",
     color: "var(--text-muted)",
     background: "color-mix(in srgb, var(--text-muted) 10%, transparent)",
     border: "1px dashed color-mix(in srgb, var(--text-muted) 36%, transparent)",
@@ -366,7 +368,7 @@ export const GRID_CSS: SystemStyleObject = {
     padding: "0 6px",
     fontSize: "var(--text-2xs)",
     lineHeight: 1.5,
-    letterSpacing: "0.04em",
+    letterSpacing: "var(--tracking-wider)",
     textTransform: "uppercase",
     borderRadius: "var(--radius-sm)",
   },
@@ -408,7 +410,7 @@ export const GRID_CSS: SystemStyleObject = {
     fontSize: "var(--text-2xs)",
     fontWeight: 600,
     fontStyle: "normal",
-    letterSpacing: "0.04em",
+    letterSpacing: "var(--tracking-wider)",
     color: "var(--cell-binary)",
     background: "color-mix(in srgb, var(--cell-binary) 14%, transparent)",
     border: "1px solid color-mix(in srgb, var(--cell-binary) 38%, transparent)",
@@ -570,12 +572,7 @@ export const GRID_CSS: SystemStyleObject = {
     justifyContent: "space-between",
     gap: "var(--space-2, 8px)",
   },
-  "& tfoot .grid-footer-fn": {
-    fontSize: "var(--text-2xs)",
-    color: "var(--text-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.03em",
-  },
+  "& tfoot .grid-footer-fn": { textStyle: "overline" },
   "& tfoot .grid-footer-val": { fontVariantNumeric: "tabular-nums", fontWeight: 600 },
   "& td.grid-empty-cell": {
     padding: "3.5",
@@ -918,6 +915,12 @@ interface Props {
   /** 新規行追加を要求する。 */
   onRequestInsertRow?: () => void;
   /**
+   * 選択行を種に行追加モーダルを開く (行の複製、#820)。渡す値は列インデックスを
+   * キーにした `PendingInsertRow` — `RowInsertModal` の `initialValues` にそのまま
+   * 渡せる。未指定ならメニュー項目を出さない。
+   */
+  onDuplicateRow?: (row: PendingInsertRow) => void;
+  /**
    * Apply a single value (or NULL) to every cell of the current rectangular
    * selection in one batch (#596). Set by App for editable table tabs.
    */
@@ -936,6 +939,26 @@ interface Props {
   diffHighlightEnabled?: boolean;
   /** 差分ハイライトのトグル切替。未指定ならトグル UI を出さない。 */
   onToggleDiffHighlight?: () => void;
+  /**
+   * 結果パネルの表示 (グリッド / ピボット / チャート) を切り替える。未指定なら
+   * ツールバーに切替セグメントを出さない。ピボット/チャート側の同じセグメントと
+   * 対になっていて、行が無い / ストリーミング中は Export と同じ条件で隠す。
+   */
+  onChangeView?: (view: ResultViewKind) => void;
+  /**
+   * 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。App が
+   * セッション・対象クエリ・データベースを確定させたときだけ渡す — 読み取り専用
+   * セッション、対象クエリが単一の SELECT/WITH でない、データベース文脈が無いなど
+   * の理由で保存できないときは未指定になり、Export と同じくボタンは disabled
+   * (ツールチップで理由を示す) のまま出る。
+   */
+  onSaveAsTable?: () => void;
+  /**
+   * 結果セットをローカル横断クエリエンジンへ「ローカルテーブルとして登録」する
+   * (#740)。App がセッション種別・在メモリ行を確定させたときだけ渡す — 表示条件
+   * (canExport/streaming) は Export・`onSaveAsTable` と揃える。
+   */
+  onRegisterLocalTable?: () => void;
   /**
    * 全件ストリーミングエクスポートのコンテキスト。提供されると ExportModal に
    * 「全件 (再実行)」モードが現れる。
@@ -980,6 +1003,19 @@ interface Props {
    * のまま動く。
    */
   gridBindings?: GridBindings;
+  /**
+   * サーバ側ソート/フィルタ (#792): table タブでヘッダーメニューから適用した
+   * 全件対象の並び替え/絞り込み。SQL 組み立て・再フェッチは App が担う。
+   * `onSetServerSort`/`onSetServerFilter` 未指定なら table タブ以外とみなし、
+   * ヘッダーメニューにセクションを出さない。
+   */
+  serverSort?: ServerSort | null;
+  serverFilter?: ServerFilter | null;
+  onSetServerSort?: (column: string, direction: ServerSortDirection | null) => void;
+  onSetServerFilter?: (
+    column: string,
+    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+  ) => void;
 }
 
 export interface ResultGridHandle {
@@ -1014,47 +1050,10 @@ interface RowShape {
 // CellKind は表示メタ (型アイコン/空値分類) と共有するため cellTypeMeta.ts に集約し、
 // ここでは import して使う。
 
-const NUMERIC_TYPES = new Set([
-  "TINYINT",
-  "SMALLINT",
-  "MEDIUMINT",
-  "INT",
-  "INTEGER",
-  "BIGINT",
-  "YEAR",
-  "FLOAT",
-  "DOUBLE",
-  "REAL",
-  "TINYINT UNSIGNED",
-  "SMALLINT UNSIGNED",
-  "MEDIUMINT UNSIGNED",
-  "INT UNSIGNED",
-  "BIGINT UNSIGNED",
-]);
-
-const DECIMAL_TYPES = new Set(["DECIMAL", "NEWDECIMAL", "NUMERIC"]);
-const DATE_TYPES = new Set(["DATE", "DATETIME", "TIMESTAMP"]);
-const TIME_TYPES = new Set(["TIME"]);
-const BINARY_TYPES = new Set([
-  "BLOB",
-  "TINYBLOB",
-  "MEDIUMBLOB",
-  "LONGBLOB",
-  "BINARY",
-  "VARBINARY",
-]);
-
+// 型名 → CellKind の分類基準は `cellTypeMeta.ts::classifyTypeName` に集約
+// (DB 全体検索 #748 の走査対象絞り込みと共有するため)。
 function classifyColumn(col: Column): CellKind {
-  const t = col.type_name.toUpperCase();
-  if (NUMERIC_TYPES.has(t)) return "number";
-  if (DECIMAL_TYPES.has(t)) return "decimal";
-  if (t === "BOOLEAN" || t === "BOOL") return "bool";
-  if (DATE_TYPES.has(t)) return "date";
-  if (TIME_TYPES.has(t)) return "time";
-  if (t === "JSON" || t === "JSONB") return "json";
-  if (t === "ENUM" || t === "SET") return "enum";
-  if (BINARY_TYPES.has(t)) return "binary";
-  return "string";
+  return classifyTypeName(col.type_name);
 }
 
 function classifyByValue(v: CellValue): CellKind | null {
@@ -1178,6 +1177,22 @@ const ROW_INDEX_WIDTH = 44;
 function cellToText(v: CellValue): string {
   if (v === null || v === undefined) return "";
   return String(v);
+}
+
+/**
+ * 行の値を `PendingInsertRow` (列インデックス → 文字列) に変換する。行の複製
+ * (#820) で、選択行の値を種に `RowInsertModal` の `initialValues` として渡す
+ * ために使う。値の文字列化は `cellToText` と同じ規約 (コピー系アクション共通) を
+ * 流用し、NULL/undefined の列はキー自体を省く — フォーム上は空欄のまま = 未設定
+ * (DB 既定値) として扱われ、通常の「行を追加」の空欄と挙動が揃う。
+ */
+function rowToPendingInsert(row: CellValue[]): PendingInsertRow {
+  const seed: PendingInsertRow = {};
+  row.forEach((v, i) => {
+    const text = cellToText(v);
+    if (text !== "") seed[i] = text;
+  });
+  return seed;
 }
 
 const COL_SIZING_LRU_KEY = "noobdb.colsizing.lru.v1";
@@ -1519,6 +1534,11 @@ function ColumnFilterMenu({
   onShowStats,
   footerEnabled,
   onToggleFooter,
+  serverSortDir,
+  onSetServerSort,
+  serverFilter,
+  onApplyServerFilter,
+  onClearServerFilter,
 }: {
   columnName: string;
   kind: CellKind;
@@ -1544,6 +1564,17 @@ function ColumnFilterMenu({
   /** 集計フッター (#645) の表示状態と切替。未指定なら項目を出さない。 */
   footerEnabled?: boolean;
   onToggleFooter?: () => void;
+  /**
+   * サーバ側ソート (#792): この列が現在の全件ソート対象なら方向、そうでなければ
+   * null。`onSetServerSort` 未指定なら table タブ以外 (プレビュー等) とみなし
+   * セクション自体を出さない。
+   */
+  serverSortDir?: ServerSortDirection | null;
+  onSetServerSort?: (direction: ServerSortDirection | null) => void;
+  /** サーバ側フィルタ (#792): この列が現在の全件 WHERE 対象ならその条件。 */
+  serverFilter?: { op: ServerFilterOp; value: string } | null;
+  onApplyServerFilter?: (op: ServerFilterOp, value: string) => void;
+  onClearServerFilter?: () => void;
 }) {
   const t = useT();
   const numeric = isNumericFilterKind(kind);
@@ -1551,6 +1582,11 @@ function ColumnFilterMenu({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState<ColumnFilter>(() => value ?? makeDefaultFilter(kind));
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [serverFilterOp, setServerFilterOp] = useState<ServerFilterOp>(
+    () => serverFilter?.op ?? (numeric ? "eq" : "contains"),
+  );
+  const [serverFilterValue, setServerFilterValue] = useState<string>(() => serverFilter?.value ?? "");
+  const serverFilterNeedsValue = serverFilterOp === "eq" || serverFilterOp === "contains";
 
   // Commit the draft up to the table, clearing it when it no longer narrows.
   const apply = (next: ColumnFilter) => {
@@ -1623,17 +1659,18 @@ function ColumnFilterMenu({
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <chakra.div
-        fontSize="var(--text-sm)"
-        fontWeight={600}
-        color="app.text"
-        whiteSpace="nowrap"
-        overflow="hidden"
-        textOverflow="ellipsis"
-        title={columnName}
-      >
-        {columnName}
-      </chakra.div>
+      <Tooltip label={columnName} focusableWrapper>
+        <chakra.div
+          fontSize="var(--text-sm)"
+          fontWeight={600}
+          color="app.text"
+          whiteSpace="nowrap"
+          overflow="hidden"
+          textOverflow="ellipsis"
+        >
+          {columnName}
+        </chakra.div>
+      </Tooltip>
 
       <chakra.label display="flex" flexDirection="column" gap="3px">
         <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
@@ -1703,6 +1740,88 @@ function ColumnFilterMenu({
           <option value="exclude">{t("gridFilterNullExclude")}</option>
         </chakra.select>
       </chakra.label>
+
+      {(onSetServerSort || onApplyServerFilter) && (
+        <Box
+          display="flex"
+          flexDirection="column"
+          gap="1.5"
+          paddingTop="1"
+          borderTop="1px solid"
+          borderColor="app.borderSubtle"
+        >
+          <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+            {t("gridServerBrowseLabel")}
+          </chakra.span>
+          {onSetServerSort && (
+            <chakra.select
+              css={FILTER_FIELD_CSS}
+              value={serverSortDir ?? "none"}
+              aria-label={t("gridServerSortSelectAria")}
+              onChange={(e) => {
+                const v = e.target.value;
+                onSetServerSort(v === "none" ? null : (v as ServerSortDirection));
+              }}
+            >
+              <option value="none">{t("gridServerSortOptionNone")}</option>
+              <option value="asc">{t("gridServerSortOptionAsc")}</option>
+              <option value="desc">{t("gridServerSortOptionDesc")}</option>
+            </chakra.select>
+          )}
+          {onApplyServerFilter && (
+            <>
+              <chakra.select
+                css={FILTER_FIELD_CSS}
+                value={serverFilterOp}
+                aria-label={t("gridServerFilterOpAria")}
+                onChange={(e) => setServerFilterOp(e.target.value as ServerFilterOp)}
+              >
+                <option value="eq">{t("gridServerFilterOpEq")}</option>
+                <option value="contains">{t("gridServerFilterOpContains")}</option>
+                <option value="isNull">{t("gridServerFilterOpIsNull")}</option>
+                <option value="isNotNull">{t("gridServerFilterOpIsNotNull")}</option>
+              </chakra.select>
+              {serverFilterNeedsValue && (
+                <chakra.input
+                  css={FILTER_FIELD_CSS}
+                  type="text"
+                  inputMode={numeric ? "decimal" : undefined}
+                  value={serverFilterValue}
+                  placeholder={t("gridFilterValuePlaceholder")}
+                  aria-label={t("gridServerFilterValueAria")}
+                  onChange={(e) => setServerFilterValue(e.target.value)}
+                />
+              )}
+              <Box display="flex" gap="1.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="2"
+                  onClick={() => {
+                    onApplyServerFilter(serverFilterOp, serverFilterValue);
+                    onClose();
+                  }}
+                >
+                  {t("gridServerFilterApply")}
+                </Button>
+                {serverFilter && onClearServerFilter && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    px="2"
+                    onClick={() => {
+                      onClearServerFilter();
+                      onClose();
+                    }}
+                  >
+                    {t("gridServerFilterClear")}
+                  </Button>
+                )}
+              </Box>
+            </>
+          )}
+        </Box>
+      )}
 
       {formatSupported && (
         <chakra.label display="flex" flexDirection="column" gap="3px">
@@ -1846,24 +1965,32 @@ function ColumnFilterMenu({
 
 /** 統計ポップオーバーの 1 行 (ラベル + 値)。 */
 function StatRow({ label, value, title }: { label: string; value: ReactNode; title?: string }) {
+  const valueSpan = (
+    <chakra.span
+      fontSize="var(--text-sm)"
+      fontFamily="mono"
+      color="app.text"
+      fontWeight={600}
+      textAlign="right"
+      overflow="hidden"
+      textOverflow="ellipsis"
+      whiteSpace="nowrap"
+    >
+      {value}
+    </chakra.span>
+  );
   return (
     <Box display="flex" alignItems="baseline" justifyContent="space-between" gap="2">
       <chakra.span fontSize="var(--text-xs)" color="app.textMuted" whiteSpace="nowrap">
         {label}
       </chakra.span>
-      <chakra.span
-        fontSize="var(--text-sm)"
-        fontFamily="mono"
-        color="app.text"
-        fontWeight={600}
-        textAlign="right"
-        overflow="hidden"
-        textOverflow="ellipsis"
-        whiteSpace="nowrap"
-        title={title}
-      >
-        {value}
-      </chakra.span>
+      {title ? (
+        <Tooltip label={title} focusableWrapper>
+          {valueSpan}
+        </Tooltip>
+      ) : (
+        valueSpan
+      )}
     </Box>
   );
 }
@@ -2011,24 +2138,25 @@ function ColumnStatsMenu({
   // `colorScale.ts` の `accentFill`/`ACCENT_FILL_STOPS` を `.cell-databar` と
   // 共有し、`color-mix(--accent)` の直書きを避ける (#718)。
   const nullBar = (
-    <Box
-      role="img"
-      aria-label={`${t("gridStatsNullRate")}: ${nullPct.toFixed(1)}%`}
-      title={`${nullPct.toFixed(1)}%`}
-      height="6px"
-      borderRadius="full"
-      overflow="hidden"
-      background="color-mix(in srgb, var(--text-muted) 18%, transparent)"
-    >
+    <Tooltip label={`${nullPct.toFixed(1)}%`} focusableWrapper>
       <Box
-        height="100%"
-        width="100%"
-        transformOrigin="left center"
-        style={{ transform: `scaleX(${nullPct / 100})` }}
-        background={accentFill(ACCENT_FILL_STOPS.nullRate)}
-        transition="transform var(--dur-med) var(--ease-out)"
-      />
-    </Box>
+        role="img"
+        aria-label={`${t("gridStatsNullRate")}: ${nullPct.toFixed(1)}%`}
+        height="6px"
+        borderRadius="full"
+        overflow="hidden"
+        background="color-mix(in srgb, var(--text-muted) 18%, transparent)"
+      >
+        <Box
+          height="100%"
+          width="100%"
+          transformOrigin="left center"
+          style={{ transform: `scaleX(${nullPct / 100})` }}
+          background={accentFill(ACCENT_FILL_STOPS.nullRate)}
+          transition="transform var(--dur-med) var(--ease-out)"
+        />
+      </Box>
+    </Tooltip>
   );
 
   return createPortal(
@@ -2056,18 +2184,19 @@ function ColumnStatsMenu({
       onMouseDown={(e) => e.stopPropagation()}
     >
       <Box display="flex" alignItems="center" gap="1.5" minWidth={0}>
-        <Icon name={CELL_KIND_META[kind].icon} size={13} />
-        <chakra.div
-          fontSize="var(--text-sm)"
-          fontWeight={600}
-          color="app.text"
-          whiteSpace="nowrap"
-          overflow="hidden"
-          textOverflow="ellipsis"
-          title={columnName}
-        >
-          {columnName}
-        </chakra.div>
+        <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
+        <Tooltip label={columnName} focusableWrapper>
+          <chakra.div
+            fontSize="var(--text-sm)"
+            fontWeight={600}
+            color="app.text"
+            whiteSpace="nowrap"
+            overflow="hidden"
+            textOverflow="ellipsis"
+          >
+            {columnName}
+          </chakra.div>
+        </Tooltip>
       </Box>
 
       <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
@@ -2246,6 +2375,7 @@ export function DataGrid({
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
+  onDuplicateRow,
   validateEdit,
   columnSizingStorageKey,
   emptyMessage,
@@ -2261,12 +2391,18 @@ export function DataGrid({
   onPaginationChange,
   onUndoEdit,
   onRedoEdit,
+  canUndo,
+  canRedo,
   onSelectionSummary,
   onRunStatsQuery,
   findHits,
   findCurrentKey,
   findNav,
   gridBindings,
+  serverSort,
+  serverFilter,
+  onSetServerSort,
+  onSetServerFilter,
 }: {
   columns: Column[];
   rows: CellValue[][];
@@ -2308,6 +2444,11 @@ export function DataGrid({
   onToggleRowDelete?: (rowKey: string) => void;
   /** 新規行追加を要求する。未指定ならメニュー項目を出さない。 */
   onRequestInsertRow?: () => void;
+  /**
+   * 選択行を種に行追加モーダルを開く (行の複製、#820)。未指定ならメニュー
+   * 項目を出さない。
+   */
+  onDuplicateRow?: (row: PendingInsertRow) => void;
   /**
    * Validates a pending edit by result-column index, returning an i18n key
    * describing the problem or `null` when the value is acceptable. Drives the
@@ -2369,6 +2510,14 @@ export function DataGrid({
   onUndoEdit?: () => void;
   onRedoEdit?: () => void;
   /**
+   * 呼び出し元 (`ResultGrid`) が保持する Undo/Redo スタックの可否 (#815)。
+   * 右クリックメニューの「元に戻す/やり直す」項目の disabled 判定にのみ使う —
+   * ツールバーボタンの有効判定は `ResultGrid` 自身が別途行うので、ここは省略
+   * (undefined) なら常に有効として扱う。
+   */
+  canUndo?: boolean;
+  canRedo?: boolean;
+  /**
    * Called whenever the rectangular range selection changes, with the live
    * aggregate of the selected cells (or null when nothing multi-cell is
    * selected). Lets `ResultGrid` surface the summary in its status bar (#523).
@@ -2394,12 +2543,34 @@ export function DataGrid({
    * (#681)。省略時は今日の既定キーのまま (`DEFAULT_SHORTCUT_COMBOS`)。
    */
   gridBindings?: GridBindings;
+  /**
+   * サーバ側ソート/フィルタ (#792): table タブでヘッダーメニューから適用した
+   * 全件対象の並び替え/絞り込み。実際の SQL 組み立て (`applyServerBrowse`) と
+   * 再フェッチは呼び出し元 (App.tsx) が担い、ここは現在の状態の表示と、
+   * ヘッダーメニュー経由の変更要求の中継のみを行う。`onSetServerSort` /
+   * `onSetServerFilter` が未指定なら table タブ以外とみなしセクション自体を
+   * 出さない (プレビュー/ダイアログ内のグリッドなど)。
+   */
+  serverSort?: ServerSort | null;
+  serverFilter?: ServerFilter | null;
+  onSetServerSort?: (column: string, direction: ServerSortDirection | null) => void;
+  onSetServerFilter?: (
+    column: string,
+    filter: { op: ServerFilterOp; value: string; numeric: boolean } | null,
+  ) => void;
 }) {
   const t = useT();
   const locale = useLocale();
   const toast = useToast();
   const { cellEditOnBlur, richCellRendering } = useSettings();
   const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
+  // セル内容の全文ツールチップ (省略記号で切れた値・条件付き書式のホバー説明
+  // など) は行×列に比例して大量に描画されうるため (仮想化されていても可視行 ×
+  // 列数のぶんだけ Tooltip インスタンスが乗る)、`ConnectionList` のスキーマ
+  // ツリーと同じ「1 つの共有ツールチップ + イベント委譲」方式
+  // (`useDelegatedTooltip`、#884) に一本化する。native title からの後退はなく
+  // (セルは元々 tabIndex を持たない)、表示速度とテーマ追従だけを底上げする。
+  const { hovered: hoveredCellTooltip, bind: cellTooltipProps } = useDelegatedTooltip();
 
   // グリッド系ショートカットの実効バインド (#681)。未指定のキーは今日の既定へ
   // フォールバックするので、`gridBindings` を渡さない呼び出し元 (プレビューの
@@ -2677,27 +2848,26 @@ export function DataGrid({
       const fkTable = fkInfo?.referenced_table ?? null;
       return {
         id: String(i),
+        // ヘッダーは列数ぶんしか描画されない (行数に比例しない) ため、他の列
+        // ヘッダー系コントロール (ソート/フィルタ/リサイズボタン等、後述) と
+        // 同じく共有 `Tooltip` を直接使ってよい (#884)。
         header: () => (
-          <span
-            className="th-content"
-            title={fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name}
-          >
-            <span className="th-label-row">
-              {fkTable && <span className="th-fk-badge">FK</span>}
-              <span className="th-name">{c.name}</span>
-              {/* カラム型アイコン。aria-label で SR にも型を伝える。
-                  名前の後ろに置き、ヘッダーのアクセシブル名が列名から始まるようにする。 */}
-              <span
-                className="th-type-icon"
-                role="img"
-                aria-label={t(CELL_KIND_META[kind].labelKey)}
-                title={t(CELL_KIND_META[kind].labelKey)}
-              >
-                <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
+          <Tooltip label={fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name} focusableWrapper>
+            <span className="th-content">
+              <span className="th-label-row">
+                {fkTable && <span className="th-fk-badge">FK</span>}
+                <span className="th-name">{c.name}</span>
+                {/* カラム型アイコン。aria-label で SR にも型を伝える。
+                    名前の後ろに置き、ヘッダーのアクセシブル名が列名から始まるようにする。 */}
+                <Tooltip label={t(CELL_KIND_META[kind].labelKey)} focusableWrapper>
+                  <span className="th-type-icon" role="img" aria-label={t(CELL_KIND_META[kind].labelKey)}>
+                    <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
+                  </span>
+                </Tooltip>
               </span>
+              <span className="th-type">{c.type_name}</span>
             </span>
-            <span className="th-type">{c.type_name}</span>
-          </span>
+          </Tooltip>
         ),
         accessorFn: (row) => row[String(i)],
         sortingFn: sortingFnForKind(kind),
@@ -2720,8 +2890,8 @@ export function DataGrid({
             return (
               <span
                 className={`cell-empty cell-empty-${emptyKind}`}
-                title={t(badge.labelKey)}
                 aria-label={t(badge.labelKey)}
+                {...cellTooltipProps(t(badge.labelKey))}
               >
                 {badge.glyph}
               </span>
@@ -2736,14 +2906,14 @@ export function DataGrid({
             const num = toNumber(v);
             if (mode === "off" || !stats || num === null) {
               return (
-                <span className={`cell-number ${extraClass}`} title={title}>
+                <span className={`cell-number ${extraClass}`} {...cellTooltipProps(title)}>
                   {display}
                 </span>
               );
             }
             if (mode === "bar") {
               return (
-                <span className="cell-cf-wrap" title={title}>
+                <span className="cell-cf-wrap" {...cellTooltipProps(title)}>
                   <span
                     className="cell-databar"
                     style={{ transform: `scaleX(${dataBarPercent(num, stats) / 100})` }}
@@ -2770,7 +2940,7 @@ export function DataGrid({
             // 不透明な塗りにし、`readableInk` で塗り色そのものから文字色を
             // 決めることで、テーマに関わらず十分なコントラストを確保する。
             return (
-              <span className="cell-cf-wrap" title={title} style={{ background: color }}>
+              <span className="cell-cf-wrap" {...cellTooltipProps(title)} style={{ background: color }}>
                 <span
                   className={`cell-number cell-cf-value ${extraClass}`}
                   style={{ color: readableInk(color) }}
@@ -2811,7 +2981,7 @@ export function DataGrid({
                 ? formatDateTimeDisplay(raw, locale)
                 : null;
             return formatted !== null ? (
-              <span className="cell-date" title={raw}>
+              <span className="cell-date" {...cellTooltipProps(raw)}>
                 {formatted}
               </span>
             ) : (
@@ -2823,7 +2993,7 @@ export function DataGrid({
             // グリッド内では空白を畳んだコンパクト表現にする (表示専用、原文は title)。
             const compact = richCellRendering ? formatJsonCompact(raw) : null;
             return compact !== null ? (
-              <span className="cell-json" title={raw}>
+              <span className="cell-json" {...cellTooltipProps(raw)}>
                 {compact}
               </span>
             ) : (
@@ -2834,10 +3004,12 @@ export function DataGrid({
             const raw = String(v);
             // 列挙値は値ごとに決まる色相でバッジ表示する (表示専用)。OFF 時は素の文字列。
             // 長い値は他の型と同じくグリッド CSS の ellipsis で省略されるため、
-            // title で元の文字列をホバー確認できるようにする (#647)。
+            // ホバーで元の文字列を確認できるようにする (#647)。行×列に比例して
+            // 描画されるため native title ではなく `cellTooltipProps` (共有
+            // ツールチップ + イベント委譲、#884) を使う。
             if (!richCellRendering) {
               return (
-                <span className="cell-string" title={raw}>
+                <span className="cell-string" {...cellTooltipProps(raw)}>
                   {raw}
                 </span>
               );
@@ -2845,7 +3017,7 @@ export function DataGrid({
             return (
               <span
                 className="cell-enum-badge"
-                title={raw}
+                {...cellTooltipProps(raw)}
                 style={{ "--enum-hue": enumBadgeHue(raw) } as CSSProperties}
               >
                 {raw}
@@ -2857,16 +3029,20 @@ export function DataGrid({
             const label = t("gridBlobBytes", { size: formatBytes(Math.floor(s.length / 2)) });
             const { preview } = truncateHexPreview(s);
             return (
-              <span className="cell-binary" title={`${label} — 0x${s}`}>
+              <span className="cell-binary" {...cellTooltipProps(`${label} — 0x${s}`)}>
                 <span className="cell-binary-tag">{label}</span>0x{preview}
               </span>
             );
           }
           // 既定 (string) カテゴリ。JSON/日時/バイナリ/列挙と同じく、グリッドの
-          // ellipsis で省略された長文をホバーで確認できるよう title を付ける (#647)。
+          // ellipsis で省略された長文をホバーで確認できるようにする。行×列に
+          // 比例して描画されるセルなので、native title ではなく共有ツールチップ +
+          // イベント委譲 (`cellTooltipProps`、#884) を使う — 可視行 (仮想化後) ×
+          // 列数ぶん `Tooltip` インスタンスを乗せる素朴な全置換は、スクロールの
+          // たびに大量のマウント/アンマウントを引き起こし性能リスクがあるため。
           const rawStr = String(v);
           return (
-            <span className="cell-string" title={rawStr}>
+            <span className="cell-string" {...cellTooltipProps(rawStr)}>
               {rawStr}
             </span>
           );
@@ -3081,31 +3257,40 @@ export function DataGrid({
     }
   };
 
-  // Apply the bulk-edit dialog's single value to every selected cell (#596).
+  // Buffer one value across a rectangle of cells (#596). Shared by the
+  // bulk-edit dialog and the right-click "set value" shortcuts, so both paths
+  // get the same editability/validity rules and the same result toast.
   // Editability and per-cell type validity are decided by `planBulkCellEdit`;
   // skipped cells (read-only column or invalid value) are surfaced via a toast.
-  const applyBulkEdit = () => {
-    if (!bulkEdit || !onBulkEdit) {
-      setBulkEdit(null);
-      return;
-    }
+  const applyValueToCells = (
+    rowIndices: number[],
+    colIndices: number[],
+    value: string,
+  ) => {
+    if (!onBulkEdit) return;
     const plan = planBulkCellEdit({
       rows,
       columns,
       pkIndices: pkIndices ?? [],
-      rowIndices: bulkEdit.rowIndices,
-      colIndices: bulkEdit.colIndices,
-      value: bulkEdit.value,
+      rowIndices,
+      colIndices,
+      value,
       isColEditable: (c) => editableColumns?.[c] ?? false,
       validate: (c, v) => validateEdit?.(c, v) ?? null,
     });
-    setBulkEdit(null);
-    if (plan.applied.length === 0) {
+    if (plan.applied.length === 0 && plan.unchanged.length === 0) {
       toast.error(t("gridBulkEditNoneApplied"));
       return;
     }
-    onBulkEdit(plan.applied);
-    const skipped = plan.skippedReadonly + plan.skippedInvalid;
+    // `unchanged` は「すでにその値」のセル。新しい編集は積まないが、そこに残って
+    // いる保留編集は解除したいので `applied` と一緒に渡す。
+    onBulkEdit([...plan.applied, ...plan.unchanged]);
+    if (plan.applied.length === 0) {
+      toast.info(t("gridBulkEditAllUnchanged", { cells: plan.unchanged.length }));
+      return;
+    }
+    const skipped =
+      plan.skippedReadonly + plan.skippedInvalid + plan.unchanged.length;
     if (skipped > 0) {
       toast.info(
         t("gridBulkEditAppliedSkipped", { cells: plan.applied.length, skipped }),
@@ -3113,6 +3298,14 @@ export function DataGrid({
     } else {
       toast.success(t("gridBulkEditApplied", { cells: plan.applied.length }));
     }
+  };
+
+  // Apply the bulk-edit dialog's single value to every selected cell (#596).
+  const applyBulkEdit = () => {
+    const pending = bulkEdit;
+    setBulkEdit(null);
+    if (!pending) return;
+    applyValueToCells(pending.rowIndices, pending.colIndices, pending.value);
   };
 
   const visibleRows = table.getRowModel().rows;
@@ -3149,6 +3342,40 @@ export function DataGrid({
     const colIdSet = new Set(visibleColIds.slice(c0, c1 + 1));
     return { r0, r1, c0, c1, rowIndexSet, colIdSet };
   }, [selection, visibleRows, visibleColIds]);
+
+  /**
+   * Applies a right-click "set value" shortcut (`quickSetValues.ts`).
+   *
+   * Scope mirrors the bulk-edit dialog: when the clicked cell sits inside an
+   * active rectangular selection, the value goes to the whole rectangle;
+   * otherwise it goes to just that cell. Either way the change is *buffered*
+   * like any inline edit — nothing reaches the database until Apply.
+   */
+  const applyQuickSet = (rowIdx: number, colIdx: number, value: string) => {
+    const inSelection =
+      !!selectionRect &&
+      selectionRect.rowIndexSet.has(rowIdx) &&
+      selectionRect.colIdSet.has(colIdx);
+    if (inSelection && onBulkEdit) {
+      applyValueToCells(
+        visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
+        visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
+        value,
+      );
+      return;
+    }
+    const col = columns[colIdx];
+    const row = rows[rowIdx];
+    if (!col || !row || !onSetCellEdit) return;
+    if (validateEdit?.(colIdx, value)) {
+      toast.error(t("gridQuickSetInvalid"));
+      return;
+    }
+    // Setting the value the cell already holds clears any buffered edit
+    // instead of recording a no-op one.
+    const rowKey = rowEditKey(row, pkIndices ?? [], rowIdx);
+    onSetCellEdit(rowKey, colIdx, editIsNoop(value, col, row[colIdx]) ? null : value);
+  };
 
   // Live aggregate of the selected rectangle, surfaced to the parent's status
   // bar (#523). Null when there is no multi-cell range so the summary hides.
@@ -3608,7 +3835,11 @@ export function DataGrid({
               else cellRefs.current.delete(key);
             }}
             className={`col-${kind} ${isNumericKind(kind) ? "align-right" : ""} ${isNull && !hasPending ? "is-null" : ""} ${isChanged ? "is-changed" : ""} ${hasPending ? "is-pending-edit" : ""} ${colEditable ? "is-editable-cell" : ""} ${editError || pendingError ? "is-invalid-edit" : ""} ${isActiveCell ? "is-active-cell" : ""} ${inSelection ? "is-selected-cell" : ""} ${isFindHit ? "is-find-hit" : ""} ${isFindCurrent ? "is-find-current" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
-            title={
+            // マウス hover 用は行×列に比例するため native title ではなく
+            // `cellTooltipProps` (#884) に委譲する。キーボードでの同等手段は
+            // 既存の `gridInspector` ショートカット (`CellValueViewer`) が
+            // アクティブセルの全文を常に提供済みなので、後退にはならない。
+            {...cellTooltipProps(
               isEditingHere
                 ? undefined
                 : hasPending
@@ -3623,7 +3854,7 @@ export function DataGrid({
                       (kind === "string" || kind === "json") && String(v).length > 40
                       ? `${String(v)}\n(${t("gridCharCount", { count: String(v).length })})`
                       : String(v)
-            }
+            )}
             onMouseDown={(e) => {
               // Right-click opens the context menu (which can act on the current
               // selection, e.g. bulk edit) — never clear the selection here.
@@ -3772,7 +4003,7 @@ export function DataGrid({
 
   return (
     <>
-      {(isFiltered || multiSortActive) && (
+      {(isFiltered || multiSortActive || serverSort || serverFilter) && (
         <Box className="grid-filter-summary">
           {isFiltered && t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
           {multiSortActive && (
@@ -3794,6 +4025,35 @@ export function DataGrid({
               onClick={clearSorting}
             >
               {t("gridClearSort")}
+            </chakra.button>
+          )}
+          {serverSort && (
+            <chakra.span>
+              {t("gridServerSortChip", {
+                column: serverSort.column,
+                dir: t(serverSort.direction === "asc" ? "gridServerSortOptionAsc" : "gridServerSortOptionDesc"),
+              })}
+            </chakra.span>
+          )}
+          {serverSort && onSetServerSort && (
+            <chakra.button
+              type="button"
+              className="grid-filter-clear"
+              onClick={() => onSetServerSort(serverSort.column, null)}
+            >
+              {t("gridServerBrowseClear")}
+            </chakra.button>
+          )}
+          {serverFilter && (
+            <chakra.span>{t("gridServerFilterChip", { column: serverFilter.column })}</chakra.span>
+          )}
+          {serverFilter && onSetServerFilter && (
+            <chakra.button
+              type="button"
+              className="grid-filter-clear"
+              onClick={() => onSetServerFilter(serverFilter.column, null)}
+            >
+              {t("gridServerBrowseClear")}
             </chakra.button>
           )}
         </Box>
@@ -3876,77 +4136,81 @@ export function DataGrid({
                   >
                     {enableColumnControls ? (
                       <div className="th-inner">
-                        <chakra.span
-                          className="th-drag-grip"
-                          draggable
-                          role="button"
-                          tabIndex={-1}
-                          aria-label={t("gridDragColumn")}
-                          title={t("gridDragColumn")}
-                          onDragStart={(e) => {
-                            setDragColId(h.column.id);
-                            e.dataTransfer.effectAllowed = "move";
-                            e.dataTransfer.setData("text/plain", h.column.id);
-                          }}
-                          onDragEnd={() => {
-                            setDragColId(null);
-                            setDragOverColId(null);
-                          }}
-                        >
-                          <Icon name="columns" size={12} />
-                        </chakra.span>
-                        <chakra.button
-                          type="button"
-                          className="th-sort-button"
-                          onClick={h.column.getToggleSortingHandler()}
-                          title={sortTitle}
-                        >
-                          {flexRender(h.column.columnDef.header, h.getContext())}
-                          <chakra.span className="th-sort-indicator" aria-hidden>
-                            {sortDir === "asc" ? (
-                              <Icon name="sort-asc" size={ICON_SIZES.sm} />
-                            ) : sortDir === "desc" ? (
-                              <Icon name="sort-desc" size={ICON_SIZES.sm} />
-                            ) : null}
-                            {sortRank > 0 && (
-                              <chakra.span
-                                className="th-sort-rank"
-                                aria-label={t("gridSortPriority", { n: sortRank })}
-                              >
-                                {sortRank}
-                              </chakra.span>
-                            )}
+                        <Tooltip label={t("gridDragColumn")}>
+                          <chakra.span
+                            className="th-drag-grip"
+                            draggable
+                            role="button"
+                            tabIndex={-1}
+                            aria-label={t("gridDragColumn")}
+                            onDragStart={(e) => {
+                              setDragColId(h.column.id);
+                              e.dataTransfer.effectAllowed = "move";
+                              e.dataTransfer.setData("text/plain", h.column.id);
+                            }}
+                            onDragEnd={() => {
+                              setDragColId(null);
+                              setDragOverColId(null);
+                            }}
+                          >
+                            <Icon name="columns" size={ICON_SIZES.sm} />
                           </chakra.span>
-                        </chakra.button>
-                        <chakra.button
-                          type="button"
-                          className={`th-filter-button ${colFilterActive ? "is-active" : ""}`}
-                          onClick={(e) =>
-                            setFilterMenu({
-                              colIdx,
-                              anchor: e.currentTarget.getBoundingClientRect(),
-                            })
-                          }
-                          title={filterLabel}
-                          aria-label={filterLabel}
-                          aria-haspopup="dialog"
-                          aria-expanded={filterMenu?.colIdx === colIdx}
-                        >
-                          <Icon name="filter" size={12} strokeWidth={2.2} />
-                        </chakra.button>
+                        </Tooltip>
+                        <Tooltip label={sortTitle}>
+                          <chakra.button
+                            type="button"
+                            className="th-sort-button"
+                            onClick={h.column.getToggleSortingHandler()}
+                          >
+                            {flexRender(h.column.columnDef.header, h.getContext())}
+                            <chakra.span className="th-sort-indicator" aria-hidden>
+                              {sortDir === "asc" ? (
+                                <Icon name="sort-asc" size={ICON_SIZES.sm} />
+                              ) : sortDir === "desc" ? (
+                                <Icon name="sort-desc" size={ICON_SIZES.sm} />
+                              ) : null}
+                              {sortRank > 0 && (
+                                <chakra.span
+                                  className="th-sort-rank"
+                                  aria-label={t("gridSortPriority", { n: sortRank })}
+                                >
+                                  {sortRank}
+                                </chakra.span>
+                              )}
+                            </chakra.span>
+                          </chakra.button>
+                        </Tooltip>
+                        <Tooltip label={filterLabel}>
+                          <chakra.button
+                            type="button"
+                            className={`th-filter-button ${colFilterActive ? "is-active" : ""}`}
+                            onClick={(e) =>
+                              setFilterMenu({
+                                colIdx,
+                                anchor: e.currentTarget.getBoundingClientRect(),
+                              })
+                            }
+                            aria-label={filterLabel}
+                            aria-haspopup="dialog"
+                            aria-expanded={filterMenu?.colIdx === colIdx}
+                          >
+                            <Icon name="filter" size={ICON_SIZES.sm} strokeWidth={2.2} />
+                          </chakra.button>
+                        </Tooltip>
                       </div>
                     ) : (
                       flexRender(h.column.columnDef.header, h.getContext())
                     )}
                     {canResize && (
-                      <div
-                        className={`th-resize-handle ${isResizing ? "is-resizing" : ""}`}
-                        onMouseDown={h.getResizeHandler()}
-                        onTouchStart={h.getResizeHandler()}
-                        onDoubleClick={() => h.column.resetSize()}
-                        title={t("gridResizeColumn")}
-                        aria-hidden
-                      />
+                      <Tooltip label={t("gridResizeColumn")}>
+                        <div
+                          className={`th-resize-handle ${isResizing ? "is-resizing" : ""}`}
+                          onMouseDown={h.getResizeHandler()}
+                          onTouchStart={h.getResizeHandler()}
+                          onDoubleClick={() => h.column.resetSize()}
+                          aria-hidden
+                        />
+                      </Tooltip>
                     )}
                   </th>
                 );
@@ -4047,12 +4311,11 @@ export function DataGrid({
                     }
                   : {};
                 const label = t(FOOTER_FN_LABEL[fn]);
-                return (
+                const footerTd = (
                   <td
                     key={h.id}
                     style={pinStyle}
                     className={`grid-footer-cell col-${kind} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
-                    title={text ? `${label}: ${text}` : undefined}
                   >
                     {fn !== "none" && (
                       <span className="grid-footer-inner">
@@ -4070,6 +4333,15 @@ export function DataGrid({
                     )}
                   </td>
                 );
+                // 列数ぶんしか描画されない (行数には比例しない) ため、共有
+                // `Tooltip` を直接使う (#884)。
+                return text ? (
+                  <Tooltip key={h.id} label={`${label}: ${text}`} focusableWrapper>
+                    {footerTd}
+                  </Tooltip>
+                ) : (
+                  footerTd
+                );
               })}
               <td className="col-filler grid-footer-cell" aria-hidden />
             </tr>
@@ -4082,10 +4354,16 @@ export function DataGrid({
           y={copyMenu.y}
           onClose={() => setCopyMenu(null)}
           items={[
-            { label: t("gridCopyCell"), onSelect: () => copyCell(copyMenu.rowIdx, copyMenu.colIdx) },
+            {
+              label: t("gridCopyCell"),
+              icon: "copy",
+              shortcut: formatCombo(effectiveGridBindings.gridCopy),
+              onSelect: () => copyCell(copyMenu.rowIdx, copyMenu.colIdx),
+            },
             { label: t("gridCopyRow"), onSelect: () => copyRow(copyMenu.rowIdx) },
             {
               label: t("gridCopyRowWithHeaders"),
+              shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
               onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
             },
             ...(() => {
@@ -4140,6 +4418,92 @@ export function DataGrid({
                     ]
                   : []),
               ];
+            })(),
+            // 行の複製 (#820): クリックした行の値を種に行追加モーダルを開く。
+            // `onRequestInsertRow` と同じ表示条件 (編集可能なテーブルタブ) で
+            // App から渡される。
+            ...(onDuplicateRow
+              ? [
+                  { separator: true as const },
+                  {
+                    label: t("gridDuplicateRow"),
+                    title: t("gridDuplicateRowTitle"),
+                    onSelect: () => {
+                      const row = rows[copyMenu.rowIdx];
+                      setCopyMenu(null);
+                      if (row) onDuplicateRow(rowToPendingInsert(row));
+                    },
+                  },
+                ]
+              : []),
+            // 値のワンクリック設定: NULL / 空文字 / 0 / true / false / 現在日時
+            // といった「毎回手で打つのが煩わしい定番値」を列の型に応じて出す。
+            // 表示条件はインライン編集そのもの (編集可能な列 + PK 解決済み) と
+            // 同じで、書き込みではなく既存の pending 編集バッファに載せる。
+            ...(() => {
+              const colEditable =
+                editable && (editableColumns?.[copyMenu.colIdx] ?? false) && !!onSetCellEdit;
+              if (!colEditable) return [];
+              const col = columns[copyMenu.colIdx];
+              if (!col) return [];
+              const meta = columnMeta?.find((m) => m.name === col.name) ?? null;
+              // 矩形選択がクリックしたセルを含むときは選択範囲全体が対象。
+              // ラベルは短いまま、対象範囲はツールチップで伝える。
+              const selectedCells =
+                selectionRect &&
+                selectionRect.rowIndexSet.has(copyMenu.rowIdx) &&
+                selectionRect.colIdSet.has(copyMenu.colIdx) &&
+                onBulkEdit
+                  ? selectionRect.rowIndexSet.size * selectionRect.colIdSet.size
+                  : 0;
+              const scopeNote =
+                selectedCells > 1
+                  ? t("gridQuickSetSelectionNote", { count: selectedCells })
+                  : null;
+              const items = quickSetOptions({ column: col, meta, now: new Date(), driver: rowSqlDriver }).map(
+                (opt) => {
+                  const note = opt.noteKey ? t(opt.noteKey) : null;
+                  const title = opt.disabledReason
+                    ? t(opt.disabledReason)
+                    : [scopeNote, note].filter(Boolean).join("\n\n") || undefined;
+                  return {
+                    label: t(opt.labelKey),
+                    title,
+                    disabled: !!opt.disabledReason,
+                    onSelect: () => {
+                      const rk = copyMenu.rowIdx;
+                      const ck = copyMenu.colIdx;
+                      // 時刻系はメニューを開いてから選ぶまでの間に古くなるので、
+                      // 確定した瞬間の時計で組み立て直す。
+                      const value = opt.dynamic
+                        ? resolveDynamicValue(opt.dynamic, new Date())
+                        : opt.value;
+                      setCopyMenu(null);
+                      applyQuickSet(rk, ck, value);
+                    },
+                  };
+                },
+              );
+              // 保留中の編集があるセルだけ、その 1 セルぶんを取り消す導線を足す
+              // (Undo は編集履歴全体を 1 手戻すので、狙ったセルだけ戻したいとき用)。
+              const rowKey = rowEditKey(
+                rows[copyMenu.rowIdx] ?? [],
+                pkIndices ?? [],
+                copyMenu.rowIdx,
+              );
+              if (pendingEdits?.[rowKey]?.[copyMenu.colIdx] !== undefined) {
+                items.push({
+                  label: t("gridQuickSetRevert"),
+                  title: undefined,
+                  disabled: false,
+                  onSelect: () => {
+                    const ck = copyMenu.colIdx;
+                    setCopyMenu(null);
+                    onSetCellEdit?.(rowKey, ck, null);
+                  },
+                });
+              }
+              return [{ separator: true as const }, ...items];
             })(),
             // 一括編集 (#596): 矩形選択がある編集可能なテーブルでのみ、
             // 「選択セルに値を設定」を出す。PK が無いテーブルは行を特定できないため非表示。
@@ -4221,6 +4585,7 @@ export function DataGrid({
             },
             {
               label: t("gridRowInspector"),
+              shortcut: formatCombo(effectiveGridBindings.gridInspector),
               onSelect: () => {
                 const rk = copyMenu.rowIdx;
                 const ck = copyMenu.colIdx;
@@ -4229,6 +4594,35 @@ export function DataGrid({
                 setInspectorOpen(true);
               },
             },
+            // 元に戻す/やり直す (#815): ツールバーの Undo/Redo ボタンと同じ
+            // ハンドラ/有効判定をメニューからも呼べるようにする。
+            ...(onUndoEdit || onRedoEdit
+              ? [
+                  { separator: true as const },
+                  ...(onUndoEdit
+                    ? [
+                        {
+                          label: t("gridUndoItem"),
+                          icon: "undo" as const,
+                          shortcut: formatCombo(effectiveGridBindings.gridUndo),
+                          disabled: canUndo === false,
+                          onSelect: () => { setCopyMenu(null); onUndoEdit(); },
+                        },
+                      ]
+                    : []),
+                  ...(onRedoEdit
+                    ? [
+                        {
+                          label: t("gridRedoItem"),
+                          icon: "redo" as const,
+                          shortcut: formatCombo(effectiveGridBindings.gridRedo),
+                          disabled: canRedo === false,
+                          onSelect: () => { setCopyMenu(null); onRedoEdit(); },
+                        },
+                      ]
+                    : []),
+                ]
+              : []),
             // 行の追加・削除。PK が無いテーブルでは削除を無効化 (行を一意に
             // 特定できないため)。新規行追加は PK 有無に依らず可能。
             ...(onToggleRowDelete || onRequestInsertRow
@@ -4380,6 +4774,36 @@ export function DataGrid({
           }
           footerEnabled={footerEnabled}
           onToggleFooter={enableColumnControls ? toggleFooter : undefined}
+          serverSortDir={
+            serverSort && serverSort.column === (columns[filterMenu.colIdx]?.name ?? "")
+              ? serverSort.direction
+              : null
+          }
+          onSetServerSort={
+            onSetServerSort
+              ? (dir) => onSetServerSort(columns[filterMenu.colIdx]?.name ?? "", dir)
+              : undefined
+          }
+          serverFilter={
+            serverFilter && serverFilter.column === (columns[filterMenu.colIdx]?.name ?? "")
+              ? { op: serverFilter.op, value: serverFilter.value }
+              : null
+          }
+          onApplyServerFilter={
+            onSetServerFilter
+              ? (op, value) =>
+                  onSetServerFilter(columns[filterMenu.colIdx]?.name ?? "", {
+                    op,
+                    value,
+                    numeric: isNumericFilterKind(columnKinds[filterMenu.colIdx] ?? "string"),
+                  })
+              : undefined
+          }
+          onClearServerFilter={
+            onSetServerFilter
+              ? () => onSetServerFilter(columns[filterMenu.colIdx]?.name ?? "", null)
+              : undefined
+          }
         />
       )}
       {statsMenu && (() => {
@@ -4508,6 +4932,9 @@ export function DataGrid({
         );
       })()}
       {blurDialog}
+      {hoveredCellTooltip && (
+        <TooltipBubble label={hoveredCellTooltip.label} anchor={hoveredCellTooltip.rect} />
+      )}
     </>
   );
 }
@@ -4606,17 +5033,18 @@ function StreamingBanner({
         )}
       </chakra.span>
       {onStop && (
-        <Button
-          variant="warning"
-          size="sm"
-          px="3"
-          py="0.5"
-          whiteSpace="nowrap"
-          onClick={onStop}
-          title={t("gridStopButtonTitle")}
-        >
-          {t("gridStopButton")}
-        </Button>
+        <Tooltip label={t("gridStopButtonTitle")}>
+          <Button
+            variant="warning"
+            size="sm"
+            px="3"
+            py="0.5"
+            whiteSpace="nowrap"
+            onClick={onStop}
+          >
+            {t("gridStopButton")}
+          </Button>
+        </Tooltip>
       )}
     </Box>
   );
@@ -4657,11 +5085,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   pendingDeleteKeys,
   onToggleRowDelete,
   onRequestInsertRow,
+  onDuplicateRow,
   onBulkEdit,
   diffPrevRows,
   diffComparable,
   diffHighlightEnabled,
   onToggleDiffHighlight,
+  onChangeView,
+  onSaveAsTable,
+  onRegisterLocalTable,
   fullExport,
   lastEditAppliedAt,
   applyingEdits,
@@ -4673,6 +5105,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   initialScrollTop,
   onScroll,
   gridBindings,
+  serverSort,
+  serverFilter,
+  onSetServerSort,
+  onSetServerFilter,
 }: Props, ref) {
   const t = useT();
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
@@ -5153,15 +5589,16 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           <chakra.span flex="1">
             {t("autoLimitApplied", { limit: autoLimitApplied! })}
           </chakra.span>
-          <Button
-            size="sm"
-            px="2.5"
-            whiteSpace="nowrap"
-            onClick={onFetchAllRows}
-            title={t("autoLimitFetchAllTitle")}
-          >
-            {t("autoLimitFetchAll")}
-          </Button>
+          <Tooltip label={t("autoLimitFetchAllTitle")}>
+            <Button
+              size="sm"
+              px="2.5"
+              whiteSpace="nowrap"
+              onClick={onFetchAllRows}
+            >
+              {t("autoLimitFetchAll")}
+            </Button>
+          </Tooltip>
         </Box>
       )}
       <Box
@@ -5173,13 +5610,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         borderBottom="1px solid"
         borderColor="app.borderSubtle"
         flexShrink={0}
+        // 分割ペインが狭いとき、縮まないボタン (ピン/最大化/ピボット/チャート) が
+        // 親の overflow: hidden でクリップされて操作不能になるのを防ぐ。TabBar と
+        // 同じ横スクロール方式で、フォーカス移動時もブラウザが自動で見える位置へ
+        // スクロールする。
+        overflowX="auto"
+        overflowY="hidden"
+        scrollbarWidth="thin"
       >
-        <Button
-          size="sm"
-          px="2.5"
-          onClick={() => setShowExport(true)}
-          disabled={!canExport}
-          title={
+        {/*
+          グリッド / ピボット / チャートの表示切替。以前は「ピボット」「チャート」の
+          独立ボタンが差分トグルの右隣にあり、戻る導線は各ビュー側だけだったが、
+          3 択のセグメントへ寄せて往復を 1 か所にまとめる。ツールバー先頭 (最も
+          目に付く位置) に置き、表示条件は Export と同じ (ストリーミング中でなく
+          行がある)。
+        */}
+        {onChangeView && canExport && (
+          <ResultViewSwitch value="grid" onChange={onChangeView} />
+        )}
+        <Tooltip
+          focusableWrapper={!canExport}
+          label={
             canExport
               ? t("exportButtonTitle")
               : streaming
@@ -5187,15 +5638,64 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 : t("exportDisabledNoRows")
           }
         >
-          {t("exportButton")}
-        </Button>
+          <Button
+            size="sm"
+            px="2.5"
+            onClick={() => setShowExport(true)}
+            disabled={!canExport}
+          >
+            <Icon name="download" size={ICON_SIZES.md} /> {t("exportButton")}
+          </Button>
+        </Tooltip>
+        <Tooltip
+          focusableWrapper={!canExport || !onSaveAsTable}
+          label={
+            streaming
+              ? t("exportDisabledStreaming")
+              : !canExport
+                ? t("exportDisabledNoRows")
+                : onSaveAsTable
+                  ? t("saveAsTableButtonTitle")
+                  : t("saveAsTableDisabledTitle")
+          }
+        >
+          <Button
+            size="sm"
+            px="2.5"
+            onClick={() => onSaveAsTable?.()}
+            disabled={!canExport || !onSaveAsTable}
+          >
+            <Icon name="table" size={ICON_SIZES.md} /> {t("saveAsTableButton")}
+          </Button>
+        </Tooltip>
+        <Tooltip
+          focusableWrapper={!canExport || !onRegisterLocalTable}
+          label={
+            streaming
+              ? t("exportDisabledStreaming")
+              : !canExport
+                ? t("exportDisabledNoRows")
+                : onRegisterLocalTable
+                  ? t("registerLocalTableButtonTitle")
+                  : t("registerLocalTableDisabledTitle")
+          }
+        >
+          <Button
+            size="sm"
+            px="2.5"
+            onClick={() => onRegisterLocalTable?.()}
+            disabled={!canExport || !onRegisterLocalTable}
+          >
+            <Icon name="database" size={ICON_SIZES.md} /> {t("registerLocalTableButton")}
+          </Button>
+        </Tooltip>
         {onSetAutoRefresh && (
+          <Tooltip label={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}>
           <Box
             display="inline-flex"
             alignItems="center"
             gap="1.5"
             paddingLeft="2px"
-            title={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}
           >
             <chakra.label
               display="inline-flex"
@@ -5253,14 +5753,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               </chakra.span>
             )}
           </Box>
+          </Tooltip>
         )}
         {onToggleDiffHighlight && pkIndices.length > 0 && (
+          <Tooltip label={t("diffHighlightTitle")}>
           <Box
             display="inline-flex"
             alignItems="center"
             gap="1.5"
             paddingLeft="2px"
-            title={t("diffHighlightTitle")}
           >
             <chakra.label
               display="inline-flex"
@@ -5294,17 +5795,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               </chakra.span>
             )}
           </Box>
+          </Tooltip>
         )}
         {editable && tableColumns && pkIndices.length === 0 && (
-          <chakra.span
-            fontSize="xs"
-            color="app.textMuted"
-            fontStyle="italic"
-            paddingLeft="4px"
-            title={t("editNoPkHintTitle")}
-          >
-            {t("editNoPkHint")}
-          </chakra.span>
+          <Tooltip label={t("editNoPkHintTitle")}>
+            <chakra.span
+              fontSize="xs"
+              color="app.textMuted"
+              fontStyle="italic"
+              paddingLeft="4px"
+            >
+              {t("editNoPkHint")}
+            </chakra.span>
+          </Tooltip>
         )}
         {editableActive && (
           // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
@@ -5361,46 +5864,45 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               // Preview only handles one row at a time; surface that
               // limitation explicitly so users don't assume Apply has been
               // dry-run-validated for every edited row.
-              <chakra.span
-                role="note"
-                fontSize="xs"
-                color="app.textMuted"
-                fontStyle="italic"
-                whiteSpace="nowrap"
-                title={t("editPreviewMultiRowBannerTitle")}
-              >
-                {t("editPreviewMultiRowBanner")}
-              </chakra.span>
+              <Tooltip label={t("editPreviewMultiRowBannerTitle")}>
+                <chakra.span
+                  role="note"
+                  fontSize="xs"
+                  color="app.textMuted"
+                  fontStyle="italic"
+                  whiteSpace="nowrap"
+                >
+                  {t("editPreviewMultiRowBanner")}
+                </chakra.span>
+              </Tooltip>
             )}
-            <Button
-              variant="secondary"
-              size="sm"
-              px="1.5"
-              onClick={onUndoEdit}
-              disabled={!canUndo}
-              title={t("editUndoTitle")}
-              aria-label={t("editUndoTitle")}
-            >
-              <Icon name="undo" />
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              px="1.5"
-              onClick={onRedoEdit}
-              disabled={!canRedo}
-              title={t("editRedoTitle")}
-              aria-label={t("editRedoTitle")}
-            >
-              <Icon name="redo" />
-            </Button>
-            <Button
-              variant="warning"
-              size="sm"
-              px="2.5"
-              onClick={onPreviewEdits}
-              disabled={!canPreview}
-              title={
+            <Tooltip label={t("editUndoTitle")}>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                onClick={onUndoEdit}
+                disabled={!canUndo}
+                aria-label={t("editUndoTitle")}
+              >
+                <Icon name="undo" />
+              </Button>
+            </Tooltip>
+            <Tooltip label={t("editRedoTitle")}>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                onClick={onRedoEdit}
+                disabled={!canRedo}
+                aria-label={t("editRedoTitle")}
+              >
+                <Icon name="redo" />
+              </Button>
+            </Tooltip>
+            <Tooltip
+              focusableWrapper={!canPreview}
+              label={
                 hasInvalidEdit
                   ? t("editApplyDisabledInvalid")
                   : editedRowCount > 1
@@ -5410,16 +5912,19 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                       : t("editorPreviewTitle")
               }
             >
-              {t("editPreviewButton")}
-            </Button>
-            <LoadingButton
-              variant="success"
-              size="sm"
-              px="2.5"
-              loading={applyingEdits}
-              onClick={onApplyEdits}
-              disabled={!canApply}
-              title={
+              <Button
+                variant="warning"
+                size="sm"
+                px="2.5"
+                onClick={onPreviewEdits}
+                disabled={!canPreview}
+              >
+                <Icon name="eye" size={ICON_SIZES.md} /> {t("editPreviewButton")}
+              </Button>
+            </Tooltip>
+            <Tooltip
+              focusableWrapper={!canApply}
+              label={
                 hasInvalidEdit
                   ? t("editApplyDisabledInvalid")
                   : streaming
@@ -5427,17 +5932,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                     : t("editApplyButtonTitle")
               }
             >
-              {t("editApplyButton")}
-            </LoadingButton>
+              <LoadingButton
+                variant="success"
+                size="sm"
+                px="2.5"
+                loading={applyingEdits}
+                onClick={onApplyEdits}
+                disabled={!canApply}
+              >
+                <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
+              </LoadingButton>
+            </Tooltip>
+            <Tooltip label={t("editCancelButtonTitle")}>
             <Button
               variant="secondary"
               size="sm"
               px="2.5"
               onClick={() => setShowDiscardConfirm(true)}
-              title={t("editCancelButtonTitle")}
             >
-              {t("editCancelButton")}
+              <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
             </Button>
+            </Tooltip>
           </Box>
               </motion.div>
             )}
@@ -5525,23 +6040,25 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           >
             {t("resultStatusBar", { rows: result.rows.length, ms: result.elapsed_ms })}
             {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
-              <chakra.span color="var(--text-warning)" marginLeft="6px" title={t("autoLimitApplied", { limit: autoLimitApplied })}>
-                LIMIT {autoLimitApplied}
-              </chakra.span>
+              <Tooltip label={t("autoLimitApplied", { limit: autoLimitApplied })}>
+                <chakra.span color="var(--text-warning)" marginLeft="6px">
+                  LIMIT {autoLimitApplied}
+                </chakra.span>
+              </Tooltip>
             )}
             {partialResult && (
-              <chakra.span
-                color="var(--text-warning)"
-                marginLeft="6px"
-                title={t(
+              <Tooltip
+                label={t(
                   partialResult.reason === "cancelled"
                     ? "partialResultCancelledTitle"
                     : "partialResultTimeoutTitle",
                   { rows: partialResult.rows },
                 )}
               >
-                {t("partialResultBadge")}
-              </chakra.span>
+                <chakra.span color="var(--text-warning)" marginLeft="6px">
+                  {t("partialResultBadge")}
+                </chakra.span>
+              </Tooltip>
             )}
           </chakra.span>
         )}
@@ -5576,34 +6093,36 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           aria-label={t("gridSearchAria")}
         />
         {onPinResult && (
-          <Button
-            variant="secondary"
-            size="sm"
-            px="1.5"
-            marginLeft="1.5"
-            flexShrink={0}
-            onClick={onPinResult}
-            disabled={!canPinResult}
-            title={t("pinResultTitle")}
-            aria-label={t("pinResultTitle")}
-          >
-            <Icon name="pin" />
-          </Button>
+          <Tooltip label={t("pinResultTitle")} focusableWrapper={!canPinResult}>
+            <Button
+              variant="secondary"
+              size="sm"
+              px="1.5"
+              marginLeft="1.5"
+              flexShrink={0}
+              onClick={onPinResult}
+              disabled={!canPinResult}
+              aria-label={t("pinResultTitle")}
+            >
+              <Icon name="pin" />
+            </Button>
+          </Tooltip>
         )}
         {onToggleMaximize && (
-          <Button
-            variant="secondary"
-            size="sm"
-            px="1.5"
-            marginLeft="1.5"
-            flexShrink={0}
-            onClick={onToggleMaximize}
-            title={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
-            aria-label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
-            aria-pressed={!!maximized}
-          >
-            <Icon name={maximized ? "minimize" : "maximize"} />
-          </Button>
+          <Tooltip label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}>
+            <Button
+              variant="secondary"
+              size="sm"
+              px="1.5"
+              marginLeft="1.5"
+              flexShrink={0}
+              onClick={onToggleMaximize}
+              aria-label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
+              aria-pressed={!!maximized}
+            >
+              <Icon name={maximized ? "minimize" : "maximize"} />
+            </Button>
+          </Tooltip>
         )}
       </Box>
       <AnimatePresence initial={false}>
@@ -5660,36 +6179,39 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                 placeholder={t("gridFindPlaceholder")}
                 aria-label={t("gridFindInputAria")}
               />
-              <chakra.button
-                type="button"
-                css={FIND_TOGGLE_CSS}
-                aria-pressed={findCaseSensitive}
-                onClick={() => setFindCaseSensitive((v) => !v)}
-                title={t("gridFindCaseTitle")}
-                aria-label={t("gridFindCaseTitle")}
-              >
-                Aa
-              </chakra.button>
-              <chakra.button
-                type="button"
-                css={FIND_TOGGLE_CSS}
-                aria-pressed={findWholeCell}
-                onClick={() => setFindWholeCell((v) => !v)}
-                title={t("gridFindWholeTitle")}
-                aria-label={t("gridFindWholeTitle")}
-              >
-                =
-              </chakra.button>
-              <chakra.button
-                type="button"
-                css={FIND_TOGGLE_CSS}
-                aria-pressed={findRegex}
-                onClick={() => setFindRegex((v) => !v)}
-                title={t("gridFindRegexTitle")}
-                aria-label={t("gridFindRegexTitle")}
-              >
-                .*
-              </chakra.button>
+              <Tooltip label={t("gridFindCaseTitle")}>
+                <chakra.button
+                  type="button"
+                  css={FIND_TOGGLE_CSS}
+                  aria-pressed={findCaseSensitive}
+                  onClick={() => setFindCaseSensitive((v) => !v)}
+                  aria-label={t("gridFindCaseTitle")}
+                >
+                  Aa
+                </chakra.button>
+              </Tooltip>
+              <Tooltip label={t("gridFindWholeTitle")}>
+                <chakra.button
+                  type="button"
+                  css={FIND_TOGGLE_CSS}
+                  aria-pressed={findWholeCell}
+                  onClick={() => setFindWholeCell((v) => !v)}
+                  aria-label={t("gridFindWholeTitle")}
+                >
+                  =
+                </chakra.button>
+              </Tooltip>
+              <Tooltip label={t("gridFindRegexTitle")}>
+                <chakra.button
+                  type="button"
+                  css={FIND_TOGGLE_CSS}
+                  aria-pressed={findRegex}
+                  onClick={() => setFindRegex((v) => !v)}
+                  aria-label={t("gridFindRegexTitle")}
+                >
+                  .*
+                </chakra.button>
+              </Tooltip>
               <chakra.span
                 fontSize="xs"
                 fontFamily="mono"
@@ -5712,39 +6234,42 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
                           total: findResult.matches.length,
                         })}
               </chakra.span>
-              <Button
-                variant="secondary"
-                size="sm"
-                px="1.5"
-                disabled={findResult.matches.length === 0}
-                onClick={() => findStep(-1)}
-                title={t("gridFindPrevTitle")}
-                aria-label={t("gridFindPrevTitle")}
-              >
-                ‹
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                px="1.5"
-                disabled={findResult.matches.length === 0}
-                onClick={() => findStep(1)}
-                title={t("gridFindNextTitle")}
-                aria-label={t("gridFindNextTitle")}
-              >
-                ›
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                px="1.5"
-                marginLeft="auto"
-                onClick={closeFind}
-                title={t("gridFindCloseTitle")}
-                aria-label={t("gridFindCloseTitle")}
-              >
-                <Icon name="close" />
-              </Button>
+              <Tooltip label={t("gridFindPrevTitle")} focusableWrapper={findResult.matches.length === 0}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="1.5"
+                  disabled={findResult.matches.length === 0}
+                  onClick={() => findStep(-1)}
+                  aria-label={t("gridFindPrevTitle")}
+                >
+                  ‹
+                </Button>
+              </Tooltip>
+              <Tooltip label={t("gridFindNextTitle")} focusableWrapper={findResult.matches.length === 0}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="1.5"
+                  disabled={findResult.matches.length === 0}
+                  onClick={() => findStep(1)}
+                  aria-label={t("gridFindNextTitle")}
+                >
+                  ›
+                </Button>
+              </Tooltip>
+              <Tooltip label={t("gridFindCloseTitle")}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  px="1.5"
+                  marginLeft="auto"
+                  onClick={closeFind}
+                  aria-label={t("gridFindCloseTitle")}
+                >
+                  <Icon name="close" />
+                </Button>
+              </Tooltip>
             </Box>
           </motion.div>
         )}
@@ -5774,8 +6299,11 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           pendingDeleteKeys={pendingDeleteKeys}
           onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
           onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
+          onDuplicateRow={editableActive ? onDuplicateRow : undefined}
           onUndoEdit={onUndoEdit}
           onRedoEdit={onRedoEdit}
+          canUndo={canUndo}
+          canRedo={canRedo}
           validateEdit={validateEdit}
           rowSqlDriver={driver}
           rowSqlDatabase={database}
@@ -5793,17 +6321,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
           findNav={findNav}
           gridBindings={gridBindings}
+          serverSort={serverSort}
+          serverFilter={serverFilter}
+          onSetServerSort={onSetServerSort}
+          onSetServerFilter={onSetServerFilter}
           emptyMessage={
             streaming ? undefined : queryError ? (
               <EmptyState
-                illustration={(() => {
-                  const kind = illustrationForError(queryError);
-                  if (kind === "connectionFailed") return <ConnectionFailedIllustration size={72} />;
-                  if (kind === "timeout") return <TimeoutIllustration size={72} />;
-                  if (kind === "permissionDenied") return <PermissionDeniedIllustration size={72} />;
-                  if (kind === "schemaLoadFailed") return <SchemaLoadFailedIllustration size={72} />;
-                  return undefined;
-                })()}
+                illustration={errorIllustration(queryError)}
                 icon="warning"
                 title={t("gridQueryError")}
                 description={queryError}
@@ -5854,25 +6379,26 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             disabled: boolean,
             onClick: () => void,
           ) => (
-            <chakra.button
-              aria-label={title}
-              title={title}
-              disabled={disabled}
-              onClick={onClick}
-              fontSize="xs"
-              px="1.5"
-              py="0.5"
-              border="1px solid var(--border)"
-              borderRadius="var(--radius-sm)"
-              background={disabled ? "transparent" : "var(--bg-input)"}
-              color={disabled ? "var(--text-muted)" : "var(--text)"}
-              cursor={disabled ? "not-allowed" : "pointer"}
-              _hover={disabled ? {} : { background: "var(--bg-muted)" }}
-              whiteSpace="nowrap"
-              lineHeight={1.4}
-            >
-              {label}
-            </chakra.button>
+            <Tooltip label={title} focusableWrapper={disabled}>
+              <chakra.button
+                aria-label={title}
+                disabled={disabled}
+                onClick={onClick}
+                fontSize="xs"
+                px="1.5"
+                py="0.5"
+                border="1px solid var(--border)"
+                borderRadius="var(--radius-sm)"
+                background={disabled ? "transparent" : "var(--bg-input)"}
+                color={disabled ? "var(--text-muted)" : "var(--text)"}
+                cursor={disabled ? "not-allowed" : "pointer"}
+                _hover={disabled ? {} : { background: "var(--bg-muted)" }}
+                whiteSpace="nowrap"
+                lineHeight={1.4}
+              >
+                {label}
+              </chakra.button>
+            </Tooltip>
           );
           const handleNext = () => {
             if (isLast && canLoadMore && !loadingMore) onLoadMore?.();

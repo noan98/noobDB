@@ -41,6 +41,15 @@ ignore = [
     # 低い。plist/Tauri の更新で解消次第、この 2 件を外す。
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # #729 (MSSQL ドライバ、tiberius) が引き込む rustls-webpki 0.101.7 の 3 件。
+    # 依存経路: tiberius 0.12.3 → tokio-rustls 0.24.1 → rustls 0.21.12 →
+    # rustls-webpki 0.101.7。修正版は rustls-webpki >= 0.103.12 (rustls 0.22+
+    # が要る) だが、crates.io の tiberius 最新 (0.12.3、2025 年時点) は
+    # rustls 0.21 系に固定されており、`cargo update` では引き上げられない
+    # (tiberius 側が rustls 0.22+ に上げるまで解消不能)。
+    { id = "RUSTSEC-2026-0098", reason = "tiberius(#729) → tokio-rustls 0.24 → rustls 0.21 → rustls-webpki 0.101 に固定。URI 名の name constraints 誤受理だが、そもそも信頼済み CA が誤った証明書を発行した場合にのみ到達する経路 (署名検証を通過した後のホスト名照合ロジックの話であり、リモート攻撃者が単独で悪用できるものではない)。tiberius が rustls 0.22+ に追従次第、この ignore を削除する。" },
+    { id = "RUSTSEC-2026-0099", reason = "同上の依存経路。ワイルドカード名に対する name constraints の誤受理も同様に、信頼済み CA の誤発行を前提とする限定的なリスク。tiberius の rustls 0.22+ 追従待ち。" },
+    { id = "RUSTSEC-2026-0104", reason = "同上の依存経路。CRL パースで到達可能な panic だが、本アプリは tiberius 経由で CRL 検証 API を一切呼び出さない (TLS ハンドシェイクの証明書検証パスのみ使用) ため実行時に到達しない。tiberius の rustls 0.22+ 追従待ち。" },
 ]
 
 [licenses]
@@ -58,6 +67,10 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "CDLA-Permissive-2.0",
+    # DuckDB (#709) の依存ツリー (duckdb → arrow-array/arrow-select →
+    # ahash → const-random → tiny-keccak) が引き込む。パブリックドメイン
+    # 相当の最大限に寛容なライセンス。
+    "CC0-1.0",
 ]
 # ライセンス判定の信頼度しきい値。1.0 に近いほど厳密。
 confidence-threshold = 0.8

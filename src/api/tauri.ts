@@ -69,7 +69,7 @@ function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   });
 }
 
-export type DriverKind = "mysql" | "postgres" | "sqlite";
+export type DriverKind = "mysql" | "postgres" | "sqlite" | "duckdb" | "mssql";
 
 export type SshAuthMethod = "key" | "agent" | "password";
 
@@ -103,12 +103,31 @@ export interface SessionInitSettings {
   init_sql?: string | null;
 }
 
+/**
+ * The bastion/jump hop of a 2-hop SSH tunnel (#708). Structurally the same
+ * shape as {@link SshProfile} minus its own `jump` — chains are capped at one
+ * bastion hop (2 SSH hops total) for now.
+ */
+export interface SshJumpProfile {
+  host: string;
+  port: number;
+  user: string;
+  auth_method: SshAuthMethod;
+  private_key_path: string;
+}
+
 export interface SshProfile {
   host: string;
   port: number;
   user: string;
   auth_method: SshAuthMethod;
   private_key_path: string;
+  /**
+   * Optional bastion/jump hop dialed *before* this one (#708 multi-hop
+   * tunnel, ProxyJump-equivalent). `null`/omitted for a direct (single-hop)
+   * tunnel, including every profile saved before this field existed.
+   */
+  jump?: SshJumpProfile | null;
 }
 
 export interface ConnectionProfile extends TlsSettings, SessionInitSettings {
@@ -151,11 +170,37 @@ export interface ConnectionProfile extends TlsSettings, SessionInitSettings {
   has_ssh_passphrase?: boolean;
   /** Whether an SSH password is stored in the keyring. See `has_db_password`. */
   has_ssh_password?: boolean;
+  /** Whether a jump/bastion hop passphrase is stored (#708). */
+  has_ssh_jump_passphrase?: boolean;
+  /** Whether a jump/bastion hop password is stored (#708). */
+  has_ssh_jump_password?: boolean;
 }
 
-export interface SshRequest extends SshProfile {
+/** The bastion/jump hop of a connect request, carrying its own credentials. */
+export interface SshJumpRequest extends SshJumpProfile {
   passphrase?: string;
   password?: string;
+}
+
+export interface SshRequest extends Omit<SshProfile, "jump"> {
+  passphrase?: string;
+  password?: string;
+  jump?: SshJumpRequest | null;
+}
+
+/**
+ * What `resolveSshConfigHost` can prefill from a `~/.ssh/config` `Host` alias
+ * (#708). `jump_*` fields are only present when the alias's `ProxyJump`
+ * directive could be parsed into a `host[:port]`.
+ */
+export interface ResolvedSshAlias {
+  host_name: string | null;
+  port: number | null;
+  user: string | null;
+  identity_file: string | null;
+  jump_host: string | null;
+  jump_port: number | null;
+  jump_user: string | null;
 }
 
 export interface ConnectRequest extends TlsSettings, SessionInitSettings {
@@ -190,6 +235,9 @@ export interface SaveProfileRequest extends TlsSettings, SessionInitSettings {
   db_password?: string;
   ssh_passphrase?: string;
   ssh_password?: string;
+  /** Jump/bastion hop secrets (#708); same `undefined`/empty-clears semantics. */
+  ssh_jump_passphrase?: string;
+  ssh_jump_password?: string;
   group: string | null;
   color: string | null;
   is_production: boolean;
@@ -252,6 +300,58 @@ export interface HistoryEntry {
   error: string | null;
   /** ISO8601 (RFC3339, UTC) timestamp. */
   executed_at: string;
+}
+
+/** #735 DML フライトレコーダの書き込み種別。`db::WriteKind` の wire 表現。 */
+export type WriteKind = "insert" | "update" | "delete" | "other";
+
+/** `run_captured_write` / `run_query_stream` (capture 有効時) の戻り値。 */
+export interface CapturedWriteResponse {
+  result: QueryResult;
+  capturable: boolean;
+  reason: string | null;
+  captureId: number | null;
+}
+
+/** `precheck_captured_write` — 実行前に記録可否/推定行数を知るための下見。 */
+export interface WriteCapturePrecheck {
+  capturable: boolean;
+  reason: string | null;
+  estimatedRows: number | null;
+}
+
+/** `list_flight_records` の 1 件。行データ本体は含まない一覧用サマリ。 */
+export interface WriteCaptureSummary {
+  id: number;
+  profile_id: string | null;
+  driver: string;
+  database: string | null;
+  table: string;
+  kind: WriteKind;
+  sql: string;
+  rows_affected: number;
+  captured_at: string;
+  undone: boolean;
+}
+
+/** Undo プレビュー/適用で検出される 1 行の競合。 */
+export interface UndoConflict {
+  key: CellValue[];
+  expected: CellValue[] | null;
+  current: CellValue[] | null;
+}
+
+export interface UndoPreviewResponse {
+  statements: string[];
+  conflicts: UndoConflict[];
+  warnings: string[];
+}
+
+export interface UndoOutcome {
+  applied: boolean;
+  rowsAffected: number;
+  conflicts: UndoConflict[];
+  warnings: string[];
 }
 
 export interface Column {
@@ -407,6 +507,65 @@ export interface ProcessInfo {
 }
 
 /**
+ * データベースユーザ / ロール 1 件 (ユーザ・権限管理パネル #732)。MySQL は
+ * `(user, host)` の組でアカウントを識別する (同じユーザ名でもホストごとに別の
+ * 権限を持てる) ため `host` を持つ。PostgreSQL のロールはホストの概念を持たず
+ * 常に `null`。SQLite はユーザ概念を持たず、UI は導線ごと非表示にする。
+ */
+export interface DbUserInfo {
+  name: string;
+  host: string | null;
+  /** MySQL は `SUPER` のみ。PostgreSQL は SUPERUSER/CREATEDB/CREATEROLE/LOGIN/
+   *  REPLICATION/BYPASSRLS のうち該当するもの。 */
+  attributes: string[];
+  /** PostgreSQL のロール所属 (`pg_auth_members`)。MySQL は常に空配列。 */
+  member_of: string[];
+  is_superuser: boolean;
+  can_login: boolean;
+}
+
+/**
+ * 権限マトリクスの 1 行。`table` は DB 全体既定行 (MySQL の `mysql.user` グローバル
+ * 権限) では `"*"`、テーブル単位の GRANT では `"<db>.<table>"`。`ddl` は各ドライバが
+ * テーブル単位で実際に GRANT できるスキーマ変更系権限をまとめたもの (MySQL:
+ * CREATE/ALTER/DROP/INDEX/REFERENCES、PostgreSQL: TRUNCATE/REFERENCES/TRIGGER —
+ * PostgreSQL の CREATE/ALTER/DROP TABLE はスキーマ所有権で制御されテーブル単位の
+ * GRANT 対象ではないため対象外)。
+ */
+export interface TablePrivilegeRow {
+  table: string;
+  select: boolean;
+  insert: boolean;
+  update: boolean;
+  delete: boolean;
+  ddl: boolean;
+}
+
+/** 1 ユーザ/ロール分の権限マトリクス全体。`global` は MySQL のみ (PostgreSQL は
+ *  DB 全体既定に相当する概念を持たないため常に `null`)。 */
+export interface UserPrivileges {
+  global: TablePrivilegeRow | null;
+  tables: TablePrivilegeRow[];
+}
+
+/** GRANT/REVOKE の対象と権限フラグ (`generateGrantSql`/`generateRevokeSql` の入力)。
+ *  `table` を省略すると DB/スキーマ全体が対象になる (MySQL `db.*` / PostgreSQL
+ *  `ALL TABLES IN SCHEMA`)。 */
+export interface GrantSpec {
+  user: string;
+  host?: string | null;
+  database: string;
+  table?: string | null;
+  flags: {
+    select: boolean;
+    insert: boolean;
+    update: boolean;
+    delete: boolean;
+    ddl: boolean;
+  };
+}
+
+/**
  * サーバランタイムの軽量メトリクス 1 サンプル (#731)。監視ダッシュボードが一定
  * 間隔でポーリングし、在メモリのリングバッファに蓄積して接続数 / QPS / ロック待ちを
  * 時系列グラフ化する。ゲージ (瞬時値) とカウンタ (累積値) が混在し、QPS/TPS などの
@@ -535,6 +694,17 @@ export interface SchemaDiff {
   tables: TableDiff[];
 }
 
+/**
+ * One table's full column metadata — the wire shape `diffSchemaSnapshots`
+ * expects on each side (mirrors the Rust `TableColumns` struct in
+ * `db::diff`). Used both by the live `compare_schema` collection shape and by
+ * `schemaDrift.ts`'s stored snapshots (schema drift timeline, #736).
+ */
+export interface SchemaSnapshotTable {
+  name: string;
+  columns: TableColumnInfo[];
+}
+
 /** スキーマ健全性アドバイザ (#741) の指摘ルール識別子。バックの serde
  *  (snake_case) と一致させる。 */
 export type AdvisorRuleId =
@@ -632,6 +802,64 @@ export interface DataDiff {
   target_count: number;
 }
 
+/**
+ * サンドボックス (壊せる砂場、#747) の非秘密メタデータ。実データはローカル
+ * SQLite ファイル (`file_path`) に持ち、`session_id` (作成/一覧取得後にセッション
+ * として開いたもの) を通じて通常のエディタ/グリッド UI でそのまま操作できる。
+ * `source_driver` は書き戻し SQL の方言 (`generateSyncSql` / `generateDataSyncSql`
+ * が使う `target_driver`) を決める。
+ */
+export interface SandboxRecord {
+  id: string;
+  name: string;
+  source_profile_id: string | null;
+  source_driver: DriverKind;
+  source_database: string | null;
+  /** 実データを持つテーブル名 (影の base スナップショットは含まない)。 */
+  tables: string[];
+  row_limit: number;
+  file_path: string;
+  created_at: string;
+  /** 行数上限に達し部分コピーになったテーブル。 */
+  truncated_tables: string[];
+}
+
+/** `createSandbox` の戻り値。`session_id` は通常のセッションと同様に扱える。 */
+export interface SandboxCreateResponse {
+  sandbox: SandboxRecord;
+  session_id: string;
+}
+
+/**
+ * データ書き戻しの行競合 1 件: サンドボックスと元 DB の双方が、コピー取得後に
+ * 同じ主キーの行を独立に変更した状態。`external_row` は元 DB の**現在の**値
+ * (元 DB 側で削除されていれば null)。
+ */
+export interface SandboxConflict {
+  key: CellValue[];
+  desired_status: RowStatus;
+  external_status: RowStatus;
+  external_row: CellValue[] | null;
+}
+
+/** `sandboxTableDiff` の戻り値。 */
+export interface SandboxTableDiffResult {
+  /** サンドボックスでの変更 (base 比較)。`generateDataSyncSql` にそのまま渡せる。 */
+  desired: DataDiff;
+  /** `source_checked` が false のときは常に空 (競合未検査、「競合なし」の意味ではない)。 */
+  conflicts: SandboxConflict[];
+  source_checked: boolean;
+}
+
+/** `sandboxSchemaDiff` の戻り値。 */
+export interface SandboxSchemaDiffResult {
+  /** サンドボックスでのスキーマ変更 (base 比較)。`generateSyncSql` にそのまま渡せる。 */
+  desired: SchemaDiff;
+  /** サンドボックス・元 DB の双方でスキーマが変わったテーブル名 (情報提供のみ)。 */
+  external_changed_tables: string[];
+  source_checked: boolean;
+}
+
 /** Application log contents plus the on-disk file path, for the Settings viewer. */
 export interface LogView {
   text: string;
@@ -672,6 +900,79 @@ export interface DumpOptions {
    * by the server / generator). Best-effort; intended for review/version control.
    */
   formatSql?: boolean;
+}
+
+// --- タスクスケジューラ (#730) -------------------------------------------
+
+/** タスクが実行するアクション。読み取り専用に限定される (バックエンドが
+ *  作成時・実行時の両方で `sql` を検証する)。 */
+export type TaskAction =
+  | {
+      kind: "export_query";
+      sql: string;
+      database: string | null;
+      format: ExportFormat;
+      /** 出力先パス。`{date}` / `{datetime}` プレースホルダに対応 (UTC)。 */
+      output_path: string;
+      /** SQL INSERT 形式のときの対象テーブル名。他形式では無視。 */
+      sql_table?: string | null;
+      /** SQL INSERT 形式のときの 1 文あたり行数。他形式では無視。 */
+      sql_batch_size?: number | null;
+    }
+  | {
+      kind: "dump";
+      database: string;
+      output_path: string;
+      options: DumpOptions;
+    };
+
+/** タスクの発火スケジュール。時刻はすべて UTC で解釈する。 */
+export type TaskSchedule =
+  | { kind: "interval"; minutes: number }
+  | { kind: "daily"; hour: number; minute: number };
+
+export interface TaskDefinition {
+  id: string;
+  name: string;
+  profile_id: string;
+  action: TaskAction;
+  schedule: TaskSchedule;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_status: string | null;
+}
+
+export interface SaveTaskRequest {
+  id?: string | null;
+  name: string;
+  profile_id: string;
+  action: TaskAction;
+  schedule: TaskSchedule;
+  enabled: boolean;
+}
+
+/** 1 回分のタスク実行ログ (`task_runs.sqlite`、クエリ履歴とは別)。 */
+export interface TaskRun {
+  id: number;
+  task_id: string;
+  started_at: string;
+  finished_at: string;
+  status: string;
+  error: string | null;
+  output_path: string | null;
+  rows: number | null;
+  bytes: number | null;
+  elapsed_ms: number;
+  catch_up: boolean;
+}
+
+export interface SchedulerSettings {
+  /** true: アプリ非起動中に過ぎたスケジュールを次回起動時に 1 回だけ追い掛け
+   *  実行する。false (既定): 過ぎた分はスキップする。 */
+  catch_up_missed: boolean;
 }
 
 /**
@@ -721,6 +1022,31 @@ export interface CsvPreview {
   truncated: boolean;
 }
 
+/**
+ * ローカル横断クエリ (#740) — ローカルエンジンへ登録された 1 テーブルの由来情報。
+ * 取り込みそのものは接続情報を持ち出さないので、ここに含まれるのは表示用の
+ * ラベル (プロファイル名・実行 SQL・ドライバ) と件数/日時のみ。
+ */
+export interface LocalTableMeta {
+  name: string;
+  source_profile: string | null;
+  source_sql: string;
+  source_driver: string | null;
+  /** 登録時刻 (epoch ミリ秒)。`new Date(fetched_at_ms)` でそのまま使える。 */
+  fetched_at_ms: number;
+  row_count: number;
+}
+
+export interface RegisterLocalTableRequest {
+  sessionId: string;
+  tableName: string;
+  columns: Column[];
+  rows: CellValue[][];
+  sourceProfile?: string | null;
+  sourceSql: string;
+  sourceDriver?: string | null;
+}
+
 export const api = {
   /**
    * Test a connection. `attemptId` (a fresh id per attempt) lets the caller
@@ -757,6 +1083,47 @@ export const api = {
    */
   pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
   /**
+   * ローカル横断クエリ (#740): 駆動元セッションを持たない「ローカル」接続を新規に
+   * 開く。実体は一時ファイルバックドの SQLite セッションで、以降は他の接続と同じ
+   * `runQuery` / `runQueryStream` 等で扱える。既定で揮発 — `disconnect` すると
+   * バッキングファイルごと削除される。
+   */
+  createLocalSession: () =>
+    invoke<string>("create_local_session").then((r) =>
+      parseResponse(schemas.stringResponse, r, "create_local_session"),
+    ),
+  /**
+   * 結果セットを 1 つのローカルテーブルとして登録する (#740)。`sessionId` は
+   * `createLocalSession` で開いたローカルセッション。取り込みは在メモリの行を
+   * そのまま渡すだけの 1 本の経路で、上限行数はバックエンド側で強制される。
+   */
+  registerLocalTable: (req: RegisterLocalTableRequest) =>
+    invoke<LocalTableMeta>("register_local_table", {
+      req: {
+        session_id: req.sessionId,
+        table_name: req.tableName,
+        columns: req.columns,
+        rows: req.rows,
+        source_profile: req.sourceProfile ?? null,
+        source_sql: req.sourceSql,
+        source_driver: req.sourceDriver ?? null,
+      },
+    }).then((r) => parseResponse(schemas.localTableMeta, r, "register_local_table")),
+  /** ローカルセッションに登録済みの全テーブルを、登録が新しい順で返す。 */
+  listLocalTables: (sessionId: string) =>
+    invoke<LocalTableMeta[]>("list_local_tables", { sessionId }).then((r) =>
+      parseResponse(schemas.localTableMetaArray, r, "list_local_tables"),
+    ),
+  /** 登録済みローカルテーブルを 1 つ削除する。 */
+  dropLocalTable: (sessionId: string, tableName: string) =>
+    invoke<void>("drop_local_table", { sessionId, tableName }),
+  /**
+   * ローカル DB を丸ごと 1 ファイルへ永続化する ("ファイルに保存")。セッション自体は
+   * 引き続き揮発のまま — これは独立したスナップショットを作るだけ。
+   */
+  saveLocalDatabase: (sessionId: string, path: string) =>
+    invoke<void>("save_local_database", { sessionId, path }),
+  /**
    * List the SSH known_hosts entries (host:port + fingerprint). Backs the
    * Settings known_hosts panel and the host-key mismatch recovery flow (#682).
    */
@@ -780,6 +1147,16 @@ export const api = {
    */
   trustHostKey: (host: string, port: number, fingerprint: string) =>
     invoke<void>("trust_host_key", { host, port, fingerprint }),
+  /**
+   * Resolve `HostName` / `Port` / `User` / `IdentityFile` / `ProxyJump` for
+   * `alias` from the user's `~/.ssh/config`, for the connection form's "load
+   * from SSH config" action (#708). Read-only and best-effort: `null` covers
+   * both "no ~/.ssh/config" and "no matching Host block", not just one.
+   */
+  resolveSshConfigHost: (alias: string) =>
+    invoke<ResolvedSshAlias | null>("resolve_ssh_config_host", { alias }).then((r) =>
+      r === null ? null : parseResponse(schemas.resolvedSshAlias, r, "resolve_ssh_config_host"),
+    ),
   /** 明示トランザクションを開始する。 */
   beginTransaction: (sessionId: string, database?: string | null) =>
     invoke<void>("begin_transaction", { sessionId, database: database ?? null }),
@@ -791,6 +1168,16 @@ export const api = {
   /** 明示トランザクションを確定 (commit=true) / 破棄 (false) する。 */
   finishTransaction: (sessionId: string, commit: boolean) =>
     invoke<void>("finish_transaction", { sessionId, commit }),
+  /**
+   * 読み取り専用セッションの「緊急クエリ実行モード」を切り替える。有効な間は
+   * バックエンドの read-only ガードが SQL 実行経路 (run_query / トランザクション /
+   * ストリーミング) に限り書き込み文を通す。CSV インポート・同期適用・KILL の
+   * read-only 拒否は変わらない。有効化の合意 (接続先名のタイプ確認) はフロントの
+   * ダイアログが担う UI レベルの安全網で、フラグは切断・再接続で必ずオフに戻る。
+   * 読み書き可能なセッションでの有効化は InvalidInput で reject される。
+   */
+  setEmergencyMode: (sessionId: string, enabled: boolean) =>
+    invoke<void>("set_emergency_mode", { sessionId, enabled }),
 
   runQuery: (sessionId: string, sql: string, database?: string | null) =>
     invoke<QueryResult>("run_query", {
@@ -824,6 +1211,25 @@ export const api = {
      * mutate data nor flood the history.
      */
     autoRefresh?: boolean;
+    /**
+     * When true, the backend enforces a read-only guard regardless of the
+     * session's profile. Used by cross-environment broadcast execution
+     * (#738), which fans one statement out to several sessions at once and
+     * must never let it write to any of them.
+     */
+    forceReadOnly?: boolean;
+    /**
+     * DML フライトレコーダ (#735)。true かつ単文の INSERT/UPDATE/DELETE の
+     * ときだけ、通常のストリーミング実行の代わりにバックエンドが
+     * `capture_write` 経由で before/after イメージの記録を試みつつ実行する。
+     * `query-stream:*` イベントの形は変わらないため、この関数の呼び出し側
+     * (`onDone`/`onError` 購読) は変更不要。
+     */
+    capture?: boolean;
+    /** 1 回の書き込みで退避する対象行数の上限。 */
+    captureRowCap?: number | null;
+    /** 退避した before/after イメージの保持期間 (日数)。 */
+    captureRetentionDays?: number | null;
   }) =>
     invoke<void>("run_query_stream", {
       sessionId: params.sessionId,
@@ -835,6 +1241,10 @@ export const api = {
       autoLimit: params.autoLimit ?? null,
       queryTimeoutSecs: params.queryTimeoutSecs ?? null,
       autoRefresh: params.autoRefresh ?? false,
+      forceReadOnly: params.forceReadOnly ?? false,
+      capture: params.capture ?? false,
+      captureRowCap: params.captureRowCap ?? null,
+      captureRetentionDays: params.captureRetentionDays ?? null,
     }),
   previewQueryStream: (params: {
     sessionId: string;
@@ -975,6 +1385,27 @@ export const api = {
       targetSessionId: params.targetSessionId,
       targetDatabase: params.targetDatabase,
     }).then((r) => parseResponse(schemas.schemaDiff, r, "compare_schema")),
+  /**
+   * セッションを介さず、2 つの独立に取得したスキーマスナップショットを
+   * `compute_schema_diff` で突き合わせる (スキーマドリフト・タイムライン #736)。
+   * `source` / `target` は `listTables` + `describeTable` で集めた
+   * `{ name, columns }` の配列 — `compareSchema` がライブ接続から集める形と同じ
+   * shape で、`schemaDrift.ts` の localStorage 世代ストアに保存された過去の
+   * スナップショットを渡せる。読み取り専用でも常時利用可能 (セッション自体を
+   * 使わない純粋な計算コマンド)。
+   */
+  diffSchemaSnapshots: (params: {
+    sourceDriver: DriverKind;
+    targetDriver: DriverKind;
+    source: SchemaSnapshotTable[];
+    target: SchemaSnapshotTable[];
+  }) =>
+    invoke<SchemaDiff>("diff_schema_snapshots", {
+      sourceDriver: params.sourceDriver,
+      targetDriver: params.targetDriver,
+      source: params.source,
+      target: params.target,
+    }).then((r) => parseResponse(schemas.schemaDiff, r, "diff_schema_snapshots")),
   generateSyncSql: (diff: SchemaDiff, allowDestructive: boolean) =>
     invoke<SyncPlan>("generate_sync_sql", { diff, allowDestructive }).then((r) =>
       parseResponse(schemas.syncPlan, r, "generate_sync_sql"),
@@ -1009,6 +1440,165 @@ export const api = {
       database: params.database ?? null,
       statements: params.statements,
     }).then((r) => parseResponse(schemas.numberResponse, r, "apply_sync_sql")),
+
+  // --- ユーザ / 権限管理 (#732) ---------------------------------------------
+  //
+  // Diff/Sync (`generateSyncSql` → `applySyncSql`) と同じ「生成とプレビュー →
+  // 確認 → 適用」の分離パターン。SQL 生成 (create/drop/alterPassword/grant/
+  // revoke) は副作用なしの純コマンドで、`applyPrivilegeSql` だけがセッションを
+  // 介して実際に SQL を実行する。パスワードを含みうる SQL 文はクエリ履歴・ログの
+  // どちらにも記録されない (バックエンド `apply_privilege_sql` が
+  // `run_query_transaction` ではなく `execute_transaction` を直接呼ぶため)。
+  /** サーバ側のユーザ (MySQL) / ロール (PostgreSQL) 一覧を取得する。読み取りの
+   *  みなので read_only セッションでも可。SQLite は非対応でエラーを返す。 */
+  listDbUsers: (sessionId: string) =>
+    invoke<DbUserInfo[]>("list_db_users", { sessionId }).then((r) =>
+      parseResponse(schemas.dbUserInfoArray, r, "list_db_users"),
+    ),
+  /** 指定ユーザ/ロールの CRUD+DDL 権限マトリクスを取得する。読み取りのみ。 */
+  listUserPrivileges: (sessionId: string, user: string, host?: string | null) =>
+    invoke<UserPrivileges>("list_user_privileges", {
+      sessionId,
+      user,
+      host: host ?? null,
+    }).then((r) => parseResponse(schemas.userPrivileges, r, "list_user_privileges")),
+  /** `CREATE USER` / `CREATE ROLE` の SQL を生成する (純粋、副作用なし)。 */
+  generateCreateUserSql: (
+    driver: DriverKind,
+    spec: { name: string; host?: string | null; password?: string | null },
+  ) =>
+    invoke<string>("generate_create_user_sql", {
+      driver,
+      spec: { name: spec.name, host: spec.host ?? null, password: spec.password ?? null },
+    }).then((r) => parseResponse(schemas.stringResponse, r, "generate_create_user_sql")),
+  /** `DROP USER` / `DROP ROLE` の SQL を生成する (純粋)。 */
+  generateDropUserSql: (driver: DriverKind, name: string, host?: string | null) =>
+    invoke<string>("generate_drop_user_sql", { driver, name, host: host ?? null }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "generate_drop_user_sql"),
+    ),
+  /** `ALTER USER ... IDENTIFIED BY` / `ALTER ROLE ... PASSWORD` の SQL を生成する
+   *  (純粋)。生成された SQL 文字列自体にパスワードが埋め込まれる点に注意 —
+   *  呼び出し側はこれをログや履歴に残してはいけない。 */
+  generateAlterPasswordSql: (
+    driver: DriverKind,
+    name: string,
+    host: string | null,
+    password: string,
+  ) =>
+    invoke<string>("generate_alter_password_sql", { driver, name, host, password }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "generate_alter_password_sql"),
+    ),
+  /** `GRANT <privs> ON ... TO ...` の SQL を生成する (純粋)。選択された権限が無い
+   *  ときは `null` (生成する文が無い)。 */
+  generateGrantSql: (driver: DriverKind, spec: GrantSpec) =>
+    invoke<string | null>("generate_grant_sql", {
+      driver,
+      spec: { ...spec, host: spec.host ?? null, table: spec.table ?? null },
+    }).then((r) => parseResponse(schemas.nullableStringResponse, r, "generate_grant_sql")),
+  /** `REVOKE <privs> ON ... FROM ...` の SQL を生成する (純粋)。`null` は
+   *  `generateGrantSql` と同じ意味。 */
+  generateRevokeSql: (driver: DriverKind, spec: GrantSpec) =>
+    invoke<string | null>("generate_revoke_sql", {
+      driver,
+      spec: { ...spec, host: spec.host ?? null, table: spec.table ?? null },
+    }).then((r) => parseResponse(schemas.nullableStringResponse, r, "generate_revoke_sql")),
+  /**
+   * 確認済みの SQL 文 (CREATE USER / DROP USER / ALTER ... PASSWORD / GRANT /
+   * REVOKE) を 1 トランザクションで適用する。`applySyncSql` と同じガード
+   * (read_only セッション拒否・空文拒否) を持ち、クエリ履歴には一切記録しない。
+   */
+  applyPrivilegeSql: (params: {
+    sessionId: string;
+    database?: string | null;
+    statements: string[];
+  }) =>
+    invoke<number>("apply_privilege_sql", {
+      sessionId: params.sessionId,
+      database: params.database ?? null,
+      statements: params.statements,
+    }).then((r) => parseResponse(schemas.numberResponse, r, "apply_privilege_sql")),
+  /**
+   * サンドボックス (壊せる砂場、#747) を作成する。`sourceSessionId` の接続から
+   * `tables` (+ `includeRelated` なら FK の推移的閉包) をローカル SQLite へ
+   * コピーし、通常のセッションとして開いて返す。
+   */
+  createSandbox: (params: {
+    sourceSessionId: string;
+    sourceDatabase?: string | null;
+    name: string;
+    tables: string[];
+    includeRelated: boolean;
+    rowLimit?: number | null;
+  }) =>
+    invoke<SandboxCreateResponse>("create_sandbox", {
+      sourceSessionId: params.sourceSessionId,
+      sourceDatabase: params.sourceDatabase ?? null,
+      name: params.name,
+      tables: params.tables,
+      includeRelated: params.includeRelated,
+      rowLimit: params.rowLimit ?? null,
+    }).then((r) => parseResponse(schemas.sandboxCreateResponse, r, "create_sandbox")),
+  listSandboxes: () =>
+    invoke<SandboxRecord[]>("list_sandboxes").then((r) =>
+      parseResponse(schemas.sandboxRecordArray, r, "list_sandboxes"),
+    ),
+  /** サンドボックスを破棄する。開いていれば `sessionId` のセッションも閉じ、
+   *  ローカル SQLite ファイルを削除する。 */
+  discardSandbox: (sandboxId: string, sessionId?: string | null) =>
+    invoke<void>("discard_sandbox", { sandboxId, sessionId: sessionId ?? null }),
+  /** サンドボックスの 1 テーブル分のデータ差分 (書き戻し案 + 競合) を計算する。
+   *  `sourceSessionId` を渡すと元 DB の現在値と突き合わせて競合を検出する。 */
+  sandboxTableDiff: (params: {
+    sandboxId: string;
+    sandboxSessionId: string;
+    table: string;
+    sourceSessionId?: string | null;
+    limit?: number | null;
+  }) =>
+    invoke<SandboxTableDiffResult>("sandbox_table_diff", {
+      sandboxId: params.sandboxId,
+      sandboxSessionId: params.sandboxSessionId,
+      table: params.table,
+      sourceSessionId: params.sourceSessionId ?? null,
+      limit: params.limit ?? null,
+    }).then((r) => parseResponse(schemas.sandboxTableDiffResult, r, "sandbox_table_diff")),
+  /** サンドボックス全体のスキーマ差分 (書き戻し案 + 外部競合テーブル一覧) を計算する。 */
+  sandboxSchemaDiff: (params: {
+    sandboxId: string;
+    sandboxSessionId: string;
+    sourceSessionId?: string | null;
+  }) =>
+    invoke<SandboxSchemaDiffResult>("sandbox_schema_diff", {
+      sandboxId: params.sandboxId,
+      sandboxSessionId: params.sandboxSessionId,
+      sourceSessionId: params.sourceSessionId ?? null,
+    }).then((r) => parseResponse(schemas.sandboxSchemaDiffResult, r, "sandbox_schema_diff")),
+  /** 競合を「スキップ」解決した行を `diff` から取り除く。純粋な変換で副作用なし。 */
+  filterSandboxDataDiff: (diff: DataDiff, skipKeys: CellValue[][]) =>
+    invoke<DataDiff>("filter_sandbox_data_diff", { diff, skipKeys }).then((r) =>
+      parseResponse(schemas.dataDiff, r, "filter_sandbox_data_diff"),
+    ),
+  /**
+   * 書き戻しに成功した直後に呼び、サンドボックスの base スナップショットを
+   * 適用済みの行へ進める。呼ばないと、次回の差分計算で「サンドボックス側も
+   * 元 DB 側も変化した」という偽の競合が (実際にはもう一致している行に対して)
+   * 出続けてしまう。`applied` には実際に適用した SQL の生成元 (`generateDataSyncSql`
+   * に渡した後の) `DataDiff` を渡す。
+   */
+  sandboxAdvanceBase: (params: {
+    sandboxId: string;
+    sandboxSessionId: string;
+    table: string;
+    applied: DataDiff;
+    allowDelete: boolean;
+  }) =>
+    invoke<void>("sandbox_advance_base", {
+      sandboxId: params.sandboxId,
+      sandboxSessionId: params.sandboxSessionId,
+      table: params.table,
+      applied: params.applied,
+      allowDelete: params.allowDelete,
+    }),
 
   listProfiles: () =>
     invoke<ConnectionProfile[]>("list_profiles").then((r) =>
@@ -1058,11 +1648,20 @@ export const api = {
     profileId?: string | null;
     limit?: number | null;
     search?: string | null;
+    /** `"ok"` or `"error"`; omit/`null` for no status filter (#822). */
+    status?: string | null;
+    /** RFC3339 inclusive lower bound on `executed_at` (#822). */
+    from?: string | null;
+    /** RFC3339 inclusive upper bound on `executed_at` (#822). */
+    to?: string | null;
   } = {}) =>
     invoke<HistoryEntry[]>("list_history", {
       profileId: params.profileId ?? null,
       limit: params.limit ?? null,
       search: params.search ?? null,
+      status: params.status ?? null,
+      from: params.from ?? null,
+      to: params.to ?? null,
     }).then((r) => parseResponse(schemas.historyEntryArray, r, "list_history")),
   clearHistory: (profileId?: string | null) =>
     invoke<number>("clear_history", { profileId: profileId ?? null }).then((r) =>
@@ -1194,6 +1793,108 @@ export const api = {
   writeBinaryFile: (path: string, data: Uint8Array) =>
     invoke<number>("write_binary_file", { path, data: Array.from(data) }).then((r) =>
       parseResponse(schemas.numberResponse, r, "write_binary_file"),
+    ),
+
+  /**
+   * DML フライトレコーダ (#735)。単文の INSERT/UPDATE/DELETE を実行しつつ
+   * before/after イメージの記録を試みる。記録の成否 (`capturable`) に関わらず
+   * 書き込み自体は常に行われる — 記録はベストエフォートの保険。
+   */
+  runCapturedWrite: (params: {
+    sessionId: string;
+    sql: string;
+    database?: string | null;
+    rowCap?: number | null;
+    retentionDays?: number | null;
+  }) =>
+    invoke<CapturedWriteResponse>("run_captured_write", {
+      sessionId: params.sessionId,
+      sql: params.sql,
+      database: params.database ?? null,
+      rowCap: params.rowCap ?? null,
+      retentionDays: params.retentionDays ?? null,
+    }).then((r) => parseResponse(schemas.capturedWriteResponse, r, "run_captured_write")),
+
+  /** 実行前に「この文は記録できるか・約何行が対象か」を副作用なしで確認する。 */
+  precheckCapturedWrite: (params: {
+    sessionId: string;
+    sql: string;
+    database?: string | null;
+    rowCap?: number | null;
+  }) =>
+    invoke<WriteCapturePrecheck>("precheck_captured_write", {
+      sessionId: params.sessionId,
+      sql: params.sql,
+      database: params.database ?? null,
+      rowCap: params.rowCap ?? null,
+    }).then((r) => parseResponse(schemas.writeCapturePrecheck, r, "precheck_captured_write")),
+
+  listFlightRecords: (profileId?: string | null, limit?: number | null) =>
+    invoke<WriteCaptureSummary[]>("list_flight_records", {
+      profileId: profileId ?? null,
+      limit: limit ?? null,
+    }).then((r) => parseResponse(schemas.writeCaptureSummaryArray, r, "list_flight_records")),
+
+  clearFlightRecords: (profileId?: string | null) =>
+    invoke<number>("clear_flight_records", { profileId: profileId ?? null }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "clear_flight_records"),
+    ),
+
+  /** 巻き戻しの逆 SQL・競合を副作用なしで確認する (適用前のレビュー用)。 */
+  previewUndo: (sessionId: string, id: number) =>
+    invoke<UndoPreviewResponse>("preview_undo", { sessionId, id }).then((r) =>
+      parseResponse(schemas.undoPreviewResponse, r, "preview_undo"),
+    ),
+
+  /**
+   * 巻き戻しの逆 SQL を適用する。競合があり `force` が false のときは何も
+   * 適用せず競合一覧を返す (`applied: false`) — 呼び出し側は競合を提示して
+   * `force: true` で再呼び出しするか、諦めるかをユーザに選ばせる。既存の
+   * `run_query_transaction` 経路 (all-or-nothing・read-only ガード・履歴記録)
+   * をそのまま通る。
+   */
+  undoFlightRecord: (sessionId: string, id: number, force: boolean) =>
+    invoke<UndoOutcome>("undo_flight_record", { sessionId, id, force }).then((r) =>
+      parseResponse(schemas.undoOutcome, r, "undo_flight_record"),
+    ),
+
+  // --- タスクスケジューラ (#730) ---
+
+  listTasks: () =>
+    invoke<TaskDefinition[]>("list_tasks").then((r) =>
+      parseResponse(schemas.taskDefinitionArray, r, "list_tasks"),
+    ),
+  saveTask: (req: SaveTaskRequest) =>
+    invoke<TaskDefinition>("save_task", { req }).then((r) =>
+      parseResponse(schemas.taskDefinition, r, "save_task"),
+    ),
+  deleteTask: (id: string) => invoke<void>("delete_task", { id }),
+  setTaskEnabled: (id: string, enabled: boolean) =>
+    invoke<TaskDefinition>("set_task_enabled", { id, enabled }).then((r) =>
+      parseResponse(schemas.taskDefinition, r, "set_task_enabled"),
+    ),
+  /** タスクを即座に 1 回実行する (有効/無効を問わない)。完了までブロックする —
+   *  ダンプ等は数分かかりうるので、呼び出し側で進行中表示を出すこと。 */
+  runTaskNow: (id: string) =>
+    invoke<TaskRun>("run_task_now", { id }).then((r) =>
+      parseResponse(schemas.taskRun, r, "run_task_now"),
+    ),
+  listTaskRuns: (taskId?: string | null, limit?: number) =>
+    invoke<TaskRun[]>("list_task_runs", {
+      taskId: taskId ?? null,
+      limit: limit ?? null,
+    }).then((r) => parseResponse(schemas.taskRunArray, r, "list_task_runs")),
+  clearTaskRuns: (taskId?: string | null) =>
+    invoke<number>("clear_task_runs", { taskId: taskId ?? null }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "clear_task_runs"),
+    ),
+  getSchedulerSettings: () =>
+    invoke<SchedulerSettings>("get_scheduler_settings").then((r) =>
+      parseResponse(schemas.schedulerSettings, r, "get_scheduler_settings"),
+    ),
+  setSchedulerSettings: (settings: SchedulerSettings) =>
+    invoke<SchedulerSettings>("set_scheduler_settings", { settings }).then((r) =>
+      parseResponse(schemas.schedulerSettings, r, "set_scheduler_settings"),
     ),
 };
 
@@ -1649,4 +2350,37 @@ export async function listenConnectProgress(
     );
     if (payload.attemptId === attemptId) onPhase(payload.phase);
   });
+}
+
+/** タスクスケジューラの実行完了 (#730)。`task-run:done` / `task-run:error` の
+ *  どちらでも同じ形。`status` で成否を判別する。 */
+export interface TaskRunEvent {
+  taskId: string;
+  taskName: string;
+  status: string;
+  message: string | null;
+  outputPath: string | null;
+  catchUp: boolean;
+}
+
+/**
+ * バックグラウンドスケジューラが発火させた `task-run:*` イベントをグローバルに
+ * 購読する (特定の `streamId` を持たない — アプリ起動中いつでも、どのタブからでも
+ * 発火しうるため)。App のマウント時に一度だけ購読して、失敗トースト/OS 通知と、
+ * タスク管理画面が開いていれば一覧の再読み込みに使う想定。
+ */
+export async function listenTaskRunEvents(handlers: {
+  onDone?: (e: TaskRunEvent) => void;
+  onError?: (e: TaskRunEvent) => void;
+}): Promise<UnlistenFn> {
+  const parse = (event: string, payload: unknown) =>
+    parseResponse<TaskRunEvent>(schemas.taskRunEvent, payload as TaskRunEvent, event);
+  return registerListeners([
+    listen<TaskRunEvent>("task-run:done", (e) => {
+      handlers.onDone?.(parse("task-run:done", e.payload));
+    }),
+    listen<TaskRunEvent>("task-run:error", (e) => {
+      handlers.onError?.(parse("task-run:error", e.payload));
+    }),
+  ]);
 }

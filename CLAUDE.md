@@ -139,6 +139,8 @@ NOOBDB_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/testdb \
   cargo test --test mysql_integration
 NOOBDB_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/testdb \
   cargo test --test postgres_integration
+NOOBDB_TEST_MSSQL_URL=mssql://sa:YourStrong!Passw0rd@127.0.0.1:1433/testdb \
+  cargo test --test mssql_integration
 ```
 
 SSH トンネル統合テスト (`tests/ssh_integration.rs`、#331) は `NOOBDB_TEST_SSH_URL`
@@ -525,10 +527,11 @@ knip は「エクスポートされているがどこからも import されな�
 
 ## アーキテクチャ
 
-noobDB は MySQL / PostgreSQL / SQLite に対応した軽量デスクトップ DB クライアントで、
-SSH トンネルをファーストクラスでサポートします。Rust バックエンド (`rust-version`
-1.77、edition 2021) は `sqlx` 0.9 (`tls-rustls`)、`russh` 0.61、`keyring` 3 などに
-依存しています。
+noobDB は MySQL / PostgreSQL / SQLite / Microsoft SQL Server (#729) に対応した
+軽量デスクトップ DB クライアントで、SSH トンネルをファーストクラスでサポートします。
+Rust バックエンド (`rust-version` 1.77、edition 2021) は `sqlx` 0.9 (`tls-rustls`、
+MySQL/PostgreSQL/SQLite の 3 ドライバが使う)、MSSQL 専用の `tiberius` 0.12、
+`russh` 0.61、`keyring` 3 などに依存しています。
 
 ### 2 プロセス構成
 
@@ -544,11 +547,38 @@ SSH トンネルをファーストクラスでサポートします。Rust バ�
   ハンドラを登録し、`AppState` を Tauri 管理ステートとしてインストールします。
   `tracing` でログを出力し、`main.rs` は薄いシムで `noobdb_lib::run()` を呼ぶだけです。
 
+#### `setup` フックでは `tokio::spawn` を使わないこと
+
+`lib.rs::run()` の `.setup(...)` フックは、Tauri がイベントループの `Ready`
+ハンドラ (= **メインスレッド**) から呼び出します (`tauri::app::setup`)。ここには
+**Tokio ランタイムのコンテキストが入っていません** — Tauri は `setup` を
+`async_runtime::block_on` で包まないためです。したがって `setup` の中で
+`tokio::spawn` / `tokio::time` などスレッドローカルのランタイムハンドルを要求する
+API を呼ぶと `there is no reactor running, must be called from the context of a
+Tokio 1.x runtime` で **panic** します。**`setup` から常駐タスクを起動するときは
+`tauri::async_runtime::spawn` を使ってください** (グローバルランタイムのハンドルへ
+直接投げるためランタイム外から呼んでも安全。投入後のタスク内では通常どおり
+`tokio::spawn` / `tokio::time::sleep` が使えます)。IPC コマンドハンドラ
+(`#[tauri::command] async fn`) は Tauri の非同期ランタイム上で実行されるため、
+そちらでの `tokio::spawn` は従来どおり問題ありません (`commands/query.rs` などの
+ストリーミング経路)。
+
+この panic は**ウィンドウ生成の後**に起きます (`tauri::app::setup` は設定ファイルの
+ウィンドウを先に build してからユーザの `setup` を呼ぶ) — 症状は「真っ白なウィンドウが
+一瞬表示された直後にプロセスが終了」で、リリースビルドは
+`windows_subsystem = "windows"` によりコンソールを持たないため panic メッセージも
+表示されません (v0.9.0 のインストール後クラッシュの原因)。`tracing` のログにも
+残らないため、`<data_dir>/noobdb.log` は `noobDB starting` で途切れます。回帰テストは
+`tasks/scheduler.rs` の `spawn_detached_works_outside_a_tokio_runtime` (素の
+`#[test]` = ランタイム外から呼ぶことで本番と同じ条件を再現) が固定しています。
+
 ### ドライバのディスパッチ: `enum Connection`
 
 DB レイヤは意図的に手書きの enum で実装されており、トレイトオブジェクトではありません。
-`src-tauri/src/db/mod.rs` の `db::Connection` は `MySql` / `Postgres` / `Sqlite` の
-3 バリアントを持ち、各操作 (`execute`, `begin_transaction` / `execute_in_transaction` /
+`src-tauri/src/db/mod.rs` の `db::Connection` は `MySql` / `Postgres` / `Sqlite` /
+`Mssql` の 4 バリアントを持ち (`Mssql` だけ `Box<mssql::MssqlConn>` — `tiberius::Client`
+が sqlx の他 3 ドライバよりずっと大きく `clippy::large_enum_variant` に当たるため)、
+各操作 (`execute`, `begin_transaction` / `execute_in_transaction` /
 `finish_transaction` / `transaction_active`, `health_check`,
 `preview_execute_with_limit`, `execute_stream`, `import_rows`, `execute_transaction`,
 `databases`, `tables`, `columns`, `schema_overview`, `foreign_keys`, `schema_objects`,
@@ -559,8 +589,40 @@ DB レイヤは意図的に手書きの enum で実装されており、トレ�
 SSH やセッション層には触らないでください — それらはドライバに依存しません。`schema_objects` /
 `object_definition` (ビュー・ルーチン・トリガーの列挙と DDL 取得)、`list_indexes`、
 `table_row_estimates` (統計情報ベースの概算行数)、`list_processes` / `kill_process`
-(MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity`) もこの enum 表面の一部で、SQLite では
-多くがサーバ機能非対応のため空や no-op で短絡します。
+(MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity` / MSSQL `sys.dm_exec_sessions`
++ `sys.dm_exec_requests` / `KILL <spid>`) もこの enum 表面の一部で、SQLite では多くが
+サーバ機能非対応のため空や no-op で短絡します。
+
+**MSSQL ドライバ (`db/mssql.rs`、#729) は他 3 ドライバと異なり sqlx を使いません**
+(sqlx に MSSQL バックエンドが無いため)。代わりに素の TDS クライアント `tiberius` を
+直接使い、コネクションプールも `sqlx::Pool` ではなく本モジュール内に手書きの極小プール
+(`MssqlPool` — `std::sync::Mutex<Vec<Client>>` の idle リスト + `tokio::sync::Semaphore`
+で同時接続数を制限。同期 Mutex を使うのは `PooledConn` の `Drop` から async を経由せずに
+接続をプールへ返せるようにするため) を実装しています。エラー型も `AppError::Sqlx` では
+なく専用の `AppError::Mssql(#[from] tiberius::error::Error)` です。他ドライバとの主な
+差分:
+
+- **スキーマ introspection は `dbo` スキーマに限定**しています。MSSQL は 1 データベース
+  内に複数スキーマを持てますが、既存の「1 データベース = 1 名前空間」という他ドライバの
+  抽象 (sync/export/import が生成する識別子はすべて単一パート想定) を崩さないための
+  意図的なスコープ縮小です (`db/mssql.rs` のモジュール doc に詳細)。フロント側の
+  `db.table` 参照もすべて `db.[dbo].table` の 3 パートで組み立てます
+  (`cellEdit.ts`/`QueryBuilder.tsx`/`tableMaintenance.ts`/`createTable.ts` の
+  `qualified`/`qualifiedTableRef`/`tableRef`/`qualifiedName` を参照)。
+- **識別子クオートは `[ident]`** (`db::sync::quote_ident` の `DriverKind::Mssql` 分岐、
+  フロントは `sqlDialect.ts::quoteIdentFor`)。**自動 LIMIT は `TOP (n)`** を
+  `SELECT [DISTINCT]` の直後に挿入する専用実装 `db::apply_auto_limit_mssql`
+  (`db::apply_auto_limit_for` がドライバで振り分け) — `WITH` (CTE) は対象外
+  (「型を惑わせるより何もしない」方針、doc 参照)。フロントの `QueryBuilder.tsx` も
+  同じ TOP 方式で生成する。
+- **`server_metrics` / `query_stats_support` (ライブクエリ・インスペクタ) /
+  `unused_indexes` は未実装**(SQLite と同じ `unsupported_driver` 縮退)。`dump_database`
+  も未対応 (`commands/dump.rs` が `InvalidInput` を返す)。いずれも本 Issue の受け入れ
+  条件の範囲外 — 将来 `sys.dm_exec_*` 系 DMV で実装可能。
+- **統合テストは `tests/mssql_integration.rs`**、`NOOBDB_TEST_MSSQL_URL`
+  (`mssql://user:pass@host:port/db`) 環境変数ゲート (未設定ならスキップ)。CI の
+  サービスコンテナは未追加 (ローカル/手動実行のみ、他ドライバと同じ導入パターンを
+  踏襲すれば追加可能)。
 
 `db::types::{Value, Column, QueryResult, TableColumnInfo, TableSchema,
 PreviewResult, StreamBatch}` がドライバ横断のワイヤフォーマットです。`Value` は
@@ -598,12 +660,44 @@ MySQL / PostgreSQL の接続は TLS をファーストクラスでサポート�
 トンネル併用時はドライバが 127.0.0.1 に接続するため `verify_full` のホスト名検証が失敗
 しうる点をヘルプ (`formTlsSshHint`) に明記しています。
 
-**TLS 統合テスト方針**: 既存の MySQL/PostgreSQL 統合テスト (環境変数ゲート) と同様に、
-TLS 有効サーバを要する検証は専用の環境変数 (未設定ならスキップ) でゲートする想定です。
-`apply_tls` のモードマッピングとパス正規化 (`non_empty`) は `db/mysql.rs` /
-`db/postgres.rs` の単体テストが network 不要でカバーしており、実 TLS サーバへの
-ハンドシェイク検証 (CA 検証失敗時のエラー表面化を含む) は CI にサーバ証明書を配備した
-うえで追加するのが次段です。
+**TLS 統合テスト方針 (#520 の既知ギャップ、#795 で実装)**: `apply_tls` のモード
+マッピングとパス正規化 (`non_empty`) は `db/mysql.rs` / `db/postgres.rs` の単体
+テストが network 不要でカバーしていますが、実 TLS ハンドシェイク (CA 検証の成功/
+失敗) は実サーバが要るため、既存の MySQL/PostgreSQL 統合テストと同じ環境変数ゲート
+方式で `src-tauri/tests/tls_integration.rs` に追加しました。ゲートする環境変数は
+`NOOBDB_TEST_MYSQL_TLS_URL` / `NOOBDB_TEST_POSTGRES_TLS_URL` (TLS 必須サーバの
+接続 URL) と `NOOBDB_TEST_TLS_CA` (両サーバの証明書を発行した CA の PEM パス、
+共通) の 3 つで、いずれか欠けている対応するテストはスキップされます。カバーする
+観点は各ドライバにつき: `ssl_mode=require` での接続成立、`verify_ca`/`verify_full` +
+正しい CA での接続成立、`verify_full` + CA 未指定 (システムのトラストストアには
+自己署名 CA が入っていないため検証失敗) で `AppError` がエラーとして表面化する
+こと (`connect` の戻り値は常に `Result<Connection, AppError>` なので `Err` である
+こと自体が確認になる)。
+
+**CI 配備 (`ci.yml` の `rust (test)` ジョブ) — 既存サービスコンテナとは別に TLS
+必須の DB を独立して立てる方式を採用**: `scripts/ci-setup-tls-db.sh` が openssl で
+自己署名 CA + サーバ証明書 (SAN に `127.0.0.1`/`localhost`) を生成し、
+mysql-server/postgresql (ubuntu-latest ランナーに既定でプリインストール済み) を
+**別ポート (3307/5433)** に TLS 必須 (`require_secure_transport=ON` /
+`hostssl ... scram-sha-256` のみ許可) で起動して、上記 3 環境変数を `$GITHUB_ENV`
+へ書き出します。既存の MySQL 8 / PostgreSQL 16 サービスコンテナ (3306/5432、平文)
+はそのまま維持し、TLS インスタンスは完全に独立した並存構成です。
+
+この方式を選んだ理由 (サービスコンテナの `services:` ブロックへ直接 TLS を組み込む
+案との比較): GitHub Actions のサービスコンテナは**ジョブの他のどのステップよりも
+前に起動する**ため、証明書をジョブ内で生成してからコンテナへ渡す手段が無く (ボリューム
+マウントで後から流し込んでも mysqld/postgres は起動時にしか TLS 設定を読まない)、
+かつ `services:` の workflow 構文には `command:` (エントリポイント引数の上書き) が
+無いため、公式 postgres イメージへ `-c ssl=on -c ssl_cert_file=...` のような起動
+引数を渡す手段も存在しません。対して「サービスコンテナに頼らず apt パッケージを
+直接構成する」方式は、SSH トンネル統合テスト (#331、`scripts/ci-setup-sshd.sh`) で
+既に実績のある同じパターンをそのまま踏襲でき、ローカルでも同一スクリプトで再現・
+検証できます。CI ワークフロー本体の変更は「sshd と並列の background ステップ +
+`wait:` への合流」1 箇所の追加のみで、既存のサービスコンテナ定義・カバレッジ計装・
+ジョブ分割方針には一切手を入れていません (最小侵襲)。MySQL 側は Ubuntu の
+AppArmor プロファイルがカスタム datadir/証明書パスを塞ぐことがあるため
+`aa-complain` で complain モードに倒しています (プロファイルが存在しない環境では
+no-op)。
 
 ### セッション初期化 SQL (#522)
 
@@ -659,6 +753,21 @@ Vitest (`readOnlyGolden.test.ts`) で import、バックは統合テスト
   エントリポイントが `ensure_allowed_for_session` 経由で `is_read_only_sql` を通し、
   `import_csv` も `session.read_only` を拒否します。IPC を直接呼んでも書き込みは
   通りません。
+- **緊急クエリ実行モード** (`Session.emergency_write`) は read_only の唯一の
+  ランタイム例外です。読み取り専用セッションで緊急対応の書き込みが必要なとき、
+  クエリエディタのトグル → **接続先名のタイプ確認** (`ConfirmDialog` の
+  `typedConfirmation`、#675 と同じパターン) を経て IPC `set_emergency_mode` で
+  有効化すると、`ensure_allowed_for_session` が書き込み文を通します (通過は
+  `tracing::warn!` でログに残る)。適用範囲は SQL 実行経路のみで、`import_csv` /
+  `apply_sync_sql` / `kill_process` の read-only 拒否は変わりません。フラグは
+  `AtomicBool` としてセッション在命中のみ有効で、切断・`reconnect` のセッション
+  差し替えで必ずオフに戻ります (フロントの UI ミラー `emergencySessions` も同じ
+  タイミングでリセット)。緊急モード中の書き込みは、フロントの実行ゲートが
+  `confirm_writes` と同じ毎回の承認ダイアログを要求します。なお有効化の合意
+  (名前タイプ) は UI レベルの安全網であり、IPC を直接呼べば確認なしに有効化
+  できます — 確実な書き込み禁止には DB 側の権限設定を併用してください。
+  読み書き可能なセッションでの有効化要求は `InvalidInput` で拒否されます
+  (常時実行テスト: `tests/sqlite_integration.rs` の `emergency_mode_*`)。
 - `is_production` の接続確認と `confirm_writes` (本番接続での書き込み承認) は
   **UI レベルの安全網 (UX ガード)** です。`confirm_writes` の判定はフロントの実行
   ゲート (`App.tsx` の `analyzeDangerousSql` / `isReadOnlySql`) でのみ行われ、
@@ -747,6 +856,61 @@ accept タスクの `JoinHandle` は構造体が所有しています。**`impl 
 では再接続時に提示された別の鍵まで信頼してしまうため。承認鍵をピン留めすることで、
 再接続で別の鍵 = MITM が提示されたら再び不一致として拒否されます。#682 レビュー対応。
 メッセージから fingerprint を取れない場合のみ従来の forget + TOFU にフォールバック)。
+
+### 多段 SSH トンネル (ProxyJump 相当) と ~/.ssh/config の読み込み (#708)
+
+`SshTunnel` は踏み台 (bastion/jump ホスト) を 1 段だけ経由する多段構成に対応します
+(ローカル → 踏み台 → 最終 SSH ホスト → DB、計 2 ホップまで)。プロトコルレベルで
+`direct-tcpip` を入れ子にする実装ではなく、**既存のローカルポートフォワード
+プリミティブをそのままチェーンする**設計です: 踏み台の `SshTunnel` を先に開いて
+ローカルポートを得た後、最終ホップの SSH セッションは (踏み台の実アドレスではなく)
+`127.0.0.1:<踏み台の local_port>` へダイヤルして張ります。ホスト鍵の検証/記録は
+**ダイヤル先ではなく各ホップ自身の実 `host:port`** を使うため (`ClientHandler::new`
+に渡す識別子と実際に接続するソケットアドレスを分離)、known_hosts には従来どおり
+段ごとの実サーバが `host:port fingerprint` で記録されます。
+
+- **型**: `SshConfig` (`ssh/tunnel.rs`) に `jump: Option<Box<SshJumpConfig>>` を
+  追加。`SshJumpConfig` は `SshConfig` から `remote_host`/`remote_port` と自身の
+  `jump` を除いた同形の構造体 (踏み台は常に「次のホップの実アドレス」へ転送する
+  ため `remote_*` は暗黙)。プロファイル側も対称に `SshProfile.jump:
+  Option<SshJumpProfile>` を持ちます。
+- **ライフタイム/Drop 順序**: `SshTunnel` は自身の `_upstream: Option<Box<SshTunnel>>`
+  を**構造体の最後のフィールド**として保持します。Rust の構造体フィールドは
+  **宣言順に drop される**ため、`impl Drop` 本体 (accept タスク/転送タスクの
+  abort) が走った後、`_session` (この段の SSH セッション) → `_upstream`
+  (踏み台。再帰的に同じ Drop を辿る) の順で閉じます。これにより「DB 接続 → 末段
+  (target) → 先頭段 (bastion)」の順序が保証され、既存の「トンネルは DB 接続より
+  先に drop しない」不変条件がチェーン全体へ自然に拡張されます。
+- **エラーの段別属性化**: `ssh::tunnel::tag_hop_error` (非公開) が `AppError::Ssh`
+  / `AppError::SshKey` のメッセージへ `[jump host <host>:<port>]` /
+  `[ssh host <host>:<port>]` のプレフィックスを付けます。`kind()` は変えない
+  (フロントの分類は従来どおり `ssh`) — メッセージだけがどちらの段の失敗かを示す
+  手がかりを増やします。`AppError::SshHostKeyMismatch` は元々 `host`/`port` を
+  持つため追加のタグ付けは不要で、その `host`/`port` は常に**実際に不一致が
+  起きた段**の識別子です (フロントの `parseHostKeyFingerprints` がメッセージから
+  これを抽出し、`App.tsx` の再信頼フローはプロファイルの主 SSH ホストではなく
+  こちらを使います — 踏み台側で鍵が変わった場合に正しいエンドポイントを
+  pin できるようにするため)。
+- **秘密情報**: 踏み台の passphrase / password は既存の `ssh_passphrase` /
+  `ssh_password` (最終ホップ用、後方互換のため名前は据え置き) とは別の keyring
+  kind (`ssh_passphrase_hop0` / `ssh_password_hop0`、`profiles/secrets.rs`) に
+  保存します。`profiles::secrets::delete_all` も両方を消します。
+- **reconnect (#712) との整合**: `Session.reconnect_ssh: Option<SshConfig>` は
+  `jump` を含めたまま非秘密フィールドのみを保持し (`reconnect_ssh_from` が両
+  ホップの secrets を空文字にする)、`reopen_transport` が再接続時に**踏み台側も**
+  keyring から再解決します。
+- **`~/.ssh/config` の読み込み**: `ssh::config_parser` (パス非依存の純粋パーサ、
+  副作用なし) が `Host` ブロックから `HostName` / `Port` / `User` /
+  `IdentityFile` / `ProxyJump` を解決します。ワイルドカードパターン・`Include`・
+  `Match` は非対応、"first obtained value wins" という OpenSSH 本来の規則には
+  従います。IPC `resolve_ssh_config_host(alias)` (`commands/ssh.rs`) が
+  `~/.ssh/config` (`%USERPROFILE%\.ssh\config`) を読んで解決し、`ProxyJump` は
+  `config_parser::parse_proxy_jump` で最初の 1 ホップのみ `host`/`port`/`user` に
+  分解します (本アプリのトンネルが 2 ホップまでのため)。**読み取り専用・保存時
+  一度きりのコピー**であり、接続時に設定ファイルを再参照することはありません。
+  `ConnectionForm` の「SSH ホスト」欄にエイリアスを入力して
+  「~/.ssh/config から読み込む」を押すと、解決された値 (と `ProxyJump` があれば
+  踏み台欄) がフォームへ展開されます。
 
 ### セッション
 
@@ -953,6 +1117,67 @@ best-effort 逐次のため整合します。**スキーマ変更の原子性が
   セッションへの適用は拒否します。MySQL は DDL の暗黙コミットのため best-effort 逐次、
   他ドライバは all-or-nothing。
 
+### サンドボックス (壊せる砂場・ブランチ、#747)
+
+選択したテーブル群 (+ 任意で FK の推移的閉包) をローカル SQLite ファイルへコピーし、
+独立したセッションとして開く機能です。既存のエディタ/グリッド/セル編集 UI をそのまま
+使え、何をしても元の接続には一切影響しません。差分計算・SQL 生成・適用は新規コマンドを
+最小限に留め、既存の Diff/Sync 機能 (`generate_sync_sql` / `generate_data_sync_sql` /
+`apply_sync_sql`) をそのまま再利用します — サンドボックスの書き戻しは、元 DB から見れば
+ただの sync apply です。
+
+- `db/sandbox.rs`: 純粋・ドライバ非依存のロジック。テーブルごとに複製する
+  「凍結された base スナップショット」の命名規約 (`shadow_table_name` =
+  `__noobdb_sandbox_base__<table>` プレフィックス、`is_shadow_table_name` でテーブル
+  ツリーから隠す判定に使う)、行数上限のクランプ (`clamp_row_limit`、既定 5,000 / 上限
+  100,000)、FK 推移的閉包 (`fk_closure`。参照先方向のみの片方向 — `schemaExport.ts` の
+  双方向閉包とは意図的に異なる)、`Value` → `import_rows` 用セル文字列変換
+  (`value_to_cell` / `row_to_cells`)、**競合検出** (`detect_conflicts` — サンドボックス側
+  [live vs base] の diff と元 DB 側 [current vs base] の diff を同じ base に対して
+  計算し、両方に現れる主キーを競合として突き合わせる)、競合を「スキップ」解決した行を
+  除く `filter_out_keys`、スキーマの外部競合テーブル一覧 `schema_conflict_tables` を
+  持ちます。
+- `sandboxes/store.rs`: サンドボックスの非秘密メタデータ (`SandboxRecord`: 名前・
+  ソースプロファイル/ドライバ/DB・テーブル一覧・行数上限・SQLite ファイルパス・作成日時)
+  を `sandboxes.json` に永続化する、`profiles::store` / `snippets::store` と同じ
+  JSON ファイルストアパターン。SQLite ファイル自体は `<data_dir>/sandboxes/<id>.sqlite`。
+- `commands/sandbox.rs`:
+  - `create_sandbox`: 選択テーブル (+ FK 閉包) の列メタデータを取得し、
+    `compute_schema_diff` + `generate_sync_sql` を **SQLite 方言**で走らせて
+    CREATE TABLE 一式を生成・実行 (テーブルごとに実名 + `shadow_table_name` の 2 つを
+    作成)、行データは `import_rows` で両方へ投入します。作成した SQLite 接続はそのまま
+    通常のセッションとして `AppState` に登録して返します。
+  - `list_sandboxes` / `discard_sandbox` (セッションを閉じ、SQLite ファイル + メタデータを
+    削除)。
+  - `sandbox_table_diff` / `sandbox_schema_diff`: サンドボックスの live テーブルと
+    shadow (base) テーブルを比較した「書き戻し案」(`desired`。`target_driver` は元 DB の
+    ドライバなので、そのまま `generate_data_sync_sql` / `generate_sync_sql` に渡せる) と、
+    任意で渡された元 DB セッションの現在値を同じ base と比較した「外部変更」を
+    `detect_conflicts` / `schema_conflict_tables` で突き合わせた競合情報を返します。
+  - `filter_sandbox_data_diff`: 競合を「スキップ」解決した行を desired diff から除く
+    純粋コマンド (`generate_data_sync_sql` へ渡す前にフロントが呼ぶ)。
+  - `sandbox_advance_base`: 書き戻し成功後に呼び、適用済みの行だけ shadow (base) を
+    現在値へ進めます。呼ばないと、同じ行が次回の差分計算で「サンドボックス側も元 DB
+    側も変化した」という偽の競合として出続けます (`allow_delete` を
+    `generate_data_sync_sql` と揃え、実際に削除されなかった `TargetOnly` 行の base は
+    残す)。
+  - 適用そのものは新規コマンドを作らず、既存の `apply_sync_sql` をそのまま使います
+    (read_only セッション拒否・トランザクション適用などの安全網もそのまま効きます)。
+- フロントは `sandbox.ts` の純ロジック (影テーブル判定・行数上限クランプ・FK 閉包の
+  プレビュー・競合解決状態の集計) に加え、**`SandboxRecord` を非永続の合成
+  `ConnectionProfile` に変換する `sandboxToProfile`** が肝です。これにより、
+  サンドボックスは `save_profile` を一切経由せずに複数同時接続レジストリ
+  (`openConnections`)・タブ復元・切替など既存の仕組みへそのまま乗ります (`id` は
+  `sandbox:<id>` という予約プレフィックスで通常のプロファイル id と衝突しません)。
+  接続先への無影響を常時明示するため、専用色 (violet、`SANDBOX_BAND_COLOR`) と
+  `SandboxBadge` (タイトルバー下端の帯・バッジ) で他の接続と視覚的に区別します。
+  UI は `ConnectionList` の DB 右クリックメニューから開く `SandboxCreateModal`
+  (テーブル選択・FK 自動追加・行数上限・方言近似の限界を明記)、サイドバーの専用
+  セクション `SandboxSection` (通常のプロファイルツリー/並べ替えとは独立 — 詳細は
+  同コンポーネントのコメント)、変更確認・書き戻しの `SandboxReviewModal` (スキーマ/
+  データ差分表示・競合行ごとの上書き/スキップ選択・SQL 生成プレビュー・適用。本番
+  接続への適用は `SchemaCompareView` と同じ型入力確認を経由) の 3 つです。
+
 ### プロセス管理
 
 `commands/process.rs` の `list_processes` / `kill_process` が、サーバのアクティブな
@@ -962,6 +1187,89 @@ best-effort 逐次のため整合します。**スキーマ変更の原子性が
 読み取り専用セッションを明示的に拒否します (SQL 文ではないので `is_read_only_sql` の
 経路外、コマンド側で別途ガード)。SQLite はサーバプロセスを持たないため空を返します。
 なお #587 で `performance_schema` 無効時に MySQL のプロセス一覧が空になる問題を修正済み。
+
+### ユーザ / 権限管理 (#732)
+
+MySQL ユーザ (`mysql.user` + `mysql.tables_priv`) / PostgreSQL ロール (`pg_roles` +
+`information_schema.role_table_grants`) の一覧と、選択したユーザ/ロールのテーブル単位
+CRUD+DDL 権限マトリクスを閲覧・編集する機能です。Diff/Sync (`db::sync` /
+`commands::sync`) と同じ「SQL 生成 (純粋) → プレビュー → 確認 → 適用」の分離パターンを
+踏襲します。
+
+- `db/privileges.rs`: `CREATE USER` / `DROP USER` / `ALTER USER ... PASSWORD` /
+  `GRANT` / `REVOKE` を方言別に生成する副作用なしの純ロジック。識別子クオートは
+  `db::sync::quote_ident` を共有し、単体テストでドライバ別の生成 SQL を固定しています。
+  DDL チェックボックスは各ドライバがテーブル単位で実際に `GRANT` できるスキーマ変更系
+  権限をまとめたもの (MySQL: `CREATE`/`ALTER`/`DROP`/`INDEX`/`REFERENCES`、PostgreSQL:
+  `TRUNCATE`/`REFERENCES`/`TRIGGER` — PostgreSQL の `CREATE`/`ALTER`/`DROP TABLE` は
+  テーブル単位の `GRANT` ではなくスキーマ所有権 / `CREATE ON SCHEMA` で制御されるため
+  対象外)。
+- `db::Connection::list_db_users` / `user_privileges` が `mysql.user` / `pg_roles` を
+  読む読み取り専用の introspection です。SQLite はユーザ概念を持たないため
+  `list_processes` と同じ「空ではなくエラーで非対応を明示する」方針で `AppError` を
+  返し、フロントはこの機能の導線自体を出しません。
+- `commands/privileges.rs::apply_privilege_sql` は `apply_sync_sql_inner` と同じく
+  `execute_transaction` を直接呼び、`run_query_transaction` の履歴記録経路を経由しません
+  — `CREATE USER`/`ALTER USER ... PASSWORD` はパスワードを SQL リテラルとして含みうる
+  ため、クエリ履歴にもログにも一切残しません。読み取り専用セッションは
+  `kill_process` と同じくコマンド側で明示的に拒否します (`is_read_only_sql` を通らない
+  経路のため)。
+- フロント (`UsersPanel.tsx`) は MySQL の `mysql.user` グローバル (`*.*`) 権限行を
+  意図的に**表示専用**にしています — このパネルが編集するのは選択中データベースの
+  テーブル単位権限 (`GRANT ... ON db.table`) で、スコープが異なるサーバ全体権限を
+  誤って書き換えてしまう事故を避けるためです。`DROP USER` は typed confirmation 付きの
+  danger 確認、`REVOKE` を含む権限変更は danger 確認、それ以外は primary 確認を経ます。
+- 権限不足エラー (MySQL "command denied to user" / PostgreSQL "permission denied
+  for ..." / "must be owner of ..." / "must be superuser") のヒントを `errorHints.ts`
+  に追加しています (`errorHintInsufficientPrivilege`)。
+### ローカル横断クエリ (#740)
+
+複数接続の結果セットをローカルエンジンへ取り込み、異種 DB 間 JOIN・再分析を 1 アプリ内で
+完結させる機能です。第 1 候補は DuckDB (#709) でしたが、本実装は #709 に先行しないため
+**既にフル依存済みの組み込み SQLite をインメモリ相当 (一時ファイル) で使う縮退構成**を
+採用しています。将来 DuckDB へ差し替える場合は `db::Connection` の `Sqlite` 版
+`register_local_table` / `list_local_tables` / `drop_local_table` / `vacuum_into` を
+新バリアントへ実装し直すだけで、`commands/local.rs` (IPC 層) は無改修で済む設計です。
+
+- **「ローカル」接続 = 駆動元セッションを持たない特殊セッション**。`create_local_session`
+  が OS 標準の一時領域 (`std::env::temp_dir()/noobdb-local/`) に空の SQLite ファイルを
+  touch し、既存の `Connection::Sqlite` としてそのまま開きます。以降のクエリ実行は
+  **既存の `run_query` / `run_query_stream` 等をそのまま再利用**し、新しい実行経路は
+  一切増やしていません。フロント (`App.tsx`) はこの「ローカル」を実在しない擬似
+  `ConnectionProfile` (`id: "__local__"`、`driver: "sqlite"`) として扱い、`handleConnect`
+  内で `id` を見て `api.connect` の代わりに `api.createLocalSession` を呼ぶ以外は、
+  複数同時接続のタブ切替・タブ復元・エディタ・グリッド・エクスポートを他の接続と
+  完全に共有します。
+- **登録**: `register_local_table` が `db::types::{Column, Value}` (既存のワイヤ
+  フォーマットそのもの) を受け取り、`db::sqlite::SqliteConn::register_local_table` が
+  1 トランザクションで「テーブル作成 (無型宣言 = BLOB affinity で値を無変換のまま保持) →
+  行 INSERT (`Value` を文字列往復させず直接 bind — `Bytes` は実 BLOB に、`Int`/`Float`/
+  `Bool` はそれぞれの storage class に、`Null` は SQL NULL に) → 由来メタデータ upsert」
+  まで行います。無型宣言のカラムは SQLite の BLOB affinity (無変換) を利用しており、
+  型付き `Value` から文字列を経由しない分、CSV インポート系の文字列ベース経路より
+  高精度に往復します。取り込み対象は**在メモリの取得済み行のみ**で、上限
+  `MAX_LOCAL_TABLE_ROWS = 200_000` (バックエンド `commands/local.rs` とフロント
+  `components/localQuery.ts` の同名定数で表現) を超える登録はバックエンドが拒否します。
+- **由来メタデータ**は隠しカタログテーブル `__noobdb_local_meta` (ローカル DB 自身の中、
+  初回登録時に遅延作成) に保存し、`LocalTableMeta` (元の接続名・実行 SQL・ドライバ・
+  登録日時・行数) として `list_local_tables` で返します。セッション固有の `AppState`
+  側の別管理は持たず、ローカル DB ファイル自体がこの状態の単一の情報源です。
+- **既定揮発 / 明示操作でのみ永続化**: バッキングファイルは OS 標準の一時領域に置き、
+  `disconnect` 時に削除します (`Session.local_temp_file` の有無で「ローカルセッション
+  かどうか」を判別)。アプリ異常終了で削除が走らなくても、次回起動時に
+  `commands::local::cleanup_stale_local_files` が同ディレクトリを丸ごと掃除します
+  (前回起動のセッションはどのみち全て無効なので安全)。「ファイルに保存」は
+  `save_local_database` → SQLite の `VACUUM INTO` で独立したスナップショットファイルを
+  書き出すだけで、元のセッション自体の揮発性は変えません。
+- **UI**: `ResultGrid` の「ローカルに登録」ボタン (`RegisterLocalTableModal` で名前確認
+  + 件数/上限/プライバシー注記を表示) と、サイドバーの「ローカル」タブ
+  (`LocalTablesPanel`。登録済みテーブルの由来一覧・削除・ファイル保存)。安全性/
+  プライバシーの明示 (外部送信なし、ここでの書き込みは元接続に反映されない) は
+  モーダル文言に集約しています。
+- 統合テストは `tests/local_query_integration.rs` に集約 (SQLite ベースで外部サーバ
+  不要・常時実行)。異種「接続」2 つ (別々の temp SQLite ファイルで模擬) からの登録 →
+  JOIN、BLOB/NULL/日時の往復、上限行数超過の拒否、非ローカルセッションへの誤呼び出し
+  拒否、`VACUUM INTO` によるファイル保存を検証します。
 
 ### ログシステム
 
@@ -1044,16 +1352,23 @@ fs プラグインを使わず capabilities を増やさないための経路で
 - 接続: `test_connection` / `connect` / `disconnect` / `reconnect` /
   `ping_session` / `cancel_connect`
 - SSH known_hosts: `list_known_hosts` / `forget_host_key` / `trust_host_key`
+- SSH config: `resolve_ssh_config_host` (`~/.ssh/config` エイリアス解決。#708)
 - クエリ: `run_query` / `run_query_transaction` / `run_query_stream` /
-  `preview_query_stream` / `cancel_stream`
+  `preview_query_stream` / `cancel_stream` / `set_emergency_mode`
 - 明示的トランザクション: `begin_transaction` / `run_in_transaction` /
   `finish_transaction`
 - スキーマ: `list_databases` / `list_tables` / `describe_table` /
   `schema_overview` / `foreign_keys` / `list_indexes` / `list_schema_objects` /
   `get_object_definition` / `table_row_estimates`
 - プロセス管理: `list_processes` / `kill_process`
+- ユーザ / 権限管理: `list_db_users` / `list_user_privileges` /
+  `generate_create_user_sql` / `generate_drop_user_sql` / `generate_alter_password_sql` /
+  `generate_grant_sql` / `generate_revoke_sql` / `apply_privilege_sql`
 - 比較・同期 (Diff/Sync): `compare_schema` / `compare_table_data` /
   `generate_sync_sql` / `generate_data_sync_sql` / `apply_sync_sql`
+- サンドボックス (壊せる砂場、#747): `create_sandbox` / `list_sandboxes` /
+  `discard_sandbox` / `sandbox_table_diff` / `sandbox_schema_diff` /
+  `filter_sandbox_data_diff` / `sandbox_advance_base`
 - プロファイル: `list_profiles` / `save_profile` / `delete_profile` /
   `export_profiles` / `import_profiles`
 - スニペット: `list_snippets` / `save_snippet` / `delete_snippet`
@@ -1114,7 +1429,11 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   serde 構造体と TS 型のズレを早期検出します (未知フィールドは破棄で前方互換)。
 - `components/` (接続・クエリ) — `ConnectionList`/`ConnectionForm` (接続)、`QueryEditor`
   (CodeMirror 6 + スキーマ補完 + リアルタイム構文チェック。後述の #704 lint 統合)、`QueryBuilder`、`ResultGrid`/`PreviewGrid`
-  (TanStack Table)、`TabBar`、`HistoryList`、`SnippetList`/`SnippetForm`、
+  (TanStack Table)、`ResultViewSwitch` (結果パネルの表示切替セグメント。グリッド /
+  ピボット / チャートの 3 択排他で、`ResultGrid`・`PivotView`・`ChartView` の各
+  ツールバー先頭に同じものを置き「今どれを見ているか」と往復導線を 1 か所に集約
+  する。App 側の受け口は `setResultView` で、`showPivot`/`showChart` の 2 フラグを
+  常に同時に確定させる)、`TabBar`、`HistoryList`、`SnippetList`/`SnippetForm`、
   `ExportModal`/`DumpModal`/`ImportModal`、`ExplainViewer`、`SettingsView`、
   `HelpView`、`DangerousQueryDialog`、`CellValueViewer`、`ERDiagramView`
   (`@xyflow/react` + `@dagrejs/dagre` による ER 図。レイアウト/グラフ構築の純ロジックは
@@ -1132,7 +1451,12 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   (CREATE TABLE ウィザード。`createTable.ts`)、`RowInsertModal` / `RowInspector` /
   `RenameTableDialog` (行追加・行インスペクタ・テーブル名変更)、`SchemaCompareView`
   (スキーマ/データ比較 → 同期 SQL 生成 UI。バックの Diff/Sync コマンドを駆動)、
-  `ProcessListPanel` (プロセス監視・KILL。`processList.ts`)、`ProfileImportDialog`
+  `SandboxCreateModal` / `SandboxSection` / `SandboxReviewModal` (壊せる砂場・ブランチ
+  #747。作成・サイドバー専用セクション・変更確認 → 書き戻し。純ロジックは
+  `sandbox.ts`、詳細はアーキテクチャの「サンドボックス」節を参照)、
+  `ProcessListPanel` (プロセス監視・KILL。`processList.ts`)、`UsersPanel` (ユーザ /
+  権限管理 #732。MySQL ユーザ・PostgreSQL ロールの一覧とテーブル単位権限マトリクスの
+  閲覧・GRANT/REVOKE 編集。SQL 生成 → プレビュー → 確認 → 適用のフロー)、`ProfileImportDialog`
   (プロファイルインポートの ID 衝突解決)、`ShortcutCheatSheet` (`?` キーのチートシート。
   `shortcuts.ts` が単一ソース)、`TitleBar` (Tauri `decorations: false` のカスタム
   ウィンドウクローム。色決定は `titleBarContext.ts`)、`PlanWatchPanel` (実行計画
@@ -1148,6 +1472,29 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `cellFormat.ts` (JSON コンパクト表記・日時のロケール整形。**表示専用**で実値は不変)、
   `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用。色は下記
   `colorScale.ts` を参照)。
+- セル値のクイックセット — `quickSetValues.ts`。結果グリッドのセル右クリックに出る
+  「NULL をセット」「空文字をセット」「0 をセット」「true/false をセット」「現在日時を
+  セット」の**純ロジック** (どの列にどの候補を出すか + 生成する生文字列)。生成値は
+  「ユーザが編集ボックスに手で打てたはずの文字列」に限定してあるため、下流の
+  `validateCellInput` / `literalFromInput` / `cellValueFromInput` がそのまま効き、
+  **DB への新しい経路を一切増やさない** (既存のインラインセル編集バッファに載るだけで、
+  確定は従来どおり Apply)。適用範囲は一括編集ダイアログ (#596) と同じ判定で、クリック
+  したセルが矩形選択の内側なら選択範囲全体 (`planBulkCellEdit` 経由)、そうでなければ
+  そのセル 1 つ。時刻系の候補は**クリック時点**の時計で組み直す (メニューを開いたまま
+  時間が経っても古い値を書かない)。NOT NULL 列では NULL の項目を「消す」のではなく
+  **理由付きで無効化**して制約を可視化する。`BIT` はドライバで意味が変わる唯一の型で、
+  MSSQL では真偽型そのもの (MySQL/SQLite も 1/0 が有効) だが PostgreSQL / DuckDB では
+  ビット列 (`'10110000'`) なので `true`/`false` も空文字も不正なリテラルになる。
+  `classifyEditType` は型名しか見られないためこの分岐は `quickSetOptions` 側に置き、
+  ビット列ドライバでは NULL 以外を出さない (必ず Apply で失敗する候補を出すくらいなら
+  出さない)。
+  「すでにその値」のセットは `cellEdit.ts` の **`editIsNoop`** が検出し、保留編集を積む
+  代わりに解除する。この判定は単一セル経路と `planBulkCellEdit` (矩形選択・一括編集
+  ダイアログ #596) の**両方**が共有し、後者は該当セルを `applied` ではなく
+  `unchanged` (`value: null` = 解除) へ回す。`BulkEditTarget.value` の `null` は
+  「値ではなく解除」を意味し、App の `setBulkCellEditsForTab` が単一セルの
+  `setCellEditForTab` と同じ削除処理を行う — 無変更の `SET col = <同じ値>` を Apply で
+  発行せず、保留編集の件数表示も実際に変わるセルだけを数えるため。
 - データ可視化カラースケール (#525) — `colorScale.ts` が、データを色で符号化する表面
   (チャート系列・ヒートマップ・データバー・将来のコスト/NULL 率ミニバー) が共有する
   **単一のスケール体系**を純ロジックとして定義する。**sequential** (単一色相の連続、CB
@@ -1191,6 +1538,31 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   が境界を固定)。エディタ集中/結果最大化はワークスペース単位 (`noobdb.layout.mode`) で
   永続化し、全画面オーバーレイは `App.css` の `pane-overlay-in` で出現させ
   reduced-motion で静止化する。
+- ツールチップ (#814/#884) — `components/Tooltip.tsx` が唯一の実装で、位置決めの
+  純ロジックは `components/tooltipPosition.ts` (`computeTooltipPosition`。測定 →
+  クランプ → フリップ) に分離してテストする。**新しい UI で native `title=` を
+  書かないこと** — native title は表示まで約 1 秒・**キーボードフォーカスでは
+  一切表示されない (a11y 欠陥)**・テーマ非追従・すぐ消える、という弱点がある。
+  使い分けは 2 つ:
+  - `<Tooltip label={...}>` — 通常のボタン/アイコン/ラベル。`cloneElement` で
+    hover/focus ハンドラ・ref・`aria-describedby` を注入するので DOM 構造は
+    変わらない。`label` が falsy なら何もせず `children` をそのまま返すため、
+    条件付きラベルを分岐なしで渡せる。**無効 (`disabled`) なトリガーにだけ**
+    `focusableWrapper` を付ける (ブラウザが無効要素をタブ順序から外すため)。
+    通常のフォーカス可能要素に付けると余計なタブストップが増える。
+  - `useDelegatedTooltip()` + `<TooltipBubble>` — 行/列/セル数に比例して大量に
+    描画される一覧 (`ResultGrid` のセル、`ConnectionList` のスキーマツリー行、
+    `ERDiagramView` の PK/FK アイコン)。共有状態 1 つ + `bind(label)` が返す
+    軽量なハンドラだけを各要素に付け、`Tooltip` インスタンスを増やさない。
+    hover 専用 (focus 非対応) なので、**キーボードで到達できる要素には使わない**。
+  同時に見える吹き出しは常に高々 1 つで、新しく開いたものが直前のものを閉じる
+  (`claimTooltip`/`releaseTooltip`)。行のツールチップの中にボタンのツールチップを
+  入れ子にしても native title と同じ「最も内側だけ」の見え方になる。複数行ラベル
+  (`ヒント\n\nSQL` など) は `white-space: pre-wrap` で改行を保つ。**唯一の例外は
+  `TabBar` のタブ本体**で、`AnimatePresence` の直接の子である必要があり `Tooltip`
+  の Fragment を挟むと退出アニメーションが壊れるため、意図的に native title の
+  ままにしている (理由はコード内コメントに明記)。挙動は `tooltip.test.tsx`
+  (開閉・a11y 結線・入れ子) が固定する。
 - `settings.ts` — `useSyncExternalStore` ベースの設定ストア。シンタックスカラー
   (`syntaxColors` light/dark)・プレビューハイライト色・表示行数 (`defaultDisplayCount` /
   `streamPrefetchSize`)・自動 LIMIT (`autoLimitEnabled` / `autoLimitCount`)・SQL 構文

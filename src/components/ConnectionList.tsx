@@ -1,9 +1,11 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
 import { AnimatePresence, Reorder } from "motion/react";
-import { api, ConnectionProfile, IndexInfo, SchemaObject, TableColumnInfo } from "../api/tauri";
+import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
+import { isSandboxShadowTableName } from "../sandbox";
+import { SandboxSection } from "./SandboxSection";
 import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
@@ -14,8 +16,10 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { computeTooltipPosition } from "./tooltipPosition";
+import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
-import { normalizeChipColor } from "../profileIdentity";
+import { driverColor, driverIconName, normalizeChipColor } from "../profileIdentity";
 import {
   databaseMaintenanceCommands,
   tableMaintenanceCommands,
@@ -28,6 +32,7 @@ import {
   MotionTreeRow,
   TreeBadge,
   TreeChevron,
+  TreeChevronButton,
   TreeCollapse,
   TreeIcon,
   TreeLabel,
@@ -36,6 +41,15 @@ import {
 } from "./tree";
 
 const tableKey = (db: string, tbl: string) => `${db}::${tbl}`;
+
+/** `api.listTables` に薄く重ねて、サンドボックス (#747) の影テーブル
+ *  (`db::sandbox::shadow_table_name` の予約プレフィックス) をツリー・検索・
+ *  クイックアクセスなどこのコンポーネント内のあらゆる利用箇所から一律に隠す。
+ *  非サンドボックスの通常セッションでは該当テーブルが存在しないため無害。 */
+async function listVisibleTables(sessionId: string, db: string): Promise<string[]> {
+  const list = await api.listTables(sessionId, db);
+  return list.filter((t) => !isSandboxShadowTableName(t));
+}
 
 /** localStorage に永続化するグループ表示順序のキー (#786)。触られていない
  *  グループはアルファベット順の既定挙動のままなので、ドラッグ/キーボードで
@@ -111,39 +125,6 @@ function HighlightText({ text, query }: { text: string; query: string }) {
   );
 }
 
-/** ドライバ名 (プロファイルの自由文字列) を Icon のブランドロゴ名へ正規化する。
- *  未知のドライバは null を返し、呼び出し側で汎用アイコンへフォールバックする。 */
-function driverIconName(driver: string): IconName | null {
-  switch (driver.toLowerCase()) {
-    case "mysql":
-    case "mariadb":
-      return "mysql";
-    case "postgres":
-    case "postgresql":
-      return "postgres";
-    case "sqlite":
-    case "sqlite3":
-      return "sqlite";
-    default:
-      return null;
-  }
-}
-
-/** ドライバごとのブランドアクセント色。ライト/ダーク両テーマで視認できる中間色を
- *  選んでいる (暗い純正色だとダークテーマで沈むため)。 */
-function driverColor(driver: string): string {
-  switch (driverIconName(driver)) {
-    case "mysql":
-      return "#00758f";
-    case "postgres":
-      return "#3b82c4";
-    case "sqlite":
-      return "#0f9bdc";
-    default:
-      return "var(--accent)";
-  }
-}
-
 /** 保守コマンド種別ごとのメニューラベル i18n キー。#561。 */
 const MAINTENANCE_LABEL_KEYS: Record<MaintenanceKind, I18nKey> = {
   analyze: "maintenanceAnalyze",
@@ -202,17 +183,7 @@ const TreeEmpty = chakra("div", {
 
 // クイックアクセスのセクション見出し (お気に入り / 最近)。
 const QuickAccessHeader = chakra("div", {
-  base: {
-    pt: "1.5",
-    pb: "0.5",
-    pl: "2",
-    pr: "2.5",
-    fontSize: "2xs",
-    fontWeight: 600,
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-    color: "app.textMuted",
-  },
+  base: { pt: "1.5", pb: "0.5", pl: "2", pr: "2.5", textStyle: "overline" },
 });
 
 /** 接続状態ドットの状態別 style。色は動的トークンの
@@ -279,10 +250,12 @@ interface Props {
   onShowCreateTable?: (database: string, table: string) => void;
   /** DB ノードから新規テーブル作成ウィザードを開く。 */
   onCreateTable?: (database: string) => void;
-  /** テーブル保守操作: TRUNCATE / DROP / RENAME。read_only では無効化される。 */
+  /** テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794)。read_only では無効化される。 */
   onTruncateTable?: (database: string, table: string) => void;
   onDropTable?: (database: string, table: string) => void;
   onRenameTable?: (database: string, table: string) => void;
+  /** 列の追加/変更/削除/リネームとインデックス作成の GUI ダイアログを開く (#794)。read_only では無効化。 */
+  onAlterTable?: (database: string, table: string) => void;
   /** テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
    *  生成済み SQL を渡し、確認 + 実行は呼び出し側 (App) が担う。read_only では無効化。 */
   onRunTableMaintenance?: (database: string, table: string, command: MaintenanceCommand) => void;
@@ -290,6 +263,14 @@ interface Props {
   onRunDatabaseMaintenance?: (database: string, command: MaintenanceCommand) => void;
   /** DB ノードからサイズ・統計ダッシュボードを開く。#562。 */
   onShowDatabaseSizes?: (database: string) => void;
+  /** DB ノードからサンドボックス (壊せる砂場) 作成ダイアログを開く。#747。 */
+  onCreateSandbox?: (database: string) => void;
+  /** 作成済みサンドボックス一覧 (#747)。専用セクションとして通常のプロファイル
+   *  ツリーとは別に描画する (`SandboxSection`)。 */
+  sandboxes?: SandboxRecord[];
+  onOpenSandbox?: (record: SandboxRecord) => void;
+  onReviewSandbox?: (record: SandboxRecord) => void;
+  onDiscardSandbox?: (record: SandboxRecord) => void;
   /** テーブル名をクリップボードへコピー。 */
   onCopyTableName?: (table: string) => void;
   /** スキーマオブジェクトの定義を開く。`id` は同名衝突を避ける一意識別子。 */
@@ -341,9 +322,15 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onTruncateTable,
   onDropTable,
   onRenameTable,
+  onAlterTable,
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
   onShowDatabaseSizes,
+  onCreateSandbox,
+  sandboxes,
+  onOpenSandbox,
+  onReviewSandbox,
+  onDiscardSandbox,
   onCopyTableName,
   onOpenObjectDefinition,
   selectLimit,
@@ -381,6 +368,13 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const [hoveredColumn, setHoveredColumn] = useState<{ col: TableColumnInfo; rect: DOMRect } | null>(
     null,
   );
+  // スキーマツリー行 (DB/テーブル/インデックス/オブジェクト) の単純テキスト
+  // ツールチップは、`hoveredColumn`/`ColumnTooltip` と同じ「1 つの共有ツールチップ +
+  // イベント委譲」方式を汎用化した `useDelegatedTooltip` (`Tooltip.tsx`、#884) に
+  // 委譲する。行数に比例して Tooltip インスタンスを増やさない — ツリーは数百行
+  // 規模になりうるため、行ごとに hover リスナー付きコンポーネントを乗せる素朴な
+  // 全置換は性能リスクがある (#884 Issue が示す設計案の 1 つ)。
+  const { hovered: hoveredLabel, bind: treeTooltipProps } = useDelegatedTooltip();
   // Databases whose table list is currently being fetched, either by manual
   // expand (toggleDb) or by eager schema-search loading. Shared so that rapid
   // collapse / re-expand during an in-flight fetch can't re-issue the same
@@ -474,7 +468,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       await Promise.all(
         existingOpenDbs.map(async (db) => {
           try {
-            nextTables[db] = await api.listTables(targetSessionId, db);
+            nextTables[db] = await listVisibleTables(targetSessionId, db);
           } catch {
             // Skip a database that failed to list; re-expanding retries it.
             failedTableDbs.add(db);
@@ -589,7 +583,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       await Promise.all(
         openDbs.map(async (db) => {
           try {
-            nextTables[db] = await api.listTables(targetSessionId, db);
+            nextTables[db] = await listVisibleTables(targetSessionId, db);
           } catch {
             // Skip a database that failed to list; re-expanding retries it.
           }
@@ -711,6 +705,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       window.removeEventListener("resize", clear);
     };
   }, [hoveredColumn]);
+
+  // このツリーの行 (DB/テーブル/インデックス/オブジェクト) は現状 `tabIndex` を
+  // 持たず (別 Issue のキーボードナビゲーション改善のスコープ)、`treeTooltipProps`
+  // (= `useDelegatedTooltip().bind`) はマウス hover のみに対応する — native title
+  // からの後退はなく、表示速度とテーマ追従だけを底上げする。
 
   // --- 接続 / グループの並べ替え (#786) ---
   //
@@ -893,15 +892,23 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (onCopyTableName) {
       items.push({ label: t("contextMenuCopyTableName"), onSelect: () => onCopyTableName(tbl) });
     }
-    // テーブル保守操作: TRUNCATE / DROP / RENAME。破壊的なので read_only では
-    // 無効化し、実行時は呼び出し側 (App) が確認ダイアログを挟む。
-    if (onTruncateTable || onDropTable || onRenameTable) {
+    // テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794)。破壊的なので
+    // read_only では無効化し、実行時は呼び出し側 (App) が確認ダイアログを挟む。
+    if (onTruncateTable || onDropTable || onRenameTable || onAlterTable) {
       const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
       items.push({ separator: true });
       if (onRenameTable) {
         items.push({
           label: t("contextMenuRenameTable"),
           onSelect: () => onRenameTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+        });
+      }
+      if (onAlterTable) {
+        items.push({
+          label: t("contextMenuAlterTable"),
+          onSelect: () => onAlterTable(db, tbl),
           disabled: activeReadOnly,
           title: roTitle,
         });
@@ -965,6 +972,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (onShowDatabaseSizes) {
       items.push({ label: t("sizeMenuLabel"), onSelect: () => onShowDatabaseSizes(db) });
     }
+    if (onCreateSandbox) {
+      items.push({ label: t("contextMenuCreateSandbox"), onSelect: () => onCreateSandbox(db) });
+    }
     // DB 全体の保守コマンド (#561)。SQLite/PostgreSQL のみ対象 (MySQL はグローバル
     // 保守文が無いため空)。データは消さないが書き込み/ロックを伴うため read_only で無効化。
     if (onRunDatabaseMaintenance) {
@@ -1023,7 +1033,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (tablesInFlightRef.current.has(db)) return;
     tablesInFlightRef.current.add(db);
     try {
-      const list = await api.listTables(sessionId, db);
+      const list = await listVisibleTables(sessionId, db);
       setTables((prev) => ({ ...prev, [db]: list }));
       void loadRowEstimates(sessionId, db);
       // 非テーブルのスキーマオブジェクトもベストエフォートで取得する。
@@ -1141,8 +1151,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     for (const db of databases) {
       if (tables[db] !== undefined || tablesInFlightRef.current.has(db)) continue;
       tablesInFlightRef.current.add(db);
-      api
-        .listTables(sessionId, db)
+      listVisibleTables(sessionId, db)
         .then((list) => setTables((prev) => ({ ...prev, [db]: list })))
         .catch(() => {})
         .finally(() => tablesInFlightRef.current.delete(db));
@@ -1229,7 +1238,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         role="treeitem"
         onClick={() => onPickTable(refItem.database, refItem.table)}
         onContextMenu={(e) => handleTableContextMenu(e, refItem.database, refItem.table)}
-        title={`${refItem.database}.${refItem.table}`}
+        {...treeTooltipProps(`${refItem.database}.${refItem.table}`)}
         _hover={{ bg: "app.rowHover" }}
       >
         <TreeChevron aria-hidden style={{ visibility: "hidden" }}>▸</TreeChevron>
@@ -1243,20 +1252,21 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           </chakra.span>
         </TreeLabel>
         {star && onToggleFavorite && (
-          <chakra.button
-            type="button"
-            aria-label={t("quickAccessRemoveTitle")}
-            title={t("quickAccessRemoveTitle")}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFavorite(refItem.database, refItem.table);
-            }}
-            color="app.textMuted"
-            px="1"
-            _hover={{ color: "app.text" }}
-          >
-            <Icon name="close" size={ICON_SIZES.sm} />
-          </chakra.button>
+          <Tooltip label={t("quickAccessRemoveTitle")}>
+            <chakra.button
+              type="button"
+              aria-label={t("quickAccessRemoveTitle")}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFavorite(refItem.database, refItem.table);
+              }}
+              color="app.textMuted"
+              px="1"
+              _hover={{ color: "app.text" }}
+            >
+              <Icon name="close" size={ICON_SIZES.sm} />
+            </chakra.button>
+          </Tooltip>
         )}
       </TreeRow>
     );
@@ -1303,7 +1313,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                   pl="1"
                   role="treeitem"
                   onClick={() => onOpenObjectDefinition(db, o.kind, o.name, o.id)}
-                  title={`${o.name} — ${labels[kind] ?? kind}`}
+                  {...treeTooltipProps(`${o.name} — ${labels[kind] ?? kind}`)}
                   _hover={{ bg: "app.rowHover" }}
                 >
                   <TreeChevron visibility="hidden" aria-hidden />
@@ -1375,10 +1385,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       rowBg = undefined;
     }
     const subtitle =
-      p.driver === "sqlite"
+      p.driver === "sqlite" || p.driver === "duckdb"
         ? p.file_path
           ? p.file_path.split(/[/\\]/).pop() || p.file_path
-          : "SQLite"
+          : p.driver === "duckdb"
+            ? "DuckDB"
+            : "SQLite"
         : `${p.host}:${p.port}${p.database ? ` / ${p.database}` : ""}`;
 
     const driverIcon = driverIconName(p.driver);
@@ -1427,11 +1439,19 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           tabIndex={0}
           role="treeitem"
           aria-expanded={isOpen}
-          title={
-            p.driver === "sqlite"
+          // 共有 `Tooltip` (#814) で単純に包むと、この行自体が `AnimatePresence`
+          // の直接の子として追跡される `Reorder.Item` (ドラッグ並べ替え #786) のため、
+          // `TabBar` の `MotionTab` と同じ理由で開閉/並べ替えアニメーションが壊れる
+          // (`Tooltip` はトリガーを Fragment で包むため、間に挟むと `AnimatePresence`
+          // から見た直接の子が変わってしまう)。そのため行自体は `treeTooltipProps`
+          // (#884、下記スキーマツリー行と同じ「1 つの共有ツールチップ + 座標だけ
+          // 報告するイベント委譲」方式) を使う — ラッパ要素を増やさないので
+          // アニメーションに影響しない。
+          {...treeTooltipProps(
+            p.driver === "sqlite" || p.driver === "duckdb"
               ? p.file_path ?? p.name
-              : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`
-          }
+              : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`,
+          )}
         >
           <TreeChevron transform={isOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
           {/* ドライバ別ブランドアイコン (MySQL/PostgreSQL/SQLite) でひと目で種別が
@@ -1467,7 +1487,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               fontSize="2xs"
               fontFamily="mono"
               color={isActive ? "app.textSecondary" : "app.textMuted"}
-              title={subtitle}
+              {...treeTooltipProps(subtitle)}
             >
               {subtitle}
             </chakra.span>
@@ -1480,49 +1500,51 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               アクティブな sessionId を対象にするため、背景接続の行に出すと別接続を
               更新してしまい紛らわしい (#複数同時接続)。背景接続は接続済みドットのみ。 */}
           {status === "connected" && isActive && (
-            <chakra.button
-              type="button"
-              flexShrink={0}
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              p="0.5"
-              color="app.textMuted"
-              bg="transparent"
-              border="none"
-              borderRadius="sm"
-              cursor="pointer"
-              _hover={refreshing ? undefined : { color: "app.text", bg: "var(--bg-hover, var(--bg-muted))" }}
-              _disabled={{ cursor: "default" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                void refreshSchema();
-              }}
-              disabled={refreshing}
-              title={t("treeRefreshTitle")}
-              aria-label={t("treeRefresh")}
-            >
-              <chakra.span
+            <Tooltip label={t("treeRefreshTitle")} focusableWrapper={refreshing}>
+              <chakra.button
+                type="button"
+                flexShrink={0}
                 display="inline-flex"
-                animation={refreshing ? "spinner-rotate var(--dur-spin) linear infinite" : undefined}
+                alignItems="center"
+                justifyContent="center"
+                p="0.5"
+                color="app.textMuted"
+                bg="transparent"
+                border="none"
+                borderRadius="sm"
+                cursor="pointer"
+                _hover={refreshing ? undefined : { color: "app.text", bg: "var(--bg-hover, var(--bg-muted))" }}
+                _disabled={{ cursor: "default" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void refreshSchema();
+                }}
+                disabled={refreshing}
+                aria-label={t("treeRefresh")}
               >
-                <Icon name="refresh" size={13} />
-              </chakra.span>
-            </chakra.button>
+                <chakra.span
+                  display="inline-flex"
+                  animation={refreshing ? "spinner-rotate var(--dur-spin) linear infinite" : undefined}
+                >
+                  <Icon name="refresh" size={ICON_SIZES.sm} />
+                </chakra.span>
+              </chakra.button>
+            </Tooltip>
           )}
-          <chakra.span
-            display="inline-block"
-            width="8px"
-            height="8px"
-            borderRadius="50%"
-            flexShrink={0}
-            transitionProperty="background, box-shadow"
-            transitionDuration="var(--dur-med)"
-            transitionTimingFunction="var(--ease)"
-            {...STATUS_DOT_STYLE[status]}
-            aria-label={statusLabel(status)}
-            title={statusLabel(status)}
-          />
+          <Tooltip label={statusLabel(status)} focusableWrapper>
+            <chakra.span
+              display="inline-block"
+              width="8px"
+              height="8px"
+              borderRadius="50%"
+              flexShrink={0}
+              transitionProperty="background, box-shadow"
+              transitionDuration="var(--dur-med)"
+              transitionTimingFunction="var(--ease)"
+              {...STATUS_DOT_STYLE[status]}
+              aria-label={statusLabel(status)}
+            />
+          </Tooltip>
         </MotionTreeRow>
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
@@ -1547,7 +1569,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       onContextMenu={(e) => handleDbContextMenu(e, db)}
                       role="treeitem"
                       aria-expanded={dbOpen}
-                      title={db}
+                      {...treeTooltipProps(db)}
                     >
                       <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
                       <TreeIcon color="#0ea5e9" aria-hidden><Icon name="database" /></TreeIcon>
@@ -1577,14 +1599,36 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                 <TreeRow
                                   pl="1"
                                   role="treeitem"
+                                  /* 行のアクセシブルネームをテーブル名に固定する。既定の
+                                     content 由来の名前だと、内側のチェブロンボタンの
+                                     aria-label や行数バッジまで連結され、SR の読み上げと
+                                     ロール検索 (テスト含む) が不安定になるため。 */
+                                  aria-label={tbl}
                                   aria-expanded={tOpen}
-                                  onClick={() => toggleTable(db, tbl)}
                                   onDoubleClick={() => onPickTable(db, tbl)}
                                   onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
-                                  title={t("treeTableTitle")}
+                                  {...treeTooltipProps(t("treeTableTitle"))}
                                   _hover={{ bg: "app.rowHover" }}
                                 >
-                                  <TreeChevron transform={tOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
+                                  {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
+                                      ダブルクリック (テーブルを開く) の前に click が 2 回発火して
+                                      カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
+                                      連打が行の onDoubleClick (テーブルを開く) に化けるのを防ぐ。
+                                      唯一の展開手段になったためネイティブ button として描画し、
+                                      キーボード (Enter/Space) と支援技術からも操作できるようにする
+                                      (行本体は現状 tabIndex を持たない — 上記のキーボードナビ方針
+                                      コメント参照)。 */}
+                                  <TreeChevronButton
+                                    type="button"
+                                    transform={tOpen ? "rotate(90deg)" : undefined}
+                                    aria-label={t("treeToggleColumnsAria", { table: tbl })}
+                                    aria-expanded={tOpen}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void toggleTable(db, tbl);
+                                    }}
+                                    onDoubleClick={(e) => e.stopPropagation()}
+                                  >▸</TreeChevronButton>
                                   <TreeIcon color="app.textSecondary" aria-hidden><Icon name="table" /></TreeIcon>
                                   <TreeLabel fontWeight={400}><HighlightText text={tbl} query={q} /></TreeLabel>
                                   {rowEstLabel && (
@@ -1593,7 +1637,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                       fontSize="2xs"
                                       textTransform="none"
                                       letterSpacing="0"
-                                      title={`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`}
+                                      {...treeTooltipProps(`${rowEst!.toLocaleString()} — ${t("treeRowEstimateTitle")}`)}
                                     >
                                       {rowEstLabel}
                                     </TreeBadge>
@@ -1630,10 +1674,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             }
                                           >
                                             <TreeChevron visibility="hidden" aria-hidden />
+                                            {/* PK/FK アイコンと型バッジの native title は削除(#884)。行に
+                                                hover すると `ColumnTooltip` (下記 `hoveredColumn`) が
+                                                鍵種別・型を含む詳細を表示するため、ここで別に native
+                                                title を持つと同じ情報が二重に (かつ約 1 秒遅れで)
+                                                出てしまう。 */}
                                             <TreeIcon
                                               fontSize="xs"
                                               color={isPk ? "app.keyAccent" : isFk ? "app.accent" : "app.textMuted"}
-                                              title={isPk ? t("colPkTitle") : isFk ? t("colFkTitle") : undefined}
                                               aria-hidden
                                             >
                                               {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
@@ -1643,7 +1691,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                               fontFamily="mono"
                                               textTransform="lowercase"
                                               fontSize="2xs"
-                                              title={col.data_type}
                                             >
                                               {col.data_type}
                                             </TreeBadge>
@@ -1664,7 +1711,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             cursor="default"
                                             fontSize="sm"
                                             role="treeitem"
-                                            title={`${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`}
+                                            {...treeTooltipProps(
+                                              `${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`,
+                                            )}
                                           >
                                             <TreeChevron visibility="hidden" aria-hidden />
                                             <TreeIcon
@@ -1681,7 +1730,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                               <TreeBadge
                                                 fontSize="2xs"
                                                 textTransform="uppercase"
-                                                title={idx.name}
+                                                {...treeTooltipProps(idx.name)}
                                               >
                                                 {idx.primary ? t("indexBadgePk") : t("indexBadgeUnique")}
                                               </TreeBadge>
@@ -1808,10 +1857,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                         pr="2.5"
                         pb="1.5"
                         pl="1.5"
-                        fontSize="xs"
-                        textTransform="uppercase"
-                        letterSpacing="0.06em"
-                        color="app.textMuted"
+                        textStyle="overline"
                         bg="app.surfaceMuted"
                         borderTop="1px solid"
                         borderTopColor="app.borderSubtle"
@@ -1886,10 +1932,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           pr="2.5"
                           pb="1.5"
                           pl="1.5"
-                          fontSize="xs"
-                          textTransform="uppercase"
-                          letterSpacing="0.06em"
-                          color="app.textMuted"
+                          textStyle="overline"
                           bg="app.surfaceMuted"
                           borderTop="1px solid"
                           borderTopColor="app.borderSubtle"
@@ -1940,11 +1983,24 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         </Box>
       )}
 
+      {sandboxes && sandboxes.length > 0 && onOpenSandbox && onReviewSandbox && onDiscardSandbox && (
+        <SandboxSection
+          sandboxes={sandboxes}
+          activeProfileId={activeProfileId}
+          openProfileIds={openProfileIds}
+          connectingId={connectingId}
+          onOpen={onOpenSandbox}
+          onReview={onReviewSandbox}
+          onDiscard={onDiscardSandbox}
+        />
+      )}
+
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
 
       {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
+      {hoveredLabel && <TooltipBubble label={hoveredLabel.label} anchor={hoveredLabel.rect} maxWidth="320px" />}
     </Flex>
   );
 }));
@@ -1967,19 +2023,14 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const { width, height } = el.getBoundingClientRect();
-    const margin = 8;
-    let left = anchor.right + margin;
-    if (left + width + margin > window.innerWidth) {
-      left = anchor.left - margin - width;
-    }
-    left = Math.max(margin, left);
-    let top = anchor.top;
-    if (top + height + margin > window.innerHeight) {
-      top = window.innerHeight - margin - height;
-    }
-    top = Math.max(margin, top);
-    setPos({ left, top });
+    const size = el.getBoundingClientRect();
+    // 測定→クランプ→フリップは Tooltip プリミティブ (#814) と共有の
+    // `computeTooltipPosition` に一本化済み。行の高さ全体を対象に中央寄せすると
+    // 縦長の行ではカーソル位置から離れて見えるため、"right" + align="start" で
+    // 行の上端に揃える (元のインライン実装と同じ見た目)。
+    setPos(
+      computeTooltipPosition(anchor, size, "right", 8, { width: window.innerWidth, height: window.innerHeight }, "start"),
+    );
   }, [col, anchor]);
 
   const keyLabel =
@@ -2055,3 +2106,4 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect 
     </Box>
   );
 }
+

@@ -14,6 +14,7 @@ import {
   isEditableColumnType,
   resolvePkIndices,
   rowEditKey,
+  validateCellInput,
   type BuildRowSqlInput,
   type BuildUpdateInput,
   type PendingEdits,
@@ -354,6 +355,15 @@ describe("buildRowSql", () => {
       expect(
         buildRowSql(baseRowSql({ driver: "sqlite", columns, rows }), "insert"),
       ).toEqual(['INSERT INTO "tbl" ("id", "data") VALUES (1, X\'deadbeef\');']);
+      // DuckDB's BLOB literal escapes every byte individually
+      // ('\xde\xad\xbe\xef'), unlike PostgreSQL's bytea (one `\x` prefix for
+      // the whole string, '\xdeadbeef') — a multi-byte value like this is the
+      // only way to distinguish the two formats.
+      expect(
+        buildRowSql(baseRowSql({ driver: "duckdb", columns, rows }), "insert"),
+      ).toEqual([
+        'INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xde\\xad\\xbe\\xef\');',
+      ]);
     });
 
     it("treats PostgreSQL BYTEA as a BLOB-family column (regression: #修正4)", () => {
@@ -531,6 +541,39 @@ describe("buildInsertClipboard", () => {
     expect(result.sql).toBe(
       "INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (1, TRUE, NULL), (2, FALSE, 'O''Brien');",
     );
+  });
+});
+
+describe("validateCellInput", () => {
+  it("rejects the NULL keyword on a NOT NULL column", () => {
+    expect(validateCellInput("NULL", "VARCHAR", false)).toBe("editInvalidNotNull");
+    expect(validateCellInput("null", "VARCHAR", true)).toBeNull();
+  });
+
+  // 空欄は文字列系の列では空文字リテラル `''` を意味する (literalFromInput が
+  // そう組み立てる) ため、NOT NULL 制約の違反ではない。右クリックの
+  // 「空文字をセット」がこの前提に乗っている。
+  it("accepts an empty value on a string column even when NOT NULL", () => {
+    expect(validateCellInput("", "VARCHAR", false)).toBeNull();
+    expect(validateCellInput("", "TEXT", true)).toBeNull();
+  });
+
+  it("still rejects an empty value on non-string columns", () => {
+    expect(validateCellInput("", "INT", false)).toBe("editInvalidNotNull");
+    expect(validateCellInput("", "INT", true)).toBe("editInvalidNumber");
+    expect(validateCellInput("", "DATETIME", true)).toBe("editInvalidDateTime");
+  });
+
+  it("checks the value shape per column kind", () => {
+    expect(validateCellInput("12.5", "INT", true)).toBeNull();
+    expect(validateCellInput("abc", "INT", true)).toBe("editInvalidNumber");
+    expect(validateCellInput("2024-03-05", "DATE", true)).toBeNull();
+    expect(validateCellInput("2024-03-05 07:08:09", "DATETIME", true)).toBeNull();
+    expect(validateCellInput("07:08:09", "TIME", true)).toBeNull();
+    expect(validateCellInput("true", "BOOLEAN", true)).toBeNull();
+    expect(validateCellInput("yes", "BOOLEAN", true)).toBe("editInvalidBoolean");
+    // 未知の型は決して弾かない (サーバに最終判断を委ねる)。
+    expect(validateCellInput("anything", "GEOMETRY", true)).toBeNull();
   });
 });
 
