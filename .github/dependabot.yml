@@ -39,3 +39,15 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 5
+    groups:
+      # codeql-action は単一リポジトリの中の 3 つのアクション
+      # (init / autobuild / analyze) を使っており、これらは同じバージョンで
+      # なければ「Loaded a configuration file for version 'X', but running
+      # version 'Y'」の設定エラーで CodeQL ジョブが必ず落ちる
+      # (.github/workflows/codeql.yml のコメント参照)。既定では Dependabot が
+      # アクションごとに別々の PR を出すため、片方だけマージされた瞬間に main が
+      # 壊れる事故が v4.37.0 / v4.37.1 / v4.37.3 / v4.37.4 と繰り返し発生した。
+      # 3 つを 1 本の PR にまとめて常に同時更新させることで構造的に防ぐ。
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
