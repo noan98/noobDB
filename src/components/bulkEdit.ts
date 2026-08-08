@@ -1,5 +1,5 @@
 import type { CellValue, Column } from "../api/tauri";
-import { rowEditKey } from "./cellEdit";
+import { editIsNoop, rowEditKey } from "./cellEdit";
 
 /**
  * 結果グリッドの複数セル一括編集 (#596)。
@@ -25,13 +25,23 @@ export interface BulkEditTarget {
   rowKey: string;
   /** `columns` 上の列添字。 */
   colIdx: number;
-  /** 適用する生の入力値 ("NULL" は NULL クリア)。選択セル全体で共通。 */
-  value: string;
+  /**
+   * 適用する生の入力値 ("NULL" は SQL NULL)。選択セル全体で共通。
+   * `null` は「値ではなく、このセルの保留編集を**解除**する」意味で、セルが
+   * すでにその値を持っていた (= 編集が無変更になる) ときに使う。
+   */
+  value: string | null;
 }
 
 export interface BulkEditPlan {
-  /** 値を適用するセル (rowKey + colIdx + value)。 */
+  /** 実際に値が変わるセル (rowKey + colIdx + 値)。 */
   applied: BulkEditTarget[];
+  /**
+   * すでにその値を持っていたセル。`value: null` を積んであり、呼び出し側は
+   * `applied` と一緒に渡すことで、そのセルに残っていた保留編集を解除できる
+   * (単一セル編集の no-op 判定と挙動を揃えるため。`editIsNoop` を参照)。
+   */
+  unchanged: BulkEditTarget[];
   /** 値が適用される個別の行数 (重複 PK は 1 行に畳む)。 */
   rowCount: number;
   /** 編集不可列のためスキップしたセル数。 */
@@ -66,14 +76,19 @@ export interface PlanBulkEditInput {
  * 選択範囲 × 単一値から、実際に適用する pending edit のリストとスキップ件数を算出する。
  * 行は PK で特定するため `pkIndices` が空なら空計画を返す。各 (行, 列) について編集
  * 可能性と型妥当性を確認し、通ったセルだけ `applied` に積む。
+ *
+ * すでに同じ値を持っているセルは `applied` ではなく `unchanged` へ回す。無変更の
+ * `SET col = <同じ値>` を Apply で発行せず、保留編集の件数表示も実際に変わるセル
+ * だけを数えるためで、単一セル編集の no-op 判定 (`editIsNoop`) と挙動が揃う。
  */
 export function planBulkCellEdit(input: PlanBulkEditInput): BulkEditPlan {
   const applied: BulkEditTarget[] = [];
+  const unchanged: BulkEditTarget[] = [];
   let skippedReadonly = 0;
   let skippedInvalid = 0;
   // PK 欠如テーブルは安全のため一括編集の対象外。
   if (input.pkIndices.length === 0) {
-    return { applied, rowCount: 0, skippedReadonly: 0, skippedInvalid: 0 };
+    return { applied, unchanged, rowCount: 0, skippedReadonly: 0, skippedInvalid: 0 };
   }
   const touchedRows = new Set<string>();
   // 列の編集可否は行に依らないので先に一度だけ判定し、不可列は選択セル数ぶん
@@ -92,9 +107,14 @@ export function planBulkCellEdit(input: PlanBulkEditInput): BulkEditPlan {
         skippedInvalid++;
         continue;
       }
+      // すでにその値のセルは編集を積まず、逆に残っている保留編集を解除する。
+      if (editIsNoop(input.value, input.columns[colIdx], row[colIdx])) {
+        unchanged.push({ rowKey, colIdx, value: null });
+        continue;
+      }
       applied.push({ rowKey, colIdx, value: input.value });
       touchedRows.add(rowKey);
     }
   }
-  return { applied, rowCount: touchedRows.size, skippedReadonly, skippedInvalid };
+  return { applied, unchanged, rowCount: touchedRows.size, skippedReadonly, skippedInvalid };
 }
