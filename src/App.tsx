@@ -6512,6 +6512,7 @@ export default function App() {
                   ) : tab.showChart && tab.result && !tab.streaming ? (
                     <ChartView
                       result={tab.result}
+                      sourceSql={tab.lastExecutedSql}
                       onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.showPivot && tab.result && !tab.streaming ? (

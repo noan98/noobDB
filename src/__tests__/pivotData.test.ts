@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildPivotModel,
   buildPivotSql,
   defaultPivotConfig,
   firstNumericColumnIndex,
+  pivotConfigKeyFrom,
   pivotValueLabel,
+  readStoredPivotConfig,
+  sanitizePivotConfig,
+  writeStoredPivotConfig,
   MAX_PIVOT_ROWS,
   type PivotConfig,
 } from "../components/pivotData";
@@ -232,5 +236,95 @@ describe("buildPivotSql", () => {
       agg: "sum",
     });
     expect(sql).toContain("`we``ird`");
+  });
+});
+
+describe("pivotConfigKeyFrom (#909)", () => {
+  it("derives a stable key from the executed SQL text", () => {
+    const key = pivotConfigKeyFrom("SELECT * FROM sales");
+    expect(key).toBeDefined();
+    expect(key).toBe(pivotConfigKeyFrom("SELECT * FROM sales"));
+    expect(key).toBe(pivotConfigKeyFrom("  SELECT * FROM sales  "));
+  });
+
+  it("differs for different SQL text, and from chart keys (different namespace)", () => {
+    expect(pivotConfigKeyFrom("SELECT 1")).not.toBe(pivotConfigKeyFrom("SELECT 2"));
+  });
+
+  it("returns undefined when there is no SQL (unexecuted / empty)", () => {
+    expect(pivotConfigKeyFrom(undefined)).toBeUndefined();
+    expect(pivotConfigKeyFrom("")).toBeUndefined();
+    expect(pivotConfigKeyFrom("   ")).toBeUndefined();
+  });
+});
+
+describe("sanitizePivotConfig (#909, corruption resistance)", () => {
+  it("accepts a well-formed config referencing valid columns", () => {
+    const cfg: PivotConfig = { rowField: 0, colField: 1, valueField: 2, agg: "avg" };
+    expect(sanitizePivotConfig(cfg, COLUMNS)).toEqual(cfg);
+  });
+
+  it("rejects non-object / null input", () => {
+    expect(sanitizePivotConfig(null, COLUMNS)).toBeNull();
+    expect(sanitizePivotConfig("bogus", COLUMNS)).toBeNull();
+  });
+
+  it("rejects an unknown aggregation", () => {
+    expect(sanitizePivotConfig({ rowField: 0, colField: null, valueField: 2, agg: "median" }, COLUMNS)).toBeNull();
+  });
+
+  it("falls back to null when rowField is out of range (column set changed)", () => {
+    expect(sanitizePivotConfig({ rowField: 9, colField: null, valueField: 2, agg: "sum" }, COLUMNS)).toBeNull();
+  });
+
+  it("degrades an out-of-range colField to null rather than rejecting the whole config", () => {
+    const result = sanitizePivotConfig({ rowField: 0, colField: 9, valueField: 2, agg: "sum" }, COLUMNS);
+    expect(result).toEqual({ rowField: 0, colField: null, valueField: 2, agg: "sum" });
+  });
+
+  it("degrades colField equal to rowField to null", () => {
+    const result = sanitizePivotConfig({ rowField: 0, colField: 0, valueField: 2, agg: "sum" }, COLUMNS);
+    expect(result).toEqual({ rowField: 0, colField: null, valueField: 2, agg: "sum" });
+  });
+
+  it("falls back to null when a non-count aggregation loses its value field", () => {
+    expect(sanitizePivotConfig({ rowField: 0, colField: null, valueField: 9, agg: "sum" }, COLUMNS)).toBeNull();
+  });
+
+  it("allows a null value field for count", () => {
+    const cfg: PivotConfig = { rowField: 0, colField: null, valueField: null, agg: "count" };
+    expect(sanitizePivotConfig(cfg, COLUMNS)).toEqual(cfg);
+  });
+});
+
+describe("readStoredPivotConfig / writeStoredPivotConfig (#909)", () => {
+  const KEY = "noobdb.pivotconfig.v1::test";
+
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it("round-trips a config through localStorage", () => {
+    const cfg: PivotConfig = { rowField: 0, colField: 1, valueField: 2, agg: "max" };
+    writeStoredPivotConfig(KEY, cfg);
+    expect(readStoredPivotConfig(KEY, COLUMNS)).toEqual(cfg);
+  });
+
+  it("returns null when no key is given (unexecuted SQL)", () => {
+    expect(readStoredPivotConfig(undefined, COLUMNS)).toBeNull();
+    expect(() =>
+      writeStoredPivotConfig(undefined, { rowField: 0, colField: null, valueField: null, agg: "count" }),
+    ).not.toThrow();
+  });
+
+  it("returns null for missing or corrupt JSON instead of throwing", () => {
+    expect(readStoredPivotConfig(KEY, COLUMNS)).toBeNull();
+    localStorage.setItem(KEY, "{not json");
+    expect(readStoredPivotConfig(KEY, COLUMNS)).toBeNull();
+  });
+
+  it("falls back to null when the stored config no longer fits the current columns", () => {
+    const cfg: PivotConfig = { rowField: 9, colField: null, valueField: null, agg: "count" };
+    writeStoredPivotConfig(KEY, cfg);
+    expect(readStoredPivotConfig(KEY, COLUMNS)).toBeNull();
   });
 });
