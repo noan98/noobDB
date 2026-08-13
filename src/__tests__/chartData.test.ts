@@ -1,14 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CellValue, Column } from "../api/tauri";
 import {
   buildChartModel,
+  chartConfigKeyFrom,
   chartNotices,
   defaultChartConfig,
   inferNumericColumns,
   MAX_POINTS,
   niceTicks,
+  readStoredChartConfig,
+  sanitizeChartConfig,
   toNumber,
   valueExtent,
+  writeStoredChartConfig,
+  type ChartConfig,
 } from "../components/chartData";
 
 const col = (name: string): Column => ({ name, type_name: "x" });
@@ -270,5 +275,103 @@ describe("niceTicks", () => {
   it("returns a single tick for degenerate ranges", () => {
     expect(niceTicks(0, 0)).toEqual([0]);
     expect(niceTicks(7, 7)).toEqual([7]);
+  });
+});
+
+describe("chartConfigKeyFrom (#909)", () => {
+  it("derives a stable key from the executed SQL text", () => {
+    const key = chartConfigKeyFrom("SELECT * FROM users");
+    expect(key).toBeDefined();
+    expect(key).toBe(chartConfigKeyFrom("SELECT * FROM users"));
+    // Leading/trailing whitespace differences don't matter.
+    expect(key).toBe(chartConfigKeyFrom("  SELECT * FROM users  "));
+  });
+
+  it("differs for different SQL text", () => {
+    expect(chartConfigKeyFrom("SELECT 1")).not.toBe(chartConfigKeyFrom("SELECT 2"));
+  });
+
+  it("returns undefined when there is no SQL (unexecuted / empty)", () => {
+    expect(chartConfigKeyFrom(undefined)).toBeUndefined();
+    expect(chartConfigKeyFrom("")).toBeUndefined();
+    expect(chartConfigKeyFrom("   ")).toBeUndefined();
+  });
+});
+
+describe("sanitizeChartConfig (#909, corruption resistance)", () => {
+  const columns = [col("name"), col("amount"), col("qty")];
+
+  it("accepts a well-formed config referencing valid columns", () => {
+    const cfg: ChartConfig = { type: "line", xCol: 0, yCols: [1, 2], aggregation: "sum" };
+    expect(sanitizeChartConfig(cfg, columns)).toEqual(cfg);
+  });
+
+  it("rejects non-object / null input", () => {
+    expect(sanitizeChartConfig(null, columns)).toBeNull();
+    expect(sanitizeChartConfig("bogus", columns)).toBeNull();
+    expect(sanitizeChartConfig(42, columns)).toBeNull();
+  });
+
+  it("rejects an unknown chart type or aggregation", () => {
+    expect(sanitizeChartConfig({ type: "scatter", xCol: 0, yCols: [1], aggregation: "sum" }, columns)).toBeNull();
+    expect(sanitizeChartConfig({ type: "bar", xCol: 0, yCols: [1], aggregation: "median" }, columns)).toBeNull();
+  });
+
+  it("falls back to null when xCol is out of range (column set changed)", () => {
+    expect(sanitizeChartConfig({ type: "bar", xCol: 9, yCols: [1], aggregation: "none" }, columns)).toBeNull();
+  });
+
+  it("drops out-of-range / duplicate Y columns but keeps the rest", () => {
+    const result = sanitizeChartConfig(
+      { type: "bar", xCol: 0, yCols: [1, 1, 9, 1], aggregation: "none" },
+      columns,
+    );
+    expect(result).toEqual({ type: "bar", xCol: 0, yCols: [1], aggregation: "none" });
+  });
+
+  it("falls back to null when every saved Y column disappeared (schema drift)", () => {
+    expect(sanitizeChartConfig({ type: "bar", xCol: 0, yCols: [9, 10], aggregation: "none" }, columns)).toBeNull();
+  });
+
+  it("respects an intentionally empty Y selection", () => {
+    const cfg: ChartConfig = { type: "bar", xCol: 0, yCols: [], aggregation: "none" };
+    expect(sanitizeChartConfig(cfg, columns)).toEqual(cfg);
+  });
+
+  it("excludes a saved Y column that now equals xCol", () => {
+    const result = sanitizeChartConfig({ type: "bar", xCol: 1, yCols: [1, 2], aggregation: "none" }, columns);
+    expect(result).toEqual({ type: "bar", xCol: 1, yCols: [2], aggregation: "none" });
+  });
+});
+
+describe("readStoredChartConfig / writeStoredChartConfig (#909)", () => {
+  const KEY = "noobdb.chartconfig.v1::test";
+  const columns = [col("name"), col("amount")];
+
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it("round-trips a config through localStorage", () => {
+    const cfg: ChartConfig = { type: "pie", xCol: 0, yCols: [1], aggregation: "count" };
+    writeStoredChartConfig(KEY, cfg);
+    expect(readStoredChartConfig(KEY, columns)).toEqual(cfg);
+  });
+
+  it("returns null when no key is given (unexecuted SQL)", () => {
+    expect(readStoredChartConfig(undefined, columns)).toBeNull();
+    // Writing with no key is a silent no-op, not a throw.
+    expect(() => writeStoredChartConfig(undefined, { type: "bar", xCol: 0, yCols: [1], aggregation: "none" })).not.toThrow();
+  });
+
+  it("returns null for missing or corrupt JSON instead of throwing", () => {
+    expect(readStoredChartConfig(KEY, columns)).toBeNull();
+    localStorage.setItem(KEY, "{not json");
+    expect(readStoredChartConfig(KEY, columns)).toBeNull();
+  });
+
+  it("falls back to null when the stored config no longer fits the current columns", () => {
+    const cfg: ChartConfig = { type: "bar", xCol: 5, yCols: [6], aggregation: "none" };
+    writeStoredChartConfig(KEY, cfg);
+    expect(readStoredChartConfig(KEY, columns)).toBeNull();
   });
 });

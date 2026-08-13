@@ -5,6 +5,7 @@
 // 描画は ChartView (SVG) が行う。副作用が無いので Vitest でユニットテストする。
 
 import type { CellValue, Column } from "../api/tauri";
+import { resultViewKey } from "./resultViewKey";
 
 export type ChartType = "bar" | "line" | "area" | "pie";
 export type Aggregation = "none" | "sum" | "avg" | "count";
@@ -254,4 +255,85 @@ export function chartNotices(model: ChartModel): ChartNotice[] {
   }
   if ((model.excludedNonNumeric ?? 0) > 0) notices.push("nonNumericExcluded");
   return notices;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 設定の永続化 (#909)。実行 SQL のフィンガープリント単位で localStorage に保存し、
+// 再実行・タブ切替・タブ復元・再起動をまたいで復元する。破損耐性は既存パターン
+// (`gridFooter.ts` の `readStoredFooterState` 等) に倣い、壊れた JSON・型不一致・
+// 列構成が変わって参照が成立しない設定は破棄して呼び出し側の既定値へ委ねる。
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CHART_CONFIG_NAMESPACE = "noobdb.chartconfig.v1";
+
+/** 実行 SQL からチャート設定の永続化キーを作る。SQL が無ければ永続化しない。 */
+export function chartConfigKeyFrom(sql: string | undefined): string | undefined {
+  return resultViewKey(CHART_CONFIG_NAMESPACE, sql);
+}
+
+const CHART_TYPES: ChartType[] = ["bar", "line", "area", "pie"];
+const AGGREGATIONS: Aggregation[] = ["none", "sum", "avg", "count"];
+
+/**
+ * パース済み JSON を現在の列構成に照らして妥当な `ChartConfig` に整える。純粋
+ * (ストレージ非依存) なのでユニットテストできる。型不正・列参照が範囲外・X 軸が
+ * 消えた場合は `null` を返し、呼び出し側は `defaultChartConfig` へ安全に縮退する。
+ * 保存時に Y 軸が空 (ユーザが意図的に全解除) だった場合はそのまま尊重するが、
+ * 保存時に Y 軸があったのに列構成の変化で全滅した場合は `null` (縮退) にする —
+ * 「列が変わった」ことの検出に使う。
+ */
+export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfig | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+
+  const type = o.type;
+  if (typeof type !== "string" || !CHART_TYPES.includes(type as ChartType)) return null;
+
+  const aggregation = o.aggregation;
+  if (typeof aggregation !== "string" || !AGGREGATIONS.includes(aggregation as Aggregation)) return null;
+
+  const xCol = o.xCol;
+  if (typeof xCol !== "number" || !Number.isInteger(xCol) || xCol < 0 || xCol >= columns.length) return null;
+
+  const yColsRaw = o.yCols;
+  if (!Array.isArray(yColsRaw)) return null;
+  const seen = new Set<number>();
+  const yCols: number[] = [];
+  for (const y of yColsRaw) {
+    if (typeof y === "number" && Number.isInteger(y) && y >= 0 && y < columns.length && y !== xCol && !seen.has(y)) {
+      seen.add(y);
+      yCols.push(y);
+    }
+  }
+  // 保存時に Y 軸が選ばれていたのに、列構成の変化で 1 つも生き残らなかった
+  // 場合だけ縮退する。保存時から空だったなら (ユーザの意図的な全解除) 尊重する。
+  if (yColsRaw.length > 0 && yCols.length === 0) return null;
+
+  return { type: type as ChartType, xCol, yCols, aggregation: aggregation as Aggregation };
+}
+
+/**
+ * 保存済みチャート設定を読む。キー無し・壊れた JSON・型不一致・列構成の不整合は
+ * `null` を返し、呼び出し側 (`ChartView`) は `defaultChartConfig` にフォールバック
+ * する (private mode / quota / 破損に耐える。#566 と同じ方針)。
+ */
+export function readStoredChartConfig(key: string | undefined, columns: Column[]): ChartConfig | null {
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return null;
+    return sanitizeChartConfig(JSON.parse(raw), columns);
+  } catch {
+    return null;
+  }
+}
+
+/** チャート設定を保存する。キー無し (SQL 未実行) のときは何もしない。 */
+export function writeStoredChartConfig(key: string | undefined, config: ChartConfig): void {
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(config));
+  } catch {
+    // ignore (private mode, quota)
+  }
 }

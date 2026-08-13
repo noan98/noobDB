@@ -47,12 +47,19 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { copyToClipboard } from "./components/clipboard";
 import {
+  buildDropIndexSql,
   buildDropTableSql,
   buildRenameTableSql,
   buildTruncateSql,
 } from "./components/tableMaintenance";
 import type { AlterStatement } from "./components/alterTable";
 import { buildCreateTableAsSql, isCtasEligibleSql } from "./components/resultsToTable";
+import {
+  buildCreateViewSql,
+  buildDropViewSql,
+  buildReplaceViewSql,
+  extractViewBody,
+} from "./components/viewMaintenance";
 import type { MaintenanceCommand } from "./components/maintenanceCommands";
 import { quoteIdentFor } from "./components/sqlDialect";
 import {
@@ -156,8 +163,14 @@ const RenameTableDialog = lazy(() =>
 const AlterTableModal = lazy(() =>
   import("./components/AlterTableModal").then((m) => ({ default: m.AlterTableModal })),
 );
+const CreateIndexModal = lazy(() =>
+  import("./components/CreateIndexModal").then((m) => ({ default: m.CreateIndexModal })),
+);
 const SaveAsTableModal = lazy(() =>
   import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
+);
+const SaveAsViewModal = lazy(() =>
+  import("./components/SaveAsViewModal").then((m) => ({ default: m.SaveAsViewModal })),
 );
 const RegisterLocalTableModal = lazy(() =>
   import("./components/RegisterLocalTableModal").then((m) => ({ default: m.RegisterLocalTableModal })),
@@ -306,6 +319,14 @@ import {
   toggleFavorite as toggleFavoriteTable,
   type QuickAccessState,
 } from "./tableQuickAccess";
+import {
+  forgetSnippetQuickAccess,
+  loadSnippetQuickAccess,
+  recordSnippetRun,
+  saveSnippetQuickAccess,
+  toggleSnippetFavorite,
+  type SnippetQuickAccessState,
+} from "./snippetQuickAccess";
 import {
   EMPTY_PLAN_WATCH,
   isWatched,
@@ -706,6 +727,15 @@ interface Tab {
    * the backend at the moment the stream stopped.
    */
   partialResult?: { reason: "cancelled" | "timeout"; rows: number } | null;
+  /**
+   * ビュー定義編集タブの目印 (#851)。ツリーで「定義を編集」を選んだときに、
+   * 取得した DDL の本文 (`extractViewBody`) を `sql` へ流し込んだうえでここに
+   * 元のビュー名を残す — 「ビューへ保存」ボタンを押したとき `SaveAsViewModal` の
+   * 名前欄をこの値で初期化し、同名のまま確定すれば置換 (CREATE OR REPLACE VIEW)
+   * になる。リネームして保存すれば新規ビューになる (通常の「保存」と同じ衝突判定)。
+   * In-memory only (タブ復元では引き継がない — 復元後は普通のクエリタブとして扱う)。
+   */
+  editingViewName?: string;
 }
 
 /**
@@ -1407,6 +1437,12 @@ export default function App() {
   // お気に入り / 最近使ったテーブル。アクティブ接続プロファイル単位で
   // localStorage に永続化する。`handleOpenTable` がテーブルを開くたびに最近へ記録。
   const [quickAccess, setQuickAccess] = useState<QuickAccessState>(EMPTY_QUICK_ACCESS);
+  // お気に入り (ピン留め) / 最近実行したスニペット (#877)。スニペットは接続を
+  // 跨いで再利用されることが多いため、テーブルのクイックアクセスと異なりプロファイル
+  // 単位ではなくグローバルに 1 つだけ持つ (`snippetQuickAccess.ts` 参照)。
+  const [snippetQuickAccess, setSnippetQuickAccess] = useState<SnippetQuickAccessState>(
+    () => loadSnippetQuickAccess(),
+  );
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // 直近の実行クエリ (最新が先頭、連続重複は畳む)。QueryEditor の ↑/↓ 履歴
   // ナビゲーション用。接続プロファイル単位で読み込み、実行のたびに
@@ -1603,8 +1639,18 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
   // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
+  // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
+  const [createIndexTarget, setCreateIndexTarget] = useState<{ database: string; table: string } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
+  // 結果をビューへ保存 / 既存ビュー定義の編集を保存 (#851): 対象。null で閉じる。
+  // `initialName` は「定義を編集」タブから開いたときのみセットされ (`editingViewName`)、
+  // モーダルの名前欄の初期値になる。
+  const [saveAsViewRequest, setSaveAsViewRequest] = useState<{
+    sql: string;
+    database: string;
+    initialName?: string;
+  } | null>(null);
   // ローカル横断クエリ (#740): 駆動元セッションを持たない「ローカル」接続。アプリ
   // 起動後、初めて使われたときに一度だけ作成し (`ensureLocalSession`)、以後は
   // アクティブな接続の切替とは独立に生存し続ける — `sessionId` (現在アクティブな
@@ -2254,7 +2300,14 @@ export default function App() {
           setPlanWatch(loadPlanWatch(profile.id));
         }
         if (changed > 0) {
-          toast.info(translate("planWatchChangedToast", { count: changed }));
+          // 見た目は info のままだが、アクティビティセンター (#912) には
+          // 「警告」として残す — 実行計画の変化は後から拾い直したい種類の
+          // イベントで、重大度で絞り込めると見つけやすい。
+          toast.notify({
+            message: translate("planWatchChangedToast", { count: changed }),
+            tone: "info",
+            severity: "warning",
+          });
         }
       } finally {
         planWatchInFlightRef.current.delete(profile.id);
@@ -2354,7 +2407,12 @@ export default function App() {
         });
         const summary = summarizeDrift(diff, diffIndexes(rec.prev, gen));
         if (summary.tables.length > 0) {
-          toast.info(translate("schemaDriftChangedToast", { detail: buildDriftDetail(summary) }));
+          // 実行計画ウォッチと同じく、見た目は info・記録は警告 (#912)。
+          toast.notify({
+            message: translate("schemaDriftChangedToast", { detail: buildDriftDetail(summary) }),
+            tone: "info",
+            severity: "warning",
+          });
         }
       } catch (e) {
         toast.error(translate("schemaDriftRefreshFailedToast", { error: String(e) }));
@@ -2392,6 +2450,25 @@ export default function App() {
       return next;
     });
   }, [selectedProfile?.id]);
+
+  // スニペットのお気に入り (ピン留め) トグル (#877)。接続の有無に関わらず常に
+  // 使える (ローカル永続化のみで DB には触れない)。
+  const handleToggleSnippetFavorite = useCallback((snippet: Snippet) => {
+    setSnippetQuickAccess((prev) => {
+      const next = toggleSnippetFavorite(prev, snippet.id);
+      saveSnippetQuickAccess(next);
+      return next;
+    });
+  }, []);
+
+  // ワンクリック実行したスニペットを「最近実行」の先頭へ記録する (#877)。
+  const recordSnippetRunUsage = useCallback((id: string) => {
+    setSnippetQuickAccess((prev) => {
+      const next = recordSnippetRun(prev, id);
+      saveSnippetQuickAccess(next);
+      return next;
+    });
+  }, []);
 
   // Keep the active profile pointer in sync when the profile is edited or
   // when the saved list is refreshed for any other reason.
@@ -4283,6 +4360,26 @@ export default function App() {
     }
   }, [activeTab, sessionId, activeEditor, addTab]);
 
+  // 保存済みスニペットのワンクリック実行 (#877)。専用の新しいクエリタブへ SQL を
+  // 流し込み、通常のエディタ実行 (`dispatchEditorAction` の "run") と全く同じ
+  // `runInTabWithGate` に委譲する — 危険クエリ確認 (DangerousQueryDialog)・
+  // 読み取り専用ガード・本番書き込み承認・自動 LIMIT を含む既存の安全網をそのまま
+  // 通し、実行経路を二重実装しない。`newTab: false` は「このスニペット専用に
+  // 作った新タブをそのまま使う」指定で、`settings.resultsInNewTab` が有効でも
+  // さらにもう 1 枚タブを開かせない。
+  const handleRunSnippet = useCallback((snippet: Snippet) => {
+    if (!sessionId) return;
+    const tab: Tab = {
+      ...makeQueryTab(),
+      sql: snippet.sql,
+      lastExecutedSql: snippet.sql,
+      title: snippet.name,
+    };
+    addTab(tab);
+    runInTabWithGate(tab, snippet.sql, { newTab: false });
+    recordSnippetRunUsage(snippet.id);
+  }, [sessionId, addTab, runInTabWithGate, recordSnippetRunUsage]);
+
   // Insert an advisor's fix DDL (#741) into the focused query/explain editor,
   // or a fresh query tab. Executing it still goes through the existing safety
   // nets (read-only rejection, dangerous-query confirmation). The panel stays
@@ -4354,6 +4451,13 @@ export default function App() {
       if (activeProfileIdRef.current) {
         setPlanWatch(loadPlanWatch(activeProfileIdRef.current));
       }
+      // クイックアクセス (#877): 削除したスニペットをお気に入り/最近実行から
+      // 取り除く (実行計画ウォッチと同じく、Undo で元に戻ってもここは復元しない)。
+      setSnippetQuickAccess((prev) => {
+        const next = forgetSnippetQuickAccess(prev, id);
+        if (next !== prev) saveSnippetQuickAccess(next);
+        return next;
+      });
     }, "statusFailedDeleteSnippet");
     if (!ok) return;
     // Undo (#676): snippets have no secrets, so restoring with the original id
@@ -4763,6 +4867,30 @@ export default function App() {
     }
   }, [sessionId, openQueryInEditor, toast]);
 
+  // ビュー定義の編集 (#851): 選択したビューの DDL を取得し、`CREATE VIEW` の
+  // 外殻を剥がした本文だけを新しいクエリタブへ展開する。タブに `editingViewName`
+  // を残しておくと、後で「ビューへ保存」ボタンを押したときに `SaveAsViewModal` の
+  // 名前欄がこの名前で初期化され、そのまま確定すれば `CREATE OR REPLACE VIEW`
+  // (SQLite は DROP+CREATE) による置換保存になる (`handleSaveAsViewConfirm`)。
+  // DDL 取得自体は読み取りのみなので read_only セッションでも実行できる —
+  // 実際の保存 (書き込み) は別のボタン操作で `!readOnly` によりガードされる。
+  const handleEditViewDefinition = useCallback(async (database: string, name: string) => {
+    if (!sessionId) return;
+    try {
+      const ddl = await api.getObjectDefinition(sessionId, database, "view", name, null);
+      const tab: Tab = {
+        ...makeQueryTab(),
+        sql: extractViewBody(ddl),
+        title: name,
+        database,
+        editingViewName: name,
+      };
+      addTab(tab);
+    } catch (e) {
+      toast.error(translate("objDefinitionError", { error: String(e) }));
+    }
+  }, [sessionId, addTab, toast]);
+
   // CREATE TABLE ウィザードの実行: DDL を新しいクエリタブで実行し、閉じる。
   const handleCreateTableRun = useCallback((sql: string) => {
     setCreateTableDb(null);
@@ -4840,6 +4968,27 @@ export default function App() {
       // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
       tabsRef.current
         .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
+        .forEach((tt) => handleCloseTabRef.current(tt.id));
+    }
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
+
+  // ビューの DROP (#851)。確認導線・実行経路は `handleDropTable` をそのまま流用する
+  // (Issue の方針: 「削除は既存の DROP 確認導線を流用」)。
+  const handleDropView = useCallback(async (database: string, name: string) => {
+    const ok = await confirm({
+      title: translate("dropViewConfirmTitle", { view: name }),
+      message: maintenanceMessage(translate("dropViewConfirmBody", { view: name })),
+      confirmLabel: translate("dropViewConfirmOk"),
+      tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? name : undefined,
+    });
+    if (!ok) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const success = await runMaintenanceDdl(buildDropViewSql(driver, database, name), database);
+    if (success) {
+      // 定義を編集中だった同名ビューのタブは整合性が取れなくなるので閉じる。
+      tabsRef.current
+        .filter((tt) => tt.editingViewName === name && tt.database === database)
         .forEach((tt) => handleCloseTabRef.current(tt.id));
     }
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
@@ -4925,6 +5074,41 @@ export default function App() {
     }
   }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache]);
 
+  // インデックス作成の軽量モーダル (#850) の実行: 非破壊操作なので CreateTableModal と
+  // 同じく確認ダイアログなしで直接実行する (destructive な DROP INDEX とは異なる)。
+  const handleCreateIndexRun = useCallback(async (sql: string) => {
+    const target = createIndexTarget;
+    if (!target) return;
+    const success = await runMaintenanceDdl(sql, target.database);
+    if (success) {
+      toast.success(translate("createIndexSuccess"));
+      setCreateIndexTarget(null);
+    }
+  }, [createIndexTarget, runMaintenanceDdl, toast]);
+
+  const handleCreateIndexToEditor = useCallback((sql: string) => {
+    setCreateIndexTarget(null);
+    openQueryInEditor(sql);
+  }, [openQueryInEditor]);
+
+  // インデックスノード右クリックからの DROP INDEX (#850)。TRUNCATE/DROP TABLE と
+  // 同じく不可逆 × 本番接続ではタイプ入力の強確認ゲート (#675) を追加する。
+  // PK インデックスは `ConnectionList` 側で常に無効化しているのでここには来ない。
+  const handleDropIndex = useCallback(async (database: string, table: string, indexName: string) => {
+    const driver = selectedProfile?.driver ?? "mysql";
+    const sql = buildDropIndexSql(driver, database, table, indexName);
+    const ok = await confirm({
+      title: translate("dropIndexConfirmTitle", { index: indexName }),
+      message: maintenanceMessage(translate("dropIndexConfirmBody", { index: indexName, table })),
+      confirmLabel: translate("dropIndexConfirmOk"),
+      tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
+    });
+    if (!ok) return;
+    const success = await runMaintenanceDdl(sql, database);
+    if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, toast]);
+
   // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
   // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
@@ -4939,6 +5123,46 @@ export default function App() {
       if (success) toast.success(translate("saveAsTableSuccess", { table: newName }));
     })();
   }, [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast]);
+
+  // 現在のクエリをビューとして保存 / 既存ビュー定義の編集を保存 (#851)。
+  //
+  // `replace` は `SaveAsViewModal` が既存ビュー名との衝突から判定済み: 新規なら
+  // 単一の `CREATE VIEW` (`api.runQuery` の単文実行)、置換なら
+  // `buildReplaceViewSql` が返す複数文 (SQLite は DROP+CREATE、MSSQL は
+  // CREATE OR ALTER) を `run_query_transaction` で all-or-nothing 実行する
+  // (`handleAlterTableRun` と同じ複数文パターン)。モーダルは確定と同時に閉じ
+  // (`SaveAsTableModal` と同じ流儀)、実行・スキーマキャッシュ更新・成功トーストは
+  // 非同期に行う。
+  const handleSaveAsViewConfirm = useCallback((newName: string, replace: boolean) => {
+    const req = saveAsViewRequest;
+    setSaveAsViewRequest(null);
+    if (!req || !sessionId) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    void (async () => {
+      try {
+        if (replace) {
+          await api.runQueryTransaction(
+            sessionId,
+            buildReplaceViewSql(driver, req.database, newName, req.sql),
+            req.database,
+          );
+        } else {
+          await api.runQuery(
+            sessionId,
+            buildCreateViewSql(driver, req.database, newName, req.sql),
+            req.database,
+          );
+        }
+        invalidateSchemaCache(req.database);
+        connectionListRef.current?.refreshSchema();
+        toast.success(
+          translate(replace ? "saveAsViewReplaceSuccess" : "saveAsViewSuccess", { view: newName }),
+        );
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+      }
+    })();
+  }, [saveAsViewRequest, sessionId, selectedProfile?.driver, invalidateSchemaCache, toast]);
 
   // ローカル横断クエリ (#740) ――――――――――――――――――――――――――――――――
   //
@@ -6106,7 +6330,9 @@ export default function App() {
       }
     }
 
-    // スニペット。
+    // スニペット。挿入 (常時) に加え、接続中は「保存済みスニペットを直接実行」
+    // (#877) の候補も並べる。id を分けて 2 候補を独立に検索・実行できるようにする
+    // (挿入だけ試したいケースを妨げない)。
     for (const snippet of snippets) {
       items.push({
         id: `snippet:${snippet.id}`,
@@ -6117,6 +6343,17 @@ export default function App() {
         icon: "snippet",
         run: () => handleInsertSnippet(snippet),
       });
+      if (sessionId) {
+        items.push({
+          id: `snippet-run:${snippet.id}`,
+          group: "snippets",
+          label: t("cmdkActionRunSnippet", { name: snippet.name }),
+          sublabel: snippet.folder ?? undefined,
+          keywords: `${snippet.tags.join(" ")} ${snippet.sql} run execute 実行`,
+          icon: "query",
+          run: () => handleRunSnippet(snippet),
+        });
+      }
     }
 
     // 直近のクエリ履歴 (最新優先、件数を抑える)。
@@ -6149,6 +6386,7 @@ export default function App() {
     handleConnect,
     handleRunTableSelect,
     handleInsertSnippet,
+    handleRunSnippet,
     handleRestoreHistory,
     openFullView,
     toggleTheme,
@@ -6512,6 +6750,7 @@ export default function App() {
                   ) : tab.showChart && tab.result && !tab.streaming ? (
                     <ChartView
                       result={tab.result}
+                      sourceSql={tab.lastExecutedSql}
                       onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.showPivot && tab.result && !tab.streaming ? (
@@ -6626,6 +6865,20 @@ export default function App() {
                               setSaveAsTableRequest({
                                 sql: tab.lastExecutedSql,
                                 database: (tab.database ?? selectedProfile?.database) as string,
+                              })
+                          : undefined
+                      }
+                      onSaveAsView={
+                        sessionId &&
+                        !readOnly &&
+                        tab.lastExecutedSql &&
+                        isCtasEligibleSql(tab.lastExecutedSql) &&
+                        (tab.database ?? selectedProfile?.database)
+                          ? () =>
+                              setSaveAsViewRequest({
+                                sql: tab.lastExecutedSql,
+                                database: (tab.database ?? selectedProfile?.database) as string,
+                                initialName: tab.editingViewName,
                               })
                           : undefined
                       }
@@ -7019,11 +7272,15 @@ export default function App() {
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
             onAlterTable={(database, table) => setAlterTableTarget({ database, table })}
+            onCreateIndex={(database, table) => setCreateIndexTarget({ database, table })}
+            onDropIndex={handleDropIndex}
             onRunTableMaintenance={handleRunTableMaintenance}
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
             onShowDatabaseSizes={handleShowDatabaseSizes}
             onCopyTableName={handleCopyTableName}
             onOpenObjectDefinition={handleOpenObjectDefinition}
+            onEditViewDefinition={handleEditViewDefinition}
+            onDropView={handleDropView}
             onCreateSandbox={sessionId ? (db) => setSandboxCreateTarget({ database: db }) : undefined}
             sandboxes={sandboxes}
             onOpenSandbox={handleOpenSandbox}
@@ -7041,6 +7298,9 @@ export default function App() {
             watchedPlanIds={watchedPlanIdList}
             onTogglePlanWatch={selectedProfile ? handleTogglePlanWatch : undefined}
             onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
+            favoriteIds={snippetQuickAccess.favorites}
+            onToggleFavorite={handleToggleSnippetFavorite}
+            onRun={sessionId ? handleRunSnippet : undefined}
           />
         ) : sidebarTab === "history" ? (
           <HistoryList
@@ -7049,6 +7309,7 @@ export default function App() {
             reloadKey={historyReloadKey}
             onRestore={handleRestoreHistory}
             onOpenInNewTab={handleOpenHistoryInNewTab}
+            onSaveAsSnippet={handleSaveSnippetFromEditor}
             onNewQuery={sessionId ? handleNewTab : undefined}
           />
         ) : (
@@ -7919,6 +8180,23 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {createIndexTarget && sessionId && (
+          <Suspense fallback={null}>
+            <CreateIndexModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={createIndexTarget.database}
+              table={createIndexTarget.table}
+              readOnly={readOnly}
+              onRun={handleCreateIndexRun}
+              onSendToEditor={handleCreateIndexToEditor}
+              onClose={() => setCreateIndexTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {saveAsTableRequest && sessionId && (
           <Suspense fallback={null}>
             <SaveAsTableModal
@@ -7928,6 +8206,22 @@ export default function App() {
               sourceSql={saveAsTableRequest.sql}
               onConfirm={handleSaveAsTableConfirm}
               onClose={() => setSaveAsTableRequest(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {saveAsViewRequest && sessionId && (
+          <Suspense fallback={null}>
+            <SaveAsViewModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={saveAsViewRequest.database}
+              sourceSql={saveAsViewRequest.sql}
+              initialName={saveAsViewRequest.initialName}
+              onConfirm={handleSaveAsViewConfirm}
+              onClose={() => setSaveAsViewRequest(null)}
             />
           </Suspense>
         )}

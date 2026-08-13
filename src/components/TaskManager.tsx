@@ -202,6 +202,22 @@ export function TaskManager({
     }
   };
 
+  const handleClearRuns = async (task: TaskDefinition) => {
+    const ok = await confirm({
+      title: t("taskHistoryClear"),
+      message: t("taskHistoryClearConfirm", { name: task.name }),
+      confirmLabel: t("taskHistoryClear"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await api.clearTaskRuns(task.id);
+      setRuns([]);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
   const sorted = useMemo(() => sortTasksForDisplay(tasks), [tasks]);
   const profileName = (id: string) => profiles.find((p) => p.id === id)?.name ?? id;
 
@@ -287,6 +303,7 @@ export function TaskManager({
                       onDelete={() => void handleDelete(task)}
                       onRunNow={() => void handleRunNow(task)}
                       onToggleHistory={() => toggleHistory(task.id)}
+                      onClearHistory={() => void handleClearRuns(task)}
                     />
                   ))}
                 </chakra.div>
@@ -313,6 +330,7 @@ function TaskRow({
   onDelete,
   onRunNow,
   onToggleHistory,
+  onClearHistory,
 }: {
   task: TaskDefinition;
   profileName: string;
@@ -326,6 +344,7 @@ function TaskRow({
   onDelete: () => void;
   onRunNow: () => void;
   onToggleHistory: () => void;
+  onClearHistory: () => void;
 }) {
   const t = useT();
   const rel = relativeNextRun(task.next_run_at, now);
@@ -391,7 +410,12 @@ function TaskRow({
               {t("taskHistoryEmpty")}
             </chakra.p>
           ) : (
-            <chakra.div display="flex" flexDirection="column" gap="1">
+            <chakra.div display="flex" flexDirection="column" gap="1.5">
+              <Flex justify="flex-end">
+                <Button type="button" variant="danger" size="sm" onClick={onClearHistory}>
+                  {t("taskHistoryClear")}
+                </Button>
+              </Flex>
               {runs.map((r) => (
                 <chakra.div
                   key={r.id}

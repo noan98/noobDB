@@ -163,6 +163,39 @@ export function columnStats(values: CellValue[], _kind: CellKind): ColumnStats {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// #911 NULL 率 (列ヘッダの常時ミニバー / フッターの nullRate が共有)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 列統計から NULL 率 (0〜100) を取り出す。0 行の列は 0% とする (0 除算回避)。
+ * `ColumnStatsMenu` の NULL 率バー・集計フッターの `nullRate`・列ヘッダの常時
+ * ミニバー (#911) が同じ式を各所で書かないための単一定義。
+ */
+export function nullRatePercentOf(stats: Pick<ColumnStats, "count" | "nullCount">): number {
+  return stats.count > 0 ? (stats.nullCount / stats.count) * 100 : 0;
+}
+
+/**
+ * 行列 (在メモリの取得済み行) から列ごとの NULL 率 (0〜100) だけを求める (#911)。
+ *
+ * 列ヘッダのミニバーは**常時表示**で全列ぶん再計算されるため、DISTINCT / 代表値の
+ * 頻度マップまで作る `columnStats` を全列に流すのは重い (「fetch all」後は数万行 ×
+ * 列数)。NULL 率の算出に必要なのは非 NULL の数え上げだけなので、ここでは
+ * 追加のアロケーションを一切せず O(行数 × 列数) で数える軽量経路を用意する。
+ * 率の式そのものは `nullRatePercentOf` と共有する。
+ */
+export function columnNullRates(rows: CellValue[][], columnCount: number): number[] {
+  const cols = Math.max(0, Math.floor(columnCount));
+  const nulls = new Array<number>(cols).fill(0);
+  for (const row of rows) {
+    for (let i = 0; i < cols; i++) {
+      if (isNullish(row[i] ?? null)) nulls[i]++;
+    }
+  }
+  return nulls.map((nullCount) => nullRatePercentOf({ count: rows.length, nullCount }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // #524 全件集計 SQL
 // ─────────────────────────────────────────────────────────────────────────────
 
