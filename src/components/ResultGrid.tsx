@@ -87,6 +87,7 @@ import {
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
+import { parseClipboardGrid, planPasteEdit } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
 import type { ServerFilter, ServerFilterOp, ServerSort, ServerSortDirection } from "./serverBrowse";
 import { diffResultRows } from "../resultDiff";
@@ -3475,6 +3476,89 @@ export function DataGrid({
     }
   };
 
+  // Clipboard paste → multi-cell bulk edit (#793). Symmetric to `copySelection`:
+  // pastes a TSV/CSV block from the clipboard, expanding from the active
+  // rectangular selection's top-left corner (or the active cell) into the grid's
+  // *display* order. A single pasted value onto an active rectangle fills the
+  // whole rectangle via the existing `planBulkCellEdit` (#596) path instead of a
+  // bespoke 1x1 case; anything larger goes through `planPasteEdit`.
+  const handleGridPaste = (e: React.ClipboardEvent<HTMLTableElement>) => {
+    // The inline cell editor (a plain <input>) handles its own paste natively;
+    // only intercept when a grid cell itself has focus.
+    if (editing || !editable || !onBulkEdit) return;
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!text) return;
+    const grid = parseClipboardGrid(text);
+    if (grid.length === 0 || grid[0].length === 0) return;
+    e.preventDefault();
+
+    if (grid.length === 1 && grid[0].length === 1 && selectionRect) {
+      applyValueToCells(
+        visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
+        visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
+        grid[0][0],
+      );
+      return;
+    }
+
+    const anchorVis = selectionRect
+      ? selectionRect.r0
+      : visibleRows.findIndex((r) => r.index === activeCell?.rowIdx);
+    const anchorColPos = selectionRect ? selectionRect.c0 : visibleColIds.indexOf(activeCell?.colIdx ?? -1);
+    if (anchorVis < 0 || anchorColPos < 0) return;
+
+    const maxCols = Math.max(...grid.map((r) => r.length));
+    const targetRowIndices = visibleRows.slice(anchorVis, anchorVis + grid.length).map((r) => r.index);
+    const targetColIndices = visibleColIds.slice(anchorColPos, anchorColPos + maxCols);
+
+    const plan = planPasteEdit({
+      grid,
+      rows,
+      columns,
+      pkIndices: pkIndices ?? [],
+      targetRowIndices,
+      targetColIndices,
+      isColEditable: (c) => editableColumns?.[c] ?? false,
+      validate: (c, v) => validateEdit?.(c, v) ?? null,
+    });
+
+    if (plan.applied.length === 0 && plan.unchanged.length === 0) {
+      toast.error(t("gridPasteNoneApplied"));
+      return;
+    }
+    onBulkEdit([...plan.applied, ...plan.unchanged]);
+    if (plan.applied.length === 0) {
+      toast.info(t("gridPasteAllUnchanged", { cells: plan.unchanged.length }));
+      return;
+    }
+    const skipped =
+      plan.skippedReadonly + plan.skippedInvalid + plan.skippedOutOfBounds + plan.unchanged.length;
+    if (skipped > 0) {
+      toast.info(t("gridPasteAppliedSkipped", { cells: plan.applied.length, skipped }));
+    } else {
+      toast.success(t("gridPasteApplied", { cells: plan.applied.length }));
+    }
+  };
+
+  // Delete/Backspace on a focused (non-editing) cell clears the selection (or
+  // just the active cell) to NULL (#793) — the same "set value" path the
+  // right-click quick-set / bulk-edit dialog use, so read-only columns and
+  // NOT NULL violations are skipped with the same toast, not silently dropped.
+  const clearSelectedCells = () => {
+    if (!editable || !onBulkEdit) return;
+    if (selectionRect) {
+      applyValueToCells(
+        visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
+        visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
+        "NULL",
+      );
+      return;
+    }
+    if (activeCell) {
+      applyValueToCells([activeCell.rowIdx], [activeCell.colIdx], "NULL");
+    }
+  };
+
   // Row virtualization. Cells are single-line (`white-space: nowrap` +
   // ellipsis), so rows are uniform height; we still let the virtualizer
   // `measureElement` the real height so it follows the font-scale setting and
@@ -3707,6 +3791,16 @@ export function DataGrid({
         }
         break;
       }
+      case "Delete":
+      case "Backspace":
+        // 編集不可な列やアクティブセルが無い場合は `clearSelectedCells` 側で
+        // 何もしない (early return) — その場合はブラウザ既定の挙動 (何もない)
+        // に任せるため preventDefault しない。
+        if (editable && onBulkEdit && (selectionRect || activeCell)) {
+          e.preventDefault();
+          clearSelectedCells();
+        }
+        break;
       default:
         // Printable character → start editing with that char (Undo/Redo/Copy
         // are handled above, before the switch).
@@ -4058,7 +4152,12 @@ export function DataGrid({
           )}
         </Box>
       )}
-      <table role="grid" style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }} onKeyDown={handleGridKeyDown}>
+      <table
+        role="grid"
+        style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }}
+        onKeyDown={handleGridKeyDown}
+        onPaste={handleGridPaste}
+      >
         <colgroup>
           <col style={{ width: ROW_INDEX_WIDTH }} />
           {table.getHeaderGroups()[0]?.headers.map((h) => (
