@@ -179,6 +179,14 @@ interface Props {
   onChange?: (sql: string) => void;
   onFormatError?: (error: string) => void;
   onSaveSnippet?: (sql: string) => void;
+  /**
+   * `.sql` スクリプトの明示的な「開く」/「名前を付けて保存」(#918)。渡されると
+   * ツールバーにボタンが現れる。どちらも SQL のテキストはやり取りせず (開く先は
+   * 新規タブ、保存元はタブの現在値を App 側が持つ)、ダイアログ表示・ファイル I/O は
+   * すべて呼び出し側 (`App.tsx`) が担う。
+   */
+  onOpenFile?: () => void;
+  onSaveFile?: () => void;
   disabled?: boolean;
   schemaTable?: SchemaTable | null;
   /**
@@ -374,6 +382,8 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   onChange,
   onFormatError,
   onSaveSnippet,
+  onOpenFile,
+  onSaveFile,
   disabled,
   schemaTable,
   databaseSchema,
@@ -981,6 +991,40 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
               </svg>
             </chakra.span>
             {t("editorSaveSnippet")}
+          </ToolbarButton>
+        )}
+        {/* .sql スクリプトの明示的な「開く」/「名前を付けて保存」(#918)。D&D
+            (`App.tsx` の `handleFilesDropped`) と読み込みロジックを共有する。 */}
+        {onOpenFile && (
+          <ToolbarButton
+            onClick={onOpenFile}
+            disabled={disabled}
+            title={disabledReason ?? t("editorOpenFileTitle")}
+          >
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 11.5v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" />
+                <path d="M4.5 6L8 2.5 11.5 6" />
+                <path d="M8 3v7.5" />
+              </svg>
+            </chakra.span>
+            {t("editorOpenFile")}
+          </ToolbarButton>
+        )}
+        {onSaveFile && (
+          <ToolbarButton
+            onClick={onSaveFile}
+            disabled={disabled || !hasContent}
+            title={disabledReason ?? t("editorSaveFileTitle")}
+          >
+            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 11.5v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" />
+                <path d="M4.5 8L8 11.5 11.5 8" />
+                <path d="M8 10.5V3" />
+              </svg>
+            </chakra.span>
+            {t("editorSaveFile")}
           </ToolbarButton>
         )}
         {onBroadcast && !explainMode && (
