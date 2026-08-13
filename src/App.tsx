@@ -1727,6 +1727,12 @@ export default function App() {
   const activeTabRef = useRef<Tab | null>(activeTab);
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
+  // 読み取り専用判定 (`isReadOnlySql`) はドライバごとの文字列エスケープ規則に
+  // 依存する (#852)。自動リフレッシュの tick やブロードキャスト要求は deps を
+  // 増やさず ref 経由で最新のプロファイルを読む (activeTabRef と同じ理由)。
+  const selectedProfileRef = useRef<ConnectionProfile | null>(selectedProfile);
+  useEffect(() => { selectedProfileRef.current = selectedProfile; }, [selectedProfile]);
+
   // The active tab of every pane, in pane order. Drives per-pane schema
   // prefetch and lets effects react to either pane changing tabs.
   const paneActiveTabs = useMemo(
@@ -3233,7 +3239,9 @@ export default function App() {
       // A manual run of a non-read-only statement turns auto-refresh off so the
       // toggle never lingers "on" while silently skipping ticks. Read-only
       // manual re-runs keep polling, now targeting the new SQL.
-      ...(!autoRefresh && !isReadOnlySql(sql) ? { autoRefreshSecs: null } : {}),
+      ...(!autoRefresh && !isReadOnlySql(sql, selectedProfile?.driver)
+        ? { autoRefreshSecs: null }
+        : {}),
     });
 
     const finalize = () => {
@@ -3423,6 +3431,8 @@ export default function App() {
     settings.flightRecorderRowCap,
     settings.flightRecorderRetentionDays,
     selectedProfile?.database,
+    // 読み取り専用判定の文字列エスケープ規則がドライバ依存になったため (#852)。
+    selectedProfile?.driver,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
     settings.queryTimeoutSecs,
@@ -3433,7 +3443,7 @@ export default function App() {
   // 二重の安全網)。対象接続の選択・本番確認・実行は `BroadcastModal` 側に任せ、
   // ここでは要求を受け取ってモーダルを開くだけ。
   const requestBroadcast = useCallback((sql: string, tab: Tab | null) => {
-    if (!isReadOnlySql(sql)) {
+    if (!isReadOnlySql(sql, selectedProfileRef.current?.driver)) {
       toast.error(translate("broadcastBlockedToast"));
       return;
     }
@@ -3496,7 +3506,7 @@ export default function App() {
         const sql = tt.lastExecutedSql;
         // Defence in depth: never poll a non-read-only statement (the backend
         // enforces this too via the auto-refresh guard).
-        if (!sql || !isReadOnlySql(sql)) return;
+        if (!sql || !isReadOnlySql(sql, selectedProfileRef.current?.driver)) return;
         void runQueryInTabRef.current(tabId, sql, tt.paginatable ?? null, null, true);
       }, secs * 1000);
       timers.set(tabId, handle);
@@ -4127,7 +4137,7 @@ export default function App() {
     // 緊急クエリ実行モード中の書き込みは、本番の confirm_writes と同じく毎回
     // 確認を要求する (read-only と明示した接続への書き込みは常に例外的な操作)。
     const needsWriteApproval =
-      (requireWriteApproval || emergencyMode) && !isReadOnlySql(sql);
+      (requireWriteApproval || emergencyMode) && !isReadOnlySql(sql, selectedProfile?.driver);
     if (findings.length > 0 || needsWriteApproval) {
       // Irreversible DROP/TRUNCATE on a production connection gets the
       // stronger "type the target name to confirm" gate (#675); everything
@@ -6769,7 +6779,9 @@ export default function App() {
                       onApplyEdits={() => applyEditsForTab(tab)}
                       applyingEdits={tab.applyingEdits}
                       autoRefreshSecs={tab.autoRefreshSecs ?? null}
-                      autoRefreshAllowed={!!tab.result && isReadOnlySql(tab.lastExecutedSql)}
+                      autoRefreshAllowed={
+                        !!tab.result && isReadOnlySql(tab.lastExecutedSql, selectedProfile?.driver)
+                      }
                       autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
                       onSetAutoRefresh={(secs) => setAutoRefreshForTab(tab.id, secs)}
                       queryError={tab.queryError ?? null}

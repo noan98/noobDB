@@ -370,7 +370,7 @@ impl MssqlConn {
                 "preview only supports INSERT/UPDATE/DELETE statements".into(),
             ));
         }
-        if super::has_stacked_statements(sql) {
+        if super::has_stacked_statements_for(super::DriverKind::Mssql, sql) {
             return Err(AppError::InvalidInput(
                 "preview does not support multiple statements".into(),
             ));

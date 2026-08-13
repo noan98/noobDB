@@ -494,6 +494,10 @@ function TaskForm({
   const [formError, setFormError] = useState<string | null>(null);
 
   const selectedProfile = profiles.find((p) => p.id === profileId) ?? null;
+  // ドライバを渡さない (= 保守的なマスク) のは意図的: バックエンドの
+  // `commands::tasks::validate_action` / `tasks::executor::run_once` も、
+  // プロファイル解決前に同じドライバ非依存の判定で弾くため (#852)。ここで
+  // MySQL 解釈を使うと、UI が通した SQL を保存時にバックエンドが拒否しうる。
   const sqlLooksReadOnly = actionKind !== "export_query" || sql.trim() === "" || isReadOnlySql(sql);
   const preview = outputPath ? previewOutputPath(outputPath, new Date()) : "";
 
@@ -526,6 +530,7 @@ function TaskForm({
         setFormError(t("taskFormSqlRequired"));
         return;
       }
+      // 上と同じ理由でドライバ非依存 (#852)。
       if (!isReadOnlySql(sql)) {
         setFormError(t("taskFormSqlNotReadOnly"));
         return;

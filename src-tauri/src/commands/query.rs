@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::types::{Column, QueryResult, StreamBatch, Value};
-use crate::db::{apply_auto_limit_for, is_read_only_sql};
+use crate::db::{apply_auto_limit_for, is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
@@ -15,7 +15,7 @@ use crate::state::{AppState, Session, StreamHandle, StreamKind};
 /// strictly read-only. Used at every query entry point (and the streaming
 /// export path in `commands::export`).
 pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result<()> {
-    if session.read_only && !is_read_only_sql(sql) {
+    if session.read_only && !is_read_only_sql_for(session.conn.driver_kind(), sql) {
         // 緊急クエリ実行モード: 読み取り専用セッションでも、ユーザが明示的に
         // 有効化したときだけ書き込み文を通す (`set_emergency_mode` 参照)。
         // 監査の手がかりとしてログには必ず残す。
@@ -96,8 +96,11 @@ pub(crate) async fn set_emergency_mode_inner(
 /// (`confirmDangerousQueries` / production write approval) never fire here.
 /// This is enforced for *every* session regardless of the profile's `read_only`
 /// flag, so even a writable session can only auto-refresh SELECT-shaped SQL.
-fn ensure_auto_refresh_read_only(sql: &str) -> Result<()> {
-    if !is_read_only_sql(sql) {
+///
+/// `driver` selects the string-escaping rules the read-only analysis assumes
+/// (#852) — the caller passes the session's own driver.
+fn ensure_auto_refresh_read_only(driver: DriverKind, sql: &str) -> Result<()> {
+    if !is_read_only_sql_for(driver, sql) {
         return Err(AppError::ReadOnly(
             "auto-refresh allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
                 .into(),
@@ -113,8 +116,10 @@ fn ensure_auto_refresh_read_only(sql: &str) -> Result<()> {
 /// mirroring [`ensure_auto_refresh_read_only`]'s reasoning for scheduled
 /// re-execution. The frontend already blocks non-read-only SQL before firing
 /// a broadcast, but this is the backend-enforced half of that guarantee.
-fn ensure_broadcast_read_only(sql: &str) -> Result<()> {
-    if !is_read_only_sql(sql) {
+/// `driver` selects the string-escaping rules the read-only analysis assumes
+/// (#852), same as [`ensure_auto_refresh_read_only`].
+fn ensure_broadcast_read_only(driver: DriverKind, sql: &str) -> Result<()> {
+    if !is_read_only_sql_for(driver, sql) {
         return Err(AppError::ReadOnly(
             "broadcast execution allows only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
                 .into(),
@@ -420,12 +425,12 @@ pub async fn run_query_stream(
     // Scheduled re-execution (auto-refresh) is read-only no matter the session.
     let auto_refresh = auto_refresh.unwrap_or(false);
     if auto_refresh {
-        ensure_auto_refresh_read_only(&sql)?;
+        ensure_auto_refresh_read_only(session.conn.driver_kind(), &sql)?;
     }
     // Cross-environment broadcast execution (#738) is read-only no matter the
     // session, mirroring the auto-refresh guard above.
     if force_read_only.unwrap_or(false) {
-        ensure_broadcast_read_only(&sql)?;
+        ensure_broadcast_read_only(session.conn.driver_kind(), &sql)?;
     }
     // `register_stream` をタスク本体の実行より前に完了させるためのゲート。
     // `tokio::spawn` は返り値の `JoinHandle` からしか `AbortHandle` を得られないため
@@ -447,7 +452,9 @@ pub async fn run_query_stream(
     let capture_requested = capture.unwrap_or(false) && !auto_refresh;
     let handle = tokio::spawn(async move {
         let _ = ready_rx.await;
-        if capture_requested && crate::db::classify_write_kind(&sql) != crate::db::WriteKind::Other
+        if capture_requested
+            && crate::db::classify_write_kind_for(session.conn.driver_kind(), &sql)
+                != crate::db::WriteKind::Other
         {
             spawn_captured_write(
                 app,
@@ -1173,6 +1180,17 @@ pub async fn cancel_stream(
 mod tests {
     use super::*;
 
+    /// Every supported driver, so the read-only guards are asserted under both
+    /// masking flavours (MySQL's backslash escapes vs. the standard reading)
+    /// rather than only the one that happens to be the default (#852).
+    const ALL_DRIVERS: [DriverKind; 5] = [
+        DriverKind::Mysql,
+        DriverKind::Postgres,
+        DriverKind::Sqlite,
+        DriverKind::DuckDb,
+        DriverKind::Mssql,
+    ];
+
     #[test]
     fn auto_refresh_allows_read_only_statements() {
         for sql in [
@@ -1183,10 +1201,12 @@ mod tests {
             "EXPLAIN SELECT 1",
             "WITH t AS (SELECT 1) SELECT * FROM t",
         ] {
-            assert!(
-                ensure_auto_refresh_read_only(sql).is_ok(),
-                "expected `{sql}` to be allowed for auto-refresh"
-            );
+            for driver in ALL_DRIVERS {
+                assert!(
+                    ensure_auto_refresh_read_only(driver, sql).is_ok(),
+                    "expected `{sql}` to be allowed for auto-refresh on {driver:?}"
+                );
+            }
         }
     }
 
@@ -1203,13 +1223,15 @@ mod tests {
             // Data-modifying CTE.
             "WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
         ] {
-            assert!(
-                matches!(
-                    ensure_auto_refresh_read_only(sql),
-                    Err(AppError::ReadOnly(_))
-                ),
-                "expected `{sql}` to be rejected for auto-refresh"
-            );
+            for driver in ALL_DRIVERS {
+                assert!(
+                    matches!(
+                        ensure_auto_refresh_read_only(driver, sql),
+                        Err(AppError::ReadOnly(_))
+                    ),
+                    "expected `{sql}` to be rejected for auto-refresh on {driver:?}"
+                );
+            }
         }
     }
 
@@ -1223,10 +1245,12 @@ mod tests {
             "EXPLAIN SELECT 1",
             "WITH t AS (SELECT 1) SELECT * FROM t",
         ] {
-            assert!(
-                ensure_broadcast_read_only(sql).is_ok(),
-                "expected `{sql}` to be allowed for broadcast execution"
-            );
+            for driver in ALL_DRIVERS {
+                assert!(
+                    ensure_broadcast_read_only(driver, sql).is_ok(),
+                    "expected `{sql}` to be allowed for broadcast execution on {driver:?}"
+                );
+            }
         }
     }
 
@@ -1243,10 +1267,15 @@ mod tests {
             // Data-modifying CTE.
             "WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
         ] {
-            assert!(
-                matches!(ensure_broadcast_read_only(sql), Err(AppError::ReadOnly(_))),
-                "expected `{sql}` to be rejected for broadcast execution"
-            );
+            for driver in ALL_DRIVERS {
+                assert!(
+                    matches!(
+                        ensure_broadcast_read_only(driver, sql),
+                        Err(AppError::ReadOnly(_))
+                    ),
+                    "expected `{sql}` to be rejected for broadcast execution on {driver:?}"
+                );
+            }
         }
     }
 

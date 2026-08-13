@@ -17,7 +17,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::types::{QueryResult, Value};
-use crate::db::{classify_write_kind, DriverKind, WriteKind, DEFAULT_CAPTURE_ROW_CAP};
+use crate::db::{classify_write_kind_for, DriverKind, WriteKind, DEFAULT_CAPTURE_ROW_CAP};
 use crate::error::{AppError, Result};
 use crate::flight_recorder::undo::{build_undo_plan, UndoConflict};
 use crate::flight_recorder::{persist_capture, store as flight_store, WriteCaptureSummary};
@@ -160,7 +160,7 @@ pub async fn precheck_captured_write(
     let row_cap = row_cap
         .map(|n| n as usize)
         .unwrap_or(DEFAULT_CAPTURE_ROW_CAP);
-    let kind = classify_write_kind(&sql);
+    let kind = classify_write_kind_for(session.conn.driver_kind(), &sql);
     if kind == WriteKind::Other {
         return Ok(WriteCapturePrecheck {
             capturable: false,

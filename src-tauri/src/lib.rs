@@ -39,8 +39,9 @@ pub mod __test_api {
         TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::{
-        apply_auto_limit, classify_write_kind, is_read_only_sql, is_session_init_sql, Connection,
-        DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
+        apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
+        is_read_only_sql, is_read_only_sql_for, is_session_init_sql, Connection, DbConnectOptions,
+        DriverKind, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
