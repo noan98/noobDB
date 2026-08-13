@@ -115,6 +115,13 @@ export interface Settings {
    */
   richCellRendering: boolean;
   /**
+   * Show an always-on NULL-rate mini bar under each result grid column header
+   * (#911). Display-only: it never affects values, sorting or editing, and it
+   * reuses the loaded rows only (no extra query). Turn off for the densest
+   * possible header row.
+   */
+  columnNullBars: boolean;
+  /**
    * Preferred monospace font family for the editor, result grid and code views.
    * `null` keeps the App.css default mono stack. A non-null value is
    * prepended to the shared fallback chain so an uninstalled font degrades
@@ -304,6 +311,9 @@ export const DEFAULT_CELL_EDIT_ON_BLUR: CellEditOnBlur = "commit";
 
 /** Rich cell rendering is on by default; it is a display-only enhancement. */
 export const DEFAULT_RICH_CELL_RENDERING = true;
+
+/** Column NULL-rate mini bars are on by default; display-only like rich cells (#911). */
+export const DEFAULT_COLUMN_NULL_BARS = true;
 
 /** Font family defaults: `null` means "use the App.css default stack". */
 export const DEFAULT_MONO_FONT_FAMILY: string | null = null;
@@ -638,6 +648,7 @@ export const DEFAULT_SETTINGS: Settings = {
   resultGridPageSize: DEFAULT_RESULT_GRID_PAGE_SIZE,
   cellEditOnBlur: DEFAULT_CELL_EDIT_ON_BLUR,
   richCellRendering: DEFAULT_RICH_CELL_RENDERING,
+  columnNullBars: DEFAULT_COLUMN_NULL_BARS,
   monoFontFamily: DEFAULT_MONO_FONT_FAMILY,
   uiFontFamily: DEFAULT_UI_FONT_FAMILY,
   themePreset: DEFAULT_THEME_PRESET,
@@ -857,6 +868,7 @@ export function normalizeSettings(input: unknown): Settings {
     resultGridPageSize?: unknown;
     cellEditOnBlur?: unknown;
     richCellRendering?: unknown;
+    columnNullBars?: unknown;
     monoFontFamily?: unknown;
     uiFontFamily?: unknown;
     themePreset?: unknown;
@@ -940,6 +952,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.richCellRendering === "boolean"
         ? parsed.richCellRendering
         : DEFAULT_RICH_CELL_RENDERING,
+    columnNullBars:
+      typeof parsed.columnNullBars === "boolean"
+        ? parsed.columnNullBars
+        : DEFAULT_COLUMN_NULL_BARS,
     monoFontFamily: sanitizeFontFamily(parsed.monoFontFamily, DEFAULT_MONO_FONT_FAMILY),
     uiFontFamily: sanitizeFontFamily(parsed.uiFontFamily, DEFAULT_UI_FONT_FAMILY),
     themePreset: sanitizeThemePreset(parsed.themePreset, DEFAULT_THEME_PRESET),
@@ -1317,6 +1333,13 @@ export function setCellEditOnBlur(value: CellEditOnBlur): void {
 export function setRichCellRendering(value: boolean): void {
   if (current.richCellRendering === value) return;
   current = { ...current, richCellRendering: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setColumnNullBars(value: boolean): void {
+  if (current.columnNullBars === value) return;
+  current = { ...current, columnNullBars: value };
   persist();
   listeners.forEach((cb) => cb());
 }

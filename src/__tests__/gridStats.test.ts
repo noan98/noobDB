@@ -5,6 +5,8 @@ import {
   buildColumnStatsSql,
   parseFullColumnStats,
   isNumericStatsKind,
+  nullRatePercentOf,
+  columnNullRates,
 } from "../components/gridStats";
 import type { CellValue } from "../api/tauri";
 
@@ -212,6 +214,47 @@ describe("parseFullColumnStats (#524)", () => {
     const s = parseFullColumnStats(row, true);
     expect(s.total).toBe(100);
     expect(s.avg).toBe(50.5);
+  });
+});
+
+describe("nullRatePercentOf / columnNullRates (#911)", () => {
+  it("derives the NULL rate from column stats", () => {
+    expect(nullRatePercentOf({ count: 10, nullCount: 2 })).toBe(20);
+    expect(nullRatePercentOf({ count: 4, nullCount: 4 })).toBe(100);
+    expect(nullRatePercentOf({ count: 3, nullCount: 0 })).toBe(0);
+  });
+
+  it("treats an empty column as 0% (no division by zero)", () => {
+    expect(nullRatePercentOf({ count: 0, nullCount: 0 })).toBe(0);
+  });
+
+  it("agrees with columnStats on the same values", () => {
+    const values: CellValue[] = [1, null, 3, null, null];
+    const viaStats = nullRatePercentOf(columnStats(values, "number"));
+    const viaRows = columnNullRates(values.map((v) => [v]), 1)[0];
+    expect(viaRows).toBe(viaStats);
+    expect(viaRows).toBe(60);
+  });
+
+  it("counts NULL per column across rows", () => {
+    const rows: CellValue[][] = [
+      [1, null, "a"],
+      [null, null, "b"],
+      [3, null, null],
+      [4, 5, "d"],
+    ];
+    expect(columnNullRates(rows, 3)).toEqual([25, 75, 25]);
+  });
+
+  it("treats missing (short row) cells as NULL and clamps the column count", () => {
+    const rows: CellValue[][] = [[1], [1, 2]];
+    expect(columnNullRates(rows, 2)).toEqual([0, 50]);
+    expect(columnNullRates(rows, 0)).toEqual([]);
+    expect(columnNullRates(rows, -3)).toEqual([]);
+  });
+
+  it("returns an all-zero vector for an empty result", () => {
+    expect(columnNullRates([], 2)).toEqual([0, 0]);
   });
 });
 
