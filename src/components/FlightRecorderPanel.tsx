@@ -75,6 +75,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [clearing, setClearing] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   const scopeId = showAll ? null : profileId;
@@ -160,6 +161,26 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
     }
   };
 
+  const handleClear = async () => {
+    const ok = await confirm({
+      title: t("flightRecorderClearAction"),
+      message: scopeId ? t("flightRecorderClearConfirmProfile") : t("flightRecorderClearConfirmAll"),
+      confirmLabel: t("flightRecorderClearAction"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    setClearing(true);
+    try {
+      await api.clearFlightRecords(scopeId);
+      setEntries([]);
+      setError(null);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setClearing(false);
+    }
+  };
+
   return (
     <Modal onClose={onClose} width="820px">
       <ModalHeader onClose={onClose} closeLabel={t("flightRecorderClose")}>
@@ -169,19 +190,28 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         <chakra.p m={0} fontSize="xs" color="app.textMuted">
           {t("flightRecorderIntro")}
         </chakra.p>
-        {profileId && (
-          <Flex align="center" gap="1.5" fontSize="xs" color="app.textSecondary">
-            <chakra.input
-              type="checkbox"
-              checked={showAll}
-              onChange={(e) => setShowAll(e.target.checked)}
-              id="flight-recorder-show-all"
-            />
-            <chakra.label htmlFor="flight-recorder-show-all" cursor="pointer">
-              {t("historyShowAll")}
-            </chakra.label>
-          </Flex>
-        )}
+        <Flex align="center" justify="space-between" gap="2" flexWrap="wrap">
+          {profileId ? (
+            <Flex align="center" gap="1.5" fontSize="xs" color="app.textSecondary">
+              <chakra.input
+                type="checkbox"
+                checked={showAll}
+                onChange={(e) => setShowAll(e.target.checked)}
+                id="flight-recorder-show-all"
+              />
+              <chakra.label htmlFor="flight-recorder-show-all" cursor="pointer">
+                {t("historyShowAll")}
+              </chakra.label>
+            </Flex>
+          ) : (
+            <Box />
+          )}
+          {entries.length > 0 && (
+            <PressableButton type="button" variant="danger" onClick={() => void handleClear()} disabled={clearing}>
+              {t("flightRecorderClearAction")}
+            </PressableButton>
+          )}
+        </Flex>
         <Box flex="1" minHeight={0} overflowY="auto" border="1px solid" borderColor="app.border" borderRadius="md">
           {error ? (
             <chakra.p m={0} p="3" color="app.textError">
