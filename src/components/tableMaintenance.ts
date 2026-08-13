@@ -56,3 +56,49 @@ export function buildRenameTableSql(
   const to = quoteIdentFor(driver, newName);
   return `ALTER TABLE ${from} RENAME TO ${to};`;
 }
+
+/**
+ * インデックス名候補から、識別子として扱いづらい文字を `_` に畳む。クオートは
+ * 呼び出し側が行うので、ここでは可読性のための正規化のみ。バックエンドの
+ * `db/advisor.rs::sanitize_index_name` (アドバイザの自動修正 DDL が使う) と同じ規則。
+ */
+function sanitizeIndexName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9]/g, "_");
+}
+
+/**
+ * `CREATE [UNIQUE] INDEX` 文を生成する (#850)。方言差は `db/advisor.rs::create_index_ddl`
+ * の移植。インデックス名を指定しなければ `idx_<table>_<col1>_<col2>...` を自動生成する。
+ * 空の列名は無視する。
+ */
+export function buildCreateIndexSql(
+  driver: string,
+  database: string | null,
+  table: string,
+  columns: string[],
+  opts: { name?: string; unique?: boolean } = {},
+): string {
+  const cols = columns.map((c) => c.trim()).filter((c) => c.length > 0);
+  const rawName = opts.name?.trim() || `idx_${table}_${cols.join("_")}`;
+  const idxName = sanitizeIndexName(rawName);
+  const colList = cols.map((c) => quoteIdentFor(driver, c)).join(", ");
+  const keyword = opts.unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
+  return `${keyword} ${quoteIdentFor(driver, idxName)} ON ${qualified(driver, database, table)} (${colList});`;
+}
+
+/**
+ * 方言別の `DROP INDEX` (#850)。MySQL / MSSQL は `DROP INDEX <name> ON <table>`
+ * (テーブル修飾が必須)、PostgreSQL / SQLite / DuckDB は `DROP INDEX <name>`
+ * (テーブル指定不可)。`db/advisor.rs::drop_index_ddl` と同じ方言分岐の移植。
+ */
+export function buildDropIndexSql(
+  driver: string,
+  database: string | null,
+  table: string,
+  indexName: string,
+): string {
+  if (driver === "mysql" || driver === "mssql") {
+    return `DROP INDEX ${quoteIdentFor(driver, indexName)} ON ${qualified(driver, database, table)};`;
+  }
+  return `DROP INDEX ${quoteIdentFor(driver, indexName)};`;
+}

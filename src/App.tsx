@@ -47,6 +47,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { copyToClipboard } from "./components/clipboard";
 import {
+  buildDropIndexSql,
   buildDropTableSql,
   buildRenameTableSql,
   buildTruncateSql,
@@ -155,6 +156,9 @@ const RenameTableDialog = lazy(() =>
 );
 const AlterTableModal = lazy(() =>
   import("./components/AlterTableModal").then((m) => ({ default: m.AlterTableModal })),
+);
+const CreateIndexModal = lazy(() =>
+  import("./components/CreateIndexModal").then((m) => ({ default: m.CreateIndexModal })),
 );
 const SaveAsTableModal = lazy(() =>
   import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
@@ -1603,6 +1607,8 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
   // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
+  // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
+  const [createIndexTarget, setCreateIndexTarget] = useState<{ database: string; table: string } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
   // ローカル横断クエリ (#740): 駆動元セッションを持たない「ローカル」接続。アプリ
@@ -4925,6 +4931,41 @@ export default function App() {
     }
   }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache]);
 
+  // インデックス作成の軽量モーダル (#850) の実行: 非破壊操作なので CreateTableModal と
+  // 同じく確認ダイアログなしで直接実行する (destructive な DROP INDEX とは異なる)。
+  const handleCreateIndexRun = useCallback(async (sql: string) => {
+    const target = createIndexTarget;
+    if (!target) return;
+    const success = await runMaintenanceDdl(sql, target.database);
+    if (success) {
+      toast.success(translate("createIndexSuccess"));
+      setCreateIndexTarget(null);
+    }
+  }, [createIndexTarget, runMaintenanceDdl, toast]);
+
+  const handleCreateIndexToEditor = useCallback((sql: string) => {
+    setCreateIndexTarget(null);
+    openQueryInEditor(sql);
+  }, [openQueryInEditor]);
+
+  // インデックスノード右クリックからの DROP INDEX (#850)。TRUNCATE/DROP TABLE と
+  // 同じく不可逆 × 本番接続ではタイプ入力の強確認ゲート (#675) を追加する。
+  // PK インデックスは `ConnectionList` 側で常に無効化しているのでここには来ない。
+  const handleDropIndex = useCallback(async (database: string, table: string, indexName: string) => {
+    const driver = selectedProfile?.driver ?? "mysql";
+    const sql = buildDropIndexSql(driver, database, table, indexName);
+    const ok = await confirm({
+      title: translate("dropIndexConfirmTitle", { index: indexName }),
+      message: maintenanceMessage(translate("dropIndexConfirmBody", { index: indexName, table })),
+      confirmLabel: translate("dropIndexConfirmOk"),
+      tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
+    });
+    if (!ok) return;
+    const success = await runMaintenanceDdl(sql, database);
+    if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, toast]);
+
   // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
   // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
@@ -7019,6 +7060,8 @@ export default function App() {
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
             onAlterTable={(database, table) => setAlterTableTarget({ database, table })}
+            onCreateIndex={(database, table) => setCreateIndexTarget({ database, table })}
+            onDropIndex={handleDropIndex}
             onRunTableMaintenance={handleRunTableMaintenance}
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
             onShowDatabaseSizes={handleShowDatabaseSizes}
@@ -7913,6 +7956,23 @@ export default function App() {
               onRun={handleAlterTableRun}
               onSendToEditor={handleAlterTableToEditor}
               onClose={() => setAlterTableTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {createIndexTarget && sessionId && (
+          <Suspense fallback={null}>
+            <CreateIndexModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={createIndexTarget.database}
+              table={createIndexTarget.table}
+              readOnly={readOnly}
+              onRun={handleCreateIndexRun}
+              onSendToEditor={handleCreateIndexToEditor}
+              onClose={() => setCreateIndexTarget(null)}
             />
           </Suspense>
         )}
