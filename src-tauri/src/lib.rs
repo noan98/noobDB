@@ -93,6 +93,18 @@ pub mod __test_api {
         StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
     };
 
+    /// SQL 識別子引用の単一実装 (`db::sync::quote_ident`)。`pub(crate)` のため
+    /// `pub use` で再公開できず、薄いラッパーで露出する。実装横断ゴールデン
+    /// (`tests/sql_quoting_golden.rs`、#880) が使う。
+    pub fn quote_ident(driver: DriverKind, name: &str) -> String {
+        crate::db::sync::quote_ident(driver, name)
+    }
+
+    /// SQL リテラルエスケープ (`db::data_diff::sql_literal`)。上と同じ理由の
+    /// ラッパー (#880)。
+    pub fn sql_literal(driver: DriverKind, value: &Value) -> String {
+        crate::db::data_diff::sql_literal(driver, value)
+    }
     // サーバ機能系コマンドの State なしコア (#881)。`inspector` / `server` /
     // `process` は env ゲートの MySQL/PostgreSQL 統合テストでしか実行されず、
     // Windows ジョブや env 無しのローカル `cargo test` (SQLite のみ) では
