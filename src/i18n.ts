@@ -59,6 +59,11 @@ const en = {
   editorSaveSnippet: "Save snippet",
   editorSaveSnippetTitle: "Save the selection (or whole editor) as a reusable snippet.",
 
+  editorOpenFile: "Open",
+  editorOpenFileTitle: "Open a .sql/.txt file in a new tab.",
+  editorSaveFile: "Save as...",
+  editorSaveFileTitle: "Save this tab's SQL to a .sql file.",
+
   snippetSearchPlaceholder: "Filter snippets...",
   snippetShowAllScopes: "Show all scopes",
   snippetEmpty: "No snippets yet. Use \"Save snippet\" in the editor, or + above.",
@@ -1609,6 +1614,12 @@ const en = {
   dropCsvNoTable: "Open a table first to import a dropped CSV.",
   dropCsvMultiOnlyFirst: "Only the first CSV was used; import the rest one at a time.",
   dropUnsupported: "Unsupported file: {name}",
+  // .sql の明示的な「開く」/「名前を付けて保存」(#918。D&D の読み込みロジックを共有)
+  openSqlFileTitle: "Open SQL file",
+  openSqlFileError: "Could not open the file: {error}",
+  saveSqlFileTitle: "Save SQL file",
+  saveSqlFileSuccess: "Saved {name}",
+  saveSqlFileError: "Could not save the file: {error}",
   importFormat: "Format",
   importFormatCsv: "CSV",
   importFormatJson: "JSON (array)",
@@ -2063,6 +2074,8 @@ const en = {
   cmdkHintClose: "Close",
   cmdkBadgeConnected: "Connected",
   cmdkActionNewQueryTab: "New query tab",
+  cmdkActionOpenSqlFile: "Open SQL file…",
+  cmdkActionSaveSqlFile: "Save SQL as file…",
   cmdkActionNewConnection: "New connection…",
   cmdkActionSettings: "Open settings",
   cmdkActionHelp: "Open help",
@@ -2684,6 +2697,11 @@ const ja: Dict = {
 
   editorSaveSnippet: "Save snippet",
   editorSaveSnippetTitle: "選択範囲（またはエディタ全体）を再利用可能なスニペットとして保存します。",
+
+  editorOpenFile: "Open",
+  editorOpenFileTitle: ".sql/.txt ファイルを新しいタブで開きます。",
+  editorSaveFile: "Save as...",
+  editorSaveFileTitle: "このタブの SQL を .sql ファイルとして保存します。",
 
   snippetSearchPlaceholder: "スニペットを検索...",
   snippetShowAllScopes: "すべてのスコープを表示",
@@ -4228,6 +4246,12 @@ const ja: Dict = {
   dropCsvNoTable: "ドロップした CSV を取り込むには、先にテーブルを開いてください。",
   dropCsvMultiOnlyFirst: "最初の CSV のみ使用しました。残りは 1 つずつ取り込んでください。",
   dropUnsupported: "対応していないファイルです: {name}",
+  // .sql の明示的な「開く」/「名前を付けて保存」(#918。D&D の読み込みロジックを共有)
+  openSqlFileTitle: "SQL ファイルを開く",
+  openSqlFileError: "ファイルを開けませんでした: {error}",
+  saveSqlFileTitle: "SQL ファイルを保存",
+  saveSqlFileSuccess: "{name} を保存しました",
+  saveSqlFileError: "ファイルを保存できませんでした: {error}",
   importFormat: "形式",
   importFormatCsv: "CSV",
   importFormatJson: "JSON (配列)",
@@ -4682,6 +4706,8 @@ const ja: Dict = {
   cmdkHintClose: "閉じる",
   cmdkBadgeConnected: "接続中",
   cmdkActionNewQueryTab: "新しいクエリタブ",
+  cmdkActionOpenSqlFile: "SQL ファイルを開く…",
+  cmdkActionSaveSqlFile: "SQL をファイルに保存…",
   cmdkActionNewConnection: "新規接続…",
   cmdkActionSettings: "設定を開く",
   cmdkActionHelp: "ヘルプを開く",

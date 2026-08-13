@@ -29,6 +29,7 @@ import { SandboxCreateModal } from "./components/SandboxCreateModal";
 import { SandboxReviewModal } from "./components/SandboxReviewModal";
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
+import { sqlSaveFileName } from "./sqlFileIO";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
@@ -5422,6 +5423,50 @@ export default function App() {
     }
   }, [addTab, toast]);
 
+  /**
+   * コマンドパレット / エディタツールバーからの「SQL ファイルを開く」(#918)。
+   * ドラッグ&ドロップ (`handleFilesDropped`) と読み込みロジックを完全に共有し、
+   * 新しい IPC/読み込み経路は増やさない。ダイアログでキャンセルされたら何もしない。
+   */
+  const handleOpenSqlFile = useCallback(async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: true,
+        title: translate("openSqlFileTitle"),
+        filters: [{ name: "SQL", extensions: ["sql", "txt"] }],
+      });
+      if (!picked) return;
+      const paths = Array.isArray(picked) ? picked : [picked];
+      if (paths.length === 0) return;
+      await handleFilesDropped(paths);
+    } catch (e) {
+      toast.error(translate("openSqlFileError", { error: String(e) }));
+    }
+  }, [handleFilesDropped, toast]);
+
+  /**
+   * コマンドパレット / エディタツールバーからの「名前を付けて保存」(#918)。現在の
+   * タブの SQL を、既存の `write_binary_file` (フロントが fs API を直に叩かず
+   * capabilities を増やさない経路。チャート/ER 図の画像保存 #643 と同じパターン) で
+   * ディスクへ書き出す。新しい IPC は追加しない。
+   */
+  const handleSaveSqlFile = useCallback(async () => {
+    const tab = activeTabRef.current;
+    if (!tab) return;
+    try {
+      const dest = await saveFileDialog({
+        defaultPath: sqlSaveFileName(tab.title),
+        title: translate("saveSqlFileTitle"),
+        filters: [{ name: "SQL", extensions: ["sql"] }],
+      });
+      if (typeof dest !== "string" || !dest) return;
+      await api.writeBinaryFile(dest, new TextEncoder().encode(tab.sql));
+      toast.success(translate("saveSqlFileSuccess", { name: fileBaseName(dest) }));
+    } catch (e) {
+      toast.error(translate("saveSqlFileError", { error: String(e) }));
+    }
+  }, [toast]);
+
   // Tauri のウィンドウ drag-drop イベントを購読する。enter でファイル群の
   // 受理可否を判定してオーバーレイ用の状態を立て、drop で実際に振り分ける。over は
   // 座標のみでパスを持たないため、enter で得た判定をそのまま維持する。`leave` /
@@ -5959,6 +6004,27 @@ export default function App() {
         shortcut: formatCombo(shortcutBindings.newTab),
         run: () => handleNewTab(),
       });
+      // .sql スクリプトの明示的な「開く」/「名前を付けて保存」(#918)。D&D 非対応の
+      // キーボード/コマンドパレット中心のユーザ向け導線で、読み込みは D&D 経路
+      // (`handleFilesDropped`) をそのまま共有する。
+      items.push({
+        id: "nav:open-sql-file",
+        group: "navigation",
+        label: t("cmdkActionOpenSqlFile"),
+        icon: "upload",
+        keywords: "open file sql script import ファイル 開く スクリプト",
+        run: () => void handleOpenSqlFile(),
+      });
+      if (activeTab) {
+        items.push({
+          id: "nav:save-sql-file",
+          group: "navigation",
+          label: t("cmdkActionSaveSqlFile"),
+          icon: "download",
+          keywords: "save file sql script export ファイル 保存",
+          run: () => void handleSaveSqlFile(),
+        });
+      }
       items.push({
         id: "nav:er-diagram",
         group: "navigation",
@@ -6136,6 +6202,7 @@ export default function App() {
     sessionId,
     selectedProfile?.id,
     paletteDatabase,
+    activeTab,
     visibleProfiles,
     schemaCache,
     snippets,
@@ -6145,6 +6212,8 @@ export default function App() {
     locale,
     shortcutBindings,
     handleNewTab,
+    handleOpenSqlFile,
+    handleSaveSqlFile,
     handleDisconnect,
     handleConnect,
     handleRunTableSelect,
@@ -6372,6 +6441,8 @@ export default function App() {
                     onChange={(sql) => updateTab(tab.id, { sql })}
                     onPreflightImpact={(r) => preflightRef.current.set(tab.id, r)}
                     onSaveSnippet={handleSaveSnippetFromEditor}
+                    onOpenFile={() => void handleOpenSqlFile()}
+                    onSaveFile={() => void handleSaveSqlFile()}
                     onFormatError={(error) =>
                       setStatus({
                         kind: "key",
