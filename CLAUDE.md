@@ -114,7 +114,8 @@ cargo test mysql_roundtrip_when_env_set             # テスト名を指定し�
 
 ```sh
 # 安全網モジュール限定で実行 (推奨。フル実行は数十分かかる)
-cargo mutants --file src/db/mod.rs --file src/db/mysql.rs
+cargo mutants --file src/db/mod.rs --file src/db/mysql.rs \
+  --file src/db/sync.rs --file src/db/data_diff.rs
 
 # 変異候補の一覧のみ確認 (テストを走らせない)
 cargo mutants --list --file src/db/mod.rs --file src/db/mysql.rs
@@ -123,9 +124,12 @@ cargo mutants --list --file src/db/mod.rs --file src/db/mysql.rs
 cargo mutants --file src/db/mod.rs --file src/db/mysql.rs --in-place
 ```
 
-**運用方針**: スコープは `src/db/mod.rs` / `src/db/mysql.rs` の安全網関数
-(`is_read_only_sql` / `apply_auto_limit` / `has_stacked_statements` /
-`is_query_shape` / `with_cte_is_mutation`) に限定。CI トリガは
+**運用方針**: スコープは安全網ロジックを持つ 4 ファイルに限定 —
+`src/db/mod.rs` (`is_read_only_sql` / `apply_auto_limit` / `has_stacked_statements`)、
+`src/db/mysql.rs` (`is_query_shape` / `with_cte_is_mutation`)、`src/db/sync.rs`
+(`quote_ident`)、`src/db/data_diff.rs` (`sql_literal`)。後者 2 つは SQL
+インジェクション隣接の引用/エスケープで、共有ゴールデン (#880) で固定した後に
+その有効性を可視化する目的で追加しました。CI トリガは
 `.github/workflows/mutants.yml` の `workflow_dispatch` (手動) のみで、PR では
 走らせない。**fail させない** (可視化のみ) — バンドルサイズ (#443) ・カバレッジ
 (#482) と同じ漸進方針。生き残り変異 (MISSED) が出たら `db::tests` に境界ケースを
@@ -207,8 +211,8 @@ CI は 2 つのワークフローに分かれています:
   `ipcArgParity.test.ts` / `streamEventParity.test.ts` (`?raw` インポートで
   `src-tauri/src/lib.rs` / `commands/*.rs` / `tasks/scheduler.rs` を読む) と
   `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
-  `schemaParity.test.ts` (Rust の統合テストと共有するフィクスチャ
-  `src/__tests__/fixtures/*.json` を検証する)、および
+  `schemaParity.test.ts` / `sqlQuotingGolden.test.ts` (#880) (Rust の統合テストと
+  共有するフィクスチャ `src/__tests__/fixtures/*.json` を検証する)、および
   `apiReachabilityParity.test.ts` (#907。Rust ソースは読まないが、UI 未到達
   ラッパーの削除は `ipcCommandParity` = Rust 側登録と連動して直す必要があるため
   同じ起動条件で同居させる) は「相手言語のソースを実行時に読む」
@@ -221,7 +225,8 @@ CI は 2 つのワークフローに分かれています:
   しています (`frontend` ジョブとテストが重複しますが、対象を絞っているため数秒
   程度と軽量で、重複コストよりカバレッジの穴を塞ぐ価値を優先しました)。逆方向
   (Rust 側のゴールデンテスト `serde_schema_parity.rs` / `read_only_golden.rs` /
-  `error_kind_golden.rs` / `error_hint_golden.rs` が `include_str!` で読む共有
+  `error_kind_golden.rs` / `error_hint_golden.rs` / `sql_quoting_golden.rs` が
+  `include_str!` で読む共有
   フィクスチャだけを変更する PR で `rust (test)` がスキップされる問題) は
   `changes` ジョブに追加した `crosslang` フィルタ (`src/__tests__/fixtures/**`
   限定) を `rust (test)` の `if:` へ OR で足すことで塞いでいます。**必須チェックを
@@ -868,6 +873,20 @@ MySQL のバックスラッシュエスケープ解釈で判定が変わるケ�
 隠すため、`readOnlyMysql` が `readOnly` より厳しくなる (true→false) ことはありません。
 両言語のテストは全ドライバでベクタを回し、加えて「MySQL だけ判定が分かれるケースが
 最低 1 件は残っていること」も検証します (ドライバ次元の形骸化防止)。
+
+**SQL 識別子引用 / リテラルエスケープも同じ方式で固定します (#880)。** 識別子引用は
+Rust の `db::sync::quote_ident` (MySQL/SQLite ドライバの `quote_ident` はこれへ委譲する
+薄いラッパー) と、フロントの `components/sqlDialect.ts::quoteIdentFor` /
+`components/exportPreview.ts::quoteSqlIdent` に分散し、リテラルエスケープは
+`db::data_diff::sql_literal` をフロントの `exportPreview.ts::sqlLiteral` がミラーします。
+インジェクション隣接の安全性ロジックが方言分岐ごとコピーされているため、共有ベクタ
+`src/__tests__/fixtures/sqlQuotingVectors.json` を `sqlQuotingGolden.test.ts` と
+`tests/sql_quoting_golden.rs` の双方へ通して全実装の一致を固定しています (5 ドライバ ×
+危険入力: 各方言の引用文字 / バックスラッシュ / NUL / マルチバイト / 非 BMP / 空文字列)。
+BLOB だけはフロントが `Value::Bytes` を `Value::String` と区別できない (JSON 上はただの
+16 進文字列) ため意図的に食い違い、その差分を `frontend` キーで明記しています。
+`cargo-mutants` のスコープにも `src/db/sync.rs` / `src/db/data_diff.rs` を追加済み
+(可視化のみ・fail させない既存方針)。
 
 **安全網には「強制レベル」の違いがある点に注意してください。** 同じ「安全網」でも、
 バックエンドで強制されるものと、UI 上の確認に留まるものがあります。
