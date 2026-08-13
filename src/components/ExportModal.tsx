@@ -51,6 +51,13 @@ interface Props {
   stoppedPartial?: boolean;
   /** 全件エクスポートのコンテキスト。未提供ならグリッドのみエクスポート。 */
   fullExport?: FullExportContext;
+  /**
+   * 矩形選択範囲 (#917)。`ResultGrid` の `selectionRect` から切り出した部分集合
+   * (選択列のみの `Column[]` + 選択行 × 選択列の `CellValue[][]`)。非 null/非空の
+   * ときだけ「選択範囲」スコープを提示する — 選択が無い場合は従来どおり
+   * current / full のみ。
+   */
+  selection?: { columns: Column[]; rows: CellValue[][] } | null;
   onClose: () => void;
 }
 
@@ -120,10 +127,13 @@ type Status =
   | { kind: "streaming"; rows: number; streamId: string }
   | { kind: "error"; message: string };
 
-/** エクスポート対象: 現在のグリッドのみ / クエリを再実行して全件。 */
-type ExportScope = "current" | "full";
+/**
+ * エクスポート対象: 現在のグリッドのみ / 矩形選択範囲のみ (#917) / クエリを
+ * 再実行して全件。
+ */
+type ExportScope = "current" | "selection" | "full";
 
-export function ExportModal({ columns, rows, database, table, driver, partial, stoppedPartial, fullExport, onClose }: Props) {
+export function ExportModal({ columns, rows, database, table, driver, partial, stoppedPartial, fullExport, selection, onClose }: Props) {
   const t = useT();
   const toast = useToast();
   const [format, setFormat] = useState<ExportFormat>("csv");
@@ -132,9 +142,13 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   const [sqlTable, setSqlTable] = useState<string>(table ?? "");
   const [sqlBatch, setSqlBatch] = useState<number>(DEFAULT_SQL_BATCH);
   const sqlDriver = driver ?? "mysql";
-  // 部分結果かつ全件モードが使えるときは「全件」を初期選択にし、誤って部分だけ
-  // 書き出すのを防ぐ。それ以外は従来どおりグリッドのみ。
-  const [scope, setScope] = useState<ExportScope>(fullExport && partial ? "full" : "current");
+  // 選択範囲があればそれを扱う意図が明確なので「選択範囲」を初期選択にする。
+  // 次点は、部分結果かつ全件モードが使えるときの「全件」(誤って部分だけ書き出す
+  // のを防ぐ)。それ以外は従来どおりグリッドのみ。
+  const hasSelection = !!selection && selection.rows.length > 0;
+  const [scope, setScope] = useState<ExportScope>(
+    hasSelection ? "selection" : fullExport && partial ? "full" : "current",
+  );
   const initialBasename = useMemo(() => defaultBasename(database, table), [database, table]);
   const [path, setPath] = useState<string>(`${initialBasename}${extensionFor("csv")}`);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -146,8 +160,15 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   const unlistenRef = useRef<(() => void) | null>(null);
 
   // JSON 形式のときだけ実行クエリを出力に同梱する。クエリは全件モードの
-  // コンテキスト (`fullExport.sql`) から取得し、無ければ含めない。
+  // コンテキスト (`fullExport.sql`) から取得し、無ければ含めない。選択範囲/現在
+  // グリッドのスコープでは (全件を再実行したわけではないので) 同梱しない。
   const queryForJson = fullExport?.sql ?? null;
+
+  // スコープが "selection" のときは、選択範囲の列/行部分集合を整形対象にする。
+  // それ以外 ("current" / "full" 起動前のプレビュー・コピー・グリッドのみ保存) は
+  // 従来どおりグリッド全体。`buildExportContent` は共通なので書式は二重定義しない。
+  const effectiveColumns = scope === "selection" && selection ? selection.columns : columns;
+  const effectiveRows = scope === "selection" && selection ? selection.rows : rows;
 
   // プレビューは先頭 PREVIEW_ROWS 行のみ生成して表示負荷を抑える。実際の出力書式
   // (CSV のクオート・JSON の整形・実行クエリ同梱) はバックエンドと同じ。
@@ -156,10 +177,10 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     [sqlDriver, sqlTable, sqlBatch],
   );
   const previewContent = useMemo(
-    () => buildExportContent(format, columns, rows.slice(0, PREVIEW_ROWS), queryForJson, exportCtx),
-    [format, columns, rows, queryForJson, exportCtx],
+    () => buildExportContent(format, effectiveColumns, effectiveRows.slice(0, PREVIEW_ROWS), queryForJson, exportCtx),
+    [format, effectiveColumns, effectiveRows, queryForJson, exportCtx],
   );
-  const previewTruncated = rows.length > PREVIEW_ROWS;
+  const previewTruncated = effectiveRows.length > PREVIEW_ROWS;
   // Set on unmount so an in-flight `listenExportStream` (awaited below) can
   // tell its registration arrived too late and must self-unlisten — otherwise
   // the listener would be orphaned (the cleanup below has already run).
@@ -174,10 +195,11 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     [],
   );
 
-  // 全文 (在グリッドの全行) を生成してクリップボードへコピーする。プレビューと違い
-  // 行数を絞らないため、グリッドに読み込まれている全行が対象。
+  // 全文 (スコープ対象の全行) を生成してクリップボードへコピーする。プレビューと
+  // 違い行数を絞らないため、選択範囲スコープなら選択範囲の全行、それ以外はグリッドに
+  // 読み込まれている全行が対象。
   const handleCopy = async () => {
-    const content = buildExportContent(format, columns, rows, queryForJson, exportCtx);
+    const content = buildExportContent(format, effectiveColumns, effectiveRows, queryForJson, exportCtx);
     const ok = await copyToClipboard(content);
     if (!ok) {
       toast.error(t("clipboardCopyFailed"));
@@ -253,7 +275,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       await handleFullExport(fullExport);
       return;
     }
-    if (rows.length === 0) {
+    if (effectiveRows.length === 0) {
       setStatus({ kind: "error", message: t("exportNoData") });
       return;
     }
@@ -262,8 +284,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
       const bytes = await api.exportQueryResult({
         path,
         format,
-        columns,
-        rows,
+        columns: effectiveColumns,
+        rows: effectiveRows,
         // JSON 形式のときだけ実行クエリを同梱する (バックエンドが判定)。
         query: queryForJson,
         // SQL 形式のときだけ使われる (バックエンドが形式で判定)。
@@ -352,13 +374,19 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
 
       <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="md" color="app.text">
-          {t("exportRowCount", { rows: rows.length })}
+          {t("exportRowCount", { rows: effectiveRows.length })}
         </chakra.div>
-        {fullExport && (
+        {(hasSelection || fullExport) && (
           <FormSection>
             <FieldLabel as="div">{t("exportScope")}</FieldLabel>
             <chakra.div role="radiogroup" aria-label={t("exportScope")} display="flex" flexDirection="column" gap="1.5">
-              {(["current", "full"] as const).map((sc) => (
+              {(
+                [
+                  "current",
+                  ...(hasSelection ? (["selection"] as const) : []),
+                  ...(fullExport ? (["full"] as const) : []),
+                ] as const
+              ).map((sc) => (
                 <chakra.label key={sc} display="inline-flex" alignItems="flex-start" gap="2" cursor="pointer" userSelect="none">
                   <Radio
                     name="export-scope"
@@ -369,9 +397,22 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                     mt="3px"
                   />
                   <chakra.span display="flex" flexDirection="column">
-                    <chakra.span fontSize="md">{sc === "current" ? t("exportScopeCurrent") : t("exportScopeFull")}</chakra.span>
+                    <chakra.span fontSize="md">
+                      {sc === "current"
+                        ? t("exportScopeCurrent")
+                        : sc === "selection"
+                          ? t("exportScopeSelection")
+                          : t("exportScopeFull")}
+                    </chakra.span>
                     <chakra.span fontSize="xs" color="app.textMuted">
-                      {sc === "current" ? t("exportScopeCurrentHint", { rows: rows.length }) : t("exportScopeFullHint")}
+                      {sc === "current"
+                        ? t("exportScopeCurrentHint", { rows: rows.length })
+                        : sc === "selection"
+                          ? t("exportScopeSelectionHint", {
+                              rows: selection?.rows.length ?? 0,
+                              cols: selection?.columns.length ?? 0,
+                            })
+                          : t("exportScopeFullHint")}
                     </chakra.span>
                   </chakra.span>
                 </chakra.label>
@@ -507,11 +548,11 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
           <chakra.div display="flex" alignItems="center" gap="2">
             <FieldLabel as="div" mb={0}>{t("exportPreview")}</FieldLabel>
             <chakra.div flex="1" />
-            <Tooltip label={copied ? t("gridCopied") : t("exportCopyAll")} focusableWrapper={rows.length === 0}>
+            <Tooltip label={copied ? t("gridCopied") : t("exportCopyAll")} focusableWrapper={effectiveRows.length === 0}>
               <chakra.button
                 type="button"
                 onClick={handleCopy}
-                disabled={rows.length === 0}
+                disabled={effectiveRows.length === 0}
                 aria-label={copied ? t("gridCopied") : t("exportCopyAll")}
                 display="inline-flex"
                 alignItems="center"
@@ -554,7 +595,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
           </chakra.pre>
           {previewTruncated && (
             <chakra.div fontSize="xs" color="app.textMuted">
-              {t("exportPreviewTruncated", { shown: PREVIEW_ROWS, total: rows.length })}
+              {t("exportPreviewTruncated", { shown: PREVIEW_ROWS, total: effectiveRows.length })}
             </chakra.div>
           )}
         </FormSection>
