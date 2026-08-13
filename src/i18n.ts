@@ -87,7 +87,11 @@ const en = {
   snippetFolderNone: "(No folder)",
   snippetInsertHint: "Double-click to insert into the editor",
   snippetMenuInsert: "Insert into editor",
+  snippetMenuRun: "Run",
   snippetMenuEdit: "Edit snippet",
+  snippetMenuFavorite: "Add to favorites",
+  snippetMenuUnfavorite: "Remove from favorites",
+  snippetFavoriteBadge: "Favorite snippet",
   snippetMenuDelete: "Delete snippet",
   snippetDeleteConfirm: 'Delete snippet "{name}"?',
 
@@ -2109,6 +2113,7 @@ const en = {
   cmdkActionSchemaExport: "Export schema for AI (Markdown)",
   cmdkActionToggleTheme: "Toggle light / dark theme",
   cmdkActionDisconnect: "Disconnect",
+  cmdkActionRunSnippet: "Run: {name}",
 
   // プロセスモニタパネル
   appProcesses: "Process monitor",
@@ -2754,7 +2759,11 @@ const ja: Dict = {
   snippetFolderNone: "(フォルダなし)",
   snippetInsertHint: "ダブルクリックでエディタに挿入",
   snippetMenuInsert: "エディタに挿入",
+  snippetMenuRun: "実行",
   snippetMenuEdit: "スニペットを編集",
+  snippetMenuFavorite: "お気に入りに追加",
+  snippetMenuUnfavorite: "お気に入りから削除",
+  snippetFavoriteBadge: "お気に入りのスニペット",
   snippetMenuDelete: "スニペットを削除",
   snippetDeleteConfirm: "スニペット「{name}」を削除しますか？",
 
@@ -4769,6 +4778,7 @@ const ja: Dict = {
   cmdkActionSchemaExport: "スキーマを AI 向けに出力 (Markdown)",
   cmdkActionToggleTheme: "ライト / ダークテーマ切替",
   cmdkActionDisconnect: "切断する",
+  cmdkActionRunSnippet: "実行: {name}",
 
   // プロセスモニタパネル
   appProcesses: "プロセスモニタ",

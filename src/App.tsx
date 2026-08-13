@@ -311,6 +311,14 @@ import {
   type QuickAccessState,
 } from "./tableQuickAccess";
 import {
+  forgetSnippetQuickAccess,
+  loadSnippetQuickAccess,
+  recordSnippetRun,
+  saveSnippetQuickAccess,
+  toggleSnippetFavorite,
+  type SnippetQuickAccessState,
+} from "./snippetQuickAccess";
+import {
   EMPTY_PLAN_WATCH,
   isWatched,
   loadPlanWatch,
@@ -1411,6 +1419,12 @@ export default function App() {
   // お気に入り / 最近使ったテーブル。アクティブ接続プロファイル単位で
   // localStorage に永続化する。`handleOpenTable` がテーブルを開くたびに最近へ記録。
   const [quickAccess, setQuickAccess] = useState<QuickAccessState>(EMPTY_QUICK_ACCESS);
+  // お気に入り (ピン留め) / 最近実行したスニペット (#877)。スニペットは接続を
+  // 跨いで再利用されることが多いため、テーブルのクイックアクセスと異なりプロファイル
+  // 単位ではなくグローバルに 1 つだけ持つ (`snippetQuickAccess.ts` 参照)。
+  const [snippetQuickAccess, setSnippetQuickAccess] = useState<SnippetQuickAccessState>(
+    () => loadSnippetQuickAccess(),
+  );
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // 直近の実行クエリ (最新が先頭、連続重複は畳む)。QueryEditor の ↑/↓ 履歴
   // ナビゲーション用。接続プロファイル単位で読み込み、実行のたびに
@@ -2410,6 +2424,25 @@ export default function App() {
       return next;
     });
   }, [selectedProfile?.id]);
+
+  // スニペットのお気に入り (ピン留め) トグル (#877)。接続の有無に関わらず常に
+  // 使える (ローカル永続化のみで DB には触れない)。
+  const handleToggleSnippetFavorite = useCallback((snippet: Snippet) => {
+    setSnippetQuickAccess((prev) => {
+      const next = toggleSnippetFavorite(prev, snippet.id);
+      saveSnippetQuickAccess(next);
+      return next;
+    });
+  }, []);
+
+  // ワンクリック実行したスニペットを「最近実行」の先頭へ記録する (#877)。
+  const recordSnippetRunUsage = useCallback((id: string) => {
+    setSnippetQuickAccess((prev) => {
+      const next = recordSnippetRun(prev, id);
+      saveSnippetQuickAccess(next);
+      return next;
+    });
+  }, []);
 
   // Keep the active profile pointer in sync when the profile is edited or
   // when the saved list is refreshed for any other reason.
@@ -4301,6 +4334,26 @@ export default function App() {
     }
   }, [activeTab, sessionId, activeEditor, addTab]);
 
+  // 保存済みスニペットのワンクリック実行 (#877)。専用の新しいクエリタブへ SQL を
+  // 流し込み、通常のエディタ実行 (`dispatchEditorAction` の "run") と全く同じ
+  // `runInTabWithGate` に委譲する — 危険クエリ確認 (DangerousQueryDialog)・
+  // 読み取り専用ガード・本番書き込み承認・自動 LIMIT を含む既存の安全網をそのまま
+  // 通し、実行経路を二重実装しない。`newTab: false` は「このスニペット専用に
+  // 作った新タブをそのまま使う」指定で、`settings.resultsInNewTab` が有効でも
+  // さらにもう 1 枚タブを開かせない。
+  const handleRunSnippet = useCallback((snippet: Snippet) => {
+    if (!sessionId) return;
+    const tab: Tab = {
+      ...makeQueryTab(),
+      sql: snippet.sql,
+      lastExecutedSql: snippet.sql,
+      title: snippet.name,
+    };
+    addTab(tab);
+    runInTabWithGate(tab, snippet.sql, { newTab: false });
+    recordSnippetRunUsage(snippet.id);
+  }, [sessionId, addTab, runInTabWithGate, recordSnippetRunUsage]);
+
   // Insert an advisor's fix DDL (#741) into the focused query/explain editor,
   // or a fresh query tab. Executing it still goes through the existing safety
   // nets (read-only rejection, dangerous-query confirmation). The panel stays
@@ -4372,6 +4425,13 @@ export default function App() {
       if (activeProfileIdRef.current) {
         setPlanWatch(loadPlanWatch(activeProfileIdRef.current));
       }
+      // クイックアクセス (#877): 削除したスニペットをお気に入り/最近実行から
+      // 取り除く (実行計画ウォッチと同じく、Undo で元に戻ってもここは復元しない)。
+      setSnippetQuickAccess((prev) => {
+        const next = forgetSnippetQuickAccess(prev, id);
+        if (next !== prev) saveSnippetQuickAccess(next);
+        return next;
+      });
     }, "statusFailedDeleteSnippet");
     if (!ok) return;
     // Undo (#676): snippets have no secrets, so restoring with the original id
@@ -6159,7 +6219,9 @@ export default function App() {
       }
     }
 
-    // スニペット。
+    // スニペット。挿入 (常時) に加え、接続中は「保存済みスニペットを直接実行」
+    // (#877) の候補も並べる。id を分けて 2 候補を独立に検索・実行できるようにする
+    // (挿入だけ試したいケースを妨げない)。
     for (const snippet of snippets) {
       items.push({
         id: `snippet:${snippet.id}`,
@@ -6170,6 +6232,17 @@ export default function App() {
         icon: "snippet",
         run: () => handleInsertSnippet(snippet),
       });
+      if (sessionId) {
+        items.push({
+          id: `snippet-run:${snippet.id}`,
+          group: "snippets",
+          label: t("cmdkActionRunSnippet", { name: snippet.name }),
+          sublabel: snippet.folder ?? undefined,
+          keywords: `${snippet.tags.join(" ")} ${snippet.sql} run execute 実行`,
+          icon: "query",
+          run: () => handleRunSnippet(snippet),
+        });
+      }
     }
 
     // 直近のクエリ履歴 (最新優先、件数を抑える)。
@@ -6202,6 +6275,7 @@ export default function App() {
     handleConnect,
     handleRunTableSelect,
     handleInsertSnippet,
+    handleRunSnippet,
     handleRestoreHistory,
     openFullView,
     toggleTheme,
@@ -7096,6 +7170,9 @@ export default function App() {
             watchedPlanIds={watchedPlanIdList}
             onTogglePlanWatch={selectedProfile ? handleTogglePlanWatch : undefined}
             onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
+            favoriteIds={snippetQuickAccess.favorites}
+            onToggleFavorite={handleToggleSnippetFavorite}
+            onRun={sessionId ? handleRunSnippet : undefined}
           />
         ) : sidebarTab === "history" ? (
           <HistoryList
