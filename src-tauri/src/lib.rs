@@ -114,6 +114,17 @@ pub mod __test_api {
     }
 
     pub use crate::commands::export::ExportFormat;
+    // サーバ機能系コマンドの State なしコア (#881)。`inspector` / `server` /
+    // `process` は env ゲートの MySQL/PostgreSQL 統合テストでしか実行されず、
+    // Windows ジョブや env 無しのローカル `cargo test` (SQLite のみ) では
+    // コマンド境界が一度も走らなかった。常時実走の `tests/sqlite_integration.rs`
+    // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
+    // 経路を駆動できるよう、ここでピンポイントに公開する。
+    pub use crate::commands::inspector::{
+        query_stats_support_inner, sample_live_queries_inner, sample_statement_stats_inner,
+    };
+    pub use crate::commands::process::list_processes_inner;
+    pub use crate::commands::server::{server_info_inner, server_metrics_inner};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await

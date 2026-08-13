@@ -804,6 +804,20 @@ no-op)。
 `commands::query` の各エントリポイントは `ensure_allowed_for_session` でこのガードを
 通します。
 
+**MSSQL のロック系テーブルヒント (#906)。** 他ドライバの `FOR UPDATE` /
+`LOCK IN SHARE MODE` を拒否している設計意図 (読み取り専用セッションはロックを取らない)
+に合わせ、T-SQL の `WITH (...)` ヒントのうち**共有読み取りより強いロックモード**
+(`UPDLOCK` / `XLOCK` / `TABLOCKX`) と**文より長いロック保持期間**
+(`HOLDLOCK` / `SERIALIZABLE` / `REPEATABLEREAD` / `READCOMMITTEDLOCK`) を
+`has_locking_table_hint` で拒否します。`NOLOCK` / `READUNCOMMITTED` / `READPAST`
+(ロックを減らす) と粒度のみのヒント (`ROWLOCK` / `PAGLOCK` / `TABLOCK`) は意図的に
+対象外。判定は `WITH (…)` グループの内側に限定するので `updlock` という**列名**は
+誤検出しません (入れ子括弧 `INDEX(0)` も追跡し、JOIN の 2 つ目のテーブルに付いた
+ヒントも拾います)。全ドライバに適用します — `WITH (…)` がテーブル参照直後に来る形は
+他方言では読み取り専用構文として成立しないため誤検出の余地が無く、共有ゴールデンの
+期待値を文ごとに 1 つに保てるからです。`FROM t (UPDLOCK)` という `WITH` 無しの
+レガシー形は既知の非対応 (通常の括弧式と区別できないため)。
+
 `apply_auto_limit` は、自前で行数を制限していない素の `SELECT` / `WITH ... SELECT` に
 自動で `LIMIT n` を付与します。判定は保守的で、迷ったら `None` (ユーザの SQL をそのまま
 実行) を返します。単一行集計 (`COUNT(*)` 等) や既存の `LIMIT`/`OFFSET`、ロック句がある
@@ -1508,6 +1522,20 @@ ipcCommandParity.test.ts` が Rust 側登録と `tauri.ts` の対応をテスト
 などを提供します。新しいテスト用エントリポイントが必要な場合は、内部モジュールを
 公開するのではなく、ここに追加してください。
 
+**コマンド層の常時実行カバレッジ (#881)。** `commands/inspector.rs` /
+`commands/server.rs` / `commands/process.rs` は env ゲートの MySQL/PostgreSQL
+統合テストからしか実行されておらず、`rust (windows test)` ジョブや env 変数を
+設定しないローカルの `cargo test` (= SQLite のみ) では**コマンド境界が 1 度も
+走りません**でした。各コマンドの State なしコア
+(`query_stats_support_inner` / `sample_live_queries_inner` /
+`sample_statement_stats_inner` / `server_info_inner` / `server_metrics_inner` /
+`list_processes_inner`) を `__test_api` から公開し、常時実走の
+`tests/sqlite_integration.rs` が「SQLite 短絡パスの戻り値 (縮退レスポンス /
+非対応エラー)」「未知セッション ID での `SessionNotFound`」「読み取り操作は
+read_only セッションでも通ること」を外部サーバ無しで固定します。`_inner` を切る
+パターンは `commands::query::run_query_inner` と同じで、`#[tauri::command]` 側は
+一行のラッパーに徹します。
+
 ### Tauri capabilities
 
 `src-tauri/capabilities/default.json` は意図的に最小限です: ウィンドウ / app /
@@ -1593,6 +1621,24 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   「値ではなく解除」を意味し、App の `setBulkCellEditsForTab` が単一セルの
   `setCellEditForTab` と同じ削除処理を行う — 無変更の `SET col = <同じ値>` を Apply で
   発行せず、保留編集の件数表示も実際に変わるセルだけを数えるため。
+- クリップボード貼り付けによる一括編集 (#793) — `pasteEdit.ts`。結果グリッドの
+  矩形選択 TSV コピー (`copySelection`) と対称の取り込み経路で、`DataGrid` の
+  `<table>` に付けた `onPaste` が Excel/スプレッドシート由来の TSV (タブ区切り・
+  改行区切り、`"` で囲んだフィールドのタブ/改行/二重引用符も復元) を
+  `parseClipboardGrid` で解析し、選択の左上 (矩形選択が無ければアクティブセル) を
+  アンカーに貼り付け範囲を展開する。1×1 の単一値貼り付けは既存の矩形選択があれば
+  `planBulkCellEdit` (#596) にそのまま委譲し (二重実装しない)、2 セル以上の矩形
+  貼り付けだけが新設の `planPasteEdit` を通る — 編集不可列・型不正値のスキップは
+  `planBulkCellEdit` と同じ `isColEditable`/`validate` を共有し、加えて貼り付け
+  範囲が現在表示中の行/列数を超えた分は `skippedOutOfBounds` としてスキップ計上
+  する (行の自動 INSERT 化はこの Issue のスコープ外)。生成される変更は既存の
+  `PendingEdits`/`BulkEditTarget` バッファに積まれるだけで、確定は従来どおり
+  Apply — **DB への新しい書き込み経路を増やさない**点は `quickSetValues.ts` と
+  同じ方針。副次的に、グリッドセルにフォーカスがある状態 (インライン編集中は
+  対象外) での Delete/Backspace は選択範囲 (または アクティブセル) を NULL へ
+  一括セットする `clearSelectedCells` を追加し、既存の「値をセット」経路
+  (`applyValueToCells`) をそのまま再利用するため NOT NULL 制約のスキップ挙動も
+  一括編集ダイアログと揃う。
 - データ可視化カラースケール (#525) — `colorScale.ts` が、データを色で符号化する表面
   (チャート系列・ヒートマップ・データバー・将来のコスト/NULL 率ミニバー) が共有する
   **単一のスケール体系**を純ロジックとして定義する。**sequential** (単一色相の連続、CB
