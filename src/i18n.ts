@@ -80,6 +80,11 @@ const en = {
   editorSaveSnippet: "Save snippet",
   editorSaveSnippetTitle: "Save the selection (or whole editor) as a reusable snippet.",
 
+  editorOpenFile: "Open",
+  editorOpenFileTitle: "Open a .sql/.txt file in a new tab.",
+  editorSaveFile: "Save as...",
+  editorSaveFileTitle: "Save this tab's SQL to a .sql file.",
+
   snippetSearchPlaceholder: "Filter snippets...",
   snippetShowAllScopes: "Show all scopes",
   snippetEmpty: "No snippets yet. Use \"Save snippet\" in the editor, or + above.",
@@ -1012,6 +1017,9 @@ const en = {
   exportScope: "What to export",
   exportScopeCurrent: "Current grid only",
   exportScopeCurrentHint: "Export the {rows} rows currently loaded in the grid.",
+  // 矩形選択範囲のエクスポート (#917)。
+  exportScopeSelection: "Selected cells only",
+  exportScopeSelectionHint: "Export the {rows} rows × {cols} columns currently selected in the grid.",
   exportScopeFull: "Full result (re-run query)",
   exportScopeFullHint: "Re-run the query and stream every row to the file (no auto LIMIT).",
   exportFullProgress: "Exported {rows} rows...",
@@ -1585,6 +1593,9 @@ const en = {
   gridAddRow: "Add new row...",
   gridMarkDelete: "Mark row for deletion",
   gridUnmarkDelete: "Unmark deletion",
+  // 選択範囲のエクスポート/コピー (#917)
+  gridExportSelection: "Export {count} selected cells...",
+  gridExportSelectionTitle: "Save the selected rectangle to a file or copy it as CSV / JSON / Markdown / etc.",
   // 一括セル編集 (#596)
   gridBulkEditSelection: "Set value for {count} selected cells...",
   gridBulkEditSelectionTitle:
@@ -1600,6 +1611,13 @@ const en = {
     "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
   gridBulkEditNoneApplied: "No cells were edited (read-only columns or invalid value)",
   gridBulkEditAllUnchanged: "All {cells} cells already held that value — nothing to edit",
+  // クリップボード貼り付けによる複数セル一括編集 (#793)
+  gridPasteApplied: "Buffered {cells} pasted cell edits — Apply to commit",
+  gridPasteAppliedSkipped:
+    "Buffered {cells} pasted cell edits ({skipped} skipped) — Apply to commit",
+  gridPasteNoneApplied:
+    "No cells were pasted (read-only columns, invalid values, or the paste extended past the visible rows/columns)",
+  gridPasteAllUnchanged: "All {cells} pasted cells already held that value — nothing to edit",
   // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
   gridQuickSetNull: "Set to NULL",
   gridQuickSetEmpty: "Set to empty string",
@@ -1676,6 +1694,12 @@ const en = {
   dropCsvNoTable: "Open a table first to import a dropped CSV.",
   dropCsvMultiOnlyFirst: "Only the first CSV was used; import the rest one at a time.",
   dropUnsupported: "Unsupported file: {name}",
+  // .sql の明示的な「開く」/「名前を付けて保存」(#918。D&D の読み込みロジックを共有)
+  openSqlFileTitle: "Open SQL file",
+  openSqlFileError: "Could not open the file: {error}",
+  saveSqlFileTitle: "Save SQL file",
+  saveSqlFileSuccess: "Saved {name}",
+  saveSqlFileError: "Could not save the file: {error}",
   importFormat: "Format",
   importFormatCsv: "CSV",
   importFormatJson: "JSON (array)",
@@ -2130,6 +2154,8 @@ const en = {
   cmdkHintClose: "Close",
   cmdkBadgeConnected: "Connected",
   cmdkActionNewQueryTab: "New query tab",
+  cmdkActionOpenSqlFile: "Open SQL file…",
+  cmdkActionSaveSqlFile: "Save SQL as file…",
   cmdkActionNewConnection: "New connection…",
   cmdkActionSettings: "Open settings",
   cmdkActionHelp: "Open help",
@@ -2778,6 +2804,11 @@ const ja: Dict = {
 
   editorSaveSnippet: "Save snippet",
   editorSaveSnippetTitle: "選択範囲（またはエディタ全体）を再利用可能なスニペットとして保存します。",
+
+  editorOpenFile: "Open",
+  editorOpenFileTitle: ".sql/.txt ファイルを新しいタブで開きます。",
+  editorSaveFile: "Save as...",
+  editorSaveFileTitle: "このタブの SQL を .sql ファイルとして保存します。",
 
   snippetSearchPlaceholder: "スニペットを検索...",
   snippetShowAllScopes: "すべてのスコープを表示",
@@ -3710,6 +3741,9 @@ const ja: Dict = {
   exportScope: "エクスポート対象",
   exportScopeCurrent: "現在のグリッドのみ",
   exportScopeCurrentHint: "グリッドに読み込み済みの {rows} 行を書き出します。",
+  // 矩形選択範囲のエクスポート (#917)。
+  exportScopeSelection: "選択範囲のみ",
+  exportScopeSelectionHint: "グリッドで選択中の {rows} 行 × {cols} 列を書き出します。",
   exportScopeFull: "全件 (クエリを再実行)",
   exportScopeFullHint: "クエリを再実行し、全行をストリーミングでファイルへ書き出します (自動 LIMIT なし)。",
   exportFullProgress: "{rows} 行をエクスポート中...",
@@ -4278,6 +4312,9 @@ const ja: Dict = {
   gridAddRow: "新規行を追加...",
   gridMarkDelete: "行を削除予定にする",
   gridUnmarkDelete: "削除予定を解除",
+  // 選択範囲のエクスポート/コピー (#917)
+  gridExportSelection: "選択した {count} セルをエクスポート...",
+  gridExportSelectionTitle: "選択範囲だけを CSV / JSON / Markdown などでファイル保存またはコピーします",
   // 一括セル編集 (#596)
   gridBulkEditSelection: "選択した {count} セルに値を設定...",
   gridBulkEditSelectionTitle: "選択範囲のすべてのセルに単一値 (または NULL) を適用",
@@ -4292,6 +4329,13 @@ const ja: Dict = {
     "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
   gridBulkEditNoneApplied: "編集されたセルはありません (編集不可列または不正な値)",
   gridBulkEditAllUnchanged: "選択した {cells} セルはすべてすでにその値です — 変更はありません",
+  // クリップボード貼り付けによる複数セル一括編集 (#793)
+  gridPasteApplied: "{cells} セルの貼り付け編集を保留しました — Apply で確定します",
+  gridPasteAppliedSkipped:
+    "{cells} セルの貼り付け編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
+  gridPasteNoneApplied:
+    "貼り付けられたセルはありません (編集不可列・不正な値、または表示中の行/列数を超えた貼り付けです)",
+  gridPasteAllUnchanged: "貼り付けた {cells} セルはすべてすでにその値です — 変更はありません",
   // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
   gridQuickSetNull: "NULL をセット",
   gridQuickSetEmpty: "空文字をセット",
@@ -4368,6 +4412,12 @@ const ja: Dict = {
   dropCsvNoTable: "ドロップした CSV を取り込むには、先にテーブルを開いてください。",
   dropCsvMultiOnlyFirst: "最初の CSV のみ使用しました。残りは 1 つずつ取り込んでください。",
   dropUnsupported: "対応していないファイルです: {name}",
+  // .sql の明示的な「開く」/「名前を付けて保存」(#918。D&D の読み込みロジックを共有)
+  openSqlFileTitle: "SQL ファイルを開く",
+  openSqlFileError: "ファイルを開けませんでした: {error}",
+  saveSqlFileTitle: "SQL ファイルを保存",
+  saveSqlFileSuccess: "{name} を保存しました",
+  saveSqlFileError: "ファイルを保存できませんでした: {error}",
   importFormat: "形式",
   importFormatCsv: "CSV",
   importFormatJson: "JSON (配列)",
@@ -4822,6 +4872,8 @@ const ja: Dict = {
   cmdkHintClose: "閉じる",
   cmdkBadgeConnected: "接続中",
   cmdkActionNewQueryTab: "新しいクエリタブ",
+  cmdkActionOpenSqlFile: "SQL ファイルを開く…",
+  cmdkActionSaveSqlFile: "SQL をファイルに保存…",
   cmdkActionNewConnection: "新規接続…",
   cmdkActionSettings: "設定を開く",
   cmdkActionHelp: "ヘルプを開く",

@@ -14,10 +14,23 @@ pub async fn query_stats_support(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<QueryStatsSupport> {
+    query_stats_support_inner(state.inner(), &session_id).await
+}
+
+/// Core of [`query_stats_support`] without Tauri's `State` wrapper, so
+/// integration tests can drive the exact command path (session lookup +
+/// driver dispatch) without a Tauri runtime — same pattern as
+/// `commands::query::run_query_inner`. Lets the SQLite short-circuit
+/// (`unsupported_driver`) be covered by the always-on SQLite suite instead of
+/// only by the env-gated MySQL/PostgreSQL ones (#881).
+pub async fn query_stats_support_inner(
+    state: &AppState,
+    session_id: &str,
+) -> Result<QueryStatsSupport> {
     let session = state
-        .get(&session_id)
+        .get(session_id)
         .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     session.conn.query_stats_support().await
 }
 
@@ -33,10 +46,18 @@ pub async fn sample_live_queries(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<LiveQuery>> {
+    sample_live_queries_inner(state.inner(), &session_id).await
+}
+
+/// Core of [`sample_live_queries`]. See [`query_stats_support_inner`] (#881).
+pub async fn sample_live_queries_inner(
+    state: &AppState,
+    session_id: &str,
+) -> Result<Vec<LiveQuery>> {
     let session = state
-        .get(&session_id)
+        .get(session_id)
         .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     session.conn.live_queries().await
 }
 
@@ -50,9 +71,17 @@ pub async fn sample_statement_stats(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<StatementStat>> {
+    sample_statement_stats_inner(state.inner(), &session_id).await
+}
+
+/// Core of [`sample_statement_stats`]. See [`query_stats_support_inner`] (#881).
+pub async fn sample_statement_stats_inner(
+    state: &AppState,
+    session_id: &str,
+) -> Result<Vec<StatementStat>> {
     let session = state
-        .get(&session_id)
+        .get(session_id)
         .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     session.conn.statement_stats().await
 }

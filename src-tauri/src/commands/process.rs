@@ -12,10 +12,17 @@ pub async fn list_processes(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<ProcessInfo>> {
+    list_processes_inner(state.inner(), &session_id).await
+}
+
+/// Core of [`list_processes`] without Tauri's `State` wrapper, so integration
+/// tests can drive the exact command path without a Tauri runtime — same
+/// pattern as [`kill_process_inner`] (#881).
+pub async fn list_processes_inner(state: &AppState, session_id: &str) -> Result<Vec<ProcessInfo>> {
     let session = state
-        .get(&session_id)
+        .get(session_id)
         .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     session.conn.list_processes().await
 }
 

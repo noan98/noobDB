@@ -1,8 +1,10 @@
 //! IPC surface for the DML flight recorder / one-click undo (#735).
 //!
-//! `run_captured_write` wraps a single write statement's execution with a
+//! `run_captured_write_inner` wraps a single write statement's execution with a
 //! best-effort before/after capture (`Connection::capture_write`) and, when
-//! successful, persists it to the local `flight_recorder.sqlite` store.
+//! successful, persists it to the local `flight_recorder.sqlite` store. It is
+//! reached through `run_query_stream({ capture: true })` rather than an IPC
+//! command of its own (#907).
 //! `list_flight_records` / `clear_flight_records` mirror the existing history
 //! commands. `preview_undo` / `undo_flight_record` compute (and, for the
 //! latter, apply) the reverse SQL via `flight_recorder::undo::build_undo_plan`.
@@ -17,7 +19,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::types::{QueryResult, Value};
-use crate::db::{classify_write_kind, DriverKind, WriteKind, DEFAULT_CAPTURE_ROW_CAP};
+use crate::db::{DriverKind, WriteKind, DEFAULT_CAPTURE_ROW_CAP};
 use crate::error::{AppError, Result};
 use crate::flight_recorder::undo::{build_undo_plan, UndoConflict};
 use crate::flight_recorder::{persist_capture, store as flight_store, WriteCaptureSummary};
@@ -41,27 +43,13 @@ pub struct CapturedWriteResponse {
 /// session's `read_only` guard exactly like `run_query`, and records to query
 /// history exactly like `run_query_transaction` (skipped for `skip_history`
 /// sessions, which also skip the flight-recorder capture itself).
-#[tauri::command]
+///
+/// **Not an IPC command.** The UI records writes through
+/// `run_query_stream({ capture: true })` (`commands::query::spawn_captured_write`),
+/// which funnels into this same core; the non-streaming `run_captured_write`
+/// wrapper had no caller and was removed in #907. Integration tests drive this
+/// through `__test_api::run_captured_write_via_command`.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_captured_write(
-    session_id: String,
-    sql: String,
-    database: Option<String>,
-    row_cap: Option<u32>,
-    retention_days: Option<u32>,
-    state: State<'_, AppState>,
-) -> Result<CapturedWriteResponse> {
-    run_captured_write_inner(
-        state.inner(),
-        session_id,
-        sql,
-        database,
-        row_cap,
-        retention_days,
-    )
-    .await
-}
-
 pub(crate) async fn run_captured_write_inner(
     state: &AppState,
     session_id: String,
@@ -130,74 +118,6 @@ pub(crate) async fn run_captured_write_inner(
         reason: capture.reason,
         capture_id,
     })
-}
-
-#[derive(Debug, Serialize)]
-pub struct WriteCapturePrecheck {
-    pub capturable: bool,
-    pub reason: Option<String>,
-    #[serde(rename = "estimatedRows")]
-    pub estimated_rows: Option<u64>,
-}
-
-/// Read-only informational check ("would this write be captured, and about
-/// how many rows would it touch?"), used by the UI to warn before running a
-/// write that would exceed the row cap or that the recorder can't resolve a
-/// target table/primary key for — without side effects (it only runs the
-/// existing dry-run preview, which always rolls back).
-#[tauri::command]
-pub async fn precheck_captured_write(
-    session_id: String,
-    sql: String,
-    database: Option<String>,
-    row_cap: Option<u32>,
-    state: State<'_, AppState>,
-) -> Result<WriteCapturePrecheck> {
-    let session = state
-        .get(&session_id)
-        .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    let row_cap = row_cap
-        .map(|n| n as usize)
-        .unwrap_or(DEFAULT_CAPTURE_ROW_CAP);
-    let kind = classify_write_kind(&sql);
-    if kind == WriteKind::Other {
-        return Ok(WriteCapturePrecheck {
-            capturable: false,
-            reason: Some("対象外の文 (SELECT / DDL / 複数文など) のため記録できません".to_string()),
-            estimated_rows: None,
-        });
-    }
-    match session
-        .conn
-        .preview_execute_with_limit(&sql, database.as_deref(), row_cap)
-        .await
-    {
-        Ok(dry) => {
-            let capturable = dry.target_table.is_some()
-                && !dry.primary_key.is_empty()
-                && (kind == WriteKind::Insert || !dry.truncated);
-            let reason = if capturable {
-                None
-            } else if dry.target_table.is_none() {
-                Some("対象テーブルを特定できませんでした (複雑な JOIN 等)".to_string())
-            } else if dry.primary_key.is_empty() {
-                Some("対象テーブルに主キーがありません".to_string())
-            } else {
-                Some(format!("対象行数が上限 ({row_cap} 行) を超えています"))
-            };
-            Ok(WriteCapturePrecheck {
-                capturable,
-                reason,
-                estimated_rows: Some(dry.rows_affected),
-            })
-        }
-        Err(e) => Ok(WriteCapturePrecheck {
-            capturable: false,
-            reason: Some(e.to_string()),
-            estimated_rows: None,
-        }),
-    }
 }
 
 const DEFAULT_LIST_LIMIT: i64 = 200;
