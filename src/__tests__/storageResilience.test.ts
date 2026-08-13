@@ -9,6 +9,7 @@ import {
 } from "../settings";
 import { loadPersistedWorkspace, type PersistedWorkspace } from "../tabPersistence";
 import { EMPTY_QUICK_ACCESS, loadQuickAccess } from "../tableQuickAccess";
+import { EMPTY_SNIPPET_QUICK_ACCESS, loadSnippetQuickAccess } from "../snippetQuickAccess";
 import { loadSchemaTree, normalizeSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import {
   normalizeCollapsedFolders,
@@ -196,6 +197,38 @@ describe("loadQuickAccess (クイックアクセスの破損耐性)", () => {
 
   it("キーが無いプロファイルは空状態", () => {
     expect(loadQuickAccess("never-saved")).toEqual(EMPTY_QUICK_ACCESS);
+  });
+});
+
+describe("loadSnippetQuickAccess (スニペットお気に入り/最近実行 #877 の破損耐性)", () => {
+  const KEY = "noobdb.snippetQuickAccess.v1";
+
+  it("壊れた JSON は空状態へフォールバックする (例外なし)", () => {
+    localStorage.setItem(KEY, "}{not json");
+    let state!: ReturnType<typeof loadSnippetQuickAccess>;
+    expect(() => {
+      state = loadSnippetQuickAccess();
+    }).not.toThrow();
+    expect(state).toEqual(EMPTY_SNIPPET_QUICK_ACCESS);
+  });
+
+  it("型不一致のエントリを捨てて妥当な ID だけ残す", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ favorites: ["abc12345", 1, null], recent: "not-an-array" }),
+    );
+    const state = loadSnippetQuickAccess();
+    expect(state.favorites).toEqual(["abc12345"]);
+    expect(state.recent).toEqual([]);
+  });
+
+  it("非オブジェクト JSON は空状態", () => {
+    localStorage.setItem(KEY, JSON.stringify(123));
+    expect(loadSnippetQuickAccess()).toEqual(EMPTY_SNIPPET_QUICK_ACCESS);
+  });
+
+  it("キーが無ければ空状態", () => {
+    expect(loadSnippetQuickAccess()).toEqual(EMPTY_SNIPPET_QUICK_ACCESS);
   });
 });
 
