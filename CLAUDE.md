@@ -208,15 +208,18 @@ CI は 2 つのワークフローに分かれています:
   `src-tauri/src/lib.rs` / `commands/*.rs` / `tasks/scheduler.rs` を読む) と
   `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
   `schemaParity.test.ts` / `exportFormatGolden.test.ts` (#879) (Rust の統合テストと
-  共有するフィクスチャ `src/__tests__/fixtures/*.json` を検証する) は「相手言語の
-  ソースを実行時に読む」言語横断のパリティ/ゴールデンテストです。これらは元々
-  `frontend` ジョブの `pnpm test` に含まれていたため `frontend==true` (`src/**` の
-  変更) でしか走らず、`src-tauri/**` のみを変更する PR ではまさにその変更を捕まえる
-  べきテストが 1 本も実行されないという穴がありました (#853)。対応として、対象
-  8 ファイルだけを `pnpm vitest run <files...>` でピンポイントに実行する軽量な専用
-  ジョブ `crosslang parity` を新設し、起動条件を `frontend==true || rust==true` の
-  OR にしています (`frontend` ジョブとテストが重複しますが、対象を絞っているため
-  数秒程度と軽量で、重複コストよりカバレッジの穴を塞ぐ価値を優先しました)。逆方向
+  共有するフィクスチャ `src/__tests__/fixtures/*.json` を検証する)、および
+  `apiReachabilityParity.test.ts` (#907。Rust ソースは読まないが、UI 未到達
+  ラッパーの削除は `ipcCommandParity` = Rust 側登録と連動して直す必要があるため
+  同じ起動条件で同居させる) は「相手言語のソースを実行時に読む」
+  言語横断のパリティ/ゴールデンテストです。これらは元々 `frontend` ジョブの
+  `pnpm test` に含まれていたため `frontend==true` (`src/**` の変更) でしか走らず、
+  `src-tauri/**` のみを変更する PR ではまさにその変更を捕まえるべきテストが
+  1 本も実行されないという穴がありました (#853)。対応として、対象ファイルだけを
+  `pnpm vitest run <files...>` でピンポイントに実行する軽量な専用ジョブ
+  `crosslang parity` を新設し、起動条件を `frontend==true || rust==true` の OR に
+  しています (`frontend` ジョブとテストが重複しますが、対象を絞っているため数秒
+  程度と軽量で、重複コストよりカバレッジの穴を塞ぐ価値を優先しました)。逆方向
   (Rust 側のゴールデンテスト `serde_schema_parity.rs` / `read_only_golden.rs` /
   `error_kind_golden.rs` / `error_hint_golden.rs` / `export_format_golden.rs` が
   `include_str!` で読む共有フィクスチャだけを変更する PR で `rust (test)` が
@@ -1496,7 +1499,27 @@ ipcCommandParity.test.ts` が Rust 側登録と `tauri.ts` の対応をテスト
 **コマンドを追加する
 ときは: Rust ハンドラを追加し、`lib.rs` で登録し、`tauri.ts` に型付けされたラッパー
 (とストリーミングなら対応する `listen*` ヘルパー) を追加します — これらの間でズレが
-発生するとフロントエンドが暗黙のうちに壊れます。** エラーは `AppError` として上に
+発生するとフロントエンドが暗黙のうちに壊れます。**
+
+**さらに「UI からそのラッパーに到達できるか」も検証します (#907)。**
+`ipcCommandParity` が担保するのは「lib.rs 登録 ⇔ `tauri.ts` ラッパ」の集合一致まで
+で、その先の到達性は誰も見ていませんでした。`api` は単一オブジェクトとして export され
+UI で使われているため **knip では原理的にプロパティ単位の未使用を検出できず**、逆に
+`ipcCommandParity` は集合完全一致を強制するので UI 未接続のラッパーを消すと CI が
+落ちる — 結果としてデッドラッパーが構造的に不可視でした。
+`src/__tests__/apiReachabilityParity.test.ts` が `Object.keys(api)` と `src/` 配下
+(`api/tauri.ts` と `__tests__/` を除く) の `api.<name>` 参照を突き合わせ、**どこからも
+呼ばれないラッパーがあれば落ちます**。逃げ道の許可リスト
+`INTENTIONALLY_UNREACHABLE` は**空のまま維持するのが理想**で、追加するときは理由を
+併記してください (「まだ UI を作っていない」は理由になりません — UI を足すか、
+ラッパーと Rust コマンドを一緒に消す)。この方針で #907 では
+`run_captured_write` / `precheck_captured_write` を IPC ごと削除しました (書き込み記録は
+`run_query_stream({ capture: true })` に一本化済み。`run_captured_write_inner` は
+その共通コアとして残る)。`clear_flight_records` / `clear_task_runs` は同じ調査で
+UI 未接続と分かりましたが、#910 が `FlightRecorderPanel` の「全消去」/ `TaskManager`
+の「実行履歴をクリア」導線を追加して解消済みです。
+
+エラーは `AppError` として上に
 伝搬し、`{ kind, message }` の**構造化 JSON** としてシリアライズされます
 (`error.rs::Serialize` / `AppError::kind()` を参照。#683)。`kind` はバリアント由来の
 安定した判別子 (`ssh` / `sshHostKeyMismatch` / `timeout` / `readOnly` /

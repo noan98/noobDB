@@ -207,9 +207,10 @@ pub mod __test_api {
         crate::commands::import::ensure_import_writable(session)
     }
 
-    /// Drives the `run_captured_write` IPC command's core path (session
-    /// lookup + read-only guard + capture + history recording) without a
-    /// Tauri runtime (#735).
+    /// Drives the captured-write core path (session lookup + read-only guard +
+    /// capture + history recording) without a Tauri runtime (#735). Production
+    /// reaches the same core through `run_query_stream({ capture: true })`
+    /// (#907 removed the unused non-streaming IPC command).
     pub async fn run_captured_write_via_command(
         state: &AppState,
         session_id: &str,
@@ -679,8 +680,6 @@ pub fn run() {
             commands::snippets::delete_snippet,
             commands::history::list_history,
             commands::history::clear_history,
-            commands::flight_recorder::run_captured_write,
-            commands::flight_recorder::precheck_captured_write,
             commands::flight_recorder::list_flight_records,
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,
