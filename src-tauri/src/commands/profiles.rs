@@ -71,8 +71,9 @@ pub struct SaveProfileRequest {
 }
 
 /// A stored profile plus flags telling the UI which secrets already exist in the
-/// keyring. The secret *values* never leave the backend; only their presence is
-/// reported so the form can show a masked indicator instead of an empty field.
+/// keyring. This payload carries only their presence, never the values, so the
+/// form can show a masked indicator instead of an empty field; reading a value
+/// takes a separate, explicit [`reveal_profile_secret`] call (#938).
 /// `ConnectionProfile` is flattened so the wire shape stays a superset of the
 /// plain profile (the extra `has_*` fields are not persisted to profiles.json).
 #[derive(Debug, Clone, Serialize)]
@@ -110,6 +111,73 @@ pub async fn list_profiles() -> Result<Vec<ProfileWithSecretFlags>> {
             }
         })
         .collect())
+}
+
+/// keyring に保存された秘密の種類。値は `profiles::secrets` の内部 kind 文字列
+/// (= keyring のアカウント名 `<profile_id>/<kind>` の後半) とそのまま一致させて
+/// あり、監査ログの `kind` フィールドと keyring 上のエントリ名を突き合わせられる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretKind {
+    DbPassword,
+    SshPassphrase,
+    SshPassword,
+    SshJumpPassphrase,
+    SshJumpPassword,
+}
+
+impl SecretKind {
+    /// ログ用の安定した識別子 (keyring の kind 文字列と同一)。
+    fn as_str(self) -> &'static str {
+        match self {
+            SecretKind::DbPassword => "db_password",
+            SecretKind::SshPassphrase => "ssh_passphrase",
+            SecretKind::SshPassword => "ssh_password",
+            SecretKind::SshJumpPassphrase => "ssh_passphrase_hop0",
+            SecretKind::SshJumpPassword => "ssh_password_hop0",
+        }
+    }
+}
+
+/// 保存済みの秘密を keyring から読み出して**平文のまま**フロントへ返す、唯一の
+/// IPC (#938)。ユーザが自分で保存したパスワードを確認したいだけのために OS の
+/// 資格情報マネージャ / Keychain / secret-tool を叩かせるのは体験として悪いので、
+/// 接続フォームの「表示」操作からだけ呼ばれる読み出し口を用意する。
+///
+/// **秘密分離ポリシー (CLAUDE.md) の意図的な例外である点に注意。** 前提は
+/// 「keyring を読めるのは OS ユーザ自身であり、そのユーザは同じ値を OS 標準
+/// ツールでも読める」こと — アプリは新しい権限を得ておらず、既に持っている
+/// アクセスへの導線を短くしているだけ。したがってここでの守るべき性質は
+/// 「値をどこにも残さない」ことに尽きる:
+///
+/// - 値はログに出さない (`secrets.rs` と同じ方針)。**表示された事実だけ**を
+///   `warn` レベルで記録し、後から「いつ・どのプロファイルの・どの種類の秘密を
+///   表示したか」を追跡できるようにする。
+/// - クエリ履歴 (`history`) を経由しない (そもそも SQL ではない)。
+/// - 返り値はフロントの表示バッファに載るだけで、`profiles.json` にも
+///   localStorage にも書かない (呼び出し側の責務。`ConnectionForm` は再マスク
+///   時に state から破棄する)。
+///
+/// 未保存 (エントリ無し) のときは `None` を返す — 呼び出し側はこれを「表示する
+/// ものが無い」として扱えばよく、エラーと区別できる。
+#[tauri::command]
+pub async fn reveal_profile_secret(profile_id: String, kind: SecretKind) -> Result<Option<String>> {
+    if profile_id.trim().is_empty() {
+        return Err(AppError::InvalidInput("profileId is required".to_string()));
+    }
+    // 値そのものは決して記録しない。表示イベントの監査証跡としてのみ残す。
+    tracing::warn!(
+        profile_id = %profile_id,
+        secret = kind.as_str(),
+        "revealing a stored secret to the UI"
+    );
+    match kind {
+        SecretKind::DbPassword => secrets::get_db_password(&profile_id),
+        SecretKind::SshPassphrase => secrets::get_ssh_passphrase(&profile_id),
+        SecretKind::SshPassword => secrets::get_ssh_password(&profile_id),
+        SecretKind::SshJumpPassphrase => secrets::get_ssh_jump_passphrase(&profile_id),
+        SecretKind::SshJumpPassword => secrets::get_ssh_jump_password(&profile_id),
+    }
 }
 
 #[tauri::command]
@@ -589,6 +657,26 @@ mod tests {
         assert!(overwritten_ids.is_empty());
         assert_eq!(merged[0].name, "Good");
         assert_eq!(merged[0].id, "new1");
+    }
+
+    // #938: フロントは snake_case のリテラル ("db_password" 等) を送る。keyring の
+    // kind 文字列と一対一に対応することも固定する (ログと keyring エントリ名の
+    // 突き合わせが崩れないように)。
+    #[test]
+    fn secret_kind_deserializes_from_snake_case() {
+        let k: SecretKind = serde_json::from_str("\"db_password\"").unwrap();
+        assert_eq!(k, SecretKind::DbPassword);
+        assert_eq!(k.as_str(), "db_password");
+
+        let k: SecretKind = serde_json::from_str("\"ssh_jump_passphrase\"").unwrap();
+        assert_eq!(k, SecretKind::SshJumpPassphrase);
+        // 踏み台の秘密は keyring 上では `_hop0` サフィックス (#708)。
+        assert_eq!(k.as_str(), "ssh_passphrase_hop0");
+
+        let k: SecretKind = serde_json::from_str("\"ssh_jump_password\"").unwrap();
+        assert_eq!(k.as_str(), "ssh_password_hop0");
+
+        assert!(serde_json::from_str::<SecretKind>("\"dbPassword\"").is_err());
     }
 
     #[test]

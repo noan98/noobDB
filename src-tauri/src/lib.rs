@@ -635,6 +635,7 @@ pub fn run() {
             commands::sandbox::filter_sandbox_data_diff,
             commands::sandbox::sandbox_advance_base,
             commands::profiles::list_profiles,
+            commands::profiles::reveal_profile_secret,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,
             commands::profiles::reorder_profiles,
