@@ -1580,6 +1580,24 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   「値ではなく解除」を意味し、App の `setBulkCellEditsForTab` が単一セルの
   `setCellEditForTab` と同じ削除処理を行う — 無変更の `SET col = <同じ値>` を Apply で
   発行せず、保留編集の件数表示も実際に変わるセルだけを数えるため。
+- クリップボード貼り付けによる一括編集 (#793) — `pasteEdit.ts`。結果グリッドの
+  矩形選択 TSV コピー (`copySelection`) と対称の取り込み経路で、`DataGrid` の
+  `<table>` に付けた `onPaste` が Excel/スプレッドシート由来の TSV (タブ区切り・
+  改行区切り、`"` で囲んだフィールドのタブ/改行/二重引用符も復元) を
+  `parseClipboardGrid` で解析し、選択の左上 (矩形選択が無ければアクティブセル) を
+  アンカーに貼り付け範囲を展開する。1×1 の単一値貼り付けは既存の矩形選択があれば
+  `planBulkCellEdit` (#596) にそのまま委譲し (二重実装しない)、2 セル以上の矩形
+  貼り付けだけが新設の `planPasteEdit` を通る — 編集不可列・型不正値のスキップは
+  `planBulkCellEdit` と同じ `isColEditable`/`validate` を共有し、加えて貼り付け
+  範囲が現在表示中の行/列数を超えた分は `skippedOutOfBounds` としてスキップ計上
+  する (行の自動 INSERT 化はこの Issue のスコープ外)。生成される変更は既存の
+  `PendingEdits`/`BulkEditTarget` バッファに積まれるだけで、確定は従来どおり
+  Apply — **DB への新しい書き込み経路を増やさない**点は `quickSetValues.ts` と
+  同じ方針。副次的に、グリッドセルにフォーカスがある状態 (インライン編集中は
+  対象外) での Delete/Backspace は選択範囲 (または アクティブセル) を NULL へ
+  一括セットする `clearSelectedCells` を追加し、既存の「値をセット」経路
+  (`applyValueToCells`) をそのまま再利用するため NOT NULL 制約のスキップ挙動も
+  一括編集ダイアログと揃う。
 - データ可視化カラースケール (#525) — `colorScale.ts` が、データを色で符号化する表面
   (チャート系列・ヒートマップ・データバー・将来のコスト/NULL 率ミニバー) が共有する
   **単一のスケール体系**を純ロジックとして定義する。**sequential** (単一色相の連続、CB

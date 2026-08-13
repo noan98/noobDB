@@ -1611,6 +1611,13 @@ const en = {
     "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
   gridBulkEditNoneApplied: "No cells were edited (read-only columns or invalid value)",
   gridBulkEditAllUnchanged: "All {cells} cells already held that value — nothing to edit",
+  // クリップボード貼り付けによる複数セル一括編集 (#793)
+  gridPasteApplied: "Buffered {cells} pasted cell edits — Apply to commit",
+  gridPasteAppliedSkipped:
+    "Buffered {cells} pasted cell edits ({skipped} skipped) — Apply to commit",
+  gridPasteNoneApplied:
+    "No cells were pasted (read-only columns, invalid values, or the paste extended past the visible rows/columns)",
+  gridPasteAllUnchanged: "All {cells} pasted cells already held that value — nothing to edit",
   // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
   gridQuickSetNull: "Set to NULL",
   gridQuickSetEmpty: "Set to empty string",
@@ -4322,6 +4329,13 @@ const ja: Dict = {
     "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
   gridBulkEditNoneApplied: "編集されたセルはありません (編集不可列または不正な値)",
   gridBulkEditAllUnchanged: "選択した {cells} セルはすべてすでにその値です — 変更はありません",
+  // クリップボード貼り付けによる複数セル一括編集 (#793)
+  gridPasteApplied: "{cells} セルの貼り付け編集を保留しました — Apply で確定します",
+  gridPasteAppliedSkipped:
+    "{cells} セルの貼り付け編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
+  gridPasteNoneApplied:
+    "貼り付けられたセルはありません (編集不可列・不正な値、または表示中の行/列数を超えた貼り付けです)",
+  gridPasteAllUnchanged: "貼り付けた {cells} セルはすべてすでにその値です — 変更はありません",
   // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
   gridQuickSetNull: "NULL をセット",
   gridQuickSetEmpty: "空文字をセット",
