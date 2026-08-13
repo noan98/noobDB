@@ -983,6 +983,13 @@ interface Props {
    */
   onSaveAsTable?: () => void;
   /**
+   * 実行結果をビューへ保存 (「現在のクエリをビューとして保存」、#851)。App が
+   * セッション・対象クエリ・データベースを確定させたときだけ渡す —
+   * `onSaveAsTable` と同じ表示条件 (単一 SELECT/WITH・読み取り専用でない・
+   * データベース文脈がある) で、未指定のときは disabled のまま出る。
+   */
+  onSaveAsView?: () => void;
+  /**
    * 結果セットをローカル横断クエリエンジンへ「ローカルテーブルとして登録」する
    * (#740)。App がセッション種別・在メモリ行を確定させたときだけ渡す — 表示条件
    * (canExport/streaming) は Export・`onSaveAsTable` と揃える。
@@ -5164,6 +5171,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onToggleDiffHighlight,
   onChangeView,
   onSaveAsTable,
+  onSaveAsView,
   onRegisterLocalTable,
   fullExport,
   lastEditAppliedAt,
@@ -5737,6 +5745,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             disabled={!canExport || !onSaveAsTable}
           >
             <Icon name="table" size={ICON_SIZES.md} /> {t("saveAsTableButton")}
+          </Button>
+        </Tooltip>
+        <Tooltip
+          focusableWrapper={!canExport || !onSaveAsView}
+          label={
+            streaming
+              ? t("exportDisabledStreaming")
+              : !canExport
+                ? t("exportDisabledNoRows")
+                : onSaveAsView
+                  ? t("saveAsViewButtonTitle")
+                  : t("saveAsViewDisabledTitle")
+          }
+        >
+          <Button
+            size="sm"
+            px="2.5"
+            onClick={() => onSaveAsView?.()}
+            disabled={!canExport || !onSaveAsView}
+          >
+            <Icon name="view" size={ICON_SIZES.md} /> {t("saveAsViewButton")}
           </Button>
         </Tooltip>
         <Tooltip
