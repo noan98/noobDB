@@ -7,6 +7,7 @@ import { BrandMark } from "../brand";
 import { ProductionBadge, ProfileColorChip, SandboxBadge } from "./ProfileBadge";
 import { connectionBandColor, type TitleBarConnection } from "./titleBarContext";
 import { Tooltip } from "./Tooltip";
+import { ActivityCenter } from "./ActivityCenter";
 
 export type { TitleBarConnection } from "./titleBarContext";
 
@@ -147,6 +148,9 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
       </Flex>
 
       <Flex align="stretch">
+        {/* アクティビティ (通知センター、#912)。自動で消えたトーストを後から
+            見返す入口で、ウィンドウ操作より手前 (左) に置く。 */}
+        <ActivityCenter />
         <TitleControl
           onClick={() => appWindow.minimize()}
           title={t("titleBarMinimize")}

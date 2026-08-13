@@ -2254,7 +2254,14 @@ export default function App() {
           setPlanWatch(loadPlanWatch(profile.id));
         }
         if (changed > 0) {
-          toast.info(translate("planWatchChangedToast", { count: changed }));
+          // 見た目は info のままだが、アクティビティセンター (#912) には
+          // 「警告」として残す — 実行計画の変化は後から拾い直したい種類の
+          // イベントで、重大度で絞り込めると見つけやすい。
+          toast.notify({
+            message: translate("planWatchChangedToast", { count: changed }),
+            tone: "info",
+            severity: "warning",
+          });
         }
       } finally {
         planWatchInFlightRef.current.delete(profile.id);
@@ -2354,7 +2361,12 @@ export default function App() {
         });
         const summary = summarizeDrift(diff, diffIndexes(rec.prev, gen));
         if (summary.tables.length > 0) {
-          toast.info(translate("schemaDriftChangedToast", { detail: buildDriftDetail(summary) }));
+          // 実行計画ウォッチと同じく、見た目は info・記録は警告 (#912)。
+          toast.notify({
+            message: translate("schemaDriftChangedToast", { detail: buildDriftDetail(summary) }),
+            tone: "info",
+            severity: "warning",
+          });
         }
       } catch (e) {
         toast.error(translate("schemaDriftRefreshFailedToast", { error: String(e) }));
