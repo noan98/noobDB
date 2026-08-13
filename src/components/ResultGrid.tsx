@@ -2394,6 +2394,7 @@ export function DataGrid({
   canUndo,
   canRedo,
   onSelectionSummary,
+  onExportSelection,
   onRunStatsQuery,
   findHits,
   findCurrentKey,
@@ -2523,6 +2524,14 @@ export function DataGrid({
    * selected). Lets `ResultGrid` surface the summary in its status bar (#523).
    */
   onSelectionSummary?: (summary: SelectionSummary | null) => void;
+  /**
+   * 矩形選択範囲の右クリック「選択範囲をエクスポート」から呼ばれる (#917)。
+   * その時点の選択範囲が指す列/行の部分集合を一度きり渡す (継続的な同期はしない
+   * — `onSelectionSummary` と違い、生のセル値をレンダーのたびに親へ push すると
+   * 大きな結果セットで重いため)。`ResultGrid` はこれを `ExportModal` の
+   * `selection` prop へそのまま渡し、モーダル側で「選択範囲」スコープを提示する。
+   */
+  onExportSelection?: (data: { columns: Column[]; rows: CellValue[][] }) => void;
   /**
    * Runs an ad-hoc SELECT for the column quick-stats popover's "aggregate all
    * rows" action (#524). Provided by App bound to the active session; omit to
@@ -4366,6 +4375,32 @@ export function DataGrid({
               shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
               onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
             },
+            // 選択範囲のエクスポート/コピー (#917): 矩形選択が 2 セル以上を
+            // 覆っているときだけ出す (単一セルは上の「値をコピー」で足りる)。
+            // 選択範囲の列/行部分集合を一度だけ `onExportSelection` へ渡し、
+            // `ResultGrid` がそれを `ExportModal` の "selection" スコープとして開く。
+            ...(selectionRect && onExportSelection
+              ? [
+                  {
+                    label: t("gridExportSelection", {
+                      count: selectionRect.rowIndexSet.size * selectionRect.colIdSet.size,
+                    }),
+                    icon: "download" as const,
+                    title: t("gridExportSelectionTitle"),
+                    onSelect: () => {
+                      const rowIdxs = visibleRows
+                        .slice(selectionRect.r0, selectionRect.r1 + 1)
+                        .map((r) => r.index);
+                      const colIds = visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1);
+                      setCopyMenu(null);
+                      onExportSelection({
+                        columns: colIds.map((ci) => columns[ci]).filter((c): c is Column => !!c),
+                        rows: rowIdxs.map((ri) => colIds.map((ci) => rows[ri]?.[ci] ?? null)),
+                      });
+                    },
+                  },
+                ]
+              : []),
             ...(() => {
               // "Copy as INSERT" (#601): operates on every row covered by an
               // active multi-row range selection, or just the clicked row
@@ -5136,6 +5171,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     if (rowCount < prev) setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [rowCount]);
   const [showExport, setShowExport] = useState(false);
+  // 右クリック「選択範囲をエクスポート」(#917) で `DataGrid` から一度きり渡される
+  // 選択範囲の列/行部分集合。モーダルを閉じたら破棄し、次に (右クリック経由でなく)
+  // ツールバーの通常 Export を開いたときに古い選択が「選択範囲」スコープとして
+  // 残らないようにする。
+  const [selectionExport, setSelectionExport] = useState<{
+    columns: Column[];
+    rows: CellValue[][];
+  } | null>(null);
   const [search, setSearch] = useState("");
   // Interval the toggle will use when switched on. Seeded from the persisted
   // default and from the live cadence so the selector reflects the active poll.
@@ -6314,6 +6357,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}
           onSelectionSummary={setSelSummary}
+          onExportSelection={(data) => {
+            setSelectionExport(data);
+            setShowExport(true);
+          }}
           onRunStatsQuery={onRunStatsQuery}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}
@@ -6487,7 +6534,11 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
             stoppedPartial={!!partialResult}
             fullExport={fullExport}
-            onClose={() => setShowExport(false)}
+            selection={selectionExport}
+            onClose={() => {
+              setShowExport(false);
+              setSelectionExport(null);
+            }}
           />
         )}
       </AnimatePresence>
