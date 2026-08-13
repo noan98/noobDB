@@ -160,10 +160,11 @@ export interface ConnectionProfile extends TlsSettings, SessionInitSettings {
   /** Database file path for file-backed drivers (SQLite). */
   file_path: string | null;
   /**
-   * Whether a DB password is stored in the OS keyring for this profile. The
-   * value itself never reaches the frontend; this flag only drives the masked
-   * "password is set" indicator in the connection form. Present only on
-   * profiles returned by `list_profiles`.
+   * Whether a DB password is stored in the OS keyring for this profile. This
+   * flag drives the masked "password is set" indicator in the connection form.
+   * The value itself is never carried by the profile payload — reading it takes
+   * an explicit `revealProfileSecret` call (#938). Present only on profiles
+   * returned by `list_profiles`.
    */
   has_db_password?: boolean;
   /** Whether an SSH key passphrase is stored in the keyring. See `has_db_password`. */
@@ -175,6 +176,18 @@ export interface ConnectionProfile extends TlsSettings, SessionInitSettings {
   /** Whether a jump/bastion hop password is stored (#708). */
   has_ssh_jump_password?: boolean;
 }
+
+/**
+ * Which stored secret `revealProfileSecret` should read (#938). The literals
+ * match the `has_*` flags above one-for-one, and the backend maps them to the
+ * keyring entry names (`ssh_jump_*` live under a `_hop0` suffix, see #708).
+ */
+export type ProfileSecretKind =
+  | "db_password"
+  | "ssh_passphrase"
+  | "ssh_password"
+  | "ssh_jump_passphrase"
+  | "ssh_jump_password";
 
 /** The bastion/jump hop of a connect request, carrying its own credentials. */
 export interface SshJumpRequest extends SshJumpProfile {
@@ -1604,6 +1617,29 @@ export const api = {
     invoke<ConnectionProfile[]>("list_profiles").then((r) =>
       parseResponse(schemas.connectionProfileArray, r, "list_profiles"),
     ),
+  /**
+   * 保存済みの秘密を OS keyring から読み出して**平文のまま**返す (#938)。
+   * `list_profiles` が返すのは `has_*` の真偽値だけで、値をフロントへ渡すのは
+   * この IPC のみ (秘密分離ポリシーの意図的な例外 — 詳細は Rust 側の
+   * `reveal_profile_secret` の doc コメントと CLAUDE.md を参照)。
+   *
+   * 未保存なら `null`。**呼び出し側は受け取った値を永続化しないこと** — 表示
+   * バッファに載せるだけにして、非表示に戻すときは state から破棄する。
+   */
+  revealProfileSecret: (profileId: string, kind: ProfileSecretKind) =>
+    invoke<string | null>("reveal_profile_secret", { profileId, kind }).then((r) => {
+      // ここだけ `parseResponse` (zod 検証) を通さない。検証に失敗すると
+      // `parseResponse` は DEV ビルドで**受信値そのもの**を `console.error` へ
+      // 出すが、このコマンドの受信値は平文の秘密そのもので、開発者コンソールに
+      // 残ってしまう。返り値が単純な `string | null` なので、値をログ経路へ
+      // 一切渡さない形状チェックで代替する。
+      if (r !== null && typeof r !== "string") {
+        throw new Error(
+          'IPC レスポンス "reveal_profile_secret" が期待した形式と一致しません: (root): expected string or null',
+        );
+      }
+      return r;
+    }),
   saveProfile: (req: SaveProfileRequest) =>
     invoke<ConnectionProfile>("save_profile", { req }).then((r) =>
       parseResponse(schemas.connectionProfile, r, "save_profile"),

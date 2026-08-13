@@ -1038,6 +1038,19 @@ id が変わらないため、フロントのタブ・グリッド状態 (sessio
   のみを記録します)。`password` / `passphrase` が空の接続要求は、`profile_id` をキー
   にした keyring の参照にフォールバックします (`resolve_password` /
   `resolve_passphrase` / `resolve_ssh_password` を参照)。
+- **保存済み秘密の表示 (`reveal_profile_secret`、#938) はこの分離ポリシーの唯一かつ
+  意図的な例外です。** 通常 `list_profiles` が返すのは `has_db_password` などの
+  真偽値だけで値は含まれませんが、「自分で保存したパスワードを確認したい」ために
+  資格情報マネージャ / Keychain / `secret-tool` を叩かせるのは体験が悪いため、
+  接続フォームの目アイコンから明示的に呼ぶ読み出し口を用意しています。前提は
+  「keyring を読めるのは OS ユーザ自身であり、そのユーザは同じ値を OS 標準ツール
+  でも読める」こと — **アプリは新しい権限を得ておらず、既にあるアクセスへの導線を
+  短くしているだけ**です。したがって守るべき性質は「値をどこにも残さない」ことに
+  尽き、実装は次を満たします: 値をログに出さず**表示した事実だけ**を `warn` で
+  監査記録する / 履歴・`profiles.json`・localStorage に一切書かない / フロントは
+  `PasswordInput` の state にのみ保持し、再マスク・アンマウント・30 秒
+  (`REVEAL_TIMEOUT_MS`) の経過で破棄する。**新しい秘密の種類を追加するときは
+  `SecretKind` と `ProfileSecretKind` (フロント) の両方に足してください。**
 
 ### クエリ履歴
 
@@ -1441,8 +1454,8 @@ fs プラグインを使わず capabilities を増やさないための経路で
 - サンドボックス (壊せる砂場、#747): `create_sandbox` / `list_sandboxes` /
   `discard_sandbox` / `sandbox_table_diff` / `sandbox_schema_diff` /
   `filter_sandbox_data_diff` / `sandbox_advance_base`
-- プロファイル: `list_profiles` / `save_profile` / `delete_profile` /
-  `export_profiles` / `import_profiles`
+- プロファイル: `list_profiles` / `reveal_profile_secret` / `save_profile` /
+  `delete_profile` / `export_profiles` / `import_profiles`
 - スニペット: `list_snippets` / `save_snippet` / `delete_snippet`
 - 履歴: `list_history` / `clear_history`
 - ログ: `read_logs` / `clear_logs`

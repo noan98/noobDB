@@ -1,25 +1,48 @@
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
-import { api, ConnectionProfile, DriverKind, SshAuthMethod, SslMode } from "../api/tauri";
+import {
+  api,
+  ConnectionProfile,
+  DriverKind,
+  ProfileSecretKind,
+  SshAuthMethod,
+  SslMode,
+} from "../api/tauri";
 import { useT } from "../i18n";
+import { copyToClipboard } from "./clipboard";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip } from "./Tooltip";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
-// saved in the OS keyring. The real value never reaches the frontend, so this
-// is a fixed-length placeholder whose only job is to make "a password is set"
-// visible instead of an empty field.
+// saved in the OS keyring. The real value is not part of the profile payload,
+// so this is a fixed-length placeholder whose only job is to make "a password
+// is set" visible instead of an empty field. Reading the actual value takes an
+// explicit reveal (see `PasswordInput` below, #938).
 const STORED_MASK = "•".repeat(10);
+
+/**
+ * How long a revealed secret stays on screen before it re-masks itself (#938).
+ * Long enough to read a generated password out loud or copy it, short enough
+ * that walking away from the machine doesn't leave a password displayed.
+ */
+const REVEAL_TIMEOUT_MS = 30_000;
 
 interface PasswordInputProps {
   value: string;
   onChange: (value: string) => void;
   /** True when a secret for this field already exists in the keyring. */
   hasStored: boolean;
+  /**
+   * Profile whose stored secret the reveal button reads (#938). Undefined for
+   * unsaved profiles — there is nothing in the keyring yet, so no reveal.
+   */
+  profileId?: string;
+  /** Which keyring entry the reveal button reads. Pairs with `profileId`. */
+  secretKind?: ProfileSecretKind;
   /** Associates the visible <label htmlFor> with the inner input (a11y). */
   id?: string;
 }
@@ -29,53 +52,193 @@ interface PasswordInputProps {
  * already stored and the user has not typed a replacement, it displays a masked
  * placeholder (read-only) so the saved state is obvious; focusing clears it for
  * editing and leaving it untouched keeps the stored value (empty `value`).
+ *
+ * In that stored-but-untyped state the toggle does more than flip the input
+ * type: it fetches the saved secret from the OS keyring (`revealProfileSecret`)
+ * so the user can check a password they forgot without digging through
+ * Credential Manager / Keychain / secret-tool (#938). The fetched value lives
+ * only in this component's state — it is dropped on re-mask, on unmount, and
+ * automatically after {@link REVEAL_TIMEOUT_MS}.
  */
-function PasswordInput({ value, onChange, hasStored, id }: PasswordInputProps) {
+function PasswordInput({
+  value,
+  onChange,
+  hasStored,
+  profileId,
+  secretKind,
+  id,
+}: PasswordInputProps) {
   const t = useT();
   const [show, setShow] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [revealed, setRevealed] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showingMask = hasStored && value === "" && !focused;
+  const showingMask = hasStored && value === "" && !focused && revealed === null;
+  const canReveal = hasStored && value === "" && !!profileId && !!secretKind;
+
+  const clearHideTimer = () => {
+    if (hideTimer.current !== null) {
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+  };
+
+  // Drop the plaintext (and any pending timer) when the field unmounts — e.g.
+  // switching the SSH auth method away from "password" while it is revealed.
+  useEffect(
+    () => () => {
+      clearHideTimer();
+      if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
+
+  const hideRevealed = () => {
+    clearHideTimer();
+    setRevealed(null);
+    setShow(false);
+    setCopied(false);
+    setRevealError(null);
+  };
+
+  const revealStored = async () => {
+    if (!profileId || !secretKind) return;
+    setRevealing(true);
+    setRevealError(null);
+    try {
+      const secret = await api.revealProfileSecret(profileId, secretKind);
+      if (secret === null) {
+        // The `has_*` flag said there was one; the entry is gone (deleted from
+        // the OS keyring behind our back). Say so instead of showing "".
+        setRevealError(t("formPasswordRevealMissing"));
+        return;
+      }
+      setRevealed(secret);
+      setShow(true);
+      clearHideTimer();
+      hideTimer.current = setTimeout(hideRevealed, REVEAL_TIMEOUT_MS);
+    } catch (e) {
+      setRevealError(`${t("formPasswordRevealFailed")}: ${String(e)}`);
+    } finally {
+      setRevealing(false);
+    }
+  };
+
+  const onToggle = () => {
+    if (revealed !== null) {
+      hideRevealed();
+      return;
+    }
+    if (canReveal) {
+      void revealStored();
+      return;
+    }
+    setShow((s) => !s);
+  };
+
+  const copyRevealed = async () => {
+    if (revealed === null) return;
+    if (await copyToClipboard(revealed)) {
+      setCopied(true);
+      if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1500);
+    }
+  };
+
+  const showing = show || revealed !== null;
+  const toggleLabel = showing
+    ? t("formPasswordHide")
+    : canReveal
+      ? t("formPasswordReveal")
+      : t("formPasswordShow");
+  // Room for the toggle, plus the copy button while a secret is revealed.
+  const inputPadding = revealed !== null ? "62px" : "34px";
 
   return (
-    <Box position="relative" display="flex" alignItems="center">
-      <Input
-        id={id}
-        type={show ? "text" : "password"}
-        value={showingMask ? STORED_MASK : value}
-        readOnly={showingMask}
-        autoComplete="off"
-        pr="34px"
-        // Hide the WebView2/Edge native password reveal & clear controls so they
-        // don't render a second eye icon alongside our own toggle button.
-        css={{ "&::-ms-reveal": { display: "none" }, "&::-ms-clear": { display: "none" } }}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-      />
-      <Tooltip label={show ? t("formPasswordHide") : t("formPasswordShow")}>
-        <chakra.button
-          type="button"
-          position="absolute"
-          right="4px"
-          display="inline-flex"
-          alignItems="center"
-          justifyContent="center"
-          p="1"
-          border="none"
-          bg="transparent"
-          color="app.textMuted"
-          borderRadius="sm"
-          _hover={{ bg: "app.hover", color: "app.text" }}
-          // Keep the input focused so the toggle works while typing.
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setShow((s) => !s)}
-          aria-pressed={show}
-          aria-label={show ? t("formPasswordHide") : t("formPasswordShow")}
-        >
-          <Icon name={show ? "eye-off" : "eye"} size={ICON_SIZES.md} />
-        </chakra.button>
-      </Tooltip>
+    <Box>
+      <Box position="relative" display="flex" alignItems="center">
+        <Input
+          id={id}
+          type={showing ? "text" : "password"}
+          value={showingMask ? STORED_MASK : (revealed ?? value)}
+          readOnly={showingMask || revealed !== null}
+          autoComplete="off"
+          pr={inputPadding}
+          // Hide the WebView2/Edge native password reveal & clear controls so they
+          // don't render a second eye icon alongside our own toggle button.
+          css={{ "&::-ms-reveal": { display: "none" }, "&::-ms-clear": { display: "none" } }}
+          onChange={(e) => {
+            // 入力を始めた時点で、前回の読み出し失敗の文言は用済み。
+            setRevealError(null);
+            onChange(e.target.value);
+          }}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+        />
+        {revealed !== null && (
+          <Tooltip label={copied ? t("formPasswordCopied") : t("formPasswordCopy")}>
+            <chakra.button
+              type="button"
+              position="absolute"
+              right="32px"
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              p="1"
+              border="none"
+              bg="transparent"
+              color={copied ? "app.textSuccess" : "app.textMuted"}
+              borderRadius="sm"
+              _hover={{ bg: "app.hover", color: copied ? "app.textSuccess" : "app.text" }}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => void copyRevealed()}
+              aria-label={copied ? t("formPasswordCopied") : t("formPasswordCopy")}
+            >
+              <Icon name={copied ? "check" : "copy"} size={ICON_SIZES.md} />
+            </chakra.button>
+          </Tooltip>
+        )}
+        <Tooltip label={toggleLabel}>
+          <chakra.button
+            type="button"
+            position="absolute"
+            right="4px"
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            p="1"
+            border="none"
+            bg="transparent"
+            color="app.textMuted"
+            borderRadius="sm"
+            _hover={{ bg: "app.hover", color: "app.text" }}
+            // Keep the input focused so the toggle works while typing.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onToggle}
+            disabled={revealing}
+            aria-pressed={showing}
+            aria-label={toggleLabel}
+          >
+            <Icon name={showing ? "eye-off" : "eye"} size={ICON_SIZES.md} />
+          </chakra.button>
+        </Tooltip>
+      </Box>
+      {revealError && (
+        // クリック後に非同期で現れるため、支援技術へ通知する (role="alert")。
+        <Text role="alert" color="app.textError" fontSize="11px" mt="1" mb="0">
+          {revealError}
+        </Text>
+      )}
+      {revealed !== null && (
+        <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+          {t("formPasswordRevealNote", { seconds: REVEAL_TIMEOUT_MS / 1000 })}
+        </Text>
+      )}
     </Box>
   );
 }
@@ -659,6 +822,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               value={password}
               onChange={setPassword}
               hasStored={!!initial?.has_db_password}
+              profileId={initial?.id}
+              secretKind="db_password"
             />
           </Box>
         </Fieldset>
@@ -905,6 +1070,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                       value={sshPassphrase}
                       onChange={setSshPassphrase}
                       hasStored={!!initial?.has_ssh_passphrase}
+                      profileId={initial?.id}
+                      secretKind="ssh_passphrase"
                     />
                   </Box>
                 </>
@@ -917,6 +1084,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                     value={sshPassword}
                     onChange={setSshPassword}
                     hasStored={!!initial?.has_ssh_password}
+                    profileId={initial?.id}
+                    secretKind="ssh_password"
                   />
                 </Box>
               )}
@@ -996,6 +1165,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                             value={sshJumpPassphrase}
                             onChange={setSshJumpPassphrase}
                             hasStored={!!initial?.has_ssh_jump_passphrase}
+                            profileId={initial?.id}
+                            secretKind="ssh_jump_passphrase"
                           />
                         </Box>
                       </>
@@ -1008,6 +1179,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                           value={sshJumpPassword}
                           onChange={setSshJumpPassword}
                           hasStored={!!initial?.has_ssh_jump_password}
+                          profileId={initial?.id}
+                          secretKind="ssh_jump_password"
                         />
                       </Box>
                     )}
