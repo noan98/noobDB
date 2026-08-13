@@ -93,6 +93,18 @@ pub mod __test_api {
         StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
     };
 
+    /// SQL 識別子引用の単一実装 (`db::sync::quote_ident`)。`pub(crate)` のため
+    /// `pub use` で再公開できず、薄いラッパーで露出する。実装横断ゴールデン
+    /// (`tests/sql_quoting_golden.rs`、#880) が使う。
+    pub fn quote_ident(driver: DriverKind, name: &str) -> String {
+        crate::db::sync::quote_ident(driver, name)
+    }
+
+    /// SQL リテラルエスケープ (`db::data_diff::sql_literal`)。上と同じ理由の
+    /// ラッパー (#880)。
+    pub fn sql_literal(driver: DriverKind, value: &Value) -> String {
+        crate::db::data_diff::sql_literal(driver, value)
+    }
     // サーバ機能系コマンドの State なしコア (#881)。`inspector` / `server` /
     // `process` は env ゲートの MySQL/PostgreSQL 統合テストでしか実行されず、
     // Windows ジョブや env 無しのローカル `cargo test` (SQLite のみ) では
@@ -186,9 +198,10 @@ pub mod __test_api {
         crate::commands::import::ensure_import_writable(session)
     }
 
-    /// Drives the `run_captured_write` IPC command's core path (session
-    /// lookup + read-only guard + capture + history recording) without a
-    /// Tauri runtime (#735).
+    /// Drives the captured-write core path (session lookup + read-only guard +
+    /// capture + history recording) without a Tauri runtime (#735). Production
+    /// reaches the same core through `run_query_stream({ capture: true })`
+    /// (#907 removed the unused non-streaming IPC command).
     pub async fn run_captured_write_via_command(
         state: &AppState,
         session_id: &str,
@@ -659,8 +672,6 @@ pub fn run() {
             commands::snippets::delete_snippet,
             commands::history::list_history,
             commands::history::clear_history,
-            commands::flight_recorder::run_captured_write,
-            commands::flight_recorder::precheck_captured_write,
             commands::flight_recorder::list_flight_records,
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,

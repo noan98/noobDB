@@ -1,0 +1,168 @@
+{
+  "description": "SQL 識別子引用 (quote_ident) とリテラルエスケープ (sql_literal) の実装横断ゴールデンベクタ (#880)。識別子引用は Rust の db::sync::quote_ident と、フロントの components/sqlDialect.ts::quoteIdentFor / components/exportPreview.ts::quoteSqlIdent の 3 実装に重複しており、リテラルエスケープは Rust の db::data_diff::sql_literal をフロントの exportPreview.ts::sqlLiteral がミラーする。いずれも SQL インジェクション隣接の安全性ロジックで、方言分岐がコピーされているため 1 箇所直し漏れると壊れる。read-only 判定 (#444) と同格の共有ゴールデンとして、全実装を同じベクタへ通して一致を固定する。新しい境界ケースはこの 1 ファイルに追記すれば両言語へ反映される。",
+  "drivers": ["mysql", "postgres", "sqlite", "duckdb", "mssql"],
+
+  "identifierNotes": "expected は 5 ドライバすべてでの引用結果。バッククォート (MySQL) / ダブルクォート (PostgreSQL・SQLite・DuckDB) / 角括弧 (MSSQL) を、それぞれ埋め込まれた同じ文字の二重化で閉じる。識別子引用はバックスラッシュを一切エスケープしない (どの方言でも識別子内の `\\` はただの文字) 点も固定する。",
+  "identifiers": [
+    {
+      "input": "users",
+      "note": "素の識別子",
+      "expected": { "mysql": "`users`", "postgres": "\"users\"", "sqlite": "\"users\"", "duckdb": "\"users\"", "mssql": "[users]" }
+    },
+    {
+      "input": "",
+      "note": "空文字列 (呼び出し側が弾く前提だが、引用そのものは壊れないこと)",
+      "expected": { "mysql": "``", "postgres": "\"\"", "sqlite": "\"\"", "duckdb": "\"\"", "mssql": "[]" }
+    },
+    {
+      "input": "we`ird",
+      "note": "バッククォート — MySQL でのみ二重化される",
+      "expected": { "mysql": "`we``ird`", "postgres": "\"we`ird\"", "sqlite": "\"we`ird\"", "duckdb": "\"we`ird\"", "mssql": "[we`ird]" }
+    },
+    {
+      "input": "we\"ird",
+      "note": "ダブルクォート — PostgreSQL / SQLite / DuckDB でのみ二重化される",
+      "expected": { "mysql": "`we\"ird`", "postgres": "\"we\"\"ird\"", "sqlite": "\"we\"\"ird\"", "duckdb": "\"we\"\"ird\"", "mssql": "[we\"ird]" }
+    },
+    {
+      "input": "we]ird",
+      "note": "閉じ角括弧 — MSSQL でのみ二重化される",
+      "expected": { "mysql": "`we]ird`", "postgres": "\"we]ird\"", "sqlite": "\"we]ird\"", "duckdb": "\"we]ird\"", "mssql": "[we]]ird]" }
+    },
+    {
+      "input": "we'ird",
+      "note": "シングルクォートは識別子引用の対象外 (どの方言でもそのまま)",
+      "expected": { "mysql": "`we'ird`", "postgres": "\"we'ird\"", "sqlite": "\"we'ird\"", "duckdb": "\"we'ird\"", "mssql": "[we'ird]" }
+    },
+    {
+      "input": "back\\slash",
+      "note": "バックスラッシュは識別子内ではただの文字 (MySQL でも二重化しない)",
+      "expected": { "mysql": "`back\\slash`", "postgres": "\"back\\slash\"", "sqlite": "\"back\\slash\"", "duckdb": "\"back\\slash\"", "mssql": "[back\\slash]" }
+    },
+    {
+      "input": "a`b\"c]d",
+      "note": "3 方言分の引用文字を同時に含む識別子",
+      "expected": { "mysql": "`a``b\"c]d`", "postgres": "\"a`b\"\"c]d\"", "sqlite": "\"a`b\"\"c]d\"", "duckdb": "\"a`b\"\"c]d\"", "mssql": "[a`b\"c]]d]" }
+    },
+    {
+      "input": "t`; DROP TABLE x; --",
+      "note": "インジェクション試行: 引用文字の二重化で閉じられず、識別子の内側に留まる",
+      "expected": { "mysql": "`t``; DROP TABLE x; --`", "postgres": "\"t`; DROP TABLE x; --\"", "sqlite": "\"t`; DROP TABLE x; --\"", "duckdb": "\"t`; DROP TABLE x; --\"", "mssql": "[t`; DROP TABLE x; --]" }
+    },
+    {
+      "input": "x\u0000y",
+      "note": "NUL 文字はどの実装も除去/拒否せずそのまま通す (既知の挙動として固定)",
+      "expected": { "mysql": "`x\u0000y`", "postgres": "\"x\u0000y\"", "sqlite": "\"x\u0000y\"", "duckdb": "\"x\u0000y\"", "mssql": "[x\u0000y]" }
+    },
+    {
+      "input": "テーブル名",
+      "note": "マルチバイト識別子はそのまま包む",
+      "expected": { "mysql": "`テーブル名`", "postgres": "\"テーブル名\"", "sqlite": "\"テーブル名\"", "duckdb": "\"テーブル名\"", "mssql": "[テーブル名]" }
+    },
+    {
+      "input": "emoji🙂col",
+      "note": "非 BMP 文字 (サロゲートペア) を含む識別子",
+      "expected": { "mysql": "`emoji🙂col`", "postgres": "\"emoji🙂col\"", "sqlite": "\"emoji🙂col\"", "duckdb": "\"emoji🙂col\"", "mssql": "[emoji🙂col]" }
+    }
+  ],
+
+  "literalNotes": "kind は Rust 側 db::types::Value のどのバリアントを組み立てるかを指す (untagged serde では JSON からバリアントを一意に決められないため明示する)。expected は Rust の sql_literal の出力。frontend は exportPreview.ts の sqlLiteral の期待値で、省略時は expected と同じ。フロントは JSON 化された CellValue (string | number | boolean | null) しか持たないため BLOB を文字列と区別できず、bytes ケースだけ意図的に食い違う — その差分をここに明記して固定する。",
+  "literals": [
+    {
+      "kind": "null",
+      "note": "NULL はどの方言でも裸の NULL キーワード",
+      "expected": { "mysql": "NULL", "postgres": "NULL", "sqlite": "NULL", "duckdb": "NULL", "mssql": "NULL" }
+    },
+    {
+      "kind": "bool",
+      "value": true,
+      "note": "PostgreSQL / DuckDB は TRUE/FALSE、MySQL / SQLite / MSSQL は 1/0 (T-SQL に真偽型が無い)",
+      "expected": { "mysql": "1", "postgres": "TRUE", "sqlite": "1", "duckdb": "TRUE", "mssql": "1" }
+    },
+    {
+      "kind": "bool",
+      "value": false,
+      "note": "同上の false",
+      "expected": { "mysql": "0", "postgres": "FALSE", "sqlite": "0", "duckdb": "FALSE", "mssql": "0" }
+    },
+    {
+      "kind": "int",
+      "value": 42,
+      "note": "整数はそのまま",
+      "expected": { "mysql": "42", "postgres": "42", "sqlite": "42", "duckdb": "42", "mssql": "42" }
+    },
+    {
+      "kind": "int",
+      "value": -7,
+      "note": "負の整数",
+      "expected": { "mysql": "-7", "postgres": "-7", "sqlite": "-7", "duckdb": "-7", "mssql": "-7" }
+    },
+    {
+      "kind": "float",
+      "value": 1.5,
+      "note": "有限の浮動小数",
+      "expected": { "mysql": "1.5", "postgres": "1.5", "sqlite": "1.5", "duckdb": "1.5", "mssql": "1.5" }
+    },
+    {
+      "kind": "string",
+      "value": "plain",
+      "note": "エスケープ不要の文字列",
+      "expected": { "mysql": "'plain'", "postgres": "'plain'", "sqlite": "'plain'", "duckdb": "'plain'", "mssql": "'plain'" }
+    },
+    {
+      "kind": "string",
+      "value": "",
+      "note": "空文字列",
+      "expected": { "mysql": "''", "postgres": "''", "sqlite": "''", "duckdb": "''", "mssql": "''" }
+    },
+    {
+      "kind": "string",
+      "value": "O'Brien",
+      "note": "シングルクォートは全方言で二重化",
+      "expected": { "mysql": "'O''Brien'", "postgres": "'O''Brien'", "sqlite": "'O''Brien'", "duckdb": "'O''Brien'", "mssql": "'O''Brien'" }
+    },
+    {
+      "kind": "string",
+      "value": "a\\b",
+      "note": "バックスラッシュは MySQL でのみ二重化 (他方言で二重化するとデータが壊れる)",
+      "expected": { "mysql": "'a\\\\b'", "postgres": "'a\\b'", "sqlite": "'a\\b'", "duckdb": "'a\\b'", "mssql": "'a\\b'" }
+    },
+    {
+      "kind": "string",
+      "value": "'; DROP TABLE x; --",
+      "note": "インジェクション試行: 引用符の二重化で文字列から抜け出せない",
+      "expected": { "mysql": "'''; DROP TABLE x; --'", "postgres": "'''; DROP TABLE x; --'", "sqlite": "'''; DROP TABLE x; --'", "duckdb": "'''; DROP TABLE x; --'", "mssql": "'''; DROP TABLE x; --'" }
+    },
+    {
+      "kind": "string",
+      "value": "\\'; DROP TABLE x; --",
+      "note": "バックスラッシュ + 引用符のインジェクション試行 (#852 のマスク取り違えと対になるケース)",
+      "expected": { "mysql": "'\\\\''; DROP TABLE x; --'", "postgres": "'\\''; DROP TABLE x; --'", "sqlite": "'\\''; DROP TABLE x; --'", "duckdb": "'\\''; DROP TABLE x; --'", "mssql": "'\\''; DROP TABLE x; --'" }
+    },
+    {
+      "kind": "string",
+      "value": "line1\nline2",
+      "note": "改行はエスケープせずそのまま (どの方言も引用符内の改行を許す)",
+      "expected": { "mysql": "'line1\nline2'", "postgres": "'line1\nline2'", "sqlite": "'line1\nline2'", "duckdb": "'line1\nline2'", "mssql": "'line1\nline2'" }
+    },
+    {
+      "kind": "string",
+      "value": "x\u0000y",
+      "note": "NUL 文字はどの実装も除去しない (既知の挙動として固定)",
+      "expected": { "mysql": "'x\u0000y'", "postgres": "'x\u0000y'", "sqlite": "'x\u0000y'", "duckdb": "'x\u0000y'", "mssql": "'x\u0000y'" }
+    },
+    {
+      "kind": "string",
+      "value": "日本語🙂",
+      "note": "マルチバイト / 非 BMP 文字はそのまま",
+      "expected": { "mysql": "'日本語🙂'", "postgres": "'日本語🙂'", "sqlite": "'日本語🙂'", "duckdb": "'日本語🙂'", "mssql": "'日本語🙂'" }
+    },
+    {
+      "kind": "bytes",
+      "value": "ab12",
+      "note": "BLOB は方言ごとに別構文。フロントは JSON 化で 16 進文字列としてしか受け取れず String と区別できないため、意図的に文字列リテラルになる (在グリッド経路の既知の挙動)",
+      "expected": { "mysql": "X'ab12'", "postgres": "'\\xab12'", "sqlite": "X'ab12'", "duckdb": "'\\xab\\x12'", "mssql": "0xab12" },
+      "frontend": { "mysql": "'ab12'", "postgres": "'ab12'", "sqlite": "'ab12'", "duckdb": "'ab12'", "mssql": "'ab12'" }
+    }
+  ]
+}
