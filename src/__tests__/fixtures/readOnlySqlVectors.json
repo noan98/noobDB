@@ -86,6 +86,20 @@
     { "sql": "SELECT '\\'; DROP TABLE users; --'", "readOnly": false, "readOnlyMysql": true, "note": "#852: 同上の DDL 版" },
     { "sql": "SELECT '\\'; SELECT 2; --'", "readOnly": false, "readOnlyMysql": true, "note": "#852: 書き込みキーワードが無くても、露出した 2 文目 (スタック) として弾く" },
     { "sql": "SELECT 'ok\\' AS s", "readOnly": true, "note": "#852: リテラル内の \\ があってもキーワード/セミコロンが露出しなければ両マスクとも読み取り" },
-    { "sql": "SELECT 'a\\\\b' AS s", "readOnly": true, "note": "#852: エスケープされたバックスラッシュのみを含むリテラル" }
+    { "sql": "SELECT 'a\\\\b' AS s", "readOnly": true, "note": "#852: エスケープされたバックスラッシュのみを含むリテラル" },
+    { "sql": "SELECT * FROM [dbo].[users] WITH (UPDLOCK)", "readOnly": false, "note": "#906: MSSQL テーブルヒント UPDLOCK は更新ロックを取得する" },
+    { "sql": "SELECT * FROM users WITH (UPDLOCK, HOLDLOCK)", "readOnly": false, "note": "#906: 複数ヒント (UPDLOCK + HOLDLOCK)" },
+    { "sql": "SELECT * FROM users WITH (HOLDLOCK)", "readOnly": false, "note": "#906: HOLDLOCK はトランザクション終了まで共有ロックを保持する" },
+    { "sql": "SELECT * FROM users WITH (SERIALIZABLE)", "readOnly": false, "note": "#906: SERIALIZABLE は HOLDLOCK の同義語" },
+    { "sql": "SELECT * FROM users WITH (REPEATABLEREAD)", "readOnly": false, "note": "#906: REPEATABLEREAD もロック保持期間を延ばす" },
+    { "sql": "SELECT * FROM users WITH (TABLOCKX)", "readOnly": false, "note": "#906: TABLOCKX は排他テーブルロック" },
+    { "sql": "SELECT * FROM users WITH (XLOCK, ROWLOCK)", "readOnly": false, "note": "#906: XLOCK は排他ロック (粒度ヒントとの併記でも検出)" },
+    { "sql": "SELECT * FROM users WITH(UPDLOCK)", "readOnly": false, "note": "#906: WITH と ( の間に空白が無い形" },
+    { "sql": "SELECT a.id FROM a WITH (NOLOCK) JOIN b WITH (UPDLOCK) ON a.id = b.id", "readOnly": false, "note": "#906: JOIN の 2 つ目のテーブルに付いたヒントも見落とさない" },
+    { "sql": "SELECT * FROM users WITH (INDEX(0), NOLOCK)", "readOnly": true, "note": "#906: パラメータ付きヒントの入れ子括弧を跨いでもロックヒントが無ければ読み取り" },
+    { "sql": "SELECT * FROM users WITH (ROWLOCK)", "readOnly": true, "note": "#906: ROWLOCK は粒度ヒントのみでロックモード/保持期間を変えないため許容" },
+    { "sql": "SELECT * FROM users WITH (TABLOCK)", "readOnly": true, "note": "#906: TABLOCK も粒度ヒント (拒否リストに入れない意図的な線引き)" },
+    { "sql": "SELECT updlock, serializable FROM t", "readOnly": true, "note": "#906: WITH (...) の外にある同名の列は誤検出しない" },
+    { "sql": "SELECT * FROM t WHERE holdlock = 1", "readOnly": true, "note": "#906: WHERE 句の列名も誤検出しない" }
   ]
 }

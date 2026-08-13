@@ -313,6 +313,69 @@ function hasLockingClause(body: string): boolean {
 }
 
 /**
+ * Microsoft SQL Server table hints that make a `SELECT` acquire locks a plain
+ * read would not (#906): a stronger lock mode than a shared read (`UPDLOCK` /
+ * `XLOCK` / `TABLOCKX`) or a longer lock duration than the statement
+ * (`HOLDLOCK` and its synonym `SERIALIZABLE`, `REPEATABLEREAD`,
+ * `READCOMMITTEDLOCK`). `NOLOCK` / `READUNCOMMITTED` / `READPAST` (fewer
+ * locks) and the granularity-only `ROWLOCK` / `PAGLOCK` / `TABLOCK` are
+ * deliberately absent. Mirrors the backend `LOCKING_TABLE_HINTS`
+ * (`src-tauri/src/db/mod.rs`).
+ */
+const LOCKING_TABLE_HINTS = new Set([
+  "updlock",
+  "xlock",
+  "tablockx",
+  "holdlock",
+  "serializable",
+  "repeatableread",
+  "readcommittedlock",
+]);
+
+/**
+ * True when masked/lowercased `body` carries a `LOCKING_TABLE_HINTS` hint
+ * inside a T-SQL `WITH (...)` hint group — e.g.
+ * `SELECT * FROM t WITH (UPDLOCK, HOLDLOCK)` (#906).
+ *
+ * Scoped to the interior of a `WITH (…)` group rather than scanning for the
+ * bare words, so a column named `updlock` (or a
+ * `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`) is never mistaken for a
+ * hint. Parenthesis depth is tracked because hints may be parameterised
+ * (`INDEX(0)`), and every group is inspected so a hint on the second table of
+ * a join is not missed. Applied on every driver, not just MSSQL: `WITH (…)`
+ * straight after a table reference is not valid read-only syntax elsewhere (a
+ * CTE is `WITH <name> AS (…)`), so there is nothing to false-positive on.
+ * Mirrors the backend `has_locking_table_hint`.
+ */
+function hasLockingTableHint(body: string): boolean {
+  const re = /\bwith\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    let depth = 0;
+    let i = m.index + m[0].length - 1; // at the `(`
+    let group = "";
+    for (; i < body.length; i++) {
+      const c = body[i];
+      if (c === "(") {
+        depth++;
+        if (depth > 1) group += " ";
+      } else if (c === ")") {
+        depth--;
+        if (depth === 0) break;
+        group += " ";
+      } else {
+        group += c;
+      }
+    }
+    if (group.split(/[^A-Za-z0-9_]+/).some((w) => LOCKING_TABLE_HINTS.has(w))) {
+      return true;
+    }
+    re.lastIndex = Math.max(i, m.index + 1);
+  }
+  return false;
+}
+
+/**
  * Best-effort mirror of the backend `is_read_only_sql` gate
  * (`src-tauri/src/db/mod.rs`): true only when `sql` is a single statement that
  * begins with an allowed read-only keyword and carries no write/DDL keyword,
@@ -341,6 +404,7 @@ export function isReadOnlySql(sql: string, driver?: string): boolean {
   if (body.includes(";")) return false;
   if (WRITE_KEYWORDS.some((kw) => containsWord(body, kw))) return false;
   if (hasLockingClause(body)) return false;
+  if (hasLockingTableHint(body)) return false;
   return true;
 }
 

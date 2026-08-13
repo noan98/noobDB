@@ -87,6 +87,7 @@ import {
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
+import { parseClipboardGrid, planPasteEdit } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
 import type { ServerFilter, ServerFilterOp, ServerSort, ServerSortDirection } from "./serverBrowse";
 import { diffResultRows } from "../resultDiff";
@@ -982,6 +983,13 @@ interface Props {
    * (ツールチップで理由を示す) のまま出る。
    */
   onSaveAsTable?: () => void;
+  /**
+   * 実行結果をビューへ保存 (「現在のクエリをビューとして保存」、#851)。App が
+   * セッション・対象クエリ・データベースを確定させたときだけ渡す —
+   * `onSaveAsTable` と同じ表示条件 (単一 SELECT/WITH・読み取り専用でない・
+   * データベース文脈がある) で、未指定のときは disabled のまま出る。
+   */
+  onSaveAsView?: () => void;
   /**
    * 結果セットをローカル横断クエリエンジンへ「ローカルテーブルとして登録」する
    * (#740)。App がセッション種別・在メモリ行を確定させたときだけ渡す — 表示条件
@@ -2424,6 +2432,7 @@ export function DataGrid({
   canUndo,
   canRedo,
   onSelectionSummary,
+  onExportSelection,
   onRunStatsQuery,
   findHits,
   findCurrentKey,
@@ -2553,6 +2562,14 @@ export function DataGrid({
    * selected). Lets `ResultGrid` surface the summary in its status bar (#523).
    */
   onSelectionSummary?: (summary: SelectionSummary | null) => void;
+  /**
+   * 矩形選択範囲の右クリック「選択範囲をエクスポート」から呼ばれる (#917)。
+   * その時点の選択範囲が指す列/行の部分集合を一度きり渡す (継続的な同期はしない
+   * — `onSelectionSummary` と違い、生のセル値をレンダーのたびに親へ push すると
+   * 大きな結果セットで重いため)。`ResultGrid` はこれを `ExportModal` の
+   * `selection` prop へそのまま渡し、モーダル側で「選択範囲」スコープを提示する。
+   */
+  onExportSelection?: (data: { columns: Column[]; rows: CellValue[][] }) => void;
   /**
    * Runs an ad-hoc SELECT for the column quick-stats popover's "aggregate all
    * rows" action (#524). Provided by App bound to the active session; omit to
@@ -3514,6 +3531,89 @@ export function DataGrid({
     }
   };
 
+  // Clipboard paste → multi-cell bulk edit (#793). Symmetric to `copySelection`:
+  // pastes a TSV/CSV block from the clipboard, expanding from the active
+  // rectangular selection's top-left corner (or the active cell) into the grid's
+  // *display* order. A single pasted value onto an active rectangle fills the
+  // whole rectangle via the existing `planBulkCellEdit` (#596) path instead of a
+  // bespoke 1x1 case; anything larger goes through `planPasteEdit`.
+  const handleGridPaste = (e: React.ClipboardEvent<HTMLTableElement>) => {
+    // The inline cell editor (a plain <input>) handles its own paste natively;
+    // only intercept when a grid cell itself has focus.
+    if (editing || !editable || !onBulkEdit) return;
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!text) return;
+    const grid = parseClipboardGrid(text);
+    if (grid.length === 0 || grid[0].length === 0) return;
+    e.preventDefault();
+
+    if (grid.length === 1 && grid[0].length === 1 && selectionRect) {
+      applyValueToCells(
+        visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
+        visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
+        grid[0][0],
+      );
+      return;
+    }
+
+    const anchorVis = selectionRect
+      ? selectionRect.r0
+      : visibleRows.findIndex((r) => r.index === activeCell?.rowIdx);
+    const anchorColPos = selectionRect ? selectionRect.c0 : visibleColIds.indexOf(activeCell?.colIdx ?? -1);
+    if (anchorVis < 0 || anchorColPos < 0) return;
+
+    const maxCols = Math.max(...grid.map((r) => r.length));
+    const targetRowIndices = visibleRows.slice(anchorVis, anchorVis + grid.length).map((r) => r.index);
+    const targetColIndices = visibleColIds.slice(anchorColPos, anchorColPos + maxCols);
+
+    const plan = planPasteEdit({
+      grid,
+      rows,
+      columns,
+      pkIndices: pkIndices ?? [],
+      targetRowIndices,
+      targetColIndices,
+      isColEditable: (c) => editableColumns?.[c] ?? false,
+      validate: (c, v) => validateEdit?.(c, v) ?? null,
+    });
+
+    if (plan.applied.length === 0 && plan.unchanged.length === 0) {
+      toast.error(t("gridPasteNoneApplied"));
+      return;
+    }
+    onBulkEdit([...plan.applied, ...plan.unchanged]);
+    if (plan.applied.length === 0) {
+      toast.info(t("gridPasteAllUnchanged", { cells: plan.unchanged.length }));
+      return;
+    }
+    const skipped =
+      plan.skippedReadonly + plan.skippedInvalid + plan.skippedOutOfBounds + plan.unchanged.length;
+    if (skipped > 0) {
+      toast.info(t("gridPasteAppliedSkipped", { cells: plan.applied.length, skipped }));
+    } else {
+      toast.success(t("gridPasteApplied", { cells: plan.applied.length }));
+    }
+  };
+
+  // Delete/Backspace on a focused (non-editing) cell clears the selection (or
+  // just the active cell) to NULL (#793) — the same "set value" path the
+  // right-click quick-set / bulk-edit dialog use, so read-only columns and
+  // NOT NULL violations are skipped with the same toast, not silently dropped.
+  const clearSelectedCells = () => {
+    if (!editable || !onBulkEdit) return;
+    if (selectionRect) {
+      applyValueToCells(
+        visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
+        visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
+        "NULL",
+      );
+      return;
+    }
+    if (activeCell) {
+      applyValueToCells([activeCell.rowIdx], [activeCell.colIdx], "NULL");
+    }
+  };
+
   // Row virtualization. Cells are single-line (`white-space: nowrap` +
   // ellipsis), so rows are uniform height; we still let the virtualizer
   // `measureElement` the real height so it follows the font-scale setting and
@@ -3746,6 +3846,16 @@ export function DataGrid({
         }
         break;
       }
+      case "Delete":
+      case "Backspace":
+        // 編集不可な列やアクティブセルが無い場合は `clearSelectedCells` 側で
+        // 何もしない (early return) — その場合はブラウザ既定の挙動 (何もない)
+        // に任せるため preventDefault しない。
+        if (editable && onBulkEdit && (selectionRect || activeCell)) {
+          e.preventDefault();
+          clearSelectedCells();
+        }
+        break;
       default:
         // Printable character → start editing with that char (Undo/Redo/Copy
         // are handled above, before the switch).
@@ -4097,7 +4207,12 @@ export function DataGrid({
           )}
         </Box>
       )}
-      <table role="grid" style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }} onKeyDown={handleGridKeyDown}>
+      <table
+        role="grid"
+        style={{ width: ROW_INDEX_WIDTH + table.getTotalSize() }}
+        onKeyDown={handleGridKeyDown}
+        onPaste={handleGridPaste}
+      >
         <colgroup>
           <col style={{ width: ROW_INDEX_WIDTH }} />
           {table.getHeaderGroups()[0]?.headers.map((h) => (
@@ -4437,6 +4552,32 @@ export function DataGrid({
               shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
               onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
             },
+            // 選択範囲のエクスポート/コピー (#917): 矩形選択が 2 セル以上を
+            // 覆っているときだけ出す (単一セルは上の「値をコピー」で足りる)。
+            // 選択範囲の列/行部分集合を一度だけ `onExportSelection` へ渡し、
+            // `ResultGrid` がそれを `ExportModal` の "selection" スコープとして開く。
+            ...(selectionRect && onExportSelection
+              ? [
+                  {
+                    label: t("gridExportSelection", {
+                      count: selectionRect.rowIndexSet.size * selectionRect.colIdSet.size,
+                    }),
+                    icon: "download" as const,
+                    title: t("gridExportSelectionTitle"),
+                    onSelect: () => {
+                      const rowIdxs = visibleRows
+                        .slice(selectionRect.r0, selectionRect.r1 + 1)
+                        .map((r) => r.index);
+                      const colIds = visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1);
+                      setCopyMenu(null);
+                      onExportSelection({
+                        columns: colIds.map((ci) => columns[ci]).filter((c): c is Column => !!c),
+                        rows: rowIdxs.map((ri) => colIds.map((ci) => rows[ri]?.[ci] ?? null)),
+                      });
+                    },
+                  },
+                ]
+              : []),
             ...(() => {
               // "Copy as INSERT" (#601): operates on every row covered by an
               // active multi-row range selection, or just the clicked row
@@ -5164,6 +5305,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   onToggleDiffHighlight,
   onChangeView,
   onSaveAsTable,
+  onSaveAsView,
   onRegisterLocalTable,
   fullExport,
   lastEditAppliedAt,
@@ -5207,6 +5349,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     if (rowCount < prev) setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [rowCount]);
   const [showExport, setShowExport] = useState(false);
+  // 右クリック「選択範囲をエクスポート」(#917) で `DataGrid` から一度きり渡される
+  // 選択範囲の列/行部分集合。モーダルを閉じたら破棄し、次に (右クリック経由でなく)
+  // ツールバーの通常 Export を開いたときに古い選択が「選択範囲」スコープとして
+  // 残らないようにする。
+  const [selectionExport, setSelectionExport] = useState<{
+    columns: Column[];
+    rows: CellValue[][];
+  } | null>(null);
   const [search, setSearch] = useState("");
   // Interval the toggle will use when switched on. Seeded from the persisted
   // default and from the live cadence so the selector reflects the active poll.
@@ -5737,6 +5887,27 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             disabled={!canExport || !onSaveAsTable}
           >
             <Icon name="table" size={ICON_SIZES.md} /> {t("saveAsTableButton")}
+          </Button>
+        </Tooltip>
+        <Tooltip
+          focusableWrapper={!canExport || !onSaveAsView}
+          label={
+            streaming
+              ? t("exportDisabledStreaming")
+              : !canExport
+                ? t("exportDisabledNoRows")
+                : onSaveAsView
+                  ? t("saveAsViewButtonTitle")
+                  : t("saveAsViewDisabledTitle")
+          }
+        >
+          <Button
+            size="sm"
+            px="2.5"
+            onClick={() => onSaveAsView?.()}
+            disabled={!canExport || !onSaveAsView}
+          >
+            <Icon name="view" size={ICON_SIZES.md} /> {t("saveAsViewButton")}
           </Button>
         </Tooltip>
         <Tooltip
@@ -6385,6 +6556,10 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}
           onSelectionSummary={setSelSummary}
+          onExportSelection={(data) => {
+            setSelectionExport(data);
+            setShowExport(true);
+          }}
           onRunStatsQuery={onRunStatsQuery}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}
@@ -6558,7 +6733,11 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
             stoppedPartial={!!partialResult}
             fullExport={fullExport}
-            onClose={() => setShowExport(false)}
+            selection={selectionExport}
+            onClose={() => {
+              setShowExport(false);
+              setSelectionExport(null);
+            }}
           />
         )}
       </AnimatePresence>

@@ -208,11 +208,14 @@ CI は 2 つのワークフローに分かれています:
   `src-tauri/src/lib.rs` / `commands/*.rs` / `tasks/scheduler.rs` を読む) と
   `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
   `schemaParity.test.ts` (Rust の統合テストと共有するフィクスチャ
-  `src/__tests__/fixtures/*.json` を検証する) は「相手言語のソースを実行時に読む」
+  `src/__tests__/fixtures/*.json` を検証する)、および
+  `apiReachabilityParity.test.ts` (#907。Rust ソースは読まないが、UI 未到達
+  ラッパーの削除は `ipcCommandParity` = Rust 側登録と連動して直す必要があるため
+  同じ起動条件で同居させる) は「相手言語のソースを実行時に読む」
   言語横断のパリティ/ゴールデンテストです。これらは元々 `frontend` ジョブの
   `pnpm test` に含まれていたため `frontend==true` (`src/**` の変更) でしか走らず、
   `src-tauri/**` のみを変更する PR ではまさにその変更を捕まえるべきテストが
-  1 本も実行されないという穴がありました (#853)。対応として、対象 7 ファイルだけを
+  1 本も実行されないという穴がありました (#853)。対応として、対象ファイルだけを
   `pnpm vitest run <files...>` でピンポイントに実行する軽量な専用ジョブ
   `crosslang parity` を新設し、起動条件を `frontend==true || rust==true` の OR に
   しています (`frontend` ジョブとテストが重複しますが、対象を絞っているため数秒
@@ -828,6 +831,20 @@ no-op)。
   `isReadOnlySql(sql, driver?)` / `maskLiterals(sql, driver?)` は driver 省略時に
   保守的な解釈を採る (`components/sqlDialect.ts` のヘルパが未知ドライバを MySQL 扱い
   するのとは**逆**なので注意)。
+
+**MSSQL のロック系テーブルヒント (#906)。** 他ドライバの `FOR UPDATE` /
+`LOCK IN SHARE MODE` を拒否している設計意図 (読み取り専用セッションはロックを取らない)
+に合わせ、T-SQL の `WITH (...)` ヒントのうち**共有読み取りより強いロックモード**
+(`UPDLOCK` / `XLOCK` / `TABLOCKX`) と**文より長いロック保持期間**
+(`HOLDLOCK` / `SERIALIZABLE` / `REPEATABLEREAD` / `READCOMMITTEDLOCK`) を
+`has_locking_table_hint` で拒否します。`NOLOCK` / `READUNCOMMITTED` / `READPAST`
+(ロックを減らす) と粒度のみのヒント (`ROWLOCK` / `PAGLOCK` / `TABLOCK`) は意図的に
+対象外。判定は `WITH (…)` グループの内側に限定するので `updlock` という**列名**は
+誤検出しません (入れ子括弧 `INDEX(0)` も追跡し、JOIN の 2 つ目のテーブルに付いた
+ヒントも拾います)。全ドライバに適用します — `WITH (…)` がテーブル参照直後に来る形は
+他方言では読み取り専用構文として成立しないため誤検出の余地が無く、共有ゴールデンの
+期待値を文ごとに 1 つに保てるからです。`FROM t (UPDLOCK)` という `WITH` 無しの
+レガシー形は既知の非対応 (通常の括弧式と区別できないため)。
 
 `apply_auto_limit` は、自前で行数を制限していない素の `SELECT` / `WITH ... SELECT` に
 自動で `LIMIT n` を付与します。判定は保守的で、迷ったら `None` (ユーザの SQL をそのまま
@@ -1503,7 +1520,27 @@ ipcCommandParity.test.ts` が Rust 側登録と `tauri.ts` の対応をテスト
 **コマンドを追加する
 ときは: Rust ハンドラを追加し、`lib.rs` で登録し、`tauri.ts` に型付けされたラッパー
 (とストリーミングなら対応する `listen*` ヘルパー) を追加します — これらの間でズレが
-発生するとフロントエンドが暗黙のうちに壊れます。** エラーは `AppError` として上に
+発生するとフロントエンドが暗黙のうちに壊れます。**
+
+**さらに「UI からそのラッパーに到達できるか」も検証します (#907)。**
+`ipcCommandParity` が担保するのは「lib.rs 登録 ⇔ `tauri.ts` ラッパ」の集合一致まで
+で、その先の到達性は誰も見ていませんでした。`api` は単一オブジェクトとして export され
+UI で使われているため **knip では原理的にプロパティ単位の未使用を検出できず**、逆に
+`ipcCommandParity` は集合完全一致を強制するので UI 未接続のラッパーを消すと CI が
+落ちる — 結果としてデッドラッパーが構造的に不可視でした。
+`src/__tests__/apiReachabilityParity.test.ts` が `Object.keys(api)` と `src/` 配下
+(`api/tauri.ts` と `__tests__/` を除く) の `api.<name>` 参照を突き合わせ、**どこからも
+呼ばれないラッパーがあれば落ちます**。逃げ道の許可リスト
+`INTENTIONALLY_UNREACHABLE` は**空のまま維持するのが理想**で、追加するときは理由を
+併記してください (「まだ UI を作っていない」は理由になりません — UI を足すか、
+ラッパーと Rust コマンドを一緒に消す)。この方針で #907 では
+`run_captured_write` / `precheck_captured_write` を IPC ごと削除しました (書き込み記録は
+`run_query_stream({ capture: true })` に一本化済み。`run_captured_write_inner` は
+その共通コアとして残る)。`clear_flight_records` / `clear_task_runs` は同じ調査で
+UI 未接続と分かりましたが、#910 が `FlightRecorderPanel` の「全消去」/ `TaskManager`
+の「実行履歴をクリア」導線を追加して解消済みです。
+
+エラーは `AppError` として上に
 伝搬し、`{ kind, message }` の**構造化 JSON** としてシリアライズされます
 (`error.rs::Serialize` / `AppError::kind()` を参照。#683)。`kind` はバリアント由来の
 安定した判別子 (`ssh` / `sshHostKeyMismatch` / `timeout` / `readOnly` /
@@ -1528,6 +1565,20 @@ ipcCommandParity.test.ts` が Rust 側登録と `tauri.ts` の対応をテスト
 (ゴールデンベクタ検証用)・`kill_process_inner` (Tauri State 不要のプロセス強制終了)
 などを提供します。新しいテスト用エントリポイントが必要な場合は、内部モジュールを
 公開するのではなく、ここに追加してください。
+
+**コマンド層の常時実行カバレッジ (#881)。** `commands/inspector.rs` /
+`commands/server.rs` / `commands/process.rs` は env ゲートの MySQL/PostgreSQL
+統合テストからしか実行されておらず、`rust (windows test)` ジョブや env 変数を
+設定しないローカルの `cargo test` (= SQLite のみ) では**コマンド境界が 1 度も
+走りません**でした。各コマンドの State なしコア
+(`query_stats_support_inner` / `sample_live_queries_inner` /
+`sample_statement_stats_inner` / `server_info_inner` / `server_metrics_inner` /
+`list_processes_inner`) を `__test_api` から公開し、常時実走の
+`tests/sqlite_integration.rs` が「SQLite 短絡パスの戻り値 (縮退レスポンス /
+非対応エラー)」「未知セッション ID での `SessionNotFound`」「読み取り操作は
+read_only セッションでも通ること」を外部サーバ無しで固定します。`_inner` を切る
+パターンは `commands::query::run_query_inner` と同じで、`#[tauri::command]` 側は
+一行のラッパーに徹します。
 
 ### Tauri capabilities
 
@@ -1614,6 +1665,24 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   「値ではなく解除」を意味し、App の `setBulkCellEditsForTab` が単一セルの
   `setCellEditForTab` と同じ削除処理を行う — 無変更の `SET col = <同じ値>` を Apply で
   発行せず、保留編集の件数表示も実際に変わるセルだけを数えるため。
+- クリップボード貼り付けによる一括編集 (#793) — `pasteEdit.ts`。結果グリッドの
+  矩形選択 TSV コピー (`copySelection`) と対称の取り込み経路で、`DataGrid` の
+  `<table>` に付けた `onPaste` が Excel/スプレッドシート由来の TSV (タブ区切り・
+  改行区切り、`"` で囲んだフィールドのタブ/改行/二重引用符も復元) を
+  `parseClipboardGrid` で解析し、選択の左上 (矩形選択が無ければアクティブセル) を
+  アンカーに貼り付け範囲を展開する。1×1 の単一値貼り付けは既存の矩形選択があれば
+  `planBulkCellEdit` (#596) にそのまま委譲し (二重実装しない)、2 セル以上の矩形
+  貼り付けだけが新設の `planPasteEdit` を通る — 編集不可列・型不正値のスキップは
+  `planBulkCellEdit` と同じ `isColEditable`/`validate` を共有し、加えて貼り付け
+  範囲が現在表示中の行/列数を超えた分は `skippedOutOfBounds` としてスキップ計上
+  する (行の自動 INSERT 化はこの Issue のスコープ外)。生成される変更は既存の
+  `PendingEdits`/`BulkEditTarget` バッファに積まれるだけで、確定は従来どおり
+  Apply — **DB への新しい書き込み経路を増やさない**点は `quickSetValues.ts` と
+  同じ方針。副次的に、グリッドセルにフォーカスがある状態 (インライン編集中は
+  対象外) での Delete/Backspace は選択範囲 (または アクティブセル) を NULL へ
+  一括セットする `clearSelectedCells` を追加し、既存の「値をセット」経路
+  (`applyValueToCells`) をそのまま再利用するため NOT NULL 制約のスキップ挙動も
+  一括編集ダイアログと揃う。
 - データ可視化カラースケール (#525) — `colorScale.ts` が、データを色で符号化する表面
   (チャート系列・ヒートマップ・データバー・将来のコスト/NULL 率ミニバー) が共有する
   **単一のスケール体系**を純ロジックとして定義する。**sequential** (単一色相の連続、CB

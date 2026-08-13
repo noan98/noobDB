@@ -9,6 +9,14 @@ import { setLocale, t } from "../i18n";
 import { setColumnNullBars, setRichCellRendering } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
 
+// 選択範囲エクスポート (#917) のテストが `ExportModal` を実際にマウントするため、
+// そのマウント effect が呼ぶ `@tauri-apps/api/path` をモックする
+// (`exportModal.test.tsx` と同じ方針。書き出し自体は Export 押下時のみ発生する)。
+vi.mock("@tauri-apps/api/path", () => ({
+  downloadDir: vi.fn().mockResolvedValue("/home/user/Downloads"),
+  join: vi.fn().mockResolvedValue("/home/user/Downloads/export.csv"),
+}));
+
 // ResultGrid の主要インタラクション (描画・全文フィルタ・列ソート・ページ読み込み
 // トリガー・インラインセル編集) の退行を検出するテスト。リファクタリングや
 // 機能追加で表示・編集フローが壊れたことを CI で自動検出できるようにする。
@@ -1500,5 +1508,52 @@ describe("セル値のクイックセット", () => {
     fireEvent.contextMenu(cells[0][1]);
     await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetRevert") }));
     expect(onSetCellEdit).toHaveBeenCalledWith(rowKey, 1, null);
+  });
+});
+
+// 矩形選択範囲のエクスポート (#917)。右クリックの「選択範囲をエクスポート」から
+// `ExportModal` を「選択範囲」スコープ既定で開けることを固定する。整形自体の
+// 二重実装が無いことは `exportModal.test.tsx` 側で確認済みなので、ここでは配線
+// (選択範囲があるときだけメニューに出る・選んだ部分集合がモーダルへ渡る) を見る。
+describe("選択範囲のエクスポート (#917)", () => {
+  beforeEach(() => setLocale("en"));
+
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  it("矩形選択が無いときはメニューに出ない", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    fireEvent.contextMenu(cells[0][0]);
+    expect(screen.queryByText(/Export \d+ selected cells/)).toBeNull();
+  });
+
+  it("矩形選択があるときにメニューへ出て、選ぶと選択範囲スコープでエクスポートモーダルを開く", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    // 2x2 の範囲 (name/qty × banana/apple) を選択する (#486 のテストと同じ手順)。
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cells[0][1], { key: "ArrowDown", shiftKey: true });
+    expect(container.querySelectorAll("td.is-selected-cell")).toHaveLength(4);
+
+    fireEvent.contextMenu(cells[0][0]);
+    const item = await screen.findByRole("menuitem", { name: t("gridExportSelection", { count: 4 }) });
+    await user.click(item);
+
+    // エクスポートモーダルが開き、「選択範囲」スコープが既定で選ばれている。
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText(t("exportTitle"))).toBeInTheDocument();
+    const radio = screen.getByRole("radio", { name: new RegExp(t("exportScopeSelection")) });
+    expect(radio).toBeChecked();
+    // プレビューは選択した 2 行 × 2 列 (name, qty) のみを反映する。
+    const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+    expect(preview).toContain("banana");
+    expect(preview).toContain("apple");
+    expect(preview).not.toContain("cherry");
   });
 });

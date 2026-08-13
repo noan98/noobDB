@@ -94,6 +94,18 @@ pub mod __test_api {
         StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
     };
 
+    // サーバ機能系コマンドの State なしコア (#881)。`inspector` / `server` /
+    // `process` は env ゲートの MySQL/PostgreSQL 統合テストでしか実行されず、
+    // Windows ジョブや env 無しのローカル `cargo test` (SQLite のみ) では
+    // コマンド境界が一度も走らなかった。常時実走の `tests/sqlite_integration.rs`
+    // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
+    // 経路を駆動できるよう、ここでピンポイントに公開する。
+    pub use crate::commands::inspector::{
+        query_stats_support_inner, sample_live_queries_inner, sample_statement_stats_inner,
+    };
+    pub use crate::commands::process::list_processes_inner;
+    pub use crate::commands::server::{server_info_inner, server_metrics_inner};
+
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
     }
@@ -175,9 +187,10 @@ pub mod __test_api {
         crate::commands::import::ensure_import_writable(session)
     }
 
-    /// Drives the `run_captured_write` IPC command's core path (session
-    /// lookup + read-only guard + capture + history recording) without a
-    /// Tauri runtime (#735).
+    /// Drives the captured-write core path (session lookup + read-only guard +
+    /// capture + history recording) without a Tauri runtime (#735). Production
+    /// reaches the same core through `run_query_stream({ capture: true })`
+    /// (#907 removed the unused non-streaming IPC command).
     pub async fn run_captured_write_via_command(
         state: &AppState,
         session_id: &str,
@@ -647,8 +660,6 @@ pub fn run() {
             commands::snippets::delete_snippet,
             commands::history::list_history,
             commands::history::clear_history,
-            commands::flight_recorder::run_captured_write,
-            commands::flight_recorder::precheck_captured_write,
             commands::flight_recorder::list_flight_records,
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,

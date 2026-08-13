@@ -318,21 +318,6 @@ export interface HistoryEntry {
 /** #735 DML フライトレコーダの書き込み種別。`db::WriteKind` の wire 表現。 */
 export type WriteKind = "insert" | "update" | "delete" | "other";
 
-/** `run_captured_write` / `run_query_stream` (capture 有効時) の戻り値。 */
-export interface CapturedWriteResponse {
-  result: QueryResult;
-  capturable: boolean;
-  reason: string | null;
-  captureId: number | null;
-}
-
-/** `precheck_captured_write` — 実行前に記録可否/推定行数を知るための下見。 */
-export interface WriteCapturePrecheck {
-  capturable: boolean;
-  reason: string | null;
-  estimatedRows: number | null;
-}
-
 /** `list_flight_records` の 1 件。行データ本体は含まない一覧用サマリ。 */
 export interface WriteCaptureSummary {
   id: number;
@@ -1831,39 +1816,9 @@ export const api = {
       parseResponse(schemas.numberResponse, r, "write_binary_file"),
     ),
 
-  /**
-   * DML フライトレコーダ (#735)。単文の INSERT/UPDATE/DELETE を実行しつつ
-   * before/after イメージの記録を試みる。記録の成否 (`capturable`) に関わらず
-   * 書き込み自体は常に行われる — 記録はベストエフォートの保険。
-   */
-  runCapturedWrite: (params: {
-    sessionId: string;
-    sql: string;
-    database?: string | null;
-    rowCap?: number | null;
-    retentionDays?: number | null;
-  }) =>
-    invoke<CapturedWriteResponse>("run_captured_write", {
-      sessionId: params.sessionId,
-      sql: params.sql,
-      database: params.database ?? null,
-      rowCap: params.rowCap ?? null,
-      retentionDays: params.retentionDays ?? null,
-    }).then((r) => parseResponse(schemas.capturedWriteResponse, r, "run_captured_write")),
-
-  /** 実行前に「この文は記録できるか・約何行が対象か」を副作用なしで確認する。 */
-  precheckCapturedWrite: (params: {
-    sessionId: string;
-    sql: string;
-    database?: string | null;
-    rowCap?: number | null;
-  }) =>
-    invoke<WriteCapturePrecheck>("precheck_captured_write", {
-      sessionId: params.sessionId,
-      sql: params.sql,
-      database: params.database ?? null,
-      rowCap: params.rowCap ?? null,
-    }).then((r) => parseResponse(schemas.writeCapturePrecheck, r, "precheck_captured_write")),
+  // DML フライトレコーダ (#735)。書き込みの記録は `runQueryStream({ capture: true })`
+  // に一本化されているため、非ストリーム版の `run_captured_write` /
+  // `precheck_captured_write` ラッパは持たない (#907 で削除)。
 
   listFlightRecords: (profileId?: string | null, limit?: number | null) =>
     invoke<WriteCaptureSummary[]>("list_flight_records", {

@@ -1532,7 +1532,9 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 /// `LOCK IN SHARE MODE` form — including their `NOWAIT` / `SKIP LOCKED` /
 /// `OF <table>` suffixed variants (see [`has_locking_clause`]) — are rejected
 /// because they acquire row locks even though they syntactically begin with
-/// `SELECT`.
+/// `SELECT`. Microsoft SQL Server table hints that do the same thing via
+/// `WITH (...)` (`UPDLOCK` / `XLOCK` / `TABLOCKX` / `HOLDLOCK` / …, see
+/// [`has_locking_table_hint`], #906) are rejected the same way.
 ///
 /// Beyond the leading keyword the body is masked (comments / string literals /
 /// quoted identifiers blanked) and then:
@@ -1608,6 +1610,9 @@ fn is_read_only_sql_masked(masked: &[char]) -> bool {
     if has_locking_clause(body) {
         return false;
     }
+    if has_locking_table_hint(body) {
+        return false;
+    }
     true
 }
 
@@ -1670,6 +1675,114 @@ fn contains_word_phrase(haystack: &str, phrase: &str) -> bool {
             }
         }
         i += 1;
+    }
+    false
+}
+
+/// Microsoft SQL Server table hints that make a `SELECT` acquire locks a plain
+/// read would not (#906). Two families, both of which break the "a read-only
+/// session takes no locks" guarantee that [`LOCKING_CLAUSES`] enforces for the
+/// other drivers:
+///
+/// * **stronger lock mode than a shared read**: `UPDLOCK` (update locks),
+///   `XLOCK` (exclusive locks), `TABLOCKX` (exclusive table lock).
+/// * **longer lock duration than the statement**: `HOLDLOCK` and its synonym
+///   `SERIALIZABLE`, `REPEATABLEREAD`, `READCOMMITTEDLOCK` — all hold their
+///   locks until the end of the transaction rather than releasing them when
+///   the statement finishes.
+///
+/// Deliberately **not** listed: `NOLOCK` / `READUNCOMMITTED` / `READPAST`
+/// (which take *fewer* locks, and which the shared golden vectors already
+/// assert are read-only) and the granularity-only hints `ROWLOCK` / `PAGLOCK` /
+/// `TABLOCK`, which do not change the lock mode or duration a plain `SELECT`
+/// would already use.
+const LOCKING_TABLE_HINTS: &[&str] = &[
+    "updlock",
+    "xlock",
+    "tablockx",
+    "holdlock",
+    "serializable",
+    "repeatableread",
+    "readcommittedlock",
+];
+
+/// True when masked/lowercased `body` carries a T-SQL table hint from
+/// [`LOCKING_TABLE_HINTS`] inside a `WITH (...)` hint group (#906) — e.g.
+/// `SELECT * FROM t WITH (UPDLOCK, HOLDLOCK)`.
+///
+/// The match is deliberately scoped to the interior of a `WITH (…)` group
+/// rather than scanning the whole body for the bare words, so an ordinary
+/// column named `updlock` or `serializable` (or a
+/// `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE` statement) is never mistaken
+/// for a hint. Parenthesis depth is tracked while scanning the group because
+/// hints may themselves be parameterised (`INDEX(0)`, `FORCESEEK (ix (col))`),
+/// and every `WITH (…)` group in the statement is inspected so a hint on the
+/// second table of a join is not missed.
+///
+/// Applied on **every** driver rather than only [`DriverKind::Mssql`]: `WITH
+/// (…)` directly after a table reference is not valid read-only syntax on the
+/// other dialects (a CTE is `WITH <name> AS (…)`), so there is nothing to
+/// false-positive on, and keeping one rule for all drivers means the shared
+/// golden vectors need a single expected verdict per statement.
+///
+/// **Known limit**: the legacy hint form without `WITH` (`FROM t (UPDLOCK)`,
+/// deprecated by Microsoft) is not recognised, since a bare parenthesised
+/// group after an identifier is ambiguous with ordinary expressions. Same
+/// best-effort posture as the rest of this module.
+fn has_locking_table_hint(body: &str) -> bool {
+    let chars: Vec<char> = body.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        // Find a word-bounded `with` followed only by whitespace before a `(`.
+        if !(chars[i..].starts_with(&['w', 'i', 't', 'h'])
+            && (i == 0 || !is_word_char(chars[i - 1])))
+        {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 4;
+        if j < n && is_word_char(chars[j]) {
+            i += 1;
+            continue;
+        }
+        while j < n && chars[j].is_whitespace() {
+            j += 1;
+        }
+        if j >= n || chars[j] != '(' {
+            i += 1;
+            continue;
+        }
+        // Collect the group's interior, tracking depth so a nested `(…)` in a
+        // parameterised hint doesn't end the scan early.
+        let mut depth = 0usize;
+        let mut group = String::new();
+        while j < n {
+            match chars[j] {
+                '(' => {
+                    depth += 1;
+                    if depth > 1 {
+                        group.push(' ');
+                    }
+                }
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                    group.push(' ');
+                }
+                c => group.push(c),
+            }
+            j += 1;
+        }
+        let hinted = group
+            .split(|c: char| !is_word_char(c))
+            .any(|word| LOCKING_TABLE_HINTS.contains(&word));
+        if hinted {
+            return true;
+        }
+        i = j.max(i + 1);
     }
     false
 }
@@ -2477,6 +2590,56 @@ mod tests {
         assert!(is_session_init_sql(""));
         assert!(is_session_init_sql("  ;  ;\n"));
         assert!(is_session_init_sql("-- just a comment"));
+    }
+
+    /// #906: T-SQL table hints that take stronger or longer-lived locks than a
+    /// plain read must be rejected by the read-only guard, the same way
+    /// `FOR UPDATE` / `LOCK IN SHARE MODE` already are on the other dialects.
+    #[test]
+    fn read_only_rejects_mssql_locking_table_hints() {
+        for sql in [
+            "SELECT * FROM [dbo].[users] WITH (UPDLOCK)",
+            "SELECT * FROM users WITH (UPDLOCK, HOLDLOCK)",
+            "SELECT * FROM users WITH (HOLDLOCK)",
+            "SELECT * FROM users WITH (SERIALIZABLE)",
+            "SELECT * FROM users WITH (REPEATABLEREAD)",
+            "SELECT * FROM users WITH (READCOMMITTEDLOCK)",
+            "SELECT * FROM users WITH (TABLOCKX)",
+            "SELECT * FROM users WITH (XLOCK, ROWLOCK)",
+            // No whitespace between `WITH` and `(`.
+            "SELECT * FROM users WITH(UPDLOCK)",
+            // Hint on the second table of a join.
+            "SELECT a.id FROM a WITH (NOLOCK) JOIN b WITH (UPDLOCK) ON a.id = b.id",
+            // Case and line breaks must not matter.
+            "SELECT *\n  FROM users\n  WITH (updlock)",
+        ] {
+            assert!(
+                !is_read_only_sql(sql),
+                "expected {sql:?} to be rejected as a locking read"
+            );
+        }
+    }
+
+    /// The hint check must not fire on things that merely *look* like hints:
+    /// lock-avoiding / granularity-only hints, ordinary CTEs, and columns that
+    /// happen to be named after a hint (#906).
+    #[test]
+    fn read_only_allows_non_locking_hints_and_lookalikes() {
+        for sql in [
+            "SELECT * FROM users WITH (NOLOCK)",
+            "SELECT * FROM users WITH (READUNCOMMITTED)",
+            "SELECT * FROM users WITH (ROWLOCK)",
+            "SELECT * FROM users WITH (TABLOCK)",
+            // Parameterised hint: the nested `(0)` must not end the scan early.
+            "SELECT * FROM users WITH (INDEX(0), NOLOCK)",
+            // Columns named after hints, outside any WITH (...) group.
+            "SELECT updlock, serializable FROM t",
+            "SELECT * FROM t WHERE holdlock = 1",
+            // Ordinary CTE — `WITH <name> AS (…)`, not a hint group.
+            "WITH c AS (SELECT 1) SELECT * FROM c",
+        ] {
+            assert!(is_read_only_sql(sql), "expected {sql:?} to stay read-only");
+        }
     }
 
     #[test]
