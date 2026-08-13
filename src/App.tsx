@@ -7049,6 +7049,7 @@ export default function App() {
             reloadKey={historyReloadKey}
             onRestore={handleRestoreHistory}
             onOpenInNewTab={handleOpenHistoryInNewTab}
+            onSaveAsSnippet={handleSaveSnippetFromEditor}
             onNewQuery={sessionId ? handleNewTab : undefined}
           />
         ) : (
