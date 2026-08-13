@@ -119,6 +119,32 @@ export function TaskManager({
     }
   }, [toast]);
 
+  /**
+   * このタスクの実行履歴をクリアする (#907)。バックエンドの `clear_task_runs` は
+   * #730 から存在していたが UI 導線が無く、`api.clearTaskRuns` が UI から到達
+   * 不能なラッパーになっていた。履歴パネルを開いているタスクだけを対象にする
+   * (全タスク一括消去は誤操作の影響が大きいので出さない)。
+   */
+  const clearRuns = useCallback(
+    async (taskId: string) => {
+      const ok = await confirm({
+        title: t("taskHistoryClear"),
+        message: t("taskHistoryClearConfirm"),
+        confirmLabel: t("taskHistoryClear"),
+        tone: "danger",
+      });
+      if (!ok) return;
+      try {
+        const removed = await api.clearTaskRuns(taskId);
+        toast.info(t("taskHistoryCleared", { count: removed }));
+        setRuns([]);
+      } catch (e) {
+        toast.error(String(e));
+      }
+    },
+    [confirm, t, toast],
+  );
+
   // バックグラウンドスケジューラの発火 (このビューを開いたまま待っているとき) と、
   // 他タブ相当の手動実行のどちらでも一覧/履歴を追従させる。
   useEffect(() => {
@@ -287,6 +313,7 @@ export function TaskManager({
                       onDelete={() => void handleDelete(task)}
                       onRunNow={() => void handleRunNow(task)}
                       onToggleHistory={() => toggleHistory(task.id)}
+                      onClearHistory={() => void clearRuns(task.id)}
                     />
                   ))}
                 </chakra.div>
@@ -313,6 +340,7 @@ function TaskRow({
   onDelete,
   onRunNow,
   onToggleHistory,
+  onClearHistory,
 }: {
   task: TaskDefinition;
   profileName: string;
@@ -326,6 +354,7 @@ function TaskRow({
   onDelete: () => void;
   onRunNow: () => void;
   onToggleHistory: () => void;
+  onClearHistory: () => void;
 }) {
   const t = useT();
   const rel = relativeNextRun(task.next_run_at, now);
@@ -412,6 +441,13 @@ function TaskRow({
               ))}
             </chakra.div>
           )}
+          {!runsLoading && runs.length > 0 && (
+            <Flex justify="flex-end" mt="2">
+              <Button type="button" variant="danger" onClick={onClearHistory}>
+                {t("taskHistoryClear")}
+              </Button>
+            </Flex>
+          )}
         </chakra.div>
       )}
     </chakra.div>
@@ -470,6 +506,10 @@ function TaskForm({
   const [formError, setFormError] = useState<string | null>(null);
 
   const selectedProfile = profiles.find((p) => p.id === profileId) ?? null;
+  // ドライバを渡さない (= 保守的なマスク) のは意図的: バックエンドの
+  // `commands::tasks::validate_action` / `tasks::executor::run_once` も、
+  // プロファイル解決前に同じドライバ非依存の判定で弾くため (#852)。ここで
+  // MySQL 解釈を使うと、UI が通した SQL を保存時にバックエンドが拒否しうる。
   const sqlLooksReadOnly = actionKind !== "export_query" || sql.trim() === "" || isReadOnlySql(sql);
   const preview = outputPath ? previewOutputPath(outputPath, new Date()) : "";
 
@@ -502,6 +542,7 @@ function TaskForm({
         setFormError(t("taskFormSqlRequired"));
         return;
       }
+      // 上と同じ理由でドライバ非依存 (#852)。
       if (!isReadOnlySql(sql)) {
         setFormError(t("taskFormSqlNotReadOnly"));
         return;

@@ -41,6 +41,11 @@ fn validate_action(action: &TaskAction) -> Result<()> {
             if sql.trim().is_empty() {
                 return Err(AppError::InvalidInput("task SQL is empty".into()));
             }
+            // ドライバは保存時点では未確定 (profile_id からの解決は接続時に行う)
+            // ため、ドライバ非依存の `is_read_only_sql` — `\` を文字列エスケープと
+            // 見なさない保守的なマスク — を使う (#852)。MySQL のリテラル内 `\'`
+            // を含む文が弾かれる可能性はあるが、fail-closed 側の誤りであり、
+            // 実行時 (`tasks::executor::run_once`) にも同じ判定が走る。
             if !is_read_only_sql(sql) {
                 return Err(AppError::ReadOnly(
                     "scheduled tasks only support read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"

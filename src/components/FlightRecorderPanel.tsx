@@ -160,6 +160,31 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
     }
   };
 
+  /**
+   * 記録の全消去 (#907)。バックエンドの `clear_flight_records` は #735 から
+   * 存在していたが UI 導線が無く、`api.clearFlightRecords` が UI から到達不能な
+   * ラッパーになっていた。`HistoryList` の「履歴をクリア」と同じく、現在の
+   * 表示スコープ (この接続のみ / 全接続) をそのまま消去対象にする。
+   */
+  const handleClear = async () => {
+    const ok = await confirm({
+      title: t("flightRecorderClear"),
+      message: scopeId
+        ? t("flightRecorderClearConfirmProfile")
+        : t("flightRecorderClearConfirmAll"),
+      confirmLabel: t("flightRecorderClear"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      const removed = await api.clearFlightRecords(scopeId);
+      toast.info(t("flightRecorderCleared", { count: removed }));
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   return (
     <Modal onClose={onClose} width="820px">
       <ModalHeader onClose={onClose} closeLabel={t("flightRecorderClose")}>
@@ -246,6 +271,13 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         )}
       </ModalBody>
       <ModalFooter>
+        <Button
+          variant="danger"
+          disabled={loading || entries.length === 0}
+          onClick={() => void handleClear()}
+        >
+          {t("flightRecorderClear")}
+        </Button>
         <Box flex="1" />
         <Button variant="primary" onClick={onClose}>
           {t("flightRecorderClose")}

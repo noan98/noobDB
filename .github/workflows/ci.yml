@@ -257,9 +257,13 @@ jobs:
   # 背景: `ipcCommandParity.test.ts` / `ipcArgParity.test.ts` /
   # `streamEventParity.test.ts` は `?raw` インポートで src-tauri 側のソース
   # (`lib.rs` / `commands/*.rs` / `tasks/scheduler.rs`) を読み、`readOnlyGolden.test.ts` /
-  # `errorKindGolden.test.ts` / `errorHintGolden.test.ts` / `schemaParity.test.ts` は
+  # `errorKindGolden.test.ts` / `errorHintGolden.test.ts` / `schemaParity.test.ts` /
+  # `sqlQuotingGolden.test.ts` (#880) / `exportFormatGolden.test.ts` (#879) は
   # Rust の統合テスト (`read_only_golden.rs` 等) と共有するフィクスチャ
-  # (`src/__tests__/fixtures/*.json`) を検証する。いずれも「相手言語の変更を捕まえる」
+  # (`src/__tests__/fixtures/*.json`) を検証する。`apiReachabilityParity.test.ts`
+  # (#907) は Rust ソースこそ読まないが、UI 未到達ラッパーの削除は
+  # `ipcCommandParity` (= Rust 側登録) と連動して直す必要があるため、同じ
+  # 起動条件でここに同居させる。いずれも「相手言語の変更を捕まえる」
   # のが目的だが、従来は Vitest 一式として `frontend` ジョブにのみ含まれていたため
   # `src-tauri/**` のみを変更する PR では `frontend==false` となり、まさにその変更を
   # 検証すべきパリティテストが 1 本も走らなかった。
@@ -269,12 +273,13 @@ jobs:
   # (Issue が推奨する方式そのまま) — 両言語のどちらの変更でも確実に起動する。
   # 「frontend ジョブとテストが重複するのでは」という点は許容する: frontend
   # ジョブは `frontend==true` のときしか走らないためパリティ観点では不十分であり、
-  # 逆に crosslang ジョブは対象 7 ファイルのみで数秒 (`pnpm vitest run` 実測) と
+  # 逆に crosslang ジョブは対象ファイルのみで数秒 (`pnpm vitest run` 実測) と
   # 極めて軽量なため、重複コストよりカバレッジの穴を塞ぐ価値を優先する。
   #
   # 逆方向 (Rust 側のゴールデンテストがフロントのフィクスチャ変更を見逃す問題) は
   # このジョブだけでは塞げない — `serde_schema_parity.rs` / `read_only_golden.rs` /
-  # `error_kind_golden.rs` / `error_hint_golden.rs` は `rust (test)` ジョブの中で
+  # `error_kind_golden.rs` / `error_hint_golden.rs` / `sql_quoting_golden.rs` /
+  # `export_format_golden.rs` は `rust (test)` ジョブの中で
   # 実行されるため、`src/__tests__/fixtures/**` だけを変更する PR
   # (`rust==false`) では引き続きスキップされてしまう。これは上の `changes` ジョブに
   # 追加した `crosslang` フィルタ (フィクスチャパス限定) を `rust (test)` の if: へ
@@ -326,6 +331,9 @@ jobs:
           src/__tests__/errorKindGolden.test.ts
           src/__tests__/errorHintGolden.test.ts
           src/__tests__/schemaParity.test.ts
+          src/__tests__/sqlQuotingGolden.test.ts
+          src/__tests__/exportFormatGolden.test.ts
+          src/__tests__/apiReachabilityParity.test.ts
 
   rust-fmt:
     name: rust (fmt)

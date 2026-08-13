@@ -114,7 +114,8 @@ cargo test mysql_roundtrip_when_env_set             # テスト名を指定し�
 
 ```sh
 # 安全網モジュール限定で実行 (推奨。フル実行は数十分かかる)
-cargo mutants --file src/db/mod.rs --file src/db/mysql.rs
+cargo mutants --file src/db/mod.rs --file src/db/mysql.rs \
+  --file src/db/sync.rs --file src/db/data_diff.rs
 
 # 変異候補の一覧のみ確認 (テストを走らせない)
 cargo mutants --list --file src/db/mod.rs --file src/db/mysql.rs
@@ -123,9 +124,13 @@ cargo mutants --list --file src/db/mod.rs --file src/db/mysql.rs
 cargo mutants --file src/db/mod.rs --file src/db/mysql.rs --in-place
 ```
 
-**運用方針**: スコープは `src/db/mod.rs` / `src/db/mysql.rs` の安全網関数
-(`is_read_only_sql` / `apply_auto_limit` / `has_stacked_statements` /
-`is_query_shape` / `with_cte_is_mutation`) に限定。CI トリガは
+**運用方針**: スコープは安全網ロジックを持つ 4 ファイルに限定 —
+`src/db/mod.rs` (`is_read_only_sql` / `has_locking_table_hint` /
+`apply_auto_limit` / `has_stacked_statements` / `mask_for_driver`)、
+`src/db/mysql.rs` (`is_query_shape` / `with_cte_is_mutation`)、
+`src/db/sync.rs` (`quote_ident`)、`src/db/data_diff.rs` (`sql_literal`)。
+後者 2 つは SQL インジェクション隣接の引用/エスケープで、共有ゴールデン (#880) で
+固定した後にその有効性を可視化する目的で追加しました (#880)。CI トリガは
 `.github/workflows/mutants.yml` の `workflow_dispatch` (手動) のみで、PR では
 走らせない。**fail させない** (可視化のみ) — バンドルサイズ (#443) ・カバレッジ
 (#482) と同じ漸進方針。生き残り変異 (MISSED) が出たら `db::tests` に境界ケースを
@@ -207,18 +212,23 @@ CI は 2 つのワークフローに分かれています:
   `ipcArgParity.test.ts` / `streamEventParity.test.ts` (`?raw` インポートで
   `src-tauri/src/lib.rs` / `commands/*.rs` / `tasks/scheduler.rs` を読む) と
   `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
-  `schemaParity.test.ts` (Rust の統合テストと共有するフィクスチャ
-  `src/__tests__/fixtures/*.json` を検証する) は「相手言語のソースを実行時に読む」
+  `schemaParity.test.ts` / `sqlQuotingGolden.test.ts` (#880) /
+  `exportFormatGolden.test.ts` (#879) (Rust の統合テストと共有するフィクスチャ
+  `src/__tests__/fixtures/*.json` を検証する)、および
+  `apiReachabilityParity.test.ts` (#907。Rust ソースは読まないが、UI 未到達
+  ラッパーの削除は `ipcCommandParity` = Rust 側登録と連動して直す必要があるため
+  同じ起動条件で同居させる) は「相手言語のソースを実行時に読む」
   言語横断のパリティ/ゴールデンテストです。これらは元々 `frontend` ジョブの
   `pnpm test` に含まれていたため `frontend==true` (`src/**` の変更) でしか走らず、
   `src-tauri/**` のみを変更する PR ではまさにその変更を捕まえるべきテストが
-  1 本も実行されないという穴がありました (#853)。対応として、対象 7 ファイルだけを
+  1 本も実行されないという穴がありました (#853)。対応として、対象ファイルだけを
   `pnpm vitest run <files...>` でピンポイントに実行する軽量な専用ジョブ
   `crosslang parity` を新設し、起動条件を `frontend==true || rust==true` の OR に
   しています (`frontend` ジョブとテストが重複しますが、対象を絞っているため数秒
   程度と軽量で、重複コストよりカバレッジの穴を塞ぐ価値を優先しました)。逆方向
   (Rust 側のゴールデンテスト `serde_schema_parity.rs` / `read_only_golden.rs` /
-  `error_kind_golden.rs` / `error_hint_golden.rs` が `include_str!` で読む共有
+  `error_kind_golden.rs` / `error_hint_golden.rs` / `sql_quoting_golden.rs` /
+  `export_format_golden.rs` が `include_str!` で読む共有
   フィクスチャだけを変更する PR で `rust (test)` がスキップされる問題) は
   `changes` ジョブに追加した `crosslang` フィルタ (`src/__tests__/fixtures/**`
   限定) を `rust (test)` の `if:` へ OR で足すことで塞いでいます。**必須チェックを
@@ -799,9 +809,49 @@ no-op)。
 判定する**ベストエフォートの安全網** (パーサではない) です。許可リストは `SELECT` /
 `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `WITH`。コメントと文字列リテラルをマスク
 したうえで、隠れた 2 文目 (`SELECT 1; DELETE ...`)、書き込み/DDL キーワード、データ
-変更 CTE、`SELECT ... INTO`、ロック付き SELECT (`FOR UPDATE` 等) を弾きます。
-`commands::query` の各エントリポイントは `ensure_allowed_for_session` でこのガードを
-通します。
+変更 CTE、`SELECT ... INTO`、ロック付き SELECT (`FOR UPDATE` 等)、MSSQL のロック系
+テーブルヒント (`WITH (UPDLOCK)` 等。後述) を弾きます。`commands::query` の各
+エントリポイントは `ensure_allowed_for_session` でこのガードを通します。
+
+**マスクはドライバごとに切り替えます (#852)。** バックスラッシュを文字列リテラルの
+エスケープ文字と見なすのは **MySQL/MariaDB だけ**で、PostgreSQL
+(`standard_conforming_strings = on`) / SQLite / DuckDB / MSSQL では `\` はただの
+文字です。以前はどのドライバでも MySQL 流のマスク (`backslash_escapes = true`) を
+使っていたため、`SELECT '\'; DELETE FROM t; --'` のような入力で「まだ文字列の中」と
+誤読し、隠れた `;` も `delete` も見えないまま**フェイルオープン**していました
+(`is_session_init_sql` だけは先に修正済みで、その判断を残り 3 つの安全網へ横展開した
+のが #852)。現在の構成は:
+
+- `mask_for_driver(driver, src)` が `driver_backslash_escapes(driver)` でマスク規則を
+  選ぶ。`*_for(driver, ...)` 系の入口 — `is_read_only_sql_for` /
+  `has_stacked_statements_for` / `apply_auto_limit_for` / `classify_write_kind_for` —
+  はすべてこれを通る。呼び出し側 (`commands::query` の
+  `ensure_allowed_for_session` / auto-refresh / broadcast ガード、`commands::export`、
+  `commands::flight_recorder`、各ドライバの `preview_execute_with_limit`) は
+  `session.conn.driver_kind()` を渡す。
+- **ドライバを知らない呼び出し口** (`is_read_only_sql` / `has_stacked_statements` /
+  `apply_auto_limit` / `classify_write_kind` の引数なし版) は
+  `mask_for_analysis_conservative` に倒す。文字列リテラルは MySQL 流マスクより
+  **早くしか閉じない**ため、キーワードは隠れず露出する方向 = fail-closed。
+  タスクスケジューラ (`commands::tasks::validate_action` / `tasks::executor::run_once`)
+  はプロファイル解決前に検証するのでこちら。フロントも同じ方針で、
+  `isReadOnlySql(sql, driver?)` / `maskLiterals(sql, driver?)` は driver 省略時に
+  保守的な解釈を採る (`components/sqlDialect.ts` のヘルパが未知ドライバを MySQL 扱い
+  するのとは**逆**なので注意)。
+
+**MSSQL のロック系テーブルヒント (#906)。** 他ドライバの `FOR UPDATE` /
+`LOCK IN SHARE MODE` を拒否している設計意図 (読み取り専用セッションはロックを取らない)
+に合わせ、T-SQL の `WITH (...)` ヒントのうち**共有読み取りより強いロックモード**
+(`UPDLOCK` / `XLOCK` / `TABLOCKX`) と**文より長いロック保持期間**
+(`HOLDLOCK` / `SERIALIZABLE` / `REPEATABLEREAD` / `READCOMMITTEDLOCK`) を
+`has_locking_table_hint` で拒否します。`NOLOCK` / `READUNCOMMITTED` / `READPAST`
+(ロックを減らす) と粒度のみのヒント (`ROWLOCK` / `PAGLOCK` / `TABLOCK`) は意図的に
+対象外。判定は `WITH (…)` グループの内側に限定するので `updlock` という**列名**は
+誤検出しません (入れ子括弧 `INDEX(0)` も追跡し、JOIN の 2 つ目のテーブルに付いた
+ヒントも拾います)。全ドライバに適用します — `WITH (…)` がテーブル参照直後に来る形は
+他方言では読み取り専用構文として成立しないため誤検出の余地が無く、共有ゴールデンの
+期待値を文ごとに 1 つに保てるからです。`FROM t (UPDLOCK)` という `WITH` 無しの
+レガシー形は既知の非対応 (通常の括弧式と区別できないため)。
 
 `apply_auto_limit` は、自前で行数を制限していない素の `SELECT` / `WITH ... SELECT` に
 自動で `LIMIT n` を付与します。判定は保守的で、迷ったら `None` (ユーザの SQL をそのまま
@@ -817,6 +867,28 @@ Vitest (`readOnlyGolden.test.ts`) で import、バックは統合テスト
 に通します。スタック文・ロック付き SELECT・データ変更 CTE・マスク済みキーワードなどの
 境界ケースを網羅しており、片方の実装だけ変えてズレるとどちらかのテストが落ちます。
 **境界ケースを追加するときはこの JSON に追記**すれば両言語に反映されます。
+
+ベクタは**ドライバ次元**を持ちます (#852)。`readOnly` は標準的な文字列リテラル解釈
+(PostgreSQL / SQLite / DuckDB / MSSQL、およびドライバ非依存の呼び出し口) での期待値で、
+MySQL のバックスラッシュエスケープ解釈で判定が変わるケースだけ `readOnlyMysql` を
+併記します (省略時は `readOnly` と同じ)。MySQL のマスクは標準解釈より多くを文字列内へ
+隠すため、`readOnlyMysql` が `readOnly` より厳しくなる (true→false) ことはありません。
+両言語のテストは全ドライバでベクタを回し、加えて「MySQL だけ判定が分かれるケースが
+最低 1 件は残っていること」も検証します (ドライバ次元の形骸化防止)。
+
+**SQL 識別子引用 / リテラルエスケープも同じ方式で固定します (#880)。** 識別子引用は
+Rust の `db::sync::quote_ident` (MySQL/SQLite ドライバの `quote_ident` はこれへ委譲する
+薄いラッパー) と、フロントの `components/sqlDialect.ts::quoteIdentFor` /
+`components/exportPreview.ts::quoteSqlIdent` に分散し、リテラルエスケープは
+`db::data_diff::sql_literal` をフロントの `exportPreview.ts::sqlLiteral` がミラーします。
+インジェクション隣接の安全性ロジックが方言分岐ごとコピーされているため、共有ベクタ
+`src/__tests__/fixtures/sqlQuotingVectors.json` を `sqlQuotingGolden.test.ts` と
+`tests/sql_quoting_golden.rs` の双方へ通して全実装の一致を固定しています (5 ドライバ ×
+危険入力: 各方言の引用文字 / バックスラッシュ / NUL / マルチバイト / 非 BMP / 空文字列)。
+BLOB だけはフロントが `Value::Bytes` を `Value::String` と区別できない (JSON 上はただの
+16 進文字列) ため意図的に食い違い、その差分を `frontend` キーで明記しています。
+`cargo-mutants` のスコープにも `src/db/sync.rs` / `src/db/data_diff.rs` を追加済み
+(可視化のみ・fail させない既存方針)。
 
 **安全網には「強制レベル」の違いがある点に注意してください。** 同じ「安全網」でも、
 バックエンドで強制されるものと、UI 上の確認に留まるものがあります。
@@ -1094,6 +1166,18 @@ LIKE ワイルドカードはエスケープされます。
   従来どおり配列のまま (後方互換)。`ExportModal` (フロント) は出力内容のプレビュー欄
   (純ロジックは `components/exportPreview.ts` がバックエンドの書式をミラー) と、在
   グリッド全行を全文コピーするコピーアイコンを備えます。
+  **「プレビュー = 実出力」は共有ゴールデンで固定します (#879)。**
+  `exportPreview.ts::buildExportContent` は 5 書式をバックエンドと**バイト一致**する
+  よう独立に再実装しているため、`src/__tests__/fixtures/exportFormatVectors.json` の
+  同一入力を両実装へ通して突き合わせます (フロントは `exportFormatGolden.test.ts`、
+  バックは `tests/export_format_golden.rs` が `__test_api::export_bytes` 経由で
+  **実ファイル出力と同じ** `write_export_to` を `Vec<u8>` 相手に走らせる)。ベクタは
+  #879 が名指しする既知のドリフト源 — 浮動小数の書式・JSON キーのソート順 (serde_json
+  の `BTreeMap` = UTF-8 バイト順。非 BMP 絵文字は JS の素の文字列比較だとズレるので
+  `compareCodePoints` が要る)・CSV インジェクション緩和 (`mitigate_formula_injection`)・
+  空結果・クエリ同梱・SQL のバッチ分割 — をケース名で固定しています。BLOB だけは
+  フロントが `Value::Bytes` を区別できないため意図的に食い違い、`frontendExpected` に
+  明記します。
 - `commands/dump.rs`: `mysqldump` を呼ぶ DB ダンプ (MySQL 専用)。資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
   経由で渡し、終了後に削除します。`mysqldump` が PATH にない場合は分かりやすい
@@ -1469,7 +1553,25 @@ ipcCommandParity.test.ts` が Rust 側登録と `tauri.ts` の対応をテスト
 **コマンドを追加する
 ときは: Rust ハンドラを追加し、`lib.rs` で登録し、`tauri.ts` に型付けされたラッパー
 (とストリーミングなら対応する `listen*` ヘルパー) を追加します — これらの間でズレが
-発生するとフロントエンドが暗黙のうちに壊れます。** エラーは `AppError` として上に
+発生するとフロントエンドが暗黙のうちに壊れます。**
+
+**さらに「UI からそのラッパーに到達できるか」も検証します (#907)。**
+`ipcCommandParity` が担保するのは「lib.rs 登録 ⇔ `tauri.ts` ラッパ」の集合一致まで
+で、その先の到達性は誰も見ていませんでした。`api` は単一オブジェクトとして export され
+UI で使われているため **knip では原理的にプロパティ単位の未使用を検出できず**、逆に
+`ipcCommandParity` は集合完全一致を強制するので UI 未接続のラッパーを消すと CI が
+落ちる — 結果としてデッドラッパーが構造的に不可視でした。
+`src/__tests__/apiReachabilityParity.test.ts` が `Object.keys(api)` と `src/` 配下
+(`api/tauri.ts` と `__tests__/` を除く) の `api.<name>` 参照を突き合わせ、**どこからも
+呼ばれないラッパーがあれば落ちます**。逃げ道の許可リスト
+`INTENTIONALLY_UNREACHABLE` は**空のまま維持するのが理想**で、追加するときは理由を
+併記してください (「まだ UI を作っていない」は理由になりません — UI を足すか、
+ラッパーと Rust コマンドを一緒に消す)。この方針で #907 では
+`run_captured_write` / `precheck_captured_write` を IPC ごと削除し (書き込み記録は
+`run_query_stream({ capture: true })` に一本化済み。`run_captured_write_inner` は
+その共通コアとして残る)、UI 導線が欠けていた `clear_flight_records` /
+`clear_task_runs` には `FlightRecorderPanel` の「記録をクリア」/ `TaskManager` の
+「実行履歴をクリア」を追加しました。 エラーは `AppError` として上に
 伝搬し、`{ kind, message }` の**構造化 JSON** としてシリアライズされます
 (`error.rs::Serialize` / `AppError::kind()` を参照。#683)。`kind` はバリアント由来の
 安定した判別子 (`ssh` / `sshHostKeyMismatch` / `timeout` / `readOnly` /
@@ -1494,6 +1596,20 @@ ipcCommandParity.test.ts` が Rust 側登録と `tauri.ts` の対応をテスト
 (ゴールデンベクタ検証用)・`kill_process_inner` (Tauri State 不要のプロセス強制終了)
 などを提供します。新しいテスト用エントリポイントが必要な場合は、内部モジュールを
 公開するのではなく、ここに追加してください。
+
+**コマンド層の常時実行カバレッジ (#881)。** `commands/inspector.rs` /
+`commands/server.rs` / `commands/process.rs` は env ゲートの MySQL/PostgreSQL
+統合テストからしか実行されておらず、`rust (windows test)` ジョブや env 変数を
+設定しないローカルの `cargo test` (= SQLite のみ) では**コマンド境界が 1 度も
+走りません**でした。各コマンドの State なしコア
+(`query_stats_support_inner` / `sample_live_queries_inner` /
+`sample_statement_stats_inner` / `server_info_inner` / `server_metrics_inner` /
+`list_processes_inner`) を `__test_api` から公開し、常時実走の
+`tests/sqlite_integration.rs` が「SQLite 短絡パスの戻り値 (縮退レスポンス /
+非対応エラー)」「未知セッション ID での `SessionNotFound`」「読み取り操作は
+read_only セッションでも通ること」を外部サーバ無しで固定します。`_inner` を切る
+パターンは `commands::query::run_query_inner` と同じで、`#[tauri::command]` 側は
+一行のラッパーに徹します。
 
 ### Tauri capabilities
 

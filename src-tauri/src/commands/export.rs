@@ -11,7 +11,7 @@ use crate::commands::query::ensure_allowed_for_session;
 use crate::db::data_diff::sql_literal;
 use crate::db::sync::quote_ident;
 use crate::db::types::{Column, StreamBatch, Value};
-use crate::db::{is_read_only_sql, DriverKind};
+use crate::db::{is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, StreamHandle, StreamKind};
 
@@ -119,13 +119,14 @@ async fn write_export(
     tokio::task::spawn_blocking(move || -> Result<u64> {
         let file = std::fs::File::create(&path)?;
         let mut writer = std::io::BufWriter::new(file);
-        match format {
-            ExportFormat::Csv => write_csv(&mut writer, &columns, &rows)?,
-            ExportFormat::Json => write_json(&mut writer, &columns, &rows, query.as_deref())?,
-            ExportFormat::Ndjson => write_ndjson(&mut writer, &columns, &rows)?,
-            ExportFormat::Markdown => write_markdown(&mut writer, &columns, &rows)?,
-            ExportFormat::Sql => write_sql_insert(&mut writer, &columns, &rows, &sql_opts)?,
-        }
+        write_export_to(
+            &mut writer,
+            format,
+            &columns,
+            &rows,
+            query.as_deref(),
+            &sql_opts,
+        )?;
         // `into_inner` flushes the buffer; surface any flush error as I/O.
         let file = writer
             .into_inner()
@@ -135,6 +136,27 @@ async fn write_export(
     })
     .await
     .map_err(|e| AppError::Other(format!("export task failed: {e}")))?
+}
+
+/// 形式ごとのライタへの振り分け。ファイル出力 ([`write_export`]) と、フロントの
+/// プレビュー実装との共有ゴールデン (`tests/export_format_golden.rs`、#879) が
+/// **同じ経路**を通るように、`Write` 実装を取る形で切り出してある。
+pub(crate) fn write_export_to<W: Write>(
+    w: &mut W,
+    format: ExportFormat,
+    columns: &[Column],
+    rows: &[Vec<Value>],
+    query: Option<&str>,
+    sql_opts: &SqlExportOpts,
+) -> Result<()> {
+    match format {
+        ExportFormat::Csv => write_csv(w, columns, rows)?,
+        ExportFormat::Json => write_json(w, columns, rows, query)?,
+        ExportFormat::Ndjson => write_ndjson(w, columns, rows)?,
+        ExportFormat::Markdown => write_markdown(w, columns, rows)?,
+        ExportFormat::Sql => write_sql_insert(w, columns, rows, sql_opts)?,
+    }
+    Ok(())
 }
 
 /// CSV インジェクション (Excel/LibreOffice などでセルが数式として評価されてしまう
@@ -758,7 +780,7 @@ pub async fn export_query_stream(
     // Read-only sessions reject non-SELECT outright; and even writable sessions
     // may only export read-only statements (an export must never mutate).
     ensure_allowed_for_session(&session, &sql)?;
-    if !is_read_only_sql(&sql) {
+    if !is_read_only_sql_for(session.conn.driver_kind(), &sql) {
         return Err(AppError::ReadOnly(
             "export supports only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
                 .into(),

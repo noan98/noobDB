@@ -10,10 +10,17 @@ use crate::state::AppState;
 /// アクティブ接続は既存のプロセスモニタ (`list_processes`) が担うため重複させない。
 #[tauri::command]
 pub async fn server_info(session_id: String, state: State<'_, AppState>) -> Result<ServerInfo> {
+    server_info_inner(state.inner(), &session_id).await
+}
+
+/// Core of [`server_info`] without Tauri's `State` wrapper, so integration
+/// tests can drive the exact command path without a Tauri runtime — same
+/// pattern as `commands::query::run_query_inner` (#881).
+pub async fn server_info_inner(state: &AppState, session_id: &str) -> Result<ServerInfo> {
     let session = state
-        .get(&session_id)
+        .get(session_id)
         .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     session.conn.server_info().await
 }
 
@@ -27,9 +34,14 @@ pub async fn server_metrics(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<ServerMetrics> {
+    server_metrics_inner(state.inner(), &session_id).await
+}
+
+/// Core of [`server_metrics`]. See [`server_info_inner`] (#881).
+pub async fn server_metrics_inner(state: &AppState, session_id: &str) -> Result<ServerMetrics> {
     let session = state
-        .get(&session_id)
+        .get(session_id)
         .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     session.conn.server_metrics().await
 }

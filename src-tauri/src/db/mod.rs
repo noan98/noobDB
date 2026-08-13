@@ -139,16 +139,36 @@ pub enum WriteKind {
 }
 
 /// Classifies `sql` per [`WriteKind`]. Comments and string/quoted-identifier
-/// literals are masked first (reusing [`mask_for_analysis`], same as
-/// [`is_read_only_sql`]), and a statement packing more than one SQL statement
+/// literals are masked first (same masking rules as [`is_read_only_sql`]),
+/// and a statement packing more than one SQL statement
 /// ([`has_stacked_statements`]) is always `Other` — the flight recorder only
 /// ever captures a single, unambiguous write.
+///
+/// **Driver-less entry point**: masks conservatively (#852). `Other` means
+/// "don't capture", so a mis-read can only cost a capture, never produce a
+/// wrong one. Callers holding a session use [`classify_write_kind_for`].
 pub fn classify_write_kind(sql: &str) -> WriteKind {
     if has_stacked_statements(sql) {
         return WriteKind::Other;
     }
     let orig: Vec<char> = sql.chars().collect();
-    let masked = mask_for_analysis(&orig);
+    classify_write_kind_masked(&mask_for_analysis_conservative(&orig))
+}
+
+/// Driver-aware entry point for [`classify_write_kind`] (#852), so a MySQL
+/// write using `\'` inside a literal still classifies (and stays capturable)
+/// while the other dialects are analysed with their own escaping rules.
+pub fn classify_write_kind_for(driver: DriverKind, sql: &str) -> WriteKind {
+    if has_stacked_statements_for(driver, sql) {
+        return WriteKind::Other;
+    }
+    let orig: Vec<char> = sql.chars().collect();
+    classify_write_kind_masked(&mask_for_driver(driver, &orig))
+}
+
+/// Leading-keyword half of [`classify_write_kind`]; the stacked-statement
+/// rejection happens in the two entry points so each can use its own flavour.
+fn classify_write_kind_masked(masked: &[char]) -> WriteKind {
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
     let body = masked_lower.trim();
     if starts_with_word(body, "insert") {
@@ -253,8 +273,10 @@ pub(crate) fn init_sql_of(opts: &DbConnectOptions) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())?;
     // Mask comments / string literals, then require a non-empty statement
-    // between the `;` separators.
-    let masked = mask_for_analysis(&sql.chars().collect::<Vec<_>>());
+    // between the `;` separators. Uses the same conservative mask as
+    // [`is_session_init_sql`], so the "is there anything to run?" question and
+    // the "is it allowed?" question always split the input the same way.
+    let masked = mask_for_analysis_conservative(&sql.chars().collect::<Vec<_>>());
     let has_statement = masked
         .iter()
         .collect::<String>()
@@ -978,7 +1000,7 @@ impl Connection {
         database: Option<&str>,
         row_cap: usize,
     ) -> Result<(QueryResult, WriteCapture)> {
-        let kind = classify_write_kind(sql);
+        let kind = classify_write_kind_for(self.driver_kind(), sql);
         if kind == WriteKind::Other {
             let result = self.execute(sql, database).await?;
             return Ok((
@@ -1513,7 +1535,7 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 /// `SELECT`.
 ///
 /// Beyond the leading keyword the body is masked (comments / string literals /
-/// quoted identifiers blanked, reusing `mask_for_analysis`) and then:
+/// quoted identifiers blanked) and then:
 ///
 /// * any leftover `;` after trimming trailing separators means a second
 ///   statement is hiding behind the first (`SELECT 1; DELETE …`), so it is
@@ -1525,9 +1547,34 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 /// write already fails the leading-keyword check, and listing it would reject
 /// the perfectly read-only `REPLACE()` string function. This remains a
 /// best-effort safety net, not a parser; when in doubt it errs toward rejection.
+///
+/// **Driver-less entry point**: masks with the stricter
+/// [`mask_for_analysis_conservative`] reading, i.e. `\` is *not* an escape
+/// inside a string literal. That is the fail-closed direction for every
+/// dialect (a literal can only close earlier, never later, so keywords are
+/// revealed rather than hidden), at the cost of rejecting a small number of
+/// legitimate MySQL statements that use `\'` inside a string. Callers that
+/// know the session's driver should use [`is_read_only_sql_for`] instead so
+/// MySQL keeps its own escaping rules. See [`mask_for_driver`] (#852).
 pub fn is_read_only_sql(sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    let masked = mask_for_analysis(&orig);
+    is_read_only_sql_masked(&mask_for_analysis_conservative(&orig))
+}
+
+/// Driver-aware entry point for [`is_read_only_sql`] (#852): masks string
+/// literals with `driver`'s own escaping rules (see [`mask_for_driver`]) so
+/// PostgreSQL / SQLite / DuckDB / MSSQL are not analysed with MySQL's
+/// backslash-escape reading, which fails open on payloads like
+/// `SELECT '\'; DELETE FROM t; --'`.
+pub fn is_read_only_sql_for(driver: DriverKind, sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    is_read_only_sql_masked(&mask_for_driver(driver, &orig))
+}
+
+/// Shared body of [`is_read_only_sql`] / [`is_read_only_sql_for`], operating on
+/// an already-masked statement so the two entry points differ only in which
+/// masking rules they applied.
+fn is_read_only_sql_masked(masked: &[char]) -> bool {
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
     let body = masked_lower
         .trim()
@@ -1559,6 +1606,9 @@ pub fn is_read_only_sql(sql: &str) -> bool {
         }
     }
     if has_locking_clause(body) {
+        return false;
+    }
+    if has_locking_table_hint(body) {
         return false;
     }
     true
@@ -1627,6 +1677,114 @@ fn contains_word_phrase(haystack: &str, phrase: &str) -> bool {
     false
 }
 
+/// Microsoft SQL Server table hints that make a `SELECT` acquire locks a plain
+/// read would not (#906). Two families, both of which break the "a read-only
+/// session takes no locks" guarantee that [`LOCKING_CLAUSES`] enforces for the
+/// other drivers:
+///
+/// * **stronger lock mode than a shared read**: `UPDLOCK` (update locks),
+///   `XLOCK` (exclusive locks), `TABLOCKX` (exclusive table lock).
+/// * **longer lock duration than the statement**: `HOLDLOCK` and its synonym
+///   `SERIALIZABLE`, `REPEATABLEREAD`, `READCOMMITTEDLOCK` — all hold their
+///   locks until the end of the transaction rather than releasing them when
+///   the statement finishes.
+///
+/// Deliberately **not** listed: `NOLOCK` / `READUNCOMMITTED` / `READPAST`
+/// (which take *fewer* locks, and which the shared golden vectors already
+/// assert are read-only) and the granularity-only hints `ROWLOCK` / `PAGLOCK` /
+/// `TABLOCK`, which do not change the lock mode or duration a plain `SELECT`
+/// would already use.
+const LOCKING_TABLE_HINTS: &[&str] = &[
+    "updlock",
+    "xlock",
+    "tablockx",
+    "holdlock",
+    "serializable",
+    "repeatableread",
+    "readcommittedlock",
+];
+
+/// True when masked/lowercased `body` carries a T-SQL table hint from
+/// [`LOCKING_TABLE_HINTS`] inside a `WITH (...)` hint group (#906) — e.g.
+/// `SELECT * FROM t WITH (UPDLOCK, HOLDLOCK)`.
+///
+/// The match is deliberately scoped to the interior of a `WITH (…)` group
+/// rather than scanning the whole body for the bare words, so an ordinary
+/// column named `updlock` or `serializable` (or a
+/// `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE` statement) is never mistaken
+/// for a hint. Parenthesis depth is tracked while scanning the group because
+/// hints may themselves be parameterised (`INDEX(0)`, `FORCESEEK (ix (col))`),
+/// and every `WITH (…)` group in the statement is inspected so a hint on the
+/// second table of a join is not missed.
+///
+/// Applied on **every** driver rather than only [`DriverKind::Mssql`]: `WITH
+/// (…)` directly after a table reference is not valid read-only syntax on the
+/// other dialects (a CTE is `WITH <name> AS (…)`), so there is nothing to
+/// false-positive on, and keeping one rule for all drivers means the shared
+/// golden vectors need a single expected verdict per statement.
+///
+/// **Known limit**: the legacy hint form without `WITH` (`FROM t (UPDLOCK)`,
+/// deprecated by Microsoft) is not recognised, since a bare parenthesised
+/// group after an identifier is ambiguous with ordinary expressions. Same
+/// best-effort posture as the rest of this module.
+fn has_locking_table_hint(body: &str) -> bool {
+    let chars: Vec<char> = body.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        // Find a word-bounded `with` followed only by whitespace before a `(`.
+        if !(chars[i..].starts_with(&['w', 'i', 't', 'h'])
+            && (i == 0 || !is_word_char(chars[i - 1])))
+        {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 4;
+        if j < n && is_word_char(chars[j]) {
+            i += 1;
+            continue;
+        }
+        while j < n && chars[j].is_whitespace() {
+            j += 1;
+        }
+        if j >= n || chars[j] != '(' {
+            i += 1;
+            continue;
+        }
+        // Collect the group's interior, tracking depth so a nested `(…)` in a
+        // parameterised hint doesn't end the scan early.
+        let mut depth = 0usize;
+        let mut group = String::new();
+        while j < n {
+            match chars[j] {
+                '(' => {
+                    depth += 1;
+                    if depth > 1 {
+                        group.push(' ');
+                    }
+                }
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                    group.push(' ');
+                }
+                c => group.push(c),
+            }
+            j += 1;
+        }
+        let hinted = group
+            .split(|c: char| !is_word_char(c))
+            .any(|word| LOCKING_TABLE_HINTS.contains(&word));
+        if hinted {
+            return true;
+        }
+        i = j.max(i + 1);
+    }
+    false
+}
+
 /// Appends an automatic `LIMIT <limit>` to an ad-hoc `SELECT` / `WITH ... SELECT`
 /// that does not already constrain its own row window, returning the rewritten
 /// SQL. Returns `None` when the statement should run untouched.
@@ -1651,12 +1809,22 @@ fn contains_word_phrase(haystack: &str, phrase: &str) -> bool {
 ///
 /// The `LIMIT` is spliced in just after the last meaningful character — ahead of
 /// any trailing `;` or comment — so it is never swallowed by a line comment.
+///
+/// **Driver-less entry point**: masks conservatively, same rationale as
+/// [`is_read_only_sql`] (#852). Revealing more keywords can only make this
+/// return `None` (run the statement untouched), which is the safe direction.
+/// Callers that know the driver go through [`apply_auto_limit_for`].
 pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
+    let orig: Vec<char> = sql.chars().collect();
+    apply_auto_limit_masked(&orig, &mask_for_analysis_conservative(&orig), limit)
+}
+
+/// Shared body of [`apply_auto_limit`] and its driver-aware caller, operating
+/// on the original chars plus an already-masked copy of the same length.
+fn apply_auto_limit_masked(orig: &[char], masked: &[char], limit: usize) -> Option<String> {
     if limit == 0 {
         return None;
     }
-    let orig: Vec<char> = sql.chars().collect();
-    let masked = mask_for_analysis(&orig);
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
 
     let body = masked_lower
@@ -1717,11 +1885,18 @@ pub fn apply_auto_limit(sql: &str, limit: usize) -> Option<String> {
 /// leading `SELECT` (and `DISTINCT`, if present). Callers that know the
 /// target driver (`commands::query`) should use this instead of calling
 /// [`apply_auto_limit`] directly.
+///
+/// String literals are masked with `driver`'s own escaping rules
+/// ([`mask_for_driver`], #852) rather than always assuming MySQL's.
 pub fn apply_auto_limit_for(driver: DriverKind, sql: &str, limit: usize) -> Option<String> {
     match driver {
+        // T-SQL has no backslash string escapes, so the MSSQL rewriter's own
+        // conservative mask already matches `mask_for_driver(Mssql, …)`.
         DriverKind::Mssql => apply_auto_limit_mssql(sql, limit),
         DriverKind::Mysql | DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb => {
-            apply_auto_limit(sql, limit)
+            let orig: Vec<char> = sql.chars().collect();
+            let masked = mask_for_driver(driver, &orig);
+            apply_auto_limit_masked(&orig, &masked, limit)
         }
     }
 }
@@ -1743,12 +1918,20 @@ pub fn apply_auto_limit_for(driver: DriverKind, sql: &str, limit: usize) -> Opti
 /// module. A statement that already contains `TOP`, `OFFSET`, or `FETCH`
 /// (T-SQL's `OFFSET ... FETCH NEXT ... ROWS ONLY` pagination clause) is left
 /// alone, same as an existing `LIMIT`/`OFFSET` on the other drivers.
+///
+/// **Driver-less entry point**: masks conservatively, which happens to match
+/// MSSQL's own rules (`\` is not a string escape in T-SQL), so this and
+/// [`apply_auto_limit_for`]`(DriverKind::Mssql, …)` always agree.
 pub fn apply_auto_limit_mssql(sql: &str, limit: usize) -> Option<String> {
+    let orig: Vec<char> = sql.chars().collect();
+    apply_auto_limit_mssql_masked(&orig, &mask_for_analysis_conservative(&orig), limit)
+}
+
+/// Shared body of [`apply_auto_limit_mssql`] and its driver-aware caller.
+fn apply_auto_limit_mssql_masked(orig: &[char], masked: &[char], limit: usize) -> Option<String> {
     if limit == 0 {
         return None;
     }
-    let orig: Vec<char> = sql.chars().collect();
-    let masked = mask_for_analysis(&orig);
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
 
     let body = masked_lower
@@ -1811,7 +1994,7 @@ pub fn apply_auto_limit_mssql(sql: &str, limit: usize) -> Option<String> {
 /// True when `sql` packs more than one statement — i.e. a `;` separates
 /// statements rather than merely trailing the final one. Comments and the
 /// interior of string / quoted-identifier literals are masked first (reusing
-/// `mask_for_analysis`), so a `;` inside `'a;b'` or `-- drop; this` is not
+/// the same masking rules), so a `;` inside `'a;b'` or `-- drop; this` is not
 /// mistaken for a separator. Trailing `;` and whitespace are tolerated.
 ///
 /// Used to fail-closed on stacked queries in the dry-run preview path: a DDL
@@ -1819,9 +2002,27 @@ pub fn apply_auto_limit_mssql(sql: &str, limit: usize) -> Option<String> {
 /// MySQL and so escape the rollback that makes the preview safe. sqlx's
 /// prepared-statement execution already rejects multi-statement strings, but
 /// this makes that guarantee explicit instead of leaning on a library detail.
+///
+/// **Driver-less entry point**: masks conservatively (#852), which reveals at
+/// least as many `;` separators as the MySQL reading would — the fail-closed
+/// direction for a check whose `true` means "refuse to run this". Driver
+/// modules use [`has_stacked_statements_for`].
 pub(crate) fn has_stacked_statements(sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    let masked = mask_for_analysis(&orig);
+    has_stacked_statements_masked(&mask_for_analysis_conservative(&orig))
+}
+
+/// Driver-aware entry point for [`has_stacked_statements`] (#852). Each
+/// driver's `preview_execute_with_limit` passes its own [`DriverKind`] so a
+/// PostgreSQL / SQLite / DuckDB / MSSQL payload is not analysed with MySQL's
+/// backslash-escape reading, which would hide the stacked `;` in
+/// `UPDATE t SET s = '\'; DROP TABLE t; --'`.
+pub(crate) fn has_stacked_statements_for(driver: DriverKind, sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    has_stacked_statements_masked(&mask_for_driver(driver, &orig))
+}
+
+fn has_stacked_statements_masked(masked: &[char]) -> bool {
     let masked_str: String = masked.iter().collect();
     let body = masked_str.trim_end_matches(|c: char| c == ';' || c.is_whitespace());
     body.contains(';')
@@ -1837,14 +2038,12 @@ pub(crate) fn has_stacked_statements(sql: &str) -> bool {
 /// makes the whole string invalid. Empty input (only whitespace / comments / bare
 /// `;`) is allowed and runs nothing.
 ///
-/// Comments and string / quoted-identifier literals are masked first, using
-/// the **conservative** ([`mask_for_analysis_conservative`], not the
-/// MySQL-flavoured `mask_for_analysis`) reading — this input is executed
-/// verbatim against whichever driver the profile targets (including
-/// PostgreSQL / SQLite, where `\` is not a string escape), and the
-/// MySQL-flavoured mask can be tricked into treating a stray `\'` as an
-/// escaped quote, hiding a stacked statement inside what it thinks is still
-/// an open string literal.
+/// Comments and string / quoted-identifier literals are masked with
+/// [`mask_for_analysis_conservative`] — this input is executed verbatim
+/// against whichever driver the profile targets (including PostgreSQL /
+/// SQLite, where `\` is not a string escape), and a MySQL-flavoured mask can
+/// be tricked into treating a stray `\'` as an escaped quote, hiding a
+/// stacked statement inside what it thinks is still an open string literal.
 pub fn is_session_init_sql(sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
     let masked = mask_for_analysis_conservative(&orig);
@@ -1892,42 +2091,65 @@ fn is_allowed_set_statement(s: &str) -> bool {
 /// Replaces every comment and the interior of every string / quoted-identifier
 /// literal with spaces, preserving the original char count so positions still
 /// line up with the source. Newlines inside comments are kept so line-comment
-/// boundaries survive.
+/// boundaries survive. `\` is **not** treated as a string escape character.
 ///
-/// Backslash is treated as a string-literal escape character (MySQL's
-/// default `NO_BACKSLASH_ESCAPES`-off behaviour). This is what
-/// [`is_read_only_sql`] and the shared golden-vector tests
-/// (`tests/read_only_golden.rs` / `readOnlyGolden.test.ts`) are calibrated
-/// against, so this default must not change. Callers that need the more
-/// conservative (non-MySQL-specific) reading should use
-/// [`mask_for_analysis_conservative`] instead.
-fn mask_for_analysis(src: &[char]) -> Vec<char> {
-    mask_for_analysis_impl(src, true)
-}
-
-/// Like [`mask_for_analysis`], but does **not** treat `\` as a string escape
-/// character. PostgreSQL (with the default `standard_conforming_strings =
-/// on`) and SQLite both treat `\` inside `'…'` as an ordinary character, so a
-/// literal there is closed by the first unescaped, non-doubled quote — not by
-/// skipping over a backslash-escaped one. Using the MySQL-flavoured
-/// [`mask_for_analysis`] on those dialects lets a payload like
-/// `'\'; DELETE FROM t; --'` be mis-read as one still-open string, masking
-/// the `; DELETE …` as if it were inside the literal.
+/// PostgreSQL (with the default `standard_conforming_strings = on`), SQLite,
+/// DuckDB and Microsoft SQL Server all treat `\` inside `'…'` as an ordinary
+/// character, so a literal there is closed by the first unescaped, non-doubled
+/// quote — not by skipping over a backslash-escaped one. Masking those
+/// dialects with MySQL's reading (`backslash_escapes = true`) lets a payload
+/// like `'\'; DELETE FROM t; --'` be mis-read as one still-open string,
+/// hiding the `; DELETE …` as if it were inside the literal.
 ///
 /// This is intentionally the more conservative reading: a string literal can
 /// only close *earlier* than the MySQL-flavoured mask would judge, never
 /// later, so real SQL keywords are never hidden that the MySQL mask would
 /// have revealed — only the reverse. That means a small number of otherwise
-/// legitimate MySQL init statements containing `\'` inside a string could be
-/// rejected as invalid; that's an acceptable false-negative (fail closed)
-/// given this guards session-init SQL for every physical connection in a
-/// read-only profile. See [`is_session_init_sql`].
+/// legitimate MySQL statements containing `\'` inside a string could be
+/// rejected; that's an acceptable false-negative (fail closed) for the
+/// driver-less entry points that use this mask ([`is_read_only_sql`],
+/// [`has_stacked_statements`], [`apply_auto_limit`], [`classify_write_kind`],
+/// [`is_session_init_sql`]). Callers holding a [`DriverKind`] should use
+/// [`mask_for_driver`] so MySQL keeps its own rules.
 fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
     mask_for_analysis_impl(src, false)
 }
 
-/// Shared implementation for [`mask_for_analysis`] /
-/// [`mask_for_analysis_conservative`]. `backslash_escapes` controls whether
+/// True when `driver` treats `\` inside a `'…'` / `"…"` string literal as an
+/// escape character. Only MySQL/MariaDB does (with the default
+/// `NO_BACKSLASH_ESCAPES` off); PostgreSQL (`standard_conforming_strings = on`),
+/// SQLite, DuckDB and Microsoft SQL Server all read `\` as an ordinary
+/// character, so a literal there closes at the first unescaped, non-doubled
+/// quote.
+fn driver_backslash_escapes(driver: DriverKind) -> bool {
+    match driver {
+        DriverKind::Mysql => true,
+        DriverKind::Postgres | DriverKind::Sqlite | DriverKind::DuckDb | DriverKind::Mssql => false,
+    }
+}
+
+/// Masks `src` for analysis using the string-escaping rules of `driver` (#852).
+///
+/// The safety nets built on this mask ([`is_read_only_sql_for`],
+/// [`has_stacked_statements_for`], [`apply_auto_limit_for`],
+/// [`classify_write_kind_for`]) used to mask with the MySQL-flavoured
+/// MySQL-flavoured mask regardless of the target driver, which **fails open**
+/// on the other dialects: given `SELECT '\'; DELETE FROM t; --'`, the MySQL
+/// reading treats `\'` as an escaped quote and swallows the `; DELETE …` as
+/// still-inside-the-literal, so neither the stacked `;` nor the `delete`
+/// keyword is visible. PostgreSQL / SQLite / DuckDB / MSSQL actually close the
+/// literal at that quote and run a real stacked write.
+///
+/// Callers that know their driver should always route through the `*_for`
+/// entry points; the driver-less variants deliberately fall back to the
+/// stricter [`mask_for_analysis_conservative`] reading (see
+/// [`is_read_only_sql`]).
+fn mask_for_driver(driver: DriverKind, src: &[char]) -> Vec<char> {
+    mask_for_analysis_impl(src, driver_backslash_escapes(driver))
+}
+
+/// Shared implementation for [`mask_for_analysis_conservative`] /
+/// [`mask_for_driver`]. `backslash_escapes` controls whether
 /// `\` inside a `'…'` / `"…"` literal is treated as escaping the following
 /// character (MySQL) or as an ordinary character (PostgreSQL / SQLite).
 fn mask_for_analysis_impl(src: &[char], backslash_escapes: bool) -> Vec<char> {
@@ -2312,9 +2534,19 @@ fn is_aggregate_expr(item: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_auto_limit, classify_write_kind, has_stacked_statements, is_read_only_sql,
+        apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
+        has_stacked_statements, has_stacked_statements_for, is_read_only_sql, is_read_only_sql_for,
         is_session_init_sql, mask_sensitive_var, sum_size_parts, DriverKind, SslMode, WriteKind,
     };
+
+    /// Drivers whose string literals follow the standard reading (`\` is an
+    /// ordinary character), i.e. everything except MySQL (#852).
+    const STANDARD_DRIVERS: [DriverKind; 4] = [
+        DriverKind::Postgres,
+        DriverKind::Sqlite,
+        DriverKind::DuckDb,
+        DriverKind::Mssql,
+    ];
 
     #[test]
     fn sum_size_parts_treats_missing_part_as_zero() {
@@ -2406,6 +2638,143 @@ mod tests {
         // A `;` hidden inside a string literal is not a statement boundary, so
         // this remains a single (allowed) SET statement.
         assert!(is_session_init_sql("SET application_name = 'a;b'"));
+    }
+
+    /// #852: the read-only guard used to mask with MySQL's backslash-escape
+    /// rules on **every** driver, so `'\'` was read as an escaped quote and
+    /// the `; DELETE …` behind it stayed hidden inside an apparently-open
+    /// string literal. PostgreSQL / SQLite / DuckDB / MSSQL close the literal
+    /// at that quote and would really run the stacked write.
+    #[test]
+    fn read_only_rejects_backslash_masked_stacked_write_on_standard_dialects() {
+        const PAYLOADS: [&str; 3] = [
+            r"SELECT '\'; DELETE FROM users; --'",
+            r"SELECT '\'; DROP TABLE users; --'",
+            // No write keyword at all — still a second statement.
+            r"SELECT '\'; SELECT 2; --'",
+        ];
+        for sql in PAYLOADS {
+            for driver in STANDARD_DRIVERS {
+                assert!(
+                    !is_read_only_sql_for(driver, sql),
+                    "{driver:?} must not accept {sql:?} as read-only"
+                );
+            }
+            // MySQL really does read this as one string literal, so it stays
+            // read-only there — the whole point of the driver dimension.
+            assert!(
+                is_read_only_sql_for(DriverKind::Mysql, sql),
+                "MySQL should still read {sql:?} as a single string literal"
+            );
+            // The driver-less entry point falls back to the strict reading.
+            assert!(
+                !is_read_only_sql(sql),
+                "driver-less must fail closed on {sql:?}"
+            );
+        }
+    }
+
+    /// The same fail-open shape, but through the dry-run preview's
+    /// stacked-statement gate (#852). A DDL stacked behind a DML escapes the
+    /// rollback that makes the preview safe.
+    #[test]
+    fn stacked_statement_gate_is_driver_aware() {
+        let sql = r"UPDATE t SET s = '\'; DROP TABLE t; --'";
+        for driver in STANDARD_DRIVERS {
+            assert!(
+                has_stacked_statements_for(driver, sql),
+                "{driver:?} must see the stacked DROP in {sql:?}"
+            );
+        }
+        assert!(!has_stacked_statements_for(DriverKind::Mysql, sql));
+        assert!(has_stacked_statements(sql), "driver-less must fail closed");
+        // And the flight recorder refuses to capture it on those dialects.
+        for driver in STANDARD_DRIVERS {
+            assert_eq!(classify_write_kind_for(driver, sql), WriteKind::Other);
+        }
+        assert_eq!(
+            classify_write_kind_for(DriverKind::Mysql, sql),
+            WriteKind::Update
+        );
+        assert_eq!(classify_write_kind(sql), WriteKind::Other);
+    }
+
+    /// Auto-LIMIT must not splice a cap onto what is really a stacked write on
+    /// the standard dialects (#852). Bailing out (`None`) is the safe answer.
+    #[test]
+    fn auto_limit_is_driver_aware() {
+        let sql = r"SELECT * FROM t WHERE s = '\'; DELETE FROM t; --'";
+        for driver in STANDARD_DRIVERS {
+            assert!(
+                apply_auto_limit_for(driver, sql, 100).is_none(),
+                "{driver:?} must leave {sql:?} untouched"
+            );
+        }
+        assert!(apply_auto_limit(sql, 100).is_none());
+        // MySQL reads one literal, so the statement is an ordinary SELECT and
+        // still gets capped.
+        assert_eq!(
+            apply_auto_limit_for(DriverKind::Mysql, sql, 100).as_deref(),
+            Some(r"SELECT * FROM t WHERE s = '\'; DELETE FROM t; --' LIMIT 100")
+        );
+    }
+
+    /// #906: T-SQL table hints that take stronger or longer-lived locks than a
+    /// plain read must be rejected by the read-only guard, the same way
+    /// `FOR UPDATE` / `LOCK IN SHARE MODE` already are on the other dialects.
+    #[test]
+    fn read_only_rejects_mssql_locking_table_hints() {
+        for sql in [
+            "SELECT * FROM [dbo].[users] WITH (UPDLOCK)",
+            "SELECT * FROM users WITH (UPDLOCK, HOLDLOCK)",
+            "SELECT * FROM users WITH (HOLDLOCK)",
+            "SELECT * FROM users WITH (SERIALIZABLE)",
+            "SELECT * FROM users WITH (REPEATABLEREAD)",
+            "SELECT * FROM users WITH (READCOMMITTEDLOCK)",
+            "SELECT * FROM users WITH (TABLOCKX)",
+            "SELECT * FROM users WITH (XLOCK, ROWLOCK)",
+            // No whitespace between `WITH` and `(`.
+            "SELECT * FROM users WITH(UPDLOCK)",
+            // Hint on the second table of a join.
+            "SELECT a.id FROM a WITH (NOLOCK) JOIN b WITH (UPDLOCK) ON a.id = b.id",
+            // Case and line breaks must not matter.
+            "SELECT *\n  FROM users\n  WITH (updlock)",
+        ] {
+            assert!(
+                !is_read_only_sql_for(DriverKind::Mssql, sql),
+                "expected {sql:?} to be rejected as a locking read"
+            );
+            assert!(
+                !is_read_only_sql(sql),
+                "driver-less must reject {sql:?} too"
+            );
+        }
+    }
+
+    /// The hint check must not fire on things that merely *look* like hints:
+    /// lock-avoiding / granularity-only hints, ordinary CTEs, and columns that
+    /// happen to be named after a hint (#906).
+    #[test]
+    fn read_only_allows_non_locking_hints_and_lookalikes() {
+        for sql in [
+            "SELECT * FROM users WITH (NOLOCK)",
+            "SELECT * FROM users WITH (READUNCOMMITTED)",
+            "SELECT * FROM users WITH (ROWLOCK)",
+            "SELECT * FROM users WITH (TABLOCK)",
+            // Parameterised hint: the nested `(0)` must not end the scan early.
+            "SELECT * FROM users WITH (INDEX(0), NOLOCK)",
+            // Columns named after hints, outside any WITH (...) group.
+            "SELECT updlock, serializable FROM t",
+            "SELECT * FROM t WHERE holdlock = 1",
+            // Ordinary CTE — `WITH <name> AS (…)`, not a hint group.
+            "WITH c AS (SELECT 1) SELECT * FROM c",
+        ] {
+            assert!(
+                is_read_only_sql_for(DriverKind::Mssql, sql),
+                "expected {sql:?} to stay read-only"
+            );
+            assert!(is_read_only_sql(sql), "driver-less must accept {sql:?} too");
+        }
     }
 
     /// Regression test for the backslash-masking bypass: on PostgreSQL /

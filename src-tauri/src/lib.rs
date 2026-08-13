@@ -39,8 +39,9 @@ pub mod __test_api {
         TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::{
-        apply_auto_limit, classify_write_kind, is_read_only_sql, is_session_init_sql, Connection,
-        DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
+        apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
+        is_read_only_sql, is_read_only_sql_for, is_session_init_sql, Connection, DbConnectOptions,
+        DriverKind, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
@@ -92,6 +93,53 @@ pub mod __test_api {
         PreviewDoneEvent, PreviewMetaEvent, StreamCancelledEvent, StreamColumnsEvent,
         StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
     };
+
+    // サーバ機能系コマンドの State なしコア (#881)。`inspector` / `server` /
+    // `process` は env ゲートの MySQL/PostgreSQL 統合テストでしか実行されず、
+    // Windows ジョブや env 無しのローカル `cargo test` (SQLite のみ) では
+    // コマンド境界が一度も走らなかった。常時実走の `tests/sqlite_integration.rs`
+    // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
+    // 経路を駆動できるよう、ここでピンポイントに公開する。
+    pub use crate::commands::inspector::{
+        query_stats_support_inner, sample_live_queries_inner, sample_statement_stats_inner,
+    };
+    pub use crate::commands::process::list_processes_inner;
+    pub use crate::commands::server::{server_info_inner, server_metrics_inner};
+
+    /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
+    /// `commands::export::write_export_to` — 実ファイル出力と**同じ**振り分け /
+    /// ライタ — をそのまま通すので、フロントの `exportPreview.ts` との共有
+    /// ゴールデン (`tests/export_format_golden.rs`) は「プレビュー = 実出力」を
+    /// 直接検証できる。
+    pub fn export_bytes(
+        format: crate::commands::export::ExportFormat,
+        columns: &[Column],
+        rows: &[Vec<Value>],
+        query: Option<&str>,
+        driver: Option<DriverKind>,
+        table: Option<String>,
+        batch_size: Option<usize>,
+    ) -> crate::error::Result<Vec<u8>> {
+        let opts = crate::commands::export::SqlExportOpts::build(driver, table, batch_size);
+        let mut buf = Vec::new();
+        crate::commands::export::write_export_to(&mut buf, format, columns, rows, query, &opts)?;
+        Ok(buf)
+    }
+
+    pub use crate::commands::export::ExportFormat;
+
+    /// SQL 識別子引用の単一実装 (`db::sync::quote_ident`)。`pub(crate)` のため
+    /// `pub use` で再公開できず、薄いラッパーで露出する。実装横断ゴールデン
+    /// (`tests/sql_quoting_golden.rs`、#880) が使う。
+    pub fn quote_ident(driver: DriverKind, name: &str) -> String {
+        crate::db::sync::quote_ident(driver, name)
+    }
+
+    /// SQL リテラルエスケープ (`db::data_diff::sql_literal`)。上と同じ理由の
+    /// ラッパー (#880)。
+    pub fn sql_literal(driver: DriverKind, value: &Value) -> String {
+        crate::db::data_diff::sql_literal(driver, value)
+    }
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
@@ -174,9 +222,10 @@ pub mod __test_api {
         crate::commands::import::ensure_import_writable(session)
     }
 
-    /// Drives the `run_captured_write` IPC command's core path (session
-    /// lookup + read-only guard + capture + history recording) without a
-    /// Tauri runtime (#735).
+    /// Drives the captured-write core path (session lookup + read-only guard +
+    /// capture + history recording) without a Tauri runtime (#735). Production
+    /// reaches the same core through `run_query_stream({ capture: true })`
+    /// (#907 removed the unused non-streaming IPC command).
     pub async fn run_captured_write_via_command(
         state: &AppState,
         session_id: &str,
@@ -646,8 +695,6 @@ pub fn run() {
             commands::snippets::delete_snippet,
             commands::history::list_history,
             commands::history::clear_history,
-            commands::flight_recorder::run_captured_write,
-            commands::flight_recorder::precheck_captured_write,
             commands::flight_recorder::list_flight_records,
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,

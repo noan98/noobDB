@@ -36,7 +36,8 @@ export interface DangerFinding {
  * survive while a `where` hiding inside a string or a quoted identifier named
  * `` `order` `` does not.
  */
-export function maskLiterals(sql: string): string {
+export function maskLiterals(sql: string, driver?: string): string {
+  const backslashEscapes = driverBackslashEscapes(driver);
   const out = sql.split("");
   const n = sql.length;
   const blank = (start: number, end: number) => {
@@ -102,8 +103,9 @@ export function maskLiterals(sql: string): string {
           j++;
           break;
         }
-        // Backslash escapes apply inside MySQL strings but not in `` `ident` ``.
-        if (sql[j] === "\\" && quote !== "`") {
+        // Backslash escapes apply inside MySQL strings but not in `` `ident` ``
+        // — and not at all on the other dialects (see `driverBackslashEscapes`).
+        if (backslashEscapes && sql[j] === "\\" && quote !== "`") {
           j += 2;
           continue;
         }
@@ -130,6 +132,24 @@ function matchDollarQuoteTag(sql: string, i: number): string | null {
   if (/[0-9]/.test(sql[j] ?? "")) return null;
   while (j < sql.length && /[A-Za-z0-9_]/.test(sql[j])) j++;
   return sql[j] === "$" ? sql.slice(i, j + 1) : null;
+}
+
+/**
+ * True when `driver` treats `\` inside a `'…'` / `"…"` string literal as an
+ * escape character. Only MySQL/MariaDB does (with the default
+ * `NO_BACKSLASH_ESCAPES` off); PostgreSQL (`standard_conforming_strings = on`),
+ * SQLite, DuckDB and Microsoft SQL Server all read `\` as an ordinary
+ * character. Mirrors the backend `driver_backslash_escapes`
+ * (`src-tauri/src/db/mod.rs`, #852).
+ *
+ * Unlike the dialect helpers in `components/sqlDialect.ts`, an unknown or
+ * omitted driver falls back to **false** (the stricter, non-MySQL reading)
+ * rather than to MySQL: a string literal can then only close earlier than
+ * MySQL would judge, never later, so keywords are revealed rather than hidden
+ * and every check built on the mask errs toward "this is a write".
+ */
+function driverBackslashEscapes(driver?: string): boolean {
+  return driver === "mysql";
 }
 
 function startsWithKeyword(body: string, keyword: string): boolean {
@@ -293,6 +313,69 @@ function hasLockingClause(body: string): boolean {
 }
 
 /**
+ * Microsoft SQL Server table hints that make a `SELECT` acquire locks a plain
+ * read would not (#906): a stronger lock mode than a shared read (`UPDLOCK` /
+ * `XLOCK` / `TABLOCKX`) or a longer lock duration than the statement
+ * (`HOLDLOCK` and its synonym `SERIALIZABLE`, `REPEATABLEREAD`,
+ * `READCOMMITTEDLOCK`). `NOLOCK` / `READUNCOMMITTED` / `READPAST` (fewer
+ * locks) and the granularity-only `ROWLOCK` / `PAGLOCK` / `TABLOCK` are
+ * deliberately absent. Mirrors the backend `LOCKING_TABLE_HINTS`
+ * (`src-tauri/src/db/mod.rs`).
+ */
+const LOCKING_TABLE_HINTS = new Set([
+  "updlock",
+  "xlock",
+  "tablockx",
+  "holdlock",
+  "serializable",
+  "repeatableread",
+  "readcommittedlock",
+]);
+
+/**
+ * True when masked/lowercased `body` carries a `LOCKING_TABLE_HINTS` hint
+ * inside a T-SQL `WITH (...)` hint group — e.g.
+ * `SELECT * FROM t WITH (UPDLOCK, HOLDLOCK)` (#906).
+ *
+ * Scoped to the interior of a `WITH (…)` group rather than scanning for the
+ * bare words, so a column named `updlock` (or a
+ * `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`) is never mistaken for a
+ * hint. Parenthesis depth is tracked because hints may be parameterised
+ * (`INDEX(0)`), and every group is inspected so a hint on the second table of
+ * a join is not missed. Applied on every driver, not just MSSQL: `WITH (…)`
+ * straight after a table reference is not valid read-only syntax elsewhere (a
+ * CTE is `WITH <name> AS (…)`), so there is nothing to false-positive on.
+ * Mirrors the backend `has_locking_table_hint`.
+ */
+function hasLockingTableHint(body: string): boolean {
+  const re = /\bwith\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    let depth = 0;
+    let i = m.index + m[0].length - 1; // at the `(`
+    let group = "";
+    for (; i < body.length; i++) {
+      const c = body[i];
+      if (c === "(") {
+        depth++;
+        if (depth > 1) group += " ";
+      } else if (c === ")") {
+        depth--;
+        if (depth === 0) break;
+        group += " ";
+      } else {
+        group += c;
+      }
+    }
+    if (group.split(/[^A-Za-z0-9_]+/).some((w) => LOCKING_TABLE_HINTS.has(w))) {
+      return true;
+    }
+    re.lastIndex = Math.max(i, m.index + 1);
+  }
+  return false;
+}
+
+/**
  * Best-effort mirror of the backend `is_read_only_sql` gate
  * (`src-tauri/src/db/mod.rs`): true only when `sql` is a single statement that
  * begins with an allowed read-only keyword and carries no write/DDL keyword,
@@ -302,9 +385,15 @@ function hasLockingClause(body: string): boolean {
  * logic aligned with the backend means the approval prompt fires for exactly
  * the statements a read-only session would reject. When in doubt it returns
  * false (treats the statement as a write), erring toward asking.
+ *
+ * `driver` selects the string-escaping rules used while masking (#852). Omit
+ * it only where the driver is genuinely unknown: the fallback is the stricter
+ * non-MySQL reading, which can classify a legitimate MySQL statement using
+ * `\'` inside a literal as a write (an extra confirmation prompt, never a
+ * missed one). See `driverBackslashEscapes`.
  */
-export function isReadOnlySql(sql: string): boolean {
-  const masked = maskLiterals(sql);
+export function isReadOnlySql(sql: string, driver?: string): boolean {
+  const masked = maskLiterals(sql, driver);
   const body = masked
     .toLowerCase()
     .replace(/[;\s]+$/, "")
@@ -315,6 +404,7 @@ export function isReadOnlySql(sql: string): boolean {
   if (body.includes(";")) return false;
   if (WRITE_KEYWORDS.some((kw) => containsWord(body, kw))) return false;
   if (hasLockingClause(body)) return false;
+  if (hasLockingTableHint(body)) return false;
   return true;
 }
 
