@@ -2257,3 +2257,137 @@ async fn undo_rejects_unknown_capture_id() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+// ── コマンド層 (inspector / server / process) の常時実行カバレッジ (#881) ──
+//
+// `commands/inspector.rs` / `commands/server.rs` / `commands/process.rs` は
+// これまで env ゲートの MySQL / PostgreSQL 統合テストからしか実行されておらず、
+// `rust (windows test)` ジョブや env 変数を設定しないローカルの `cargo test`
+// (= SQLite のみ) では**コマンド境界が 1 度も走らなかった**。ドライバ本体の
+// SQLite 短絡は既存テストが押さえているが、その手前の「セッション検索 →
+// ドライバ委譲」というコマンド層の回帰は誰も検出できない状態だった。
+//
+// ここでは各コマンドの State なしコア (`*_inner`) を `__test_api` 経由で直接
+// 駆動し、(1) SQLite 短絡パスの戻り値、(2) 未知セッション ID での
+// `SessionNotFound`、(3) 読み取り操作は read_only セッションでも通ること、を
+// 外部サーバ無しで固定する。
+
+/// このブロック用の一時 SQLite ファイルを用意する (テストごとに別名)。
+fn temp_cmd_db(tag: &str) -> PathBuf {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_cmd_{tag}_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    p
+}
+
+/// ライブクエリ・インスペクタ (#746) のコマンド層。SQLite はサーバを持たないので
+/// 「可否プローブは理由コード付きで縮退」「サンプリングは非対応エラー」で短絡する。
+/// いずれも読み取り操作なので read_only セッションでも許可される。
+#[tokio::test]
+async fn sqlite_inspector_commands_degrade_via_command_layer() {
+    let path = temp_cmd_db("inspector");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    // read_only = true: インスペクタは読み取り専用セッションでも使えること。
+    let session = t::make_session("insp", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let support = t::query_stats_support_inner(&state, &sid)
+        .await
+        .expect("support probe must succeed even when the driver has no server");
+    assert!(!support.live_tail);
+    assert!(!support.statements);
+    assert_eq!(
+        support.live_tail_reason.as_deref(),
+        Some("unsupported_driver")
+    );
+    assert_eq!(
+        support.statements_reason.as_deref(),
+        Some("unsupported_driver")
+    );
+
+    assert!(matches!(
+        t::sample_live_queries_inner(&state, &sid).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        t::sample_statement_stats_inner(&state, &sid).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+
+    // 未知のセッション ID はドライバへ到達する前に弾かれる。
+    for result in [
+        t::query_stats_support_inner(&state, "nope").await.err(),
+        t::sample_live_queries_inner(&state, "nope").await.err(),
+        t::sample_statement_stats_inner(&state, "nope").await.err(),
+    ] {
+        assert!(matches!(result, Some(t::AppError::SessionNotFound(_))));
+    }
+
+    let _ = std::fs::remove_file(&path);
+}
+
+/// サーバ情報 (#563) / 監視ダッシュボード (#731) のコマンド層。SQLite は
+/// `server_info` を PRAGMA ベースで返せるが `server_metrics` は非対応。
+#[tokio::test]
+async fn sqlite_server_commands_via_command_layer() {
+    let path = temp_cmd_db("server");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_session("srv", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let info = t::server_info_inner(&state, &sid)
+        .await
+        .expect("server_info must work on SQLite (version + PRAGMAs)");
+    assert!(!info.version.is_empty(), "version must not be empty");
+    assert!(
+        !info.variables.is_empty(),
+        "SQLite exposes a curated PRAGMA set as variables"
+    );
+
+    assert!(matches!(
+        t::server_metrics_inner(&state, &sid).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+
+    assert!(matches!(
+        t::server_info_inner(&state, "nope").await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+    assert!(matches!(
+        t::server_metrics_inner(&state, "nope").await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+/// プロセス一覧のコマンド層。`kill_process` 側 (read_only ガード込み) は
+/// `sqlite_process_commands_unsupported_and_read_only_guarded` が押さえているので、
+/// ここは読み取り側のコマンド境界を補完する。
+#[tokio::test]
+async fn sqlite_list_processes_via_command_layer() {
+    let path = temp_cmd_db("proclist");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    // 読み取り操作なので read_only セッションでもガードでは弾かれず、
+    // ドライバの非対応エラーがそのまま表面化する。
+    let session = t::make_session("proclist", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    assert!(matches!(
+        t::list_processes_inner(&state, &sid).await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        t::list_processes_inner(&state, "nope").await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+
+    let _ = std::fs::remove_file(&path);
+}
