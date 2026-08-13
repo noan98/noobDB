@@ -105,6 +105,8 @@ import {
   buildColumnStatsSql,
   parseFullColumnStats,
   isNumericStatsKind,
+  columnNullRates,
+  nullRatePercentOf,
 } from "./gridStats";
 import {
   type GridFindMatch,
@@ -638,6 +640,33 @@ export const GRID_CSS: SystemStyleObject = {
     opacity: 0.65,
   },
   "& thead th.is-resizing": { userSelect: "none" },
+  // 列ヘッダ下端の常時 NULL 率ミニバー (#911)。ヘッダの**高さを変えない**よう
+  // 絶対配置で下端に重ねる — こうすると密度設定 (Compact/Normal/Spacious) や
+  // フォント拡大でヘッダ高さが変わっても、バーの有無で列間の整列が崩れない。
+  // 目盛りとしての「地」を薄く敷き、NULL が 0 件の列でもバーの存在 (= 計測済み)
+  // が分かるようにする。リサイズハンドル (zIndex 3) の方が手前に来るので、
+  // 右端のドラッグ操作は妨げない。
+  "& thead th .th-nullbar": {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: "3px",
+    background: "color-mix(in srgb, var(--text-muted) 12%, transparent)",
+    zIndex: 2,
+  },
+  // 塗りは `.cell-databar` / 列統計ポップオーバーの NULL 率バーと同じ
+  // `accentFill(ACCENT_FILL_STOPS.nullRate)` (#718) を共有する。幅ではなく
+  // scaleX で表現するのもデータバーと同じ理由 (レイアウトを誘発しない)。
+  "& thead th .th-nullbar-fill": {
+    height: "100%",
+    width: "100%",
+    transformOrigin: "left center",
+    background: accentFill(ACCENT_FILL_STOPS.nullRate),
+    transitionProperty: "transform",
+    transitionDuration: "var(--dur-med)",
+    transitionTimingFunction: "var(--ease-out)",
+  },
   // プレビュー差分ハイライト (PreviewGrid のみ出現)
   "& td.is-changed": {
     background: "color-mix(in srgb, var(--preview-highlight) 18%, transparent)",
@@ -2085,7 +2114,8 @@ function ColumnStatsMenu({
   const [fullError, setFullError] = useState<string | null>(null);
 
   const stats: ColumnStats = useMemo(() => computeColumnStats(values, kind), [values, kind]);
-  const nullPct = stats.count > 0 ? (stats.nullCount / stats.count) * 100 : 0;
+  // 率の式は列ヘッダのミニバー (#911) / 集計フッターと `nullRatePercentOf` で共有する。
+  const nullPct = nullRatePercentOf(stats);
 
   // Clamp into the viewport once measured (mirrors ColumnFilterMenu). Re-runs on
   // `full`/`loadingFull` since the panel grows when the all-rows section appears.
@@ -2569,7 +2599,7 @@ export function DataGrid({
   const t = useT();
   const locale = useLocale();
   const toast = useToast();
-  const { cellEditOnBlur, richCellRendering } = useSettings();
+  const { cellEditOnBlur, richCellRendering, columnNullBars } = useSettings();
   const { confirm: confirmBlur, dialog: blurDialog } = useConfirm();
   // セル内容の全文ツールチップ (省略記号で切れた値・条件付き書式のホバー説明
   // など) は行×列に比例して大量に描画されうるため (仮想化されていても可視行 ×
@@ -2820,6 +2850,15 @@ export function DataGrid({
       ),
     );
   }, [footerEnabled, rows, columns, columnKinds]);
+
+  // 列ヘッダの常時 NULL 率ミニバー (#911)。ポップオーバー (`ColumnStatsMenu`) を
+  // 開かなくても欠損の偏りが一望できるよう、取得済み行の NULL 率だけを軽量に
+  // 数える (`columnNullRates` — DISTINCT/代表値の頻度マップは作らない)。設定で
+  // オフのとき、および行が 1 件も無いときは計算も描画もしない。
+  const nullRates = useMemo<number[] | null>(() => {
+    if (!columnNullBars || rows.length === 0 || columns.length === 0) return null;
+    return columnNullRates(rows, columns.length);
+  }, [columnNullBars, rows, columns.length]);
 
   // Drag-to-reorder columns: track the dragged/hovered column ids for
   // visual feedback, and commit a new order on drop.
@@ -4208,6 +4247,38 @@ export function DataGrid({
                     ) : (
                       flexRender(h.column.columnDef.header, h.getContext())
                     )}
+                    {nullRates && (() => {
+                      // 常時表示の NULL 率ミニバー (#911)。取得済み行のうち NULL が
+                      // 占める割合を、ヘッダ下端の細い帯として列幅いっぱいに描く。
+                      // 塗りは `.cell-databar` / 列統計ポップオーバーと同じ
+                      // `accentFill` レシピ (#718) を共有し、色を二重定義しない。
+                      // 幅は width ではなく scaleX で表現する (データバーと同じ理由)。
+                      // 全列に必ず 1 本描くのでヘッダ高さは列ごとにブレず、密度/
+                      // フォントサイズを変えても整列は崩れない。ツールチップは列数
+                      // ぶんしか描かれないが、フォーカス不能な装飾要素にタブ
+                      // ストップを増やさないよう、共有 Tooltip ではなくセルと同じ
+                      // 委譲ツールチップ (hover 専用) に載せる。読み上げ向けの情報は
+                      // `aria-label` が持つ。
+                      const pct = nullRates[colIdx] ?? 0;
+                      const label = t("gridNullBarAria", {
+                        column: columns[colIdx]?.name ?? "",
+                        percent: pct.toFixed(pct > 0 && pct < 1 ? 1 : 0),
+                        count: rows.length.toLocaleString(),
+                      });
+                      return (
+                        <div
+                          className="th-nullbar"
+                          role="img"
+                          aria-label={label}
+                          {...cellTooltipProps(label)}
+                        >
+                          <div
+                            className="th-nullbar-fill"
+                            style={{ transform: `scaleX(${pct / 100})` }}
+                          />
+                        </div>
+                      );
+                    })()}
                     {canResize && (
                       <Tooltip label={t("gridResizeColumn")}>
                         <div

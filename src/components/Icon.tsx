@@ -120,6 +120,7 @@ export type IconName =
   | "postgres"
   | "sqlite"
   | "search"
+  | "bell"
   | "flask";
 
 /**
@@ -255,6 +256,13 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   snippet: <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />,
+  // アクティビティセンター (#912) のベル。他のグリフと同じ 24x24 / ストローク描画。
+  bell: (
+    <>
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </>
+  ),
   warning: (
     <>
       <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />

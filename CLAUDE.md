@@ -1612,6 +1612,40 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   控えめにアニメーションし reduced-motion で抑制。`gridFooter.test.ts` (純ロジック) と
   `ResultGrid.test.tsx` (描画/切替/永続化) がテスト。全件集計が要る場合は #524 の
   `buildColumnStatsSql` / 全件集計ボタンに乗る (フッター自体は在メモリ対象)。
+- 結果グリッド列ヘッダの NULL 率ミニバー — `gridStats.ts` の `columnNullRates` /
+  `nullRatePercentOf` (#911)。列統計ポップオーバー (`ColumnStatsMenu`) を開かなくても
+  各列の欠損の偏りを一望できるよう、ヘッダ下端に細いバーを**常時表示**する。率の式は
+  `nullRatePercentOf` に一本化し、ポップオーバーの NULL 率バー・集計フッターの
+  `nullRate` (#645)・このミニバーが同じ値になることを保証する。全列ぶん再計算される
+  経路なので、DISTINCT/代表値の頻度マップまで作る `columnStats` ではなく、NULL の
+  数え上げだけを行う軽量な `columnNullRates` を使う (「fetch all」後の数万行 × 列数で
+  効く)。塗りは `colorScale.ts` の `accentFill(ACCENT_FILL_STOPS.nullRate)` を
+  `.cell-databar` / ポップオーバーと共有し色を新規定義せず、幅は width ではなく
+  `scaleX` で表現する (データバーと同じくレイアウトを誘発しない)。バーはヘッダの
+  **高さを変えない絶対配置**で下端に重ねるため、密度設定 (Compact/Normal/Spacious) や
+  フォント拡大でも列間の整列が崩れない。0% の列にも薄い「地」を敷いて計測済みで
+  あることを示す。表示専用で実値・ソート・編集・エクスポートには影響しない
+  (`cellConditionalFormat` と同方針)。設定 `columnNullBars` (既定オン) でオフにできる。
+  装飾要素にタブストップを増やさないよう、ホバー時の説明はセルと同じ委譲ツールチップ
+  (hover 専用) に載せ、読み上げ向けには `role="img"` + `aria-label` を持たせる。
+- アプリ内アクティビティ / 通知センター — `activityLog.ts` + `components/ActivityCenter.tsx`
+  (#912)。トーストは自動で消える一過性の通知なので、インポート結果・同期の成否・実行
+  計画ウォッチ (#743) のアラートを見逃すと二度と確認できなかった。`ToastProvider` の
+  `notify` が発火時に `pushActivity` へ流し込み、タイトルバーのベルアイコン →
+  ポップオーバーで時系列に再閲覧できるようにする (**記録の入口は 1 か所**なので、
+  通知を出す側は従来どおり `toast.*` を呼ぶだけでよい)。ストアは在メモリで**セッション
+  内のみ揮発**し (通知は「今このアプリで何が起きたか」の記録で、再起動をまたぐと文脈が
+  失われるため)、`ACTIVITY_LIMIT` (200) を超えたら古いものから捨てる。未読はエントリ
+  ごとのフラグではなく「最後に読んだ id」の水位で表し、`countUnread` で数える。重大度
+  (`ActivitySeverity`) は `semanticColors.ts` の `SemanticRole` と 1 対 1 で対応させて
+  状態色を二重管理しない (`danger` に相当する語だけトーストの tone に合わせて `error`)。
+  トーストの tone は 3 種しか無いため、見た目は変えずセンター側でだけ「警告」として
+  分類したい通知 (スキーマドリフト検知・実行計画の変化) は `ToastOptions.severity` で
+  明示する。a11y: パネルは `role="dialog"` + フォーカストラップ (開くとパネル自身へ
+  フォーカス、閉じるとベルへ復帰) で、**`aria-live` は付けない** — 通知そのものは
+  トースト側 (`aria-live="polite"`) が既に読み上げており、二重読み上げを避けるための
+  意図的な設計。追加/ローテーション・絞り込み・未読数・相対時刻はすべて純関数として
+  公開し `activityLog.test.ts` が、UI 結線は `ActivityCenter.test.tsx` が固定する。
 - 基盤モジュール — `shortcuts.ts` (全ショートカット定義の単一ソース)、`keyboardNav.ts`
   (`useFocusTrap` / `useRovingFocus` / `useReturnFocus` の a11y フック)、
   `tableQuickAccess.ts` (お気に入り + 最近使ったテーブルを localStorage 永続化)、
@@ -1658,7 +1692,8 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   (`monoFontFamily` / `uiFontFamily`)・アクセント色 (`accentColor`)・UI 密度
   (`density`)・自動リフレッシュ間隔 (`autoRefreshDefaultSecs`)・グリッド表示モード
   (`resultGridMode` scroll/paginate, `resultGridPageSize`)・セル編集の blur 挙動
-  (`cellEditOnBlur`)・リッチセル描画 (`richCellRendering`)・テーマプリセット
+  (`cellEditOnBlur`)・リッチセル描画 (`richCellRendering`)・列ヘッダの NULL 率
+  ミニバー (`columnNullBars`。#911)・テーマプリセット
   (`themePreset` default/dracula/high-contrast/colorblind。後者 2 つは light/dark
   追従でアクセシビリティ向け。#558) などを保持します。
 - `dangerousSql.ts` — WHERE なし UPDATE/DELETE・DROP・TRUNCATE を検出する
