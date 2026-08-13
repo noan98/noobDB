@@ -803,6 +803,20 @@ no-op)。
 `commands::query` の各エントリポイントは `ensure_allowed_for_session` でこのガードを
 通します。
 
+**MSSQL のロック系テーブルヒント (#906)。** 他ドライバの `FOR UPDATE` /
+`LOCK IN SHARE MODE` を拒否している設計意図 (読み取り専用セッションはロックを取らない)
+に合わせ、T-SQL の `WITH (...)` ヒントのうち**共有読み取りより強いロックモード**
+(`UPDLOCK` / `XLOCK` / `TABLOCKX`) と**文より長いロック保持期間**
+(`HOLDLOCK` / `SERIALIZABLE` / `REPEATABLEREAD` / `READCOMMITTEDLOCK`) を
+`has_locking_table_hint` で拒否します。`NOLOCK` / `READUNCOMMITTED` / `READPAST`
+(ロックを減らす) と粒度のみのヒント (`ROWLOCK` / `PAGLOCK` / `TABLOCK`) は意図的に
+対象外。判定は `WITH (…)` グループの内側に限定するので `updlock` という**列名**は
+誤検出しません (入れ子括弧 `INDEX(0)` も追跡し、JOIN の 2 つ目のテーブルに付いた
+ヒントも拾います)。全ドライバに適用します — `WITH (…)` がテーブル参照直後に来る形は
+他方言では読み取り専用構文として成立しないため誤検出の余地が無く、共有ゴールデンの
+期待値を文ごとに 1 つに保てるからです。`FROM t (UPDLOCK)` という `WITH` 無しの
+レガシー形は既知の非対応 (通常の括弧式と区別できないため)。
+
 `apply_auto_limit` は、自前で行数を制限していない素の `SELECT` / `WITH ... SELECT` に
 自動で `LIMIT n` を付与します。判定は保守的で、迷ったら `None` (ユーザの SQL をそのまま
 実行) を返します。単一行集計 (`COUNT(*)` 等) や既存の `LIMIT`/`OFFSET`、ロック句がある
