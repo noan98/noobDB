@@ -943,8 +943,12 @@ impl PostgresConn {
         if let Some(identity) = super::row_identity_pk_or_none(&cols) {
             return Ok(identity);
         }
+        // `pg_class.relkind` は text ではなく内部型 `"char"` (1 バイト、OID 18) で、
+        // sqlx はこれを String へデコードできない。`::text` へ明示的にキャストして
+        // おかないと `try_get::<String, _>` が必ず失敗し、下の `unwrap_or_default()`
+        // が空文字を返して通常のヒープテーブルまで `all_columns` に落ちてしまう。
         let row: Option<PgRow> = sqlx::query(
-            r#"SELECT c.relkind
+            r#"SELECT c.relkind::text AS relkind
                FROM pg_catalog.pg_class c
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
                WHERE n.nspname = $1 AND c.relname = $2"#,
