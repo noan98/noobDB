@@ -13,6 +13,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { Icon, ICON_SIZES } from "./Icon";
 import { transitions } from "../motion";
 import { semanticColorToken, type SemanticRole } from "../semanticColors";
+import { pushActivity, type ActivitySeverity } from "../activityLog";
 
 export type ToastTone = "success" | "error" | "info";
 
@@ -21,6 +22,15 @@ export type ToastTone = "success" | "error" | "info";
 const TONE_ROLE: Record<ToastTone, SemanticRole> = {
   success: "success",
   error: "danger",
+  info: "info",
+};
+
+/** Toast の tone をアクティビティセンター (#912) の重大度へマップする既定値。
+ *  トースト側に「警告」トーンは無いので、警告として記録したい通知は
+ *  `ToastOptions.severity` で明示する。 */
+const TONE_SEVERITY: Record<ToastTone, ActivitySeverity> = {
+  success: "success",
+  error: "error",
   info: "info",
 };
 
@@ -53,6 +63,14 @@ export interface ToastOptions {
    * アクション付きトーストは既定の表示時間を長めにして押す余裕を持たせる。
    */
   action?: ToastAction;
+  /**
+   * アクティビティセンター (#912) に記録する重大度。既定は `tone` から導出する
+   * (`TONE_SEVERITY`)。トーストの見た目は 3 トーンしか無いが、意味としては
+   * 「警告」であるもの (スキーマドリフト検知・実行計画の変化など) に
+   * `severity: "warning"` を渡すと、センター側だけ警告として分類・絞り込める。
+   * 見た目 (tone) は変えない。
+   */
+  severity?: ActivitySeverity;
 }
 
 interface ToastItem {
@@ -162,6 +180,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       // an action (e.g. Undo, #676) also linger so the user has time to click.
       const duration =
         opts.duration ?? (opts.action ? 8000 : tone === "error" ? 6000 : 3500);
+      // 自動消滅で失われないよう、同じ内容をアクティビティセンター (#912) へ
+      // 残す。記録の入口をここ 1 か所にすることで、通知を出す側は従来どおり
+      // toast を呼ぶだけで履歴に載る。
+      pushActivity(opts.severity ?? TONE_SEVERITY[tone], opts.message);
       setToasts((cur) => [...cur, { id, message: opts.message, tone, action: opts.action }]);
       if (duration > 0) {
         armTimer(id, duration);
