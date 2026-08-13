@@ -6,17 +6,23 @@
 #
 # ローカル実行例:
 #   cd src-tauri
-#   cargo mutants --file src/db/mod.rs --file src/db/mysql.rs
+#   cargo mutants --file src/db/mod.rs --file src/db/mysql.rs \
+#     --file src/db/sync.rs --file src/db/data_diff.rs
 #
 # 変異候補一覧のみ確認する (テストを走らせない):
 #   cargo mutants --list --file src/db/mod.rs --file src/db/mysql.rs
 
-# 対象: 安全網ロジックを持つ 2 ファイルのみ。
+# 対象: 安全網ロジックを持つファイルのみ。
 # is_read_only_sql / apply_auto_limit / has_stacked_statements (mod.rs)
 # is_query_shape / with_cte_is_mutation (mysql.rs)
+# quote_ident (sync.rs) / sql_literal (data_diff.rs) — SQL インジェクション隣接の
+# 引用・エスケープ実装。共有ゴールデン (#880) で固定しているので、変異注入で
+# その有効性 (方言分岐や二重化の取りこぼし) を可視化する。
 examine_globs = [
   "src/db/mod.rs",
   "src/db/mysql.rs",
+  "src/db/sync.rs",
+  "src/db/data_diff.rs",
 ]
 
 # ベースラインテストが完走したときの倍率で各変異のタイムアウトを決める。

@@ -227,9 +227,23 @@ export const DEFAULT_SQL_TABLE = "exported_table";
 /** SQL INSERT で 1 文へまとめる行数の既定上限 (バックと一致)。 */
 export const DEFAULT_SQL_BATCH = 100;
 
-function quoteSqlIdent(driver: string, name: string): string {
-  if (driver === "postgres" || driver === "sqlite") {
+/**
+ * 識別子をドライバの方言でクオートする。バックエンドの `db::sync::quote_ident`
+ * と、フロントの `components/sqlDialect.ts::quoteIdentFor` の 3 実装が完全に
+ * 一致していることは共有ゴールデン (`fixtures/sqlQuotingVectors.json` /
+ * `sqlQuotingGolden.test.ts` / `tests/sql_quoting_golden.rs`) が固定する (#880)。
+ *
+ * DuckDB は PostgreSQL/SQLite と同じ二重引用符、MSSQL は角括弧 (`]` を `]]` へ
+ * 二重化)。未知のドライバは `quoteIdentFor` と同じく MySQL 扱い。
+ *
+ * @public 共有ゴールデンテストが直接検証するためエクスポートしている。
+ */
+export function quoteSqlIdent(driver: string, name: string): string {
+  if (driver === "postgres" || driver === "sqlite" || driver === "duckdb") {
     return '"' + name.replace(/"/g, '""') + '"';
+  }
+  if (driver === "mssql") {
+    return "[" + name.replace(/]/g, "]]") + "]";
   }
   return "`" + name.replace(/`/g, "``") + "`";
 }
@@ -238,18 +252,32 @@ function quoteSqlIdent(driver: string, name: string): string {
  * 1 つの値を SQL リテラルへ変換する。バックエンドの `data_diff::sql_literal` を
  * JSON 化された値の意味でミラーする (BLOB は文字列として届くため、`Value::Bytes`
  * の専用エンコードではなく文字列リテラルになる点も在グリッド経路と一致する)。
+ * 両実装の一致は共有ゴールデン (`fixtures/sqlQuotingVectors.json`) が固定する
+ * (#880)。
+ *
+ * 方言差:
+ * - 真偽値は PostgreSQL / DuckDB が `TRUE`/`FALSE`、MySQL / SQLite / MSSQL が
+ *   `1`/`0` (T-SQL は `BIT` に真偽型が無い)。
+ * - 文字列は全方言で `'` を `''` に二重化し、**MySQL だけ**バックスラッシュも
+ *   二重化する (既定モードで `\` がエスケープ文字のため)。PostgreSQL /
+ *   SQLite / DuckDB / MSSQL で二重化すると `\` が 2 文字に化けてデータが壊れる。
+ * - 未知のドライバは `quoteSqlIdent` と同じく MySQL 扱い (エスケープを増やす側 =
+ *   引用符から抜け出せない側に倒す)。
+ *
+ * @public 共有ゴールデンテストが直接検証するためエクスポートしている。
  */
-function sqlLiteral(driver: string, v: CellValue): string {
+export function sqlLiteral(driver: string, v: CellValue): string {
   if (v === null) return "NULL";
   if (typeof v === "boolean") {
-    if (driver === "postgres") return v ? "TRUE" : "FALSE";
+    if (driver === "postgres" || driver === "duckdb") return v ? "TRUE" : "FALSE";
     return v ? "1" : "0";
   }
   if (typeof v === "number") return Number.isFinite(v) ? formatFloat(v) : "NULL";
-  const escaped =
-    driver === "postgres" || driver === "sqlite"
-      ? v.replace(/'/g, "''")
-      : v.replace(/\\/g, "\\\\").replace(/'/g, "''");
+  const standardStrings =
+    driver === "postgres" || driver === "sqlite" || driver === "duckdb" || driver === "mssql";
+  const escaped = standardStrings
+    ? v.replace(/'/g, "''")
+    : v.replace(/\\/g, "\\\\").replace(/'/g, "''");
   return "'" + escaped + "'";
 }
 

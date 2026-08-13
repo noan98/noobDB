@@ -293,7 +293,7 @@
       ],
       "query": null,
       "sql": {
-        "driver": "postgres",
+        "driver": "duckdb",
         "table": "t",
         "batchSize": 100
       },
