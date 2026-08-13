@@ -44,8 +44,8 @@ use t::{
     ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet,
     SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementStat,
     StreamCancelledEvent, StreamColumnsEvent, StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
-    SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableDiff, TableRowEstimate, TableSchema,
-    TableSizeInfo, Value,
+    SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableDiff, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -111,6 +111,10 @@ fn build_fixtures() -> serde_json::Value {
     let table_row_estimate = TableRowEstimate {
         name: "users".into(),
         estimate: Some(1234),
+    };
+    let table_row_identity = TableRowIdentity {
+        strategy: "rowid".into(),
+        hidden_column: Some("rowid".into()),
     };
     let table_size_info = TableSizeInfo {
         name: "users".into(),
@@ -492,6 +496,7 @@ fn build_fixtures() -> serde_json::Value {
         "indexInfo": index_info,
         "schemaObject": schema_object,
         "tableRowEstimate": table_row_estimate,
+        "tableRowIdentity": table_row_identity,
         "tableSizeInfo": table_size_info,
         "serverVariable": server_variable,
         "serverInfo": server_info,

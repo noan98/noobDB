@@ -36,7 +36,7 @@ pub mod __test_api {
         Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
         ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
         ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow,
-        TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges, Value,
+        TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::{
         apply_auto_limit, classify_write_kind, is_read_only_sql, is_session_init_sql, Connection,
@@ -623,6 +623,7 @@ pub fn run() {
             commands::schema::list_databases,
             commands::schema::list_tables,
             commands::schema::describe_table,
+            commands::schema::table_row_identity,
             commands::schema::schema_overview,
             commands::schema::foreign_keys,
             commands::schema::list_indexes,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CellValue, Column, TableColumnInfo } from "../api/tauri";
+import { CellValue, Column, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import {
   applyEditsToRows,
   buildDeleteStatements,
@@ -11,8 +11,10 @@ import {
   countEditedCells,
   countEditedRows,
   FALLBACK_INSERT_TABLE,
+  hasAmbiguousIdentity,
   isEditableColumnType,
   resolvePkIndices,
+  resolveRowIdentity,
   rowEditKey,
   validateCellInput,
   type BuildRowSqlInput,
@@ -94,6 +96,92 @@ describe("resolvePkIndices", () => {
     expect(
       resolvePkIndices(cols, [tcol("c", "PRI"), tcol("a", "PRI")]),
     ).toEqual([2, 0]);
+  });
+});
+
+function rowIdentity(
+  strategy: string,
+  hidden_column: string | null = null,
+): TableRowIdentity {
+  return { strategy, hidden_column };
+}
+
+describe("resolveRowIdentity", () => {
+  const columns = [col("id", "INT"), col("name", "VARCHAR")];
+
+  it("prefers a real primary key over any rowIdentity fallback", () => {
+    expect(
+      resolveRowIdentity(columns, [tcol("id", "PRI"), tcol("name", "")], rowIdentity("all_columns")),
+    ).toEqual({ indices: [0], strategy: "primary_key" });
+  });
+
+  it("returns none when there is no PK and no rowIdentity", () => {
+    expect(resolveRowIdentity(columns, [tcol("id", ""), tcol("name", "")], null)).toEqual({
+      indices: [],
+      strategy: "none",
+    });
+  });
+
+  it("resolves a rowid pseudo-column by name", () => {
+    const withRowid = [col("id", "INT"), col("name", "VARCHAR"), col("rowid", "INTEGER")];
+    expect(
+      resolveRowIdentity(
+        withRowid,
+        [tcol("id", ""), tcol("name", "")],
+        rowIdentity("rowid", "rowid"),
+      ),
+    ).toEqual({ indices: [2], strategy: "rowid" });
+  });
+
+  it("resolves a ctid pseudo-column by name", () => {
+    const withCtid = [col("id", "INT"), col("ctid", "tid")];
+    expect(
+      resolveRowIdentity(withCtid, [tcol("id", "")], rowIdentity("ctid", "ctid")),
+    ).toEqual({ indices: [1], strategy: "ctid" });
+  });
+
+  it("falls back to none when the rowid/ctid column is missing from the result", () => {
+    // e.g. the browse SQL wasn't rebuilt with the hidden column yet.
+    expect(
+      resolveRowIdentity(columns, [tcol("id", ""), tcol("name", "")], rowIdentity("rowid", "rowid")),
+    ).toEqual({ indices: [], strategy: "none" });
+  });
+
+  it("falls back to all result columns for the all_columns strategy", () => {
+    expect(
+      resolveRowIdentity(columns, [tcol("id", ""), tcol("name", "")], rowIdentity("all_columns")),
+    ).toEqual({ indices: [0, 1], strategy: "all_columns" });
+  });
+
+  it("returns none for an empty result", () => {
+    expect(resolveRowIdentity([], null, rowIdentity("all_columns"))).toEqual({
+      indices: [],
+      strategy: "none",
+    });
+  });
+
+  it("returns none for an unrecognized strategy", () => {
+    expect(
+      resolveRowIdentity(columns, [tcol("id", ""), tcol("name", "")], rowIdentity("none")),
+    ).toEqual({ indices: [], strategy: "none" });
+  });
+});
+
+describe("hasAmbiguousIdentity", () => {
+  it("returns false when identity indices are empty", () => {
+    expect(hasAmbiguousIdentity([[1, "a"], [1, "a"]], [])).toBe(false);
+  });
+
+  it("returns false when every row has a distinct identity", () => {
+    expect(hasAmbiguousIdentity([[1, "a"], [2, "a"]], [0])).toBe(false);
+  });
+
+  it("returns true when two rows share the same identity (all-columns duplicate)", () => {
+    expect(hasAmbiguousIdentity([[1, "a"], [1, "a"]], [0, 1])).toBe(true);
+  });
+
+  it("treats NULL consistently across duplicate rows", () => {
+    expect(hasAmbiguousIdentity([[null, "a"], [null, "a"]], [0, 1])).toBe(true);
   });
 });
 
@@ -277,6 +365,26 @@ describe("buildUpdateStatements", () => {
       "UPDATE `db`.`tbl` SET `name` = 'y' WHERE `id` = 2;",
     ]);
   });
+
+  it("uses IS NULL (not = NULL) in the WHERE clause for a NULL identity value (#849 all_columns fallback)", () => {
+    // A real PK is practically never NULL, but the all_columns fallback
+    // routinely identifies rows by nullable columns — `col = NULL` is always
+    // false in SQL, so it must become `col IS NULL`.
+    const columns = [col("a", "INT"), col("b", "VARCHAR")];
+    const rows: CellValue[][] = [[null, "x"]];
+    const key = rowEditKey([null, "x"], [0, 1], 0);
+    expect(
+      buildUpdateStatements({
+        driver: "mysql",
+        database: "db",
+        table: "tbl",
+        columns,
+        rows,
+        pkIndices: [0, 1],
+        edits: { [key]: { 1: "y" } },
+      }),
+    ).toEqual(["UPDATE `db`.`tbl` SET `b` = 'y' WHERE `a` IS NULL AND `b` = 'x';"]);
+  });
 });
 
 function baseRowSql(overrides: Partial<BuildRowSqlInput>): BuildRowSqlInput {
@@ -408,6 +516,16 @@ describe("buildRowSql", () => {
           "update",
         ),
       ).toEqual(["UPDATE `db`.`tbl` SET `v` = 'x' WHERE `a` = 1 AND `b` = 2;"]);
+    });
+
+    it("uses IS NULL in the WHERE clause for a NULL identity value (#849 all_columns fallback)", () => {
+      const columns = [col("a", "INT"), col("b", "VARCHAR"), col("v", "VARCHAR")];
+      expect(
+        buildRowSql(
+          baseRowSql({ columns, rows: [[null, "k", "x"]], pkIndices: [0, 1] }),
+          "update",
+        ),
+      ).toEqual(["UPDATE `db`.`tbl` SET `v` = 'x' WHERE `a` IS NULL AND `b` = 'k';"]);
     });
   });
 
@@ -651,6 +769,22 @@ describe("buildDeleteStatements", () => {
     expect(
       buildDeleteStatements({ driver: "mysql", database: "d", table: "t", columns, rows, pkIndices, deleteKeys: new Set() }),
     ).toEqual([]);
+  });
+
+  it("uses IS NULL in the WHERE clause for a NULL identity value (#849 all_columns fallback)", () => {
+    const allColsRows: CellValue[][] = [[null, "Alice"]];
+    const key = rowEditKey(allColsRows[0], [0, 1], 0);
+    expect(
+      buildDeleteStatements({
+        driver: "mysql",
+        database: "shop",
+        table: "users",
+        columns,
+        rows: allColsRows,
+        pkIndices: [0, 1],
+        deleteKeys: new Set([key]),
+      }),
+    ).toEqual(["DELETE FROM `shop`.`users` WHERE `id` IS NULL AND `name` = 'Alice';"]);
   });
 });
 

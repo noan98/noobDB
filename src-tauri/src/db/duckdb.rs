@@ -51,8 +51,8 @@ use super::advisor::UnusedIndexStats;
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges,
-    Value,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 use super::{init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
@@ -762,6 +762,21 @@ impl DuckDbConn {
             Ok(out)
         })
         .await
+    }
+
+    /// Row identity strategy for inline editing (#849). DuckDB exposes no
+    /// stable, cheaply-selectable physical row id via SQL, so the only
+    /// fallback once a table has no PK is matching every column in the WHERE
+    /// clause — same as MySQL/MSSQL.
+    pub async fn row_identity(&self, db: &str, table: &str) -> Result<TableRowIdentity> {
+        let cols = self.columns(db, table).await?;
+        if let Some(identity) = super::row_identity_pk_or_none(&cols) {
+            return Ok(identity);
+        }
+        Ok(TableRowIdentity {
+            strategy: "all_columns".into(),
+            hidden_column: None,
+        })
     }
 
     pub async fn foreign_keys(&self, db: &str) -> Result<Vec<ForeignKey>> {

@@ -223,6 +223,80 @@ async fn postgres_table_sizes_and_server_info() {
     conn.close().await;
 }
 
+/// #849: row identity fallback for inline editing. A table with a PK reports
+/// `primary_key`; a PK-less ordinary heap table falls back to the physical
+/// `ctid`; a view (no storage/`ctid` of its own) falls back further to
+/// `all_columns`.
+#[tokio::test]
+async fn postgres_row_identity_pk_ctid_and_view_fallback() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP VIEW IF EXISTS public.noobdb_pg_rowident_view", None)
+        .await
+        .expect("drop view");
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_rowident_pk", None)
+        .await
+        .expect("drop pk table");
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_rowident_no_pk", None)
+        .await
+        .expect("drop no-pk table");
+    conn.execute(
+        "CREATE TABLE public.noobdb_pg_rowident_pk (id INT PRIMARY KEY, label TEXT)",
+        None,
+    )
+    .await
+    .expect("create pk table");
+    conn.execute(
+        "CREATE TABLE public.noobdb_pg_rowident_no_pk (label TEXT, note TEXT)",
+        None,
+    )
+    .await
+    .expect("create no-pk table");
+    conn.execute(
+        "CREATE VIEW public.noobdb_pg_rowident_view AS SELECT label FROM public.noobdb_pg_rowident_no_pk",
+        None,
+    )
+    .await
+    .expect("create view");
+
+    let with_pk = conn
+        .row_identity("public", "noobdb_pg_rowident_pk")
+        .await
+        .expect("row_identity pk table");
+    assert_eq!(with_pk.strategy, "primary_key");
+    assert_eq!(with_pk.hidden_column, None);
+
+    let without_pk = conn
+        .row_identity("public", "noobdb_pg_rowident_no_pk")
+        .await
+        .expect("row_identity no-pk table");
+    assert_eq!(without_pk.strategy, "ctid");
+    assert_eq!(without_pk.hidden_column, Some("ctid".to_string()));
+
+    let view = conn
+        .row_identity("public", "noobdb_pg_rowident_view")
+        .await
+        .expect("row_identity view");
+    assert_eq!(view.strategy, "all_columns");
+    assert_eq!(view.hidden_column, None);
+
+    conn.execute("DROP VIEW public.noobdb_pg_rowident_view", None)
+        .await
+        .expect("cleanup view");
+    conn.execute("DROP TABLE public.noobdb_pg_rowident_pk", None)
+        .await
+        .expect("cleanup pk table");
+    conn.execute("DROP TABLE public.noobdb_pg_rowident_no_pk", None)
+        .await
+        .expect("cleanup no-pk table");
+    conn.close().await;
+}
+
 /// list_indexes / schema_objects + object_definition (oid 識別子) /
 /// 明示トランザクション / health_check を PostgreSQL 上で実行する。
 /// CI のサービスコンテナで実走し、ドライバメソッドの動作とカバレッジを担保する。

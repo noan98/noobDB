@@ -8,8 +8,8 @@ use super::advisor::UnusedIndexStats;
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
     ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
-    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema,
-    TableSizeInfo, UserPrivileges, Value,
+    ServerVariable, StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions};
 use crate::error::{AppError, Result};
@@ -794,6 +794,48 @@ impl SqliteConn {
                 }
             })
             .collect())
+    }
+
+    /// Row identity strategy for inline editing (#849). Once a table has no
+    /// resolvable primary key, SQLite tables still carry an implicit `rowid`
+    /// **unless** the table was declared `WITHOUT ROWID` or is a view/virtual
+    /// table — none of which have a stable, cheaply-selectable row id. We
+    /// detect this from the table's own stored DDL in `sqlite_master` rather
+    /// than a dedicated PRAGMA (SQLite has none for "is this a rowid table"),
+    /// checking for a case-insensitive `WITHOUT ROWID` suffix and excluding
+    /// `CREATE VIRTUAL TABLE` definitions.
+    pub async fn row_identity(&self, db: &str, table: &str) -> Result<TableRowIdentity> {
+        let cols = self.columns(db, table).await?;
+        if let Some(identity) = super::row_identity_pk_or_none(&cols) {
+            return Ok(identity);
+        }
+        let row: Option<SqliteRow> =
+            sqlx::query("SELECT type, sql FROM sqlite_master WHERE name = ?1")
+                .bind(table)
+                .fetch_optional(&self.pool)
+                .await?;
+        if let Some(r) = row {
+            let kind = r.try_get::<String, _>("type").unwrap_or_default();
+            let ddl = r
+                .try_get::<Option<String>, _>("sql")
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+                .to_uppercase();
+            let is_rowid_table = kind == "table"
+                && !ddl.contains("WITHOUT ROWID")
+                && !ddl.starts_with("CREATE VIRTUAL TABLE");
+            if is_rowid_table {
+                return Ok(TableRowIdentity {
+                    strategy: "rowid".into(),
+                    hidden_column: Some("rowid".into()),
+                });
+            }
+        }
+        Ok(TableRowIdentity {
+            strategy: "all_columns".into(),
+            hidden_column: None,
+        })
     }
 
     pub async fn foreign_keys(&self, db: &str) -> Result<Vec<ForeignKey>> {

@@ -400,6 +400,20 @@ export interface TableSchema {
   columns: string[];
 }
 
+/**
+ * Row identity strategy for inline editing when a table has no usable
+ * primary key (#849). `strategy` is one of `"primary_key"` / `"rowid"` /
+ * `"ctid"` / `"all_columns"` / `"none"` — see the backend's
+ * `db::types::TableRowIdentity` doc for what each means and when the
+ * driver reports it. `hidden_column` is the pseudo-column name
+ * (`"rowid"` / `"ctid"`) to append to a browse `SELECT` for the
+ * `"rowid"`/`"ctid"` strategies, `null` otherwise.
+ */
+export interface TableRowIdentity {
+  strategy: string;
+  hidden_column: string | null;
+}
+
 /** テーブル 1 つのインデックス情報。 */
 export interface IndexInfo {
   name: string;
@@ -1284,6 +1298,14 @@ export const api = {
   describeTable: (sessionId: string, database: string, table: string) =>
     invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }).then(
       (r) => parseResponse(schemas.tableColumnInfoArray, r, "describe_table"),
+    ),
+  /**
+   * PK 不在時の編集用行識別戦略 (rowid/ctid/全列一致、#849) を取得する。PK が
+   * 解決できているときは呼ぶ必要がない — `describeTable` の `key` だけで足りる。
+   */
+  tableRowIdentity: (sessionId: string, database: string, table: string) =>
+    invoke<TableRowIdentity>("table_row_identity", { sessionId, database, table }).then(
+      (r) => parseResponse(schemas.tableRowIdentity, r, "table_row_identity"),
     ),
   schemaOverview: (sessionId: string, database: string) =>
     invoke<TableSchema[]>("schema_overview", { sessionId, database }).then((r) =>

@@ -40,8 +40,8 @@ use super::advisor::UnusedIndexStats;
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo, UserPrivileges,
-    Value,
+    StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 use super::{DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
@@ -764,6 +764,22 @@ impl MssqlConn {
                 }
             })
             .collect())
+    }
+
+    /// Row identity strategy for inline editing (#849). MSSQL has no
+    /// SQL-visible physical row id comparable to SQLite's `rowid` / Postgres's
+    /// `ctid` (`%%physloc%%` exists but isn't stable/documented enough to rely
+    /// on), so the only fallback once a table has no PK is matching every
+    /// column in the WHERE clause — same as MySQL.
+    pub async fn row_identity(&self, db: &str, table: &str) -> Result<TableRowIdentity> {
+        let cols = self.columns(db, table).await?;
+        if let Some(identity) = super::row_identity_pk_or_none(&cols) {
+            return Ok(identity);
+        }
+        Ok(TableRowIdentity {
+            strategy: "all_columns".into(),
+            hidden_column: None,
+        })
     }
 
     pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {

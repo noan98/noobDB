@@ -22,7 +22,7 @@ import {
   type Row,
   type VisibilityState,
 } from "@tanstack/react-table";
-import { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
+import { CellValue, Column, QueryResult, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { comboMatchesEvent, formatCombo } from "../shortcutKeys";
@@ -78,12 +78,14 @@ import {
   countEditedCells,
   countEditedRows,
   editIsNoop,
+  hasAmbiguousIdentity,
   isEditableColumnType,
-  resolvePkIndices,
+  resolveRowIdentity,
   rowEditKey,
   validateCellInput,
   type PendingEdits,
   type PendingInsertRow,
+  type RowIdentityKind,
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
@@ -889,6 +891,13 @@ interface Props {
   editable?: boolean;
   /** Column metadata from `describeTable` — used to detect PK + types. */
   tableColumns?: TableColumnInfo[] | null;
+  /**
+   * Row identity fallback for inline editing when the table has no primary
+   * key (#849): rowid/ctid pseudo-column or all-columns matching. `null`
+   * when a PK resolved (the common case) or hasn't been checked. Combined
+   * with `tableColumns` via `resolveRowIdentity` to gate/build edits.
+   */
+  rowIdentity?: TableRowIdentity | null;
   /** Edits awaiting Preview/Apply. Keyed by [rowEditKey][colIdx]. */
   pendingEdits?: PendingEdits;
   /**
@@ -2464,9 +2473,13 @@ export function DataGrid({
   editable?: boolean;
   editableColumns?: boolean[];
   /**
-   * Result-column indices forming the table's primary key. Used to derive each
-   * row's stable `rowEditKey` so buffered edits survive pagination. Empty (or
-   * omitted) means no resolvable PK — editing is gated off in that case.
+   * Result-column indices forming the row's identity — the table's primary
+   * key when one resolves, or (#849) the outer `ResultGrid`'s
+   * `resolveRowIdentity` fallback when it doesn't: a single rowid/ctid
+   * pseudo-column, or every column when matching all of them is the only
+   * option. Used to derive each row's stable `rowEditKey` so buffered edits
+   * survive pagination. Empty (or omitted) means no resolvable identity at
+   * all — editing is gated off in that case.
    */
   pkIndices?: number[];
   pendingEdits?: PendingEdits;
@@ -5262,6 +5275,31 @@ function StreamingBanner({
   );
 }
 
+/**
+ * i18n keys for the toolbar hint shown next to Preview/Apply when a table has
+ * no primary key (#849). One pair per non-`"primary_key"` strategy —
+ * `"none"` keeps the original PK-required wording (editing stays disabled),
+ * the others explain which fallback identifies rows so users understand why
+ * editing is (still) available.
+ */
+function identityHintKeys(
+  strategy: RowIdentityKind,
+  ambiguous: boolean,
+): { label: I18nKey; title: I18nKey } {
+  switch (strategy) {
+    case "rowid":
+      return { label: "editRowidHint", title: "editRowidHintTitle" };
+    case "ctid":
+      return { label: "editCtidHint", title: "editCtidHintTitle" };
+    case "all_columns":
+      return ambiguous
+        ? { label: "editAllColumnsAmbiguousHint", title: "editAllColumnsAmbiguousHintTitle" }
+        : { label: "editAllColumnsHint", title: "editAllColumnsHintTitle" };
+    default:
+      return { label: "editNoPkHint", title: "editNoPkHintTitle" };
+  }
+}
+
 export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGrid({
   result,
   streaming,
@@ -5277,6 +5315,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   table,
   editable,
   tableColumns,
+  rowIdentity,
   pendingEdits,
   canUndo,
   canRedo,
@@ -5568,37 +5607,59 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     scrollRestoredRef.current = true;
   }, [initialScrollTop, result?.rows.length, streaming]);
 
-  // PK indices and per-column editability are computed once per render so
-  // both the toolbar (gating Preview/Apply) and the grid agree on which
-  // cells are interactive. These hooks must run before any early return so
-  // the hook order stays stable as `result` transitions null → columns
-  // (otherwise React aborts the whole tree on the next render).
+  // Row identity indices and per-column editability are computed once per
+  // render so both the toolbar (gating Preview/Apply) and the grid agree on
+  // which cells are interactive. These hooks must run before any early
+  // return so the hook order stays stable as `result` transitions
+  // null → columns (otherwise React aborts the whole tree on the next
+  // render).
   const columns = result?.columns;
-  // Resolve the PK regardless of `editable`: a read-only table tab still wants
-  // it for row→SQL generation (UPDATE/DELETE WHERE clause). Inline editing
-  // stays gated on `editable` downstream, so this never makes cells editable.
-  const pkIndices = useMemo(
-    () => (columns ? resolvePkIndices(columns, tableColumns ?? null) : []),
-    [columns, tableColumns],
+  // Resolve row identity regardless of `editable`: a read-only table tab
+  // still wants it for row→SQL generation (UPDATE/DELETE WHERE clause).
+  // Inline editing stays gated on `editable` downstream, so this never makes
+  // cells editable. Prefers a real primary key; falls back to the backend's
+  // rowid/ctid/all-columns strategy (#849) when there's none.
+  const identity = useMemo(
+    () => (columns ? resolveRowIdentity(columns, tableColumns ?? null, rowIdentity ?? null) : { indices: [], strategy: "none" as RowIdentityKind }),
+    [columns, tableColumns, rowIdentity],
   );
+  const pkIndices = identity.indices;
+  const identityStrategy = identity.strategy;
   const editableCols = useMemo<boolean[]>(() => {
     if (!editable || !columns) return columns ? columns.map(() => false) : [];
-    const hasPk = pkIndices.length > 0;
-    if (!hasPk) return columns.map(() => false);
+    if (pkIndices.length === 0) return columns.map(() => false);
+    // The "all_columns" fallback (#849) has no PK column to protect — every
+    // column is fair game to edit, since the WHERE clause is always rebuilt
+    // from the row's ORIGINAL values (not the pending edit), so editing a
+    // column that also happens to be part of the identity is safe. For the
+    // other strategies, disallow editing the identity column(s) themselves:
+    // a real PK or the rowid/ctid pseudo-column changing in-place would
+    // invalidate the WHERE clause used to identify the row (rowid/ctid also
+    // isn't a real declared column, so editing it wouldn't mean anything).
+    if (identityStrategy === "all_columns") {
+      return columns.map((c) => isEditableColumnType(c.type_name));
+    }
     const pkSet = new Set(pkIndices);
-    return columns.map((c, i) =>
-      // Disallow editing PK columns themselves: changing a PK in-place
-      // would invalidate the WHERE clause used to identify the row.
-      !pkSet.has(i) && isEditableColumnType(c.type_name),
-    );
-  }, [editable, columns, pkIndices]);
+    return columns.map((c, i) => !pkSet.has(i) && isEditableColumnType(c.type_name));
+  }, [editable, columns, pkIndices, identityStrategy]);
+
+  const resultRows = result?.rows;
+  // Whether the currently-loaded rows contain a genuine identity collision
+  // under the "all_columns" fallback (#849) — two rows with identical values
+  // in every column, which a WHERE clause built from that identity can't
+  // tell apart. Best-effort (only sees rows actually fetched into the grid),
+  // but strengthens the toolbar hint and Apply's confirmation wording from a
+  // generic caution to "this data actually has duplicates".
+  const ambiguousIdentity = useMemo(
+    () => identityStrategy === "all_columns" && !!resultRows && hasAmbiguousIdentity(resultRows, pkIndices),
+    [identityStrategy, resultRows, pkIndices],
+  );
 
   // Re-run diff (#597): compare the previous snapshot against the current
   // result and surface changed cells / added rows / removed count. Computed only
   // when the toggle is on, the two results came from the same query
   // (`diffComparable`), streaming has settled, a PK is resolvable, and a
   // snapshot exists — otherwise we fall back to normal rendering (no highlight).
-  const resultRows = result?.rows;
   const diff = useMemo(() => {
     if (
       !diffHighlightEnabled ||
@@ -6039,15 +6100,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           </Box>
           </Tooltip>
         )}
-        {editable && tableColumns && pkIndices.length === 0 && (
-          <Tooltip label={t("editNoPkHintTitle")}>
+        {editable && tableColumns && identityStrategy !== "primary_key" && (
+          <Tooltip label={t(identityHintKeys(identityStrategy, ambiguousIdentity).title)}>
             <chakra.span
               fontSize="xs"
-              color="app.textMuted"
+              color={identityStrategy === "all_columns" ? "var(--text-warning)" : "app.textMuted"}
               fontStyle="italic"
               paddingLeft="4px"
             >
-              {t("editNoPkHint")}
+              {t(identityHintKeys(identityStrategy, ambiguousIdentity).label)}
             </chakra.span>
           </Tooltip>
         )}
