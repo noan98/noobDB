@@ -2,7 +2,8 @@
  * データ可視化のカラースケール体系 (#525)。
  *
  * 「データを色で符号化する」表面 — チャート系列・ヒートマップ・データバー・
- * (将来) EXPLAIN コストや NULL 率ミニバー — が**各所で独立にパレットを持つと**、
+ * NULL 率ミニバー (列統計ポップオーバー #524 / 列ヘッダの常時表示 #911)・
+ * (将来) EXPLAIN コスト — が**各所で独立にパレットを持つと**、
  * (1) 知覚的に不均一、(2) カラーブラインドに不利、(3) ライト/ダークで不統一、
  * という問題が出る。本モジュールはそれらが共有する**単一のスケール体系**を、
  * 副作用のない純ロジックとして定義する。描画側 (`ChartView` / `cellConditionalFormat`)
@@ -153,14 +154,15 @@ export function categoricalColor(index: number): string {
  * 追従させたいため hex ランプでは表現できない。そこで `color-mix(in srgb,
  * var(--accent) N%, transparent)` という**塗りの生成レシピ**そのものをここへ
  * 集約し、不透明度の段階 (`ACCENT_FILL_STOPS`) を単一ソース化する。これにより
- * `ResultGrid.tsx` (`.cell-databar`) と `ColumnStatsMenu` (NULL 率バー) が
- * 同じ文字列を直書きして二重定義することを防ぐ (#525 コメントの集約先)。
+ * `ResultGrid.tsx` (`.cell-databar` / 列ヘッダの `.th-nullbar-fill` #911) と
+ * `ColumnStatsMenu` (NULL 率バー) が同じ文字列を直書きして二重定義することを
+ * 防ぐ (#525 コメントの集約先)。
  * DOM 非依存の純関数 (文字列生成のみ) なので Vitest で検証できる。
  */
 export const ACCENT_FILL_STOPS = {
   /** データバー (`.cell-databar`) の塗り不透明度。 */
   dataBar: 28,
-  /** NULL 率ミニバーの塗り不透明度 (バー本体)。 */
+  /** NULL 率ミニバーの塗り不透明度 (列統計ポップオーバー / 列ヘッダ共通)。 */
   nullRate: 55,
 } as const;
 

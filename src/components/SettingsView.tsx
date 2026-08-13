@@ -97,6 +97,7 @@ import {
   setResultGridMode,
   setResultGridPageSize,
   setRichCellRendering,
+  setColumnNullBars,
   setPlanWatchOnConnect,
   setSchemaDriftOnConnect,
   setSqlLintEnabled,
@@ -1522,6 +1523,19 @@ export function SettingsView({ theme, onClose }: Props) {
           </SettingsToggleLabel>
           <SettingsHelpInline>
             {t("settingsRichCellRenderingHelp")}
+          </SettingsHelpInline>
+        </SettingsToggleRow>
+        <SettingsToggleRow>
+          <SettingsToggleLabel htmlFor="settings-column-null-bars">
+            <Switch
+              id="settings-column-null-bars"
+              checked={settings.columnNullBars}
+              onChange={setColumnNullBars}
+            />
+            {t("settingsColumnNullBars")}
+          </SettingsToggleLabel>
+          <SettingsHelpInline>
+            {t("settingsColumnNullBarsHelp")}
           </SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>

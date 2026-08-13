@@ -1,6 +1,6 @@
 import type { CellValue } from "../api/tauri";
 import type { CellKind } from "./cellTypeMeta";
-import { columnStats, isNumericStatsKind, type ColumnStats } from "./gridStats";
+import { columnStats, isNumericStatsKind, nullRatePercentOf, type ColumnStats } from "./gridStats";
 
 /**
  * 結果グリッドの集計フッター行 (#645) の純ロジック。
@@ -74,7 +74,9 @@ export function computeFooterCell(stats: ColumnStats, fn: FooterAggFn): FooterCe
     case "distinct":
       return { ...base, numeric: stats.distinctCount };
     case "nullRate":
-      return { ...base, percent: stats.count > 0 ? (stats.nullCount / stats.count) * 100 : 0 };
+      // 率の式は `gridStats.nullRatePercentOf` と共有する (列ヘッダのミニバー
+      // #911・列統計ポップオーバーと同じ値になることを保証する)。
+      return { ...base, percent: nullRatePercentOf(stats) };
     case "sum":
       return { ...base, numeric: stats.sum, blank: stats.sum === null };
     case "avg":
