@@ -811,6 +811,32 @@ no-op)。
 `commands::query` の各エントリポイントは `ensure_allowed_for_session` でこのガードを
 通します。
 
+**マスクはドライバごとに切り替えます (#852)。** バックスラッシュを文字列リテラルの
+エスケープ文字と見なすのは **MySQL/MariaDB だけ**で、PostgreSQL
+(`standard_conforming_strings = on`) / SQLite / DuckDB / MSSQL では `\` はただの
+文字です。以前はどのドライバでも MySQL 流のマスク (`backslash_escapes = true`) を
+使っていたため、`SELECT '\'; DELETE FROM t; --'` のような入力で「まだ文字列の中」と
+誤読し、隠れた `;` も `delete` も見えないまま**フェイルオープン**していました
+(`is_session_init_sql` だけは先に修正済みで、その判断を残り 3 つの安全網へ横展開した
+のが #852)。現在の構成は:
+
+- `mask_for_driver(driver, src)` が `driver_backslash_escapes(driver)` でマスク規則を
+  選ぶ。`*_for(driver, ...)` 系の入口 — `is_read_only_sql_for` /
+  `has_stacked_statements_for` / `apply_auto_limit_for` / `classify_write_kind_for` —
+  はすべてこれを通る。呼び出し側 (`commands::query` の
+  `ensure_allowed_for_session` / auto-refresh / broadcast ガード、`commands::export`、
+  `commands::flight_recorder`、各ドライバの `preview_execute_with_limit`) は
+  `session.conn.driver_kind()` を渡す。
+- **ドライバを知らない呼び出し口** (`is_read_only_sql` / `has_stacked_statements` /
+  `apply_auto_limit` / `classify_write_kind` の引数なし版) は
+  `mask_for_analysis_conservative` に倒す。文字列リテラルは MySQL 流マスクより
+  **早くしか閉じない**ため、キーワードは隠れず露出する方向 = fail-closed。
+  タスクスケジューラ (`commands::tasks::validate_action` / `tasks::executor::run_once`)
+  はプロファイル解決前に検証するのでこちら。フロントも同じ方針で、
+  `isReadOnlySql(sql, driver?)` / `maskLiterals(sql, driver?)` は driver 省略時に
+  保守的な解釈を採る (`components/sqlDialect.ts` のヘルパが未知ドライバを MySQL 扱い
+  するのとは**逆**なので注意)。
+
 **MSSQL のロック系テーブルヒント (#906)。** 他ドライバの `FOR UPDATE` /
 `LOCK IN SHARE MODE` を拒否している設計意図 (読み取り専用セッションはロックを取らない)
 に合わせ、T-SQL の `WITH (...)` ヒントのうち**共有読み取りより強いロックモード**
@@ -839,6 +865,14 @@ Vitest (`readOnlyGolden.test.ts`) で import、バックは統合テスト
 に通します。スタック文・ロック付き SELECT・データ変更 CTE・マスク済みキーワードなどの
 境界ケースを網羅しており、片方の実装だけ変えてズレるとどちらかのテストが落ちます。
 **境界ケースを追加するときはこの JSON に追記**すれば両言語に反映されます。
+
+ベクタは**ドライバ次元**を持ちます (#852)。`readOnly` は標準的な文字列リテラル解釈
+(PostgreSQL / SQLite / DuckDB / MSSQL、およびドライバ非依存の呼び出し口) での期待値で、
+MySQL のバックスラッシュエスケープ解釈で判定が変わるケースだけ `readOnlyMysql` を
+併記します (省略時は `readOnly` と同じ)。MySQL のマスクは標準解釈より多くを文字列内へ
+隠すため、`readOnlyMysql` が `readOnly` より厳しくなる (true→false) ことはありません。
+両言語のテストは全ドライバでベクタを回し、加えて「MySQL だけ判定が分かれるケースが
+最低 1 件は残っていること」も検証します (ドライバ次元の形骸化防止)。
 
 **SQL 識別子引用 / リテラルエスケープも同じ方式で固定します (#880)。** 識別子引用は
 Rust の `db::sync::quote_ident` (MySQL/SQLite ドライバの `quote_ident` はこれへ委譲する

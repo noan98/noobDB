@@ -11,7 +11,7 @@ use crate::commands::query::ensure_allowed_for_session;
 use crate::db::data_diff::sql_literal;
 use crate::db::sync::quote_ident;
 use crate::db::types::{Column, StreamBatch, Value};
-use crate::db::{is_read_only_sql, DriverKind};
+use crate::db::{is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, StreamHandle, StreamKind};
 
@@ -758,7 +758,7 @@ pub async fn export_query_stream(
     // Read-only sessions reject non-SELECT outright; and even writable sessions
     // may only export read-only statements (an export must never mutate).
     ensure_allowed_for_session(&session, &sql)?;
-    if !is_read_only_sql(&sql) {
+    if !is_read_only_sql_for(session.conn.driver_kind(), &sql) {
         return Err(AppError::ReadOnly(
             "export supports only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
                 .into(),

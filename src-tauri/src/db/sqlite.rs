@@ -211,7 +211,7 @@ impl SqliteConn {
         // Reject stacked statements outright so the preview can only ever run
         // the single mutation it shows a diff for (the rollback below assumes
         // exactly one statement executed).
-        if super::has_stacked_statements(sql) {
+        if super::has_stacked_statements_for(super::DriverKind::Sqlite, sql) {
             return Err(AppError::InvalidInput(
                 "preview does not support multiple statements".into(),
             ));

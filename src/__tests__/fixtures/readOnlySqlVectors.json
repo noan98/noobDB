@@ -1,5 +1,6 @@
 {
   "description": "読み取り専用判定 (read-only ガード) のフロント/バック共有ゴールデンベクタ (#444)。各ケースの sql に対する期待値 readOnly を、フロント src/dangerousSql.ts の isReadOnlySql と、バック src-tauri/src/db/mod.rs の is_read_only_sql の双方が満たすことを検証する。片方だけロジックを変えると判定がズレてこのテストが落ちる。新しい境界ケースはこの 1 ファイルに追記すれば両言語に反映される。",
+  "driverDimension": "readOnly は「標準的な文字列リテラル解釈」(バックスラッシュをエスケープと見なさない = PostgreSQL / SQLite / DuckDB / MSSQL、およびドライバ非依存の呼び出し口) での期待値 (#852)。MySQL だけは \\' を引用符のエスケープとして扱うため判定が変わりうる。異なる場合のみ readOnlyMysql を書く (省略時は readOnly と同じ)。MySQL のマスクは標準解釈より多くを文字列内へ隠すため、readOnlyMysql が readOnly より厳しくなる (true→false) ことはない。",
   "cases": [
     { "sql": "SELECT * FROM users", "readOnly": true, "note": "素の SELECT" },
     { "sql": "  select 1  ", "readOnly": true, "note": "前後空白・小文字" },
@@ -81,6 +82,11 @@
     { "sql": "WITH x AS (WITH y AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM y) SELECT * FROM x", "readOnly": false, "note": "ネスト CTE 内の INSERT を弾く" },
     { "sql": "WITH x AS (WITH y AS (UPDATE t SET c = 1 RETURNING *) SELECT * FROM y) SELECT * FROM x", "readOnly": false, "note": "ネスト CTE 内の UPDATE を弾く" },
 
+    { "sql": "SELECT '\\'; DELETE FROM users; --'", "readOnly": false, "readOnlyMysql": true, "note": "#852: PG/SQLite/DuckDB/MSSQL では \\ はエスケープでないため文字列が閉じ、隠れた DELETE が露出する。MySQL では \\' が引用符のエスケープなので全体が 1 つの文字列リテラル" },
+    { "sql": "SELECT '\\'; DROP TABLE users; --'", "readOnly": false, "readOnlyMysql": true, "note": "#852: 同上の DDL 版" },
+    { "sql": "SELECT '\\'; SELECT 2; --'", "readOnly": false, "readOnlyMysql": true, "note": "#852: 書き込みキーワードが無くても、露出した 2 文目 (スタック) として弾く" },
+    { "sql": "SELECT 'ok\\' AS s", "readOnly": true, "note": "#852: リテラル内の \\ があってもキーワード/セミコロンが露出しなければ両マスクとも読み取り" },
+    { "sql": "SELECT 'a\\\\b' AS s", "readOnly": true, "note": "#852: エスケープされたバックスラッシュのみを含むリテラル" },
     { "sql": "SELECT * FROM [dbo].[users] WITH (UPDLOCK)", "readOnly": false, "note": "#906: MSSQL テーブルヒント UPDLOCK は更新ロックを取得する" },
     { "sql": "SELECT * FROM users WITH (UPDLOCK, HOLDLOCK)", "readOnly": false, "note": "#906: 複数ヒント (UPDLOCK + HOLDLOCK)" },
     { "sql": "SELECT * FROM users WITH (HOLDLOCK)", "readOnly": false, "note": "#906: HOLDLOCK はトランザクション終了まで共有ロックを保持する" },

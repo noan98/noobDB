@@ -58,6 +58,9 @@ const EXPORT_CHUNK_SIZE: usize = 2000;
 /// そのものには影響せず、呼び出し元が `NewTaskRun.catch_up` へそのまま転記する。
 pub async fn run_once(app: &AppHandle, task: &TaskDefinition) -> TaskOutcome {
     if let TaskAction::ExportQuery { sql, .. } = &task.action {
+        // プロファイル (= ドライバ) を解決する前に弾くため、ドライバ非依存の
+        // 保守的なマスクを使う `is_read_only_sql` を通す (#852)。判定は
+        // `commands::tasks::validate_action` (保存時) と同一。
         if !is_read_only_sql(sql) {
             return TaskOutcome::err(
                 "task SQL is not read-only (scheduler only allows SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)",

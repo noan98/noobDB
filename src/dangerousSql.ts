@@ -36,7 +36,8 @@ export interface DangerFinding {
  * survive while a `where` hiding inside a string or a quoted identifier named
  * `` `order` `` does not.
  */
-export function maskLiterals(sql: string): string {
+export function maskLiterals(sql: string, driver?: string): string {
+  const backslashEscapes = driverBackslashEscapes(driver);
   const out = sql.split("");
   const n = sql.length;
   const blank = (start: number, end: number) => {
@@ -102,8 +103,9 @@ export function maskLiterals(sql: string): string {
           j++;
           break;
         }
-        // Backslash escapes apply inside MySQL strings but not in `` `ident` ``.
-        if (sql[j] === "\\" && quote !== "`") {
+        // Backslash escapes apply inside MySQL strings but not in `` `ident` ``
+        // — and not at all on the other dialects (see `driverBackslashEscapes`).
+        if (backslashEscapes && sql[j] === "\\" && quote !== "`") {
           j += 2;
           continue;
         }
@@ -130,6 +132,24 @@ function matchDollarQuoteTag(sql: string, i: number): string | null {
   if (/[0-9]/.test(sql[j] ?? "")) return null;
   while (j < sql.length && /[A-Za-z0-9_]/.test(sql[j])) j++;
   return sql[j] === "$" ? sql.slice(i, j + 1) : null;
+}
+
+/**
+ * True when `driver` treats `\` inside a `'…'` / `"…"` string literal as an
+ * escape character. Only MySQL/MariaDB does (with the default
+ * `NO_BACKSLASH_ESCAPES` off); PostgreSQL (`standard_conforming_strings = on`),
+ * SQLite, DuckDB and Microsoft SQL Server all read `\` as an ordinary
+ * character. Mirrors the backend `driver_backslash_escapes`
+ * (`src-tauri/src/db/mod.rs`, #852).
+ *
+ * Unlike the dialect helpers in `components/sqlDialect.ts`, an unknown or
+ * omitted driver falls back to **false** (the stricter, non-MySQL reading)
+ * rather than to MySQL: a string literal can then only close earlier than
+ * MySQL would judge, never later, so keywords are revealed rather than hidden
+ * and every check built on the mask errs toward "this is a write".
+ */
+function driverBackslashEscapes(driver?: string): boolean {
+  return driver === "mysql";
 }
 
 function startsWithKeyword(body: string, keyword: string): boolean {
@@ -365,9 +385,15 @@ function hasLockingTableHint(body: string): boolean {
  * logic aligned with the backend means the approval prompt fires for exactly
  * the statements a read-only session would reject. When in doubt it returns
  * false (treats the statement as a write), erring toward asking.
+ *
+ * `driver` selects the string-escaping rules used while masking (#852). Omit
+ * it only where the driver is genuinely unknown: the fallback is the stricter
+ * non-MySQL reading, which can classify a legitimate MySQL statement using
+ * `\'` inside a literal as a write (an extra confirmation prompt, never a
+ * missed one). See `driverBackslashEscapes`.
  */
-export function isReadOnlySql(sql: string): boolean {
-  const masked = maskLiterals(sql);
+export function isReadOnlySql(sql: string, driver?: string): boolean {
+  const masked = maskLiterals(sql, driver);
   const body = masked
     .toLowerCase()
     .replace(/[;\s]+$/, "")

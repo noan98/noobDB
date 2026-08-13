@@ -315,7 +315,7 @@ impl MySqlConn {
         // Reject stacked statements outright: on MySQL a DDL stacked behind the
         // DML (`UPDATE …; DROP TABLE …`) would implicitly commit and escape the
         // rollback that keeps the preview side-effect-free.
-        if super::has_stacked_statements(sql) {
+        if super::has_stacked_statements_for(super::DriverKind::Mysql, sql) {
             return Err(AppError::InvalidInput(
                 "preview does not support multiple statements".into(),
             ));
