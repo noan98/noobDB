@@ -12,6 +12,9 @@ import {
   buildPivotSql,
   defaultPivotConfig,
   firstNumericColumnIndex,
+  pivotConfigKeyFrom,
+  readStoredPivotConfig,
+  writeStoredPivotConfig,
   type PivotAgg,
   type PivotConfig,
   type PivotModel,
@@ -25,6 +28,13 @@ import {
  * 可視化する (表示専用)。**在メモリ (取得済み行) が対象**である点を明示し、全行を
  * DB 側で集計し直す GROUP BY SQL への変換導線 (エディタへ送る) を備える。
  * 計算ロジックは pivotData.ts に分離してテスト済み。
+ *
+ * **設定の永続化 (#909)**: 行/列/値フィールドと集計関数は `sourceSql` の
+ * フィンガープリント単位で localStorage に保存し、同じクエリの再実行・タブ切替・
+ * タブ復元・再起動をまたいで復元する (`pivotData.ts` の
+ * `readStoredPivotConfig`/`writeStoredPivotConfig`)。列構成が変わって保存済みの
+ * 参照が成立しなくなった場合は `sanitizePivotConfig` が検出して安全に既定値へ
+ * 縮退する。
  */
 interface Props {
   result: QueryResult;
@@ -83,9 +93,17 @@ const totalCss: SystemStyleObject = {
 
 export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeView }: Props) {
   const t = useT();
-  const [config, setConfig] = useState<PivotConfig | null>(() =>
-    defaultPivotConfig(result.columns, result.rows),
+  // 永続化キーは実行 SQL のフィンガープリント (#909)。クエリ再実行のたびに
+  // PivotView はストリーミング状態を経由して remount されるため (App.tsx の
+  // `!tab.streaming` 条件)、useState の初期化関数だけで再実行時の復元が完結する。
+  const persistKey = useMemo(() => pivotConfigKeyFrom(sourceSql), [sourceSql]);
+  const [config, setConfigState] = useState<PivotConfig | null>(
+    () => readStoredPivotConfig(persistKey, result.columns) ?? defaultPivotConfig(result.columns, result.rows),
   );
+  const setConfig = (next: PivotConfig) => {
+    setConfigState(next);
+    writeStoredPivotConfig(persistKey, next);
+  };
   const [heatmap, setHeatmap] = useState(true);
   const numericFieldIdx = useMemo(
     () => firstNumericColumnIndex(result.columns, result.rows),

@@ -6,7 +6,7 @@ import { ResultGrid, GRID_CSS, isColumnFilterActive, type ResultGridHandle, read
 import { rowEditKey } from "../components/cellEdit";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
-import { setRichCellRendering } from "../settings";
+import { setColumnNullBars, setRichCellRendering } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
 
 // ResultGrid の主要インタラクション (描画・全文フィルタ・列ソート・ページ読み込み
@@ -732,6 +732,57 @@ describe("集計フッター行 (#645)", () => {
     );
     expect(c2.querySelector("tfoot")).not.toBeNull();
     expect(footerTexts(c2)[1]).toContain("5.33");
+  });
+});
+
+describe("列ヘッダの NULL 率ミニバー (#911)", () => {
+  beforeEach(() => {
+    setLocale("en");
+    setColumnNullBars(true);
+  });
+
+  const NULLABLE_RESULT = makeResult(FRUIT_COLUMNS, [
+    ["banana", 2],
+    [null, 5],
+    [null, 9],
+    ["date", null],
+  ]);
+
+  /** ヘッダのミニバーを列順に取り出す。 */
+  function nullBars(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll("thead .th-nullbar"));
+  }
+
+  it("全列にバーを描き、NULL 率を scaleX と aria-label で表す", () => {
+    const { container } = renderWithProviders(<ResultGrid result={NULLABLE_RESULT} />);
+
+    const bars = nullBars(container);
+    // 列数ぶん必ず 1 本ずつ (0% の列も描くのでヘッダ高さは列間で揃う)。
+    expect(bars).toHaveLength(2);
+    // name 列は 4 行中 2 行が NULL = 50%、qty 列は 1 行 = 25%。
+    expect(bars[0].querySelector<HTMLElement>(".th-nullbar-fill")?.style.transform).toBe(
+      "scaleX(0.5)",
+    );
+    expect(bars[1].querySelector<HTMLElement>(".th-nullbar-fill")?.style.transform).toBe(
+      "scaleX(0.25)",
+    );
+    expect(bars[0]).toHaveAttribute(
+      "aria-label",
+      t("gridNullBarAria", { column: "name", percent: "50", count: "4" }),
+    );
+  });
+
+  it("設定でオフにすると描画されない", () => {
+    setColumnNullBars(false);
+    const { container } = renderWithProviders(<ResultGrid result={NULLABLE_RESULT} />);
+    expect(nullBars(container)).toHaveLength(0);
+  });
+
+  it("行が 1 件も無い結果ではバーを出さない", () => {
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(FRUIT_COLUMNS, [])} />,
+    );
+    expect(nullBars(container)).toHaveLength(0);
   });
 });
 

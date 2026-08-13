@@ -91,6 +91,14 @@ interface Props {
   /** Open the entry's SQL in a brand-new query tab (never overwrites the editor). */
   onOpenInNewTab: (sql: string) => void;
   /**
+   * Promote a history entry's SQL to a saved snippet (#878). Opens the shared
+   * `SnippetForm` with the SQL prefilled — the actual `save_snippet` IPC call
+   * happens there, so this handler is just the "open the form" step. Omitted
+   * entirely hides the row action (kept optional for callers/tests that don't
+   * wire snippets, mirroring the existing optional `onNewQuery`).
+   */
+  onSaveAsSnippet?: (sql: string) => void;
+  /**
    * Empty-state CTA: open a fresh query tab so a first-time user has an
    * obvious next step ("run something and it'll show up here"). Omitted while
    * disconnected, since there is nothing to run yet (#599).
@@ -110,7 +118,7 @@ function formatTime(iso: string): string {
 
 // memo 化して App.tsx の高頻度な再レンダリングから切り離す。props は親で
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
-export const HistoryList = memo(function HistoryList({ activeProfile, sessionId, reloadKey, onRestore, onOpenInNewTab, onNewQuery }: Props) {
+export const HistoryList = memo(function HistoryList({ activeProfile, sessionId, reloadKey, onRestore, onOpenInNewTab, onSaveAsSnippet, onNewQuery }: Props) {
   const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -397,6 +405,29 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
                           <Icon name="query" size={ICON_SIZES.md} />
                         </chakra.button>
                       </Tooltip>
+                      {onSaveAsSnippet && (
+                        <Tooltip label={t("historySaveAsSnippet")}>
+                          <chakra.button
+                            type="button"
+                            minW="0"
+                            w="24px"
+                            h="24px"
+                            p="0"
+                            display="inline-flex"
+                            alignItems="center"
+                            justifyContent="center"
+                            color="app.textSecondary"
+                            _hover={{ color: "app.text" }}
+                            aria-label={t("historySaveAsSnippet")}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSaveAsSnippet(h.sql);
+                            }}
+                          >
+                            <Icon name="snippet" size={ICON_SIZES.md} />
+                          </chakra.button>
+                        </Tooltip>
+                      )}
                     </chakra.span>
                   </TreeRow>
                 </Tooltip>
