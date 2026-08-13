@@ -496,6 +496,10 @@
     "estimate": 1234,
     "name": "users"
   },
+  "tableRowIdentity": {
+    "hidden_column": "rowid",
+    "strategy": "rowid"
+  },
   "tableSchema": {
     "columns": [
       "id",

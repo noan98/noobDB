@@ -930,6 +930,23 @@ const en = {
   editPendingTitle: "{original} → {next} (pending — Preview or Apply to commit)",
   editNoPkHint: "No primary key — editing disabled",
   editNoPkHintTitle: "Inline cell editing needs a primary key to build a safe UPDATE WHERE clause.",
+  editRowidHint: "No primary key — using rowid",
+  editRowidHintTitle:
+    "This table has no primary key. SQLite's implicit rowid identifies each row instead, so editing still works.",
+  editCtidHint: "No primary key — using ctid",
+  editCtidHintTitle:
+    "This table has no primary key. PostgreSQL's physical row id (ctid) identifies each row instead — valid for this session only; it can change on VACUUM FULL or when the row itself is updated.",
+  editAllColumnsHint: "No primary key — matching all columns",
+  editAllColumnsHintTitle:
+    "This table has no primary key and no cheap row id. Every column is matched in the WHERE clause, which cannot guarantee a single row if two rows happen to be identical.",
+  editAllColumnsAmbiguousHint: "No primary key — duplicate rows detected",
+  editAllColumnsAmbiguousHintTitle:
+    "This table has no primary key, and some of the loaded rows have identical values in every column. Editing or deleting one of them will affect all of its duplicates.",
+  editAllColumnsConfirmTitle: "Apply without a guaranteed-unique row match?",
+  editAllColumnsConfirmBody:
+    "This table has no primary key, so {count} statement(s) match every column's value instead. If a matched row isn't actually unique, every identical row will be affected. Continue?",
+  editAllColumnsConfirmBodyAmbiguous:
+    "This table has no primary key, and some of the loaded rows have identical values in every column. {count} statement(s) will run, and a statement targeting a duplicated row will affect all of its duplicates at once. Continue?",
   editApplyDisabledInvalid: "Fix the highlighted invalid edits before applying.",
   editInvalidNumber: "Enter a number (or NULL).",
   editInvalidDate: "Enter a date like 2024-01-31 (or NULL).",
@@ -3654,6 +3671,23 @@ const ja: Dict = {
   editPendingTitle: "{original} → {next} (未保存 — Preview か Apply で反映)",
   editNoPkHint: "主キーが無いため編集できません",
   editNoPkHintTitle: "インラインのセル編集は、対象行を特定する WHERE 句を組み立てるために主キーが必要です。",
+  editRowidHint: "主キーなし — rowid で識別",
+  editRowidHintTitle:
+    "このテーブルには主キーがありません。代わりに SQLite の暗黙の rowid で各行を識別するため、編集は引き続き可能です。",
+  editCtidHint: "主キーなし — ctid で識別",
+  editCtidHintTitle:
+    "このテーブルには主キーがありません。代わりに PostgreSQL の物理行 ID (ctid) で各行を識別します — この値は今回のセッション限りの有効性で、VACUUM FULL や行自体の UPDATE で変わることがあります。",
+  editAllColumnsHint: "主キーなし — 全列一致で識別",
+  editAllColumnsHintTitle:
+    "このテーブルには主キーも安価な行 ID もありません。WHERE 句は全列の値を一致条件にしますが、2 行が偶然同一の値を持つ場合は一意に特定できません。",
+  editAllColumnsAmbiguousHint: "主キーなし — 重複行を検出",
+  editAllColumnsAmbiguousHintTitle:
+    "このテーブルには主キーが無く、表示中の行の一部は全列が同一の値を持っています。そのいずれかを編集・削除すると、重複するすべての行に影響します。",
+  editAllColumnsConfirmTitle: "一意性を保証できないまま適用しますか？",
+  editAllColumnsConfirmBody:
+    "このテーブルには主キーが無いため、{count} 件の文は全列の値で行を照合します。照合先の行が実際には一意でない場合、同一の値を持つすべての行が変更されます。続行しますか？",
+  editAllColumnsConfirmBodyAmbiguous:
+    "このテーブルには主キーが無く、表示中の行の一部は全列が同一の値を持っています。{count} 件の文を実行しますが、重複行を対象とした文はその重複すべてに影響します。続行しますか？",
   editApplyDisabledInvalid: "不正な入力を修正してから適用してください。",
   editInvalidNumber: "数値を入力してください（または NULL）。",
   editInvalidDate: "日付を入力してください（例: 2024-01-31、または NULL）。",

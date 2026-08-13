@@ -94,6 +94,64 @@ async fn mysql_table_row_estimates_present_for_base_table() {
     conn.close().await;
 }
 
+/// #849: row identity fallback for inline editing. MySQL has no cheap
+/// physical row id, so a table with a PK reports `primary_key` and a table
+/// without one always falls back to `all_columns`.
+#[tokio::test]
+async fn mysql_row_identity_pk_and_all_columns_fallback() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS row_identity_pk", Some(&db))
+        .await
+        .expect("drop pk table");
+    conn.execute(
+        "CREATE TABLE row_identity_pk (id INT PRIMARY KEY, label VARCHAR(32))",
+        Some(&db),
+    )
+    .await
+    .expect("create pk table");
+    conn.execute("DROP TABLE IF EXISTS row_identity_no_pk", Some(&db))
+        .await
+        .expect("drop no-pk table");
+    conn.execute(
+        "CREATE TABLE row_identity_no_pk (label VARCHAR(32), note VARCHAR(32))",
+        Some(&db),
+    )
+    .await
+    .expect("create no-pk table");
+
+    let with_pk = conn
+        .row_identity(&db, "row_identity_pk")
+        .await
+        .expect("row_identity pk table");
+    assert_eq!(with_pk.strategy, "primary_key");
+    assert_eq!(with_pk.hidden_column, None);
+
+    let without_pk = conn
+        .row_identity(&db, "row_identity_no_pk")
+        .await
+        .expect("row_identity no-pk table");
+    assert_eq!(without_pk.strategy, "all_columns");
+    assert_eq!(without_pk.hidden_column, None);
+
+    conn.execute("DROP TABLE row_identity_pk", Some(&db))
+        .await
+        .expect("cleanup pk table");
+    conn.execute("DROP TABLE row_identity_no_pk", Some(&db))
+        .await
+        .expect("cleanup no-pk table");
+    conn.close().await;
+}
+
 /// `table_sizes` must report a real base table with byte figures from
 /// information_schema.TABLES (DATA_LENGTH / INDEX_LENGTH). InnoDB's lengths are
 /// approximate, so we only assert the table appears with a non-negative total

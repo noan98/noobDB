@@ -254,6 +254,39 @@ pub struct ProcessInfo {
     pub is_self: bool,
 }
 
+/// Row identity strategy for inline editing when a table has no usable
+/// primary key (#849): what the frontend should use, instead of PK columns,
+/// to build a WHERE clause that targets exactly one physical row.
+///
+/// `strategy` is one of:
+/// - `"primary_key"` — a real PK exists (`TableColumnInfo.key == "PRI"`).
+///   Callers normally don't even need to ask for this — `describe_table`
+///   already reports it — but it's included so the type is self-describing
+///   when a caller checks this first.
+/// - `"rowid"` — SQLite table with an implicit rowid (not `WITHOUT ROWID`,
+///   not a view, not a virtual table). `hidden_column` is `"rowid"`; the
+///   frontend appends it to the browse `SELECT` as a pseudo-column so it
+///   comes back with the result set.
+/// - `"ctid"` — PostgreSQL ordinary heap table (`pg_class.relkind = 'r'`).
+///   `hidden_column` is `"ctid"`. **Caveat**: `ctid` identifies a row's
+///   *physical* location and is invalidated by `VACUUM FULL` / `UPDATE`
+///   (Postgres itself writes a new tuple with a new ctid on UPDATE) — safe
+///   within one grid session's Preview/Apply round trip, not as a durable
+///   key across sessions.
+/// - `"all_columns"` — no PK and no cheap physical row id (MySQL, SQLite
+///   `WITHOUT ROWID` tables, views). The frontend falls back to matching
+///   every column in the WHERE clause. This cannot guarantee uniqueness
+///   (two rows may be genuinely identical without a PK/UNIQUE constraint),
+///   so the frontend must warn before applying an edit built this way.
+///   `hidden_column` is `None`.
+/// - `"none"` — nothing usable (e.g. the object has no columns, or isn't a
+///   plain table). Editing stays disabled, same as before this feature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableRowIdentity {
+    pub strategy: String,
+    pub hidden_column: Option<String>,
+}
+
 /// One database user / role for the users & privileges panel (#732). MySQL
 /// identifies a principal by a `(user, host)` pair (the same user name can
 /// have several host-scoped accounts with different privileges), so `host`

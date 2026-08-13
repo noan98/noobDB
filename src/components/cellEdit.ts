@@ -1,4 +1,4 @@
-import { CellValue, Column, TableColumnInfo } from "../api/tauri";
+import { CellValue, Column, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import type { I18nKey } from "../i18n";
 import { quoteIdentFor } from "./sqlDialect";
 
@@ -193,6 +193,53 @@ export function resolvePkIndices(
   return indices;
 }
 
+/** Which row-identity strategy backs a set of identity indices (#849). */
+export type RowIdentityKind = "primary_key" | "rowid" | "ctid" | "all_columns" | "none";
+
+export interface RowIdentityResolution {
+  /** Result-column indices to use in the WHERE clause identifying a row. */
+  indices: number[];
+  strategy: RowIdentityKind;
+}
+
+/**
+ * Resolves the result-column indices to use for a row's identity (#849): the
+ * WHERE clause of an UPDATE/DELETE, and the key `rowEditKey` derives buffered
+ * edits from. Tries strategies in order of trustworthiness:
+ *
+ * 1. A real primary key (`resolvePkIndices`) — always preferred when it
+ *    resolves.
+ * 2. The backend's `rowIdentity` fallback (`table_row_identity`, #849) when
+ *    the table has none:
+ *    - `"rowid"` / `"ctid"` — a single pseudo-column the caller must have
+ *      appended to the browse `SELECT` (see `qualifiedTableSql`) and that
+ *      must therefore already be present in `columns` under that name.
+ *    - `"all_columns"` — every column in the result, in order. This cannot
+ *      guarantee uniqueness on its own (see `hasAmbiguousIdentity`), so
+ *      callers must warn before applying edits built from it.
+ * 3. Nothing resolvable → `{ indices: [], strategy: "none" }`, same as the
+ *    previous PK-only behavior (editing stays disabled).
+ */
+export function resolveRowIdentity(
+  columns: Column[],
+  tableColumns: TableColumnInfo[] | null,
+  rowIdentity: Pick<TableRowIdentity, "strategy" | "hidden_column"> | null,
+): RowIdentityResolution {
+  const pk = resolvePkIndices(columns, tableColumns);
+  if (pk.length > 0) return { indices: pk, strategy: "primary_key" };
+  if (!rowIdentity || columns.length === 0) return { indices: [], strategy: "none" };
+  if (rowIdentity.strategy === "rowid" || rowIdentity.strategy === "ctid") {
+    if (!rowIdentity.hidden_column) return { indices: [], strategy: "none" };
+    const idx = columns.findIndex((c) => c.name === rowIdentity.hidden_column);
+    if (idx < 0) return { indices: [], strategy: "none" };
+    return { indices: [idx], strategy: rowIdentity.strategy };
+  }
+  if (rowIdentity.strategy === "all_columns") {
+    return { indices: columns.map((_, i) => i), strategy: "all_columns" };
+  }
+  return { indices: [], strategy: "none" };
+}
+
 // Distinct, collision-resistant encoding of a single primary-key cell. A type
 // tag keeps the value domains apart so the number 1, the string "1", the
 // boolean true and SQL NULL never collapse onto the same key. PK values are
@@ -234,6 +281,32 @@ export function rowEditKey(
       })
       .join("")
   );
+}
+
+/**
+ * True when two or more rows share the exact same identity (#849's
+ * `"all_columns"` fallback: without a PK/UNIQUE constraint, nothing stops the
+ * database from holding genuinely duplicate rows). When this is true, a
+ * WHERE clause built from that identity would match every duplicate at once
+ * — an UPDATE/DELETE meant for one row silently touches all of them. Callers
+ * use this to warn before applying an edit built from a non-PK identity.
+ *
+ * Only meaningful for the `"all_columns"` (and, in principle, `"rowid"`/
+ * `"ctid"`, though those are physically unique by construction) strategies —
+ * a real primary key can never collide, so callers typically skip this check
+ * once `resolveRowIdentity` reports `"primary_key"`.
+ */
+export function hasAmbiguousIdentity(rows: CellValue[][], indices: number[]): boolean {
+  if (indices.length === 0) return false;
+  const seen = new Set<string>();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) continue;
+    const key = rowEditKey(row, indices, i);
+    if (seen.has(key)) return true;
+    seen.add(key);
+  }
+  return false;
 }
 
 function qualifiedTableRef(driver: string, database: string, table: string): string {
@@ -284,6 +357,21 @@ export function literalFromCellValue(driver: string, v: CellValue): string {
   }
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : "NULL";
   return quoteString(driver, String(v));
+}
+
+/**
+ * Builds one `col = <literal>` / `col IS NULL` WHERE-clause term identifying
+ * a row by an original (not user-edited) cell value. A plain `= NULL` is
+ * always false in SQL, so NULL must use `IS NULL` instead — this never
+ * mattered while row identity was PK-only (PK columns are practically never
+ * NULL), but the `"all_columns"` fallback (#849) routinely includes nullable
+ * columns in the WHERE clause, so every identity-WHERE builder below goes
+ * through this helper rather than inlining `literalFromCellValue`.
+ */
+function whereEqualsClause(driver: string, colName: string, v: CellValue): string {
+  const quoted = quoteIdentFor(driver, colName);
+  if (v === null || v === undefined) return `${quoted} IS NULL`;
+  return `${quoted} = ${literalFromCellValue(driver, v)}`;
 }
 
 /**
@@ -462,10 +550,9 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
       );
     }
     if (setParts.length === 0) continue;
-    const whereParts = input.pkIndices.map((i) => {
-      const col = input.columns[i];
-      return `${quoteIdentFor(input.driver, col.name)} = ${literalFromCellValue(input.driver, row[i])}`;
-    });
+    const whereParts = input.pkIndices.map((i) =>
+      whereEqualsClause(input.driver, input.columns[i].name, row[i]),
+    );
     stmts.push(
       `UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`,
     );
@@ -532,10 +619,9 @@ export function buildDeleteStatements(input: {
     const key = rowEditKey(row, input.pkIndices, rowIdx);
     if (!input.deleteKeys.has(key) || emitted.has(key)) continue;
     emitted.add(key);
-    const whereParts = input.pkIndices.map((i) => {
-      const col = input.columns[i];
-      return `${quoteIdentFor(input.driver, col.name)} = ${literalFromCellValue(input.driver, row[i])}`;
-    });
+    const whereParts = input.pkIndices.map((i) =>
+      whereEqualsClause(input.driver, input.columns[i].name, row[i]),
+    );
     stmts.push(`DELETE FROM ${ref} WHERE ${whereParts.join(" AND ")};`);
   }
   return stmts;
@@ -636,10 +722,15 @@ export function buildRowSql(input: BuildRowSqlInput, kind: RowSqlKind): string[]
   const stmts: string[] = [];
   for (const row of rows) {
     if (!row) continue;
-    const whereParts = pkIndices.map(
-      (i) =>
-        `${quoteIdentFor(driver, columns[i].name)} = ${rowValueLiteral(driver, row[i], columns[i])}`,
-    );
+    const whereParts = pkIndices.map((i) => {
+      const v = row[i];
+      const quoted = quoteIdentFor(driver, columns[i].name);
+      // A real WHERE `= NULL` never matches (SQL three-valued logic) — see
+      // `whereEqualsClause`'s doc for why this matters once identity can
+      // include nullable columns (#849's all_columns fallback).
+      if (v === null || v === undefined) return `${quoted} IS NULL`;
+      return `${quoted} = ${rowValueLiteral(driver, v, columns[i])}`;
+    });
     if (kind === "insert") {
       const cols = columns.map((c) => quoteIdentFor(driver, c.name)).join(", ");
       const vals = columns.map((c, i) => rowValueLiteral(driver, row[i], c)).join(", ");

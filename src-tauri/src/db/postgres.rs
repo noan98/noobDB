@@ -10,8 +10,8 @@ use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableSchema, TableSizeInfo,
-    UserPrivileges, Value,
+    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
+    TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::{columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
@@ -930,6 +930,42 @@ impl PostgresConn {
                 }
             })
             .collect())
+    }
+
+    /// Row identity strategy for inline editing (#849). Once a table has no
+    /// resolvable primary key, PostgreSQL ordinary heap tables (`pg_class.
+    /// relkind = 'r'`) still carry a physical `ctid` that can pin a single
+    /// row within one Preview/Apply round trip. Views, foreign tables, and
+    /// partitioned parents (`p` — no storage of their own; `ctid` lives on
+    /// the child partitions) don't, so those fall back to `all_columns`.
+    pub async fn row_identity(&self, schema: &str, table: &str) -> Result<TableRowIdentity> {
+        let cols = self.columns(schema, table).await?;
+        if let Some(identity) = super::row_identity_pk_or_none(&cols) {
+            return Ok(identity);
+        }
+        let row: Option<PgRow> = sqlx::query(
+            r#"SELECT c.relkind
+               FROM pg_catalog.pg_class c
+               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = $1 AND c.relname = $2"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(r) = row {
+            let relkind = r.try_get::<String, _>("relkind").unwrap_or_default();
+            if relkind == "r" {
+                return Ok(TableRowIdentity {
+                    strategy: "ctid".into(),
+                    hidden_column: Some("ctid".into()),
+                });
+            }
+        }
+        Ok(TableRowIdentity {
+            strategy: "all_columns".into(),
+            hidden_column: None,
+        })
     }
 
     pub async fn foreign_keys(&self, schema: &str) -> Result<Vec<ForeignKey>> {

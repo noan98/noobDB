@@ -1,8 +1,8 @@
 use tauri::State;
 
 use crate::db::types::{
-    ForeignKey, IndexInfo, SchemaObject, TableColumnInfo, TableRowEstimate, TableSchema,
-    TableSizeInfo,
+    ForeignKey, IndexInfo, SchemaObject, TableColumnInfo, TableRowEstimate, TableRowIdentity,
+    TableSchema, TableSizeInfo,
 };
 use crate::error::{AppError, Result};
 use crate::state::AppState;
@@ -41,6 +41,23 @@ pub async fn describe_table(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session.conn.columns(&database, &table).await
+}
+
+/// テーブルの編集用の行識別戦略を返す (主キー不在時の rowid/ctid/全列一致
+/// フォールバック、#849)。呼び出し側 (フロント) は主キーが解決できたときは
+/// これを呼ぶ必要がない — `describe_table` の `key` だけで足りる。
+#[tauri::command]
+pub async fn table_row_identity(
+    session_id: String,
+    database: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<TableRowIdentity> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.row_identity(&database, &table).await
 }
 
 #[tauri::command]

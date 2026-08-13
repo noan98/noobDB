@@ -19,6 +19,7 @@ import {
   type SandboxRecord,
   Snippet,
   TableColumnInfo,
+  TableRowIdentity,
   TableSchema,
   listenConnectProgress,
   listenPreviewStream,
@@ -40,7 +41,8 @@ import {
   buildUpdateStatements,
   countEditedCells,
   countEditedRows,
-  resolvePkIndices,
+  hasAmbiguousIdentity,
+  resolveRowIdentity,
   type PendingEdits,
   type PendingInsertRow,
 } from "./components/cellEdit";
@@ -664,6 +666,12 @@ interface Tab {
    */
   tableColumns: TableColumnInfo[] | null;
   /**
+   * Row identity fallback for inline editing when the table has no primary
+   * key (#849) — `null` when a PK resolved (the common case; `tableColumns`
+   * already carries everything needed) or hasn't been checked yet.
+   */
+  rowIdentity: TableRowIdentity | null;
+  /**
    * Inline cell edits awaiting Preview/Apply. Keyed by the row index in
    * `result.rows` (the canonical "original" position) then by the column
    * index in `result.columns`. Cleared on Apply success or Cancel.
@@ -813,11 +821,71 @@ function tableTotalPagesEstimate(
   return estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
 }
 
-function qualifiedTableSql(driver: string, database: string, table: string): string {
+/**
+ * `hiddenColumn`, when given, appends a driver pseudo-column (SQLite
+ * `rowid` / PostgreSQL `ctid`) to the SELECT list so it comes back as an
+ * ordinary result column — the row-identity fallback for tables with no
+ * primary key (#849). Aliased to its own bare name (`AS rowid` / `AS ctid`)
+ * so `resolveRowIdentity` can find it by name in the result; harmless when
+ * the table happens to also declare a real column with that name; SQLite
+ * `SELECT *, rowid` and Postgres `SELECT *, ctid` are both unambiguous
+ * because the star expansion and the pseudo-column reference different
+ * namespaces.
+ */
+function qualifiedTableSql(
+  driver: string,
+  database: string,
+  table: string,
+  hiddenColumn?: string | null,
+): string {
+  const extra = hiddenColumn ? `, ${hiddenColumn}` : "";
   // SQLite has a single attached namespace ("main"); leaving the
   // db.table qualification off keeps the generated SELECT portable.
-  if (driver === "sqlite") return `SELECT * FROM ${quoteIdentFor(driver, table)}`;
-  return `SELECT * FROM ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
+  if (driver === "sqlite") return `SELECT *${extra} FROM ${quoteIdentFor(driver, table)}`;
+  return `SELECT *${extra} FROM ${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
+}
+
+/**
+ * Resolves everything needed to open a "table" tab in one place, shared by
+ * `handleOpenTable` and `restoreSavedTabs` (#849): the table's column
+ * metadata (for PK detection and edit gating), its row-identity fallback
+ * when there's no PK, and the base `SELECT` — which carries the fallback's
+ * hidden pseudo-column (`rowid`/`ctid`) when applicable, so it's present in
+ * every page fetched from `paginatable` for the life of the tab.
+ *
+ * `tableRowIdentity` is skipped whenever a real PK resolves (the common
+ * case) — no need for the extra round trip. Both IPCs are best-effort: a
+ * `describeTable` failure propagates (the caller already handles it, e.g.
+ * `restoreSavedTabs` downgrades the tab to a query tab), but a
+ * `tableRowIdentity` failure just leaves editing gated off like before this
+ * feature, since not being able to identify rows is no different from the
+ * table having no PK and no fallback.
+ */
+async function resolveTableOpen(
+  sessionId: string,
+  driver: string,
+  database: string,
+  table: string,
+): Promise<{ base: string; tableColumns: TableColumnInfo[]; rowIdentity: TableRowIdentity | null }> {
+  const cols = await api.describeTable(sessionId, database, table);
+  const hasPk = cols.some((c) => c.key.toUpperCase() === "PRI");
+  let rowIdentity: TableRowIdentity | null = null;
+  if (!hasPk) {
+    try {
+      rowIdentity = await api.tableRowIdentity(sessionId, database, table);
+    } catch {
+      rowIdentity = null;
+    }
+  }
+  const hiddenColumn =
+    rowIdentity && (rowIdentity.strategy === "rowid" || rowIdentity.strategy === "ctid")
+      ? rowIdentity.hidden_column
+      : null;
+  return {
+    base: qualifiedTableSql(driver, database, table, hiddenColumn),
+    tableColumns: cols,
+    rowIdentity,
+  };
 }
 
 // SQL that returns a table's definition, or null for drivers without a
@@ -871,6 +939,7 @@ function makeTab(kind: TabKind, title: string, sql: string): Tab {
     canLoadMore: false,
     queryError: null,
     tableColumns: null,
+    rowIdentity: null,
     pendingEdits: {},
     editUndoStack: [],
     editRedoStack: [],
@@ -3062,11 +3131,28 @@ export default function App() {
       if (!tt || tt.kind !== "table" || !tt.database || !tt.table || tt.schemaTable) continue;
       const { id, database, table } = tt;
       api.describeTable(sessionId, database, table)
-        .then((cols) => {
+        .then(async (cols) => {
+          if (cancelled) return;
+          // 主キーが無い場合の行識別フォールバック (rowid/ctid/全列一致、#849)。
+          // ここは `handleOpenTable`/`restoreSavedTabs` が schemaTable を
+          // 立てずに済ませた経路 (通常は無いはずの) 保険なので、隠し列を
+          // SELECT へ追加する再実行はしない — 主キー付きテーブルと同じ描画
+          // タイミングで済ませ、rowid/ctid が必要なテーブルは次の再実行/ページ
+          // 送りで自然と編集可能になる。
+          const hasPk = cols.some((c) => c.key.toUpperCase() === "PRI");
+          let rowIdentity: TableRowIdentity | null = null;
+          if (!hasPk) {
+            try {
+              rowIdentity = await api.tableRowIdentity(sessionId, database, table);
+            } catch {
+              rowIdentity = null;
+            }
+          }
           if (cancelled) return;
           updateTab(id, {
             schemaTable: { database, name: table, columns: cols.map((c) => c.name) },
             tableColumns: cols,
+            rowIdentity,
           });
         })
         .catch(() => { /* ignore */ });
@@ -3552,8 +3638,12 @@ export default function App() {
         const restoredSnapshot = s.builderSnapshot ?? null;
         if (s.kind === "table" && s.database && s.table) {
           try {
-            await api.describeTable(sid, s.database, s.table);
-            const base = qualifiedTableSql(profile.driver, s.database, s.table);
+            const { base, tableColumns, rowIdentity } = await resolveTableOpen(
+              sid,
+              profile.driver,
+              s.database,
+              s.table,
+            );
             // Re-fetch page 1 at the restored page size (#678) so users who work
             // at 500/1000 rows don't have to re-select it; falls back to the
             // default display count when no page size was persisted.
@@ -3563,6 +3653,9 @@ export default function App() {
               ...makeTab("table", s.title || s.table, sql),
               database: s.database,
               table: s.table,
+              schemaTable: { database: s.database, name: s.table, columns: tableColumns.map((c) => c.name) },
+              tableColumns,
+              rowIdentity,
               previewRowLimit: limit,
               paginatable: base,
               builderSnapshot: restoredSnapshot,
@@ -4603,9 +4696,9 @@ export default function App() {
 
   const previewEditsForTab = useCallback((tab: Tab) => {
     if (!sessionId) return;
-    const { result, tableColumns, database, table, pendingEdits } = tab;
+    const { result, tableColumns, database, table, pendingEdits, rowIdentity } = tab;
     if (!result || !tableColumns || !database || !table) return;
-    const pkIndices = resolvePkIndices(result.columns, tableColumns);
+    const { indices: pkIndices } = resolveRowIdentity(result.columns, tableColumns, rowIdentity);
     const stmts = buildUpdateStatements({
       driver: selectedProfile?.driver ?? "mysql",
       database,
@@ -4624,9 +4717,13 @@ export default function App() {
 
   const applyEditsForTab = useCallback(async (tab: Tab) => {
     if (!sessionId) return;
-    const { result, tableColumns, database, table, pendingEdits, paginatable } = tab;
+    const { result, tableColumns, database, table, pendingEdits, paginatable, rowIdentity } = tab;
     if (!result || !tableColumns || !database || !table) return;
-    const pkIndices = resolvePkIndices(result.columns, tableColumns);
+    const { indices: pkIndices, strategy: identityStrategy } = resolveRowIdentity(
+      result.columns,
+      tableColumns,
+      rowIdentity,
+    );
     const driver = selectedProfile?.driver ?? "mysql";
     // 1 トランザクションに UPDATE (セル編集) + DELETE (削除予定行) + INSERT (新規行) を
     // まとめる。all-or-nothing なので一部失敗で全体がロールバックする。
@@ -4642,6 +4739,23 @@ export default function App() {
     });
     const stmts = [...updates, ...deletes, ...inserts];
     if (stmts.length === 0) return;
+    // 主キーが無く全列一致で行を識別しているとき (#849) は一意性を保証できない
+    // ため、Apply 前に必ず警告する — 本番/confirm_writes の設定に関わらず、常に
+    // このテーブル特有の安全網として機能する。表示中の行に実際に重複がある
+    // ことを検出できればより強い文言、そうでなければ一般的な注意文言を出す。
+    if ((updates.length > 0 || deletes.length > 0) && identityStrategy === "all_columns") {
+      const ambiguous = hasAmbiguousIdentity(result.rows, pkIndices);
+      const ok = await confirm({
+        title: translate("editAllColumnsConfirmTitle"),
+        message: translate(
+          ambiguous ? "editAllColumnsConfirmBodyAmbiguous" : "editAllColumnsConfirmBody",
+          { count: updates.length + deletes.length },
+        ),
+        confirmLabel: translate("editApplyButton"),
+        tone: "warning",
+      });
+      if (!ok) return;
+    }
     // 本番接続で書き込み承認 (confirm_writes) が有効なときは、通常のクエリ実行
     // ゲートと同じく、インライン編集の一括 Apply にも確認を要求する (#659)。
     // read-only は編集面自体が無効なので到達しないが、保険で条件に含める。
@@ -4796,23 +4910,49 @@ export default function App() {
       activateTab(existing.id);
       return;
     }
+    if (!sessionId) return;
     const limit = Math.max(1, settings.defaultDisplayCount);
-    const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
-    const sql = `${base} LIMIT ${limit}`;
-    const tab: Tab = {
-      ...makeTab("table", table, sql),
-      database,
-      table,
-      previewRowLimit: limit,
-      paginatable: base,
-      page: 1,
-      pageSize: limit,
-      rowEstimateTotal: null,
-    };
-    addTab(tab);
-    runQueryInTab(tab.id, sql, base);
-    // ページネーションの総ページ数目安に使う行数推定を取得 (ベストエフォート)。
-    if (sessionId) {
+    const driver = selectedProfile?.driver ?? "mysql";
+    void (async () => {
+      // 事前にスキーマ (主キー有無) と、無い場合の行識別フォールバック
+      // (rowid/ctid、#849) を解決してから初回 SELECT を組み立てる — 後から
+      // 付け足すと 1 ページ目を編集不能なまま表示し、その後こっそり再実行する
+      // 体験になってしまうため。`restoreSavedTabs` と同じ「開く前に
+      // describeTable を await する」方式 (既存のタブ復元と揃える)。失敗時は
+      // 従来どおりのプレーンな SELECT * にフォールバックし、実行自体のエラーは
+      // グリッド側 (queryError) に委ねる。
+      let resolved: {
+        base: string;
+        tableColumns: TableColumnInfo[];
+        rowIdentity: TableRowIdentity | null;
+      };
+      try {
+        resolved = await resolveTableOpen(sessionId, driver, database, table);
+      } catch {
+        resolved = {
+          base: qualifiedTableSql(driver, database, table),
+          tableColumns: [],
+          rowIdentity: null,
+        };
+      }
+      const { base, tableColumns, rowIdentity } = resolved;
+      const sql = `${base} LIMIT ${limit}`;
+      const tab: Tab = {
+        ...makeTab("table", table, sql),
+        database,
+        table,
+        schemaTable: { database, name: table, columns: tableColumns.map((c) => c.name) },
+        tableColumns,
+        rowIdentity,
+        previewRowLimit: limit,
+        paginatable: base,
+        page: 1,
+        pageSize: limit,
+        rowEstimateTotal: null,
+      };
+      addTab(tab);
+      runQueryInTab(tab.id, sql, base);
+      // ページネーションの総ページ数目安に使う行数推定を取得 (ベストエフォート)。
       void api
         .tableRowEstimates(sessionId, database)
         .then((list) => {
@@ -4820,7 +4960,7 @@ export default function App() {
           if (est != null) patchTab(tab.id, (tt) => ({ ...tt, rowEstimateTotal: est }));
         })
         .catch(() => {});
-    }
+    })();
   }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, selectedProfile?.driver, recordRecentTableOpen, sessionId, patchTab]);
 
   const handleImportTable = useCallback((database: string, table: string) => {
@@ -6912,6 +7052,7 @@ export default function App() {
                       table={tab.table ?? null}
                       editable={tab.kind === "table" && !readOnly}
                       tableColumns={tab.tableColumns}
+                      rowIdentity={tab.rowIdentity}
                       pendingEdits={tab.pendingEdits}
                       canUndo={(tab.editUndoStack?.length ?? 0) > 0}
                       canRedo={(tab.editRedoStack?.length ?? 0) > 0}

@@ -9,8 +9,8 @@ use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, PreviewResult, ProcessInfo, QueryResult,
     QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableSchema, TableSizeInfo,
-    UserPrivileges, Value,
+    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
+    TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::{
     build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode,
@@ -1248,6 +1248,21 @@ impl MySqlConn {
                 referenced_column: r.try_get::<Option<String>, _>(7).ok().flatten(),
             })
             .collect())
+    }
+
+    /// Row identity strategy for inline editing (#849). MySQL has no cheap
+    /// physical row identifier exposed to SQL (unlike SQLite's `rowid` or
+    /// PostgreSQL's `ctid`), so the only fallback once a table has no PK is
+    /// matching every column in the WHERE clause.
+    pub async fn row_identity(&self, db: &str, table: &str) -> Result<TableRowIdentity> {
+        let cols = self.columns(db, table).await?;
+        if let Some(identity) = super::row_identity_pk_or_none(&cols) {
+            return Ok(identity);
+        }
+        Ok(TableRowIdentity {
+            strategy: "all_columns".into(),
+            hidden_column: None,
+        })
     }
 
     pub async fn foreign_keys(&self, db: &str) -> Result<Vec<ForeignKey>> {

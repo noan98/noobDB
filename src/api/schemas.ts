@@ -51,6 +51,12 @@ export const tableSchema = z.object({
   columns: z.array(z.string()),
 });
 
+/** 編集用の行識別戦略 (#849)。primary_key / rowid / ctid / all_columns / none。 */
+export const tableRowIdentity = z.object({
+  strategy: z.string(),
+  hidden_column: z.string().nullable(),
+});
+
 export const foreignKey = z.object({
   table: z.string(),
   column: z.string(),

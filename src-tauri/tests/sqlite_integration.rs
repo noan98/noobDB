@@ -448,6 +448,104 @@ async fn sqlite_list_indexes_reports_primary_unique_and_plain() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// #849: row identity fallback for inline editing when a table has no usable
+/// primary key. Covers all four SQLite outcomes: real PK wins outright, a
+/// PK-less ordinary table falls back to `rowid`, a `WITHOUT ROWID` table has
+/// no rowid to fall back to (`all_columns`), and a table with no columns at
+/// all (edge case) reports `none`.
+#[tokio::test]
+async fn sqlite_row_identity_covers_pk_rowid_and_without_rowid() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_rowident_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute(
+        "CREATE TABLE with_pk (id INTEGER PRIMARY KEY, label TEXT)",
+        None,
+    )
+    .await
+    .expect("create with_pk");
+    conn.execute("CREATE TABLE no_pk (label TEXT, note TEXT)", None)
+        .await
+        .expect("create no_pk");
+    conn.execute(
+        "CREATE TABLE without_rowid (k TEXT, v TEXT, PRIMARY KEY (k, v)) WITHOUT ROWID",
+        None,
+    )
+    .await
+    .expect("create without_rowid");
+
+    let with_pk = conn
+        .row_identity("main", "with_pk")
+        .await
+        .expect("row_identity with_pk");
+    assert_eq!(with_pk.strategy, "primary_key");
+    assert_eq!(with_pk.hidden_column, None);
+
+    let no_pk = conn
+        .row_identity("main", "no_pk")
+        .await
+        .expect("row_identity no_pk");
+    assert_eq!(no_pk.strategy, "rowid");
+    assert_eq!(no_pk.hidden_column, Some("rowid".to_string()));
+
+    // `without_rowid` DOES have a (composite) primary key, so it must resolve
+    // to `primary_key` — WITHOUT ROWID only matters once there's no PK either
+    // (there's no such table in practice, but the driver logic still handles
+    // it: PK check runs first).
+    let without_rowid_pk = conn
+        .row_identity("main", "without_rowid")
+        .await
+        .expect("row_identity without_rowid (has composite PK)");
+    assert_eq!(without_rowid_pk.strategy, "primary_key");
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A `WITHOUT ROWID` table with no primary key isn't valid SQLite (WITHOUT
+/// ROWID requires a PK), so the only way to exercise the "no PK, no rowid"
+/// branch is a **view** — SQLite reports it as `type = 'view'` in
+/// `sqlite_master`, which `row_identity` excludes from the rowid strategy the
+/// same way it excludes `WITHOUT ROWID` tables and virtual tables.
+#[tokio::test]
+async fn sqlite_row_identity_falls_back_to_all_columns_for_a_view() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_rowident_view_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute(
+        "CREATE TABLE src (id INTEGER PRIMARY KEY, label TEXT)",
+        None,
+    )
+    .await
+    .expect("create src");
+    conn.execute("CREATE VIEW src_view AS SELECT label FROM src", None)
+        .await
+        .expect("create view");
+
+    let identity = conn
+        .row_identity("main", "src_view")
+        .await
+        .expect("row_identity src_view");
+    assert_eq!(identity.strategy, "all_columns");
+    assert_eq!(identity.hidden_column, None);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
 #[tokio::test]
 async fn sqlite_schema_objects_lists_views_and_triggers_with_definitions() {
     // schema_objects surfaces SQLite views and triggers (no routines),

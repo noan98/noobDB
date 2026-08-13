@@ -19,8 +19,8 @@ use advisor::UnusedIndexStats;
 use types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, LiveQuery, LocalTableMeta, PreviewResult,
     ProcessInfo, QueryResult, QueryStatsSupport, SchemaObject, ServerInfo, ServerMetrics,
-    StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate, TableSchema, TableSizeInfo,
-    UserPrivileges, Value,
+    StatementStat, StreamBatch, TableColumnInfo, TableRowEstimate, TableRowIdentity, TableSchema,
+    TableSizeInfo, UserPrivileges, Value,
 };
 
 /// Plain options to address a DB endpoint. When connecting through an SSH tunnel,
@@ -669,6 +669,19 @@ impl Connection {
             Connection::Sqlite(c) => c.columns(db, table).await,
             Connection::DuckDb(c) => c.columns(db, table).await,
             Connection::Mssql(c) => c.columns(db, table).await,
+        }
+    }
+
+    /// Row identity strategy for inline editing when a table has no usable
+    /// primary key (#849) — see [`TableRowIdentity`] for what each driver
+    /// reports and why.
+    pub async fn row_identity(&self, db: &str, table: &str) -> Result<TableRowIdentity> {
+        match self {
+            Connection::MySql(c) => c.row_identity(db, table).await,
+            Connection::Postgres(c) => c.row_identity(db, table).await,
+            Connection::Sqlite(c) => c.row_identity(db, table).await,
+            Connection::DuckDb(c) => c.row_identity(db, table).await,
+            Connection::Mssql(c) => c.row_identity(db, table).await,
         }
     }
 
@@ -1359,6 +1372,28 @@ impl Connection {
 /// SQLite as declared), so the candidate literals stay uppercase.
 pub(crate) fn type_name_matches(name: &str, candidates: &[&str]) -> bool {
     candidates.iter().any(|c| name.eq_ignore_ascii_case(c))
+}
+
+/// Shared PK/empty short-circuit for `Connection::row_identity` (#849). A real
+/// primary key always wins outright (the frontend already knows how to build
+/// a WHERE clause from it), and a table with no columns at all has nothing to
+/// identify a row by. Returns `None` in every other case, leaving the caller
+/// to decide between a driver-specific physical row id (SQLite `rowid` /
+/// PostgreSQL `ctid`) and the universal `all_columns` fallback.
+pub(crate) fn row_identity_pk_or_none(cols: &[TableColumnInfo]) -> Option<TableRowIdentity> {
+    if cols.iter().any(|c| c.key.eq_ignore_ascii_case("PRI")) {
+        return Some(TableRowIdentity {
+            strategy: "primary_key".into(),
+            hidden_column: None,
+        });
+    }
+    if cols.is_empty() {
+        return Some(TableRowIdentity {
+            strategy: "none".into(),
+            hidden_column: None,
+        });
+    }
+    None
 }
 
 /// Builds the driver-agnostic column metadata (`Column`) from the first row of
