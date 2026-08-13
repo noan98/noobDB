@@ -326,19 +326,6 @@ export const logView = z.object({
 // #735 DML フライトレコーダ / Undo。
 const writeKind = z.enum(["insert", "update", "delete", "other"]);
 
-export const capturedWriteResponse = z.object({
-  result: queryResult,
-  capturable: z.boolean(),
-  reason: z.string().nullable(),
-  captureId: z.number().nullable(),
-});
-
-export const writeCapturePrecheck = z.object({
-  capturable: z.boolean(),
-  reason: z.string().nullable(),
-  estimatedRows: z.number().nullable(),
-});
-
 export const writeCaptureSummary = z.object({
   id: z.number(),
   profile_id: z.string().nullable(),
