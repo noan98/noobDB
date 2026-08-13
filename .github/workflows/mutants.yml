@@ -3,8 +3,8 @@ name: mutation-test
 # ミューテーションテスト (#528)
 #
 # 安全網モジュール (is_read_only_sql / apply_auto_limit / has_stacked_statements /
-# is_query_shape / with_cte_is_mutation) に変異を注入し、既存テストが変異を
-# 捕捉できるかを定量評価する。
+# is_query_shape / with_cte_is_mutation / quote_ident / sql_literal) に変異を
+# 注入し、既存テストが変異を捕捉できるかを定量評価する。
 #
 # 実行時間が長い (全変異で数十分以上) ため、PR では走らせず手動トリガのみ。
 # 可視化 (Job Summary + アーティファクト) だけを目的とし、fail させない方針。
@@ -100,10 +100,12 @@ jobs:
           cargo mutants --list \
             --file src/db/mod.rs \
             --file src/db/mysql.rs \
+            --file src/db/sync.rs \
+            --file src/db/data_diff.rs \
             2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      # 変異テスト本体: 安全網モジュール 2 ファイルに限定して実行。
+      # 変異テスト本体: 安全網モジュール群に限定して実行。
       # --no-shuffle で再現性を確保し、失敗しても CI を落とさない (|| true)。
       # mutants.out/ をアーティファクトとして保存し、Job Summary にサマリを出す。
       - name: Run cargo-mutants
@@ -113,6 +115,8 @@ jobs:
           cargo mutants \
             --file src/db/mod.rs \
             --file src/db/mysql.rs \
+            --file src/db/sync.rs \
+            --file src/db/data_diff.rs \
             --no-shuffle \
             2>&1 | tee mutants-output.txt || true
 
