@@ -91,6 +91,13 @@ import {
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
 import { parseClipboardGrid, planPasteEdit } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
+import {
+  clientQuickFilter,
+  isNullCell,
+  quickFilterValueLabel,
+  serverQuickFilter,
+  type QuickFilterMode,
+} from "./quickFilter";
 import type { ServerFilter, ServerFilterOp, ServerSort, ServerSortDirection } from "./serverBrowse";
 import { diffResultRows } from "../resultDiff";
 import {
@@ -1365,8 +1372,8 @@ export function writeStoredColumnState(
  * by `columnFilter` (the `filterFn`) and the header popup.
  */
 export type FilterNullMode = "any" | "only" | "exclude";
-export type TextFilterOp = "contains" | "equals" | "startsWith" | "endsWith";
-export type NumberFilterOp = "eq" | "gt" | "lt" | "between";
+export type TextFilterOp = "contains" | "equals" | "notEquals" | "startsWith" | "endsWith";
+export type NumberFilterOp = "eq" | "ne" | "gt" | "lt" | "between";
 export type FilterOp = TextFilterOp | NumberFilterOp;
 
 export interface ColumnFilter {
@@ -1381,12 +1388,14 @@ export interface ColumnFilter {
 const TEXT_FILTER_OPS: { op: TextFilterOp; key: I18nKey }[] = [
   { op: "contains", key: "gridFilterOpContains" },
   { op: "equals", key: "gridFilterOpEquals" },
+  { op: "notEquals", key: "gridFilterOpNotEquals" },
   { op: "startsWith", key: "gridFilterOpStartsWith" },
   { op: "endsWith", key: "gridFilterOpEndsWith" },
 ];
 
 const NUMBER_FILTER_OPS: { op: NumberFilterOp; key: I18nKey }[] = [
   { op: "eq", key: "gridFilterOpEq" },
+  { op: "ne", key: "gridFilterOpNe" },
   { op: "gt", key: "gridFilterOpGt" },
   { op: "lt", key: "gridFilterOpLt" },
   { op: "between", key: "gridFilterOpBetween" },
@@ -1430,16 +1439,19 @@ function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFi
   switch (f.op) {
     case "contains":
     case "equals":
+    case "notEquals":
     case "startsWith":
     case "endsWith": {
       const s = String(v).toLowerCase();
       const q = f.value.toLowerCase();
       if (f.op === "contains") return s.includes(q);
       if (f.op === "equals") return s === q;
+      if (f.op === "notEquals") return s !== q;
       if (f.op === "startsWith") return s.startsWith(q);
       return s.endsWith(q);
     }
     case "eq":
+    case "ne":
     case "gt":
     case "lt":
     case "between": {
@@ -1457,6 +1469,7 @@ function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFi
       if (isIntegerLiteral(raw) && present.length > 0 && present.every(isIntegerLiteral)) {
         const n = BigInt(raw);
         if (f.op === "eq") return n === BigInt(a);
+        if (f.op === "ne") return n !== BigInt(a);
         if (f.op === "gt") return n > BigInt(a);
         if (f.op === "lt") return n < BigInt(a);
         // between: an empty bound is treated as open.
@@ -1466,6 +1479,7 @@ function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFi
       if (Number.isNaN(n)) return false;
       const an = a === "" ? NaN : Number(a);
       if (f.op === "eq") return !Number.isNaN(an) && n === an;
+      if (f.op === "ne") return !Number.isNaN(an) && n !== an;
       if (f.op === "gt") return !Number.isNaN(an) && n > an;
       if (f.op === "lt") return !Number.isNaN(an) && n < an;
       // between: an empty bound is treated as open (-∞ / +∞).
@@ -1632,7 +1646,8 @@ function ColumnFilterMenu({
     () => serverFilter?.op ?? (numeric ? "eq" : "contains"),
   );
   const [serverFilterValue, setServerFilterValue] = useState<string>(() => serverFilter?.value ?? "");
-  const serverFilterNeedsValue = serverFilterOp === "eq" || serverFilterOp === "contains";
+  const serverFilterNeedsValue =
+    serverFilterOp === "eq" || serverFilterOp === "ne" || serverFilterOp === "contains";
 
   // Commit the draft up to the table, clearing it when it no longer narrows.
   const apply = (next: ColumnFilter) => {
@@ -1823,6 +1838,7 @@ function ColumnFilterMenu({
                 onChange={(e) => setServerFilterOp(e.target.value as ServerFilterOp)}
               >
                 <option value="eq">{t("gridServerFilterOpEq")}</option>
+                <option value="ne">{t("gridServerFilterOpNe")}</option>
                 <option value="contains">{t("gridServerFilterOpContains")}</option>
                 <option value="isNull">{t("gridServerFilterOpIsNull")}</option>
                 <option value="isNotNull">{t("gridServerFilterOpIsNotNull")}</option>
@@ -4591,6 +4607,56 @@ export function DataGrid({
                   },
                 ]
               : []),
+            // セル値のクイックフィルタ (#914)。探索で最頻用の「この値で絞る」を
+            // 右クリック 1 手にする。新しいフィルタモデルは作らず、既存の 2 経路
+            // (table タブのサーバ側 WHERE / クエリ結果のクライアント側
+            // ColumnFilter) のどちらかへ `quickFilter.ts` が値を流し込むだけなので、
+            // フィルタチップやヘッダーのアクティブ表示はそのまま再利用される。
+            ...(() => {
+              const col = columns[copyMenu.colIdx];
+              // サーバ側フィルタが使えるのは table タブのみ。それ以外は
+              // クライアント側へ載せるが、列フィルタ自体が無効な文脈
+              // (`enableColumnControls: false` のプレビュー等) では出さない。
+              if (!col || !(onSetServerFilter || enableColumnControls)) return [];
+              const kind = columnKinds[copyMenu.colIdx] ?? "string";
+              // BLOB は手元に 16 進表現しか無く、それで一致比較しても意味を成さない。
+              if (kind === "binary") return [];
+              const value = rows[copyMenu.rowIdx]?.[copyMenu.colIdx] ?? null;
+              const numeric = isNumericFilterKind(kind);
+              const nullCell = isNullCell(value);
+              const shown = quickFilterValueLabel(value);
+              const title = onSetServerFilter
+                ? t("gridQuickFilterTitleServer")
+                : t("gridQuickFilterTitleClient");
+              const apply = (mode: QuickFilterMode) => {
+                setCopyMenu(null);
+                if (onSetServerFilter) {
+                  onSetServerFilter(col.name, serverQuickFilter(value, mode, numeric));
+                } else {
+                  table
+                    .getColumn(String(copyMenu.colIdx))
+                    ?.setFilterValue(clientQuickFilter(value, mode, numeric));
+                }
+              };
+              return [
+                { separator: true as const },
+                {
+                  label: nullCell
+                    ? t("gridQuickFilterEqNull")
+                    : t("gridQuickFilterEq", { value: shown }),
+                  icon: "filter" as const,
+                  title,
+                  onSelect: () => apply("eq"),
+                },
+                {
+                  label: nullCell
+                    ? t("gridQuickFilterNeNull")
+                    : t("gridQuickFilterNe", { value: shown }),
+                  title,
+                  onSelect: () => apply("ne"),
+                },
+              ];
+            })(),
             ...(() => {
               // "Copy as INSERT" (#601): operates on every row covered by an
               // active multi-row range selection, or just the clicked row

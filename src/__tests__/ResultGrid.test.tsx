@@ -1557,3 +1557,124 @@ describe("選択範囲のエクスポート (#917)", () => {
     expect(preview).not.toContain("cherry");
   });
 });
+
+// セル右クリックのクイックフィルタ (#914)。既存のフィルタモデル
+// (`onSetServerFilter` / TanStack の ColumnFilter) へセル値を流し込むだけなので、
+// ここでは「どちらの経路に載るか」と「NULL / BLOB の扱い」を固定する。値 → 条件の
+// 変換そのものは `quickFilter.test.ts` が担当する。
+describe("ResultGrid クイックフィルタ (#914)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+
+  const NULLABLE_RESULT = makeResult(FRUIT_COLUMNS, [
+    ["banana", 2],
+    [null, 5],
+  ]);
+
+  function cells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  it("table タブ (サーバ側ブラウズ) では onSetServerFilter へ = / ≠ を渡す", async () => {
+    const user = userEvent.setup();
+    const onSetServerFilter = vi.fn();
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={FRUIT_RESULT}
+        onSetServerSort={vi.fn()}
+        onSetServerFilter={onSetServerFilter}
+      />,
+    );
+
+    fireEvent.contextMenu(cells(container)[0][0]);
+    await user.click(
+      await screen.findByRole("menuitem", { name: t("gridQuickFilterEq", { value: "banana" }) }),
+    );
+    expect(onSetServerFilter).toHaveBeenCalledWith("name", {
+      op: "eq",
+      value: "banana",
+      numeric: false,
+    });
+
+    // 数値列からの「除外」は numeric フラグ付きで渡り、裸の数値リテラルになる。
+    fireEvent.contextMenu(cells(container)[0][1]);
+    await user.click(
+      await screen.findByRole("menuitem", { name: t("gridQuickFilterNe", { value: "2" }) }),
+    );
+    expect(onSetServerFilter).toHaveBeenLastCalledWith("qty", {
+      op: "ne",
+      value: "2",
+      numeric: true,
+    });
+  });
+
+  it("NULL セルでは IS NULL / IS NOT NULL の項目になる", async () => {
+    const user = userEvent.setup();
+    const onSetServerFilter = vi.fn();
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={NULLABLE_RESULT}
+        onSetServerSort={vi.fn()}
+        onSetServerFilter={onSetServerFilter}
+      />,
+    );
+
+    fireEvent.contextMenu(cells(container)[1][0]);
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickFilterNeNull") }));
+    expect(onSetServerFilter).toHaveBeenCalledWith("name", {
+      op: "isNotNull",
+      value: "",
+      numeric: false,
+    });
+  });
+
+  it("クエリ結果タブではクライアント側フィルタとして即座に行が絞られる", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    expect(dataRowTexts(container)).toHaveLength(3);
+
+    fireEvent.contextMenu(cells(container)[0][0]);
+    await user.click(
+      await screen.findByRole("menuitem", { name: t("gridQuickFilterEq", { value: "banana" }) }),
+    );
+
+    await waitFor(() => expect(dataRowTexts(container)).toHaveLength(1));
+    expect(dataRowTexts(container)[0][0]).toBe("banana");
+    // 既存のフィルタ表示 (件数チップ + 解除ボタン) がそのまま効く。
+    expect(screen.getByText(t("gridClearFilters"))).toBeTruthy();
+  });
+
+  it("除外を選ぶとその値の行だけが落ちる", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+
+    fireEvent.contextMenu(cells(container)[0][0]);
+    await user.click(
+      await screen.findByRole("menuitem", { name: t("gridQuickFilterNe", { value: "banana" }) }),
+    );
+
+    await waitFor(() => expect(dataRowTexts(container)).toHaveLength(2));
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["apple", "cherry"]);
+  });
+
+  it("BLOB 列では出さない (16 進表現の一致比較は意味を成さないため)", async () => {
+    const blobResult = makeResult(
+      [
+        { name: "id", type_name: "INT" },
+        { name: "payload", type_name: "BLOB" },
+      ],
+      [[1, "0xdeadbeef"]],
+    );
+    const { container } = renderWithProviders(<ResultGrid result={blobResult} />);
+
+    fireEvent.contextMenu(cells(container)[0][1]);
+    // 同じメニューの他項目は出ているのに、クイックフィルタだけが無い。
+    expect(await screen.findByRole("menuitem", { name: t("gridViewFull") })).toBeTruthy();
+    expect(
+      screen.queryByRole("menuitem", { name: t("gridQuickFilterEq", { value: "0xdeadbeef" }) }),
+    ).toBeNull();
+  });
+});

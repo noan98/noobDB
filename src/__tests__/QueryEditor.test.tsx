@@ -94,3 +94,87 @@ describe("QueryEditor", () => {
     });
   });
 });
+
+// ツールバーのオーバーフローメニュー (#915)。主要アクション (Run / Preview /
+// Format) は常時表示のまま、副次アクションは「…」へ畳む。折り返しをやめた
+// ことでツールバーが 1 段に収まる、という見た目そのものは jsdom では測れない
+// ため、ここでは「何が畳まれ / 何が残るか」と「メニューから実行できるか」を
+// 固定する (畳んだ結果としてツールバーの要素数が減ることが 1 段化の根拠)。
+describe("QueryEditor ツールバーのオーバーフロー (#915)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+
+  it("主要アクションは常時表示のまま、副次アクションは畳まれる", () => {
+    renderWithProviders(
+      <QueryEditor
+        onRun={() => {}}
+        onPreview={() => {}}
+        onExplain={() => {}}
+        onSaveSnippet={() => {}}
+        initialSql="SELECT 1"
+      />,
+    );
+
+    // 主要アクションはツールバー上に残る。
+    expect(screen.getByRole("button", { name: t("editorRun") })).toBeTruthy();
+    expect(screen.getByRole("button", { name: t("editorPreview") })).toBeTruthy();
+    expect(screen.getByRole("button", { name: t("editorFormat") })).toBeTruthy();
+    // 副次アクションはメニューを開くまで現れない。
+    expect(screen.queryByRole("button", { name: t("editorExplain") })).toBeNull();
+    expect(screen.queryByRole("button", { name: t("editorSaveSnippet") })).toBeNull();
+    expect(screen.getByRole("button", { name: t("editorMoreActions") })).toBeTruthy();
+  });
+
+  it("「…」からメニューを開いて副次アクションを実行できる", async () => {
+    const user = userEvent.setup();
+    const onExplain = vi.fn();
+    renderWithProviders(
+      <QueryEditor onRun={() => {}} onExplain={onExplain} initialSql="SELECT 7" />,
+    );
+
+    const more = screen.getByRole("button", { name: t("editorMoreActions") });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    await user.click(more);
+
+    const item = await screen.findByRole("menuitem", { name: t("editorExplain") });
+    await user.click(item);
+
+    expect(onExplain).toHaveBeenCalledWith("SELECT 7");
+    // 実行後はメニューが閉じる (ContextMenu の activate は close → onSelect)。
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem", { name: t("editorExplain") })).toBeNull(),
+    );
+  });
+
+  it("本文が空のときメニュー項目は無効化される (ツールバーの無効判定を引き継ぐ)", async () => {
+    const user = userEvent.setup();
+    const onExplain = vi.fn();
+    renderWithProviders(<QueryEditor onRun={() => {}} onExplain={onExplain} initialSql="" />);
+
+    await user.click(screen.getByRole("button", { name: t("editorMoreActions") }));
+    // 無効項目は role=menuitem を持ったまま disabled になる (理由は Tooltip)。
+    const item = document.querySelector<HTMLButtonElement>("[role=menuitem][disabled]");
+    expect(item?.textContent).toContain(t("editorExplain"));
+  });
+
+  it("畳む対象のアクションが 1 つも無ければ「…」自体を出さない", () => {
+    renderWithProviders(<QueryEditor onRun={() => {}} initialSql="SELECT 1" />);
+    expect(screen.queryByRole("button", { name: t("editorMoreActions") })).toBeNull();
+  });
+
+  it("緊急クエリ実行モードのトグルは畳まずツールバーに残す (状態の可視性が安全網)", () => {
+    renderWithProviders(
+      <QueryEditor
+        onRun={() => {}}
+        onExplain={() => {}}
+        sessionId="s1"
+        readOnly
+        emergencyMode={false}
+        onToggleEmergencyMode={() => {}}
+        initialSql="SELECT 1"
+      />,
+    );
+    expect(screen.getByLabelText(t("editorEmergencyMode"))).toBeTruthy();
+  });
+});

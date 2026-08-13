@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CellValue, Column } from "../api/tauri";
+import { CATEGORICAL, DIVERGING_RAMPS, SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
 import {
   buildChartModel,
   chartConfigKeyFrom,
   chartNotices,
+  chartPalette,
+  chartRampGradient,
+  chartSeriesColors,
+  chartValueColors,
+  DEFAULT_CHART_PALETTE,
   defaultChartConfig,
   inferNumericColumns,
   MAX_POINTS,
@@ -54,6 +60,7 @@ describe("defaultChartConfig", () => {
       xCol: 0,
       yCols: [1],
       aggregation: "none",
+      palette: "categorical",
     });
   });
 
@@ -302,7 +309,7 @@ describe("sanitizeChartConfig (#909, corruption resistance)", () => {
   const columns = [col("name"), col("amount"), col("qty")];
 
   it("accepts a well-formed config referencing valid columns", () => {
-    const cfg: ChartConfig = { type: "line", xCol: 0, yCols: [1, 2], aggregation: "sum" };
+    const cfg: ChartConfig = { type: "line", xCol: 0, yCols: [1, 2], aggregation: "sum", palette: "teal" };
     expect(sanitizeChartConfig(cfg, columns)).toEqual(cfg);
   });
 
@@ -326,7 +333,7 @@ describe("sanitizeChartConfig (#909, corruption resistance)", () => {
       { type: "bar", xCol: 0, yCols: [1, 1, 9, 1], aggregation: "none" },
       columns,
     );
-    expect(result).toEqual({ type: "bar", xCol: 0, yCols: [1], aggregation: "none" });
+    expect(result).toEqual({ type: "bar", xCol: 0, yCols: [1], aggregation: "none", palette: "categorical" });
   });
 
   it("falls back to null when every saved Y column disappeared (schema drift)", () => {
@@ -335,12 +342,12 @@ describe("sanitizeChartConfig (#909, corruption resistance)", () => {
 
   it("respects an intentionally empty Y selection", () => {
     const cfg: ChartConfig = { type: "bar", xCol: 0, yCols: [], aggregation: "none" };
-    expect(sanitizeChartConfig(cfg, columns)).toEqual(cfg);
+    expect(sanitizeChartConfig(cfg, columns)).toEqual({ ...cfg, palette: "categorical" });
   });
 
   it("excludes a saved Y column that now equals xCol", () => {
     const result = sanitizeChartConfig({ type: "bar", xCol: 1, yCols: [1, 2], aggregation: "none" }, columns);
-    expect(result).toEqual({ type: "bar", xCol: 1, yCols: [2], aggregation: "none" });
+    expect(result).toEqual({ type: "bar", xCol: 1, yCols: [2], aggregation: "none", palette: "categorical" });
   });
 });
 
@@ -352,7 +359,7 @@ describe("readStoredChartConfig / writeStoredChartConfig (#909)", () => {
   afterEach(() => localStorage.clear());
 
   it("round-trips a config through localStorage", () => {
-    const cfg: ChartConfig = { type: "pie", xCol: 0, yCols: [1], aggregation: "count" };
+    const cfg: ChartConfig = { type: "pie", xCol: 0, yCols: [1], aggregation: "count", palette: "blue" };
     writeStoredChartConfig(KEY, cfg);
     expect(readStoredChartConfig(KEY, columns)).toEqual(cfg);
   });
@@ -373,5 +380,111 @@ describe("readStoredChartConfig / writeStoredChartConfig (#909)", () => {
     const cfg: ChartConfig = { type: "bar", xCol: 5, yCols: [6], aggregation: "none" };
     writeStoredChartConfig(KEY, cfg);
     expect(readStoredChartConfig(KEY, columns)).toBeNull();
+  });
+});
+
+// --- 配色 (#916) ------------------------------------------------------------
+//
+// グリッドの条件付き書式が使う共有カラースケール (`colorScale.ts`) の連続/発散
+// ランプを、チャートの系列色/値着色にも開放したもの。色そのものの正しさは
+// `colorScale.test.ts` が固定するので、ここでは「どの位置をサンプリングするか」
+// と「離散パレットのときに従来挙動へ落ちるか」を固定する。
+
+describe("chartPalette (#916)", () => {
+  it("falls back to the categorical default for unknown / missing keys", () => {
+    expect(chartPalette(undefined).key).toBe(DEFAULT_CHART_PALETTE);
+    expect(chartPalette("nope").key).toBe(DEFAULT_CHART_PALETTE);
+    expect(chartPalette(null).key).toBe(DEFAULT_CHART_PALETTE);
+  });
+
+  it("exposes the shared ramps and their colour-blind safety", () => {
+    expect(chartPalette("categorical").ramp).toBeNull();
+    expect(chartPalette("blue").ramp?.stops).toEqual(SEQUENTIAL_RAMPS.blue.stops);
+    expect(chartPalette("blue").colorBlindSafe).toBe(true);
+    // coolWarm は直感的だが赤緑色弱に不利 (colorScale.ts の定義と揃っている)。
+    expect(chartPalette("coolWarm").colorBlindSafe).toBe(false);
+    expect(chartPalette("blueOrange").colorBlindSafe).toBe(true);
+  });
+});
+
+describe("chartSeriesColors (#916)", () => {
+  it("keeps the previous categorical cycling as the default", () => {
+    const colors = chartSeriesColors("categorical", 10);
+    expect(colors).toHaveLength(10);
+    expect(colors[0]).toBe(CATEGORICAL[0]);
+    // パレット長を超えたら循環する (従来の `% length` と同じ)。
+    expect(colors[CATEGORICAL.length]).toBe(CATEGORICAL[0]);
+  });
+
+  it("returns an empty array for a degenerate count", () => {
+    expect(chartSeriesColors("blue", 0)).toEqual([]);
+    expect(chartSeriesColors("blue", -3)).toEqual([]);
+    expect(chartSeriesColors("blue", Number.NaN)).toEqual([]);
+  });
+
+  it("samples a ramp across its usable span for multiple series", () => {
+    const colors = chartSeriesColors("blue", 3);
+    expect(colors).toHaveLength(3);
+    expect(new Set(colors).size).toBe(3);
+    // 連続ランプの下端 (ほぼ白) は背景に沈むので使わない。
+    expect(colors[0]).not.toBe(sampleRamp(0, SEQUENTIAL_RAMPS.blue.stops));
+    expect(colors[2]).toBe(sampleRamp(1, SEQUENTIAL_RAMPS.blue.stops));
+  });
+
+  it("uses a single readable mid-dark colour when there is only one series", () => {
+    const [only] = chartSeriesColors("teal", 1);
+    expect(only).toBe(sampleRamp(0.75, SEQUENTIAL_RAMPS.teal.stops));
+  });
+});
+
+describe("chartValueColors (#916)", () => {
+  it("returns null for the categorical palette (no value encoding)", () => {
+    expect(chartValueColors([1, 2, 3], "categorical")).toBeNull();
+    expect(chartValueColors([1, 2, 3], undefined)).toBeNull();
+  });
+
+  it("maps the smallest value to the light end and the largest to the dark end", () => {
+    const colors = chartValueColors([10, 0, 5], "blue");
+    expect(colors).not.toBeNull();
+    const [high, low, mid] = colors!;
+    expect(high).toBe(sampleRamp(1, SEQUENTIAL_RAMPS.blue.stops));
+    expect(low).toBe(sampleRamp(0.2, SEQUENTIAL_RAMPS.blue.stops));
+    expect(mid).not.toBe(high);
+    expect(mid).not.toBe(low);
+  });
+
+  it("uses the whole diverging ramp so its pale centre lands on the mid value", () => {
+    const colors = chartValueColors([0, 50, 100], "blueOrange");
+    expect(colors![0]).toBe(sampleRamp(0, DIVERGING_RAMPS.blueOrange.stops));
+    expect(colors![1]).toBe(sampleRamp(0.5, DIVERGING_RAMPS.blueOrange.stops));
+    expect(colors![2]).toBe(sampleRamp(1, DIVERGING_RAMPS.blueOrange.stops));
+  });
+
+  it("falls back to one solid colour when the range is degenerate", () => {
+    const flat = chartValueColors([7, 7, 7], "blue")!;
+    expect(new Set(flat).size).toBe(1);
+    expect(chartValueColors([], "blue")).toEqual([]);
+    // 非有限値だけの系列も「大小を表せない」ので単色に倒す (NaN を色にしない)。
+    const nonFinite = chartValueColors([Number.NaN, Number.POSITIVE_INFINITY], "blue")!;
+    expect(new Set(nonFinite).size).toBe(1);
+    expect(nonFinite[0]).toMatch(/^rgb\(\d+, \d+, \d+\)$/);
+  });
+
+  it("keeps non-finite entries readable inside an otherwise valid range", () => {
+    const colors = chartValueColors([0, Number.NaN, 10], "blue")!;
+    expect(colors[1]).toMatch(/^rgb\(\d+, \d+, \d+\)$/);
+  });
+});
+
+describe("chartRampGradient (#916)", () => {
+  it("returns null for the categorical palette (no gradient to show)", () => {
+    expect(chartRampGradient("categorical")).toBeNull();
+  });
+
+  it("builds a CSS gradient from the shared ramp", () => {
+    const css = chartRampGradient("blue");
+    expect(css).toMatch(/^linear-gradient\(90deg, rgb\(/);
+    expect(css).toContain("0%");
+    expect(css).toContain("100%");
   });
 });

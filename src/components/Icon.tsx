@@ -31,6 +31,7 @@ import { chakra } from "@chakra-ui/react";
  * | 検索 (値/横断検索)         | `search`        |
  * | チャート (結果の可視化)    | `chart`         |
  * | ピボット (クロス集計)      | `pivot`         |
+ * | 一括実行 (ブロードキャスト) | `broadcast`    |
  *
  * ## サイズ / ストローク規約
  *
@@ -121,6 +122,7 @@ export type IconName =
   | "sqlite"
   | "search"
   | "bell"
+  | "broadcast"
   | "flask";
 
 /**
@@ -557,6 +559,17 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <circle cx="11" cy="11" r="8" />
       <path d="m21 21-4.3-4.3" />
+    </>
+  ),
+  // 一括実行 (ブロードキャスト、#915)。中心の点から広がる同心の弧で「1 つの文を
+  // 複数の接続へ同時に送る」ことを示す。QueryEditor のツールバーにインラインで
+  // 描いていた glyph を、オーバーフローメニューでも使えるようアイコンセットへ
+  // 昇格させたもの (同じ意味に同じ glyph、というレキシコンの方針どおり)。
+  broadcast: (
+    <>
+      <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
+      <path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4" />
+      <path d="M4.2 4.2a11.4 11.4 0 0 0 0 15.6M19.8 4.2a11.4 11.4 0 0 1 0 15.6" />
     </>
   ),
   // サンドボックス (壊せる砂場、#747) 用のフラスコアイコン。

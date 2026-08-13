@@ -1630,7 +1630,15 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   ラッパーは `api/schemas.ts` の **zod スキーマ**でレスポンスを実行時検証し、Rust の
   serde 構造体と TS 型のズレを早期検出します (未知フィールドは破棄で前方互換)。
 - `components/` (接続・クエリ) — `ConnectionList`/`ConnectionForm` (接続)、`QueryEditor`
-  (CodeMirror 6 + スキーマ補完 + リアルタイム構文チェック。後述の #704 lint 統合)、`QueryBuilder`、`ResultGrid`/`PreviewGrid`
+  (CodeMirror 6 + スキーマ補完 + リアルタイム構文チェック。後述の #704 lint 統合。
+  ツールバーは**主要アクションのみ常時表示**で、副次アクション (Explain・スニペット
+  保存・`.sql` の開く/保存・一括実行・Query Builder) は「…」オーバーフローメニュー
+  (共有 `ContextMenu`) へ畳む #915 — 以前は狭幅で `flexWrap` により 2〜3 段へ折り返し、
+  多機能タブほどエディタの縦領域が削られていた。畳まないのは Run / Preview /
+  Format と**緊急クエリ実行モードのトグル**で、後者は「状態が常に見えていること
+  自体が安全網」だから。無効時の理由 (`disabledReason` 等) はメニュー項目の
+  `title` に持ち込むので、ボタンだったときと同じ説明がそのまま読める)、
+  `QueryBuilder`、`ResultGrid`/`PreviewGrid`
   (TanStack Table)、`ResultViewSwitch` (結果パネルの表示切替セグメント。グリッド /
   ピボット / チャートの 3 択排他で、`ResultGrid`・`PivotView`・`ChartView` の各
   ツールバー先頭に同じものを置き「今どれを見ているか」と往復導線を 1 か所に集約
@@ -1645,7 +1653,16 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `schemaExport.ts` に分離してテスト。出力はロケール非依存の英語固定で、既存 IPC
   のみで完結しバックエンド変更なし)。
 - `components/` (発展機能) — `ChartView` (結果のグラフ化。チャートライブラリ非依存で
-  SVG 描画、純ロジックは `chartData.ts`)、`CommandPalette` (Cmd/Ctrl+K の横断検索。
+  SVG 描画、純ロジックは `chartData.ts`。**配色はユーザが選べる** #916 — 既定の
+  カテゴリスケールに加えて `colorScale.ts` の連続 (blue/teal) / 発散 (coolWarm/
+  blueOrange) ランプを選べ、グリッドの条件付き書式 (`HEAT_PALETTES`) と「値 → 色」の
+  体系が揃う。選択肢とサンプリング位置の決め方だけを `chartData.ts` の
+  `CHART_PALETTES` / `chartSeriesColors` / `chartValueColors` / `chartRampGradient` が
+  持ち、色そのものは `colorScale.ts` を単一の情報源にする。ランプ選択時は単一系列の
+  棒グラフと円グラフを**値の大小で着色**し (折れ線/面は形状を追いやすいよう系列色
+  1 色のまま)、そのとき凡例の見本は単色ではなくランプの勾配にする。設定は既存の
+  チャート設定と同じ localStorage 永続化に相乗りし、このフィールドを持たない
+  保存済み設定は縮退させず既定へ埋める)、`CommandPalette` (Cmd/Ctrl+K の横断検索。
   `commandPaletteSearch.ts`)、`ObjectSearchModal` (スキーマ全体のオブジェクト検索。
   `objectSearch.ts`)、`ParameterInputModal` (`{{name}}` プレースホルダのパラメータ化
   クエリ。`queryParams.ts` が型別に安全なリテラル/識別子へ展開)、`BatchResultsView`
@@ -1674,6 +1691,21 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `cellFormat.ts` (JSON コンパクト表記・日時のロケール整形。**表示専用**で実値は不変)、
   `cellConditionalFormat.ts` (データバー/ヒートマップ。表示専用。色は下記
   `colorScale.ts` を参照)。
+- セル値のクイックフィルタ (#914) — `quickFilter.ts`。結果グリッドのセル右クリックに
+  出る「この値で絞り込む (= value)」「この値を除外する (≠ value)」の**純ロジック**。
+  **新しいフィルタモデルは増やさず**、クリックしたセルの値を既存の 2 経路 — table
+  タブのサーバ側 WHERE (`onSetServerFilter` → `serverBrowse.ts` の `ServerFilter`) と、
+  クエリ結果タブのクライアント側 `ColumnFilter` (TanStack の `ColumnFiltersState`) —
+  のどちらかへ変換するだけで、絞り込みの実行・表示 (フィルタチップ / ヘッダーの
+  アクティブ表示 / 解除ボタン) は既存の仕組みがそのまま担う。実装として `≠` の
+  演算子を両モデルへ追加した (`ServerFilterOp` の `ne` = `<>`、`ColumnFilter` の
+  `notEquals` / `ne`)。これらは列ヘッダのフィルタポップアップからも選べる。
+  **NULL セルは値比較ではなく NULL 判定に倒す** (`IS NULL` / `IS NOT NULL`、
+  クライアントは `nullMode: only / exclude`)。非 NULL 値の「除外」は両経路とも
+  NULL 行にマッチしない — SQL の `col <> 'x'` が三値論理で NULL を落とすのと、
+  クライアント側 `columnFilter` が値条件のある行で NULL を弾くのが一致するため、
+  テーブルブラウズとクエリ結果で見え方が変わらない (意図的に揃えてある)。BLOB 列は
+  手元に 16 進表現しか無く一致比較が意味を成さないので項目自体を出さない。
 - セル値のクイックセット — `quickSetValues.ts`。結果グリッドのセル右クリックに出る
   「NULL をセット」「空文字をセット」「0 をセット」「true/false をセット」「現在日時を
   セット」の**純ロジック** (どの列にどの候補を出すか + 生成する生文字列)。生成値は
@@ -1720,8 +1752,9 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   **単一のスケール体系**を純ロジックとして定義する。**sequential** (単一色相の連続、CB
   セーフ) / **categorical** (CB 配慮の順序付き離散色、チャート系列用) / **diverging**
   (中央が淡い発散) の 3 系統と、値 → 色の純関数 (`sampleRamp` / `categoricalColor`) ・
-  塗り面上の可読インク (`readableInk`) を公開する。`ChartView` と
-  `cellConditionalFormat.ts` はここを参照し色を二重定義しない (`colorScale.test.ts` が
+  塗り面上の可読インク (`readableInk`) を公開する。`ChartView` (系列/値の配色は
+  `chartData.ts` の `CHART_PALETTES` 経由。#916) と `cellConditionalFormat.ts` は
+  ここを参照し色を二重定義しない (`colorScale.test.ts` が
   最小/最大/NaN などの境界を固定)。`ChartView` の系列描画/出現アニメーションは
   `motion.ts` の共有プリセットに沿い、reduced-motion で自動抑制される (#526)。
 - 結果グリッドの分析サマリ — `gridStats.ts` (#523/#524)。`selectionSummary` が矩形範囲

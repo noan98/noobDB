@@ -5,6 +5,13 @@
 // 描画は ChartView (SVG) が行う。副作用が無いので Vitest でユニットテストする。
 
 import type { CellValue, Column } from "../api/tauri";
+import {
+  DIVERGING_RAMPS,
+  SEQUENTIAL_RAMPS,
+  categoricalColor,
+  sampleRamp,
+  type ColorRamp,
+} from "../colorScale";
 import { resultViewKey } from "./resultViewKey";
 
 export type ChartType = "bar" | "line" | "area" | "pie";
@@ -17,6 +24,15 @@ export interface ChartConfig {
   /** Y 軸 (数値系列) の列インデックス。複数可。 */
   yCols: number[];
   aggregation: Aggregation;
+  /**
+   * 系列/値の配色 (#916)。共有カラースケール (`colorScale.ts`) のキーで、
+   * 省略時は従来どおりカテゴリスケール。`defaultChartConfig` /
+   * `sanitizeChartConfig` は必ず値を入れるため、省略可なのは後から足した
+   * フィールドの後方互換 (このフィールドを持たない保存済み設定・テストの
+   * 手組みモデル) を型レベルでも認めるためだけ。読み出しは常に
+   * `chartPalette()` を通すので未設定でも安全に既定へ倒れる。
+   */
+  palette?: ChartPaletteKey;
 }
 
 export interface ChartSeries {
@@ -38,6 +54,120 @@ export interface ChartModel {
    * `0` 扱い。
    */
   excludedNonNumeric?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 配色 (#916)。グリッドの条件付き書式 (`cellConditionalFormat.ts` の
+// `HEAT_PALETTES`) が既に開放している連続/発散ランプを、チャートの系列色にも
+// 開放して「値 → 色」の体系をグリッドと揃える。色そのものは共有カラースケール
+// (`colorScale.ts`、#525) だけを情報源にし、ここでは**選択肢の集合とサンプリング
+// 位置の決め方**しか持たない (色を二重定義しない)。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** チャートで選べる配色のキー。`categorical` は従来どおりの離散パレット。 */
+export type ChartPaletteKey = "categorical" | "blue" | "teal" | "coolWarm" | "blueOrange";
+
+export interface ChartPalette {
+  key: ChartPaletteKey;
+  /** 連続/発散ランプ。離散パレット (`categorical`) では null。 */
+  ramp: ColorRamp | null;
+  /** カラーブラインド (赤緑色弱) に配慮した配色か。UI の注記に使う。 */
+  colorBlindSafe: boolean;
+}
+
+export const CHART_PALETTES: Record<ChartPaletteKey, ChartPalette> = {
+  categorical: { key: "categorical", ramp: null, colorBlindSafe: true },
+  blue: { key: "blue", ramp: SEQUENTIAL_RAMPS.blue, colorBlindSafe: SEQUENTIAL_RAMPS.blue.colorBlindSafe },
+  teal: { key: "teal", ramp: SEQUENTIAL_RAMPS.teal, colorBlindSafe: SEQUENTIAL_RAMPS.teal.colorBlindSafe },
+  coolWarm: {
+    key: "coolWarm",
+    ramp: DIVERGING_RAMPS.coolWarm,
+    colorBlindSafe: DIVERGING_RAMPS.coolWarm.colorBlindSafe,
+  },
+  blueOrange: {
+    key: "blueOrange",
+    ramp: DIVERGING_RAMPS.blueOrange,
+    colorBlindSafe: DIVERGING_RAMPS.blueOrange.colorBlindSafe,
+  },
+};
+
+export const DEFAULT_CHART_PALETTE: ChartPaletteKey = "categorical";
+
+/** キー (未知/未設定を含む) からパレット定義を引く。常に有効な値を返す。 */
+export function chartPalette(key: string | undefined | null): ChartPalette {
+  if (typeof key === "string" && key in CHART_PALETTES) {
+    return CHART_PALETTES[key as ChartPaletteKey];
+  }
+  return CHART_PALETTES[DEFAULT_CHART_PALETTE];
+}
+
+/**
+ * ランプ上でサンプリングに使う区間。連続ランプの t=0 は淡すぎて明るい背景に
+ * 沈むため下端を切り上げる。発散ランプは中央の淡色が「基準値」を表す設計なので
+ * 全域をそのまま使う。
+ */
+function rampSpan(ramp: ColorRamp): [number, number] {
+  return ramp.kind === "diverging" ? [0, 1] : [0.2, 1];
+}
+
+/** 単一色でランプを代表させるときの位置 (系列 1 本・値域が退化しているとき)。 */
+const RAMP_SOLO_T = 0.75;
+
+/**
+ * 系列インデックス → 色。`categorical` は既存の離散パレットを循環参照し、
+ * ランプでは系列数で `rampSpan` を等分してサンプリングする (隣接系列の明度差を
+ * 確保するため端から端まで使い切る)。`count` が 0 なら空配列。
+ */
+export function chartSeriesColors(paletteKey: string | undefined, count: number): string[] {
+  const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  const { ramp } = chartPalette(paletteKey);
+  if (!ramp) return Array.from({ length: n }, (_, i) => categoricalColor(i));
+  if (n === 1) return [sampleRamp(RAMP_SOLO_T, ramp.stops)];
+  const [lo, hi] = rampSpan(ramp);
+  return Array.from({ length: n }, (_, i) => sampleRamp(lo + ((hi - lo) * i) / (n - 1), ramp.stops));
+}
+
+/**
+ * 値の大小をランプ上の位置へ写した「1 点ごとの色」(#916)。単一数値系列の棒/円を
+ * 値で着色するために使う。`categorical` では値による着色を行わないので `null` を
+ * 返し、呼び出し側は系列色 1 色にフォールバックする。値域が退化 (空/全同値/
+ * 非有限のみ) しているときは大小を色で表せないため単色を返す。
+ */
+export function chartValueColors(values: number[], paletteKey: string | undefined): string[] | null {
+  const { ramp } = chartPalette(paletteKey);
+  if (!ramp) return null;
+  const solo = sampleRamp(RAMP_SOLO_T, ramp.stops);
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of values) {
+    if (!Number.isFinite(v)) continue;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max === min) {
+    return values.map(() => solo);
+  }
+  const [lo, hi] = rampSpan(ramp);
+  return values.map((v) => {
+    if (!Number.isFinite(v)) return solo;
+    return sampleRamp(lo + ((hi - lo) * (v - min)) / (max - min), ramp.stops);
+  });
+}
+
+/**
+ * ランプを CSS の `linear-gradient` として表現する (値で着色しているときの凡例
+ * 見本用)。離散パレットは勾配を持たないので `null`。
+ */
+export function chartRampGradient(paletteKey: string | undefined): string | null {
+  const { ramp } = chartPalette(paletteKey);
+  if (!ramp) return null;
+  const [lo, hi] = rampSpan(ramp);
+  const steps = 4;
+  const stops = Array.from({ length: steps + 1 }, (_, i) => {
+    const t = lo + ((hi - lo) * i) / steps;
+    return `${sampleRamp(t, ramp.stops)} ${Math.round((i / steps) * 100)}%`;
+  });
+  return `linear-gradient(90deg, ${stops.join(", ")})`;
 }
 
 /** 描画点数の上限。これを超えたら等間隔でサンプリングする。 */
@@ -89,7 +219,7 @@ export function defaultChartConfig(columns: Column[], rows: CellValue[][]): Char
     if (altY < 0) return null;
     yCols.push(altY);
   }
-  return { type: "bar", xCol, yCols, aggregation: "none" };
+  return { type: "bar", xCol, yCols, aggregation: "none", palette: DEFAULT_CHART_PALETTE };
 }
 
 function cellLabel(v: CellValue): string {
@@ -309,7 +439,11 @@ export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfi
   // 場合だけ縮退する。保存時から空だったなら (ユーザの意図的な全解除) 尊重する。
   if (yColsRaw.length > 0 && yCols.length === 0) return null;
 
-  return { type: type as ChartType, xCol, yCols, aggregation: aggregation as Aggregation };
+  // 配色 (#916) は後から足したフィールドなので、欠けている旧設定や未知のキーは
+  // 縮退させず既定へ埋める (他フィールドと違い、参照の整合性を壊さないため)。
+  const palette = chartPalette(typeof o.palette === "string" ? o.palette : undefined).key;
+
+  return { type: type as ChartType, xCol, yCols, aggregation: aggregation as Aggregation, palette };
 }
 
 /**

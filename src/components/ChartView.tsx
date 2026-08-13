@@ -3,7 +3,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
-import { CATEGORICAL, readableInk } from "../colorScale";
+import { readableInk } from "../colorScale";
 import { durations, easings } from "../motion";
 import { Checkbox, Select } from "./ui";
 import { ImageExportButton } from "./ImageExportButton";
@@ -11,9 +11,14 @@ import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { EmptyState } from "./EmptyState";
 import {
+  CHART_PALETTES,
+  DEFAULT_CHART_PALETTE,
   buildChartModel,
   chartConfigKeyFrom,
   chartNotices,
+  chartRampGradient,
+  chartSeriesColors,
+  chartValueColors,
   defaultChartConfig,
   inferNumericColumns,
   niceTicks,
@@ -25,16 +30,26 @@ import {
   type ChartConfig,
   type ChartModel,
   type ChartNotice,
+  type ChartPaletteKey,
 } from "./chartData";
 
 /**
  * クエリ結果のチャート可視化。取得済みの結果セットを入力に、棒/折れ線/面/円
  * グラフを SVG で描画する (チャートライブラリ非依存でバンドル増を避ける)。X/Y 軸と
  * 集計はユーザが選べる。軸/グリッド/凡例/ツールチップの色は CSS 変数 (--text-muted /
- * --border ほか) を参照しテーマに追従し、系列色は可視化共通のカテゴリスケール
+ * --border ほか) を参照しテーマに追従し、系列色は可視化共通のカラースケール
  * (`colorScale.ts`、#525) を参照する。描画・系列の出現アニメーションは共有モーション
  * プリセット (`motion.ts`、#526) に沿い、reduced-motion では自動抑制される。
  * データ整形の純ロジックは chartData.ts に分離してテスト済み。
+ *
+ * **配色の選択 (#916)**: 既定のカテゴリスケールに加えて、グリッドの条件付き書式
+ * (`cellConditionalFormat.ts` の `HEAT_PALETTES`) が既に開放している連続 (blue /
+ * teal) / 発散 (coolWarm / blueOrange) ランプを選べる。選択肢とサンプリング位置の
+ * 決め方は `chartData.ts` (`CHART_PALETTES` / `chartSeriesColors` /
+ * `chartValueColors` / `chartRampGradient`) が持ち、色そのものは `colorScale.ts` を
+ * 単一の情報源にする (ここで色を二重定義しない)。ランプ選択時は単一系列の棒と
+ * 円グラフを**値の大小**で着色し、折れ線/面は形状を追いやすいよう系列色 1 色の
+ * ままにする。値で着色しているときの凡例見本は単色ではなくランプの勾配で示す。
  *
  * **空/退化データ (#646)**: 数値列が無い・データが 0 件・Y 軸未選択は共有の
  * `EmptyState` (アプリ全体の空状態と同じ見た目・fade-in モーション) で示す。
@@ -62,10 +77,6 @@ interface Props {
    */
   onChangeView: (view: ResultViewKind) => void;
 }
-
-// 系列の配色は可視化共通のカテゴリスケール (CB セーフな順序付き離散色)。系列数が
-// パレット長を超えたら呼び出し側で `% length` により循環させる。
-const SERIES_COLORS = CATEGORICAL;
 
 // 系列の出現アニメーションを行う要素数の上限。これを超えると数百〜数千の要素を
 // 同時にアニメートすることになり描画コストが嵩むため、静的描画に切り替える。
@@ -142,6 +153,7 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
   const setType = (type: ChartType) => setConfig({ ...config, type });
   const setX = (xCol: number) => setConfig({ ...config, xCol });
   const setAgg = (aggregation: Aggregation) => setConfig({ ...config, aggregation });
+  const setPalette = (palette: ChartPaletteKey) => setConfig({ ...config, palette });
   const toggleY = (c: number) =>
     setConfig({
       ...config,
@@ -149,6 +161,20 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
         ? config.yCols.filter((y) => y !== c)
         : [...config.yCols, c],
     });
+
+  // 系列色 (#916)。既定はこれまでどおりカテゴリスケールで、連続/発散ランプを
+  // 選ぶとグリッドのヒートマップと同じ体系の色になる。
+  const seriesColors = chartSeriesColors(config.palette, model.series.length);
+  // 単一数値系列を「値の大小」でランプ着色する。棒だけが対象で、折れ線/面は
+  // 1 本の線・面が 1 色である方が形状を追いやすいので系列色のままにする
+  // (円グラフはもともとスライス単位の着色なので `PieChart` 側で解決する)。
+  // `categorical` では null が返り、従来どおり系列 1 色で描く。
+  const valueColors =
+    model.series.length === 1 && config.type === "bar"
+      ? chartValueColors(model.series[0].values, config.palette)
+      : null;
+  // 値で着色しているときの凡例見本は、単色ではなくランプの勾配で示す。
+  const legendGradient = valueColors ? chartRampGradient(config.palette) : null;
 
   return (
     <Flex direction="column" h="100%" minH={0} minW={0}>
@@ -189,6 +215,23 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
             <option value="count">COUNT</option>
           </Select>
         </Field>
+        {/* 配色 (#916): グリッドの条件付き書式と同型のセレクタで、共有カラー
+            スケールの離散/連続/発散パレットを選ぶ。CB セーフかどうかも同じ
+            注記 (`gridPaletteCbSafe`) で示し、体系を UI レベルでも揃える。 */}
+        <Field label={t("chartPalette")}>
+          <Select
+            value={config.palette ?? DEFAULT_CHART_PALETTE}
+            onChange={(e) => setPalette(e.target.value as ChartPaletteKey)}
+            width="auto"
+          >
+            {Object.values(CHART_PALETTES).map((p) => (
+              <option key={p.key} value={p.key}>
+                {t(`chartPalette_${p.key}` as Parameters<typeof t>[0])}
+                {p.colorBlindSafe ? ` ${t("gridPaletteCbSafe")}` : ""}
+              </option>
+            ))}
+          </Select>
+        </Field>
         <Field label={t("chartYAxis")}>
           <Flex gap="2" flexWrap="wrap">
             {result.columns.map((c, i) =>
@@ -223,7 +266,16 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
         <Flex gap="3" px="3" py="1" flex="none" flexWrap="wrap" fontSize="xs" color="app.textSecondary">
           {model.series.map((s, i) => (
             <Flex key={s.name} align="center" gap="5px">
-              <chakra.span w="10px" h="10px" borderRadius="2px" bg={SERIES_COLORS[i % SERIES_COLORS.length]} />
+              {/* 値で着色しているときは単色の見本が実態と食い違うため、ランプの
+                  勾配そのものを見本にする (読み上げ向けの説明は aria-label)。 */}
+              <chakra.span
+                w={legendGradient ? "22px" : "10px"}
+                h="10px"
+                borderRadius="2px"
+                bg={legendGradient ?? seriesColors[i]}
+                role={legendGradient ? "img" : undefined}
+                aria-label={legendGradient ? t("chartPaletteValueColoring") : undefined}
+              />
               {s.name}
             </Flex>
           ))}
@@ -236,13 +288,14 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
         ) : config.yCols.length === 0 ? (
           <EmptyState compact icon="filter" title={t("chartPickY")} />
         ) : config.type === "pie" ? (
-          <PieChart model={model} colors={SERIES_COLORS} />
+          <PieChart model={model} palette={config.palette ?? DEFAULT_CHART_PALETTE} />
         ) : (
           <CartesianChart
             model={model}
             type={config.type}
             xName={result.columns[config.xCol]?.name ?? ""}
-            colors={SERIES_COLORS}
+            colors={seriesColors}
+            valueColors={valueColors}
           />
         )}
       </chakra.div>
@@ -268,11 +321,18 @@ function CartesianChart({
   type,
   xName,
   colors,
+  valueColors,
 }: {
   model: ChartModel;
   type: ChartType;
   xName: string;
+  /** 系列インデックス → 色 (系列数と同じ長さ)。 */
   colors: string[];
+  /**
+   * 点インデックス → 色 (#916)。単一系列の棒を値の大小でランプ着色するときだけ
+   * 渡り、null なら系列色 1 色で描く。
+   */
+  valueColors?: string[] | null;
 }) {
   // ホバー中のバンド (X インデックス)。値を読み取るためのガイド/ツールチップに使う。
   const [hover, setHover] = useState<number | null>(null);
@@ -403,7 +463,7 @@ function CartesianChart({
                     key={i}
                     x={x}
                     width={Math.max(1, barW)}
-                    fill={color}
+                    fill={valueColors?.[i] ?? color}
                     fillOpacity={hover == null || hover === i ? 1 : 0.5}
                     initial={animate ? { y: zeroY, height: 0 } : false}
                     animate={{ y, height: Math.max(0, h) }}
@@ -464,7 +524,15 @@ function CartesianChart({
       })}
 
       {/* ツールチップ (ホバー中バンドの全系列の値) */}
-      {hover != null && <HoverTooltip model={model} index={hover} gx={xAt(hover)} colors={colors} />}
+      {hover != null && (
+        <HoverTooltip
+          model={model}
+          index={hover}
+          gx={xAt(hover)}
+          colors={colors}
+          valueColors={valueColors}
+        />
+      )}
     </chakra.svg>
   );
 }
@@ -475,17 +543,20 @@ function HoverTooltip({
   index,
   gx,
   colors,
+  valueColors,
 }: {
   model: ChartModel;
   index: number;
   gx: number;
   colors: string[];
+  /** 値で着色しているときの点ごとの色 (#916)。見本を実際の棒の色と揃える。 */
+  valueColors?: string[] | null;
 }) {
   const header = truncate(model.labels[index], 26);
   const rows = model.series.map((s, si) => ({
     name: truncate(s.name, 22),
     value: formatValue(s.values[index]),
-    color: colors[si % colors.length],
+    color: valueColors?.[index] ?? colors[si % colors.length],
   }));
   const charW = 6.2;
   const longest = Math.max(header.length, ...rows.map((r) => r.name.length + r.value.length + 4));
@@ -528,12 +599,16 @@ function HoverTooltip({
   );
 }
 
-function PieChart({ model, colors }: { model: ChartModel; colors: string[] }) {
+function PieChart({ model, palette }: { model: ChartModel; palette: string }) {
   // 円グラフは先頭系列のみ。負値は 0 にクランプ。
   const [hover, setHover] = useState<number | null>(null);
   const series = model.series[0];
   const values = series.values.map((v) => Math.max(0, v));
   const total = values.reduce((a, b) => a + b, 0);
+  // 円は元からスライス単位の着色なので、色はスライス数ぶん用意する (#916)。
+  // ランプを選んだときは値の大小で、離散パレットでは従来どおりカテゴリ色の
+  // 循環でスライスを塗り分ける。
+  const colors = chartValueColors(values, palette) ?? chartSeriesColors(palette, values.length);
   // スライスは数が限られるため常に出現アニメーション可。reduced-motion は
   // ルートの MotionConfig が自動抑制する。
   const animate = values.length <= ANIM_MAX_ELEMENTS;

@@ -75,6 +75,23 @@ describe("buildServerFilterClause", () => {
     const f: ServerFilter = { column: "name", op: "contains", value: "ali", numeric: false };
     expect(buildServerFilterClause("postgres", f)).toBe("\"name\" LIKE '%ali%' ESCAPE '\\'");
   });
+
+  // 非等価 (#914 のセル右クリック「この値を除外する」で使う)。eq と同じ
+  // クオート/数値判定を共有し、比較演算子だけが `<>` になる。
+  it("ne: eq と同じクオート規則で <> を組み立てる", () => {
+    expect(
+      buildServerFilterClause("mysql", { column: "name", op: "ne", value: "alice", numeric: false }),
+    ).toBe("`name` <> 'alice'");
+    expect(
+      buildServerFilterClause("postgres", { column: "id", op: "ne", value: "42", numeric: true }),
+    ).toBe('"id" <> 42');
+  });
+
+  it("ne: 数値カラムでも非数値リテラルはクオートしてフォールバックする", () => {
+    expect(
+      buildServerFilterClause("mysql", { column: "id", op: "ne", value: "1 OR 1=1", numeric: true }),
+    ).toBe("`id` <> '1 OR 1=1'");
+  });
 });
 
 describe("buildServerSortClause", () => {
