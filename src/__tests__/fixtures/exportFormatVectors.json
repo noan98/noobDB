@@ -1,0 +1,405 @@
+{
+  "description": "エクスポート 5 書式 (CSV / JSON / NDJSON / Markdown / SQL INSERT) のフロント↔バック共有ゴールデンベクタ (#879)。フロントの src/components/exportPreview.ts::buildExportContent は、バックエンド src-tauri/src/commands/export.rs の書き出しと**バイト一致**するよう独立に再実装されている (エクスポートモーダルのプレビュー = 実ファイルの中身、という約束)。同じ入力を両実装へ通して出力を突き合わせることで、片方だけ直したときの静かなドリフトを検出する。",
+  "conventions": "cells の kind は Rust の db::types::Value のどのバリアントを組み立てるかを指す (untagged serde では JSON からバリアントを一意に決められないため明示する)。expected はバックエンド (= 実ファイル) の出力。frontendExpected はフロントの期待値で、省略された書式は expected と同じ。フロントは JSON 化された CellValue (string | number | boolean | null) しか受け取らず BLOB を文字列と区別できないため、bytes を含むケースだけ意図的に食い違う — その差分をここへ明記して固定する。",
+  "cases": [
+    {
+      "name": "basic",
+      "note": "代表的な型の組み合わせ + CSV/Markdown のエスケープが必要な文字列",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "name",
+          "typeName": "text"
+        },
+        {
+          "name": "score",
+          "typeName": "double"
+        },
+        {
+          "name": "active",
+          "typeName": "bool"
+        },
+        {
+          "name": "note",
+          "typeName": "text"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 1
+          },
+          {
+            "kind": "string",
+            "value": "alice"
+          },
+          {
+            "kind": "float",
+            "value": 1.5
+          },
+          {
+            "kind": "bool",
+            "value": true
+          },
+          {
+            "kind": "null"
+          }
+        ],
+        [
+          {
+            "kind": "int",
+            "value": 2
+          },
+          {
+            "kind": "string",
+            "value": "b,c\"d"
+          },
+          {
+            "kind": "float",
+            "value": -0.25
+          },
+          {
+            "kind": "bool",
+            "value": false
+          },
+          {
+            "kind": "string",
+            "value": "line1\nline2|piped\\slash"
+          }
+        ]
+      ],
+      "query": null,
+      "sql": {
+        "driver": "mysql",
+        "table": "users",
+        "batchSize": 100
+      },
+      "expected": {
+        "csv": "id,name,score,active,note\r\n1,alice,1.5,true,\r\n2,\"b,c\"\"d\",-0.25,false,\"line1\nline2|piped\\slash\"\r\n",
+        "json": "[\n  {\n    \"active\": true,\n    \"id\": 1,\n    \"name\": \"alice\",\n    \"note\": null,\n    \"score\": 1.5\n  },\n  {\n    \"active\": false,\n    \"id\": 2,\n    \"name\": \"b,c\\\"d\",\n    \"note\": \"line1\\nline2|piped\\\\slash\",\n    \"score\": -0.25\n  }\n]",
+        "markdown": "| id | name | score | active | note |\n| --- | --- | --- | --- | --- |\n| 1 | alice | 1.5 | true |  |\n| 2 | b,c\"d | -0.25 | false | line1<br>line2\\|piped\\\\slash |\n",
+        "ndjson": "{\"active\":true,\"id\":1,\"name\":\"alice\",\"note\":null,\"score\":1.5}\n{\"active\":false,\"id\":2,\"name\":\"b,c\\\"d\",\"note\":\"line1\\nline2|piped\\\\slash\",\"score\":-0.25}\n",
+        "sql": "INSERT INTO `users` (`id`, `name`, `score`, `active`, `note`) VALUES\n  (1, 'alice', 1.5, 1, NULL),\n  (2, 'b,c\"d', -0.25, 0, 'line1\nline2|piped\\\\slash');\n"
+      }
+    },
+    {
+      "name": "empty-rows",
+      "note": "0 行: CSV/Markdown はヘッダを出し、JSON は空配列、NDJSON と SQL は空文字列",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "name",
+          "typeName": "text"
+        }
+      ],
+      "rows": [],
+      "query": null,
+      "sql": {
+        "driver": "postgres",
+        "table": "t",
+        "batchSize": 100
+      },
+      "expected": {
+        "csv": "id,name\r\n",
+        "json": "[]",
+        "markdown": "| id | name |\n| --- | --- |\n",
+        "ndjson": "",
+        "sql": ""
+      }
+    },
+    {
+      "name": "json-with-query",
+      "note": "JSON 形式のみクエリを同梱し {query, rows} でラップする。他形式では query を無視する",
+      "columns": [
+        {
+          "name": "b",
+          "typeName": "int"
+        },
+        {
+          "name": "a",
+          "typeName": "text"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 7
+          },
+          {
+            "kind": "string",
+            "value": "x"
+          }
+        ]
+      ],
+      "query": "SELECT b, a FROM t",
+      "sql": {
+        "driver": "sqlite",
+        "table": "t",
+        "batchSize": 100
+      },
+      "expected": {
+        "csv": "b,a\r\n7,x\r\n",
+        "json": "{\n  \"query\": \"SELECT b, a FROM t\",\n  \"rows\": [\n    {\n      \"a\": \"x\",\n      \"b\": 7\n    }\n  ]\n}",
+        "markdown": "| b | a |\n| --- | --- |\n| 7 | x |\n",
+        "ndjson": "{\"a\":\"x\",\"b\":7}\n",
+        "sql": "INSERT INTO \"t\" (\"b\", \"a\") VALUES\n  (7, 'x');\n"
+      }
+    },
+    {
+      "name": "csv-formula-injection",
+      "note": "CSV インジェクション緩和: 数式トリガ文字で始まり数値としてパースできない値だけ ' を前置する。符号付き数値 (-5 / +3.2 / -1e5) は前置しない",
+      "columns": [
+        {
+          "name": "v",
+          "typeName": "text"
+        },
+        {
+          "name": "n",
+          "typeName": "int"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "string",
+            "value": "=1+2"
+          },
+          {
+            "kind": "int",
+            "value": -5
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "-5"
+          },
+          {
+            "kind": "int",
+            "value": 0
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "+3.2"
+          },
+          {
+            "kind": "int",
+            "value": 0
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "-1e5"
+          },
+          {
+            "kind": "int",
+            "value": 0
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "@SUM(A1)"
+          },
+          {
+            "kind": "int",
+            "value": 0
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "-cmd|'/c calc"
+          },
+          {
+            "kind": "int",
+            "value": 0
+          }
+        ]
+      ],
+      "query": null,
+      "sql": {
+        "driver": "mysql",
+        "table": "t",
+        "batchSize": 100
+      },
+      "expected": {
+        "csv": "v,n\r\n'=1+2,-5\r\n-5,0\r\n+3.2,0\r\n-1e5,0\r\n'@SUM(A1),0\r\n'-cmd|'/c calc,0\r\n",
+        "json": "[\n  {\n    \"n\": -5,\n    \"v\": \"=1+2\"\n  },\n  {\n    \"n\": 0,\n    \"v\": \"-5\"\n  },\n  {\n    \"n\": 0,\n    \"v\": \"+3.2\"\n  },\n  {\n    \"n\": 0,\n    \"v\": \"-1e5\"\n  },\n  {\n    \"n\": 0,\n    \"v\": \"@SUM(A1)\"\n  },\n  {\n    \"n\": 0,\n    \"v\": \"-cmd|'/c calc\"\n  }\n]",
+        "markdown": "| v | n |\n| --- | --- |\n| =1+2 | -5 |\n| -5 | 0 |\n| +3.2 | 0 |\n| -1e5 | 0 |\n| @SUM(A1) | 0 |\n| -cmd\\|'/c calc | 0 |\n",
+        "ndjson": "{\"n\":-5,\"v\":\"=1+2\"}\n{\"n\":0,\"v\":\"-5\"}\n{\"n\":0,\"v\":\"+3.2\"}\n{\"n\":0,\"v\":\"-1e5\"}\n{\"n\":0,\"v\":\"@SUM(A1)\"}\n{\"n\":0,\"v\":\"-cmd|'/c calc\"}\n",
+        "sql": "INSERT INTO `t` (`v`, `n`) VALUES\n  ('=1+2', -5),\n  ('-5', 0),\n  ('+3.2', 0),\n  ('-1e5', 0),\n  ('@SUM(A1)', 0),\n  ('-cmd|''/c calc', 0);\n"
+      }
+    },
+    {
+      "name": "sorted-keys-and-unicode",
+      "note": "JSON/NDJSON のキー順は serde_json の BTreeMap 出力 (= UTF-8 バイト順 = コードポイント順) に一致させる。非 BMP の絵文字 (U+1F642) は UTF-16 単位で比較すると先頭サロゲート 0xD83D が全角 Ａ (U+FF21) より小さくなるため、JS の素の文字列比較ではキー順がバックエンドとズレる — その境界をここで固定する。私用領域文字 (U+E000) も z と Ａ の間に入る位置関係の確認用",
+      "columns": [
+        {
+          "name": "z",
+          "typeName": "text"
+        },
+        {
+          "name": "a",
+          "typeName": "text"
+        },
+        {
+          "name": "Ａ",
+          "typeName": "text"
+        },
+        {
+          "name": "🙂",
+          "typeName": "text"
+        },
+        {
+          "name": "",
+          "typeName": "text"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "string",
+            "value": "zv"
+          },
+          {
+            "kind": "string",
+            "value": "av"
+          },
+          {
+            "kind": "string",
+            "value": "full-width"
+          },
+          {
+            "kind": "string",
+            "value": "emoji"
+          },
+          {
+            "kind": "string",
+            "value": "private-use"
+          }
+        ]
+      ],
+      "query": null,
+      "sql": {
+        "driver": "postgres",
+        "table": "t",
+        "batchSize": 100
+      },
+      "expected": {
+        "csv": "z,a,Ａ,🙂,\r\nzv,av,full-width,emoji,private-use\r\n",
+        "json": "[\n  {\n    \"a\": \"av\",\n    \"z\": \"zv\",\n    \"\": \"private-use\",\n    \"Ａ\": \"full-width\",\n    \"🙂\": \"emoji\"\n  }\n]",
+        "markdown": "| z | a | Ａ | 🙂 |  |\n| --- | --- | --- | --- | --- |\n| zv | av | full-width | emoji | private-use |\n",
+        "ndjson": "{\"a\":\"av\",\"z\":\"zv\",\"\":\"private-use\",\"Ａ\":\"full-width\",\"🙂\":\"emoji\"}\n",
+        "sql": "INSERT INTO \"t\" (\"z\", \"a\", \"Ａ\", \"🙂\", \"\") VALUES\n  ('zv', 'av', 'full-width', 'emoji', 'private-use');\n"
+      }
+    },
+    {
+      "name": "sql-batching-and-quoting",
+      "note": "SQL INSERT: batchSize ごとに 1 文へまとめ、識別子/リテラルは方言別にエスケープする",
+      "columns": [
+        {
+          "name": "we\"ird",
+          "typeName": "text"
+        },
+        {
+          "name": "n",
+          "typeName": "int"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "string",
+            "value": "O'Brien"
+          },
+          {
+            "kind": "int",
+            "value": 1
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "a\\b"
+          },
+          {
+            "kind": "int",
+            "value": 2
+          }
+        ],
+        [
+          {
+            "kind": "null"
+          },
+          {
+            "kind": "int",
+            "value": 3
+          }
+        ]
+      ],
+      "query": null,
+      "sql": {
+        "driver": "postgres",
+        "table": "sch ema",
+        "batchSize": 2
+      },
+      "expected": {
+        "csv": "\"we\"\"ird\",n\r\nO'Brien,1\r\na\\b,2\r\n,3\r\n",
+        "json": "[\n  {\n    \"n\": 1,\n    \"we\\\"ird\": \"O'Brien\"\n  },\n  {\n    \"n\": 2,\n    \"we\\\"ird\": \"a\\\\b\"\n  },\n  {\n    \"n\": 3,\n    \"we\\\"ird\": null\n  }\n]",
+        "markdown": "| we\"ird | n |\n| --- | --- |\n| O'Brien | 1 |\n| a\\\\b | 2 |\n|  | 3 |\n",
+        "ndjson": "{\"n\":1,\"we\\\"ird\":\"O'Brien\"}\n{\"n\":2,\"we\\\"ird\":\"a\\\\b\"}\n{\"n\":3,\"we\\\"ird\":null}\n",
+        "sql": "INSERT INTO \"sch ema\" (\"we\"\"ird\", \"n\") VALUES\n  ('O''Brien', 1),\n  ('a\\b', 2);\nINSERT INTO \"sch ema\" (\"we\"\"ird\", \"n\") VALUES\n  (NULL, 3);\n"
+      }
+    },
+    {
+      "name": "blob-known-divergence",
+      "note": "BLOB はバックエンドが 0x 前置 (CSV/Markdown) / 16 進文字列 (JSON) / 方言別バイナリリテラル (SQL) にするが、フロントは JSON 化された 16 進文字列としてしか受け取れず String と区別できない。既知かつ意図的な差分として frontendExpected に明記する",
+      "columns": [
+        {
+          "name": "b",
+          "typeName": "blob"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "bytes",
+            "value": "ab12"
+          }
+        ]
+      ],
+      "query": null,
+      "sql": {
+        "driver": "mysql",
+        "table": "t",
+        "batchSize": 100
+      },
+      "expected": {
+        "csv": "b\r\n0xab12\r\n",
+        "json": "[\n  {\n    \"b\": \"0xab12\"\n  }\n]",
+        "markdown": "| b |\n| --- |\n| 0xab12 |\n",
+        "ndjson": "{\"b\":\"0xab12\"}\n",
+        "sql": "INSERT INTO `t` (`b`) VALUES\n  (X'ab12');\n"
+      },
+      "frontendExpected": {
+        "csv": "b\r\nab12\r\n",
+        "json": "[\n  {\n    \"b\": \"ab12\"\n  }\n]",
+        "ndjson": "{\"b\":\"ab12\"}\n",
+        "markdown": "| b |\n| --- |\n| ab12 |\n",
+        "sql": "INSERT INTO `t` (`b`) VALUES\n  ('ab12');\n"
+      }
+    }
+  ]
+}

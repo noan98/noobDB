@@ -93,6 +93,28 @@ pub mod __test_api {
         StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
     };
 
+    /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
+    /// `commands::export::write_export_to` — 実ファイル出力と**同じ**振り分け /
+    /// ライタ — をそのまま通すので、フロントの `exportPreview.ts` との共有
+    /// ゴールデン (`tests/export_format_golden.rs`) は「プレビュー = 実出力」を
+    /// 直接検証できる。
+    pub fn export_bytes(
+        format: crate::commands::export::ExportFormat,
+        columns: &[Column],
+        rows: &[Vec<Value>],
+        query: Option<&str>,
+        driver: Option<DriverKind>,
+        table: Option<String>,
+        batch_size: Option<usize>,
+    ) -> crate::error::Result<Vec<u8>> {
+        let opts = crate::commands::export::SqlExportOpts::build(driver, table, batch_size);
+        let mut buf = Vec::new();
+        crate::commands::export::write_export_to(&mut buf, format, columns, rows, query, &opts)?;
+        Ok(buf)
+    }
+
+    pub use crate::commands::export::ExportFormat;
+
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
     }

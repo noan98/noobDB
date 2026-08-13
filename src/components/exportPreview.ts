@@ -59,11 +59,44 @@ function formatFloat(v: number): string {
   return expandExponential(s);
 }
 
+/**
+ * CSV インジェクション (Excel/LibreOffice でセルが数式として評価されてしまう問題)
+ * の緩和。バックエンドの `commands/export.rs::mitigate_formula_injection` と
+ * **同じ規則**にする (#879): 先頭がトリガ文字で、かつ値全体が数値としてパース
+ * できないときだけシングルクオートを前置する。`-5` / `+3.2` のような符号付き数値は
+ * 数値としてパースできるので前置しない。
+ */
+const CSV_FORMULA_TRIGGERS = ["=", "+", "-", "@", "\t", "\r"];
+
+/**
+ * バックエンドの `s.trim().parse::<f64>().is_ok()` と同じ判定。JS の `Number()` は
+ * 使えない — 空文字列を 0 とみなし、16 進 (`0x10`) を受理し、逆に Rust が受理する
+ * `inf` / `nan` を拒否するため、判定が食い違う。Rust の `f64::from_str` の文法
+ * (符号 + `inf`/`infinity`/`nan`/10 進数 + 任意の指数部、いずれも大小無視) を
+ * そのまま正規表現へ写す。`s` は呼び出し側で trim 済みでなくてよい (ここで trim
+ * するのもバックエンドと同じ)。
+ */
+function parsesAsF64(s: string): boolean {
+  return /^[+-]?(inf|infinity|nan|(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?)$/i.test(s.trim());
+}
+
+function mitigateFormulaInjection(s: string): string {
+  const first = s[0];
+  if (first !== undefined && CSV_FORMULA_TRIGGERS.includes(first) && !parsesAsF64(s)) {
+    return "'" + s;
+  }
+  return s;
+}
+
 function csvField(s: string): string {
+  const mitigated = mitigateFormulaInjection(s);
   const needsQuote =
-    s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r");
-  if (!needsQuote) return s;
-  return `"${s.replace(/"/g, '""')}"`;
+    mitigated.includes(",") ||
+    mitigated.includes('"') ||
+    mitigated.includes("\n") ||
+    mitigated.includes("\r");
+  if (!needsQuote) return mitigated;
+  return `"${mitigated.replace(/"/g, '""')}"`;
 }
 
 function valueToCsv(v: CellValue): string {
