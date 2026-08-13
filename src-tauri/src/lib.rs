@@ -94,6 +94,28 @@ pub mod __test_api {
         StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
     };
 
+    /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
+    /// `commands::export::write_export_to` — 実ファイル出力と**同じ**振り分け /
+    /// ライタ — をそのまま通すので、フロントの `exportPreview.ts` との共有
+    /// ゴールデン (`tests/export_format_golden.rs`) は「プレビュー = 実出力」を
+    /// 直接検証できる。
+    pub fn export_bytes(
+        format: crate::commands::export::ExportFormat,
+        columns: &[Column],
+        rows: &[Vec<Value>],
+        query: Option<&str>,
+        driver: Option<DriverKind>,
+        table: Option<String>,
+        batch_size: Option<usize>,
+    ) -> crate::error::Result<Vec<u8>> {
+        let opts = crate::commands::export::SqlExportOpts::build(driver, table, batch_size);
+        let mut buf = Vec::new();
+        crate::commands::export::write_export_to(&mut buf, format, columns, rows, query, &opts)?;
+        Ok(buf)
+    }
+
+    pub use crate::commands::export::ExportFormat;
+
     /// SQL 識別子引用の単一実装 (`db::sync::quote_ident`)。`pub(crate)` のため
     /// `pub use` で再公開できず、薄いラッパーで露出する。実装横断ゴールデン
     /// (`tests/sql_quoting_golden.rs`、#880) が使う。

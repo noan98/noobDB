@@ -211,7 +211,8 @@ CI は 2 つのワークフローに分かれています:
   `ipcArgParity.test.ts` / `streamEventParity.test.ts` (`?raw` インポートで
   `src-tauri/src/lib.rs` / `commands/*.rs` / `tasks/scheduler.rs` を読む) と
   `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
-  `schemaParity.test.ts` / `sqlQuotingGolden.test.ts` (#880) (Rust の統合テストと
+  `schemaParity.test.ts` / `sqlQuotingGolden.test.ts` (#880) /
+  `exportFormatGolden.test.ts` (#879) (Rust の統合テストと
   共有するフィクスチャ `src/__tests__/fixtures/*.json` を検証する)、および
   `apiReachabilityParity.test.ts` (#907。Rust ソースは読まないが、UI 未到達
   ラッパーの削除は `ipcCommandParity` = Rust 側登録と連動して直す必要があるため
@@ -225,8 +226,8 @@ CI は 2 つのワークフローに分かれています:
   しています (`frontend` ジョブとテストが重複しますが、対象を絞っているため数秒
   程度と軽量で、重複コストよりカバレッジの穴を塞ぐ価値を優先しました)。逆方向
   (Rust 側のゴールデンテスト `serde_schema_parity.rs` / `read_only_golden.rs` /
-  `error_kind_golden.rs` / `error_hint_golden.rs` / `sql_quoting_golden.rs` が
-  `include_str!` で読む共有
+  `error_kind_golden.rs` / `error_hint_golden.rs` / `sql_quoting_golden.rs` /
+  `export_format_golden.rs` が `include_str!` で読む共有
   フィクスチャだけを変更する PR で `rust (test)` がスキップされる問題) は
   `changes` ジョブに追加した `crosslang` フィルタ (`src/__tests__/fixtures/**`
   限定) を `rust (test)` の `if:` へ OR で足すことで塞いでいます。**必須チェックを
@@ -1164,6 +1165,18 @@ LIKE ワイルドカードはエスケープされます。
   従来どおり配列のまま (後方互換)。`ExportModal` (フロント) は出力内容のプレビュー欄
   (純ロジックは `components/exportPreview.ts` がバックエンドの書式をミラー) と、在
   グリッド全行を全文コピーするコピーアイコンを備えます。
+  **「プレビュー = 実出力」は共有ゴールデンで固定します (#879)。**
+  `exportPreview.ts::buildExportContent` は 5 書式をバックエンドと**バイト一致**する
+  よう独立に再実装しているため、`src/__tests__/fixtures/exportFormatVectors.json` の
+  同一入力を両実装へ通して突き合わせます (フロントは `exportFormatGolden.test.ts`、
+  バックは `tests/export_format_golden.rs` が `__test_api::export_bytes` 経由で
+  **実ファイル出力と同じ** `write_export_to` を `Vec<u8>` 相手に走らせる)。ベクタは
+  #879 が名指しする既知のドリフト源 — 浮動小数の書式・JSON キーのソート順 (serde_json
+  の `BTreeMap` = UTF-8 バイト順。非 BMP 絵文字は JS の素の文字列比較だとズレるので
+  `compareCodePoints` が要る)・CSV インジェクション緩和 (`mitigate_formula_injection`)・
+  空結果・クエリ同梱・SQL のバッチ分割 — をケース名で固定しています。BLOB だけは
+  フロントが `Value::Bytes` を区別できないため意図的に食い違い、`frontendExpected` に
+  明記します。
 - `commands/dump.rs`: `mysqldump` を呼ぶ DB ダンプ (MySQL 専用)。資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
   経由で渡し、終了後に削除します。`mysqldump` が PATH にない場合は分かりやすい
