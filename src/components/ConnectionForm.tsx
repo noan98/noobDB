@@ -103,6 +103,7 @@ function PasswordInput({
     setRevealed(null);
     setShow(false);
     setCopied(false);
+    setRevealError(null);
   };
 
   const revealStored = async () => {
@@ -171,7 +172,11 @@ function PasswordInput({
           // Hide the WebView2/Edge native password reveal & clear controls so they
           // don't render a second eye icon alongside our own toggle button.
           css={{ "&::-ms-reveal": { display: "none" }, "&::-ms-clear": { display: "none" } }}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            // 入力を始めた時点で、前回の読み出し失敗の文言は用済み。
+            setRevealError(null);
+            onChange(e.target.value);
+          }}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
         />
@@ -224,13 +229,14 @@ function PasswordInput({
         </Tooltip>
       </Box>
       {revealError && (
-        <Text color="app.textError" fontSize="11px" mt="1" mb="0">
+        // クリック後に非同期で現れるため、支援技術へ通知する (role="alert")。
+        <Text role="alert" color="app.textError" fontSize="11px" mt="1" mb="0">
           {revealError}
         </Text>
       )}
       {revealed !== null && (
         <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
-          {t("formPasswordRevealNote")}
+          {t("formPasswordRevealNote", { seconds: REVEAL_TIMEOUT_MS / 1000 })}
         </Text>
       )}
     </Box>

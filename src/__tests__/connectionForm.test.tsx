@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, act } from "./testUtils";
 import { t } from "../i18n";
 import type { ConnectionProfile } from "../api/tauri";
 
@@ -120,6 +120,30 @@ describe("ConnectionForm reveals a stored password (#938)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("formPasswordHide") }));
     await waitFor(() => expect(passwordField().value).not.toBe("s3cret-pw"));
     expect(passwordField().type).toBe("password");
+  });
+
+  // 表示しっぱなしで席を離れても平文が残らないことを担保する経路。壊れると
+  // 画面に秘密が残り続けるので、タイマー経過の破棄も固定しておく。
+  it("re-masks on its own once the reveal timeout elapses", async () => {
+    reveal.mockResolvedValue("s3cret-pw");
+    // 自動再マスクの `setTimeout` は reveal 成功時に張られるので、偽タイマーは
+    // クリック**前**に入れておく必要がある。読み出しの解決はマイクロタスクなので
+    // 偽タイマー下でも `act` のフラッシュだけで進む (`waitFor` は使わない)。
+    vi.useFakeTimers();
+    try {
+      renderForm(saved);
+      fireEvent.click(screen.getByRole("button", { name: t("formPasswordReveal") }));
+      await act(async () => {});
+      expect(passwordField().value).toBe("s3cret-pw");
+
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+      expect(passwordField().value).not.toBe("s3cret-pw");
+      expect(passwordField().type).toBe("password");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports a keyring entry that disappeared instead of showing an empty value", async () => {

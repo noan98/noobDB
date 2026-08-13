@@ -1627,9 +1627,19 @@ export const api = {
    * バッファに載せるだけにして、非表示に戻すときは state から破棄する。
    */
   revealProfileSecret: (profileId: string, kind: ProfileSecretKind) =>
-    invoke<string | null>("reveal_profile_secret", { profileId, kind }).then((r) =>
-      parseResponse(schemas.nullableStringResponse, r, "reveal_profile_secret"),
-    ),
+    invoke<string | null>("reveal_profile_secret", { profileId, kind }).then((r) => {
+      // ここだけ `parseResponse` (zod 検証) を通さない。検証に失敗すると
+      // `parseResponse` は DEV ビルドで**受信値そのもの**を `console.error` へ
+      // 出すが、このコマンドの受信値は平文の秘密そのもので、開発者コンソールに
+      // 残ってしまう。返り値が単純な `string | null` なので、値をログ経路へ
+      // 一切渡さない形状チェックで代替する。
+      if (r !== null && typeof r !== "string") {
+        throw new Error(
+          'IPC レスポンス "reveal_profile_secret" が期待した形式と一致しません: (root): expected string or null',
+        );
+      }
+      return r;
+    }),
   saveProfile: (req: SaveProfileRequest) =>
     invoke<ConnectionProfile>("save_profile", { req }).then((r) =>
       parseResponse(schemas.connectionProfile, r, "save_profile"),

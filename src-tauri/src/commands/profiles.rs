@@ -113,9 +113,10 @@ pub async fn list_profiles() -> Result<Vec<ProfileWithSecretFlags>> {
         .collect())
 }
 
-/// keyring に保存された秘密の種類。値は `profiles::secrets` の内部 kind 文字列
-/// (= keyring のアカウント名 `<profile_id>/<kind>` の後半) とそのまま一致させて
-/// あり、監査ログの `kind` フィールドと keyring 上のエントリ名を突き合わせられる。
+/// keyring に保存された秘密の種類。`as_str` は `profiles::secrets` の内部 kind
+/// 文字列 (= keyring のアカウント名 `<profile_id>/<kind>` の後半) とそのまま一致
+/// させてあり、監査ログの `secret` フィールド (`save_profile_inner` の set/clear
+/// ログと同じ名前) から keyring 上のエントリを直接引ける。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecretKind {

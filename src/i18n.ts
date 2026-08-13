@@ -707,7 +707,8 @@ const en = {
   formPasswordReveal: "Show the saved password",
   formPasswordCopy: "Copy password",
   formPasswordCopied: "Copied",
-  formPasswordRevealNote: "Read from the OS keyring. Hides again automatically after 30 seconds.",
+  formPasswordRevealNote:
+    "Read from the OS keyring. Hides again automatically after {seconds} seconds.",
   formPasswordRevealMissing: "No saved password found in the OS keyring.",
   formPasswordRevealFailed: "Could not read the saved password",
   formUseSsh: "Use SSH tunnel",
@@ -3332,7 +3333,8 @@ const ja: Dict = {
   formPasswordReveal: "保存済みパスワードを表示",
   formPasswordCopy: "パスワードをコピー",
   formPasswordCopied: "コピーしました",
-  formPasswordRevealNote: "OS キーリングから読み出しました。30 秒後に自動で非表示に戻ります。",
+  formPasswordRevealNote:
+    "OS キーリングから読み出しました。{seconds} 秒後に自動で非表示に戻ります。",
   formPasswordRevealMissing: "OS キーリングに保存済みパスワードが見つかりません。",
   formPasswordRevealFailed: "保存済みパスワードを読み取れませんでした",
   formUseSsh: "SSHトンネルを使用",
