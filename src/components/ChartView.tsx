@@ -12,11 +12,14 @@ import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { EmptyState } from "./EmptyState";
 import {
   buildChartModel,
+  chartConfigKeyFrom,
   chartNotices,
   defaultChartConfig,
   inferNumericColumns,
   niceTicks,
+  readStoredChartConfig,
   valueExtent,
+  writeStoredChartConfig,
   type Aggregation,
   type ChartType,
   type ChartConfig,
@@ -38,9 +41,21 @@ import {
  * データ点が 1 つだけ・全値同一・NULL/非数値を 0 として読み替えている、といった
  * 「描画は破綻しないが説明が要る」ケースは `chartData.ts` の `chartNotices` が
  * 判定し、サンプリング注記と同じ控えめなトーンで一言添える。
+ *
+ * **設定の永続化 (#909)**: チャート種別・X 軸・Y 系列・集計は `sourceSql` の
+ * フィンガープリント単位で localStorage に保存し、同じクエリの再実行・タブ切替・
+ * タブ復元・再起動をまたいで復元する (`chartData.ts` の
+ * `readStoredChartConfig`/`writeStoredChartConfig`)。列構成が変わって保存済みの
+ * 参照が成立しなくなった場合は `sanitizeChartConfig` が検出して安全に既定値へ
+ * 縮退する。
  */
 interface Props {
   result: QueryResult;
+  /**
+   * チャート元の実行 SQL (#909)。設定の永続化キー (`chartConfigKeyFrom`) に使う。
+   * 無い (未実行) ときは永続化をスキップする。
+   */
+  sourceSql?: string;
   /**
    * 結果パネルの表示切替 (グリッド / ピボット / チャート)。設定バー先頭の
    * `ResultViewSwitch` と、数値列が無いときの空状態アクションから呼ばれる。
@@ -56,15 +71,23 @@ const SERIES_COLORS = CATEGORICAL;
 // 同時にアニメートすることになり描画コストが嵩むため、静的描画に切り替える。
 const ANIM_MAX_ELEMENTS = 200;
 
-export function ChartView({ result, onChangeView }: Props) {
+export function ChartView({ result, sourceSql, onChangeView }: Props) {
   const t = useT();
   const numericCols = useMemo(
     () => inferNumericColumns(result.columns, result.rows),
     [result.columns, result.rows],
   );
-  const [config, setConfig] = useState<ChartConfig | null>(() =>
-    defaultChartConfig(result.columns, result.rows),
+  // 永続化キーは実行 SQL のフィンガープリント (#909)。クエリ再実行のたびに
+  // ChartView はストリーミング状態を経由して remount されるため (App.tsx の
+  // `!tab.streaming` 条件)、useState の初期化関数だけで再実行時の復元が完結する。
+  const persistKey = useMemo(() => chartConfigKeyFrom(sourceSql), [sourceSql]);
+  const [config, setConfigState] = useState<ChartConfig | null>(
+    () => readStoredChartConfig(persistKey, result.columns) ?? defaultChartConfig(result.columns, result.rows),
   );
+  const setConfig = (next: ChartConfig) => {
+    setConfigState(next);
+    writeStoredChartConfig(persistKey, next);
+  };
 
   const model = useMemo<ChartModel | null>(
     () => (config ? buildChartModel(result.columns, result.rows, config) : null),

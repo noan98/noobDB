@@ -256,6 +256,13 @@ interface Props {
   onRenameTable?: (database: string, table: string) => void;
   /** 列の追加/変更/削除/リネームとインデックス作成の GUI ダイアログを開く (#794)。read_only では無効化。 */
   onAlterTable?: (database: string, table: string) => void;
+  /** テーブル右クリックからインデックス作成の軽量モーダルを開く (#850)。`AlterTable`
+   *  の重量フォームを開かずに済む単一目的の近道。read_only では無効化。 */
+  onCreateIndex?: (database: string, table: string) => void;
+  /** インデックスノード右クリックからの DROP INDEX (#850)。方言別 SQL の生成は
+   *  `tableMaintenance.ts::buildDropIndexSql` (`db/advisor.rs::drop_index_ddl` の移植)。
+   *  read_only では無効化、PK インデックスはツリー側で対象外にする。 */
+  onDropIndex?: (database: string, table: string, indexName: string) => void;
   /** テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
    *  生成済み SQL を渡し、確認 + 実行は呼び出し側 (App) が担う。read_only では無効化。 */
   onRunTableMaintenance?: (database: string, table: string, command: MaintenanceCommand) => void;
@@ -332,6 +339,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onDropTable,
   onRenameTable,
   onAlterTable,
+  onCreateIndex,
+  onDropIndex,
   onRunTableMaintenance,
   onRunDatabaseMaintenance,
   onShowDatabaseSizes,
@@ -903,9 +912,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     if (onCopyTableName) {
       items.push({ label: t("contextMenuCopyTableName"), onSelect: () => onCopyTableName(tbl) });
     }
-    // テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794)。破壊的なので
-    // read_only では無効化し、実行時は呼び出し側 (App) が確認ダイアログを挟む。
-    if (onTruncateTable || onDropTable || onRenameTable || onAlterTable) {
+    // テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794) / インデックス作成
+    // (#850)。破壊的なので read_only では無効化し、実行時は呼び出し側 (App) が
+    // 確認ダイアログを挟む。
+    if (onTruncateTable || onDropTable || onRenameTable || onAlterTable || onCreateIndex) {
       const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
       items.push({ separator: true });
       if (onRenameTable) {
@@ -920,6 +930,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         items.push({
           label: t("contextMenuAlterTable"),
           onSelect: () => onAlterTable(db, tbl),
+          disabled: activeReadOnly,
+          title: roTitle,
+        });
+      }
+      if (onCreateIndex) {
+        items.push({
+          label: t("contextMenuCreateIndex"),
+          onSelect: () => onCreateIndex(db, tbl),
           disabled: activeReadOnly,
           title: roTitle,
         });
@@ -988,6 +1006,32 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         danger: true,
       });
     }
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
+  // インデックスノードの右クリック: DROP INDEX (#850)。PK インデックスは
+  // `DROP INDEX` 単体では方言によって落とせない (MySQL は `ALTER TABLE ... DROP
+  // PRIMARY KEY`、PostgreSQL は制約の DROP が必要) ため、ここでは常に無効化して
+  // 誤操作を防ぐ (項目自体は出し、理由をツールチップで明示する)。
+  const handleIndexContextMenu = (e: React.MouseEvent, db: string, tbl: string, idx: IndexInfo) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!onDropIndex) return;
+    const disabled = activeReadOnly || idx.primary;
+    const title = idx.primary
+      ? t("dropIndexPrimaryDisabled")
+      : activeReadOnly
+        ? t("listReadOnlyTitle")
+        : undefined;
+    const items: ContextMenuEntry[] = [
+      {
+        label: t("contextMenuDropIndex"),
+        onSelect: () => onDropIndex(db, tbl, idx.name),
+        disabled,
+        title,
+        danger: true,
+      },
+    ];
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
@@ -1752,6 +1796,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             cursor="default"
                                             fontSize="sm"
                                             role="treeitem"
+                                            onContextMenu={(e) => handleIndexContextMenu(e, db, tbl, idx)}
                                             {...treeTooltipProps(
                                               `${idx.name}${idx.method ? ` (${idx.method})` : ""}: ${idx.columns.join(", ")}`,
                                             )}

@@ -47,6 +47,7 @@ import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
 import { copyToClipboard } from "./components/clipboard";
 import {
+  buildDropIndexSql,
   buildDropTableSql,
   buildRenameTableSql,
   buildTruncateSql,
@@ -161,6 +162,9 @@ const RenameTableDialog = lazy(() =>
 );
 const AlterTableModal = lazy(() =>
   import("./components/AlterTableModal").then((m) => ({ default: m.AlterTableModal })),
+);
+const CreateIndexModal = lazy(() =>
+  import("./components/CreateIndexModal").then((m) => ({ default: m.CreateIndexModal })),
 );
 const SaveAsTableModal = lazy(() =>
   import("./components/SaveAsTableModal").then((m) => ({ default: m.SaveAsTableModal })),
@@ -315,6 +319,14 @@ import {
   toggleFavorite as toggleFavoriteTable,
   type QuickAccessState,
 } from "./tableQuickAccess";
+import {
+  forgetSnippetQuickAccess,
+  loadSnippetQuickAccess,
+  recordSnippetRun,
+  saveSnippetQuickAccess,
+  toggleSnippetFavorite,
+  type SnippetQuickAccessState,
+} from "./snippetQuickAccess";
 import {
   EMPTY_PLAN_WATCH,
   isWatched,
@@ -1425,6 +1437,12 @@ export default function App() {
   // お気に入り / 最近使ったテーブル。アクティブ接続プロファイル単位で
   // localStorage に永続化する。`handleOpenTable` がテーブルを開くたびに最近へ記録。
   const [quickAccess, setQuickAccess] = useState<QuickAccessState>(EMPTY_QUICK_ACCESS);
+  // お気に入り (ピン留め) / 最近実行したスニペット (#877)。スニペットは接続を
+  // 跨いで再利用されることが多いため、テーブルのクイックアクセスと異なりプロファイル
+  // 単位ではなくグローバルに 1 つだけ持つ (`snippetQuickAccess.ts` 参照)。
+  const [snippetQuickAccess, setSnippetQuickAccess] = useState<SnippetQuickAccessState>(
+    () => loadSnippetQuickAccess(),
+  );
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // 直近の実行クエリ (最新が先頭、連続重複は畳む)。QueryEditor の ↑/↓ 履歴
   // ナビゲーション用。接続プロファイル単位で読み込み、実行のたびに
@@ -1621,6 +1639,8 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
   // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
+  // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
+  const [createIndexTarget, setCreateIndexTarget] = useState<{ database: string; table: string } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
   // 結果をビューへ保存 / 既存ビュー定義の編集を保存 (#851): 対象。null で閉じる。
@@ -2430,6 +2450,25 @@ export default function App() {
       return next;
     });
   }, [selectedProfile?.id]);
+
+  // スニペットのお気に入り (ピン留め) トグル (#877)。接続の有無に関わらず常に
+  // 使える (ローカル永続化のみで DB には触れない)。
+  const handleToggleSnippetFavorite = useCallback((snippet: Snippet) => {
+    setSnippetQuickAccess((prev) => {
+      const next = toggleSnippetFavorite(prev, snippet.id);
+      saveSnippetQuickAccess(next);
+      return next;
+    });
+  }, []);
+
+  // ワンクリック実行したスニペットを「最近実行」の先頭へ記録する (#877)。
+  const recordSnippetRunUsage = useCallback((id: string) => {
+    setSnippetQuickAccess((prev) => {
+      const next = recordSnippetRun(prev, id);
+      saveSnippetQuickAccess(next);
+      return next;
+    });
+  }, []);
 
   // Keep the active profile pointer in sync when the profile is edited or
   // when the saved list is refreshed for any other reason.
@@ -4321,6 +4360,26 @@ export default function App() {
     }
   }, [activeTab, sessionId, activeEditor, addTab]);
 
+  // 保存済みスニペットのワンクリック実行 (#877)。専用の新しいクエリタブへ SQL を
+  // 流し込み、通常のエディタ実行 (`dispatchEditorAction` の "run") と全く同じ
+  // `runInTabWithGate` に委譲する — 危険クエリ確認 (DangerousQueryDialog)・
+  // 読み取り専用ガード・本番書き込み承認・自動 LIMIT を含む既存の安全網をそのまま
+  // 通し、実行経路を二重実装しない。`newTab: false` は「このスニペット専用に
+  // 作った新タブをそのまま使う」指定で、`settings.resultsInNewTab` が有効でも
+  // さらにもう 1 枚タブを開かせない。
+  const handleRunSnippet = useCallback((snippet: Snippet) => {
+    if (!sessionId) return;
+    const tab: Tab = {
+      ...makeQueryTab(),
+      sql: snippet.sql,
+      lastExecutedSql: snippet.sql,
+      title: snippet.name,
+    };
+    addTab(tab);
+    runInTabWithGate(tab, snippet.sql, { newTab: false });
+    recordSnippetRunUsage(snippet.id);
+  }, [sessionId, addTab, runInTabWithGate, recordSnippetRunUsage]);
+
   // Insert an advisor's fix DDL (#741) into the focused query/explain editor,
   // or a fresh query tab. Executing it still goes through the existing safety
   // nets (read-only rejection, dangerous-query confirmation). The panel stays
@@ -4392,6 +4451,13 @@ export default function App() {
       if (activeProfileIdRef.current) {
         setPlanWatch(loadPlanWatch(activeProfileIdRef.current));
       }
+      // クイックアクセス (#877): 削除したスニペットをお気に入り/最近実行から
+      // 取り除く (実行計画ウォッチと同じく、Undo で元に戻ってもここは復元しない)。
+      setSnippetQuickAccess((prev) => {
+        const next = forgetSnippetQuickAccess(prev, id);
+        if (next !== prev) saveSnippetQuickAccess(next);
+        return next;
+      });
     }, "statusFailedDeleteSnippet");
     if (!ok) return;
     // Undo (#676): snippets have no secrets, so restoring with the original id
@@ -5007,6 +5073,41 @@ export default function App() {
       toast.error(translate("statusQueryError", { error: String(e) }));
     }
   }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache]);
+
+  // インデックス作成の軽量モーダル (#850) の実行: 非破壊操作なので CreateTableModal と
+  // 同じく確認ダイアログなしで直接実行する (destructive な DROP INDEX とは異なる)。
+  const handleCreateIndexRun = useCallback(async (sql: string) => {
+    const target = createIndexTarget;
+    if (!target) return;
+    const success = await runMaintenanceDdl(sql, target.database);
+    if (success) {
+      toast.success(translate("createIndexSuccess"));
+      setCreateIndexTarget(null);
+    }
+  }, [createIndexTarget, runMaintenanceDdl, toast]);
+
+  const handleCreateIndexToEditor = useCallback((sql: string) => {
+    setCreateIndexTarget(null);
+    openQueryInEditor(sql);
+  }, [openQueryInEditor]);
+
+  // インデックスノード右クリックからの DROP INDEX (#850)。TRUNCATE/DROP TABLE と
+  // 同じく不可逆 × 本番接続ではタイプ入力の強確認ゲート (#675) を追加する。
+  // PK インデックスは `ConnectionList` 側で常に無効化しているのでここには来ない。
+  const handleDropIndex = useCallback(async (database: string, table: string, indexName: string) => {
+    const driver = selectedProfile?.driver ?? "mysql";
+    const sql = buildDropIndexSql(driver, database, table, indexName);
+    const ok = await confirm({
+      title: translate("dropIndexConfirmTitle", { index: indexName }),
+      message: maintenanceMessage(translate("dropIndexConfirmBody", { index: indexName, table })),
+      confirmLabel: translate("dropIndexConfirmOk"),
+      tone: "danger",
+      typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
+    });
+    if (!ok) return;
+    const success = await runMaintenanceDdl(sql, database);
+    if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, toast]);
 
   // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
@@ -6229,7 +6330,9 @@ export default function App() {
       }
     }
 
-    // スニペット。
+    // スニペット。挿入 (常時) に加え、接続中は「保存済みスニペットを直接実行」
+    // (#877) の候補も並べる。id を分けて 2 候補を独立に検索・実行できるようにする
+    // (挿入だけ試したいケースを妨げない)。
     for (const snippet of snippets) {
       items.push({
         id: `snippet:${snippet.id}`,
@@ -6240,6 +6343,17 @@ export default function App() {
         icon: "snippet",
         run: () => handleInsertSnippet(snippet),
       });
+      if (sessionId) {
+        items.push({
+          id: `snippet-run:${snippet.id}`,
+          group: "snippets",
+          label: t("cmdkActionRunSnippet", { name: snippet.name }),
+          sublabel: snippet.folder ?? undefined,
+          keywords: `${snippet.tags.join(" ")} ${snippet.sql} run execute 実行`,
+          icon: "query",
+          run: () => handleRunSnippet(snippet),
+        });
+      }
     }
 
     // 直近のクエリ履歴 (最新優先、件数を抑える)。
@@ -6272,6 +6386,7 @@ export default function App() {
     handleConnect,
     handleRunTableSelect,
     handleInsertSnippet,
+    handleRunSnippet,
     handleRestoreHistory,
     openFullView,
     toggleTheme,
@@ -6635,6 +6750,7 @@ export default function App() {
                   ) : tab.showChart && tab.result && !tab.streaming ? (
                     <ChartView
                       result={tab.result}
+                      sourceSql={tab.lastExecutedSql}
                       onChangeView={(v) => setResultView(tab.id, v)}
                     />
                   ) : tab.showPivot && tab.result && !tab.streaming ? (
@@ -7156,6 +7272,8 @@ export default function App() {
             onDropTable={handleDropTable}
             onRenameTable={(database, table) => setRenameTarget({ database, table })}
             onAlterTable={(database, table) => setAlterTableTarget({ database, table })}
+            onCreateIndex={(database, table) => setCreateIndexTarget({ database, table })}
+            onDropIndex={handleDropIndex}
             onRunTableMaintenance={handleRunTableMaintenance}
             onRunDatabaseMaintenance={handleRunDatabaseMaintenance}
             onShowDatabaseSizes={handleShowDatabaseSizes}
@@ -7180,6 +7298,9 @@ export default function App() {
             watchedPlanIds={watchedPlanIdList}
             onTogglePlanWatch={selectedProfile ? handleTogglePlanWatch : undefined}
             onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
+            favoriteIds={snippetQuickAccess.favorites}
+            onToggleFavorite={handleToggleSnippetFavorite}
+            onRun={sessionId ? handleRunSnippet : undefined}
           />
         ) : sidebarTab === "history" ? (
           <HistoryList
@@ -8053,6 +8174,23 @@ export default function App() {
               onRun={handleAlterTableRun}
               onSendToEditor={handleAlterTableToEditor}
               onClose={() => setAlterTableTarget(null)}
+            />
+          </Suspense>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {createIndexTarget && sessionId && (
+          <Suspense fallback={null}>
+            <CreateIndexModal
+              sessionId={sessionId}
+              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+              database={createIndexTarget.database}
+              table={createIndexTarget.table}
+              readOnly={readOnly}
+              onRun={handleCreateIndexRun}
+              onSendToEditor={handleCreateIndexToEditor}
+              onClose={() => setCreateIndexTarget(null)}
             />
           </Suspense>
         )}
