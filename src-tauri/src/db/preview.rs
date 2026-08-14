@@ -75,7 +75,15 @@ pub(crate) fn before_where_clause(
     if primary_key.is_empty() {
         return None;
     }
-    let head = sql.trim_start().to_ascii_lowercase();
+    // 先頭キーワードの判定も**コメント除去後**のテキストで行う。生の `sql` を
+    // 見ると `/* fix */ UPDATE t SET …` のように先頭コメント付きの文で
+    // `starts_with("update")` が偽になり、WHERE の再利用をあきらめて固定窓へ
+    // 縮退してしまう — このモジュールが直そうとしている「窓の外の行が差分に
+    // 出ない」症状が、コメント付きの文でだけ残ることになる
+    // (`extract_target_table` はコメントを除去して解析するので、対象テーブルの
+    // 側だけは解決できてしまい、食い違いにも気付きにくい)。
+    let cleaned = super::strip_sql_comments(sql, flavor);
+    let head = cleaned.trim_start().to_ascii_lowercase();
     let is_postgres = flavor == SqlFlavor::Postgres;
     // 先頭に置く "where" が「見つけたい句」、それ以降は「これが先に出たら
     // WHERE の再利用をやめる」失格キーワード。
@@ -98,12 +106,12 @@ pub(crate) fn before_where_clause(
     };
 
     // 失格キーワードが無い方言 (= 探すのは `WHERE` だけ) では、抽出そのものは
-    // [`extract_where_and_after`] と同一なのでそちらへ委譲する。
+    // [`extract_where_and_after`] と同一なのでそちらへ委譲する (コメント除去を
+    // 二度走らせることになるが、同じ抽出規則が 2 か所に増えるより安い)。
     if keywords.len() == 1 {
         return extract_where_and_after(sql, flavor);
     }
 
-    let cleaned = super::strip_sql_comments(sql, flavor);
     let (pos, which) = find_top_level_keyword(&cleaned, keywords, flavor)?;
     if which != 0 {
         return None;
@@ -361,6 +369,40 @@ mod tests {
     /// MySQL 方言の解釈が変わっていないことを固定する。
     fn mysql_where(sql: &str) -> Option<String> {
         extract_where_and_after(sql, SqlFlavor::MySql)
+    }
+
+    // 先頭にコメントが付いた UPDATE / DELETE でも WHERE を再利用できること。
+    // 先頭キーワードの判定を生の SQL で行っていた頃は、ここで `None` に落ちて
+    // BEFORE スナップショットが固定窓へ縮退し、「窓の外の行が差分に出ない」
+    // 症状がコメント付きの文でだけ残っていた。
+    #[test]
+    fn before_where_clause_sees_past_a_leading_comment() {
+        let pk = vec!["id".to_string()];
+        assert_eq!(
+            before_where_clause(
+                "/* fix */ UPDATE t SET x = 1 WHERE id = 40",
+                SqlFlavor::MySql,
+                &pk
+            ),
+            Some("WHERE id = 40".into())
+        );
+        assert_eq!(
+            before_where_clause(
+                "-- hotfix\nDELETE FROM t WHERE id = 40",
+                SqlFlavor::Postgres,
+                &pk
+            ),
+            Some("WHERE id = 40".into())
+        );
+        // PostgreSQL の失格キーワード判定も先頭コメント込みで効くこと。
+        assert_eq!(
+            before_where_clause(
+                "/* c */ UPDATE t SET x = o.x FROM other o WHERE t.id = o.id",
+                SqlFlavor::Postgres,
+                &pk
+            ),
+            None
+        );
     }
 
     #[test]

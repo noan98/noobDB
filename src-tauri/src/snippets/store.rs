@@ -96,7 +96,16 @@ fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
         seq
     ));
     {
-        let mut f = std::fs::File::create(&tmp_path)?;
+        // `create` (`O_CREAT|O_TRUNC`) は既存エントリを開いてしまい、
+        // シンボリックリンクなら**その指す先**を切り詰める。一時ファイル名は
+        // PID + プロセス内カウンタで衝突しない前提だが、data_dir へ書ける
+        // 別プロセスが候補パスを先回りして作れる以上、`create_new`
+        // (`O_CREAT|O_EXCL`) で排他予約する (`commands::dump` の資格情報
+        // ファイル / 一時ダンプファイルと同じ防御に揃える)。
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
         f.write_all(content)?;
         f.sync_all()?;
     }

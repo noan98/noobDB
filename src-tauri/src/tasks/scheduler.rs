@@ -197,12 +197,16 @@ pub(crate) async fn execute_and_log(
 /// タスク定義を読み直し・部分更新・保存し直す共通ヘルパー。タスクが
 /// (並行して) 削除済みなら何もしない (エラーにしない — レースはあり得る想定内)。
 fn update_task_fields(id: &str, f: impl FnOnce(&mut TaskDefinition)) -> Result<()> {
-    let mut tasks = store::load_all()?;
-    if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
-        f(t);
-        store::save_all(&tasks)?;
-    }
-    Ok(())
+    // 読み → 変更 → 書きはストアのロック下で一息に行う。`load_all` と
+    // `save_all` を別々に呼ぶと、その間に割り込んだ `upsert` / `delete` の
+    // 変更をスケジューラの書き戻しが消してしまう (実行のたびに `next_run_at`
+    // を書くので、ユーザの編集と競合する窓が繰り返し開く)。
+    store::update_all(|tasks| {
+        if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+            f(t);
+        }
+        Ok(())
+    })
 }
 
 fn persist_next_run(id: &str, next: DateTime<Utc>) -> Result<()> {

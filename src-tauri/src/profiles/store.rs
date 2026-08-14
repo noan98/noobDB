@@ -78,9 +78,24 @@ pub fn load_all() -> Result<Vec<ConnectionProfile>> {
     load_all_locked()
 }
 
-pub fn save_all(profiles: &[ConnectionProfile]) -> Result<()> {
+/// 「読み込み → 変更 → 保存」をロックを握ったまま一息で行う。
+///
+/// `load_all()` と `save_all()` を別々に呼ぶと、その**間にロックが解放される**
+/// ため、間に割り込んだ `upsert` / `delete` の変更を後から来た `save_all` が
+/// 丸ごと上書きしてしまう (lost update)。インポートや並べ替えのようにストア
+/// 全体を読んで書き戻す操作は、必ずこの API を通すこと。
+///
+/// `f` はロック下で実行されるので、**この中で他の公開 API (`load_all` /
+/// `save_all` / `upsert` / `delete`) を呼ばないこと** — 同じ非再入 Mutex を
+/// 取り直してデッドロックする。
+pub fn update_all<F>(f: F) -> Result<()>
+where
+    F: FnOnce(Vec<ConnectionProfile>) -> Result<Vec<ConnectionProfile>>,
+{
     let _guard = lock_store();
-    save_all_locked(profiles)
+    let current = load_all_locked()?;
+    let next = f(current)?;
+    save_all_locked(&next)
 }
 
 /// `path` をアトミックに (全体差し替えで) 書き込む。同じディレクトリに一時ファイル
@@ -106,7 +121,16 @@ fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
         seq
     ));
     {
-        let mut f = std::fs::File::create(&tmp_path)?;
+        // `create` (`O_CREAT|O_TRUNC`) は既存エントリを開いてしまい、
+        // シンボリックリンクなら**その指す先**を切り詰める。一時ファイル名は
+        // PID + プロセス内カウンタで衝突しない前提だが、data_dir へ書ける
+        // 別プロセスが候補パスを先回りして作れる以上、`create_new`
+        // (`O_CREAT|O_EXCL`) で排他予約する (`commands::dump` の資格情報
+        // ファイル / 一時ダンプファイルと同じ防御に揃える)。
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
         f.write_all(content)?;
         f.sync_all()?;
     }

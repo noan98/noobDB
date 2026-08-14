@@ -433,10 +433,24 @@ impl MssqlConn {
             let client = conn.client_mut()?;
             apply_use_database(client, database).await?;
         }
+        // PK が取れないこと自体はプレビューを止める理由にならない (PK 無しの
+        // テーブルでも before/after は撮れる) ので既定値へ倒すが、失敗の原因が
+        // I/O エラーや未消費の結果セット = 接続破損である可能性は残る。それを
+        // 握り潰したまま末尾で `unmark_discard` すると、状態の分からない接続を
+        // プールへ返してしまう ("迷ったら捨てる" 方針の穴) ので、失敗した事実を
+        // 覚えておいて解除を抑止する。
+        let mut pk_lookup_failed = false;
         let primary_key = match target.as_deref() {
             Some(t) => {
                 let client = conn.client_mut()?;
-                fetch_primary_key(client, t).await.unwrap_or_default()
+                match fetch_primary_key(client, t).await {
+                    Ok(pk) => pk,
+                    Err(e) => {
+                        tracing::warn!(table = %t, error = %e, "mssql: preview primary-key lookup failed; keeping the connection discarded");
+                        pk_lookup_failed = true;
+                        Vec::new()
+                    }
+                }
             }
             None => Vec::new(),
         };
@@ -479,8 +493,12 @@ impl MssqlConn {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         finish_tx(&mut conn, "ROLLBACK TRANSACTION").await?;
         // Every step above succeeded and the dry-run transaction rolled
-        // back cleanly — this connection is known-healthy again.
-        conn.unmark_discard();
+        // back cleanly — this connection is known-healthy again. The one
+        // exception is a swallowed PK-lookup failure above: that error might
+        // have been I/O-level, so leave the discard mark in place.
+        if !pk_lookup_failed {
+            conn.unmark_discard();
+        }
 
         let truncated = before_raw.len() > row_limit || after_raw.len() > row_limit;
         let columns = if !before_raw.is_empty() {

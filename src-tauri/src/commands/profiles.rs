@@ -430,10 +430,23 @@ pub async fn import_profiles(path: String, strategy: ImportStrategy) -> Result<I
         )));
     }
 
-    let all = store::load_all()?;
-    let (merged, result, overwritten_ids) =
-        merge_imported(all, parsed.profiles, strategy, new_profile_id);
-    store::save_all(&merged)?;
+    // 読み込み → マージ → 保存はストアのロックを握ったまま一息で行う。
+    // `load_all()` と `save_all()` を別々に呼ぶと、その間に割り込んだ
+    // `save_profile` / `delete_profile` の変更をインポートが丸ごと上書きする
+    // (lost update)。結果 (`ImportResult` と上書き対象 id) はクロージャの外へ
+    // 持ち出したいので、`Option` に退避してから受け取る。
+    let mut outcome: Option<(ImportResult, Vec<String>)> = None;
+    store::update_all(|all| {
+        let (merged, result, overwritten_ids) =
+            merge_imported(all, parsed.profiles, strategy, new_profile_id);
+        outcome = Some((result, overwritten_ids));
+        Ok(merged)
+    })?;
+    let (result, overwritten_ids) = outcome.ok_or_else(|| {
+        // `update_all` が `f` を呼ばずに返ることは無いので到達しない。panic せず
+        // 通常のエラーにするのはリポジトリ方針 (本体コードで unwrap/panic 禁止)。
+        AppError::Other("profile import did not produce a result".into())
+    })?;
     // Overwrite で本体を差し替えた既存プロファイルの keyring 秘密を消す。
     // インポートされるプロファイル本体には秘密が含まれないため (エクスポート
     // 注記のとおり)、host/user が変わっていた場合に旧サーバ向けパスワードが
@@ -490,14 +503,19 @@ fn delete_profile_ordered(
 /// 利用した永続化方針 (CLAUDE.md の「Rust 変更は最小限に」に沿う)。
 #[tauri::command]
 pub async fn reorder_profiles(ordered_ids: Vec<String>) -> Result<()> {
-    let all = store::load_all()?;
-    let count = all.len();
-    let reordered = reorder_profiles_pure(all, &ordered_ids).ok_or_else(|| {
-        AppError::InvalidInput(
-            "orderedIds must be a permutation of the existing profile ids".to_string(),
-        )
+    // 並べ替えもインポートと同じく「読み → 変更 → 書き」なので、ロックを握った
+    // まま一息で行う (途中で `save_profile` が割り込むと、その追加/変更が
+    // 並べ替えの書き戻しで消える)。順列チェックも同じロック下で行うため、
+    // 検証に使った一覧と書き戻す一覧が必ず同一のスナップショットになる。
+    let mut count = 0usize;
+    store::update_all(|all| {
+        count = all.len();
+        reorder_profiles_pure(all, &ordered_ids).ok_or_else(|| {
+            AppError::InvalidInput(
+                "orderedIds must be a permutation of the existing profile ids".to_string(),
+            )
+        })
     })?;
-    store::save_all(&reordered)?;
     tracing::info!(count, "profiles reordered");
     Ok(())
 }

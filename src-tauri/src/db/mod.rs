@@ -2199,7 +2199,15 @@ fn is_allowed_set_statement(s: &str, orig_segment: &str) -> bool {
         .split(|c: char| !is_word_char(c))
         .find(|w| !w.is_empty())
         .unwrap_or("");
-    if matches!(next_word, "global" | "password" | "statement") {
+    // `PERSIST` / `PERSIST_ONLY` は MySQL 8.0 の永続化構文で、`GLOBAL` より
+    // 影響が広い: グローバル変数を書き換えたうえで `mysqld-auto.cnf` に保存し、
+    // **サーバ再起動後も残る**。セッション初期化 SQL は「このセッションの
+    // 再現性を整える」ためのものなので、サーバ全体・他ユーザ・次回起動まで
+    // 波及する設定は `GLOBAL` と同じく拒否する。
+    if matches!(
+        next_word,
+        "global" | "password" | "statement" | "persist" | "persist_only"
+    ) {
         return false;
     }
     !sets_no_backslash_escapes_mode(orig_segment)
@@ -3118,6 +3126,30 @@ mod tests {
         assert!(is_session_init_sql("SET sql_mode = 'STRICT_ALL_TABLES'"));
         // sql_mode と無関係な設定文は引き続き許可。
         assert!(is_session_init_sql("SET time_zone = 'UTC'"));
+    }
+
+    // セッション初期化 SQL は「このセッションの再現性を整える」ものなので、
+    // サーバ全体・次回起動まで波及する MySQL 8.0 の永続化構文は `GLOBAL` と
+    // 同じく拒否する (`SET PERSIST` はグローバル変数の変更 + `mysqld-auto.cnf`
+    // への保存、`SET PERSIST_ONLY` は保存のみ)。
+    #[test]
+    fn session_init_rejects_persist_and_persist_only() {
+        assert!(!is_session_init_sql("SET PERSIST read_only = 0"));
+        assert!(!is_session_init_sql(
+            "SET PERSIST_ONLY sql_mode = 'STRICT_ALL_TABLES'"
+        ));
+        // 大小無視・空白ゆれ。
+        assert!(!is_session_init_sql("set   persist   max_connections = 10"));
+        assert!(!is_session_init_sql(
+            "set persist_only innodb_log_file_size = 1"
+        ));
+        // 複数文の 2 文目に隠れていても検出する。
+        assert!(!is_session_init_sql(
+            "SET time_zone = 'UTC'; SET PERSIST read_only = 0"
+        ));
+        // `persist` で始まる**変数名**は永続化構文ではないので通す
+        // (`SET persistent_foo = 1` のような設定を巻き込まないこと)。
+        assert!(is_session_init_sql("SET persistent_foo = 1"));
     }
 
     #[test]

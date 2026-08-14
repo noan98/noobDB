@@ -90,7 +90,16 @@ fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
         seq
     ));
     {
-        let mut f = std::fs::File::create(&tmp_path)?;
+        // `create` (`O_CREAT|O_TRUNC`) は既存エントリを開いてしまい、
+        // シンボリックリンクなら**その指す先**を切り詰める。一時ファイル名は
+        // PID + プロセス内カウンタで衝突しない前提だが、data_dir へ書ける
+        // 別プロセスが候補パスを先回りして作れる以上、`create_new`
+        // (`O_CREAT|O_EXCL`) で排他予約する (`commands::dump` の資格情報
+        // ファイル / 一時ダンプファイルと同じ防御に揃える)。
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
         f.write_all(content)?;
         f.sync_all()?;
     }
@@ -103,12 +112,24 @@ pub fn load_all() -> Result<Vec<TaskDefinition>> {
     Ok(load_file_locked()?.tasks)
 }
 
-pub fn save_all(tasks: &[TaskDefinition]) -> Result<()> {
+/// 「読み込み → 変更 → 保存」をロックを握ったまま一息で行う。
+///
+/// `load_all()` して変更してから `save_all()` する形だと、その**間にロックが
+/// 解放される**ため、割り込んだ `upsert` / `delete` の変更を後から来た保存が
+/// 丸ごと上書きしてしまう (lost update)。一覧全体を読んで書き戻す操作は必ず
+/// この API を通すこと。`profiles::store::update_all` と同じ形。
+///
+/// `f` はロック下で実行されるので、**この中で他の公開 API を呼ばないこと** —
+/// 同じ非再入 Mutex を取り直してデッドロックする。
+pub fn update_all<F>(f: F) -> Result<()>
+where
+    F: FnOnce(&mut Vec<TaskDefinition>) -> Result<()>,
+{
     // `settings` を保ったまま `tasks` だけ差し替える read-modify-write なので、
     // 読み→書きの全体をロックで保護する。
     let _guard = lock_store();
     let mut file = load_file_locked()?;
-    file.tasks = tasks.to_vec();
+    f(&mut file.tasks)?;
     save_file_locked(&file)
 }
 
