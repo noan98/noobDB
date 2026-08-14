@@ -93,9 +93,17 @@ export const CHART_PALETTES: Record<ChartPaletteKey, ChartPalette> = {
 
 export const DEFAULT_CHART_PALETTE: ChartPaletteKey = "categorical";
 
-/** キー (未知/未設定を含む) からパレット定義を引く。常に有効な値を返す。 */
+/**
+ * キー (未知/未設定を含む) からパレット定義を引く。常に有効な値を返す。
+ *
+ * 判定に `in` ではなく `hasOwnProperty` を使うのは、`localStorage` から来る
+ * 任意の文字列が対象だから — `"toString"` / `"constructor"` / `"__proto__"` は
+ * `in` では真になり、`Object.prototype` 由来の値 (パレットではないもの) を
+ * 返してしまう。そうなると `.key` が undefined になり、`sanitizeChartConfig`
+ * が `palette: undefined` を永続化する。
+ */
 export function chartPalette(key: string | undefined | null): ChartPalette {
-  if (typeof key === "string" && key in CHART_PALETTES) {
+  if (typeof key === "string" && Object.prototype.hasOwnProperty.call(CHART_PALETTES, key)) {
     return CHART_PALETTES[key as ChartPaletteKey];
   }
   return CHART_PALETTES[DEFAULT_CHART_PALETTE];

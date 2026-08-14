@@ -940,7 +940,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     overflowItems.push({
       label: t("editorOpenFile"),
       icon: "upload",
-      title: disabledReason ?? t("editorOpenFileTitle"),
+      // 「開く」は本文が空でも押せる (開く先は新規タブ) ので、`disabledReason`
+      // をそのまま使うと空のときだけ「先に SQL を入力してください」という
+      // 的外れな無効理由が出る。無効になるのは未接続のときだけ。
+      title: disabled ? t("editorHintDisabled") : t("editorOpenFileTitle"),
       disabled,
       onSelect: onOpenFile,
     });

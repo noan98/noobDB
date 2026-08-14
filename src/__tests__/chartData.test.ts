@@ -345,6 +345,21 @@ describe("sanitizeChartConfig (#909, corruption resistance)", () => {
     expect(sanitizeChartConfig(cfg, columns)).toEqual({ ...cfg, palette: "categorical" });
   });
 
+  it("fills in the default palette for missing / bogus keys instead of degrading (#916)", () => {
+    // 配色は後から足したフィールドなので、これを持たない旧設定は縮退させない。
+    const legacy = sanitizeChartConfig({ type: "bar", xCol: 0, yCols: [1], aggregation: "none" }, columns);
+    expect(legacy?.palette).toBe("categorical");
+    // 未知の文字列やプロトタイプ由来のキーでも必ず有効なキーが入る
+    // (undefined を永続設定へ書き戻さない)。
+    for (const palette of ["bogus", "__proto__", 42, null]) {
+      const out = sanitizeChartConfig(
+        { type: "bar", xCol: 0, yCols: [1], aggregation: "none", palette },
+        columns,
+      );
+      expect(out?.palette, String(palette)).toBe("categorical");
+    }
+  });
+
   it("excludes a saved Y column that now equals xCol", () => {
     const result = sanitizeChartConfig({ type: "bar", xCol: 1, yCols: [1, 2], aggregation: "none" }, columns);
     expect(result).toEqual({ type: "bar", xCol: 1, yCols: [2], aggregation: "none", palette: "categorical" });
@@ -395,6 +410,14 @@ describe("chartPalette (#916)", () => {
     expect(chartPalette(undefined).key).toBe(DEFAULT_CHART_PALETTE);
     expect(chartPalette("nope").key).toBe(DEFAULT_CHART_PALETTE);
     expect(chartPalette(null).key).toBe(DEFAULT_CHART_PALETTE);
+  });
+
+  it("falls back for prototype-derived keys (the stored key is arbitrary text)", () => {
+    // `in` で判定すると Object.prototype 由来のキーが通ってしまい、パレットで
+    // ないものが返る → sanitizeChartConfig が palette: undefined を永続化する。
+    for (const key of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+      expect(chartPalette(key).key, key).toBe(DEFAULT_CHART_PALETTE);
+    }
   });
 
   it("exposes the shared ramps and their colour-blind safety", () => {
