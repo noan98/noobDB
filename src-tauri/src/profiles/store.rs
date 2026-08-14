@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use directories::ProjectDirs;
 
@@ -9,6 +10,21 @@ use crate::error::{AppError, Result};
 const QUALIFIER: &str = "";
 const ORG: &str = "";
 const APP: &str = "noobDB";
+
+/// `profiles.json` への read-modify-write を直列化するロック。`Tauri` の
+/// `#[tauri::command] async fn` はプロセス内で並行実行されるため (`ssh::known_hosts`
+/// の `KNOWN_HOSTS_LOCK` と全く同じ事情)、`upsert`/`delete` が行う
+/// 「`load_all` → 変更 → `save_all`」を無防備なまま並行実行すると、後勝ちの
+/// `save_all` が他方の変更を消す lost update が起きる。このロックを
+/// 読み→書きの全体にわたって保持することでそれを防ぐ。poisoning は
+/// `into_inner` で回復する: パニック時点で書きかけの内容は `write_atomic` の一時
+/// ファイル側にしか無く、本ファイル (`profiles.json`) は直前の一貫した状態の
+/// ままなので、ロックの中身自体は壊れていない。
+static STORE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_store() -> std::sync::MutexGuard<'static, ()> {
+    STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 pub fn data_dir() -> Option<PathBuf> {
     ProjectDirs::from(QUALIFIER, ORG, APP).map(|p| p.data_dir().to_path_buf())
@@ -20,7 +36,10 @@ pub fn profiles_path() -> Result<PathBuf> {
     Ok(dir.join("profiles.json"))
 }
 
-pub fn load_all() -> Result<Vec<ConnectionProfile>> {
+/// 実際のファイル読み込み (ロック非取得)。ロックを跨いだ複合操作
+/// (`upsert`/`delete`) から呼ぶための内部版で、公開 API の `load_all` はこれを
+/// ロック付きでラップするだけ。
+fn load_all_locked() -> Result<Vec<ConnectionProfile>> {
     let path = profiles_path()?;
     if !path.exists() {
         return Ok(Vec::new());
@@ -39,7 +58,9 @@ pub fn load_all() -> Result<Vec<ConnectionProfile>> {
     Ok(profiles)
 }
 
-pub fn save_all(profiles: &[ConnectionProfile]) -> Result<()> {
+/// 実際のファイル書き込み (ロック非取得)。`load_all_locked` と対で、複合操作から
+/// 呼ぶための内部版。
+fn save_all_locked(profiles: &[ConnectionProfile]) -> Result<()> {
     let path = profiles_path()?;
     let content = serde_json::to_string_pretty(profiles).map_err(|e| {
         tracing::error!(error = %e, "profiles: failed to serialize profiles");
@@ -52,6 +73,16 @@ pub fn save_all(profiles: &[ConnectionProfile]) -> Result<()> {
     Ok(())
 }
 
+pub fn load_all() -> Result<Vec<ConnectionProfile>> {
+    let _guard = lock_store();
+    load_all_locked()
+}
+
+pub fn save_all(profiles: &[ConnectionProfile]) -> Result<()> {
+    let _guard = lock_store();
+    save_all_locked(profiles)
+}
+
 /// `path` をアトミックに (全体差し替えで) 書き込む。同じディレクトリに一時ファイル
 /// を書いて `sync_all` してから `rename` することで、書き込み途中のクラッシュ/
 /// 電源断/ディスクフルで本ファイルが半端な内容のまま残る (以後 JSON パース失敗で
@@ -59,14 +90,20 @@ pub fn save_all(profiles: &[ConnectionProfile]) -> Result<()> {
 /// アトミックなので、途中状態は一時ファイル側にしか現れない。
 fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-    // プロセスごとに一意な一時ファイル名にして、並行書き込み同士が互いの一時
-    // ファイルを踏まないようにする。
+    // プロセス ID だけでは同一プロセス内の並行呼び出し (Tauri の `async fn` コマンドは
+    // プロセス内で並行実行される) 同士が同じ一時ファイル名を選んでしまい、互いの
+    // 書き込みを上書きし合う (アトミック書き込みの保証そのものが壊れる) ため、
+    // プロセス内で単調増加するカウンタも足して一意にする。
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp_path = dir.join(format!(
-        ".{}.tmp.{}",
+        ".{}.tmp.{}.{}",
         path.file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "profiles.json".to_string()),
-        std::process::id()
+        std::process::id(),
+        seq
     ));
     {
         let mut f = std::fs::File::create(&tmp_path)?;
@@ -78,19 +115,24 @@ fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
 }
 
 pub fn upsert(profile: ConnectionProfile) -> Result<()> {
-    let mut all = load_all()?;
+    // 読み→書きの全体でロックを保持する (`load_all`/`save_all` を素朴に呼ぶと
+    // その間にロックが解放され、他の呼び出しの変更を踏む余地が生まれるため、
+    // ロックを取らない内部版を直接使う)。
+    let _guard = lock_store();
+    let mut all = load_all_locked()?;
     if let Some(existing) = all.iter_mut().find(|p| p.id == profile.id) {
         *existing = profile;
     } else {
         all.push(profile);
     }
-    save_all(&all)
+    save_all_locked(&all)
 }
 
 pub fn delete(id: &str) -> Result<()> {
-    let mut all = load_all()?;
+    let _guard = lock_store();
+    let mut all = load_all_locked()?;
     all.retain(|p| p.id != id);
-    save_all(&all)
+    save_all_locked(&all)
 }
 
 pub fn new_profile_id() -> String {
@@ -115,6 +157,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    // 同一プロセス内で `write_atomic` を並行に呼んでも、一時ファイル名が衝突して
+    // 互いの内容を混ぜてしまわないこと (#H の本題)。カウンタが無いと PID だけでは
+    // 同一プロセス内の並行呼び出しを区別できず、2 本のスレッドが同じ一時ファイルを
+    // create/write/rename して壊れた内容が残りうる。
+    #[test]
+    fn write_atomic_is_safe_under_same_process_concurrency() {
+        let dir = scratch_dir("atomic_concurrent");
+        let path = dir.join("profiles.json");
+        let path = std::sync::Arc::new(path);
+
+        let handles: Vec<_> = (0..16)
+            .map(|i| {
+                let path = std::sync::Arc::clone(&path);
+                std::thread::spawn(move || {
+                    let content = format!("payload-{i}");
+                    write_atomic(&path, content.as_bytes()).unwrap();
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // 最終的な内容はどれか 1 本の書き込みそのもの (途中で切れたり混ざったり
+        // していない) であること。
+        let final_content = std::fs::read_to_string(&*path).unwrap();
+        assert!(final_content.starts_with("payload-"));
+        let n: usize = final_content["payload-".len()..].parse().unwrap();
+        assert!(n < 16);
+
+        // 一時ファイルが残っていないこと。
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "profiles.json")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp file was left behind: {leftovers:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // H3: write_atomic はリネーム後に内容が読め、一時ファイルを残さないこと。

@@ -1192,7 +1192,12 @@ fn decode_cell(row: &SqliteRow, i: usize) -> Value {
     // columns where the declared type is something exotic like "DATETIME".
     if ti(type_name, &["INTEGER", "INT", "BIGINT"]) {
         if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
-            return v.map(Value::Int).unwrap_or(Value::Null);
+            // SQLite's INTEGER storage class is a full 64-bit signed value
+            // (unlike most other drivers' `int`/`smallint`, which always fit
+            // safely), so this can exceed JS's safe integer range — route
+            // through the lossless conversion (#precision) rather than a
+            // bare `Value::Int`.
+            return v.map(Value::from_i64_lossless).unwrap_or(Value::Null);
         }
     }
     if ti(type_name, &["REAL", "FLOAT", "DOUBLE"]) {
@@ -1224,7 +1229,11 @@ fn decode_cell(row: &SqliteRow, i: usize) -> Value {
         Ok(None) => Value::Null,
         Err(_) => {
             if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(i) {
-                return Value::Int(v);
+                // Same lossless treatment as the declared-INTEGER path above
+                // — this is the dynamically-typed-column fallback (e.g. a
+                // column declared with an exotic/no type affinity), which
+                // can just as easily carry a value beyond 2^53.
+                return Value::from_i64_lossless(v);
             }
             if let Ok(Some(v)) = row.try_get::<Option<f64>, _>(i) {
                 return Value::Float(v);
@@ -1548,6 +1557,84 @@ mod tests {
         assert!(is_query_shape(
             "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte"
         ));
+    }
+
+    /// #precision: `decode_cell`'s INTEGER path must stay lossless across
+    /// JS's `Number.MAX_SAFE_INTEGER` (2^53-1) boundary — SQLite's INTEGER
+    /// storage class is a full 64-bit signed value, unlike most other
+    /// drivers' narrower integer types that always fit safely. Uses a bare
+    /// in-memory `sqlx::SqliteConnection` (no pool, no temp file) so this
+    /// stays a self-contained unit test of `decode_cell` itself.
+    #[tokio::test]
+    async fn integer_decode_stays_lossless_across_js_safe_boundary() {
+        use sqlx::Connection;
+        let mut conn = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite connection");
+        sqlx::query("CREATE TABLE t (n INTEGER)")
+            .execute(&mut conn)
+            .await
+            .expect("create table");
+        sqlx::query("INSERT INTO t (n) VALUES (?), (?), (?)")
+            .bind(9_007_199_254_740_991i64) // JS_MAX_SAFE_INTEGER itself: still a number
+            .bind(9_007_199_254_740_992i64) // one past it: must become a decimal string
+            .bind(-9_007_199_254_740_992i64) // symmetric negative case
+            .execute(&mut conn)
+            .await
+            .expect("insert rows");
+        let rows: Vec<SqliteRow> = sqlx::query("SELECT n FROM t ORDER BY rowid")
+            .fetch_all(&mut conn)
+            .await
+            .expect("select rows");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(decode_cell(&rows[0], 0), Value::Int(9_007_199_254_740_991));
+        assert_eq!(
+            decode_cell(&rows[1], 0),
+            Value::String("9007199254740992".to_string())
+        );
+        assert_eq!(
+            decode_cell(&rows[2], 0),
+            Value::String("-9007199254740992".to_string())
+        );
+    }
+
+    /// #precision, 動的型付け列: 宣言型が `NUMERIC` (INTEGER/INT/BIGINT の
+    /// どのキーワードにも一致しない) でも、安全整数を超える値が数値のまま
+    /// 返らないことを固定する。
+    ///
+    /// なお sqlx-sqlite が結果カラムについて報告する型名は**宣言型ではなく
+    /// 値のストレージクラス**なので、整数が入った `NUMERIC` 列でも型名は
+    /// `INTEGER` になり、実際には主経路 (宣言型 INTEGER の分岐) が処理する。
+    /// つまり `decode_cell` 末尾の `try_get::<Option<i64>>` フォールバックへ
+    /// 整数値が落ちてくることは実際には無く、そちらの `from_i64_lossless`
+    /// 化は多重防御。ここでは「どの経路を通っても結果が無損失であること」を
+    /// 宣言型の違う列で確認する。
+    #[tokio::test]
+    async fn numeric_declared_integer_column_stays_lossless() {
+        use sqlx::Connection;
+        let mut conn = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite connection");
+        sqlx::query("CREATE TABLE t (n NUMERIC)")
+            .execute(&mut conn)
+            .await
+            .expect("create table");
+        sqlx::query("INSERT INTO t (n) VALUES (?), (?)")
+            .bind(9_007_199_254_740_991i64)
+            .bind(9_007_199_254_740_992i64)
+            .execute(&mut conn)
+            .await
+            .expect("insert rows");
+        let rows: Vec<SqliteRow> = sqlx::query("SELECT n FROM t ORDER BY rowid")
+            .fetch_all(&mut conn)
+            .await
+            .expect("select rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(decode_cell(&rows[0], 0), Value::Int(9_007_199_254_740_991));
+        assert_eq!(
+            decode_cell(&rows[1], 0),
+            Value::String("9007199254740992".to_string())
+        );
     }
 
     #[test]

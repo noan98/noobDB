@@ -105,9 +105,15 @@ impl Session {
 #[derive(Default)]
 pub struct AppState {
     pub sessions: RwLock<HashMap<SessionId, Arc<Session>>>,
-    /// Active streaming tasks keyed by client-provided stream id.
-    /// Aborting the handle cancels the task and stops further events.
-    pub streams: RwLock<HashMap<StreamId, StreamHandle>>,
+    /// Active streaming tasks keyed by client-provided stream id. Aborting the
+    /// handle cancels the task and stops further events. The value carries a
+    /// per-registration token so a finishing task only clears its *own* entry
+    /// (see `register_stream` / `forget_stream`) — mirrors `connects` below,
+    /// which solved the identical "client-supplied id can be reused" problem
+    /// first.
+    pub streams: RwLock<HashMap<StreamId, (u64, StreamHandle)>>,
+    /// Monotonic source of the per-registration tokens above.
+    stream_seq: AtomicU64,
     /// In-flight connection attempts keyed by a client-provided attempt id.
     /// Aborting the handle cancels a connect that is hanging on an unreachable
     /// host / stuck tunnel, so the UI can offer a cancel button (#684). The
@@ -162,19 +168,41 @@ impl AppState {
         removed
     }
 
-    pub async fn register_stream(&self, stream_id: StreamId, handle: StreamHandle) {
+    /// Track a running streaming task so `cancel_stream` can abort it. Returns
+    /// a per-registration token that must be passed back to `forget_stream`,
+    /// so a task that reused a client-provided `stream_id` never clears the
+    /// newer registration that superseded it (mirrors `register_connect`).
+    ///
+    /// `stream_id` is chosen by the frontend, not generated here, so unlike
+    /// `SessionId` it *can* legitimately repeat (e.g. a tab reusing a stable
+    /// id across runs). Without the token, a slow task's cleanup at the end of
+    /// its run could `remove` an entry that a newer task — started under the
+    /// same id after the old one finished but before its cleanup ran —
+    /// already registered, leaving the newer task's `AbortHandle` unreachable
+    /// (`cancel_stream` would then report `{cancelled:false}` forever even
+    /// though the stream is still running, holding a DB connection / SSH
+    /// tunnel open with no way to cancel it).
+    pub async fn register_stream(&self, stream_id: StreamId, handle: StreamHandle) -> u64 {
+        let token = self.stream_seq.fetch_add(1, Ordering::Relaxed);
         let mut map = self.streams.write().await;
-        tracing::debug!(stream_id = %stream_id, "stream registered");
-        if let Some(prev) = map.insert(stream_id, handle) {
+        tracing::debug!(stream_id = %stream_id, token, "stream registered");
+        if let Some((_, prev)) = map.insert(stream_id, (token, handle)) {
             // Cancel any previous task that reused this id — caller side
             // should not normally collide, but never let two run concurrently.
             tracing::warn!("stream id reused; aborting previous task");
             prev.abort.abort();
         }
+        token
     }
 
-    pub async fn forget_stream(&self, stream_id: &str) {
-        self.streams.write().await.remove(stream_id);
+    /// Remove the registration for `stream_id` only when it still carries
+    /// `token`. If a newer stream reused the same id, its (larger) token won't
+    /// match and its entry is preserved so `cancel_stream` can still reach it.
+    pub async fn forget_stream(&self, stream_id: &str, token: u64) {
+        let mut map = self.streams.write().await;
+        if map.get(stream_id).is_some_and(|(cur, _)| *cur == token) {
+            map.remove(stream_id);
+        }
     }
 
     /// Track an in-flight connection attempt so `cancel_connect` can abort it.
@@ -226,7 +254,7 @@ impl AppState {
     /// existed). The caller (the `cancel_stream` IPC command) uses the kind to
     /// emit the matching `<kind>-stream:cancelled` event.
     pub async fn cancel_stream(&self, stream_id: &str) -> Option<(u64, StreamKind)> {
-        if let Some(h) = self.streams.write().await.remove(stream_id) {
+        if let Some((_, h)) = self.streams.write().await.remove(stream_id) {
             h.abort.abort();
             let delivered_rows = h.delivered_rows.load(Ordering::SeqCst);
             tracing::debug!(stream_id = %stream_id, delivered_rows, "stream cancelled");
@@ -254,4 +282,68 @@ pub fn random_slug(len: usize) -> String {
 /// Short base32-ish slug (8 chars) suitable for keyring target names.
 pub fn new_session_id() -> SessionId {
     random_slug(8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `StreamHandle` needs a real `AbortHandle` to construct, so spawn a
+    /// no-op task purely to obtain one. The task is never awaited by the test.
+    fn dummy_handle(kind: StreamKind) -> StreamHandle {
+        let jh = tokio::spawn(async {});
+        StreamHandle {
+            abort: jh.abort_handle(),
+            delivered_rows: Arc::new(AtomicU64::new(0)),
+            kind,
+        }
+    }
+
+    /// I4 の再発防止テスト: 旧タスクの `forget_stream` が、同じ `stream_id` で
+    /// 登録された新タスクのエントリを消してはいけない。トークンを介さない実装
+    /// (旧: `forget_stream(id)` が無条件 `remove`) だと、旧タスクの後始末が新
+    /// タスクの `AbortHandle` を消してしまい、以後の `cancel_stream` が
+    /// `{cancelled:false}` を返し続ける (DB 接続 / SSH トンネルを握ったままの
+    /// キャンセル不能なストリームが残る) — `register_connect`/`forget_connect`
+    /// が既に対処済みだったのと同じ競合を `streams` 側にも再現して固定する。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn forget_stream_never_clears_a_newer_registration_under_the_same_id() {
+        let state = AppState::default();
+        let stream_id = "reused-stream-id".to_string();
+
+        // 旧タスクの登録。トークンは呼び出し側が握っておく (実際のコマンドでは
+        // spawn したタスク自身がこれを最終的に forget_stream へ渡す)。
+        let old_token = state
+            .register_stream(stream_id.clone(), dummy_handle(StreamKind::Query))
+            .await;
+
+        // 同じ stream_id で新しいタスクが登録される (クライアントがこの id を
+        // 再利用した想定)。register_stream は「同じ id の既存エントリ」を検知して
+        // 旧タスクの AbortHandle を abort するが、ここで再現したいのは「旧タスクの
+        // 後始末 (forget_stream) が、abort 済みであるにも関わらず別途少し遅れて
+        // 呼ばれる」競合なので、まず新規登録が正しく上書きされ、別トークンを
+        // 持つことだけ確認する。
+        let new_token = state
+            .register_stream(stream_id.clone(), dummy_handle(StreamKind::Query))
+            .await;
+        assert_ne!(
+            old_token, new_token,
+            "tokens must be unique per registration"
+        );
+
+        // 旧タスクが (自分がまだ生きていると誤解して) 遅れて forget_stream を
+        // 呼んでも、トークンが一致しないので新タスクの登録は残ること。
+        state.forget_stream(&stream_id, old_token).await;
+        assert!(
+            state.streams.read().await.contains_key(&stream_id),
+            "an old task's forget_stream must not remove a newer registration"
+        );
+
+        // 新タスクが自分のトークンで forget すれば、今度こそ消えること。
+        state.forget_stream(&stream_id, new_token).await;
+        assert!(
+            !state.streams.read().await.contains_key(&stream_id),
+            "the current registration's own token must still remove its entry"
+        );
+    }
 }

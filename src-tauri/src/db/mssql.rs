@@ -125,9 +125,22 @@ impl MssqlPool {
 }
 
 /// One checked-out connection. Returns itself to the pool's idle list on
-/// `Drop` unless [`PooledConn::mark_discard`] was called (used when a
-/// connection is left in an unknown state, e.g. a `COMMIT`/`ROLLBACK` itself
-/// failed — mirrors `PoolConnection::detach()` on the sqlx-backed drivers).
+/// `Drop` unless [`PooledConn::mark_discard`] was called.
+///
+/// **Discard-on-error is this pool's core safety invariant.** Unlike sqlx's
+/// pools (which the other three drivers use), this hand-rolled one has no
+/// built-in way to tell "this connection just failed and its state is now
+/// unknown" from "this connection is still fine" — that bookkeeping is
+/// entirely on us. A connection that exits a fallible operation abnormally
+/// (an I/O error mid-query, a stream left partially read because its
+/// consumer stopped polling, ...) must never be handed back to the pool for
+/// a *different*, unrelated caller to inherit: that caller would see a
+/// confusing failure that has nothing to do with its own query, or worse,
+/// silently read stale/misaligned data if a previous result set wasn't
+/// fully drained. `mark_discard`/`unmark_discard` and the helper functions
+/// below (`unwrap_or_discard`, `query_rows`, `rows`, `use_database`, `exec`,
+/// ...) exist to make that hard to forget at any individual call site — see
+/// their doc comments for the "when in doubt, discard" policy they share.
 struct PooledConn {
     pool: Arc<MssqlPoolInner>,
     client: Option<MssqlClient>,
@@ -150,6 +163,15 @@ impl PooledConn {
 
     fn mark_discard(&self) {
         self.discard.store(true, AtomicOrdering::Relaxed);
+    }
+
+    /// Clears a previously set discard mark, so this connection returns to
+    /// the pool normally on `Drop` after all. Used by the "discard-by-
+    /// default, only lift the mark on full success" functions in this file
+    /// (`execute_stream`, `preview_execute_with_limit`, `import_rows`,
+    /// `probe_failing_row`) — see their doc comments.
+    fn unmark_discard(&self) {
+        self.discard.store(false, AtomicOrdering::Relaxed);
     }
 }
 
@@ -224,9 +246,8 @@ impl MssqlConn {
 
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, database).await?;
-        run_sql_on(client, sql).await
+        use_database(&mut conn, database).await?;
+        run_sql_on(&mut conn, sql).await
     }
 
     // ── 明示トランザクション ──
@@ -239,10 +260,7 @@ impl MssqlConn {
             ));
         }
         let mut conn = self.pool.acquire().await?;
-        {
-            let client = conn.client_mut()?;
-            apply_use_database(client, database).await?;
-        }
+        use_database(&mut conn, database).await?;
         begin_tx(&mut conn).await?;
         *guard = Some(conn);
         Ok(())
@@ -253,8 +271,7 @@ impl MssqlConn {
         let conn = guard
             .as_mut()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
-        let client = conn.client_mut()?;
-        run_sql_on(client, sql).await
+        run_sql_on(conn, sql).await
     }
 
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
@@ -292,11 +309,27 @@ impl MssqlConn {
     {
         let started = Instant::now();
         let mut conn = self.pool.acquire().await?;
+        // Discard-by-default for the rest of this call. `execute_stream` is
+        // the one place in this file where a tiberius result stream can be
+        // left partially read across `.await` points driven by an external
+        // callback (`on_batch`): if the whole future is dropped early
+        // (`cancel_stream`'s abort, or a `query_timeout_secs` race losing to
+        // the timeout), there is no cleanup path that can finish draining
+        // the wire, and tiberius expects to see the rest of the current
+        // result before it will accept a new request on the same
+        // connection. Handing back a connection with an unread partial
+        // result set means the *next*, unrelated caller inherits that
+        // confusion. So: mark discard up front, and only lift it once we
+        // reach the natural end of the stream (or the non-streaming
+        // `execute` shortcut just below, which reads its whole result
+        // eagerly) — any early `?` return in between leaves the mark set.
+        conn.mark_discard();
         let client = conn.client_mut()?;
         apply_use_database(client, database).await?;
 
         if !is_query_shape(sql) {
             let result = client.execute(sql, &[]).await?;
+            conn.unmark_discard();
             return Ok(QueryResult::empty(
                 result.total(),
                 started.elapsed().as_millis() as u64,
@@ -346,6 +379,15 @@ impl MssqlConn {
             on_batch(StreamBatch::Columns(columns.clone()))?;
         }
 
+        // `stream` (and the mutable borrow of `client`/`conn` it carries)
+        // must be gone before we touch `conn` again below — an explicit
+        // `drop` pins that down exactly here rather than relying on it
+        // being the variable's last textual use.
+        drop(stream);
+        // Reached the natural end of the stream with nothing left unread on
+        // the wire — safe to return this connection to the pool after all.
+        conn.unmark_discard();
+
         Ok(QueryResult {
             columns,
             rows: Vec::new(),
@@ -378,6 +420,15 @@ impl MssqlConn {
 
         let target = extract_target_table(sql);
         let mut conn = self.pool.acquire().await?;
+        // Discard-by-default for the whole dry-run — same policy as
+        // `execute_stream` (see its doc comment). Any failure partway
+        // through (use-database, the PK lookup, BEGIN, either snapshot
+        // SELECT, the mutation itself) leaves this connection's
+        // transactional state uncertain even after the best-effort
+        // ROLLBACK attempts below, so only reaching the very end —
+        // everything succeeded *and* the dry-run was cleanly rolled back —
+        // proves it's still healthy.
+        conn.mark_discard();
         {
             let client = conn.client_mut()?;
             apply_use_database(client, database).await?;
@@ -427,6 +478,9 @@ impl MssqlConn {
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
         finish_tx(&mut conn, "ROLLBACK TRANSACTION").await?;
+        // Every step above succeeded and the dry-run transaction rolled
+        // back cleanly — this connection is known-healthy again.
+        conn.unmark_discard();
 
         let truncated = before_raw.len() > row_limit || after_raw.len() > row_limit;
         let columns = if !before_raw.is_empty() {
@@ -485,6 +539,13 @@ impl MssqlConn {
         let batch = batch_size.clamp(1, 1000);
 
         let mut conn = self.pool.acquire().await?;
+        // Discard-by-default for the whole import — same policy as
+        // `execute_stream`/`preview_execute_with_limit` (see the former's
+        // doc comment). Only a fully successful COMMIT below proves the
+        // connection is still healthy; every other exit (including the
+        // caller's `on_progress` callback failing, e.g. because the
+        // frontend cancelled the import) leaves it discarded.
+        conn.mark_discard();
         {
             let client = conn.client_mut()?;
             apply_use_database(client, database).await?;
@@ -508,6 +569,7 @@ impl MssqlConn {
             }
         }
         finish_tx(&mut conn, "COMMIT TRANSACTION").await?;
+        conn.unmark_discard();
         Ok(inserted)
     }
 
@@ -526,9 +588,8 @@ impl MssqlConn {
         let cols_sql = columns.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
         let sql = build_multi_row_insert(&qi(table), &cols_sql, columns.len(), rows);
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, database).await?;
-        client.execute(sql.as_str(), &[]).await?;
+        use_database(&mut conn, database).await?;
+        exec(&mut conn, &sql).await?;
         Ok(())
     }
 
@@ -542,10 +603,7 @@ impl MssqlConn {
         rows: &[Vec<Option<String>>],
     ) -> Result<Option<(usize, String)>> {
         let mut conn = self.pool.acquire().await?;
-        {
-            let client = conn.client_mut()?;
-            apply_use_database(client, database).await?;
-        }
+        use_database(&mut conn, database).await?;
         begin_tx(&mut conn).await?;
         let cols_sql = columns.iter().map(|c| qi(c)).collect::<Vec<_>>().join(", ");
         let table_ident = qi(table);
@@ -562,6 +620,15 @@ impl MssqlConn {
                 client.execute(sql.as_str(), &[]).await
             };
             if let Err(e) = step {
+                // A per-row insert failing here is the expected, everyday
+                // outcome this function exists to find (a bad value or a
+                // constraint violation) — not evidence the connection
+                // itself is broken — so this alone does *not* mark
+                // discard. If the connection really is dead, the
+                // `finish_tx` ROLLBACK just below will itself fail and
+                // discard it (see `finish_tx`'s doc comment); a `?` here
+                // would also incorrectly abandon the probe instead of
+                // reporting which row failed.
                 failing = Some((i, e.to_string()));
                 break;
             }
@@ -590,20 +657,16 @@ impl MssqlConn {
         database: Option<&str>,
     ) -> Result<u64> {
         let mut conn = self.pool.acquire().await?;
-        {
-            let client = conn.client_mut()?;
-            apply_use_database(client, database).await?;
-        }
+        use_database(&mut conn, database).await?;
         begin_tx(&mut conn).await?;
         let mut total: u64 = 0;
         for stmt in statements {
-            let step = {
-                let client = conn.client_mut()?;
-                run_sql_on(client, stmt).await
-            };
-            match step {
+            match run_sql_on(&mut conn, stmt).await {
                 Ok(r) => total += r.rows_affected,
                 Err(e) => {
+                    // `run_sql_on` already marked `conn` for discard on
+                    // failure; the ROLLBACK attempt here is best-effort
+                    // cleanup, not a condition for whether to discard.
                     let _ = finish_tx(&mut conn, "ROLLBACK TRANSACTION").await;
                     return Err(e);
                 }
@@ -617,13 +680,13 @@ impl MssqlConn {
 
     pub async fn databases(&self) -> Result<Vec<String>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        let rows = client
-            .query("SELECT name FROM sys.databases ORDER BY name", &[])
-            .await?
-            .into_first_result()
-            .await?;
-        Ok(rows
+        let out = rows(
+            &mut conn,
+            "SELECT name FROM sys.databases ORDER BY name",
+            &[],
+        )
+        .await?;
+        Ok(out
             .iter()
             .filter_map(|r| r.get::<&str, _>(0).map(str::to_string))
             .collect())
@@ -631,19 +694,16 @@ impl MssqlConn {
 
     pub async fn tables(&self, db: &str) -> Result<Vec<String>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, Some(db)).await?;
-        let rows = client
-            .query(
-                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES \
-                 WHERE TABLE_SCHEMA = 'dbo' AND TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
-                 ORDER BY TABLE_NAME",
-                &[],
-            )
-            .await?
-            .into_first_result()
-            .await?;
-        Ok(rows
+        let out = rows_in(
+            &mut conn,
+            Some(db),
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES \
+             WHERE TABLE_SCHEMA = 'dbo' AND TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
+             ORDER BY TABLE_NAME",
+            &[],
+        )
+        .await?;
+        Ok(out
             .iter()
             .filter_map(|r| r.get::<&str, _>(0).map(str::to_string))
             .collect())
@@ -651,75 +711,66 @@ impl MssqlConn {
 
     pub async fn columns(&self, db: &str, table: &str) -> Result<Vec<TableColumnInfo>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, Some(db)).await?;
+        use_database(&mut conn, Some(db)).await?;
 
-        let base_rows = client
-            .query(
-                r#"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT,
-                          CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
-                   FROM INFORMATION_SCHEMA.COLUMNS
-                   WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = @P1
-                   ORDER BY ORDINAL_POSITION"#,
-                &[&table],
-            )
-            .await?
-            .into_first_result()
-            .await?;
+        let base_rows = rows(
+            &mut conn,
+            r#"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT,
+                      CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
+               FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = @P1
+               ORDER BY ORDINAL_POSITION"#,
+            &[&table],
+        )
+        .await?;
 
-        let pk_rows = client
-            .query(
-                r#"SELECT ku.COLUMN_NAME
-                   FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-                   JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
-                     ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
-                    AND tc.TABLE_SCHEMA = ku.TABLE_SCHEMA
-                    AND tc.TABLE_NAME = ku.TABLE_NAME
-                   WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
-                     AND tc.TABLE_SCHEMA = 'dbo' AND tc.TABLE_NAME = @P1"#,
-                &[&table],
-            )
-            .await?
-            .into_first_result()
-            .await?;
+        let pk_rows = rows(
+            &mut conn,
+            r#"SELECT ku.COLUMN_NAME
+               FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+               JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
+                 ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
+                AND tc.TABLE_SCHEMA = ku.TABLE_SCHEMA
+                AND tc.TABLE_NAME = ku.TABLE_NAME
+               WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                 AND tc.TABLE_SCHEMA = 'dbo' AND tc.TABLE_NAME = @P1"#,
+            &[&table],
+        )
+        .await?;
         let pk_cols: std::collections::HashSet<String> = pk_rows
             .iter()
             .filter_map(|r| r.get::<&str, _>(0).map(str::to_string))
             .collect();
 
-        let identity_rows = client
-            .query(
-                r#"SELECT c.name
-                   FROM sys.columns c
-                   JOIN sys.tables t ON t.object_id = c.object_id
-                   JOIN sys.schemas s ON s.schema_id = t.schema_id
-                   WHERE s.name = 'dbo' AND t.name = @P1 AND c.is_identity = 1"#,
-                &[&table],
-            )
-            .await?
-            .into_first_result()
-            .await?;
+        let identity_rows = rows(
+            &mut conn,
+            r#"SELECT c.name
+               FROM sys.columns c
+               JOIN sys.tables t ON t.object_id = c.object_id
+               JOIN sys.schemas s ON s.schema_id = t.schema_id
+               WHERE s.name = 'dbo' AND t.name = @P1 AND c.is_identity = 1"#,
+            &[&table],
+        )
+        .await?;
         let identity_cols: std::collections::HashSet<String> = identity_rows
             .iter()
             .filter_map(|r| r.get::<&str, _>(0).map(str::to_string))
             .collect();
 
-        let fk_rows = client
-            .query(
-                r#"SELECT cp.name AS col, tr.name AS ref_table, cr.name AS ref_col
-                   FROM sys.foreign_keys fk
-                   JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
-                   JOIN sys.tables tp ON tp.object_id = fkc.parent_object_id
-                   JOIN sys.schemas sp ON sp.schema_id = tp.schema_id
-                   JOIN sys.columns cp ON cp.object_id = fkc.parent_object_id AND cp.column_id = fkc.parent_column_id
-                   JOIN sys.tables tr ON tr.object_id = fkc.referenced_object_id
-                   JOIN sys.columns cr ON cr.object_id = fkc.referenced_object_id AND cr.column_id = fkc.referenced_column_id
-                   WHERE sp.name = 'dbo' AND tp.name = @P1"#,
-                &[&table],
-            )
-            .await?
-            .into_first_result()
-            .await?;
+        let fk_rows = rows(
+            &mut conn,
+            r#"SELECT cp.name AS col, tr.name AS ref_table, cr.name AS ref_col
+               FROM sys.foreign_keys fk
+               JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+               JOIN sys.tables tp ON tp.object_id = fkc.parent_object_id
+               JOIN sys.schemas sp ON sp.schema_id = tp.schema_id
+               JOIN sys.columns cp ON cp.object_id = fkc.parent_object_id AND cp.column_id = fkc.parent_column_id
+               JOIN sys.tables tr ON tr.object_id = fkc.referenced_object_id
+               JOIN sys.columns cr ON cr.object_id = fkc.referenced_object_id AND cr.column_id = fkc.referenced_column_id
+               WHERE sp.name = 'dbo' AND tp.name = @P1"#,
+            &[&table],
+        )
+        .await?;
         let fk_map: std::collections::HashMap<String, (String, String)> = fk_rows
             .iter()
             .filter_map(|r| {
@@ -784,20 +835,17 @@ impl MssqlConn {
 
     pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, Some(db)).await?;
-        let rows = client
-            .query(
-                r#"SELECT TABLE_NAME, COLUMN_NAME
-                   FROM INFORMATION_SCHEMA.COLUMNS
-                   WHERE TABLE_SCHEMA = 'dbo'
-                   ORDER BY TABLE_NAME, ORDINAL_POSITION"#,
-                &[],
-            )
-            .await?
-            .into_first_result()
-            .await?;
-        let pairs = rows
+        let out = rows_in(
+            &mut conn,
+            Some(db),
+            r#"SELECT TABLE_NAME, COLUMN_NAME
+               FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = 'dbo'
+               ORDER BY TABLE_NAME, ORDINAL_POSITION"#,
+            &[],
+        )
+        .await?;
+        let pairs = out
             .iter()
             .map(|r| {
                 (
@@ -811,26 +859,23 @@ impl MssqlConn {
 
     pub async fn foreign_keys(&self, db: &str) -> Result<Vec<ForeignKey>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, Some(db)).await?;
-        let rows = client
-            .query(
-                r#"SELECT tp.name, cp.name, tr.name, cr.name, fk.name
-                   FROM sys.foreign_keys fk
-                   JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
-                   JOIN sys.tables tp ON tp.object_id = fkc.parent_object_id
-                   JOIN sys.schemas sp ON sp.schema_id = tp.schema_id
-                   JOIN sys.columns cp ON cp.object_id = fkc.parent_object_id AND cp.column_id = fkc.parent_column_id
-                   JOIN sys.tables tr ON tr.object_id = fkc.referenced_object_id
-                   JOIN sys.columns cr ON cr.object_id = fkc.referenced_object_id AND cr.column_id = fkc.referenced_column_id
-                   WHERE sp.name = 'dbo'
-                   ORDER BY tp.name, fk.name, fkc.constraint_column_id"#,
-                &[],
-            )
-            .await?
-            .into_first_result()
-            .await?;
-        Ok(rows
+        let out = rows_in(
+            &mut conn,
+            Some(db),
+            r#"SELECT tp.name, cp.name, tr.name, cr.name, fk.name
+               FROM sys.foreign_keys fk
+               JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+               JOIN sys.tables tp ON tp.object_id = fkc.parent_object_id
+               JOIN sys.schemas sp ON sp.schema_id = tp.schema_id
+               JOIN sys.columns cp ON cp.object_id = fkc.parent_object_id AND cp.column_id = fkc.parent_column_id
+               JOIN sys.tables tr ON tr.object_id = fkc.referenced_object_id
+               JOIN sys.columns cr ON cr.object_id = fkc.referenced_object_id AND cr.column_id = fkc.referenced_column_id
+               WHERE sp.name = 'dbo'
+               ORDER BY tp.name, fk.name, fkc.constraint_column_id"#,
+            &[],
+        )
+        .await?;
+        Ok(out
             .iter()
             .map(|r| ForeignKey {
                 table: r.get::<&str, _>(0).unwrap_or_default().to_string(),
@@ -844,18 +889,15 @@ impl MssqlConn {
 
     pub async fn schema_objects(&self, db: &str) -> Result<Vec<SchemaObject>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, Some(db)).await?;
+        use_database(&mut conn, Some(db)).await?;
         let mut out: Vec<SchemaObject> = Vec::new();
 
-        let views = client
-            .query(
-                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = 'dbo' ORDER BY TABLE_NAME",
-                &[],
-            )
-            .await?
-            .into_first_result()
-            .await?;
+        let views = rows(
+            &mut conn,
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = 'dbo' ORDER BY TABLE_NAME",
+            &[],
+        )
+        .await?;
         for r in &views {
             if let Some(name) = r.get::<&str, _>(0) {
                 out.push(SchemaObject {
@@ -866,15 +908,13 @@ impl MssqlConn {
             }
         }
 
-        let routines = client
-            .query(
-                "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM INFORMATION_SCHEMA.ROUTINES \
-                 WHERE ROUTINE_SCHEMA = 'dbo' ORDER BY ROUTINE_TYPE, ROUTINE_NAME",
-                &[],
-            )
-            .await?
-            .into_first_result()
-            .await?;
+        let routines = rows(
+            &mut conn,
+            "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM INFORMATION_SCHEMA.ROUTINES \
+             WHERE ROUTINE_SCHEMA = 'dbo' ORDER BY ROUTINE_TYPE, ROUTINE_NAME",
+            &[],
+        )
+        .await?;
         for r in &routines {
             let rtype = r.get::<&str, _>(1).unwrap_or_default();
             let kind = if rtype.eq_ignore_ascii_case("PROCEDURE") {
@@ -891,19 +931,17 @@ impl MssqlConn {
             }
         }
 
-        let triggers = client
-            .query(
-                r#"SELECT tr.name
-                   FROM sys.triggers tr
-                   JOIN sys.tables t ON t.object_id = tr.parent_id
-                   JOIN sys.schemas s ON s.schema_id = t.schema_id
-                   WHERE s.name = 'dbo' AND tr.parent_class = 1
-                   ORDER BY tr.name"#,
-                &[],
-            )
-            .await?
-            .into_first_result()
-            .await?;
+        let triggers = rows(
+            &mut conn,
+            r#"SELECT tr.name
+               FROM sys.triggers tr
+               JOIN sys.tables t ON t.object_id = tr.parent_id
+               JOIN sys.schemas s ON s.schema_id = t.schema_id
+               WHERE s.name = 'dbo' AND tr.parent_class = 1
+               ORDER BY tr.name"#,
+            &[],
+        )
+        .await?;
         for r in &triggers {
             if let Some(name) = r.get::<&str, _>(0) {
                 out.push(SchemaObject {
@@ -926,17 +964,14 @@ impl MssqlConn {
             )));
         }
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, Some(db)).await?;
         let qualified = format!("dbo.{name}");
-        let row = client
-            .query(
-                "SELECT OBJECT_DEFINITION(OBJECT_ID(@P1))",
-                &[&qualified.as_str()],
-            )
-            .await?
-            .into_row()
-            .await?;
+        let row = row_in(
+            &mut conn,
+            Some(db),
+            "SELECT OBJECT_DEFINITION(OBJECT_ID(@P1))",
+            &[&qualified.as_str()],
+        )
+        .await?;
         Ok(row
             .and_then(|r| r.get::<&str, _>(0).map(str::to_string))
             .unwrap_or_default())
@@ -944,28 +979,25 @@ impl MssqlConn {
 
     pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, Some(db)).await?;
-        let rows = client
-            .query(
-                r#"SELECT i.name, c.name, i.is_unique, i.is_primary_key, i.type_desc, ic.key_ordinal
-                   FROM sys.indexes i
-                   JOIN sys.tables t ON t.object_id = i.object_id
-                   JOIN sys.schemas s ON s.schema_id = t.schema_id
-                   JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-                   JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-                   WHERE s.name = 'dbo' AND t.name = @P1 AND i.name IS NOT NULL
-                     AND ic.is_included_column = 0
-                   ORDER BY i.name, ic.key_ordinal"#,
-                &[&table],
-            )
-            .await?
-            .into_first_result()
-            .await?;
+        let out = rows_in(
+            &mut conn,
+            Some(db),
+            r#"SELECT i.name, c.name, i.is_unique, i.is_primary_key, i.type_desc, ic.key_ordinal
+               FROM sys.indexes i
+               JOIN sys.tables t ON t.object_id = i.object_id
+               JOIN sys.schemas s ON s.schema_id = t.schema_id
+               JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+               JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+               WHERE s.name = 'dbo' AND t.name = @P1 AND i.name IS NOT NULL
+                 AND ic.is_included_column = 0
+               ORDER BY i.name, ic.key_ordinal"#,
+            &[&table],
+        )
+        .await?;
         let mut order: Vec<String> = Vec::new();
         let mut by_name: std::collections::HashMap<String, IndexInfo> =
             std::collections::HashMap::new();
-        for r in &rows {
+        for r in &out {
             let Some(name) = r.get::<&str, _>(0) else {
                 continue;
             };
@@ -995,27 +1027,24 @@ impl MssqlConn {
 
     pub async fn table_row_estimates(&self, db: &str) -> Result<Vec<TableRowEstimate>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, Some(db)).await?;
         // `sys.partitions` carries a per-partition row count maintained by the
         // engine (no scan); `index_id IN (0, 1)` restricts to the heap/
         // clustered-index partition so multi-partition and secondary-index
         // rows aren't double counted.
-        let rows = client
-            .query(
-                r#"SELECT t.name, SUM(p.rows)
-                   FROM sys.tables t
-                   JOIN sys.schemas s ON s.schema_id = t.schema_id
-                   JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1)
-                   WHERE s.name = 'dbo'
-                   GROUP BY t.name
-                   ORDER BY t.name"#,
-                &[],
-            )
-            .await?
-            .into_first_result()
-            .await?;
-        Ok(rows
+        let out = rows_in(
+            &mut conn,
+            Some(db),
+            r#"SELECT t.name, SUM(p.rows)
+               FROM sys.tables t
+               JOIN sys.schemas s ON s.schema_id = t.schema_id
+               JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1)
+               WHERE s.name = 'dbo'
+               GROUP BY t.name
+               ORDER BY t.name"#,
+            &[],
+        )
+        .await?;
+        Ok(out
             .iter()
             .filter_map(|r| {
                 let name = r.get::<&str, _>(0)?.to_string();
@@ -1027,31 +1056,28 @@ impl MssqlConn {
 
     pub async fn table_sizes(&self, db: &str) -> Result<Vec<TableSizeInfo>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        apply_use_database(client, Some(db)).await?;
         // Best-effort split of in-row data (allocation unit `type = 1`) vs.
         // everything else (LOB/row-overflow + all index partitions) into
         // `index_bytes`, matching the row-count restriction used by
         // `table_row_estimates`. `used_pages` is in 8 KiB pages.
-        let rows = client
-            .query(
-                r#"SELECT t.name,
-                          SUM(CASE WHEN p.index_id IN (0, 1) THEN p.rows ELSE 0 END),
-                          SUM(CASE WHEN a.type = 1 THEN a.used_pages ELSE 0 END) * 8192,
-                          SUM(CASE WHEN a.type <> 1 THEN a.used_pages ELSE 0 END) * 8192
-                   FROM sys.tables t
-                   JOIN sys.schemas s ON s.schema_id = t.schema_id
-                   JOIN sys.partitions p ON p.object_id = t.object_id
-                   JOIN sys.allocation_units a ON a.container_id = p.partition_id
-                   WHERE s.name = 'dbo'
-                   GROUP BY t.name
-                   ORDER BY t.name"#,
-                &[],
-            )
-            .await?
-            .into_first_result()
-            .await?;
-        Ok(rows
+        let out = rows_in(
+            &mut conn,
+            Some(db),
+            r#"SELECT t.name,
+                      SUM(CASE WHEN p.index_id IN (0, 1) THEN p.rows ELSE 0 END),
+                      SUM(CASE WHEN a.type = 1 THEN a.used_pages ELSE 0 END) * 8192,
+                      SUM(CASE WHEN a.type <> 1 THEN a.used_pages ELSE 0 END) * 8192
+               FROM sys.tables t
+               JOIN sys.schemas s ON s.schema_id = t.schema_id
+               JOIN sys.partitions p ON p.object_id = t.object_id
+               JOIN sys.allocation_units a ON a.container_id = p.partition_id
+               WHERE s.name = 'dbo'
+               GROUP BY t.name
+               ORDER BY t.name"#,
+            &[],
+        )
+        .await?;
+        Ok(out
             .iter()
             .filter_map(|r| {
                 let name = r.get::<&str, _>(0)?.to_string();
@@ -1071,12 +1097,7 @@ impl MssqlConn {
 
     pub async fn server_info(&self) -> Result<ServerInfo> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        let version_row = client
-            .query("SELECT @@VERSION", &[])
-            .await?
-            .into_row()
-            .await?;
+        let version_row = row_in(&mut conn, None, "SELECT @@VERSION", &[]).await?;
         let version = version_row
             .and_then(|r| r.get::<&str, _>(0).map(str::to_string))
             .unwrap_or_default();
@@ -1087,22 +1108,20 @@ impl MssqlConn {
             "user options",
             "default language",
         ];
-        let rows = client
-            .query(
-                "SELECT name, CAST(value_in_use AS NVARCHAR(4000)) \
-                 FROM sys.configurations WHERE name IN (@P1, @P2, @P3, @P4, @P5) ORDER BY name",
-                &[
-                    &SETTINGS[0],
-                    &SETTINGS[1],
-                    &SETTINGS[2],
-                    &SETTINGS[3],
-                    &SETTINGS[4],
-                ],
-            )
-            .await?
-            .into_first_result()
-            .await?;
-        let variables = rows
+        let out = rows(
+            &mut conn,
+            "SELECT name, CAST(value_in_use AS NVARCHAR(4000)) \
+             FROM sys.configurations WHERE name IN (@P1, @P2, @P3, @P4, @P5) ORDER BY name",
+            &[
+                &SETTINGS[0],
+                &SETTINGS[1],
+                &SETTINGS[2],
+                &SETTINGS[3],
+                &SETTINGS[4],
+            ],
+        )
+        .await?;
+        let variables = out
             .iter()
             .filter_map(|r| {
                 let name = r.get::<&str, _>(0)?.to_string();
@@ -1127,23 +1146,20 @@ impl MssqlConn {
     /// を列挙する。`sys.dm_exec_sql_text` で直近/実行中の SQL テキストを解決する。
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        let rows = client
-            .query(
-                r#"SELECT s.session_id, s.login_name, s.host_name, DB_NAME(s.database_id),
-                          s.status, r.wait_type, r.total_elapsed_time, t.text,
-                          CAST(CASE WHEN s.session_id = @@SPID THEN 1 ELSE 0 END AS BIT)
-                   FROM sys.dm_exec_sessions s
-                   LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id
-                   OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
-                   WHERE s.is_user_process = 1
-                   ORDER BY s.session_id"#,
-                &[],
-            )
-            .await?
-            .into_first_result()
-            .await?;
-        Ok(rows
+        let out = rows(
+            &mut conn,
+            r#"SELECT s.session_id, s.login_name, s.host_name, DB_NAME(s.database_id),
+                      s.status, r.wait_type, r.total_elapsed_time, t.text,
+                      CAST(CASE WHEN s.session_id = @@SPID THEN 1 ELSE 0 END AS BIT)
+               FROM sys.dm_exec_sessions s
+               LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id
+               OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+               WHERE s.is_user_process = 1
+               ORDER BY s.session_id"#,
+            &[],
+        )
+        .await?;
+        Ok(out
             .iter()
             .map(|r| ProcessInfo {
                 id: i64::from(r.get::<i16, _>(0).unwrap_or_default()),
@@ -1165,8 +1181,7 @@ impl MssqlConn {
     /// `KILL` はパラメータバインドを受け付けない T-SQL のステートメント)。
     pub async fn kill_process(&self, id: i64) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
-        let client = conn.client_mut()?;
-        client.execute(format!("KILL {id}"), &[]).await?;
+        exec(&mut conn, &format!("KILL {id}")).await?;
         Ok(())
     }
 
@@ -1243,15 +1258,152 @@ async fn apply_use_database(client: &mut MssqlClient, database: Option<&str>) ->
     Ok(())
 }
 
+/// Turns a fully resolved `Result` into `T`, marking `conn` for discard
+/// first if it's an `Err`. This is the single enforcement point for the
+/// pool's core invariant (see the [`PooledConn`] doc comment above): **a
+/// connection that just failed a fallible operation must never be handed
+/// back to the next caller.** We deliberately do not try to tell "the TCP
+/// connection itself is broken" apart from "that was just an ordinary
+/// SQL-level error (bad syntax, missing table, ...), the connection is
+/// still perfectly healthy" — tiberius's error enum does not reliably
+/// support that distinction, and discarding one otherwise-healthy
+/// connection on a benign SQL error is a far smaller cost than a
+/// *different, unrelated* caller silently inheriting a half-broken one and
+/// seeing a confusing failure that has nothing to do with its own query.
+/// When in doubt, this discards.
+///
+/// This function never itself performs I/O — callers first resolve their
+/// fallible operation into a plain owned `Result` (typically via
+/// [`query_rows`]/[`query_rows_in`]/`exec`'s own inner call below), so by
+/// the time this runs there is no outstanding tiberius value (like a
+/// `QueryStream`, which still borrows the connection while unconsumed)
+/// left to worry about.
+fn unwrap_or_discard<T, E>(conn: &PooledConn, result: std::result::Result<T, E>) -> Result<T>
+where
+    AppError: From<E>,
+{
+    match result {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            conn.mark_discard();
+            Err(AppError::from(e))
+        }
+    }
+}
+
+/// Runs `sql` and returns all rows of its first result set — the
+/// `client.query(...).await?.into_first_result().await?` idiom used by
+/// nearly every `sys.*`/`INFORMATION_SCHEMA.*` lookup in this file. Resolves
+/// fully into an owned `Vec<TdsRow>` (no lifetime tied to `conn`/`client`
+/// left over), which is what lets [`unwrap_or_discard`] inspect the result
+/// afterward without also holding a live borrow of `conn`.
+async fn query_rows(
+    conn: &mut PooledConn,
+    sql: &str,
+    params: &[&dyn tiberius::ToSql],
+) -> Result<Vec<TdsRow>> {
+    let client = conn.client_mut()?;
+    Ok(client.query(sql, params).await?.into_first_result().await?)
+}
+
+/// [`query_rows`], switching database first (`USE [db]`) — the shape nearly
+/// every table-scoped introspection query in this file needs.
+async fn query_rows_in(
+    conn: &mut PooledConn,
+    database: Option<&str>,
+    sql: &str,
+    params: &[&dyn tiberius::ToSql],
+) -> Result<Vec<TdsRow>> {
+    let client = conn.client_mut()?;
+    apply_use_database(client, database).await?;
+    Ok(client.query(sql, params).await?.into_first_result().await?)
+}
+
+/// [`query_rows_in`], returning at most one row (`into_row()`) — used by
+/// `object_definition`/`server_info`'s single-row lookups.
+async fn query_row_in(
+    conn: &mut PooledConn,
+    database: Option<&str>,
+    sql: &str,
+    params: &[&dyn tiberius::ToSql],
+) -> Result<Option<TdsRow>> {
+    let client = conn.client_mut()?;
+    apply_use_database(client, database).await?;
+    Ok(client.query(sql, params).await?.into_row().await?)
+}
+
+/// [`query_rows`] + [`unwrap_or_discard`] combined: the common case where a
+/// caller just wants the rows, with the connection already flagged for
+/// discard on any failure.
+async fn rows(
+    conn: &mut PooledConn,
+    sql: &str,
+    params: &[&dyn tiberius::ToSql],
+) -> Result<Vec<TdsRow>> {
+    let result = query_rows(conn, sql, params).await;
+    unwrap_or_discard(conn, result)
+}
+
+/// [`query_rows_in`] + [`unwrap_or_discard`] combined.
+async fn rows_in(
+    conn: &mut PooledConn,
+    database: Option<&str>,
+    sql: &str,
+    params: &[&dyn tiberius::ToSql],
+) -> Result<Vec<TdsRow>> {
+    let result = query_rows_in(conn, database, sql, params).await;
+    unwrap_or_discard(conn, result)
+}
+
+/// [`query_row_in`] + [`unwrap_or_discard`] combined.
+async fn row_in(
+    conn: &mut PooledConn,
+    database: Option<&str>,
+    sql: &str,
+    params: &[&dyn tiberius::ToSql],
+) -> Result<Option<TdsRow>> {
+    let result = query_row_in(conn, database, sql, params).await;
+    unwrap_or_discard(conn, result)
+}
+
+/// Switches the connection's database, marking `conn` for discard if the
+/// `USE` statement itself fails.
+async fn use_database(conn: &mut PooledConn, database: Option<&str>) -> Result<()> {
+    let result = {
+        let client = conn.client_mut()?;
+        apply_use_database(client, database).await
+    };
+    unwrap_or_discard(conn, result)
+}
+
+/// Runs a non-row-returning statement (`INSERT`/`UPDATE`/`DELETE`/DDL/
+/// `KILL`/...) and returns the total affected-row count, marking `conn` for
+/// discard if it fails.
+async fn exec(conn: &mut PooledConn, sql: &str) -> Result<u64> {
+    let result = {
+        let client = conn.client_mut()?;
+        client.execute(sql, &[]).await
+    };
+    Ok(unwrap_or_discard(conn, result)?.total())
+}
+
 /// Runs one statement and decodes it, dispatching on whether `sql` looks like
 /// a result-set-returning statement. Shared by `execute`, `tx_execute`, and
-/// `execute_transaction`.
-async fn run_sql_on(client: &mut MssqlClient, sql: &str) -> Result<QueryResult> {
+/// `execute_transaction`. Takes the pooled connection (not a bare client) so
+/// any failure marks `conn` for discard via [`unwrap_or_discard`] — this is
+/// a deliberate broadening from an earlier version of this file, where only
+/// `BEGIN`/`COMMIT`/`ROLLBACK` failing (`begin_tx`/`finish_tx`) discarded:
+/// a `run_sql_on` failure now discards too, so `tx_execute`'s mid-
+/// transaction statements and `execute_transaction`'s batched ones are
+/// covered by the same "when in doubt, discard" policy (see
+/// `unwrap_or_discard`'s doc comment) instead of only being caught
+/// indirectly whenever a subsequent ROLLBACK/COMMIT also happens to fail.
+async fn run_sql_on(conn: &mut PooledConn, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
     if is_query_shape(sql) {
-        let rows = client.query(sql, &[]).await?.into_first_result().await?;
-        let columns = columns_of_rows(&rows);
-        let rows_out = rows.iter().map(row_to_values).collect();
+        let out = rows(conn, sql, &[]).await?;
+        let columns = columns_of_rows(&out);
+        let rows_out = out.iter().map(row_to_values).collect();
         Ok(QueryResult {
             columns,
             rows: rows_out,
@@ -1259,9 +1411,9 @@ async fn run_sql_on(client: &mut MssqlClient, sql: &str) -> Result<QueryResult> 
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
     } else {
-        let result = client.execute(sql, &[]).await?;
+        let total = exec(conn, sql).await?;
         Ok(QueryResult::empty(
-            result.total(),
+            total,
             started.elapsed().as_millis() as u64,
         ))
     }
@@ -1270,10 +1422,7 @@ async fn run_sql_on(client: &mut MssqlClient, sql: &str) -> Result<QueryResult> 
 async fn fetch_rows(conn: &mut PooledConn, sql: Option<&str>) -> Result<Vec<TdsRow>> {
     match sql {
         None => Ok(Vec::new()),
-        Some(q) => {
-            let client = conn.client_mut()?;
-            Ok(client.query(q, &[]).await?.into_first_result().await?)
-        }
+        Some(q) => query_rows(conn, q, &[]).await,
     }
 }
 
@@ -1381,7 +1530,11 @@ fn decode_cell(row: &TdsRow, i: usize) -> Value {
         ColumnType::Int4 | ColumnType::Intn => {
             opt_val(row.get::<i32, _>(i), |v| Value::Int(v as i64))
         }
-        ColumnType::Int8 => opt_val(row.get::<i64, _>(i), Value::Int),
+        // `bigint` is the only integer width here that can exceed JS's safe
+        // integer range (2^53-1) — `tinyint`/`smallint`/`int` above always
+        // fit, so they stay `Value::Int` unconditionally. See
+        // `Value::from_i64_lossless`'s doc comment (#precision).
+        ColumnType::Int8 => opt_val(row.get::<i64, _>(i), Value::from_i64_lossless),
         ColumnType::Float4 => opt_val(row.get::<f32, _>(i), |v| Value::Float(v as f64)),
         ColumnType::Float8 | ColumnType::Floatn | ColumnType::Money | ColumnType::Money4 => {
             opt_val(row.get::<f64, _>(i), Value::Float)
@@ -1769,6 +1922,139 @@ mod tests {
         assert_eq!(
             mssql_type_name(ColumnType::DatetimeOffsetn),
             "datetimeoffset"
+        );
+    }
+
+    // ── プール安全性 (discard フラグ) ──
+    //
+    // `MssqlPool`/`PooledConn` は実サーバへの TCP 接続なしには組み立てられない
+    // (`MssqlClient` は TDS ハンドシェイクを要する) が、discard フラグの
+    // 立ち上げ/立ち下げロジック自体はサーバ非依存の純粋な状態遷移なので、
+    // `client: None` のダミー `PooledConn` (`Config::new()` はネットワークを
+    // 叩かないので安全) を組み立ててそこだけを検証する。
+
+    /// テスト専用: サーバ接続なしで `PooledConn` を組み立てる。`client: None`
+    /// は「クライアントを保持していない」実際の状態 (`client_mut()` が
+    /// `Err` を返す状態) にもなり得る値であり、discard フラグの読み書きは
+    /// クライアントの有無に関知しないため、フラグ単体のテストには十分。
+    async fn dummy_pooled_conn() -> PooledConn {
+        let inner = Arc::new(MssqlPoolInner {
+            config: Config::new(),
+            idle: StdMutex::new(Vec::new()),
+            sem: Arc::new(Semaphore::new(1)),
+        });
+        let permit = inner
+            .sem
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("acquiring a permit from a fresh semaphore never fails");
+        PooledConn {
+            pool: inner,
+            client: None,
+            discard: AtomicBool::new(false),
+            _permit: permit,
+        }
+    }
+
+    #[tokio::test]
+    async fn pooled_conn_discard_flag_marks_and_unmarks() {
+        let conn = dummy_pooled_conn().await;
+        assert!(!conn.discard.load(AtomicOrdering::Relaxed));
+        conn.mark_discard();
+        assert!(conn.discard.load(AtomicOrdering::Relaxed));
+        // Idempotent in both directions — `execute_stream` et al. rely on
+        // being able to call `mark_discard`/`unmark_discard` without
+        // tracking whether it was already in that state.
+        conn.mark_discard();
+        assert!(conn.discard.load(AtomicOrdering::Relaxed));
+        conn.unmark_discard();
+        assert!(!conn.discard.load(AtomicOrdering::Relaxed));
+        conn.unmark_discard();
+        assert!(!conn.discard.load(AtomicOrdering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn unwrap_or_discard_marks_only_on_err() {
+        let conn = dummy_pooled_conn().await;
+
+        let ok: std::result::Result<i32, AppError> = Ok(42);
+        let v = unwrap_or_discard(&conn, ok).expect("Ok passes through unchanged");
+        assert_eq!(v, 42);
+        assert!(
+            !conn.discard.load(AtomicOrdering::Relaxed),
+            "a successful result must not mark the connection for discard"
+        );
+
+        let err: std::result::Result<i32, AppError> = Err(AppError::InvalidInput("boom".into()));
+        let e = unwrap_or_discard(&conn, err);
+        assert!(e.is_err());
+        assert!(
+            conn.discard.load(AtomicOrdering::Relaxed),
+            "an error must mark the connection for discard"
+        );
+    }
+
+    #[tokio::test]
+    async fn drop_returns_healthy_connection_but_not_discarded_one() {
+        // `client: None` means `Drop` has nothing to push into `idle`
+        // either way, but this still exercises the branch selection itself
+        // (discarded connections must take the early return and skip the
+        // `idle.push` path entirely).
+        let inner = Arc::new(MssqlPoolInner {
+            config: Config::new(),
+            idle: StdMutex::new(Vec::new()),
+            sem: Arc::new(Semaphore::new(1)),
+        });
+
+        {
+            let permit = inner
+                .sem
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("acquiring a permit from a fresh semaphore never fails");
+            let healthy = PooledConn {
+                pool: inner.clone(),
+                client: None,
+                discard: AtomicBool::new(false),
+                _permit: permit,
+            };
+            drop(healthy);
+        }
+        assert_eq!(
+            inner
+                .idle
+                .lock()
+                .expect("idle mutex is never poisoned in this test")
+                .len(),
+            0,
+            "no client was ever set, so idle stays empty regardless of the discard flag"
+        );
+
+        // Re-acquire (the previous permit was released by `drop(healthy)`
+        // above) and confirm marking discard doesn't panic or otherwise
+        // misbehave on the early-return path.
+        let permit = inner
+            .sem
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("acquiring a permit from a fresh semaphore never fails");
+        let discarded = PooledConn {
+            pool: inner.clone(),
+            client: None,
+            discard: AtomicBool::new(true),
+            _permit: permit,
+        };
+        drop(discarded);
+        assert_eq!(
+            inner
+                .idle
+                .lock()
+                .expect("idle mutex is never poisoned in this test")
+                .len(),
+            0
         );
     }
 }

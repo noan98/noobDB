@@ -441,17 +441,31 @@ pub async fn run_query_stream(
     // `forget_stream` してしまい、既に完了したタスクの `AbortHandle` がマップに
     // 残り続け、以後その `stream_id` への `cancel_stream` が誤って `true` を返す
     // (逆に登録前に forget されると後続の同 stream_id 登録を消してしまう競合窓もある)。
+    // oneshot は `register_stream` が発行したトークンそのものを運ぶ — タスクは
+    // それを受け取った `forget_stream(&stream_id, token)` でしか自分の登録を
+    // 消せない (#state.rs の I4 対応)。`stream_id` はクライアント (フロント) が
+    // 指定する値で再利用がありうるため、トークン照合なしの無条件 `remove` だと
+    // 「同じ id で登録された新しいタスクのエントリを、たまたま遅れて後始末した
+    // 旧タスクが消してしまう」競合が起こり、以後 `cancel_stream` が
+    // `{cancelled:false}` を返し続ける (DB 接続 / SSH トンネルを握ったままの
+    // キャンセル不能なストリームが残る) ため。
+    //
     // Shared counter incremented as row batches are emitted, so a cancel or
     // timeout can report how many rows had already reached the frontend
     // (#685). Cloned into the state map (read by `cancel_stream`) and into
     // the task itself (read when building the timeout/error event).
     let delivered_rows = Arc::new(AtomicU64::new(0));
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
     let stream_id_for_task = stream_id.clone();
     let delivered_rows_for_task = delivered_rows.clone();
     let capture_requested = capture.unwrap_or(false) && !auto_refresh;
     let handle = tokio::spawn(async move {
-        let _ = ready_rx.await;
+        // 送信側 (下の register_stream 直後) が必ず送るので、Err は理論上起こらない
+        // が、万一起きても panic せずタスクを静かに終わらせる (登録自体が無ければ
+        // forget すべきエントリも無い)。
+        let Ok(token) = ready_rx.await else {
+            return;
+        };
         if capture_requested
             && crate::db::classify_write_kind_for(session.conn.driver_kind(), &sql)
                 != crate::db::WriteKind::Other
@@ -460,6 +474,7 @@ pub async fn run_query_stream(
                 app,
                 session,
                 stream_id_for_task,
+                token,
                 sql,
                 database,
                 capture_row_cap
@@ -476,6 +491,7 @@ pub async fn run_query_stream(
             app,
             session,
             stream_id_for_task,
+            token,
             sql,
             database,
             initial_batch,
@@ -487,7 +503,7 @@ pub async fn run_query_stream(
         )
         .await;
     });
-    state
+    let token = state
         .register_stream(
             stream_id,
             StreamHandle {
@@ -498,7 +514,7 @@ pub async fn run_query_stream(
         )
         .await;
     // タスク本体の実行を許可する。register_stream が確実に先に完了している。
-    let _ = ready_tx.send(());
+    let _ = ready_tx.send(token);
     Ok(())
 }
 
@@ -507,6 +523,7 @@ async fn spawn_query_stream(
     app: AppHandle,
     session: Arc<Session>,
     stream_id: String,
+    stream_token: u64,
     sql: String,
     database: Option<String>,
     initial_batch: usize,
@@ -677,7 +694,7 @@ async fn spawn_query_stream(
     }
 
     if let Some(state) = app.try_state::<AppState>() {
-        state.forget_stream(&stream_id).await;
+        state.forget_stream(&stream_id, stream_token).await;
     }
 }
 
@@ -695,6 +712,7 @@ async fn spawn_captured_write(
     app: AppHandle,
     session: Arc<Session>,
     stream_id: String,
+    stream_token: u64,
     sql: String,
     database: Option<String>,
     row_cap: usize,
@@ -799,7 +817,7 @@ async fn spawn_captured_write(
     record_history(&session, &sql, database.as_deref(), &result_for_history).await;
 
     if let Some(state) = app.try_state::<AppState>() {
-        state.forget_stream(&stream_id).await;
+        state.forget_stream(&stream_id, stream_token).await;
     }
 }
 
@@ -932,6 +950,12 @@ pub async fn preview_query_stream(
     database: Option<String>,
     row_limit: usize,
     chunk_size: usize,
+    // ドライラン (INSERT/UPDATE/DELETE をトランザクション内で実行してロールバック)
+    // にも通常実行と同じ全体タイムアウトを課す (#I2)。ロック待ちで詰まる UPDATE を
+    // プレビューすると、これが無いと接続と行ロックを無期限に握り続けてしまう
+    // (読み取り専用セッションからでも preview 経路自体は到達できるため影響がある)。
+    // 扱いは run_query_stream と同じ方式 (tokio::time::timeout でレース) に揃える。
+    query_timeout_secs: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -948,25 +972,31 @@ pub async fn preview_query_stream(
     // register_stream をタスク本体より前に完了させるためのゲート。理由は
     // run_query_stream 側の同種コメントを参照 (register/forget の順序が逆転すると
     // AbortHandle がマップに残り続けたり、後続の同 stream_id 登録を消してしまう)。
+    // oneshot は register_stream が発行したトークンを運び、タスクはそれを使って
+    // 自分の登録だけを forget_stream する (run_query_stream と同じ理由)。
     let delivered_rows = Arc::new(AtomicU64::new(0));
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
     let stream_id_for_task = stream_id.clone();
     let delivered_rows_for_task = delivered_rows.clone();
     let handle = tokio::spawn(async move {
-        let _ = ready_rx.await;
+        let Ok(token) = ready_rx.await else {
+            return;
+        };
         spawn_preview_stream(
             app,
             session,
             stream_id_for_task,
+            token,
             sql,
             database,
             row_limit,
             chunk_size,
+            query_timeout_secs,
             delivered_rows_for_task,
         )
         .await;
     });
-    state
+    let token = state
         .register_stream(
             stream_id,
             StreamHandle {
@@ -976,7 +1006,7 @@ pub async fn preview_query_stream(
             },
         )
         .await;
-    let _ = ready_tx.send(());
+    let _ = ready_tx.send(token);
     Ok(())
 }
 
@@ -985,16 +1015,29 @@ async fn spawn_preview_stream(
     app: AppHandle,
     session: Arc<Session>,
     stream_id: String,
+    stream_token: u64,
     sql: String,
     database: Option<String>,
     row_limit: usize,
     chunk_size: usize,
+    query_timeout_secs: Option<u64>,
     delivered_rows: Arc<AtomicU64>,
 ) {
-    let result = session
+    let exec = session
         .conn
-        .preview_execute_with_limit(&sql, database.as_deref(), row_limit)
-        .await;
+        .preview_execute_with_limit(&sql, database.as_deref(), row_limit);
+    // run_query_stream と同じレース方式: 超過したら future を drop してプールへ
+    // 接続を返す (プレビューはトランザクション内なので、drop は暗黙のロールバック
+    // として働き、握っていた行ロックも解放される)。
+    let result = match query_timeout_secs {
+        Some(secs) if secs > 0 => {
+            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                Ok(res) => res,
+                Err(_) => Err(AppError::Timeout(secs)),
+            }
+        }
+        _ => exec.await,
+    };
     match result {
         Ok(p) => {
             if let Err(e) = app.emit(
@@ -1047,18 +1090,27 @@ async fn spawn_preview_stream(
             }
         }
         Err(e) => {
-            tracing::warn!(
-                session_id = %session.id,
-                stream_id = %stream_id,
-                error = %e,
-                "preview stream failed"
-            );
+            if matches!(e, AppError::Timeout(_)) {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %e,
+                    "preview stream timed out"
+                );
+            } else {
+                tracing::warn!(
+                    session_id = %session.id,
+                    stream_id = %stream_id,
+                    error = %e,
+                    "preview stream failed"
+                );
+            }
             if let Err(emit_err) = app.emit(
                 EV_PREVIEW_ERROR,
                 StreamErrorEvent {
                     stream_id: stream_id.clone(),
                     error: e.to_string(),
-                    timed_out: false,
+                    timed_out: matches!(e, AppError::Timeout(_)),
                     connection_lost: e.is_connection_lost(),
                     delivered_rows: delivered_rows.load(Ordering::SeqCst),
                 },
@@ -1073,7 +1125,7 @@ async fn spawn_preview_stream(
         }
     }
     if let Some(state) = app.try_state::<AppState>() {
-        state.forget_stream(&stream_id).await;
+        state.forget_stream(&stream_id, stream_token).await;
     }
 }
 
@@ -1292,15 +1344,19 @@ mod tests {
         let state = Arc::new(AppState::default());
         let stream_id = "test-stream-gate".to_string();
 
-        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+        // 本番コード (run_query_stream / preview_query_stream) と同じく、oneshot は
+        // register_stream が発行したトークンそのものを運ぶ。
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
         let task_state = state.clone();
         let task_stream_id = stream_id.clone();
         // 実処理を模した「即完了するタスク」。ゲートを待ってから自分の登録を消す。
         let handle = tokio::spawn(async move {
-            let _ = ready_rx.await;
-            task_state.forget_stream(&task_stream_id).await;
+            let Ok(token) = ready_rx.await else {
+                return;
+            };
+            task_state.forget_stream(&task_stream_id, token).await;
         });
-        state
+        let token = state
             .register_stream(
                 stream_id.clone(),
                 StreamHandle {
@@ -1316,7 +1372,7 @@ mod tests {
             state.streams.read().await.contains_key(&stream_id),
             "stream should be registered before the gate is released"
         );
-        let _ = ready_tx.send(());
+        let _ = ready_tx.send(token);
         handle.await.unwrap();
         // タスクがゲート解放後に forget_stream を実行し、エントリが消えていること。
         assert!(

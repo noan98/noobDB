@@ -14,6 +14,61 @@ pub enum Value {
     Bytes(String),
 }
 
+/// JS の `Number.MAX_SAFE_INTEGER` (2^53 - 1)。
+///
+/// [`Value`] は `#[serde(untagged)]` なので `Int`/`UInt` は JSON の素の数値として
+/// シリアライズされ、フロントでは `JSON.parse` により IEEE754 倍精度の `number` に
+/// なる。したがってこの範囲を超える整数は **IPC を跨いだ時点で丸められて別の値に
+/// なる** — 表示・コピー・エクスポートが静かに誤った値になるだけでなく、
+/// インラインセル編集が丸めた値で `WHERE pk = ...` を組み立てるため、丸め後の値が
+/// 実在する別の主キーと一致すると**意図しない行を書き換えうる**。
+pub const JS_MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+
+impl Value {
+    /// 符号付き整数を「JSON を跨いでも精度が落ちない」表現へ変換する。
+    ///
+    /// 安全整数の範囲内なら数値のまま (`Int`)、超えるなら十進文字列
+    /// (`String`) にする。DECIMAL/NUMERIC が桁あふれ時に文字列へ退避するのと
+    /// 同じ方針で、フロントの `cellEdit.ts` も「2^53 を超える整数は文字列で
+    /// 届く」前提で書かれている。
+    pub fn from_i64_lossless(v: i64) -> Self {
+        if (-JS_MAX_SAFE_INTEGER..=JS_MAX_SAFE_INTEGER).contains(&v) {
+            Value::Int(v)
+        } else {
+            Value::String(v.to_string())
+        }
+    }
+
+    /// [`Value::from_i64_lossless`] の符号なし版 (MySQL の `BIGINT UNSIGNED` 等)。
+    pub fn from_u64_lossless(v: u64) -> Self {
+        if v <= JS_MAX_SAFE_INTEGER as u64 {
+            Value::UInt(v)
+        } else {
+            Value::String(v.to_string())
+        }
+    }
+
+    /// [`Value::from_i64_lossless`] の 128bit 版 (DuckDB の `HUGEINT` 等)。
+    /// `i64` に収まらない値も含めて、安全整数の外は必ず文字列になる。
+    pub fn from_i128_lossless(v: i128) -> Self {
+        let max = JS_MAX_SAFE_INTEGER as i128;
+        if (-max..=max).contains(&v) {
+            Value::Int(v as i64)
+        } else {
+            Value::String(v.to_string())
+        }
+    }
+
+    /// [`Value::from_i128_lossless`] の符号なし版 (DuckDB の `UHUGEINT` 等)。
+    pub fn from_u128_lossless(v: u128) -> Self {
+        if v <= JS_MAX_SAFE_INTEGER as u128 {
+            Value::UInt(v as u64)
+        } else {
+            Value::String(v.to_string())
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Column {
     pub name: String,

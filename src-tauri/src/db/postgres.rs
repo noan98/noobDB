@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use sqlx::postgres::{
     PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode, PgValueFormat, PgValueRef,
 };
-use sqlx::{Acquire, Row, TypeInfo, ValueRef};
+use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::types::{
@@ -13,7 +13,7 @@ use super::types::{
     StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
     TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
-use super::{columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions, SslMode};
+use super::{columns_of, init_sql_of, DbConnectOptions, SslMode};
 use crate::error::{AppError, Result};
 
 /// pg_stat_activity の `application_name` に載せる接続の表示名。
@@ -204,6 +204,21 @@ impl PostgresConn {
         })
     }
 
+    /// ドライランプレビュー: 文をトランザクション内で実行し、対象テーブルの
+    /// before/after スナップショットを添えて必ずロールバックする。
+    ///
+    /// 対象テーブルに主キーがあるときは、MySQL 側と同じ戦略を取る
+    /// (共有ロジックは `db::preview`):
+    ///
+    /// * BEFORE はユーザの `WHERE` 句で絞る。これが無いと BEFORE は「PK 昇順の
+    ///   先頭 N 件」でしかなく、更新対象がその窓の外にあると before/after が
+    ///   同一になり、実際には書き換わっているのに差分が「変更なし」に見える。
+    /// * AFTER は BEFORE で捕まえた PK で取り直す。`… SET flag=0 WHERE flag=1`
+    ///   のように WHERE が実行後に一致しなくなるケースでも、両ペインが行単位で
+    ///   揃う。
+    ///
+    /// INSERT は新規行が BEFORE に居ないため PK アンカーを使わず、従来どおり
+    /// 固定窓を撮り直す。
     pub async fn preview_execute_with_limit(
         &self,
         sql: &str,
@@ -238,9 +253,22 @@ impl PostgresConn {
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database).await?;
 
+        let order_clause = super::pk_order_clause(&primary_key, pg_quote_ident);
+        // ユーザの WHERE を BEFORE へ反映する (PK が判っている UPDATE/DELETE の
+        // ときだけ。`UPDATE … FROM other` のように単独 SELECT として成立しない
+        // 形は共有ロジック側が弾いて従来の固定窓へ縮退する)。
+        let where_clause =
+            super::preview::before_where_clause(sql, super::SqlFlavor::Postgres, &primary_key);
+        // PostgreSQL の UPDATE/DELETE は ORDER BY / LIMIT を取れないので、
+        // 切り出した句と自前の ORDER BY / LIMIT が衝突することはない — MySQL と
+        // 違ってフィルタ時も上限を SQL 側で掛けられる。
         let before_sql = target.as_ref().map(|t| {
-            let order = super::pk_order_clause(&primary_key, pg_quote_ident);
-            format!("SELECT * FROM {}{} LIMIT {}", t, order, row_limit + 1)
+            super::preview::build_snapshot_sql(
+                t,
+                where_clause.as_deref(),
+                &order_clause,
+                Some(row_limit + 1),
+            )
         });
 
         let mut tx = conn.begin().await?;
@@ -251,12 +279,58 @@ impl PostgresConn {
             None => Vec::new(),
         };
 
+        // BEFORE の行レイアウト上での PK 列の位置。AFTER を PK で取り直すのに
+        // 使う (フロントの before/after ペアリングにも同じ PK が渡る)。
+        let pk_indices: Vec<usize> = match (primary_key.is_empty(), before_raw.first()) {
+            (false, Some(first)) => primary_key
+                .iter()
+                .filter_map(|name| {
+                    first
+                        .columns()
+                        .iter()
+                        .position(|c| c.name() == name.as_str())
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        // 全ての PK 列を特定できたときだけ PK アンカーを使う。
+        let captured_pks: Vec<Vec<Value>> =
+            if !pk_indices.is_empty() && pk_indices.len() == primary_key.len() {
+                before_raw
+                    .iter()
+                    .take(row_limit)
+                    .map(|r| pk_indices.iter().map(|&i| decode_cell(r, i)).collect())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
         let result = sqlx::query(sqlx::AssertSqlSafe(sql))
             .execute(&mut *tx)
             .await?;
         let rows_affected = result.rows_affected();
 
-        let after_raw: Vec<PgRow> = match &before_sql {
+        // INSERT は新しい行が BEFORE の PK に含まれないので、アンカーせず
+        // 固定窓を撮り直す (そうしないと挿入行が AFTER に出てこない)。
+        let is_insert = trimmed.starts_with("insert");
+        let after_by_pk = if is_insert {
+            None
+        } else {
+            target.as_ref().and_then(|t| {
+                super::preview::build_after_by_pk_sql(
+                    t,
+                    &primary_key,
+                    &captured_pks
+                        .iter()
+                        .map(|row| row.iter().map(pk_literal).collect())
+                        .collect::<Vec<Vec<String>>>(),
+                    &order_clause,
+                    pg_quote_ident,
+                )
+            })
+        };
+        // PK アンカーが組めなければ BEFORE と同じクエリを撮り直す (従来動作)。
+        let after_raw: Vec<PgRow> = match after_by_pk.as_ref().or(before_sql.as_ref()) {
             Some(q) => fetch_capped_pg(&mut tx, q, row_limit + 1).await?,
             None => Vec::new(),
         };
@@ -1521,6 +1595,10 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
     let type_info = raw.type_info();
     let type_name = type_info.name();
     use super::type_name_matches as ti;
+    // sqlx-postgres は prepared statement 経路ではバイナリ形式を要求するが、
+    // simple query (`raw_sql`) 経路ではテキスト形式で届く。ワイヤ表現を自前で
+    // 読む分岐はバイナリのときだけ有効。
+    let binary_format = raw.format() == PgValueFormat::Binary;
 
     // Integer family. Postgres has signed-only int2/int4/int8 (no unsigned).
     if ti(type_name, &["INT2"]) {
@@ -1535,7 +1613,12 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
     }
     if ti(type_name, &["INT8"]) {
         if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
-            return v.map(Value::Int).unwrap_or(Value::Null);
+            // int8 は 2^53 を超えうる。`Value` は `#[serde(untagged)]` なので
+            // そのまま `Value::Int` にすると JSON の素の数値として送られ、
+            // フロントの `JSON.parse` で丸められて**別の値**になる (表示だけで
+            // なく、インラインセル編集が組み立てる `WHERE pk = …` まで狂う)。
+            // 安全整数の外は十進文字列へ退避する。
+            return v.map(Value::from_i64_lossless).unwrap_or(Value::Null);
         }
     }
     if ti(type_name, &["FLOAT4"]) {
@@ -1602,6 +1685,24 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
         }
     }
     if ti(type_name, &["JSON", "JSONB"]) {
+        // サーバが返した JSON テキストを**そのまま**返す。`serde_json::Value`
+        // へパースして `to_string()` で組み直すと、`preserve_order` 無効の
+        // 既定では `Map` が `BTreeMap` になりオブジェクトのキーが辞書順へ
+        // 並べ替えられてしまう (`{"b":1,"a":2}` → `{"a":2,"b":1}`)。
+        // `preserve_order` の有効化はエクスポートのゴールデン (JSON のキーは
+        // UTF-8 バイト順、という前提) を壊すので、こちら側で再シリアライズを
+        // やめる方向で直す。
+        //
+        // ワイヤ表現: `json` は素の UTF-8 テキスト、`jsonb` はバイナリ形式の
+        // とき先頭 1 バイトのバージョン (現行 `0x01`) の後ろが UTF-8 テキスト。
+        // 妥当な UTF-8 として読めない / 未知バージョンのときだけ従来の
+        // パース経路へフォールバックする。
+        if let Ok(bytes) = raw.as_bytes() {
+            let strip_version = binary_format && ti(type_name, &["JSONB"]);
+            if let Some(text) = json_wire_text(bytes, strip_version) {
+                return Value::String(text);
+            }
+        }
         if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(i) {
             return v
                 .map(|j| Value::String(j.to_string()))
@@ -1616,8 +1717,112 @@ fn decode_cell(row: &PgRow, i: usize) -> Value {
         }
     }
 
-    // Default: string (covers TEXT/VARCHAR/BPCHAR/NAME/UUID/INET/CITEXT/...)
-    decode_string_or_bytes(row, i)
+    // --- ここから下は「sqlx の型互換チェックでは文字列として読めない型」を
+    // 明示的に処理する分岐。最終フォールバックの
+    // `try_get_unchecked::<Option<String>>` はバイナリ表現がたまたま妥当な
+    // UTF-8 だとゴミ文字列を返しうるので、ワイヤ表現が判っている型は先に
+    // 自前で整形してしまう。整形に失敗した (長さが想定と違う等) ときは panic
+    // せず素通しし、下の一般フォールバックに任せる。
+    //
+    // バイナリ形式のときだけ自前デコードを試す — テキスト形式 (simple query
+    // 経路) で届いた値はサーバが既に人間可読な表現にしているので、そのまま
+    // 一般フォールバックが文字列として読むのが正しい。
+    if binary_format {
+        if ti(type_name, &["UUID"]) {
+            if let Ok(b) = raw.as_bytes() {
+                if let Some(s) = format_uuid(b) {
+                    return Value::String(s);
+                }
+            }
+        }
+        if ti(type_name, &["INET", "CIDR"]) {
+            if let Ok(b) = raw.as_bytes() {
+                if let Some(s) = format_inet(b) {
+                    return Value::String(s);
+                }
+            }
+        }
+        if ti(type_name, &["MACADDR", "MACADDR8"]) {
+            if let Ok(b) = raw.as_bytes() {
+                if let Some(s) = format_macaddr(b) {
+                    return Value::String(s);
+                }
+            }
+        }
+        if ti(type_name, &["MONEY"]) {
+            if let Ok(b) = raw.as_bytes() {
+                if let Some(s) = format_money(b) {
+                    return Value::String(s);
+                }
+            }
+        }
+        if ti(type_name, &["INTERVAL"]) {
+            if let Ok(b) = raw.as_bytes() {
+                if let Some(s) = format_interval(b) {
+                    return Value::String(s);
+                }
+            }
+        }
+        if ti(type_name, &["BIT", "VARBIT"]) {
+            if let Ok(b) = raw.as_bytes() {
+                if let Some(s) = format_bit_string(b) {
+                    return Value::String(s);
+                }
+            }
+        }
+        // カタログ列でよく出る 32bit 識別子 (符号なし 4 バイト)。sqlx は
+        // `u32` を Postgres 型へマップしないため自前で読む。
+        if ti(type_name, &["OID", "XID", "CID"]) {
+            if let Ok(b) = raw.as_bytes() {
+                if let Ok(arr) = <[u8; 4]>::try_from(b) {
+                    return Value::Int(u32::from_be_bytes(arr) as i64);
+                }
+            }
+        }
+        // `tid` = 物理行位置。インラインセル編集の ctid フォールバック (#849)
+        // が `SELECT ctid, …` で持ち帰る値そのものなので、`(block,offset)` の
+        // テキスト表現に整形して往復できるようにする (従来はここが Null に
+        // なっており、ctid を WHERE に組み立て直せなかった)。
+        if ti(type_name, &["TID"]) {
+            if let Ok(b) = raw.as_bytes() {
+                if let Some(s) = format_tid(b) {
+                    return Value::String(s);
+                }
+            }
+        }
+    }
+    // 配列型 (`text[]` / `int4[]` …) は sqlx の `Vec<Option<T>>` デコードに
+    // 任せられる (テキスト/バイナリ両形式に対応済み) ので形式を問わず試す。
+    if is_array_type_name(type_name) {
+        if let Some(s) = decode_array(row, i) {
+            return Value::String(s);
+        }
+    }
+
+    // 最終フォールバック。**非 NULL の値が `Value::Null` へ落ちる経路を作らない**
+    // ことが眼目 (`db::decode_string_or_bytes` は型互換チェック付きの
+    // `try_get` を使うため、TEXT 系と BYTEA 以外はすべて失敗して Null になって
+    // いた — ENUM / ドメイン型 / citext / xml などの実データが黙って消え、
+    // Diff/Sync が「両側 Null = 差分なし」と誤判定していた)。
+    decode_unchecked_text_or_bytes(row, i)
+}
+
+/// 型互換チェックを飛ばして「まずテキスト、駄目なら生バイト」で読む最終
+/// フォールバック。`try_get_unchecked` は sqlx の `compatible` 判定を通さない
+/// ので、テキストで届く ENUM / ドメイン型 / citext / xml などがそのまま読める。
+///
+/// `Value::Null` を返すのは**本当に SQL NULL のときだけ**。呼び出し元
+/// ([`decode_cell`]) が先に `raw.is_null()` を確認しているため、実際には
+/// ここで `Null` になることはない (防御的に残してある)。
+fn decode_unchecked_text_or_bytes(row: &PgRow, i: usize) -> Value {
+    match row.try_get_unchecked::<Option<String>, _>(i) {
+        Ok(Some(s)) => Value::String(s),
+        Ok(None) => Value::Null,
+        Err(_) => match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
+            Ok(Some(b)) => Value::Bytes(data_encoding::HEXLOWER.encode(&b)),
+            _ => Value::Null,
+        },
+    }
 }
 
 /// Decodes a NUMERIC cell's raw wire value into a human-readable decimal
@@ -1711,6 +1916,285 @@ fn numeric_binary_to_string(bytes: &[u8]) -> Option<String> {
         out.push_str(&frac);
     }
     Some(out)
+}
+
+/// `json` / `jsonb` のワイヤ表現を、サーバが返したままの JSON テキストとして
+/// 取り出す。`strip_version` はバイナリ形式の `jsonb` のとき true で、先頭
+/// 1 バイトのバージョン (現行は `0x01`) を落とす。未知バージョン・非 UTF-8 は
+/// `None` (呼び出し側は従来のパース経路へ)。
+fn json_wire_text(bytes: &[u8], strip_version: bool) -> Option<String> {
+    let body = if strip_version {
+        match bytes.split_first() {
+            Some((1, rest)) => rest,
+            _ => return None,
+        }
+    } else {
+        bytes
+    };
+    std::str::from_utf8(body).ok().map(str::to_string)
+}
+
+/// `uuid` のバイナリ表現 (16 バイト) を `8-4-4-4-12` のハイフン付き小文字
+/// 16 進へ整形する。長さが違えば `None`。
+fn format_uuid(bytes: &[u8]) -> Option<String> {
+    if bytes.len() != 16 {
+        return None;
+    }
+    let hex = data_encoding::HEXLOWER.encode(bytes);
+    let mut out = String::with_capacity(36);
+    for (idx, c) in hex.chars().enumerate() {
+        if matches!(idx, 8 | 12 | 16 | 20) {
+            out.push('-');
+        }
+        out.push(c);
+    }
+    Some(out)
+}
+
+/// `inet` / `cidr` のバイナリ表現をテキストへ整形する。
+///
+/// レイアウトは `family, bits, is_cidr, addr_len, アドレス本体` の 4 バイト
+/// ヘッダ + 本体。family は PostgreSQL 内部の値で IPv4 = 2 (`PGSQL_AF_INET`)、
+/// IPv6 = 3 (`PGSQL_AF_INET6`)。アドレスの文字列化は標準ライブラリの
+/// [`std::net::Ipv4Addr`] / [`std::net::Ipv6Addr`] に任せる (IPv6 の `::`
+/// 短縮も PostgreSQL の出力と同じ規則なので、新しい依存を足す必要は無い)。
+///
+/// マスク長は `cidr` では常に、`inet` ではホストマスク (32 / 128) 以外のときに
+/// 付ける — `inet_out` / `cidr_out` と同じ振る舞い。
+fn format_inet(bytes: &[u8]) -> Option<String> {
+    let family = *bytes.first()?;
+    let bits = *bytes.get(1)?;
+    let is_cidr = *bytes.get(2)?;
+    let addr_len = *bytes.get(3)? as usize;
+    let addr = bytes.get(4..4 + addr_len)?;
+    let (text, max_bits) = match (family, addr_len) {
+        (2, 4) => {
+            let octets: [u8; 4] = addr.try_into().ok()?;
+            (std::net::Ipv4Addr::from(octets).to_string(), 32u8)
+        }
+        (3, 16) => {
+            let octets: [u8; 16] = addr.try_into().ok()?;
+            (std::net::Ipv6Addr::from(octets).to_string(), 128u8)
+        }
+        _ => return None,
+    };
+    if is_cidr != 0 || bits != max_bits {
+        Some(format!("{}/{}", text, bits))
+    } else {
+        Some(text)
+    }
+}
+
+/// `macaddr` (6 バイト) / `macaddr8` (8 バイト) をコロン区切りの小文字
+/// 16 進へ整形する。
+fn format_macaddr(bytes: &[u8]) -> Option<String> {
+    if !matches!(bytes.len(), 6 | 8) {
+        return None;
+    }
+    Some(
+        bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(":"),
+    )
+}
+
+/// `money` のバイナリ表現 (8 バイト big-endian の i64、100 分の 1 単位) を
+/// 小数 2 桁の十進文字列へ。通貨記号や桁区切りは**付けない** — 表示・コピー・
+/// エクスポートで扱いやすい素の数値にするため (小数桁数はサーバの
+/// `lc_monetary` に依存するが、実運用のほぼすべてで 2 桁)。
+fn format_money(bytes: &[u8]) -> Option<String> {
+    let arr: [u8; 8] = bytes.try_into().ok()?;
+    let v = i64::from_be_bytes(arr);
+    let abs = v.unsigned_abs();
+    let text = format!("{}.{:02}", abs / 100, abs % 100);
+    Some(if v < 0 { format!("-{}", text) } else { text })
+}
+
+/// `interval` のバイナリ表現 (micros: i64, days: i32, months: i32 の順、
+/// いずれも big-endian) を PostgreSQL 既定の `IntervalStyle = postgres` 風の
+/// テキストへ整形する (例: `1 year 2 mons 3 days 04:05:06.789`)。
+///
+/// 月は年/月に分解し、時刻部分はマイクロ秒まで保持したうえで末尾の 0 を
+/// 落とす。全要素が 0 のときは `00:00:00`。
+fn format_interval(bytes: &[u8]) -> Option<String> {
+    if bytes.len() != 16 {
+        return None;
+    }
+    let micros = i64::from_be_bytes(bytes.get(0..8)?.try_into().ok()?);
+    let days = i32::from_be_bytes(bytes.get(8..12)?.try_into().ok()?);
+    let months = i32::from_be_bytes(bytes.get(12..16)?.try_into().ok()?);
+
+    // `i32::abs` は i32::MIN でオーバーフロー panic するため unsigned_abs を使う。
+    fn plural(n: i32) -> &'static str {
+        if n.unsigned_abs() == 1 {
+            ""
+        } else {
+            "s"
+        }
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    let years = months / 12;
+    let mons = months % 12;
+    if years != 0 {
+        parts.push(format!("{} year{}", years, plural(years)));
+    }
+    if mons != 0 {
+        parts.push(format!("{} mon{}", mons, plural(mons)));
+    }
+    if days != 0 {
+        parts.push(format!("{} day{}", days, plural(days)));
+    }
+    if micros != 0 || parts.is_empty() {
+        let abs = micros.unsigned_abs();
+        let total_secs = abs / 1_000_000;
+        let frac = abs % 1_000_000;
+        let mut time = format!(
+            "{}{:02}:{:02}:{:02}",
+            if micros < 0 { "-" } else { "" },
+            total_secs / 3600,
+            (total_secs % 3600) / 60,
+            total_secs % 60
+        );
+        if frac != 0 {
+            let mut digits = format!("{:06}", frac);
+            while digits.ends_with('0') {
+                digits.pop();
+            }
+            time.push('.');
+            time.push_str(&digits);
+        }
+        parts.push(time);
+    }
+    Some(parts.join(" "))
+}
+
+/// `bit` / `varbit` のバイナリ表現 (i32 のビット長 + MSB 詰めのビット列) を
+/// `'10110000'` 形式の 0/1 文字列へ。長さが宣言と合わなければ `None`。
+fn format_bit_string(bytes: &[u8]) -> Option<String> {
+    let bit_len = i32::from_be_bytes(bytes.get(0..4)?.try_into().ok()?);
+    if bit_len < 0 {
+        return None;
+    }
+    let bit_len = bit_len as usize;
+    let body = bytes.get(4..4 + bit_len.div_ceil(8))?;
+    let mut out = String::with_capacity(bit_len);
+    for idx in 0..bit_len {
+        let byte = *body.get(idx / 8)?;
+        out.push(if (byte >> (7 - (idx % 8))) & 1 == 1 {
+            '1'
+        } else {
+            '0'
+        });
+    }
+    Some(out)
+}
+
+/// `tid` (物理行位置) の 6 バイト表現を `(block,offset)` へ整形する。
+/// ブロック番号は 16bit 2 語 (上位/下位) に分かれている。
+fn format_tid(bytes: &[u8]) -> Option<String> {
+    if bytes.len() != 6 {
+        return None;
+    }
+    let hi = u16::from_be_bytes(bytes.get(0..2)?.try_into().ok()?) as u32;
+    let lo = u16::from_be_bytes(bytes.get(2..4)?.try_into().ok()?) as u32;
+    let offset = u16::from_be_bytes(bytes.get(4..6)?.try_into().ok()?);
+    Some(format!("({},{})", (hi << 16) | lo, offset))
+}
+
+/// 型名が配列型かどうか。`PgTypeInfo::name()` は既知の配列型を `TEXT[]` の
+/// 形で返すが、未知の (ユーザ定義型の) 配列は pg_type の内部名である
+/// `_mytype` の形で出ることがあるため両方を見る。
+fn is_array_type_name(type_name: &str) -> bool {
+    type_name.ends_with("[]") || type_name.starts_with('_')
+}
+
+/// 配列セルを PostgreSQL の配列リテラル表記 (`{a,b,NULL}`) へ整形する。
+///
+/// 要素型は事前に判らないので、sqlx が配列としてデコードできる形を順に試して
+/// 最初に成功したものを使う。`Option<T>` の要素で受けるので、要素の NULL と
+/// 文字列 `"NULL"` を取り違えない。どれも駄目なら `None` を返し、呼び出し側の
+/// 一般フォールバック (生テキスト / 16 進) に委ねる。
+fn decode_array(row: &PgRow, i: usize) -> Option<String> {
+    if let Ok(Some(v)) = row.try_get::<Option<Vec<Option<String>>>, _>(i) {
+        return Some(format_array_literal(&v));
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<Vec<Option<i16>>>, _>(i) {
+        return Some(format_array_literal(&stringify_elements(v)));
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<Vec<Option<i32>>>, _>(i) {
+        return Some(format_array_literal(&stringify_elements(v)));
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<Vec<Option<i64>>>, _>(i) {
+        return Some(format_array_literal(&stringify_elements(v)));
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<Vec<Option<f32>>>, _>(i) {
+        return Some(format_array_literal(&stringify_elements(v)));
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<Vec<Option<f64>>>, _>(i) {
+        return Some(format_array_literal(&stringify_elements(v)));
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<Vec<Option<bool>>>, _>(i) {
+        // PostgreSQL の bool 出力に合わせて t/f (`{t,f}`)。
+        let cells: Vec<Option<String>> = v
+            .into_iter()
+            .map(|e| e.map(|b| if b { "t".to_string() } else { "f".to_string() }))
+            .collect();
+        return Some(format_array_literal(&cells));
+    }
+    // 最後に型互換チェック抜きの文字列配列を試す。ユーザ定義 ENUM の配列
+    // (`_mood`) やドメイン型の配列は要素がテキストで届くのでこれで読める。
+    // 要素が本当にバイナリ (uuid[] など) なら UTF-8 として不正になりデコードが
+    // 失敗するので、その場合は `None` のまま一般フォールバックへ落ちる。
+    if let Ok(Some(v)) = row.try_get_unchecked::<Option<Vec<Option<String>>>, _>(i) {
+        return Some(format_array_literal(&v));
+    }
+    None
+}
+
+fn stringify_elements<T: ToString>(values: Vec<Option<T>>) -> Vec<Option<String>> {
+    values
+        .into_iter()
+        .map(|e| e.map(|v| v.to_string()))
+        .collect()
+}
+
+/// 要素の文字列表現から PostgreSQL の配列リテラル (`{a,"b,c",NULL}`) を組む。
+/// 区切り/括弧/引用符/バックスラッシュ/空白を含む要素、空文字列、`NULL` と
+/// 読めてしまう要素は `"` で囲み、内部の `"` と `\` をバックスラッシュで
+/// エスケープする。
+fn format_array_literal(elements: &[Option<String>]) -> String {
+    let mut out = String::from("{");
+    for (idx, element) in elements.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        match element {
+            None => out.push_str("NULL"),
+            Some(s) if array_element_needs_quotes(s) => {
+                out.push('"');
+                for c in s.chars() {
+                    if c == '"' || c == '\\' {
+                        out.push('\\');
+                    }
+                    out.push(c);
+                }
+                out.push('"');
+            }
+            Some(s) => out.push_str(s),
+        }
+    }
+    out.push('}');
+    out
+}
+
+fn array_element_needs_quotes(s: &str) -> bool {
+    s.is_empty()
+        || s.eq_ignore_ascii_case("NULL")
+        || s.chars()
+            .any(|c| matches!(c, ',' | '{' | '}' | '"' | '\\') || c.is_whitespace())
 }
 
 /// Best-effort extraction of the target table from a mutation statement.
@@ -1863,6 +2347,31 @@ fn pg_literal(cell: Option<&str>) -> String {
     match cell {
         None => "NULL".to_string(),
         Some(s) => format!("'{}'", s.replace('\'', "''")),
+    }
+}
+
+/// プレビューの AFTER を PK で取り直すときに、捕まえた主キー値を SQL へ
+/// 埋め込む形にする。
+///
+/// **バインドパラメータ (`$1`) ではなく型なしリテラルを使う**のは、PostgreSQL
+/// の型解決がクライアント指定のパラメータ型に厳格なため。sqlx は Rust の型から
+/// パラメータの型 OID を決めるので、`uuid` / `inet` / `date` 列に対して
+/// `String` を bind すると `operator does not exist: uuid = text` で**文の実行
+/// 自体が失敗**し、プレビュー全体が落ちる。一方、引用符付きの型なしリテラルは
+/// 比較相手の列型へ暗黙に解決されるため、列型を知らないこの経路でも安全に
+/// 比較できる (`import_rows` が値をリテラルで流し込んでいるのと同じ理由)。
+///
+/// BLOB (`Value::Bytes`) は 16 進テキストのままでは往復しないので `NULL` に
+/// する — MySQL 側の `bind_value` と同じ方針で、AFTER から当該行が落ちるだけに
+/// 留め、型不一致でエラーにはしない。
+fn pk_literal(v: &Value) -> String {
+    match v {
+        Value::Null | Value::Bytes(_) => "NULL".to_string(),
+        Value::Bool(b) => pg_literal(Some(if *b { "true" } else { "false" })),
+        Value::Int(i) => pg_literal(Some(i.to_string().as_str())),
+        Value::UInt(u) => pg_literal(Some(u.to_string().as_str())),
+        Value::Float(f) => pg_literal(Some(f.to_string().as_str())),
+        Value::String(s) => pg_literal(Some(s.as_str())),
     }
 }
 
@@ -2207,5 +2716,212 @@ mod tests {
         let mut bytes = encode_numeric(0x0000, 1, 0, &[1, 2345]);
         bytes.truncate(bytes.len() - 2);
         assert_eq!(numeric_binary_to_string(&bytes), None);
+    }
+
+    // --- ワイヤ表現を自前で読む整形関数群 ---------------------------------
+    // いずれも「非 NULL の値が Value::Null へ落ちる」のを止めるために追加した
+    // 分岐 (sqlx の型互換チェックでは文字列として読めない型)。境界 (空・最大長・
+    // 不正長) で panic せず None を返すことも併せて固定する。
+
+    #[test]
+    fn formats_uuid_from_16_bytes() {
+        let bytes: Vec<u8> = (0u8..16).collect();
+        assert_eq!(
+            format_uuid(&bytes).as_deref(),
+            Some("00010203-0405-0607-0809-0a0b0c0d0e0f")
+        );
+        // 長さ違いは panic せず None (呼び出し側が一般フォールバックへ落ちる)。
+        assert_eq!(format_uuid(&[]), None);
+        assert_eq!(format_uuid(&[0u8; 15]), None);
+        assert_eq!(format_uuid(&[0u8; 17]), None);
+    }
+
+    #[test]
+    fn formats_inet_and_cidr() {
+        // inet 192.168.1.5/32 (ホストマスク) → マスク表記なし。
+        let host = [2u8, 32, 0, 4, 192, 168, 1, 5];
+        assert_eq!(format_inet(&host).as_deref(), Some("192.168.1.5"));
+        // inet 10.0.0.0/8 → マスクあり。
+        let net = [2u8, 8, 0, 4, 10, 0, 0, 0];
+        assert_eq!(format_inet(&net).as_deref(), Some("10.0.0.0/8"));
+        // cidr はホストマスクでもマスクを出す。
+        let cidr = [2u8, 32, 1, 4, 192, 168, 1, 5];
+        assert_eq!(format_inet(&cidr).as_deref(), Some("192.168.1.5/32"));
+        // IPv6 (::1/128) は標準ライブラリの短縮表記に従う。
+        let mut v6 = vec![3u8, 128, 0, 16];
+        v6.extend_from_slice(&[0u8; 15]);
+        v6.push(1);
+        assert_eq!(format_inet(&v6).as_deref(), Some("::1"));
+        // 切り詰められた/未知 family のペイロードは None。
+        assert_eq!(format_inet(&[2, 32, 0, 4, 192]), None);
+        assert_eq!(format_inet(&[9, 32, 0, 4, 1, 2, 3, 4]), None);
+        assert_eq!(format_inet(&[]), None);
+    }
+
+    #[test]
+    fn formats_macaddr_variants() {
+        assert_eq!(
+            format_macaddr(&[0x08, 0x00, 0x2b, 0x01, 0x02, 0x03]).as_deref(),
+            Some("08:00:2b:01:02:03")
+        );
+        assert_eq!(
+            format_macaddr(&[0x08, 0x00, 0x2b, 0x01, 0x02, 0x03, 0x04, 0x05]).as_deref(),
+            Some("08:00:2b:01:02:03:04:05")
+        );
+        assert_eq!(format_macaddr(&[1, 2, 3]), None);
+        assert_eq!(format_macaddr(&[]), None);
+    }
+
+    #[test]
+    fn formats_money_with_two_decimals() {
+        assert_eq!(
+            format_money(&1234i64.to_be_bytes()).as_deref(),
+            Some("12.34")
+        );
+        assert_eq!(format_money(&0i64.to_be_bytes()).as_deref(), Some("0.00"));
+        assert_eq!(
+            format_money(&(-5i64).to_be_bytes()).as_deref(),
+            Some("-0.05")
+        );
+        // i64::MIN でも unsigned_abs のおかげでオーバーフロー panic しない。
+        assert!(format_money(&i64::MIN.to_be_bytes()).is_some());
+        assert_eq!(format_money(&[0, 0, 0]), None);
+    }
+
+    /// interval のバイナリ表現 (micros, days, months) を組み立てるテスト用ヘルパ。
+    fn encode_interval(micros: i64, days: i32, months: i32) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(16);
+        buf.extend_from_slice(&micros.to_be_bytes());
+        buf.extend_from_slice(&days.to_be_bytes());
+        buf.extend_from_slice(&months.to_be_bytes());
+        buf
+    }
+
+    #[test]
+    fn formats_interval_like_postgres() {
+        // 1 year 2 mons 3 days 04:05:06.789
+        let micros = ((4 * 3600 + 5 * 60 + 6) * 1_000_000) + 789_000;
+        assert_eq!(
+            format_interval(&encode_interval(micros, 3, 14)).as_deref(),
+            Some("1 year 2 mons 3 days 04:05:06.789")
+        );
+        // 単数形/複数形。
+        assert_eq!(
+            format_interval(&encode_interval(0, 1, 1)).as_deref(),
+            Some("1 mon 1 day")
+        );
+        // 全要素ゼロは 00:00:00。
+        assert_eq!(
+            format_interval(&encode_interval(0, 0, 0)).as_deref(),
+            Some("00:00:00")
+        );
+        // 負の時刻部分。
+        assert_eq!(
+            format_interval(&encode_interval(-90_000_000, 0, 0)).as_deref(),
+            Some("-00:01:30")
+        );
+        assert_eq!(format_interval(&[0u8; 15]), None);
+    }
+
+    #[test]
+    fn formats_bit_strings() {
+        // 8 ビット '10110000' → 1 バイト 0b1011_0000。
+        let mut bytes = 8i32.to_be_bytes().to_vec();
+        bytes.push(0b1011_0000);
+        assert_eq!(format_bit_string(&bytes).as_deref(), Some("10110000"));
+        // ビット長がバイト境界に揃わないケース (3 ビット)。
+        let mut odd = 3i32.to_be_bytes().to_vec();
+        odd.push(0b1010_0000);
+        assert_eq!(format_bit_string(&odd).as_deref(), Some("101"));
+        // 空のビット列。
+        assert_eq!(format_bit_string(&0i32.to_be_bytes()).as_deref(), Some(""));
+        // 宣言されたビット数に対して本体が足りない / 負の長さは None。
+        assert_eq!(format_bit_string(&16i32.to_be_bytes()), None);
+        assert_eq!(format_bit_string(&(-1i32).to_be_bytes()), None);
+        assert_eq!(format_bit_string(&[0, 1]), None);
+    }
+
+    #[test]
+    fn formats_tid_as_block_offset() {
+        // block 1, offset 2
+        let bytes = [0x00, 0x00, 0x00, 0x01, 0x00, 0x02];
+        assert_eq!(format_tid(&bytes).as_deref(), Some("(1,2)"));
+        // 上位語が効くブロック番号 (0x00010000 = 65536)。
+        let big = [0x00, 0x01, 0x00, 0x00, 0x00, 0x05];
+        assert_eq!(format_tid(&big).as_deref(), Some("(65536,5)"));
+        assert_eq!(format_tid(&[0, 0, 0]), None);
+    }
+
+    #[test]
+    fn formats_array_literals_with_quoting_and_nulls() {
+        let cells = vec![
+            Some("a".to_string()),
+            None,
+            Some("b,c".to_string()),
+            Some(String::new()),
+            Some("NULL".to_string()),
+            Some("say \"hi\"".to_string()),
+            Some("back\\slash".to_string()),
+            Some("two words".to_string()),
+        ];
+        assert_eq!(
+            format_array_literal(&cells),
+            "{a,NULL,\"b,c\",\"\",\"NULL\",\"say \\\"hi\\\"\",\"back\\\\slash\",\"two words\"}"
+        );
+        assert_eq!(format_array_literal(&[]), "{}");
+        // 要素の NULL と文字列 "NULL" が区別できていること。
+        assert_eq!(
+            format_array_literal(&[None, Some("NULL".to_string())]),
+            "{NULL,\"NULL\"}"
+        );
+    }
+
+    #[test]
+    fn detects_array_type_names() {
+        assert!(is_array_type_name("TEXT[]"));
+        assert!(is_array_type_name("INT4[]"));
+        assert!(is_array_type_name("_mood"));
+        assert!(!is_array_type_name("TEXT"));
+        assert!(!is_array_type_name("INT4"));
+        // INTERVAL と INT を取り違えないこと自体は `type_name_matches` が
+        // 完全一致 (大小無視) である前提に乗っている。
+        assert!(!super::super::type_name_matches("INTERVAL", &["INT"]));
+        assert!(super::super::type_name_matches("interval", &["INTERVAL"]));
+    }
+
+    #[test]
+    fn json_wire_text_strips_jsonb_version_byte() {
+        // jsonb (バイナリ): 先頭 1 バイトのバージョンを落とし、キー順は
+        // サーバが返したまま保つ。
+        let mut jsonb = vec![1u8];
+        jsonb.extend_from_slice(br#"{"b": 1, "a": 2}"#);
+        assert_eq!(
+            json_wire_text(&jsonb, true).as_deref(),
+            Some(r#"{"b": 1, "a": 2}"#)
+        );
+        // json (テキスト): そのまま。
+        assert_eq!(
+            json_wire_text(br#"{"b":1,"a":2}"#, false).as_deref(),
+            Some(r#"{"b":1,"a":2}"#)
+        );
+        // 未知バージョン / 非 UTF-8 は None (従来のパース経路へ)。
+        assert_eq!(json_wire_text(&[9, b'{', b'}'], true), None);
+        assert_eq!(json_wire_text(&[1, 0xff, 0xfe], true), None);
+        assert_eq!(json_wire_text(&[], true), None);
+    }
+
+    #[test]
+    fn pk_literals_are_untyped_and_safe() {
+        assert_eq!(pk_literal(&Value::Int(42)), "'42'");
+        assert_eq!(pk_literal(&Value::UInt(7)), "'7'");
+        assert_eq!(pk_literal(&Value::Bool(true)), "'true'");
+        assert_eq!(
+            pk_literal(&Value::String("a'b".to_string())),
+            "'a''b'",
+            "PK 値に単一引用符が含まれても壊れない"
+        );
+        // NULL と BLOB は NULL 扱い (該当行が AFTER から落ちるだけ)。
+        assert_eq!(pk_literal(&Value::Null), "NULL");
+        assert_eq!(pk_literal(&Value::Bytes("00ff".to_string())), "NULL");
     }
 }

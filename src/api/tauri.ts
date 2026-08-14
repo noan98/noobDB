@@ -1265,6 +1265,13 @@ export const api = {
     database?: string | null;
     rowLimit: number;
     chunkSize: number;
+    /**
+     * ドライラン (INSERT/UPDATE/DELETE をトランザクション内で実行してロールバック)
+     * にも `runQueryStream` と同じ全体タイムアウトを課す。未指定/0 はタイムアウト
+     * なし。ロック待ちで詰まる UPDATE をプレビューすると、これが無いと接続と行
+     * ロックを無期限に握り続ける (読み取り専用セッションからでも到達できる経路)。
+     */
+    queryTimeoutSecs?: number | null;
   }) =>
     invoke<void>("preview_query_stream", {
       sessionId: params.sessionId,
@@ -1273,6 +1280,7 @@ export const api = {
       database: params.database ?? null,
       rowLimit: params.rowLimit,
       chunkSize: params.chunkSize,
+      queryTimeoutSecs: params.queryTimeoutSecs ?? null,
     }),
   /**
    * Aborts the streaming task registered under `streamId` (query/preview/

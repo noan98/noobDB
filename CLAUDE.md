@@ -700,6 +700,20 @@ SSH やセッション層には触らないでください — それらはド�
   `unused_indexes` は未実装**(SQLite と同じ `unsupported_driver` 縮退)。`dump_database`
   も未対応 (`commands/dump.rs` が `InvalidInput` を返す)。いずれも本 Issue の受け入れ
   条件の範囲外 — 将来 `sys.dm_exec_*` 系 DMV で実装可能。
+- **手書きプールは「疑わしい接続を絶対に返さない」方針**。`PooledConn` の `Drop` は
+  既定でアイドルリストへ接続を戻すため、失敗した操作の後にそのまま返すと壊れた TCP
+  ソケットが次の無関係なリクエストへ配られます。そこで fallible な操作は
+  `unwrap_or_discard` / `rows` / `exec` などのヘルパ経由に統一し、エラー時は必ず
+  `mark_discard()` します (I/O エラーと SQL エラーを tiberius のエラー型から確実に
+  見分けるのは難しいので、**迷ったら捨てる** — 接続 1 本のコストの方が小さい)。
+  `execute_stream` / `preview_execute_with_limit` / `import_rows` は逆に
+  **先に discard を立て、最後まで読み切って成功したときだけ `unmark_discard()`** し
+  ます。この形なら `cancel_stream` の abort やタイムアウトで future が drop された
+  場合も自動的に discard 扱いになり、**未消費の結果セットを抱えた接続**がプールへ
+  戻りません (tiberius は読み切っていない `QueryStream` があると次のクエリの前に
+  残りを flush するため、放置すると次の呼び出し元がそのツケを払います)。例外は
+  `probe_failing_row` の行単位 INSERT 失敗で、これは想定内のデータエラーであり接続
+  破損の証拠ではないので discard しません。
 - **統合テストは `tests/mssql_integration.rs`**、`NOOBDB_TEST_MSSQL_URL`
   (`mssql://user:pass@host:port/db`) 環境変数ゲート (未設定ならスキップ)。CI の
   サービスコンテナは未追加 (ローカル/手動実行のみ、他ドライバと同じ導入パターンを
@@ -712,6 +726,32 @@ JSON で安全に扱えるよう 16 進エンコードした文字列 (`Value::B
 各ドライバの `decode_cell` 系では型に応じた明示的なデコードを行っています — カラム型を
 追加する際は「型付きで試して失敗したら String にフォールバック」というパターンに
 従ってください。
+
+**64bit 整数は「JS の安全整数」を境に表現が変わります。** `Value` は
+`#[serde(untagged)]` なので `Int`/`UInt` は JSON の素の数値としてシリアライズされ、
+フロントの `JSON.parse` で IEEE754 倍精度の `number` になります。したがって
+`Number.MAX_SAFE_INTEGER` (2^53-1) を超える整数はそのまま返すと**丸められて別の値に
+なり**、表示・コピー・エクスポートが静かに誤るだけでなく、インラインセル編集が
+丸めた値で `WHERE pk = ...` を組み立てるため**意図しない行を書き換えうる**。これを
+避けるため、全ドライバの整数デコードは `Value::from_i64_lossless` /
+`from_u64_lossless` / `from_i128_lossless` / `from_u128_lossless` (`db/types.rs`) を
+通し、安全整数の外は十進文字列 (`Value::String`) にします (DECIMAL/NUMERIC が桁あふれ
+時に文字列へ退避するのと同じ方針で、フロントの `cellEdit.ts` もこの前提で書かれて
+います)。**新しい整数型の分岐を足すときは必ずこのヘルパを経由してください。**
+
+**PostgreSQL のデコードは「非 NULL の値を `Value::Null` にしない」ことを不変条件と
+します。** sqlx の通常の `try_get` は型互換チェックを通すため、`String` が受け付ける
+TEXT/VARCHAR/BPCHAR/NAME/UNKNOWN/citext 以外 (uuid・配列・inet/cidr・macaddr・money・
+interval・ユーザ定義 ENUM・ドメイン型など) は失敗し、`Vec<u8>` も BYTEA 以外は失敗
+するため、素朴なフォールバックだと**実データが NULL として返り**ます。表示が消える
+だけでなく、`db/data_diff.rs` の比較で両側とも `Null` になり Diff/Sync とサンドボックス
+書き戻しが実差分を見逃します。`postgres.rs::decode_cell` は UUID・配列・INET/CIDR・
+MACADDR・MONEY・INTERVAL・BIT/VARBIT・TID(`ctid`)・OID 系に明示分岐を持ち、最終
+フォールバックは型互換チェックを飛ばす `try_get_unchecked`(String → 失敗時 `Vec<u8>` を
+16 進) にして、**SQL NULL のときだけ `Value::Null`** を返します。JSON/JSONB は
+`serde_json::Value` を経由すると `BTreeMap` でキーが並べ替わるため、生ワイヤバイト
+(JSONB は先頭のバージョンバイトを剥がす) をそのまま返してサーバのキー順を保ちます
+(MySQL はサーバ側が JSON のキーを正規化するので対象外)。
 
 クエリ判定 (結果セットを返す SELECT 系か、`rows_affected` を返す書き込み系か) は
 ドライバごとに SQL の先頭キーワードを見て行います。MySQL の `is_query_shape`
@@ -856,6 +896,28 @@ no-op)。
 自動で `LIMIT n` を付与します。判定は保守的で、迷ったら `None` (ユーザの SQL をそのまま
 実行) を返します。単一行集計 (`COUNT(*)` 等) や既存の `LIMIT`/`OFFSET`、ロック句がある
 場合は付与しません。`db/mod.rs` の単体テストがこれら 2 関数の挙動を広くカバーしています。
+**MSSQL 版 (`apply_auto_limit_mssql`) はトップレベルに `UNION`/`INTERSECT`/`EXCEPT` が
+現れたら `None` を返します** — T-SQL の `TOP (n)` は自分が属する `SELECT` にしか効かず、
+先頭ブランチだけを制限して残りを素通しするくらいなら何もしない方が安全なため (括弧の
+深さを見るのでサブクエリ内の集合演算では諦めません)。
+
+**キーワード許可リストでは原理的に見えない書き込み経路も拒否します。**
+`SELECT * FROM OPENROWSET(..., 'UPDATE ...')` / `SELECT dblink_exec(..., 'DELETE ...')` /
+`SELECT load_extension('...')` は、文全体が `SELECT` で始まり、実際の書き込み SQL は
+**文字列リテラルの中** = マスクで空白化される領域に隠れるため、通常の書き込み
+キーワード走査には一切引っかかりません。そこで `openrowset` / `openquery` /
+`opendatasource` / `dblink` / `dblink_exec` / `load_extension` を全ドライバ共通で拒否
+します (これらが読み取り専用クエリの識別子として正当に現れる可能性は極めて低く、
+過検知のコストより見逃しのコストが桁違いに大きいため fail-closed)。
+
+**マスクの前提を崩す設定は入口で塞ぎます。** `driver_backslash_escapes` は
+「MySQL では `\` がエスケープ文字」という静的な前提を置くため、セッション初期化 SQL
+(`is_session_init_sql`) が `SET sql_mode = 'NO_BACKSLASH_ESCAPES'` を通すとマスクと実
+サーバの解釈が乖離します (`... WHERE x = '\' ; DROP TABLE users -- '` をマスクは「全部
+文字列の中」と誤読)。そのため `sql_mode` への `NO_BACKSLASH_ESCAPES` 設定は
+`InvalidInput` で拒否します。また MySQL の `/*! ... */` は**コメントではなく条件付き
+実行構文**なので、マスクは中身を空白化せずキーワード走査の対象として残します
+(「マスクされた領域 = 実行されない領域」という安全網の前提を保つため)。
 
 読み取り専用判定は、バックの `is_read_only_sql` とフロントの `dangerousSql.ts`
 `isReadOnlySql` で**独立に二重実装**されているため、両者の判定がズレないよう**共有
@@ -945,6 +1007,27 @@ BLOB だけはフロントが `Value::Bytes` を `Value::String` と区別でき
 (all-or-nothing) を踏襲します。新しいストリーミングコマンドを足すときは、この
 イベント命名・`register_stream`/`forget_stream`・`stream_id` フィルタの 3 点セットに
 合わせてください。
+
+**`stream_id` はクライアントが指定する値なので、登録は世代トークンで守ります。**
+`register_stream` は登録ごとにトークンを発行して返し、`forget_stream(stream_id, token)`
+はトークンが一致する登録だけを消します。これが無いと「同じ id を再利用した新しい
+タスクの登録を、先に終わった古いタスクの後始末が消す」競合が起き、`cancel_stream` が
+`{cancelled: false}` を返す**キャンセル不能なストリーム**が DB 接続や SSH トンネルを
+掴んだまま残ります (接続試行側の `register_connect`/`forget_connect` (#684) と同じ
+方式です)。
+
+`preview_query_stream` も `run_query_stream` と同じく `query_timeout_secs` を受け取り
+`tokio::time::timeout` でレースします。ドライランは読み取り専用セッションからも呼べる
+ため、タイムアウトが無いとロック待ちする `UPDATE` のプレビューで接続と行ロックを無期限に
+握れてしまいます。
+
+なお、プレビューの before/after スナップショットを組み立てる純粋ロジック
+(ユーザの `WHERE` の抽出、BEFORE で捕まえた PK による AFTER の取り直し) は
+**`db/preview.rs`** に集約し、MySQL と PostgreSQL が共有します。ここを共有していな
+かった頃は PostgreSQL 側だけ「PK 昇順の先頭 N 件」を撮るだけの実装で、対象行が窓の外に
+あると diff が「変更なし」に見える取りこぼしがありました。方言差 (ドル引用、
+`RETURNING` の切り落とし、`UPDATE ... FROM` / `DELETE ... USING` の失格判定) は
+`SqlFlavor` で分岐します。
 
 ### SSH トンネルとセッションのライフタイム
 
@@ -1096,6 +1179,17 @@ id が変わらないため、フロントのタブ・グリッド状態 (sessio
   `ssl_client_key` の各**パス**。#520)、セッション初期化 SQL (`init_sql`。#522) など。
   証明書はパスのみが非秘密で、ファイルの中身は接続時に読み込むだけで保存しません。
   `profiles/store.rs` は load/save-all と upsert/delete の API を提供します。
+  **JSON ストア 4 種 (`profiles` / `snippets` / `sandboxes` / `tasks`) は同じ 2 つの
+  対策を必ず持ちます**: (1) `write_atomic` の一時ファイル名に PID **とプロセス内の
+  単調増加カウンタ**を含める — Tauri の `#[tauri::command] async fn` は同一プロセス
+  内で並行実行されるため、PID だけだと 2 本の `save_all` が同じ一時ファイルを
+  `create`(truncate) して書き、混ざった内容が `rename` されて**アトミック書き込みの
+  保証自体が壊れます**。(2) `load_all` → 変更 → `save_all` の read-modify-write 全体を
+  ストア単位の `Mutex` で直列化する (`ssh/known_hosts.rs` の `KNOWN_HOSTS_LOCK` と
+  同じパターン。poisoning は `into_inner` で回復) — 無いと後勝ちで他方の変更が消える
+  lost update が起きます。ロックを持つ公開関数から内部の `*_locked` 版を呼ぶ構成に
+  してあるので、**新しい read-modify-write を足すときは `*_locked` 側を使ってくださ
+  い** (公開関数を呼ぶと同一 Mutex の再取得でデッドロックします)。
 - OS の keyring (`keyring` クレート) には**秘密情報のみ**を保存します:
   `<profile_id>/db_password`・`<profile_id>/ssh_passphrase`・`<profile_id>/ssh_password`
   の 3 種を、サービス名 `noobDB` のもとに格納します。詳細は `profiles/secrets.rs`
@@ -1192,6 +1286,18 @@ LIKE ワイルドカードはエスケープされます。
   子プロセスを kill し書きかけファイルを削除します (エクスポート #494 と同じ後始末方針)。
   SQLite 経路はテーブル単位の逐次書き出しで、在メモリの全文字列構築をやめています。
   `DumpModal` は進捗表示 (バイト/テーブル数・経過時間) とキャンセルボタンを持ちます。
+  **一時ファイルは `create_new` (`O_CREAT|O_EXCL`) で予約します** — 素の `create` は
+  シンボリックリンクを辿るため、ダンプ先ディレクトリに書ける攻撃者が
+  `.<name>.dumping.<pid>.<seq>` (PID から予測可能) をリンクとして仕込むと、ダンプ内容が
+  任意のファイルへ書き込まれます (資格情報ファイル側は元から `create_new`。同じ防御に
+  揃えました)。`AlreadyExists` なら候補名を進めて有限回リトライします。後始末の
+  `PartialFileCleanup` は `run_dump` が一元的に所有し、rename 成功時にだけ commit
+  します (途中の関数で commit すると整形や rename の失敗で書きかけが残る)。
+  加えて、`DefaultsFile` / `PgPassFile` は `Drop` でしか消えず SIGKILL / OOM では
+  **平文パスワードを含む `noobdb-dump-*.cnf` / `.pgpass` が一時領域に残る**ため、
+  起動時に `cleanup_stale_dump_credential_files` が自分たちの命名規約に一致する
+  ものだけを掃除します (`commands::local::cleanup_stale_local_files` と同じ位置・
+  同じベストエフォート方針で `lib.rs` から呼びます)。
 - `commands/import.rs`: CSV / JSON / NDJSON を `import_rows` でテーブルへ一括投入
   します (`encoding_rs` でエンコーディング指定可、NULL トークン・列マッピング対応)。
   読み取り専用セッションでは拒否されます。進捗は `csv-import:*` イベントで通知します。
@@ -1274,7 +1380,13 @@ best-effort 逐次のため整合します。**スキーマ変更の原子性が
   合わせた `SyncPlan` (`SyncStatement` 列 + `warnings`) を生成。MySQL は `MODIFY COLUMN`、
   PostgreSQL は facet 単位の `ALTER COLUMN`、SQLite は in-place 変更不可のため warning に
   降格、と方言差を吸収します。`SyncKind::order()` で CREATE → ADD → ALTER → DROP →
-  INSERT/UPDATE/DELETE の安全な適用順を決めます。
+  INSERT/UPDATE/DELETE の安全な適用順を決めます。MySQL の `DEFAULT` は
+  `information_schema.COLUMNS.COLUMN_DEFAULT` が**クオート無し**で返るため
+  `is_mysql_string_default_type` に該当する型 (文字列系に加え `date`/`datetime`/
+  `timestamp`/`time`/`year`/`binary`/`varbinary`/`blob` 系/`json`) では再クオートします
+  — 漏れると `DEFAULT 2020-01-01` のような構文エラーの DDL になります。式の
+  デフォルト (`CURRENT_TIMESTAMP` 等) は `extra` の `DEFAULT_GENERATED` を見て
+  手前で逐語出力へ分岐するので二重クオートにはなりません。
 - `commands/diff.rs`: `compare_schema` / `compare_table_data` が両セッションから
   メタデータ・行を取得して上記純粋関数に渡す IPC ラッパー。両セッションが同一ドライバで
   あること、データ比較対象テーブルにプライマリキーがあることを要求し、データ比較は
@@ -1331,6 +1443,18 @@ best-effort 逐次のため整合します。**スキーマ変更の原子性が
     残す)。
   - 適用そのものは新規コマンドを作らず、既存の `apply_sync_sql` をそのまま使います
     (read_only セッション拒否・トランザクション適用などの安全網もそのまま効きます)。
+  - **`sandbox_session_id` を受け取るコマンドは、そのセッションが本当にその
+    サンドボックスのものかを検証してから使います** (`get_sandbox_session`。
+    `SandboxRecord` の SQLite ファイルパスとセッションの `connect_options.file_path`
+    を突き合わせる。`commands/local.rs::get_local_session` と同じ発想)。検証が無いと
+    IPC を直接叩いて任意のセッション — 本番の読み取り専用接続を含む — を対象にでき、
+    `sandbox_advance_base` は `execute_transaction` を直接呼ぶ経路なので
+    `ensure_allowed_for_session` も通りません。`sandbox_advance_base` には
+    `apply_sync_sql` と同じ read_only 拒否も入れてあります。
+  - **予約プレフィックスの検査は FK 閉包を展開した後にも適用します。** ユーザ指定の
+    `tables` だけを見ていると、`__noobdb_sandbox_base__*` という名前の実テーブルが
+    `fk_closure` 経由で紛れ込み、影テーブルと実名が衝突して差分計算が壊れます
+    (黙って除外すると閉包が不完全になり後段で気付けないため、エラーで弾きます)。
 - フロントは `sandbox.ts` の純ロジック (影テーブル判定・行数上限クランプ・FK 閉包の
   プレビュー・競合解決状態の集計) に加え、**`SandboxRecord` を非永続の合成
   `ConnectionProfile` に変換する `sandboxToProfile`** が肝です。これにより、
@@ -1371,7 +1495,11 @@ CRUD+DDL 権限マトリクスを閲覧・編集する機能です。Diff/Sync (
   権限をまとめたもの (MySQL: `CREATE`/`ALTER`/`DROP`/`INDEX`/`REFERENCES`、PostgreSQL:
   `TRUNCATE`/`REFERENCES`/`TRIGGER` — PostgreSQL の `CREATE`/`ALTER`/`DROP TABLE` は
   テーブル単位の `GRANT` ではなくスキーマ所有権 / `CREATE ON SCHEMA` で制御されるため
-  対象外)。
+  対象外)。**MySQL の `GRANT ... ON db.*` では DB 名の `_` / `%` を `\_` / `\%` に
+  エスケープします** — MySQL は `mysql.db` の `Db` 列を LIKE パターンとして評価する
+  ため、バッククォートで囲んでいてもエスケープしないと `my_app` への GRANT が
+  `myXapp` にも波及し最小権限原則が崩れます。テーブルを明示する `db.table` 形式
+  (`mysql.tables_priv`) はパターン評価を受けないので対象外です。
 - `db::Connection::list_db_users` / `user_privileges` が `mysql.user` / `pg_roles` を
   読む読み取り専用の introspection です。SQLite はユーザ概念を持たないため
   `list_processes` と同じ「空ではなくエラーで非対応を明示する」方針で `AppError` を
@@ -1422,6 +1550,17 @@ CRUD+DDL 権限マトリクスを閲覧・編集する機能です。Diff/Sync (
   初回登録時に遅延作成) に保存し、`LocalTableMeta` (元の接続名・実行 SQL・ドライバ・
   登録日時・行数) として `list_local_tables` で返します。セッション固有の `AppState`
   側の別管理は持たず、ローカル DB ファイル自体がこの状態の単一の情報源です。
+- **置き場所は全ユーザ共有なので、権限と所有者を検証してから使う (Unix)**:
+  `std::env::temp_dir()/noobdb-local/` には複数 DB を横断結合した**実データ**が入る
+  一方、`/tmp` は誰でも書ける固定パスです。ディレクトリは `0700` で作成し、既に
+  存在する場合は「シンボリックリンクでない・実ディレクトリである・所有者が自分・
+  group/other に権限が無い」の 4 点を `symlink_metadata` (lstat) で確認してから使い、
+  満たさなければ**黙って使わずエラーで拒否**します (攻撃者に先回りで作られた
+  ディレクトリやリンクへ書き込まないため)。SQLite ファイル自体も `create_new`
+  (`O_CREAT|O_EXCL`、リンクを辿らない) + `mode(0o600)` で作ります
+  (`dump.rs::DefaultsFile::create` と同じパターン)。`cleanup_stale_local_files` も
+  同様に lstat してから消すので、`noobdb-local` がリンクへ差し替えられていても
+  リンク先を再帰削除しません。
 - **既定揮発 / 明示操作でのみ永続化**: バッキングファイルは OS 標準の一時領域に置き、
   `disconnect` 時に削除します (`Session.local_temp_file` の有無で「ローカルセッション
   かどうか」を判別)。アプリ異常終了で削除が走らなくても、次回起動時に

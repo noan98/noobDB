@@ -562,16 +562,23 @@ pub async fn import_csv(
     // register_stream をタスク本体より前に完了させるためのゲート
     // (run_query_stream / preview_query_stream と同じ理由。#685)。入力エラー等で
     // 即終了する import が register より先に forget_stream し、完了済みハンドルが
-    // streams に残る競合を防ぐ。
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    // streams に残る競合を防ぐ。oneshot は register_stream が発行したトークンを
+    // 運び、タスクはそれで自分の登録だけを forget_stream する — stream_id は
+    // クライアント指定で再利用がありうるため、トークン照合なしだと「同じ id で
+    // 登録された新しい import のエントリを、遅れて後始末した旧タスクが消して
+    // しまう」競合が起こる (#state.rs の I4 対応)。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
     let stream_id_for_task = stream_id.clone();
     let committed_for_task = committed.clone();
     let handle = tokio::spawn(async move {
-        let _ = ready_rx.await;
+        let Ok(token) = ready_rx.await else {
+            return;
+        };
         spawn_import(
             app,
             session,
             stream_id_for_task,
+            token,
             database,
             table,
             path,
@@ -582,7 +589,7 @@ pub async fn import_csv(
         )
         .await;
     });
-    state
+    let token = state
         .register_stream(
             stream_id,
             StreamHandle {
@@ -595,7 +602,7 @@ pub async fn import_csv(
         )
         .await;
     // register_stream 完了後にタスク本体の実行を許可する。
-    let _ = ready_tx.send(());
+    let _ = ready_tx.send(token);
     Ok(())
 }
 
@@ -604,6 +611,7 @@ async fn spawn_import(
     app: AppHandle,
     session: Arc<Session>,
     stream_id: String,
+    stream_token: u64,
     database: Option<String>,
     table: String,
     path: String,
@@ -738,7 +746,7 @@ async fn spawn_import(
     }
 
     if let Some(state) = app.try_state::<AppState>() {
-        state.forget_stream(&stream_id).await;
+        state.forget_stream(&stream_id, stream_token).await;
     }
 }
 

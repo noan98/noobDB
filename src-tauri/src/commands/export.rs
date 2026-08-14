@@ -795,16 +795,23 @@ pub async fn export_query_stream(
     // (run_query_stream / preview_query_stream と同じ理由。#685)。ゲートが
     // 無いと、即エラーや極小結果の export が register より先に forget_stream し、
     // 完了済み StreamHandle が streams に残り後続の cancel_stream が誤って成功を
-    // 返す競合窓ができる。
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    // 返す競合窓ができる。oneshot は register_stream が発行したトークンを運び、
+    // タスクはそれを使って自分の登録だけを forget_stream する — stream_id は
+    // クライアント指定で再利用がありうるため、トークン照合なしだと「同じ id で
+    // 登録された新しい export のエントリを、遅れて後始末した旧タスクが消して
+    // しまう」競合が起こる (#state.rs の I4 対応)。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
     let stream_id_for_task = stream_id.clone();
     let counter_for_task = counter.clone();
     let handle = tokio::spawn(async move {
-        let _ = ready_rx.await;
+        let Ok(token) = ready_rx.await else {
+            return;
+        };
         spawn_export_stream(
             app,
             session,
             stream_id_for_task,
+            token,
             sql,
             database,
             format,
@@ -818,7 +825,7 @@ pub async fn export_query_stream(
         )
         .await;
     });
-    state
+    let token = state
         .register_stream(
             stream_id,
             StreamHandle {
@@ -829,7 +836,7 @@ pub async fn export_query_stream(
         )
         .await;
     // register_stream 完了後にタスク本体の実行を許可する。
-    let _ = ready_tx.send(());
+    let _ = ready_tx.send(token);
     Ok(())
 }
 
@@ -838,6 +845,7 @@ async fn spawn_export_stream(
     app: AppHandle,
     session: Arc<crate::state::Session>,
     stream_id: String,
+    stream_token: u64,
     sql: String,
     database: Option<String>,
     format: ExportFormat,
@@ -905,7 +913,7 @@ async fn spawn_export_stream(
     }
 
     if let Some(state) = app.try_state::<AppState>() {
-        state.forget_stream(&stream_id).await;
+        state.forget_stream(&stream_id, stream_token).await;
     }
 }
 
