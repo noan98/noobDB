@@ -755,46 +755,46 @@ async fn postgres_exotic_types_decode_to_values_not_null() {
         assert!(
             !matches!(&row[i], t::Value::Null),
             "column {name} decoded to NULL despite holding a value: {:?}",
-            &row[i]
+            row[i]
         );
     }
 
     assert!(
         matches!(&row[0], t::Value::String(s) if s == "11111111-2222-3333-4444-555555555555"),
         "uuid must decode to its canonical text form, got {:?}",
-        &row[0]
+        row[0]
     );
     // 配列は PostgreSQL の配列リテラル表記。区切り文字を含む要素は引用され、
     // 要素の NULL は `NULL` として表れる。
     assert!(
         matches!(&row[1], t::Value::String(s) if s == "{a,\"b,c\",NULL}"),
         "text[] must decode to an array literal, got {:?}",
-        &row[1]
+        row[1]
     );
     assert!(
         matches!(&row[2], t::Value::String(s) if s == "{1,2,3}"),
         "int4[] must decode to an array literal, got {:?}",
-        &row[2]
+        row[2]
     );
     assert!(
         matches!(&row[3], t::Value::String(s) if s == "192.168.1.5"),
         "inet must decode to its text form, got {:?}",
-        &row[3]
+        row[3]
     );
     assert!(
         matches!(&row[4], t::Value::String(s) if s == "12.34"),
         "money must decode to a plain decimal, got {:?}",
-        &row[4]
+        row[4]
     );
     assert!(
         matches!(&row[5], t::Value::String(s) if s == "1 year 2 mons 3 days 04:05:06.789"),
         "interval must decode to PostgreSQL-style text, got {:?}",
-        &row[5]
+        row[5]
     );
     assert!(
         matches!(&row[6], t::Value::String(s) if s == "happy"),
         "user-defined enum must decode to its label, got {:?}",
-        &row[6]
+        row[6]
     );
     // JSONB のキー順はサーバが返したまま (再シリアライズで辞書順に
     // 並べ替えない)。PostgreSQL の jsonb 自身はキーを長さ→バイト順で
@@ -814,13 +814,13 @@ async fn postgres_exotic_types_decode_to_values_not_null() {
     assert!(
         matches!(&row[7], t::Value::String(s) if *s == expected_json),
         "jsonb must be returned verbatim ({expected_json}), got {:?}",
-        &row[7]
+        row[7]
     );
     // 2^53 を超える bigint は丸めを避けるため十進文字列で届く。
     assert!(
         matches!(&row[8], t::Value::String(s) if s == "9007199254740993"),
         "bigint beyond 2^53 must be a decimal string, got {:?}",
-        &row[8]
+        row[8]
     );
 
     // 同じ列の SQL NULL はきちんと Null になること。

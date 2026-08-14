@@ -1097,24 +1097,24 @@ async fn mysql_bigint_beyond_safe_integer_is_a_string() {
     assert!(
         matches!(&row[0], t::Value::Int(9_007_199_254_740_991)),
         "the largest safe integer must stay a JSON number, got {:?}",
-        &row[0]
+        row[0]
     );
     // 2^53 + 1 は文字列で届く (数値のままだと 9007199254740992 に丸まる)。
     assert!(
         matches!(&row[1], t::Value::String(s) if s == "9007199254740993"),
         "bigint beyond 2^53 must be a decimal string, got {:?}",
-        &row[1]
+        row[1]
     );
     assert!(
         matches!(&row[2], t::Value::String(s) if s == "-9007199254740993"),
         "negative bigint beyond -2^53 must be a decimal string, got {:?}",
-        &row[2]
+        row[2]
     );
     // BIGINT UNSIGNED も同様。
     assert!(
         matches!(&row[3], t::Value::String(s) if s == "18446744073709551615"),
         "bigint unsigned beyond 2^53 must be a decimal string, got {:?}",
-        &row[3]
+        row[3]
     );
     assert!(
         matches!(
@@ -1122,7 +1122,7 @@ async fn mysql_bigint_beyond_safe_integer_is_a_string() {
             t::Value::UInt(9_007_199_254_740_991) | t::Value::Int(9_007_199_254_740_991)
         ),
         "an unsigned value within the safe range must stay a JSON number, got {:?}",
-        &row[4]
+        row[4]
     );
 
     conn.execute("DROP TABLE noobdb_mysql_bigint", None)
