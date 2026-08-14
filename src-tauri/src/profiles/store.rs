@@ -120,22 +120,34 @@ fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
         std::process::id(),
         seq
     ));
-    {
-        // `create` (`O_CREAT|O_TRUNC`) は既存エントリを開いてしまい、
-        // シンボリックリンクなら**その指す先**を切り詰める。一時ファイル名は
-        // PID + プロセス内カウンタで衝突しない前提だが、data_dir へ書ける
-        // 別プロセスが候補パスを先回りして作れる以上、`create_new`
-        // (`O_CREAT|O_EXCL`) で排他予約する (`commands::dump` の資格情報
-        // ファイル / 一時ダンプファイルと同じ防御に揃える)。
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
-        f.write_all(content)?;
-        f.sync_all()?;
+    // `create` (`O_CREAT|O_TRUNC`) は既存エントリを開いてしまい、
+    // シンボリックリンクなら**その指す先**を切り詰める。一時ファイル名は
+    // PID + プロセス内カウンタで衝突しない前提だが、data_dir へ書ける
+    // 別プロセスが候補パスを先回りして作れる以上、`create_new`
+    // (`O_CREAT|O_EXCL`) で排他予約する (`commands::dump` の資格情報
+    // ファイル / 一時ダンプファイルと同じ防御に揃える)。
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)?;
+    // ここから先は「自分が排他予約に成功した」一時ファイルなので、途中で
+    // 失敗したら必ず消してから抜ける。`create_new` にした以上、残骸を放置すると
+    // PID が再利用された次回起動 (プロセス内カウンタは 0 から振り直される) で
+    // 同じ候補パスに当たり、`AlreadyExists` で保存が**恒久的に**失敗しうる
+    // (`create` だった頃は残骸を切り詰めて上書きするので無害だった)。
+    //
+    // **`open` 自体の失敗時に消さないのは意図的**: `AlreadyExists` は他プロセスの
+    // 書きかけを指しうるので、それを消すと `create_new` による排他予約の意味が
+    // 無くなる (消してよいのは自分が作ったものだけ)。
+    let written = f.write_all(content).and_then(|()| f.sync_all());
+    // Windows は開いたままのファイルを rename できないため、先に閉じる。
+    drop(f);
+    let written = written.and_then(|()| std::fs::rename(&tmp_path, path));
+    if written.is_err() {
+        // 後始末自体の失敗は握り潰す (呼び出し側には元のエラーを返したい)。
+        let _ = std::fs::remove_file(&tmp_path);
     }
-    std::fs::rename(&tmp_path, path)?;
-    Ok(())
+    written
 }
 
 pub fn upsert(profile: ConnectionProfile) -> Result<()> {
