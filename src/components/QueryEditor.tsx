@@ -51,6 +51,7 @@ import { PreflightBadge } from "./PreflightBadge";
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { QueryBuilder, type QueryBuilderSnapshot } from "./QueryBuilder";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { codeMirrorSqlDialectFor, sqlFormatterLanguageFor } from "./sqlDialect";
 import { Spinner } from "./Spinner";
 import { Switch } from "./Switch";
@@ -468,6 +469,10 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
   };
   const [hasContent, setHasContent] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
+  // 「…」オーバーフローメニュー (#915) のアンカー (ビューポート座標)。開いている
+  // 間だけ非 null。位置決め・外側クリック/Escape での閉じ・キーボード操作は共有の
+  // `ContextMenu` に任せる。
+  const [overflowAnchor, setOverflowAnchor] = useState<{ x: number; y: number } | null>(null);
   // 影響行数プリフライト (#737) の対象テキスト。updateListener が「選択 or 全文」を
   // 反映し、値が実際に変わったときだけ更新する (カーソル移動だけでは再計算しない)。
   const [preflightSql, setPreflightSql] = useState("");
@@ -902,6 +907,81 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     disabled: { label: t("editorPreview"), tone: "neutral", icon: previewIconEye },
   };
 
+  // ツールバーの副次アクション (#915)。主要アクション (Run / Preview / Format) は
+  // 常時表示のままにし、それ以外は「…」メニューへ畳む。以前は幅が狭いときに
+  // `flexWrap` で 2〜3 段へ折り返しており、多機能タブほどエディタの縦領域が削られ
+  // ていた。畳む対象は「押す頻度が主要 3 つより低く、かつ押せなくても危険側に倒れ
+  // ない」もの — 緊急クエリ実行モードのトグルだけは、状態が常に見えていること自体
+  // が安全網なので畳まずツールバーに残す。
+  // 無効時の理由 (`disabledReason` 等) は `title` としてそのまま持ち込むので、
+  // ツールバーのボタンだったときと同じ説明がメニュー上でも読める。
+  const overflowItems: ContextMenuEntry[] = [];
+  if (onExplain) {
+    overflowItems.push({
+      label: t("editorExplain"),
+      icon: "explain",
+      title: disabledReason ?? t("editorExplainTitle"),
+      disabled: disabled || !hasContent,
+      onSelect: explainSelectionOrAll,
+    });
+  }
+  if (onSaveSnippet) {
+    overflowItems.push({
+      label: t("editorSaveSnippet"),
+      icon: "snippet",
+      title: disabledReason ?? t("editorSaveSnippetTitle"),
+      disabled: disabled || !hasContent,
+      onSelect: saveSelectionOrAll,
+    });
+  }
+  // .sql スクリプトの明示的な「開く」/「名前を付けて保存」(#918)。D&D
+  // (`App.tsx` の `handleFilesDropped`) と読み込みロジックを共有する。
+  if (onOpenFile) {
+    overflowItems.push({
+      label: t("editorOpenFile"),
+      icon: "upload",
+      // 「開く」は本文が空でも押せる (開く先は新規タブ) ので、`disabledReason`
+      // をそのまま使うと空のときだけ「先に SQL を入力してください」という
+      // 的外れな無効理由が出る。無効になるのは未接続のときだけ。
+      title: disabled ? t("editorHintDisabled") : t("editorOpenFileTitle"),
+      disabled,
+      onSelect: onOpenFile,
+    });
+  }
+  if (onSaveFile) {
+    overflowItems.push({
+      label: t("editorSaveFile"),
+      icon: "download",
+      title: disabledReason ?? t("editorSaveFileTitle"),
+      disabled: disabled || !hasContent,
+      onSelect: onSaveFile,
+    });
+  }
+  if (onBroadcast && !explainMode) {
+    overflowItems.push({
+      label: t("editorBroadcast"),
+      icon: "broadcast",
+      title: disabled
+        ? t("editorHintDisabled")
+        : !hasContent
+          ? t("editorHintEmpty")
+          : !broadcastAvailable
+            ? t("broadcastDisabledSingle")
+            : t("editorBroadcastTitle"),
+      disabled: disabled || !hasContent || !broadcastAvailable,
+      onSelect: broadcastSelectionOrAll,
+    });
+  }
+  if (sessionId && !explainMode) {
+    overflowItems.push({
+      label: t("editorBuilder"),
+      icon: "tools",
+      title: disabled ? t("editorHintDisabled") : t("editorBuilderTitle"),
+      disabled,
+      onSelect: () => setShowBuilder(true),
+    });
+  }
+
   return (
     <Box
       display="flex"
@@ -919,8 +999,12 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
         borderBottom="1px solid"
         borderColor="app.border"
         bg="app.toolbar"
+        // 折り返しは行わない (#915)。副次アクションは「…」へ畳んであるため、
+        // 幅が狭くてもツールバーは 1 段のまま = 高さが幅に依らず一定になる。
+        // ボタンは recipe の `flexShrink: 0` で潰れないので、極端に狭いときの
+        // 逃げ道だけ横スクロールとして残す (縦に伸ばさない、が主眼)。
+        overflowX="auto"
         css={{
-          "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1.5" },
           "& .btn-spinner": {
             borderColor: "color-mix(in srgb, currentColor 35%, transparent)",
             borderTopColor: "currentColor",
@@ -960,109 +1044,28 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           </chakra.span>
           {t("editorFormat")}
         </ToolbarButton>
-        {onExplain && (
+        {/* 副次アクションのオーバーフロー (#915)。項目が 1 つも無い呼び出し
+            (プレビュー用の最小構成など) ではボタン自体を出さない。 */}
+        {overflowItems.length > 0 && (
           <ToolbarButton
-            onClick={explainSelectionOrAll}
-            disabled={disabled || !hasContent}
-            title={disabledReason ?? t("editorExplainTitle")}
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+              // メニューはクリック位置ではなくボタンの下端に開き、ツールバーの
+              // 並びと視覚的に繋がるようにする。
+              const r = e.currentTarget.getBoundingClientRect();
+              setOverflowAnchor({ x: r.left, y: r.bottom + 4 });
+            }}
+            title={t("editorMoreActionsTitle")}
+            aria-label={t("editorMoreActions")}
+            aria-haspopup="menu"
+            aria-expanded={!!overflowAnchor}
           >
             <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="6" y="1.5" width="4" height="3" rx="0.5" />
-                <rect x="1.5" y="11.5" width="4" height="3" rx="0.5" />
-                <rect x="10.5" y="11.5" width="4" height="3" rx="0.5" />
-                <path d="M8 4.5v2.5M3.5 11.5V9h9v2.5" />
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+                <circle cx="3" cy="8" r="1.3" />
+                <circle cx="8" cy="8" r="1.3" />
+                <circle cx="13" cy="8" r="1.3" />
               </svg>
             </chakra.span>
-            {t("editorExplain")}
-          </ToolbarButton>
-        )}
-        {onSaveSnippet && (
-          <ToolbarButton
-            onClick={saveSelectionOrAll}
-            disabled={disabled || !hasContent}
-            title={disabledReason ?? t("editorSaveSnippetTitle")}
-          >
-            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
-                <path d="M5 2v4h5V2" />
-                <path d="M5 10h6" />
-              </svg>
-            </chakra.span>
-            {t("editorSaveSnippet")}
-          </ToolbarButton>
-        )}
-        {/* .sql スクリプトの明示的な「開く」/「名前を付けて保存」(#918)。D&D
-            (`App.tsx` の `handleFilesDropped`) と読み込みロジックを共有する。 */}
-        {onOpenFile && (
-          <ToolbarButton
-            onClick={onOpenFile}
-            disabled={disabled}
-            title={disabledReason ?? t("editorOpenFileTitle")}
-          >
-            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 11.5v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" />
-                <path d="M4.5 6L8 2.5 11.5 6" />
-                <path d="M8 3v7.5" />
-              </svg>
-            </chakra.span>
-            {t("editorOpenFile")}
-          </ToolbarButton>
-        )}
-        {onSaveFile && (
-          <ToolbarButton
-            onClick={onSaveFile}
-            disabled={disabled || !hasContent}
-            title={disabledReason ?? t("editorSaveFileTitle")}
-          >
-            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 11.5v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" />
-                <path d="M4.5 8L8 11.5 11.5 8" />
-                <path d="M8 10.5V3" />
-              </svg>
-            </chakra.span>
-            {t("editorSaveFile")}
-          </ToolbarButton>
-        )}
-        {onBroadcast && !explainMode && (
-          <ToolbarButton
-            onClick={broadcastSelectionOrAll}
-            disabled={disabled || !hasContent || !broadcastAvailable}
-            title={
-              disabled
-                ? t("editorHintDisabled")
-                : !hasContent
-                  ? t("editorHintEmpty")
-                  : !broadcastAvailable
-                    ? t("broadcastDisabledSingle")
-                    : t("editorBroadcastTitle")
-            }
-          >
-            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none" />
-                <path d="M5.2 5.2a4 4 0 0 0 0 5.6M10.8 5.2a4 4 0 0 1 0 5.6" />
-                <path d="M2.8 2.8a7.6 7.6 0 0 0 0 10.4M13.2 2.8a7.6 7.6 0 0 1 0 10.4" />
-              </svg>
-            </chakra.span>
-            {t("editorBroadcast")}
-          </ToolbarButton>
-        )}
-        {sessionId && !explainMode && (
-          <ToolbarButton
-            onClick={() => setShowBuilder(true)}
-            disabled={disabled}
-            title={disabled ? t("editorHintDisabled") : t("editorBuilderTitle")}
-          >
-            <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11.5 2.5a3 3 0 0 0-3.9 3.6L2.5 11.2a1.5 1.5 0 1 0 2.1 2.1l5.1-5.1a3 3 0 0 0 3.6-3.9l-1.7 1.7-1.5-.4-.4-1.5z" />
-              </svg>
-            </chakra.span>
-            {t("editorBuilder")}
           </ToolbarButton>
         )}
         {/* 緊急クエリ実行モード (read-only セッション限定)。オンの間は書き込み文が
@@ -1118,6 +1121,14 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
           </>
         )}
       </Box>
+      {overflowAnchor && (
+        <ContextMenu
+          x={overflowAnchor.x}
+          y={overflowAnchor.y}
+          items={overflowItems}
+          onClose={() => setOverflowAnchor(null)}
+        />
+      )}
       <Box ref={hostRef} flex="1" overflow="auto" bg="app.surface" />
       <AnimatePresence>
         {showBuilder && sessionId && !explainMode && (

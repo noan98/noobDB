@@ -21,8 +21,16 @@ export interface ServerSort {
   direction: ServerSortDirection;
 }
 
-/** 最小セットの演算子: 等価 / 部分一致 (LIKE) / NULL 判定。 */
-export type ServerFilterOp = "eq" | "contains" | "isNull" | "isNotNull";
+/**
+ * 最小セットの演算子: 等価 / 非等価 / 部分一致 (LIKE) / NULL 判定。
+ *
+ * `ne` はセル右クリックの「この値を除外する」(#914) と列ヘッダの条件指定で使う。
+ * SQL の三値論理どおり `col <> 'x'` は NULL 行にマッチしない — つまり除外の
+ * 結果から NULL 行も落ちる。これはクライアント側フィルタ (`ResultGrid` の
+ * `columnFilter` は値条件がある行で NULL を弾く) と同じ挙動なので、テーブル
+ * ブラウズとクエリ結果のどちらで絞り込んでも見え方が揃う。
+ */
+export type ServerFilterOp = "eq" | "ne" | "contains" | "isNull" | "isNotNull";
 
 export interface ServerFilter {
   column: string;
@@ -58,11 +66,13 @@ export function buildServerFilterClause(driver: string, filter: ServerFilter): s
       const pattern = `%${escapeLikeValue(filter.value)}%`;
       return `${ident} LIKE ${quoteString(driver, pattern)} ESCAPE '\\'`;
     }
+    case "ne":
     case "eq":
     default: {
+      const cmp = filter.op === "ne" ? "<>" : "=";
       const trimmed = filter.value.trim();
-      if (filter.numeric && isNumericParam(trimmed)) return `${ident} = ${trimmed}`;
-      return `${ident} = ${quoteString(driver, filter.value)}`;
+      if (filter.numeric && isNumericParam(trimmed)) return `${ident} ${cmp} ${trimmed}`;
+      return `${ident} ${cmp} ${quoteString(driver, filter.value)}`;
     }
   }
 }
