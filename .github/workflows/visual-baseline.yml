@@ -11,6 +11,11 @@ name: visual baseline update
 # 使い方: Actions タブから対象ブランチを選んで実行する。`pnpm test:browser:update`
 # が `--update` 付きでブラウザテストを走らせ、`__screenshots__` 配下の PNG を
 # 生成/更新し、変更があればそのブランチへ自動コミットする。
+#
+# **`main` を選んで実行しないこと。** main はリポジトリルールで直接 push が禁止
+# されている (`Changes must be made through a pull request`) ため、スクリーンショット
+# の生成まで成功しても最後の push が `GH013` で必ず失敗する。見た目を変える作業
+# ブランチ上で実行し、生成されたベースラインをその変更と同じ PR に含めてマージする。
 
 on:
   workflow_dispatch:
