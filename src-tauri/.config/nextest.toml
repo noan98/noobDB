@@ -12,9 +12,23 @@
 # `sandbox '<id>' not found` で落ちる。テスト同士の衝突なので、このバイナリの
 # テストは 1 本ずつ走らせる (プロダクションコードは「1 プロセス = 1 アプリ
 # インスタンス」前提のままでよい)。
+#
+# `commands::dump::tests` も同じ理由で直列化する。
+# `cleanup_stale_dump_credential_files` は OS 標準の一時ディレクトリを走査して
+# `noobdb-dump-*.cnf` / `.pgpass` を消す (これは本番の意図した挙動) ため、その
+# テストと、実物の資格情報ファイルを作って `Drop` での削除を確かめる
+# `defaults_file_is_removed_on_drop` / `pgpass_file_is_removed_on_drop` が
+# 同時に走ると、前者が後者のファイルを消してしまう。モジュール内の
+# `CRED_FILE_TEST_LOCK` が `cargo test` (スレッド並列) では防いでいるが、
+# nextest のプロセス並列には効かないので、ここでも 1 本ずつに落とす。
 [test-groups]
 sandbox-store = { max-threads = 1 }
+dump-temp-files = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'binary(sandbox_integration)'
 test-group = 'sandbox-store'
+
+[[profile.default.overrides]]
+filter = 'test(commands::dump::tests::)'
+test-group = 'dump-temp-files'
