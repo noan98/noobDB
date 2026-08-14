@@ -490,6 +490,11 @@ SQL の安全網・リテラル生成・方言判定など安全性に直結す�
   **`.github/workflows/visual-baseline.yml` の手動トリガ (`workflow_dispatch`)** を
   対象ブランチで実行してベースラインを再生成・コミットします。失敗時の実測/差分
   画像 (`*-actual.png` / `*-diff.png`) は `.gitignore` 済みでコミットされません。
+  **`main` を選んで実行しないでください** — main はリポジトリルールで直接 push が
+  禁止されている (`Changes must be made through a pull request`) ため、
+  スクリーンショットの生成まで成功しても最後のコミット push で必ず失敗します
+  (`GH013`)。見た目を変える**作業ブランチ上で**実行し、生成されたベースラインを
+  その変更と同じ PR (または後追いの PR) でマージしてください。
 - CI では `ci.yml` の **`frontend` ジョブ (チェック名 `frontend (build + browser
   tests)`)** が、jsdom 単体テスト等の後続ステップとして Playwright の Chromium を
   導入して `pnpm test:browser` を実行します。旧来は jsdom 側と別ジョブ
