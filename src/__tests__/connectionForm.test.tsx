@@ -10,6 +10,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       revealProfileSecret: vi.fn(),
+      testConnection: vi.fn(),
     },
   };
 });
@@ -183,5 +184,91 @@ describe("ConnectionForm reveals a stored password (#938)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("formPasswordShow") }));
     expect(reveal).not.toHaveBeenCalled();
     expect(passwordField().value).toBe("typed-new");
+  });
+});
+
+/**
+ * 接続テスト結果のインラインフィードバック (#1006)。
+ *
+ * - 成功/失敗バナーは意味のある role (`status`/`alert`) + `aria-live` で
+ *   支援技術へ通知される。
+ * - ポートのバリデーション失敗は「接続テスト結果」バナーではなく、該当
+ *   フィールド直下のインラインエラー (`aria-invalid` 付き) として現れる。
+ */
+describe("ConnectionForm connection test feedback (#1006)", () => {
+  const testConnection = vi.mocked(api.testConnection);
+
+  function portField(): HTMLInputElement {
+    return screen.getByLabelText(t("formPort")) as HTMLInputElement;
+  }
+
+  beforeEach(() => {
+    testConnection.mockReset();
+  });
+
+  it("shows a success banner with role=status when the test connection succeeds", async () => {
+    testConnection.mockResolvedValue("ok");
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+
+    // `getByRole("status")` alone would also match the Test ボタンの読み込み中
+    // スピナー (LoadingButton の `Spinner`、`aria-label="loading"`)、なので
+    // メッセージのテキストからバナー本体を辿って区別する。
+    const messageNode = await screen.findByText(t("formConnectionOk"));
+    const banner = messageNode.closest('[role="status"]');
+    expect(banner).not.toBeNull();
+    expect(banner).toHaveAttribute("aria-live", "polite");
+    // 失敗バナー用の role="alert" は存在しない。
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows a danger banner with role=alert when the test connection fails", async () => {
+    testConnection.mockRejectedValue(new Error("boom"));
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+
+    const messageNode = await screen.findByText(/boom/);
+    const banner = messageNode.closest('[role="alert"]');
+    expect(banner).not.toBeNull();
+    expect(banner).toHaveAttribute("aria-live", "assertive");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("rejects an invalid port as an inline field error, not the test-result banner", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+
+    fireEvent.change(portField(), { target: { value: "700000" } });
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+
+    // フィールド直下のインラインエラー。
+    expect(screen.getByText(t("formInvalidPort"))).toBeInTheDocument();
+    expect(portField()).toHaveAttribute("aria-invalid", "true");
+    // 集約バナー (接続テスト結果専用) は表示されず、alert はフィールド直下の
+    // インラインエラー 1 件のみ。IPC も呼ばれない。
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(testConnection).not.toHaveBeenCalled();
+  });
+
+  it("clears the inline port error once the user edits the field again", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+
+    fireEvent.change(portField(), { target: { value: "700000" } });
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+    expect(portField()).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.change(portField(), { target: { value: "5432" } });
+    expect(portField()).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText(t("formInvalidPort"))).toBeNull();
   });
 });
