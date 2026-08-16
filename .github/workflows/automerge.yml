@@ -136,6 +136,7 @@ jobs:
           #    埋め込まれた状態マーカーで行う:
           #      "... review in progress by coderabbit.ai" → 進行中なのでスキップ
           #      "... rate limited by coderabbit.ai"       → レートリミットなので継続
+          #      "... skip review by coderabbit.ai"        → レビュー省略なので継続
           #    CodeRabbit はメインの状態コメントを進行中→完了 (summarize) と in-place で
           #    編集するため、現在のコメント本文にマーカーが残っていれば進行中とみなせる。
           #    CodeRabbit のコメントが 1 件も無い PR (CodeRabbit 未適用等) はそのまま通過。
@@ -160,6 +161,26 @@ jobs:
             cr_rate_limited="true"
           fi
 
+          # 5a. CodeRabbit が「レビューを省略した」と宣言している場合も、待っても
+          #     レビューは提出されないためマージを許可する。レートリミットと同じ
+          #     「待っても進まない」クラスの状態で、代表例は star 数が閾値未満の
+          #     OSS リポジトリに対する手動レビュー要求:
+          #       「Reviews should be triggered manually for repositories with
+          #         fewer than 10 stars」(コミットステータスの description は
+          #         "Review skipped: manual review required for this OSS repository")
+          #     この状態では coderabbitai[bot] はサマリコメントだけを投稿して
+          #     レビュー本体を一切提出しないため、後続の 5b (head へのレビュー提出を
+          #     待つ) が永久に成立せず、自動マージが恒久的に停止する。
+          #     判定は自動生成コメントに埋め込まれた機械可読マーカー
+          #     "<!-- ...: skip review by coderabbit.ai -->" で行う。進行中マーカー
+          #     ("review in progress") とは別物なので、上の進行中判定を弱めない
+          #     (進行中の PR は 5 で既に exit 済み)。
+          cr_review_skipped="false"
+          if printf '%s' "$cr_comments" | grep -qi "skip review by coderabbit"; then
+            echo "CodeRabbit がレビューを省略しています (手動トリガ要求等)。マージを継続します。"
+            cr_review_skipped="true"
+          fi
+
           # 5b. サマリコメントの "進行中" マーカーだけでは不十分。CodeRabbit はサマリ
           #     コメントを完了形 (summarize) へ in-place 編集してから、レビュー本体
           #     (インラインのレビュースレッドを含む) を提出するまでに十数〜数十秒の差が
@@ -168,10 +189,11 @@ jobs:
           #     (PR #277 の取りこぼしの原因)。レビューとそのスレッドは "レビュー提出"
           #     時にアトミックに作られるため、CodeRabbit が稼働している PR では現在の
           #     head SHA に対する coderabbitai[bot] のレビュー提出を完了の確定信号として
-          #     待つ。レートリミット時はレビューが提出されないので待たない。
+          #     待つ。レートリミット時とレビュー省略時 (5a) はレビューが提出されない
+          #     ので待たない。
           #     (トレードオフ: CodeRabbit がインクリメンタルレビューを提出しない構成だと
           #      新コミットで待ち続けるが、その場合の失敗側は "自動マージしない" で安全。)
-          if [ "$cr_active" = "true" ] && [ "$cr_rate_limited" = "false" ]; then
+          if [ "$cr_active" = "true" ] && [ "$cr_rate_limited" = "false" ] && [ "$cr_review_skipped" = "false" ]; then
             cr_reviews_for_head="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
               --jq '.[] | select(.user.login == "coderabbitai[bot]") | .commit_id' \
               | grep -Fxc "$headSha" || true)"
