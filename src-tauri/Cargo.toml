@@ -151,16 +151,23 @@ custom-protocol = ["tauri/custom-protocol"]
 [profile.dev]
 debug = "line-tables-only"
 
-# リリースバイナリ (NSIS で配布する Windows 実行ファイル) の実行時性能を優先する
-# 設定。このプロファイルは `tauri build` (release.yml) のリリースビルドにのみ効き、
-# CI の clippy / nextest / fmt や日常の dev ビルドには影響しない (それらは dev /
-# test プロファイル)。処理の大半は DB I/O 待ちだが、大きな結果セットのデコードなど
-# 数少ない CPU バウンド経路のスループットをこのプロファイルで最大化する。
+# リリースバイナリ (NSIS で配布する Windows 実行ファイル) のビルド設定。この
+# プロファイルは `tauri build` (release.yml) のリリースビルドにのみ効き、CI の
+# clippy / nextest / fmt や日常の dev ビルドには影響しない (それらは dev / test
+# プロファイル)。
+#
+# LTO は "thin" とし、codegen-units は既定 (16) のままにする。以前は
+# lto = "fat" + codegen-units = 1 で最適化を最大化していたが、fat LTO は依存ツリー
+# 全体 (DuckDB の bundled 静的ライブラリ #709 を含む) を単一単位で再最適化するため、
+# 最終コンパイル + リンクが rust-cache でキャッシュできない毎回の固定コストとして
+# リリースビルドを支配していた (タグビルド 30 分超の主因の 1 つ)。本アプリの処理は
+# 大半が DB I/O 待ちで fat LTO の実行時性能メリットは計測困難な一方、thin LTO でも
+# クレート跨ぎのインライン化はほぼ得られる。バイナリサイズの微増は release.yml の
+# 出荷バイナリサイズ可視化 (#549) で追跡できる。
 #
 # panic は既定の "unwind" を維持する。"abort" は tokio タスク内のパニックがアプリ
 # 全体を巻き込んで落とすためロバスト性が下がる (各ドライバのデコード経路などを
 # 点検したうえでなければ採用しない)。
 [profile.release]
 opt-level = 3        # 実行時スループット優先
-lto = "fat"          # クレート跨ぎの最適化を最大化 (リンク時間とのトレードオフ)
-codegen-units = 1    # 最適化単位を 1 にまとめ最大限の最適化 (リリースビルド時間とのトレードオフ)
+lto = "thin"         # クレート跨ぎ最適化とビルド時間のバランス (fat にしない理由は上記)

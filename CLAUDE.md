@@ -323,20 +323,32 @@ CI は 2 つのワークフローに分かれています:
   ジョブは push イベントでは git 履歴比較を行うため checkout してから filter を
   実行します (`ci.yml` の `changes` ジョブと同じ配慮、`fetch-depth: 2`)。
   **ゲート対象はキャッシュ温めビルドのみ**で、キャッシュ温めの本来の目的
-  (タグビルドの初回コールド回避) を壊さないよう、以下の 2 経路はゲートを完全に
+  (タグビルドの初回コールド回避) を壊さないよう、以下の 3 経路はゲートを完全に
   迂回して常に `build` ジョブを実行します:
   - **タグ push** (`refs/tags/v*`): リリースビルドそのものであり、`changes`
     ジョブは比較対象コミットが無く意味を持たないため、`changes` 自体をこの
     条件で実行しません (`changes` の `if:` で除外)。
   - **`workflow_dispatch`** (手動実行): 明示的な手動トリガの意図を尊重し、
     変更内容に関わらず常にビルドします。
+  - **`schedule`** (毎週月曜 03:00 UTC の定期温め): main push の温めビルドは
+    paths ゲートのスキップや連続 push の concurrency キャンセルで長期間完走
+    しないことがあり、GitHub Actions のキャッシュは 7 日間未アクセスで削除
+    されるため、main スコープの rust-cache が失効した状態でタグビルドが毎回
+    コールドスタートする退行が実際に起きました (DuckDB #709 の bundled C++
+    ビルドが乗った v0.9.x でリリースビルドが 27〜35 分に悪化)。週次の定期
+    実行でキャッシュを常に新鮮に保つのが目的なので、変更有無に関わらず
+    ビルドします (`changes` は push 限定の `if:` により skip)。
   `build` ジョブの `if:` は `always() && (tag push || workflow_dispatch ||
-  changes.outputs.rust == 'true' || changes.outputs.frontend == 'true')` で、
-  `always()` は「`changes` が (タグ/手動実行で) skip されたときに `needs:` の
-  既定動作 (`success()` 相当) で `build` まで連鎖 skip されてしまう」のを防ぐ
-  ためのものです — 実際の実行可否は続く OR 条件が判定します。`changes` ジョブが
-  何らかの理由で失敗した場合は outputs が空になり OR 条件が偽になるため、
-  main push では安全側 (skip) に倒れます。
+  schedule || changes.outputs.rust == 'true' || changes.outputs.frontend ==
+  'true')` で、`always()` は「`changes` が (タグ/手動実行/schedule で) skip
+  されたときに `needs:` の既定動作 (`success()` 相当) で `build` まで連鎖 skip
+  されてしまう」のを防ぐためのものです — 実際の実行可否は続く OR 条件が判定
+  します。`changes` ジョブが何らかの理由で失敗した場合は outputs が空になり
+  OR 条件が偽になるため、main push では安全側 (skip) に倒れます。
+  **タグビルドでは rust-cache を保存しません (`save-if`)** — タグ ref スコープに
+  保存されたキャッシュは main や他のタグの実行から参照できず、同じタグが再実行
+  されることも無いため、保存 (~1 分) が純粋な無駄になるからです。タグビルドは
+  main スコープのキャッシュを復元のみで利用します。
 
 Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`, `libxdo-dev`,
@@ -382,6 +394,15 @@ PR の自動生成と脆弱性の可視化を次のように役割分担して�
   指定し、dev ビルドの debuginfo を行テーブルのみに削減しています。リンク時間が
   減り dev ビルドの反復が速くなる一方、バックトレースのファイル:行情報は維持され
   ます。ツール導入不要で全環境に効きます。
+- `[profile.release]` は **`lto = "thin"` + `codegen-units` 既定**です。以前の
+  `lto = "fat"` + `codegen-units = 1` は依存ツリー全体 (DuckDB #709 の bundled
+  静的ライブラリを含む) を単一単位で再最適化するため、最終コンパイル + リンクが
+  rust-cache でキャッシュできない毎回の固定コストとしてリリースビルド (タグ
+  ビルド 30 分超) を支配していました。本アプリは処理の大半が DB I/O 待ちで
+  fat LTO の実行時性能メリットは計測困難な一方、thin LTO でもクレート跨ぎの
+  インライン化はほぼ得られます。バイナリサイズの微増は release.yml の出荷
+  バイナリサイズ可視化 (#549) で追跡します。**fat に戻す変更はビルド時間との
+  トレードオフを必ず再計測してから**にしてください。
 - `src-tauri/Cargo.toml` の `[lib] crate-type` は **`["rlib"]` のみ**にしています。
   `staticlib` / `cdylib` はモバイル (iOS/Android) 専用の生成物で、デスクトップ
   専用の本プロジェクトでは不要です。これらを残すとリリースビルドで依存ツリー全体を

@@ -7,6 +7,16 @@ on:
       - main
     tags:
       - "v*"
+  # 週次のキャッシュ温め (キャッシュ健全性の保険)。main push の温めビルドは
+  # paths ゲート (#919) のスキップや連続 push の concurrency キャンセルで
+  # 長期間完走しないことがあり、GitHub Actions のキャッシュは 7 日間未アクセスで
+  # 削除されるため、main スコープの rust-cache (DuckDB #709 の bundled ビルド
+  # 成果物を含む) が失効した状態でタグビルドが毎回コールドスタートしていた
+  # (v0.9.0〜v0.9.2 のリリースビルドが 27〜35 分に悪化した主因)。週 1 回の
+  # 定期実行で main スコープのキャッシュを常に新鮮に保ち、タグビルドが確実に
+  # フォールバック復元できるようにする。
+  schedule:
+    - cron: "0 3 * * 1" # 毎週月曜 03:00 UTC
 
 # main への push が連続したとき、古い「キャッシュ温め」ビルドを取り消して
 # CI 時間を節約する。タグ (リリース) ビルドは ref ごとにグループが分かれる上
@@ -70,15 +80,18 @@ jobs:
     name: build (${{ matrix.platform }})
     needs: changes
     # ゲート対象は「タグ以外の main push (= キャッシュ温めビルド)」のみ。
-    # タグ push (リリースビルド) と workflow_dispatch (手動実行) は changes
-    # ジョブの結果に関わらず常にこのジョブを実行する。タグ/手動実行では
-    # changes ジョブ自体を上の if で skip しているため、素の needs 既定
-    # (success() 相当) だと build も連鎖して skip されてしまう — それを
-    # always() で止め、実際の実行可否は下記の OR 条件で判定する。
+    # タグ push (リリースビルド)・workflow_dispatch (手動実行)・schedule
+    # (週次のキャッシュ温め。キャッシュを新鮮に保つこと自体が目的なので変更
+    # 有無に関わらず実行する) は changes ジョブの結果に関わらず常にこの
+    # ジョブを実行する。これらのイベントでは changes ジョブ自体を上の if で
+    # skip しているため、素の needs 既定 (success() 相当) だと build も連鎖
+    # して skip されてしまう — それを always() で止め、実際の実行可否は
+    # 下記の OR 条件で判定する。
     if: |
       always() &&
       (startsWith(github.ref, 'refs/tags/v') ||
        github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'schedule' ||
        needs.changes.outputs.rust == 'true' ||
        needs.changes.outputs.frontend == 'true')
     permissions:
@@ -126,6 +139,12 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: "./src-tauri -> target"
+          # タグビルドではキャッシュを保存しない (復元のみ)。GitHub Actions の
+          # キャッシュはタグ ref スコープに保存されると main や他のタグの実行
+          # から参照できず、同じタグが再実行されることも無いため、タグビルド
+          # 末尾の Post Cache (~1 分) が純粋な無駄になる。main (温めビルド) と
+          # schedule / workflow_dispatch では従来どおり保存する。
+          save-if: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
       - name: Cache Tauri bundler tools (NSIS / WiX)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
