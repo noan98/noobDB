@@ -274,7 +274,7 @@ import { incomingForeignKeys } from "./fkNavigation";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
 import { workspaceSpineColor } from "./profileIdentity";
-import { semanticColorToken } from "./semanticColors";
+import { semanticColorToken, semanticColorVar } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
@@ -7801,14 +7801,16 @@ export default function App() {
               pr="3.5"
               py="2"
               borderBottomWidth={selectedProfile?.is_production ? "2px" : "1px"}
-              borderBottomColor={selectedProfile?.is_production ? "app.status.error" : "app.border"}
+              borderBottomColor={
+                selectedProfile?.is_production ? semanticColorToken("danger", "solid") : "app.border"
+              }
               minH="42px"
               // 本番接続は `--ws-accent` (プロファイルのカスタム色) ではなく常に危険色
               // トークンで塗る。カスタム色に紛れて「本番らしさ」が薄まるのを防ぐため
               // (#791)。非本番は従来どおり控えめなワークスペースアクセントの色付け。
               bg={
                 selectedProfile?.is_production
-                  ? "color-mix(in srgb, var(--status-error) 16%, var(--bg-elevated))"
+                  ? `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 16%, var(--bg-elevated))`
                   : "color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated))"
               }
               // padding-left はサイドバー折りたたみ (#873) で 46px ↔ 14px に
@@ -7855,7 +7857,7 @@ export default function App() {
                           px="2"
                           py="0.5"
                           borderRadius="pill"
-                          bg="var(--status-info, var(--bg-muted))"
+                          bg={semanticColorToken("info", "subtle")}
                           color="app.text"
                           borderWidth="1px"
                           borderStyle="solid"
@@ -7899,7 +7901,7 @@ export default function App() {
                           px="1.5"
                           py="0.5"
                           borderRadius="4px"
-                          bg="color-mix(in srgb, var(--status-warning) 18%, transparent)"
+                          bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 18%, transparent)`}
                           color="var(--text-warning)"
                         >
                           {t("txActiveBadge")}
@@ -8765,9 +8767,9 @@ export default function App() {
                 gap: "12px",
                 padding: "32px 48px",
                 borderRadius: "16px",
-                border: `2px dashed ${dragFeedback.accept ? "var(--accent)" : "var(--status-error)"}`,
+                border: `2px dashed ${dragFeedback.accept ? "var(--accent)" : semanticColorVar("danger", "solid")}`,
                 background: "var(--bg-elevated, var(--bg))",
-                color: dragFeedback.accept ? "var(--accent)" : "var(--status-error)",
+                color: dragFeedback.accept ? "var(--accent)" : semanticColorVar("danger", "solid"),
                 boxShadow: "var(--shadow-lg, 0 12px 40px rgba(0,0,0,0.3))",
               }}
             >

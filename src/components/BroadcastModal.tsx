@@ -18,6 +18,7 @@ import {
   resolveKeyIndicesByName,
   type BroadcastRunStatus,
 } from "../broadcastCompare";
+import { semanticColorToken } from "../semanticColors";
 import { resolvePkIndices } from "./cellEdit";
 import type { ConfirmOptions } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -433,11 +434,11 @@ function statusColor(status: BroadcastRunStatus): string {
     case "running":
       return "app.textMuted";
     case "done":
-      return "var(--status-success)";
+      return semanticColorToken("success", "text");
     case "error":
-      return "var(--status-error)";
+      return semanticColorToken("danger", "text");
     case "cancelled":
-      return "var(--status-warning)";
+      return semanticColorToken("warning", "text");
   }
 }
 
@@ -535,20 +536,20 @@ function EntryCard({
           px="3"
           py="1.5"
           fontSize="xs"
-          color={diff && !diff.comparable ? "var(--status-warning)" : "app.textMuted"}
+          color={diff && !diff.comparable ? semanticColorToken("warning", "text") : "app.textMuted"}
           borderBottom="1px solid"
           borderColor="app.borderSubtle"
         >
           {diffLine}
           {diff?.truncated && (
-            <chakra.span ml="2" color="var(--status-warning)">
+            <chakra.span ml="2" color={semanticColorToken("warning", "text")}>
               {t("broadcastDiffTruncated", { max: MAX_BROADCAST_COMPARE_ROWS })}
             </chakra.span>
           )}
         </Box>
       )}
       {entry.status === "error" && entry.error && (
-        <Box px="3" py="1.5" fontSize="xs" color="var(--status-error)">
+        <Box px="3" py="1.5" fontSize="xs" color={semanticColorToken("danger", "text")}>
           {t("broadcastErrorLabel", { error: entry.error })}
         </Box>
       )}

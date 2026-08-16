@@ -3,6 +3,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type QueryStatsSupport, type StatementStat } from "../api/tauri";
 import { useT } from "../i18n";
+import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import {
   INSPECTOR_INTERVAL_OPTIONS,
   setInspectorNPlusOneMinCount,
@@ -95,8 +96,8 @@ function NPlusOneBadge({ title }: { title: string }) {
         px="1.5"
         fontFamily="var(--font-sans)"
         textStyle="overline"
-        color="var(--status-error)"
-        border="1px solid var(--status-error)"
+        color={semanticColorToken("danger", "text")}
+        border={`1px solid ${semanticColorVar("danger", "text")}`}
         borderRadius="var(--radius-sm)"
         whiteSpace="nowrap"
       >
@@ -352,14 +353,14 @@ export function QueryInspectorPanel({
         <>
           {/* 前提が無い機能は理由 + 有効化手順を明示して縮退する (#587)。 */}
           {!support.live_tail && support.live_tail_reason && (
-            <chakra.p margin={0} fontSize="sm" color="var(--status-warning, var(--text-secondary))">
+            <chakra.p margin={0} fontSize="sm" color={semanticColorToken("warning", "text")}>
               {t("inspectorTailDegraded", {
                 reason: reasonText(support.live_tail_reason) ?? support.live_tail_reason,
               })}
             </chakra.p>
           )}
           {!support.statements && support.statements_reason && (
-            <chakra.p margin={0} fontSize="sm" color="var(--status-warning, var(--text-secondary))">
+            <chakra.p margin={0} fontSize="sm" color={semanticColorToken("warning", "text")}>
               {t("inspectorStatsDegraded", {
                 reason: reasonText(support.statements_reason) ?? support.statements_reason,
               })}
@@ -416,7 +417,7 @@ export function QueryInspectorPanel({
               </chakra.span>
             )}
             {recording && (
-              <chakra.span textStyle="overline" color="var(--status-error)">
+              <chakra.span textStyle="overline" color={semanticColorToken("danger", "text")}>
                 {t("inspectorRecordingBadge")}
               </chakra.span>
             )}
@@ -509,7 +510,7 @@ export function QueryInspectorPanel({
                 </chakra.span>
               </Flex>
               {maskedCount > 0 && (
-                <chakra.p margin={0} fontSize="sm" color="var(--status-warning, var(--text-secondary))">
+                <chakra.p margin={0} fontSize="sm" color={semanticColorToken("warning", "text")}>
                   {t("inspectorPrivilegeNote", { count: maskedCount })}
                 </chakra.p>
               )}

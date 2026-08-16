@@ -24,6 +24,7 @@ import {
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
+import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { comboMatchesEvent, formatCombo } from "../shortcutKeys";
 import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact, rawValueTitle } from "./cellFormat";
@@ -699,16 +700,16 @@ export const GRID_CSS: SystemStyleObject = {
   // 流用し、追加行は緑で示す (削除行は今回結果に無いためツールバーの件数で示す)。
   // 緑は色覚に配慮しつつ「追加=増加」の直感に沿う。reduced-motion 時も色は残る。
   "& tbody tr.grid-row-added td.row-index": {
-    boxShadow: "inset 3px 0 0 var(--status-success)",
+    boxShadow: `inset 3px 0 0 ${semanticColorVar("success", "solid")}`,
   },
   "& tbody tr.grid-row-added td": {
-    background: "color-mix(in srgb, var(--status-success) 12%, transparent)",
+    background: `color-mix(in srgb, ${semanticColorVar("success", "solid")} 12%, transparent)`,
   },
   "& tbody tr.grid-row-added.grid-row-stripe td": {
-    background: "color-mix(in srgb, var(--status-success) 16%, transparent)",
+    background: `color-mix(in srgb, ${semanticColorVar("success", "solid")} 16%, transparent)`,
   },
   "& tbody tr.grid-row-added:hover td": {
-    background: "color-mix(in srgb, var(--status-success) 20%, transparent)",
+    background: `color-mix(in srgb, ${semanticColorVar("success", "solid")} 20%, transparent)`,
   },
   // インラインセル編集 (ResultGrid のみ出現)
   "& td.is-pending-edit": {
@@ -774,14 +775,13 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow:
       "inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--accent) 45%, transparent)",
   },
-  "& td.is-invalid-edit": { boxShadow: "inset 2px 0 0 var(--status-error)" },
+  "& td.is-invalid-edit": { boxShadow: `inset 2px 0 0 ${semanticColorVar("danger", "solid")}` },
   "& td.is-invalid-edit.is-pending-edit": {
-    background: "color-mix(in srgb, var(--status-error) 12%, transparent)",
+    background: `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 12%, transparent)`,
   },
   // アクティブセルが invalid-edit のとき: 左端エラーバー + inset エラーリングを重ねる。
   "& td.is-invalid-edit.is-active-cell:not(:focus-within)": {
-    boxShadow:
-      "inset 2px 0 0 var(--status-error), inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--status-error) 55%, transparent)",
+    boxShadow: `inset 2px 0 0 ${semanticColorVar("danger", "solid")}, inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, ${semanticColorVar("danger", "solid")} 55%, transparent)`,
   },
   "& .cell-edit-wrap": { position: "relative" },
   "& .cell-edit-input": {
@@ -812,7 +812,7 @@ export const GRID_CSS: SystemStyleObject = {
     fontSize: "var(--text-xs)",
     fontWeight: 500,
     color: "#fff",
-    background: "var(--status-error)",
+    background: semanticColorVar("danger", "solid"),
     borderRadius: "var(--radius-sm)",
     boxShadow: "var(--shadow-md, 0 2px 6px rgb(0 0 0 / 0.3))",
     whiteSpace: "normal",
@@ -828,15 +828,15 @@ export const GRID_CSS: SystemStyleObject = {
   // 塗りにする。ストライプ/ホバーの行背景より優先する。
   "& tbody td.is-find-hit, & tbody tr.grid-row-stripe td.is-find-hit, & tbody tr:hover td.is-find-hit":
     {
-      background: "color-mix(in srgb, var(--status-warning) 22%, var(--bg))",
+      background: `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 22%, var(--bg))`,
     },
   // 現在ヒット: 濃い塗り + inset リング。ジャンプ時は App.css の
   // @keyframes find-current-pulse で一瞬リングを太らせて着地を示す
   // (reduced-motion では App.css 末尾のメディアクエリで静止化)。
   "& tbody td.is-find-current, & tbody tr.grid-row-stripe td.is-find-current, & tbody tr:hover td.is-find-current":
     {
-      background: "color-mix(in srgb, var(--status-warning) 38%, var(--bg))",
-      boxShadow: "inset 0 0 0 2px var(--status-warning)",
+      background: `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 38%, var(--bg))`,
+      boxShadow: `inset 0 0 0 2px ${semanticColorVar("warning", "solid")}`,
       animation: "find-current-pulse 0.45s var(--ease-out)",
     },
 };
@@ -2414,7 +2414,7 @@ function ColumnStatsMenu({
             <chakra.span
               role="alert"
               fontSize="var(--text-xs)"
-              color="var(--status-error)"
+              color={semanticColorToken("danger", "text")}
               whiteSpace="normal"
             >
               {fullError}
@@ -5322,8 +5322,16 @@ function StreamingBanner({
       color="app.textMuted"
       flexShrink={0}
       borderBottom="1px solid"
-      borderColor={approaching ? "color-mix(in srgb, var(--status-warning) 45%, var(--border))" : "app.borderSubtle"}
-      bg={approaching ? "color-mix(in srgb, var(--status-warning) 12%, var(--bg-muted))" : "app.surfaceMuted"}
+      borderColor={
+        approaching
+          ? `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 45%, var(--border))`
+          : "app.borderSubtle"
+      }
+      bg={
+        approaching
+          ? `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 12%, var(--bg-muted))`
+          : "app.surfaceMuted"
+      }
     >
       <chakra.span
         aria-hidden
@@ -5331,7 +5339,9 @@ function StreamingBanner({
         height="8px"
         borderRadius="50%"
         flexShrink={0}
-        background={approaching ? "var(--status-error)" : "var(--status-warning)"}
+        background={
+          approaching ? semanticColorVar("danger", "solid") : semanticColorVar("warning", "solid")
+        }
         animation="streaming-pulse 1s ease-in-out infinite"
       />
       <chakra.span flex="1" display="inline-flex" alignItems="center" gap="2" minW={0} overflow="hidden">
@@ -5979,7 +5989,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           color="app.text"
           borderBottom="1px solid"
           borderColor="app.borderSubtle"
-          background="color-mix(in srgb, var(--status-warning) 14%, var(--bg-muted))"
+          background={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
         >
           <chakra.span flex="1">
             {t("autoLimitApplied", { limit: autoLimitApplied! })}
