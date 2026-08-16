@@ -18,6 +18,7 @@ import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { computeTooltipPosition } from "./tooltipPosition";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
+import { DropInsertionMarker } from "./DropInsertionMarker";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
 import { driverColor, driverIconName, normalizeChipColor } from "../profileIdentity";
 import {
@@ -1509,9 +1510,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           borderLeftWidth="4px"
           borderLeftColor={borderLeftColor}
           bg={rowBg}
-          // 並べ替え (ドラッグ中/キーボード移動直後) の着地位置を上端のインセット
-          // アクセントバーで示す。TabBar の挿入マーカーと同じ役割。
-          boxShadow={dropIndicator === p.id ? "inset 0 2px 0 0 var(--accent)" : undefined}
+          // `DropInsertionMarker` (下記) を絶対配置するための基準。
+          position="relative"
           _hover={{ bg: rowBg ?? "app.hover" }}
           // ホバーで控えめに拡大 + 影を出すモーション。
           // prefers-reduced-motion はルートの MotionConfig が自動抑制する。
@@ -1630,6 +1630,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               aria-label={statusLabel(status)}
             />
           </Tooltip>
+          {/* 並べ替え (ドラッグ中/キーボード移動直後) の着地位置マーカー。TabBar と
+              同じ共有実装 (#1007)。 */}
+          <DropInsertionMarker orientation="horizontal" visible={dropIndicator === p.id} />
         </MotionTreeRow>
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
@@ -1950,7 +1953,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                         borderBottom="1px solid"
                         borderBottomColor="app.borderSubtle"
                         borderLeft="2px solid transparent"
-                        boxShadow={dropIndicator === `group:${key}` ? "inset 0 2px 0 0 var(--accent)" : undefined}
+                        // `DropInsertionMarker` (下記) を絶対配置するための基準。
+                        position="relative"
                         transitionProperty="background, color, border-color, box-shadow"
                         transitionDuration="var(--dur-fast)"
                         transitionTimingFunction="var(--ease)"
@@ -1970,6 +1974,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           {g.name}
                         </chakra.span>
                         <TreeBadge textTransform="none" letterSpacing="0">{g.profiles.length}</TreeBadge>
+                        {/* 並べ替え (ドラッグ中/キーボード移動直後) の着地位置マーカー。
+                            TabBar と同じ共有実装 (#1007)。 */}
+                        <DropInsertionMarker orientation="horizontal" visible={dropIndicator === `group:${key}`} />
                       </Box>
                       <TreeCollapse open={groupOpen}>
                         <Reorder.Group

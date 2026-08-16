@@ -53,4 +53,27 @@ describe("ConnectionList render smoke (#604)", () => {
     fireEvent.click(screen.getByText(t("listCreateFirst")));
     expect(onCreate).toHaveBeenCalledOnce();
   });
+
+  // ドラッグ並べ替えのドロップ位置マーカー (#1007)。キーボード移動
+  // (Ctrl/Cmd+Shift+↑/↓) が TabBar と同じ着地位置マーカーを表示すること・並べ替え
+  // 自体 (`onReorderProfiles` への通知) が退行しないことを固定する。
+  it("shows the drop-position marker and reorders on keyboard move", () => {
+    const onReorderProfiles = vi.fn();
+    const profiles = [
+      makeProfile({ id: "p-a", name: "Alpha DB" }),
+      makeProfile({ id: "p-b", name: "Beta DB" }),
+    ];
+    const { container } = renderWithProviders(
+      <ConnectionList {...baseProps} profiles={profiles} onReorderProfiles={onReorderProfiles} />,
+    );
+    const rows = screen.getAllByRole("treeitem");
+    expect(rows).toHaveLength(2);
+    const markersBefore = container.querySelectorAll('[aria-hidden="true"]').length;
+
+    fireEvent.keyDown(rows[0], { key: "ArrowDown", ctrlKey: true, shiftKey: true });
+
+    expect(onReorderProfiles).toHaveBeenCalledWith(["p-b", "p-a"]);
+    const markersAfter = container.querySelectorAll('[aria-hidden="true"]').length;
+    expect(markersAfter).toBe(markersBefore + 1);
+  });
 });
