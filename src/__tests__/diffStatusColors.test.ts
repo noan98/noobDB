@@ -12,21 +12,21 @@ describe("statusColors (#1008)", () => {
   it("source_only (追加) は success の意味色を返す", () => {
     expect(statusColors("source_only")).toEqual({
       color: semanticColorVar("success", "text"),
-      borderColor: semanticColorVar("success", "border"),
+      borderColor: semanticColorVar("success", "text"),
     });
   });
 
   it("target_only (削除) は danger の意味色を返す", () => {
     expect(statusColors("target_only")).toEqual({
       color: semanticColorVar("danger", "text"),
-      borderColor: semanticColorVar("danger", "border"),
+      borderColor: semanticColorVar("danger", "text"),
     });
   });
 
   it("different (変更) は warning の意味色を返す", () => {
     expect(statusColors("different")).toEqual({
       color: semanticColorVar("warning", "text"),
-      borderColor: semanticColorVar("warning", "border"),
+      borderColor: semanticColorVar("warning", "text"),
     });
   });
 
