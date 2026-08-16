@@ -1824,6 +1824,17 @@ export default function App() {
   const activeTabRef = useRef<Tab | null>(activeTab);
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
+  // スキーマツリーの「現在地」表示 (#982) 用に、アクティブタブが開いている
+  // (db, table) だけを取り出す。table タブでも database/table が未確定な
+  // 過渡状態 (作成直後など) は null にして、ツリー側で誤って光らせない。
+  const activeTreeTable = useMemo(
+    () =>
+      activeTab && activeTab.kind === "table" && activeTab.database && activeTab.table
+        ? { database: activeTab.database, table: activeTab.table }
+        : null,
+    [activeTab],
+  );
+
   // 読み取り専用判定 (`isReadOnlySql`) はドライバごとの文字列エスケープ規則に
   // 依存する (#852)。自動リフレッシュの tick やブロードキャスト要求は deps を
   // 増やさず ref 経由で最新のプロファイルを読む (activeTabRef と同じ理由)。
@@ -7474,6 +7485,7 @@ export default function App() {
             ref={connectionListRef}
             profiles={visibleProfiles}
             activeProfileId={selectedProfile?.id ?? null}
+            activeTable={activeTreeTable}
             sessionId={sessionId}
             connectingId={connectingId}
             errorProfileId={errorProfileId}

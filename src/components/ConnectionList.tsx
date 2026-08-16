@@ -1,6 +1,6 @@
-import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
-import { AnimatePresence, Reorder } from "motion/react";
+import { AnimatePresence, motion, Reorder } from "motion/react";
 import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
@@ -96,6 +96,18 @@ const MotionReorderNode = chakra(
   { base: { display: "flex", flexDirection: "column" } },
   { forwardProps: ["transition"] },
 );
+
+/**
+ * 現在開いているテーブル行を示すアクセントスパイン (#982)。`TabBar` の
+ * アクティブインジケータ (`MotionIndicator`) と同じパターン
+ * (`motion.span` + `forwardProps: ["transition"]`) をそのまま踏襲する新規の
+ * Motion 基盤ではない薄いラッパで、ツリー全体で 1 つの `layoutId` を共有する。
+ * アクティブなテーブル行が切り替わるたびに、前の行から新しい行へ spring で
+ * 移動する (TabBar と同じ `transitions.emphasized`)。reduced-motion は
+ * ルートの `<MotionConfig reducedMotion="user">` (src/main.tsx) が自動で
+ * 即時化する。
+ */
+const MotionActiveIndicator = chakra(motion.span, {}, { forwardProps: ["transition"] });
 
 /** サイドバーフィルタで公開するハンドル型。App.tsx が Cmd/Ctrl+P でフォーカスを当てるために使う。 */
 export interface ConnectionListHandle {
@@ -213,6 +225,12 @@ const STATUS_DOT_STYLE = {
 interface Props {
   profiles: ConnectionProfile[];
   activeProfileId: string | null;
+  /**
+   * 現在アクティブなタブが開いている (database, table)。table タブ以外
+   * (query/explain) や未接続時は null。一致するスキーマツリーの行に
+   * `aria-current` + アクセントスパインを付与する「現在地」表示 (#982) に使う。
+   */
+  activeTable?: { database: string; table: string } | null;
   sessionId: string | null;
   connectingId: string | null;
   errorProfileId: string | null;
@@ -317,6 +335,7 @@ interface MenuState {
 export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(function ConnectionList({
   profiles,
   activeProfileId,
+  activeTable,
   sessionId,
   connectingId,
   errorProfileId,
@@ -361,6 +380,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onToggleFavorite,
 }, ref) {
   const t = useT();
+  // アクティブテーブル行のスパインが共有する layoutId (#982)。`TabBar` の
+  // `indicatorId` と同じ理由でコンポーネントインスタンスごとにスコープする。
+  const activeTableIndicatorId = `tree-active-table-indicator-${useId()}`;
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
   const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
@@ -1684,6 +1706,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                             const rowEst = rowEstimates[db]?.[tbl];
                             const rowEstLabel =
                               typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
+                            // 現在結果パネルに開いているテーブルかどうか (#982)。
+                            // ツリーはアクティブ接続のみを表示するので db/table の
+                            // 一致だけで十分 (プロファイル跨ぎの衝突はない)。
+                            const isActiveTable =
+                              !!activeTable && activeTable.database === db && activeTable.table === tbl;
                             return (
                               <TreeNode key={tbl}>
                                 <TreeRow
@@ -1695,11 +1722,31 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                      ロール検索 (テスト含む) が不安定になるため。 */
                                   aria-label={tbl}
                                   aria-expanded={tOpen}
+                                  // 「現在地」表示 (#982): SR には aria-current、視覚には
+                                  // 下の共有 layoutId インジケータ (アクセントスパイン) で
+                                  // 示す。position: relative はインジケータの絶対配置の
+                                  // 基準になるが、非アクティブ行では不要なので付けない。
+                                  aria-current={isActiveTable ? "true" : undefined}
+                                  position={isActiveTable ? "relative" : undefined}
+                                  bg={isActiveTable ? "var(--bg-active)" : undefined}
                                   onDoubleClick={() => onPickTable(db, tbl)}
                                   onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
                                   {...treeTooltipProps(t("treeTableTitle"))}
-                                  _hover={{ bg: "app.rowHover" }}
+                                  _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
                                 >
+                                  {isActiveTable && (
+                                    <MotionActiveIndicator
+                                      layoutId={activeTableIndicatorId}
+                                      transition={transitions.emphasized}
+                                      position="absolute"
+                                      left="0"
+                                      top="0"
+                                      bottom="0"
+                                      width="2px"
+                                      bg="var(--accent)"
+                                      aria-hidden
+                                    />
+                                  )}
                                   {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
                                       ダブルクリック (テーブルを開く) の前に click が 2 回発火して
                                       カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
