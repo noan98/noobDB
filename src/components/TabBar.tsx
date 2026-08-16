@@ -6,6 +6,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { transitions, variants } from "../motion";
 import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
+import { DropInsertionMarker } from "./DropInsertionMarker";
 
 // キーボードフォーカスリング (App.css のフォーカス表現と一致、動的アクセントへ追従)。
 const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
@@ -492,27 +493,9 @@ export function TabBar({
                 )}
                 {/* Drop-position marker: a vertical accent bar on the tab's
                     leading edge shown while it is dragged / just after a
-                    keyboard move, indicating where the tab lands. */}
-                <AnimatePresence>
-                  {dropIndicator === tab.id && (
-                    <MotionIndicator
-                      key="drop"
-                      initial={{ opacity: 0, scaleY: 0.4 }}
-                      animate={{ opacity: 1, scaleY: 1 }}
-                      exit={{ opacity: 0, scaleY: 0.4 }}
-                      transition={transitions.crossfade}
-                      position="absolute"
-                      left="-1px"
-                      top="2px"
-                      bottom="2px"
-                      w="2px"
-                      borderRadius="1px"
-                      bg="var(--ws-accent, var(--accent))"
-                      zIndex={4}
-                      aria-hidden
-                    />
-                  )}
-                </AnimatePresence>
+                    keyboard move, indicating where the tab lands. Shared
+                    implementation (#1007) also used by `ConnectionList`. */}
+                <DropInsertionMarker orientation="vertical" visible={dropIndicator === tab.id} />
               </MotionTab>
             );
           })}
