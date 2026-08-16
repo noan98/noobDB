@@ -255,8 +255,9 @@ jobs:
   # 言語横断のパリティ/ゴールデンテスト専用の軽量ジョブ (#853)。
   #
   # 背景: `ipcCommandParity.test.ts` / `ipcArgParity.test.ts` /
-  # `streamEventParity.test.ts` は `?raw` インポートで src-tauri 側のソース
-  # (`lib.rs` / `commands/*.rs` / `tasks/scheduler.rs`) を読み、`readOnlyGolden.test.ts` /
+  # `streamEventParity.test.ts` は `?raw` インポート (または `import.meta.glob`
+  # による網羅列挙。#970) で src-tauri 側のソース (`lib.rs` / `commands/*.rs` /
+  # `src-tauri/src/**/*.rs`) を読み、`readOnlyGolden.test.ts` /
   # `errorKindGolden.test.ts` / `errorHintGolden.test.ts` / `schemaParity.test.ts` /
   # `sqlQuotingGolden.test.ts` (#880) / `exportFormatGolden.test.ts` (#879) は
   # Rust の統合テスト (`read_only_golden.rs` 等) と共有するフィクスチャ

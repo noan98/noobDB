@@ -1,30 +1,37 @@
 import { describe, expect, it } from "vitest";
-// `ipcCommandParity.test.ts` と同じ `?raw` インポート方式で両ソースの中身を文字列
-// として取り込む (Node の fs に依存しないため、`tsc` の型チェックでも追加の型定義が
-// 不要)。ストリーミングイベントを emit する Rust ファイルは
-// `src-tauri/src/commands/query.rs` (`query-stream:*`・`preview-stream:*`・各
-// `*-cancelled`)・`dump.rs` (`dump-stream:*`)・`export.rs` (`export-stream:*`)・
-// `import.rs` (`csv-import:*`)・`connection.rs` (`connect-progress:phase`)・
-// `tasks/scheduler.rs` (`task-run:*`。#730) の 6 つに限られる (他の `commands/*.rs`
-// にイベント名リテラルが無いことは実装時に grep で確認済み)。
-import connectionRs from "../../src-tauri/src/commands/connection.rs?raw";
-import dumpRs from "../../src-tauri/src/commands/dump.rs?raw";
-import exportRs from "../../src-tauri/src/commands/export.rs?raw";
-import importRs from "../../src-tauri/src/commands/import.rs?raw";
-import queryRs from "../../src-tauri/src/commands/query.rs?raw";
-import schedulerRs from "../../src-tauri/src/tasks/scheduler.rs?raw";
+// `ipcArgParity.test.ts` と同じ `import.meta.glob` 方式 (#970)。
+//
+// かつては「イベントを emit する Rust ファイルは query.rs / dump.rs / export.rs /
+// import.rs / connection.rs / tasks/scheduler.rs の 6 つに限られる (grep で確認済み)」
+// という前提でこの 6 ファイルだけを個別に `?raw` import していた。しかし
+// `ipcArgParity.test.ts` が #921 で踏んだのと同じ罠で、この前提は将来の変更で
+// 静かに陳腐化しうる — 例えば `commands/sandbox.rs` (サンドボックスコピーの
+// 長時間処理) や `commands/flight_recorder.rs` (レコーダ進捗) が新たに `.emit()`
+// を追加しても、ハードコードされた import リストへの追記を忘れる限りパリティ
+// 検査は永遠にそれを見ない。`src-tauri/src/**/*.rs` を再帰的に列挙することで、
+// ファイル追加時の追記漏れ自体を構造的に無くす (`commands/*.rs` に限定せず全体を
+// 対象にするのは、将来 `ssh/` や `flight_recorder/` など commands 外のモジュールが
+// 直接 emit するようになっても取りこぼさないため)。
 import tauriTs from "../api/tauri.ts?raw";
 
-// ストリーミングイベント名のフロント (`tauri.ts` の `listen(...)`) ↔ バック
-// (`commands/*.rs` の emit 箇所) パリティ検証 (#797)。
-//
-// バックエンドのイベント名は各 `commands/*.rs` に文字列リテラルとして散在し、フロント
-// も `src/api/tauri.ts` の `listen("query-stream:columns", …)` 等で別途ハードコードして
-// いる。両者はコンパイラが対応関係を検証してくれないため、名前のタイポや片側だけの
-// 追加・削除漏れは実行時まで気付けない。ここでは両ソースからイベント名の集合を機械的に
-// 抽出して突き合わせ、片側にしか存在しない名前があればテストを落とす。
+const rustModules = import.meta.glob("../../src-tauri/src/**/*.rs", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+}) as Record<string, string>;
+const rustSources = Object.values(rustModules);
 
-// `commands/*.rs` の `const EV_XXX: &str = "event-name";` からイベント名リテラルを
+// ストリーミングイベント名のフロント (`tauri.ts` の `listen(...)`) ↔ バック
+// (`src-tauri/src/**/*.rs` の emit 箇所) パリティ検証 (#797)。
+//
+// バックエンドのイベント名は emit している各 `.rs` ファイルに文字列リテラルとして
+// 散在し、フロントも `src/api/tauri.ts` の `listen("query-stream:columns", …)` 等で
+// 別途ハードコードしている。両者はコンパイラが対応関係を検証してくれないため、名前の
+// タイポや片側だけの追加・削除漏れは実行時まで気付けない。ここでは両ソースから
+// イベント名の集合を機械的に抽出して突き合わせ、片側にしか存在しない名前があれば
+// テストを落とす。
+
+// `.rs` ファイルの `const EV_XXX: &str = "event-name";` からイベント名リテラルを
 // 抽出する。ストリーミングイベントは「意味の分かる定数名 → リテラル」という書き方に
 // 統一されているためこれが主経路だが、将来 `.emit("xxx-yyy:zzz", ...)` のように定数を
 // 介さず直接リテラルで emit されても取りこぼさないよう、emit 呼び出しの第一引数に
@@ -73,14 +80,7 @@ function extractListenedEvents(tauriTs: string): Set<string> {
   return events;
 }
 
-const emitted = extractEmittedEvents([
-  queryRs,
-  dumpRs,
-  exportRs,
-  importRs,
-  connectionRs,
-  schedulerRs,
-]);
+const emitted = extractEmittedEvents(rustSources);
 const listened = extractListenedEvents(tauriTs);
 
 // 片側にのみ正当に存在してよいイベント名の明示的な許可リスト。
@@ -143,14 +143,7 @@ describe("ストリーミングイベント名パリティ (Rust emit ↔ tauri.
     // `event_name` も同型: `scheduler.rs::execute_and_log` が成否で
     // `EV_TASK_RUN_DONE` / `EV_TASK_RUN_ERROR` のどちらかを束ねてから emit する
     // ローカル変数で、値自体は EV_* 定数経路で既に抽出済み (#730)。
-    const offenders = extractEmitFirstArgs([
-      queryRs,
-      dumpRs,
-      exportRs,
-      importRs,
-      connectionRs,
-      schedulerRs,
-    ]).filter((arg) => {
+    const offenders = extractEmitFirstArgs(rustSources).filter((arg) => {
       if (arg.startsWith('"')) return false;
       if (/^EV_[A-Z0-9_]+$/.test(arg)) return false;
       if (arg === "event") return false;
