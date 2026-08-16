@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import {
   api,
@@ -16,13 +17,26 @@ import {
   type TableDiff,
 } from "../api/tauri";
 import { useT } from "../i18n";
+import { staggerContainer, transitions, variants as motionVariants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
+import { statusColors } from "./diffStatusColors";
 import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
 import { Tooltip } from "./Tooltip";
+import { TreeChevron } from "./tree";
 import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
+
+// motion 用 props (`variants`/`initial`/`animate`/`exit`/`transition`) は Chakra の
+// スタイルプロップに飲まれないよう forwardProps で素通しする (`ActivityCenter` /
+// `ProfileCardGrid` と同じパターン)。テーブル差分行のアコーディオン開閉
+// (`variants.collapse`) と、展開時のカラム行 stagger フェードインに使う (#1008)。
+const MotionCollapseBox = chakra(motion.div, {}, {
+  forwardProps: ["variants", "initial", "animate", "exit", "transition"],
+});
+const MotionColumnList = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionColumnItem = chakra(motion.li, {}, { forwardProps: ["variants"] });
 
 /**
  * スキーマ比較ビューの本体スタイル。各要素へ直接 `css` を適用する。
@@ -88,22 +102,35 @@ const tablesCss: SystemStyleObject = {
   flexDirection: "column",
   gap: "1",
 };
-// `<details>` 本体。`<summary>` はタグセレクタ (要素スコープ) で括る。
+// テーブル差分行の外枠。左端 4px は `DiffStatus` に応じたアクセントスパイン
+// (`statusColors` 経由。ConnectionList のプロファイル行と同じ手法、#1008) を
+// `TableDiffRow` 側で `borderLeftColor` として動的に与える。
 const tableCss: SystemStyleObject = {
   border: "1px solid var(--border)",
   borderRadius: "var(--radius-md)",
   background: "var(--bg-elevated)",
   overflow: "hidden",
-  "& > summary": {
-    display: "flex",
-    alignItems: "center",
-    gap: "2.5",
-    py: "2", px: "3",
-    cursor: "pointer",
-    listStyle: "none",
-    userSelect: "none",
-  },
-  "& > summary::-webkit-details-marker": { display: "none" },
+  borderLeftWidth: "4px",
+};
+/**
+ * アコーディオンの見出し行。ネイティブ `<details>/<summary>` を `TreeChevron` +
+ * `aria-expanded` を持つボタン (展開可能な行) または装飾のみの `div`
+ * (カラム差分を持たない行) に置き換える (#1008)。開閉可能な行はキーボード
+ * (Enter/Space) と支援技術からもネイティブ `<button>` として操作できる。
+ */
+const tableSummaryCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "center",
+  gap: "2.5",
+  width: "100%",
+  py: "2", px: "3",
+  userSelect: "none",
+  background: "transparent",
+  border: "none",
+  textAlign: "left",
+  font: "inherit",
+  color: "inherit",
+  _focusVisible: { outline: "none", boxShadow: "var(--focus-ring)" },
 };
 const tableNameCss: SystemStyleObject = {
   fontFamily: "var(--font-mono)",
@@ -123,13 +150,16 @@ const columnsCss: SystemStyleObject = {
   flexDirection: "column",
   gap: "1",
 };
+// カラム行にも `DiffStatus` の左スパイン (3px、行が小さいためテーブル行の 4px より
+// 細く) を付ける。`pl` はスパインとテキストの間隔を確保するための余白。
 const columnCss: SystemStyleObject = {
   display: "flex",
   alignItems: "baseline",
   gap: "2",
   fontSize: "var(--text-sm)",
-  padding: "3px 0",
+  padding: "3px 0 3px 8px",
   borderTop: "1px solid var(--border-subtle)",
+  borderLeftWidth: "3px",
 };
 const columnNameCss: SystemStyleObject = {
   fontFamily: "var(--font-mono)",
@@ -223,34 +253,6 @@ const limitCss: SystemStyleObject = {
   color: "var(--text-secondary)",
   "& input": { width: "80px" },
 };
-
-/**
- * DiffStatus に対応する文字色/枠色 (chip / badge 共通)。#1009: `semanticColors`
- * の 4 役割 (success/warning/danger/info) へマッピングし、生の `--status-*` を
- * 直参照しない。text/border とも同じ tier (`text`) を使うのは、このチップが
- * 淡色地の "subtle" 背景ではなく中立地 (`--bg-muted`) の上に単色の文字色+枠色を
- * 重ねるデザインのため — text/border で tier を分けると (テーマによっては)
- * 文字色と枠色の色相がずれてしまう。`same` (無変化) は状態色を持たないニュートラル
- * 表示のまま据え置く。
- */
-function statusColors(status: DiffStatus): { color: string; borderColor: string } {
-  switch (status) {
-    case "source_only": {
-      const c = semanticColorVar("success", "text");
-      return { color: c, borderColor: c };
-    }
-    case "target_only": {
-      const c = semanticColorVar("danger", "text");
-      return { color: c, borderColor: c };
-    }
-    case "different": {
-      const c = semanticColorVar("warning", "text");
-      return { color: c, borderColor: c };
-    }
-    case "same":
-      return { color: "var(--text-muted)", borderColor: "var(--border)" };
-  }
-}
 
 /** サマリ等のステータスチップ。 */
 function chipCss(status: DiffStatus): SystemStyleObject {
@@ -1199,29 +1201,84 @@ function statusLabel(status: DiffStatus, t: ReturnType<typeof useT>): string {
   }
 }
 
-function TableDiffRow({ table, t }: { table: TableDiff; t: ReturnType<typeof useT> }) {
+/**
+ * テーブル差分行。開閉可能なら `<button aria-expanded>` を見出しにしたアコーディオン
+ * (`ConnectionList` / `SandboxSection` と同じ「見出し全体がボタン」方式) で、開閉は
+ * `motion.ts` の `variants.collapse` (height ↔ auto の補間) でアニメーションする。
+ * 展開時のカラム行は `staggerContainer` + `variants.staggerItem` で控えめに順次
+ * フェードインし、`prefers-reduced-motion` / `motionPreference="reduced"` では
+ * `useReducedMotion()` 経由で同時表示にフォールバックする (#1008)。左端の 4px は
+ * `DiffStatus` に対応するアクセントスパイン (`statusColors` = semanticColors 経由)。
+ *
+ * `export` するのは `SchemaCompareView.test.tsx` 相当の単体テストと、将来
+ * 差分ツリーを他パネルから再利用する可能性のため (`coerceDriver` と同じ理由)。
+ */
+export function TableDiffRow({ table, t }: { table: TableDiff; t: ReturnType<typeof useT> }) {
   const expandable = table.columns.length > 0;
-  return (
-    <chakra.details css={tableCss} open={table.status === "different"}>
-      <chakra.summary>
-        <chakra.span css={badgeCss(table.status)}>
-          {statusLabel(table.status, t)}
-        </chakra.span>
-        <chakra.span css={tableNameCss}>{table.name}</chakra.span>
-        {expandable && (
-          <chakra.span css={colcountCss}>
-            {t("schemaCompareColumnCount", { count: table.columns.length })}
-          </chakra.span>
-        )}
-      </chakra.summary>
+  const [open, setOpen] = useState(table.status === "different");
+  const reduced = useReducedMotion() ?? false;
+  const columnsId = `${useId()}-columns`;
+  const spine = statusColors(table.status).color;
+
+  const header = (
+    <>
+      <TreeChevron aria-hidden visibility={expandable ? "visible" : "hidden"}
+        transform={expandable && open ? "rotate(90deg)" : undefined}>
+        ▸
+      </TreeChevron>
+      <chakra.span css={badgeCss(table.status)}>
+        {statusLabel(table.status, t)}
+      </chakra.span>
+      <chakra.span css={tableNameCss}>{table.name}</chakra.span>
       {expandable && (
-        <chakra.ul css={columnsCss}>
-          {table.columns.map((col) => (
-            <ColumnDiffRow key={col.name} column={col} t={t} />
-          ))}
-        </chakra.ul>
+        <chakra.span css={colcountCss}>
+          {t("schemaCompareColumnCount", { count: table.columns.length })}
+        </chakra.span>
       )}
-    </chakra.details>
+    </>
+  );
+
+  return (
+    <Box css={{ ...tableCss, borderLeftColor: spine }}>
+      {expandable ? (
+        <chakra.button
+          type="button"
+          css={{ ...tableSummaryCss, cursor: "pointer" }}
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-controls={columnsId}
+        >
+          {header}
+        </chakra.button>
+      ) : (
+        <chakra.div css={{ ...tableSummaryCss, cursor: "default" }}>
+          {header}
+        </chakra.div>
+      )}
+      <AnimatePresence initial={false}>
+        {expandable && open && (
+          <MotionCollapseBox
+            id={columnsId}
+            variants={motionVariants.collapse}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={transitions.layout}
+          >
+            <MotionColumnList
+              variants={staggerContainer(reduced)}
+              initial="initial"
+              animate="animate"
+              css={columnsCss}
+            >
+              {table.columns.map((col) => (
+                <ColumnDiffRow key={col.name} column={col} t={t} />
+              ))}
+            </MotionColumnList>
+          </MotionCollapseBox>
+        )}
+      </AnimatePresence>
+    </Box>
   );
 }
 
@@ -1270,10 +1327,15 @@ function fieldValue(
   }
 }
 
+/** カラム差分 1 行。`variants.staggerItem` で親の stagger コンテナに乗って
+ *  順次フェードインする (#1008)。左端 3px は `DiffStatus` のアクセントスパイン。 */
 function ColumnDiffRow({ column, t }: { column: ColumnDiff; t: ReturnType<typeof useT> }) {
   const def = column.source ?? column.target;
   return (
-    <chakra.li css={columnCss}>
+    <MotionColumnItem
+      variants={motionVariants.staggerItem}
+      css={{ ...columnCss, borderLeftColor: statusColors(column.status).color }}
+    >
       <chakra.span css={badgeCss(column.status)}>
         {statusLabel(column.status, t)}
       </chakra.span>
@@ -1290,6 +1352,6 @@ function ColumnDiffRow({ column, t }: { column: ColumnDiff; t: ReturnType<typeof
       ) : (
         <chakra.span css={coltypeCss}>{def?.data_type ?? ""}</chakra.span>
       )}
-    </chakra.li>
+    </MotionColumnItem>
   );
 }
