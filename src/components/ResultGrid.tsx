@@ -62,6 +62,8 @@ import {
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
 import { accentFill, ACCENT_FILL_STOPS, readableInk } from "../colorScale";
+import { CountUp } from "./CountUp";
+import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -1124,6 +1126,14 @@ function formatNumber(v: number): string {
   if (!Number.isFinite(v)) return String(v);
   if (Number.isInteger(v)) return intFormatter.format(v);
   return v.toString();
+}
+
+/**
+ * `resultStatusBar` の結果件数は元々 `.toLocaleString()` を通さず生の桁で表示
+ * していた (#977 のカウントアップ導入前と同じ見た目を保つための整形関数)。
+ */
+function formatCountUpPlainInt(n: number): string {
+  return String(Math.round(n));
 }
 
 /**
@@ -2269,16 +2279,27 @@ function ColumnStatsMenu({
       <Box display="flex" flexDirection="column" gap="1">
         <StatRow
           label={t("gridCountLabel")}
-          value={`${stats.nonNullCount.toLocaleString()} / ${stats.count.toLocaleString()}`}
+          value={
+            <>
+              <CountUp value={stats.nonNullCount} />
+              {" / "}
+              <CountUp value={stats.count} />
+            </>
+          }
         />
         <Box display="flex" flexDirection="column" gap="0.5">
           <StatRow
             label={t("gridNullLabel")}
-            value={`${stats.nullCount.toLocaleString()} (${nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0)}%)`}
+            value={
+              <>
+                <CountUp value={stats.nullCount} />
+                {` (${nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0)}%)`}
+              </>
+            }
           />
           {nullBar}
         </Box>
-        <StatRow label={t("gridDistinctLabel")} value={stats.distinctCount.toLocaleString()} />
+        <StatRow label={t("gridDistinctLabel")} value={<CountUp value={stats.distinctCount} />} />
         {numeric ? (
           <>
             <StatRow label={t("gridMinLabel")} value={fmtStatNum(stats.min)} />
@@ -2357,13 +2378,19 @@ function ColumnStatsMenu({
               </chakra.span>
               <StatRow
                 label={t("gridCountLabel")}
-                value={`${full.nonNull.toLocaleString()} / ${full.total.toLocaleString()}`}
+                value={
+                  <>
+                    <CountUp value={full.nonNull} />
+                    {" / "}
+                    <CountUp value={full.total} />
+                  </>
+                }
               />
               <StatRow
                 label={t("gridNullLabel")}
-                value={full.nullCount.toLocaleString()}
+                value={<CountUp value={full.nullCount} />}
               />
-              <StatRow label={t("gridDistinctLabel")} value={full.distinct.toLocaleString()} />
+              <StatRow label={t("gridDistinctLabel")} value={<CountUp value={full.distinct} />} />
               <StatRow label={t("gridMinLabel")} value={fmtStatCell(full.min)} title={fmtStatCell(full.min)} />
               <StatRow label={t("gridMaxLabel")} value={fmtStatCell(full.max)} title={fmtStatCell(full.max)} />
               {numeric && (
@@ -5453,6 +5480,15 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     // A shrink (new query) resets; a grow (load more) keeps the current page.
     if (rowCount < prev) setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [rowCount]);
+  // 確定した結果件数のカウントアップ (#977)。ストリーミング中は行数が絶えず増える
+  // ため、その途中経過をカウントアップさせるとチカチカするだけで逆効果 — なので
+  // `streaming` が真の間は前回の確定値に据え置き、完了した瞬間にだけ新しい値へ
+  // 遷移させる (これにより `useCountUp` 自身の「意味のある差分か」判定にも確定値
+  // 同士の差分だけが渡る)。
+  const [confirmedRowCount, setConfirmedRowCount] = useState(rowCount);
+  useEffect(() => {
+    if (!streaming) setConfirmedRowCount(rowCount);
+  }, [streaming, rowCount]);
   const [showExport, setShowExport] = useState(false);
   // 右クリック「選択範囲をエクスポート」(#917) で `DataGrid` から一度きり渡される
   // 選択範囲の列/行部分集合。モーダルを閉じたら破棄し、次に (右クリック経由でなく)
@@ -5888,6 +5924,17 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const canPreview =
     hasPendingEdits && editedRowCount === 1 && !streaming && !hasInvalidEdit;
   const canApply = hasPendingEdits && !streaming && !hasInvalidEdit;
+
+  // `resultStatusBar` は "{rows} 件 · {ms} ms" 形式の 1 文を `t()` で組み立てるため、
+  // 件数だけをアニメーションさせるには展開済み文字列からプレースホルダの前後を
+  // 逆算して分割する (#977)。テンプレート自体・i18n 実装には触れず、どの言語でも
+  // 動く。
+  const statusBarParts =
+    !streaming && result.elapsed_ms != null && result.columns.length > 0
+      ? splitAroundCountUpToken(
+          t("resultStatusBar", { rows: COUNT_UP_TOKEN, ms: result.elapsed_ms }),
+        )
+      : null;
 
   return (
     <Box
@@ -6398,7 +6445,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             )}
           </chakra.span>
         )}
-        {!streaming && result.elapsed_ms != null && result.columns.length > 0 && (
+        {statusBarParts && (
           <chakra.span
             marginLeft={selSummary ? "4" : "auto"}
             fontSize="xs"
@@ -6407,7 +6454,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             fontFamily="mono"
             aria-live="polite"
           >
-            {t("resultStatusBar", { rows: result.rows.length, ms: result.elapsed_ms })}
+            {statusBarParts[0]}
+            <CountUp value={confirmedRowCount} formatter={formatCountUpPlainInt} />
+            {statusBarParts[1]}
             {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
               <Tooltip label={t("autoLimitApplied", { limit: autoLimitApplied })}>
                 <chakra.span color="var(--text-warning)" marginLeft="6px">
@@ -6434,7 +6483,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         <chakra.input
           ref={searchInputRef}
           type="search"
-          marginLeft={selSummary || (!streaming && result.elapsed_ms != null && result.columns.length > 0) ? "8px" : "auto"}
+          marginLeft={selSummary || statusBarParts ? "8px" : "auto"}
           width="220px"
           padding="3px 8px"
           fontSize="sm"
