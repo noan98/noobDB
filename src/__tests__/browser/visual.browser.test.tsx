@@ -39,13 +39,23 @@ afterEach(() => {
 /**
  * 固定幅のラッパ (`visual-root`) に収めて描画する。Portal を使わない通常の
  * コンポーネント向け。スクリーンショット対象の locator を返す。
+ *
+ * `background: var(--app-bg)` はこのラッパ自体には対応する `App.css` トークンが
+ * 無く未解決のまま (= transparent) になる。以前は `, #fff` のフォールバックが
+ * 付いていたため常に白背景で描画されていたが、これは「`App.css` の変数が来ない」
+ * ことを前提にした記述だった (#961)。`setup.browser.ts` で `App.css` を読み込む
+ * ようになった現在は `html, body, #root { background: var(--bg); }` が実際の
+ * テーマ背景色を描画するので、このラッパは背景を透過させてその下地を見せれば
+ * ライト/ダークの差分が正しく現れる。フォールバックを残さないことで、将来また
+ * `App.css` が読み込まれなくなる退行が起きても (白背景に隠れず) 気付けるように
+ * している。
  */
 async function renderVisual(ui: ReactElement, theme: Theme) {
   applyTheme(theme);
   await renderInBrowser(
     <div
       data-testid="visual-root"
-      style={{ width: "640px", padding: "16px", background: "var(--app-bg, #fff)" }}
+      style={{ width: "640px", padding: "16px", background: "var(--app-bg)" }}
     >
       {ui}
     </div>,
