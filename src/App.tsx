@@ -3902,6 +3902,8 @@ export default function App() {
         database: tab?.database ?? null,
         rowLimit,
         chunkSize: settings.streamPrefetchSize,
+        // runQueryInTab (通常実行) と同じ設定値を渡す (#I2)。
+        queryTimeoutSecs: settings.queryTimeoutSecs,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({
@@ -3922,6 +3924,7 @@ export default function App() {
     cancelStreamForTab,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
+    settings.queryTimeoutSecs,
   ]);
 
   const loadMoreInTab = useCallback(async (tabId: string) => {

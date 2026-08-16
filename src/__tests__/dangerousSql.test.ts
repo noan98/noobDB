@@ -203,6 +203,47 @@ describe("isReadOnlySql", () => {
     expect(isReadOnlySql("   ")).toBe(false);
     expect(isReadOnlySql("(SELECT 1)")).toBe(false);
   });
+
+  it("rejects cross-engine write passthrough functions hidden in a SELECT", () => {
+    // The statement itself is a plain top-level SELECT, so it passes the
+    // prefix check; the actual write lives inside a string-literal argument
+    // that maskLiterals blanks, so only the function name being on the
+    // WRITE_KEYWORDS list catches it. Mirrors backend
+    // `is_read_only_sql_masked` (src-tauri/src/db/mod.rs).
+    expect(
+      isReadOnlySql(
+        "SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE t SET a=1') AS r",
+      ),
+    ).toBe(false);
+    expect(
+      isReadOnlySql("SELECT * FROM OPENQUERY(linked_srv, 'DELETE FROM accounts')"),
+    ).toBe(false);
+    expect(
+      isReadOnlySql("SELECT dblink_exec('dbname=other','DELETE FROM accounts')"),
+    ).toBe(false);
+    expect(isReadOnlySql("SELECT dblink('dbname=other','SELECT 1')")).toBe(false);
+    expect(isReadOnlySql("SELECT load_extension('/tmp/evil.so')")).toBe(false);
+    // Fail-closed: a column merely named after one of these functions is also
+    // rejected (over-detection is cheap, under-detection is not).
+    expect(isReadOnlySql("SELECT openrowset FROM t")).toBe(false);
+  });
+
+  it("reveals the contents of a MySQL versioned comment (/*! ... */) instead of masking it", () => {
+    // `/*! ... */` is not a comment on MySQL — its body executes on servers
+    // new enough to satisfy the optional version gate — so it must not be
+    // blanked the way a plain `/* ... */` block comment is.
+    expect(isReadOnlySql("SELECT /*!50000 * FROM users */ ")).toBe(true);
+    expect(
+      isReadOnlySql("SELECT 1 /*! UNION SELECT password FROM users */"),
+    ).toBe(true);
+    expect(
+      isReadOnlySql("SELECT 1 /*!50000 , (SELECT DELETE FROM users) */"),
+    ).toBe(false);
+    // An ordinary block comment (no `!`) is unaffected.
+    expect(
+      isReadOnlySql("SELECT 1 /* normal comment with DELETE inside */"),
+    ).toBe(true);
+  });
 });
 
 /**

@@ -65,6 +65,42 @@ fn find_record(id: &str) -> Result<SandboxRecord> {
         .ok_or_else(|| sandbox_not_found(id))
 }
 
+/// 渡された `session_id` が本当に `record` (= `sandbox_id`) のサンドボックス
+/// セッションであることを検証して返す。IPC は直接叩けるため、検証なしに
+/// `sandbox_session_id` を信用すると、無関係なセッション (他のサンドボックスや
+/// 通常の接続) に対して読み取り/書き込み/close を発行できてしまう —
+/// `commands::local::get_local_session` (「このセッションは想定した種類か」を
+/// 使う前に確認する既存パターン) と同じ考え方で、こちらは「このセッションは
+/// "この" サンドボックスのものか」まで踏み込んで確認する。
+///
+/// 判定は `SandboxRecord.file_path` (このサンドボックスの SQLite ファイルパス) と、
+/// セッションが実際に開いている `connect_options.file_path` の突き合わせ —
+/// サンドボックスセッションは常にこのファイルを指す `Connection::Sqlite` として
+/// 作られる (`create_sandbox_inner`) ため、一致すれば「別セッションだが同じ ID を
+/// 使い回された」余地なく本人確認になる。
+async fn get_sandbox_session(
+    state: &AppState,
+    record: &SandboxRecord,
+    session_id: &str,
+) -> Result<std::sync::Arc<Session>> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    let is_this_sandbox = session
+        .connect_options
+        .file_path
+        .as_deref()
+        .is_some_and(|p| p == record.file_path);
+    if !is_this_sandbox {
+        return Err(AppError::InvalidInput(format!(
+            "session '{session_id}' is not the sandbox session for '{}'",
+            record.id
+        )));
+    }
+    Ok(session)
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct SandboxCreateResponse {
     pub sandbox: SandboxRecord,
@@ -145,6 +181,21 @@ pub(crate) async fn create_sandbox_inner(
     } else {
         selected
     };
+    // 上の予約プレフィックス検査はユーザが直接選んだ `tables` にしか効いていない。
+    // `include_related` で FK 閉包を辿った結果 (`effective_tables`) には
+    // ユーザの手を離れて実テーブルが追加され得るため、ここでも同じ検査を掛け直す。
+    // この時点まで来ている名前は元の `tables` 検査を通過済みなので、ここで
+    // 引っかかるものは必ず FK 閉包で新たに引き込まれたテーブルだと分かる —
+    // その旨をエラーメッセージに含めることで、ユーザは「関連テーブルの自動追加」を
+    // 外すか対象を絞るかの判断がしやすくなる (黙って除外すると、閉包が本来含む
+    // はずのテーブルが理由もなく欠けたサンドボックスができてしまい、後段の diff/
+    // 書き戻しが気づかれないまま不完全になる方が有害と判断した)。
+    if let Some(t) = effective_tables.iter().find(|t| is_shadow_table_name(t)) {
+        return Err(AppError::InvalidInput(format!(
+            "table '{t}' uses the reserved sandbox prefix and was pulled in via a foreign-key \
+             relationship; deselect \"include related tables\" or narrow the selection to avoid it"
+        )));
+    }
 
     let limit = clamp_row_limit(row_limit);
 
@@ -359,12 +410,25 @@ pub(crate) async fn discard_sandbox_inner(
     sandbox_id: String,
     session_id: Option<String>,
 ) -> Result<()> {
+    // レコードは一度だけ読み、セッション検証と後段のファイル削除の両方に使い回す。
+    let record = find_record(&sandbox_id).ok();
+
     if let Some(sid) = &session_id {
-        if let Some(sess) = state.remove(sid).await {
-            sess.conn.close().await;
+        // `get_sandbox_session` で「この session_id は本当にこのサンドボックスの
+        // ものか」を確認できたときだけ close する。無関係な session_id (他の
+        // サンドボックスや通常の接続、あるいは既にメタデータが消えたサンドボックス)
+        // を渡されても、黙ってそのセッションを強制切断しない — 検証なしに
+        // `state.remove` を叩くと呼び出し元の入力ミス/悪意で無関係のセッションを
+        // 巻き込んで閉じてしまう事故になる。
+        if let Some(record) = &record {
+            if get_sandbox_session(state, record, sid).await.is_ok() {
+                if let Some(sess) = state.remove(sid).await {
+                    sess.conn.close().await;
+                }
+            }
         }
     }
-    if let Ok(record) = find_record(&sandbox_id) {
+    if let Some(record) = &record {
         remove_sandbox_files(std::path::Path::new(&record.file_path));
     }
     sandbox_store::delete(&sandbox_id)?;
@@ -427,10 +491,7 @@ pub(crate) async fn sandbox_table_diff_inner(
             "table '{table}' is not part of sandbox '{sandbox_id}'"
         )));
     }
-    let sandbox = state
-        .get(&sandbox_session_id)
-        .await
-        .ok_or_else(|| AppError::SessionNotFound(sandbox_session_id.clone()))?;
+    let sandbox = get_sandbox_session(state, &record, &sandbox_session_id).await?;
 
     let col_info = sandbox.conn.columns("", &table).await?;
     if col_info.is_empty() {
@@ -576,10 +637,7 @@ pub(crate) async fn sandbox_schema_diff_inner(
     source_session_id: Option<String>,
 ) -> Result<SandboxSchemaDiffResult> {
     let record = find_record(&sandbox_id)?;
-    let sandbox = state
-        .get(&sandbox_session_id)
-        .await
-        .ok_or_else(|| AppError::SessionNotFound(sandbox_session_id.clone()))?;
+    let sandbox = get_sandbox_session(state, &record, &sandbox_session_id).await?;
 
     let mut live_tables: Vec<TableColumns> = Vec::with_capacity(record.tables.len());
     let mut base_tables: Vec<TableColumns> = Vec::with_capacity(record.tables.len());
@@ -695,10 +753,17 @@ pub(crate) async fn sandbox_advance_base_inner(
             "table '{table}' is not part of sandbox '{sandbox_id}'"
         )));
     }
-    let sandbox = state
-        .get(&sandbox_session_id)
-        .await
-        .ok_or_else(|| AppError::SessionNotFound(sandbox_session_id.clone()))?;
+    let sandbox = get_sandbox_session(state, &record, &sandbox_session_id).await?;
+    // このコマンドはサンドボックスの内部帳簿 (shadow/base テーブル) への書き込みを
+    // 直接 `execute_transaction` で発行する。`commands::sync::apply_sync_sql_inner`
+    // (L62) / `commands::privileges` (L128) と同じく、read_only セッションへの
+    // 書き込みは `is_read_only_sql` の判定経路を通らない (SQL 文字列としてではなく
+    // ここで直接組み立てているため) ので、コマンド側で明示的に拒否する。
+    if sandbox.read_only {
+        return Err(AppError::ReadOnly(
+            "read-only session: sandbox base snapshot cannot be advanced".into(),
+        ));
+    }
     let shadow = shadow_table_name(&table);
     let can_delete = allow_delete && !applied.truncated;
 

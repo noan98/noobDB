@@ -141,20 +141,27 @@ pub async fn delete_task(id: String) -> Result<()> {
 
 #[tauri::command]
 pub async fn set_task_enabled(id: String, enabled: bool) -> Result<TaskDefinition> {
-    let mut tasks = store::load_all()?;
-    let task = tasks
-        .iter_mut()
-        .find(|t| t.id == id)
-        .ok_or_else(|| AppError::InvalidInput(format!("task not found: {id}")))?;
-    task.enabled = enabled;
-    task.next_run_at = if enabled {
-        Some(schedule::next_run_after(&task.schedule, Utc::now()).to_rfc3339())
-    } else {
-        None
-    };
-    let updated = task.clone();
-    store::save_all(&tasks)?;
-    Ok(updated)
+    // 読み → 変更 → 書きをストアのロック下で一息に行う (途中で `save_task` /
+    // `delete_task` が割り込むと、その変更をこの保存が消してしまうため)。
+    let mut updated: Option<TaskDefinition> = None;
+    store::update_all(|tasks| {
+        let task = tasks
+            .iter_mut()
+            .find(|t| t.id == id)
+            .ok_or_else(|| AppError::InvalidInput(format!("task not found: {id}")))?;
+        task.enabled = enabled;
+        task.next_run_at = if enabled {
+            Some(schedule::next_run_after(&task.schedule, Utc::now()).to_rfc3339())
+        } else {
+            None
+        };
+        updated = Some(task.clone());
+        Ok(())
+    })?;
+    // `update_all` は `f` を必ず呼び、その中でタスクが見つからなければ上の `?` で
+    // 抜けるので、ここに来た時点で必ず `Some`。panic せず通常のエラーにするのは
+    // リポジトリ方針 (本体コードで unwrap/panic 禁止)。
+    updated.ok_or_else(|| AppError::Other("task update did not produce a result".into()))
 }
 
 /// タスクを即座に 1 回実行する。有効/無効に関係なく実行できる (手動確認・

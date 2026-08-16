@@ -348,26 +348,19 @@ impl MySqlConn {
         // BEFORE query, and a WHERE-filtered re-run would return a
         // different row set after the UPDATE (e.g. `... SET flag=0 WHERE
         // flag=1` matches nothing once committed), breaking the pairing.
-        let where_clause = if !primary_key.is_empty()
-            && (trimmed.starts_with("update") || trimmed.starts_with("delete"))
-        {
-            extract_where_and_after(sql)
-        } else {
-            None
-        };
+        //
+        // 判定と切り出しはドライバ非依存の純ロジック (`db::preview`) を共有する
+        // — PostgreSQL 側にも同じ取りこぼしがあったため。
+        let where_clause =
+            super::preview::before_where_clause(sql, super::SqlFlavor::MySql, &primary_key);
 
         let before_sql = target.as_ref().map(|t| match &where_clause {
             // The user's clause is appended verbatim — it already includes
             // any ORDER BY / LIMIT they wrote. We don't add our own LIMIT
             // here (their LIMIT would clash); the fetch below caps the
             // collected rows at `row_limit + 1` instead.
-            Some(w) => format!("SELECT * FROM {} {}", t, w),
-            None => format!(
-                "SELECT * FROM {}{} LIMIT {}",
-                t,
-                order_clause,
-                row_limit + 1
-            ),
+            Some(w) => super::preview::build_snapshot_sql(t, Some(w), "", None),
+            None => super::preview::build_snapshot_sql(t, None, &order_clause, Some(row_limit + 1)),
         });
 
         let mut tx = conn.begin().await?;
@@ -1744,7 +1737,12 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
         &["TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "YEAR"],
     ) {
         if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
-            return v.map(Value::Int).unwrap_or(Value::Null);
+            // BIGINT は 2^53 を超えうる。`Value` は `#[serde(untagged)]` なので
+            // そのまま `Value::Int` にすると JSON の素の数値として送られ、
+            // フロントの `JSON.parse` で丸められて**別の値**になる (表示だけで
+            // なく、インラインセル編集が組み立てる `WHERE pk = …` まで狂う)。
+            // 安全整数の外は十進文字列へ退避する。
+            return v.map(Value::from_i64_lossless).unwrap_or(Value::Null);
         }
     }
     if ti(
@@ -1758,7 +1756,9 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
         ],
     ) {
         if let Ok(v) = row.try_get::<Option<u64>, _>(i) {
-            return v.map(Value::UInt).unwrap_or(Value::Null);
+            // BIGINT UNSIGNED も同様に安全整数を超えうる
+            // (`Value::from_i64_lossless` の符号なし版へ)。
+            return v.map(Value::from_u64_lossless).unwrap_or(Value::Null);
         }
     }
     if ti(type_name, &["FLOAT", "DOUBLE"]) {
@@ -1823,6 +1823,15 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
         }
     }
     if ti(type_name, &["JSON"]) {
+        // `serde_json::Value` を経由した再シリアライズはオブジェクトのキーを
+        // 並べ替える (`preserve_order` 無効の既定では `Map` が `BTreeMap` =
+        // 辞書順)。PostgreSQL 側 (`db::postgres`) ではこれが実害になるため
+        // サーバの返す JSON テキストをそのまま返すよう直したが、**MySQL は
+        // 現状維持**とする: MySQL は JSON 型を保存時にバイナリ表現へ正規化
+        // し、その際オブジェクトのキーを (長さ → バイト順で) 並べ替えるため、
+        // 著者が書いた順序はサーバ到達時点で既に失われており、クライアント側で
+        // 復元する術が無い。並べ替えの規則が MySQL の正規化順と厳密には
+        // 一致しない点は許容する (JSON としての等価性は保たれる)。
         if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(i) {
             return v
                 .map(|j| Value::String(j.to_string()))
@@ -1894,94 +1903,6 @@ fn extract_target_table(sql: &str) -> Option<String> {
         }
         _ => None,
     }
-}
-
-/// Returns the substring of `sql` starting at the outermost `WHERE`
-/// keyword (inclusive), or `None` if the statement has no top-level
-/// `WHERE`. Comments are stripped first; string and identifier quoting
-/// (`'...'`, `"..."`, `` `...` ``) plus parenthesis depth are tracked so
-/// a `WHERE` nested in a subquery — e.g. inside the `SET` expression of
-/// an `UPDATE` — is not mistaken for the outer clause.
-///
-/// Any trailing statement terminator (`;`) is stripped from the result so
-/// the value can be concatenated directly into a wrapper SELECT. ORDER BY
-/// and LIMIT clauses that the user wrote after WHERE are preserved
-/// verbatim, so the BEFORE snapshot honours them too.
-fn extract_where_and_after(sql: &str) -> Option<String> {
-    let cleaned = strip_sql_comments(sql);
-    let bytes = cleaned.as_bytes();
-    let n = bytes.len();
-    let mut depth: i32 = 0;
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_backtick = false;
-    let mut i: usize = 0;
-    while i < n {
-        let c = bytes[i];
-        if in_single {
-            if c == b'\\' && i + 1 < n {
-                i += 2;
-                continue;
-            }
-            if c == b'\'' {
-                // Doubled '' inside '...' is an escaped quote, not the end.
-                if i + 1 < n && bytes[i + 1] == b'\'' {
-                    i += 2;
-                    continue;
-                }
-                in_single = false;
-            }
-        } else if in_double {
-            if c == b'\\' && i + 1 < n {
-                i += 2;
-                continue;
-            }
-            if c == b'"' {
-                if i + 1 < n && bytes[i + 1] == b'"' {
-                    i += 2;
-                    continue;
-                }
-                in_double = false;
-            }
-        } else if in_backtick {
-            if c == b'`' {
-                in_backtick = false;
-            }
-        } else {
-            match c {
-                b'\'' => in_single = true,
-                b'"' => in_double = true,
-                b'`' => in_backtick = true,
-                b'(' => depth += 1,
-                b')' if depth > 0 => {
-                    depth -= 1;
-                }
-                _ if depth == 0
-                    && i + 5 <= n
-                    && bytes[i..i + 5].eq_ignore_ascii_case(b"where")
-                    && (i == 0 || !is_ident_byte(bytes[i - 1]))
-                    && (i + 5 == n || !is_ident_byte(bytes[i + 5])) =>
-                {
-                    let mut tail = cleaned[i..].trim();
-                    if let Some(stripped) = tail.strip_suffix(';') {
-                        tail = stripped.trim_end();
-                    }
-                    return if tail.is_empty() {
-                        None
-                    } else {
-                        Some(tail.to_string())
-                    };
-                }
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-fn is_ident_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
 }
 
 /// Backtick-quotes a single identifier, doubling any embedded backticks.
@@ -2118,37 +2039,24 @@ async fn fetch_after_by_pk(
     if captured_pks.is_empty() {
         return Ok(Vec::new());
     }
-    let pk_idents: Vec<String> = pk_cols
-        .iter()
-        .map(|c| format!("`{}`", c.replace('`', "``")))
-        .collect();
     // Single-column PK → `WHERE pk IN (?, ?, ...)`. Composite PK →
     // `WHERE (a,b) IN ((?,?), (?,?), ...)`. MySQL supports the row-constructor
-    // form natively, so we don't need to fall back to OR chains.
-    let row_placeholder = if pk_idents.len() == 1 {
-        "?".to_string()
-    } else {
-        format!(
-            "({})",
-            std::iter::repeat("?")
-                .take(pk_idents.len())
-                .collect::<Vec<_>>()
-                .join(",")
-        )
+    // form natively, so we don't need to fall back to OR chains. 組み立ては
+    // ドライバ非依存の `db::preview` と共有し、ここでは MySQL の位置
+    // パラメータ (`?`) を値の数だけ並べて後段で bind する。
+    let fragments: Vec<Vec<String>> = captured_pks
+        .iter()
+        .map(|_| vec!["?".to_string(); pk_cols.len()])
+        .collect();
+    let Some(sql) = super::preview::build_after_by_pk_sql(
+        target,
+        pk_cols,
+        &fragments,
+        order_clause,
+        quote_ident,
+    ) else {
+        return Ok(Vec::new());
     };
-    let placeholders = std::iter::repeat(row_placeholder.as_str())
-        .take(captured_pks.len())
-        .collect::<Vec<_>>()
-        .join(",");
-    let lhs = if pk_idents.len() == 1 {
-        pk_idents[0].clone()
-    } else {
-        format!("({})", pk_idents.join(","))
-    };
-    let sql = format!(
-        "SELECT * FROM {} WHERE {} IN ({}){}",
-        target, lhs, placeholders, order_clause
-    );
     let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     for row_pks in captured_pks {
         for v in row_pks {
@@ -2670,93 +2578,10 @@ mod tests {
         assert_eq!(extract_target_table(sql), Some("users".into()));
     }
 
-    #[test]
-    fn extracts_outer_where_from_update() {
-        assert_eq!(
-            extract_where_and_after("UPDATE users SET name = 'a' WHERE id = 1"),
-            Some("WHERE id = 1".into())
-        );
-    }
-
-    #[test]
-    fn extracts_outer_where_from_delete() {
-        assert_eq!(
-            extract_where_and_after("DELETE FROM orders WHERE total > 100"),
-            Some("WHERE total > 100".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_returns_none_when_absent() {
-        assert!(extract_where_and_after("UPDATE t SET x = 1").is_none());
-        assert!(extract_where_and_after("DELETE FROM t").is_none());
-    }
-
-    #[test]
-    fn extract_where_ignores_inner_where_in_subquery() {
-        // The WHERE inside the SET subquery is at paren depth > 0 and must
-        // be skipped — otherwise we'd build the BEFORE snapshot from the
-        // subquery's filter instead of the outer one.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET x = (SELECT y FROM s WHERE z = 1) WHERE id = 5"),
-            Some("WHERE id = 5".into())
-        );
-        assert!(
-            extract_where_and_after("UPDATE t SET x = (SELECT y FROM s WHERE z = 1)").is_none()
-        );
-    }
-
-    #[test]
-    fn extract_where_ignores_keyword_in_string_literal() {
-        // 'WHERE' inside a single-quoted literal must not be picked up as
-        // the outer keyword.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET x = 'WHERE' WHERE id = 1"),
-            Some("WHERE id = 1".into())
-        );
-        // Doubled-quote escape '' inside the string must not prematurely
-        // close it.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET x = 'a''b WHERE c' WHERE id = 1"),
-            Some("WHERE id = 1".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_ignores_keyword_in_backtick_identifier() {
-        // A column literally named `where` must not be picked up as the
-        // keyword. We then expect the real keyword that follows.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET `where` = 1 WHERE id = 2"),
-            Some("WHERE id = 2".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_preserves_trailing_clauses() {
-        // ORDER BY / LIMIT after WHERE belong to the user's mutation and
-        // should be reused verbatim by the BEFORE-snapshot SELECT.
-        assert_eq!(
-            extract_where_and_after("DELETE FROM t WHERE y = 2 ORDER BY id DESC LIMIT 10"),
-            Some("WHERE y = 2 ORDER BY id DESC LIMIT 10".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_strips_trailing_semicolon() {
-        // A trailing `;` would break the wrapper SELECT it gets spliced
-        // into, so the extractor drops it.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET x=1 WHERE id=1;"),
-            Some("WHERE id=1".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_ignores_identifier_prefixed_with_where() {
-        // `whereabouts` starts with "where" but is not the keyword.
-        assert!(extract_where_and_after("UPDATE t SET whereabouts = 'home'").is_none());
-    }
+    // NOTE: `extract_where_and_after` の単体テストは `db::preview` へ移設した
+    // (PostgreSQL と共有する純ロジックになったため)。MySQL 方言の解釈が
+    // 変わっていないことは、移設先で `SqlFlavor::MySql` を指定した同じ
+    // ケース群が引き続き固定している。
 
     #[test]
     fn quotes_identifiers_with_backticks() {

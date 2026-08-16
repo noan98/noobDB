@@ -673,3 +673,295 @@ async fn postgres_server_metrics_reports_connection_and_transaction_counters() {
 
     conn.close().await;
 }
+
+/// 型デコードの回帰テスト: sqlx の型互換チェックでは文字列として読めない型
+/// (`uuid` / 配列 / `inet` / `money` / `interval` / ユーザ定義 ENUM) が、
+/// **非 NULL なのに `Value::Null` として返る**という不具合の再発防止。
+/// 併せて、同じ列の SQL NULL は当然 `Value::Null` になること (NULL と非 NULL を
+/// 取り違えていないこと) も確認する。
+#[tokio::test]
+async fn postgres_exotic_types_decode_to_values_not_null() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_types", None)
+        .await
+        .expect("drop table");
+    conn.execute("DROP TYPE IF EXISTS noobdb_pg_mood", None)
+        .await
+        .expect("drop type");
+    conn.execute("CREATE TYPE noobdb_pg_mood AS ENUM ('happy', 'sad')", None)
+        .await
+        .expect("create enum type");
+    conn.execute(
+        "CREATE TABLE public.noobdb_pg_types (
+            id INT PRIMARY KEY,
+            u UUID,
+            tags TEXT[],
+            nums INT4[],
+            addr INET,
+            price MONEY,
+            span INTERVAL,
+            mood noobdb_pg_mood,
+            payload JSONB,
+            big BIGINT
+         )",
+        None,
+    )
+    .await
+    .expect("create table");
+    conn.execute(
+        "INSERT INTO public.noobdb_pg_types VALUES (
+            1,
+            '11111111-2222-3333-4444-555555555555'::uuid,
+            ARRAY['a', 'b,c', NULL]::text[],
+            ARRAY[1, 2, 3]::int4[],
+            '192.168.1.5'::inet,
+            12.34::money,
+            INTERVAL '1 year 2 mons 3 days 04:05:06.789',
+            'happy'::noobdb_pg_mood,
+            '{\"b\": 1, \"a\": 2}'::jsonb,
+            9007199254740993
+         ), (
+            2, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+         )",
+        None,
+    )
+    .await
+    .expect("insert");
+
+    let res = conn
+        .execute(
+            "SELECT u, tags, nums, addr, price, span, mood, payload, big
+             FROM public.noobdb_pg_types WHERE id = 1",
+            None,
+        )
+        .await
+        .expect("select typed row");
+    assert_eq!(res.rows.len(), 1);
+    let row = &res.rows[0];
+
+    // どの列も NULL であってはならない (これが本丸の回帰点)。
+    for (i, name) in [
+        "uuid", "text[]", "int4[]", "inet", "money", "interval", "enum", "jsonb", "bigint",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert!(
+            !matches!(&row[i], t::Value::Null),
+            "column {name} decoded to NULL despite holding a value: {:?}",
+            row[i]
+        );
+    }
+
+    assert!(
+        matches!(&row[0], t::Value::String(s) if s == "11111111-2222-3333-4444-555555555555"),
+        "uuid must decode to its canonical text form, got {:?}",
+        row[0]
+    );
+    // 配列は PostgreSQL の配列リテラル表記。区切り文字を含む要素は引用され、
+    // 要素の NULL は `NULL` として表れる。
+    assert!(
+        matches!(&row[1], t::Value::String(s) if s == "{a,\"b,c\",NULL}"),
+        "text[] must decode to an array literal, got {:?}",
+        row[1]
+    );
+    assert!(
+        matches!(&row[2], t::Value::String(s) if s == "{1,2,3}"),
+        "int4[] must decode to an array literal, got {:?}",
+        row[2]
+    );
+    assert!(
+        matches!(&row[3], t::Value::String(s) if s == "192.168.1.5"),
+        "inet must decode to its text form, got {:?}",
+        row[3]
+    );
+    assert!(
+        matches!(&row[4], t::Value::String(s) if s == "12.34"),
+        "money must decode to a plain decimal, got {:?}",
+        row[4]
+    );
+    assert!(
+        matches!(&row[5], t::Value::String(s) if s == "1 year 2 mons 3 days 04:05:06.789"),
+        "interval must decode to PostgreSQL-style text, got {:?}",
+        row[5]
+    );
+    assert!(
+        matches!(&row[6], t::Value::String(s) if s == "happy"),
+        "user-defined enum must decode to its label, got {:?}",
+        row[6]
+    );
+    // JSONB のキー順はサーバが返したまま (再シリアライズで辞書順に
+    // 並べ替えない)。PostgreSQL の jsonb 自身はキーを長さ→バイト順で
+    // 正規化するので、`{"b": 1, "a": 2}` は `{"a": 2, "b": 1}` として
+    // 保存される — 検証したいのは「サーバの出力と一致すること」。
+    let server_text = conn
+        .execute(
+            "SELECT payload::text FROM public.noobdb_pg_types WHERE id = 1",
+            None,
+        )
+        .await
+        .expect("select jsonb as text");
+    let expected_json = match &server_text.rows[0][0] {
+        t::Value::String(s) => s.clone(),
+        other => panic!("jsonb::text must come back as a string: {other:?}"),
+    };
+    assert!(
+        matches!(&row[7], t::Value::String(s) if *s == expected_json),
+        "jsonb must be returned verbatim ({expected_json}), got {:?}",
+        row[7]
+    );
+    // 2^53 を超える bigint は丸めを避けるため十進文字列で届く。
+    assert!(
+        matches!(&row[8], t::Value::String(s) if s == "9007199254740993"),
+        "bigint beyond 2^53 must be a decimal string, got {:?}",
+        row[8]
+    );
+
+    // 同じ列の SQL NULL はきちんと Null になること。
+    let nulls = conn
+        .execute(
+            "SELECT u, tags, nums, addr, price, span, mood, payload, big
+             FROM public.noobdb_pg_types WHERE id = 2",
+            None,
+        )
+        .await
+        .expect("select null row");
+    assert!(
+        nulls.rows[0].iter().all(|v| matches!(v, t::Value::Null)),
+        "every SQL NULL must decode to Value::Null: {:?}",
+        nulls.rows[0]
+    );
+
+    // 安全整数の境界: 2^53 - 1 までは数値のまま。
+    let boundary = conn
+        .execute("SELECT 9007199254740991::bigint", None)
+        .await
+        .expect("boundary select");
+    assert!(
+        matches!(&boundary.rows[0][0], t::Value::Int(9_007_199_254_740_991)),
+        "the largest safe integer must stay a JSON number, got {:?}",
+        boundary.rows[0][0]
+    );
+
+    conn.execute("DROP TABLE public.noobdb_pg_types", None)
+        .await
+        .expect("cleanup table");
+    conn.execute("DROP TYPE noobdb_pg_mood", None)
+        .await
+        .expect("cleanup type");
+    conn.close().await;
+}
+
+/// ドライランプレビューが「PK 昇順の先頭 N 件」の窓の外を更新する UPDATE でも
+/// before/after を捉えること。以前の PostgreSQL 実装は常に
+/// `SELECT * FROM t ORDER BY pk LIMIT n+1` を撮っていたため、窓の外の行を
+/// 更新すると before/after が同一になり「変更なし」に見えていた。
+#[tokio::test]
+async fn postgres_preview_captures_rows_outside_the_default_window() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_preview", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE public.noobdb_pg_preview (id INT PRIMARY KEY, label TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO public.noobdb_pg_preview
+         SELECT g, 'row-' || g FROM generate_series(1, 50) g",
+        None,
+    )
+    .await
+    .expect("seed");
+
+    // row_limit = 3 → 従来の固定窓は id 1..3 しか映さない。id = 40 は窓の外。
+    let preview = conn
+        .preview_execute_with_limit(
+            "UPDATE public.noobdb_pg_preview SET label = 'changed' WHERE id = 40",
+            None,
+            3,
+        )
+        .await
+        .expect("preview");
+    assert_eq!(preview.rows_affected, 1);
+    assert_eq!(preview.primary_key, vec!["id".to_string()]);
+    assert_eq!(
+        preview.before_rows.len(),
+        1,
+        "BEFORE must be filtered by the user's WHERE, got {:?}",
+        preview.before_rows
+    );
+    assert_eq!(
+        preview.after_rows.len(),
+        1,
+        "AFTER must be refetched by the captured PK, got {:?}",
+        preview.after_rows
+    );
+    let label_index = preview
+        .columns
+        .iter()
+        .position(|c| c.name == "label")
+        .expect("label column");
+    assert!(
+        matches!(&preview.before_rows[0][label_index], t::Value::String(s) if s == "row-40"),
+        "BEFORE must show the pre-update value: {:?}",
+        preview.before_rows[0]
+    );
+    assert!(
+        matches!(&preview.after_rows[0][label_index], t::Value::String(s) if s == "changed"),
+        "AFTER must show the updated value: {:?}",
+        preview.after_rows[0]
+    );
+
+    // プレビューは必ずロールバックする。
+    let live = conn
+        .execute(
+            "SELECT label FROM public.noobdb_pg_preview WHERE id = 40",
+            None,
+        )
+        .await
+        .expect("post-preview select");
+    assert!(
+        matches!(&live.rows[0][0], t::Value::String(s) if s == "row-40"),
+        "preview must not persist: {:?}",
+        live.rows[0]
+    );
+
+    // WHERE が更新対象の列そのものを絞るケース (実行後は WHERE に一致しなく
+    // なる) でも、AFTER は BEFORE の PK でアンカーされているので行が消えない。
+    let flip = conn
+        .preview_execute_with_limit(
+            "UPDATE public.noobdb_pg_preview SET label = 'flipped' WHERE label = 'row-45'",
+            None,
+            3,
+        )
+        .await
+        .expect("preview flip");
+    assert_eq!(flip.rows_affected, 1);
+    assert_eq!(flip.before_rows.len(), 1);
+    assert_eq!(
+        flip.after_rows.len(),
+        1,
+        "PK-anchored AFTER must keep the row visible: {:?}",
+        flip.after_rows
+    );
+
+    conn.execute("DROP TABLE public.noobdb_pg_preview", None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}

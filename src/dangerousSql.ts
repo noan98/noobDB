@@ -34,7 +34,10 @@ export interface DangerFinding {
  * quotes, double quotes, backticks, dollar-quoted strings, line comments
  * (`--` / `#`) and block comments, so clause keywords (`WHERE`, `ORDER BY`, …)
  * survive while a `where` hiding inside a string or a quoted identifier named
- * `` `order` `` does not.
+ * `` `order` `` does not. One deliberate exception: a MySQL versioned comment
+ * — opened with `/*!`, optionally followed by a version number, e.g.
+ * `/*!50000` — is *not* blanked like an ordinary block comment, because
+ * MySQL actually executes its body. See the `/*!` branch below.
  */
 export function maskLiterals(sql: string, driver?: string): string {
   const backslashEscapes = driverBackslashEscapes(driver);
@@ -59,6 +62,26 @@ export function maskLiterals(sql: string, driver?: string): string {
     if (c === "#") {
       let j = i + 1;
       while (j < n && sql[j] !== "\n") j++;
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    if (c === "/" && c2 === "*" && sql[i + 2] === "!") {
+      // MySQL "version comment" `/*! ... */` (optionally `/*!50000 ... */`):
+      // despite the `/*` spelling this is not a comment on MySQL — its body
+      // *executes* on servers new enough to satisfy the optional version
+      // gate — so blanking the interior the way a normal `/* ... */` block
+      // comment is blanked below would hide real, executable SQL from every
+      // keyword scan built on this mask. Only the opening delimiter (`/*!`
+      // plus any immediately-following digits) is blanked here; the body is
+      // left for the main loop to keep scanning normally from here (so a
+      // quote or nested comment inside it is still masked correctly), and
+      // the closing `*/` — which nothing else in this loop specially
+      // recognises — just passes through unchanged as two ordinary
+      // characters (harmless: neither is a word character). Mirrors the
+      // backend `mask_for_analysis_impl` (src-tauri/src/db/mod.rs).
+      let j = i + 3;
+      while (j < n && /[0-9]/.test(sql[j])) j++;
       blank(i, j);
       i = j;
       continue;
@@ -275,6 +298,23 @@ const WRITE_KEYWORDS = [
   "merge",
   "grant",
   "revoke",
+  // 別エンジンへの書き込みパススルー関数群。文全体は `SELECT ...` のままなので
+  // READ_ONLY_PREFIXES は通過するが、実際の書き込み SQL は引数の文字列リテラルの
+  // 中に埋め込まれ maskLiterals で空白化されるため、通常のキーワード走査には
+  // 引っかからない (`SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE ...')`、
+  // `SELECT dblink_exec('dbname=other','DELETE FROM accounts')`)。
+  // `openrowset`/`openquery`/`opendatasource` は MSSQL のリンクサーバ経由
+  // パススルー、`dblink`/`dblink_exec` は PostgreSQL の他 DB へのクエリ実行、
+  // `load_extension` は SQLite のネイティブ拡張ロード (任意コード実行)。バックの
+  // `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と同じく全ドライバ共通で
+  // 拒否する (fail-closed。正当な識別子としてこれらの名前が現れる可能性は極めて
+  // 低い)。
+  "openrowset",
+  "openquery",
+  "opendatasource",
+  "dblink",
+  "dblink_exec",
+  "load_extension",
 ];
 
 /**

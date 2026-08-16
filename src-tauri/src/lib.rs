@@ -595,6 +595,11 @@ pub fn run() {
     // ローカル横断クエリ (#740) の一時 DB は前回起動のセッション寿命に紐づくため、
     // 新しいプロセスの起動時点で前回分は必ず無効 — 異常終了で残った分をここで掃除する。
     commands::local::cleanup_stale_local_files();
+    // ダンプ用の一時資格情報ファイル (`noobdb-dump-*.cnf`/`.pgpass`、平文の DB
+    // パスワードを含む) も同じ理由で前回起動分は無効。通常は Drop で消えるが、
+    // SIGKILL/OOM/クラッシュなど Drop を経由しない終了だと残ってしまうため、
+    // 同じタイミング・同じベストエフォート方針で掃除する。
+    commands::dump::cleanup_stale_dump_credential_files();
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

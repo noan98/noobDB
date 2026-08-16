@@ -1040,3 +1040,93 @@ async fn mysql_query_inspector_support_and_stats() {
     observed.close().await;
     conn.close().await;
 }
+
+/// 64bit 整数の精度落ち回帰テスト。`Value` は `#[serde(untagged)]` なので
+/// `Value::Int` / `Value::UInt` は JSON の素の数値としてフロントへ渡り、
+/// `JSON.parse` で 2^53 を超える値が丸められてしまう。安全整数の境界を跨いだ
+/// ところで表現が数値 → 十進文字列に切り替わることを固定する
+/// (フロントの `cellEdit.ts` も「2^53 超は文字列で届く」前提)。
+#[tokio::test]
+async fn mysql_bigint_beyond_safe_integer_is_a_string() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    conn.execute("DROP TABLE IF EXISTS noobdb_mysql_bigint", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_mysql_bigint (
+            id INT PRIMARY KEY,
+            safe BIGINT,
+            big BIGINT,
+            neg BIGINT,
+            ubig BIGINT UNSIGNED,
+            usafe BIGINT UNSIGNED
+         )",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO noobdb_mysql_bigint VALUES (
+            1,
+            9007199254740991,
+            9007199254740993,
+            -9007199254740993,
+            18446744073709551615,
+            9007199254740991
+         )",
+        None,
+    )
+    .await
+    .expect("insert");
+
+    let res = conn
+        .execute(
+            "SELECT safe, big, neg, ubig, usafe FROM noobdb_mysql_bigint WHERE id = 1",
+            None,
+        )
+        .await
+        .expect("select");
+    let row = &res.rows[0];
+    // 2^53 - 1 は JSON でも正確に表せるので数値のまま。
+    assert!(
+        matches!(&row[0], t::Value::Int(9_007_199_254_740_991)),
+        "the largest safe integer must stay a JSON number, got {:?}",
+        row[0]
+    );
+    // 2^53 + 1 は文字列で届く (数値のままだと 9007199254740992 に丸まる)。
+    assert!(
+        matches!(&row[1], t::Value::String(s) if s == "9007199254740993"),
+        "bigint beyond 2^53 must be a decimal string, got {:?}",
+        row[1]
+    );
+    assert!(
+        matches!(&row[2], t::Value::String(s) if s == "-9007199254740993"),
+        "negative bigint beyond -2^53 must be a decimal string, got {:?}",
+        row[2]
+    );
+    // BIGINT UNSIGNED も同様。
+    assert!(
+        matches!(&row[3], t::Value::String(s) if s == "18446744073709551615"),
+        "bigint unsigned beyond 2^53 must be a decimal string, got {:?}",
+        row[3]
+    );
+    assert!(
+        matches!(
+            &row[4],
+            t::Value::UInt(9_007_199_254_740_991) | t::Value::Int(9_007_199_254_740_991)
+        ),
+        "an unsigned value within the safe range must stay a JSON number, got {:?}",
+        row[4]
+    );
+
+    conn.execute("DROP TABLE noobdb_mysql_bigint", None)
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}

@@ -312,3 +312,251 @@ async fn sandbox_create_diff_writeback_and_discard_round_trip() {
 
     let _ = std::fs::remove_file(&source_path);
 }
+
+/// #H3: `sandbox_advance_base` must verify that `sandbox_session_id` is really
+/// the session for `sandbox_id` before touching its shadow/base tables. A
+/// completely unrelated session (different backing SQLite file — e.g. another
+/// sandbox, or an ordinary connection) must be rejected rather than silently
+/// having its tables read/written.
+#[tokio::test]
+async fn sandbox_advance_base_rejects_unrelated_session() {
+    let (source_path, source_conn) = fresh_sqlite("advance_unrelated_source").await;
+    source_conn
+        .execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+            None,
+        )
+        .await
+        .expect("create source table");
+    source_conn
+        .execute("INSERT INTO items (id, label) VALUES (1, 'a')", None)
+        .await
+        .expect("seed source rows");
+
+    let state = std::sync::Arc::new(t::AppState::default());
+    let source_session = t::make_session(
+        "sbx_adv_unrel_source",
+        source_conn,
+        t::sqlite_options(source_path.to_str().expect("utf8 path")),
+        false,
+    );
+    let source_session_id = state.insert(source_session).await;
+
+    let create = t::create_sandbox_via_command(
+        &state,
+        &source_session_id,
+        None,
+        "advance unrelated test",
+        vec!["items".to_string()],
+        false,
+        Some(100),
+    )
+    .await
+    .expect("create_sandbox");
+    let guard = DiscardGuard {
+        state: state.clone(),
+        sandbox_id: Some(create.sandbox.id.clone()),
+        session_id: Some(create.session_id.clone()),
+    };
+
+    // A second, wholly unrelated session (a different backing SQLite file, not
+    // registered as this sandbox's session) must not be accepted in its place.
+    let (other_path, other_conn) = fresh_sqlite("advance_unrelated_other").await;
+    let other_session = t::make_session(
+        "sbx_adv_unrel_other",
+        other_conn,
+        t::sqlite_options(other_path.to_str().expect("utf8 path")),
+        false,
+    );
+    let other_session_id = state.insert(other_session).await;
+
+    // An (effectively) empty diff still exercises the ownership check, which
+    // runs before any statement is built from `applied`.
+    let empty_diff = t::sandbox_table_diff_via_command(
+        &state,
+        &create.sandbox.id,
+        &create.session_id,
+        "items",
+        None,
+        None,
+    )
+    .await
+    .expect("sandbox_table_diff")
+    .desired;
+
+    let err = t::sandbox_advance_base_via_command(
+        &state,
+        &create.sandbox.id,
+        &other_session_id,
+        "items",
+        empty_diff,
+        true,
+    )
+    .await
+    .expect_err("an unrelated session must not be accepted as this sandbox's session");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("not the sandbox session"),
+        "unexpected error message: {msg}"
+    );
+
+    guard.discard().await;
+    if let Some(sess) = state.remove(&other_session_id).await {
+        sess.conn.close().await;
+    }
+    let _ = std::fs::remove_file(&source_path);
+    let _ = std::fs::remove_file(&other_path);
+}
+
+/// #H3: `sandbox_advance_base` must reject a read-only session even when it
+/// legitimately points at the sandbox's own SQLite file (mirrors
+/// `apply_sync_sql` / `apply_privilege_sql` rejecting read-only targets).
+#[tokio::test]
+async fn sandbox_advance_base_rejects_read_only_session() {
+    let (source_path, source_conn) = fresh_sqlite("advance_ro_source").await;
+    source_conn
+        .execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+            None,
+        )
+        .await
+        .expect("create source table");
+    source_conn
+        .execute("INSERT INTO items (id, label) VALUES (1, 'a')", None)
+        .await
+        .expect("seed source rows");
+
+    let state = std::sync::Arc::new(t::AppState::default());
+    let source_session = t::make_session(
+        "sbx_adv_ro_source",
+        source_conn,
+        t::sqlite_options(source_path.to_str().expect("utf8 path")),
+        false,
+    );
+    let source_session_id = state.insert(source_session).await;
+
+    let create = t::create_sandbox_via_command(
+        &state,
+        &source_session_id,
+        None,
+        "advance read-only test",
+        vec!["items".to_string()],
+        false,
+        Some(100),
+    )
+    .await
+    .expect("create_sandbox");
+    let guard = DiscardGuard {
+        state: state.clone(),
+        sandbox_id: Some(create.sandbox.id.clone()),
+        session_id: Some(create.session_id.clone()),
+    };
+
+    // Open a second connection to the *same* sandbox SQLite file, this time
+    // marked read-only. It legitimately identifies as this sandbox's session
+    // (same file_path) so the ownership check alone must not be enough to
+    // stop it — the read_only guard has to catch it.
+    let ro_opts = t::sqlite_options(&create.sandbox.file_path);
+    let ro_conn = t::connect(&ro_opts).await.expect("connect read-only copy");
+    let ro_session = t::make_session("sbx_adv_ro_copy", ro_conn, ro_opts, true);
+    let ro_session_id = state.insert(ro_session).await;
+
+    let empty_diff = t::sandbox_table_diff_via_command(
+        &state,
+        &create.sandbox.id,
+        &create.session_id,
+        "items",
+        None,
+        None,
+    )
+    .await
+    .expect("sandbox_table_diff")
+    .desired;
+
+    let err = t::sandbox_advance_base_via_command(
+        &state,
+        &create.sandbox.id,
+        &ro_session_id,
+        "items",
+        empty_diff,
+        true,
+    )
+    .await
+    .expect_err("a read-only session must not be able to advance the sandbox base");
+    assert_eq!(err.kind(), "readOnly", "unexpected error kind: {err:?}");
+
+    guard.discard().await;
+    if let Some(sess) = state.remove(&ro_session_id).await {
+        sess.conn.close().await;
+    }
+    let _ = std::fs::remove_file(&source_path);
+}
+
+/// #H4: the reserved shadow-table prefix check must also apply to tables
+/// pulled in transitively via `include_related` (FK closure), not just the
+/// tables the caller explicitly selected. Otherwise a real table that happens
+/// to be named with the reserved prefix can be dragged in through a foreign
+/// key and collide with its own shadow ("base") mirror.
+#[tokio::test]
+async fn create_sandbox_rejects_reserved_prefix_pulled_in_via_fk_closure() {
+    // Must match `db::sandbox::SHADOW_PREFIX` (not re-exported to tests).
+    const SHADOW_PREFIX: &str = "__noobdb_sandbox_base__";
+    let reserved_table = format!("{SHADOW_PREFIX}parent");
+
+    let (source_path, source_conn) = fresh_sqlite("fk_reserved_prefix").await;
+    source_conn
+        .execute(
+            &format!("CREATE TABLE \"{reserved_table}\" (id INTEGER PRIMARY KEY)"),
+            None,
+        )
+        .await
+        .expect("create reserved-prefix parent table");
+    source_conn
+        .execute(
+            &format!(
+                "CREATE TABLE child (id INTEGER PRIMARY KEY, ref_id INTEGER REFERENCES \"{reserved_table}\"(id))"
+            ),
+            None,
+        )
+        .await
+        .expect("create child table with FK to the reserved-prefix table");
+
+    let state = std::sync::Arc::new(t::AppState::default());
+    let source_session = t::make_session(
+        "sbx_fk_reserved_prefix",
+        source_conn,
+        t::sqlite_options(source_path.to_str().expect("utf8 path")),
+        false,
+    );
+    let source_session_id = state.insert(source_session).await;
+
+    // Selecting only `child` with `include_related = true` must pull in the
+    // reserved-prefix parent via FK closure — and that must be rejected, not
+    // silently accepted into a sandbox where it would collide with its own
+    // shadow table.
+    let err = t::create_sandbox_via_command(
+        &state,
+        &source_session_id,
+        None,
+        "fk reserved prefix test",
+        vec!["child".to_string()],
+        true,
+        Some(100),
+    )
+    .await
+    .expect_err("a reserved-prefix table pulled in via FK closure must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains(&reserved_table) && msg.contains("reserved sandbox prefix"),
+        "unexpected error message: {msg}"
+    );
+
+    // Nothing should have been persisted: no sandbox record, no leftover file.
+    let listed = t::list_sandboxes_via_command().expect("list_sandboxes");
+    assert!(
+        !listed.iter().any(|r| r.name == "fk reserved prefix test"),
+        "a rejected sandbox creation must not leave a record behind"
+    );
+
+    let _ = std::fs::remove_file(&source_path);
+}

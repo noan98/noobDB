@@ -28,20 +28,189 @@ pub const MAX_LOCAL_TABLE_ROWS: usize = 200_000;
 /// 「既定で揮発」という設計を置き場所のレベルからも裏付けるため — アプリが
 /// 異常終了して `disconnect` のクリーンアップが走らなくても、OS が temp を
 /// 掃除する対象になる。
+///
+/// **注意**: `std::env::temp_dir()` は全ユーザ共有の書き込み可能領域 (Unix では
+/// 通常 `/tmp`)。このディレクトリには複数 DB を横断結合した実データが入るため、
+/// 同一マシンの他ユーザに読まれたり、固定パスを先回りされて (ディレクトリ/
+/// シンボリックリンクの事前作成で) 書き込み先ごと乗っ取られたりしないよう、
+/// 実際の準備は [`prepare_local_temp_dir`] / ファイル作成側の `mode(0o600)` で
+/// 検証・強制する (Unix 限定。他 OS では従来どおり)。
 fn local_temp_dir() -> std::path::PathBuf {
     std::env::temp_dir().join("noobdb-local")
+}
+
+/// 現在のプロセスの実効 UID。所有者検証 (`prepare_local_temp_dir` /
+/// `cleanup_stale_local_files`) にだけ使う 1 関数のために `libc` クレート依存を
+/// 増やしたくないので、`geteuid(2)` を直接 `extern "C"` 宣言する。Unix ターゲットは
+/// ビルド時に必ずシステム libc をリンクするため、追加のビルド設定は不要。
+#[cfg(unix)]
+fn current_uid() -> u32 {
+    extern "C" {
+        fn geteuid() -> u32;
+    }
+    // SAFETY: `geteuid` は引数を取らず失敗しない純粋な問い合わせ syscall。
+    unsafe { geteuid() }
+}
+
+/// [`local_temp_dir`] を、他ユーザに乗っ取られていないことを検証したうえで用意する
+/// (Unix 限定)。
+///
+/// - まだ何も存在しなければ `0700` (自分だけが rwx) で新規作成する。
+/// - 既に何か存在する場合は **黙って使わず**、次をすべて確認する:
+///   - シンボリックリンクでないこと (差し替えによる書き込み先ハイジャックを検出)。
+///   - 実在するディレクトリであること。
+///   - 所有者が自分 (`current_uid()`) であること (他ユーザの先回り作成を検出)。
+///   - group/other に一切の権限が無いこと (`mode & 0o077 == 0`)。
+///
+///   いずれかを満たさなければ分かりやすいエラーで拒否する。
+///
+/// `symlink_metadata` (lstat 相当、シンボリックリンクを辿らない) で存在確認と
+/// 種別判定を同時に行うことで、「確認してから使う」の間に TOCTOU が入り込む余地を
+/// 最小化している。
+#[cfg(unix)]
+fn prepare_local_temp_dir(dir: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    match std::fs::symlink_metadata(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+                Ok(()) => Ok(()),
+                // 「存在しない」を見てから作るまでの間に、別スレッド (ローカル
+                // セッションは同時に複数開ける) が先に作ることがある。作成の
+                // 成否ではなく「最終的に検証を満たすディレクトリがあるか」が
+                // 目的なので、その場合は検証側へ回して判定させる。ここで素直に
+                // エラーにすると、正常な並行オープンが `AlreadyExists` で
+                // 落ちてしまう。
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    verify_local_temp_dir(dir)
+                }
+                Err(e) => Err(e.into()),
+            }
+        }
+        Err(e) => Err(e.into()),
+        Ok(meta) => verify_local_temp_dir_meta(dir, &meta),
+    }
+}
+
+/// 既存の [`local_temp_dir`] を lstat し直して検証する ([`prepare_local_temp_dir`]
+/// の作成が競合で `AlreadyExists` になったときの合流点)。
+#[cfg(unix)]
+fn verify_local_temp_dir(dir: &std::path::Path) -> Result<()> {
+    let meta = std::fs::symlink_metadata(dir)?;
+    verify_local_temp_dir_meta(dir, &meta)
+}
+
+/// 既存エントリが「自分だけが読み書きできる実ディレクトリ」であることの検証。
+#[cfg(unix)]
+fn verify_local_temp_dir_meta(dir: &std::path::Path, meta: &std::fs::Metadata) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if meta.file_type().is_symlink() {
+        return Err(AppError::Other(format!(
+            "refusing to use local session directory {}: it is a symbolic link (possible hijack)",
+            dir.display()
+        )));
+    }
+    if !meta.is_dir() {
+        return Err(AppError::Other(format!(
+            "refusing to use local session directory {}: not a directory",
+            dir.display()
+        )));
+    }
+    if meta.uid() != current_uid() {
+        return Err(AppError::Other(format!(
+            "refusing to use local session directory {}: not owned by the current user",
+            dir.display()
+        )));
+    }
+    let mode = meta.permissions().mode();
+    if mode & 0o077 != 0 {
+        return Err(AppError::Other(format!(
+            "refusing to use local session directory {}: group or other has access (mode {:o})",
+            dir.display(),
+            mode & 0o777
+        )));
+    }
+    Ok(())
+}
+
+/// Windows など Unix 以外では、所有者/パーミッション概念が異なるため従来どおり
+/// `create_dir_all` するだけ (挙動を変えない)。
+#[cfg(not(unix))]
+fn prepare_local_temp_dir(dir: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    Ok(())
+}
+
+/// ローカルセッションの SQLite ファイルを新規作成する。`dump.rs::DefaultsFile::
+/// create` と同じパターン (Unix では `mode(0o600)`) を踏襲し、他ユーザに読まれない
+/// パーミッションで作る。`create_new` (= `O_CREAT | O_EXCL`) を使うのは、`create`
+/// (`O_CREAT | O_TRUNC`) だと既存のシンボリックリンクを辿って書き込んでしまうため
+/// — ファイル名は `random_slug(12)` を含み衝突はまず起きない前提なので、
+/// 「既に存在するなら異常」として素直にエラーにできる。
+#[cfg(unix)]
+fn create_local_session_file(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_local_session_file(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    Ok(())
 }
 
 /// 起動時に呼ばれるベストエフォートの掃除。前回異常終了で残った一時 DB ファイルは
 /// この時点でどのセッションからも参照されていない (アプリを再起動した = 全セッションが
 /// 消えている) ので、ディレクトリごと削除して構わない。失敗してもログに残すだけで
 /// 起動は継続する (#740)。
+///
+/// **Unix ではディレクトリの実体を検証してから消す。** `dir.exists()` (stat 相当、
+/// シンボリックリンクを辿る) で存在確認して素朴に `remove_dir_all` すると、
+/// 攻撃者が `noobdb-local` を他ディレクトリへのシンボリックリンクへ差し替えていた
+/// 場合にリンク先のディレクトリを丸ごと再帰削除しかねない。`symlink_metadata`
+/// (lstat) でリンクそのものかどうかを見極め、リンクなら中身を辿らずエントリ自体
+/// だけを消す。所有者が自分でない場合も (他ユーザの先回り作成の可能性) 中身には
+/// 触れず、次回 `create_local_session` 側の検証に判断を委ねる。
 pub fn cleanup_stale_local_files() {
     let dir = local_temp_dir();
-    if dir.exists() {
-        if let Err(e) = std::fs::remove_dir_all(&dir) {
-            tracing::warn!(path = %dir.display(), error = %e, "failed to clean up stale local-session temp files");
+    let meta = match std::fs::symlink_metadata(&dir) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            tracing::warn!(path = %dir.display(), error = %e, "failed to stat local-session temp directory during startup cleanup");
+            return;
         }
+    };
+
+    #[cfg(unix)]
+    {
+        if meta.file_type().is_symlink() {
+            if let Err(e) = std::fs::remove_file(&dir) {
+                tracing::warn!(path = %dir.display(), error = %e, "failed to remove hijacked local-session symlink");
+            }
+            return;
+        }
+        use std::os::unix::fs::MetadataExt;
+        if meta.is_dir() && meta.uid() != current_uid() {
+            tracing::warn!(path = %dir.display(), "local-session temp directory is not owned by the current user; leaving it alone");
+            return;
+        }
+    }
+    // 非 Unix ビルドでは上の `#[cfg(unix)]` ブロックが丸ごと消えるため `meta` が
+    // 未使用になる。存在確認だけが目的の変数なので明示的に握りつぶしておく。
+    let _ = &meta;
+
+    if let Err(e) = std::fs::remove_dir_all(&dir) {
+        tracing::warn!(path = %dir.display(), error = %e, "failed to clean up stale local-session temp files");
     }
 }
 
@@ -95,11 +264,13 @@ pub async fn create_local_session(state: State<'_, AppState>) -> Result<SessionI
 /// it without a Tauri runtime (exposed via `__test_api`).
 pub async fn create_local_session_inner(state: &AppState) -> Result<SessionId> {
     let dir = local_temp_dir();
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| AppError::Other(format!("failed to prepare local session directory: {e}")))?;
+    // 乗っ取り検証込みの準備 (Unix): シンボリックリンク/他ユーザ所有/群書き込み
+    // 可能な場合はここでエラーになる。エラーメッセージは既に状況を明示しているので
+    // そのまま伝播する。
+    prepare_local_temp_dir(&dir)?;
     let file_name = format!("local-{}.sqlite", random_slug(12));
     let path = dir.join(file_name);
-    std::fs::File::create(&path)
+    create_local_session_file(&path)
         .map_err(|e| AppError::Other(format!("failed to create local session file: {e}")))?;
 
     let opts = DbConnectOptions {
@@ -312,5 +483,108 @@ mod tests {
         // Sanity bound: some time after this file was written, well before
         // any realistic clock skew could make it fail.
         assert!(now_ms() > 1_700_000_000_000);
+    }
+
+    // ローカル横断クエリの一時ディレクトリ/ファイルの権限強制 (Unix 限定)。
+    #[cfg(unix)]
+    mod unix_permissions {
+        use super::*;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        fn scratch_dir(tag: &str) -> std::path::PathBuf {
+            let mut p = std::env::temp_dir();
+            p.push(format!(
+                "noobdb_local_perm_test_{tag}_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+            p
+        }
+
+        #[test]
+        fn prepare_local_temp_dir_creates_with_mode_0700() {
+            let dir = scratch_dir("fresh");
+            prepare_local_temp_dir(&dir).unwrap();
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "got mode {mode:o}");
+            std::fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
+        fn prepare_local_temp_dir_is_idempotent_for_a_properly_secured_dir() {
+            let dir = scratch_dir("idempotent");
+            prepare_local_temp_dir(&dir).unwrap();
+            // 2 回目も、自分が作った 0700 ディレクトリなのでそのまま通る。
+            prepare_local_temp_dir(&dir).unwrap();
+            std::fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
+        fn prepare_local_temp_dir_rejects_a_symlink() {
+            let target = scratch_dir("symlink_target");
+            std::fs::create_dir_all(&target).unwrap();
+            let link = scratch_dir("symlink_link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+
+            let err = prepare_local_temp_dir(&link).unwrap_err();
+            assert!(
+                err.to_string().contains("symbolic link"),
+                "unexpected error: {err}"
+            );
+
+            std::fs::remove_file(&link).ok();
+            std::fs::remove_dir_all(&target).ok();
+        }
+
+        #[test]
+        fn prepare_local_temp_dir_rejects_group_or_other_writable_existing_dir() {
+            let dir = scratch_dir("loose_perms");
+            std::fs::create_dir_all(&dir).unwrap();
+            // 意図的に group/other へ書き込み権限を残す (乗っ取りシナリオの模擬)。
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+            let err = prepare_local_temp_dir(&dir).unwrap_err();
+            assert!(
+                err.to_string().contains("group or other has access"),
+                "unexpected error: {err}"
+            );
+
+            std::fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
+        fn create_local_session_file_creates_with_mode_0600() {
+            let dir = scratch_dir("file_mode");
+            prepare_local_temp_dir(&dir).unwrap();
+            let path = dir.join("probe.sqlite");
+            create_local_session_file(&path).unwrap();
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "got mode {mode:o}");
+            std::fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
+        fn create_local_session_file_refuses_to_overwrite_an_existing_path() {
+            let dir = scratch_dir("file_exists");
+            prepare_local_temp_dir(&dir).unwrap();
+            let path = dir.join("probe.sqlite");
+            create_local_session_file(&path).unwrap();
+            // 2 回目 (同じパスに何か既に存在する) は `create_new` により拒否
+            // される — シンボリックリンクへ追従して書き込む経路を作らない。
+            assert!(create_local_session_file(&path).is_err());
+            std::fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
+        fn current_uid_matches_metadata_of_a_freshly_created_file() {
+            let dir = scratch_dir("uid_probe");
+            std::fs::create_dir_all(&dir).unwrap();
+            let uid = std::fs::metadata(&dir).unwrap().uid();
+            assert_eq!(uid, current_uid());
+            std::fs::remove_dir_all(&dir).ok();
+        }
     }
 }

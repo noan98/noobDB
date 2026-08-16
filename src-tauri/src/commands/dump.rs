@@ -178,15 +178,22 @@ pub async fn dump_database(
     // Gate the task on register_stream completing first, mirroring the other
     // streaming commands so a fast/failed dump can't forget_stream before it is
     // registered (a leftover handle would make a later cancel wrongly succeed).
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+    // The oneshot carries the token `register_stream` issues; the task uses it
+    // to `forget_stream` only *its own* registration — `stream_id` is
+    // client-supplied and can be reused, so without the token a late cleanup
+    // from a stale task could erase a newer dump's entry (#state.rs の I4 対応)。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
     let stream_id_for_task = stream_id.clone();
     let counter_for_task = counter.clone();
     let handle = tokio::spawn(async move {
-        let _ = ready_rx.await;
+        let Ok(token) = ready_rx.await else {
+            return;
+        };
         spawn_dump(
             app,
             session,
             stream_id_for_task,
+            token,
             database,
             path,
             options,
@@ -194,7 +201,7 @@ pub async fn dump_database(
         )
         .await;
     });
-    state
+    let token = state
         .register_stream(
             stream_id,
             StreamHandle {
@@ -204,7 +211,7 @@ pub async fn dump_database(
             },
         )
         .await;
-    let _ = ready_tx.send(());
+    let _ = ready_tx.send(token);
     Ok(())
 }
 
@@ -216,6 +223,7 @@ async fn spawn_dump(
     app: AppHandle,
     session: Arc<Session>,
     stream_id: String,
+    stream_token: u64,
     database: String,
     path: String,
     options: DumpOptions,
@@ -252,7 +260,7 @@ async fn spawn_dump(
     }
 
     if let Some(state) = app.try_state::<AppState>() {
-        state.forget_stream(&stream_id).await;
+        state.forget_stream(&stream_id, stream_token).await;
     }
 }
 
@@ -276,48 +284,10 @@ pub(crate) async fn run_dump(
     counter: &Arc<AtomicU64>,
     started: Instant,
 ) -> Result<u64> {
-    let tmp = dump_temp_path(final_path);
-    let tmp_str = tmp.to_string_lossy().to_string();
-
-    let bytes = match session.connect_options.driver {
-        DriverKind::Mysql => {
-            dump_mysql(
-                app,
-                stream_id,
-                &session.connect_options,
-                database,
-                &tmp_str,
-                options,
-                counter,
-                started,
-            )
-            .await?
-        }
-        DriverKind::Postgres => {
-            dump_postgres(
-                app,
-                stream_id,
-                &session.connect_options,
-                database,
-                &tmp_str,
-                options,
-                counter,
-                started,
-            )
-            .await?
-        }
-        DriverKind::Sqlite => {
-            dump_sqlite(
-                app,
-                stream_id,
-                &session.conn,
-                &tmp_str,
-                options,
-                counter,
-                started,
-            )
-            .await?
-        }
+    // Fail fast for unsupported drivers *before* touching the filesystem —
+    // otherwise every dump attempt on these would create (and immediately
+    // discard) a temp file for nothing.
+    match session.connect_options.driver {
         // #709: DuckDB has no `sqlite_master`-style catalog table carrying
         // verbatim `CREATE TABLE` DDL the way SQLite does, so `dump_sqlite`'s
         // approach doesn't translate directly. A dedicated DuckDB dump path
@@ -339,28 +309,96 @@ pub(crate) async fn run_dump(
                 "database dump is not yet supported for MSSQL".into(),
             ))
         }
+        DriverKind::Mysql | DriverKind::Postgres | DriverKind::Sqlite => {}
+    }
+
+    // Reserve the temp file up front with a symlink-safe `create_new` open
+    // and thread the already-open handle down to whichever driver path
+    // actually writes into it, rather than letting each path re-open the
+    // path by name (which would reintroduce the TOCTOU window).
+    //
+    // `cleanup` owns the temp file for the *entire* remaining span of this
+    // function — dispatch, optional reformat, and the final rename — and is
+    // only `commit()`ted once the rename succeeds. Centralizing it here
+    // (rather than letting `stream_external_dump`/`dump_sqlite` each guard
+    // only their own slice) matters because the file now exists *before* we
+    // know whether e.g. the `mysqldump`/`pg_dump` binary is even installed or
+    // the credentials file could be written: any `?` early return from
+    // `dump_mysql`/`dump_postgres`/`dump_sqlite` below (including failures
+    // that happen before they ever touch the file) must still delete this
+    // reserved-but-unused temp file, which only a guard spanning the whole
+    // function can guarantee.
+    let (tmp, tmp_file) = create_dump_temp_file(final_path).await?;
+    let tmp_str = tmp.to_string_lossy().to_string();
+    let mut cleanup = PartialFileCleanup::new(tmp.clone());
+
+    let bytes = match session.connect_options.driver {
+        DriverKind::Mysql => {
+            dump_mysql(
+                app,
+                stream_id,
+                &session.connect_options,
+                database,
+                tmp_file,
+                options,
+                counter,
+                started,
+            )
+            .await?
+        }
+        DriverKind::Postgres => {
+            dump_postgres(
+                app,
+                stream_id,
+                &session.connect_options,
+                database,
+                tmp_file,
+                options,
+                counter,
+                started,
+            )
+            .await?
+        }
+        DriverKind::Sqlite => {
+            dump_sqlite(
+                app,
+                stream_id,
+                &session.conn,
+                tmp_file,
+                options,
+                counter,
+                started,
+            )
+            .await?
+        }
+        DriverKind::DuckDb | DriverKind::Mssql => {
+            // Unreachable in practice — the early return above already sends
+            // these two drivers home before `tmp`/`tmp_file` are created. Kept
+            // as an explicit (non-panicking) arm rather than `unreachable!()`
+            // so a future refactor that removes the early check fails safely
+            // (an `InvalidInput` error) instead of a runtime panic; `cleanup`
+            // (not yet committed) removes the reserved-but-unused temp file.
+            return Err(AppError::InvalidInput(
+                "database dump is not yet supported for this driver".into(),
+            ));
+        }
     };
 
     // 整形オプションが有効なら、書き出した SQL を整形して保存し直す (#546)。整形も
-    // 一時ファイル上で行う。
+    // 一時ファイル上で行う。失敗時は `cleanup` (未 commit) が末尾の Drop で消す。
     let bytes = if options.format_sql && bytes > 0 {
-        match format_dump_file(tmp_str.clone()).await {
-            Ok(b) => b,
-            Err(e) => {
-                let _ = tokio::fs::remove_file(&tmp).await;
-                return Err(e);
-            }
-        }
+        format_dump_file(tmp_str).await?
     } else {
         bytes
     };
 
     // Everything succeeded: atomically move the temp file onto the final path,
-    // replacing any existing file only now (not mid-write).
-    if let Err(e) = tokio::fs::rename(&tmp, final_path).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return Err(AppError::Io(e));
-    }
+    // replacing any existing file only now (not mid-write). Failure here is
+    // also covered by `cleanup`'s Drop.
+    tokio::fs::rename(&tmp, final_path)
+        .await
+        .map_err(AppError::Io)?;
+    cleanup.commit();
     Ok(bytes)
 }
 
@@ -380,17 +418,79 @@ fn dump_temp_path(final_path: &str) -> PathBuf {
     dir.join(format!(".{name}.dumping.{}.{seq}", std::process::id()))
 }
 
-/// Pipe an external dump tool's stdout to `path` while counting bytes and
-/// emitting throttled `dump-stream:progress` events. `kill_on_drop` is set so a
-/// `cancel_stream` abort (which drops this future) kills the child; the
-/// `PartialFileCleanup` guard removes the half-written file on any non-success
-/// path. stdout and stderr are drained concurrently to avoid a pipe deadlock.
+/// Upper bound on retries in [`create_dump_temp_file`]. `dump_temp_path`
+/// already mixes in the current PID and a per-process sequence number, so a
+/// collision here should be all but impossible in practice; the loop exists
+/// only so a genuine (or attacker-forced) collision doesn't fail the dump
+/// outright when trying the very next candidate would have worked.
+const DUMP_TEMP_FILE_MAX_ATTEMPTS: u32 = 8;
+
+/// Opens a **new** temp dump file, refusing to follow anything already at that
+/// path — including a symlink planted by another local user with write access
+/// to the target directory.
+///
+/// `tokio::fs::File::create` (`O_CREAT|O_TRUNC`) follows an existing symlink
+/// and truncates whatever it points at, so a pre-planted link in the dump
+/// directory could redirect the dump's contents onto an arbitrary file the
+/// attacker doesn't otherwise have permission to write (TOCTOU: the directory
+/// is checked for a moment, then written to as if nothing had changed).
+/// `OpenOptions::create_new` maps to `O_CREAT|O_EXCL`, which atomically fails
+/// with `AlreadyExists` when the final path component exists at all (symlink
+/// or not, dangling or not) instead of following it — the same defense
+/// `DefaultsFile::create` / `PgPassFile::create` below already use for the
+/// credential files.
+///
+/// On `AlreadyExists` this retries with a fresh candidate path (bumping
+/// `dump_temp_path`'s sequence number) rather than failing immediately, since
+/// a single collision doesn't mean the directory is hostile — the next
+/// candidate is very likely available. Returns the actual path used (the
+/// caller must use *this* path, not whatever it might have computed itself,
+/// for the follow-up reformat/rename) together with the open handle.
+async fn create_dump_temp_file(final_path: &str) -> Result<(PathBuf, tokio::fs::File)> {
+    let mut last_err: Option<std::io::Error> = None;
+    for _ in 0..DUMP_TEMP_FILE_MAX_ATTEMPTS {
+        let candidate = dump_temp_path(final_path);
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+            .await
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_err = Some(e);
+                continue;
+            }
+            Err(e) => return Err(AppError::Io(e)),
+        }
+    }
+    Err(AppError::Other(format!(
+        "failed to create a unique temp dump file after {DUMP_TEMP_FILE_MAX_ATTEMPTS} attempts: {}",
+        last_err.map(|e| e.to_string()).unwrap_or_default()
+    )))
+}
+
+/// Pipe an external dump tool's stdout to the already-open `file` while
+/// counting bytes and emitting throttled `dump-stream:progress` events.
+/// `kill_on_drop` is set so a `cancel_stream` abort (which drops this future)
+/// kills the child. stdout and stderr are drained concurrently to avoid a
+/// pipe deadlock.
+///
+/// `file` was reserved up front by [`create_dump_temp_file`] in `run_dump`
+/// (symlink-safe via `create_new`) and its cleanup-on-failure is owned by
+/// `run_dump`'s `PartialFileCleanup` guard, not this function — this function
+/// only ever writes into the handle it was given, it never re-opens the path
+/// by name (which would reintroduce the TOCTOU window `create_dump_temp_file`
+/// closes) and never deletes it itself (a "binary not found" failure can
+/// happen before this function is even called, e.g. while writing the
+/// credentials file in `dump_mysql`/`dump_postgres`, so only a guard spanning
+/// the whole dispatch in `run_dump` can cover every early-return path).
 async fn stream_external_dump(
     app: &AppHandle,
     stream_id: &str,
     mut cmd: Command,
     tool_name: &str,
-    path: &str,
+    file: tokio::fs::File,
     counter: &Arc<AtomicU64>,
     started: Instant,
 ) -> Result<u64> {
@@ -399,6 +499,8 @@ async fn stream_external_dump(
     cmd.stdin(Stdio::null());
     // Aborting the task must kill the child rather than leave it running (#686).
     cmd.kill_on_drop(true);
+
+    let mut writer = BufWriter::new(file);
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -410,11 +512,6 @@ async fn stream_external_dump(
         }
         Err(e) => return Err(AppError::Io(e)),
     };
-
-    // Create the output file only after a successful spawn, guarded for cleanup.
-    let mut cleanup = PartialFileCleanup::new(path);
-    let file = tokio::fs::File::create(path).await?;
-    let mut writer = BufWriter::new(file);
 
     let mut stdout = child
         .stdout
@@ -480,8 +577,10 @@ async fn stream_external_dump(
         )));
     }
 
+    // 一時ファイルの後始末は呼び出し元 (`run_dump`) が持つ `PartialFileCleanup`
+    // に一元化してある (rename が成功した時点で commit される)。ここで commit
+    // すると、整形や rename が失敗したときに書きかけのファイルが残ってしまう。
     let bytes = counter.load(Ordering::SeqCst);
-    cleanup.commit();
     Ok(bytes)
 }
 
@@ -529,14 +628,16 @@ async fn format_dump_file(path: String) -> Result<u64> {
     .map_err(|e| AppError::Other(format!("dump format task failed: {e}")))?
 }
 
-/// Run `mysqldump` for `database`, streaming SQL to `path`.
+/// Run `mysqldump` for `database`, streaming SQL into the already-open `file`
+/// (symlink-safe, reserved by [`create_dump_temp_file`] in `run_dump`, which
+/// also owns cleaning it up on failure).
 #[allow(clippy::too_many_arguments)]
 async fn dump_mysql(
     app: &AppHandle,
     stream_id: &str,
     connect_options: &DbConnectOptions,
     database: &str,
-    path: &str,
+    file: tokio::fs::File,
     options: &DumpOptions,
     counter: &Arc<AtomicU64>,
     started: Instant,
@@ -597,21 +698,23 @@ async fn dump_mysql(
     // Hold the option file until the child finishes reading it — the streamer
     // spawns the child, so keeping `defaults` alive across the await is required.
     let result =
-        stream_external_dump(app, stream_id, cmd, "mysqldump", path, counter, started).await;
+        stream_external_dump(app, stream_id, cmd, "mysqldump", file, counter, started).await;
     drop(defaults);
     result
 }
 
-/// Run `pg_dump` for `database`, writing SQL to `path`. The password is
-/// passed via a temp `PGPASSFILE` (mode 0600 on unix) and `--no-password`, so it
-/// never appears in process arguments, the environment, or logs.
+/// Run `pg_dump` for `database`, writing SQL into the already-open `file`
+/// (symlink-safe, reserved by [`create_dump_temp_file`] in `run_dump`, which
+/// also owns cleaning it up on failure). The password is passed via a temp
+/// `PGPASSFILE` (mode 0600 on unix) and `--no-password`, so it never appears
+/// in process arguments, the environment, or logs.
 #[allow(clippy::too_many_arguments)]
 async fn dump_postgres(
     app: &AppHandle,
     stream_id: &str,
     connect_options: &DbConnectOptions,
     database: &str,
-    path: &str,
+    file: tokio::fs::File,
     options: &DumpOptions,
     counter: &Arc<AtomicU64>,
     started: Instant,
@@ -653,29 +756,29 @@ async fn dump_postgres(
     cmd.env_remove("PGPASSWORD");
 
     // Hold the pass file until the child finishes authenticating.
-    let result = stream_external_dump(app, stream_id, cmd, "pg_dump", path, counter, started).await;
+    let result = stream_external_dump(app, stream_id, cmd, "pg_dump", file, counter, started).await;
     drop(pgpass);
     result
 }
 
 /// Generate a `sqlite3 .dump`-style SQL script for the live SQLite connection,
-/// writing it to `path` **table by table** instead of building the whole dump as
-/// one in-memory `String` first (#686). PATH-independent: no external `sqlite3`
-/// binary is needed. Progress is reported per processed table via
-/// `dump-stream:progress`; a cancel aborts the task and the partial file is
-/// removed by `PartialFileCleanup`.
+/// writing it to the already-open `file` **table by table** instead of
+/// building the whole dump as one in-memory `String` first (#686).
+/// PATH-independent: no external `sqlite3` binary is needed. Progress is
+/// reported per processed table via `dump-stream:progress`; a cancel aborts
+/// the task and the partial file is removed by `run_dump`'s
+/// `PartialFileCleanup` (this function does not own that guard itself — see
+/// [`create_dump_temp_file`] and the doc comment on `run_dump`).
 #[allow(clippy::too_many_arguments)]
 async fn dump_sqlite(
     app: &AppHandle,
     stream_id: &str,
     conn: &crate::db::Connection,
-    path: &str,
+    file: tokio::fs::File,
     options: &DumpOptions,
     counter: &Arc<AtomicU64>,
     started: Instant,
 ) -> Result<u64> {
-    let mut cleanup = PartialFileCleanup::new(path);
-    let file = tokio::fs::File::create(path).await?;
     let mut writer = BufWriter::new(file);
 
     write_chunk(
@@ -779,7 +882,6 @@ async fn dump_sqlite(
     write_chunk(&mut writer, counter, "COMMIT;\n").await?;
     writer.flush().await?;
     let bytes = counter.load(Ordering::SeqCst);
-    cleanup.commit();
     Ok(bytes)
 }
 
@@ -848,6 +950,65 @@ fn sqlite_literal(value: &Value) -> String {
     }
 }
 
+/// The filename prefix shared by every temp credential file `DefaultsFile` /
+/// `PgPassFile` create (see below), used to scope
+/// [`cleanup_stale_dump_credential_files`] to files this module owns.
+const DUMP_CREDENTIAL_FILE_PREFIX: &str = "noobdb-dump-";
+
+/// 起動時に呼ばれるベストエフォートの掃除。`DefaultsFile` / `PgPassFile`
+/// (下記) は、ダンプ実行中だけ生きる一時的な資格情報ファイル
+/// (`noobdb-dump-<slug>.cnf` / `.pgpass`、OS 標準の一時ディレクトリ直下。DB
+/// パスワードを平文で含む) を作り、通常は `Drop` で確実に削除する。しかし
+/// アプリが SIGKILL / OOM / クラッシュなど `Drop` を経由しない形で終了すると
+/// この削除は走らず、平文パスワードを含むファイルがそのままディスクに残り
+/// 続けてしまう (`commands::local::cleanup_stale_local_files` が「ローカル
+/// 横断クエリの一時 DB」に対して既に解決している問題と同種)。
+///
+/// 前回起動のダンプ処理はプロセスごと終了しているのでどのセッションからも
+/// 参照されておらず、次回起動時点でこの命名規約に一致するファイルを削除して
+/// 安全 — 失敗してもログに残すだけで起動は継続するベストエフォートである点も
+/// `cleanup_stale_local_files` と同じ。
+///
+/// OS 標準の一時ディレクトリは他プロセスとも共有される場所なので、
+/// ディレクトリごと削除する local セッションの掃除とは違い、
+/// **自分たちの命名規約 (`noobdb-dump-` プレフィックス + `.cnf`/`.pgpass`
+/// 拡張子) に厳密一致するファイルだけ**を 1 件ずつ判定して削除する — 他人の
+/// ファイルを巻き込まないための最小限のスコープ。
+pub fn cleanup_stale_dump_credential_files() {
+    let dir = std::env::temp_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(
+                path = %dir.display(),
+                error = %e,
+                "failed to scan temp dir for stale dump credential files"
+            );
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(DUMP_CREDENTIAL_FILE_PREFIX) {
+            continue;
+        }
+        if !(name.ends_with(".cnf") || name.ends_with(".pgpass")) {
+            continue;
+        }
+        let path = entry.path();
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "failed to clean up a stale dump credential file"
+            );
+        }
+    }
+}
+
 /// A temporary MySQL option file holding connection credentials. Removed from
 /// disk when dropped.
 struct DefaultsFile {
@@ -859,8 +1020,13 @@ impl DefaultsFile {
         use std::io::Write;
 
         // Unique temp file name. An 8-char slug from a 31-char alphabet is more
-        // than enough uniqueness for a short-lived per-dump option file.
-        let name = format!("noobdb-dump-{}.cnf", crate::state::random_slug(8));
+        // than enough uniqueness for a short-lived per-dump option file. The
+        // `DUMP_CREDENTIAL_FILE_PREFIX`/`.cnf` naming is also what
+        // `cleanup_stale_dump_credential_files` matches on at startup.
+        let name = format!(
+            "{DUMP_CREDENTIAL_FILE_PREFIX}{}.cnf",
+            crate::state::random_slug(8)
+        );
         let path = std::env::temp_dir().join(name);
 
         let mut content = String::from("[client]\n");
@@ -916,7 +1082,12 @@ impl PgPassFile {
     fn create(opts: &DbConnectOptions, database: &str) -> Result<Self> {
         use std::io::Write;
 
-        let name = format!("noobdb-dump-{}.pgpass", crate::state::random_slug(8));
+        // `DUMP_CREDENTIAL_FILE_PREFIX`/`.pgpass` naming is also what
+        // `cleanup_stale_dump_credential_files` matches on at startup.
+        let name = format!(
+            "{DUMP_CREDENTIAL_FILE_PREFIX}{}.pgpass",
+            crate::state::random_slug(8)
+        );
         let path = std::env::temp_dir().join(name);
         // `.pgpass` is colon-delimited; backslash-escape any literal ':' or '\'
         // in field values so they aren't misread as separators.
@@ -989,6 +1160,15 @@ fn my_cnf_quote(s: &str) -> String {
 mod tests {
     use super::*;
 
+    /// `cleanup_stale_dump_credential_files` scans the *whole* OS temp
+    /// directory indiscriminately, so it could race with (and steal a file
+    /// out from under) `defaults_file_is_removed_on_drop` /
+    /// `pgpass_file_is_removed_on_drop`, which run concurrently by default
+    /// under `cargo test`. This lock serializes every test that touches
+    /// `noobdb-dump-*` credential files in the shared temp dir so none of
+    /// them observe another's file appearing/disappearing mid-assertion.
+    static CRED_FILE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn dump_temp_path_is_a_sibling_in_the_same_dir() {
         let tmp = dump_temp_path("/backups/db_2026.sql");
@@ -1030,6 +1210,9 @@ mod tests {
 
     #[test]
     fn pgpass_file_is_removed_on_drop() {
+        let _guard = CRED_FILE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let opts = DbConnectOptions {
             host: "127.0.0.1".into(),
             port: 5432,
@@ -1103,6 +1286,9 @@ mod tests {
 
     #[test]
     fn defaults_file_is_removed_on_drop() {
+        let _guard = CRED_FILE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let opts = DbConnectOptions {
             host: "127.0.0.1".into(),
             port: 3306,
@@ -1127,5 +1313,55 @@ mod tests {
             p
         };
         assert!(!path.exists(), "temp option file should be deleted on drop");
+    }
+
+    // 起動時クリーンアップ: 前回起動がクラッシュして Drop を経由せず
+    // 残った `noobdb-dump-*.cnf` / `.pgpass` は削除され、命名規約に一致しない
+    // ファイル (無関係な一時ファイル・拡張子違い・プレフィックス違い) は無傷で
+    // 残ることを確認する。
+    #[test]
+    fn cleanup_stale_dump_credential_files_removes_only_matching_names() {
+        let _guard = CRED_FILE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir();
+        let unique = crate::state::random_slug(8);
+
+        // クラッシュで残った想定の資格情報ファイル (実際の DefaultsFile/PgPassFile
+        // と同じ命名規約)。中身はダミーで良い — 削除対象かどうかは名前だけで
+        // 判定されるため。
+        let stale_cnf = dir.join(format!("noobdb-dump-{unique}.cnf"));
+        let stale_pgpass = dir.join(format!("noobdb-dump-{unique}.pgpass"));
+        std::fs::write(&stale_cnf, "[client]\npassword=\"leftover\"\n").unwrap();
+        std::fs::write(&stale_pgpass, "127.0.0.1:5432:db:user:leftover\n").unwrap();
+
+        // 命名規約に一致しないファイル: プレフィックス違い・拡張子違い。これらは
+        // 消してはいけない (他人のファイルを巻き込まないためのスコープ限定)。
+        let unrelated_prefix = dir.join(format!("not-noobdb-dump-{unique}.cnf"));
+        let unrelated_ext = dir.join(format!("noobdb-dump-{unique}.sql"));
+        std::fs::write(&unrelated_prefix, "unrelated").unwrap();
+        std::fs::write(&unrelated_ext, "unrelated").unwrap();
+
+        cleanup_stale_dump_credential_files();
+
+        assert!(
+            !stale_cnf.exists(),
+            "stale .cnf credential file should be removed"
+        );
+        assert!(
+            !stale_pgpass.exists(),
+            "stale .pgpass credential file should be removed"
+        );
+        assert!(
+            unrelated_prefix.exists(),
+            "a file with a different prefix must not be touched"
+        );
+        assert!(
+            unrelated_ext.exists(),
+            "a file with a different extension must not be touched"
+        );
+
+        let _ = std::fs::remove_file(&unrelated_prefix);
+        let _ = std::fs::remove_file(&unrelated_ext);
     }
 }
