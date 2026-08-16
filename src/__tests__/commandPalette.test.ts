@@ -9,7 +9,9 @@ import {
   sanitizeMruIds,
   recordMruUsage,
   pruneMruIds,
+  shouldStaggerEntrance,
   MAX_MRU_ITEMS,
+  MAX_STAGGER_ITEMS,
   GROUP_ORDER,
   type CommandItem,
 } from "../components/commandPaletteSearch";
@@ -322,6 +324,22 @@ describe("CommandItem.shortcut (#843)", () => {
   it("is optional and left undefined when the caller omits it", () => {
     const withoutShortcut = item({ id: "n2", group: "navigation", label: "Help" });
     expect(withoutShortcut.shortcut).toBeUndefined();
+  });
+});
+
+describe("shouldStaggerEntrance (#976)", () => {
+  it("is true for indices within the cap", () => {
+    expect(shouldStaggerEntrance(0)).toBe(true);
+    expect(shouldStaggerEntrance(MAX_STAGGER_ITEMS - 1)).toBe(true);
+  });
+
+  it("is false once the index reaches the cap (avoids staggered-reveal lag on large result sets)", () => {
+    expect(shouldStaggerEntrance(MAX_STAGGER_ITEMS)).toBe(false);
+    expect(shouldStaggerEntrance(MAX_STAGGER_ITEMS + 50)).toBe(false);
+  });
+
+  it("is false for a not-found index (-1, e.g. flat.indexOf miss)", () => {
+    expect(shouldStaggerEntrance(-1)).toBe(false);
   });
 });
 
