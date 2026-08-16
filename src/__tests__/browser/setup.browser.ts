@@ -3,6 +3,18 @@
 // `setup.ts` とは実行環境が異なるため別ファイルに分けている。
 //
 // やること:
+//   0. デザイントークン (`App.css`) の読み込み — 実アプリは `main.tsx` が
+//      `App.css` を import してから `ChakraProvider` をマウントするが、ブラウザ
+//      テストのハーネスは `main.tsx` を経由しないため、`App.css` が一度も
+//      読み込まれず `:root` の CSS 変数 (`--font-scale` / `--text-*` /
+//      `--control-*` / `--bg` ほか) が全て未定義のまま描画されていた (#961)。
+//      Chakra の recipe (`buttonRecipe` の `px: "var(--control-px)"` 等) は
+//      これらの変数を参照するため、未定義のままだと padding/gap/font-size が
+//      潰れ、`calc(13px * var(--font-scale))` (`Icon.tsx`) のような式も invalid
+//      になってアイコンが巨大化する。実アプリと同じ読み込み順
+//      (`main.tsx` → `App.css` → `ChakraProvider`) に揃えるため、他のセットアップ
+//      (アニメーション無効化 CSS の注入など) より前に import する。jsdom 側
+//      (`testUtils.tsx`) は computed style を評価しないため影響を受けない。
 //   1. Tauri ランタイムのスタブ — 実ブラウザには Tauri が注入する
 //      `window.__TAURI_INTERNALS__` が存在しないため、`@tauri-apps/api` の
 //      `invoke` がそのままだと参照エラーになる。コンポーネントがマウント時に
@@ -15,6 +27,7 @@
 //      ビジュアル回帰スクリーンショットが非決定的になる。`prefers-reduced-motion`
 //      相当として全要素のアニメーション/トランジションを停止する CSS を注入する。
 //   3. ロケール固定 — 描画される文言を決定的にするため英語に固定する。
+import "../../App.css";
 import { afterEach, beforeEach } from "vitest";
 import { cleanup } from "vitest-browser-react";
 import { setLocale } from "../../i18n";

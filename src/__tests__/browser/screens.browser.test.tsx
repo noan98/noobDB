@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderInBrowser } from "./render";
 import { t } from "../../i18n";
 import { ConnectionForm } from "../../components/ConnectionForm";
@@ -109,5 +109,50 @@ describe("主要画面のレンダリング (実ブラウザ)", () => {
   it("ヘルプ画面が描画される", async () => {
     const screen = await renderInBrowser(<HelpView onClose={() => {}} />);
     await expect.element(screen.getByText(t("helpTitle"))).toBeVisible();
+  });
+});
+
+// #961: ブラウザテストのハーネスが `App.css` を一度も読み込んでおらず、
+// `:root` で定義されるデザイントークン (`--font-scale` / `--text-*` /
+// `--control-*` ほか、Chakra の recipe や `calc()` 式が参照する CSS 変数) が
+// 全て未定義のまま描画されていた回帰の固定テスト。`setup.browser.ts` が
+// `App.css` を import するようになったことの直接の証拠として、未定義なら
+// 空文字列を返す `getComputedStyle` でトークンが実際に解決されていることを
+// 確認する。
+describe("デザイントークン (App.css) の解決 (#961)", () => {
+  afterEach(() => {
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  it(":root のトークンが未定義 (空文字列) のまま描画されていない", () => {
+    document.documentElement.removeAttribute("data-theme");
+    const root = getComputedStyle(document.documentElement);
+
+    // `--font-scale` は `calc(13px * var(--font-scale))` (`Icon.tsx`) のような
+    // 式の分母にあたり、未定義だと calc() 自体が invalid になってアイコンが
+    // 巨大化する (Issue 本文の症状)。
+    expect(root.getPropertyValue("--font-scale").trim()).not.toBe("");
+    // `--text-md` / `--control-px` はツールバーの余白・文字サイズを決めるトークン。
+    expect(root.getPropertyValue("--text-md").trim()).not.toBe("");
+    expect(root.getPropertyValue("--control-px").trim()).not.toBe("");
+    // `--bg` はページ全体の背景色トークン (`html, body, #root { background:
+    // var(--bg); }`)。ダークテーマのベースラインが白背景のまま描画される問題
+    // (Issue 本文) の直接の原因だった。
+    expect(root.getPropertyValue("--bg").trim()).not.toBe("");
+  });
+
+  it("`data-theme=\"dark\"` で `--bg` トークンがライトテーマと異なる値へ切り替わる", () => {
+    document.documentElement.removeAttribute("data-theme");
+    const lightBg = getComputedStyle(document.documentElement)
+      .getPropertyValue("--bg")
+      .trim();
+
+    document.documentElement.setAttribute("data-theme", "dark");
+    const darkBg = getComputedStyle(document.documentElement)
+      .getPropertyValue("--bg")
+      .trim();
+
+    expect(darkBg).not.toBe("");
+    expect(darkBg).not.toBe(lightBg);
   });
 });
