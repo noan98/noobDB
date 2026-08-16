@@ -8,6 +8,7 @@ import {
   themePreviewGradient,
 } from "../themePresetPreview";
 import { useT, type I18nKey } from "../i18n";
+import { semanticColorToken } from "../semanticColors";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
@@ -1882,7 +1883,7 @@ export function SettingsView({ theme, onClose }: Props) {
         <SettingsToggleRow>
           <SettingsReset
             type="button"
-            color="var(--status-error)"
+            color={semanticColorToken("danger", "text")}
             onClick={handleResetAllSettings}
           >
             {t("settingsBackupResetAll")}

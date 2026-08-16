@@ -36,9 +36,15 @@ function statusRole(status: DiffStatus): SemanticRole | null {
  * DiffStatus に対応する文字色/枠色 (chip / badge / アコーディオンの左スパイン共通)。
  * `semanticColors.ts` の `semanticColorVar` (#664) 経由で解決し、`--status-*` の
  * 直書きは行わない。
+ *
+ * text/border とも同じ tier (`text`) を使うのは #1009 の判断を引き継いだもの —
+ * このチップは淡色地の "subtle" 背景ではなく中立地 (`--bg-muted`) の上に単色の
+ * 文字色 + 枠色を重ねるデザインのため、tier を分けると (テーマによっては) 文字色と
+ * 枠色の色相がずれてしまう。`same` (無変化) は状態色を持たないニュートラル表示。
  */
 export function statusColors(status: DiffStatus): { color: string; borderColor: string } {
   const role = statusRole(status);
   if (!role) return { color: "var(--text-muted)", borderColor: "var(--border)" };
-  return { color: semanticColorVar(role, "text"), borderColor: semanticColorVar(role, "border") };
+  const c = semanticColorVar(role, "text");
+  return { color: c, borderColor: c };
 }

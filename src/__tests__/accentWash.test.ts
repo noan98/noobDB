@@ -4,6 +4,7 @@ import {
   accentWashSpec,
   shouldFireAccentWash,
 } from "../components/accentWash";
+import { semanticColorVar } from "../semanticColors";
 
 /**
  * 接続切替時のアクセント/環境ウォッシュ (#978) の純ロジック。発火判定
@@ -46,7 +47,7 @@ describe("accentWashSpec", () => {
 
   it("uses the danger color for production, matching the title bar band (#791)", () => {
     const spec = accentWashSpec({ name: "prod", color: "#22c55e", isProduction: true });
-    expect(spec?.color).toBe("var(--status-error)");
+    expect(spec?.color).toBe(semanticColorVar("danger", "solid"));
   });
 
   it("uses the sandbox color, preserving its identifiability (#747)", () => {

@@ -8,6 +8,7 @@ import {
   type TablePrivilegeRow,
 } from "../api/tauri";
 import { useT } from "../i18n";
+import { semanticColorVar } from "../semanticColors";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
@@ -550,8 +551,8 @@ export function UsersPanel({
                               marginLeft="1.5"
                               px="1.5"
                               fontSize="var(--text-xs)"
-                              color="var(--status-error)"
-                              border="1px solid var(--status-error)"
+                              color={semanticColorVar("danger", "text")}
+                              border={`1px solid ${semanticColorVar("danger", "text")}`}
                               borderRadius="var(--radius-sm)"
                             >
                               {t("usersSuperuserBadge")}

@@ -3,6 +3,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, HistoryEntry } from "../api/tauri";
 import { I18nKey, useT } from "../i18n";
 import { transitions, variants } from "../motion";
+import { semanticColorToken } from "../semanticColors";
 import { Icon, ICON_SIZES } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { FlightRecorderPanel } from "./FlightRecorderPanel";
@@ -335,7 +336,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
                     <TreeLabel fontFamily="mono">{oneLine(h.sql)}</TreeLabel>
                     {failed && (
                       <TreeBadge
-                        bg="var(--status-info, var(--bg-muted))"
+                        bg={semanticColorToken("info", "subtle")}
                         color="app.text"
                         borderColor="app.borderStrong"
                         fontWeight={700}

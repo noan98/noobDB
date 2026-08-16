@@ -4,6 +4,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { useReturnFocus, useRovingFocus } from "../keyboardNav";
+import { semanticColorVar } from "../semanticColors";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { Kbd } from "./Kbd";
@@ -196,7 +197,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               css={{
                 "&:hover:not(:disabled), &:focus-visible": {
                   background: entry.danger
-                    ? "color-mix(in srgb, var(--status-error) 12%, transparent)"
+                    ? `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 12%, transparent)`
                     : "var(--bg-hover)",
                 },
               }}

@@ -4,6 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api/tauri";
 import { useT } from "../i18n";
+import { semanticColorVar } from "../semanticColors";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Radio } from "./ui";
 import { LoadingButton } from "./LoadingButton";
@@ -430,8 +431,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             role="status"
             py="2" px="2.5"
             border="1px solid"
-            borderColor="color-mix(in srgb, var(--status-warning) 50%, var(--border))"
-            bg="color-mix(in srgb, var(--status-warning) 14%, var(--bg-muted))"
+            borderColor={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 50%, var(--border))`}
+            bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
             color="app.text"
             borderRadius="md"
             fontSize="sm"
