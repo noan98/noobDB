@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Box, chakra, VisuallyHidden } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
-import { transitions, variants } from "../motion";
+import { springs, staggerContainer, transitions, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
 import { useFocusTrap, useReturnFocus } from "../keyboardNav";
 import {
@@ -40,7 +40,35 @@ import type { I18nKey } from "../i18n";
  *   aria-live="polite"`) が既に読み上げており、ここは「後から開いて読む」ための
  *   静的な一覧。同じ文言を二重に読み上げないための意図的な設計。パネル自体は
  *   `role="dialog"` + フォーカストラップで、キーボードだけで開閉・巡回できる。
+ *
+ * **登場コレオグラフィ (#984)**: 一覧は `motion.ts` の `staggerContainer` /
+ * `variants.staggerItem` (`WelcomeView` / `ProfileCardGrid` と同じパターン) で
+ * 順次フェードインする。フィルタチップの切替は `<ul>` の `key` を絞り込み条件で
+ * 差し替えることで再マウントし、瞬間ハードスワップではなく再ステガーで滑らかに
+ * 差し替える。200 件までローテーションする一覧を全件順番に遅延させると体感が
+ * 重くなるため、先頭 `STAGGER_CAP` 件だけ協調出現させ、残りは即時表示する
+ * (`useReducedMotion()` が true のときは `staggerContainer` 自体が同時表示へ
+ * フォールバックする)。未読バッジは `AnimatePresence` + `variants.fadeScale` /
+ * `springs.snappy` で pop / dismiss する — こちらは stagger ではない単発の
+ * enter/exit なので `MotionConfig` が reduced-motion 時に自動で即時化する
+ * (追加の分岐は不要)。いずれも `role="dialog"` + フォーカストラップ + `aria-live`
+ * を付けない既存設計は変えない (バッジは従来どおり `aria-hidden`)。
  */
+
+/**
+ * stagger を適用する先頭件数の上限 (#984)。`ACTIVITY_LIMIT` (200) 件を全件
+ * 順番に遅延させると体感遅延になるため、先頭のみ協調出現させ、残りは
+ * (`variants` を渡さないことで) 即時表示にする。
+ */
+const STAGGER_CAP = 20;
+
+// motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で
+// 素通しする (`WelcomeView` / `ProfileCardGrid` と同じパターン)。
+const MotionUl = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
+const MotionBadge = chakra(motion.span, {}, {
+  forwardProps: ["variants", "initial", "animate", "exit", "transition"],
+});
 
 /** 重大度ごとのアイコン (色は意味色トークン)。 */
 const SEVERITY_ICON: Record<ActivitySeverity, "check" | "warning" | "help"> = {
@@ -74,12 +102,22 @@ function formatRelative(t: ReturnType<typeof useT>, at: number, now: number): st
   }
 }
 
-function ActivityRow({ entry, now }: { entry: ActivityEntry; now: number }) {
+function ActivityRow({
+  entry,
+  now,
+  animated,
+}: {
+  entry: ActivityEntry;
+  now: number;
+  /** false のときは stagger に参加させず即時表示する (#984、`STAGGER_CAP` 超過分)。 */
+  animated: boolean;
+}) {
   const t = useT();
   const role = ACTIVITY_SEVERITY_ROLE[entry.severity];
   const absolute = new Date(entry.at).toLocaleString();
   return (
-    <chakra.li
+    <MotionLi
+      variants={animated ? variants.staggerItem : undefined}
       display="flex"
       alignItems="flex-start"
       gap="2"
@@ -111,7 +149,7 @@ function ActivityRow({ entry, now }: { entry: ActivityEntry; now: number }) {
           <VisuallyHidden> ({absolute})</VisuallyHidden>
         </chakra.span>
       </Box>
-    </chakra.li>
+    </MotionLi>
   );
 }
 
@@ -164,6 +202,8 @@ function ActivityPanel({ anchor, onClose }: { anchor: DOMRect; onClose: () => vo
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   // 相対時刻は開いた時点で固定する (開きっぱなしで秒刻みに再描画しない)。
   const [now] = useState(() => Date.now());
+  // 一覧の stagger 出現 (#984)。MotionConfig の設定も反映される。
+  const reduced = useReducedMotion() ?? false;
 
   useFocusTrap(panelRef, onClose);
   useReturnFocus();
@@ -320,7 +360,13 @@ function ActivityPanel({ anchor, onClose }: { anchor: DOMRect; onClose: () => vo
             {entries.length === 0 ? t("activityEmpty") : t("activityNoMatches")}
           </chakra.p>
         ) : (
-          <chakra.ul
+          <MotionUl
+            // フィルタ変更時は key を差し替えて再マウントし、瞬間ハードスワップ
+            // ではなく stagger を再生させる (#984)。
+            key={severity ?? "__all__"}
+            variants={staggerContainer(reduced)}
+            initial="initial"
+            animate="animate"
             listStyleType="none"
             m={0}
             p={0}
@@ -328,10 +374,10 @@ function ActivityPanel({ anchor, onClose }: { anchor: DOMRect; onClose: () => vo
             overflowY="auto"
             aria-label={t("activityListAria")}
           >
-            {shown.map((e) => (
-              <ActivityRow key={e.id} entry={e} now={now} />
+            {shown.map((e, i) => (
+              <ActivityRow key={e.id} entry={e} now={now} animated={i < STAGGER_CAP} />
             ))}
-          </chakra.ul>
+          </MotionUl>
         )}
 
         <chakra.p
@@ -394,29 +440,40 @@ export function ActivityCenter() {
           _hover={{ bg: "app.hover", color: "app.text" }}
         >
           <Icon name="bell" size={ICON_SIZES.md} />
-          {unread > 0 && (
-            // 未読インジケータ。件数は 9+ で頭打ちにしてタイトルバーの高さを保つ。
-            <chakra.span
-              position="absolute"
-              top="7px"
-              right="7px"
-              minWidth="14px"
-              height="14px"
-              px="3px"
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              fontSize="9px"
-              fontWeight={700}
-              lineHeight={1}
-              borderRadius="7px"
-              bg={semanticColorToken("danger", "solid")}
-              color="#fff"
-              aria-hidden
-            >
-              {unread > 9 ? "9+" : unread}
-            </chakra.span>
-          )}
+          <AnimatePresence>
+            {unread > 0 && (
+              // 未読インジケータ。件数は 9+ で頭打ちにしてタイトルバーの高さを
+              // 保つ。出入りは pop/dismiss (#984)。単発の enter/exit なので
+              // reduced-motion は `MotionConfig` が自動で即時化する
+              // (stagger と違い明示的な分岐は不要)。
+              <MotionBadge
+                key="badge"
+                variants={variants.fadeScale}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={springs.snappy}
+                position="absolute"
+                top="7px"
+                right="7px"
+                minWidth="14px"
+                height="14px"
+                px="3px"
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                fontSize="9px"
+                fontWeight={700}
+                lineHeight={1}
+                borderRadius="7px"
+                bg={semanticColorToken("danger", "solid")}
+                color="#fff"
+                aria-hidden
+              >
+                {unread > 9 ? "9+" : unread}
+              </MotionBadge>
+            )}
+          </AnimatePresence>
         </chakra.button>
       </Tooltip>
       <AnimatePresence>

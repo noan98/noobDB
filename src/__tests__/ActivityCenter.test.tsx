@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, within } from "./testUtils";
+import { act, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { ActivityCenter } from "../components/ActivityCenter";
 import { useToast } from "../components/Toast";
 import { __resetActivityLog, getActivityState, pushActivity } from "../activityLog";
@@ -104,6 +104,34 @@ describe("ActivityCenter (#912)", () => {
       severity: "error",
       message: "export failed",
     });
+  });
+
+  it("stagger の登場コレオグラフィが有効でも上限を超えた分を含め全件表示される (#984)", async () => {
+    for (let i = 0; i < 25; i++) pushActivity("info", `entry ${i}`);
+    const { panel } = await open();
+    // STAGGER_CAP (20) を超える 25 件でも、上限以降は即時表示されるだけで
+    // 表示自体からは落ちない。
+    expect(within(panel).getAllByRole("listitem")).toHaveLength(25);
+  });
+
+  it("未読バッジは AnimatePresence の enter/exit として出入りする (#984)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ActivityCenter />);
+    // ベルボタン自身に絞って検証する (パネルを開くとフィルタチップの件数表示
+    // など同じテキストが他所にも現れうるため)。
+    const bell = () => screen.getByRole("button", { name: /Activity/ });
+    expect(within(bell()).queryByText("1")).not.toBeInTheDocument();
+
+    act(() => {
+      pushActivity("info", "one");
+    });
+    // マウント (enter) 直後から DOM 上にテキストは存在する (opacity/scale の
+    // 補間はスタイルであり、要素の有無には影響しない)。
+    expect(await within(bell()).findByText("1")).toBeInTheDocument();
+
+    await user.click(bell());
+    // 開いて既読になると exit し、DOM から消える。
+    await waitFor(() => expect(within(bell()).queryByText("1")).not.toBeInTheDocument());
   });
 
   it("tone を変えずに重大度だけ警告として記録できる", async () => {
