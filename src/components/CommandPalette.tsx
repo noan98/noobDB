@@ -1,16 +1,28 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Kbd } from "./Kbd";
 import { Modal } from "./Modal";
+import { staggerContainer, transitions, variants } from "../motion";
 import {
   flattenGroups,
   groupCommands,
+  shouldStaggerEntrance,
   splitLabel,
   type CommandGroup,
   type CommandItem,
 } from "./commandPaletteSearch";
+
+// motion 用 props は Chakra のスタイルプロップ名 (`transition`) と衝突したり、
+// スタイルプロップ以外は既定で無視されたりするため、必要なものだけ明示的に転送する
+// (`TabBar` の `MotionIndicator` / `ProfileCardGrid` の `MotionFlex` と同じパターン)。
+// - `MotionHighlight`: アクティブ行の背後を滑らせる `layoutId` ハイライト (#976)。
+// - `MotionRow`: 結果グループのスタッガー出現に使う `variants` を持つ行本体。
+const MotionHighlight = chakra(motion.div, {}, { forwardProps: ["transition"] });
+const MotionRow = chakra(motion.button, {}, { forwardProps: ["variants"] });
+const MotionListBox = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
 
 /**
  * コマンドパレット (Cmd/Ctrl+K)。接続・テーブル・スニペット・履歴・画面遷移を
@@ -51,6 +63,11 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const reduced = useReducedMotion() ?? false;
+  // このパレットインスタンス限定でハイライトを共有する layoutId (#976)。TabBar の
+  // インジケータと同じ発想 — 複数パレットが同時に存在することは無いが、スコープを
+  // 切っておくことでコンポーネント跨ぎの衝突を構造的に避ける。
+  const highlightId = `cmdk-active-highlight-${useId()}`;
 
   const grouped = useMemo(() => groupCommands(items, query, mruIds), [items, query, mruIds]);
   const flat = useMemo(() => flattenGroups(grouped), [grouped]);
@@ -166,13 +183,16 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
         />
       </Flex>
 
-      <Box
+      <MotionListBox
         ref={listRef}
         id="command-palette-list"
         role="listbox"
         maxH="min(420px, 60vh)"
         overflowY="auto"
         py="1.5"
+        variants={staggerContainer(reduced)}
+        initial="initial"
+        animate="animate"
       >
         {flat.length === 0 ? (
           <Box px="4" py="5" textAlign="center" color="app.textMuted" fontSize="sm">
@@ -197,6 +217,8 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
                     item={scored.item}
                     labelSegments={splitLabel(scored.item.label, scored.ranges)}
                     active={isActive}
+                    animateEntrance={shouldStaggerEntrance(flatIndex)}
+                    highlightId={highlightId}
                     onMouseMove={() => {
                       if (!isActive) setActiveIndex(flatIndex);
                     }}
@@ -207,7 +229,7 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
             </Box>
           ))
         )}
-      </Box>
+      </MotionListBox>
 
       <Flex
         align="center"
@@ -242,14 +264,27 @@ interface CommandRowProps {
   item: CommandItem;
   labelSegments: { text: string; highlighted: boolean }[];
   active: boolean;
+  /** 結果グループのスタッガー出現 (#976) の対象か。上限を超えた行は即時表示。 */
+  animateEntrance: boolean;
+  /** アクティブ行のハイライトを滑らせる共有 `layoutId` (#976、`CommandPalette` 発行)。 */
+  highlightId: string;
   onMouseMove: () => void;
   onClick: () => void;
   ref?: (el: HTMLButtonElement | null) => void;
 }
 
-function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: CommandRowProps) {
+function CommandRow({
+  item,
+  labelSegments,
+  active,
+  animateEntrance,
+  highlightId,
+  onMouseMove,
+  onClick,
+  ref,
+}: CommandRowProps) {
   return (
-    <chakra.button
+    <MotionRow
       ref={ref}
       type="button"
       id={`cmdk-item-${item.id}`}
@@ -258,67 +293,86 @@ function CommandRow({ item, labelSegments, active, onMouseMove, onClick, ref }: 
       tabIndex={-1}
       onMouseMove={onMouseMove}
       onClick={onClick}
-      display="flex"
-      alignItems="center"
-      gap="2"
+      variants={animateEntrance ? variants.staggerItem : undefined}
+      position="relative"
+      display="block"
       w="100%"
       textAlign="left"
       px="4"
       py="2"
       border="none"
       cursor="pointer"
-      bg={active ? "app.active" : "transparent"}
+      bg="transparent"
       color="app.text"
       css={{ scrollMarginBlock: "8px" }}
     >
-      {item.icon && (
-        <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-          <Icon name={item.icon} size={ICON_SIZES.md} />
-        </Box>
+      {/* アクティブ行の背後を滑らせるハイライト (#976)。`bg` を行ごとに切り替える
+          代わりに、単一の layoutId 要素をアクティブ行の内側だけへマウントすることで、
+          ↑/↓ 移動のたびに Motion がこの要素の前回位置 → 新しい位置への layout
+          アニメーションを自動計算する (`TabBar` のアクティブインジケータと同じ手法)。
+          reduced-motion は MotionConfig が自動で瞬時化する。 */}
+      {active && (
+        <MotionHighlight
+          layoutId={highlightId}
+          transition={transitions.emphasized}
+          position="absolute"
+          inset="0"
+          bg="app.active"
+          zIndex={0}
+          pointerEvents="none"
+          aria-hidden
+        />
       )}
-      <Flex direction="column" minW={0} flex="1" gap="1px">
-        <chakra.span
-          fontSize="sm"
-          overflow="hidden"
-          textOverflow="ellipsis"
-          whiteSpace="nowrap"
-          fontFamily={item.group === "history" ? "var(--font-mono)" : undefined}
-        >
-          {labelSegments.map((seg, i) =>
-            seg.highlighted ? (
-              <chakra.span key={i} color="app.accent" fontWeight={700}>
-                {seg.text}
-              </chakra.span>
-            ) : (
-              <span key={i}>{seg.text}</span>
-            ),
-          )}
-        </chakra.span>
-        {item.sublabel && (
+      <Flex position="relative" zIndex={1} align="center" gap="2" w="100%">
+        {item.icon && (
+          <Box color="app.textMuted" flexShrink={0} display="inline-flex">
+            <Icon name={item.icon} size={ICON_SIZES.md} />
+          </Box>
+        )}
+        <Flex direction="column" minW={0} flex="1" gap="1px">
           <chakra.span
-            fontSize="xs"
-            color="app.textMuted"
+            fontSize="sm"
             overflow="hidden"
             textOverflow="ellipsis"
             whiteSpace="nowrap"
+            fontFamily={item.group === "history" ? "var(--font-mono)" : undefined}
           >
-            {item.sublabel}
+            {labelSegments.map((seg, i) =>
+              seg.highlighted ? (
+                <chakra.span key={i} color="app.accent" fontWeight={700}>
+                  {seg.text}
+                </chakra.span>
+              ) : (
+                <span key={i}>{seg.text}</span>
+              ),
+            )}
           </chakra.span>
+          {item.sublabel && (
+            <chakra.span
+              fontSize="xs"
+              color="app.textMuted"
+              overflow="hidden"
+              textOverflow="ellipsis"
+              whiteSpace="nowrap"
+            >
+              {item.sublabel}
+            </chakra.span>
+          )}
+        </Flex>
+        {item.shortcut && (
+          <Kbd tone="muted" flexShrink={0} color="app.textMuted">
+            {item.shortcut}
+          </Kbd>
+        )}
+        {item.badges && item.badges.length > 0 && (
+          <Flex gap="1" flexShrink={0}>
+            {item.badges.map((badge) => (
+              <Badge key={badge}>{badge}</Badge>
+            ))}
+          </Flex>
         )}
       </Flex>
-      {item.shortcut && (
-        <Kbd tone="muted" flexShrink={0} color="app.textMuted">
-          {item.shortcut}
-        </Kbd>
-      )}
-      {item.badges && item.badges.length > 0 && (
-        <Flex gap="1" flexShrink={0}>
-          {item.badges.map((badge) => (
-            <Badge key={badge}>{badge}</Badge>
-          ))}
-        </Flex>
-      )}
-    </chakra.button>
+    </MotionRow>
   );
 }
 
