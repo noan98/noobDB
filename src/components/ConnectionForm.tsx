@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
+import { AnimatePresence, motion } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import {
@@ -16,6 +17,8 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip } from "./Tooltip";
+import { transitions, variants } from "../motion";
+import { semanticColorToken } from "../semanticColors";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value is not part of the profile payload,
@@ -317,6 +320,48 @@ function Legend({ children }: { children: ReactNode }) {
   );
 }
 
+// motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で
+// 素通しする (`ActivityCenter` / `MultiStateBadge` と同じパターン)。
+const MotionBanner = chakra(motion.div, {}, {
+  forwardProps: ["initial", "animate", "exit", "transition"],
+});
+
+/**
+ * 接続テスト結果のバナー (#1006)。成功/失敗を `AnimatePresence` +
+ * `variants.slideUp` (`motion.ts`) で出入りさせ、`prefers-reduced-motion` /
+ * `settings.motionPreference="reduced"` はルートの `MotionConfig` が自動で
+ * 即時化する (個別分岐は不要)。色は意味色トークン (`semanticColors.ts`) 経由で
+ * 解決し、色値を直書きしない。成功は `role="status"`、失敗は `role="alert"` +
+ * `aria-live` で支援技術へ通知される。
+ */
+function ResultBanner({ tone, children }: { tone: "success" | "danger"; children: ReactNode }) {
+  return (
+    <MotionBanner
+      role={tone === "success" ? "status" : "alert"}
+      aria-live={tone === "success" ? "polite" : "assertive"}
+      initial={variants.slideUp.initial}
+      animate={variants.slideUp.animate}
+      exit={variants.slideUp.exit}
+      transition={transitions.enter}
+      gridColumn="span 2"
+      display="flex"
+      alignItems="center"
+      gap="2"
+      px="3"
+      py="2"
+      border="1px solid"
+      borderColor={semanticColorToken(tone, "border")}
+      bg={semanticColorToken(tone, "subtle")}
+      color={semanticColorToken(tone, "text")}
+      borderRadius="md"
+      fontSize="13px"
+    >
+      <Icon name={tone === "success" ? "check" : "warning"} size={ICON_SIZES.md} />
+      <Box as="span">{children}</Box>
+    </MotionBanner>
+  );
+}
+
 /** Inline switch toggle with a muted help line underneath. */
 function CheckboxRow({
   checked,
@@ -406,8 +451,14 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  // `error`/`message` は「接続テスト結果」専用のバナーに整理する (#1006)。
+  // ポートのバリデーション失敗はどのフィールドが不正かを示せないため、フィールド
+  // 直下の専用エラー (下記 3 種) へ分離する。
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [portError, setPortError] = useState<string | null>(null);
+  const [sshPortError, setSshPortError] = useState<string | null>(null);
+  const [sshJumpPortError, setSshJumpPortError] = useState<string | null>(null);
 
   // DuckDB (#709) is file-backed exactly like SQLite: same `file_path`
   // requirement, no host/port/user/password, no SSH tunnel, no TLS.
@@ -620,21 +671,28 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   };
 
   // Network-backed drivers need a valid port; SQLite is file-backed and skips it.
+  // Each invalid field gets its own message (shown inline under the field with
+  // `aria-invalid`, #1006) rather than a single aggregated string, since the
+  // aggregated `error` box is now reserved for the connection test result.
   const validatePorts = (): boolean => {
+    setPortError(null);
+    setSshPortError(null);
+    setSshJumpPortError(null);
     if (isFileBacked) return true;
+    let ok = true;
     if (parsePort(port) === null) {
-      setError(t("formInvalidPort"));
-      return false;
+      setPortError(t("formInvalidPort"));
+      ok = false;
     }
     if (useSsh && parsePort(sshPort) === null) {
-      setError(t("formInvalidSshPort"));
-      return false;
+      setSshPortError(t("formInvalidSshPort"));
+      ok = false;
     }
     if (useSsh && useSshJump && parsePort(sshJumpPort) === null) {
-      setError(t("formInvalidSshJumpPort"));
-      return false;
+      setSshJumpPortError(t("formInvalidSshJumpPort"));
+      ok = false;
     }
-    return true;
+    return ok;
   };
 
   const handleTest = async () => {
@@ -801,8 +859,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 type="text"
                 inputMode="numeric"
                 value={port}
-                onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ""))}
+                aria-invalid={portError ? true : undefined}
+                onChange={(e) => {
+                  setPort(e.target.value.replace(/[^0-9]/g, ""));
+                  if (portError) setPortError(null);
+                }}
               />
+              {portError && (
+                <Text role="alert" color="app.textError" fontSize="11px" mt="1" mb="0">
+                  {portError}
+                </Text>
+              )}
             </Box>
           </Box>
           <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3" mt="2">
@@ -1034,8 +1101,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                     type="text"
                     inputMode="numeric"
                     value={sshPort}
-                    onChange={(e) => setSshPort(e.target.value.replace(/[^0-9]/g, ""))}
+                    aria-invalid={sshPortError ? true : undefined}
+                    onChange={(e) => {
+                      setSshPort(e.target.value.replace(/[^0-9]/g, ""));
+                      if (sshPortError) setSshPortError(null);
+                    }}
                   />
+                  {sshPortError && (
+                    <Text role="alert" color="app.textError" fontSize="11px" mt="1" mb="0">
+                      {sshPortError}
+                    </Text>
+                  )}
                 </Box>
               </Box>
               <Box mt="2">
@@ -1120,8 +1196,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                           type="text"
                           inputMode="numeric"
                           value={sshJumpPort}
-                          onChange={(e) => setSshJumpPort(e.target.value.replace(/[^0-9]/g, ""))}
+                          aria-invalid={sshJumpPortError ? true : undefined}
+                          onChange={(e) => {
+                            setSshJumpPort(e.target.value.replace(/[^0-9]/g, ""));
+                            if (sshJumpPortError) setSshJumpPortError(null);
+                          }}
                         />
+                        {sshJumpPortError && (
+                          <Text role="alert" color="app.textError" fontSize="11px" mt="1" mb="0">
+                            {sshJumpPortError}
+                          </Text>
+                        )}
                       </Box>
                     </Box>
                     <Box mt="2">
@@ -1219,8 +1304,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         </Box>
       </Fieldset>
 
-      {message && <Box gridColumn="span 2" color="app.textSuccess">{message}</Box>}
-      {error && <Box gridColumn="span 2" color="app.textError">{error}</Box>}
+      <AnimatePresence initial={false}>
+        {message && <ResultBanner key="test-message" tone="success">{message}</ResultBanner>}
+      </AnimatePresence>
+      <AnimatePresence initial={false}>
+        {error && <ResultBanner key="test-error" tone="danger">{error}</ResultBanner>}
+      </AnimatePresence>
 
       <Flex gridColumn="span 2" gap="2" justify="flex-end">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={saving || testing}>
