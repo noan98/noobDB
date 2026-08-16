@@ -207,9 +207,11 @@ CI は 2 つのワークフローに分かれています:
   `frontend (build + browser tests)` へ設定し直してください** (#908 のジョブ統合で
   チェック名が変わったため)。
 
-  **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` /
-  `ipcArgParity.test.ts` / `streamEventParity.test.ts` (`?raw` インポートで
-  `src-tauri/src/lib.rs` / `commands/*.rs` / `tasks/scheduler.rs` を読む) と
+  **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` (`?raw`
+  インポートで `src-tauri/src/lib.rs` を読む) / `ipcArgParity.test.ts` /
+  `streamEventParity.test.ts` (いずれも `import.meta.glob` で `src-tauri/src/`
+  配下の `.rs` を網羅的に読む。前者は `commands/*.rs` 限定、後者は
+  `src-tauri/src/**/*.rs` 再帰。#970) と
   `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
   `schemaParity.test.ts` / `sqlQuotingGolden.test.ts` (#880) /
   `exportFormatGolden.test.ts` (#879) (Rust の統合テストと
