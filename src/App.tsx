@@ -91,7 +91,7 @@ import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
 import type { ResultViewKind } from "./components/ResultViewSwitch";
 import { TabBar } from "./components/TabBar";
-import { TitleBar } from "./components/TitleBar";
+import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
@@ -291,6 +291,7 @@ import {
   type TabRestoreMode,
 } from "./settings";
 import { ThemeTransition } from "./components/ThemeTransition";
+import { AccentWash } from "./components/AccentWash";
 import { accentVars } from "./accent";
 import {
   clearPersistedTabs,
@@ -7219,6 +7220,21 @@ export default function App() {
     );
   };
 
+  // タイトルバー帯とアクセントウォッシュ (#978) が共有する「今アクティブな接続」
+  // の要約。両者とも `titleBarContext.connectionBandColor` と同じ優先順位
+  // (本番=危険色 / サンドボックス=violet / 通常=プロファイル色) で色を決めるため、
+  // 二重に組み立てずここで 1 つにまとめる。
+  const titleBarConnection: TitleBarConnection | null =
+    sessionId && selectedProfile
+      ? {
+          name: selectedProfile.name,
+          color: selectedProfile.color ?? null,
+          isProduction: selectedProfile.is_production,
+          isSandbox: isSandboxProfileId(selectedProfile.id),
+          status: connectionStatus,
+        }
+      : null;
+
   return (
     <Flex
       direction="column"
@@ -7232,21 +7248,12 @@ export default function App() {
       }
     >
       <ThemeTransition themeKey={dataTheme} />
+      {/* 接続切替時の環境ウォッシュ (#978)。`sessionId` (接続の同一性キー) が
+          実際に変化したときだけ発火し、同一接続内の再描画では発火しない。 */}
+      <AccentWash connectionKey={sessionId} connection={titleBarConnection} />
       {/* 起動スプラッシュ (#619)。ブート完了でアンマウントしフェードアウトする。 */}
       <AnimatePresence>{!booted && <SplashScreen />}</AnimatePresence>
-      <TitleBar
-        connection={
-          sessionId && selectedProfile
-            ? {
-                name: selectedProfile.name,
-                color: selectedProfile.color ?? null,
-                isProduction: selectedProfile.is_production,
-                isSandbox: isSandboxProfileId(selectedProfile.id),
-                status: connectionStatus,
-              }
-            : null
-        }
-      />
+      <TitleBar connection={titleBarConnection} />
       <Grid
         templateColumns={
           sidebarCollapsed || (narrow && narrowSidebarOpen)

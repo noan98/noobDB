@@ -412,6 +412,13 @@ export function TabBar({
                   color={isActive ? "var(--ws-accent)" : "app.textMuted"}
                   flexShrink={0}
                   aria-hidden
+                  // 接続切替 (#978) で `--ws-accent` が変わったときになめらかに
+                  // 追従させる。単純な色 transition なので CSS のままでよい
+                  // (motion.ts の方針)。reduced-motion は App.css のグローバル
+                  // メディアクエリが自動で抑制する。
+                  transitionProperty="color"
+                  transitionDuration="var(--dur-med)"
+                  transitionTimingFunction="var(--ease)"
                 >
                   <Icon name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"} />
                 </chakra.span>
@@ -474,6 +481,12 @@ export function TabBar({
                     top="-2px"
                     h="2px"
                     bg="var(--ws-accent, var(--accent))"
+                    // 接続切替 (#978) での `--ws-accent` の変化になめらかに追従
+                    // させる (位置の移動は上の `transition` prop = motion layout
+                    // アニメが担う。こちらは色のみの単純遷移なので CSS のまま)。
+                    transitionProperty="background"
+                    transitionDuration="var(--dur-med)"
+                    transitionTimingFunction="var(--ease)"
                     aria-hidden
                   />
                 )}
