@@ -75,11 +75,21 @@ describe("主要画面のレンダリング (実ブラウザ)", () => {
         ["apple", 5],
       ],
     );
-    const screen = await renderInBrowser(<ResultGrid result={result} />);
+    const screen = await renderInBrowser(
+      <ResultGrid result={result} onChangeView={() => {}} />,
+    );
 
     // 列ヘッダはソート可能なのでボタンとして描画される。
     await expect.element(screen.getByRole("button", { name: /^name/ })).toBeVisible();
     await expect.element(screen.getByText("banana")).toBeVisible();
+    // 表示切替セグメント (グリッド/ピボット/チャート、#975 の Segmented) が
+    // 排他ラジオグループとして可視であること。
+    await expect
+      .element(screen.getByRole("radiogroup", { name: t("resultViewSwitchAria") }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("radio", { name: t("gridViewLabel") }))
+      .toBeVisible();
   });
 
   it("危険クエリ確認ダイアログ (安全網 UI) が描画される", async () => {
@@ -104,6 +114,14 @@ describe("主要画面のレンダリング (実ブラウザ)", () => {
     await expect.element(
       screen.getByRole("heading", { name: t("settingsTitle"), exact: true }),
     ).toBeVisible();
+    // 密度設定のスライドするセグメント (#975 の Segmented) が排他ラジオグループ
+    // として可視であること。
+    await expect
+      .element(screen.getByRole("radiogroup", { name: t("settingsDensity") }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("radio", { name: t("settingsDensityNormal") }))
+      .toBeVisible();
   });
 
   it("ヘルプ画面が描画される", async () => {

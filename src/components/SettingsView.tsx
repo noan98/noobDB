@@ -11,6 +11,7 @@ import { useT, type I18nKey } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
+import { Segmented } from "./Segmented";
 import { Input, Select, Switch } from "./ui";
 import {
   SettingsHelp,
@@ -345,42 +346,6 @@ const SettingsColorHex = chakra("span", {
 
 const SettingsColorSample = chakra("span", {
   base: { fontFamily: "mono", fontSize: "md", fontWeight: 600 },
-});
-
-// 表示密度の 3 択セグメント。アクティブはアクセント地に反転。
-const SettingsSegment = chakra("div", {
-  base: {
-    display: "inline-flex",
-    border: "1px solid",
-    borderColor: "app.borderStrong",
-    borderRadius: "md",
-    overflow: "hidden",
-    flexShrink: 0,
-  },
-});
-
-const SettingsSegmentButton = chakra("button", {
-  base: {
-    px: "3",
-    py: "5px",
-    fontSize: "sm",
-    fontWeight: 500,
-    border: "none",
-    borderRadius: 0,
-    background: "app.surface",
-    color: "app.text",
-    cursor: "pointer",
-    transitionProperty: "background, color",
-    transitionDuration: "var(--dur-fast)",
-    transitionTimingFunction: "var(--ease)",
-    _hover: { background: "app.hover" },
-    "&[aria-pressed=true]": {
-      background: "app.accent",
-      color: "app.accentText",
-    },
-    "&[aria-pressed=true]:hover": { background: "app.accentHover" },
-    "& + &": { borderLeft: "1px solid var(--border-strong)" },
-  },
 });
 
 // アクセント色のプリセットスウォッチ列。
@@ -1074,18 +1039,12 @@ export function SettingsView({ theme, onClose }: Props) {
 
         <SettingsToggleRow>
           <SettingsToggleLabel as="span">{t("settingsDensity")}</SettingsToggleLabel>
-          <SettingsSegment role="group" aria-label={t("settingsDensity")}>
-            {DENSITY_ORDER.map((d) => (
-              <SettingsSegmentButton
-                key={d}
-                type="button"
-                aria-pressed={settings.density === d}
-                onClick={() => setDensity(d)}
-              >
-                {t(DENSITY_LABEL_KEYS[d])}
-              </SettingsSegmentButton>
-            ))}
-          </SettingsSegment>
+          <Segmented
+            value={settings.density}
+            options={DENSITY_ORDER.map((d) => ({ value: d, label: t(DENSITY_LABEL_KEYS[d]) }))}
+            onChange={setDensity}
+            ariaLabel={t("settingsDensity")}
+          />
           <SettingsHelpInline>{t("settingsDensityHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
 
@@ -1181,18 +1140,15 @@ export function SettingsView({ theme, onClose }: Props) {
 
         <SettingsToggleRow>
           <SettingsToggleLabel as="span">{t("settingsMotionPreference")}</SettingsToggleLabel>
-          <SettingsSegment role="group" aria-label={t("settingsMotionPreference")}>
-            {MOTION_PREFERENCE_ORDER.map((m) => (
-              <SettingsSegmentButton
-                key={m}
-                type="button"
-                aria-pressed={settings.motionPreference === m}
-                onClick={() => setMotionPreference(m)}
-              >
-                {t(MOTION_PREFERENCE_LABEL_KEYS[m])}
-              </SettingsSegmentButton>
-            ))}
-          </SettingsSegment>
+          <Segmented
+            value={settings.motionPreference}
+            options={MOTION_PREFERENCE_ORDER.map((m) => ({
+              value: m,
+              label: t(MOTION_PREFERENCE_LABEL_KEYS[m]),
+            }))}
+            onChange={setMotionPreference}
+            ariaLabel={t("settingsMotionPreference")}
+          />
           <SettingsHelpInline>{t("settingsMotionPreferenceHelp")}</SettingsHelpInline>
         </SettingsToggleRow>
       </SettingsSection>

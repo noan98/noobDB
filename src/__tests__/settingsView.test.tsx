@@ -54,4 +54,31 @@ describe("SettingsView render smoke (#604)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("settingsClose") }));
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  // 密度・モーション設定は #975 で共有プリミティブ `Segmented` へ移行した。旧実装は
+  // `role="group"` + `aria-pressed` のトグルボタン列だったが、`ResultViewSwitch` と
+  // 同じ `role="radiogroup"` + `role="radio"` (`aria-checked`) の排他選択になった
+  // ことを固定する。
+  it("renders the density and motion-preference settings as sliding-pill radiogroups", async () => {
+    renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
+    await waitFor(() =>
+      expect(screen.getByText(t("settingsTitle"))).toBeInTheDocument(),
+    );
+
+    const density = screen.getByRole("radiogroup", { name: t("settingsDensity") });
+    expect(density).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: t("settingsDensityNormal") }).getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("true");
+
+    const motion = screen.getByRole("radiogroup", { name: t("settingsMotionPreference") });
+    expect(motion).toBeInTheDocument();
+    expect(
+      screen
+        .getByRole("radio", { name: t("settingsMotionPreferenceSystem") })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+  });
 });
