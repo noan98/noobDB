@@ -367,6 +367,16 @@ function extractInvokedArgs(tauriTs: string): Map<string, Set<string>> {
  */
 const KNOWN_DIFFERENCES: Record<string, { onlyInBackend?: string[]; onlyInFrontend?: string[] }> = {};
 
+/**
+ * `#[tauri::command]` を実装したが `generate_handler!` に登録し忘れている
+ * (= 到達不能な) ハンドラの許可リスト (#989)。**空のまま維持するのが理想**で、
+ * 追加するときは「なぜ登録しないのに残すのか」を必ず併記すること。単に
+ * 「まだ配線していない」は理由にならない — `lib.rs` へ登録して `tauri.ts` に
+ * ラッパを足すか、コマンドごと削除すること (#907 の `INTENTIONALLY_UNREACHABLE`
+ * と同じ思想)。現時点で正当な理由は無い。
+ */
+const INTENTIONALLY_UNREGISTERED: string[] = [];
+
 const rustSources = Object.values(commandModules);
 
 const backendParams = new Map<string, string[]>();
@@ -431,6 +441,36 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
       missing,
       `rustSources (commands/*.rs) から引数情報を抽出できていない登録コマンド: ${missing.join(", ")}`,
     ).toEqual([]);
+  });
+
+  it("commands/*.rs の全 #[tauri::command] が lib.rs の generate_handler! に登録されている (#989)", () => {
+    // これまでのパリティ検査は「集合の一部」しか見ていなかった:
+    //   - ipcCommandParity.test.ts は lib.rs 登録集合 == tauri.ts 呼び出し集合を強制。
+    //   - 上のテストは lib.rs 登録集合 ⊆ backendParams (取りこぼし検知) だけを見る。
+    // どちらも「#[tauri::command] を実装したが generate_handler! に登録せず、
+    // tauri.ts のラッパも作っていない」コマンドを検出できない。コマンド関数は
+    // すべて pub async fn なので rlib の公開 API と見なされ、rustc の dead_code にも
+    // ならず clippy -D warnings もすり抜ける。knip は TS 専用で Rust を見ない。
+    // ここで backendParams (= commands/*.rs の全 #[tauri::command] 名) が
+    // registered (= lib.rs の generate_handler! 登録集合) の部分集合であることを
+    // 強制し、未登録の到達不能ハンドラを検出する (#907 のバックエンド版)。
+    const registered = extractRegisteredCommands(libRs);
+    const unregistered = [...backendParams.keys()]
+      .filter((name) => !registered.has(name))
+      .filter((name) => !INTENTIONALLY_UNREGISTERED.includes(name))
+      .sort();
+    expect(
+      unregistered,
+      `generate_handler! に未登録の #[tauri::command] (到達不能): ${unregistered.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("INTENTIONALLY_UNREGISTERED が実態と合っている (登録されたエントリは外す)", () => {
+    const registered = extractRegisteredCommands(libRs);
+    const stale = INTENTIONALLY_UNREGISTERED.filter(
+      (name) => !backendParams.has(name) || registered.has(name),
+    ).sort();
+    expect(stale, `不要になった許可リストのエントリ: ${stale.join(", ")}`).toEqual([]);
   });
 
   it("バックエンドとフロントエンドの双方に存在するコマンドの引数キー集合が一致する", () => {
