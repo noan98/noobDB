@@ -24,6 +24,7 @@ import { useReducedMotion } from "motion/react";
 
 import { api, type DriverKind } from "../api/tauri";
 import { useT } from "../i18n";
+import { semanticColorToken } from "../semanticColors";
 import {
   buildErGraph,
   layoutErGraph,
@@ -500,7 +501,7 @@ function ERDiagramInner({
         {t("erDiagramDesc")}
       </chakra.p>
       {truncated && (
-        <chakra.p margin={0} padding="6px 24px 0" fontSize="sm" color="var(--status-warning)">
+        <chakra.p margin={0} padding="6px 24px 0" fontSize="sm" color={semanticColorToken("warning", "text")}>
           {t("erDiagramTruncated", { shown: summary!.shown, total: summary!.total })}
         </chakra.p>
       )}

@@ -10,6 +10,7 @@ import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
+import { semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
@@ -1456,10 +1457,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     let borderLeftColor: string;
     let rowBg: string | undefined;
     if (p.is_production) {
-      borderLeftColor = "var(--status-error)";
+      const danger = semanticColorVar("danger", "solid");
+      borderLeftColor = danger;
       rowBg = isActive
-        ? "color-mix(in srgb, var(--status-error) 12%, var(--bg-active))"
-        : "color-mix(in srgb, var(--status-error) 6%, transparent)";
+        ? `color-mix(in srgb, ${danger} 12%, var(--bg-active))`
+        : `color-mix(in srgb, ${danger} 6%, transparent)`;
     } else if (accent) {
       borderLeftColor = accent;
       rowBg = isActive ? "var(--bg-active)" : undefined;

@@ -15,6 +15,7 @@ import {
 } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { isReadOnlySql } from "../dangerousSql";
+import { semanticColorToken } from "../semanticColors";
 import { previewOutputPath, relativeNextRun, sortTasksForDisplay, summarizeAction, summarizeSchedule } from "../taskFormat";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
@@ -374,7 +375,7 @@ function TaskRow({
             <chakra.span color="app.textMuted">{t("taskLastOk")}</chakra.span>
           )}
           {task.last_status === "error" && (
-            <chakra.span color="var(--status-error)">{t("taskLastError")}</chakra.span>
+            <chakra.span color={semanticColorToken("danger", "text")}>{t("taskLastError")}</chakra.span>
           )}
           {!task.last_status && <chakra.span color="app.textMuted">–</chakra.span>}
         </chakra.div>
@@ -423,7 +424,7 @@ function TaskRow({
                   gap="2"
                   fontSize="xs"
                   fontFamily="var(--font-mono)"
-                  color={r.status === "ok" ? "app.textMuted" : "var(--status-error)"}
+                  color={r.status === "ok" ? "app.textMuted" : semanticColorToken("danger", "text")}
                 >
                   <chakra.span minW="170px">{new Date(r.started_at).toLocaleString()}</chakra.span>
                   <chakra.span minW="50px">{r.status}</chakra.span>
@@ -635,7 +636,7 @@ function TaskForm({
               placeholder="SELECT ..."
             />
             {!sqlLooksReadOnly && (
-              <chakra.p margin={0} marginTop="1" fontSize="xs" color="var(--status-error)">
+              <chakra.p margin={0} marginTop="1" fontSize="xs" color={semanticColorToken("danger", "text")}>
                 {t("taskFormSqlNotReadOnly")}
               </chakra.p>
             )}

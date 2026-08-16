@@ -16,6 +16,7 @@
 
 import { accentForeground, parseHex } from "./accent";
 import { categoricalColor } from "./colorScale";
+import { semanticColorVar } from "./semanticColors";
 
 /** プロファイルに表示しうるバッジの種類。 */
 export type ProfileBadgeKind = "production" | "readOnly";
@@ -77,15 +78,16 @@ export function chipForeground(color: string | null | undefined): string | null 
  * `ConnectionList` の行スパインと同じ**本番が常に最優先**:
  *
  * 1. 未接続 (`active` が `null`) → `"transparent"` (何も塗らない)
- * 2. 本番接続 (`is_production`) → 常に危険色トークン (`--status-error`)。
- *    プロファイルの `color` がどんな色でも誤操作リスクを薄めないよう上書きする。
+ * 2. 本番接続 (`is_production`) → 常に危険色トークン (`semanticColors` の
+ *    `danger`/`solid`、#1009)。プロファイルの `color` がどんな色でも誤操作
+ *    リスクを薄めないよう上書きする。
  * 3. プロファイルにカスタム色があればそれをそのまま使う。
  * 4. 色未設定ならワークスペースアクセント (`--ws-accent`、無ければブランド
  *    アクセント `--accent`) にフォールバックする — 未設定時も自然に見える。
  */
 export function workspaceSpineColor(active: WorkspaceIdentityInput | null): string {
   if (!active) return "transparent";
-  if (active.is_production) return "var(--status-error)";
+  if (active.is_production) return semanticColorVar("danger", "solid");
   return normalizeChipColor(active.color) ?? "var(--ws-accent, var(--accent))";
 }
 

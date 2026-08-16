@@ -16,6 +16,7 @@ import {
   type TableDiff,
 } from "../api/tauri";
 import { useT } from "../i18n";
+import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -51,11 +52,13 @@ const sideLabelCss: SystemStyleObject = {
 };
 const sideErrorCss: SystemStyleObject = {
   fontSize: "var(--text-xs)",
-  color: "var(--status-error)",
+  color: semanticColorVar("danger", "text"),
 };
 const actionsCss: SystemStyleObject = { margin: "12px 0" };
+// 変数名は "warning" だが実際は接続/比較エラー文言に使われるため danger 役割へ
+// マッピングする (#1009)。
 const warningCss: SystemStyleObject = {
-  color: "var(--status-error)",
+  color: semanticColorVar("danger", "text"),
   fontSize: "var(--text-sm)",
   margin: "8px 0",
 };
@@ -165,11 +168,11 @@ const destructiveCss: SystemStyleObject = {
   alignItems: "center",
   gap: "1.5",
   fontSize: "var(--text-sm)",
-  color: "var(--status-error)",
+  color: semanticColorVar("danger", "text"),
   cursor: "pointer",
 };
 const successCss: SystemStyleObject = {
-  color: "var(--status-success)",
+  color: semanticColorVar("success", "text"),
   fontSize: "var(--text-sm)",
   margin: "8px 0",
 };
@@ -190,7 +193,7 @@ const statementHeadCss: SystemStyleObject = {
 };
 const destructiveFlagCss: SystemStyleObject = {
   textStyle: "overline",
-  color: "var(--status-error)",
+  color: semanticColorVar("danger", "text"),
 };
 const sqlCss: SystemStyleObject = {
   display: "block",
@@ -202,7 +205,7 @@ const sqlCss: SystemStyleObject = {
 };
 const backupCss: SystemStyleObject = {
   fontSize: "var(--text-sm)",
-  color: "var(--status-connecting)",
+  color: semanticColorVar("warning", "text"),
   margin: "10px 0",
 };
 const planWarningsCss: SystemStyleObject = {
@@ -221,15 +224,29 @@ const limitCss: SystemStyleObject = {
   "& input": { width: "80px" },
 };
 
-/** DiffStatus に対応する文字色/枠色 (chip / badge 共通)。 */
+/**
+ * DiffStatus に対応する文字色/枠色 (chip / badge 共通)。#1009: `semanticColors`
+ * の 4 役割 (success/warning/danger/info) へマッピングし、生の `--status-*` を
+ * 直参照しない。text/border とも同じ tier (`text`) を使うのは、このチップが
+ * 淡色地の "subtle" 背景ではなく中立地 (`--bg-muted`) の上に単色の文字色+枠色を
+ * 重ねるデザインのため — text/border で tier を分けると (テーマによっては)
+ * 文字色と枠色の色相がずれてしまう。`same` (無変化) は状態色を持たないニュートラル
+ * 表示のまま据え置く。
+ */
 function statusColors(status: DiffStatus): { color: string; borderColor: string } {
   switch (status) {
-    case "source_only":
-      return { color: "var(--status-success)", borderColor: "var(--status-success)" };
-    case "target_only":
-      return { color: "var(--status-error)", borderColor: "var(--status-error)" };
-    case "different":
-      return { color: "var(--status-connecting)", borderColor: "var(--status-connecting)" };
+    case "source_only": {
+      const c = semanticColorVar("success", "text");
+      return { color: c, borderColor: c };
+    }
+    case "target_only": {
+      const c = semanticColorVar("danger", "text");
+      return { color: c, borderColor: c };
+    }
+    case "different": {
+      const c = semanticColorVar("warning", "text");
+      return { color: c, borderColor: c };
+    }
     case "same":
       return { color: "var(--text-muted)", borderColor: "var(--border)" };
   }
@@ -259,20 +276,26 @@ function badgeCss(status: DiffStatus): SystemStyleObject {
   };
 }
 
-/** SyncKind に対応する文字色/枠色。 */
+/** SyncKind に対応する文字色/枠色。`statusColors` と同じ tier 方針 (#1009)。 */
 function kindColors(kind: SyncKind): { color: string; borderColor: string } {
   switch (kind) {
     case "create_table":
     case "add_column":
-    case "insert_row":
-      return { color: "var(--status-success)", borderColor: "var(--status-success)" };
+    case "insert_row": {
+      const c = semanticColorVar("success", "text");
+      return { color: c, borderColor: c };
+    }
     case "alter_column":
-    case "update_row":
-      return { color: "var(--status-connecting)", borderColor: "var(--status-connecting)" };
+    case "update_row": {
+      const c = semanticColorVar("warning", "text");
+      return { color: c, borderColor: c };
+    }
     case "drop_column":
     case "drop_table":
-    case "delete_row":
-      return { color: "var(--status-error)", borderColor: "var(--status-error)" };
+    case "delete_row": {
+      const c = semanticColorVar("danger", "text");
+      return { color: c, borderColor: c };
+    }
   }
 }
 
@@ -295,7 +318,7 @@ function statementCss(destructive: boolean): SystemStyleObject {
     background: "var(--bg-elevated)",
     py: "2", px: "2.5",
   };
-  return destructive ? { ...base, borderColor: "var(--status-error)" } : base;
+  return destructive ? { ...base, borderColor: semanticColorVar("danger", "text") } : base;
 }
 
 type Side = "source" | "target";
