@@ -1835,14 +1835,18 @@ fn has_locking_table_hint(body: &str) -> bool {
 ///   a comment or a `'literal'` never trips detection — and a `` `limit` ``
 ///   column name is not mistaken for the clause.
 /// * Only statements beginning with `select` or `with` are eligible. Anything
-///   that already carries a `limit` / `offset` keyword, a write keyword
-///   (`insert` / `update` / `delete` / `into` — guarding data-modifying CTEs and
-///   `SELECT … INTO`), a locking clause, or that reads as a single-row aggregate
-///   is left alone.
+///   that already carries a `limit` / `offset` / `fetch` keyword (the last
+///   covers the SQL-standard `FETCH FIRST/NEXT … ROWS ONLY` pagination clause
+///   that PostgreSQL and DuckDB both accept — appending a trailing `LIMIT`
+///   after it is a syntax error, mirroring the guard [`apply_auto_limit_mssql`]
+///   already has for T-SQL's `OFFSET … FETCH NEXT … ROWS ONLY`), a write
+///   keyword (`insert` / `update` / `delete` / `into` — guarding
+///   data-modifying CTEs and `SELECT … INTO`), a locking clause, or that reads
+///   as a single-row aggregate is left alone.
 /// * *Any* `limit` token anywhere — even one inside a sub-query — makes us bail.
 ///   That can skip a query we could have safely capped, but it can never append
 ///   a second `LIMIT` after an existing top-level one (a syntax error). Skipping
-///   is the safe direction.
+///   is the safe direction. The same reasoning applies to `offset` and `fetch`.
 ///
 /// The `LIMIT` is spliced in just after the last meaningful character — ahead of
 /// any trailing `;` or comment — so it is never swallowed by a line comment.
@@ -1874,7 +1878,8 @@ fn apply_auto_limit_masked(orig: &[char], masked: &[char], limit: usize) -> Opti
     if !(starts_with_word(body, "select") || starts_with_word(body, "with")) {
         return None;
     }
-    if contains_word(body, "limit") || contains_word(body, "offset") {
+    if contains_word(body, "limit") || contains_word(body, "offset") || contains_word(body, "fetch")
+    {
         return None;
     }
     // Data-modifying CTEs (`WITH … DELETE`) and `SELECT … INTO` must not get a
@@ -3276,6 +3281,40 @@ mod tests {
         assert!(apply_auto_limit("SELECT * FROM t LIMIT 10", 1000).is_none());
         assert!(apply_auto_limit("SELECT * FROM t limit 10 offset 5", 1000).is_none());
         assert!(apply_auto_limit("SELECT * FROM t ORDER BY id OFFSET 5 ROWS", 1000).is_none());
+    }
+
+    #[test]
+    fn auto_limit_skips_when_fetch_present() {
+        // PostgreSQL/DuckDB's SQL-standard `FETCH FIRST/NEXT … ROWS ONLY`
+        // pagination clause (#969). Appending a trailing `LIMIT` after it
+        // would be a syntax error, so this must bail just like an existing
+        // `LIMIT`/`OFFSET` does.
+        assert!(
+            apply_auto_limit("SELECT * FROM t ORDER BY id FETCH FIRST 10 ROWS ONLY", 1000)
+                .is_none()
+        );
+        assert!(
+            apply_auto_limit("SELECT * FROM t ORDER BY id FETCH NEXT 10 ROWS ONLY", 1000).is_none()
+        );
+        // Same clause combined with an explicit OFFSET.
+        assert!(apply_auto_limit(
+            "SELECT * FROM t ORDER BY id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+            1000
+        )
+        .is_none());
+        // Driver-aware entry point for PostgreSQL/DuckDB must agree.
+        assert!(apply_auto_limit_for(
+            DriverKind::Postgres,
+            "SELECT * FROM t ORDER BY id FETCH FIRST 10 ROWS ONLY",
+            1000
+        )
+        .is_none());
+        assert!(apply_auto_limit_for(
+            DriverKind::DuckDb,
+            "SELECT * FROM t ORDER BY id FETCH FIRST 10 ROWS ONLY",
+            1000
+        )
+        .is_none());
     }
 
     #[test]
