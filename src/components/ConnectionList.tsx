@@ -16,7 +16,7 @@ import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
-import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
 import { computeTooltipPosition } from "./tooltipPosition";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { DropInsertionMarker } from "./DropInsertionMarker";
@@ -993,14 +993,20 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       if (commands.length > 0) {
         const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
         items.push({ separator: true });
-        for (const command of commands) {
-          items.push({
-            label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
-            onSelect: () => onRunTableMaintenance(db, tbl, command),
-            disabled: activeReadOnly,
-            title: roTitle,
-          });
-        }
+        // 保守コマンドはドライバによって 1〜4 件に増減し、それ自体は日常操作では
+        // ないので 2 件以上ならサブメニューへ畳む (#1018)。
+        items.push(
+          ...submenuOrFlat(
+            t("contextMenuMaintenanceGroup"),
+            commands.map((command) => ({
+              label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
+              onSelect: () => onRunTableMaintenance(db, tbl, command),
+              disabled: activeReadOnly,
+              title: roTitle,
+            })),
+            { icon: "tools" },
+          ),
+        );
       }
     }
     setMenu({ x: e.clientX, y: e.clientY, items });
@@ -1088,14 +1094,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       if (commands.length > 0) {
         const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
         items.push({ separator: true });
-        for (const command of commands) {
-          items.push({
-            label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
-            onSelect: () => onRunDatabaseMaintenance(db, command),
-            disabled: activeReadOnly,
-            title: roTitle,
-          });
-        }
+        items.push(
+          ...submenuOrFlat(
+            t("contextMenuMaintenanceGroup"),
+            commands.map((command) => ({
+              label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
+              onSelect: () => onRunDatabaseMaintenance(db, command),
+              disabled: activeReadOnly,
+              title: roTitle,
+            })),
+            { icon: "tools" },
+          ),
+        );
       }
     }
     setMenu({ x: e.clientX, y: e.clientY, items });

@@ -1,4 +1,12 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
@@ -8,6 +16,7 @@ import { semanticColorVar } from "../semanticColors";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { Kbd } from "./Kbd";
+import { computeMenuPosition, type MenuAnchor, type MenuRect } from "./menuPosition";
 
 /**
  * メニュー本体を motion 化するラッパー。`transition` を Chakra のスタイルプロップに
@@ -48,10 +57,54 @@ export interface ContextMenuSeparator {
   separator: true;
 }
 
-export type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator;
+/**
+ * 入れ子メニュー (#1018)。ホバー (またはキーボードの ArrowRight / Enter) で子項目を
+ * 開く 1 項目で、`items` にはさらにセパレータや入れ子のサブメニューを置ける。
+ *
+ * 使いどころは「項目数が状況によって膨らむグループ」— 例えば結果グリッドの
+ * 「参照元を表示」は子テーブルの数だけ項目が増え、実際に画面高いっぱいの
+ * メニューになっていた。固定 2〜3 項目のグループをむやみに畳むと、ただ
+ * 1 ホバー分の操作コストが増えるだけなので、判断は `submenuOrFlat` に寄せる。
+ */
+export interface ContextMenuSubmenu {
+  label: string;
+  /** 子項目。空の配列を渡してはいけない (開いても何も無いメニューになる)。 */
+  items: ContextMenuEntry[];
+  icon?: IconName;
+  title?: string;
+  disabled?: boolean;
+}
+
+export type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator | ContextMenuSubmenu;
 
 function isSeparator(entry: ContextMenuEntry): entry is ContextMenuSeparator {
   return "separator" in entry;
+}
+
+function isSubmenu(entry: ContextMenuEntry): entry is ContextMenuSubmenu {
+  return "items" in entry;
+}
+
+/** `submenuOrFlat` が子項目をサブメニューへ畳み始める既定のしきい値。 */
+export const SUBMENU_THRESHOLD = 2;
+
+/**
+ * 項目数に応じて「そのまま並べる」か「サブメニューへ畳む」かを選ぶ (#1018)。
+ *
+ * 呼び出し側は毎回このヘルパーを通すことで、メニューごとに畳む/畳まないの
+ * 基準がばらつくのを防ぐ。項目が 0 件なら空配列 (呼び出し側はスプレッドで
+ * 差し込むだけでよい)、`threshold` 未満ならフラットのまま、それ以上なら
+ * 1 つのサブメニュー項目へまとめる。
+ */
+export function submenuOrFlat(
+  label: string,
+  items: ContextMenuEntry[],
+  opts: { icon?: IconName; title?: string; threshold?: number } = {},
+): ContextMenuEntry[] {
+  const { icon, title, threshold = SUBMENU_THRESHOLD } = opts;
+  if (items.length === 0) return [];
+  if (items.length < threshold) return items;
+  return [{ label, items, icon, title }];
 }
 
 interface Props {
@@ -70,27 +123,12 @@ interface Props {
  * viewport clamping. Activating an item closes the menu first, then runs it.
  */
 export function ContextMenu({ x, y, items, onClose }: Props) {
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-
   // メニューが閉じたとき、開く前にフォーカスしていた要素へ戻す。
   useReturnFocus();
 
-  // Clamp into the viewport once the menu has measured itself, flipping back
-  // from the anchor when it would overflow the right/bottom edge.
-  useLayoutEffect(() => {
-    const el = menuRef.current;
-    if (!el) return;
-    const { width, height } = el.getBoundingClientRect();
-    const margin = 6;
-    let left = x + width + margin > window.innerWidth ? x - width : x;
-    let top = y + height + margin > window.innerHeight ? y - height : y;
-    left = Math.min(Math.max(margin, left), window.innerWidth - width - margin);
-    top = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
-    setPos({ left, top });
-  }, [x, y, items]);
-
   // Outside clicks are absorbed by the backdrop; here we handle the rest.
+  // Escape はパネル側でも処理する (サブメニューが開いていればそれだけを閉じる)
+  // ため、この window リスナーはフォーカスがメニュー外にある場合の保険。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -105,19 +143,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     };
   }, [onClose]);
 
-  // Focus the first enabled item so keyboard users can navigate immediately.
-  useEffect(() => {
-    menuRef.current?.querySelector<HTMLButtonElement>(ENABLED_ITEM)?.focus();
-  }, [items]);
-
-  const activate = (item: ContextMenuItem) => {
-    if (item.disabled) return;
-    onClose();
-    item.onSelect();
-  };
-
-  // 共通 roving tabindex ヘルパーで ArrowUp/Down・Home/End のメニュー項目移動を実装。
-  const { onKeyDown } = useRovingFocus(menuRef, ENABLED_ITEM, { orientation: "vertical" });
+  const anchor = useMemo<MenuAnchor>(() => ({ kind: "point", x, y }), [x, y]);
 
   return createPortal(
     <Box
@@ -130,6 +156,121 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
         onClose();
       }}
     >
+      <MenuPanel entries={items} anchor={anchor} onCloseAll={onClose} autoFocus />
+    </Box>,
+    document.body,
+  );
+}
+
+interface PanelProps {
+  entries: ContextMenuEntry[];
+  anchor: MenuAnchor;
+  /** メニュー全体を閉じる (項目の実行時・ルートの Escape)。 */
+  onCloseAll: () => void;
+  /** サブメニューのみ: 自分だけを閉じて親項目へフォーカスを戻す。 */
+  onCloseSelf?: () => void;
+  /** 開いた直後に先頭項目へフォーカスする (ルート、およびキーボードで開いた
+   *  サブメニュー)。ホバーで開いたサブメニューはフォーカスを奪わない。 */
+  autoFocus?: boolean;
+}
+
+/**
+ * メニュー 1 枚ぶんの描画。ルートメニューもサブメニューも同じコンポーネントで、
+ * サブメニューは自身をさらにポータルで body へ出す (親パネルの DOM に入れると
+ * 親の roving focus のクエリ `[role=menuitem]` に子項目まで混ざり、矢印キーの
+ * 移動が壊れるため)。
+ */
+function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: PanelProps) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  /** 開いているサブメニュー。同一パネルで同時に開くのは高々 1 つ。`anchor` は
+   *  開いた時点で 1 度だけ組み立てる — 毎レンダリングで作り直すと、位置決めの
+   *  `useLayoutEffect` が依存の変化を検出し続けて再測定が止まらなくなる。 */
+  const [open, setOpen] = useState<{
+    index: number;
+    anchor: MenuAnchor;
+    viaKeyboard: boolean;
+  } | null>(null);
+  const triggerRefs = useRef(new Map<number, HTMLButtonElement>());
+
+  // Clamp into the viewport once the menu has measured itself, flipping back
+  // from the anchor when it would overflow the right/bottom edge.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    setPos(
+      computeMenuPosition(
+        anchor,
+        { width, height },
+        { width: window.innerWidth, height: window.innerHeight },
+      ),
+    );
+  }, [anchor, entries]);
+
+  // Focus the first enabled item so keyboard users can navigate immediately.
+  useEffect(() => {
+    if (!autoFocus) return;
+    menuRef.current?.querySelector<HTMLButtonElement>(ENABLED_ITEM)?.focus();
+  }, [entries, autoFocus]);
+
+  const closeSubmenu = useCallback((focusTrigger: boolean) => {
+    setOpen((prev) => {
+      if (prev && focusTrigger) triggerRefs.current.get(prev.index)?.focus();
+      return null;
+    });
+  }, []);
+
+  const activate = (item: ContextMenuItem) => {
+    if (item.disabled) return;
+    onCloseAll();
+    item.onSelect();
+  };
+
+  const openSubmenu = (index: number, el: HTMLButtonElement, viaKeyboard: boolean) => {
+    const r = el.getBoundingClientRect();
+    const rect: MenuRect = {
+      top: r.top,
+      left: r.left,
+      right: r.right,
+      bottom: r.bottom,
+      width: r.width,
+      height: r.height,
+    };
+    setOpen({ index, anchor: { kind: "rect", rect }, viaKeyboard });
+  };
+
+  // 共通 roving tabindex ヘルパーで ArrowUp/Down・Home/End のメニュー項目移動を実装。
+  const { onKeyDown: onRovingKeyDown } = useRovingFocus(menuRef, ENABLED_ITEM, {
+    orientation: "vertical",
+  });
+
+  // サブメニューはポータルで body へ出るが React ツリー上は親パネルの子なので、
+  // キーイベントは親の onKeyDown まで伝播する。子パネルが処理したキーで親の
+  // roving まで動かないよう、パネル内で完結させたキーは伝播を止める。
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      e.preventDefault();
+      // サブメニューなら自分だけ閉じ、ルートならメニュー全体を閉じる。
+      if (onCloseSelf) onCloseSelf();
+      else onCloseAll();
+      return;
+    }
+    if (e.key === "ArrowLeft" && onCloseSelf) {
+      e.stopPropagation();
+      e.preventDefault();
+      onCloseSelf();
+      return;
+    }
+    e.stopPropagation();
+    onRovingKeyDown(e);
+  };
+
+  const openEntry = open ? entries[open.index] : undefined;
+
+  return (
+    <>
       <MotionMenu
         ref={menuRef}
         position="fixed"
@@ -150,15 +291,15 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
         animate={{ opacity: 1, scale: 1 }}
         transition={transitions.enter}
         style={{
-          left: pos?.left ?? x,
-          top: pos?.top ?? y,
+          left: pos?.left ?? (anchor.kind === "point" ? anchor.x : anchor.rect.right),
+          top: pos?.top ?? (anchor.kind === "point" ? anchor.y : anchor.rect.top),
           visibility: pos ? "visible" : "hidden",
         }}
         role="menu"
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
-        {items.map((entry, i) => {
+        {entries.map((entry, i) => {
           if (isSeparator(entry)) {
             return (
               <Box
@@ -171,10 +312,22 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               />
             );
           }
+          const submenu = isSubmenu(entry);
+          const expanded = submenu && open?.index === i;
           const button = (
             <chakra.button
               type="button"
               role="menuitem"
+              ref={
+                submenu
+                  ? (el: HTMLButtonElement | null) => {
+                      if (el) triggerRefs.current.set(i, el);
+                      else triggerRefs.current.delete(i);
+                    }
+                  : undefined
+              }
+              aria-haspopup={submenu ? "menu" : undefined}
+              aria-expanded={submenu ? expanded : undefined}
               display="flex"
               alignItems="center"
               gap="2"
@@ -185,7 +338,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               px="2.5"
               py="1.5"
               fontSize="var(--text-md)"
-              color={entry.danger ? "app.textError" : "app.text"}
+              color={!submenu && entry.danger ? "app.textError" : "app.text"}
               borderRadius="sm"
               cursor="pointer"
               disabled={entry.disabled}
@@ -196,12 +349,37 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               _disabled={{ color: "app.textMuted", opacity: 0.6, cursor: "default" }}
               css={{
                 "&:hover:not(:disabled), &:focus-visible": {
-                  background: entry.danger
-                    ? `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 12%, transparent)`
-                    : "var(--bg-hover)",
+                  background:
+                    !submenu && entry.danger
+                      ? `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 12%, transparent)`
+                      : "var(--bg-hover)",
                 },
               }}
-              onClick={() => activate(entry)}
+              // 開いているサブメニューは、他のサブメニュー項目にホバーしたとき
+              // だけ切り替える。通常項目を通過しただけで閉じないので、親項目から
+              // 斜めにパネルへ移動しても取りこぼさない (閉じるのはクリック・
+              // Escape・ArrowLeft・メニュー自体の終了時)。
+              onMouseEnter={(e) => {
+                if (!submenu || entry.disabled) return;
+                openSubmenu(i, e.currentTarget, false);
+              }}
+              onClick={(e) => {
+                if (!submenu) {
+                  activate(entry);
+                  return;
+                }
+                if (entry.disabled) return;
+                if (expanded) closeSubmenu(false);
+                else openSubmenu(i, e.currentTarget, true);
+              }}
+              onKeyDown={(e) => {
+                if (!submenu || entry.disabled) return;
+                if (e.key === "ArrowRight" || e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openSubmenu(i, e.currentTarget, true);
+                }
+              }}
             >
               {entry.icon && (
                 <Box flexShrink={0} opacity={entry.disabled ? 0.6 : 0.85} aria-hidden>
@@ -211,7 +389,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               <chakra.span flex="1" minW="0">
                 {entry.label}
               </chakra.span>
-              {entry.shortcut && (
+              {!submenu && entry.shortcut && (
                 <Kbd
                   tone="muted"
                   flexShrink={0}
@@ -221,6 +399,11 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
                 >
                   {entry.shortcut}
                 </Kbd>
+              )}
+              {submenu && (
+                <Box flexShrink={0} ml="3" opacity={entry.disabled ? 0.6 : 0.7} aria-hidden>
+                  <Icon name="chevron-right" size={ICON_SIZES.sm} />
+                </Box>
               )}
             </chakra.button>
           );
@@ -244,7 +427,20 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
           );
         })}
       </MotionMenu>
-    </Box>,
-    document.body,
+      {open &&
+        openEntry &&
+        isSubmenu(openEntry) &&
+        createPortal(
+          <MenuPanel
+            key={open.index}
+            entries={openEntry.items}
+            anchor={open.anchor}
+            onCloseAll={onCloseAll}
+            onCloseSelf={() => closeSubmenu(true)}
+            autoFocus={open.viaKeyboard}
+          />,
+          document.body,
+        )}
+    </>
   );
 }

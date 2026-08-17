@@ -1362,6 +1362,8 @@ const en = {
   contextMenuTruncateTable: "Truncate table...",
   contextMenuDropTable: "Drop table...",
   contextMenuDropIndex: "Drop index...",
+  // 保守コマンドのサブメニュー (#1018)
+  contextMenuMaintenanceGroup: "Maintenance...",
   renameTableTitle: "Rename table",
   renameTableLabel: "New name for {table}",
   renameTableConfirm: "Rename",
@@ -1598,6 +1600,8 @@ const en = {
   gridQuickFilterTitleClient:
     "Filters the rows already fetched into this grid. Excluding a value also drops NULL rows.",
   gridCopyCell: "Copy value",
+  // 右クリックメニューの階層化 (#1018)
+  gridCopyGroup: "Copy...",
   gridCopyRow: "Copy row (TSV)",
   gridCopyRowWithHeaders: "Copy row with column names",
   gridCopyAsInsert: "Copy as INSERT",
@@ -1659,6 +1663,7 @@ const en = {
     "No cells were pasted (read-only columns, invalid values, or the paste extended past the visible rows/columns)",
   gridPasteAllUnchanged: "All {cells} pasted cells already held that value — nothing to edit",
   // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
+  gridQuickSetGroup: "Set value...",
   gridQuickSetNull: "Set to NULL",
   gridQuickSetEmpty: "Set to empty string",
   gridQuickSetEmptyNote: "The empty string '' — not NULL",
@@ -1687,6 +1692,8 @@ const en = {
   gridFkJump: "Jump to: {table}",
   gridFkJumpTitle: "Open the referenced table filtered by this value",
   gridFkReverse: "Referencing rows: {table}.{column}",
+  gridFkReverseGroup: "Referencing rows ({count})",
+  gridFkReverseChild: "{table}.{column}",
   gridFkReverseTitle: "Open the child table filtered to rows referencing this row",
   gridFkColHeader: "FK → {table}",
   cellViewerCopy: "Copy",
@@ -4124,6 +4131,8 @@ const ja: Dict = {
   contextMenuTruncateTable: "テーブルを TRUNCATE...",
   contextMenuDropTable: "テーブルを DROP...",
   contextMenuDropIndex: "インデックスを DROP...",
+  // 保守コマンドのサブメニュー (#1018)
+  contextMenuMaintenanceGroup: "保守コマンド...",
   renameTableTitle: "テーブル名を変更",
   renameTableLabel: "{table} の新しい名前",
   renameTableConfirm: "変更",
@@ -4359,6 +4368,8 @@ const ja: Dict = {
   gridQuickFilterTitleClient:
     "このグリッドに取得済みの行を絞り込みます。値の除外では NULL の行も落ちます。",
   gridCopyCell: "値をコピー",
+  // 右クリックメニューの階層化 (#1018)
+  gridCopyGroup: "コピー...",
   gridCopyRow: "行をコピー (TSV)",
   gridCopyRowWithHeaders: "列名付きで行をコピー",
   gridCopyAsInsert: "INSERT としてコピー",
@@ -4417,6 +4428,7 @@ const ja: Dict = {
     "貼り付けられたセルはありません (編集不可列・不正な値、または表示中の行/列数を超えた貼り付けです)",
   gridPasteAllUnchanged: "貼り付けた {cells} セルはすべてすでにその値です — 変更はありません",
   // セル右クリックの「値をセット」ショートカット (quickSetValues.ts)
+  gridQuickSetGroup: "値をセット...",
   gridQuickSetNull: "NULL をセット",
   gridQuickSetEmpty: "空文字をセット",
   gridQuickSetEmptyNote: "NULL ではなく空文字列 '' です",
@@ -4445,6 +4457,8 @@ const ja: Dict = {
   gridFkJump: "参照先へジャンプ: {table}",
   gridFkJumpTitle: "この値で参照先テーブルを開く",
   gridFkReverse: "参照元を表示: {table}.{column}",
+  gridFkReverseGroup: "参照元を表示 ({count})",
+  gridFkReverseChild: "{table}.{column}",
   gridFkReverseTitle: "この行を参照している子テーブルの行を開く",
   gridFkColHeader: "FK → {table}",
   cellViewerCopy: "コピー",
