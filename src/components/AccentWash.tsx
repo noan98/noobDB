@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions } from "../motion";
 import type { TitleBarConnection } from "./titleBarContext";
-import { accentWashSpec, shouldFireAccentWash } from "./accentWash";
+import { accentWashSpec, shouldFireAccentWash } from "./accentWashSpec";
 
 interface Flash {
   key: number;
