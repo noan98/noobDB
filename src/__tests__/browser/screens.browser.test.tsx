@@ -3,6 +3,7 @@ import { renderInBrowser } from "./render";
 import { t } from "../../i18n";
 import { ConnectionForm } from "../../components/ConnectionForm";
 import { ResultGrid } from "../../components/ResultGrid";
+import { ContextMenu } from "../../components/ContextMenu";
 import { DangerousQueryDialog } from "../../components/DangerousQueryDialog";
 import { SettingsView } from "../../components/SettingsView";
 import { HelpView } from "../../components/HelpView";
@@ -172,5 +173,54 @@ describe("デザイントークン (App.css) の解決 (#961)", () => {
 
     expect(darkBg).not.toBe("");
     expect(darkBg).not.toBe(lightBg);
+  });
+});
+
+// 右クリックメニューのサブメニュー (#1018)。開いた子パネルが実際にどこへ描画され
+// るかは CSS とレイアウト依存で、jsdom (矩形が常に 0) では検証できない。ここでは
+// 実 Chromium で「親項目の右側に出る」「ビューポート内に収まる」「親パネルを
+// 覆い隠さない」という位置決めの要点だけを押さえる (算術自体は
+// `menuPosition.test.ts` の領分)。
+describe("ContextMenu のサブメニュー (実ブラウザ)", () => {
+  it("親項目の右側に開き、ビューポート内へ収まる", async () => {
+    const screen = await renderInBrowser(
+      <ContextMenu
+        x={120}
+        y={140}
+        onClose={() => {}}
+        items={[
+          { label: "トップ項目", onSelect: () => {} },
+          {
+            label: "参照元を表示",
+            items: [
+              { label: "orders.user_id", onSelect: () => {} },
+              { label: "comments.user_id", onSelect: () => {} },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const trigger = screen.getByRole("menuitem", { name: "参照元を表示" });
+    await expect.element(trigger).toBeVisible();
+    await trigger.hover();
+
+    const childItem = screen.getByRole("menuitem", { name: "orders.user_id" });
+    await expect.element(childItem).toBeVisible();
+
+    const triggerRect = (await trigger.element()).getBoundingClientRect();
+    const childPanel = (await childItem.element()).closest("[role=menu]");
+    expect(childPanel).not.toBeNull();
+    const panelRect = (childPanel as HTMLElement).getBoundingClientRect();
+
+    // 親項目の右側 (= 親パネルに重ならない位置) に出ている。
+    expect(panelRect.left).toBeGreaterThanOrEqual(triggerRect.right);
+    // 先頭の子項目は親項目とおおよそ同じ高さに並ぶ。
+    expect(Math.abs(panelRect.top - triggerRect.top)).toBeLessThan(16);
+    // 画面外へはみ出していない。
+    expect(panelRect.left).toBeGreaterThanOrEqual(0);
+    expect(panelRect.right).toBeLessThanOrEqual(window.innerWidth);
+    expect(panelRect.top).toBeGreaterThanOrEqual(0);
+    expect(panelRect.bottom).toBeLessThanOrEqual(window.innerHeight);
   });
 });

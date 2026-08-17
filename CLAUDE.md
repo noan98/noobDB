@@ -2017,6 +2017,30 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   の Fragment を挟むと退出アニメーションが壊れるため、意図的に native title の
   ままにしている (理由はコード内コメントに明記)。挙動は `tooltip.test.tsx`
   (開閉・a11y 結線・入れ子) が固定する。
+- コンテキストメニュー (#213/#815/#1018) — 全画面の右クリックメニューは
+  `components/ContextMenu.tsx` の 1 実装で、項目は `ContextMenuEntry`
+  (項目 / セパレータ / **サブメニュー**) の配列として呼び出し側が組み立てる。
+  位置決めの純ロジックは `components/menuPosition.ts` (`computeMenuPosition`。
+  クリック点起点と親項目起点の 2 通りで測定 → フリップ → クランプ) に分離して
+  テストする (`tooltipPosition.ts` と同じ形)。
+  **サブメニュー (#1018)**: 項目数が状況によって膨らむグループは
+  `submenuOrFlat(label, items, opts)` を通してから差し込む — 0 件なら何も出さず、
+  `SUBMENU_THRESHOLD` (既定 2) 未満ならフラットのまま、それ以上なら 1 項目へ
+  畳む。1 件のためにホバー 1 手を増やさないための共通基準で、**畳む/畳まないの
+  判定を各メニューで独自に書かないこと**。現在の適用先は結果グリッドのセル
+  メニュー (コピーの派生・値のクイックセット・「参照元を表示」— 参照元は子
+  テーブルの数だけ増え、実際に画面高を縦断していた) と、接続ツリーのテーブル /
+  DB 保守コマンド。子パネルは**ポータルで body へ出す** — 親パネルの DOM に
+  入れると親の roving focus のクエリ (`[role=menuitem]`) に子項目まで混ざって
+  矢印移動が壊れるため。ポータルでも React ツリー上は親の子なのでキーイベントは
+  親へ伝播する点に注意 (パネル内で処理したキーは `stopPropagation` する。
+  サブメニュー内の Escape が**メニュー全体ではなくサブメニューだけ**を閉じるのも
+  これによる)。ホバーで開いた子は通常項目を通過しても閉じず、別のサブメニュー
+  項目へホバーしたときだけ開き先が入れ替わる (親項目から斜めに子パネルへ
+  移動しても取りこぼさないため)。キーボードは ArrowRight / Enter で開いて先頭の
+  子項目へフォーカス、ArrowLeft / Escape で親へ戻る。挙動は
+  `contextMenu.test.tsx`、算術は `menuPosition.test.ts`、実 CSS 上の配置は
+  `browser/screens.browser.test.tsx` が固定する。
 - `settings.ts` — `useSyncExternalStore` ベースの設定ストア。シンタックスカラー
   (`syntaxColors` light/dark)・プレビューハイライト色・表示行数 (`defaultDisplayCount` /
   `streamPrefetchSize`)・自動 LIMIT (`autoLimitEnabled` / `autoLimitCount`)・SQL 構文

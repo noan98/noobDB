@@ -1351,10 +1351,22 @@ describe("セル値のクイックセット", () => {
     return { container, onSetCellEdit };
   }
 
+  /**
+   * 候補が 2 件以上ある列では、クイックセットは「値をセット」サブメニュー
+   * (#1018) の中に入る。候補が 1 件だけの列 (PostgreSQL の BIT 等) は
+   * `submenuOrFlat` がフラットのまま出すので、その場合は何もしない。
+   */
+  async function openQuickSet(user: ReturnType<typeof userEvent.setup>) {
+    await screen.findByRole("menu");
+    const trigger = screen.queryByRole("menuitem", { name: t("gridQuickSetGroup") });
+    if (trigger) await user.hover(trigger);
+  }
+
   it("「NULL をセット」で編集バッファに NULL を載せる", async () => {
     const user = userEvent.setup();
     const { container, onSetCellEdit } = renderGrid();
     fireEvent.contextMenu(dataCells(container)[0][1]);
+    await openQuickSet(user);
 
     await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetNull") }));
 
@@ -1362,21 +1374,26 @@ describe("セル値のクイックセット", () => {
   });
 
   it("文字列列では「空文字をセット」を、数値列では「0 をセット」を出す", async () => {
+    const user = userEvent.setup();
     const { container } = renderGrid();
 
     fireEvent.contextMenu(dataCells(container)[0][1]);
+    await openQuickSet(user);
     expect(await screen.findByRole("menuitem", { name: t("gridQuickSetEmpty") })).toBeTruthy();
     expect(screen.queryByRole("menuitem", { name: t("gridQuickSetZero") })).toBeNull();
 
     fireEvent.keyDown(window, { key: "Escape" });
     fireEvent.contextMenu(dataCells(container)[0][2]);
+    await openQuickSet(user);
     expect(await screen.findByRole("menuitem", { name: t("gridQuickSetZero") })).toBeTruthy();
     expect(screen.queryByRole("menuitem", { name: t("gridQuickSetEmpty") })).toBeNull();
   });
 
   it("NOT NULL 列では NULL の項目を無効化する", async () => {
+    const user = userEvent.setup();
     const { container } = renderGrid();
     fireEvent.contextMenu(dataCells(container)[0][2]);
+    await openQuickSet(user);
 
     const item = await screen.findByRole("menuitem", { name: t("gridQuickSetNull") });
     expect(item).toBeDisabled();
@@ -1397,6 +1414,7 @@ describe("セル値のクイックセット", () => {
       />,
     );
     fireEvent.contextMenu(dataCells(container)[0][2]);
+    await openQuickSet(user);
 
     await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetZero") }));
     expect(onSetCellEdit).toHaveBeenCalledWith(rowEditKey([1, "banana", 0], [0], 0), 2, null);
@@ -1425,6 +1443,7 @@ describe("セル値のクイックセット", () => {
     expect(container.querySelectorAll("td.is-selected-cell")).toHaveLength(2);
 
     fireEvent.contextMenu(cells[0][1]);
+    await openQuickSet(user);
     await user.click(await screen.findByRole("menuitem", { name: t("gridQuickSetNull") }));
 
     expect(onBulkEdit).toHaveBeenCalledWith([
@@ -1436,6 +1455,7 @@ describe("セル値のクイックセット", () => {
   // BIT はドライバで意味が変わるので、グリッドが driver を渡していることを見る
   // (どう出し分けるかの判定自体は quickSetValues.test.ts が固定する)。
   it("BIT 列の候補はセッションのドライバで変わる", async () => {
+    const user = userEvent.setup();
     const bitColumns: Column[] = [
       { name: "id", type_name: "INT" },
       { name: "flag", type_name: "BIT" },
@@ -1467,13 +1487,16 @@ describe("セル値のクイックセット", () => {
     // MSSQL の BIT は真偽型そのもの。
     const mssql = render("mssql");
     fireEvent.contextMenu(dataCells(mssql.container)[0][1]);
+    await openQuickSet(user);
     expect(await screen.findByRole("menuitem", { name: t("gridQuickSetTrue") })).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
     mssql.unmount();
 
-    // PostgreSQL の BIT はビット列なので true/false も空文字も出さない。
+    // PostgreSQL の BIT はビット列なので true/false も空文字も出さない
+    // (候補が NULL の 1 件だけになるので、サブメニューへは畳まれない)。
     const pg = render("postgres");
     fireEvent.contextMenu(dataCells(pg.container)[0][1]);
+    await openQuickSet(user);
     expect(await screen.findByRole("menuitem", { name: t("gridQuickSetNull") })).toBeTruthy();
     expect(screen.queryByRole("menuitem", { name: t("gridQuickSetTrue") })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: t("gridQuickSetEmpty") })).toBeNull();

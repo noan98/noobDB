@@ -38,7 +38,12 @@ import { CellValueViewer } from "./CellValueViewer";
 import { RowInspector } from "./RowInspector";
 import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
-import { ContextMenu } from "./ContextMenu";
+import {
+  ContextMenu,
+  submenuOrFlat,
+  SUBMENU_THRESHOLD,
+  type ContextMenuEntry,
+} from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -4602,12 +4607,71 @@ export function DataGrid({
               shortcut: formatCombo(effectiveGridBindings.gridCopy),
               onSelect: () => copyCell(copyMenu.rowIdx, copyMenu.colIdx),
             },
-            { label: t("gridCopyRow"), onSelect: () => copyRow(copyMenu.rowIdx) },
-            {
-              label: t("gridCopyRowWithHeaders"),
-              shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
-              onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
-            },
+            // コピーの派生 (行 / 列名付き / SQL 文) はまとめてサブメニューへ畳む
+            // (#1018)。単発で最頻用の「値をコピー」だけはトップレベルに残す。
+            ...submenuOrFlat(
+              t("gridCopyGroup"),
+              (() => {
+                // "Copy as INSERT" (#601): operates on every row covered by an
+                // active multi-row range selection, or just the clicked row
+                // when there is none/it's a single row. Unlike UPDATE/DELETE
+                // it stays available even without a resolved target table —
+                // `copyRowsAsInsert` falls back to a placeholder name and warns
+                // instead.
+                const insertRowIndices =
+                  selectionRect && selectionRect.rowIndexSet.size > 1
+                    ? Array.from(selectionRect.rowIndexSet)
+                    : [copyMenu.rowIdx];
+                const multiRow = insertRowIndices.length > 1;
+                return [
+                  { label: t("gridCopyRow"), onSelect: () => copyRow(copyMenu.rowIdx) },
+                  {
+                    label: t("gridCopyRowWithHeaders"),
+                    shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
+                    onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
+                  },
+                  { separator: true as const },
+                  multiRow
+                    ? {
+                        label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
+                        title: t("gridCopyAsInsertRowsTitle"),
+                        onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                      }
+                    : {
+                        label: t("gridCopyAsInsert"),
+                        onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                      },
+                  ...(multiRow
+                    ? [
+                        {
+                          label: t("gridCopyAsInsertRowsCombined", {
+                            count: insertRowIndices.length,
+                          }),
+                          title: t("gridCopyAsInsertRowsCombinedTitle"),
+                          onSelect: () => copyRowsAsInsert(insertRowIndices, true),
+                        },
+                      ]
+                    : []),
+                  ...(rowSqlAvailable
+                    ? [
+                        {
+                          label: t("gridCopyAsUpdate"),
+                          onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
+                          disabled: !rowSqlHasPk,
+                          title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                        },
+                        {
+                          label: t("gridCopyAsDelete"),
+                          onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
+                          disabled: !rowSqlHasPk,
+                          title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                        },
+                      ]
+                    : []),
+                ];
+              })(),
+              { icon: "copy" },
+            ),
             // 選択範囲のエクスポート/コピー (#917): 矩形選択が 2 セル以上を
             // 覆っているときだけ出す (単一セルは上の「値をコピー」で足りる)。
             // 選択範囲の列/行部分集合を一度だけ `onExportSelection` へ渡し、
@@ -4684,59 +4748,6 @@ export function DataGrid({
                 },
               ];
             })(),
-            ...(() => {
-              // "Copy as INSERT" (#601): operates on every row covered by an
-              // active multi-row range selection, or just the clicked row
-              // when there is none/it's a single row. Unlike UPDATE/DELETE
-              // (below) it stays available even without a resolved target
-              // table — `copyRowsAsInsert` falls back to a placeholder name
-              // and warns instead.
-              const insertRowIndices =
-                selectionRect && selectionRect.rowIndexSet.size > 1
-                  ? Array.from(selectionRect.rowIndexSet)
-                  : [copyMenu.rowIdx];
-              const multiRow = insertRowIndices.length > 1;
-              return [
-                { separator: true as const },
-                multiRow
-                  ? {
-                      label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
-                      title: t("gridCopyAsInsertRowsTitle"),
-                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
-                    }
-                  : {
-                      label: t("gridCopyAsInsert"),
-                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
-                    },
-                ...(multiRow
-                  ? [
-                      {
-                        label: t("gridCopyAsInsertRowsCombined", {
-                          count: insertRowIndices.length,
-                        }),
-                        title: t("gridCopyAsInsertRowsCombinedTitle"),
-                        onSelect: () => copyRowsAsInsert(insertRowIndices, true),
-                      },
-                    ]
-                  : []),
-                ...(rowSqlAvailable
-                  ? [
-                      {
-                        label: t("gridCopyAsUpdate"),
-                        onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
-                        disabled: !rowSqlHasPk,
-                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                      },
-                      {
-                        label: t("gridCopyAsDelete"),
-                        onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
-                        disabled: !rowSqlHasPk,
-                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                      },
-                    ]
-                  : []),
-              ];
-            })(),
             // 行の複製 (#820): クリックした行の値を種に行追加モーダルを開く。
             // `onRequestInsertRow` と同じ表示条件 (編集可能なテーブルタブ) で
             // App から渡される。
@@ -4809,19 +4820,28 @@ export function DataGrid({
                 pkIndices ?? [],
                 copyMenu.rowIdx,
               );
-              if (pendingEdits?.[rowKey]?.[copyMenu.colIdx] !== undefined) {
-                items.push({
-                  label: t("gridQuickSetRevert"),
-                  title: undefined,
-                  disabled: false,
-                  onSelect: () => {
-                    const ck = copyMenu.colIdx;
-                    setCopyMenu(null);
-                    onSetCellEdit?.(rowKey, ck, null);
-                  },
-                });
-              }
-              return [{ separator: true as const }, ...items];
+              const revert: ContextMenuEntry[] =
+                pendingEdits?.[rowKey]?.[copyMenu.colIdx] !== undefined
+                  ? [
+                      {
+                        label: t("gridQuickSetRevert"),
+                        onSelect: () => {
+                          const ck = copyMenu.colIdx;
+                          setCopyMenu(null);
+                          onSetCellEdit?.(rowKey, ck, null);
+                        },
+                      },
+                    ]
+                  : [];
+              if (items.length === 0 && revert.length === 0) return [];
+              return [
+                { separator: true as const },
+                // 定番値のセットは列の型によって 1〜6 項目に増減するので、
+                // 2 件以上ならサブメニューへ畳む (#1018)。「このセルの編集を
+                // 取り消す」は値のセットとは別の操作なのでトップレベルに残す。
+                ...submenuOrFlat(t("gridQuickSetGroup"), items),
+                ...revert,
+              ];
             })(),
             // 一括編集 (#596): 矩形選択がある編集可能なテーブルでのみ、
             // 「選択セルに値を設定」を出す。PK が無いテーブルは行を特定できないため非表示。
@@ -4851,7 +4871,8 @@ export function DataGrid({
             ...(() => {
               if (!onFkJump) return [];
               const driver = rowSqlDriver ?? "mysql";
-              const items: { label: string; title: string; onSelect: () => void }[] = [];
+              const items: ContextMenuEntry[] = [];
+              const reverse: ContextMenuEntry[] = [];
 
               // 順方向: クリックしたセルが FK なら参照先テーブルへジャンプ。
               const fkMeta = columnMeta?.find(
@@ -4875,9 +4896,17 @@ export function DataGrid({
 
               // 逆方向: この行を参照している子テーブルの行一覧を辿る。参照先カラムが
               // 結果に含まれていない場合 (キー値を取れない) は対象から外す。
-              for (const inc of incomingFks ?? []) {
+              // 参照元は子テーブルの数だけ増え、実際に画面高いっぱいのメニューに
+              // なるため、2 件以上ならサブメニューへ畳む (#1018)。畳んだときは
+              // 親項目が「参照元を表示」を担うので、子項目は `table.column` だけの
+              // 短いラベルにする。
+              const candidates = (incomingFks ?? []).flatMap((inc) => {
                 const refColIdx = columns.findIndex((c) => c.name === inc.referencedColumn);
-                if (refColIdx < 0) continue;
+                if (refColIdx < 0) return [];
+                return [{ inc, refColIdx }];
+              });
+              const grouped = candidates.length >= SUBMENU_THRESHOLD;
+              for (const { inc, refColIdx } of candidates) {
                 const value = rows[copyMenu.rowIdx]?.[refColIdx] ?? null;
                 const sql = buildReverseRefSql({
                   driver,
@@ -4886,12 +4915,21 @@ export function DataGrid({
                   childColumn: inc.column,
                   value,
                 });
-                items.push({
-                  label: t("gridFkReverse", { table: inc.table, column: inc.column }),
+                reverse.push({
+                  label: grouped
+                    ? t("gridFkReverseChild", { table: inc.table, column: inc.column })
+                    : t("gridFkReverse", { table: inc.table, column: inc.column }),
                   title: t("gridFkReverseTitle"),
                   onSelect: () => { setCopyMenu(null); onFkJump(sql); },
                 });
               }
+              items.push(
+                ...submenuOrFlat(
+                  t("gridFkReverseGroup", { count: reverse.length }),
+                  reverse,
+                  { icon: "link", title: t("gridFkReverseTitle") },
+                ),
+              );
 
               if (items.length === 0) return [];
               return [{ separator: true as const }, ...items];
