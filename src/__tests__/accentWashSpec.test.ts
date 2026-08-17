@@ -3,7 +3,7 @@ import {
   accentWashOpacity,
   accentWashSpec,
   shouldFireAccentWash,
-} from "../components/accentWash";
+} from "../components/accentWashSpec";
 import { semanticColorVar } from "../semanticColors";
 
 /**
