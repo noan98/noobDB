@@ -5,10 +5,12 @@ import { EditorView } from "@codemirror/view";
 import { sql as sqlLang } from "@codemirror/lang-sql";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import { api } from "../api/tauri";
-import { useT } from "../i18n";
+import { api, type TableColumnInfo } from "../api/tauri";
+import { useT, type I18nKey } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
 import { copyToClipboard } from "./clipboard";
+import { classifyEditType, quoteString, type EditTypeKind } from "./cellEdit";
+import { resolveDynamicValue, type QuickSetDynamic } from "./quickSetValues";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
@@ -162,6 +164,40 @@ const limitSectionCss: SystemStyleObject = {
   gap: "3",
 };
 const limitInputCss: SystemStyleObject = { maxWidth: "120px" };
+// WHERE / SET / INSERT の 1 行 (カラム・演算子・値・削除ボタン) + その下に出る
+// 任意の 1 行 (NOT NULL 警告) をまとめる縦並びラッパー。行そのもの (`rowCss`) の
+// 高さ・整列は変えず、警告テキストだけを別行として追加できるようにする。
+const stackedRowCss: SystemStyleObject = { display: "flex", flexDirection: "column", gap: "1" };
+// 日時型カラムの「現在日時」ボタンなど、値入力とアイコンボタンを 1 行にまとめる
+// ラッパー (行全体の `rowInputCss` と同じ伸縮幅を持つ)。
+const valueWithButtonCss: SystemStyleObject = {
+  display: "flex",
+  gap: "1",
+  alignItems: "center",
+  flex: 1,
+  minWidth: 0,
+};
+// NOT NULL カラムへの NULL 入力・LIMIT の非数値入力など、実行はブロックしない
+// ベストエフォートの注意書き。既存の警告色トークン (`--warning-*`、
+// DangerousQueryDialog の `semanticColorToken("warning", ...)` と同じ意味色) を使う。
+const inlineWarningCss: SystemStyleObject = {
+  fontSize: "var(--text-xs)",
+  color: "var(--warning-text)",
+};
+// WHERE 句なしの UPDATE/DELETE (= 全行が対象) を SQL プレビュー直上で警告する
+// バンド。危険度が高いため `errorCss` と同じ色トークン (`--error-*` = 意味役割
+// "danger") を再利用し、太字にして目立たせる。
+const noWhereBandCss: SystemStyleObject = {
+  py: "2",
+  px: "2.5",
+  border: "1px solid var(--error-border)",
+  background: "var(--bg-error)",
+  color: "var(--text-error)",
+  borderRadius: "var(--radius-md)",
+  fontSize: "var(--text-sm)",
+  fontWeight: 600,
+  marginBottom: "2.5",
+};
 const previewWrapCss: SystemStyleObject = { position: "relative" };
 const previewCopyCss: SystemStyleObject = {
   position: "absolute",
@@ -318,6 +354,69 @@ export function quoteValue(driver: string, raw: string): string {
   return (driver === "mssql" ? "N" : "") + "'" + escaped + "'";
 }
 
+/**
+ * Column-type aware literal builder (改善 1). `quoteValue` above guesses a
+ * value's shape from the text itself, which is wrong whenever the shape lies:
+ * typing the digits `123` into a VARCHAR column must stay the string `'123'`,
+ * not become a bare numeral. When the column's actual `TableColumnInfo` is
+ * known, this trusts the declared type instead of the input text.
+ *
+ * Reuses `cellEdit.ts`'s type classification (`classifyEditType`) and string
+ * quoting (`quoteString`) rather than re-deriving them, so the Query Builder's
+ * "type → SQL literal" decision cannot drift from the inline cell editor's
+ * (`literalFromInput`, not exported — this mirrors its NULL / numeric /
+ * boolean rules). Callers fall back to `quoteValue` when no column metadata
+ * resolved (e.g. a free-typed column name absent from `describeTable`).
+ */
+export function quoteValueForColumn(driver: string, raw: string, info: TableColumnInfo): string {
+  const trimmed = raw.trim();
+  if (/^null$/i.test(trimmed)) return "NULL";
+  const kind: EditTypeKind = classifyEditType(info.data_type);
+  if (kind === "number" && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(trimmed)) {
+    return trimmed;
+  }
+  if (kind === "boolean") {
+    const lc = trimmed.toLowerCase();
+    if (lc === "true" || lc === "1") {
+      // SQLite/MSSQL have no native boolean literal — 1/0 instead, same
+      // convention as `quoteValue` above.
+      return driver === "sqlite" || driver === "mssql" ? "1" : "TRUE";
+    }
+    if (lc === "false" || lc === "0") {
+      return driver === "sqlite" || driver === "mssql" ? "0" : "FALSE";
+    }
+  }
+  // Everything else — string-like columns, and a numeric/boolean-looking
+  // value that didn't match the column's actual type above — is a quoted
+  // string literal. This is the correctness fix: a VARCHAR column never
+  // silently turns "123" or "true" into an unquoted literal.
+  return quoteString(driver, raw);
+}
+
+/** Looks up a table's column metadata by name; `undefined` for a free-typed
+ *  column absent from the `describeTable` result (callers fall back to the
+ *  type-agnostic `quoteValue`). */
+function resolveColumnInfo(
+  columns: TableColumnInfo[],
+  name: string,
+): TableColumnInfo | undefined {
+  return columns.find((c) => c.name === name);
+}
+
+/**
+ * Whether a NOT NULL column's edit box currently holds the literal `NULL`
+ * keyword (case-insensitive) — this will fail at Apply, so the row shows an
+ * inline warning (改善 1-4). Never blocks Run/Dry Run; `computeBuilderBlockedReason`
+ * is the only thing that does that (改善 2).
+ */
+export function isNullValueOnNotNullColumn(
+  raw: string,
+  info: TableColumnInfo | undefined | null,
+): boolean {
+  if (!info || info.nullable) return false;
+  return /^null$/i.test(raw.trim());
+}
+
 function tableRef(driver: string, database: string, table: string): string {
   const tbl = table ? quoteIdentFor(driver, table) : "<table>";
   // SQLite has a single namespace per connection — no database qualifier.
@@ -332,11 +431,18 @@ function tableRef(driver: string, database: string, table: string): string {
   return tbl;
 }
 
-function renderWhereClause(driver: string, conditions: WhereCondition[]): string {
+function renderWhereClause(
+  driver: string,
+  columns: TableColumnInfo[],
+  conditions: WhereCondition[],
+): string {
   const rendered = conditions
     .filter((c) => c.column)
     .map((c) => {
       const col = quoteIdentFor(driver, c.column);
+      const info = resolveColumnInfo(columns, c.column);
+      const literal = (raw: string) =>
+        info ? quoteValueForColumn(driver, raw, info) : quoteValue(driver, raw);
       const opNorm = normalizeOperator(c.operator);
       if (opNorm === "IS NULL" || opNorm === "IS NOT NULL") {
         return `${col} ${opNorm}`;
@@ -346,12 +452,12 @@ function renderWhereClause(driver: string, conditions: WhereCondition[]): string
           .split(",")
           .map((s) => s.trim())
           .filter((s) => s.length > 0)
-          .map((s) => quoteValue(driver, s));
+          .map(literal);
         const inner = items.length > 0 ? items.join(", ") : "<values>";
         return `${col} IN (${inner})`;
       }
       const opOut = c.operator.trim() || "=";
-      return `${col} ${opOut} ${quoteValue(driver, c.value)}`;
+      return `${col} ${opOut} ${literal(c.value)}`;
     });
   if (rendered.length === 0) return " WHERE <column> = <value>";
   return " WHERE " + rendered.join(" AND ");
@@ -359,6 +465,7 @@ function renderWhereClause(driver: string, conditions: WhereCondition[]): string
 
 function buildSql(
   driver: string,
+  columns: TableColumnInfo[],
   kind: QueryKind,
   database: string,
   table: string,
@@ -372,7 +479,13 @@ function buildSql(
   insertPairs: ColumnValuePair[],
 ): string {
   const ref = tableRef(driver, database, table);
-  const where = whereEnabled ? renderWhereClause(driver, whereConditions) : "";
+  const where = whereEnabled ? renderWhereClause(driver, columns, whereConditions) : "";
+  // 型が分かるカラムは quoteValueForColumn (改善 1) で、フォームの自由入力欄
+  // (describeTable に無い列名) は従来の quoteValue へフォールバックする。
+  const literalFor = (colName: string, raw: string): string => {
+    const info = resolveColumnInfo(columns, colName);
+    return info ? quoteValueForColumn(driver, raw, info) : quoteValue(driver, raw);
+  };
   switch (kind) {
     case "SELECT": {
       const cols = selectAll || selectColumns.length === 0
@@ -393,7 +506,7 @@ function buildSql(
     case "UPDATE": {
       const set = setPairs
         .filter((p) => p.column)
-        .map((p) => `${quoteIdentFor(driver, p.column)} = ${quoteValue(driver, p.value)}`)
+        .map((p) => `${quoteIdentFor(driver, p.column)} = ${literalFor(p.column, p.value)}`)
         .join(", ");
       const setClause = set || "<column> = <value>";
       return `UPDATE ${ref} SET ${setClause}${where};`;
@@ -407,11 +520,65 @@ function buildSql(
         ? active.map((p) => quoteIdentFor(driver, p.column)).join(", ")
         : "<column>";
       const vals = active.length > 0
-        ? active.map((p) => quoteValue(driver, p.value)).join(", ")
+        ? active.map((p) => literalFor(p.column, p.value)).join(", ")
         : "<value>";
       return `INSERT INTO ${ref} (${cols}) VALUES (${vals});`;
     }
   }
+}
+
+/** Input to {@link computeBuilderBlockedReason} — the subset of builder state
+ *  that decides whether the generated SQL still contains an unfilled
+ *  placeholder (`<table>` / `<column>` / `<value>` / `<values>`, see
+ *  `buildSql`/`renderWhereClause` above). */
+export interface BuilderValidationInput {
+  kind: QueryKind;
+  table: string;
+  whereEnabled: boolean;
+  whereConditions: WhereCondition[];
+  setPairs: ColumnValuePair[];
+  insertPairs: ColumnValuePair[];
+}
+
+/**
+ * 改善 2-1: Run / Dry Run を無効化すべきかどうかの純粋判定。生成 SQL が
+ * プレースホルダ (`<table>` 等) を含む状態を、`buildSql` と同じ条件で先回りして
+ * 検出する — 文字列として `<table>` 等を SQL から探すのではなく、`buildSql` が
+ * それらを埋め込む条件 (テーブル未選択 / 有効なペア 0 件 / WHERE 有効なのに
+ * 条件が 1 つも無い) をそのまま判定する。理由ごとに異なる i18n キーを返すため、
+ * Run ボタンの Tooltip にそのまま出せる。問題なければ `null`。
+ */
+export function computeBuilderBlockedReason(input: BuilderValidationInput): I18nKey | null {
+  const { kind, table, whereEnabled, whereConditions, setPairs, insertPairs } = input;
+  if (!table.trim()) return "qbValidationNoTable";
+  if (kind === "INSERT" && insertPairs.filter((p) => p.column).length === 0) {
+    return "qbValidationNoInsertValues";
+  }
+  if (kind === "UPDATE" && setPairs.filter((p) => p.column).length === 0) {
+    return "qbValidationNoSetValues";
+  }
+  const whereIsEmpty = whereEnabled && whereConditions.filter((c) => c.column).length === 0;
+  if ((kind === "SELECT" || kind === "UPDATE" || kind === "DELETE") && whereIsEmpty) {
+    return "qbValidationNoWhereConditions";
+  }
+  return null;
+}
+
+/** 改善 2-2: LIMIT が有効なのに数値でない (空欄は除く — 単に未入力なだけ)。
+ *  ブロックはしない、インライン警告用の純粋判定。 */
+export function isLimitInvalid(limitEnabled: boolean, limit: string): boolean {
+  const trimmed = limit.trim();
+  return limitEnabled && trimmed !== "" && !/^\d+$/.test(trimmed);
+}
+
+/**
+ * 改善 3: WHERE 句なしの UPDATE/DELETE (= テーブル全行が対象) を示す警告バンドを
+ * 出すべきかどうか。WHERE が有効だが条件が空のケース (プレースホルダ WHERE) は
+ * `computeBuilderBlockedReason` が Run 自体をブロックするのでここでは対象外 —
+ * この関数は「WHERE 自体を無効化した」場合だけを見る。
+ */
+export function showsNoWhereBand(kind: QueryKind, whereEnabled: boolean): boolean {
+  return (kind === "UPDATE" || kind === "DELETE") && !whereEnabled;
 }
 
 export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable, initialSnapshot, readOnly, onExecute, onPreview, onPersist, onClose }: Props) {
@@ -423,7 +590,9 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   const [database, setDatabase] = useState<string>(initialSnapshot?.database ?? defaultDatabase ?? "");
   const [tables, setTables] = useState<string[]>([]);
   const [table, setTable] = useState<string>(initialSnapshot?.table ?? defaultTable ?? "");
-  const [columns, setColumns] = useState<string[]>([]);
+  // 改善 1: カラム名だけでなく型メタデータ (data_type/nullable) を丸ごと保持し、
+  // WHERE/SET/INSERT の値入力を型対応にする (下記 `ValueControl` / `resolveColumnInfo`)。
+  const [tableColumns, setTableColumns] = useState<TableColumnInfo[]>([]);
   const [loadingTables, setLoadingTables] = useState(false);
   const [loadingColumns, setLoadingColumns] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -481,22 +650,32 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
 
   useEffect(() => {
     if (!database || !table) {
-      setColumns([]);
+      setTableColumns([]);
       return;
     }
     let cancelled = false;
     setLoadingColumns(true);
     api.describeTable(sessionId, database, table)
-      .then((cols) => { if (!cancelled) setColumns(cols.map((c) => c.name)); })
+      .then((cols) => { if (!cancelled) setTableColumns(cols); })
       .catch((e) => { if (!cancelled) setLoadError(String(e)); })
       .finally(() => { if (!cancelled) setLoadingColumns(false); });
     return () => { cancelled = true; };
   }, [sessionId, database, table]);
 
   const sql = useMemo(
-    () => buildSql(driver, kind, database, table, selectColumns, selectAll, whereEnabled, whereConditions, limitEnabled, limit, setPairs, insertPairs),
-    [driver, kind, database, table, selectColumns, selectAll, whereEnabled, whereConditions, limitEnabled, limit, setPairs, insertPairs],
+    () => buildSql(driver, tableColumns, kind, database, table, selectColumns, selectAll, whereEnabled, whereConditions, limitEnabled, limit, setPairs, insertPairs),
+    [driver, tableColumns, kind, database, table, selectColumns, selectAll, whereEnabled, whereConditions, limitEnabled, limit, setPairs, insertPairs],
   );
+
+  // 改善 2-1: Run / Dry Run のブロック理由 (プレースホルダが残る = 未完成の SQL)。
+  const blockedReason = useMemo(
+    () => computeBuilderBlockedReason({ kind, table, whereEnabled, whereConditions, setPairs, insertPairs }),
+    [kind, table, whereEnabled, whereConditions, setPairs, insertPairs],
+  );
+  // 改善 2-2: LIMIT が有効なのに数値でない (ブロックはしない、インライン警告のみ)。
+  const limitInvalid = isLimitInvalid(limitEnabled, limit);
+  // 改善 3: WHERE 句を無効化した UPDATE/DELETE (= 全行が対象)。
+  const noWhereBand = showsNoWhereBand(kind, whereEnabled);
 
   const handleCopy = useCallback(async () => {
     const ok = await copyToClipboard(sql);
@@ -523,17 +702,19 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   }), [kind, database, table, selectAll, selectColumns, whereEnabled, whereConditions, limitEnabled, limit, setPairs, insertPairs]);
 
   const handleExecute = useCallback(() => {
+    // 防御的ガード: 通常はボタンの disabled が押下自体を防ぐ (改善 2-1)。
+    if (blockedReason || (!!readOnly && kind !== "SELECT")) return;
     onPersist?.(captureSnapshot());
     onExecute(sql);
     onClose();
-  }, [sql, onExecute, onClose, onPersist, captureSnapshot]);
+  }, [sql, onExecute, onClose, onPersist, captureSnapshot, blockedReason, readOnly, kind]);
 
   const handlePreview = useCallback(() => {
-    if (!onPreview) return;
+    if (!onPreview || blockedReason) return;
     onPersist?.(captureSnapshot());
     onPreview(sql);
     onClose();
-  }, [sql, onPreview, onClose, onPersist, captureSnapshot]);
+  }, [sql, onPreview, onClose, onPersist, captureSnapshot, blockedReason]);
 
   const addSelectColumn = (col: string) => {
     const v = col.trim();
@@ -570,6 +751,10 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   // A read-only session rejects writes, so Run is disabled for write kinds.
   // SELECT still runs, and Dry Run stays available (it rolls back).
   const runBlockedByReadOnly = !!readOnly && kind !== "SELECT";
+  // 改善 2-1: プレースホルダが残る未完成の SQL は、読み取り専用かどうかに
+  // 関わらず Run/Dry Run 双方をブロックする。
+  const runDisabled = runBlockedByReadOnly || !!blockedReason;
+  const dryRunDisabled = !!blockedReason;
 
   const showWhere = kind === "SELECT" || kind === "UPDATE" || kind === "DELETE";
   const showSelectColumns = kind === "SELECT";
@@ -577,7 +762,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   const showSet = kind === "UPDATE";
   const showInsertValues = kind === "INSERT";
 
-  const columnOptions = columns;
+  const columnOptions = tableColumns.map((c) => c.name);
 
   return (
     <Modal onClose={onClose}>
@@ -714,34 +899,44 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   + {t("qbAddSet")}
                 </chakra.button>
               </Box>
-              {setPairs.map((p, i) => (
-                <Box css={rowCss} key={`set-${i}`}>
-                  <ColumnPicker
-                    value={p.column}
-                    options={columnOptions}
-                    onChange={(v) => updatePair("set", i, { column: v })}
-                    placeholder={t("qbColumn")}
-                  />
-                  <chakra.span css={eqCss}>=</chakra.span>
-                  <chakra.input
-                    css={rowInputCss}
-                    value={p.value}
-                    placeholder={t("qbValue")}
-                    onChange={(e) => updatePair("set", i, { value: e.target.value })}
-                  />
-                  <Tooltip label={t("qbRemove")} focusableWrapper={setPairs.length <= 1}>
-                    <chakra.button
-                      type="button"
-                      css={iconBtnCss}
-                      onClick={() => removePair("set", i)}
-                      aria-label={t("qbRemove")}
-                      disabled={setPairs.length <= 1}
-                    >
-                      <Icon name="close" size={ICON_SIZES.sm} />
-                    </chakra.button>
-                  </Tooltip>
-                </Box>
-              ))}
+              {setPairs.map((p, i) => {
+                const info = resolveColumnInfo(tableColumns, p.column);
+                const notNullWarning = isNullValueOnNotNullColumn(p.value, info);
+                return (
+                  <Box css={stackedRowCss} key={`set-${i}`}>
+                    <Box css={rowCss}>
+                      <ColumnPicker
+                        value={p.column}
+                        options={columnOptions}
+                        onChange={(v) => updatePair("set", i, { column: v })}
+                        placeholder={t("qbColumn")}
+                      />
+                      <chakra.span css={eqCss}>=</chakra.span>
+                      <ValueControl
+                        value={p.value}
+                        onChange={(v) => updatePair("set", i, { value: v })}
+                        columnInfo={info}
+                        placeholder={t("qbValue")}
+                        t={t}
+                      />
+                      <Tooltip label={t("qbRemove")} focusableWrapper={setPairs.length <= 1}>
+                        <chakra.button
+                          type="button"
+                          css={iconBtnCss}
+                          onClick={() => removePair("set", i)}
+                          aria-label={t("qbRemove")}
+                          disabled={setPairs.length <= 1}
+                        >
+                          <Icon name="close" size={ICON_SIZES.sm} />
+                        </chakra.button>
+                      </Tooltip>
+                    </Box>
+                    {notNullWarning && (
+                      <chakra.span css={inlineWarningCss}>{t("qbNotNullWarning")}</chakra.span>
+                    )}
+                  </Box>
+                );
+              })}
             </chakra.section>
           )}
 
@@ -753,34 +948,44 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   + {t("qbAddValue")}
                 </chakra.button>
               </Box>
-              {insertPairs.map((p, i) => (
-                <Box css={rowCss} key={`ins-${i}`}>
-                  <ColumnPicker
-                    value={p.column}
-                    options={columnOptions}
-                    onChange={(v) => updatePair("insert", i, { column: v })}
-                    placeholder={t("qbColumn")}
-                  />
-                  <chakra.span css={eqCss}>=</chakra.span>
-                  <chakra.input
-                    css={rowInputCss}
-                    value={p.value}
-                    placeholder={t("qbValue")}
-                    onChange={(e) => updatePair("insert", i, { value: e.target.value })}
-                  />
-                  <Tooltip label={t("qbRemove")} focusableWrapper={insertPairs.length <= 1}>
-                    <chakra.button
-                      type="button"
-                      css={iconBtnCss}
-                      onClick={() => removePair("insert", i)}
-                      aria-label={t("qbRemove")}
-                      disabled={insertPairs.length <= 1}
-                    >
-                      <Icon name="close" size={ICON_SIZES.sm} />
-                    </chakra.button>
-                  </Tooltip>
-                </Box>
-              ))}
+              {insertPairs.map((p, i) => {
+                const info = resolveColumnInfo(tableColumns, p.column);
+                const notNullWarning = isNullValueOnNotNullColumn(p.value, info);
+                return (
+                  <Box css={stackedRowCss} key={`ins-${i}`}>
+                    <Box css={rowCss}>
+                      <ColumnPicker
+                        value={p.column}
+                        options={columnOptions}
+                        onChange={(v) => updatePair("insert", i, { column: v })}
+                        placeholder={t("qbColumn")}
+                      />
+                      <chakra.span css={eqCss}>=</chakra.span>
+                      <ValueControl
+                        value={p.value}
+                        onChange={(v) => updatePair("insert", i, { value: v })}
+                        columnInfo={info}
+                        placeholder={t("qbValue")}
+                        t={t}
+                      />
+                      <Tooltip label={t("qbRemove")} focusableWrapper={insertPairs.length <= 1}>
+                        <chakra.button
+                          type="button"
+                          css={iconBtnCss}
+                          onClick={() => removePair("insert", i)}
+                          aria-label={t("qbRemove")}
+                          disabled={insertPairs.length <= 1}
+                        >
+                          <Icon name="close" size={ICON_SIZES.sm} />
+                        </chakra.button>
+                      </Tooltip>
+                    </Box>
+                    {notNullWarning && (
+                      <chakra.span css={inlineWarningCss}>{t("qbNotNullWarning")}</chakra.span>
+                    )}
+                  </Box>
+                );
+              })}
             </chakra.section>
           )}
 
@@ -803,46 +1008,65 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   </chakra.button>
                 )}
               </Box>
-              {whereEnabled && whereConditions.map((c, i) => (
-                <Box css={rowCss} key={`w-${i}`}>
-                  <ColumnPicker
-                    value={c.column}
-                    options={columnOptions}
-                    onChange={(v) => updateCondition(i, { column: v })}
-                    placeholder={t("qbColumn")}
-                  />
-                  <ComboBox
-                    css={opCss}
-                    value={c.operator}
-                    options={[...WHERE_OPERATORS]}
-                    onChange={(v) => updateCondition(i, { operator: v })}
-                  />
-                  <chakra.input
-                    css={rowInputCss}
-                    value={c.value}
-                    placeholder={
-                      isNullOperator(c.operator)
-                        ? "—"
-                        : normalizeOperator(c.operator) === "IN"
-                          ? t("qbValuesPlaceholder")
-                          : t("qbValue")
-                    }
-                    disabled={isNullOperator(c.operator)}
-                    onChange={(e) => updateCondition(i, { value: e.target.value })}
-                  />
-                  <Tooltip label={t("qbRemove")} focusableWrapper={whereConditions.length <= 1}>
-                    <chakra.button
-                      type="button"
-                      css={iconBtnCss}
-                      onClick={() => removeCondition(i)}
-                      aria-label={t("qbRemove")}
-                      disabled={whereConditions.length <= 1}
-                    >
-                      <Icon name="close" size={ICON_SIZES.sm} />
-                    </chakra.button>
-                  </Tooltip>
-                </Box>
-              ))}
+              {whereEnabled && whereConditions.map((c, i) => {
+                const info = resolveColumnInfo(tableColumns, c.column);
+                const nullOp = isNullOperator(c.operator);
+                // IN takes a comma-separated list, which the boolean Select /
+                // date "now" button can't represent, so it keeps the plain
+                // free-text box regardless of the column's type. The two
+                // "IS [NOT] NULL" operators need no value at all.
+                const isIn = normalizeOperator(c.operator) === "IN";
+                const notNullWarning = !nullOp && isNullValueOnNotNullColumn(c.value, info);
+                return (
+                  <Box css={stackedRowCss} key={`w-${i}`}>
+                    <Box css={rowCss}>
+                      <ColumnPicker
+                        value={c.column}
+                        options={columnOptions}
+                        onChange={(v) => updateCondition(i, { column: v })}
+                        placeholder={t("qbColumn")}
+                      />
+                      <ComboBox
+                        css={opCss}
+                        value={c.operator}
+                        options={[...WHERE_OPERATORS]}
+                        onChange={(v) => updateCondition(i, { operator: v })}
+                      />
+                      {nullOp || isIn ? (
+                        <chakra.input
+                          css={rowInputCss}
+                          value={c.value}
+                          placeholder={nullOp ? "—" : t("qbValuesPlaceholder")}
+                          disabled={nullOp}
+                          onChange={(e) => updateCondition(i, { value: e.target.value })}
+                        />
+                      ) : (
+                        <ValueControl
+                          value={c.value}
+                          onChange={(v) => updateCondition(i, { value: v })}
+                          columnInfo={info}
+                          placeholder={t("qbValue")}
+                          t={t}
+                        />
+                      )}
+                      <Tooltip label={t("qbRemove")} focusableWrapper={whereConditions.length <= 1}>
+                        <chakra.button
+                          type="button"
+                          css={iconBtnCss}
+                          onClick={() => removeCondition(i)}
+                          aria-label={t("qbRemove")}
+                          disabled={whereConditions.length <= 1}
+                        >
+                          <Icon name="close" size={ICON_SIZES.sm} />
+                        </chakra.button>
+                      </Tooltip>
+                    </Box>
+                    {notNullWarning && (
+                      <chakra.span css={inlineWarningCss}>{t("qbNotNullWarning")}</chakra.span>
+                    )}
+                  </Box>
+                );
+              })}
             </chakra.section>
           )}
 
@@ -858,17 +1082,24 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                 />
                 <chakra.span>{t("qbLimit")}</chakra.span>
               </chakra.label>
-              <chakra.input
-                id="qb-limit"
-                css={limitInputCss}
-                value={limit}
-                placeholder="100"
-                disabled={!limitEnabled}
-                onChange={(e) => setLimit(e.target.value)}
-                inputMode="numeric"
-              />
+              <Box css={stackedRowCss}>
+                <chakra.input
+                  id="qb-limit"
+                  css={limitInputCss}
+                  value={limit}
+                  placeholder="100"
+                  disabled={!limitEnabled}
+                  onChange={(e) => setLimit(e.target.value)}
+                  inputMode="numeric"
+                />
+                {limitInvalid && (
+                  <chakra.span css={inlineWarningCss}>{t("qbLimitInvalid")}</chakra.span>
+                )}
+              </Box>
             </chakra.section>
           )}
+
+          {noWhereBand && <Box css={noWhereBandCss}>{t("qbNoWhereBand")}</Box>}
 
           <chakra.section css={sectionCss}>
             <Box css={sectionTitleCss}>{t("qbPreview")}</Box>
@@ -921,8 +1152,13 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
       <ModalFooter>
         <Box flex={1} />
         {onPreview && kind !== "SELECT" && (
-          <Tooltip label={t("editorPreviewTitle")}>
-            <Button variant="warning" onClick={handlePreview}>
+          // 改善 2-1: プレースホルダが残る未完成の SQL は Dry Run も無効化する
+          // (`runBlockedByReadOnly` 節と同じ「無効ボタン + focusableWrapper」パターン)。
+          <Tooltip
+            label={blockedReason ? t(blockedReason) : t("editorPreviewTitle")}
+            focusableWrapper={dryRunDisabled}
+          >
+            <Button variant="warning" onClick={handlePreview} disabled={dryRunDisabled}>
               <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" />
@@ -937,10 +1173,16 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
             primary (アクセント色)」に統一する。success はセル編集 Apply などの
             DB 書き込み確定に限定する (theme.ts の variant 規約)。 */}
         <Tooltip
-          label={runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : undefined}
-          focusableWrapper={runBlockedByReadOnly}
+          label={
+            runBlockedByReadOnly
+              ? t("qbExecuteReadOnlyTitle")
+              : blockedReason
+                ? t(blockedReason)
+                : undefined
+          }
+          focusableWrapper={runDisabled}
         >
-          <Button variant="primary" onClick={handleExecute} disabled={runBlockedByReadOnly}>
+          <Button variant="primary" onClick={handleExecute} disabled={runDisabled}>
             <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
               <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M4 3.5v9a.5.5 0 0 0 .77.42l7-4.5a.5.5 0 0 0 0-.84l-7-4.5A.5.5 0 0 0 4 3.5z" />
@@ -951,6 +1193,90 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
         </Tooltip>
       </ModalFooter>
     </Modal>
+  );
+}
+
+interface ValueControlProps {
+  value: string;
+  onChange: (v: string) => void;
+  /** The resolved column metadata, or `undefined` for a free-typed column
+   *  name absent from `describeTable` (falls back to a plain text input). */
+  columnInfo: TableColumnInfo | undefined;
+  disabled?: boolean;
+  placeholder?: string;
+  t: ReturnType<typeof useT>;
+}
+
+/**
+ * 改善 1 の型対応の値入力。カラムの型 (`classifyEditType`) に応じて:
+ *   - boolean → true/false/NULL を選ぶ `Select` (自由入力を廃し誤入力を防ぐ)
+ *   - date/time/datetime → テキスト入力 + 「現在日時」ボタン
+ *     (`quickSetValues.ts` の "now" ショートカットと同じ思想 — クリック時点の
+ *     時計で値を埋める。フォーマットも同モジュールの `resolveDynamicValue` を
+ *     再利用するので型ごとに正しい桁数になる)
+ *   - それ以外 (number/string/other、カラム情報が無い自由入力欄含む) →
+ *     従来どおりのプレーンなテキスト入力
+ *
+ * NOT NULL 警告は呼び出し側 (WHERE/SET/INSERT の各行) が
+ * `isNullValueOnNotNullColumn` で判定し、この行の外側に表示する — 複数の
+ * 呼び出し元で同じ位置に出したいのと、値そのものの入力 UI とは関心事が
+ * 別なため。
+ */
+function ValueControl({ value, onChange, columnInfo, disabled, placeholder, t }: ValueControlProps) {
+  const kind: EditTypeKind = columnInfo ? classifyEditType(columnInfo.data_type) : "other";
+
+  if (kind === "boolean") {
+    return (
+      <Select
+        css={rowInputCss}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">{placeholder ?? t("qbValue")}</option>
+        <option value="true">{t("qbBoolTrue")}</option>
+        <option value="false">{t("qbBoolFalse")}</option>
+        <option value="NULL">{t("qbBoolNull")}</option>
+      </Select>
+    );
+  }
+
+  const dynamic: QuickSetDynamic | null =
+    kind === "date" || kind === "time" || kind === "datetime" ? kind : null;
+
+  if (!dynamic) {
+    return (
+      <chakra.input
+        css={rowInputCss}
+        value={value}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
+  }
+
+  return (
+    <Box css={valueWithButtonCss}>
+      <chakra.input
+        css={rowInputCss}
+        value={value}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <Tooltip label={t("qbSetNow")}>
+        <chakra.button
+          type="button"
+          css={iconBtnCss}
+          disabled={disabled}
+          onClick={() => onChange(resolveDynamicValue(dynamic, new Date()))}
+          aria-label={t("qbSetNow")}
+        >
+          <Icon name="clock" size={ICON_SIZES.sm} />
+        </chakra.button>
+      </Tooltip>
+    </Box>
   );
 }
 
