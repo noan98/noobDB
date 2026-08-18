@@ -8,6 +8,7 @@ import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
 import { setColumnNullBars, setRichCellRendering } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
+import { TOOLTIP_OPEN_DELAY_MS } from "../components/Tooltip";
 
 // 選択範囲エクスポート (#917) のテストが `ExportModal` を実際にマウントするため、
 // そのマウント effect が呼ぶ `@tauri-apps/api/path` をモックする
@@ -16,6 +17,21 @@ vi.mock("@tauri-apps/api/path", () => ({
   downloadDir: vi.fn().mockResolvedValue("/home/user/Downloads"),
   join: vi.fn().mockResolvedValue("/home/user/Downloads/export.csv"),
 }));
+
+/**
+ * セルの共有ツールチップ (`useDelegatedTooltip`、#884) は hover 遅延を持つ
+ * (ポインタがセルの上を通過しただけで吹き出しが次々に開かないようにするため)。
+ * jsdom では時間が自動で進まないので、開くところまで明示的に進める。
+ */
+function hoverForTooltip(el: Element) {
+  vi.useFakeTimers();
+  try {
+    fireEvent.mouseEnter(el);
+    act(() => void vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY_MS));
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 // ResultGrid の主要インタラクション (描画・全文フィルタ・列ソート・ページ読み込み
 // トリガー・インラインセル編集) の退行を検出するテスト。リファクタリングや
@@ -468,7 +484,7 @@ describe("セル値のリッチ表示 (#451)", () => {
     // ため native title/個別 Tooltip インスタンスではなく 1 つの共有バブル +
     // イベント委譲) で hover 時に確認できる。
     expect(cell?.getAttribute("title")).toBeNull();
-    if (cell) fireEvent.mouseEnter(cell);
+    if (cell) hoverForTooltip(cell);
     // `toHaveTextContent` は空白を畳んで比較するため、連続空白を含む原文は
     // 素の textContent 比較で厳密に確認する。
     expect(screen.getByRole("tooltip").textContent).toBe(raw);
@@ -505,7 +521,7 @@ describe("セル値のリッチ表示 (#451)", () => {
     const cell = container.querySelector("tbody td .cell-date");
     expect(cell?.textContent).toBe("Jun 1, 2026");
     expect(cell?.getAttribute("title")).toBeNull();
-    if (cell) fireEvent.mouseEnter(cell);
+    if (cell) hoverForTooltip(cell);
     expect(screen.getByRole("tooltip")).toHaveTextContent("2026-06-01");
   });
 

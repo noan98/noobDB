@@ -17,8 +17,8 @@ import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
-import { computeTooltipPosition } from "./tooltipPosition";
-import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
+import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
+import { Tooltip, TooltipBubble, useDelegatedHover, useDelegatedTooltip } from "./Tooltip";
 import { DropInsertionMarker } from "./DropInsertionMarker";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
 import { driverColor, driverIconName, normalizeChipColor } from "../profileIdentity";
@@ -409,9 +409,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const filterInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [hoveredColumn, setHoveredColumn] = useState<{ col: TableColumnInfo; rect: DOMRect } | null>(
-    null,
-  );
+  // カラム行の詳細ホバーカード (`ColumnTooltip`)。単純テキストではないので
+  // `useDelegatedTooltip` ではなくその一般形 `useDelegatedHover` に載せ、hover
+  // 遅延・「同時に見えるのは 1 つ」の登録簿・スクロール連動非表示を他の
+  // ツールチップと共有する。
+  const { hovered: hoveredColumn, bind: columnTooltipProps } =
+    useDelegatedHover<TableColumnInfo>();
   // スキーマツリー行 (DB/テーブル/インデックス/オブジェクト) の単純テキスト
   // ツールチップは、`hoveredColumn`/`ColumnTooltip` と同じ「1 つの共有ツールチップ +
   // イベント委譲」方式を汎用化した `useDelegatedTooltip` (`Tooltip.tsx`、#884) に
@@ -736,19 +739,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       // ストレージ不可環境では永続化を諦める (セッション内の動作には影響しない)。
     }
   }, [groupOrder]);
-
-  // The column tooltip is anchored to a snapshot of the row's position, so it
-  // would detach if the tree scrolls or the window resizes under the pointer.
-  useEffect(() => {
-    if (!hoveredColumn) return;
-    const clear = () => setHoveredColumn(null);
-    window.addEventListener("scroll", clear, true);
-    window.addEventListener("resize", clear);
-    return () => {
-      window.removeEventListener("scroll", clear, true);
-      window.removeEventListener("resize", clear);
-    };
-  }, [hoveredColumn]);
 
   // このツリーの行 (DB/テーブル/インデックス/オブジェクト) は現状 `tabIndex` を
   // 持たず (別 Issue のキーボードナビゲーション改善のスコープ)、`treeTooltipProps`
@@ -1810,15 +1800,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             cursor="default"
                                             fontSize="sm"
                                             role="treeitem"
-                                            onMouseEnter={(e) =>
-                                              setHoveredColumn({
-                                                col,
-                                                rect: e.currentTarget.getBoundingClientRect(),
-                                              })
-                                            }
-                                            onMouseLeave={() =>
-                                              setHoveredColumn((cur) => (cur?.col === col ? null : cur))
-                                            }
+                                            {...columnTooltipProps(col)}
                                           >
                                             <TreeChevron visibility="hidden" aria-hidden />
                                             {/* PK/FK アイコンと型バッジの native title は削除(#884)。行に
@@ -2151,7 +2133,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
 
-      {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
+      {hoveredColumn && <ColumnTooltip col={hoveredColumn.value} anchor={hoveredColumn.rect} />}
       {hoveredLabel && <TooltipBubble label={hoveredLabel.label} anchor={hoveredLabel.rect} maxWidth="320px" />}
     </Flex>
   );
@@ -2167,7 +2149,7 @@ const TooltipDd = chakra("dd", { base: { m: 0, fontFamily: "mono", wordBreak: "b
  * left / clamping to the viewport when it would overflow. Rendered invisibly on
  * the first frame so it can measure itself before committing a position.
  */
-function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect }) {
+function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: TooltipRect }) {
   const t = useT();
   const ref = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);

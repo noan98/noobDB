@@ -16,7 +16,11 @@ import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
-import { computeTooltipPosition, type TooltipPlacement } from "./tooltipPosition";
+import {
+  computeTooltipPosition,
+  type TooltipPlacement,
+  type TooltipRect,
+} from "./tooltipPosition";
 
 export type { TooltipPlacement };
 
@@ -24,7 +28,16 @@ export type { TooltipPlacement };
  *  `MotionMenu` と同じく — motion へ明示的に forward する必要がある。 */
 const MotionBox = chakra(motion.div, {}, { forwardProps: ["transition"] });
 
-const OPEN_DELAY_MS = 400;
+/**
+ * hover でツールチップが出るまでの既定遅延 (ms)。`Tooltip` と
+ * `useDelegatedHover`/`useDelegatedTooltip` が**同じ値**を使う — 出現の速さが
+ * 表面ごとに違うと「アプリのどこを触ったか」で挙動が変わるように感じられる。
+ * ポインタが目的地へ向かう途中で通過しただけの要素が次々と吹き出しを開く
+ * (= マウスを動かすたびに画面がチラつく) のを避けるための間で、OS/ブラウザの
+ * native title (約 1 秒) よりは短く、意図して止めたときには待たされたと感じない
+ * 程度に短い値を採っている。
+ */
+export const TOOLTIP_OPEN_DELAY_MS = 400;
 const MARGIN_PX = 8;
 
 /**
@@ -134,7 +147,7 @@ export function Tooltip({
   label,
   children,
   placement = "top",
-  openDelay = OPEN_DELAY_MS,
+  openDelay = TOOLTIP_OPEN_DELAY_MS,
   focusableWrapper = false,
 }: TooltipProps) {
   const id = useId();
@@ -348,43 +361,109 @@ function composeHandler<E extends ReactMouseEvent | ReactFocusEvent>(
  * キーボードで到達できる行に使う場合は、呼び出し側で別途 `onFocus`/`onBlur` を
  * `bind` の戻り値にマージすること。
  */
-export function useDelegatedTooltip() {
-  const [state, setState] = useState<{ label: string; rect: TooltipRectLike; target: EventTarget } | null>(
-    null,
-  );
+export function useDelegatedTooltip(openDelay: number = TOOLTIP_OPEN_DELAY_MS) {
+  const { hovered, bind } = useDelegatedHover<string>(openDelay);
+  return {
+    hovered: hovered && { label: hovered.value, rect: hovered.rect, target: hovered.target },
+    bind,
+  };
+}
+
+/** `useDelegatedHover` が表示中に保持する状態。`value` は呼び出し側が
+ *  `bind` へ渡したもの (文字列ラベルでも、カラム情報のような構造体でもよい)。 */
+export interface DelegatedHoverState<T> {
+  value: T;
+  /** hover 開始時点でのトリガー要素の矩形 (バブルのアンカー)。 */
+  rect: TooltipRect;
+  /** どの要素の hover なのか — 離脱判定に使う。 */
+  target: EventTarget;
+}
+
+/**
+ * `useDelegatedTooltip` の一般形。ラベル文字列ではなく任意の値を運べるので、
+ * 単純なテキストではない hover カード (`ConnectionList` のカラム詳細など) も
+ * **遅延・単一表示の登録簿・スクロール連動非表示**を共有できる。
+ *
+ * 遅延は `Tooltip` 本体と同じ `TOOLTIP_OPEN_DELAY_MS` が既定で、行やセルの上を
+ * ポインタが通過しただけでは開かない。所有権 (`claimTooltip`) は `Tooltip` と
+ * 同じく**表示予約の時点**で取る — 遅延の途中で入れ子の内側トリガーへ移った
+ * ときに、後から発火した外側の予約が内側を蹴散らさないようにするため。
+ */
+export function useDelegatedHover<T>(openDelay: number = TOOLTIP_OPEN_DELAY_MS) {
+  const [state, setState] = useState<DelegatedHoverState<T> | null>(null);
+  const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 遅延の途中でどの要素の表示を待っているか。離脱した要素が予約の主でなければ
+  // 予約は生かす (兄弟の leave → enter が交錯しても取りこぼさない)。
+  const pendingTarget = useRef<EventTarget | null>(null);
+
+  const clearShowTimer = () => {
+    if (showTimer.current !== null) {
+      clearTimeout(showTimer.current);
+      showTimer.current = null;
+    }
+    pendingTarget.current = null;
+  };
 
   // 委譲側も `Tooltip` 本体と同じ「同時に見えるのは 1 つ」の登録簿に参加する
   // (行の委譲ツールチップと、その行の中のボタンの `Tooltip` が二重に出ないように)。
-  const stableHide = useRef(() => setState(null));
+  // 登録簿は関数の同一性で現役かどうかを判定するので、`hide` は初回レンダで 1 つ
+  // だけ作って以後使い回す。
+  const hideRef = useRef<(() => void) | null>(null);
+  if (hideRef.current === null) {
+    hideRef.current = () => {
+      clearShowTimer();
+      releaseTooltip(hideRef.current!);
+      setState(null);
+    };
+  }
+  const hide = hideRef.current;
 
   // アンカーはイベント時点の座標スナップショットなので、スクロール/リサイズで
-  // 追従できずバブルだけが古い位置に浮いてしまう (`Tooltip` 本体・
-  // `ConnectionList` の `ColumnTooltip` と同じ理由)。
+  // 追従できずバブルだけが古い位置に浮いてしまう (`Tooltip` 本体と同じ理由)。
   useEffect(() => {
     if (!state) return;
-    const clear = stableHide.current;
-    window.addEventListener("scroll", clear, true);
-    window.addEventListener("resize", clear);
+    const close = hideRef.current!;
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
     return () => {
-      window.removeEventListener("scroll", clear, true);
-      window.removeEventListener("resize", clear);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
     };
   }, [state]);
 
   useEffect(() => {
-    const close = stableHide.current;
-    return () => releaseTooltip(close);
+    const close = hideRef.current!;
+    return () => {
+      if (showTimer.current !== null) clearTimeout(showTimer.current);
+      releaseTooltip(close);
+    };
   }, []);
 
-  const bind = (label: string | undefined | null) => {
-    if (!label) return undefined;
+  const bind = (value: T | undefined | null) => {
+    if (value === undefined || value === null || value === "") return undefined;
     return {
       onMouseEnter: (e: ReactMouseEvent<HTMLElement>) => {
-        claimTooltip(stableHide.current);
-        setState({ label, rect: e.currentTarget.getBoundingClientRect(), target: e.currentTarget });
+        const target = e.currentTarget;
+        // 矩形は**この時点**で採る。React のイベントは非同期に持ち越せず
+        // (`currentTarget` はハンドラを抜けると null になる)、遅延後に測り直す
+        // 理由も無い (レイアウトが動いたならスクロール連動で閉じる)。
+        const next: DelegatedHoverState<T> = { value, rect: target.getBoundingClientRect(), target };
+        clearShowTimer();
+        claimTooltip(hide);
+        if (openDelay <= 0) {
+          setState(next);
+          return;
+        }
+        pendingTarget.current = target;
+        showTimer.current = setTimeout(() => {
+          showTimer.current = null;
+          pendingTarget.current = null;
+          setState(next);
+        }, openDelay);
       },
       onMouseLeave: (e: ReactMouseEvent<HTMLElement>) => {
-        releaseTooltip(stableHide.current);
+        if (pendingTarget.current === e.currentTarget) clearShowTimer();
+        releaseTooltip(hide);
         setState((cur) => (cur?.target === e.currentTarget ? null : cur));
       },
     };
@@ -392,9 +471,6 @@ export function useDelegatedTooltip() {
 
   return { hovered: state, bind };
 }
-
-/** `TooltipRect` と同じ形の最小サブセット。呼び出し側は `DOMRect` をそのまま渡せる。 */
-type TooltipRectLike = { top: number; left: number; right: number; bottom: number; width: number; height: number };
 
 /**
  * `useDelegatedTooltip` が管理する単一の共有バブル本体。`Tooltip` 本体の
@@ -408,7 +484,7 @@ export function TooltipBubble({
   maxWidth = "280px",
 }: {
   label: ReactNode;
-  anchor: TooltipRectLike;
+  anchor: TooltipRect;
   placement?: TooltipPlacement;
   maxWidth?: string;
 }) {

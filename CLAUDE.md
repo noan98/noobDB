@@ -2009,6 +2009,18 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
     `ERDiagramView` の PK/FK アイコン)。共有状態 1 つ + `bind(label)` が返す
     軽量なハンドラだけを各要素に付け、`Tooltip` インスタンスを増やさない。
     hover 専用 (focus 非対応) なので、**キーボードで到達できる要素には使わない**。
+    単純テキストではない hover カード (`ConnectionList` のカラム詳細
+    `ColumnTooltip` など) は、任意の値を運べる一般形 `useDelegatedHover<T>()` に
+    載せる — `bind(value)` の戻り値を行に展開するだけで、遅延・単一表示の登録簿・
+    スクロール連動非表示が揃う。**hover 状態を自前の `useState` +
+    `onMouseEnter`/`onMouseLeave` で持たないこと** (遅延と登録簿から外れる)。
+  **hover での出現には遅延を入れる (`TOOLTIP_OPEN_DELAY_MS` = 400ms)。** 即時
+  表示だとポインタが目的地へ向かう途中で通過しただけの要素が次々に吹き出しを
+  開き、画面がちらつく。この定数は `Tooltip` と `useDelegatedHover` /
+  `useDelegatedTooltip` の**共通の既定値**で、表面ごとに速さが変わらないように
+  する (呼び出し側が `openDelay` で上書きするのは、遅延が邪魔になる特殊な場合
+  だけに留める)。**フォーカス起因の表示は遅延なし** — キーボードユーザには
+  「まず hover して気付く」段階が無く、遅延はただの待ち時間になるため。
   同時に見える吹き出しは常に高々 1 つで、新しく開いたものが直前のものを閉じる
   (`claimTooltip`/`releaseTooltip`)。行のツールチップの中にボタンのツールチップを
   入れ子にしても native title と同じ「最も内側だけ」の見え方になる。複数行ラベル
@@ -2016,7 +2028,7 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   `TabBar` のタブ本体**で、`AnimatePresence` の直接の子である必要があり `Tooltip`
   の Fragment を挟むと退出アニメーションが壊れるため、意図的に native title の
   ままにしている (理由はコード内コメントに明記)。挙動は `tooltip.test.tsx`
-  (開閉・a11y 結線・入れ子) が固定する。
+  (開閉・hover 遅延・a11y 結線・入れ子) が固定する。
 - コンテキストメニュー (#213/#815/#1018) — 全画面の右クリックメニューは
   `components/ContextMenu.tsx` の 1 実装で、項目は `ContextMenuEntry`
   (項目 / セパレータ / **サブメニュー**) の配列として呼び出し側が組み立てる。

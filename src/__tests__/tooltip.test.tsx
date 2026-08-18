@@ -176,8 +176,8 @@ describe("Tooltip", () => {
 });
 
 describe("useDelegatedTooltip", () => {
-  function DelegatedList() {
-    const { hovered, bind } = useDelegatedTooltip();
+  function DelegatedList({ openDelay }: { openDelay?: number }) {
+    const { hovered, bind } = useDelegatedTooltip(openDelay);
     return (
       <div>
         <div {...bind("1 行目の説明")}>row1</div>
@@ -189,7 +189,7 @@ describe("useDelegatedTooltip", () => {
   }
 
   it("行ごとに 1 つの共有バブルを出し、離れると消える", () => {
-    renderWithProviders(<DelegatedList />);
+    renderWithProviders(<DelegatedList openDelay={0} />);
     fireEvent.mouseEnter(screen.getByText("row1"));
     expect(screen.getByRole("tooltip").textContent).toBe("1 行目の説明");
 
@@ -202,8 +202,34 @@ describe("useDelegatedTooltip", () => {
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 
+  it("委譲側も hover 遅延を持つ (グリッドのセルやツリーの行を通過しただけでは出ない)", () => {
+    // 委譲版は行/セル数に比例する一覧で使うため、遅延が無いとポインタの移動に
+    // 追従して吹き出しが次々に開き、`Tooltip` 本体 (遅延あり) との体感差も出る。
+    vi.useFakeTimers();
+    try {
+      renderWithProviders(<DelegatedList openDelay={400} />);
+      const row1 = screen.getByText("row1");
+
+      fireEvent.mouseEnter(row1);
+      expect(screen.queryByRole("tooltip")).toBeNull();
+      act(() => void vi.advanceTimersByTime(399));
+      expect(screen.queryByRole("tooltip")).toBeNull();
+      act(() => void vi.advanceTimersByTime(1));
+      expect(screen.getByRole("tooltip").textContent).toBe("1 行目の説明");
+
+      // 通過しただけ (遅延が明ける前に離脱) なら、あとから開くことはない。
+      fireEvent.mouseLeave(row1);
+      fireEvent.mouseEnter(screen.getByText("row2"));
+      fireEvent.mouseLeave(screen.getByText("row2"));
+      act(() => void vi.advanceTimersByTime(1000));
+      expect(screen.queryByRole("tooltip")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("label が無い行にはリスナーを付けない", () => {
-    renderWithProviders(<DelegatedList />);
+    renderWithProviders(<DelegatedList openDelay={0} />);
     fireEvent.mouseEnter(screen.getByText("row3"));
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
