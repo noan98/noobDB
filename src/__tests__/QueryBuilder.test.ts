@@ -6,10 +6,48 @@ import {
   isLimitInvalid,
   showsNoWhereBand,
   isNullValueOnNotNullColumn,
+  isRequiredColumn,
+  buildSql,
   type WhereCondition,
   type ColumnValuePair,
+  type OrderByItem,
 } from "../components/QueryBuilder";
 import type { TableColumnInfo } from "../api/tauri";
+
+/** buildSql の長い位置引数を名前付きオプションで組み立てる、テスト専用ヘルパー。
+ *  未指定のフィールドはすべて「そのドライバの既定の SELECT」相当の無害な値になる。 */
+function buildSelectSql(
+  driver: string,
+  opts: {
+    columns?: TableColumnInfo[];
+    database?: string;
+    table?: string;
+    selectColumns?: string[];
+    selectAll?: boolean;
+    whereEnabled?: boolean;
+    whereConditions?: WhereCondition[];
+    orderBy?: OrderByItem[];
+    limitEnabled?: boolean;
+    limit?: string;
+  } = {},
+): string {
+  return buildSql(
+    driver,
+    opts.columns ?? [],
+    "SELECT",
+    opts.database ?? "db",
+    opts.table ?? "users",
+    opts.selectColumns ?? [],
+    opts.selectAll ?? true,
+    opts.whereEnabled ?? false,
+    opts.whereConditions ?? [],
+    opts.orderBy ?? [],
+    opts.limitEnabled ?? false,
+    opts.limit ?? "",
+    [],
+    [],
+  );
+}
 
 function makeColumnInfo(overrides: Partial<TableColumnInfo> = {}): TableColumnInfo {
   return {
@@ -262,5 +300,101 @@ describe("computeBuilderBlockedReason", () => {
         insertPairs: filledPair,
       }),
     ).toBeNull();
+  });
+});
+
+describe("isRequiredColumn", () => {
+  it("flags a NOT NULL column with no default and no auto-generation", () => {
+    const info = makeColumnInfo({ nullable: false, default: null, extra: "" });
+    expect(isRequiredColumn(info)).toBe(true);
+  });
+
+  it("does not flag a nullable column", () => {
+    expect(isRequiredColumn(makeColumnInfo({ nullable: true, default: null }))).toBe(false);
+  });
+
+  it("does not flag a NOT NULL column that has a default value", () => {
+    expect(isRequiredColumn(makeColumnInfo({ nullable: false, default: "0" }))).toBe(false);
+  });
+
+  it("does not flag an auto-incrementing NOT NULL column", () => {
+    expect(
+      isRequiredColumn(
+        makeColumnInfo({ nullable: false, default: null, extra: "auto_increment", key: "PRI" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag a generated column", () => {
+    expect(
+      isRequiredColumn(makeColumnInfo({ nullable: false, default: null, extra: "STORED GENERATED" })),
+    ).toBe(false);
+  });
+
+  it("treats a missing column (free-typed name) as not required", () => {
+    expect(isRequiredColumn(undefined)).toBe(false);
+    expect(isRequiredColumn(null)).toBe(false);
+  });
+});
+
+// ORDER BY (SELECT のみ) の buildSql 回帰テスト。特に MSSQL は TOP (n) を
+// SELECT 直後、ORDER BY を文末に置く必要があり、他の 3 ドライバは LIMIT の
+// 前に ORDER BY が来る — この方言差を固定する。
+describe("buildSql — ORDER BY", () => {
+  const oneAsc: OrderByItem[] = [{ column: "name", direction: "ASC" }];
+  const twoTerms: OrderByItem[] = [
+    { column: "name", direction: "ASC" },
+    { column: "created_at", direction: "DESC" },
+  ];
+
+  it("places ORDER BY after WHERE and before LIMIT for MySQL", () => {
+    const out = buildSelectSql("mysql", {
+      whereEnabled: true,
+      whereConditions: [{ column: "id", operator: "=", value: "1" }],
+      orderBy: oneAsc,
+      limitEnabled: true,
+      limit: "10",
+    });
+    expect(out).toBe("SELECT * FROM `db`.`users` WHERE `id` = 1 ORDER BY `name` ASC LIMIT 10;");
+  });
+
+  it("renders multiple ORDER BY terms comma-separated, quoted per driver", () => {
+    expect(buildSelectSql("postgres", { orderBy: twoTerms })).toBe(
+      'SELECT * FROM "db"."users" ORDER BY "name" ASC, "created_at" DESC;',
+    );
+    expect(buildSelectSql("sqlite", { orderBy: twoTerms, database: "" })).toBe(
+      'SELECT * FROM "users" ORDER BY "name" ASC, "created_at" DESC;',
+    );
+  });
+
+  it("omits the ORDER BY clause entirely when every row has a blank column", () => {
+    const blank: OrderByItem[] = [{ column: "", direction: "ASC" }];
+    expect(buildSelectSql("mysql", { orderBy: blank })).toBe("SELECT * FROM `db`.`users`;");
+  });
+
+  it("ignores a blank row while keeping a filled one alongside it", () => {
+    const mixed: OrderByItem[] = [{ column: "", direction: "DESC" }, ...oneAsc];
+    expect(buildSelectSql("mysql", { orderBy: mixed })).toBe(
+      "SELECT * FROM `db`.`users` ORDER BY `name` ASC;",
+    );
+  });
+
+  it("MSSQL: TOP goes right after SELECT, ORDER BY still trails the statement", () => {
+    const out = buildSelectSql("mssql", {
+      orderBy: oneAsc,
+      limitEnabled: true,
+      limit: "5",
+    });
+    expect(out).toBe('SELECT TOP (5) * FROM [db].[dbo].[users] ORDER BY [name] ASC;');
+  });
+
+  it("MSSQL: ORDER BY without a LIMIT (no TOP) still renders at the end", () => {
+    const out = buildSelectSql("mssql", { orderBy: oneAsc });
+    expect(out).toBe('SELECT * FROM [db].[dbo].[users] ORDER BY [name] ASC;');
+  });
+
+  it("MSSQL: TOP alone (no ORDER BY) is unaffected by the ORDER BY change", () => {
+    const out = buildSelectSql("mssql", { limitEnabled: true, limit: "5" });
+    expect(out).toBe("SELECT TOP (5) * FROM [db].[dbo].[users];");
   });
 });

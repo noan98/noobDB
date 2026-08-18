@@ -775,17 +775,23 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     onPreflightImpactRef.current?.(preflight);
   }, [preflight]);
 
+  // カーソル位置 (選択があれば選択を置換) へテキストを挿入する共通処理。
+  // `QueryEditorHandle.insertText` (親からの外部呼び出し) と、Query Builder の
+  // 「エディタに挿入」(`onInsertToEditor`、本コンポーネント内で完結する呼び出し)
+  // の両方が使う — 挿入先はどちらも同じエディタなので経路を分けない。
+  const insertAtCursor = (text: string) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const sel = view.state.selection.main;
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: text },
+      selection: { anchor: sel.from + text.length },
+    });
+    view.focus();
+  };
+
   useImperativeHandle(ref, () => ({
-    insertText: (text: string) => {
-      const view = viewRef.current;
-      if (!view) return;
-      const sel = view.state.selection.main;
-      view.dispatch({
-        changes: { from: sel.from, to: sel.to, insert: text },
-        selection: { anchor: sel.from + text.length },
-      });
-      view.focus();
-    },
+    insertText: insertAtCursor,
     setText: (text: string) => {
       const view = viewRef.current;
       if (!view) return;
@@ -1142,6 +1148,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             onExecute={(builtSql) => onRun(builtSql)}
             onPreview={onPreview ? (builtSql) => onPreview(builtSql) : undefined}
             onPersist={onBuilderPersist}
+            onInsertToEditor={insertAtCursor}
             onClose={() => setShowBuilder(false)}
           />
         )}
