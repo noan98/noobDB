@@ -1,5 +1,29 @@
 import { describe, it, expect } from "vitest";
-import { quoteValue } from "../components/QueryBuilder";
+import {
+  quoteValue,
+  quoteValueForColumn,
+  computeBuilderBlockedReason,
+  isLimitInvalid,
+  showsNoWhereBand,
+  isNullValueOnNotNullColumn,
+  type WhereCondition,
+  type ColumnValuePair,
+} from "../components/QueryBuilder";
+import type { TableColumnInfo } from "../api/tauri";
+
+function makeColumnInfo(overrides: Partial<TableColumnInfo> = {}): TableColumnInfo {
+  return {
+    name: "col",
+    data_type: "varchar",
+    nullable: true,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+    ...overrides,
+  };
+}
 
 // 修正7 の回帰テスト: バックスラッシュの二重化は MySQL のみ行うべきで、
 // PostgreSQL (標準 standard_conforming_strings = on) と SQLite では
@@ -30,5 +54,213 @@ describe("quoteValue", () => {
     expect(quoteValue("mysql", "true")).toBe("TRUE");
     expect(quoteValue("sqlite", "true")).toBe("1");
     expect(quoteValue("sqlite", "false")).toBe("0");
+  });
+});
+
+// 改善 1 の回帰テスト: 型が分かっているカラムでは値の見た目 (数字/true/false に
+// 見えるかどうか) ではなく、カラムの実際の型で literal 化する。VARCHAR 列に
+// "123" を入れても数値リテラルにならないことが正しさの核心。
+describe("quoteValueForColumn", () => {
+  it("always quotes a numeric-looking value on a string column (the correctness fix)", () => {
+    const info = makeColumnInfo({ data_type: "varchar" });
+    expect(quoteValueForColumn("mysql", "123", info)).toBe("'123'");
+    expect(quoteValueForColumn("mysql", "true", info)).toBe("'true'");
+  });
+
+  it("emits a bare numeral for a numeric column", () => {
+    const info = makeColumnInfo({ data_type: "int" });
+    expect(quoteValueForColumn("mysql", "123", info)).toBe("123");
+    expect(quoteValueForColumn("mysql", "3.5", info)).toBe("3.5");
+    // Non-numeric text on a numeric column falls back to a quoted string
+    // (best-effort — the server has the final say, same as `literalFromInput`).
+    expect(quoteValueForColumn("mysql", "abc", info)).toBe("'abc'");
+  });
+
+  it("emits TRUE/FALSE for a boolean column, 1/0 on SQLite/MSSQL", () => {
+    const info = makeColumnInfo({ data_type: "boolean" });
+    expect(quoteValueForColumn("mysql", "true", info)).toBe("TRUE");
+    expect(quoteValueForColumn("postgres", "false", info)).toBe("FALSE");
+    expect(quoteValueForColumn("sqlite", "true", info)).toBe("1");
+    expect(quoteValueForColumn("mssql", "false", info)).toBe("0");
+    // 0/1 spellings are also accepted for a boolean column.
+    expect(quoteValueForColumn("mysql", "1", info)).toBe("TRUE");
+    expect(quoteValueForColumn("mysql", "0", info)).toBe("FALSE");
+  });
+
+  it("treats the NULL keyword the same regardless of column type", () => {
+    const info = makeColumnInfo({ data_type: "int" });
+    expect(quoteValueForColumn("mysql", "null", info)).toBe("NULL");
+    expect(quoteValueForColumn("mysql", "NULL", info)).toBe("NULL");
+  });
+
+  it("quotes a date/time value as a plain string literal", () => {
+    const info = makeColumnInfo({ data_type: "datetime" });
+    expect(quoteValueForColumn("mysql", "2024-01-01 12:00:00", info)).toBe(
+      "'2024-01-01 12:00:00'",
+    );
+  });
+
+  it("doubles backslashes for MySQL string columns only, matching quoteValue", () => {
+    const info = makeColumnInfo({ data_type: "varchar" });
+    expect(quoteValueForColumn("mysql", "C:\\temp", info)).toBe("'C:\\\\temp'");
+    expect(quoteValueForColumn("postgres", "C:\\temp", info)).toBe("'C:\\temp'");
+  });
+});
+
+describe("isNullValueOnNotNullColumn", () => {
+  it("warns when a NOT NULL column's value is the NULL keyword", () => {
+    const info = makeColumnInfo({ nullable: false });
+    expect(isNullValueOnNotNullColumn("NULL", info)).toBe(true);
+    expect(isNullValueOnNotNullColumn("null", info)).toBe(true);
+    expect(isNullValueOnNotNullColumn("  null  ", info)).toBe(true);
+  });
+
+  it("does not warn on a nullable column, an unresolved column, or a non-NULL value", () => {
+    expect(isNullValueOnNotNullColumn("NULL", makeColumnInfo({ nullable: true }))).toBe(false);
+    expect(isNullValueOnNotNullColumn("NULL", undefined)).toBe(false);
+    expect(isNullValueOnNotNullColumn("abc", makeColumnInfo({ nullable: false }))).toBe(false);
+  });
+});
+
+describe("isLimitInvalid", () => {
+  it("flags a non-numeric LIMIT while enabled", () => {
+    expect(isLimitInvalid(true, "abc")).toBe(true);
+    expect(isLimitInvalid(true, "10.5")).toBe(true);
+    expect(isLimitInvalid(true, "-5")).toBe(true);
+  });
+
+  it("does not flag a valid number, an empty box, or a disabled LIMIT", () => {
+    expect(isLimitInvalid(true, "100")).toBe(false);
+    expect(isLimitInvalid(true, "")).toBe(false);
+    expect(isLimitInvalid(true, "   ")).toBe(false);
+    expect(isLimitInvalid(false, "abc")).toBe(false);
+  });
+});
+
+describe("showsNoWhereBand", () => {
+  it("shows the band only for UPDATE/DELETE with WHERE disabled", () => {
+    expect(showsNoWhereBand("UPDATE", false)).toBe(true);
+    expect(showsNoWhereBand("DELETE", false)).toBe(true);
+    expect(showsNoWhereBand("UPDATE", true)).toBe(false);
+    expect(showsNoWhereBand("DELETE", true)).toBe(false);
+    expect(showsNoWhereBand("SELECT", false)).toBe(false);
+    expect(showsNoWhereBand("INSERT", false)).toBe(false);
+  });
+});
+
+// 改善 2-1 の回帰テスト: buildSql がプレースホルダ (<table>/<column>/<value>/
+// <values>) を埋め込む条件と 1:1 対応していること。
+describe("computeBuilderBlockedReason", () => {
+  const emptyWhere: WhereCondition[] = [{ column: "", operator: "=", value: "" }];
+  const filledWhere: WhereCondition[] = [{ column: "id", operator: "=", value: "1" }];
+  const emptyPair: ColumnValuePair[] = [{ column: "", value: "" }];
+  const filledPair: ColumnValuePair[] = [{ column: "name", value: "x" }];
+
+  it("blocks when no table is selected, regardless of kind", () => {
+    expect(
+      computeBuilderBlockedReason({
+        kind: "SELECT",
+        table: "",
+        whereEnabled: false,
+        whereConditions: emptyWhere,
+        setPairs: emptyPair,
+        insertPairs: emptyPair,
+      }),
+    ).toBe("qbValidationNoTable");
+  });
+
+  it("blocks INSERT with no filled column/value pair", () => {
+    expect(
+      computeBuilderBlockedReason({
+        kind: "INSERT",
+        table: "t",
+        whereEnabled: false,
+        whereConditions: emptyWhere,
+        setPairs: emptyPair,
+        insertPairs: emptyPair,
+      }),
+    ).toBe("qbValidationNoInsertValues");
+    expect(
+      computeBuilderBlockedReason({
+        kind: "INSERT",
+        table: "t",
+        whereEnabled: false,
+        whereConditions: emptyWhere,
+        setPairs: emptyPair,
+        insertPairs: filledPair,
+      }),
+    ).toBeNull();
+  });
+
+  it("blocks UPDATE with no filled SET pair", () => {
+    expect(
+      computeBuilderBlockedReason({
+        kind: "UPDATE",
+        table: "t",
+        whereEnabled: false,
+        whereConditions: emptyWhere,
+        setPairs: emptyPair,
+        insertPairs: emptyPair,
+      }),
+    ).toBe("qbValidationNoSetValues");
+  });
+
+  it("blocks SELECT/UPDATE/DELETE when WHERE is enabled but every condition is empty", () => {
+    expect(
+      computeBuilderBlockedReason({
+        kind: "SELECT",
+        table: "t",
+        whereEnabled: true,
+        whereConditions: emptyWhere,
+        setPairs: emptyPair,
+        insertPairs: emptyPair,
+      }),
+    ).toBe("qbValidationNoWhereConditions");
+    expect(
+      computeBuilderBlockedReason({
+        kind: "DELETE",
+        table: "t",
+        whereEnabled: true,
+        whereConditions: emptyWhere,
+        setPairs: emptyPair,
+        insertPairs: emptyPair,
+      }),
+    ).toBe("qbValidationNoWhereConditions");
+  });
+
+  it("does not block when WHERE is disabled or has a filled condition", () => {
+    expect(
+      computeBuilderBlockedReason({
+        kind: "DELETE",
+        table: "t",
+        whereEnabled: false,
+        whereConditions: emptyWhere,
+        setPairs: emptyPair,
+        insertPairs: emptyPair,
+      }),
+    ).toBeNull();
+    expect(
+      computeBuilderBlockedReason({
+        kind: "SELECT",
+        table: "t",
+        whereEnabled: true,
+        whereConditions: filledWhere,
+        setPairs: emptyPair,
+        insertPairs: emptyPair,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not require WHERE for INSERT even when enabled would be meaningless", () => {
+    expect(
+      computeBuilderBlockedReason({
+        kind: "INSERT",
+        table: "t",
+        whereEnabled: true,
+        whereConditions: emptyWhere,
+        setPairs: emptyPair,
+        insertPairs: filledPair,
+      }),
+    ).toBeNull();
   });
 });
