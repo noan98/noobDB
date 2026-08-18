@@ -911,6 +911,15 @@ const en = {
   qbValidationNoSetValues: "Fill in at least one column to update.",
   qbValidationNoWhereConditions:
     "WHERE is enabled but has no conditions — fill one in or disable WHERE.",
+  qbOrderBy: "ORDER BY",
+  qbAddOrderBy: "Add sort",
+  qbNoOrderBy: "No sort order set. Rows are returned in the database's default order.",
+  qbAddAllColumns: "Add all columns",
+  qbRequiredColumn: "Required — NOT NULL with no default value.",
+  qbBadgeNotNull: "NOT NULL",
+  qbComboNoMatches: "No matching columns",
+  qbInsertToEditor: "Insert into editor",
+  qbInsertToEditorTitle: "Insert the generated SQL into the editor without running it.",
 
   resultEmpty: "No results yet. Run a query above.",
   resultExecuted: "Statement executed. {rows} rows affected ({ms} ms).",
@@ -3694,6 +3703,15 @@ const ja: Dict = {
   qbValidationNoSetValues: "更新する列を少なくとも 1 つ入力してください。",
   qbValidationNoWhereConditions:
     "WHERE が有効ですが条件がありません。条件を入力するか WHERE を無効にしてください。",
+  qbOrderBy: "ORDER BY",
+  qbAddOrderBy: "並び替えを追加",
+  qbNoOrderBy: "並び替えは未設定です。データベースの既定の順序で返されます。",
+  qbAddAllColumns: "全カラムを追加",
+  qbRequiredColumn: "必須 — NOT NULL かつデフォルト値がありません。",
+  qbBadgeNotNull: "NOT NULL",
+  qbComboNoMatches: "一致するカラムがありません",
+  qbInsertToEditor: "エディタに挿入",
+  qbInsertToEditorTitle: "生成した SQL を実行せずにエディタへ挿入します。",
 
   resultEmpty: "まだ結果はありません。上のエディタでクエリを実行してください。",
   resultExecuted: "ステートメントを実行しました。影響行数 {rows} 件 ({ms} ms)。",
