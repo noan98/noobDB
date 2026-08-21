@@ -187,8 +187,13 @@ function matchDollarQuoteTag(sql: string, i: number): string | null {
  * rather than to MySQL: a string literal can then only close earlier than
  * MySQL would judge, never later, so keywords are revealed rather than hidden
  * and every check built on the mask errs toward "this is a write".
+ *
+ * Exported so `sqlScript.ts`'s statement splitter (`scanQuoted`) can share the
+ * exact same rule — statement boundaries and the danger/read-only masks must
+ * agree on where a `'...'` literal closes, or a hidden second statement can
+ * slip past one check while the other still sees it (#1004).
  */
-function driverBackslashEscapes(driver?: string): boolean {
+export function driverBackslashEscapes(driver?: string): boolean {
   return driver === "mysql";
 }
 
@@ -285,9 +290,12 @@ function classifyStatement(masked: string, raw: string): DangerFinding | null {
  * Scans `sql` (which may contain several `;`-separated statements) and returns
  * one finding per destructive statement detected. An empty array means nothing
  * dangerous was recognized.
+ *
+ * `driver` selects the string-escaping rules used while masking (#852, #1004).
+ * Omit it only where the driver is genuinely unknown — see `isReadOnlySql`.
  */
-export function analyzeDangerousSql(sql: string): DangerFinding[] {
-  const masked = maskLiterals(sql);
+export function analyzeDangerousSql(sql: string, driver?: string): DangerFinding[] {
+  const masked = maskLiterals(sql, driver);
   const findings: DangerFinding[] = [];
   let start = 0;
   for (let i = 0; i <= masked.length; i++) {
@@ -486,9 +494,12 @@ const SCHEMA_MUTATING_PREFIXES = [
  * `create` / `alter` / `drop` already cover the compound DDL forms the verb
  * leads — `CREATE INDEX`, `DROP INDEX`, `ALTER TABLE ... RENAME COLUMN`,
  * `ALTER TABLE ... RENAME TO` — because only the leading keyword is matched.
+ *
+ * `driver` selects the string-escaping rules used while masking (#852, #1004).
+ * Omit it only where the driver is genuinely unknown — see `isReadOnlySql`.
  */
-export function isSchemaMutatingSql(sql: string): boolean {
-  const masked = maskLiterals(sql);
+export function isSchemaMutatingSql(sql: string, driver?: string): boolean {
+  const masked = maskLiterals(sql, driver);
   let start = 0;
   for (let i = 0; i <= masked.length; i++) {
     if (i === masked.length || masked[i] === ";") {
