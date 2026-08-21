@@ -979,6 +979,23 @@ BLOB だけはフロントが `Value::Bytes` を `Value::String` と区別でき
 `cargo-mutants` のスコープにも `src/db/sync.rs` / `src/db/data_diff.rs` を追加済み
 (可視化のみ・fail させない既存方針)。
 
+**ストリーミング実行器の fetch/execute 経路振り分け (`is_query_shape`) も同じ方式で
+固定します (#971)。** `is_read_only_sql` (#444) や `quote_ident`/`sql_literal` (#880)
+と異なり、こちらは共有関数ではなく `db/sqlite.rs` / `db/mysql.rs` / `db/postgres.rs` /
+`db/duckdb.rs` / `db/mssql.rs` にそれぞれ private (`__test_api` から駆動できるよう
+`pub(crate)` へ引き上げ済み) 関数として個別実装されています。5 実装が一致すべき境界
+ケース (SELECT/SHOW/DESCRIBE/EXPLAIN/CALL/PRAGMA/SUMMARIZE/VALUES/TABLE の各ドライバ
+固有分岐、データ変更 CTE の判定、コメント/文字列リテラル前置) を共有ベクタ
+`src/__tests__/fixtures/queryShapeVectors.json` に集約し、`tests/query_shape_golden.rs`
+が `include_str!` で読み込んで `__test_api::is_query_shape(driver, sql)` 経由で全ドライバへ
+通します。`WITH` 分岐の「主文がデータ変更か」の判定 (`with_cte_is_mutation`) だけは
+`db::mysql` に 1 つだけ実装され全ドライバがそのまま共有するため、この部分は原理的に
+ドライバ間で割れません (ただし文字列リテラル中のバックスラッシュを方言に関わらず常に
+MySQL 流のエスケープとして読む既知の限界があり、フィクスチャの `knownLimitation` /
+該当ケースの note に明記しています — #852 のような driver-aware なマスクへの切り替えは
+本 Issue のスコープ外)。フロント側に `is_query_shape` 相当の分類ロジックは存在しない
+(バックエンドの実行経路振り分け専用) ため、対になる Vitest テストはありません。
+
 **安全網には「強制レベル」の違いがある点に注意してください。** 同じ「安全網」でも、
 バックエンドで強制されるものと、UI 上の確認に留まるものがあります。
 
