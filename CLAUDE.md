@@ -1159,6 +1159,24 @@ accept タスクの `JoinHandle` は構造体が所有しています。**`impl 
 再接続で別の鍵 = MITM が提示されたら再び不一致として拒否されます。#682 レビュー対応。
 メッセージから fingerprint を取れない場合のみ従来の forget + TOFU にフォールバック)。
 
+**`SshHostKeyMismatch` のメッセージ書式も #880 / #988 と同じ方式で固定します
+(#1030)。** バック (`error.rs` の `#[error(...)]` テンプレート) がメッセージを
+**生成**し、フロント (`parseHostKeyFingerprints`、
+`src/components/hostKeyFingerprints.ts`) がそれを 2 本の正規表現で**パース**して
+新旧 fingerprint と失敗ホップの `host:port` を復元する、という生成⇔パースの
+二重実装が手写しの文字列リテラルだけで繋がっていた穴を埋めます。共有ベクタ
+`src/__tests__/fixtures/sshHostKeyMismatchVectors.json` (`{host, port, expected,
+actual}` の入力と厳密なレンダリング後メッセージ) を `sshHostKeyMismatchGolden.test.ts`
+と `tests/ssh_host_key_mismatch_golden.rs` の双方へ通し、前者は
+`parseHostKeyFingerprints` の抽出結果、後者は `AppError::SshHostKeyMismatch{..}.
+to_string()` を固定します。IPv4/非標準ポート (多段トンネルの踏み台)/FQDN/レガシー
+形式 fingerprint (SHA256 未移行) に加え、**IPv6 ホスト (`:` を含む)** も含めており、
+これは endpoint 抽出用正規表現 `[^\s:]+` がホストに `:` を許さないため host/port の
+抽出には失敗する既知の境界です (fingerprint 自体は引き続き抽出できるので
+`parseHostKeyFingerprints` 全体が `null` になるわけではなく、ダイアログは host/port
+なしの縮退表示にフォールバックします)。この境界は仕様として維持し、意図せず
+挙動が変わったことに気付けるようゴールデンへ含めています。
+
 ### 多段 SSH トンネル (ProxyJump 相当) と ~/.ssh/config の読み込み (#708)
 
 `SshTunnel` は踏み台 (bastion/jump ホスト) を 1 段だけ経由する多段構成に対応します
