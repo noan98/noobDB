@@ -979,6 +979,22 @@ BLOB だけはフロントが `Value::Bytes` を `Value::String` と区別でき
 `cargo-mutants` のスコープにも `src/db/sync.rs` / `src/db/data_diff.rs` を追加済み
 (可視化のみ・fail させない既存方針)。
 
+**自動行キャップ (LIMIT/TOP の挿入) も同じ方式で固定します (#990)。** `apply_auto_limit`
+は末尾に `LIMIT n` を足す MySQL/PostgreSQL/SQLite/DuckDB 共有パス、`apply_auto_limit_mssql`
+は `SELECT [DISTINCT]` の直後に `TOP (n)` を挿入する MSSQL 専用パスで、書き換え方式も
+チェックするキーワード集合 (`limit`/`offset`/`fetch` vs `top`/`offset`/`fetch`) も異なる
+ため、フロント側の実装が無いままバックのみで両パスの整合を固定する必要があります。共有
+ベクタ `src/__tests__/fixtures/autoLimitVectors.json` を `tests/auto_limit_golden.rs` が
+`include_str!` で読み込んで `__test_api::apply_auto_limit_for` の 5 ドライバ全てに通します。
+各ケースの `expected` はドライバ名 → 期待書き換え結果 (または変更しないことを表す `null`)
+のマップで、`FETCH FIRST … ROWS ONLY` (#969 の回帰ケース) / `WITH … SELECT` / `DISTINCT` /
+ロッキング句 / 集約のみ / 既存の `LIMIT`・`OFFSET`・`TOP` / 末尾コメント・`;` /
+トップレベル集合演算 (`UNION`/`INTERSECT`/`EXCEPT`) での MSSQL の `None` 返しなどを網羅
+します。MSSQL は `limit` キーワードを、他 4 ドライバは `top` キーワードをそもそも
+チェックしないため、互いの構文が紛れ込んだ入力ではどちらか一方だけが書き換えてしまう
+非対称も意図的なケースとして固定しています (#852 の MySQL バックスラッシュマスク差分も
+同様に個別ケースで固定)。
+
 **安全網には「強制レベル」の違いがある点に注意してください。** 同じ「安全網」でも、
 バックエンドで強制されるものと、UI 上の確認に留まるものがあります。
 
