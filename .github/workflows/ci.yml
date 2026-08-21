@@ -350,6 +350,7 @@ jobs:
           src/__tests__/ipcArgParity.test.ts
           src/__tests__/streamEventParity.test.ts
           src/__tests__/readOnlyGolden.test.ts
+          src/__tests__/maskGolden.test.ts
           src/__tests__/errorKindGolden.test.ts
           src/__tests__/errorHintGolden.test.ts
           src/__tests__/schemaParity.test.ts
