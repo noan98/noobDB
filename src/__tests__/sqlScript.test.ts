@@ -111,6 +111,62 @@ describe("splitSqlStatements", () => {
   });
 });
 
+describe("splitSqlStatements — driver-aware backslash escaping (#852, #1004)", () => {
+  // `SELECT '\' AS x; DROP TABLE t` — a `'` string containing a single
+  // backslash, followed by a second statement. Only MySQL/MariaDB reads `\`
+  // as an escape character inside `'...'`; every other supported driver reads
+  // it as an ordinary character, so the `'` right after it closes the string
+  // and the trailing `; DROP TABLE t` is a real second statement. This must
+  // match `dangerousSql.ts`'s `driverBackslashEscapes` exactly — a mismatch
+  // here means `statementAtOffset` (the #555 "run statement under cursor"
+  // feature) can silently fold a later DROP into the statement under the
+  // cursor and run it too.
+  const sql = "SELECT '\\' AS x; DROP TABLE t";
+
+  it.each(["postgres", "sqlite", "duckdb", "mssql"])(
+    "splits into two statements on %s (backslash is not an escape)",
+    (driver) => {
+      expect(splitSqlStatements(sql, driver)).toEqual([
+        "SELECT '\\' AS x",
+        "DROP TABLE t",
+      ]);
+    },
+  );
+
+  it("splits into two statements when no driver is given (conservative fallback)", () => {
+    expect(splitSqlStatements(sql)).toEqual(["SELECT '\\' AS x", "DROP TABLE t"]);
+  });
+
+  it("keeps it as a single statement on mysql (backslash escapes the quote)", () => {
+    // On MySQL, `\'` inside the string does not close it, so the `'` that
+    // actually closes the literal is the one right before `; DROP TABLE t`,
+    // and the whole thing is one statement (a SELECT whose alias is
+    // `'; DROP TABLE t` textually, but syntactically unterminated until EOF —
+    // in real MySQL this string never closes and the statement errors, but
+    // for the purposes of statement *splitting* what matters is that the
+    // masking-agreeing behavior does not treat `; DROP TABLE t` as a second
+    // statement).
+    expect(splitSqlStatements(sql, "mysql")).toEqual([sql]);
+  });
+
+  it("statementAtOffset does not fold a following DROP into the cursor statement on non-MySQL drivers", () => {
+    // Cursor sits inside "SELECT '\' AS x" (offset 5). On a non-MySQL driver
+    // the range returned must stop before `; DROP TABLE t`.
+    for (const driver of ["postgres", "sqlite", "duckdb", "mssql"] as const) {
+      expect(statementAtOffset(sql, 5, driver)?.text).toBe("SELECT '\\' AS x");
+    }
+    expect(statementAtOffset(sql, 5)?.text).toBe("SELECT '\\' AS x");
+  });
+
+  it("isMultiStatement agrees with splitSqlStatements across drivers", () => {
+    for (const driver of ["postgres", "sqlite", "duckdb", "mssql"] as const) {
+      expect(isMultiStatement(sql, driver)).toBe(true);
+    }
+    expect(isMultiStatement(sql)).toBe(true);
+    expect(isMultiStatement(sql, "mysql")).toBe(false);
+  });
+});
+
 describe("splitSqlStatementRanges", () => {
   it("returns trimmed-body offsets for each statement", () => {
     const sql = "SELECT 1;  SELECT 2 ;";

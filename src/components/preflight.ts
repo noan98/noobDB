@@ -144,9 +144,12 @@ function readTableRef(sql: string, p: number): { raw: string; end: number } | nu
  * - UPDATE / DELETE だが変換できない形状のときは
  *   `{ verb, table: null, allRows: false, countSql: null }` を返す (= 「推定不可」)。
  * - 変換できる単純形では `countSql` を伴う完全な計画を返す。
+ *
+ * `driver` は `maskLiterals` の文字列エスケープ規則を選ぶ (#852、#1004)。省略時は
+ * 保守的な非 MySQL 解釈になる。
  */
-export function buildPreflightPlan(sql: string): PreflightPlan | null {
-  const masked = maskLiterals(sql);
+export function buildPreflightPlan(sql: string, driver?: string): PreflightPlan | null {
+  const masked = maskLiterals(sql, driver);
   // 末尾の空白と `;` を除いた実体。ここに `;` が残っていれば複数文なので対象外。
   // (文字列内の `;` はマスクで空白化済みなので誤検出しない。)
   const trimmed = masked.replace(/[\s;]+$/, "");
