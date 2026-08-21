@@ -224,16 +224,31 @@ CI は 2 つのワークフローに分かれています:
   `src-tauri/**` のみを変更する PR ではまさにその変更を捕まえるべきテストが
   1 本も実行されないという穴がありました (#853)。対応として、対象ファイルだけを
   `pnpm vitest run <files...>` でピンポイントに実行する軽量な専用ジョブ
-  `crosslang parity` を新設し、起動条件を `frontend==true || rust==true` の OR に
-  しています (`frontend` ジョブとテストが重複しますが、対象を絞っているため数秒
-  程度と軽量で、重複コストよりカバレッジの穴を塞ぐ価値を優先しました)。逆方向
+  `crosslang parity` を新設しました。**起動条件は
+  `(rust==true && frontend!=true) || workflow==true` です** (#1029。新設時点
+  (#853) は `frontend==true || rust==true || workflow==true` でしたが、この
+  ジョブが実行する 10 本の Vitest ファイルは `frontend` ジョブの
+  `pnpm test --coverage` (Vitest 全スイート) にも既に含まれているため、
+  `frontend==true` の PR (`src/__tests__/fixtures/**` ⊂ `src/**` なのでフィクスチャ
+  のみの PR も該当) では `frontend` ジョブが直前に実走した 10 本を、このジョブが
+  独自の checkout/setup-node/`pnpm install --frozen-lockfile` を挟んで別ランナーで
+  再実行するだけの純粋な重複になっていました。このジョブの存在意義は「`frontend`
+  ジョブが走らない rust 専用 PR の穴埋め」なので、`frontend==true` はその正当化の
+  範囲外として起動条件から外し、`rust==true && frontend!=true` (rust 専用差分) と
+  `workflow==true` (このワークフロー自身の変更は常に検証) に絞りました。カバレッジは
+  次の 4 経路で不変です: `src/**` のみの変更は `frontend` ジョブがカバー、
+  `src-tauri/**` のみの変更は本ジョブがカバー、`src/__tests__/fixtures/**` のみの
+  変更はフィクスチャが `src/**` の部分集合なので `frontend` ジョブがカバー
+  (Rust 側は次段落の `crosslang` フィルタが別途カバー)、ワークフローファイルのみの
+  変更は `workflow==true` により本ジョブが常に実走します。逆方向
   (Rust 側のゴールデンテスト `serde_schema_parity.rs` / `read_only_golden.rs` /
   `error_kind_golden.rs` / `error_hint_golden.rs` / `sql_quoting_golden.rs` /
   `export_format_golden.rs` が `include_str!` で読む共有
   フィクスチャだけを変更する PR で `rust (test)` がスキップされる問題) は
   `changes` ジョブに追加した `crosslang` フィルタ (`src/__tests__/fixtures/**`
-  限定) を `rust (test)` の `if:` へ OR で足すことで塞いでいます。**必須チェックを
-  設定する場合はこの `crosslang parity` ジョブも対象に含めてください。**
+  限定) を `rust (test)` の `if:` へ OR で足すことで塞いでいます (#1029 でも
+  変更していません)。**必須チェックを設定する場合はこの `crosslang parity`
+  ジョブも対象に含めてください。**
 
   Rust 系は 6 つのジョブに分かれます: `rust (clippy)` が
   `cargo clippy --all-targets --locked -- -D warnings` (clippy が rustc ドライバ
