@@ -3448,7 +3448,7 @@ export default function App() {
         // for the database this statement ran against (the executing tab's, or
         // the profile default when the tab pins no database), leaving other
         // panes' cached schemas untouched.
-        if (isSchemaMutatingSql(sql)) {
+        if (isSchemaMutatingSql(sql, selectedProfile?.driver)) {
           invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
         }
         finalize();
@@ -3535,7 +3535,10 @@ export default function App() {
         autoRefresh,
         // DML フライトレコーダ (#735): 単文の INSERT/UPDATE/DELETE のみ対象。
         // 自動リフレッシュ (常に読み取り専用) は対象外。
-        capture: settings.flightRecorderEnabled && !autoRefresh && isSingleCapturableStatement(sql),
+        capture:
+          settings.flightRecorderEnabled &&
+          !autoRefresh &&
+          isSingleCapturableStatement(sql, selectedProfile?.driver),
         captureRowCap: settings.flightRecorderRowCap,
         captureRetentionDays: settings.flightRecorderRetentionDays,
       });
@@ -4114,7 +4117,7 @@ export default function App() {
     if (!tab) return;
     // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
     if (tab.batchRunning || tab.streaming) return;
-    const statements = splitSqlStatements(sql);
+    const statements = splitSqlStatements(sql, selectedProfile?.driver);
     if (statements.length === 0) return;
     const db = tab.database ?? selectedProfile?.database ?? null;
     const MAX_PREVIEW_ROWS = 200;
@@ -4166,7 +4169,7 @@ export default function App() {
       vars: { ok: okCount, errors: errCount, total: results.length },
       error: errCount > 0,
     });
-  }, [sessionId, selectedProfile?.database, patchTab]);
+  }, [sessionId, selectedProfile?.database, selectedProfile?.driver, patchTab]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -4266,9 +4269,13 @@ export default function App() {
     const requireWriteApproval =
       isProduction && (selectedProfile?.confirm_writes ?? false) && !sessionReadOnly;
     // 複数文スクリプトはバッチ実行に振り分ける。auto LIMIT は付けない。
-    const batch = target.kind === "query" && isMultiStatement(sql);
+    // 文分割・危険判定・読み取り専用判定 (下の isReadOnlySql) は同じ driver を参照
+    // し、1 回の実行ゲート内でマスク解釈が食い違わないようにする (#852、#1004)。
+    const batch = target.kind === "query" && isMultiStatement(sql, selectedProfile?.driver);
     const findings =
-      isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
+      isProduction || settings.confirmDangerousQueries
+        ? analyzeDangerousSql(sql, selectedProfile?.driver)
+        : [];
     // 緊急クエリ実行モード中の書き込みは、本番の confirm_writes と同じく毎回
     // 確認を要求する (read-only と明示した接続への書き込みは常に例外的な操作)。
     const needsWriteApproval =
@@ -7096,7 +7103,7 @@ export default function App() {
                         sessionId &&
                         !readOnly &&
                         tab.lastExecutedSql &&
-                        isCtasEligibleSql(tab.lastExecutedSql) &&
+                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
                         (tab.database ?? selectedProfile?.database)
                           ? () =>
                               setSaveAsTableRequest({
@@ -7109,7 +7116,7 @@ export default function App() {
                         sessionId &&
                         !readOnly &&
                         tab.lastExecutedSql &&
-                        isCtasEligibleSql(tab.lastExecutedSql) &&
+                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
                         (tab.database ?? selectedProfile?.database)
                           ? () =>
                               setSaveAsViewRequest({
