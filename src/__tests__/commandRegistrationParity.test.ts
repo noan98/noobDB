@@ -32,10 +32,14 @@ const commandSources = Object.values(commandModules);
 // してしまう (`commands/query.rs` / `commands/sync.rs` / `commands/sandbox.rs` に
 // 実例がある)。`#[tauri::command]` と `pub fn` の間には `#[allow(...)]` のような
 // 追加の属性行が挟まることがあるため、0 個以上の `#[...]` を許容する。
+// `pub` は**任意**にしてある。`generate_handler!` へ登録するには他モジュールから
+// 参照できる必要があるので登録済みコマンドは必ず `pub` だが、`pub` の無い
+// `#[tauri::command]` はまさに「登録し得ないのにコンパイルは通る」死蔵コードで
+// あり、本テストが検出すべき対象そのもの。`pub` を必須にすると取りこぼす。
 function extractDefinedCommands(sources: string[]): Set<string> {
   const commands = new Set<string>();
   const re =
-    /#\[tauri::command\](?:\s*#\[[^\]]*\])*\s*pub\s+(?:async\s+)?fn\s+([a-zA-Z_][a-zA-Z0-9_]*)/g;
+    /#\[tauri::command\](?:\s*#\[[^\]]*\])*\s*(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z_][a-zA-Z0-9_]*)/g;
   for (const src of sources) {
     const cleaned = src
       .split("\n")
