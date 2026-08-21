@@ -13,10 +13,14 @@ import { splitSqlStatements } from "./sqlScript";
  *
  * Scoped to a single INSERT/UPDATE/DELETE statement — a multi-statement
  * script or anything else (SELECT, DDL, ...) returns `false`.
+ *
+ * `driver` selects the string-escaping rules used by the statement splitter
+ * and mask (#852, #1004). Omit it only where the driver is genuinely unknown;
+ * the fallback is the stricter non-MySQL reading.
  */
-export function isSingleCapturableStatement(sql: string): boolean {
-  const statements = splitSqlStatements(sql).filter((s) => s.trim().length > 0);
+export function isSingleCapturableStatement(sql: string, driver?: string): boolean {
+  const statements = splitSqlStatements(sql, driver).filter((s) => s.trim().length > 0);
   if (statements.length !== 1) return false;
-  const masked = maskLiterals(statements[0]).trim().toLowerCase();
+  const masked = maskLiterals(statements[0], driver).trim().toLowerCase();
   return /^(insert|update|delete)\b/.test(masked);
 }
