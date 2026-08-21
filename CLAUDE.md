@@ -218,7 +218,17 @@ CI は 2 つのワークフローに分かれています:
   共有するフィクスチャ `src/__tests__/fixtures/*.json` を検証する)、および
   `apiReachabilityParity.test.ts` (#907。Rust ソースは読まないが、UI 未到達
   ラッパーの削除は `ipcCommandParity` = Rust 側登録と連動して直す必要があるため
-  同じ起動条件で同居させる) は「相手言語のソースを実行時に読む」
+  同じ起動条件で同居させる)、`commandRegistrationParity.test.ts` (#1031。
+  `import.meta.glob` で `src-tauri/src/commands/**/*.rs` を再帰的に読み、
+  実在する `#[tauri::command] pub (async) fn <name>` を抽出して `generate_handler!`
+  登録集合の部分集合であることを検証する。3 点コントラクト
+  [`generate_handler!` 登録 ⇔ `tauri.ts` ラッパ ⇔ UI 到達性] のうち
+  `ipcCommandParity`/`apiReachabilityParity` が塞がない残る 1 辺
+  — 「定義したのに登録し忘れた」死蔵コマンド — を塞ぐ。doc コメント
+  [`//` `///` `//!`] 中に `#[tauri::command]` という記法自体が説明文として
+  出現する箇所 [`commands/query.rs::run_query_inner` /
+  `commands/sync.rs::apply_sync_sql_inner` の直前など] を誤検出しないよう、
+  抽出前に行コメントを除去する) は「相手言語のソースを実行時に読む」
   言語横断のパリティ/ゴールデンテストです。これらは元々 `frontend` ジョブの
   `pnpm test` に含まれていたため `frontend==true` (`src/**` の変更) でしか走らず、
   `src-tauri/**` のみを変更する PR ではまさにその変更を捕まえるべきテストが
@@ -227,10 +237,10 @@ CI は 2 つのワークフローに分かれています:
   `crosslang parity` を新設しました。**起動条件は
   `(rust==true && frontend!=true) || workflow==true` です** (#1029。新設時点
   (#853) は `frontend==true || rust==true || workflow==true` でしたが、この
-  ジョブが実行する 10 本の Vitest ファイルは `frontend` ジョブの
+  ジョブが実行する 11 本の Vitest ファイルは `frontend` ジョブの
   `pnpm test --coverage` (Vitest 全スイート) にも既に含まれているため、
   `frontend==true` の PR (`src/__tests__/fixtures/**` ⊂ `src/**` なのでフィクスチャ
-  のみの PR も該当) では `frontend` ジョブが直前に実走した 10 本を、このジョブが
+  のみの PR も該当) では `frontend` ジョブが直前に実走した 11 本を、このジョブが
   独自の checkout/setup-node/`pnpm install --frozen-lockfile` を挟んで別ランナーで
   再実行するだけの純粋な重複になっていました。このジョブの存在意義は「`frontend`
   ジョブが走らない rust 専用 PR の穴埋め」なので、`frontend==true` はその正当化の
@@ -1753,6 +1763,20 @@ UI で使われているため **knip では原理的にプロパティ単位の
 その共通コアとして残る)。`clear_flight_records` / `clear_task_runs` は同じ調査で
 UI 未接続と分かりましたが、#910 が `FlightRecorderPanel` の「全消去」/ `TaskManager`
 の「実行履歴をクリア」導線を追加して解消済みです。
+
+**「3 点コントラクト」の残る 1 辺 (#1031)。** `ipcCommandParity` は `generate_handler!`
+の**登録**集合を「正」とみなして `tauri.ts` と突き合わせるため、`#[tauri::command]`
+が付いているのに `generate_handler!` から**登録し忘れた**関数はどちらの集合にも
+現れず不可視のまま (`apiReachabilityParity` は Rust ソースを読まないので対象外、
+knip は TS 限定で Rust の未使用関数を検出しない)。
+`src/__tests__/commandRegistrationParity.test.ts` が `import.meta.glob` で
+`src-tauri/src/commands/**/*.rs` を再帰的に読み、実在する `#[tauri::command]
+pub (async) fn <name>` を抽出して `generate_handler!` 登録集合の部分集合であることを
+検証し、この最後の 1 辺を塞ぎます。抽出前に行コメント (`//` 始まり、`///`/`//!` も
+同じ手法で除去可能) を取り除くのが要点で、そうしないと「The `#[tauri::command]`
+wrapper above is intentionally a one-liner over this.」のような**説明文中の記法**
+(`commands/query.rs::run_query_inner` / `commands/sync.rs::apply_sync_sql_inner` /
+`commands/sandbox.rs` のモジュール doc に実例あり) を誤って属性だと検出してしまいます。
 
 エラーは `AppError` として上に
 伝搬し、`{ kind, message }` の**構造化 JSON** としてシリアライズされます
