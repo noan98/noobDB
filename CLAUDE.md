@@ -920,6 +920,29 @@ no-op)。
 期待値を文ごとに 1 つに保てるからです。`FROM t (UPDLOCK)` という `WITH` 無しの
 レガシー形は既知の非対応 (通常の括弧式と区別できないため)。
 
+**DuckDB のドライバ条件付き許可 (#1005)。** 許可リストの 6 プレフィックス
+(`SELECT`/`SHOW`/`DESCRIBE`/`DESC`/`EXPLAIN`/`WITH`) は MySQL/PostgreSQL/SQLite
+時代のままで、DuckDB (#709) 追加後の読み取り構文を欠いていたため、同一ドライバ内で
+`db/duckdb.rs::is_query_shape` (クエリか実行かのルーティング判定) と `is_read_only_sql_for`
+(読み取り専用ガード) が矛盾していました。`is_read_only_sql_masked` に `Option<DriverKind>`
+を足して是正しています。**`VALUES (1),(2)` と `TABLE t`** (PostgreSQL/DuckDB/
+MySQL 8.0.19+ の `SELECT * FROM t` 短縮形) は書き込みに転じる構文が存在しないため
+**全ドライバ**で許可 (ドライバ非依存の呼び出し口も含む)。**`FROM t` 先頭省略構文と
+`SUMMARIZE`** は DuckDB 固有の構文なので **DuckDB のみ**許可します。**`PRAGMA`** は
+DuckDB でも照会形 (`PRAGMA database_list`) と設定形 (`PRAGMA memory_limit='1GB'`) の
+両方があり後者は書き込みに準じるため、DuckDB でのみ、かつマスク後の本文に `=` を
+含まない場合だけ許可します (設定形の構文は必ず `=` を伴い、照会形は伴わないという
+近似)。SQLite の `PRAGMA foreign_keys=ON` のような設定形は書き込みであり、かつ
+SQLite に「照会専用の PRAGMA」という失って困る用途も無いため、**PRAGMA は DuckDB
+以外では一切許可しません** (fail-closed)。`is_query_shape` は変更していません
+(並行ブランチ #971 が担当) — その結果 `FROM`/`TABLE` は読み取り専用ガードこそ通るように
+なりましたが、`is_query_shape` がまだこの 2 語を認識しないため実行は `execute()`
+経路 (行を返さない) に落ち、空の結果になる既知のギャップが残っています
+(`tests/duckdb_integration.rs` の `duckdb_read_only_session_allows_new_read_only_syntax_via_ipc`
+に明記)。フロントは `dangerousSql.ts` の `READ_ONLY_PREFIXES_ALL_DRIVERS` /
+`READ_ONLY_PREFIXES_DUCKDB` が同じ許可集合をミラーし、共有ゴールデン
+(`readOnlySqlVectors.json` の `readOnlyDuckdb` 次元) で両実装の一致を固定しています。
+
 `apply_auto_limit` は、自前で行数を制限していない素の `SELECT` / `WITH ... SELECT` に
 自動で `LIMIT n` を付与します。判定は保守的で、迷ったら `None` (ユーザの SQL をそのまま
 実行) を返します。単一行集計 (`COUNT(*)` 等) や既存の `LIMIT`/`OFFSET`、ロック句がある
