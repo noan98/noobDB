@@ -50,8 +50,14 @@ export function usePreflightImpact(params: {
   database: string | null;
   /** 設定 `preflightImpactEnabled` かつ接続中のとき true。 */
   enabled: boolean;
+  /**
+   * 接続先のドライバ。`buildPreflightPlan` の `maskLiterals` 文字列エスケープ
+   * 規則を選ぶ (#852、#1004)。未接続などで不明なときは省略可能 (保守的な非
+   * MySQL 解釈になる)。
+   */
+  driver?: string;
 }): PreflightResult | null {
-  const { sql, sessionId, database, enabled } = params;
+  const { sql, sessionId, database, enabled, driver } = params;
   const [result, setResult] = useState<PreflightResult | null>(null);
   // 裏実行の世代トークン。編集や依存変化のたびに進め、古い結果を無効化する。
   const runIdRef = useRef(0);
@@ -65,7 +71,7 @@ export function usePreflightImpact(params: {
       return;
     }
     // 計画は同期に組み立て、verb / 全行 / 推定不可を即座にバッジへ反映する。
-    const plan = buildPreflightPlan(sql);
+    const plan = buildPreflightPlan(sql, driver);
     if (!plan) {
       setResult(null);
       return;
@@ -98,7 +104,7 @@ export function usePreflightImpact(params: {
         });
     }, PREFLIGHT_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [sql, sessionId, database, enabled]);
+  }, [sql, sessionId, database, enabled, driver]);
 
   return result;
 }
