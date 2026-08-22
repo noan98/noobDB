@@ -270,12 +270,33 @@ jobs:
   # 検証すべきパリティテストが 1 本も走らなかった。
   #
   # 対応方針 (Issue #853 の (a) を採用): このジョブを新設し、対象の Vitest ファイル
-  # だけをピンポイントで実行する。起動条件は `frontend==true || rust==true` の OR
-  # (Issue が推奨する方式そのまま) — 両言語のどちらの変更でも確実に起動する。
-  # 「frontend ジョブとテストが重複するのでは」という点は許容する: frontend
-  # ジョブは `frontend==true` のときしか走らないためパリティ観点では不十分であり、
-  # 逆に crosslang ジョブは対象ファイルのみで数秒 (`pnpm vitest run` 実測) と
-  # 極めて軽量なため、重複コストよりカバレッジの穴を塞ぐ価値を優先する。
+  # だけをピンポイントで実行する。
+  #
+  # 起動条件 (#1029 で `frontend==true || rust==true || workflow==true` から
+  # 変更): このジョブが実行する 10 本の Vitest ファイルは、`frontend` ジョブの
+  # `pnpm test --coverage` (Vitest 全スイート) にも既に含まれている。したがって
+  # `frontend==true` の PR (`src/__tests__/fixtures/**` ⊂ `src/**` なのでフィクスチャ
+  # のみの PR も該当) では、`frontend` ジョブが直前に実行した 10 本を、このジョブが
+  # 独自の checkout + setup-node + `pnpm install --frozen-lockfile` を挟んで
+  # 別ランナーでそのまま再実行するだけの**純粋な重複**になっていた。このジョブの
+  # 存在意義は「`frontend` ジョブが走らない rust 専用 PR のカバレッジ穴埋め」
+  # (このコメント冒頭の背景を参照) であり、`frontend==true` はその正当化の範囲外
+  # なので、`rust==true && frontend!=true` (= rust 専用差分) と `workflow==true`
+  # (このワークフロー自身の変更は常に自ジョブも検証) の場合のみに限定する。
+  # `frontend==true && rust==true` (両方に触れる PR) では `frontend` ジョブが
+  # 既に 10 本を実走するため、このジョブを skip してもカバレッジは変わらない。
+  #
+  # カバレッジが保たれることの確認 (4 経路):
+  #   - `src/**` のみ変更 (frontend==true, rust==false):
+  #     `frontend` ジョブの `pnpm test --coverage` が 10 本すべてを実走 (このジョブは skip)。
+  #   - `src-tauri/**` のみ変更 (rust==true, frontend==false):
+  #     `frontend` ジョブは skip されるため、このジョブが 10 本を実走 (下記 if: の前半)。
+  #   - `src/__tests__/fixtures/**` のみ変更:
+  #     フィクスチャは `src/**` の部分集合なので必ず frontend==true になり、
+  #     上記「`src/**` のみ変更」と同じく `frontend` ジョブがカバーする
+  #     (このジョブは skip、Rust 側は `rust (test)` の `crosslang` OR 条件が別途カバー)。
+  #   - ワークフローファイルのみ変更 (workflow==true):
+  #     下記 if: の後半 `workflow == 'true'` により常に実走する。
   #
   # 逆方向 (Rust 側のゴールデンテストがフロントのフィクスチャ変更を見逃す問題) は
   # このジョブだけでは塞げない — `serde_schema_parity.rs` / `read_only_golden.rs` /
@@ -284,11 +305,11 @@ jobs:
   # `rust (test)` ジョブの中で実行されるため、`src/__tests__/fixtures/**` だけを変更する PR
   # (`rust==false`) では引き続きスキップされてしまう。これは上の `changes` ジョブに
   # 追加した `crosslang` フィルタ (フィクスチャパス限定) を `rust (test)` の if: へ
-  # OR で足すことで塞ぐ (そちらのコメント参照)。
+  # OR で足すことで塞ぐ (そちらのコメント参照。#1029 でも変更していない)。
   crosslang-parity:
     name: crosslang parity
     needs: changes
-    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
+    if: (needs.changes.outputs.rust == 'true' && needs.changes.outputs.frontend != 'true') || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
