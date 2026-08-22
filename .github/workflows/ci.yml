@@ -356,6 +356,7 @@ jobs:
           src/__tests__/sqlQuotingGolden.test.ts
           src/__tests__/exportFormatGolden.test.ts
           src/__tests__/apiReachabilityParity.test.ts
+          src/__tests__/commandRegistrationParity.test.ts
 
   rust-fmt:
     name: rust (fmt)
