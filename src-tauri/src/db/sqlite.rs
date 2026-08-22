@@ -1126,7 +1126,10 @@ impl SqliteConn {
 /// behind an empty "0 rows" grid (rows_affected always reported as 0), so we
 /// inspect the statement that follows the CTE definitions via the
 /// (dialect-agnostic) `with_cte_is_mutation` shared from `db::mysql` (#K2).
-fn is_query_shape(sql: &str) -> bool {
+/// `pub(crate)` (raised from private) so the cross-driver golden test
+/// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
+/// without changing its behaviour.
+pub(crate) fn is_query_shape(sql: &str) -> bool {
     let cleaned = strip_sql_comments(sql);
     let trimmed = cleaned.trim_start().to_ascii_lowercase();
     if trimmed.starts_with("with") {
