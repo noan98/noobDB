@@ -2107,7 +2107,10 @@ fn strip_sql_comments(sql: &str) -> String {
 /// whether it returns a result set, so it gets its own path keyed off
 /// [`is_call_shape`] and `fetch_many` rather than being forced down either
 /// branch here.
-fn is_query_shape(sql: &str) -> bool {
+/// `pub(crate)` (raised from private) so the cross-driver golden test
+/// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
+/// without changing its behaviour.
+pub(crate) fn is_query_shape(sql: &str) -> bool {
     // Leading comments/whitespace must be skipped before the keyword check, or
     // a perfectly normal `/* hint */ SELECT ...` / `-- note\nWITH ...` would
     // miss the prefix match and get misrouted to the execute path.

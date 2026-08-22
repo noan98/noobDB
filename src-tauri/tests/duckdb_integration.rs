@@ -521,6 +521,97 @@ async fn duckdb_read_only_session_allows_select_via_ipc() {
     remove_db_files(&path);
 }
 
+/// #1005: the read-only allow list used to be stuck at the MySQL/PostgreSQL/
+/// SQLite-era six prefixes (`SELECT`/`SHOW`/`DESCRIBE`/`DESC`/`EXPLAIN`/
+/// `WITH`) and rejected DuckDB's own read-only syntax outright. This exercises
+/// the fix through the *real* IPC command path (session lookup + read-only
+/// guard + actual DuckDB execution), not just the pure `is_read_only_sql_for`
+/// function in isolation.
+///
+/// `VALUES`, `SUMMARIZE`, and query-form `PRAGMA` are also recognized as
+/// query-shaped by `db::duckdb::is_query_shape` (the internal router that
+/// decides whether to fetch rows or just run the statement), so these three
+/// return real data end-to-end. `FROM`/`TABLE` are a documented, deliberate
+/// exception: this PR only widens the read-only *gate*, not `is_query_shape`
+/// itself (a private helper that a concurrently in-flight branch, #971, is
+/// also touching) — so a read-only session no longer rejects `FROM t`/`TABLE
+/// t` outright, but until `is_query_shape` also learns those two keywords,
+/// execution still falls through to DuckDB's `execute()` path and comes back
+/// with an empty result instead of the underlying rows. That gap is called
+/// out explicitly here (and in the PR description) as follow-up work.
+#[tokio::test]
+async fn duckdb_read_only_session_allows_new_read_only_syntax_via_ipc() {
+    let path = seed_ro_fixture("newsyntax").await;
+    let (state, sid) = ro_state(&path).await;
+
+    // `VALUES`: is_query_shape recognizes it, so real data comes back.
+    let values = t::run_query_via_command(&state, &sid, "VALUES (1), (2)", None)
+        .await
+        .expect("read-only session must allow a bare VALUES statement");
+    assert_eq!(values.rows.len(), 2, "VALUES must return its two rows");
+
+    // `SUMMARIZE`: likewise query-shaped — DuckDB's column-statistics report.
+    let summarize = t::run_query_via_command(&state, &sid, "SUMMARIZE ro_t", None)
+        .await
+        .expect("read-only session must allow SUMMARIZE");
+    assert_eq!(
+        summarize.rows.len(),
+        2,
+        "SUMMARIZE ro_t must report one row per column of ro_t (id, label)"
+    );
+
+    // `PRAGMA` query form: no `=`, so the gate allows it, and is_query_shape
+    // already routes every PRAGMA (query or setting form) through the query
+    // path, so real data comes back too.
+    let pragma = t::run_query_via_command(&state, &sid, "PRAGMA database_list", None)
+        .await
+        .expect("read-only session must allow query-form PRAGMA");
+    assert!(
+        !pragma.rows.is_empty(),
+        "PRAGMA database_list must report at least the attached database"
+    );
+
+    // `PRAGMA` setting form: rejected by the read-only gate itself (`=` in
+    // the masked body), before it ever reaches the driver.
+    let err = t::run_query_via_command(&state, &sid, "PRAGMA memory_limit='1GB'", None)
+        .await
+        .expect_err("read-only session must reject setting-form PRAGMA");
+    assert!(matches!(err, t::AppError::ReadOnly(_)));
+
+    // `FROM`/`TABLE`: the read-only gate now allows both (this PR's fix), so
+    // neither is rejected as ReadOnly. Real row data is *not* asserted here —
+    // see the doc comment above for why (`is_query_shape` gap, out of scope).
+    for sql in ["FROM ro_t", "TABLE ro_t"] {
+        let res = t::run_query_via_command(&state, &sid, sql, None)
+            .await
+            .unwrap_or_else(|e| {
+                panic!("read-only session must not reject {sql:?} as ReadOnly, got: {e:?}")
+            });
+        assert_eq!(
+            res.rows.len(),
+            0,
+            "{sql:?} currently falls through to DuckDB's execute() path (is_query_shape \
+             gap, out of scope for #1005) and so comes back empty rather than with ro_t's \
+             row — if this now returns real data, `is_query_shape` has learned FROM/TABLE \
+             and this assertion (and its doc comment) should be updated to expect 1 row"
+        );
+    }
+
+    // A write disguised behind `RETURNING` is still rejected outright — the
+    // leading keyword is `insert`, nowhere near the new allow-list entries.
+    let err = t::run_query_via_command(
+        &state,
+        &sid,
+        "INSERT INTO ro_t (id, label) VALUES (2, 'z') RETURNING *",
+        None,
+    )
+    .await
+    .expect_err("read-only session must still reject INSERT ... RETURNING");
+    assert!(matches!(err, t::AppError::ReadOnly(_)));
+
+    remove_db_files(&path);
+}
+
 #[tokio::test]
 async fn duckdb_read_only_session_rejects_transaction_writes() {
     let path = seed_ro_fixture("tx").await;

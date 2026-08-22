@@ -945,6 +945,29 @@ no-op)。
 期待値を文ごとに 1 つに保てるからです。`FROM t (UPDLOCK)` という `WITH` 無しの
 レガシー形は既知の非対応 (通常の括弧式と区別できないため)。
 
+**DuckDB のドライバ条件付き許可 (#1005)。** 許可リストの 6 プレフィックス
+(`SELECT`/`SHOW`/`DESCRIBE`/`DESC`/`EXPLAIN`/`WITH`) は MySQL/PostgreSQL/SQLite
+時代のままで、DuckDB (#709) 追加後の読み取り構文を欠いていたため、同一ドライバ内で
+`db/duckdb.rs::is_query_shape` (クエリか実行かのルーティング判定) と `is_read_only_sql_for`
+(読み取り専用ガード) が矛盾していました。`is_read_only_sql_masked` に `Option<DriverKind>`
+を足して是正しています。**`VALUES (1),(2)` と `TABLE t`** (PostgreSQL/DuckDB/
+MySQL 8.0.19+ の `SELECT * FROM t` 短縮形) は書き込みに転じる構文が存在しないため
+**全ドライバ**で許可 (ドライバ非依存の呼び出し口も含む)。**`FROM t` 先頭省略構文と
+`SUMMARIZE`** は DuckDB 固有の構文なので **DuckDB のみ**許可します。**`PRAGMA`** は
+DuckDB でも照会形 (`PRAGMA database_list`) と設定形 (`PRAGMA memory_limit='1GB'`) の
+両方があり後者は書き込みに準じるため、DuckDB でのみ、かつマスク後の本文に `=` を
+含まない場合だけ許可します (設定形の構文は必ず `=` を伴い、照会形は伴わないという
+近似)。SQLite の `PRAGMA foreign_keys=ON` のような設定形は書き込みであり、かつ
+SQLite に「照会専用の PRAGMA」という失って困る用途も無いため、**PRAGMA は DuckDB
+以外では一切許可しません** (fail-closed)。`is_query_shape` は変更していません
+(並行ブランチ #971 が担当) — その結果 `FROM`/`TABLE` は読み取り専用ガードこそ通るように
+なりましたが、`is_query_shape` がまだこの 2 語を認識しないため実行は `execute()`
+経路 (行を返さない) に落ち、空の結果になる既知のギャップが残っています
+(`tests/duckdb_integration.rs` の `duckdb_read_only_session_allows_new_read_only_syntax_via_ipc`
+に明記)。フロントは `dangerousSql.ts` の `READ_ONLY_PREFIXES_ALL_DRIVERS` /
+`READ_ONLY_PREFIXES_DUCKDB` が同じ許可集合をミラーし、共有ゴールデン
+(`readOnlySqlVectors.json` の `readOnlyDuckdb` 次元) で両実装の一致を固定しています。
+
 `apply_auto_limit` は、自前で行数を制限していない素の `SELECT` / `WITH ... SELECT` に
 自動で `LIMIT n` を付与します。判定は保守的で、迷ったら `None` (ユーザの SQL をそのまま
 実行) を返します。単一行集計 (`COUNT(*)` 等) や既存の `LIMIT`/`OFFSET`、ロック句がある
@@ -1003,6 +1026,39 @@ BLOB だけはフロントが `Value::Bytes` を `Value::String` と区別でき
 16 進文字列) ため意図的に食い違い、その差分を `frontend` キーで明記しています。
 `cargo-mutants` のスコープにも `src/db/sync.rs` / `src/db/data_diff.rs` を追加済み
 (可視化のみ・fail させない既存方針)。
+
+**自動行キャップ (LIMIT/TOP の挿入) も同じ方式で固定します (#990)。** `apply_auto_limit`
+は末尾に `LIMIT n` を足す MySQL/PostgreSQL/SQLite/DuckDB 共有パス、`apply_auto_limit_mssql`
+は `SELECT [DISTINCT]` の直後に `TOP (n)` を挿入する MSSQL 専用パスで、書き換え方式も
+チェックするキーワード集合 (`limit`/`offset`/`fetch` vs `top`/`offset`/`fetch`) も異なる
+ため、フロント側の実装が無いままバックのみで両パスの整合を固定する必要があります。共有
+ベクタ `src/__tests__/fixtures/autoLimitVectors.json` を `tests/auto_limit_golden.rs` が
+`include_str!` で読み込んで `__test_api::apply_auto_limit_for` の 5 ドライバ全てに通します。
+各ケースの `expected` はドライバ名 → 期待書き換え結果 (または変更しないことを表す `null`)
+のマップで、`FETCH FIRST … ROWS ONLY` (#969 の回帰ケース) / `WITH … SELECT` / `DISTINCT` /
+ロッキング句 / 集約のみ / 既存の `LIMIT`・`OFFSET`・`TOP` / 末尾コメント・`;` /
+トップレベル集合演算 (`UNION`/`INTERSECT`/`EXCEPT`) での MSSQL の `None` 返しなどを網羅
+します。MSSQL は `limit` キーワードを、他 4 ドライバは `top` キーワードをそもそも
+チェックしないため、互いの構文が紛れ込んだ入力ではどちらか一方だけが書き換えてしまう
+非対称も意図的なケースとして固定しています (#852 の MySQL バックスラッシュマスク差分も
+同様に個別ケースで固定)。
+
+**ストリーミング実行器の fetch/execute 経路振り分け (`is_query_shape`) も同じ方式で
+固定します (#971)。** `is_read_only_sql` (#444) や `quote_ident`/`sql_literal` (#880)
+と異なり、こちらは共有関数ではなく `db/sqlite.rs` / `db/mysql.rs` / `db/postgres.rs` /
+`db/duckdb.rs` / `db/mssql.rs` にそれぞれ private (`__test_api` から駆動できるよう
+`pub(crate)` へ引き上げ済み) 関数として個別実装されています。5 実装が一致すべき境界
+ケース (SELECT/SHOW/DESCRIBE/EXPLAIN/CALL/PRAGMA/SUMMARIZE/VALUES/TABLE の各ドライバ
+固有分岐、データ変更 CTE の判定、コメント/文字列リテラル前置) を共有ベクタ
+`src/__tests__/fixtures/queryShapeVectors.json` に集約し、`tests/query_shape_golden.rs`
+が `include_str!` で読み込んで `__test_api::is_query_shape(driver, sql)` 経由で全ドライバへ
+通します。`WITH` 分岐の「主文がデータ変更か」の判定 (`with_cte_is_mutation`) だけは
+`db::mysql` に 1 つだけ実装され全ドライバがそのまま共有するため、この部分は原理的に
+ドライバ間で割れません (ただし文字列リテラル中のバックスラッシュを方言に関わらず常に
+MySQL 流のエスケープとして読む既知の限界があり、フィクスチャの `knownLimitation` /
+該当ケースの note に明記しています — #852 のような driver-aware なマスクへの切り替えは
+本 Issue のスコープ外。#1051 で追跡)。フロント側に `is_query_shape` 相当の分類ロジックは存在しない
+(バックエンドの実行経路振り分け専用) ため、対になる Vitest テストはありません。
 
 **コメント/リテラルのマスキングそのものも同じ方式で固定します (#988)。**
 read-only 判定・auto-limit・stacked 検出・危険 SQL 検出・preflight の COUNT

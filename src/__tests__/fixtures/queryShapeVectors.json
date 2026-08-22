@@ -1,0 +1,228 @@
+{
+  "description": "ストリーミング実行器の fetch 経路 (結果セットを返す) / execute 経路 (rows_affected のみ) の振り分けを決める is_query_shape の実装横断ゴールデンベクタ (#971)。is_read_only_sql (#444) と異なり is_query_shape は共有関数ではなく sqlite/mysql/postgres/duckdb/mssql の各 db/<driver>.rs にそれぞれ private (現在は pub(crate)) 関数として個別実装されている。5 実装が一致すべきケースをここに集約し、src-tauri/tests/query_shape_golden.rs が include_str! で読み込んで __test_api::is_query_shape(driver, sql) 経由で全ドライバへ通す。フロント側に対応する分類 (is_query_shape 相当) は存在しないため、Vitest 側の対テストは無い (バックエンドのみのゴールデン)。",
+  "driverNotes": "各ドライバが SELECT 系プレフィックスとして認識する先頭キーワードの集合: mysql = with/select/show/describe/desc<space>/explain (CALL は is_call_shape という別関数で実行時に判定するため is_query_shape の対象外)。postgres = with/select/show/explain/values/table<space>。sqlite = with/select/explain/values/pragma。duckdb = with/select/show/describe/desc/explain/pragma/summarize/values。mssql = with/select/values (EXEC/EXECUTE は CALL と同じ理由で対象外)。WITH 分岐の『主文がデータ変更か』の判定 (with_cte_is_mutation) だけは db::mysql に 1 つだけ実装されており、5 ドライバ全てがこの同一実装を共有する (ドライバごとに差はない)。",
+  "knownLimitation": "with_cte_is_mutation はキーワード列挙のみで方言非依存と説明されているが、文字列リテラル中のバックスラッシュだけは PostgreSQL/SQLite/DuckDB/MSSQL の標準解釈 (\\ はただの文字) ではなく MySQL 流のエスケープ解釈を無条件に使っている (is_read_only_sql が #852 で driver_backslash_escapes によりドライバ別に切り替えたのと非対称)。ケース 'with_cte_backslash_unterminated_string' はこれを実際に踏む具体例で、PostgreSQL 等の実際の文字列終端規則で読めば主文の DELETE が露出し false (execute 経路) になるべきところ、現在の共有実装は文字列が閉じないまま depth が戻らず true (fetch 経路) を返す。5 ドライバとも同じ共有関数を呼ぶため golden 上はクロスドライバの割れとしては現れない (全ドライバが一致して『恐らく誤った』true を返す) — 報告書ではこれを bug 候補として明記し、この Issue のスコープ (ゴールデン整備) では修正しない。",
+  "drivers": ["mysql", "postgres", "sqlite", "duckdb", "mssql"],
+  "cases": [
+    {
+      "sql": "SELECT * FROM users",
+      "note": "素の SELECT",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "  select 1  ",
+      "note": "前後空白・小文字",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "SELECT * FROM users;",
+      "note": "末尾セミコロンは先頭キーワード判定に影響しない",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "/* lead */ SELECT 1",
+      "note": "先頭ブロックコメントを剥がして SELECT を認識",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "-- note\nSELECT 1",
+      "note": "先頭行コメント (--) を剥がして SELECT を認識 (MySQL は separator 不要でも '--\\n' の形なら通る)",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "# note\nSELECT 1",
+      "note": "先頭 # コメントは MySQL 方言のみのコメント構文。他方言では # がただの文字として残り SELECT に到達しないため false",
+      "expected": { "mysql": true, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "  /* a */ -- b\n  SHOW all",
+      "note": "複数の先頭コメントを重ねても SHOW 系ドライバは剥がした先の SHOW を認識する",
+      "expected": { "mysql": true, "postgres": true, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "-- note\nWITH t AS (SELECT 1) SELECT * FROM t",
+      "note": "先頭コメント越しの WITH ... SELECT (with_cte_is_mutation 自身もコメントを読み飛ばす)",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "'not sql' SELECT 1",
+      "note": "先頭が文字列リテラル。is_query_shape はコメントしか読み飛ばさないため、どの方言でも文字列の中身は無視されずキーワードに届かない",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "SELECT 'DROP TABLE users' AS note",
+      "note": "文字列リテラルの中身 (DROP TABLE) は先頭キーワード判定より後ろにあるため影響しない",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "",
+      "note": "空文字列",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "   ",
+      "note": "空白のみ",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": ";",
+      "note": "セミコロンのみ",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "WITH t AS (SELECT 1) SELECT * FROM t",
+      "note": "非データ変更 CTE。with_cte_is_mutation はドライバ非依存の共有実装なので 5 者一致",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "WITH t AS (SELECT 1) DELETE FROM users",
+      "note": "データ変更 CTE (主文が DELETE)",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "WITH t AS (SELECT 1) INSERT INTO users (id) VALUES (1)",
+      "note": "データ変更 CTE (主文が INSERT)",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "WITH t AS (SELECT 1) UPDATE users SET active = 0",
+      "note": "データ変更 CTE (主文が UPDATE)",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "WITH d AS (DELETE FROM t OUTPUT deleted.*) SELECT * FROM d",
+      "note": "CTE 本体は DELETE だが主文は SELECT なので結果セットを返す (is_read_only_sql の判定基準とは異なる点に注意 — is_read_only_sql はこの形を書き込みとして拒否する)",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "WITH x AS (WITH y AS (DELETE FROM users RETURNING *) SELECT * FROM y) SELECT * FROM x",
+      "note": "ネスト CTE。最外殻の主文が SELECT なので true (内側の DELETE は depth > 0 で無視される)",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "WITH x AS (WITH y AS (SELECT 1) SELECT * FROM y) DELETE FROM x",
+      "note": "ネスト CTE。最外殻の主文が DELETE なので false",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "WITH t AS (SELECT '\\' AS x) DELETE FROM y",
+      "note": "#knownLimitation: with_cte_is_mutation は文字列リテラル中の \\ を方言に関わらず常に MySQL 流のエスケープとして読むため、この文字列は閉じずに CTE の閉じ括弧 ) も文字列内に取り込まれてしまい、主文の DELETE に到達しないまま false (非データ変更) 判定になる。PostgreSQL/SQLite/DuckDB/MSSQL の実際の文字列終端規則 (\\ はただの文字) で読めば文字列は 2 文字目の ' で閉じ、主文の DELETE が露出して true (mutation) になるはずで、現在の全ドライバ一致の true は 4/5 のドライバにとって恐らく誤り。5 ドライバとも同じ共有関数を呼ぶため cross-driver の割れとしては現れない — 現状の (共有) 実装挙動をそのまま期待値として固定しつつ、この Issue の報告でバグ候補として明記する",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "WITH t AS (SELECT 'ok' AS x) DELETE FROM y",
+      "note": "上のケースとの対比用: バックスラッシュを含まない通常の文字列なら、データ変更 CTE (主文 DELETE) は正しく false と判定される",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "SHOW TABLES",
+      "note": "SHOW (MySQL/PostgreSQL/DuckDB は対応。SQLite/MSSQL に SHOW 構文は無い)",
+      "expected": { "mysql": true, "postgres": true, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "SHOW DATABASES",
+      "note": "SHOW の別バリエーション",
+      "expected": { "mysql": true, "postgres": true, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "DESCRIBE users",
+      "note": "DESCRIBE (MySQL/DuckDB のみ実装が認識する)",
+      "expected": { "mysql": true, "postgres": false, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "DESC users",
+      "note": "DESC 短縮形 + 引数 (MySQL は 'desc ' と空白まで要求、DuckDB は 'desc' 前方一致のみで空白不要。どちらも users まで含めれば true)",
+      "expected": { "mysql": true, "postgres": false, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "DESC",
+      "note": "DESC 単独 (引数なし・末尾空白なし)。MySQL は 'desc ' という 5 文字プレフィックスに空白が無いため一致せず false。DuckDB は 'desc' への前方一致だけで true — 両実装間の細かな非対称 (実運用では DESC は常に引数を伴うため実害は薄いが、テキスト一致条件としては割れている)",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "EXPLAIN SELECT * FROM users",
+      "note": "EXPLAIN (SQLite/MySQL/PostgreSQL/DuckDB は対応。MSSQL の実行計画取得は EXPLAIN ではなく SET SHOWPLAN 系の別メカニズムのため非対応)",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "  explain query plan select 1",
+      "note": "SQLite 固有の EXPLAIN QUERY PLAN 構文も先頭一致 (explain) で拾われる",
+      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "CALL my_proc()",
+      "note": "CALL はどのドライバの is_query_shape でも非該当。MySQL はストアドプロシージャが結果セットを返すか実行時にしか分からないため、is_call_shape という別関数 + fetch_many で判定する専用経路を持ち、is_query_shape 自体は一律 false を返す設計",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "CALL sp_report(2024)",
+      "note": "CALL の別例",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "EXEC sp_helpdb",
+      "note": "MSSQL の EXEC もストアドプロシージャなので CALL と同じ理由で is_query_shape の対象外 (どのドライバも false)",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "EXECUTE dbo.my_proc",
+      "note": "EXECUTE も同様",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "VALUES (1), (2)",
+      "note": "裸の VALUES 文。SQLite/PostgreSQL/DuckDB/MSSQL は対応するが、MySQL の is_query_shape には 'values' 分岐が無い。MySQL は 8.0.19 以降で裸の VALUES 文自体が結果セットを返す構文としてサポートされているため、これは潜在的な取りこぼし (誤って execute 経路に回り結果行が失われる) の可能性がある — 現状の実装挙動をそのまま期待値として固定しつつ、報告でフォローアップ候補として明記する",
+      "expected": { "mysql": false, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+    },
+    {
+      "sql": "TABLE users",
+      "note": "PostgreSQL 固有の TABLE 省略構文 (SELECT * FROM table の同義語)。他ドライバにこの構文は無い",
+      "expected": { "mysql": false, "postgres": true, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "PRAGMA table_info(users)",
+      "note": "PRAGMA (SQLite/DuckDB のみ)",
+      "expected": { "mysql": false, "postgres": false, "sqlite": true, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "PRAGMA user_version",
+      "note": "PRAGMA の別例",
+      "expected": { "mysql": false, "postgres": false, "sqlite": true, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "SUMMARIZE t",
+      "note": "DuckDB 固有の SUMMARIZE (列ごとの要約統計を返す拡張構文)",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1)",
+      "note": "INSERT はどのドライバも execute 経路。先頭キーワードが insert であり、文中に VALUES を含んでいても (先頭一致でしか判定しないため) query 判定には影響しない",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "UPDATE t SET x = 1",
+      "note": "UPDATE",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "DELETE FROM t",
+      "note": "DELETE",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "DROP TABLE t",
+      "note": "DROP",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "CREATE TABLE t (id INT)",
+      "note": "CREATE",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "TRUNCATE TABLE t",
+      "note": "TRUNCATE",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    }
+  ]
+}
