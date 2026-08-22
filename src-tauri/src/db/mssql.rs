@@ -1451,7 +1451,10 @@ async fn fetch_rows(conn: &mut PooledConn, sql: Option<&str>) -> Result<Vec<TdsR
 /// `execute()` (rows-affected) path. `WITH` reuses the driver-agnostic
 /// mutating-CTE detector from `db::mysql` (T-SQL CTE syntax is the same ANSI
 /// shape).
-fn is_query_shape(sql: &str) -> bool {
+/// `pub(crate)` (raised from private) so the cross-driver golden test
+/// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
+/// without changing its behaviour.
+pub(crate) fn is_query_shape(sql: &str) -> bool {
     // T-SQL's comment syntax matches PostgreSQL's exactly (`--` needs no
     // trailing separator, `/* */` nests), so that flavor is reused rather
     // than adding a fourth `SqlFlavor` variant just for this.

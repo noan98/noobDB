@@ -596,6 +596,29 @@ pub mod __test_api {
             init_sql: None,
         })
     }
+
+    // `is_query_shape` の実装横断ゴールデンテスト (#971)。ストリーミング実行器が
+    // fetch 経路 (結果セットを返す) と execute 経路 (rows_affected のみ) の
+    // どちらを通すかを決める判定は、`is_read_only_sql` (#444) とは異なり
+    // 共有関数ではなく sqlite/mysql/postgres/duckdb/mssql の各モジュールに
+    // それぞれ private 関数として個別実装されている。5 実装が一致すべき境界
+    // ケースをこの下のディスパッチャ経由で `tests/query_shape_golden.rs` へ
+    // 通す。各モジュール本体の関数は挙動を変えず `pub(crate)` へ引き上げただけ
+    // (`pub use` では再公開できないため、`quote_ident`/`sql_literal` と同じく
+    // 薄いラッパー関数でここへ集約する)。
+
+    /// `db::{driver}::is_query_shape` へディスパッチする。ストリーミング実行器
+    /// の fetch/execute 経路振り分けそのものであり、判定ロジックはここでは
+    /// 一切変更しない (5 モジュールの private 関数をそのまま呼ぶだけ)。
+    pub fn is_query_shape(driver: DriverKind, sql: &str) -> bool {
+        match driver {
+            DriverKind::Mysql => crate::db::mysql::is_query_shape(sql),
+            DriverKind::Postgres => crate::db::postgres::is_query_shape(sql),
+            DriverKind::Sqlite => crate::db::sqlite::is_query_shape(sql),
+            DriverKind::DuckDb => crate::db::duckdb::is_query_shape(sql),
+            DriverKind::Mssql => crate::db::mssql::is_query_shape(sql),
+        }
+    }
 }
 
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};

@@ -1073,7 +1073,10 @@ async fn run_blocking_join<T>(handle: tokio::task::JoinHandle<Result<T>>) -> Res
 /// query-shaped statements largely mirror PostgreSQL/SQLite: `SELECT`,
 /// non-mutating `WITH ... SELECT`, and the introspection pseudo-statements
 /// `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `PRAGMA` / `SUMMARIZE`.
-fn is_query_shape(sql: &str) -> bool {
+/// `pub(crate)` (raised from private) so the cross-driver golden test
+/// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
+/// without changing its behaviour.
+pub(crate) fn is_query_shape(sql: &str) -> bool {
     let cleaned = strip_sql_comments(sql);
     let trimmed = cleaned.trim_start().to_ascii_lowercase();
     if trimmed.starts_with("with") {
