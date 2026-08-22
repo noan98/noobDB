@@ -2320,7 +2320,11 @@ fn sets_no_backslash_escapes_mode(orig_segment: &str) -> bool {
 /// [`has_stacked_statements`], [`apply_auto_limit`], [`classify_write_kind`],
 /// [`is_session_init_sql`]). Callers holding a [`DriverKind`] should use
 /// [`mask_for_driver`] so MySQL keeps its own rules.
-fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
+///
+/// `pub(crate)` (rather than private) so `lib.rs::__test_api` can re-export a
+/// thin `&str -> String` wrapper for the shared frontend/backend masking
+/// golden (`tests/mask_golden.rs`, #988).
+pub(crate) fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
     mask_for_analysis_impl(src, false)
 }
 
@@ -2353,7 +2357,11 @@ fn driver_backslash_escapes(driver: DriverKind) -> bool {
 /// entry points; the driver-less variants deliberately fall back to the
 /// stricter [`mask_for_analysis_conservative`] reading (see
 /// [`is_read_only_sql`]).
-fn mask_for_driver(driver: DriverKind, src: &[char]) -> Vec<char> {
+///
+/// `pub(crate)` (rather than private) for the same reason as
+/// [`mask_for_analysis_conservative`] — re-exported for `tests/mask_golden.rs`
+/// (#988).
+pub(crate) fn mask_for_driver(driver: DriverKind, src: &[char]) -> Vec<char> {
     mask_for_analysis_impl(src, driver_backslash_escapes(driver))
 }
 

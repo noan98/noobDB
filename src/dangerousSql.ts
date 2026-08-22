@@ -38,6 +38,10 @@ export interface DangerFinding {
  * — opened with `/*!`, optionally followed by a version number, e.g.
  * `/*!50000` — is *not* blanked like an ordinary block comment, because
  * MySQL actually executes its body. See the `/*!` branch below.
+ *
+ * Mirrors the backend `mask_for_analysis_impl` (`src-tauri/src/db/mod.rs`)
+ * closely enough that a shared golden (`fixtures/maskVectors.json`, #988)
+ * pins both implementations to the same output for the same input.
  */
 export function maskLiterals(sql: string, driver?: string): string {
   const backslashEscapes = driverBackslashEscapes(driver);
@@ -116,6 +120,7 @@ export function maskLiterals(sql: string, driver?: string): string {
     if (c === "'" || c === '"' || c === "`") {
       const quote = c;
       let j = i + 1;
+      let closed = false;
       while (j < n) {
         if (sql[j] === quote) {
           // Doubled quote is an escaped delimiter, not the end.
@@ -123,19 +128,31 @@ export function maskLiterals(sql: string, driver?: string): string {
             j += 2;
             continue;
           }
+          closed = true;
           j++;
           break;
         }
         // Backslash escapes apply inside MySQL strings but not in `` `ident` ``
         // — and not at all on the other dialects (see `driverBackslashEscapes`).
-        if (backslashEscapes && sql[j] === "\\" && quote !== "`") {
+        // Guarded by `j + 1 < n` (mirrors the backend `mask_for_analysis_impl`,
+        // #988): a backslash as the very last character of the input has
+        // nothing left to escape, so it falls through to the plain
+        // `j++` below instead of consuming a character past the end.
+        if (backslashEscapes && sql[j] === "\\" && quote !== "`" && j + 1 < n) {
           j += 2;
           continue;
         }
         j++;
       }
-      // Blank the contents but keep the delimiters so token boundaries survive.
-      blank(i + 1, j - 1);
+      // Blank the contents but keep the delimiters so token boundaries
+      // survive. When the literal never closes — it runs off the end of the
+      // input instead of hitting a real closing delimiter — there is no
+      // trailing delimiter to preserve, so mask all the way through EOF
+      // (`j`, not `j - 1`) rather than leaving the very last character of the
+      // input unmasked. Fail-closed, mirrors the backend
+      // `mask_for_analysis_impl`, which masks every remaining character up to
+      // EOF for an unterminated literal (#988).
+      blank(i + 1, closed ? j - 1 : j);
       i = j;
       continue;
     }

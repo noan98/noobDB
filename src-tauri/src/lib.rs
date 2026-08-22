@@ -52,6 +52,31 @@ pub mod __test_api {
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
+    // コメント/リテラル・マスキングの実装横断ゴールデン (#988)。read-only 判定・
+    // auto-limit・stacked 検出・危険 SQL 検出など全安全網が乗る「マスクしてから
+    // キーワード走査」という共通土台そのものを固定する。マスク関数
+    // (`db::mod::mask_for_analysis_conservative` / `mask_for_driver`) は
+    // `Vec<char>` を受け取り `Vec<char>` を返すため、JSON フィクスチャとの
+    // 突き合わせに使いやすい `&str -> String` の薄いラッパーをここで公開する
+    // (`quote_ident` / `sql_literal` と同じ理由・同じパターン)。
+    /// ドライバ非依存の呼び出し口 (`is_read_only_sql` 等) が使う保守的マスク。
+    /// バックスラッシュを文字列エスケープと見なさない標準解釈。
+    pub fn mask_for_analysis_conservative(sql: &str) -> String {
+        let chars: Vec<char> = sql.chars().collect();
+        crate::db::mask_for_analysis_conservative(&chars)
+            .into_iter()
+            .collect()
+    }
+
+    /// `driver` の文字列エスケープ規則でマスクする (#852)。MySQL だけ `\` を
+    /// エスケープ文字として扱う。
+    pub fn mask_for_driver(driver: DriverKind, sql: &str) -> String {
+        let chars: Vec<char> = sql.chars().collect();
+        crate::db::mask_for_driver(driver, &chars)
+            .into_iter()
+            .collect()
+    }
+
     // zod ⇔ serde ゴールデン (#824) が代表インスタンスを組み立てるための追加の
     // レスポンス/永続化型の再エクスポート。いずれも非公開モジュール配下にあるため、
     // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
