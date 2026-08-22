@@ -358,6 +358,7 @@ jobs:
           src/__tests__/exportFormatGolden.test.ts
           src/__tests__/apiReachabilityParity.test.ts
           src/__tests__/commandRegistrationParity.test.ts
+          src/__tests__/sshHostKeyMismatchGolden.test.ts
 
   rust-fmt:
     name: rust (fmt)

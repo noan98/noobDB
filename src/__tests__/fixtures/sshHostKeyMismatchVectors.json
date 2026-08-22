@@ -1,0 +1,70 @@
+{
+  "cases": [
+    {
+      "id": "ipv4-standard-port",
+      "note": "通常の IPv4 ホスト + 標準ポート (22)",
+      "host": "192.168.1.10",
+      "port": 22,
+      "expected": "SHA256:2mfhg9G6RVpFPzD3D5YZ2mGRvJoJcxRUu6bLdvz1B2Q",
+      "actual": "SHA256:8f3xyGpKqQqz6iTQhbzB6eDcXbLQdXGqBQx7T7B2b9Y",
+      "message": "ssh host key mismatch for 192.168.1.10:22: stored fingerprint SHA256:2mfhg9G6RVpFPzD3D5YZ2mGRvJoJcxRUu6bLdvz1B2Q, server presented SHA256:8f3xyGpKqQqz6iTQhbzB6eDcXbLQdXGqBQx7T7B2b9Y. If you did not expect the server's key to change, this could indicate a man-in-the-middle attack.",
+      "parsedHost": "192.168.1.10",
+      "parsedPort": 22
+    },
+    {
+      "id": "nonstandard-port-jump-host",
+      "note": "多段トンネルの踏み台 (#708) を想定した非標準ポート",
+      "host": "bastion.internal.example.com",
+      "port": 2222,
+      "expected": "SHA256:oldJJJ111222333aaaBBBcccDDDeee",
+      "actual": "SHA256:newKKK444555666fffGGGhhhIIIjjj",
+      "message": "ssh host key mismatch for bastion.internal.example.com:2222: stored fingerprint SHA256:oldJJJ111222333aaaBBBcccDDDeee, server presented SHA256:newKKK444555666fffGGGhhhIIIjjj. If you did not expect the server's key to change, this could indicate a man-in-the-middle attack.",
+      "parsedHost": "bastion.internal.example.com",
+      "parsedPort": 2222
+    },
+    {
+      "id": "fqdn-host-high-port",
+      "note": "FQDN ホスト名 + 高位ポート",
+      "host": "db-primary.ap-northeast-1.rds.example.co.jp",
+      "port": 65535,
+      "expected": "SHA256:aaaBBBcccDDDeeeFFF111ggg222hhh",
+      "actual": "SHA256:zzzYYYxxxWWWvvvUUU999ttt888sss",
+      "message": "ssh host key mismatch for db-primary.ap-northeast-1.rds.example.co.jp:65535: stored fingerprint SHA256:aaaBBBcccDDDeeeFFF111ggg222hhh, server presented SHA256:zzzYYYxxxWWWvvvUUU999ttt888sss. If you did not expect the server's key to change, this could indicate a man-in-the-middle attack.",
+      "parsedHost": "db-primary.ap-northeast-1.rds.example.co.jp",
+      "parsedPort": 65535
+    },
+    {
+      "id": "ipv6-host-colon-boundary",
+      "note": "IPv6 アドレス (`:` を含むホスト)。endpoint 抽出用正規表現 ([^\\s:]+) はホストに ':' を許さないため host:port の抽出には失敗する既知の境界 — fingerprint 自体は引き続き抽出できるので parseHostKeyFingerprints 全体としては null にならない (ダイアログは host/port なしで fingerprint のみ表示するフォールバック)",
+      "host": "2001:db8::1",
+      "port": 22,
+      "expected": "SHA256:ipv6OLDfingerprintAAABBBCCCddd",
+      "actual": "SHA256:ipv6NEWfingerprintXXXYYYZZZeee",
+      "message": "ssh host key mismatch for 2001:db8::1:22: stored fingerprint SHA256:ipv6OLDfingerprintAAABBBCCCddd, server presented SHA256:ipv6NEWfingerprintXXXYYYZZZeee. If you did not expect the server's key to change, this could indicate a man-in-the-middle attack.",
+      "parsedHost": null,
+      "parsedPort": null
+    },
+    {
+      "id": "legacy-fingerprint-format",
+      "note": "known_hosts が未移行のレガシー形式 (SHA256: プレフィックス無し) で保存されていた場合の expected。actual は常に現行の SHA256 形式 (ssh/handler.rs::check_server_key が fingerprint(HashAlg::Sha256) で生成)",
+      "host": "legacy.example.com",
+      "port": 22,
+      "expected": "ab1234ef5678cd90ab1234ef5678cd90",
+      "actual": "SHA256:migratedNEWfingerprintAAABBBCCC",
+      "message": "ssh host key mismatch for legacy.example.com:22: stored fingerprint ab1234ef5678cd90ab1234ef5678cd90, server presented SHA256:migratedNEWfingerprintAAABBBCCC. If you did not expect the server's key to change, this could indicate a man-in-the-middle attack.",
+      "parsedHost": "legacy.example.com",
+      "parsedPort": 22
+    },
+    {
+      "id": "single-label-hostname",
+      "note": "DNS サフィックス無しの単一ラベルホスト名 (社内 DNS でよくある形)",
+      "host": "jumpbox",
+      "port": 22,
+      "expected": "SHA256:oldSingleLabelFingerprintAAABBB",
+      "actual": "SHA256:newSingleLabelFingerprintXXXYYY",
+      "message": "ssh host key mismatch for jumpbox:22: stored fingerprint SHA256:oldSingleLabelFingerprintAAABBB, server presented SHA256:newSingleLabelFingerprintXXXYYY. If you did not expect the server's key to change, this could indicate a man-in-the-middle attack.",
+      "parsedHost": "jumpbox",
+      "parsedPort": 22
+    }
+  ]
+}
