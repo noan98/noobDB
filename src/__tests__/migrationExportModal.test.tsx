@@ -116,8 +116,17 @@ describe("MigrationExportModal render smoke (#744)", () => {
 
   it("writes both up and down files on save", async () => {
     renderModal();
-    await waitFor(() => expect(generateSyncSql).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareMigrationSave") }));
+    // 保存ボタンは down プランが ready になるまで disabled で、handleSave も
+    // `downState.kind !== "ready"` なら即 return する。`generateSyncSql` が
+    // 「呼ばれた」ことだけを待つと、状態が ready に確定する前にクリックして
+    // しまい何も起きない (CI で実際に発生した競合)。実際の前提条件である
+    // 「保存ボタンが有効になったこと」を待ってからクリックする。
+    const saveButton = await waitFor(() => {
+      const btn = screen.getByRole("button", { name: t("schemaCompareMigrationSave") });
+      expect(btn).toBeEnabled();
+      return btn;
+    });
+    fireEvent.click(saveButton);
     await waitFor(() => expect(writeBinaryFile).toHaveBeenCalledTimes(2));
     const [upPath, upBytes] = writeBinaryFile.mock.calls[0];
     const [downPath, downBytes] = writeBinaryFile.mock.calls[1];
