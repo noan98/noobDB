@@ -1481,8 +1481,11 @@ fn full_pg_data_type(
 /// `WITH` (CTE) is not SELECT-only: a CTE can prefix an INSERT/UPDATE/DELETE
 /// that mutates rows. Treating every `WITH` as a query hides those mutations
 /// behind an empty "0 rows" grid (rows_affected always reported as 0), so we
-/// inspect the statement that follows the CTE definitions via the
-/// (dialect-agnostic) `with_cte_is_mutation` shared from `db::mysql` (#K2).
+/// inspect the statement that follows the CTE definitions via
+/// `with_cte_is_mutation`, shared from `db::mysql` (#K2). そのキーワード列挙は
+/// 方言非依存だが、コメント/リテラルのマスクだけはドライバ別なので自分の
+/// `DriverKind` を渡す (#1051 — PostgreSQL は `standard_conforming_strings = on`
+/// で `\` がただの文字)。
 /// `pub(crate)` (raised from private) so the cross-driver golden test
 /// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
 /// without changing its behaviour.
@@ -1490,7 +1493,7 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
     let cleaned = strip_sql_comments(sql);
     let trimmed = cleaned.trim_start().to_ascii_lowercase();
     if trimmed.starts_with("with") {
-        return !super::mysql::with_cte_is_mutation(sql);
+        return !super::mysql::with_cte_is_mutation(super::DriverKind::Postgres, sql);
     }
     trimmed.starts_with("select")
         || trimmed.starts_with("show")

@@ -3369,6 +3369,44 @@ mod tests {
         assert!(is_session_init_sql("SET persistent_foo = 1"));
     }
 
+    /// #1051 の調査結果を固定する: `with_cte_is_mutation` (実行経路の振り分け)
+    /// が MySQL 流のバックスラッシュ解釈を全ドライバへ適用していた間も、
+    /// **読み取り専用ガードはこの入力でフェイルオープンしていなかった**。
+    /// 両者は独立した安全網であり、`is_read_only_sql_for` は
+    ///
+    /// * #852 で既にドライバ別マスク ([`mask_for_driver`]) へ切り替え済みで、
+    /// * データ変更 CTE を「主文の位置」ではなく **本文のどこかに書き込み
+    ///   キーワードが露出しているか** で弾く
+    ///
+    /// ため、`\` をただの文字として読む 4 方言では `delete` がそのまま見えて
+    /// 拒否される。MySQL だけはマスクが実サーバと同じく「閉じない文字列」と
+    /// 読むので `delete` は現れず true を返すが、そのとき実サーバも同じ理由で
+    /// この文を構文エラーにするため書き込みは起きない (安全網とサーバの解釈が
+    /// 一致している状態であって、見逃しではない)。
+    ///
+    /// つまり #1051 で直したのは「データ変更が空の 0 件グリッドとして表示され
+    /// `rows_affected` が失われる」実行経路の誤りであって、権限の穴ではない。
+    #[test]
+    fn read_only_guard_rejects_backslash_cte_on_standard_dialects() {
+        let sql = r"WITH t AS (SELECT '\' AS x) DELETE FROM y";
+        for driver in [
+            DriverKind::Postgres,
+            DriverKind::Sqlite,
+            DriverKind::DuckDb,
+            DriverKind::Mssql,
+        ] {
+            assert!(
+                !is_read_only_sql_for(driver, sql),
+                "{driver:?} must not accept a data-modifying CTE in a read-only session"
+            );
+        }
+        // ドライバ非依存の呼び出し口 (保守的マスク = `\` はただの文字) でも拒否。
+        assert!(!is_read_only_sql(sql));
+        // MySQL は実サーバと同じく「閉じない文字列リテラル」と読むため、
+        // 書き込みキーワードは現れない (この文自体が MySQL では構文エラー)。
+        assert!(is_read_only_sql_for(DriverKind::Mysql, sql));
+    }
+
     #[test]
     fn ssl_mode_serializes_to_snake_case_wire_names() {
         // The wire names must match the frontend union and the values the

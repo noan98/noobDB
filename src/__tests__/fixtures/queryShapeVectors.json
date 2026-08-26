@@ -1,7 +1,6 @@
 {
   "description": "ストリーミング実行器の fetch 経路 (結果セットを返す) / execute 経路 (rows_affected のみ) の振り分けを決める is_query_shape の実装横断ゴールデンベクタ (#971)。is_read_only_sql (#444) と異なり is_query_shape は共有関数ではなく sqlite/mysql/postgres/duckdb/mssql の各 db/<driver>.rs にそれぞれ private (現在は pub(crate)) 関数として個別実装されている。5 実装が一致すべきケースをここに集約し、src-tauri/tests/query_shape_golden.rs が include_str! で読み込んで __test_api::is_query_shape(driver, sql) 経由で全ドライバへ通す。フロント側に対応する分類 (is_query_shape 相当) は存在しないため、Vitest 側の対テストは無い (バックエンドのみのゴールデン)。",
-  "driverNotes": "各ドライバが SELECT 系プレフィックスとして認識する先頭キーワードの集合: mysql = with/select/show/describe/desc<space>/explain (CALL は is_call_shape という別関数で実行時に判定するため is_query_shape の対象外)。postgres = with/select/show/explain/values/table<space>。sqlite = with/select/explain/values/pragma。duckdb = with/select/show/describe/desc/explain/pragma/summarize/values。mssql = with/select/values (EXEC/EXECUTE は CALL と同じ理由で対象外)。WITH 分岐の『主文がデータ変更か』の判定 (with_cte_is_mutation) だけは db::mysql に 1 つだけ実装されており、5 ドライバ全てがこの同一実装を共有する (ドライバごとに差はない)。",
-  "knownLimitation": "with_cte_is_mutation はキーワード列挙のみで方言非依存と説明されているが、文字列リテラル中のバックスラッシュだけは PostgreSQL/SQLite/DuckDB/MSSQL の標準解釈 (\\ はただの文字) ではなく MySQL 流のエスケープ解釈を無条件に使っている (is_read_only_sql が #852 で driver_backslash_escapes によりドライバ別に切り替えたのと非対称)。ケース 'with_cte_backslash_unterminated_string' はこれを実際に踏む具体例で、PostgreSQL 等の実際の文字列終端規則で読めば主文の DELETE が露出し false (execute 経路) になるべきところ、現在の共有実装は文字列が閉じないまま depth が戻らず true (fetch 経路) を返す。5 ドライバとも同じ共有関数を呼ぶため golden 上はクロスドライバの割れとしては現れない (全ドライバが一致して『恐らく誤った』true を返す) — 報告書ではこれを bug 候補として明記し、この Issue のスコープ (ゴールデン整備) では修正しない。",
+  "driverNotes": "各ドライバが SELECT 系プレフィックスとして認識する先頭キーワードの集合: mysql = with/select/show/describe/desc<space>/explain (CALL は is_call_shape という別関数で実行時に判定するため is_query_shape の対象外)。postgres = with/select/show/explain/values/table<space>。sqlite = with/select/explain/values/pragma。duckdb = with/select/show/describe/desc/explain/pragma/summarize/values。mssql = with/select/values (EXEC/EXECUTE は CALL と同じ理由で対象外)。WITH 分岐の『主文がデータ変更か』の判定 (with_cte_is_mutation) は db::mysql に 1 つだけ実装され 5 ドライバ全てが共有するが、#1051 以降は呼び出し側が自分の DriverKind を渡し、内部のコメント/リテラルマスクを db::mask_for_driver へ委譲するため『文字列リテラル中のバックスラッシュをエスケープとして読むか』だけはドライバごとに割れる (MySQL のみ true = エスケープ扱い)。キーワード列挙そのものは引き続き方言非依存。",
   "drivers": ["mysql", "postgres", "sqlite", "duckdb", "mssql"],
   "cases": [
     {
@@ -106,8 +105,13 @@
     },
     {
       "sql": "WITH t AS (SELECT '\\' AS x) DELETE FROM y",
-      "note": "#knownLimitation: with_cte_is_mutation は文字列リテラル中の \\ を方言に関わらず常に MySQL 流のエスケープとして読むため、この文字列は閉じずに CTE の閉じ括弧 ) も文字列内に取り込まれてしまい、主文の DELETE に到達しないまま false (非データ変更) 判定になる。PostgreSQL/SQLite/DuckDB/MSSQL の実際の文字列終端規則 (\\ はただの文字) で読めば文字列は 2 文字目の ' で閉じ、主文の DELETE が露出して true (mutation) になるはずで、現在の全ドライバ一致の true は 4/5 のドライバにとって恐らく誤り。5 ドライバとも同じ共有関数を呼ぶため cross-driver の割れとしては現れない — 現状の (共有) 実装挙動をそのまま期待値として固定しつつ、この Issue の報告でバグ候補として明記する",
-      "expected": { "mysql": true, "postgres": true, "sqlite": true, "duckdb": true, "mssql": true }
+      "note": "#1051: with_cte_is_mutation のリテラルマスクをドライバ別 (db::mask_for_driver) に切り替えた回帰ケース。MySQL は \\' をエスケープされた引用符として読むので文字列が閉じず、CTE の閉じ括弧 ) ごと文字列内に取り込まれて主文の DELETE に到達しない = 非データ変更 (fetch 経路 true)。PostgreSQL/SQLite/DuckDB/MSSQL は \\ をただの文字として扱うので文字列は 2 文字目の ' で閉じ、主文の DELETE が露出して mutation (execute 経路 false) になる。#852 が is_read_only_sql / has_stacked_statements / apply_auto_limit / classify_write_kind に対して行った修正の、is_query_shape への横展開",
+      "expected": { "mysql": true, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
+    },
+    {
+      "sql": "WITH t AS (SELECT 'a\\\\' AS x) DELETE FROM y",
+      "note": "#1051: 二重バックスラッシュ (MySQL では \\\\ がエスケープされた 1 個のバックスラッシュ) の場合は、MySQL でも文字列が 2 文字目の ' で正しく閉じるため全ドライバ一致で mutation (false)。上のケースが MySQL だけ true になるのが『マスク規則の差』であって『MySQL では常に検出できない』ではないことを固定する",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
     },
     {
       "sql": "WITH t AS (SELECT 'ok' AS x) DELETE FROM y",

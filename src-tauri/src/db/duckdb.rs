@@ -1073,6 +1073,9 @@ async fn run_blocking_join<T>(handle: tokio::task::JoinHandle<Result<T>>) -> Res
 /// query-shaped statements largely mirror PostgreSQL/SQLite: `SELECT`,
 /// non-mutating `WITH ... SELECT`, and the introspection pseudo-statements
 /// `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `PRAGMA` / `SUMMARIZE`.
+/// `WITH` は `db::mysql` 共有の `with_cte_is_mutation` へ委譲する。そのキーワード
+/// 列挙は方言非依存だが、コメント/リテラルのマスクだけはドライバ別なので自分の
+/// `DriverKind` を渡す (#1051 — DuckDB は `\` をただの文字として扱う)。
 /// `pub(crate)` (raised from private) so the cross-driver golden test
 /// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
 /// without changing its behaviour.
@@ -1080,7 +1083,7 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
     let cleaned = strip_sql_comments(sql);
     let trimmed = cleaned.trim_start().to_ascii_lowercase();
     if trimmed.starts_with("with") {
-        return !super::mysql::with_cte_is_mutation(sql);
+        return !super::mysql::with_cte_is_mutation(super::DriverKind::DuckDb, sql);
     }
     trimmed.starts_with("select")
         || trimmed.starts_with("show")
