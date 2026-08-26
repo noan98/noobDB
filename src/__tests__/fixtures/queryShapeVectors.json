@@ -1,6 +1,6 @@
 {
   "description": "ストリーミング実行器の fetch 経路 (結果セットを返す) / execute 経路 (rows_affected のみ) の振り分けを決める is_query_shape の実装横断ゴールデンベクタ (#971)。is_read_only_sql (#444) と異なり is_query_shape は共有関数ではなく sqlite/mysql/postgres/duckdb/mssql の各 db/<driver>.rs にそれぞれ private (現在は pub(crate)) 関数として個別実装されている。5 実装が一致すべきケースをここに集約し、src-tauri/tests/query_shape_golden.rs が include_str! で読み込んで __test_api::is_query_shape(driver, sql) 経由で全ドライバへ通す。フロント側に対応する分類 (is_query_shape 相当) は存在しないため、Vitest 側の対テストは無い (バックエンドのみのゴールデン)。",
-  "driverNotes": "各ドライバが SELECT 系プレフィックスとして認識する先頭キーワードの集合: mysql = with/select/show/describe/desc<space>/explain (CALL は is_call_shape という別関数で実行時に判定するため is_query_shape の対象外)。postgres = with/select/show/explain/values/table<space>。sqlite = with/select/explain/values/pragma。duckdb = with/select/show/describe/desc/explain/pragma/summarize/values。mssql = with/select/values (EXEC/EXECUTE は CALL と同じ理由で対象外)。WITH 分岐の『主文がデータ変更か』の判定 (with_cte_is_mutation) は db::mysql に 1 つだけ実装され 5 ドライバ全てが共有するが、#1051 以降は呼び出し側が自分の DriverKind を渡し、内部のコメント/リテラルマスクを db::mask_for_driver へ委譲するため『文字列リテラル中のバックスラッシュをエスケープとして読むか』だけはドライバごとに割れる (MySQL のみ true = エスケープ扱い)。キーワード列挙そのものは引き続き方言非依存。",
+  "driverNotes": "各ドライバが SELECT 系プレフィックスとして認識する先頭キーワードの集合: mysql = with/select/show/describe/desc<space>/explain (CALL は is_call_shape という別関数で実行時に判定するため is_query_shape の対象外)。postgres = with/select/show/explain/values/table<space>。sqlite = with/select/explain/values/pragma。duckdb = with/select/show/describe/desc/explain/pragma/summarize/values/from<space>/table<space> (from/table は #1054 で追加、word-boundary 一致)。mssql = with/select/values (EXEC/EXECUTE は CALL と同じ理由で対象外)。WITH 分岐の『主文がデータ変更か』の判定 (with_cte_is_mutation) は db::mysql に 1 つだけ実装され 5 ドライバ全てが共有するが、#1051 以降は呼び出し側が自分の DriverKind を渡し、内部のコメント/リテラルマスクを db::mask_for_driver へ委譲するため『文字列リテラル中のバックスラッシュをエスケープとして読むか』だけはドライバごとに割れる (MySQL のみ true = エスケープ扱い)。キーワード列挙そのものは引き続き方言非依存。",
   "drivers": ["mysql", "postgres", "sqlite", "duckdb", "mssql"],
   "cases": [
     {
@@ -180,8 +180,23 @@
     },
     {
       "sql": "TABLE users",
-      "note": "PostgreSQL 固有の TABLE 省略構文 (SELECT * FROM table の同義語)。他ドライバにこの構文は無い",
-      "expected": { "mysql": false, "postgres": true, "sqlite": false, "duckdb": false, "mssql": false }
+      "note": "PostgreSQL/DuckDB の TABLE 省略構文 (SELECT * FROM table の同義語)。#1054 以前は is_read_only_sql_masked の許可リスト (#1005) には DuckDB も含まれていたが is_query_shape がまだ 'table' 分岐を持たず、読み取り専用ガードは通っても結果行が execute 経路で失われていた。SQLite/MySQL/MSSQL にこの構文は無い",
+      "expected": { "mysql": false, "postgres": true, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "FROM tbl",
+      "note": "#1054: DuckDB の FROM-first 省略構文 (SELECT * FROM tbl の同義語)。is_read_only_sql_masked は #1005 で DuckDB 限定で許可済みだったが、is_query_shape がこの分岐を持たなかったため execute 経路に落ちて結果行が空になっていた。DuckDB 以外にこの構文は無い",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "FROM tbl SELECT x",
+      "note": "DuckDB の FROM-first 省略構文の SELECT 句付きバリエーション (先頭キーワードは依然として FROM)",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": true, "mssql": false }
+    },
+    {
+      "sql": "FROMAGE tbl",
+      "note": "#1054 の境界ケース: FROM と同じ4文字で始まる識別子主導の (非 SQL) 入力。word-boundary 判定により FROM-first 省略構文とは誤認されず、どのドライバも false",
+      "expected": { "mysql": false, "postgres": false, "sqlite": false, "duckdb": false, "mssql": false }
     },
     {
       "sql": "PRAGMA table_info(users)",

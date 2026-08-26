@@ -1076,6 +1076,19 @@ async fn run_blocking_join<T>(handle: tokio::task::JoinHandle<Result<T>>) -> Res
 /// `WITH` は `db::mysql` 共有の `with_cte_is_mutation` へ委譲する。そのキーワード
 /// 列挙は方言非依存だが、コメント/リテラルのマスクだけはドライバ別なので自分の
 /// `DriverKind` を渡す (#1051 — DuckDB は `\` をただの文字として扱う)。
+///
+/// `FROM tbl` / `FROM tbl SELECT ...` (DuckDB's `FROM`-first shorthand) and
+/// `TABLE tbl` (the PostgreSQL/DuckDB `SELECT * FROM tbl` shorthand) were
+/// already added to the read-only allow-list in
+/// [`super::is_read_only_sql_masked`] (#1005), but not here — so both passed
+/// the read-only guard and then fell through to the `execute` branch below,
+/// silently returning an empty result instead of the statement's rows
+/// (#1054). Unlike the plain-prefix checks above, both are matched with
+/// [`super::starts_with_word`] rather than `str::starts_with`: `from` in
+/// particular is a common enough leading substring (e.g. an identifier like
+/// `FROMAGE`) that a bare prefix check could misroute a non-`FROM` statement
+/// into the query path, so the match requires the keyword to end at a
+/// word boundary.
 /// `pub(crate)` (raised from private) so the cross-driver golden test
 /// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
 /// without changing its behaviour.
@@ -1093,6 +1106,8 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("pragma")
         || trimmed.starts_with("summarize")
         || trimmed.starts_with("values")
+        || super::starts_with_word(&trimmed, "from")
+        || super::starts_with_word(&trimmed, "table")
 }
 
 fn strip_sql_comments(sql: &str) -> String {
@@ -1637,6 +1652,23 @@ mod tests {
         assert!(is_query_shape("PRAGMA version"));
         assert!(is_query_shape("SUMMARIZE t"));
         assert!(is_query_shape("SHOW TABLES"));
+    }
+
+    #[test]
+    fn query_shape_recognises_from_and_table_shorthand() {
+        // #1054: `FROM`-first shorthand and `TABLE` are read-only per
+        // `is_read_only_sql_masked` (#1005) but must also route through the
+        // query path here, or the statement's rows are silently dropped.
+        assert!(is_query_shape("FROM tbl"));
+        assert!(is_query_shape("FROM tbl SELECT x"));
+        assert!(is_query_shape("TABLE tbl"));
+        // A plain `SELECT * FROM t` must still be recognised via the
+        // `SELECT` branch, not be mistaken for `FROM`-first shorthand.
+        assert!(is_query_shape("SELECT * FROM t"));
+        // `FROMAGE` merely starts with the same 4 letters as `FROM`; the
+        // word-boundary check in `starts_with_word` must not treat this
+        // identifier-led (non-SQL) input as `FROM`-first shorthand.
+        assert!(!is_query_shape("FROMAGE tbl"));
     }
 
     #[test]
