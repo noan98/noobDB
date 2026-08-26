@@ -278,6 +278,7 @@ import { semanticColorToken, semanticColorVar } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
+import { workspaceViewKey } from "./components/workspaceView";
 import {
   useSettings,
   getSettings,
@@ -7256,6 +7257,31 @@ export default function App() {
         }
       : null;
 
+  // メイン領域が「今どの全画面サーフェスを表示しているか」の判別子 (#1020)。
+  // 下の `<main>` 直下の三項チェーンと**同順・同条件**で判定する純関数
+  // (`components/workspaceView.ts`) に委譲し、これを `AnimatePresence
+  // mode="wait"` の key にすることでワークスペース切替 (例: グリッド ⇔
+  // プロセス監視、Server Info ⇔ Advisor) に控えめなクロスフェードを添える。
+  // 結果パネル側 (#788 の `contentMode`) と同じ発想・同じ尺
+  // (`variants.fade` + `transitions.enter`) で、モーション量はルートの
+  // `MotionConfig reducedMotion` が自動抑制する。
+  const workspaceView = workspaceViewKey({
+    showCompare,
+    showErd,
+    showProcesses,
+    showUsers,
+    showServerInfo,
+    showQueryInspector,
+    showAdvisor,
+    showSizes,
+    showCompareResults,
+    showForm,
+    showSnippetForm,
+    sessionId,
+    advisorDatabase: activeTab?.database ?? selectedProfile?.database,
+    sizesTarget,
+  });
+
   return (
     <Flex
       direction="column"
@@ -7722,6 +7748,35 @@ export default function App() {
             : undefined
         }
       >
+        {/* 全画面サーフェスの切替クロスフェード (#1020)。key は上で組み立てた
+            `workspaceView` で、結果パネル (#788) と同じ `variants.fade` +
+            `transitions.enter` を流用する (尺を二重定義しない)。
+            `initial={false}` で初回描画のフェードインは抑える (起動直後に
+            画面全体がふわっと出るのを避けるため)。reduced-motion は
+            ルートの `MotionConfig reducedMotion` が自動で静止化する。
+
+            **Suspense は AnimatePresence の外ではなく motion.div の内側**に
+            置く。外側に 1 つだけ置くと、遅延ロードされたビュー (lazy) が
+            サスペンドした瞬間に「退出中の旧ビューを含む部分木ごと」フォール
+            バックへ差し替わり、退出アニメーションが途中で消える。ビュー単位の
+            境界にしておけば、新ビューのロード待ちは新ビュー側のスピナーに
+            閉じ込められ、旧ビューの退出は最後まで再生される。 */}
+        <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={workspaceView}
+          initial={variants.fade.initial}
+          animate={variants.fade.animate}
+          exit={variants.fade.exit}
+          transition={transitions.enter}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
         <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
         {showCompare ? (
           <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
@@ -8015,6 +8070,8 @@ export default function App() {
           </>
         )}
         </Suspense>
+        </motion.div>
+        </AnimatePresence>
 
         {!statusDismissed && status.kind !== "idle" && (() => {
           const tone = statusTone(status);
