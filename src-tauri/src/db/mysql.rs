@@ -2306,11 +2306,7 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 
         match c {
             '(' => depth += 1,
-            ')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
+            ')' => depth = depth.saturating_sub(1),
             _ => {}
         }
     }
