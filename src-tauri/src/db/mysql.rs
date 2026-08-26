@@ -2116,7 +2116,7 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
     // miss the prefix match and get misrouted to the execute path.
     let trimmed = skip_leading_comments_and_ws(sql).to_ascii_lowercase();
     if trimmed.starts_with("with") {
-        return !with_cte_is_mutation(sql);
+        return !with_cte_is_mutation(super::DriverKind::Mysql, sql);
     }
     trimmed.starts_with("select")
         || trimmed.starts_with("show")
@@ -2236,72 +2236,57 @@ fn skip_leading_comments_and_ws(sql: &str) -> &str {
 /// statement's leading keyword is the first statement keyword we encounter at
 /// parenthesis depth 0 — any SELECT inside a CTE body sits at depth > 0 and is
 /// skipped. Comments and quoted text (`'...'`, `"..."`, `` `...` ``) are
-/// ignored so a keyword inside a literal or identifier isn't mistaken for the
-/// main statement. If no decisive keyword is found (e.g. `WITH ... TABLE t`),
-/// the statement is treated as query-shaped.
+/// blanked out before the scan (see below) so a keyword inside a literal or
+/// identifier isn't mistaken for the main statement. If no decisive keyword is
+/// found (e.g. `WITH ... TABLE t`), the statement is treated as query-shaped.
 ///
-/// この判定はキーワード列挙のみで方言非依存 (MySQL/PostgreSQL 双方の DML
-/// キーワードを含む) なので、`db/postgres.rs` / `db/sqlite.rs` の
-/// `is_query_shape` からも `super::mysql::with_cte_is_mutation` として共有
-/// する (`pub(crate)`)。
-pub(crate) fn with_cte_is_mutation(sql: &str) -> bool {
+/// キーワード列挙そのものは方言非依存 (MySQL/PostgreSQL 双方の DML キーワードを
+/// 含む) なので、`db/postgres.rs` / `db/sqlite.rs` / `db/duckdb.rs` /
+/// `db/mssql.rs` の `is_query_shape` からも `super::mysql::with_cte_is_mutation`
+/// として共有する (`pub(crate)`)。
+///
+/// **`driver` を受け取る理由 (#1051)**: コメント/リテラルの読み飛ばしだけは
+/// 方言依存で、`\` を文字列リテラルのエスケープ文字と見なすのは MySQL/MariaDB
+/// だけである。以前はこの関数が自前の走査で `\` を無条件にエスケープ扱いして
+/// いたため、`WITH t AS (SELECT '\' AS x) DELETE FROM y` を PostgreSQL /
+/// SQLite / DuckDB / MSSQL でも「文字列が閉じない」と誤読し、CTE の閉じ括弧ごと
+/// リテラルへ飲み込んで主文の `DELETE` に到達できず「データ変更ではない」= fetch
+/// 経路と判定していた (実サーバは 2 個目の `'` で文字列を閉じ、`DELETE` を実行
+/// する)。#852 が `is_read_only_sql_for` /
+/// `has_stacked_statements_for` / `apply_auto_limit_for` /
+/// `classify_write_kind_for` に対して行ったドライバ別マスクへの切り替えを、
+/// ここへ横展開したもの。マスク処理は再実装せず
+/// [`super::mask_for_driver`] へ委譲する。
+///
+/// ドライバを知らない呼び出し口が将来増えた場合は、#852 と同じ fail-closed
+/// 方針で [`super::mask_for_analysis_conservative`] (= `\` を通常文字として
+/// 読む、リテラルが早く閉じる側) を使ってここへ渡すこと。現在の呼び出し口は
+/// 5 ドライバの `is_query_shape` だけで、いずれも自分の `DriverKind` を持つ。
+///
+/// 共有マスクへ委譲したことによる副次的な挙動差 (いずれも fail-closed 方向、
+/// または実サーバの解釈に近づく方向):
+///
+/// * MySQL の `/*! … */` は**コメントではなく条件付き実行構文**なので、
+///   [`super::mask_for_driver`] は中身を空白化せずキーワード走査へ残す。
+///   実際に実行される `DELETE` などがここでも見えるようになる。
+/// * PostgreSQL / DuckDB のドル引用文字列 (`$$…$$` / `$tag$…$tag$`) の中身が
+///   リテラルとして正しく伏せられる (以前は素通しだった)。
+pub(crate) fn with_cte_is_mutation(driver: super::DriverKind, sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    main_statement_is_mutation(&super::mask_for_driver(driver, &orig))
+}
+
+/// [`with_cte_is_mutation`] の本体。すでにコメント/リテラルがマスク済み
+/// (= 空白へ置換済み、文字数と括弧は原文のまま) の文字列を走査し、括弧深さ 0 に
+/// 最初に現れる文キーワードで判定する。マスクが引用/コメントの状態管理を
+/// 済ませているため、ここは「深さの追跡」と「単語の切り出し」だけを行う。
+fn main_statement_is_mutation(masked: &[char]) -> bool {
     let mut depth: i32 = 0;
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_backtick = false;
     let mut word = String::new();
 
-    let mut chars = sql.chars().peekable();
-    loop {
-        let next = chars.next();
-        if in_single {
-            match next {
-                Some('\\') => {
-                    chars.next();
-                }
-                Some('\'') => {
-                    if chars.peek() == Some(&'\'') {
-                        chars.next();
-                    } else {
-                        in_single = false;
-                    }
-                }
-                Some(_) => {}
-                None => break,
-            }
-            continue;
-        }
-        if in_double {
-            match next {
-                Some('\\') => {
-                    chars.next();
-                }
-                Some('"') => {
-                    if chars.peek() == Some(&'"') {
-                        chars.next();
-                    } else {
-                        in_double = false;
-                    }
-                }
-                Some(_) => {}
-                None => break,
-            }
-            continue;
-        }
-        if in_backtick {
-            match next {
-                Some('`') => in_backtick = false,
-                Some(_) => {}
-                None => break,
-            }
-            continue;
-        }
-
-        let is_word_char = matches!(next, Some(c) if c.is_alphanumeric() || c == '_' || c == '$');
-        if is_word_char {
-            // is_word_char が真のときは matches! マクロにより next が Some であることが保証されている。
-            #[allow(clippy::unwrap_used)]
-            word.push(next.unwrap());
+    for &c in masked {
+        if c.is_alphanumeric() || c == '_' || c == '$' {
+            word.push(c);
             continue;
         }
 
@@ -2319,48 +2304,15 @@ pub(crate) fn with_cte_is_mutation(sql: &str) -> bool {
             word.clear();
         }
 
-        match next {
-            Some('\'') => in_single = true,
-            Some('"') => in_double = true,
-            Some('`') => in_backtick = true,
-            // Comments are handled inline (rather than pre-stripping) so the
-            // quote state above protects comment markers that appear inside
-            // string/identifier literals, e.g. `SELECT '-- keep'`.
-            Some('-') if chars.peek() == Some(&'-') => {
-                chars.next();
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
-                }
-            }
-            Some('#') => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
-                }
-            }
-            Some('/') if chars.peek() == Some(&'*') => {
-                chars.next();
-                let mut prev = '\0';
-                for c in chars.by_ref() {
-                    if prev == '*' && c == '/' {
-                        break;
-                    }
-                    prev = c;
-                }
-            }
-            Some('(') => depth += 1,
-            Some(')') => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
-            Some(_) => {}
-            None => break,
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
         }
     }
+    // 末尾に区切り文字なしで終わった単語は、元の実装と同じく判定に使わない
+    // (`WITH … DELETE` のような文末が裸のキーワードで終わる形は SQL として
+    // 成立しないため、挙動を変えずに据え置く)。
     false
 }
 
@@ -2516,6 +2468,86 @@ mod tests {
         // skipped so the DELETE is still detected.
         assert!(!is_query_shape(
             "WITH c AS (SELECT 1) -- pick\n DELETE FROM t WHERE id = 1"
+        ));
+    }
+
+    /// #1051 の回帰テスト: `with_cte_is_mutation` の文字列リテラル解釈が接続先の
+    /// 方言に追従すること。`\` をエスケープ文字と見なすのは MySQL/MariaDB だけで、
+    /// 他方言では 2 個目の `'` で文字列が閉じて主文の `DELETE` が露出する。
+    /// 以前は全ドライバで MySQL 流に読んでいたため、PostgreSQL 等でも「文字列が
+    /// 閉じない」と誤読して CTE の閉じ括弧ごと飲み込み、データ変更を fetch 経路
+    /// (空の 0 件グリッド) へ流していた。
+    #[test]
+    fn with_cte_backslash_literal_follows_driver_escaping() {
+        use crate::db::DriverKind;
+
+        let sql = r"WITH t AS (SELECT '\' AS x) DELETE FROM y";
+        // MySQL: `\'` はエスケープされた引用符なので文字列が閉じず、主文の
+        // DELETE へ到達しない (= 非データ変更)。実サーバの解釈と一致する。
+        assert!(!with_cte_is_mutation(DriverKind::Mysql, sql));
+        // それ以外の 4 方言では `\` はただの文字。文字列は閉じ、DELETE が露出する。
+        for driver in [
+            DriverKind::Postgres,
+            DriverKind::Sqlite,
+            DriverKind::DuckDb,
+            DriverKind::Mssql,
+        ] {
+            assert!(
+                with_cte_is_mutation(driver, sql),
+                "{driver:?} must see the DELETE that follows the closed literal"
+            );
+        }
+        // MySQL 経路の `is_query_shape` 側から見た表現 (fetch 経路のまま)。
+        assert!(is_query_shape(sql));
+    }
+
+    /// 上のケースと対になる確認: `\\` (エスケープされたバックスラッシュ 1 個) なら
+    /// MySQL でも文字列は 2 個目の `'` で閉じるので、全方言でデータ変更と判定する。
+    /// 「MySQL では常に検出できない」のではなく「マスク規則が違うだけ」であることを
+    /// 固定する。
+    #[test]
+    fn with_cte_escaped_backslash_closes_literal_on_every_driver() {
+        use crate::db::DriverKind;
+
+        let sql = r"WITH t AS (SELECT 'a\\' AS x) DELETE FROM y";
+        for driver in [
+            DriverKind::Mysql,
+            DriverKind::Postgres,
+            DriverKind::Sqlite,
+            DriverKind::DuckDb,
+            DriverKind::Mssql,
+        ] {
+            assert!(
+                with_cte_is_mutation(driver, sql),
+                "{driver:?} must treat the escaped backslash as closing the literal"
+            );
+        }
+    }
+
+    /// 共有マスク (`db::mask_for_driver`) への委譲で変わった/変わらない挙動
+    /// (#1051)。
+    #[test]
+    fn with_cte_shares_the_analysis_mask_semantics() {
+        use crate::db::DriverKind;
+
+        // MySQL の `/*! … */` はコメントではなく条件付き実行構文なので、共有
+        // マスクは中身をキーワード走査へ残す → 実際に実行される DELETE を
+        // 見逃さない (以前は普通のブロックコメントとして読み飛ばしていた。
+        // fail-closed 方向の変化)。
+        assert!(with_cte_is_mutation(
+            DriverKind::Mysql,
+            "WITH c AS (SELECT 1) /*!50000 DELETE */ FROM t"
+        ));
+        // 通常のブロックコメント / 行コメントは従来どおり読み飛ばし、その先の
+        // 主文キーワードに到達する。
+        assert!(with_cte_is_mutation(
+            DriverKind::Postgres,
+            "WITH c AS (SELECT 1) /* pick */ -- go\n DELETE FROM t"
+        ));
+        // 文字列リテラルの中のキーワードは従来どおり無視。
+        assert!(!with_cte_is_mutation(
+            DriverKind::Postgres,
+            "WITH c AS (SELECT 'delete me' AS note) SELECT * FROM c"
         ));
     }
 

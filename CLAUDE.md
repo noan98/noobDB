@@ -1101,12 +1101,23 @@ BLOB だけはフロントが `Value::Bytes` を `Value::String` と区別でき
 固有分岐、データ変更 CTE の判定、コメント/文字列リテラル前置) を共有ベクタ
 `src/__tests__/fixtures/queryShapeVectors.json` に集約し、`tests/query_shape_golden.rs`
 が `include_str!` で読み込んで `__test_api::is_query_shape(driver, sql)` 経由で全ドライバへ
-通します。`WITH` 分岐の「主文がデータ変更か」の判定 (`with_cte_is_mutation`) だけは
-`db::mysql` に 1 つだけ実装され全ドライバがそのまま共有するため、この部分は原理的に
-ドライバ間で割れません (ただし文字列リテラル中のバックスラッシュを方言に関わらず常に
-MySQL 流のエスケープとして読む既知の限界があり、フィクスチャの `knownLimitation` /
-該当ケースの note に明記しています — #852 のような driver-aware なマスクへの切り替えは
-本 Issue のスコープ外。#1051 で追跡)。フロント側に `is_query_shape` 相当の分類ロジックは存在しない
+通します。`WITH` 分岐の「主文がデータ変更か」の判定 (`with_cte_is_mutation`) は
+`db::mysql` に 1 つだけ実装され全ドライバが共有するため、**キーワード列挙の部分は**
+原理的にドライバ間で割れません。**ただしコメント/リテラルのマスクだけはドライバ別
+です (#1051)** — 呼び出し側の `is_query_shape` が自分の `DriverKind` を渡し、
+`with_cte_is_mutation` は自前の走査をやめて `db::mask_for_driver` へ委譲します。
+以前は方言に関わらず常に MySQL 流のバックスラッシュ解釈を使っていたため、
+`WITH t AS (SELECT '\' AS x) DELETE FROM y` を PostgreSQL/SQLite/DuckDB/MSSQL でも
+「文字列が閉じない」と誤読し、CTE の閉じ括弧ごとリテラルへ飲み込んで主文の `DELETE`
+に到達せず、**データ変更を fetch 経路 (空の 0 件グリッド・`rows_affected` 消失) へ
+流していました** — #852 が `is_read_only_sql_for` などに対して行った修正の横展開です。
+なお**この不整合で読み取り専用ガードがフェイルオープンしたことはありません**:
+`is_read_only_sql_for` は独立した安全網で、#852 で既にドライバ別マスクへ切り替え済み
+であり、かつデータ変更 CTE を「主文の位置」ではなく「本文に書き込みキーワードが露出
+しているか」で弾くためです (回帰テスト:
+`db/mod.rs::read_only_guard_rejects_backslash_cte_on_standard_dialects`)。共有ベクタ
+側もこのバックスラッシュケースをドライバ次元が実際に割れるケースとして固定しています。
+フロント側に `is_query_shape` 相当の分類ロジックは存在しない
 (バックエンドの実行経路振り分け専用) ため、対になる Vitest テストはありません。
 
 **コメント/リテラルのマスキングそのものも同じ方式で固定します (#988)。**

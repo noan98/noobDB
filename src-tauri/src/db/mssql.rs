@@ -1448,9 +1448,10 @@ async fn fetch_rows(conn: &mut PooledConn, sql: Option<&str>) -> Result<Vec<TdsR
 /// / `EXECUTE` (stored procedures, which may or may not return rows) are
 /// deliberately **not** treated as query-shaped here — same simplification
 /// PostgreSQL's `is_query_shape` makes for `CALL` — so they go through the
-/// `execute()` (rows-affected) path. `WITH` reuses the driver-agnostic
-/// mutating-CTE detector from `db::mysql` (T-SQL CTE syntax is the same ANSI
-/// shape).
+/// `execute()` (rows-affected) path. `WITH` reuses the mutating-CTE detector
+/// from `db::mysql` (T-SQL CTE syntax is the same ANSI shape); そのキーワード
+/// 列挙は方言非依存だが、コメント/リテラルのマスクだけはドライバ別なので自分の
+/// `DriverKind` を渡す (#1051 — T-SQL は `\` をただの文字として扱う)。
 /// `pub(crate)` (raised from private) so the cross-driver golden test
 /// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
 /// without changing its behaviour.
@@ -1461,7 +1462,7 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
     let cleaned = super::strip_sql_comments(sql, super::SqlFlavor::Postgres);
     let trimmed = cleaned.trim_start().to_ascii_lowercase();
     if trimmed.starts_with("with") {
-        return !super::mysql::with_cte_is_mutation(sql);
+        return !super::mysql::with_cte_is_mutation(super::DriverKind::Mssql, sql);
     }
     trimmed.starts_with("select") || trimmed.starts_with("values")
 }
