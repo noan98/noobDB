@@ -41,11 +41,16 @@ describe("SshHostKeyMismatch メッセージ ゴールデン (フロント parse
     expect(cases.length).toBeGreaterThanOrEqual(5);
   });
 
-  it("IPv6 ホスト (`:` を含む) など endpoint 抽出が失敗する既知の境界ケースを含む", () => {
-    // parseHostKeyFingerprints の endpoint 正規表現 ([^\s:]+) はホストに ':' を
-    // 許さない。この境界が退行して「実は動くようになった/別の壊れ方をした」ことに
-    // 気付けるよう、少なくとも 1 件は host/port 抽出が失敗するケースを維持する。
-    expect(cases.some((c) => c.parsedHost === null)).toBe(true);
+  it("IPv6 ホスト (`:` を含む) のケースを含み、host/port が正しく抽出できる (#1053)", () => {
+    // #1053 以前は endpoint 抽出用正規表現 ([^\s:]+) がホストに ':' を許さず、
+    // IPv6 ホストで host/port が undefined になっていた。非貪欲マッチへの変更で
+    // 解消したことをここで固定する — 退行時にすぐ気付けるよう、少なくとも 1 件は
+    // ':' を含む host で host/port 抽出に成功するケースを維持する。
+    const ipv6Cases = cases.filter((c) => c.host.includes(":"));
+    expect(ipv6Cases.length).toBeGreaterThan(0);
+    for (const c of ipv6Cases) {
+      expect(c.parsedHost).not.toBeNull();
+    }
   });
 
   for (const c of cases) {
