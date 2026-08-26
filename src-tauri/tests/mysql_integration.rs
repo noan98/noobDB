@@ -440,6 +440,43 @@ async fn with_cte_dml_reports_rows_affected() {
     conn.close().await;
 }
 
+/// A bare `VALUES ROW(...), ROW(...)` statement (MySQL 8.0.19+) must take the
+/// result-set path, not the execute path, or its rows are silently dropped
+/// and only `rows_affected` (0) is reported (#1052).
+#[tokio::test]
+async fn bare_values_statement_returns_result_rows() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let result = conn
+        .execute("VALUES ROW(1, 'a'), ROW(2, 'b')", Some(&db))
+        .await
+        .expect("bare values statement");
+    assert_eq!(
+        result.rows.len(),
+        2,
+        "bare VALUES must surface its rows, not just rows_affected"
+    );
+    assert_eq!(
+        result.rows_affected, 0,
+        "a query must not report rows_affected"
+    );
+    assert!(
+        !result.columns.is_empty(),
+        "bare VALUES must report a column shape for the grid header"
+    );
+
+    conn.close().await;
+}
+
 /// `CALL proc()` must take the result-set path so a stored procedure that
 /// returns a result set surfaces its rows in the grid instead of only
 /// reporting `rows_affected`.

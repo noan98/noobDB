@@ -2123,6 +2123,12 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("describe")
         || trimmed.starts_with("desc ")
         || trimmed.starts_with("explain")
+        // MySQL 8.0.19+ supports a bare `VALUES ROW(...), ROW(...)` statement
+        // that returns a result set (#1052). Other drivers already treat a
+        // leading VALUES as query-shaped (see postgres.rs/sqlite.rs/duckdb.rs/
+        // mssql.rs); MySQL lacked the branch, so the statement was routed to
+        // the execute path and its rows were silently dropped.
+        || trimmed.starts_with("values")
 }
 
 /// True when `sql`'s first keyword is `CALL` (a stored-procedure invocation),
@@ -2406,6 +2412,19 @@ mod tests {
         assert!(!is_query_shape("INSERT INTO t VALUES (1)"));
         assert!(!is_query_shape("UPDATE t SET x = 1"));
         assert!(!is_query_shape("DELETE FROM t WHERE id = 1"));
+    }
+
+    #[test]
+    fn query_shape_recognises_bare_values_statement() {
+        // MySQL 8.0.19+ supports a bare `VALUES ROW(...), ROW(...)` statement
+        // that returns a result set (#1052). It must be routed to the fetch
+        // path like the other drivers (postgres/sqlite/duckdb/mssql).
+        assert!(is_query_shape("VALUES ROW(1)"));
+        assert!(is_query_shape("VALUES ROW(1, 'a'), ROW(2, 'b')"));
+        assert!(is_query_shape("  values row(1)"));
+        // `INSERT INTO t VALUES (1)` must NOT be misdetected as a leading
+        // VALUES statement — only the statement's own first keyword counts.
+        assert!(!is_query_shape("INSERT INTO t VALUES (1)"));
     }
 
     #[test]
