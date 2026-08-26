@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
 import { api, type DriverKind, type TableColumnInfo } from "../api/tauri";
 import {
@@ -11,6 +12,7 @@ import {
   type NewColumn,
   type UnsupportedChange,
 } from "./alterTable";
+import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 import { Icon } from "./Icon";
@@ -168,15 +170,44 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
         {t("alterTableTitle", { table })}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
-        {loading && <chakra.span fontSize="sm" color="app.textMuted">{t("alterTableLoading")}</chakra.span>}
-        {loadError && (
-          <chakra.span fontSize="sm" color="app.dangerFg">
-            {t("alterTableLoadError", { error: loadError })}
-          </chakra.span>
-        )}
-
-        {!loading && !loadError && (
-          <>
+        {/* 列一覧の読み込み (loading → ready/error) はテーブルを開くたび 1 回
+            だけ起きる遷移で、以後は状態が戻らない。読み込み中のプレースホルダに
+            フォーカス可能な要素は無いため、切替時にフォーカスを失う心配は
+            ない (#1025)。 */}
+        <AnimatePresence mode="wait" initial={false}>
+          {loading && (
+            <motion.div
+              key="alter-table-loading"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <chakra.span fontSize="sm" color="app.textMuted">{t("alterTableLoading")}</chakra.span>
+            </motion.div>
+          )}
+          {!loading && loadError && (
+            <motion.div
+              key="alter-table-error"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <chakra.span fontSize="sm" color="app.dangerFg">
+                {t("alterTableLoadError", { error: loadError })}
+              </chakra.span>
+            </motion.div>
+          )}
+          {!loading && !loadError && (
+            <motion.div
+              key="alter-table-ready"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+              style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
+            >
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <chakra.span fontSize="xs" fontWeight="600" color="app.textMuted">
                 {t("alterTableExistingSection")}
@@ -396,8 +427,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             {readOnly && (
               <chakra.span fontSize="xs" color="app.dangerFg">{t("alterTableReadOnly")}</chakra.span>
             )}
-          </>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </ModalBody>
       <ModalFooter>
         <Button type="button" variant="secondary" onClick={onClose}>
