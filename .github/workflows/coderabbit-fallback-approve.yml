@@ -10,9 +10,19 @@ name: coderabbit-fallback-approve
 #   1. PR が OPEN かつドラフトでない
 #   2. CodeRabbit のコミットステータス (status または check-run) が SUCCESS
 #   3. 未解決のレビュースレッドが 0 件
-#   4. CodeRabbit の最新レビュー state が APPROVED ではない
-#   5. 同じ head SHA に対して本ワークフローが既に @coderabbitai approve を
+#   4. CodeRabbit がこの PR でレビューを 1 件以上提出している (#1055)
+#   5. CodeRabbit の最新レビュー state が APPROVED ではない
+#   6. 同じ head SHA に対して本ワークフローが既に @coderabbitai approve を
 #      投稿済みでないこと (重複と無限ループの抑止)
+#
+# 条件 4 の背景 (#1055): 条件 2 と 3 は「CodeRabbit が一度もレビューしていない PR」
+# でも自動的に満たされてしまう。star 数が閾値未満の OSS リポジトリでは CodeRabbit の
+# コミットステータスが "Review skipped: manual review required for this OSS
+# repository" で success になり、レビュースレッドも 1 件も作られないためである。
+# 本ワークフローが想定しているのは「CodeRabbit が指摘を出し、全スレッドを解決した
+# のに自発的に Approved を出さない」ケースであって、「そもそもレビューしていない」
+# ケースではない。レビュー提出が 0 件の PR は承認せず、警告だけ残して抜ける。
+# 自動レビューの起動そのものは `coderabbit-request-review.yml` が担う。
 #
 # 設計方針:
 #   - PR のコードはチェックアウトしない (`gh` CLI / GitHub API のみで完結) ため、
@@ -192,12 +202,43 @@ jobs:
           fi
           echo "未解決スレッド: 0 件"
 
+          # 4b. CodeRabbit がこの PR で実際にレビューを提出しているかを確認する (#1055)。
+          #     条件 2 (ステータス SUCCESS) と条件 3 (未解決スレッド 0 件) は、
+          #     **CodeRabbit が一度もレビューしていない PR でも自動的に満たされる**
+          #     (star 数が閾値未満の OSS リポジトリでは status が
+          #      "Review skipped: manual review required" で success になり、
+          #      スレッドは 1 件も作られないので 0 件)。この状態で承認を投稿すると、
+          #     レビューを受けていない PR に承認が付き、レビューゲートが素通りする。
+          #     本ワークフローが本来想定しているのは「CodeRabbit が指摘を出し、
+          #     全スレッドを解決したのに自発的に Approved を出さない」ケースなので、
+          #     レビュー提出が 1 件も無い PR はここで抜ける。
+          #     (head SHA 一致までは要求しない。指摘を受けて修正を push した直後は
+          #      最新 head へのレビューがまだ無いのが正常で、本来の用途を壊すため。
+          #      head へのレビュー提出待ちは automerge.yml の Step 5b が担う。)
+          cr_reviews_json="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
+            --jq '[.[] | select(.user.login == "coderabbitai[bot]")]' \
+            | jq -s 'add // []')"
+          cr_review_count="$(echo "$cr_reviews_json" | jq -r 'length')"
+          if [ "${cr_review_count:-0}" -eq 0 ]; then
+            echo "::warning title=CodeRabbit のレビューが 1 件もありません::PR #$PR には CodeRabbit のレビュー提出が無いため、@coderabbitai approve は投稿しません (レビュー未実施の PR を承認しないため)。"
+            {
+              echo "### :warning: CodeRabbit のレビューが 1 件もありません"
+              echo ""
+              echo "- 対象 PR: #$PR (head \`$headSha\`)"
+              echo "- レビュー提出が無い PR に \`@coderabbitai approve\` は投稿しません (#1055)。"
+              echo "- 自動レビューが省略されている場合は \`coderabbit-request-review.yml\` が"
+              echo "  \`@coderabbitai review\` を投稿してレビューを起動します。"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "CodeRabbit のレビュー提出: ${cr_review_count} 件"
+
           # 5. CodeRabbit の最新レビュー state が APPROVED でないことを確認する。
           #    既に承認済みなら投稿は不要 (このワークフローが投稿した結果として
           #    CodeRabbit が承認した直後など、再評価で抜けるための条件)。
-          cr_review_state="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
-            --jq '[.[] | select(.user.login == "coderabbitai[bot]")]
-                  | sort_by(.submitted_at) | reverse | .[0].state // empty')"
+          cr_review_state="$(echo "$cr_reviews_json" \
+            | jq -r 'sort_by(.submitted_at) | reverse | .[0].state // empty')"
           if [ "$cr_review_state" = "APPROVED" ]; then
             echo "CodeRabbit は既に APPROVED です。投稿不要。"
             exit 0

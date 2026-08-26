@@ -1,0 +1,136 @@
+name: coderabbit-request-review
+
+# CodeRabbit がこのリポジトリで「自動レビューを行わない」と宣言したとき、
+# `@coderabbitai review` を自動投稿してレビューを明示的に起動する (#1055)。
+#
+# 背景:
+#   CodeRabbit は star 数が閾値 (10) 未満の OSS リポジトリに対して自動レビューを
+#   行わず、PR ごとに次のサマリコメントだけを残す。
+#
+#     > This repository does not receive automatic reviews because it has fewer
+#     > than 10 stars.
+#     > ... To trigger a single review, invoke the `@coderabbitai review` command.
+#
+#   コミットステータスも `state: success` /
+#   `description: Review skipped: manual review required for this OSS repository`
+#   となるため、`automerge.yml` と `coderabbit-fallback-approve.yml` の双方が
+#   「通過してよい」と判定し、**レビューが 1 度も行われないまま自動承認 →
+#   自動マージまで通る**。しかもその事実がパイプライン上のどこにも異常として
+#   現れない (#1055)。
+#
+#   レートリミットによる一過性の skip と違い、star 数に基づく skip は恒久的で
+#   待っても解消しない。CodeRabbit 自身が案内している正規の回避手段が
+#   `@coderabbitai review` の明示投稿なので、本ワークフローでそれを自動化する。
+#
+# 動作:
+#   CodeRabbit が投稿/編集するサマリコメントに埋め込まれた機械可読マーカー
+#   `<!-- ...: skip review by coderabbit.ai -->` を検出したら、その PR の
+#   現在の head SHA に対して `@coderabbitai review` を 1 回だけ投稿する。
+#
+# 設計方針:
+#   - PR のコードはチェックアウトしない (`gh` CLI / GitHub API のみで完結) ため、
+#     フォークからの PR でも安全に走らせられる。
+#   - 投稿本文へ head SHA 入りの識別タグを埋め、同じ head に対する重複投稿と
+#     無限ループを抑止する (`coderabbit-fallback-approve.yml` と同じ方式)。
+#     push で head が進めば新しい SHA として再度 1 回だけ起動する。
+#   - トリガは `issue_comment` のみ。CodeRabbit のサマリコメントが投稿された
+#     後でなければ skip 宣言を判定できず、また `@coderabbitai review` を
+#     受け付ける状態かも分からないため、コメントの到着を起点にするのが確実。
+#   - skip を宣言していない (= 通常どおり自動レビューされる) PR では何もしない。
+#     CodeRabbit の設定変更や star 数の増加で自動レビューが復活したら、本
+#     ワークフローは自然に無効化される。
+
+on:
+  issue_comment:
+    types: [created, edited]
+
+# 同一 PR に対する重複投稿を直列化する (途中 run はキャンセルしない)。
+concurrency:
+  group: coderabbit-request-review-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+# `@coderabbitai review` は PR への issue コメントとして投稿するため
+# pull-requests / issues の write が必要。コードは読まない。
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  request-review:
+    name: post @coderabbitai review when auto review is skipped
+    runs-on: ubuntu-latest
+    # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ (正常時は影響なし)。
+    timeout-minutes: 10
+    # PR への coderabbitai[bot] のコメントだけを対象にする。ジョブレベル if: での
+    # skip はランナー割り当て前に行われるため課金・待ち時間ゼロ。
+    if: >-
+      github.event.issue.pull_request != null &&
+      github.event.comment.user.login == 'coderabbitai[bot]'
+    steps:
+      - name: Request a review when CodeRabbit skipped it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+
+          # 1. このコメントが「レビューを省略した」宣言かを判定する。
+          #    判定は表示文言ではなく機械可読マーカーで行う (文言は変わりうる)。
+          #    進行中マーカー ("review in progress") とは別物なので混同しない。
+          if ! printf '%s' "$COMMENT_BODY" | grep -qi "skip review by coderabbit"; then
+            echo "レビュー省略の宣言ではありません。スキップ。"
+            exit 0
+          fi
+          echo "CodeRabbit がレビューを省略しています。明示起動を検討します。"
+
+          # 2. PR が承認可能な状態か確認する。
+          meta="$(gh pr view "$PR" --json state,isDraft,headRefOid)"
+          state="$(echo "$meta" | jq -r '.state')"
+          isDraft="$(echo "$meta" | jq -r '.isDraft')"
+          headSha="$(echo "$meta" | jq -r '.headRefOid')"
+
+          if [ "$state" != "OPEN" ];  then echo "PR が OPEN ではありません ($state)。スキップ。"; exit 0; fi
+          if [ "$isDraft" = "true" ]; then echo "ドラフト PR です。スキップ。"; exit 0; fi
+          echo "対象 PR: #$PR / head SHA: $headSha"
+
+          # 3. 現在の head に対して CodeRabbit が既にレビューを提出済みなら不要。
+          #    (明示起動が効いた後に来るサマリ編集イベント等で二重に投げない)
+          cr_reviews_for_head="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
+            --jq '.[] | select(.user.login == "coderabbitai[bot]") | .commit_id' \
+            | grep -Fxc "$headSha" || true)"
+          if [ "${cr_reviews_for_head:-0}" -gt 0 ]; then
+            echo "head $headSha に対する CodeRabbit のレビューは提出済み。スキップ。"
+            exit 0
+          fi
+
+          # 4. 同じ head SHA に対して既に明示起動を投稿していないか確認する。
+          #    注意: `gh api` の `--jq` は値を 1 つしか取らない (`--arg` も無い) ため、
+          #    本文だけを取り出して突き合わせは grep -F で行う
+          #    (`coderabbit-fallback-approve.yml` と同じ制約・同じ回避)。
+          marker="<!-- coderabbit-request-review: ${headSha} -->"
+          existing="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | .body' \
+            | grep -Fc -- "$marker" || true)"
+          if [ "${existing:-0}" -gt 0 ]; then
+            echo "head SHA $headSha に対する @coderabbitai review 投稿は既存。スキップ。"
+            exit 0
+          fi
+
+          # 5. レビューを明示的に起動する。本文末尾に識別タグを埋めて、
+          #    次回起動時の重複検出と automerge.yml 側の待機判定に使う。
+          body="$(printf '%s\n\n%s\n' \
+            '@coderabbitai review' \
+            "$marker")"
+          gh pr comment "$PR" --body "$body"
+          echo "@coderabbitai review を PR #$PR (head=$headSha) に投稿しました。"
+
+          {
+            echo "### CodeRabbit レビューの明示起動"
+            echo ""
+            echo "このリポジトリは CodeRabbit の自動レビュー対象外 (star 数が閾値未満) のため、"
+            echo "PR #$PR (head \`$headSha\`) に \`@coderabbitai review\` を投稿してレビューを起動しました。"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
