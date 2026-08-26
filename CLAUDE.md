@@ -411,6 +411,55 @@ PR の自動生成と脆弱性の可視化を次のように役割分担して�
   スケジュールにしているのは、依存を変更しない PR でも毎回外部の npm advisory DB
   に問い合わせるコストを避けるためです。
 
+### CodeRabbit レビューゲート (#1055)
+
+PR のレビュー層は CodeRabbit が担い、`.github/workflows/` の 3 ワークフローが
+連携します。**CodeRabbit はこのリポジトリでは自動レビューを行いません** — star 数が
+閾値 (10) 未満の OSS リポジトリは対象外という CodeRabbit 側の仕様で、PR には毎回
+「This repository does not receive automatic reviews because it has fewer than 10
+stars」というサマリコメントが付き、コミットステータスも
+`Review skipped: manual review required for this OSS repository` で **success** に
+なります。
+
+この「恒久 skip」は、レートリミットによる一過性の skip と**まったく別物**です。
+以前はどちらも `skip review by coderabbit.ai` という同じマーカーで表現されるため
+`automerge.yml` が一括りに「待っても進まないので通す」と判定しており、結果として
+**レビューが 1 度も行われないまま自動承認 → 自動マージまで通り、しかもその事実が
+パイプライン上のどこにも異常として現れませんでした** (#1055。#1042〜#1050 が
+この状態でマージされています)。現在は次の 3 段構えで解消しています。
+
+- **`coderabbit-request-review.yml` (新設) — レビューの明示起動**。coderabbitai[bot]
+  のサマリコメントに `skip review by coderabbit.ai` マーカーを検出したら、その PR の
+  現在の head SHA に対して `@coderabbitai review` を **1 回だけ**投稿します
+  (CodeRabbit 自身が案内している正規の回避手段)。重複と無限ループの抑止は
+  `coderabbit-fallback-approve.yml` と同じく、投稿本文へ head SHA 入りの識別タグ
+  `<!-- coderabbit-request-review: <sha> -->` を埋める方式です。push で head が
+  進めば新しい SHA として再度 1 回だけ起動します。CodeRabbit の設定変更や star 数の
+  増加で自動レビューが復活したら、skip マーカーが出なくなるので自然に無効化されます。
+- **`automerge.yml` の Step 5a — 待機と可視化**。skip 宣言を検出したら、まず現在の
+  head に対する CodeRabbit のレビュー提出を確認し、あれば skip フラグを下ろして
+  通常経路 (Step 5b/6) へ委ねます。無ければ明示起動の識別タグ付きコメントの作成時刻を
+  読み、**猶予時間 `CR_REVIEW_GRACE_SECONDS` (1200 秒 = 20 分) 以内なら待ちます**。
+  猶予を過ぎた場合、またはそもそも明示起動が記録されていない場合は、**マージは
+  継続しますが** `::warning::` アノテーションと Job Summary に「レビューゲートが
+  素通りしています」を出力します (黙って通さない)。マージを止めない理由は、
+  レビュー起動が何らかの理由で失敗し続けると自動マージが恒久停止するためで、
+  バンドルサイズ (#443) ・カバレッジ (#482) と同じ「まず可視化」の漸進方針です。
+- **`coderabbit-fallback-approve.yml` の条件 4 — レビュー未実施 PR を承認しない**。
+  投稿条件だった「CodeRabbit のステータスが SUCCESS」「未解決スレッドが 0 件」は、
+  **レビューが 1 度も行われていない PR でも自動的に満たされます** (上記のとおり
+  status は success、スレッドは 1 件も作られないので 0 件)。本ワークフローが本来
+  想定しているのは「CodeRabbit が指摘を出し、全スレッドを解決したのに自発的に
+  Approved を出さない」ケースなので、**CodeRabbit のレビュー提出が 1 件も無い PR
+  では承認を投稿せず、警告だけ残して抜けます**。head SHA との一致までは要求しません
+  — 指摘を受けて修正を push した直後は最新 head へのレビューがまだ無いのが正常で、
+  本来の用途を壊すためです (head へのレビュー提出待ちは `automerge.yml` の Step 5b が
+  担います)。
+
+**`skip review` マーカーの扱いを変更するときは 3 ファイルを揃えて見直してください。**
+`automerge.yml` のコメントが述べる前提と実際の挙動が食い違うと、#1055 と同じ
+「気付けない」状態に戻ります。
+
 ### ビルド高速化
 
 ローカルと CI の Rust ビルドを速くするための設定をいくつか入れています。
