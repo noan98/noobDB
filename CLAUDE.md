@@ -1017,12 +1017,15 @@ DuckDB でも照会形 (`PRAGMA database_list`) と設定形 (`PRAGMA memory_lim
 含まない場合だけ許可します (設定形の構文は必ず `=` を伴い、照会形は伴わないという
 近似)。SQLite の `PRAGMA foreign_keys=ON` のような設定形は書き込みであり、かつ
 SQLite に「照会専用の PRAGMA」という失って困る用途も無いため、**PRAGMA は DuckDB
-以外では一切許可しません** (fail-closed)。`is_query_shape` は変更していません
-(並行ブランチ #971 が担当) — その結果 `FROM`/`TABLE` は読み取り専用ガードこそ通るように
-なりましたが、`is_query_shape` がまだこの 2 語を認識しないため実行は `execute()`
-経路 (行を返さない) に落ち、空の結果になる既知のギャップが残っています
-(`tests/duckdb_integration.rs` の `duckdb_read_only_session_allows_new_read_only_syntax_via_ipc`
-に明記)。フロントは `dangerousSql.ts` の `READ_ONLY_PREFIXES_ALL_DRIVERS` /
+以外では一切許可しません** (fail-closed)。本 Issue (#1005) の時点では `is_query_shape`
+は変更しておらず、その結果 `FROM`/`TABLE` は読み取り専用ガードこそ通るようになった
+ものの、`is_query_shape` がまだこの 2 語を認識しないため実行は `execute()` 経路
+(行を返さない) に落ち、空の結果になるという既知のギャップが残っていました。この
+ギャップは **#1054 で解消済み** — `db/duckdb.rs::is_query_shape` の許可リストへ
+`from`/`table` を (`db::starts_with_word` による語境界一致で) 追加し、`FROM t` /
+`TABLE t` も実データを返すようになりました (`tests/duckdb_integration.rs` の
+`duckdb_read_only_session_allows_new_read_only_syntax_via_ipc` が実 DuckDB 越しに
+固定)。フロントは `dangerousSql.ts` の `READ_ONLY_PREFIXES_ALL_DRIVERS` /
 `READ_ONLY_PREFIXES_DUCKDB` が同じ許可集合をミラーし、共有ゴールデン
 (`readOnlySqlVectors.json` の `readOnlyDuckdb` 次元) で両実装の一致を固定しています。
 

@@ -531,14 +531,13 @@ async fn duckdb_read_only_session_allows_select_via_ipc() {
 /// `VALUES`, `SUMMARIZE`, and query-form `PRAGMA` are also recognized as
 /// query-shaped by `db::duckdb::is_query_shape` (the internal router that
 /// decides whether to fetch rows or just run the statement), so these three
-/// return real data end-to-end. `FROM`/`TABLE` are a documented, deliberate
-/// exception: this PR only widens the read-only *gate*, not `is_query_shape`
-/// itself (a private helper that a concurrently in-flight branch, #971, is
-/// also touching) — so a read-only session no longer rejects `FROM t`/`TABLE
-/// t` outright, but until `is_query_shape` also learns those two keywords,
-/// execution still falls through to DuckDB's `execute()` path and comes back
-/// with an empty result instead of the underlying rows. That gap is called
-/// out explicitly here (and in the PR description) as follow-up work.
+/// return real data end-to-end. `FROM`/`TABLE` used to be a documented,
+/// deliberate exception: #1005 only widened the read-only *gate*, not
+/// `is_query_shape` itself, so a read-only session stopped rejecting `FROM
+/// t`/`TABLE t` outright but execution still fell through to DuckDB's
+/// `execute()` path and came back with an empty result instead of the
+/// underlying rows. #1054 closes that gap by teaching `is_query_shape` the
+/// same two keywords, so both now return real data end-to-end as well.
 #[tokio::test]
 async fn duckdb_read_only_session_allows_new_read_only_syntax_via_ipc() {
     let path = seed_ro_fixture("newsyntax").await;
@@ -578,9 +577,10 @@ async fn duckdb_read_only_session_allows_new_read_only_syntax_via_ipc() {
         .expect_err("read-only session must reject setting-form PRAGMA");
     assert!(matches!(err, t::AppError::ReadOnly(_)));
 
-    // `FROM`/`TABLE`: the read-only gate now allows both (this PR's fix), so
-    // neither is rejected as ReadOnly. Real row data is *not* asserted here —
-    // see the doc comment above for why (`is_query_shape` gap, out of scope).
+    // `FROM`/`TABLE`: the read-only gate allows both (#1005), and as of
+    // #1054 `is_query_shape` also recognizes them, so they now round-trip
+    // through the query path and return `ro_t`'s real row instead of
+    // silently coming back empty (the gap this test used to document).
     for sql in ["FROM ro_t", "TABLE ro_t"] {
         let res = t::run_query_via_command(&state, &sid, sql, None)
             .await
@@ -589,11 +589,13 @@ async fn duckdb_read_only_session_allows_new_read_only_syntax_via_ipc() {
             });
         assert_eq!(
             res.rows.len(),
-            0,
-            "{sql:?} currently falls through to DuckDB's execute() path (is_query_shape \
-             gap, out of scope for #1005) and so comes back empty rather than with ro_t's \
-             row — if this now returns real data, `is_query_shape` has learned FROM/TABLE \
-             and this assertion (and its doc comment) should be updated to expect 1 row"
+            1,
+            "{sql:?} must return ro_t's one seeded row via the query path, not fall \
+             through to execute() and come back empty"
+        );
+        assert!(
+            matches!(&res.rows[0][1], t::Value::String(s) if s == "a"),
+            "{sql:?} must return ro_t's actual seeded label, not just an empty grid"
         );
     }
 
