@@ -68,3 +68,29 @@ describe("density tokens", () => {
     );
   });
 });
+
+// #1023: 密度変更の遷移演出。CSS 側は「値の変化そのものを補間する transition」
+// ではなく「変化の瞬間だけ立つ属性に紐づく一度きりの keyframes」であることを
+// 固定する — 常時 transition だと数万行のグリッドで再描画コストが乗るため
+// (densityTransition.ts のモジュール doc / App.css の該当コメント参照)。
+describe("density transition CSS (#1023)", () => {
+  it("defines both directions of the settle keyframes", () => {
+    expect(css).toMatch(/@keyframes density-settle-grow\s*\{/);
+    expect(css).toMatch(/@keyframes density-settle-shrink\s*\{/);
+  });
+
+  it("scopes the control animation to the transient attribute, not a bare transition", () => {
+    expect(css).toMatch(
+      /:root\[data-density-transition="grow"\][^{]*\{[^}]*animation:\s*density-settle-grow/,
+    );
+    expect(css).toMatch(
+      /:root\[data-density-transition="shrink"\][^{]*\{[^}]*animation:\s*density-settle-shrink/,
+    );
+  });
+
+  it("does not add an always-on transition on the density-consuming properties", () => {
+    // padding/height 自体には transition を掛けない (仮想スクロール位置との
+    // 競合を避けるための設計判断)。
+    expect(root).not.toMatch(/transition:[^;]*padding/);
+  });
+});

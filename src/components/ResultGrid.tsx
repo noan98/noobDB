@@ -180,6 +180,22 @@ const DENSITY_ROW_ESTIMATE: Record<Density, number> = {
 };
 
 export const GRID_CSS: SystemStyleObject = {
+  // 密度変更の遷移演出 (#1023)。この Box 自身 (スクロール枠) へ、密度が実際に
+  // 変わった瞬間だけ App.css 側の density-settle-grow/shrink keyframes を 1 回
+  // 重ねる。scale/opacity のみの compositor アニメーションで実レイアウトには
+  // 影響しないため、仮想スクロールの行位置 (rowVirtualizer)・ピン留め列・
+  // <tfoot> 集計行は同じ枠の中で一体としてスケールし、互いにズレない。属性が
+  // 立っていない定常状態ではマッチしないので、行数に関わらずコストは増えない
+  // (詳細な設計判断は App.css の同ブロック直前のコメントと `densityTransition.ts`
+  // のモジュール doc を参照)。
+  "[data-density-transition='grow'] &": {
+    animation: "density-settle-grow var(--dur-med, 200ms) var(--ease-out, ease-out)",
+    transformOrigin: "top left",
+  },
+  "[data-density-transition='shrink'] &": {
+    animation: "density-settle-shrink var(--dur-med, 200ms) var(--ease-out, ease-out)",
+    transformOrigin: "top left",
+  },
   "& table": {
     borderCollapse: "separate",
     borderSpacing: 0,
