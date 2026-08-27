@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
+import { AnimatePresence, motion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { api, DumpOptions, listenDumpStream, type DriverKind } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
+import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Switch } from "./ui";
 import { LoadingButton } from "./LoadingButton";
@@ -361,38 +363,59 @@ export function DumpModal({ sessionId, database, driver, onClose }: Props) {
           </PathRow>
         </FormSection>
 
-        {isRunning && (
-          <chakra.div
-            fontSize="sm"
-            color="app.textMuted"
-            display="flex"
-            alignItems="center"
-            gap="2"
-          >
-            <chakra.span fontWeight={500} color="app.text">
-              {progress
-                ? progress.tablesTotal != null
-                  ? t("dumpProgressTables", {
-                      tables: progress.tables ?? 0,
-                      total: progress.tablesTotal,
-                      bytes: formatBytes(progress.bytes),
-                    })
-                  : t("dumpProgressBytes", { bytes: formatBytes(progress.bytes) })
-                : t("dumpRunning")}
-            </chakra.span>
-            {progress && (
-              <chakra.span opacity={0.8}>
-                {t("dumpProgressElapsed", {
-                  secs: (progress.elapsedMs / 1000).toFixed(1),
-                })}
-              </chakra.span>
-            )}
-          </chakra.div>
-        )}
-
-        {status.kind === "error" && (
-          <ErrorNote>{t("dumpError", { error: status.message })}</ErrorNote>
-        )}
+        {/* 実行中の進捗表示とエラー表示は状態遷移 (idle → running → done/error)
+            の一部なので、瞬間的な差し替えではなくクロスフェードで切り替える
+            (#1025)。どちらもトリガーはボタン操作 (実行/キャンセル) で、切替対象
+            の内側にフォーカス可能な入力は無いためフォーカス喪失の心配はない。 */}
+        <AnimatePresence mode="wait" initial={false}>
+          {isRunning && (
+            <motion.div
+              key="dump-progress"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <chakra.div
+                fontSize="sm"
+                color="app.textMuted"
+                display="flex"
+                alignItems="center"
+                gap="2"
+              >
+                <chakra.span fontWeight={500} color="app.text">
+                  {progress
+                    ? progress.tablesTotal != null
+                      ? t("dumpProgressTables", {
+                          tables: progress.tables ?? 0,
+                          total: progress.tablesTotal,
+                          bytes: formatBytes(progress.bytes),
+                        })
+                      : t("dumpProgressBytes", { bytes: formatBytes(progress.bytes) })
+                    : t("dumpRunning")}
+                </chakra.span>
+                {progress && (
+                  <chakra.span opacity={0.8}>
+                    {t("dumpProgressElapsed", {
+                      secs: (progress.elapsedMs / 1000).toFixed(1),
+                    })}
+                  </chakra.span>
+                )}
+              </chakra.div>
+            </motion.div>
+          )}
+          {status.kind === "error" && (
+            <motion.div
+              key="dump-error"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <ErrorNote>{t("dumpError", { error: status.message })}</ErrorNote>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </ModalBody>
 
       <ModalFooter>
