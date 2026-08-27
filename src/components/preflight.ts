@@ -119,21 +119,72 @@ function maskedTopLevelWords(masked: string, start: number, end: number): Masked
 }
 
 /**
- * 元 SQL の位置 `p` から (先頭空白を許して) 単一のテーブル参照を読む。バークオート
- * (`` `t` ``)・ダブルクオート (`"t"`)・裸の識別子 (`schema.table` のドット修飾を含む)
- * に対応する。クオートかつドット修飾 (`"s"."t"`) のような複合形は**あえて対象外**と
- * して null を返し (呼び出し側で「推定不可」へ降格)、保守側に倒す。
+ * マスク済み文字列の位置 `p` から、テーブル参照を構成する**1 パート**を読み、その
+ * 終端オフセットを返す (読めなければ null)。バッククオート (`` `t` ``)・ダブル
+ * クオート (`"t"`)・裸の識別子 (`t`) のいずれかにマッチする。パート単位に切り出すのは、
+ * ドット修飾の各パートが独立にクオートされうる (`` `db`.`t` `` / `"s"."t"` /
+ * `db."t"`) ためで、`readTableRef` がこれを繰り返し呼ぶ。
  *
- * 返すのは元 SQL 上の生テキスト (クオートを保持) と終端オフセット。再クオートせず
- * 原文をそのまま COUNT に使うことで方言差 (引用文字の違い) を吸収する。
+ * **走査は必ずマスク済み文字列に対して行う。** `maskLiterals` は長さを保ったまま
+ * クオートの中身だけを空白化し**区切り記号は残す**ので、マスク上で次に現れる同じ
+ * クオート文字が、そのまま「マスクがリテラルの終わりと判断した位置」になる。
+ * 二重化によるエスケープ (`"a""b"`) や MySQL のバックスラッシュエスケープといった
+ * 終端規則をここで再実装せずに済み、**この解析基盤が前提とするマスクとの一致**
+ * (テーブル参照の終端 = マスク上の終端) が構造的に保証される。未終端クオートは
+ * マスクが EOF まで空白化するため閉じ記号が見つからず、null (= 推定不可) になる。
+ *
+ * MSSQL の角括弧 (`[t]`) は**意図的に非対応** — `maskLiterals` が角括弧の中身を
+ * 空白化しないため、`[order]` のようなクオート付き識別子が句キーワードとして
+ * トップレベル走査に現れてしまい、この解析基盤の前提が崩れる。角括弧の参照は
+ * パートとして読めず `readTableRef` が null を返すので、「推定不可」へ縮退する。
  */
-function readTableRef(sql: string, p: number): { raw: string; end: number } | null {
-  const m = /^\s*(`[^`]+`|"[^"]+"|[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*)/.exec(
-    sql.slice(p),
-  );
-  if (!m) return null;
-  const raw = m[1];
-  return { raw, end: p + m[0].length };
+function readTableRefPart(masked: string, p: number): number | null {
+  const c = masked[p];
+  if (c === "`" || c === '"') {
+    const close = masked.indexOf(c, p + 1);
+    // 空のクオート識別子 (`""`) と未終端クオートはどちらもテーブル名として
+    // 成立しないので読めない扱いにする。
+    if (close === -1 || close === p + 1) return null;
+    return close + 1;
+  }
+  const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(masked.slice(p));
+  return m ? p + m[0].length : null;
+}
+
+/**
+ * マスク済み文字列の位置 `p` から (先頭空白を許して) 単一のテーブル参照を読む。
+ * バッククオート (`` `t` ``)・ダブルクオート (`"t"`)・裸の識別子に加えて、**ドット
+ * 修飾** (`schema.table`) をパートごとに読む。各パートは独立にクオートされてよいので、
+ * `` `db`.`t` `` / `"s"."t"` / `db."t"` のような複合形も 1 つのテーブル参照として
+ * 正しく読み切る (#1075。以前はここが先頭パートだけを貪欲にマッチし、
+ * `` UPDATE `mydb`.`orders` … `` で `` `mydb` `` を対象テーブルと誤認して
+ * **無関係なテーブルの COUNT** を影響行数バッジに出していた)。
+ *
+ * ドットの後にパートが読めない打ちかけの形 (`db.` / `` `db`. `` など) は
+ * **null を返して**「推定不可」へ降格する — 先頭パートだけを採って誤った COUNT を
+ * 出すより出さない方を優先する、本モジュールの保守的方針どおり。
+ *
+ * オフセットの決定はマスク済み文字列 (`masked`) 上で行い、返す生テキストは**元 SQL**
+ * (`sql`) の同じ範囲から切り出す — マスクは長さを保つので両者のオフセットは一致する。
+ * こうして再クオートせず原文 (クオートもドットもそのまま) を COUNT に使うことで、
+ * 方言差 (引用文字の違い) を吸収する。
+ */
+function readTableRef(masked: string, sql: string, p: number): { raw: string; end: number } | null {
+  const lead = /^\s*/.exec(masked.slice(p));
+  const start = p + (lead ? lead[0].length : 0);
+  let end = readTableRefPart(masked, start);
+  if (end === null) return null;
+  // ドット修飾を続く限り読む。ドットの前後の空白は SQL 上許されるので許容し、
+  // 元テキストをそのまま切り出すことで COUNT へ写しても等価な参照を保つ。
+  for (;;) {
+    const gap = /^\s*\.\s*/.exec(masked.slice(end));
+    if (!gap) break;
+    const next = readTableRefPart(masked, end + gap[0].length);
+    // ドットは読めたが次のパートが無い = 打ちかけ/未対応形。先頭だけ採らず降格する。
+    if (next === null) return null;
+    end = next;
+  }
+  return { raw: sql.slice(start, end), end };
 }
 
 /**
@@ -178,7 +229,7 @@ function planForDelete(
   // `DELETE FROM <table> ...` のみを扱う。`DELETE t FROM ...` (MySQL 多表削除) は
   // words[1] が "from" にならないので降格。
   if (words.length < 2 || words[1].text !== "from") return unestimable("delete");
-  const table = readTableRef(sql, words[1].to);
+  const table = readTableRef(masked, sql, words[1].to);
   if (!table) return unestimable("delete");
   // テーブル直後は WHERE / RETURNING か文末でなければならない。別名 (`DELETE FROM t
   // AS x` / `DELETE FROM t x`) や `USING` などが挟まると COUNT へ素直に写せないので
@@ -198,7 +249,7 @@ function planForUpdate(
 ): PreflightPlan {
   // `UPDATE <table> SET ...` のみを扱う。テーブル直後が SET でなければ (別名・
   // `UPDATE a, b` の多表・`UPDATE a JOIN b`) 降格する。
-  const table = readTableRef(sql, words[0].to);
+  const table = readTableRef(masked, sql, words[0].to);
   if (!table) return unestimable("update");
   const after = maskedTopLevelWords(masked, table.end, stmtEnd);
   if (after.length === 0 || after[0].text !== "set") return unestimable("update");

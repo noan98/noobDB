@@ -102,6 +102,103 @@ describe("buildPreflightPlan — 引用符付き識別子 (方言差)", () => {
   });
 });
 
+// #1075 の退行固定。以前は `` `[^`]+` `` の交替が先頭パートだけを貪欲にマッチし、
+// `` `mydb`.`orders` `` の対象テーブルを `` `mydb` `` と誤認 → 全く無関係な
+// テーブルの COUNT を「影響: 約 N 行」として表示していた。
+describe("buildPreflightPlan — 複合クオート + スキーマ修飾 (#1075)", () => {
+  it("UPDATE `db`.`table` の全パートを対象テーブルとして読む", () => {
+    const plan = buildPreflightPlan("UPDATE `mydb`.`orders` SET status = 1 WHERE id = 7", "mysql");
+    expect(plan).toEqual({
+      verb: "update",
+      table: "`mydb`.`orders`",
+      allRows: false,
+      countSql: "SELECT COUNT(*) FROM `mydb`.`orders` WHERE id = 7",
+    });
+  });
+
+  it("DELETE FROM `db`.`table` の全パートを対象テーブルとして読む", () => {
+    const plan = buildPreflightPlan("DELETE FROM `mydb`.`orders` WHERE id = 7", "mysql");
+    expect(plan).toEqual({
+      verb: "delete",
+      table: "`mydb`.`orders`",
+      allRows: false,
+      countSql: "SELECT COUNT(*) FROM `mydb`.`orders` WHERE id = 7",
+    });
+  });
+
+  it("WHERE なしの複合クオートも先頭パートではなく全体で全件 COUNT する", () => {
+    const plan = buildPreflightPlan("UPDATE `mydb`.`orders` SET status = 1", "mysql");
+    expect(plan?.allRows).toBe(true);
+    expect(plan?.countSql).toBe("SELECT COUNT(*) FROM `mydb`.`orders`");
+  });
+
+  it('PostgreSQL のダブルクオート複合形 ("s"."t") も読み切る', () => {
+    const plan = buildPreflightPlan('DELETE FROM "public"."Users" WHERE "id" = 3');
+    expect(plan?.table).toBe('"public"."Users"');
+    expect(plan?.countSql).toBe('SELECT COUNT(*) FROM "public"."Users" WHERE "id" = 3');
+  });
+
+  it("クオートと裸識別子の混在 (db.\"t\" / `db`.t) も読み切る", () => {
+    expect(buildPreflightPlan('UPDATE app."Users" SET a = 1 WHERE id = 2')?.countSql).toBe(
+      'SELECT COUNT(*) FROM app."Users" WHERE id = 2',
+    );
+    expect(buildPreflightPlan("DELETE FROM `app`.sessions WHERE id = 2", "mysql")?.countSql).toBe(
+      "SELECT COUNT(*) FROM `app`.sessions WHERE id = 2",
+    );
+  });
+
+  it("3 パート修飾 (db.schema.table) も読み切る", () => {
+    const plan = buildPreflightPlan('UPDATE "d"."s"."t" SET a = 1 WHERE id = 4');
+    expect(plan?.table).toBe('"d"."s"."t"');
+    expect(plan?.countSql).toBe('SELECT COUNT(*) FROM "d"."s"."t" WHERE id = 4');
+  });
+
+  it("ドット前後の空白を許容し原文のまま保持する", () => {
+    const plan = buildPreflightPlan("DELETE FROM `db` . `t` WHERE id = 1", "mysql");
+    expect(plan?.table).toBe("`db` . `t`");
+    expect(plan?.countSql).toBe("SELECT COUNT(*) FROM `db` . `t` WHERE id = 1");
+  });
+
+  it("クオート内のドットはパート区切りではない (`my.table` は 1 パート)", () => {
+    const plan = buildPreflightPlan("DELETE FROM `my.table` WHERE id = 1", "mysql");
+    expect(plan?.table).toBe("`my.table`");
+    expect(plan?.countSql).toBe("SELECT COUNT(*) FROM `my.table` WHERE id = 1");
+  });
+
+  it("二重化でエスケープしたクオート識別子でも終端をマスクと一致させる", () => {
+    // `"a""b"` はダブルクオート 1 つ分の識別子。終端を誤ると先頭 `"a"` だけを
+    // テーブルとみなして別テーブルの COUNT を出してしまう。
+    const plan = buildPreflightPlan('DELETE FROM "a""b" WHERE id = 1');
+    expect(plan?.table).toBe('"a""b"');
+    expect(plan?.countSql).toBe('SELECT COUNT(*) FROM "a""b" WHERE id = 1');
+  });
+
+  it("複合クオート + 別名は従来どおり推定不可のまま", () => {
+    expect(buildPreflightPlan("DELETE FROM `db`.`t` AS x WHERE x.id = 1", "mysql")?.countSql).toBe(
+      null,
+    );
+    expect(buildPreflightPlan("UPDATE `db`.`t` x SET x.a = 1 WHERE x.id = 2", "mysql")?.countSql).toBe(
+      null,
+    );
+  });
+
+  it("ドットの後にパートが無い打ちかけは推定不可 (先頭パートを採らない)", () => {
+    expect(buildPreflightPlan("DELETE FROM `db`. WHERE id = 1", "mysql")?.countSql).toBeNull();
+    expect(buildPreflightPlan("UPDATE app. SET a = 1", "mysql")?.countSql).toBeNull();
+  });
+
+  it("未終端クオートのテーブル名は推定不可", () => {
+    expect(buildPreflightPlan("DELETE FROM `db WHERE id = 1", "mysql")?.countSql).toBeNull();
+    expect(buildPreflightPlan('UPDATE "db SET a = 1')?.countSql).toBeNull();
+  });
+
+  it("MSSQL の角括弧修飾は (マスク非対応のため) 推定不可へ縮退する", () => {
+    expect(buildPreflightPlan("UPDATE [db].[dbo].[orders] SET a = 1 WHERE id = 1")?.countSql).toBe(
+      null,
+    );
+  });
+});
+
 describe("buildPreflightPlan — マスク境界 (文字列/コメント内キーワード)", () => {
   it("文字列リテラル内の 'where' を句と誤認しない (全行判定)", () => {
     const plan = buildPreflightPlan("UPDATE t SET note = 'delete where now'");
