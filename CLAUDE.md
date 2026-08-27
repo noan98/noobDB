@@ -1298,12 +1298,26 @@ actual}` の入力と厳密なレンダリング後メッセージ) を `sshHost
 と `tests/ssh_host_key_mismatch_golden.rs` の双方へ通し、前者は
 `parseHostKeyFingerprints` の抽出結果、後者は `AppError::SshHostKeyMismatch{..}.
 to_string()` を固定します。IPv4/非標準ポート (多段トンネルの踏み台)/FQDN/レガシー
-形式 fingerprint (SHA256 未移行) に加え、**IPv6 ホスト (`:` を含む)** も含めており、
-これは endpoint 抽出用正規表現 `[^\s:]+` がホストに `:` を許さないため host/port の
-抽出には失敗する既知の境界です (fingerprint 自体は引き続き抽出できるので
-`parseHostKeyFingerprints` 全体が `null` になるわけではなく、ダイアログは host/port
-なしの縮退表示にフォールバックします)。この境界は仕様として維持し、意図せず
-挙動が変わったことに気付けるようゴールデンへ含めています。
+形式 fingerprint (SHA256 未移行)/**IPv6 ホスト (`:` を含む)** を含みます。
+
+**IPv6 ホストの host/port 抽出 (#1053)。** endpoint 抽出用正規表現は元々
+`([^\s:]+):(\d+):` で、ホストに `:` を許さないため IPv6 (`2001:db8::1` のような
+バックエンドが実際に生成する非角括弧形式) では host/port が `undefined` になる
+既知の境界でした (fingerprint 自体は別の正規表現で取れるため
+`parseHostKeyFingerprints` 全体は `null` にならず、host/port だけが欠損する部分的な
+情報欠損)。#708 の多段トンネルでは踏み台側で鍵が変わった場合に実際に失敗した段の
+`host:port` へピン留めする精度に関わるため、`parseHostKeyFingerprints`
+(`src/components/hostKeyFingerprints.ts`) 側で解消しました。ホストに `:` を禁止する
+代わりに、このメッセージ書式で常にポートの直後に来るリテラル `": stored
+fingerprint"` へアンカーし、ホストのキャプチャを非貪欲 (`+?`) にすることで、
+ホストが何個 `:` を含んでいても文字列中の**最後**の `<port>: stored fingerprint`
+境界へ自然に収束させています (バックエンドは非角括弧形式しか生成しませんが、
+`[2001:db8::1]:2222` の角括弧形式も曖昧さの無い表記として明示的に先に試します)。
+バックエンド (`error.rs` のテンプレート) は変更していません — フロント側のパース
+強化のみで解消できたため、生成⇔パースの書式そのものは #1030 のゴールデンが
+引き続き固定します。known_hosts の `host:port` エンコード
+(`ssh/known_hosts.rs::parse_known_hosts`) はもともと最後の `:` で区切る
+`rsplit_once` を使っており、IPv6 ホストでも曖昧にならないため無改修です。
 
 ### 多段 SSH トンネル (ProxyJump 相当) と ~/.ssh/config の読み込み (#708)
 

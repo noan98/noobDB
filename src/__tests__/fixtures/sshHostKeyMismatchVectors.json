@@ -35,14 +35,14 @@
     },
     {
       "id": "ipv6-host-colon-boundary",
-      "note": "IPv6 アドレス (`:` を含むホスト)。endpoint 抽出用正規表現 ([^\\s:]+) はホストに ':' を許さないため host:port の抽出には失敗する既知の境界 — fingerprint 自体は引き続き抽出できるので parseHostKeyFingerprints 全体としては null にならない (ダイアログは host/port なしで fingerprint のみ表示するフォールバック)",
+      "note": "IPv6 アドレス (`:` を含むホスト、バックエンドが実際に生成する非角括弧形式)。#1053 で endpoint 抽出用正規表現をリテラル ': stored fingerprint' 直前へアンカーする非貪欲マッチに変更し、host 内の ':' を許容しつつ最後の '<port>:' 境界を正しく特定できるようにした (旧実装は host/port 抽出に失敗する既知の境界だったが解消した)",
       "host": "2001:db8::1",
       "port": 22,
       "expected": "SHA256:ipv6OLDfingerprintAAABBBCCCddd",
       "actual": "SHA256:ipv6NEWfingerprintXXXYYYZZZeee",
       "message": "ssh host key mismatch for 2001:db8::1:22: stored fingerprint SHA256:ipv6OLDfingerprintAAABBBCCCddd, server presented SHA256:ipv6NEWfingerprintXXXYYYZZZeee. If you did not expect the server's key to change, this could indicate a man-in-the-middle attack.",
-      "parsedHost": null,
-      "parsedPort": null
+      "parsedHost": "2001:db8::1",
+      "parsedPort": 22
     },
     {
       "id": "legacy-fingerprint-format",

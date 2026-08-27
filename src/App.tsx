@@ -290,7 +290,13 @@ import {
   recordCommandPaletteUsage,
   pruneCommandPaletteMru,
   type TabRestoreMode,
+  type Density,
 } from "./settings";
+import {
+  DENSITY_TRANSITION_ATTR,
+  DENSITY_TRANSITION_MS,
+  densityTransitionDirection,
+} from "./densityTransition";
 import { ThemeTransition } from "./components/ThemeTransition";
 import { AccentWash } from "./components/AccentWash";
 import { accentVars } from "./accent";
@@ -1311,6 +1317,25 @@ export default function App() {
     // OS の prefers-reduced-motion にそのまま従う (どのセレクタにも一致しない)。
     root.setAttribute("data-motion", settings.motionPreference);
   }, [settings, theme]);
+
+  // 密度変更の遷移演出 (#1023)。settings.density が実際に変わった瞬間だけ、
+  // 一時的な data-density-transition 属性 ("grow"/"shrink") を立てて App.css /
+  // ResultGrid の GRID_CSS 側のスコープ付き一度きりアニメーションを有効化し、
+  // DENSITY_TRANSITION_MS 後に自動で外す (詳細な設計判断は densityTransition.ts
+  // のモジュール doc を参照)。上の効果とは別の effect にしているのは、密度以外の
+  // 設定変更のたびに再評価させないため (依存配列を settings.density だけに絞る)。
+  const prevDensityRef = useRef<Density | null>(null);
+  useEffect(() => {
+    const direction = densityTransitionDirection(prevDensityRef.current, settings.density);
+    prevDensityRef.current = settings.density;
+    if (!direction) return;
+    const root = document.documentElement;
+    root.setAttribute(DENSITY_TRANSITION_ATTR, direction);
+    const timer = window.setTimeout(() => {
+      root.removeAttribute(DENSITY_TRANSITION_ATTR);
+    }, DENSITY_TRANSITION_MS);
+    return () => window.clearTimeout(timer);
+  }, [settings.density]);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));

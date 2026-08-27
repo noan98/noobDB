@@ -1391,6 +1391,53 @@
   --density-control-scale: 1.35;
 }
 
+/* 密度変更の遷移演出 (#1023)。上の --density-* トークンは瞬時に上書きされる
+   ため、素のままだとグリッドと全コントロールが一斉に硬くスナップする。カスタム
+   プロパティ自体は @property を宣言しない限り値をアニメーションできず、かつ
+   これらを消費する padding / 高さへ常時 transition を掛けると、結果グリッドの
+   仮想スクロール (ResultGrid の rowVirtualizer が行の実測サイズを都度使う) が
+   アニメーション中の中間サイズを掴んで位置計算し、ピン留め列や <tfoot> 集計行が
+   本来の行本体とズレて「ガタつく」(#1023 の受け入れ条件)。加えて数万行の
+   グリッドでは全セルに常時 transition を掛けること自体が再描画コストになる。
+
+   そこでここでは box メトリクス自体は今までどおり瞬時に確定させたまま、
+   密度が実際に変わった瞬間だけ (`densityTransition.ts` の
+   `densityTransitionDirection` が判定し、`App.tsx` が反映する)
+   `data-density-transition` 属性 ("grow"/"shrink") を短時間だけ立て、
+   scale + opacity の compositor アニメーション (transform/opacity のみで
+   レイアウトに影響しない) を対象要素へ 1 回だけ重ねて「滑らかなズーム」に
+   見せる。属性が立っていない定常状態ではどのセレクタにも一致しないため、
+   グリッドの行数に関わらずコストは増えない。対象はコントロール
+   (button/input/select/textarea) と、結果グリッドのスクロール枠
+   (`ResultGrid.tsx` の `GRID_CSS` 側で同じ keyframes を参照。ピン留め列や
+   <tfoot> も同じ枠の中で一体としてスケールするのでズレない)。
+
+   reduced-motion では下の「Reduced motion」セクションの既存ブロック
+   (`animation-duration` を !important で 0.01ms に潰す) がそのまま抑制するため、
+   ここに専用の分岐を重複定義しない。 */
+@keyframes density-settle-grow {
+  from { transform: scale(0.96); opacity: 0.88; }
+  to { transform: scale(1); opacity: 1; }
+}
+@keyframes density-settle-shrink {
+  from { transform: scale(1.04); opacity: 0.88; }
+  to { transform: scale(1); opacity: 1; }
+}
+:root[data-density-transition="grow"] button,
+:root[data-density-transition="grow"] input,
+:root[data-density-transition="grow"] select,
+:root[data-density-transition="grow"] textarea {
+  animation: density-settle-grow var(--dur-med, 200ms) var(--ease-out, ease-out);
+  transform-origin: center;
+}
+:root[data-density-transition="shrink"] button,
+:root[data-density-transition="shrink"] input,
+:root[data-density-transition="shrink"] select,
+:root[data-density-transition="shrink"] textarea {
+  animation: density-settle-shrink var(--dur-med, 200ms) var(--ease-out, ease-out);
+  transform-origin: center;
+}
+
 * { box-sizing: border-box; }
 
 /* Theme-aware scrollbars so every scroll region (tree, result grid, editor,
