@@ -18,11 +18,12 @@ name: automerge
 #     実レビュー提出より早く消えるため、マーカーだけだと指摘が届く前にマージできて
 #     しまう (PR #277 の取りこぼし)。レビュー提出をもう一段の確定信号として待つ。
 #   - CodeRabbit が "レビューを省略した" と宣言している場合 (star 数が閾値未満の
-#     OSS リポジトリで自動レビューが恒久的に無効) は、レートリミットと**同一視しない**
-#     (#1055)。`coderabbit-request-review.yml` が `@coderabbitai review` を明示投稿して
-#     レビューを起動するので、その提出を猶予時間 (20 分) だけ待つ。猶予を過ぎたら
-#     マージは継続するが、"レビューゲートが素通りした" ことを ::warning:: と
-#     Job Summary で可視化する (黙って通さない)。詳細は Step 5a のコメントを参照。
+#     OSS リポジトリで自動レビューが恒久的に無効) も、待っても状況が変わらないため
+#     マージは継続する。ただし黙っては通さず、"レビューゲートが素通りした" ことを
+#     ::warning:: と Job Summary で可視化する (#1055)。当初は明示起動した
+#     `@coderabbitai review` の結果を猶予時間だけ待つ設計にしたが、CodeRabbit は
+#     GITHUB_TOKEN 由来のコマンドコメントに反応しないことが実地で判明したため、
+#     待ちは撤廃した。詳細は Step 5a のコメントを参照。
 #
 # トリガ:
 #   - ci ワークフローが完了したとき (workflow_run) — CI 成功を起点に再評価する。
@@ -174,27 +175,28 @@ jobs:
           #         "Review skipped: manual review required for this OSS repository")
           #     この状態では coderabbitai[bot] はサマリコメントだけを投稿して
           #     レビュー本体を一切提出しないため、後続の 5b (head へのレビュー提出を
-          #     待つ) が素のままでは永久に成立せず、自動マージが恒久的に停止する。
-          #     判定は自動生成コメントに埋め込まれた機械可読マーカー
-          #     "<!-- ...: skip review by coderabbit.ai -->" で行う。進行中マーカー
-          #     ("review in progress") とは別物なので、上の進行中判定を弱めない
-          #     (進行中の PR は 5 で既に exit 済み)。
+          #     待つ) は永久に成立しない。判定は自動生成コメントに埋め込まれた
+          #     機械可読マーカー "<!-- ...: skip review by coderabbit.ai -->" で行う。
+          #     進行中マーカー ("review in progress") とは別物なので、上の進行中判定を
+          #     弱めない (進行中の PR は 5 で既に exit 済み)。
           #
-          #     **レートリミットと同一視してはいけない。** レートリミットは一過性で
-          #     待てば解消するが、star 数に基づく skip は恒久的で、待っても永遠に
-          #     レビューは来ない。以前はどちらも「待っても進まないので通す」で
-          #     一括りにしていたため、レビューが 1 度も行われないまま自動承認 →
-          #     自動マージまで通り、しかもその事実がどこにも異常として現れなかった
-          #     (#1055)。現在は `coderabbit-request-review.yml` が skip 宣言を検出して
-          #     `@coderabbitai review` を明示投稿しレビューを起動するので、ここでは
-          #     その起動結果を待つ。待ちが無期限にならないよう猶予時間で打ち切り、
-          #     打ち切った場合は「レビューゲートが素通りした」ことを警告として
-          #     可視化する (マージ自体は止めない)。
+          #     **レートリミットと原因は違うが、扱いは同じ「待たずに通す」。**
+          #     レートリミットは一過性で待てば解消するのに対し、star 数に基づく skip は
+          #     恒久的で待っても永遠にレビューは来ない。#1055 では前者と後者を区別し、
+          #     `coderabbit-request-review.yml` が投稿する `@coderabbitai review` の
+          #     結果を猶予時間だけ待つ設計にしたが、**実地検証の結果 CodeRabbit は
+          #     GITHUB_TOKEN (github-actions[bot]) 由来のコマンドコメントに一切
+          #     反応しない**ことが分かった (PR #1059 で 40 分以上待っても
+          #     レビュー提出・返信ともに無し)。待っても状況は変わらず、猶予切れ後に
+          #     automerge を再評価するイベントも来ないため、PR が無期限に停止する
+          #     副作用だけが残った。そのため猶予待ちは撤廃し、**マージは止めずに
+          #     「レビューゲートが素通りしている」ことを警告として可視化する**
+          #     (#1055 の「黙って通さない」という主目的はこれで満たされる)。
           #
-          #     猶予時間 (秒)。これを過ぎてもレビューが提出されなければ、警告を
-          #     出したうえでマージを継続する。
-          CR_REVIEW_GRACE_SECONDS=1200
-
+          #     レビューを実際に走らせたい場合は、`coderabbit-request-review.yml` の
+          #     投稿を GITHUB_TOKEN ではなく人間ユーザの PAT で行う必要がある
+          #     (同ワークフローのコメント参照)。その構成にすると head へのレビューが
+          #     提出されるようになり、下の分岐が自動的に通常経路へ倒れる。
           cr_review_skipped="false"
           if printf '%s' "$cr_comments" | grep -qi "skip review by coderabbit"; then
             cr_review_skipped="true"
@@ -203,46 +205,29 @@ jobs:
           if [ "$cr_review_skipped" = "true" ]; then
             echo "CodeRabbit が自動レビューを省略しています (手動トリガ要求等)。"
 
-            # 現在の head に対する CodeRabbit のレビュー提出があれば、明示起動が
-            # 効いて通常のレビュー済み PR になったということ。skip フラグを下ろし、
-            # 5b の通常経路 (head へのレビュー提出を確認) と 6 のスレッド判定に委ねる。
+            # 現在の head に対する CodeRabbit のレビュー提出があれば、(PAT 構成などで)
+            # レビューが実際に走ったということ。skip フラグを下ろし、5b の通常経路
+            # (head へのレビュー提出を確認) と 6 のスレッド判定に委ねる。
             cr_reviews_for_head="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
               --jq '.[] | select(.user.login == "coderabbitai[bot]") | .commit_id' \
               | grep -Fxc "$headSha" || true)"
 
             if [ "${cr_reviews_for_head:-0}" -gt 0 ]; then
-              echo "明示起動により head ($headSha) へのレビューが提出済みです。通常経路で継続します。"
+              echo "head ($headSha) へのレビューが提出済みです。通常経路で継続します。"
               cr_review_skipped="false"
             else
-              # `coderabbit-request-review.yml` が現在の head に対して
-              # `@coderabbitai review` を投稿済みかを、識別タグ付きコメントの
-              # 作成時刻から判定する。@tsv は改行/タブをエスケープするため、
-              # 本文に改行があっても 1 行 1 コメントを保てる。
-              rr_marker="<!-- coderabbit-request-review: ${headSha} -->"
-              requested_at="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
-                --jq '.[] | select(.user.login == "github-actions[bot]") | [.created_at, .body] | @tsv' \
-                | grep -F -- "$rr_marker" | head -n 1 | cut -f1 || true)"
-
-              if [ -n "${requested_at:-}" ]; then
-                elapsed=$(( $(date -u +%s) - $(date -u -d "$requested_at" +%s) ))
-                if [ "$elapsed" -lt "$CR_REVIEW_GRACE_SECONDS" ]; then
-                  echo "レビューを明示起動済み ($requested_at, 経過 ${elapsed}s) ですが、まだ提出されていません。完了を待つためスキップ。"
-                  exit 0
-                fi
-                cr_gate_warning="レビューを明示起動 ($requested_at) してから ${elapsed} 秒経過しましたが、CodeRabbit のレビューが提出されませんでした。"
-              else
-                cr_gate_warning="CodeRabbit の自動レビューが省略されており、レビューの明示起動 (@coderabbitai review) も記録されていません。coderabbit-request-review.yml が動作しているか確認してください。"
-              fi
-
               # 5a-warn. ここに来た = レビュー層が無いまま自動マージへ進む。
               #     マージは止めない (方針) が、気付けるように警告として残す。
-              echo "::warning title=CodeRabbit のレビューゲートが素通りしています::PR #$PR (head=$headSha) ${cr_gate_warning}"
+              echo "::warning title=CodeRabbit のレビューゲートが素通りしています::PR #$PR (head=$headSha) は CodeRabbit の自動レビュー対象外で、レビュー提出が 1 件もないまま自動マージされます。"
               {
                 echo "### :warning: CodeRabbit のレビューゲートが素通りしています"
                 echo ""
                 echo "- 対象 PR: #$PR (head \`$headSha\`)"
-                echo "- 理由: ${cr_gate_warning}"
-                echo "- この PR は **CodeRabbit のレビューを 1 件も受けずに** 自動マージされます (CI は通過済み)。"
+                echo "- CodeRabbit の自動レビューが省略されており (star 数が閾値未満の OSS リポジトリ)、"
+                echo "  この PR は **CodeRabbit のレビューを 1 件も受けずに** 自動マージされます (CI は通過済み)。"
+                echo "- レビューを実際に走らせるには \`coderabbit-request-review.yml\` の投稿を"
+                echo "  GITHUB_TOKEN ではなく人間ユーザの PAT で行う必要があります"
+                echo "  (CodeRabbit は github-actions[bot] 由来のコマンドコメントに反応しません)。"
                 echo ""
               } >> "$GITHUB_STEP_SUMMARY"
             fi
