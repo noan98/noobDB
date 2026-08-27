@@ -27,6 +27,22 @@ name: coderabbit-request-review
 #   `<!-- ...: skip review by coderabbit.ai -->` を検出したら、その PR の
 #   現在の head SHA に対して `@coderabbitai review` を 1 回だけ投稿する。
 #
+# **重要 — 現状この投稿は効きません (要 PAT)。**
+#   実地検証の結果、CodeRabbit は GITHUB_TOKEN 由来 (= github-actions[bot] が
+#   author の) コマンドコメントに一切反応しないことが分かりました
+#   (PR #1059 で投稿後 40 分以上待ってもレビュー提出・返信ともに無し)。
+#   多くのレビュー bot は無限ループ防止のため bot 由来のコマンドを無視します。
+#
+#   レビューを実際に走らせたい場合は、`repo` スコープの **人間ユーザの PAT** を
+#   リポジトリ Secrets (例: `CODERABBIT_PAT`) に登録し、下の `GH_TOKEN` を
+#   `${{ secrets.CODERABBIT_PAT }}` へ差し替えてください。そうすると投稿者が
+#   人間ユーザになり CodeRabbit がコマンドとして処理します。
+#
+#   PAT を用意しない場合、本ワークフローは PR ごとに 1 コメントを残すだけの
+#   no-op です。レビューが行われないこと自体は `automerge.yml` の Step 5a が
+#   `::warning::` と Job Summary で可視化するので、見逃しにはなりません
+#   (ノイズが気になる場合は本ワークフローごと削除して構いません)。
+#
 # 設計方針:
 #   - PR のコードはチェックアウトしない (`gh` CLI / GitHub API のみで完結) ため、
 #     フォークからの PR でも安全に走らせられる。
@@ -70,6 +86,9 @@ jobs:
     steps:
       - name: Request a review when CodeRabbit skipped it
         env:
+          # PAT を用意した場合はここを ${{ secrets.CODERABBIT_PAT }} に差し替える
+          # (上のヘッダコメント参照)。GITHUB_TOKEN のままだと CodeRabbit は
+          # このコメントをコマンドとして処理しない。
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.issue.number }}
