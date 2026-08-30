@@ -2214,6 +2214,25 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   が境界を固定)。エディタ集中/結果最大化はワークスペース単位 (`noobdb.layout.mode`) で
   永続化し、全画面オーバーレイは `App.css` の `pane-overlay-in` で出現させ
   reduced-motion で静止化する。
+- アイコン — `components/Icon.tsx` が唯一の実装で、グリフの実体は
+  **Tabler Icons (`@tabler/icons-react`、MIT)** から供給する。Tabler の既定属性
+  (24x24 viewBox / `fill="none"` + `stroke="currentColor"` / stroke-width 2 / 丸い
+  キャップとジョイン) がこのアイコンセットの規約とそのまま一致するため、以前まで
+  本ファイルに手写ししていたパスデータを置き換えた。**呼び出し側の API
+  (`<Icon name="table" size={ICON_SIZES.md} />`) は変えていない。**
+  **各コンポーネントが `@tabler/icons-react` から直接 import しないこと** — 同じ
+  意味に別々のグリフが割り当たり、サイズ/ストロークのトークン規約も呼び出し側ごとに
+  崩れる。新しいアイコンが要るときは、まず `Icon.tsx` のセマンティック・レキシコン
+  (意味 → `IconName`) に意味を足し、`GLYPHS` へ Tabler コンポーネントを 1 つ束縛
+  する (「意味 → グリフ」の唯一の情報源は `GLYPHS`)。サイズは `ICON_SIZES`
+  (`sm`/`md`/`lg`/`xl`/`2xl`。#818/#886)、ストロークは `ICON_STROKE` のトークンのみ
+  で、**ピクセル直値は使わない**。寸法は SVG の `width`/`height` 属性 (= Tabler の
+  `size` prop) ではなく**インラインスタイル**で与える — `ICON_SIZES` の値は
+  `calc(13px * var(--font-scale))` のような CSS 式で、プレゼンテーション属性としては
+  不正だが CSS プロパティとしては有効なため (この経路が #818 の font-scale 追従)。
+  例外はドライバのブランドロゴ (`mysql` / `postgres` / `sqlite`) だけで、Tabler には
+  `brand-mysql` しか無く 3 つ並ぶドライバ選択で描き味が割れるため、simple-icons 由来
+  (CC0) の塗り単一パスを `BRAND_GLYPHS` に残している。
 - ツールチップ (#814/#884) — `components/Tooltip.tsx` が唯一の実装で、位置決めの
   純ロジックは `components/tooltipPosition.ts` (`computeTooltipPosition`。測定 →
   クランプ → フリップ) に分離してテストする。**新しい UI で native `title=` を
