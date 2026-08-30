@@ -1,5 +1,67 @@
 import type { ReactNode } from "react";
-import { chakra } from "@chakra-ui/react";
+import {
+  IconAlertTriangle,
+  IconArrowBackUp,
+  IconArrowForwardUp,
+  IconArrowsExchange,
+  IconArrowsSort,
+  IconBell,
+  IconBinary,
+  IconBolt,
+  IconBookmark,
+  IconBraces,
+  IconBroadcast,
+  IconCalendar,
+  IconChartBar,
+  IconCheck,
+  IconChevronLeft,
+  IconChevronRight,
+  IconClock,
+  IconCode,
+  IconColumns,
+  IconCopy,
+  IconDatabase,
+  IconDownload,
+  IconEye,
+  IconEyeOff,
+  IconFilter,
+  IconFlask,
+  IconGitBranch,
+  IconGitCompare,
+  IconHash,
+  IconHelp,
+  IconKey,
+  IconLayoutBoardSplit,
+  IconLetterCase,
+  IconLink,
+  IconList,
+  IconLock,
+  IconMathFunction,
+  IconMaximize,
+  IconMinimize,
+  IconMoon,
+  IconPin,
+  IconPlugConnectedX,
+  IconPlus,
+  IconRefresh,
+  IconSchema,
+  IconSearch,
+  IconServer,
+  IconSettings,
+  IconShieldExclamation,
+  IconSortAscending,
+  IconSortDescending,
+  IconStar,
+  IconStarFilled,
+  IconSun,
+  IconTable,
+  IconTableAlias,
+  IconToggleLeft,
+  IconTool,
+  IconUpload,
+  IconX,
+  type TablerIcon,
+} from "@tabler/icons-react";
 
 /**
  * Single-color SVG icon set. Every glyph shares a 24x24 viewBox, a rounded
@@ -7,11 +69,32 @@ import { chakra } from "@chakra-ui/react";
  * stay visually consistent in size/weight across light and dark themes. Emoji
  * and bare Unicode glyphs render differently per OS/font, so they are not used.
  *
+ * ## グリフの供給元: Tabler Icons
+ *
+ * 以前は 24x24 のパスデータを本ファイルへ手写しして持っていたが、グリフの実体は
+ * **`@tabler/icons-react` (MIT)** へ移した。Tabler の既定属性 (24x24 viewBox /
+ * `fill="none"` + `stroke="currentColor"` / `stroke-width` 2 / 丸いキャップと
+ * ジョイン) が本アイコンセットの規約と完全に一致するため、見た目の一貫性を保った
+ * まま供給元だけを差し替えられる。狙いは次の 3 点:
+ *   - 新しい意味を足すたびにパスを手で描く/写す必要が無くなる (6,000 以上の
+ *     グリフから選ぶだけ)。手写しは線幅・角丸・光学サイズが微妙にズレやすい。
+ *   - グリフの改善や追加が依存更新 (Dependabot) で自動的に入ってくる。
+ *   - `sideEffects: false` の ESM なので、`GLYPHS` から参照した分だけが
+ *     バンドルされる (barrel import でも Rollup が tree-shake する)。
+ *
+ * **`<Icon name="..." />` という呼び出し側の API は変えていない。** 意味 → グリフ
+ * の対応は下記のセマンティック・レキシコンと `GLYPHS` が引き続き一元管理し、
+ * 各コンポーネントが `@tabler/icons-react` から直接 import することは**しない**
+ * — そうすると同じ意味に別々のグリフが割り当てられ、サイズ/ストロークのトークン
+ * 規約 (後述) も呼び出し側ごとに崩れるため。
+ *
  * ## セマンティック・レキシコン
  *
  * アイコンは「見た目」ではなく「意味」で選ぶ。用途ごとに 1 つの glyph を割り当て、
  * アプリ全体で同じ意味には常に同じアイコンを使う。新しい用途を足すときは、まず
- * 下表に意味を追加してから glyph を定義する (同義の重複定義を避ける)。
+ * 下表に意味を追加してから `IconName` と `GLYPHS` を足す (同義の重複定義を避ける)。
+ * どの Tabler グリフを割り当てているかは `GLYPHS` が唯一の情報源なので、この表は
+ * 「意味 → IconName」だけを持つ (二重管理しない)。
  *
  * | 意味 (semantic)            | IconName        |
  * | -------------------------- | --------------- |
@@ -146,444 +229,15 @@ export type IconSizeToken = keyof typeof ICON_SIZES;
 export const ICON_STROKE = { thin: 1.5, regular: 2, bold: 2.5 } as const;
 
 /**
- * 塗り (fill) で描画するアイコン名。既定のグリフは単色ストローク (`fill="none"` +
- * `stroke="currentColor"`) だが、ドライバのブランドロゴ (simple-icons 由来、CC0) は
- * 単一パスの塗りで構成されるため、このセットに含まれる名前だけ fill 描画へ切り替える。
- * いずれも 24x24 viewBox で `currentColor` を継承するので、周囲のテキスト色に追従する。
+ * ブランドロゴだけは Tabler の外に置く。Tabler に存在するのは `brand-mysql` のみで
+ * PostgreSQL / SQLite のロゴが無いため、3 つ並ぶドライバ選択で 1 つだけ描き味の
+ * 違うロゴが混ざることになる。3 つとも simple-icons 由来 (CC0) の単一パスに揃えた
+ * ままにして、見た目の統一を優先する。いずれも 24x24 viewBox・`currentColor` 継承の
+ * 塗り (fill) glyph なので、周囲のテキスト色には他のアイコンと同じく追従する。
  */
-const FILLED_ICONS = new Set<IconName>(["mysql", "postgres", "sqlite", "star-filled"]);
+type BrandIconName = "mysql" | "postgres" | "sqlite";
 
-const PATHS: Record<IconName, ReactNode> = {
-  sun: (
-    <>
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2" />
-      <path d="M12 20v2" />
-      <path d="m4.93 4.93 1.41 1.41" />
-      <path d="m17.66 17.66 1.41 1.41" />
-      <path d="M2 12h2" />
-      <path d="M20 12h2" />
-      <path d="m6.34 17.66-1.41 1.41" />
-      <path d="m19.07 4.93-1.41 1.41" />
-    </>
-  ),
-  moon: <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />,
-  help: (
-    <>
-      <circle cx="12" cy="12" r="10" />
-      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-      <path d="M12 17h.01" />
-    </>
-  ),
-  settings: (
-    <>
-      <line x1="21" x2="14" y1="4" y2="4" />
-      <line x1="10" x2="3" y1="4" y2="4" />
-      <line x1="21" x2="12" y1="12" y2="12" />
-      <line x1="8" x2="3" y1="12" y2="12" />
-      <line x1="21" x2="16" y1="20" y2="20" />
-      <line x1="12" x2="3" y1="20" y2="20" />
-      <line x1="14" x2="14" y1="2" y2="6" />
-      <line x1="8" x2="8" y1="10" y2="14" />
-      <line x1="16" x2="16" y1="18" y2="22" />
-    </>
-  ),
-  plus: (
-    <>
-      <path d="M5 12h14" />
-      <path d="M12 5v14" />
-    </>
-  ),
-  close: (
-    <>
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </>
-  ),
-  check: <path d="M20 6 9 17l-5-5" />,
-  table: (
-    <>
-      <path d="M12 3v18" />
-      <rect width="18" height="18" x="3" y="3" rx="2" />
-      <path d="M3 9h18" />
-      <path d="M3 15h18" />
-    </>
-  ),
-  database: (
-    <>
-      <ellipse cx="12" cy="5" rx="9" ry="3" />
-      <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-      <path d="M3 12A9 3 0 0 0 21 12" />
-    </>
-  ),
-  server: (
-    <>
-      <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
-      <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
-      <line x1="6" x2="6.01" y1="6" y2="6" />
-      <line x1="6" x2="6.01" y1="18" y2="18" />
-    </>
-  ),
-  query: (
-    <>
-      <path d="m16 18 6-6-6-6" />
-      <path d="m8 6-6 6 6 6" />
-    </>
-  ),
-  explain: (
-    <>
-      <line x1="6" x2="6" y1="3" y2="15" />
-      <circle cx="18" cy="6" r="3" />
-      <circle cx="6" cy="18" r="3" />
-      <path d="M18 9a9 9 0 0 1-9 9" />
-    </>
-  ),
-  key: (
-    <>
-      <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" />
-      <path d="m21 2-9.6 9.6" />
-      <circle cx="7.5" cy="15.5" r="5.5" />
-    </>
-  ),
-  link: (
-    <>
-      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-    </>
-  ),
-  refresh: (
-    <>
-      <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
-      <path d="M21 3v5h-5" />
-    </>
-  ),
-  snippet: <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />,
-  // アクティビティセンター (#912) のベル。他のグリフと同じ 24x24 / ストローク描画。
-  bell: (
-    <>
-      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-    </>
-  ),
-  warning: (
-    <>
-      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-      <path d="M12 9v4" />
-      <path d="M12 17h.01" />
-    </>
-  ),
-  "chevron-left": <path d="m15 18-6-6 6-6" />,
-  "chevron-right": <path d="m9 18 6-6-6-6" />,
-  clock: (
-    <>
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 6v6l4 2" />
-    </>
-  ),
-  copy: (
-    <>
-      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-    </>
-  ),
-  eye: (
-    <>
-      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
-      <circle cx="12" cy="12" r="3" />
-    </>
-  ),
-  "eye-off": (
-    <>
-      <path d="M9.88 9.88a3 3 0 0 0 4.24 4.24" />
-      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c6.5 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
-      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3.5 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
-      <line x1="2" x2="22" y1="2" y2="22" />
-    </>
-  ),
-  diff: (
-    <>
-      <circle cx="6" cy="6" r="3" />
-      <circle cx="18" cy="18" r="3" />
-      <path d="M13 6h3a2 2 0 0 1 2 2v7" />
-      <path d="M11 18H8a2 2 0 0 1-2-2V9" />
-    </>
-  ),
-  columns: (
-    <>
-      <rect width="18" height="18" x="3" y="3" rx="2" />
-      <line x1="12" x2="12" y1="3" y2="21" />
-    </>
-  ),
-  filter: <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />,
-  // 結果の可視化 (チャート)。軸 + 棒で「テーブルではないビュー」を示す。
-  chart: (
-    <>
-      <path d="M3 3v16a2 2 0 0 0 2 2h16" />
-      <rect width="4" height="8" x="7" y="11" rx="1" />
-      <rect width="4" height="12" x="14" y="7" rx="1" />
-    </>
-  ),
-  // ピボット (クロス集計)。見出し行/列を持つ表 + 本体の変換矢印で、`table` と
-  // 区別できる形にする。
-  pivot: (
-    <>
-      <rect width="18" height="18" x="3" y="3" rx="2" />
-      <path d="M3 9h18" />
-      <path d="M9 9v12" />
-      <path d="M13 15h5" />
-      <path d="m16 13 2 2-2 2" />
-    </>
-  ),
-  "er-diagram": (
-    <>
-      <rect width="7" height="6" x="2" y="3" rx="1" />
-      <rect width="7" height="6" x="15" y="15" rx="1" />
-      <path d="M5.5 9v3a2 2 0 0 0 2 2h11" />
-      <path d="M18.5 9v6" />
-    </>
-  ),
-  lock: (
-    <>
-      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-    </>
-  ),
-  undo: (
-    <>
-      <path d="M3 7v6h6" />
-      <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
-    </>
-  ),
-  redo: (
-    <>
-      <path d="M21 7v6h-6" />
-      <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" />
-    </>
-  ),
-  // ── オブジェクト種別 / グリッド操作 ──
-  // ビュー: テーブル枠 + 目 (参照専用のテーブル様オブジェクト)。
-  view: (
-    <>
-      <rect width="18" height="18" x="3" y="3" rx="2" />
-      <path d="M3 9h18" />
-      <path d="M7.5 15c.9-1.4 2.5-2.2 4.5-2.2s3.6.8 4.5 2.2c-.9 1.4-2.5 2.2-4.5 2.2s-3.6-.8-4.5-2.2Z" />
-      <circle cx="12" cy="15" r="1" />
-    </>
-  ),
-  // ルーチン / プロシージャ / 関数: コードブレース { }。
-  routine: (
-    <>
-      <path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" />
-      <path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1" />
-    </>
-  ),
-  // トリガー: 稲妻 (イベント起動)。
-  trigger: (
-    <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
-  ),
-  // 本番接続 (危険): シールド + 感嘆符。
-  production: (
-    <>
-      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C10.51 3.81 13 5 15 5a1 1 0 0 1 1 1z" />
-      <path d="M12 8v4" />
-      <path d="M12 16h.01" />
-    </>
-  ),
-  // 並び替え (方向なし): 上下両矢印。
-  sort: (
-    <>
-      <path d="m3 8 4-4 4 4" />
-      <path d="M7 4v16" />
-      <path d="m21 16-4 4-4-4" />
-      <path d="M17 20V4" />
-    </>
-  ),
-  // 昇順: 上向き矢印 + 短→長。
-  "sort-asc": (
-    <>
-      <path d="m3 8 4-4 4 4" />
-      <path d="M7 4v16" />
-      <path d="M11 12h4" />
-      <path d="M11 16h7" />
-      <path d="M11 20h10" />
-    </>
-  ),
-  // 降順: 下向き矢印 + 長→短。
-  "sort-desc": (
-    <>
-      <path d="m3 16 4 4 4-4" />
-      <path d="M7 20V4" />
-      <path d="M11 4h10" />
-      <path d="M11 8h7" />
-      <path d="M11 12h4" />
-    </>
-  ),
-  // 列のピン留め。
-  pin: (
-    <>
-      <path d="M12 17v5" />
-      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
-    </>
-  ),
-  // お気に入り: 星。`star` は枠線、`star-filled` は塗りつぶし。
-  star: (
-    <path d="M12 2.5l2.92 5.92 6.53.95-4.72 4.6 1.11 6.5L12 17.9l-5.84 3.07 1.11-6.5L2.55 9.87l6.53-.95L12 2.5z" />
-  ),
-  "star-filled": (
-    <path d="M12 2.5l2.92 5.92 6.53.95-4.72 4.6 1.11 6.5L12 17.9l-5.84 3.07 1.11-6.5L2.55 9.87l6.53-.95L12 2.5z" />
-  ),
-  // エクスポート: 下向き矢印 + トレイ。
-  download: (
-    <>
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <path d="M7 10l5 5 5-5" />
-      <path d="M12 15V3" />
-    </>
-  ),
-  // インポート: 上向き矢印 + トレイ。
-  upload: (
-    <>
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <path d="M7 9l5-5 5 5" />
-      <path d="M12 4v12" />
-    </>
-  ),
-  // 転送 (インポート/エクスポート両方向): 左右の双方向矢印。`sort` (上下矢印 =
-  // 並び替え) との意味衝突を避けるため水平方向にしている。
-  transfer: (
-    <>
-      <path d="m16 3 4 4-4 4" />
-      <path d="M20 7H4" />
-      <path d="m8 21-4-4 4-4" />
-      <path d="M4 17h16" />
-    </>
-  ),
-  // ツール (補助ビューの集約メニュー): レンチ。
-  tools: (
-    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-  ),
-  // ── カラム型ヘッダーアイコン ──
-  // 数値 (整数/小数共通): ハッシュ #。
-  hash: (
-    <>
-      <path d="M4 9h16" />
-      <path d="M4 15h16" />
-      <path d="M10 3 8 21" />
-      <path d="m16 3-2 18" />
-    </>
-  ),
-  // 真偽値: トグルスイッチ。
-  toggle: (
-    <>
-      <rect width="20" height="12" x="2" y="6" rx="6" />
-      <circle cx="8" cy="12" r="2" />
-    </>
-  ),
-  // 日付: カレンダー。
-  calendar: (
-    <>
-      <path d="M8 2v4" />
-      <path d="M16 2v4" />
-      <rect width="18" height="18" x="3" y="4" rx="2" />
-      <path d="M3 10h18" />
-    </>
-  ),
-  // JSON: 波括弧 { }。
-  braces: (
-    <>
-      <path d="M7 3a2 2 0 0 0-2 2v3a2 2 0 0 1-2 2 2 2 0 0 1 2 2v3a2 2 0 0 0 2 2" />
-      <path d="M17 3a2 2 0 0 1 2 2v3a2 2 0 0 0 2 2 2 2 0 0 0-2 2v3a2 2 0 0 1-2 2" />
-    </>
-  ),
-  // ENUM/SET: リスト (列挙)。
-  list: (
-    <>
-      <path d="M8 6h13" />
-      <path d="M8 12h13" />
-      <path d="M8 18h13" />
-      <path d="M3 6h.01" />
-      <path d="M3 12h.01" />
-      <path d="M3 18h.01" />
-    </>
-  ),
-  // バイナリ/BLOB: 1010。
-  binary: (
-    <>
-      <rect x="14" y="14" width="6" height="6" rx="1" />
-      <rect x="6" y="4" width="6" height="6" rx="1" />
-      <path d="M6 20h4" />
-      <path d="M14 10h4" />
-      <path d="M6 14h2v6" />
-      <path d="M14 4h2v6" />
-    </>
-  ),
-  // 文字列: 大文字 T。
-  text: (
-    <>
-      <path d="M4 7V4h16v3" />
-      <path d="M9 20h6" />
-      <path d="M12 4v16" />
-    </>
-  ),
-  // 切断 (接続解除): プラグとソケットが離れた状態 (引き抜かれたプラグ)。
-  unplug: (
-    <>
-      <path d="m19 5 3-3" />
-      <path d="m2 22 3-3" />
-      <path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z" />
-      <path d="M7.5 13.5 10 11" />
-      <path d="M10.5 16.5 13 14" />
-      <path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z" />
-    </>
-  ),
-  // 最大化: 四隅に開く矢印 (結果パネルをモーダル全画面へ広げる)。
-  maximize: (
-    <>
-      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-      <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
-      <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-    </>
-  ),
-  // 最小化 (元に戻す): 四隅に閉じる矢印。
-  minimize: (
-    <>
-      <path d="M8 3v3a2 2 0 0 1-2 2H3" />
-      <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
-      <path d="M3 16h3a2 2 0 0 1 2 2v3" />
-      <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
-    </>
-  ),
-  // 検索: 虫眼鏡 (DB 全体からの値検索 #748 のコマンドパレット項目・入力欄で使用)。
-  search: (
-    <>
-      <circle cx="11" cy="11" r="8" />
-      <path d="m21 21-4.3-4.3" />
-    </>
-  ),
-  // 一括実行 (ブロードキャスト、#915)。中心の点から広がる同心の弧で「1 つの文を
-  // 複数の接続へ同時に送る」ことを示す。QueryEditor のツールバーにインラインで
-  // 描いていた glyph を、オーバーフローメニューでも使えるようアイコンセットへ
-  // 昇格させたもの (同じ意味に同じ glyph、というレキシコンの方針どおり)。
-  broadcast: (
-    <>
-      <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
-      <path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4" />
-      <path d="M4.2 4.2a11.4 11.4 0 0 0 0 15.6M19.8 4.2a11.4 11.4 0 0 1 0 15.6" />
-    </>
-  ),
-  // サンドボックス (壊せる砂場、#747) 用のフラスコアイコン。
-  flask: (
-    <>
-      <path d="M10 2v7.31" />
-      <path d="M14 9.3V1.99" />
-      <path d="M8.5 2h7" />
-      <path d="M14 9.3a6.5 6.5 0 1 1-4 0" />
-      <path d="M5.52 16h12.96" />
-    </>
-  ),
-  // ドライバのブランドロゴ (simple-icons, CC0 / 単一パスの塗り)。FILLED_ICONS 経由で
-  // fill 描画される。MySQL=イルカ / PostgreSQL=ゾウ / SQLite=羽根。
+const BRAND_GLYPHS: Record<BrandIconName, ReactNode> = {
   mysql: (
     <path d="M16.405 5.501c-.115 0-.193.014-.274.033v.013h.014c.054.104.146.18.214.273.054.107.1.214.154.32l.014-.015c.094-.066.14-.172.14-.333-.04-.047-.046-.094-.08-.14-.04-.067-.126-.1-.18-.153zM5.77 18.695h-.927a50.854 50.854 0 00-.27-4.41h-.008l-1.41 4.41H2.45l-1.4-4.41h-.01a72.892 72.892 0 00-.195 4.41H0c.055-1.966.192-3.81.41-5.53h1.15l1.335 4.064h.008l1.347-4.064h1.095c.242 2.015.384 3.86.428 5.53zm4.017-4.08c-.378 2.045-.876 3.533-1.492 4.46-.482.716-1.01 1.073-1.583 1.073-.153 0-.34-.046-.566-.138v-.494c.11.017.24.026.386.026.268 0 .483-.075.647-.222.197-.18.295-.382.295-.605 0-.155-.077-.47-.23-.944L6.23 14.615h.91l.727 2.36c.164.536.233.91.205 1.123.4-1.064.678-2.227.835-3.483zm12.325 4.08h-2.63v-5.53h.885v4.85h1.745zm-3.32.135l-1.016-.5c.09-.076.177-.158.255-.25.433-.506.648-1.258.648-2.253 0-1.83-.718-2.746-2.155-2.746-.704 0-1.254.232-1.65.697-.43.508-.646 1.256-.646 2.245 0 .972.19 1.686.574 2.14.35.41.877.615 1.583.615.264 0 .506-.033.725-.098l1.325.772.36-.622zM15.5 17.588c-.225-.36-.337-.94-.337-1.736 0-1.393.424-2.09 1.27-2.09.443 0 .77.167.977.5.224.362.336.936.336 1.723 0 1.404-.424 2.108-1.27 2.108-.445 0-.77-.167-.978-.5zm-1.658-.425c0 .47-.172.856-.516 1.156-.344.3-.803.45-1.384.45-.543 0-1.064-.172-1.573-.515l.237-.476c.438.22.833.328 1.19.328.332 0 .593-.073.783-.22a.754.754 0 00.3-.615c0-.33-.23-.61-.648-.845-.388-.213-1.163-.657-1.163-.657-.422-.307-.632-.636-.632-1.177 0-.45.157-.81.47-1.085.315-.278.72-.415 1.22-.415.512 0 .98.136 1.4.41l-.213.476a2.726 2.726 0 00-1.064-.23c-.283 0-.502.068-.654.206a.685.685 0 00-.248.524c0 .328.234.61.666.85.393.215 1.187.67 1.187.67.433.305.648.63.648 1.168zm9.382-5.852c-.535-.014-.95.04-1.297.188-.1.04-.26.04-.274.167.055.053.063.14.11.214.08.134.218.313.346.407.14.11.28.216.427.31.26.16.555.255.81.416.145.094.293.213.44.313.073.05.12.14.214.172v-.02c-.046-.06-.06-.147-.105-.214-.067-.067-.134-.127-.2-.193a3.223 3.223 0 00-.695-.675c-.214-.146-.682-.35-.77-.595l-.013-.014c.146-.013.32-.066.46-.106.227-.06.435-.047.67-.106.106-.027.213-.06.32-.094v-.06c-.12-.12-.21-.283-.334-.395a8.867 8.867 0 00-1.104-.823c-.21-.134-.476-.22-.697-.334-.08-.04-.214-.06-.26-.127-.12-.146-.19-.34-.275-.514a17.69 17.69 0 01-.547-1.163c-.12-.262-.193-.523-.34-.763-.69-1.137-1.437-1.826-2.586-2.5-.247-.14-.543-.2-.856-.274-.167-.008-.334-.02-.5-.027-.11-.047-.216-.174-.31-.235-.38-.24-1.364-.76-1.644-.072-.18.434.267.862.422 1.082.115.153.26.328.34.5.047.116.06.235.107.356.106.294.207.622.347.897.073.14.153.287.247.413.054.073.146.107.167.227-.094.136-.1.334-.154.5-.24.757-.146 1.693.194 2.25.107.166.362.534.703.393.3-.12.234-.5.32-.835.02-.08.007-.133.048-.187v.015c.094.188.188.367.274.555.206.328.566.668.867.895.16.12.287.328.487.402v-.02h-.015c-.043-.058-.1-.086-.154-.133a3.445 3.445 0 01-.35-.4 8.76 8.76 0 01-.747-1.218c-.11-.21-.202-.436-.29-.643-.04-.08-.04-.2-.107-.24-.1.146-.247.273-.32.453-.127.288-.14.642-.188 1.01-.027.007-.014 0-.027.014-.214-.052-.287-.274-.367-.46-.2-.475-.233-1.238-.06-1.785.047-.14.247-.582.167-.716-.042-.127-.174-.2-.247-.303a2.478 2.478 0 01-.24-.427c-.16-.374-.24-.788-.414-1.162-.08-.173-.22-.354-.334-.513-.127-.18-.267-.307-.368-.52-.033-.073-.08-.194-.027-.274.014-.054.042-.075.094-.09.088-.072.335.022.422.062.247.1.455.194.662.334.094.066.195.193.315.226h.14c.214.047.455.014.655.073.355.114.675.28.962.46a5.953 5.953 0 012.085 2.286c.08.154.115.295.188.455.14.33.313.663.455.982.14.315.275.636.476.897.1.14.502.213.682.286.133.06.34.115.46.188.23.14.454.3.67.454.11.076.443.243.463.378z" />
   ),
@@ -595,46 +249,147 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
 };
 
+/**
+ * `name` がブランドロゴかどうかの型ガード。これで分岐すると、以降のコードで
+ * `GLYPHS` (= ブランドを除いた全 `IconName` を網羅する) をキャスト無しで引ける。
+ */
+function isBrandIcon(name: IconName): name is BrandIconName {
+  return name in BRAND_GLYPHS;
+}
+
+/**
+ * 意味 (`IconName`) から Tabler のグリフへの束縛。**「意味 → グリフ」の唯一の
+ * 情報源**で、名前が素直に対応しないものだけ選定理由をコメントで残す。
+ */
+const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
+  sun: IconSun,
+  moon: IconMoon,
+  help: IconHelp,
+  settings: IconSettings,
+  plus: IconPlus,
+  close: IconX,
+  check: IconCheck,
+  table: IconTable,
+  database: IconDatabase,
+  server: IconServer,
+  // クエリ (エディタ/クエリタブ): SQL を書く場所なのでコードの山括弧。
+  query: IconCode,
+  // 実行計画: 分岐するツリーとして読ませる。
+  explain: IconGitBranch,
+  key: IconKey,
+  link: IconLink,
+  refresh: IconRefresh,
+  // スニペット: 保存した SQL = しおり。
+  snippet: IconBookmark,
+  warning: IconAlertTriangle,
+  "chevron-left": IconChevronLeft,
+  "chevron-right": IconChevronRight,
+  clock: IconClock,
+  copy: IconCopy,
+  eye: IconEye,
+  "eye-off": IconEyeOff,
+  // 差分 (Diff/Sync): 2 点間の比較。
+  diff: IconGitCompare,
+  // ER 図: テーブル間の関連図。
+  "er-diagram": IconSchema,
+  columns: IconColumns,
+  filter: IconFilter,
+  lock: IconLock,
+  undo: IconArrowBackUp,
+  redo: IconArrowForwardUp,
+  // ビュー: 実テーブルに別名を与えた派生表、という意味で table 系のグリフに寄せる
+  // (`table` と並んだときに同じ家族に見えることを優先)。
+  view: IconTableAlias,
+  // ルーチン (プロシージャ/関数): f(x)。以前の波括弧グリフは `braces` (JSON 列)
+  // とほぼ同形で紛らわしかったため、意味が一意に読めるものへ置き換えた。
+  routine: IconMathFunction,
+  // トリガー: 何かの発火。
+  trigger: IconBolt,
+  // 本番接続 (危険): 盾 + 注意。
+  production: IconShieldExclamation,
+  sort: IconArrowsSort,
+  "sort-asc": IconSortAscending,
+  "sort-desc": IconSortDescending,
+  pin: IconPin,
+  star: IconStar,
+  // Tabler の filled 系グリフ。塗り/線の切り替えはコンポーネント側が持つので、
+  // 本ファイルで fill 用の分岐を持つ必要はない (ブランドロゴのみ例外)。
+  "star-filled": IconStarFilled,
+  download: IconDownload,
+  upload: IconUpload,
+  // 転送 (イン/エクスポート両方向): 双方向の矢印。
+  transfer: IconArrowsExchange,
+  // ツール (補助ビューの集約): レンチ。
+  tools: IconTool,
+  hash: IconHash,
+  toggle: IconToggleLeft,
+  calendar: IconCalendar,
+  braces: IconBraces,
+  list: IconList,
+  binary: IconBinary,
+  // 文字列型の列: Aa。
+  text: IconLetterCase,
+  // 切断: 抜けたプラグ。
+  unplug: IconPlugConnectedX,
+  chart: IconChartBar,
+  // ピボット (クロス集計): 行と列の見出しを持つ格子。Tabler に pivot そのものの
+  // グリフは無いため、クロス集計の形が最も近い layout-board-split を充てる。
+  pivot: IconLayoutBoardSplit,
+  maximize: IconMaximize,
+  minimize: IconMinimize,
+  search: IconSearch,
+  bell: IconBell,
+  broadcast: IconBroadcast,
+  flask: IconFlask,
+};
+
 interface IconProps {
   name: IconName;
   size?: number | string;
   strokeWidth?: number;
 }
 
-export function Icon({ name, size = "1em", strokeWidth = 2 }: IconProps) {
-  // Chakra v3 では `width={12}` や `width="16"` を **サイズトークン** として解決し
-  // (`var(--chakra-sizes-12)` = 3rem = 48px / `var(--chakra-sizes-16)` = 4rem
-  // = 64px)、呼び出し側が「ピクセル」のつもりで渡した整数値が巨大なアイコンに
-  // なる。HTML 属性として渡される raw な数値とは解釈が異なるため、ここで
-  // 明示的に px 文字列へ変換してトークン解決を回避する。
-  // また `size="sm"` のようなサイズトークン名がそのまま渡ると Chakra が
-  // `var(--chakra-sizes-sm)` (= 24rem) として解決し巨大化する。`ICON_SIZES` の
-  // キー (sm/md/lg/xl/2xl) は `calc(px * var(--font-scale))` の CSS 文字列へ変換し、
-  // 誤って巨大アイコンになるのを防ぎつつ font-scale 追従を効かせる (#818)。
-  const dim =
-    typeof size === "number"
-      ? `${size}px`
-      : size in ICON_SIZES
-        ? ICON_SIZES[size as IconSizeToken]
-        : size;
-  const filled = FILLED_ICONS.has(name);
-  return (
-    <chakra.svg
-      width={dim}
-      height={dim}
-      viewBox="0 0 24 24"
-      fill={filled ? "currentColor" : "none"}
-      stroke={filled ? "none" : "currentColor"}
-      strokeWidth={filled ? undefined : strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-      display="inline-block"
-      verticalAlign="-0.125em"
-      flexShrink={0}
-    >
-      {PATHS[name]}
-    </chakra.svg>
-  );
+/**
+ * `ICON_SIZES` のトークン名・生の数値・任意の CSS 長さを、**CSS 用の**寸法文字列へ
+ * 正規化する。呼び出し側が `size={16}` のつもりで渡した数値は px として扱う。
+ */
+function resolveSize(size: number | string): string {
+  if (typeof size === "number") return `${size}px`;
+  return size in ICON_SIZES ? ICON_SIZES[size as IconSizeToken] : size;
+}
+
+export function Icon({ name, size = "1em", strokeWidth = ICON_STROKE.regular }: IconProps) {
+  const dim = resolveSize(size);
+  // 寸法は SVG の `width`/`height` **属性** (= Tabler の `size` prop) ではなく
+  // インラインスタイルで与える。`ICON_SIZES` の値は `calc(13px * var(--font-scale))`
+  // のような CSS 式で、プレゼンテーション属性としては不正だが CSS プロパティとしては
+  // 有効なため。CSS は属性より優先されるので、Tabler が既定で置く width/height="24"
+  // もこれで上書きされる (#818 の font-scale 追従はこの経路で効く)。
+  const style = {
+    width: dim,
+    height: dim,
+    display: "inline-block",
+    verticalAlign: "-0.125em",
+    flexShrink: 0,
+  } as const;
+
+  if (isBrandIcon(name)) {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        stroke="none"
+        aria-hidden="true"
+        focusable="false"
+        style={style}
+      >
+        {BRAND_GLYPHS[name]}
+      </svg>
+    );
+  }
+
+  const Glyph = GLYPHS[name];
+  // Tabler の `stroke` prop は色ではなく**線幅** (`stroke-width`) を指す。色は
+  // `color` prop だが、既定の `currentColor` のままにして周囲のテキスト色へ追従させる。
+  return <Glyph stroke={strokeWidth} aria-hidden="true" focusable="false" style={style} />;
 }
