@@ -601,6 +601,23 @@ SQL の安全網・リテラル生成・方言判定など安全性に直結す�
   スクリーンショットの生成まで成功しても最後のコミット push で必ず失敗します
   (`GH013`)。見た目を変える**作業ブランチ上で**実行し、生成されたベースラインを
   その変更と同じ PR (または後追いの PR) でマージしてください。
+- **このワークフローの push には Secrets `VISUAL_BASELINE_PAT` を使います (任意だが
+  強く推奨)。** GitHub は再帰防止のため **`GITHUB_TOKEN` で push したコミットからは
+  新しいワークフロー実行を起動しません**。PR ブランチへベースライン更新を push すると、
+  新しい head に対して作られる `ci` / `pr-conflict` / `codeql` の実行はいずれも
+  **`action_required` (承認待ち) のまま 1 ジョブも走らずに完了扱い**になり、PR の
+  必須チェックが永久に「待機中」で止まります (実例: PR #1083。人が Actions タブから
+  各実行を手動で再実行すれば解消しますが、気付きにくく毎回手作業が要ります)。
+  そのため checkout の `token` を
+  `${{ secrets.VISUAL_BASELINE_PAT || github.token }}` とし、PAT があればそちらで
+  push します (PAT の push は通常どおり下流のワークフローを起動します)。
+  **セットアップ (メンテナ作業)**: 本リポジトリへの **Contents: Read and write**
+  権限を持つ fine-grained PAT (classic なら `repo` スコープ) を発行し、Secrets に
+  `VISUAL_BASELINE_PAT` として登録してください。ワークフローファイル自体は push
+  しないので `workflow` スコープは不要です。**未登録でもワークフローは従来どおり
+  動きます**が、その場合は上記の承認待ちが起きることを `::warning::` と Job Summary
+  に出して黙って詰まらせないようにしています (バンドルサイズ #443 ・カバレッジ #482
+  と同じ「まず可視化」の漸進方針)。
 - CI では `ci.yml` の **`frontend` ジョブ (チェック名 `frontend (build + browser
   tests)`)** が、jsdom 単体テスト等の後続ステップとして Playwright の Chromium を
   導入して `pnpm test:browser` を実行します。旧来は jsdom 側と別ジョブ
