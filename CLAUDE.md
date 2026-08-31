@@ -14,6 +14,9 @@
   すべての文章を日本語で記述します (コード・コマンド・識別子など本来英語で書くべき
   ものは除く)。Claude Code on the web (クラウド実行環境) を含むすべての状況に適用。
 - **PR のタイトル・本文・サマリー・テスト計画もすべて日本語で記述してください。**
+- このルールは `.claude/settings.json` (`language` 設定 + `UserPromptSubmit`
+  フック) で強制しています。設定を変更した場合は `/hooks` を一度開くか、
+  セッションを再起動しないと反映されません。
 - 詳細: `.claude/rules/language.md`
 
 ### Issue と PR
