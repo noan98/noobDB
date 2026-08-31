@@ -41,6 +41,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       workflow: ${{ steps.filter.outputs.workflow }}
       crosslang: ${{ steps.filter.outputs.crosslang }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       # pull_request イベントでは paths-filter は API 比較で checkout 不要だが、
       # push (main) イベントではローカルの git 履歴を比較するため checkout が必要。
@@ -76,6 +77,13 @@ jobs:
             # 実走させる (詳細は下の `crosslang parity` ジョブのコメント参照)。
             crosslang:
               - 'src/__tests__/fixtures/**'
+            # docCommandParity.test.ts が ?raw で読む IPC コマンド一覧ドキュメント。
+            # このファイルだけを編集した PR (一覧から誤ってコマンドを消した等) でも
+            # パリティ検証が実走するよう、`crosslang parity` ジョブの if: へ OR で
+            # 足す。Rust テストはこのドキュメントを読まないので `rust (test)` には
+            # 足さない。
+            docs:
+              - '.claude/skills/noobdb-ipc/references/command-list.md'
 
   # フロントエンドの typecheck/build/lint/単体テストと、実ブラウザでの描画/
   # ビジュアル回帰テストを 1 ジョブに統合している (#908)。旧来は `frontend` と
@@ -309,7 +317,7 @@ jobs:
   crosslang-parity:
     name: crosslang parity
     needs: changes
-    if: (needs.changes.outputs.rust == 'true' && needs.changes.outputs.frontend != 'true') || needs.changes.outputs.workflow == 'true'
+    if: (needs.changes.outputs.rust == 'true' && needs.changes.outputs.frontend != 'true') || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -358,6 +366,7 @@ jobs:
           src/__tests__/exportFormatGolden.test.ts
           src/__tests__/apiReachabilityParity.test.ts
           src/__tests__/commandRegistrationParity.test.ts
+          src/__tests__/docCommandParity.test.ts
           src/__tests__/sshHostKeyMismatchGolden.test.ts
 
   rust-fmt:

@@ -1,9 +1,11 @@
 # CLAUDE.md
 
 このファイルは、本リポジトリのコードを扱う際に Claude Code (claude.ai/code) に
-向けたガイダンスを提供します。**詳細は `.claude/rules/` と `.claude/reference/` に
-分割してあります** — 下の「ドキュメント索引」から、作業に関係するファイルだけを
-読んでください。
+向けたガイダンスを提供します。
+
+**詳細は `.claude/skills/` の各スキルに分割してあります。** スキルの説明文は自動で
+読み込まれるので、作業に関係するスキルを開いてください (`noobdb-architecture` が
+出発点)。必ず守る規約は `.claude/rules/` にあり、要点はこのファイルに転記しています。
 
 ## 絶対に守るルール
 
@@ -36,10 +38,10 @@
   Rust コマンド経由にする (`src-tauri/capabilities/default.json` は意図的に最小)。
 - **`lib.rs::run()` の `.setup(...)` 内で `tokio::spawn` を使わない** —
   Tokio ランタイム外なので panic する。`tauri::async_runtime::spawn` を使う。
-- **IPC は 3 点セットで揃える**: Rust ハンドラ追加 → `lib.rs` の
-  `generate_handler!` に登録 → `src/api/tauri.ts` に型付きラッパー (+ ストリーミング
-  なら `listen*` ヘルパー) を追加し、**UI から実際に呼ぶ**。ズレるとパリティテスト
-  (`ipcCommandParity` / `apiReachabilityParity` / `commandRegistrationParity`) が落ちます。
+- **IPC は 3 点セット + ドキュメントで揃える**: Rust ハンドラ追加 → `lib.rs` の
+  `generate_handler!` に登録 → `src/api/tauri.ts` に型付きラッパー追加 → **UI から
+  実際に呼ぶ** → `.claude/skills/noobdb-ipc/references/command-list.md` に追記。
+  どれが欠けても対応するパリティテストが落ちます。
 - **本体 Rust コードの `unwrap()` / `expect()` / `panic!` は CI が fail させます。**
   やむを得ない場合は `#[allow(...)]` + 日本語の根拠コメントを必ず添える。
 - **64bit 整数のデコードは `Value::from_*_lossless` を必ず経由する** — JS の安全整数
@@ -80,9 +82,8 @@ cargo test
 > `cargo build` / `clippy` / `test` が失敗します)。Windows ビルドには `lld-link`
 > (LLVM) が必要。
 
-統合テストは環境変数ゲート方式で、未設定ならスキップされます (SQLite / DuckDB は
-常時実走)。ミューテーションテスト・TLS/SSH 統合テストの手順を含む全コマンドは
-`.claude/reference/commands.md` を参照。
+統合テストは環境変数ゲート方式で、未設定ならスキップされます。全コマンドは
+`noobdb-testing` スキルを参照。
 
 ## アーキテクチャ (要約)
 
@@ -92,49 +93,20 @@ noobDB は MySQL / PostgreSQL / SQLite / DuckDB / Microsoft SQL Server 対応の
 - **フロントエンド** (`src/`): React 19 + TypeScript + Vite + Chakra UI。Rust への
   通信は `src/api/tauri.ts` の型付きラッパー (`invoke`) のみ。ストリーミング結果は
   戻り値ではなくイベント (`listen`) で受け取る。
-- **バックエンド** (`src-tauri/src/`): Tauri 2 + Tokio。`lib.rs::run()` が IPC
-  ハンドラを登録し `AppState` を管理ステートとして持つ。
+- **バックエンド** (`src-tauri/src/`): Tauri 2 + Tokio。`lib.rs::run()` が
+  **98 個の IPC コマンド**を登録し `AppState` を管理ステートとして持つ。
 - **DB レイヤ**: トレイトオブジェクトではなく手書きの `enum db::Connection` で
   ドライバをディスパッチ (`db/mod.rs`)。
 - **秘密情報**: `profiles.json` (非秘密) と OS keyring (秘密) を厳密に分離。
 
-## ドキュメント索引
+より詳しい地図は `noobdb-architecture` スキル。
 
-作業内容に応じて、以下から**必要なものだけ**を読んでください。
-
-### ルール (`.claude/rules/`)
-
-| ファイル | 読むタイミング |
-|---|---|
-| `language.md` | 応答・PR の言語ポリシー全文 |
-| `issues-and-prs.md` | Issue を作る / ラベルを付ける / PR を作るとき |
-| `code-conventions.md` | Rust の unwrap lint、TS の tsc/Vitest/knip 運用 |
-
-### リファレンス (`.claude/reference/`)
-
-| ファイル | 読むタイミング |
-|---|---|
-| `commands.md` | テスト実行方法、ミューテーションテスト、統合テストの環境変数 |
-| `ci.md` | CI が落ちた / ワークフローを変える / 必須チェック名・依存更新・ビルド高速化 |
-| `testing.md` | ブラウザモードのテスト (#306) やビジュアル回帰、実 webview E2E (#529) |
-| `architecture-overview.md` | 2 プロセス構成、`setup` フックの制約 |
-| `db-drivers.md` | ドライバ追加/修正、`enum Connection`、MSSQL 固有事情、TLS、セッション初期化 SQL、型デコード |
-| `sql-safety.md` | 読み取り専用ガード、自動 LIMIT、リテラルマスク、共有ゴールデンベクタ |
-| `sessions-and-streaming.md` | ストリーミング実行/キャンセル、SSH トンネル (多段)、セッション管理、再接続 |
-| `profiles-and-storage.md` | プロファイル/秘密情報、クエリ履歴、スニペット、ログ、ファイル読み書き |
-| `data-io.md` | エクスポート / ダンプ / インポート、明示的トランザクション |
-| `diff-sync-sandbox.md` | スキーマ・データ比較と同期、サンドボックス (壊せる砂場) |
-| `admin-and-tools.md` | プロセス管理、ユーザ/権限管理、ローカル横断クエリ、アプリ内自動更新 |
-| `ipc.md` | IPC コマンドの追加/変更、エラーの `kind`、`__test_api`、capabilities |
-| `frontend.md` | UI コンポーネント、各フロントモジュールの責務と設計判断 |
-
-### メンテナ向けのセットアップ (未完了だと機能しません)
+## メンテナ向けのセットアップ (未完了だと機能しません)
 
 - **自動更新の署名鍵**: `tauri.conf.json` の `plugins.updater.pubkey` は
   **プレースホルダ**。`pnpm tauri signer generate` で鍵ペアを作り、公開鍵で差し替え、
-  秘密鍵を Secrets `TAURI_SIGNING_PRIVATE_KEY` に登録する
-  (詳細: `.claude/reference/admin-and-tools.md`)。
+  秘密鍵を Secrets `TAURI_SIGNING_PRIVATE_KEY` に登録する (`noobdb-features` スキル)。
 - **ビジュアルベースライン更新**: Secrets `VISUAL_BASELINE_PAT` の登録を推奨
-  (詳細: `.claude/reference/testing.md`)。
+  (`noobdb-testing` スキル)。
 - **CodeRabbit レビュー起動**: PAT (`CODERABBIT_PAT`) が無い間は no-op
-  (詳細: `.claude/reference/ci.md`)。
+  (`noobdb-ci` スキル)。
