@@ -1,6 +1,9 @@
-# アーキテクチャ概要
+---
+name: noobdb-architecture
+description: noobDB の全体像を把握するとき — 2 プロセス構成 (React フロント ⇔ Tauri/Rust バックエンド)、src-tauri/src 配下のモジュール地図、そして Tauri の setup フックで tokio::spawn が panic する落とし穴を調べるときに読む。どのファイルを触ればよいか分からないときの出発点。
+---
 
-2 プロセス構成と、Tauri `setup` フックの落とし穴。
+# noobDB のアーキテクチャ
 
 noobDB は MySQL / PostgreSQL / SQLite / DuckDB (#709) / Microsoft SQL Server (#729)
 に対応した軽量デスクトップ DB クライアントで、SSH トンネルをファーストクラスで
@@ -8,6 +11,21 @@ noobDB は MySQL / PostgreSQL / SQLite / DuckDB (#709) / Microsoft SQL Server (#
 (`tls-rustls`。MySQL/PostgreSQL/SQLite の 3 ドライバが使う)、DuckDB 専用の `duckdb`
 (bundled)、MSSQL 専用の `tiberius`、`russh`、`keyring` などに依存しています
 (バージョンの正は `src-tauri/Cargo.toml`)。
+
+## バックエンドのモジュール地図 (`src-tauri/src/`)
+
+| ディレクトリ | 役割 | 詳しいスキル |
+|---|---|---|
+| `db/` | ドライバ層。`enum Connection` でディスパッチ。安全網 (`is_read_only_sql` / `apply_auto_limit`) もここ | `noobdb-db-layer` / `noobdb-sql-safety` |
+| `commands/` | IPC ハンドラ (98 コマンド)。薄いラッパーに徹し、コアは `*_inner` に切る | `noobdb-ipc` / `noobdb-features` |
+| `ssh/` | トンネル、ホスト鍵検証 (TOFU)、`~/.ssh/config` パーサ | `noobdb-sessions` |
+| `profiles/` `snippets/` `sandboxes/` `tasks/` | JSON ストア 4 種 (並行書き込み対策が必須) | `noobdb-storage` |
+| `history/` `flight_recorder/` | ローカル SQLite ストア | `noobdb-storage` / `noobdb-features` |
+| `state.rs` | `AppState` — セッション / ストリーム / 接続試行のレジストリ | `noobdb-sessions` |
+| `error.rs` | `AppError` と構造化された `kind` | `noobdb-ipc` |
+| `logs.rs` | ファイルバックドのログシンク | `noobdb-storage` |
+
+フロントエンド (`src/`) は `noobdb-frontend` スキルを参照。
 
 ## 2 プロセス構成
 
