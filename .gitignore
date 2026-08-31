@@ -62,3 +62,6 @@ pnpm-debug.log*
 
 # Claude Code agent worktrees (transient)
 .claude/worktrees/
+
+# Claude Code の個人用設定上書き (.claude/settings.json はコミットする)
+.claude/settings.local.json
