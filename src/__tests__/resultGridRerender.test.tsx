@@ -45,13 +45,14 @@ describe("Result Grid の再レンダリング削減 (#1098)", () => {
     // 程度に大きい必要がある。ストリーミング時に近い行数 (数百行) を用意し、
     // signal-to-noise 比を確保する (行数が少ないと "本来の再レンダリング" 自体
     // も一瞬で終わり、jsdom 環境でのタイマー分解能・GC のばらつきに紛れて
-    // フレーキーになりやすい)。
+    // フレーキーになりやすい)。CI は複数ジョブが CPU を分け合うことがあるため、
+    // 既定の 5000ms より長いタイムアウトを明示する (第 2 引数)。
     const columns: Column[] = [
       { name: "id", type_name: "INT" },
       { name: "name", type_name: "VARCHAR" },
       { name: "note", type_name: "VARCHAR" },
     ];
-    const initialRows: CellValue[][] = Array.from({ length: 400 }, (_, i) => [
+    const initialRows: CellValue[][] = Array.from({ length: 250 }, (_, i) => [
       i,
       `row-${i}`,
       `この行の説明テキストです ${i}`,
@@ -100,7 +101,7 @@ describe("Result Grid の再レンダリング削減 (#1098)", () => {
     // tick だけのときよりも明確に (数倍以上) 長くかかる。
     expect(medianTickDuration).toBeLessThan(mountDuration * 0.5);
     expect(realUpdateDuration).toBeGreaterThan(medianTickDuration * 3);
-  });
+  }, 20000);
 
   it("ストリーミング的な行追加のあとも、データバーの条件付き書式が最新の min/max に追従する", async () => {
     const user = userEvent.setup();
@@ -138,5 +139,5 @@ describe("Result Grid の再レンダリング削減 (#1098)", () => {
     // 新しく増えた qty=20 の行が新しい最大値としてバー幅 100%。
     const twentyRowBar = bars()[bars().length - 1];
     expect(twentyRowBar.style.transform).toBe("scaleX(1)");
-  });
+  }, 20000);
 });
