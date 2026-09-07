@@ -14,6 +14,11 @@
 /// - `small`: 一覧画面を素早く開いたときの体感 (TTFR/TTI) を左右する規模。
 /// - `medium`: 通常運用でよく見る規模。
 /// - `large`: ストリーミング/仮想化の効果が効いてくる規模。
+///
+/// `perf` モジュール自体が非公開 (`mod perf;`) なので、テスト以外から参照されない
+/// この定数は非テストビルドでは dead_code になる。テストからのみ使うため
+/// `#[cfg(test)]` を付ける。
+#[cfg(test)]
 pub const DATASET_CASES: &[(&str, usize)] = &[("small", 200), ("medium", 5_000), ("large", 30_000)];
 
 #[cfg(test)]
@@ -118,7 +123,11 @@ mod tests {
             .await
             .unwrap_or_else(|e| panic!("perf bench '{name}' query failed: {e}"));
 
-        assert_eq!(result.rows.len(), n, "perf bench '{name}': unexpected row count");
+        assert_eq!(
+            result.rows.len(),
+            n,
+            "perf bench '{name}': unexpected row count"
+        );
         // 極端な回帰 (例: O(n^2) 劣化やデッドロック) だけを検出する緩い上限。
         // 通常の SQLite 実行なら 30,000 行でも数百 ms 程度で終わる。
         assert!(
@@ -158,6 +167,9 @@ mod tests {
     fn dataset_cases_are_defined_and_sorted_by_size() {
         let sizes: Vec<usize> = super::DATASET_CASES.iter().map(|(_, n)| *n).collect();
         assert_eq!(sizes.len(), 3);
-        assert!(sizes.windows(2).all(|w| w[0] < w[1]), "dataset cases should grow monotonically");
+        assert!(
+            sizes.windows(2).all(|w| w[0] < w[1]),
+            "dataset cases should grow monotonically"
+        );
     }
 }

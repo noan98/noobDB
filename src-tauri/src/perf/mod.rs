@@ -134,7 +134,12 @@ pub fn approx_rows_bytes(rows: &[Vec<Value>]) -> u64 {
 
 /// 非ストリーミング実行 (`run_query` / `run_query_transaction` 等) の計測ログを
 /// 1 行出す。計測 OFF なら何もしない。SQL 本文は含めない。
-pub fn log_query_execute(session_id: &str, sql_execute_ms: Option<f64>, rows: usize, columns: usize) {
+pub fn log_query_execute(
+    session_id: &str,
+    sql_execute_ms: Option<f64>,
+    rows: usize,
+    columns: usize,
+) {
     if !perf_enabled() {
         return;
     }
@@ -260,7 +265,10 @@ mod tests {
 
     #[test]
     fn approx_rows_bytes_scales_with_value_count() {
-        let rows = vec![vec![Value::Int(1), Value::Null], vec![Value::Int(2), Value::Null]];
+        let rows = vec![
+            vec![Value::Int(1), Value::Null],
+            vec![Value::Int(2), Value::Null],
+        ];
         assert_eq!(approx_rows_bytes(&rows), 4 * 12);
         assert_eq!(approx_rows_bytes(&[]), 0);
     }

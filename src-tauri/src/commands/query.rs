@@ -173,7 +173,12 @@ pub(crate) async fn run_query_inner(
     let perf_span = perf::Span::start();
     let result = session.conn.execute(sql, database).await;
     if let Ok(r) = &result {
-        perf::log_query_execute(&session.id, perf_span.elapsed_ms(), r.rows.len(), r.columns.len());
+        perf::log_query_execute(
+            &session.id,
+            perf_span.elapsed_ms(),
+            r.rows.len(),
+            r.columns.len(),
+        );
     }
     result
 }
