@@ -1,6 +1,6 @@
 # IPC コマンド一覧
 
-`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **98 コマンド**の
+`src-tauri/src/lib.rs::run()` の `generate_handler!` に登録されている **99 コマンド**の
 全件です。`src/api/tauri.ts` の `api` オブジェクトがこれをミラーします。
 
 > **このファイルは `src/__tests__/docCommandParity.test.ts` が
@@ -78,3 +78,11 @@
 
 `export_query_result` / `export_query_stream` / `dump_database` / `parse_csv_preview` /
 `import_csv` / `read_text_file` / `write_binary_file`
+
+## Schema Cache (`commands/schema.rs`, #1097)
+
+`refresh_schema_cache` — セッション単位の Schema Cache (`cache::SchemaCache`) を
+明示的に無効化する。DDL 実行時 (`run_query` / `run_query_transaction` /
+`run_in_transaction` / `apply_sync_sql`) は成功後にバックエンドが自動で
+invalidate するため、通常のフローでこのコマンドを呼ぶ必要はない — Schema
+Browser の更新ボタンなど、ユーザが明示的に最新化したいときのみ使う。

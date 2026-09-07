@@ -356,6 +356,7 @@ pub(crate) async fn create_sandbox_inner(
         // 揮発性一時ファイルとは異なり切断時に自動削除してはいけない。
         local_temp_file: None,
         _tunnel: None,
+        schema_cache: crate::cache::SchemaCache::default(),
     };
     let session_id = state.insert(session).await;
     tracing::info!(
