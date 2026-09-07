@@ -28,6 +28,12 @@
 //! の emit ペイロード構造体もこのゴールデンへ加えた。これらは元々 `commands::*`
 //! 配下の非公開型だったため、`lib.rs::__test_api` へピンポイントで再エクスポート
 //! している (フィールドも同様に `pub` 化。#824 の `LogView` と同じパターン)。
+//!
+//! #1096 で Query/Preview ストリームは `app.emit()` の個別イベント構造体をやめ、
+//! Tauri Channel で送る `kind` タグ付き enum (`QueryStreamMessage` /
+//! `PreviewStreamMessage`) に統合した (大量データ転送の効率化 — IPC 回数と
+//! payload 重複の削減)。CSV インポート/エクスポート/ダンプは引き続き名前付き
+//! イベントのまま。
 
 use std::path::PathBuf;
 
@@ -38,14 +44,13 @@ use t::{
     CsvPreview, DataDiff, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
-    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PreviewDoneEvent,
-    PreviewMetaEvent, PreviewResult, ProcessInfo, ProfileWithSecretFlags, QueryResult,
-    QueryStatsSupport, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
+    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PreviewResult,
+    PreviewStreamMessage, ProcessInfo, ProfileWithSecretFlags, QueryResult, QueryStatsSupport,
+    QueryStreamMessage, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
     ServerInfo, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet,
     SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementStat,
-    StreamCancelledEvent, StreamColumnsEvent, StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
-    SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableDiff, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, Value,
+    StreamCancelledEvent, SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableDiff,
+    TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, Value,
 };
 
 const FIXTURE_JSON: &str = include_str!("../../src/__tests__/fixtures/serdeResponseFixtures.json");
@@ -374,45 +379,42 @@ fn build_fixtures() -> serde_json::Value {
         target_count: 10,
     };
 
-    // --- #825: ストリーミングイベントの emit ペイロード -----------------------
+    // --- #1096: Query/Preview ストリーミングメッセージ (Tauri Channel) --------
     //
-    // `preview_query_stream` の行イベント (`PreviewRowsEvent`) は `StreamRowsEvent`
-    // と全く同じシェイプ ({ streamId, rows }) なので個別のフィクスチャは持たず
-    // `streamRowsEventLite` で間接的にカバーする (フロント `schemaParity.test.ts`
-    // の nestedOnly と同じ発想)。`StreamCancelledEvent` は
-    // query/preview/export/import の cancelled イベントで共有され、`dump-stream:
-    // cancelled` も同一シェイプの `dumpCancelledEvent` zod スキーマで受けるため、
-    // フロント側は同じフィクスチャを両スキーマに対して検証する。
+    // `run_query_stream` / `preview_query_stream` は emit ペイロード構造体では
+    // なく、`kind` タグ付き enum (`QueryStreamMessage` / `PreviewStreamMessage`)
+    // を Channel で送る。`before`/`after` の行メッセージは `kind` 以外全く同じ
+    // シェイプなので、フロント `schemaParity.test.ts` はどちらか一方
+    // (`beforeRows`) のフィクスチャを before/after 共有の緩いスキーマで検証する
+    // (旧 `streamRowsEventLite` と同じ発想、#825 の nestedOnly と同種の間接カバー)。
 
-    let stream_columns_event = StreamColumnsEvent {
-        stream_id: "strm0001".into(),
+    let query_stream_columns_message = QueryStreamMessage::Columns {
         columns: vec![column.clone()],
     };
-    let stream_rows_event = StreamRowsEvent {
-        stream_id: "strm0001".into(),
+    let query_stream_rows_message = QueryStreamMessage::Rows {
         rows: vec![vec![Value::Int(1), Value::String("a".into())]],
     };
-    let stream_done_event = StreamDoneEvent {
-        stream_id: "strm0001".into(),
+    let query_stream_done_message = QueryStreamMessage::Done {
         total_rows: 2,
         rows_affected: 0,
         elapsed_ms: 12,
         has_columns: true,
         applied_auto_limit: Some(1000),
     };
-    let stream_error_event = StreamErrorEvent {
-        stream_id: "strm0001".into(),
+    let query_stream_error_message = QueryStreamMessage::Error {
         error: "connection reset by peer".into(),
         timed_out: false,
         connection_lost: true,
         delivered_rows: 5,
     };
+    let channel_cancelled_message = QueryStreamMessage::Cancelled { delivered_rows: 5 };
+    // Export/Dump/Import ストリームは引き続き `app.emit()` の名前付きイベントの
+    // ままなので、`StreamCancelledEvent` (streamId を持つ) はここでも固定する。
     let stream_cancelled_event = StreamCancelledEvent {
         stream_id: "strm0001".into(),
         delivered_rows: 5,
     };
-    let preview_meta_event = PreviewMetaEvent {
-        stream_id: "strm0002".into(),
+    let preview_meta_message = PreviewStreamMessage::Meta {
         target_table: Some("users".into()),
         columns: vec![column.clone()],
         primary_key: vec!["id".into()],
@@ -420,8 +422,15 @@ fn build_fixtures() -> serde_json::Value {
         elapsed_ms: 3,
         truncated: false,
     };
-    let preview_done_event = PreviewDoneEvent {
-        stream_id: "strm0002".into(),
+    let preview_rows_message = PreviewStreamMessage::BeforeRows {
+        rows: vec![vec![Value::Int(1), Value::String("a".into())]],
+    };
+    let preview_done_message = PreviewStreamMessage::Done {};
+    let preview_error_message = PreviewStreamMessage::Error {
+        error: "connection reset by peer".into(),
+        timed_out: false,
+        connection_lost: true,
+        delivered_rows: 5,
     };
 
     let import_started_event = ImportStartedEvent {
@@ -523,14 +532,19 @@ fn build_fixtures() -> serde_json::Value {
         "syncPlan": sync_plan,
         "dataDiff": data_diff,
 
-        // --- #825: ストリーミングイベントの emit ペイロード ---
-        "queryStreamColumnsEvent": stream_columns_event,
-        "streamRowsEventLite": stream_rows_event,
-        "queryStreamDoneEvent": stream_done_event,
-        "queryStreamErrorEvent": stream_error_event,
+        // --- #1096: Query/Preview ストリーミングメッセージ (Tauri Channel) ---
+        "queryStreamColumnsMessage": query_stream_columns_message,
+        "queryStreamRowsMessageLite": query_stream_rows_message,
+        "queryStreamDoneMessage": query_stream_done_message,
+        "queryStreamErrorMessage": query_stream_error_message,
+        "channelCancelledMessage": channel_cancelled_message,
+        "previewStreamMetaMessage": preview_meta_message,
+        "previewStreamRowsMessageLite": preview_rows_message,
+        "previewStreamDoneMessage": preview_done_message,
+        "previewStreamErrorMessage": preview_error_message,
+        // --- #825: CSV インポート/エクスポート/ダンプの emit ペイロード (名前付き
+        // イベントのまま、#1096 のスコープ外) ---
         "streamCancelledEvent": stream_cancelled_event,
-        "previewStreamMetaEvent": preview_meta_event,
-        "previewStreamDoneEvent": preview_done_event,
         "importStartedEvent": import_started_event,
         "importProgressEvent": import_progress_event,
         "importDoneEvent": import_done_event,

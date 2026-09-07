@@ -572,29 +572,38 @@ export const connectionProfileArray = z.array(connectionProfile);
 export const snippetArray = z.array(snippet);
 export const historyEntryArray = z.array(historyEntry);
 
-// --- ストリーミングイベント (StreamBatch) ---------------------------------
+// --- ストリーミングメッセージ (Tauri Channel, #1096) -----------------------
 //
-// クエリ/プレビュー/CSV インポートの結果は `invoke` の戻り値ではなくイベント
-// (`listen`) で届く。制御系イベント (columns / meta / done / error / インポートの
-// ライフサイクル) は低頻度なので完全に検証する。一方 `*:rows` 系イベントは 1 バッチ
-// あたり最大 chunkSize 行を運び高頻度で飛ぶため、**セル単位の検証は行わず構造のみ**
-// を軽量に検証する (大きな結果セットでの検証コスト増を避けるトレードオフ)。
+// クエリ/プレビューの結果は、名前付きイベント (`listen`) ではなく **1 ストリーム
+// につき 1 本の Tauri Channel** で `kind` タグ付きのメッセージとして届く
+// (`src-tauri/src/commands/query.rs` の `QueryStreamMessage` /
+// `PreviewStreamMessage` 参照)。チャンネル自体がそのストリームにスコープされる
+// ため、個々のメッセージに `streamId` は乗らない — 旧 `query-stream:*` /
+// `preview-stream:*` イベント (下の CSV インポート/エクスポート/ダンプ系イベント
+// と同じ形) では全メッセージが `streamId` を重複して運んでいた分の payload を
+// 削減している。CSV インポート/エクスポート/ダンプは従来どおり名前付きイベント
+// のまま (下のセクション参照)。
+//
+// 制御系メッセージ (columns / meta / done / error / cancelled) は低頻度なので完全に
+// 検証する。一方 rows 系メッセージは 1 バッチあたり最大 chunkSize 行を運び高頻度で
+// 届くため、**セル単位の検証は行わず構造のみ**を軽量に検証する (大きな結果セットでの
+// 検証コスト増を避けるトレードオフ)。
 
-export const queryStreamColumnsEvent = z.object({
-  streamId: z.string(),
+export const queryStreamColumnsMessage = z.object({
+  kind: z.literal("columns"),
   columns: z.array(column),
 });
 
-/** `*:rows` 系の軽量スキーマ: `rows` が配列であることだけを確認する。各行・各セルの
+/** rows 系の軽量スキーマ: `rows` が配列であることだけを確認する。各行・各セルの
  *  中身は検証しない (大きなバッチでの深いコピー/反復コストを避けるため、外側 1 次元の
  *  存在チェックに留める)。 */
-export const streamRowsEventLite = z.object({
-  streamId: z.string(),
+export const queryStreamRowsMessageLite = z.object({
+  kind: z.literal("rows"),
   rows: z.array(z.unknown()),
 });
 
-export const queryStreamDoneEvent = z.object({
-  streamId: z.string(),
+export const queryStreamDoneMessage = z.object({
+  kind: z.literal("done"),
   totalRows: z.number(),
   rowsAffected: z.number(),
   elapsedMs: z.number(),
@@ -602,8 +611,8 @@ export const queryStreamDoneEvent = z.object({
   appliedAutoLimit: z.number().nullable(),
 });
 
-export const queryStreamErrorEvent = z.object({
-  streamId: z.string(),
+export const queryStreamErrorMessage = z.object({
+  kind: z.literal("error"),
   error: z.string(),
   timedOut: z.boolean(),
   connectionLost: z.boolean(),
@@ -611,15 +620,17 @@ export const queryStreamErrorEvent = z.object({
   deliveredRows: z.number(),
 });
 
-/** キャンセル成立時に `query-stream:cancelled` / `preview-stream:cancelled` /
- *  `export-stream:cancelled` として届く共通ペイロード (#685)。 */
-export const streamCancelledEvent = z.object({
-  streamId: z.string(),
+/** Query チャンネル・Preview チャンネルのどちらでも同じ shape で届く cancelled
+ *  メッセージ (#685)。名前付きイベントのまま残る CSV インポート/エクスポート/
+ *  ダンプ用の `streamCancelledEvent` (streamId を持つ、下参照) とは別スキーマ —
+ *  チャンネル自体がストリームにスコープされるため streamId が要らない。 */
+export const channelCancelledMessage = z.object({
+  kind: z.literal("cancelled"),
   deliveredRows: z.number(),
 });
 
-export const previewStreamMetaEvent = z.object({
-  streamId: z.string(),
+export const previewStreamMetaMessage = z.object({
+  kind: z.literal("meta"),
   targetTable: z.string().nullable(),
   columns: z.array(column),
   primaryKey: z.array(z.string()),
@@ -628,13 +639,33 @@ export const previewStreamMetaEvent = z.object({
   truncated: z.boolean(),
 });
 
-export const previewStreamDoneEvent = z.object({ streamId: z.string() });
+/** before-rows / after-rows のどちらも `kind` 以外は同じ shape なので 1 つの
+ *  緩いスキーマで両方受ける (旧 `streamRowsEventLite` と同じ考え方)。 */
+export const previewStreamRowsMessageLite = z.object({
+  kind: z.enum(["beforeRows", "afterRows"]),
+  rows: z.array(z.unknown()),
+});
 
-export const previewStreamErrorEvent = z.object({
-  streamId: z.string(),
+export const previewStreamDoneMessage = z.object({ kind: z.literal("done") });
+
+export const previewStreamErrorMessage = z.object({
+  kind: z.literal("error"),
   error: z.string(),
+  timedOut: z.boolean(),
   connectionLost: z.boolean(),
   /** Rows already delivered to the frontend before the run failed (#685). */
+  deliveredRows: z.number(),
+});
+
+// --- ストリーミングイベント (CSV インポート/エクスポート/ダンプ) -----------
+//
+// 上のクエリ/プレビュー用メッセージと異なり、これらは引き続き `invoke` の戻り値
+// ではなく名前付きイベント (`listen`) で届く (#1096 のスコープ外)。
+
+/** キャンセル成立時に `csv-import:cancelled` / `export-stream:cancelled` として
+ *  届く共通ペイロード (#685)。 */
+export const streamCancelledEvent = z.object({
+  streamId: z.string(),
   deliveredRows: z.number(),
 });
 

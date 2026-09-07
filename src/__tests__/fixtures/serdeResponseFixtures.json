@@ -3,6 +3,10 @@
     "cancelled": true,
     "deliveredRows": 42
   },
+  "channelCancelledMessage": {
+    "deliveredRows": 5,
+    "kind": "cancelled"
+  },
   "column": {
     "name": "id",
     "type_name": "INTEGER"
@@ -258,10 +262,17 @@
     "target_table": "users",
     "truncated": false
   },
-  "previewStreamDoneEvent": {
-    "streamId": "strm0002"
+  "previewStreamDoneMessage": {
+    "kind": "done"
   },
-  "previewStreamMetaEvent": {
+  "previewStreamErrorMessage": {
+    "connectionLost": true,
+    "deliveredRows": 5,
+    "error": "connection reset by peer",
+    "kind": "error",
+    "timedOut": false
+  },
+  "previewStreamMetaMessage": {
     "columns": [
       {
         "name": "id",
@@ -269,13 +280,22 @@
       }
     ],
     "elapsedMs": 3,
+    "kind": "meta",
     "primaryKey": [
       "id"
     ],
     "rowsAffected": 1,
-    "streamId": "strm0002",
     "targetTable": "users",
     "truncated": false
+  },
+  "previewStreamRowsMessageLite": {
+    "kind": "beforeRows",
+    "rows": [
+      [
+        1,
+        "a"
+      ]
+    ]
   },
   "processInfo": {
     "command": "Query",
@@ -324,29 +344,38 @@
     "statements": false,
     "statements_reason": "pg_stat_statements_missing"
   },
-  "queryStreamColumnsEvent": {
+  "queryStreamColumnsMessage": {
     "columns": [
       {
         "name": "id",
         "type_name": "INTEGER"
       }
     ],
-    "streamId": "strm0001"
+    "kind": "columns"
   },
-  "queryStreamDoneEvent": {
+  "queryStreamDoneMessage": {
     "appliedAutoLimit": 1000,
     "elapsedMs": 12,
     "hasColumns": true,
+    "kind": "done",
     "rowsAffected": 0,
-    "streamId": "strm0001",
     "totalRows": 2
   },
-  "queryStreamErrorEvent": {
+  "queryStreamErrorMessage": {
     "connectionLost": true,
     "deliveredRows": 5,
     "error": "connection reset by peer",
-    "streamId": "strm0001",
+    "kind": "error",
     "timedOut": false
+  },
+  "queryStreamRowsMessageLite": {
+    "kind": "rows",
+    "rows": [
+      [
+        1,
+        "a"
+      ]
+    ]
   },
   "schemaDiff": {
     "source_driver": "mysql",
@@ -458,15 +487,6 @@
   },
   "streamCancelledEvent": {
     "deliveredRows": 5,
-    "streamId": "strm0001"
-  },
-  "streamRowsEventLite": {
-    "rows": [
-      [
-        1,
-        "a"
-      ]
-    ],
     "streamId": "strm0001"
   },
   "syncPlan": {

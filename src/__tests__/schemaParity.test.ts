@@ -33,9 +33,14 @@ type AnyObjectSchema = z.ZodObject<z.ZodRawShape>;
 // #825: ストリーミングイベントの emit ペイロードも追加。`skippedRowInfo`
 // (importDoneEvent 内) も上記と同じ間接カバーで個別 case を持たない。
 // `streamCancelledEvent` フィクスチャは `StreamCancelledEvent` (Rust) を
-// query/preview/export/import の cancelled イベントで共有しており、
-// `dump-stream:cancelled` も同一シェイプの `dumpCancelledEvent` zod スキーマで
-// 受けるため、ここでは同じフィクスチャを両スキーマに対して検証する。
+// export/import の cancelled イベントで共有しており、`dump-stream:cancelled`
+// も同一シェイプの `dumpCancelledEvent` zod スキーマで受けるため、ここでは同じ
+// フィクスチャを両スキーマに対して検証する。
+//
+// #1096: Query/Preview ストリームは Tauri Channel 経由の `kind` タグ付き
+// メッセージ (`QueryStreamMessage` / `PreviewStreamMessage`) に切り替わった。
+// `previewStreamRowsMessageLite` は before/after 共有 (`kind` が違うだけの同じ
+// shape) — フィクスチャは `beforeRows` の 1 サンプルのみ持つ。
 const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["queryResult", schemas.queryResult],
   ["tableColumnInfo", schemas.tableColumnInfo],
@@ -70,15 +75,21 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["syncPlan", schemas.syncPlan],
   ["dataDiff", schemas.dataDiff],
 
-  // #825: ストリーミングイベントの emit ペイロード。
-  ["queryStreamColumnsEvent", schemas.queryStreamColumnsEvent],
-  ["streamRowsEventLite", schemas.streamRowsEventLite],
-  ["queryStreamDoneEvent", schemas.queryStreamDoneEvent],
-  ["queryStreamErrorEvent", schemas.queryStreamErrorEvent],
+  // #1096: Query/Preview ストリーミングメッセージ (Tauri Channel)。
+  ["queryStreamColumnsMessage", schemas.queryStreamColumnsMessage],
+  ["queryStreamRowsMessageLite", schemas.queryStreamRowsMessageLite],
+  ["queryStreamDoneMessage", schemas.queryStreamDoneMessage],
+  ["queryStreamErrorMessage", schemas.queryStreamErrorMessage],
+  ["channelCancelledMessage", schemas.channelCancelledMessage],
+  ["previewStreamMetaMessage", schemas.previewStreamMetaMessage],
+  ["previewStreamRowsMessageLite", schemas.previewStreamRowsMessageLite],
+  ["previewStreamDoneMessage", schemas.previewStreamDoneMessage],
+  ["previewStreamErrorMessage", schemas.previewStreamErrorMessage],
+
+  // #825: CSV インポート/エクスポート/ダンプの emit ペイロード (名前付き
+  // イベントのまま、#1096 のスコープ外)。
   ["streamCancelledEvent", schemas.streamCancelledEvent],
   ["streamCancelledEvent", schemas.dumpCancelledEvent],
-  ["previewStreamMetaEvent", schemas.previewStreamMetaEvent],
-  ["previewStreamDoneEvent", schemas.previewStreamDoneEvent],
   ["importStartedEvent", schemas.importStartedEvent],
   ["importProgressEvent", schemas.importProgressEvent],
   ["importDoneEvent", schemas.importDoneEvent],

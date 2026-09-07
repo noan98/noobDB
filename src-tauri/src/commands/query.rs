@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde::Serialize;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::types::{Column, QueryResult, StreamBatch, Value};
@@ -314,66 +315,118 @@ pub async fn finish_transaction(
 // (`serde_schema_parity.rs`) が `__test_api` 経由で代表インスタンスを組み立てる
 // ためのもの。IPC 経路としては引き続き非公開モジュール内に留まる (#824 の
 // LogView と同じ最小限の可視性拡張パターン)。
+//
+// #1096: `run_query_stream` / `preview_query_stream` は従来
+// `query-stream:columns` / `:rows` / `:done` / `:error` / `:cancelled`
+// (preview は `preview-stream:meta` / `:before-rows` / `:after-rows` / `:done` /
+// `:error` / `:cancelled`) という**個別の名前付きイベント**を `app.emit()` で
+// 全ウィンドウへブロードキャストしていた。`emit()` はペイロードを JSON へ整形して
+// `webview.eval()` に丸ごとインライン展開する実装 (tauri 2.11 `manager/webview.rs`
+// `emit_js`) なので、行チャンクのような大きなペイロードでも常にその場で JS 文字列へ
+// 埋め込まれる。加えて各チャンクに `streamId` を乗せ、フロント側は 1 ストリームにつき
+// 5〜6 本の `listen()` を張って `payload.streamId` で自分宛てかどうかを毎回判定して
+// いた (他タブ/他ストリーム宛てのイベントも一旦全リスナーに配送されてから捨てられる)。
+//
+// Tauri の `Channel<T>` は 1 回の invoke に紐づく専用チャンネルで、
+// (1) `streamId` をペイロードに含める必要が無くなる (チャンネル自体がスコープ)、
+// (2) ペイロードが一定サイズを超えると `webview.eval()` へのインライン展開ではなく
+//     fetch 経由の受け渡しに切り替わる (`ipc/channel.rs` `MAX_JSON_DIRECT_EXECUTE_
+//     THRESHOLD` 分岐) ため大きな行チャンクほど効く、
+// (3) 全ウィンドウへのブロードキャストと no-op な `streamId` 判定が消える、
+// という 3 点で大量データ転送に向く。ここでは 1 ストリームにつき 1 チャンネルへ
+// `kind` タグ付き enum (`QueryStreamMessage` / `PreviewStreamMessage`) を送ることで、
+// 従来 5〜6 イベントに分かれていた emit を 1 本のチャンネル送信にまとめ、各メッセージ
+// から `streamId` フィールドを削る (#1096 の「payload に含めるメタデータを整理し、
+// 重複情報を削減」に対応)。Export/Dump/Import ストリームは引き続き
+// `app.emit()` の名前付きイベントのまま (このコマンドの担当範囲外 — 詳細は
+// `cancel_stream` のコメント参照)。
 #[derive(Debug, Serialize, Clone)]
-pub struct StreamColumnsEvent {
-    #[serde(rename = "streamId")]
-    pub stream_id: String,
-    pub columns: Vec<Column>,
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum QueryStreamMessage {
+    Columns {
+        columns: Vec<Column>,
+    },
+    Rows {
+        rows: Vec<Vec<Value>>,
+    },
+    Done {
+        total_rows: u64,
+        rows_affected: u64,
+        elapsed_ms: u64,
+        /// True when the result had columns (a SELECT-shaped statement). False
+        /// for INSERT/UPDATE/etc. so the UI can show "rows affected" instead.
+        has_columns: bool,
+        /// The row cap that was auto-injected for this run, or `null` when none
+        /// was applied. Lets the UI show a "auto LIMIT N applied" badge.
+        applied_auto_limit: Option<u64>,
+    },
+    Error {
+        error: String,
+        /// True when the run was aborted by the execution-timeout guard rather
+        /// than failing in the database, so the UI can show a dedicated
+        /// timeout message.
+        timed_out: bool,
+        /// True when the failure means the DB connection was lost (server
+        /// closed it, socket broke, network dropped). Lets the UI drop the
+        /// now-dead session and prompt a reconnect instead of leaving it stuck
+        /// on "connected".
+        connection_lost: bool,
+        /// Rows already delivered to the frontend (via `Rows` messages) before
+        /// the run failed. Lets the UI tell a partial result apart from a
+        /// complete one on timeout/error (#685).
+        delivered_rows: u64,
+    },
+    /// Sent by `cancel_stream` when it successfully claims this stream (see
+    /// [`crate::state::AppState::cancel_stream`] and the `on_cancel` callback
+    /// wired up in `run_query_stream`), mirroring the `Error` variant's
+    /// `delivered_rows` so the UI can tell a partial result apart from a
+    /// complete one (#685).
+    Cancelled {
+        delivered_rows: u64,
+    },
 }
 
+/// Preview (dry-run) stream sibling of [`QueryStreamMessage`] — same rationale,
+/// carries `preview_query_stream`'s before/after batches instead.
 #[derive(Debug, Serialize, Clone)]
-pub struct StreamRowsEvent {
-    #[serde(rename = "streamId")]
-    pub stream_id: String,
-    pub rows: Vec<Vec<Value>>,
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum PreviewStreamMessage {
+    Meta {
+        target_table: Option<String>,
+        columns: Vec<Column>,
+        primary_key: Vec<String>,
+        rows_affected: u64,
+        elapsed_ms: u64,
+        truncated: bool,
+    },
+    BeforeRows {
+        rows: Vec<Vec<Value>>,
+    },
+    AfterRows {
+        rows: Vec<Vec<Value>>,
+    },
+    Done {},
+    Error {
+        error: String,
+        /// See [`QueryStreamMessage::Error`]. Preview also races a
+        /// `query_timeout_secs` timeout (dry-running an UPDATE/DELETE can lock
+        /// waiting rows), so this is carried here too even though the pre-#1096
+        /// frontend `PreviewStreamErrorEvent` type never surfaced it.
+        timed_out: bool,
+        connection_lost: bool,
+        delivered_rows: u64,
+    },
+    /// See [`QueryStreamMessage::Cancelled`].
+    Cancelled {
+        delivered_rows: u64,
+    },
 }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct StreamDoneEvent {
-    #[serde(rename = "streamId")]
-    pub stream_id: String,
-    #[serde(rename = "totalRows")]
-    pub total_rows: u64,
-    #[serde(rename = "rowsAffected")]
-    pub rows_affected: u64,
-    #[serde(rename = "elapsedMs")]
-    pub elapsed_ms: u64,
-    /// True when the result had columns (a SELECT-shaped statement). False
-    /// for INSERT/UPDATE/etc. so the UI can show "rows affected" instead.
-    #[serde(rename = "hasColumns")]
-    pub has_columns: bool,
-    /// The row cap that was auto-injected for this run, or `null` when none was
-    /// applied. Lets the UI show a "auto LIMIT N applied" badge.
-    #[serde(rename = "appliedAutoLimit")]
-    pub applied_auto_limit: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct StreamErrorEvent {
-    #[serde(rename = "streamId")]
-    pub stream_id: String,
-    pub error: String,
-    /// True when the run was aborted by the execution-timeout guard rather than
-    /// failing in the database, so the UI can show a dedicated timeout message.
-    #[serde(rename = "timedOut")]
-    pub timed_out: bool,
-    /// True when the failure means the DB connection was lost (server closed it,
-    /// socket broke, network dropped). Lets the UI drop the now-dead session and
-    /// prompt a reconnect instead of leaving it stuck on "connected".
-    #[serde(rename = "connectionLost")]
-    pub connection_lost: bool,
-    /// Rows already delivered to the frontend (via `:rows`/`:before-rows`/
-    /// `:after-rows` batches) before the run failed. Lets the UI tell a
-    /// partial result apart from a complete one on timeout/error (#685).
-    #[serde(rename = "deliveredRows")]
-    pub delivered_rows: u64,
-}
-
-/// Emitted once by `cancel_stream` when it successfully claims an active
-/// stream (see [`crate::state::AppState::cancel_stream`]). The event name
-/// (`query-stream:cancelled` / `preview-stream:cancelled` /
-/// `export-stream:cancelled`) is chosen from the stream's registered
-/// [`StreamKind`] so the right listener picks it up (#685).
+/// Still-`app.emit()`-based cancelled payload for the streams this file does
+/// not own the transport of (Export/Dump/Import — see `cancel_stream`). Query
+/// and Preview streams now report cancellation through their own Channel
+/// (`QueryStreamMessage::Cancelled` / `PreviewStreamMessage::Cancelled`)
+/// instead, dropping the redundant `stream_id` field a Channel doesn't need.
 #[derive(Debug, Serialize, Clone)]
 pub struct StreamCancelledEvent {
     #[serde(rename = "streamId")]
@@ -382,12 +435,6 @@ pub struct StreamCancelledEvent {
     pub delivered_rows: u64,
 }
 
-const EV_QUERY_COLS: &str = "query-stream:columns";
-const EV_QUERY_ROWS: &str = "query-stream:rows";
-const EV_QUERY_DONE: &str = "query-stream:done";
-const EV_QUERY_ERROR: &str = "query-stream:error";
-const EV_QUERY_CANCELLED: &str = "query-stream:cancelled";
-const EV_PREVIEW_CANCELLED: &str = "preview-stream:cancelled";
 const EV_EXPORT_CANCELLED: &str = "export-stream:cancelled";
 const EV_DUMP_CANCELLED: &str = "dump-stream:cancelled";
 const EV_IMPORT_CANCELLED: &str = "csv-import:cancelled";
@@ -409,12 +456,16 @@ pub async fn run_query_stream(
     // #735 DML フライトレコーダ。true かつ単文の INSERT/UPDATE/DELETE のとき、
     // 通常のストリーミング実行の代わりに `Connection::capture_write` 経由で
     // before/after イメージの記録を試みつつ実行する (`spawn_captured_write`)。
-    // 記録の成否に関わらず書き込み自体は行われ、`query-stream:*` イベントは
-    // 通常経路と同じ形で emit されるためフロントの購読側 (`onDone`/`onError`)
-    // に変更は不要。
+    // 記録の成否に関わらず書き込み自体は行われ、`QueryStreamMessage` は通常経路と
+    // 同じ形で送信されるためフロントの購読側 (`onDone`/`onError`) に変更は不要。
     capture: Option<bool>,
     capture_row_cap: Option<u32>,
     capture_retention_days: Option<u32>,
+    // #1096: フロントが `invoke` 前に生成し引数として渡す Tauri Channel。1
+    // ストリームにつき 1 チャンネルなので、以後の columns/rows/done/error/
+    // cancelled はすべてこのチャンネル経由で送る (旧 `query-stream:*` イベント群を
+    // 置き換える — 上の `QueryStreamMessage` の doc コメント参照)。
+    on_event: Channel<QueryStreamMessage>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -459,6 +510,10 @@ pub async fn run_query_stream(
     let stream_id_for_task = stream_id.clone();
     let delivered_rows_for_task = delivered_rows.clone();
     let capture_requested = capture.unwrap_or(false) && !auto_refresh;
+    // `cancel_stream` (別の invoke — このタスクの外) が cancelled 通知を送れるよう、
+    // チャンネルをもう 1 つ複製して `on_cancel` コールバックに閉じ込める。
+    // `Channel<T>` は内部 `Arc` の clone (#ipc/channel.rs) なので複製自体は軽い。
+    let cancel_channel = on_event.clone();
     let handle = tokio::spawn(async move {
         // 送信側 (下の register_stream 直後) が必ず送るので、Err は理論上起こらない
         // が、万一起きても panic せずタスクを静かに終わらせる (登録自体が無ければ
@@ -483,6 +538,7 @@ pub async fn run_query_stream(
                 capture_retention_days.map(|n| n as i64),
                 query_timeout_secs,
                 delivered_rows_for_task,
+                on_event,
             )
             .await;
             return;
@@ -500,6 +556,7 @@ pub async fn run_query_stream(
             query_timeout_secs,
             auto_refresh,
             delivered_rows_for_task,
+            on_event,
         )
         .await;
     });
@@ -510,6 +567,9 @@ pub async fn run_query_stream(
                 abort: handle.abort_handle(),
                 delivered_rows,
                 kind: StreamKind::Query,
+                on_cancel: Some(Box::new(move |delivered_rows| {
+                    let _ = cancel_channel.send(QueryStreamMessage::Cancelled { delivered_rows });
+                })),
             },
         )
         .await;
@@ -532,6 +592,7 @@ async fn spawn_query_stream(
     query_timeout_secs: Option<u64>,
     auto_refresh: bool,
     delivered_rows: Arc<AtomicU64>,
+    on_event: Channel<QueryStreamMessage>,
 ) {
     tracing::debug!(
         session_id = %session.id,
@@ -550,8 +611,7 @@ async fn spawn_query_stream(
         },
         None => (sql.clone(), None),
     };
-    let emit_app = app.clone();
-    let emit_id = stream_id.clone();
+    let send_id = stream_id.clone();
     let delivered_rows_cb = delivered_rows.clone();
     let exec = session.conn.execute_stream(
         &effective_sql,
@@ -559,44 +619,32 @@ async fn spawn_query_stream(
         initial_batch,
         chunk_size,
         |batch| match batch {
-            StreamBatch::Columns(columns) => emit_app
-                .emit(
-                    EV_QUERY_COLS,
-                    StreamColumnsEvent {
-                        stream_id: emit_id.clone(),
-                        columns,
-                    },
-                )
+            StreamBatch::Columns(columns) => on_event
+                .send(QueryStreamMessage::Columns { columns })
                 .map_err(|e| {
                     tracing::warn!(
-                        stream_id = %emit_id,
+                        stream_id = %send_id,
                         error = %e,
-                        "failed to emit columns event; aborting stream"
+                        "failed to send columns message; aborting stream"
                     );
-                    AppError::Other(format!("ipc emit failed: {e}"))
+                    AppError::Other(format!("ipc channel send failed: {e}"))
                 }),
             StreamBatch::Rows(rows) => {
-                // Count rows before emitting so a cancel racing this exact
+                // Count rows before sending so a cancel racing this exact
                 // point never under-reports what actually reached the UI.
                 let emitted_len = rows.len() as u64;
                 delivered_rows_cb.fetch_add(emitted_len, Ordering::SeqCst);
-                emit_app
-                    .emit(
-                        EV_QUERY_ROWS,
-                        StreamRowsEvent {
-                            stream_id: emit_id.clone(),
-                            rows,
-                        },
-                    )
+                on_event
+                    .send(QueryStreamMessage::Rows { rows })
                     .map_err(|e| {
                         // The UI never received these rows; roll back the count.
                         delivered_rows_cb.fetch_sub(emitted_len, Ordering::SeqCst);
                         tracing::warn!(
-                            stream_id = %emit_id,
+                            stream_id = %send_id,
                             error = %e,
-                            "failed to emit rows event; aborting stream"
+                            "failed to send rows message; aborting stream"
                         );
-                        AppError::Other(format!("ipc emit failed: {e}"))
+                        AppError::Other(format!("ipc channel send failed: {e}"))
                     })
             }
         },
@@ -624,30 +672,26 @@ async fn spawn_query_stream(
                 has_columns = !res.columns.is_empty(),
                 "query stream completed"
             );
-            if let Err(e) = app.emit(
-                EV_QUERY_DONE,
-                StreamDoneEvent {
-                    stream_id: stream_id.clone(),
-                    total_rows: if res.columns.is_empty() {
-                        0
-                    } else {
-                        res.rows_affected
-                    },
-                    rows_affected: res.rows_affected,
-                    elapsed_ms: res.elapsed_ms,
-                    has_columns: !res.columns.is_empty(),
-                    applied_auto_limit: if res.columns.is_empty() {
-                        None
-                    } else {
-                        applied_auto_limit
-                    },
+            if let Err(e) = on_event.send(QueryStreamMessage::Done {
+                total_rows: if res.columns.is_empty() {
+                    0
+                } else {
+                    res.rows_affected
                 },
-            ) {
+                rows_affected: res.rows_affected,
+                elapsed_ms: res.elapsed_ms,
+                has_columns: !res.columns.is_empty(),
+                applied_auto_limit: if res.columns.is_empty() {
+                    None
+                } else {
+                    applied_auto_limit
+                },
+            }) {
                 tracing::warn!(
                     session_id = %session.id,
                     stream_id = %stream_id,
                     error = %e,
-                    "failed to emit done event"
+                    "failed to send done message"
                 );
             }
         }
@@ -667,21 +711,17 @@ async fn spawn_query_stream(
                     "query stream failed"
                 );
             }
-            if let Err(emit_err) = app.emit(
-                EV_QUERY_ERROR,
-                StreamErrorEvent {
-                    stream_id: stream_id.clone(),
-                    error: e.to_string(),
-                    timed_out: matches!(e, AppError::Timeout(_)),
-                    connection_lost: e.is_connection_lost(),
-                    delivered_rows: delivered_rows.load(Ordering::SeqCst),
-                },
-            ) {
+            if let Err(send_err) = on_event.send(QueryStreamMessage::Error {
+                error: e.to_string(),
+                timed_out: matches!(e, AppError::Timeout(_)),
+                connection_lost: e.is_connection_lost(),
+                delivered_rows: delivered_rows.load(Ordering::SeqCst),
+            }) {
                 tracing::warn!(
                     session_id = %session.id,
                     stream_id = %stream_id,
-                    error = %emit_err,
-                    "failed to emit error event"
+                    error = %send_err,
+                    "failed to send error message"
                 );
             }
         }
@@ -701,8 +741,8 @@ async fn spawn_query_stream(
 /// The `run_query_stream` capture-enabled sibling of [`spawn_query_stream`]
 /// (#735 DML flight recorder). Instead of streaming a result set, this
 /// executes a single INSERT/UPDATE/DELETE via [`crate::db::Connection::
-/// capture_write`] and emits the *same* `query-stream:done` / `:error`
-/// events `spawn_query_stream` would have — so the frontend's existing
+/// capture_write`] and sends the *same* `QueryStreamMessage::Done` / `Error`
+/// messages `spawn_query_stream` would have — so the frontend's existing
 /// `onDone`/`onError` subscription handles both paths without change. On
 /// success, a capturable write is persisted to the local flight-recorder
 /// store (best-effort; failing to persist never fails the run, the write
@@ -719,6 +759,7 @@ async fn spawn_captured_write(
     retention_days: Option<i64>,
     query_timeout_secs: Option<u64>,
     delivered_rows: Arc<AtomicU64>,
+    on_event: Channel<QueryStreamMessage>,
 ) {
     tracing::debug!(
         session_id = %session.id,
@@ -756,22 +797,18 @@ async fn spawn_captured_write(
                 capturable = capture.capturable,
                 "captured write completed"
             );
-            if let Err(e) = app.emit(
-                EV_QUERY_DONE,
-                StreamDoneEvent {
-                    stream_id: stream_id.clone(),
-                    total_rows: 0,
-                    rows_affected: result.rows_affected,
-                    elapsed_ms,
-                    has_columns: false,
-                    applied_auto_limit: None,
-                },
-            ) {
+            if let Err(e) = on_event.send(QueryStreamMessage::Done {
+                total_rows: 0,
+                rows_affected: result.rows_affected,
+                elapsed_ms,
+                has_columns: false,
+                applied_auto_limit: None,
+            }) {
                 tracing::warn!(
                     session_id = %session.id,
                     stream_id = %stream_id,
                     error = %e,
-                    "failed to emit done event (captured write)"
+                    "failed to send done message (captured write)"
                 );
             }
 
@@ -793,21 +830,17 @@ async fn spawn_captured_write(
                 error = %e,
                 "captured write failed"
             );
-            if let Err(emit_err) = app.emit(
-                EV_QUERY_ERROR,
-                StreamErrorEvent {
-                    stream_id: stream_id.clone(),
-                    error: e.to_string(),
-                    timed_out: matches!(e, AppError::Timeout(_)),
-                    connection_lost: e.is_connection_lost(),
-                    delivered_rows: delivered_rows.load(Ordering::SeqCst),
-                },
-            ) {
+            if let Err(send_err) = on_event.send(QueryStreamMessage::Error {
+                error: e.to_string(),
+                timed_out: matches!(e, AppError::Timeout(_)),
+                connection_lost: e.is_connection_lost(),
+                delivered_rows: delivered_rows.load(Ordering::SeqCst),
+            }) {
                 tracing::warn!(
                     session_id = %session.id,
                     stream_id = %stream_id,
-                    error = %emit_err,
-                    "failed to emit error event (captured write)"
+                    error = %send_err,
+                    "failed to send error message (captured write)"
                 );
             }
         }
@@ -905,41 +938,6 @@ pub(crate) async fn record_write_history(
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct PreviewMetaEvent {
-    #[serde(rename = "streamId")]
-    pub stream_id: String,
-    #[serde(rename = "targetTable")]
-    pub target_table: Option<String>,
-    pub columns: Vec<Column>,
-    #[serde(rename = "primaryKey")]
-    pub primary_key: Vec<String>,
-    #[serde(rename = "rowsAffected")]
-    pub rows_affected: u64,
-    #[serde(rename = "elapsedMs")]
-    pub elapsed_ms: u64,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Serialize, Clone)]
-struct PreviewRowsEvent {
-    #[serde(rename = "streamId")]
-    stream_id: String,
-    rows: Vec<Vec<Value>>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct PreviewDoneEvent {
-    #[serde(rename = "streamId")]
-    pub stream_id: String,
-}
-
-const EV_PREVIEW_META: &str = "preview-stream:meta";
-const EV_PREVIEW_BEFORE: &str = "preview-stream:before-rows";
-const EV_PREVIEW_AFTER: &str = "preview-stream:after-rows";
-const EV_PREVIEW_DONE: &str = "preview-stream:done";
-const EV_PREVIEW_ERROR: &str = "preview-stream:error";
-
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn preview_query_stream(
@@ -956,6 +954,10 @@ pub async fn preview_query_stream(
     // (読み取り専用セッションからでも preview 経路自体は到達できるため影響がある)。
     // 扱いは run_query_stream と同じ方式 (tokio::time::timeout でレース) に揃える。
     query_timeout_secs: Option<u64>,
+    // #1096: `run_query_stream` と同じく、フロントが生成した Tauri Channel。
+    // meta/before-rows/after-rows/done/error/cancelled をすべてこの 1 本で送る
+    // (旧 `preview-stream:*` イベント群を置き換える)。
+    on_event: Channel<PreviewStreamMessage>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     let session = state
@@ -978,6 +980,7 @@ pub async fn preview_query_stream(
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
     let stream_id_for_task = stream_id.clone();
     let delivered_rows_for_task = delivered_rows.clone();
+    let cancel_channel = on_event.clone();
     let handle = tokio::spawn(async move {
         let Ok(token) = ready_rx.await else {
             return;
@@ -993,6 +996,7 @@ pub async fn preview_query_stream(
             chunk_size,
             query_timeout_secs,
             delivered_rows_for_task,
+            on_event,
         )
         .await;
     });
@@ -1003,6 +1007,10 @@ pub async fn preview_query_stream(
                 abort: handle.abort_handle(),
                 delivered_rows,
                 kind: StreamKind::Preview,
+                on_cancel: Some(Box::new(move |delivered_rows| {
+                    let _ =
+                        cancel_channel.send(PreviewStreamMessage::Cancelled { delivered_rows });
+                })),
             },
         )
         .await;
@@ -1022,6 +1030,7 @@ async fn spawn_preview_stream(
     chunk_size: usize,
     query_timeout_secs: Option<u64>,
     delivered_rows: Arc<AtomicU64>,
+    on_event: Channel<PreviewStreamMessage>,
 ) {
     let exec = session
         .conn
@@ -1040,52 +1049,43 @@ async fn spawn_preview_stream(
     };
     match result {
         Ok(p) => {
-            if let Err(e) = app.emit(
-                EV_PREVIEW_META,
-                PreviewMetaEvent {
-                    stream_id: stream_id.clone(),
-                    target_table: p.target_table.clone(),
-                    columns: p.columns.clone(),
-                    primary_key: p.primary_key.clone(),
-                    rows_affected: p.rows_affected,
-                    elapsed_ms: p.elapsed_ms,
-                    truncated: p.truncated,
-                },
-            ) {
+            if let Err(e) = on_event.send(PreviewStreamMessage::Meta {
+                target_table: p.target_table.clone(),
+                columns: p.columns.clone(),
+                primary_key: p.primary_key.clone(),
+                rows_affected: p.rows_affected,
+                elapsed_ms: p.elapsed_ms,
+                truncated: p.truncated,
+            }) {
                 tracing::warn!(
                     session_id = %session.id,
                     stream_id = %stream_id,
                     error = %e,
-                    "failed to emit preview meta event"
+                    "failed to send preview meta message"
                 );
             }
             emit_chunks(
-                &app,
+                &on_event,
                 &stream_id,
-                EV_PREVIEW_BEFORE,
+                |rows| PreviewStreamMessage::BeforeRows { rows },
                 &p.before_rows,
                 chunk_size,
                 &delivered_rows,
             );
             emit_chunks(
-                &app,
+                &on_event,
                 &stream_id,
-                EV_PREVIEW_AFTER,
+                |rows| PreviewStreamMessage::AfterRows { rows },
                 &p.after_rows,
                 chunk_size,
                 &delivered_rows,
             );
-            if let Err(e) = app.emit(
-                EV_PREVIEW_DONE,
-                PreviewDoneEvent {
-                    stream_id: stream_id.clone(),
-                },
-            ) {
+            if let Err(e) = on_event.send(PreviewStreamMessage::Done {}) {
                 tracing::warn!(
                     session_id = %session.id,
                     stream_id = %stream_id,
                     error = %e,
-                    "failed to emit preview done event"
+                    "failed to send preview done message"
                 );
             }
         }
@@ -1105,21 +1105,17 @@ async fn spawn_preview_stream(
                     "preview stream failed"
                 );
             }
-            if let Err(emit_err) = app.emit(
-                EV_PREVIEW_ERROR,
-                StreamErrorEvent {
-                    stream_id: stream_id.clone(),
-                    error: e.to_string(),
-                    timed_out: matches!(e, AppError::Timeout(_)),
-                    connection_lost: e.is_connection_lost(),
-                    delivered_rows: delivered_rows.load(Ordering::SeqCst),
-                },
-            ) {
+            if let Err(send_err) = on_event.send(PreviewStreamMessage::Error {
+                error: e.to_string(),
+                timed_out: matches!(e, AppError::Timeout(_)),
+                connection_lost: e.is_connection_lost(),
+                delivered_rows: delivered_rows.load(Ordering::SeqCst),
+            }) {
                 tracing::warn!(
                     session_id = %session.id,
                     stream_id = %stream_id,
-                    error = %emit_err,
-                    "failed to emit preview error event"
+                    error = %send_err,
+                    "failed to send preview error message"
                 );
             }
         }
@@ -1129,10 +1125,14 @@ async fn spawn_preview_stream(
     }
 }
 
+/// Sends `rows` to `channel` in `chunk_size`-row pieces, wrapping each chunk
+/// with `make_msg` (`PreviewStreamMessage::BeforeRows` / `AfterRows`, passed
+/// as a variant constructor). Shared by the before/after halves of a preview
+/// so the chunking/`delivered_rows` bookkeeping stays in one place.
 fn emit_chunks(
-    app: &AppHandle,
+    channel: &Channel<PreviewStreamMessage>,
     stream_id: &str,
-    event: &str,
+    make_msg: impl Fn(Vec<Vec<Value>>) -> PreviewStreamMessage,
     rows: &[Vec<Value>],
     chunk_size: usize,
     delivered_rows: &AtomicU64,
@@ -1143,20 +1143,13 @@ fn emit_chunks(
         let end = (i + chunk).min(rows.len());
         let emitted_len = (end - i) as u64;
         delivered_rows.fetch_add(emitted_len, Ordering::SeqCst);
-        if let Err(e) = app.emit(
-            event,
-            PreviewRowsEvent {
-                stream_id: stream_id.to_string(),
-                rows: rows[i..end].to_vec(),
-            },
-        ) {
+        if let Err(e) = channel.send(make_msg(rows[i..end].to_vec())) {
             // The UI never received this chunk; roll back the count.
             delivered_rows.fetch_sub(emitted_len, Ordering::SeqCst);
             tracing::warn!(
                 stream_id = %stream_id,
-                event = %event,
                 error = %e,
-                "failed to emit preview rows chunk"
+                "failed to send preview rows chunk"
             );
         }
         i = end;
@@ -1176,13 +1169,22 @@ pub struct CancelStreamResult {
 /// Aborts the streaming task registered for `stream_id` (any of
 /// `run_query_stream` / `preview_query_stream` / `export_query_stream` /
 /// `import_csv` — they all share `AppState.streams`). On a genuine cancel
-/// (the stream was still running) this also emits the matching
-/// `<kind>-stream:cancelled` event carrying the same row count, for parity
-/// with the `:done`/`:error` terminal events (#685). The frontend's own
-/// cancel flow detaches its listeners before calling this command (so it
-/// never observes that event) and instead reads `deliveredRows` off the
-/// return value directly — the event exists for any other consumer and for
-/// architectural symmetry with the other streaming commands.
+/// (the stream was still running) this also notifies the stream's transport
+/// carrying the same row count, for parity with the `:done`/`:error` terminal
+/// messages (#685):
+///
+/// - Query/Preview (#1096): via the `on_cancel` callback stored in
+///   [`StreamHandle`] at registration time, which sends a `Cancelled` message
+///   down the same Tauri Channel the rest of that stream used (see
+///   `QueryStreamMessage` / `PreviewStreamMessage`).
+/// - Export/Dump/Import: still the legacy `app.emit()` `<kind>-stream:
+///   cancelled` named event (outside this command's transport migration).
+///
+/// The frontend's own cancel flow detaches its listeners before calling this
+/// command (so it never observes either notification) and instead reads
+/// `deliveredRows` off the return value directly — the notification exists for
+/// any other consumer and for architectural symmetry with the other
+/// terminal messages.
 #[tauri::command]
 pub async fn cancel_stream(
     app: AppHandle,
@@ -1190,30 +1192,37 @@ pub async fn cancel_stream(
     state: State<'_, AppState>,
 ) -> Result<CancelStreamResult> {
     match state.cancel_stream(&stream_id).await {
-        Some((delivered_rows, kind)) => {
-            let event = match kind {
-                StreamKind::Query => Some(EV_QUERY_CANCELLED),
-                StreamKind::Preview => Some(EV_PREVIEW_CANCELLED),
-                StreamKind::Export => Some(EV_EXPORT_CANCELLED),
-                // A dump reuses `delivered_rows` as bytes-written; the frontend's
-                // dump handler reads the field as bytes. The partial file is
-                // deleted on cancel like a streaming export (#686).
-                StreamKind::Dump => Some(EV_DUMP_CANCELLED),
-                // In `skip` mode an import auto-commits each chunk, so a cancel
-                // can leave rows persisted; `delivered_rows` carries that count
-                // for parity with the other terminal events (`abort` mode rolls
-                // back and reports 0). #687 review follow-up.
-                StreamKind::Import => Some(EV_IMPORT_CANCELLED),
-            };
-            if let Some(event) = event {
-                if let Err(e) = app.emit(
-                    event,
-                    StreamCancelledEvent {
-                        stream_id: stream_id.clone(),
-                        delivered_rows,
-                    },
-                ) {
-                    tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit cancelled event");
+        Some((delivered_rows, kind, on_cancel)) => {
+            if let Some(notify) = on_cancel {
+                notify(delivered_rows);
+            } else {
+                let event = match kind {
+                    StreamKind::Export => Some(EV_EXPORT_CANCELLED),
+                    // A dump reuses `delivered_rows` as bytes-written; the frontend's
+                    // dump handler reads the field as bytes. The partial file is
+                    // deleted on cancel like a streaming export (#686).
+                    StreamKind::Dump => Some(EV_DUMP_CANCELLED),
+                    // In `skip` mode an import auto-commits each chunk, so a cancel
+                    // can leave rows persisted; `delivered_rows` carries that count
+                    // for parity with the other terminal events (`abort` mode rolls
+                    // back and reports 0). #687 review follow-up.
+                    StreamKind::Import => Some(EV_IMPORT_CANCELLED),
+                    // Query/Preview always register an `on_cancel` callback (see
+                    // `run_query_stream` / `preview_query_stream`), so this arm is
+                    // unreachable in practice; keep it exhaustive rather than
+                    // panicking on a future refactor that drops the callback.
+                    StreamKind::Query | StreamKind::Preview => None,
+                };
+                if let Some(event) = event {
+                    if let Err(e) = app.emit(
+                        event,
+                        StreamCancelledEvent {
+                            stream_id: stream_id.clone(),
+                            delivered_rows,
+                        },
+                    ) {
+                        tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit cancelled event");
+                    }
                 }
             }
             Ok(CancelStreamResult {
@@ -1363,6 +1372,7 @@ mod tests {
                     abort: handle.abort_handle(),
                     delivered_rows: Arc::new(AtomicU64::new(0)),
                     kind: StreamKind::Query,
+                    on_cancel: None,
                 },
             )
             .await;

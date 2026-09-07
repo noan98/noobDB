@@ -105,19 +105,19 @@ pub mod __test_api {
     };
 
     // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
-    // 生成専用のピンポイント再エクスポート。`preview_query_stream` の行イベント
-    // (PreviewRowsEvent) は `StreamRowsEvent` と同一シェイプのため個別公開せず、
-    // フィクスチャは共有する (前者は非公開のまま)。
+    // 生成専用のピンポイント再エクスポート。
+    //
+    // `commands::query` の Query/Preview ストリーム (#1096) は `app.emit()` の
+    // 個別イベント構造体ではなく、Tauri Channel で送る 1 本のタグ付き enum
+    // (`QueryStreamMessage` / `PreviewStreamMessage`) に統合済み。Export/Dump/
+    // Import は引き続き個別の emit ペイロード構造体のまま。
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
     pub use crate::commands::import::{
         ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
     };
-    pub use crate::commands::query::{
-        PreviewDoneEvent, PreviewMetaEvent, StreamCancelledEvent, StreamColumnsEvent,
-        StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
-    };
+    pub use crate::commands::query::{PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent};
 
     /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
     /// `commands::export::write_export_to` — 実ファイル出力と**同じ**振り分け /
