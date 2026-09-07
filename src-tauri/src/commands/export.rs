@@ -832,6 +832,10 @@ pub async fn export_query_stream(
                 abort: handle.abort_handle(),
                 delivered_rows: counter,
                 kind: StreamKind::Export,
+                // #1096: Export ストリームは引き続き `app.emit()` の名前付き
+                // イベント (`export-stream:cancelled`) 経由でキャンセルを通知
+                // する (query/preview だけが Channel 経由の `on_cancel` を使う)。
+                on_cancel: None,
             },
         )
         .await;
