@@ -5,8 +5,11 @@
 //! 同一形状のクエリ」を実行し、[`Connection::execute`] の `elapsed_ms` を記録する。
 //! 実測値そのものは実行環境 (CI ランナーのスペック等) に依存するため、このテスト
 //! では極端な悪化だけを検出する緩いしきい値で回帰の土台とし、絶対値の記録は
-//! `NOOBDB_PERF_LOG=1` を立てて `cargo test perf::bench -- --nocapture` を実行し、
-//! `tracing` の `noobdb::perf` ログから拾う運用を想定する。
+//! `NOOBDB_PERF_LOG=1 RUST_LOG=noobdb::perf=debug cargo test perf::bench --
+//! --nocapture --test-threads=1` を実行し、`tracing` の `noobdb::perf` ログから
+//! 拾う運用を想定する (テストバイナリにはアプリ本体と違いトレーシング
+//! サブスクライバが既定で無いため、この mod の `tests::init_test_tracing` が
+//! 代わりに張る)。
 //!
 //! データセットは合成データのみで、個人情報もセル実データも含まない。
 
@@ -105,12 +108,25 @@ mod tests {
         sql
     }
 
+    /// テストバイナリにはアプリ本体 (`lib.rs::run()`) と違いトレーシング
+    /// サブスクライバが既定で無いため、モジュール冒頭のドキュメントで案内している
+    /// `NOOBDB_PERF_LOG=1 cargo test perf::bench -- --nocapture` を実際に機能させる
+    /// には、ここで一度張る必要がある。`try_init` は多重初期化時に `Err` を返す
+    /// だけ (panic しない) ので、複数テストから呼んでも安全。
+    fn init_test_tracing() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .try_init();
+    }
+
     /// 1 つの代表データセットについて、シード投入 → `SELECT * FROM bench_rows`
     /// を実行し、返ってきた `QueryResult` の行数を検証する。所要時間そのものは
     /// CI ランナーのスペックに依存するため、この関数では緩い上限 (数十秒) しか
     /// 課さない — 目的は「実行できること」と「桁が違う規模の劣化を検出する土台」
     /// であり、厳密な性能アサーションではない。
     async fn run_case(name: &str, n: usize) {
+        init_test_tracing();
         let file = TempSqliteFile::create();
         let conn = connect(file.path()).await;
         let seed_sql = build_seed_sql(n);
