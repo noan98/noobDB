@@ -598,6 +598,10 @@ pub async fn import_csv(
                 // `skip` mode; `abort` mode rolls back and leaves this at 0.
                 delivered_rows: committed,
                 kind: StreamKind::Import,
+                // #1096: Import ストリームは引き続き `app.emit()` の名前付き
+                // イベント (`csv-import:cancelled`) 経由でキャンセルを通知する
+                // (query/preview だけが Channel 経由の `on_cancel` を使う)。
+                on_cancel: None,
             },
         )
         .await;

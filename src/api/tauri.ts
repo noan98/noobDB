@@ -1,4 +1,4 @@
-import { invoke as rawInvoke } from "@tauri-apps/api/core";
+import { Channel, invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
@@ -1234,7 +1234,7 @@ export const api = {
      * DML フライトレコーダ (#735)。true かつ単文の INSERT/UPDATE/DELETE の
      * ときだけ、通常のストリーミング実行の代わりにバックエンドが
      * `capture_write` 経由で before/after イメージの記録を試みつつ実行する。
-     * `query-stream:*` イベントの形は変わらないため、この関数の呼び出し側
+     * 送られるメッセージの形は変わらないため、この関数の呼び出し側
      * (`onDone`/`onError` 購読) は変更不要。
      */
     capture?: boolean;
@@ -1242,8 +1242,18 @@ export const api = {
     captureRowCap?: number | null;
     /** 退避した before/after イメージの保持期間 (日数)。 */
     captureRetentionDays?: number | null;
-  }) =>
-    invoke<void>("run_query_stream", {
+  }) => {
+    // #1096: `run_query_stream` は結果を Tauri Channel (`onEvent`) で送る。
+    // チャンネルは呼び出し側が先に `listenQueryStream(streamId, handlers)` を
+    // await していれば `queryStreamChannels` に登録済みのはず — 呼び出し順が
+    // 守られていない場合は取りこぼしを静かに許すより早期に落とす。
+    const channel = queryStreamChannels.get(params.streamId);
+    if (!channel) {
+      throw new Error(
+        `runQueryStream: listenQueryStream(streamId) must be awaited before invoking (streamId="${params.streamId}")`,
+      );
+    }
+    return invoke<void>("run_query_stream", {
       sessionId: params.sessionId,
       streamId: params.streamId,
       sql: params.sql,
@@ -1257,7 +1267,9 @@ export const api = {
       capture: params.capture ?? false,
       captureRowCap: params.captureRowCap ?? null,
       captureRetentionDays: params.captureRetentionDays ?? null,
-    }),
+      onEvent: channel,
+    });
+  },
   previewQueryStream: (params: {
     sessionId: string;
     streamId: string;
@@ -1272,8 +1284,15 @@ export const api = {
      * ロックを無期限に握り続ける (読み取り専用セッションからでも到達できる経路)。
      */
     queryTimeoutSecs?: number | null;
-  }) =>
-    invoke<void>("preview_query_stream", {
+  }) => {
+    // #1096: `preview_query_stream` も同様に Channel 経由。
+    const channel = previewStreamChannels.get(params.streamId);
+    if (!channel) {
+      throw new Error(
+        `previewQueryStream: listenPreviewStream(streamId) must be awaited before invoking (streamId="${params.streamId}")`,
+      );
+    }
+    return invoke<void>("preview_query_stream", {
       sessionId: params.sessionId,
       streamId: params.streamId,
       sql: params.sql,
@@ -1281,7 +1300,9 @@ export const api = {
       rowLimit: params.rowLimit,
       chunkSize: params.chunkSize,
       queryTimeoutSecs: params.queryTimeoutSecs ?? null,
-    }),
+      onEvent: channel,
+    });
+  },
   /**
    * Aborts the streaming task registered under `streamId` (query/preview/
    * export/import all share this). `deliveredRows` is how many rows had
@@ -1935,25 +1956,31 @@ export interface CancelStreamResult {
   deliveredRows: number;
 }
 
-/** キャンセル成立時に `query-stream:cancelled` / `preview-stream:cancelled` /
- *  `export-stream:cancelled` として届く共通ペイロード (#685)。 */
+/** キャンセル成立時に `csv-import:cancelled` / `export-stream:cancelled` /
+ *  `dump-stream:cancelled` として届く共通ペイロード (#685)。クエリ/プレビュー
+ *  ストリームは #1096 でこのイベントを卒業し、下の `ChannelCancelledMessage`
+ *  (streamId を持たない、チャンネル自体がスコープ) を使う。 */
 export interface StreamCancelledEvent {
   streamId: string;
   deliveredRows: number;
 }
 
-export interface QueryStreamColumnsEvent {
-  streamId: string;
+// --- クエリ/プレビュー ストリーミングメッセージ (Tauri Channel, #1096) -----
+//
+// 以下は `runQueryStream` / `previewQueryStream` が内部で生成する Channel から
+// 届くメッセージ形状。1 ストリームにつき 1 チャンネルなのでスコープが自明になり、
+// 旧 `query-stream:*` / `preview-stream:*` イベントが個々に運んでいた `streamId`
+// を持たない (payload 削減、#1096)。
+
+export interface QueryStreamColumnsMessage {
   columns: Column[];
 }
 
-export interface QueryStreamRowsEvent {
-  streamId: string;
+export interface QueryStreamRowsMessage {
   rows: CellValue[][];
 }
 
-export interface QueryStreamDoneEvent {
-  streamId: string;
+export interface QueryStreamDoneMessage {
   totalRows: number;
   rowsAffected: number;
   elapsedMs: number;
@@ -1962,8 +1989,7 @@ export interface QueryStreamDoneEvent {
   appliedAutoLimit: number | null;
 }
 
-export interface QueryStreamErrorEvent {
-  streamId: string;
+export interface QueryStreamErrorMessage {
   error: string;
   /** True when the run was aborted by the execution-timeout guard. */
   timedOut: boolean;
@@ -1976,8 +2002,12 @@ export interface QueryStreamErrorEvent {
   deliveredRows: number;
 }
 
-export interface PreviewStreamMetaEvent {
-  streamId: string;
+/** Query チャンネル・Preview チャンネルどちらでも同じ shape (#685)。 */
+export interface ChannelCancelledMessage {
+  deliveredRows: number;
+}
+
+export interface PreviewStreamMetaMessage {
   targetTable: string | null;
   columns: Column[];
   primaryKey: string[];
@@ -1986,18 +2016,14 @@ export interface PreviewStreamMetaEvent {
   truncated: boolean;
 }
 
-export interface PreviewStreamRowsEvent {
-  streamId: string;
+export interface PreviewStreamRowsMessage {
   rows: CellValue[][];
 }
 
-export interface PreviewStreamDoneEvent {
-  streamId: string;
-}
-
-export interface PreviewStreamErrorEvent {
-  streamId: string;
+export interface PreviewStreamErrorMessage {
   error: string;
+  /** True when the dry-run was aborted by the execution-timeout guard. */
+  timedOut: boolean;
   /**
    * True when the failure means the DB connection was lost (server closed it,
    * socket broke, network dropped). The session is no longer usable.
@@ -2111,22 +2137,24 @@ export interface ImportStreamHandlers {
 }
 
 export interface QueryStreamHandlers {
-  onColumns?: (event: QueryStreamColumnsEvent) => void;
-  onRows?: (event: QueryStreamRowsEvent) => void;
-  onDone?: (event: QueryStreamDoneEvent) => void;
-  onError?: (event: QueryStreamErrorEvent) => void;
-  /** See `ExportStreamHandlers.onCancelled` (#685). */
-  onCancelled?: (event: StreamCancelledEvent) => void;
+  onColumns?: (event: QueryStreamColumnsMessage) => void;
+  onRows?: (event: QueryStreamRowsMessage) => void;
+  onDone?: (event: QueryStreamDoneMessage) => void;
+  onError?: (event: QueryStreamErrorMessage) => void;
+  /** See `ExportStreamHandlers.onCancelled` (#685). Fired through the same
+   *  Channel as the other messages, not a broadcast event (#1096). */
+  onCancelled?: (event: ChannelCancelledMessage) => void;
 }
 
 export interface PreviewStreamHandlers {
-  onMeta?: (event: PreviewStreamMetaEvent) => void;
-  onBeforeRows?: (event: PreviewStreamRowsEvent) => void;
-  onAfterRows?: (event: PreviewStreamRowsEvent) => void;
-  onDone?: (event: PreviewStreamDoneEvent) => void;
-  onError?: (event: PreviewStreamErrorEvent) => void;
-  /** See `ExportStreamHandlers.onCancelled` (#685). */
-  onCancelled?: (event: StreamCancelledEvent) => void;
+  onMeta?: (event: PreviewStreamMetaMessage) => void;
+  onBeforeRows?: (event: PreviewStreamRowsMessage) => void;
+  onAfterRows?: (event: PreviewStreamRowsMessage) => void;
+  onDone?: () => void;
+  onError?: (event: PreviewStreamErrorMessage) => void;
+  /** See `ExportStreamHandlers.onCancelled` (#685). Fired through the same
+   *  Channel as the other messages, not a broadcast event (#1096). */
+  onCancelled?: (event: ChannelCancelledMessage) => void;
 }
 
 /**
@@ -2152,90 +2180,193 @@ async function registerListeners(
   return () => unlisteners.forEach((un) => un());
 }
 
+// --- クエリ/プレビュー ストリーミング (Tauri Channel, #1096) ----------------
+//
+// 旧実装は `query-stream:*` / `preview-stream:*` という名前付きイベントを
+// `listen()` で (ストリームごとに 5〜6 本) 購読し、`payload.streamId` で自分宛て
+// かどうかを毎回判定していた。Tauri の `Channel` は 1 回の invoke に紐づく専用
+// チャンネルなので、(1) `streamId` によるフィルタが要らず (チャンネル自体が
+// スコープ)、(2) 大きな行チャンクは `webview.eval()` へのインライン展開ではなく
+// fetch 経由の受け渡しに切り替わる (`@tauri-apps/api` `core.js` / tauri
+// `ipc/channel.rs` 参照) ため大きなペイロードほど効く。
+//
+// `listenQueryStream`/`listenPreviewStream` は呼び出し側 (App.tsx) から見た
+// 「まず listen* を呼んで unlisten 相当の関数を受け取り、そのあとで
+// `api.runQueryStream`/`api.previewQueryStream` を呼ぶ」という既存の 2 段階の
+// 呼び出し順をそのまま保つ — 内部では `listen()` の代わりに Channel を生成して
+// `streamId` ごとのレジストリへ登録するだけで、後続の invoke がそこから
+// チャンネルを取り出して `onEvent` 引数として渡す。
+
+/** `streamId` → 生成済み Channel。`invoke` 呼び出し時に `onEvent` 引数として渡す
+ *  ためだけの一時的な受け渡し場所で、`listenQueryStream` が書き込み、
+ *  `api.runQueryStream` が読み出す。`unlisten` (detach) 時にエントリを消す。 */
+const queryStreamChannels = new Map<string, Channel<unknown>>();
+const previewStreamChannels = new Map<string, Channel<unknown>>();
+
+/** Channel から届く生メッセージの最小形。`kind` で分岐する。 */
+type RawStreamMessage = { kind: string } & Record<string, unknown>;
+
 /**
- * Subscribes to all query-stream events for `streamId`. Events for other
- * streams are ignored. Returns a function that detaches every listener.
+ * `parseResponse` は引数の静的型をそのまま返り値の型にする (`T` は `schema` では
+ * なく `value` から推論される) ため、`RawStreamMessage` (index signature 型) を
+ * そのまま渡すと呼び出し側が期待する具象型 (`QueryStreamColumnsMessage` 等) に
+ * 構造的に代入できず型エラーになる。ここで明示的に型引数を渡して変換する薄い
+ * ラッパー — 実行時の検証は `parseResponse`/`schema.safeParse` がそのまま行う
+ * ので安全性は変わらない。
+ */
+function parseChannelMessage<T>(
+  schema: Parameters<typeof parseResponse>[0],
+  raw: RawStreamMessage,
+  command: string,
+): T {
+  return parseResponse(schema, raw as unknown as T, command);
+}
+
+/**
+ * Subscribes to the query-stream Channel that will be created for `streamId`.
+ * Returns a function that detaches the handlers — further messages that
+ * arrive after detaching (e.g. one already in flight when a cancel raced it)
+ * are silently ignored rather than reaching stale callbacks.
  */
 export async function listenQueryStream(
   streamId: string,
   handlers: QueryStreamHandlers,
 ): Promise<UnlistenFn> {
-  const filter =
-    <T extends { streamId: string }>(
-      schema: Parameters<typeof parseResponse>[0],
-      event: string,
-      cb?: (e: T) => void,
-    ) =>
-    (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) {
-        cb(parseResponse(schema, e.payload, event));
-      }
-    };
-  return registerListeners([
-    listen<QueryStreamColumnsEvent>(
-      "query-stream:columns",
-      filter(schemas.queryStreamColumnsEvent, "query-stream:columns", handlers.onColumns),
-    ),
-    listen<QueryStreamRowsEvent>(
-      "query-stream:rows",
-      filter(schemas.streamRowsEventLite, "query-stream:rows", handlers.onRows),
-    ),
-    listen<QueryStreamDoneEvent>(
-      "query-stream:done",
-      filter(schemas.queryStreamDoneEvent, "query-stream:done", handlers.onDone),
-    ),
-    listen<QueryStreamErrorEvent>(
-      "query-stream:error",
-      filter(schemas.queryStreamErrorEvent, "query-stream:error", handlers.onError),
-    ),
-    listen<StreamCancelledEvent>(
-      "query-stream:cancelled",
-      filter(schemas.streamCancelledEvent, "query-stream:cancelled", handlers.onCancelled),
-    ),
-  ]);
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "columns":
+        handlers.onColumns?.(
+          parseChannelMessage<QueryStreamColumnsMessage>(
+            schemas.queryStreamColumnsMessage,
+            msg,
+            "queryStreamColumnsMessage",
+          ),
+        );
+        break;
+      case "rows":
+        handlers.onRows?.(
+          parseChannelMessage<QueryStreamRowsMessage>(
+            schemas.queryStreamRowsMessageLite,
+            msg,
+            "queryStreamRowsMessageLite",
+          ),
+        );
+        break;
+      case "done":
+        handlers.onDone?.(
+          parseChannelMessage<QueryStreamDoneMessage>(
+            schemas.queryStreamDoneMessage,
+            msg,
+            "queryStreamDoneMessage",
+          ),
+        );
+        break;
+      case "error":
+        handlers.onError?.(
+          parseChannelMessage<QueryStreamErrorMessage>(
+            schemas.queryStreamErrorMessage,
+            msg,
+            "queryStreamErrorMessage",
+          ),
+        );
+        break;
+      case "cancelled":
+        handlers.onCancelled?.(
+          parseChannelMessage<ChannelCancelledMessage>(
+            schemas.channelCancelledMessage,
+            msg,
+            "channelCancelledMessage",
+          ),
+        );
+        break;
+      default:
+        // 未知の kind は無視する (将来バリアントが増えても古いフロントが落ちない
+        // ようにするための保険。#797 の streamEventParity と同じ「取りこぼしより
+        // 静かな無視を優先」の考え方)。
+        break;
+    }
+  };
+  queryStreamChannels.set(streamId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    // 同じ streamId で既に新しい登録に差し替わっていたら、他人のエントリを
+    // 消さない (`register_stream`/`forget_stream` のトークン方式と同じ発想)。
+    if (queryStreamChannels.get(streamId) === channel) {
+      queryStreamChannels.delete(streamId);
+    }
+  };
 }
 
+/** `listenQueryStream` の preview 版。プレビューは `onDone` が引数を運ばない。 */
 export async function listenPreviewStream(
   streamId: string,
   handlers: PreviewStreamHandlers,
 ): Promise<UnlistenFn> {
-  const filter =
-    <T extends { streamId: string }>(
-      schema: Parameters<typeof parseResponse>[0],
-      event: string,
-      cb?: (e: T) => void,
-    ) =>
-    (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) {
-        cb(parseResponse(schema, e.payload, event));
-      }
-    };
-  return registerListeners([
-    listen<PreviewStreamMetaEvent>(
-      "preview-stream:meta",
-      filter(schemas.previewStreamMetaEvent, "preview-stream:meta", handlers.onMeta),
-    ),
-    listen<PreviewStreamRowsEvent>(
-      "preview-stream:before-rows",
-      filter(schemas.streamRowsEventLite, "preview-stream:before-rows", handlers.onBeforeRows),
-    ),
-    listen<PreviewStreamRowsEvent>(
-      "preview-stream:after-rows",
-      filter(schemas.streamRowsEventLite, "preview-stream:after-rows", handlers.onAfterRows),
-    ),
-    listen<PreviewStreamDoneEvent>(
-      "preview-stream:done",
-      filter(schemas.previewStreamDoneEvent, "preview-stream:done", handlers.onDone),
-    ),
-    listen<PreviewStreamErrorEvent>(
-      "preview-stream:error",
-      filter(schemas.previewStreamErrorEvent, "preview-stream:error", handlers.onError),
-    ),
-    listen<StreamCancelledEvent>(
-      "preview-stream:cancelled",
-      filter(schemas.streamCancelledEvent, "preview-stream:cancelled", handlers.onCancelled),
-    ),
-  ]);
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "meta":
+        handlers.onMeta?.(
+          parseChannelMessage<PreviewStreamMetaMessage>(
+            schemas.previewStreamMetaMessage,
+            msg,
+            "previewStreamMetaMessage",
+          ),
+        );
+        break;
+      case "beforeRows":
+        handlers.onBeforeRows?.(
+          parseChannelMessage<PreviewStreamRowsMessage>(
+            schemas.previewStreamRowsMessageLite,
+            msg,
+            "previewStreamRowsMessageLite",
+          ),
+        );
+        break;
+      case "afterRows":
+        handlers.onAfterRows?.(
+          parseChannelMessage<PreviewStreamRowsMessage>(
+            schemas.previewStreamRowsMessageLite,
+            msg,
+            "previewStreamRowsMessageLite",
+          ),
+        );
+        break;
+      case "done":
+        handlers.onDone?.();
+        break;
+      case "error":
+        handlers.onError?.(
+          parseChannelMessage<PreviewStreamErrorMessage>(
+            schemas.previewStreamErrorMessage,
+            msg,
+            "previewStreamErrorMessage",
+          ),
+        );
+        break;
+      case "cancelled":
+        handlers.onCancelled?.(
+          parseChannelMessage<ChannelCancelledMessage>(
+            schemas.channelCancelledMessage,
+            msg,
+            "channelCancelledMessage",
+          ),
+        );
+        break;
+      default:
+        break;
+    }
+  };
+  previewStreamChannels.set(streamId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    if (previewStreamChannels.get(streamId) === channel) {
+      previewStreamChannels.delete(streamId);
+    }
+  };
 }
 
 /**
