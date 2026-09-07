@@ -341,7 +341,11 @@ pub async fn finish_transaction(
 // `app.emit()` の名前付きイベントのまま (このコマンドの担当範囲外 — 詳細は
 // `cancel_stream` のコメント参照)。
 #[derive(Debug, Serialize, Clone)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum QueryStreamMessage {
     Columns {
         columns: Vec<Column>,
@@ -389,7 +393,11 @@ pub enum QueryStreamMessage {
 /// Preview (dry-run) stream sibling of [`QueryStreamMessage`] — same rationale,
 /// carries `preview_query_stream`'s before/after batches instead.
 #[derive(Debug, Serialize, Clone)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum PreviewStreamMessage {
     Meta {
         target_table: Option<String>,
@@ -1008,8 +1016,7 @@ pub async fn preview_query_stream(
                 delivered_rows,
                 kind: StreamKind::Preview,
                 on_cancel: Some(Box::new(move |delivered_rows| {
-                    let _ =
-                        cancel_channel.send(PreviewStreamMessage::Cancelled { delivered_rows });
+                    let _ = cancel_channel.send(PreviewStreamMessage::Cancelled { delivered_rows });
                 })),
             },
         )
@@ -1389,5 +1396,80 @@ mod tests {
             !state.streams.read().await.contains_key(&stream_id),
             "stream should have been forgotten by the task after the gate opened"
         );
+    }
+
+    /// #1096: `run_query_stream`/`preview_query_stream` が組み立てる `on_cancel`
+    /// 配線 (Channel を clone してクロージャに閉じ込め、`cancel_stream` がそれを
+    /// 呼ぶと `Cancelled` メッセージが同じ Channel から届く) を、`AppHandle` /
+    /// 実 Tauri アプリなしで再現・固定する。
+    ///
+    /// `run_query_stream` 本体は `AppHandle` (Channel 引数は Webview 経由の IPC
+    /// デシリアライズでしか得られない) を要するため統合テストから直接は駆動
+    /// できない (`tests/timeout_cancel_pool.rs` 冒頭のコメントと同じ制約) が、
+    /// `tauri::ipc::Channel::new` はプレーンなコンストラクタなのでこの配線
+    /// パターン自体は単体テストで検証できる。「キャンセル時にストリームが確実に
+    /// 終了する」という受け入れ条件のうち、*on_cancel が実際に呼ばれて Cancelled
+    /// メッセージが同じチャンネルへ飛ぶ* 部分をここで固定する — 呼ばれなければ
+    /// フロントの `channel.onmessage` は永久に無音のままで、UI がキャンセル後も
+    /// 「実行中」表示のまま止まる (#685 の回帰)。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_stream_fires_the_registered_on_cancel_channel_callback() {
+        use tauri::ipc::InvokeResponseBody;
+
+        // Channel の送信先: `on_message` は生の InvokeResponseBody (JSON 文字列)
+        // を受け取る (`tauri::ipc::IpcResponse` の blanket impl が
+        // `serde_json::to_string` で作る)。mpsc に流し、後で kind/deliveredRows
+        // を検証する。
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InvokeResponseBody>();
+        let channel: Channel<QueryStreamMessage> = Channel::new(move |body| {
+            let _ = tx.send(body);
+            Ok(())
+        });
+        // run_query_stream が spawn 前に行うのと同じ clone
+        // (タスク本体用と on_cancel クロージャ用の 2 系統)。
+        let cancel_channel = channel.clone();
+
+        let state = AppState::default();
+        // このテストではタスク本体の中身は関係ない (on_cancel の配線だけを見る)
+        // ので、abort されるまで無期限に pending な no-op タスクで十分。
+        let jh = tokio::spawn(std::future::pending::<()>());
+        let stream_id = "strm-oncancel-test".to_string();
+        state
+            .register_stream(
+                stream_id.clone(),
+                StreamHandle {
+                    abort: jh.abort_handle(),
+                    delivered_rows: Arc::new(AtomicU64::new(3)),
+                    kind: StreamKind::Query,
+                    // run_query_stream 本体と同一の配線パターン。
+                    on_cancel: Some(Box::new(move |delivered_rows| {
+                        let _ =
+                            cancel_channel.send(QueryStreamMessage::Cancelled { delivered_rows });
+                    })),
+                },
+            )
+            .await;
+
+        let (delivered_rows, kind, on_cancel) = state
+            .cancel_stream(&stream_id)
+            .await
+            .expect("registered stream should be found and cancelled");
+        assert_eq!(delivered_rows, 3);
+        assert_eq!(kind, StreamKind::Query);
+        let on_cancel =
+            on_cancel.expect("query stream must register an on_cancel callback (#1096)");
+        // `cancel_stream` コマンドがここで呼ぶのと同じ。
+        on_cancel(delivered_rows);
+
+        let body = rx
+            .recv()
+            .await
+            .expect("on_cancel should have sent a Cancelled message down the channel");
+        let InvokeResponseBody::Json(json) = body else {
+            panic!("expected a JSON payload, got raw bytes");
+        };
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["kind"], "cancelled");
+        assert_eq!(value["deliveredRows"], 3);
     }
 }

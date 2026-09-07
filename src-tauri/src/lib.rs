@@ -117,7 +117,9 @@ pub mod __test_api {
     pub use crate::commands::import::{
         ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
     };
-    pub use crate::commands::query::{PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent};
+    pub use crate::commands::query::{
+        PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
+    };
 
     /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
     /// `commands::export::write_export_to` — 実ファイル出力と**同じ**振り分け /
