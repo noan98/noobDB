@@ -70,8 +70,16 @@ pub(crate) async fn apply_sync_sql_inner(
         ));
     }
 
-    session
+    let result = session
         .conn
         .execute_transaction(&statements, database.as_deref())
-        .await
+        .await;
+    // Schema Cache (#1097): このコマンドの目的自体が「対象スキーマをソースに
+    // 合わせて変更する」ことなので、渡された文の内容を判定せず常に
+    // invalidate する (`sql_may_change_schema` による判定は不要 — ここに来る
+    // `statements` は事実上すべて DDL)。
+    if result.is_ok() {
+        session.schema_cache.invalidate_all().await;
+    }
+    result
 }

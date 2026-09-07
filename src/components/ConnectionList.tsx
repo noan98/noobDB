@@ -621,6 +621,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setRefreshingSession(targetSessionId);
     setError(null);
     try {
+      // 明示的な Refresh (#1097): バックエンドの Schema Cache を無効化してから
+      // 再取得する。無効化に失敗しても (セッション消失など) 通常のフローで
+      // エラーになるだけなので、以降の再取得自体は続行する。
+      try {
+        await api.refreshSchemaCache(targetSessionId);
+      } catch {
+        // ignore — 下の listDatabases がセッション消失を検知してエラー表示する。
+      }
       const dbs = await api.listDatabases(targetSessionId);
       const openDbs = Object.keys(expandedDbs).filter(
         (db) => expandedDbs[db] && dbs.includes(db),

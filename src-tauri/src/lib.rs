@@ -3,6 +3,7 @@
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod cache;
 mod commands;
 mod db;
 mod error;
@@ -192,6 +193,7 @@ pub mod __test_api {
             reconnect_ssh: None,
             _tunnel: None,
             local_temp_file: None,
+            schema_cache: crate::cache::SchemaCache::default(),
         }
     }
 
@@ -340,6 +342,17 @@ pub mod __test_api {
             &s,
             &t,
         ))
+    }
+
+    /// Drives the `refresh_schema_cache` IPC command's core path (session
+    /// lookup + `SchemaCache::invalidate_all`) without a Tauri runtime (#1097),
+    /// so integration tests can exercise the explicit-Refresh path the same
+    /// way the frontend's Schema Browser refresh button does.
+    pub async fn refresh_schema_cache_via_command(
+        state: &AppState,
+        session_id: &str,
+    ) -> crate::error::Result<()> {
+        crate::commands::schema::refresh_schema_cache_inner(state, session_id).await
     }
 
     /// Drives the `apply_sync_sql` IPC command's core path (session lookup +
@@ -777,6 +790,7 @@ pub fn run() {
             commands::tasks::clear_task_runs,
             commands::tasks::get_scheduler_settings,
             commands::tasks::set_scheduler_settings,
+            commands::schema::refresh_schema_cache,
         ])
         .run(tauri::generate_context!());
 

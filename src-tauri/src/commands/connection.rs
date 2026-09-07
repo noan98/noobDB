@@ -271,6 +271,7 @@ pub async fn connect(
         reconnect_ssh,
         _tunnel: tunnel,
         local_temp_file: None,
+        schema_cache: crate::cache::SchemaCache::default(),
     };
     let id = state.insert(session).await;
     tracing::info!(
@@ -414,6 +415,11 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
         reconnect_ssh: old.reconnect_ssh.clone(),
         _tunnel: tunnel,
         local_temp_file: old.local_temp_file.clone(),
+        // 再接続は必ず新しい (空の) キャッシュから始める — 旧セッションの
+        // 値を引き継ぐと、再接続の合間に他クライアントが加えたスキーマ変更が
+        // stale なまま残ってしまう (#1097 の受け入れ条件「接続再確立時の
+        // キャッシュ有効性」)。
+        schema_cache: crate::cache::SchemaCache::default(),
     };
 
     // Swap the live session for the new one, then close the old connection. The

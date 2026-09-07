@@ -1730,6 +1730,32 @@ fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool 
     true
 }
 
+/// `sql` が DDL 相当 (`CREATE` / `ALTER` / `DROP` / `TRUNCATE` / `RENAME`) を
+/// 含み、Schema Cache (#1097) を invalidate すべきかどうかの簡易判定。
+///
+/// [`is_read_only_sql_for`] とは独立した別のヒューリスティックであり、読み取り
+/// 専用ガードの正しさには一切影響しない (invalidate 判定にのみ使う)。
+///
+/// - **先頭キーワードだけでなく本文全体を走査する。** マルチステートメントの
+///   2 文目以降や、DDL を伴う CTE (`WITH ... AS (...) CREATE ...` のような
+///   エンジン拡張、あるいは `run_query_transaction` が渡す複数文のうち一部だけ
+///   が DDL であるケース) も拾うため。
+/// - **誤検知 (DDL でないのに true) は安全側。** invalidate は「次の 1 回だけ
+///   再取得が走る」というコストに留まり、正しさを壊さない。逆に見逃し (DDL な
+///   のに false) は stale なキャッシュを残す実害に直結するため、この関数は
+///   fail-closed (広めに検出する) 方向に倒す。
+/// - コメント/文字列リテラルは [`mask_for_driver`] で空白化してから走査するので、
+///   `SELECT 'please alter this row'` のような値の中の同綴りキーワードには
+///   反応しない。
+pub fn sql_may_change_schema(driver: DriverKind, sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_driver(driver, &orig);
+    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+    ["create", "alter", "drop", "truncate", "rename"]
+        .iter()
+        .any(|kw| contains_word(&masked_lower, kw))
+}
+
 /// Row-locking clause phrases recognised by [`has_locking_clause`]: `SELECT
 /// ... FOR UPDATE` / `FOR SHARE` (standard SQL / MySQL / PostgreSQL), the
 /// PostgreSQL-only `FOR NO KEY UPDATE` / `FOR KEY SHARE`, and the MySQL-only
@@ -2823,7 +2849,7 @@ mod tests {
         apply_auto_limit, apply_auto_limit_for, apply_auto_limit_mssql, classify_write_kind,
         classify_write_kind_for, has_stacked_statements, has_stacked_statements_for,
         is_read_only_sql, is_read_only_sql_for, is_session_init_sql, mask_sensitive_var,
-        sum_size_parts, DriverKind, SslMode, WriteKind,
+        sql_may_change_schema, sum_size_parts, DriverKind, SslMode, WriteKind,
     };
 
     /// Drivers whose string literals follow the standard reading (`\` is an
@@ -3221,6 +3247,65 @@ mod tests {
                 "is_query_shape keyword {keyword:?} ({sql:?}) must be read-only-eligible for DuckDB"
             );
         }
+    }
+
+    /// Schema Cache (#1097) の invalidate 判定: DDL キーワードを含む文は検出
+    /// され、通常の DML / SELECT は検出されないこと。
+    #[test]
+    fn sql_may_change_schema_detects_ddl_keywords() {
+        let ddl = [
+            "CREATE TABLE t (id INT)",
+            "ALTER TABLE t ADD COLUMN c INT",
+            "DROP TABLE t",
+            "TRUNCATE TABLE t",
+            "RENAME TABLE t TO t2",
+            "CREATE INDEX idx ON t (c)",
+            "DROP VIEW v",
+            "CREATE OR REPLACE FUNCTION f() RETURNS INT AS $$ SELECT 1 $$ LANGUAGE sql",
+        ];
+        for sql in ddl {
+            for driver in STANDARD_DRIVERS {
+                assert!(
+                    sql_may_change_schema(driver, sql),
+                    "{driver:?} を DDL として検出できていない: {sql:?}"
+                );
+            }
+        }
+
+        let non_ddl = [
+            "SELECT * FROM t",
+            "INSERT INTO t (id) VALUES (1)",
+            "UPDATE t SET id = 1",
+            "DELETE FROM t WHERE id = 1",
+            "SELECT * FROM t WHERE note = 'please alter this later'",
+        ];
+        for sql in non_ddl {
+            for driver in STANDARD_DRIVERS {
+                assert!(
+                    !sql_may_change_schema(driver, sql),
+                    "{driver:?} が DML/SELECT を誤って DDL 判定した: {sql:?}"
+                );
+            }
+        }
+    }
+
+    /// マルチステートメントのうち後段だけが DDL でも検出できること
+    /// (`run_query_transaction` が渡す文配列の各要素がこの経路を通る想定)。
+    #[test]
+    fn sql_may_change_schema_scans_the_whole_body_not_just_the_leading_keyword() {
+        assert!(sql_may_change_schema(
+            DriverKind::Mysql,
+            "SELECT 1; ALTER TABLE t ADD COLUMN c INT"
+        ));
+    }
+
+    /// 文字列リテラルの中身は DDL 判定に影響しない (マスク経由で走査するため)。
+    #[test]
+    fn sql_may_change_schema_ignores_keywords_inside_string_literals() {
+        assert!(!sql_may_change_schema(
+            DriverKind::Postgres,
+            "SELECT 'drop everything' AS warning"
+        ));
     }
 
     /// The same fail-open shape, but through the dry-run preview's
