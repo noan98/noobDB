@@ -91,9 +91,17 @@ const EMIT_ONLY_ALLOWLIST: string[] = [];
 const LISTEN_ONLY_ALLOWLIST: string[] = [];
 
 describe("ストリーミングイベント名パリティ (Rust emit ↔ tauri.ts listen)", () => {
+  // #1096: run_query_stream / preview_query_stream は名前付きイベントを卒業し
+  // Tauri Channel (1 ストリーム 1 チャンネル、`kind` タグ付きメッセージ) へ移行
+  // したため、このテストが数える emit/listen イベント名の総数は 27 → 16 に減った
+  // (csv-import 5 + export-stream 4 + dump-stream 4 + connect-progress 1 +
+  // task-run 2)。閾値もそれに合わせて下げる — Channel 経由のメッセージ名
+  // パリティは `ipcArgParity.test.ts` の `onEvent` 引数チェックと
+  // `commands/query.rs` 内のコンパイル時の enum バリアント網羅性 (match の
+  // 網羅チェック) が別途担保する。
   it("両ソースから十分な数のイベント名を抽出できている (抽出ロジックの保険)", () => {
-    expect(emitted.size).toBeGreaterThanOrEqual(20);
-    expect(listened.size).toBeGreaterThanOrEqual(20);
+    expect(emitted.size).toBeGreaterThanOrEqual(15);
+    expect(listened.size).toBeGreaterThanOrEqual(15);
   });
 
   it("バックエンドが emit しているがフロントが listen していないイベントが無い (許可リスト除く)", () => {

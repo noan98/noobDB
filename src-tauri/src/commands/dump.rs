@@ -208,6 +208,10 @@ pub async fn dump_database(
                 abort: handle.abort_handle(),
                 delivered_rows: counter,
                 kind: StreamKind::Dump,
+                // #1096: Dump ストリームは引き続き `app.emit()` の名前付き
+                // イベント (`dump-stream:cancelled`) 経由でキャンセルを通知する
+                // (query/preview だけが Channel 経由の `on_cancel` を使う)。
+                on_cancel: None,
             },
         )
         .await;
