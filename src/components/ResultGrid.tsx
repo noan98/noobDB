@@ -19,6 +19,7 @@ import {
   type PaginationState,
   type SortingFn,
   type SortingState,
+  type Cell,
   type Row,
   type VisibilityState,
 } from "@tanstack/react-table";
@@ -3558,12 +3559,13 @@ export function DataGrid({
   });
 
   // Move keyboard focus to the given cell (original row index + column index).
-  // Scrolls the virtualizer when the target row is off-screen.
+  // Scrolls the row/column virtualizers when the target is off-screen.
   const navigateCell = (newRowIdx: number, newColIdx: number) => {
     const visIdx = visibleRows.findIndex((r) => r.index === newRowIdx);
     if (visIdx >= 0 && virtualize) {
       rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
     }
+    if (virtualize) scrollColumnIntoView(newColIdx);
     setActiveCell({ rowIdx: newRowIdx, colIdx: newColIdx });
     pendingFocusRef.current = { rowIdx: newRowIdx, colIdx: newColIdx };
   };
@@ -3725,6 +3727,46 @@ export function DataGrid({
   // the virtual spacer span.
   const totalColCount = visibleColIds.length + 2;
 
+  // Column virtualization (#1095). A wide result can have hundreds of
+  // columns; each *rendered* row would mount a `<td>` per column, multiplying
+  // against the viewport-sized row count row virtualization already limits
+  // us to. We window the *center* (unpinned) columns the same way rows are
+  // windowed, and always mount pinned columns (sticky, and typically few).
+  // The header/footer stay fully rendered — one row each, so their cost never
+  // multiplies — and remain aligned with windowed body rows regardless:
+  // `<colgroup>` declares every column's width once, and a `colSpan` spacer
+  // `<td>` simply occupies the combined width of the columns it skips (same
+  // mechanism as the vertical spacer rows below).
+  const leafColumnsForPin = table.getVisibleLeafColumns();
+  const leftPinnedCount = leafColumnsForPin.filter((c) => c.getIsPinned() === "left").length;
+  const rightPinnedCount = leafColumnsForPin.filter((c) => c.getIsPinned() === "right").length;
+  const centerColumns = leafColumnsForPin.filter((c) => !c.getIsPinned());
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: centerColumns.length,
+    getScrollElement: () => scrollContainerRef?.current ?? null,
+    // Column widths are exact (table state), not DOM-measured, so seed the
+    // real size directly instead of a rough estimate.
+    estimateSize: (index) => centerColumns[index]?.getSize() ?? defaultColumnSize("string"),
+    overscan: 6,
+  });
+  // Sizing/order/pinning/visibility can all change which column sits at a
+  // given center index; re-run the (exact) estimate so the virtualizer's
+  // cached offsets follow instead of lagging by a paint — mirrors the
+  // density re-measure above.
+  useEffect(() => {
+    if (virtualize) columnVirtualizer.measure();
+  }, [virtualize, columnVirtualizer, columnSizing, columnOrder, columnPinning, columnVisibility]);
+  const columnVirtualItems = virtualize ? columnVirtualizer.getVirtualItems() : [];
+  // Given an *original* column index, scroll it into view when it currently
+  // sits outside the mounted column window (off-screen pinned columns are
+  // always mounted, so only center columns need this). Mirrors
+  // `rowVirtualizer.scrollToIndex` for keyboard/find navigation.
+  const scrollColumnIntoView = (colIdx: number) => {
+    const centerPos = centerColumns.findIndex((c) => Number(c.id) === colIdx);
+    if (centerPos >= 0) columnVirtualizer.scrollToIndex(centerPos, { align: "auto" });
+  };
+
   // ── 結果内検索 (#644) のナビゲーション ──
   // 要求はワンショットの prop (`findNav`) で届く。ページング表示ではヒットの
   // 属するページへ先に移動する必要があり、ページ切替後の再レンダーを待ってから
@@ -3764,7 +3806,10 @@ export function DataGrid({
       return;
     }
     pendingFindNavRef.current = null;
-    if (virtualize) rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
+    if (virtualize) {
+      rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
+      scrollColumnIntoView(nav.colIdx);
+    }
     if (nav.select) {
       setSelection(null);
       setActiveCell({ rowIdx: nav.rowIdx, colIdx: nav.colIdx });
@@ -3981,7 +4026,17 @@ export function DataGrid({
       data-index={measureIndex}
     >
       <td className="row-index">{rowIdx + 1}</td>
-      {row.getVisibleCells().map((cell) => {
+      {(() => {
+        // Split into pinned-left / center / pinned-right, matching the
+        // colgroup order (`row.getVisibleCells()` already groups pinned
+        // columns to the ends). Only the (usually much larger) center group
+        // gets windowed; pinned columns are always mounted.
+        const cells = row.getVisibleCells();
+        const leftCells = leftPinnedCount > 0 ? cells.slice(0, leftPinnedCount) : [];
+        const rightCells = rightPinnedCount > 0 ? cells.slice(cells.length - rightPinnedCount) : [];
+        const centerCells = cells.slice(leftPinnedCount, cells.length - rightPinnedCount);
+        const windowed = columnVirtualItems.length > 0;
+        const renderCell = (cell: Cell<RowShape, unknown>) => {
         // Resolve original column index from the column id so reorder/hide
         // and pinning don't misalign per-column lookups.
         const colIdx = Number(cell.column.id);
@@ -4221,7 +4276,38 @@ export function DataGrid({
             )}
           </td>
         );
-      })}
+        };
+        const firstCenterIdx = windowed ? columnVirtualItems[0].index : 0;
+        const lastCenterIdx = windowed
+          ? columnVirtualItems[columnVirtualItems.length - 1].index
+          : centerCells.length - 1;
+        return (
+          <>
+            {leftCells.map(renderCell)}
+            {/* Spacer <td>s absorb the off-screen width of skipped center
+                columns so scroll width / sticky offsets stay correct — the
+                horizontal analogue of the vertical spacer <tr>s above. */}
+            {windowed && firstCenterIdx > 0 && (
+              <td
+                aria-hidden
+                colSpan={firstCenterIdx}
+                style={{ padding: 0, border: 0, background: "transparent" }}
+              />
+            )}
+            {(windowed ? columnVirtualItems.map((vi) => centerCells[vi.index]) : centerCells).map(
+              renderCell,
+            )}
+            {windowed && lastCenterIdx < centerCells.length - 1 && (
+              <td
+                aria-hidden
+                colSpan={centerCells.length - 1 - lastCenterIdx}
+                style={{ padding: 0, border: 0, background: "transparent" }}
+              />
+            )}
+            {rightCells.map(renderCell)}
+          </>
+        );
+      })()}
       <td className="col-filler" aria-hidden />
     </tr>
     );

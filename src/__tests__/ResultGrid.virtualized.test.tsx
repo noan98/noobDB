@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { fireEvent } from "@testing-library/react";
 import { renderWithProviders } from "./testUtils";
 import { ResultGrid } from "../components/ResultGrid";
 import type { Column, QueryResult } from "../api/tauri";
@@ -22,9 +23,12 @@ const ROW_H = 28;
 // (スクロール枠の <div> など) はビューポート高を返す。
 const protoOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
 const protoOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
+const protoClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+const protoScrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
 // ロケールと ResizeObserver も書き換えるため、元の値を控えて afterAll で確実に戻す
 // (Vitest はファイル単位で環境を隔離するが、後始末を漏らさないようにする)。
 const originalResizeObserver = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+const originalScrollTo = Element.prototype.scrollTo;
 let originalLocale: ReturnType<typeof getLocale>;
 
 beforeAll(() => {
@@ -49,6 +53,43 @@ beforeAll(() => {
       return 800;
     },
   });
+  // react-virtual はスクロール可能距離のクランプに `scrollWidth`/`clientWidth`
+  // (offsetWidth ではない) を直接読む (`scrollToIndex` の内部計算・#1095 の列
+  // 仮想化テスト向け)。jsdom は両方とも常に 0 を返すため、そのままだと算出した
+  // 目標オフセットが `Math.min(0, offset)` で必ず 0 に潰れる。列テストのみが
+  // `scrollToIndex` (キーボード操作でウィンドウ外の列へ移動) を要求するので、
+  // ここで実ブラウザ相当の値を与える。
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+    configurable: true,
+    get() {
+      return 800;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollWidth", {
+    configurable: true,
+    get() {
+      return 100000;
+    },
+  });
+  // jsdom の `Element.scrollTo` はレイアウトを持たないため no-op で、
+  // `scrollLeft`/`scrollTop` も "scroll" イベントも更新しない。react-virtual の
+  // `scrollToIndex` はこの一連 (scrollTo → scrollLeft 反映 → "scroll" イベントで
+  // 内部オフセットを再同期) に依存するため、キーボード操作でウィンドウ外のセルへ
+  // 移動するテスト向けに実ブラウザ相当の版へ差し替える。イベントはマイクロタスクへ
+  // 遅延させる — 同期発火だと `scrollToIndex` を呼んだ React イベントハンドラの
+  // レンダー最中に "scroll" ハンドラ側の setState が割り込み、React の
+  // flushSync 制約に触れる (実ブラウザでは scrollTo 自体が非同期のため起きない)。
+  Element.prototype.scrollTo = function (this: Element, ...args: unknown[]) {
+    const opts = (typeof args[0] === "object" && args[0] !== null ? args[0] : {}) as {
+      left?: number;
+      top?: number;
+    };
+    const left = typeof args[0] === "number" ? (args[0] as number) : opts.left;
+    const top = typeof args[1] === "number" ? (args[1] as number) : opts.top;
+    if (typeof left === "number") this.scrollLeft = left;
+    if (typeof top === "number") this.scrollTop = top;
+    queueMicrotask(() => this.dispatchEvent(new Event("scroll")));
+  };
 });
 
 afterAll(() => {
@@ -60,6 +101,9 @@ afterAll(() => {
   }
   if (protoOffsetHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", protoOffsetHeight);
   if (protoOffsetWidth) Object.defineProperty(HTMLElement.prototype, "offsetWidth", protoOffsetWidth);
+  if (protoClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", protoClientWidth);
+  if (protoScrollWidth) Object.defineProperty(HTMLElement.prototype, "scrollWidth", protoScrollWidth);
+  Element.prototype.scrollTo = originalScrollTo;
 });
 
 function makeResult(columns: Column[], rows: QueryResult["rows"]): QueryResult {
@@ -93,7 +137,7 @@ describe("ResultGrid 行仮想化 (#403)", () => {
     // 程度に収まる。
     expect(rendered.length).toBeGreaterThan(0);
     expect(rendered.length).toBeLessThan(TOTAL);
-  });
+  }, 15000);
 
   it("先頭から連番の行番号が描画され、オフスクリーン高をスペーサ行が吸収する", () => {
     const { container } = renderWithProviders(<ResultGrid result={BIG_RESULT} />);
@@ -117,7 +161,7 @@ describe("ResultGrid 行仮想化 (#403)", () => {
       return td && parseFloat((td as HTMLElement).style.height || "0") > 0;
     });
     expect(spacer).toBeTruthy();
-  });
+  }, 15000);
 
   it("奇数番目の可視行に zebra ストライプのクラスが付く", () => {
     const { container } = renderWithProviders(<ResultGrid result={BIG_RESULT} />);
@@ -127,4 +171,87 @@ describe("ResultGrid 行仮想化 (#403)", () => {
     expect(rendered[1].classList.contains("grid-row-stripe")).toBe(true);
     expect(rendered[2].classList.contains("grid-row-stripe")).toBe(false);
   });
+});
+
+// 大量カラム時の横方向仮想化 (#1095)。列幅はテーブル state 由来の実寸 (DOM 計測では
+// ない) なので、上の行仮想化と異なり列セルへの `measureElement` は不要 — スクロール枠
+// (offsetWidth = 800、上の beforeAll でモック済み) と各列の既定幅 (VARCHAR = 180px) から
+// 可視範囲が決まる。
+const MANY_COLS = 60;
+const WIDE_COLUMNS: Column[] = Array.from({ length: MANY_COLS }, (_, i) => ({
+  name: `c${i}`,
+  type_name: "VARCHAR",
+}));
+const WIDE_RESULT = makeResult(
+  WIDE_COLUMNS,
+  Array.from({ length: 20 }, (_, r) => Array.from({ length: MANY_COLS }, (_, c) => `r${r}c${c}`)),
+);
+
+describe("ResultGrid 列仮想化 (#1095)", () => {
+  // 60 列 × 20 行の描画 + v8 coverage 計装は既定の 5000ms を超えることがあるため、
+  // このファイル内の他テスト同様に個別の timeout を持たせる (振る舞いには無関係)。
+  it("大量カラムでは可視範囲付近の列だけをマウントする", () => {
+    const { container } = renderWithProviders(<ResultGrid result={WIDE_RESULT} />);
+    const row0 = dataRows(container)[0];
+    const cells = Array.from(row0.querySelectorAll("td[role='gridcell']"));
+
+    // 全列 (60) はマウントされない。ビューポート (800px) / 列幅 (180px) + overscan
+    // 程度に収まる。
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells.length).toBeLessThan(MANY_COLS);
+
+    // 省かれた列ぶんの幅を吸収する colSpan 付きスペーサ <td> が存在する
+    // (縦方向のスペーサ <tr> と同じしくみ)。
+    const spacer = Array.from(row0.querySelectorAll("td[aria-hidden='true']")).find(
+      (td) => Number(td.getAttribute("colspan") ?? "0") > 1,
+    );
+    expect(spacer).toBeTruthy();
+  }, 15000);
+
+  it("末尾付近の列は先頭行から連続してマウントされている (欠番なし)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={WIDE_RESULT} />);
+    const row0 = dataRows(container)[0];
+    const texts = Array.from(row0.querySelectorAll("td[role='gridcell']")).map(
+      (td) => td.textContent ?? "",
+    );
+    // 先頭は c0 (r0c0)。
+    expect(texts[0]).toBe("r0c0");
+    // マウントされた列は元の列順のまま連番 (c0, c1, c2, ...)。
+    const indices = texts.map((t) => Number(t.replace("r0c", "")));
+    for (let i = 1; i < indices.length; i++) {
+      expect(indices[i]).toBe(indices[i - 1] + 1);
+    }
+  }, 15000);
+
+  it("ArrowRight を繰り返すと初期ウィンドウ外の列にもフォーカスが移る (#1095)", async () => {
+    // 15 列目は初期ウィンドウ (0〜10 付近) の外。table 要素 (role=grid) に
+    // キーを送り続ける — 個々の <td> は移動のたびウィンドウ外へ出て
+    // アンマウントされうるので、生存が保証された handler 直付け先へ送る。
+    const { container } = renderWithProviders(<ResultGrid result={WIDE_RESULT} />);
+    const table = container.querySelector("table[role='grid']") as HTMLElement;
+    const firstCell = dataRows(container)[0].querySelector(
+      "td[role='gridcell']",
+    ) as HTMLElement;
+    fireEvent.focus(firstCell);
+    const TARGET_COL = 15;
+    for (let i = 0; i < TARGET_COL; i++) {
+      fireEvent.keyDown(table, { key: "ArrowRight" });
+      // 1 手ごとに "scroll" イベント (マイクロタスク経由) と React の再描画を
+      // 完了させる。まとめて連打すると `scrollToIndex` が毎回同じ古い
+      // scrollOffset を基準に計算してしまい、最終的な列がウィンドウへ入らない
+      // (実ブラウザでは各キー入力の間に十分な時間が空くため起きない)。
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    // ウィンドウ外だった列がスクロールでマウントされる (#1095 の
+    // `scrollColumnIntoView`)。マウントされないままだと退行 (キーボード操作が
+    // 大量カラムで壊れる)。
+    const row0After = dataRows(container)[0];
+    const targetCell = Array.from(
+      row0After.querySelectorAll("td[role='gridcell']"),
+    ).find((td) => td.textContent === `r0c${TARGET_COL}`);
+    expect(targetCell).toBeTruthy();
+    expect(targetCell?.classList.contains("is-active-cell")).toBe(true);
+  }, 40000);
 });
