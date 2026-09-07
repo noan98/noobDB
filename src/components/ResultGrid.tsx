@@ -3738,9 +3738,24 @@ export function DataGrid({
   // `<td>` simply occupies the combined width of the columns it skips (same
   // mechanism as the vertical spacer rows below).
   const leafColumnsForPin = table.getVisibleLeafColumns();
-  const leftPinnedCount = leafColumnsForPin.filter((c) => c.getIsPinned() === "left").length;
-  const rightPinnedCount = leafColumnsForPin.filter((c) => c.getIsPinned() === "right").length;
+  const leftPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "left");
+  const rightPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "right");
+  const leftPinnedCount = leftPinnedColumns.length;
+  const rightPinnedCount = rightPinnedColumns.length;
   const centerColumns = leafColumnsForPin.filter((c) => !c.getIsPinned());
+  // Sticky "dead zones" the scroll container's own clientWidth doesn't
+  // account for: the always-sticky row-index cell (`ROW_INDEX_WIDTH`, not a
+  // tracked column — see its `left`/`right` offset math elsewhere in this
+  // file) plus the *pixel* width of pinned columns, not just their count.
+  // Left-pinned columns sit in front of every center column in table flow,
+  // so a center column's real (scroll-content) x-coordinate is offset by
+  // `leftDeadZone`, not 0 — `scrollMargin` corrects the virtualizer's own
+  // coordinate space to match. Right-pinned columns don't shift center
+  // columns' start (they trail after), but still cover the last
+  // `rightDeadZone` px of the viewport visually.
+  const leftDeadZone =
+    ROW_INDEX_WIDTH + leftPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
+  const rightDeadZone = rightPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
   const columnVirtualizer = useVirtualizer({
     horizontal: true,
     count: centerColumns.length,
@@ -3749,11 +3764,28 @@ export function DataGrid({
     // real size directly instead of a rough estimate.
     estimateSize: (index) => centerColumns[index]?.getSize() ?? defaultColumnSize("string"),
     overscan: 6,
+    // Align the virtualizer's coordinate space with the real scroll offset
+    // (see `leftDeadZone` above) so both the mounted window during plain
+    // scrolling and `scrollToIndex`'s target offset are computed against the
+    // column's true position, not an offset that starts at 0.
+    scrollMargin: leftDeadZone,
+    // Reserve room at both ends so `scrollToIndex`/`align: "auto"` never
+    // aligns a column flush with the container edge — which would land it
+    // underneath the sticky row-index/pinned columns instead of just past
+    // them (#1099 review: keyboard/find nav could focus an invisible cell).
+    scrollPaddingStart: leftDeadZone,
+    scrollPaddingEnd: rightDeadZone,
   });
   // Sizing/order/pinning/visibility can all change which column sits at a
-  // given center index; re-run the (exact) estimate so the virtualizer's
-  // cached offsets follow instead of lagging by a paint — mirrors the
-  // density re-measure above.
+  // given center index (and, via `leftDeadZone`/`rightDeadZone` above,
+  // `scrollMargin`/`scrollPaddingStart`/`scrollPaddingEnd` themselves); re-run
+  // the (exact) estimate so the virtualizer's cached offsets follow instead
+  // of lagging by a paint — mirrors the density re-measure above. Note:
+  // `scrollMargin`/`scrollPadding*` are plain options virtual-core re-reads
+  // every render (and `scrollMargin` is itself a dependency of its internal
+  // measurements memo), so they don't strictly need this `.measure()` kick —
+  // it's here for `estimateSize`'s per-index *values* (opaque to virtual-core
+  // until asked to remeasure), which the same state changes also affect.
   useEffect(() => {
     if (virtualize) columnVirtualizer.measure();
   }, [virtualize, columnVirtualizer, columnSizing, columnOrder, columnPinning, columnVisibility]);

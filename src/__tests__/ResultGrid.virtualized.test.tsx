@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fireEvent } from "@testing-library/react";
-import { renderWithProviders } from "./testUtils";
+import userEvent from "@testing-library/user-event";
+import { renderWithProviders, screen } from "./testUtils";
 import { ResultGrid } from "../components/ResultGrid";
 import type { Column, QueryResult } from "../api/tauri";
-import { setLocale, getLocale } from "../i18n";
+import { setLocale, getLocale, t } from "../i18n";
 
 // ResultGrid の行仮想化を検証する。本体の ResultGrid.test.tsx は jsdom の
 // ビューポート寸法が 0 なので「全行描画フォールバック」経路を通る (= 仮想化されない)。
@@ -254,4 +255,67 @@ describe("ResultGrid 列仮想化 (#1095)", () => {
     expect(targetCell).toBeTruthy();
     expect(targetCell?.classList.contains("is-active-cell")).toBe(true);
   }, 40000);
+
+  it("右ピン留め列があっても、キーボード移動した列がその下に隠れない (#1099)", async () => {
+    // PR #1099 のレビュー指摘 (実バグ): 列仮想化のビューポートは
+    // スクロール枠の clientWidth 全体とみなされるが、実際には常時固定表示の
+    // 行番号セル (ROW_INDEX_WIDTH) と固定列がその両端を覆う「死角」になる。
+    // scrollPaddingStart/End (死角ぶんの余白確保) と scrollMargin (中央列の
+    // 実座標が 0 始まりでないことの補正) が無いと、`scrollToIndex` が列を
+    // ちょうど死角の下に着地させてしまう — フォーカスは移るが画面上は見えない。
+    //
+    // jsdom は実レイアウトを持たないため getBoundingClientRect で可視性を
+    // 直接検証できない。代わりに、列幅 (VARCHAR = 180px 固定) と
+    // ROW_INDEX_WIDTH (44px) から実座標を計算し、着地後の scrollLeft が
+    // 死角を避けた範囲に収まることを数値で検証する。
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={WIDE_RESULT} />);
+
+    // 最終列 (c59) を右に固定する。
+    await user.click(
+      screen.getByRole("button", { name: t("gridFilterAria", { column: `c${MANY_COLS - 1}` }) }),
+    );
+    const pinSelect = screen.getByText(t("gridPinRight")).closest("select") as HTMLSelectElement;
+    await user.selectOptions(pinSelect, "right");
+    expect(container.querySelector("td.is-pinned-right")).not.toBeNull();
+
+    const table = container.querySelector("table[role='grid']") as HTMLElement;
+    const firstCell = dataRows(container)[0].querySelector(
+      "td[role='gridcell']",
+    ) as HTMLElement;
+    fireEvent.focus(firstCell);
+    // 中央列の途中 (最終センター列 = count-1 は virtual-core が
+    // scrollPaddingEnd を経由しない別経路 (getMaxScrollOffset) を使うため
+    // 意図的に避ける — #1099 の指摘が実際に効く経路はここ)。
+    const TARGET_COL = 18;
+    for (let i = 0; i < TARGET_COL; i++) {
+      fireEvent.keyDown(table, { key: "ArrowRight" });
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    const scrollEl = table.parentElement as HTMLElement;
+    const COL_WIDTH = 180; // VARCHAR の既定幅 (defaultColumnSize)
+    const ROW_INDEX_WIDTH = 44;
+    const RIGHT_PINNED_WIDTH = 180; // 固定した c59 も VARCHAR
+    const leftDeadZone = ROW_INDEX_WIDTH; // 左固定列なし
+    const rightDeadZone = RIGHT_PINNED_WIDTH;
+    const clientWidth = 800; // beforeAll でモック済み
+    // 対象列 (c30) の実コンテンツ座標。中央列は行番号セルの直後から並ぶ。
+    const itemStart = leftDeadZone + TARGET_COL * COL_WIDTH;
+    const itemEnd = itemStart + COL_WIDTH;
+
+    // 列が実際に見えている行 (row-index/固定列の死角の外) にあることを確認する。
+    // 右端: 列の右端が「ビューポート右端 − 右固定列幅」を超えて死角へ食い込んで
+    // いない。左端: 列の左端が「行番号 + 左固定列幅」より手前 (死角側) に出ていない。
+    expect(itemEnd - scrollEl.scrollLeft).toBeLessThanOrEqual(clientWidth - rightDeadZone);
+    expect(itemStart - scrollEl.scrollLeft).toBeGreaterThanOrEqual(leftDeadZone);
+
+    // フォーカス自体は従来どおり移っている (#1095 の退行防止と両立させる)。
+    const targetCell = Array.from(
+      dataRows(container)[0].querySelectorAll("td[role='gridcell']"),
+    ).find((td) => td.textContent === `r0c${TARGET_COL}`);
+    expect(targetCell).toBeTruthy();
+    expect(targetCell?.classList.contains("is-active-cell")).toBe(true);
+  }, 60000);
 });
