@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
@@ -2470,7 +2470,16 @@ function ColumnStatsMenu({
 /** Pseudo-random width percentages for skeleton shimmer bars (cycles by column index). */
 const SKELETON_WIDTHS = [68, 85, 52, 90, 72, 58];
 
-export function DataGrid({
+// `React.memo` でラップする (#1098)。呼び出し元の `ResultGrid` は
+// ストリーミング経過時間表示 (200ms ごとに tick する `useStreamingElapsed`) や
+// 検索バー/ページネーションの UI state を自身の state として持っており、
+// それらが変化しても `DataGrid` に渡す props (columns/rows/pendingEdits 等) は
+// 何も変わらない。memo が無いと、その props 不変の再レンダリングのたびに
+// 数千行規模の本コンポーネントの本体 (state 読み出し・仮想化計算・可視行分の
+// セル JSX 組み立て) が丸ごと再実行されてしまう。shallow 比較のみで独自の
+// 比較関数は使わないため、常に props 参照の同一性判定のみで安全にスキップ判定
+// できる (stale な比較ロジックによる誤バイパスのリスクはない)。
+export const DataGrid = memo(function DataGrid({
   columns,
   rows,
   enableColumnControls = true,
@@ -2733,6 +2742,19 @@ export function DataGrid({
       ),
     [columnKinds, rows],
   );
+  // `columnStats` は行が届くたびに (ストリーミング中は 1 バッチごとに) 作り直る。
+  // これを下の `tableColumns` の依存配列に直接含めると、実際にはセルの描画関数
+  // (`cell`) 自身は変わらないのに ColumnDef 配列全体が新しい参照になり、
+  // react-table 側の列モデル (ヘッダー/フッターグループ、可視列一覧 等) まで
+  // 総入れ替えになってしまう (#1098)。データバー/ヒートマップの条件付き書式は
+  // `colFormats` で明示的に有効化された列でしか参照しない (renderNumeric 内)
+  // ので、ref 経由の最新値参照に切り替えて `tableColumns` の再構築対象から外す。
+  // `cell` 関数は行データ (`data`) の変化のたびにどのみち呼び直されるため、
+  // 表示値が古くなることはない。
+  const columnStatsRef = useRef(columnStats);
+  useEffect(() => {
+    columnStatsRef.current = columnStats;
+  }, [columnStats]);
 
   // --- Sort & column filters, persisted per result shape (#677) ---
   // Column widths/order/visibility were already persisted (#616); sort and
@@ -3036,7 +3058,9 @@ export function DataGrid({
           // ヒートマップを背景に描く。NULL/非数値は対象外 (上で弾き済み or num===null)。
           const renderNumeric = (display: string, extraClass: string, title?: string) => {
             const mode = colFormats[i] ?? "off";
-            const stats = columnStats[i];
+            // `columnStats` 自体は tableColumns の依存配列から意図的に外している
+            // (上のコメント参照) ため、ここは常に最新値を持つ ref から読む。
+            const stats = columnStatsRef.current[i];
             const num = toNumber(v);
             if (mode === "off" || !stats || num === null) {
               return (
@@ -3183,6 +3207,10 @@ export function DataGrid({
         },
       };
     });
+    // `columnStats` は意図的に外している (上のコメント参照) — 依存に含めると
+    // ストリーミングの行バッチごとに ColumnDef 配列 (延いては react-table の
+    // 列モデル全体) が作り直されてしまう。値自体は `columnStatsRef` 経由で
+    // 常に最新を参照するので、表示の鮮度は落ちない。
   }, [
     columns,
     columnKinds,
@@ -3192,16 +3220,39 @@ export function DataGrid({
     richCellRendering,
     locale,
     colFormats,
-    columnStats,
     heatPaletteKey,
   ]);
 
+  // ストリーミング中は 1 行バッチが届くたびに呼び出し元 (App.tsx) が
+  // `[...prev, ...next]` で `rows` を丸ごと新しい配列参照に作り直す。ここで
+  // 毎回 `rows` 全件を RowShape へ変換し直すと、1 バッチあたり O(既読み込み
+  // 行数) かかり、ストリーム全体では O(行数²) の無駄な変換になってしまう
+  // (#1098)。実際には既存行はそのまま (同じ要素参照で) 前に付いているだけ
+  // なので、「前回の変換結果 + 新しく増えた末尾ぶんだけ変換」で済ませる。
+  // 判定は必要十分ではなく安全側の簡易チェック — 先頭と末尾の要素参照が
+  // 前回と一致するときだけ「単純な追記」とみなし、それ以外 (新しいクエリの
+  // 実行・行の丸ごと差し替えなど) は無条件に全件変換へフォールバックする
+  // ので、誤って古い変換結果を返すことはない。
+  const dataCacheRef = useRef<{ rows: CellValue[][]; data: RowShape[] }>({ rows: [], data: [] });
   const data = useMemo<RowShape[]>(() => {
-    return rows.map((r) => {
+    const toRowShape = (r: CellValue[]): RowShape => {
       const o: RowShape = {};
       r.forEach((v, i) => (o[String(i)] = v));
       return o;
-    });
+    };
+    const prev = dataCacheRef.current;
+    const isAppendOnly =
+      prev.rows.length > 0 &&
+      rows.length >= prev.rows.length &&
+      rows[0] === prev.rows[0] &&
+      rows[prev.rows.length - 1] === prev.rows[prev.rows.length - 1];
+    const next = isAppendOnly
+      ? rows.length === prev.rows.length
+        ? prev.data
+        : prev.data.concat(rows.slice(prev.rows.length).map(toRowShape))
+      : rows.map(toRowShape);
+    dataCacheRef.current = { rows, data: next };
+    return next;
   }, [rows]);
 
   const table = useReactTable({
@@ -5427,7 +5478,7 @@ export function DataGrid({
       )}
     </>
   );
-}
+});
 
 /**
  * ストリーミング実行中の経過時間 (ms) を実時間でライブに刻む。
@@ -5680,6 +5731,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     columns: Column[];
     rows: CellValue[][];
   } | null>(null);
+  // `DataGrid` は React.memo でラップされている (#1098) ため、ここで毎レンダー
+  // 新しい無名関数を渡すと props の shallow 比較が常に不一致になり memo が
+  // 無意味になる。setState はどれも同一性の保証されたセッターなので依存配列は
+  // 空でよい。
+  const handleExportSelection = useCallback((data: { columns: Column[]; rows: CellValue[][] }) => {
+    setSelectionExport(data);
+    setShowExport(true);
+  }, []);
   const [search, setSearch] = useState("");
   // Interval the toggle will use when switched on. Seeded from the persisted
   // default and from the live cadence so the selector reflects the active poll.
@@ -6914,10 +6973,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}
           onSelectionSummary={setSelSummary}
-          onExportSelection={(data) => {
-            setSelectionExport(data);
-            setShowExport(true);
-          }}
+          onExportSelection={handleExportSelection}
           onRunStatsQuery={onRunStatsQuery}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}
