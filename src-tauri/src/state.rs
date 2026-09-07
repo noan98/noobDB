@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
 
+use crate::cache::SchemaCache;
 use crate::db::{Connection, DbConnectOptions};
 use crate::ssh::{SshConfig, SshTunnel};
 
@@ -87,6 +88,13 @@ pub struct Session {
     /// (`vacuum_into` / "ファイルに保存", which writes an independent file and
     /// does not change this session's own volatility).
     pub local_temp_file: Option<std::path::PathBuf>,
+    /// このセッション (接続) だけが持つスキーマ introspection キャッシュ (#1097)。
+    /// `Session` のフィールドとして持つことで「接続をまたいだキャッシュ汚染がない」
+    /// ことを型で保証する — 別セッションの `SchemaCache` へは決して到達できない。
+    /// `reconnect` (`commands::connection::reconnect_inner`) は既存のセッションを
+    /// 書き換えず新しい `Session` を作って差し替えるため、再接続のたびにこの
+    /// フィールドも自動的に空へ戻る (詳細は `cache` モジュールのドキュメント参照)。
+    pub schema_cache: SchemaCache,
 }
 
 impl Session {

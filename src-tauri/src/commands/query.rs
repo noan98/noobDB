@@ -167,7 +167,14 @@ pub(crate) async fn run_query_inner(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     ensure_allowed_for_session(&session, sql)?;
-    session.conn.execute(sql, database).await
+    let result = session.conn.execute(sql, database).await;
+    // Schema Cache (#1097): DDL 相当の SQL が成功したら、このセッションの
+    // スキーマキャッシュを丸ごと invalidate する。判定は実行前ではなく成功後に
+    // 行う — 失敗した DDL (構文エラー等) でキャッシュを無駄に破棄しないため。
+    if result.is_ok() && crate::db::sql_may_change_schema(session.conn.driver_kind(), sql) {
+        session.schema_cache.invalidate_all().await;
+    }
+    result
 }
 
 /// Applies `statements` as a single all-or-nothing transaction. Every
@@ -253,6 +260,20 @@ pub(crate) async fn run_query_transaction_inner(
             .await
         }
     }
+    // Schema Cache (#1097): まとめて実行した文のいずれか 1 つでも DDL 相当なら
+    // (どれがどのテーブルに効くかまでは解析しないので) 接続単位で丸ごと
+    // invalidate する。cell-edit の Apply (通常は DML のみ) では対象外のまま
+    // 高速パスを保つ一方、AlterTableModal / CreateIndexModal が生成する
+    // ALTER/CREATE 文の適用はここを必ず通る。
+    if result.is_ok() {
+        let driver = session.conn.driver_kind();
+        if statements
+            .iter()
+            .any(|sql| crate::db::sql_may_change_schema(driver, sql))
+        {
+            session.schema_cache.invalidate_all().await;
+        }
+    }
     let affected = result?;
     Ok(QueryResult::empty(affected, elapsed_ms))
 }
@@ -291,7 +312,17 @@ pub async fn run_in_transaction(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     ensure_allowed_for_session(&session, &sql)?;
-    session.conn.execute_in_transaction(&sql).await
+    let result = session.conn.execute_in_transaction(&sql).await;
+    // Schema Cache (#1097): 明示トランザクション内の DDL は、後で ROLLBACK
+    // される可能性があるため理論上は invalidate しすぎ (無駄な再取得 1 回) に
+    // なり得るが、COMMIT を待って invalidate すると `finish_transaction` 側で
+    // どの文が DDL だったかを覚えておく必要が生じ複雑化するため、fail-closed
+    // (stale を残さない) を優先してここで即時 invalidate する。ROLLBACK 時の
+    // 「無駄な 1 回の再取得」は安全側のコストとして許容する。
+    if result.is_ok() && crate::db::sql_may_change_schema(session.conn.driver_kind(), &sql) {
+        session.schema_cache.invalidate_all().await;
+    }
+    result
 }
 
 /// 明示トランザクションを確定 (commit=true) または破棄 (false) する。

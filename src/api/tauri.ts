@@ -1917,6 +1917,15 @@ export const api = {
     invoke<SchedulerSettings>("set_scheduler_settings", { settings }).then((r) =>
       parseResponse(schemas.schedulerSettings, r, "set_scheduler_settings"),
     ),
+  /**
+   * このセッションの Schema Cache (#1097) を明示的に無効化する。Schema Browser
+   * の更新ボタンなど、ユーザが最新のスキーマを見たいときに呼ぶ — DDL 実行後の
+   * 自動 invalidate はバックエンドが担うため、通常のフローでは不要。呼び出し後
+   * に `listDatabases` / `listTables` / `describeTable` 等を呼び直すと、必ず
+   * キャッシュを経由せず再取得される。
+   */
+  refreshSchemaCache: (sessionId: string) =>
+    invoke<void>("refresh_schema_cache", { sessionId }),
 };
 
 /** `cancelStream` の戻り値 (#685)。`cancelled` が `false` のときはストリームが
