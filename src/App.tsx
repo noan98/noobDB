@@ -31,6 +31,9 @@ import { SandboxReviewModal } from "./components/SandboxReviewModal";
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { sqlSaveFileName } from "./sqlFileIO";
+// 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみで、計測ロジック
+// 本体は perf.ts に閉じる。
+import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
@@ -3363,6 +3366,8 @@ export default function App() {
     streamIdRef.current.set(tabId, streamId);
     const startedAt = Date.now();
     runStartRef.current.set(tabId, startedAt);
+    markQueryStart(streamId); // 計測 (#1094): 既定 OFF なら即 no-op
+    let perfColumnCount = 0; // 計測 (#1094): onColumns で更新し、onDone に渡す
     setStatus({ kind: "key", key: "statusRunningQuery" });
     // 結果差分ハイライト (#597): 直前の結果行とその SQL を退避しておき、同一クエリの
     // 再実行 (prevResultSql === 今回 sql) のときだけ ResultGrid 側で差分計算に使う。
@@ -3406,12 +3411,14 @@ export default function App() {
 
     const unlisten = await listenQueryStream(streamId, {
       onColumns: ({ columns }) => {
+        perfColumnCount = columns.length; // 計測 (#1094): onDone 時点の列数として使う
         patchTab(tabId, (tt) => ({
           ...tt,
           result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
         }));
       },
       onRows: ({ rows }) => {
+        markFirstRow(streamId); // 計測 (#1094): Time to First Row (2 回目以降は no-op)
         patchTab(tabId, (tt) => {
           if (!tt.result) return tt;
           return {
@@ -3437,6 +3444,12 @@ export default function App() {
         });
       },
       onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit }) => {
+        // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
+        markQueryDone(streamId, {
+          rows: hasColumns ? totalRows : rowsAffected,
+          columns: perfColumnCount,
+          elapsedMs,
+        });
         patchTab(tabId, (tt) => {
           if (!hasColumns) {
             return {

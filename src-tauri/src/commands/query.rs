@@ -10,6 +10,7 @@ use crate::db::{apply_auto_limit_for, is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
+use crate::perf;
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
 /// Returns `Err(AppError::ReadOnly)` when the session is RO and `sql` is not
@@ -168,7 +169,18 @@ pub(crate) async fn run_query_inner(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     ensure_allowed_for_session(&session, sql)?;
+    // 計測 (#1094): SQL 実行 + Rust 側デコードの所要時間を perf ログへ (計測 OFF
+    // なら Span::start が Instant::now すら呼ばず、log_query_execute も即 return)。
+    let perf_span = perf::Span::start();
     let result = session.conn.execute(sql, database).await;
+    if let Ok(r) = &result {
+        perf::log_query_execute(
+            &session.id,
+            perf_span.elapsed_ms(),
+            r.rows.len(),
+            r.columns.len(),
+        );
+    }
     // Schema Cache (#1097): DDL 相当の SQL が成功したら、このセッションの
     // スキーマキャッシュを丸ごと invalidate する。判定は実行前ではなく成功後に
     // 行う — 失敗した DDL (構文エラー等) でキャッシュを無駄に破棄しないため。
@@ -652,39 +664,52 @@ async fn spawn_query_stream(
     };
     let send_id = stream_id.clone();
     let delivered_rows_cb = delivered_rows.clone();
+    // 計測 (#1094): シリアライズ + IPC emit の所要時間と概算ペイロードサイズを
+    // 積算する。計測 OFF なら record_emit はクロージャをそのまま実行するだけ。
+    let stream_perf = perf::StreamAccumulator::new();
     let exec = session.conn.execute_stream(
         &effective_sql,
         database.as_deref(),
         initial_batch,
         chunk_size,
         |batch| match batch {
-            StreamBatch::Columns(columns) => on_event
-                .send(QueryStreamMessage::Columns { columns })
-                .map_err(|e| {
-                    tracing::warn!(
-                        stream_id = %send_id,
-                        error = %e,
-                        "failed to send columns message; aborting stream"
-                    );
-                    AppError::Other(format!("ipc channel send failed: {e}"))
-                }),
+            StreamBatch::Columns(columns) => {
+                // 計測 (#1094): Channel 送信の所要時間と概算ペイロードサイズを積算。
+                let approx_bytes = perf::approx_columns_bytes(&columns);
+                stream_perf.record_emit(approx_bytes, || {
+                    on_event
+                        .send(QueryStreamMessage::Columns { columns })
+                        .map_err(|e| {
+                            tracing::warn!(
+                                stream_id = %send_id,
+                                error = %e,
+                                "failed to send columns message; aborting stream"
+                            );
+                            AppError::Other(format!("ipc channel send failed: {e}"))
+                        })
+                })
+            }
             StreamBatch::Rows(rows) => {
                 // Count rows before sending so a cancel racing this exact
                 // point never under-reports what actually reached the UI.
                 let emitted_len = rows.len() as u64;
                 delivered_rows_cb.fetch_add(emitted_len, Ordering::SeqCst);
-                on_event
-                    .send(QueryStreamMessage::Rows { rows })
-                    .map_err(|e| {
-                        // The UI never received these rows; roll back the count.
-                        delivered_rows_cb.fetch_sub(emitted_len, Ordering::SeqCst);
-                        tracing::warn!(
-                            stream_id = %send_id,
-                            error = %e,
-                            "failed to send rows message; aborting stream"
-                        );
-                        AppError::Other(format!("ipc channel send failed: {e}"))
-                    })
+                // 計測 (#1094): Channel 送信の所要時間と概算ペイロードサイズを積算。
+                let approx_bytes = perf::approx_rows_bytes(&rows);
+                stream_perf.record_emit(approx_bytes, || {
+                    on_event
+                        .send(QueryStreamMessage::Rows { rows })
+                        .map_err(|e| {
+                            // The UI never received these rows; roll back the count.
+                            delivered_rows_cb.fetch_sub(emitted_len, Ordering::SeqCst);
+                            tracing::warn!(
+                                stream_id = %send_id,
+                                error = %e,
+                                "failed to send rows message; aborting stream"
+                            );
+                            AppError::Other(format!("ipc channel send failed: {e}"))
+                        })
+                })
             }
         },
     );
@@ -710,6 +735,17 @@ async fn spawn_query_stream(
                 rows = res.rows_affected,
                 has_columns = !res.columns.is_empty(),
                 "query stream completed"
+            );
+            // 計測 (#1094): SQL 実行 + emit の内訳を perf ログへ (計測 OFF なら no-op)。
+            perf::log_query_stream(
+                &session.id,
+                &stream_id,
+                res.elapsed_ms,
+                stream_perf.emit_ms(),
+                stream_perf.emit_calls(),
+                stream_perf.payload_bytes_approx(),
+                delivered_rows.load(Ordering::SeqCst),
+                res.columns.len(),
             );
             if let Err(e) = on_event.send(QueryStreamMessage::Done {
                 total_rows: if res.columns.is_empty() {

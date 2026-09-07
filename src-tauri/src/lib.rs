@@ -10,6 +10,7 @@ mod error;
 mod flight_recorder;
 mod history;
 mod logs;
+mod perf;
 mod profiles;
 mod sandboxes;
 mod snippets;

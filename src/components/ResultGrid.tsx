@@ -2,6 +2,8 @@ import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayou
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
+// 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみ。
+import { markGridCommit } from "../perf";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
@@ -5721,6 +5723,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   const [confirmedRowCount, setConfirmedRowCount] = useState(rowCount);
   useEffect(() => {
     if (!streaming) setConfirmedRowCount(rowCount);
+  }, [streaming, rowCount]);
+  // 計測 (#1094): クエリ完了後、グリッドが新しい結果セットをコミット (描画) した
+  // タイミングを記録する (Time to Interactive 相当)。既定 OFF なら markGridCommit
+  // は即 no-op。
+  useLayoutEffect(() => {
+    if (!streaming) markGridCommit(rowCount);
   }, [streaming, rowCount]);
   const [showExport, setShowExport] = useState(false);
   // 右クリック「選択範囲をエクスポート」(#917) で `DataGrid` から一度きり渡される
