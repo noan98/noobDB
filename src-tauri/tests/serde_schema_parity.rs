@@ -387,6 +387,24 @@ fn build_fixtures() -> serde_json::Value {
     // シェイプなので、フロント `schemaParity.test.ts` はどちらか一方
     // (`beforeRows`) のフィクスチャを before/after 共有の緩いスキーマで検証する
     // (旧 `streamRowsEventLite` と同じ発想、#825 の nestedOnly と同種の間接カバー)。
+    //
+    // このゴールデンは「zod スキーマの shape (キー集合) が Rust の実 serde 出力と
+    // 一致するか」だけを見る構造パリティで、行の中身までは検証しない
+    // (`queryStreamRowsMessageLite` は `z.array(z.unknown())`)。そのため行数や
+    // 値を変えたバリアントを増やしてもキー集合は変わらず追加のカバレッジには
+    // ならないが、CLAUDE.md の「境界ケースを追記する」規約に沿って構造上
+    // 意味のある 2 点 — **空結果** (`rows: []` が `null` ではなく空配列で届く
+    // ことの固定) と **キャンセル直後** (1 行も届く前に cancel した場合の
+    // `deliveredRows: 0`) — を代表値の隣に追加する。「単一行」は既存の
+    // `query_stream_rows_message` (`rows: [[1, "a"]]`) がそのまま該当し、
+    // 「チャンク境界」はチャンクサイズという実行時パラメータの話であって
+    // メッセージの JSON shape には現れないため、このゴールデン (フィールド名/
+    // 型のパリティ) の対象外 — `execute_stream` のバッチ分割は
+    // `tests/duckdb_integration.rs`
+    // (`duckdb_execute_stream_delivers_batched_rows`) が、キャンセル直後に
+    // 後続メッセージが無視される UI 側の挙動は
+    // `src/__tests__/browser/scenarios.browser.test.tsx` の「停止ボタンで
+    // キャンセルすると…以降のイベントは無視される」がそれぞれ担保する。
 
     let query_stream_columns_message = QueryStreamMessage::Columns {
         columns: vec![column.clone()],
@@ -394,6 +412,9 @@ fn build_fixtures() -> serde_json::Value {
     let query_stream_rows_message = QueryStreamMessage::Rows {
         rows: vec![vec![Value::Int(1), Value::String("a".into())]],
     };
+    // 境界ケース: 空の結果セット (0 行の SELECT)。`Vec::new()` は serde で必ず
+    // `[]` になり `null` にはならないが、それを固定して回帰を防ぐ。
+    let query_stream_rows_message_empty = QueryStreamMessage::Rows { rows: vec![] };
     let query_stream_done_message = QueryStreamMessage::Done {
         total_rows: 2,
         rows_affected: 0,
@@ -408,6 +429,11 @@ fn build_fixtures() -> serde_json::Value {
         delivered_rows: 5,
     };
     let channel_cancelled_message = QueryStreamMessage::Cancelled { delivered_rows: 5 };
+    // 境界ケース: 列到着 (先頭チャンク) より前にキャンセルされた場合、1 行も
+    // 届いていないので `deliveredRows: 0` になる (#685 のスケルトン段階キャンセル
+    // シナリオ、`scenarios.browser.test.tsx` の「カラム到着前のスケルトン段階
+    // でも停止ボタン (キャンセル導線) が出る」に対応)。
+    let channel_cancelled_message_zero = QueryStreamMessage::Cancelled { delivered_rows: 0 };
     // Export/Dump/Import ストリームは引き続き `app.emit()` の名前付きイベントの
     // ままなので、`StreamCancelledEvent` (streamId を持つ) はここでも固定する。
     let stream_cancelled_event = StreamCancelledEvent {
@@ -535,9 +561,12 @@ fn build_fixtures() -> serde_json::Value {
         // --- #1096: Query/Preview ストリーミングメッセージ (Tauri Channel) ---
         "queryStreamColumnsMessage": query_stream_columns_message,
         "queryStreamRowsMessageLite": query_stream_rows_message,
+        // 境界ケース (空結果・キャンセル直後) — 上のコメント参照。
+        "queryStreamRowsMessageLiteEmpty": query_stream_rows_message_empty,
         "queryStreamDoneMessage": query_stream_done_message,
         "queryStreamErrorMessage": query_stream_error_message,
         "channelCancelledMessage": channel_cancelled_message,
+        "channelCancelledMessageZero": channel_cancelled_message_zero,
         "previewStreamMetaMessage": preview_meta_message,
         "previewStreamRowsMessageLite": preview_rows_message,
         "previewStreamDoneMessage": preview_done_message,

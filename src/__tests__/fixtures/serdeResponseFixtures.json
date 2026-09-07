@@ -7,6 +7,10 @@
     "deliveredRows": 5,
     "kind": "cancelled"
   },
+  "channelCancelledMessageZero": {
+    "deliveredRows": 0,
+    "kind": "cancelled"
+  },
   "column": {
     "name": "id",
     "type_name": "INTEGER"
@@ -376,6 +380,10 @@
         "a"
       ]
     ]
+  },
+  "queryStreamRowsMessageLiteEmpty": {
+    "kind": "rows",
+    "rows": []
   },
   "schemaDiff": {
     "source_driver": "mysql",

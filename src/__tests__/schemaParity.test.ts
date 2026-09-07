@@ -78,9 +78,13 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   // #1096: Query/Preview ストリーミングメッセージ (Tauri Channel)。
   ["queryStreamColumnsMessage", schemas.queryStreamColumnsMessage],
   ["queryStreamRowsMessageLite", schemas.queryStreamRowsMessageLite],
+  // 境界ケース: 空結果 (`rows: []`) / キャンセル直後 (`deliveredRows: 0`)。
+  // shape (キー集合) は代表値と同一なので同じスキーマで検証する。
+  ["queryStreamRowsMessageLiteEmpty", schemas.queryStreamRowsMessageLite],
   ["queryStreamDoneMessage", schemas.queryStreamDoneMessage],
   ["queryStreamErrorMessage", schemas.queryStreamErrorMessage],
   ["channelCancelledMessage", schemas.channelCancelledMessage],
+  ["channelCancelledMessageZero", schemas.channelCancelledMessage],
   ["previewStreamMetaMessage", schemas.previewStreamMetaMessage],
   ["previewStreamRowsMessageLite", schemas.previewStreamRowsMessageLite],
   ["previewStreamDoneMessage", schemas.previewStreamDoneMessage],
