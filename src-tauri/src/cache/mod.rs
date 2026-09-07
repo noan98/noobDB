@@ -51,6 +51,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
@@ -96,9 +97,20 @@ impl<V> CacheEntry<V> {
 /// に短時間だけ取る) — 同時に複数の呼び出しがミスした場合、fetch が重複して
 /// 走ることがあるが (single-flight 化はしていない)、結果は最後の書き込みが残る
 /// だけで正しさには影響しない、既知の割り切り。
+///
+/// **`generation` による invalidate との競合防止 (PR #1101 レビュー指摘)。**
+/// ロックを解放して `fetch` を `.await` している間に、その接続の他の操作が
+/// `invalidate_all()` を呼んで `generation` をインクリメントすることがある
+/// (例: この fetch が DDL 実行前に始まった introspection で、DDL 完了後に
+/// 結果が返ってくる場合)。この場合 fetch 自体は成功しても、その結果はもはや
+/// 最新のスキーマ状態を反映していない可能性があるため、**呼び出し元へは返すが
+/// cache へは書き込まない**。fetch 開始前後で `generation` を比較するだけの
+/// 単純な仕組みで、fetch 中ずっと書き込みロックを握る (= introspection 中に
+/// 他の操作をブロックする) 方式は採らない。
 async fn get_or_fetch_single<V, F, Fut>(
     slot: &RwLock<Option<CacheEntry<V>>>,
     ttl: Duration,
+    generation: &AtomicU64,
     fetch: F,
 ) -> Result<V>
 where
@@ -114,18 +126,37 @@ where
             }
         }
     }
+    let generation_before_fetch = generation.load(Ordering::SeqCst);
     let value = fetch().await?;
-    *slot.write().await = Some(CacheEntry::fresh(value.clone()));
+    {
+        // generation の再チェックは **write lock を取得した後**に行う。
+        // `invalidate_all()` は generation のインクリメントを各スロットの
+        // write lock 取得より必ず先に行うため (invalidate_all の実装参照)、
+        // ここで lock を取得できた時点で generation の最新値を確実に読める —
+        // チェックとロック取得の間に invalidate が割り込む隙間を作らない
+        // (チェックしてからロックを取る順序だと、その隙間で invalidate が
+        // 完了してしまい stale な結果を書き戻す余地が残る)。
+        let mut guard = slot.write().await;
+        if generation.load(Ordering::SeqCst) == generation_before_fetch {
+            *guard = Some(CacheEntry::fresh(value.clone()));
+        } else {
+            tracing::debug!(
+                "schema cache: dropping a fetch result that raced with invalidate_all (stale generation)"
+            );
+        }
+    }
     Ok(value)
 }
 
 /// キー付きスロット (`tables(db)` / `columns(db, table)` など) の get-or-fetch。
-/// ロックの扱いは [`get_or_fetch_single`] と同じ方針。
+/// ロックの扱い・`generation` による invalidate との競合防止は
+/// [`get_or_fetch_single`] と同じ方針。
 async fn get_or_fetch<K, V, F, Fut>(
     map: &RwLock<HashMap<K, CacheEntry<V>>>,
     key: K,
     ttl: Duration,
     max_entries: usize,
+    generation: &AtomicU64,
     fetch: F,
 ) -> Result<V>
 where
@@ -142,17 +173,26 @@ where
             }
         }
     }
+    let generation_before_fetch = generation.load(Ordering::SeqCst);
     let value = fetch().await?;
     {
+        // generation の再チェックは **write lock を取得した後**に行う。
+        // 理由は [`get_or_fetch_single`] のコメント参照。
         let mut guard = map.write().await;
-        if guard.len() >= max_entries && !guard.contains_key(&key) {
+        if generation.load(Ordering::SeqCst) == generation_before_fetch {
+            if guard.len() >= max_entries && !guard.contains_key(&key) {
+                tracing::debug!(
+                    max_entries,
+                    "schema cache: kind exceeded its entry cap, clearing before insert"
+                );
+                guard.clear();
+            }
+            guard.insert(key, CacheEntry::fresh(value.clone()));
+        } else {
             tracing::debug!(
-                max_entries,
-                "schema cache: kind exceeded its entry cap, clearing before insert"
+                "schema cache: dropping a fetch result that raced with invalidate_all (stale generation)"
             );
-            guard.clear();
         }
-        guard.insert(key, CacheEntry::fresh(value.clone()));
     }
     Ok(value)
 }
@@ -180,6 +220,16 @@ type Slot<K, V> = RwLock<HashMap<K, CacheEntry<V>>>;
 pub struct SchemaCache {
     ttl: Duration,
     max_entries_per_kind: usize,
+    /// invalidate 世代カウンタ (PR #1101 レビュー指摘への対応)。
+    /// `invalidate_all()` のたびにインクリメントし、各 fetch はロック解放中
+    /// (= DB introspection 中) にこの値が変わっていないかを完了後に確認する
+    /// ことで、「invalidate と競合した古い fetch 結果が cache に書き戻される」
+    /// ことを防ぐ。kind 単位・キー単位の invalidate は現状存在しないが、将来
+    /// 追加されても全体で 1 つのカウンタを共有する設計なので同じ仕組みで守れる
+    /// (無関係な kind の fetch まで巻き込んで捨てる過剰破棄はあり得るが、
+    /// 「次の 1 回だけ再取得が走る」だけで安全側 — invalidate_all 自体の
+    /// 「丸ごと破棄」という既存方針と同じ割り切り)。
+    generation: AtomicU64,
     databases: RwLock<Option<CacheEntry<Vec<String>>>>,
     tables: Slot<String, Vec<String>>,
     columns: Slot<TableKey, Vec<TableColumnInfo>>,
@@ -203,6 +253,7 @@ impl SchemaCache {
         Self {
             ttl,
             max_entries_per_kind,
+            generation: AtomicU64::new(0),
             databases: RwLock::new(None),
             tables: RwLock::new(HashMap::new()),
             columns: RwLock::new(HashMap::new()),
@@ -219,7 +270,7 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Vec<String>>>,
     {
-        get_or_fetch_single(&self.databases, self.ttl, fetch).await
+        get_or_fetch_single(&self.databases, self.ttl, &self.generation, fetch).await
     }
 
     pub async fn tables<F, Fut>(&self, database: &str, fetch: F) -> Result<Vec<String>>
@@ -232,6 +283,7 @@ impl SchemaCache {
             database.to_string(),
             self.ttl,
             self.max_entries_per_kind,
+            &self.generation,
             fetch,
         )
         .await
@@ -252,6 +304,7 @@ impl SchemaCache {
             (database.to_string(), table.to_string()),
             self.ttl,
             self.max_entries_per_kind,
+            &self.generation,
             fetch,
         )
         .await
@@ -272,6 +325,7 @@ impl SchemaCache {
             (database.to_string(), table.to_string()),
             self.ttl,
             self.max_entries_per_kind,
+            &self.generation,
             fetch,
         )
         .await
@@ -291,6 +345,7 @@ impl SchemaCache {
             database.to_string(),
             self.ttl,
             self.max_entries_per_kind,
+            &self.generation,
             fetch,
         )
         .await
@@ -306,6 +361,7 @@ impl SchemaCache {
             database.to_string(),
             self.ttl,
             self.max_entries_per_kind,
+            &self.generation,
             fetch,
         )
         .await
@@ -325,6 +381,7 @@ impl SchemaCache {
             database.to_string(),
             self.ttl,
             self.max_entries_per_kind,
+            &self.generation,
             fetch,
         )
         .await
@@ -345,6 +402,7 @@ impl SchemaCache {
             (database.to_string(), table.to_string()),
             self.ttl,
             self.max_entries_per_kind,
+            &self.generation,
             fetch,
         )
         .await
@@ -356,7 +414,16 @@ impl SchemaCache {
     ///   run_in_transaction}` (DDL 相当の SQL 実行後。
     ///   [`crate::db::sql_may_change_schema`] 参照)
     /// - `commands::sync::apply_sync_sql_inner` (スキーマ同期の適用後、常に)
+    ///
+    /// `generation` のインクリメントを各スロットの write lock 取得より**必ず
+    /// 先に**行う (PR #1101 レビュー指摘への対応)。`get_or_fetch[_single]` は
+    /// 対象スロットの write lock を取得した**後**に generation を再チェックする
+    /// ため、この順序を守る限り「fetch がロック解放中に invalidate と競合し、
+    /// 古い結果が cache に書き戻ってしまう」ことはない — invalidate 側と
+    /// fetch 側のどちらが先にロックを取得しても、fetch 側は必ず最新の
+    /// generation を見た上で書き込むかどうかを判断できる。
     pub async fn invalidate_all(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         *self.databases.write().await = None;
         self.tables.write().await.clear();
         self.columns.write().await.clear();
@@ -692,5 +759,173 @@ mod tests {
             2,
             "エラー後も再取得が走ること"
         );
+    }
+
+    /// レビュー指摘 (PR #1101): `invalidate_all()` と fetch の競合。
+    ///
+    /// `get_or_fetch` はキャッシュミス後の DB introspection 中はロックを解放
+    /// している (意図的な設計 — fetch 中に他の操作をブロックしない)。そのため
+    /// 「fetch 開始 → (ロック解放中に) DDL 実行 → invalidate_all() → 古い fetch
+    /// が完了 → 古い結果を cache に insert」という順序が起こり得て、
+    /// invalidate 直後にもかかわらず stale な結果が cache に舞い戻ってしまう。
+    ///
+    /// fetch クロージャの中で直接 `invalidate_all()` を呼ぶことで、この競合を
+    /// sleep なしで決定的に再現する — 「fetch の実行中に invalidate が完了する」
+    /// という状況そのものを、タイミングに頼らず組み立てられるため。
+    #[tokio::test]
+    async fn invalidate_during_fetch_does_not_resurrect_the_stale_value() {
+        let cache = test_cache();
+
+        // fetch がまだ cache へ書き込む前に invalidate_all() が完了するケースを
+        // 直接組み立てる。fetch 自体は成功して stale な値を返す — DDL 実行前に
+        // 読み始めた古い introspection が、DDL 完了後になって結果を返してくる
+        // のと同じ形。
+        let stale = cache
+            .tables("db", || async {
+                cache.invalidate_all().await;
+                Ok(vec!["stale".to_string()])
+            })
+            .await
+            .unwrap();
+        // 呼び出し元への返り値自体は、fetch した時点では正しい結果なので
+        // stale のままでよい — invalidate との競合が守るべきは「cache に
+        // 書き戻さない」ことだけ。
+        assert_eq!(stale, vec!["stale".to_string()]);
+
+        // invalidate 後の cache に古い値が残っていないこと — 次の呼び出しで
+        // 必ず fetch が再実行されること (再実行されなければ "stale" が
+        // キャッシュから返ってきてしまう = このテストが検出したい stale 表示)。
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fresh = {
+            let calls = calls.clone();
+            cache
+                .tables("db", || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec!["fresh".to_string()])
+                })
+                .await
+                .unwrap()
+        };
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "invalidate と競合した古い fetch の結果が cache に居座ってはいけない"
+        );
+        assert_eq!(fresh, vec!["fresh".to_string()]);
+    }
+
+    /// 上と同じ競合を `get_or_fetch_single` (`databases()`) 側でも固定する。
+    #[tokio::test]
+    async fn invalidate_during_fetch_does_not_resurrect_the_stale_databases_value() {
+        let cache = test_cache();
+
+        let stale = cache
+            .databases(|| async {
+                cache.invalidate_all().await;
+                Ok(vec!["stale_db".to_string()])
+            })
+            .await
+            .unwrap();
+        assert_eq!(stale, vec!["stale_db".to_string()]);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fresh = {
+            let calls = calls.clone();
+            cache
+                .databases(|| async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec!["fresh_db".to_string()])
+                })
+                .await
+                .unwrap()
+        };
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "invalidate と競合した古い fetch の結果が cache に居座ってはいけない"
+        );
+        assert_eq!(fresh, vec!["fresh_db".to_string()]);
+    }
+
+    /// レビュー指摘 (PR #1101) の再現手順そのものを、2 つの独立したタスクを
+    /// 実際に並行実行させる形で固定する (`oneshot` channel による決定的な
+    /// 同期 — sleep でのタイミング依存は使わない)。オーナーが列挙した 5 ステップ
+    /// をそれぞれ明示的に検証する:
+    ///
+    /// 1. fetch 開始 (DB introspection 相当を開始し、ロックを解放して待機に入る)
+    /// 2. `invalidate_all()` 実行 (fetch がまだ進行中のうちに完了させる)
+    /// 3. fetch 完了 (invalidate 完了の合図を受けてから古い値を返す)
+    /// 4. fetch 結果が cache に登録されていないことを確認 (内部状態を直接検査)
+    /// 5. 次回アクセスで最新 schema が取得されることを確認 (再取得が実際に走る)
+    #[tokio::test]
+    async fn concurrent_invalidate_during_an_in_flight_fetch_does_not_resurrect_stale_value() {
+        let cache = Arc::new(test_cache());
+
+        // fetch が「DB introspection を開始した」ことをテスト側へ知らせる合図と、
+        // テスト側が「invalidate_all() を完了した」ことを fetch へ知らせる合図。
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let (invalidated_tx, invalidated_rx) = tokio::sync::oneshot::channel::<()>();
+
+        // --- 1. fetch 開始: 別タスクとして spawn し、実際に並行実行させる ---
+        let cache_for_fetch = cache.clone();
+        let fetch_task = tokio::spawn(async move {
+            cache_for_fetch
+                .tables("db", move || async move {
+                    // read lock は既に get_or_fetch 内で解放済み (このクロージャに
+                    // 入っている時点で「ロック解放中の DB introspection」中)。
+                    started_tx
+                        .send(())
+                        .expect("test still waiting on started_rx");
+                    // invalidate_all() が完了するまで、ここで実際に待機する —
+                    // sleep ではなく channel 受信によるタイミング非依存の同期。
+                    invalidated_rx.await.expect("invalidated_tx must fire");
+                    Ok(vec!["stale".to_string()])
+                })
+                .await
+        });
+
+        // fetch が開始する (= ロックを解放して introspection に入る) のを待つ。
+        started_rx.await.expect("fetch task must signal start");
+
+        // --- 2. invalidate_all() 実行: fetch がまだ進行中のうちに完了させる ---
+        cache.invalidate_all().await;
+        invalidated_tx
+            .send(())
+            .expect("fetch task must still be awaiting the signal");
+
+        // --- 3. fetch 完了 ---
+        let stale = fetch_task
+            .await
+            .expect("fetch task must not panic")
+            .expect("fetch itself must succeed");
+        // 呼び出し元への返り値自体は、fetch した時点では正しい結果なので
+        // stale のままでよい — invalidate との競合が守るべきは cache への
+        // 書き込みだけ。
+        assert_eq!(stale, vec!["stale".to_string()]);
+
+        // --- 4. fetch 結果が cache に登録されていないことを確認 ---
+        assert!(
+            cache.tables.read().await.is_empty(),
+            "invalidate と競合した fetch の結果が cache に書き戻ってはいけない"
+        );
+
+        // --- 5. 次回アクセスで最新 schema が取得されることを確認 ---
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fresh = {
+            let calls = calls.clone();
+            cache
+                .tables("db", || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec!["fresh".to_string()])
+                })
+                .await
+                .unwrap()
+        };
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "cache に stale な値が残っていなければ、次のアクセスで必ず再取得が走るはず"
+        );
+        assert_eq!(fresh, vec!["fresh".to_string()]);
     }
 }
