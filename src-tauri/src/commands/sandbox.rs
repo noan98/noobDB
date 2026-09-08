@@ -357,6 +357,7 @@ pub(crate) async fn create_sandbox_inner(
         local_temp_file: None,
         _tunnel: None,
         schema_cache: crate::cache::SchemaCache::default(),
+        query_cache: crate::cache::QueryResultCache::default(),
     };
     let session_id = state.insert(session).await;
     tracing::info!(
@@ -787,6 +788,10 @@ pub(crate) async fn sandbox_advance_base_inner(
         return Ok(());
     }
     sandbox.conn.execute_transaction(&statements, None).await?;
+    // Query Result Cache (#1097): ライブテーブルのデータ自体は変えないが、
+    // shadow テーブル (base スナップショット) を直接 SELECT すれば書き換えが
+    // 見えてしまう以上、安全側で invalidate する。
+    sandbox.query_cache.invalidate_all().await;
     Ok(())
 }
 

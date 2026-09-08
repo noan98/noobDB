@@ -42,11 +42,131 @@
 //!   プロセスのメモリ上にのみ存在し、ディスクへは一切書かない — プロセス終了・
 //!   切断・Refresh のいずれでも消える。
 //!
-//! ## Query Result Cache について
+//! ## Query Result Cache
 //!
-//! 本 Issue (#1097) は Schema Cache と Query Result Cache を「独立して段階導入
-//! する」ことを明記している。本 PR では Schema Cache のみを実装し、Query Result
-//! Cache には着手しない (方針は上記ドキュメントコメントと PR 本文を参照)。
+//! Schema Cache とは別の、実行結果 (行データそのもの) を対象にしたキャッシュ。
+//! 行データは Schema (テーブル/カラム定義) と違って**機微データそのもの**であり、
+//! かつ書き込みによって Schema よりずっと頻繁に陳腐化するため、Schema Cache より
+//! ずっと保守的に — 「限定的に導入」する (Issue #1097 本文の方針どおり)。
+//!
+//! ### 対象 (何をキャッシュするか)
+//!
+//! - **[`crate::commands::query::run_query`] (非ストリーミング経路) だけ。**
+//!   ストリーミング経路 (`run_query_stream`) は行を貯めずに小さなチャンクへ
+//!   分割して流すのが設計上の利点であり、そこへ「結果セット全体を保持する」
+//!   キャッシュを持ち込むと、大量データを無制限に保持しないという Epic #1093
+//!   の方針と正面から衝突する。streaming 経路はキャッシュを読み書きしない
+//!   (書き込みが起きた場合の invalidate だけは受け取る — 後述)。
+//! - **[`crate::db::is_read_only_sql_for`] で読み取り専用と判定できる SQL のみ。**
+//!   書き込み文をキャッシュするのは無意味 (結果は rows_affected のみで再利用の
+//!   価値がない) かつ危険 (再実行の副作用を握りつぶすことになる) なので、
+//!   [`QueryResultCache::get_or_fetch`] は書き込み文に対してはキャッシュへ
+//!   一切触れず `fetch` を素通しする。
+//! - **行数・バイト数のどちらかが上限を超える結果はキャッシュしない**
+//!   ([`DEFAULT_QUERY_MAX_ROWS`] / [`DEFAULT_QUERY_MAX_BYTES`])。呼び出し元へは
+//!   結果をそのまま返すが、キャッシュへの insert だけをスキップする — 大量結果を
+//!   「キャッシュのために」余分にメモリへ複製し続けることを避ける (Epic #1093)。
+//!
+//! ### 効果が確認できるユースケース
+//!
+//! テーブルブラウズのページング (`App.tsx` の `goToPageInTab`) は、既に表示した
+//! ページへ戻ると**同一の SQL 文字列** (同じ `LIMIT`/`OFFSET`、同じ
+//! ORDER/FILTER) を `api.runQuery` 経由で再実行する — フロント側はページの
+//! 内容をキャッシュしておらず、都度サーバへ問い合わせる設計になっているため、
+//! 「同一クエリの再表示」という Issue が挙げるユースケースがまさにここに実在する
+//! (影響行数プリフライトの COUNT (`usePreflightImpact`) は編集のたびに SQL 自体が
+//! 変わるため対象外 — 再実行が同一クエリになる保証がない)。この 1 経路のために
+//! 導入するので、TTL・容量とも小さく抑える (下記)。
+//!
+//! ### キー設計
+//!
+//! `(database, sql)` の組。`sql` は正規化せず実行時の文字列と完全一致でのみ
+//! ヒットする — わずかな表記ゆれ (空白の増減など) でミスしても「再実行が走る
+//! だけ」で安全だが、逆に異なる意味の SQL を同一視するリスクはゼロにできる。
+//! `database` を含めるのは、同じ SQL でもアクティブな DB コンテキストが違えば
+//! (未修飾のテーブル参照などで) 結果が変わりうるため。auto-limit の適用有無は
+//! `run_query` 自体が LIMIT を注入しない (ストリーミング経路専用の機能) ので
+//! キーに含める必要がない。
+//!
+//! ### invalidate 条件 (Schema Cache より広い)
+//!
+//! Schema Cache は DDL だけを見れば足りたが、Query Result Cache は **DML でも
+//! stale になる**。判定は [`crate::db::is_read_only_sql_for`] を正とする —
+//! DDL/DML を問わず「読み取り専用でない」と判定された SQL が成功したら、その
+//! セッションの Query Result Cache を丸ごと invalidate する。書き込みが起こり
+//! うる経路を洗い出すと:
+//!
+//! 1. [`crate::commands::query::run_query_inner`] — 単文実行。
+//! 2. [`crate::commands::query::run_query_transaction_inner`] — 一括実行。
+//!    束ねた文のいずれか 1 つでも書き込みなら丸ごと invalidate。
+//! 3. [`crate::commands::query::run_in_transaction_inner`] — 明示トランザクション
+//!    内の 1 文。COMMIT を待たず即時 invalidate する (Schema Cache と同じ
+//!    fail-closed の理由 — ROLLBACK されれば「次の 1 回だけ無駄な再取得」という
+//!    安全側のコストで済む)。
+//! 4. `spawn_query_stream` (`run_query_stream` の非 capture 経路) — ストリーミング
+//!    実行自体はキャッシュを読み書きしないが、書き込み文をここ経由で実行できる
+//!    以上、他の経路がキャッシュした結果を stale にしうるため invalidate だけは行う。
+//! 5. `spawn_captured_write` / [`crate::commands::flight_recorder::run_captured_write_inner`]
+//!    — DML フライトレコーダのキャプチャ付き書き込み (INSERT/UPDATE/DELETE)。
+//!    Undo (`undo_flight_record_inner`) は 2. の
+//!    `run_query_transaction_inner` を再利用するので個別の対応は不要。
+//! 6. [`crate::commands::sync::apply_sync_sql_inner`] — スキーマ同期・データ同期
+//!    の適用。目的自体が対象を書き換えることなので常に invalidate。
+//! 7. [`crate::commands::sandbox::sandbox_advance_base_inner`] — サンドボックスの
+//!    base スナップショット (shadow テーブル) への書き込み。ライブテーブルの
+//!    データ自体は変えないが、shadow テーブルを直接 SELECT すれば見えるため
+//!    安全側で invalidate する。
+//! 8. `commands::import::spawn_import` (CSV/JSON インポート) — バルク書き込み。
+//! 9. [`crate::commands::local::register_local_table_inner`] /
+//!    [`crate::commands::local::drop_local_table_inner`] — ローカル横断クエリ
+//!    (#740) のローカルセッション自身のテーブルへの登録/削除。
+//!
+//! 逆に **invalidate しない**と判断したもの:
+//!
+//! - [`crate::commands::privileges::apply_privilege_sql_inner`] — GRANT/REVOKE/
+//!   CREATE USER/DROP USER/ALTER PASSWORD はユーザ・権限を変えるだけで、
+//!   テーブルの行データには一切影響しない (Schema Cache も同じ理由で対象外に
+//!   している既存コメント参照)。
+//! - `commands::diff` / サンドボックスの diff 系コマンド — 比較のための
+//!   `SELECT` のみで、書き込みは発生しない。
+//!
+//! 判断に迷う場合は Schema Cache と同じく**安全側 (invalidate する)** に倒す —
+//! 過剰な破棄は「次の 1 回だけ再取得が走る」コストに留まるが、見逃しは stale
+//! データによる誤操作という実害に直結するため。
+//!
+//! ### TTL・容量上限
+//!
+//! - **TTL は [`DEFAULT_QUERY_TTL`] (30 秒)。** Schema Cache (5 分) よりずっと
+//!   短い — 行データはスキーマ構造よりずっと変わりやすく、かつ noobDB を経由
+//!   しない書き込み (別クライアント・別ツール・他ユーザ) は上記の invalidate
+//!   条件では一切捕捉できないため、「同一クエリの再表示」という短時間の
+//!   ユースケースを満たす範囲でできるだけ短く取る。
+//! - **エントリあたり [`DEFAULT_QUERY_MAX_ROWS`] 行 / [`DEFAULT_QUERY_MAX_BYTES`]
+//!   バイトを超える結果はキャッシュしない。**
+//! - **セッションあたり最大 [`DEFAULT_QUERY_MAX_ENTRIES`] 件。** Schema Cache
+//!   (500) よりずっと小さく取る — ここに乗る値は実際の行データ (機微データ
+//!   そのもの) なので、保持するインスタンス数自体を絞ってワーストケースの
+//!   メモリ使用量を小さく保つ。超過時の挙動は Schema Cache と同じ「丸ごと
+//!   clear してから挿入」(部分的な LRU 追い出しはしない、単純さを優先)。
+//!
+//! ### 機微データの保存方針 (受け入れ条件)
+//!
+//! - **ディスクには絶対に書かない。** プロセスメモリ (`HashMap` 上) にのみ存在し、
+//!   `profiles.json` のような永続化ストアには一切触れない。
+//! - **ログにはキャッシュの内容 (SQL 本文・セル値) を出さない。** ヒット/ミス・
+//!   invalidate・容量超過のログはすべて `tracing::debug!` で、件数や真偽値だけを
+//!   載せ、SQL 文字列や行データそのものは載せない (`sql_summary` のような
+//!   切り詰めすら経由しない — 単に出さない)。
+//! - **切断・再接続・プロセス終了で必ず消える。** Schema Cache と同じく
+//!   `Session` のフィールドとして存在する (下記) ため、`reconnect` の
+//!   セッション差し替えやプロセス終了でインスタンスごと消える。
+//!
+//! ### 接続単位の分離
+//!
+//! Schema Cache と同じ方式 — `QueryResultCache` はグローバルな Map ではなく
+//! [`crate::state::Session`] のフィールドとして存在する。別セッションの
+//! `QueryResultCache` へ到達する経路は型として存在しないため、「接続をまたいだ
+//! キャッシュ汚染」はそもそも起こり得ない。
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -57,8 +177,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 use crate::db::types::{
-    ForeignKey, IndexInfo, SchemaObject, TableColumnInfo, TableRowIdentity, TableSchema,
+    ForeignKey, IndexInfo, QueryResult, SchemaObject, TableColumnInfo, TableRowIdentity,
+    TableSchema, Value,
 };
+use crate::db::{is_read_only_sql_for, DriverKind};
 use crate::error::Result;
 
 /// キャッシュエントリの既定 TTL (#1097)。DDL / 明示 Refresh による invalidate が
@@ -433,6 +555,162 @@ impl SchemaCache {
         self.schema_objects.write().await.clear();
         self.list_indexes.write().await.clear();
         tracing::debug!("schema cache invalidated");
+    }
+}
+
+// ── Query Result Cache (#1097) ──
+
+/// `(database, sql)` の組。モジュールドキュメントの「キー設計」参照。
+type QueryCacheKey = (Option<String>, String);
+
+/// キャッシュエントリの既定 TTL。モジュールドキュメント「TTL・容量上限」参照。
+const DEFAULT_QUERY_TTL: Duration = Duration::from_secs(30);
+
+/// キャッシュ 1 エントリが持ってよい最大行数。フロント既定の auto-limit
+/// (`DEFAULT_AUTO_LIMIT_COUNT` = 1000、`src/settings.ts`) に合わせた「対話的に
+/// 妥当なサイズ」の上限。超える結果はキャッシュ対象外 (呼び出し元へはそのまま返す)。
+const DEFAULT_QUERY_MAX_ROWS: usize = 1000;
+
+/// キャッシュ 1 エントリが持ってよい最大バイト数 (概算、[`estimate_query_result_bytes`]
+/// 参照)。行数の上限だけでは大きな TEXT/BLOB 列 1 つで簡単に超過するため独立に持つ。
+const DEFAULT_QUERY_MAX_BYTES: usize = 1024 * 1024; // 1 MiB
+
+/// セッションあたりの最大エントリ数。モジュールドキュメント「TTL・容量上限」参照。
+const DEFAULT_QUERY_MAX_ENTRIES: usize = 20;
+
+/// `result` のおおよそのメモリ占有バイト数を見積もる。`perf::approx_rows_bytes`
+/// (値 1 個あたり一律 12 バイトという相対比較用の粗い係数) と異なり、こちらは
+/// 文字列/バイナリセルの実長を数える — キャッシュ容量の実効的な上限として機能
+/// させる以上、大きな TEXT/BLOB を含む結果を過小評価してはいけないため、
+/// 用途に応じてあえて別の (より正確な) 見積もりを使う。
+fn estimate_query_result_bytes(result: &QueryResult) -> usize {
+    let columns_bytes: usize = result
+        .columns
+        .iter()
+        .map(|c| c.name.len() + c.type_name.len())
+        .sum();
+    let rows_bytes: usize = result
+        .rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|v| match v {
+                    Value::Null | Value::Bool(_) => 1,
+                    Value::Int(_) | Value::UInt(_) | Value::Float(_) => 8,
+                    // Bytes は既に hex 文字列へエンコード済み (`Value` のドキュ
+                    // メント参照) なので、String と同じく `len()` が実際の占有量。
+                    Value::String(s) | Value::Bytes(s) => s.len(),
+                })
+                .sum::<usize>()
+        })
+        .sum();
+    columns_bytes + rows_bytes
+}
+
+/// セッション (接続) 単位のクエリ結果キャッシュ。モジュールドキュメント参照。
+pub struct QueryResultCache {
+    ttl: Duration,
+    max_entries: usize,
+    max_rows: usize,
+    max_bytes: usize,
+    /// invalidate 世代カウンタ。`SchemaCache::generation` と同じ役割・同じ
+    /// 仕組みで「invalidate と競合した in-flight fetch の結果が cache に
+    /// 書き戻る」ことを防ぐ (詳細は [`get_or_fetch`] のドキュメント参照)。
+    generation: AtomicU64,
+    entries: RwLock<HashMap<QueryCacheKey, CacheEntry<QueryResult>>>,
+}
+
+impl Default for QueryResultCache {
+    fn default() -> Self {
+        Self::new(
+            DEFAULT_QUERY_TTL,
+            DEFAULT_QUERY_MAX_ENTRIES,
+            DEFAULT_QUERY_MAX_ROWS,
+            DEFAULT_QUERY_MAX_BYTES,
+        )
+    }
+}
+
+impl QueryResultCache {
+    /// テスト用に TTL / 容量上限を差し替えられるコンストラクタ。本体コードは
+    /// 常に `QueryResultCache::default()` (= `Session` 生成時) を使う。
+    fn new(ttl: Duration, max_entries: usize, max_rows: usize, max_bytes: usize) -> Self {
+        Self {
+            ttl,
+            max_entries,
+            max_rows,
+            max_bytes,
+            generation: AtomicU64::new(0),
+            entries: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// `driver`/`sql` から読み取り専用と判定できるときだけキャッシュを consult
+    /// する。書き込み文はそもそもキャッシュを読み書きしない — `fetch` を素通しで
+    /// 実行して結果を返すだけで、呼び出し元 (`commands::query` 等) が成功後に
+    /// [`invalidate_all`](Self::invalidate_all) を呼ぶ前提 (モジュールドキュメント
+    /// 「invalidate 条件」参照)。
+    ///
+    /// キャッシュヒット時は `fetch` を一切呼ばない。ミス時は `fetch` を実行し、
+    /// 結果が行数・バイト数の上限内であれば cache へ insert してから返す
+    /// (上限超過時は insert だけをスキップし、呼び出し元へは結果をそのまま返す)。
+    ///
+    /// ロックの扱い・`generation` による invalidate との競合防止は
+    /// `SchemaCache` の `get_or_fetch` と同じ方針 (fetch 中はロックを解放し、
+    /// write lock 取得後に generation を再チェックしてから insert する)。
+    pub async fn get_or_fetch<F, Fut>(
+        &self,
+        driver: DriverKind,
+        database: Option<&str>,
+        sql: &str,
+        fetch: F,
+    ) -> Result<QueryResult>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<QueryResult>>,
+    {
+        if !is_read_only_sql_for(driver, sql) {
+            return fetch().await;
+        }
+        let key: QueryCacheKey = (database.map(str::to_string), sql.to_string());
+        {
+            let guard = self.entries.read().await;
+            if let Some(entry) = guard.get(&key) {
+                if !entry.is_expired(self.ttl) {
+                    return Ok(entry.value.clone());
+                }
+            }
+        }
+        let generation_before_fetch = self.generation.load(Ordering::SeqCst);
+        let value = fetch().await?;
+        let eligible = value.rows.len() <= self.max_rows
+            && estimate_query_result_bytes(&value) <= self.max_bytes;
+        if eligible {
+            let mut guard = self.entries.write().await;
+            if self.generation.load(Ordering::SeqCst) == generation_before_fetch {
+                if guard.len() >= self.max_entries && !guard.contains_key(&key) {
+                    tracing::debug!(
+                        max_entries = self.max_entries,
+                        "query result cache: kind exceeded its entry cap, clearing before insert"
+                    );
+                    guard.clear();
+                }
+                guard.insert(key, CacheEntry::fresh(value.clone()));
+            } else {
+                tracing::debug!(
+                    "query result cache: dropping a fetch result that raced with invalidate_all (stale generation)"
+                );
+            }
+        }
+        Ok(value)
+    }
+
+    /// このセッションのクエリ結果キャッシュを丸ごと無効化する。呼び出し元の
+    /// 一覧はモジュールドキュメント「invalidate 条件」参照。
+    pub async fn invalidate_all(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.entries.write().await.clear();
+        tracing::debug!("query result cache invalidated");
     }
 }
 
@@ -927,5 +1205,436 @@ mod tests {
             "cache に stale な値が残っていなければ、次のアクセスで必ず再取得が走るはず"
         );
         assert_eq!(fresh, vec!["fresh".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod query_result_cache_tests {
+    use super::*;
+    use crate::db::types::Column;
+    use crate::error::AppError;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    fn test_cache() -> QueryResultCache {
+        QueryResultCache::new(Duration::from_secs(300), 20, 1000, 1024 * 1024)
+    }
+
+    /// `rows` 行・`cols_per_row` 列 (すべて `Value::Int`) の小さな `QueryResult`
+    /// を組み立てる。容量上限テストで手早くサイズを作るためのヘルパー。
+    fn result_with(rows: usize, cols_per_row: usize) -> QueryResult {
+        QueryResult {
+            columns: (0..cols_per_row)
+                .map(|i| Column {
+                    name: format!("c{i}"),
+                    type_name: "int".to_string(),
+                })
+                .collect(),
+            rows: (0..rows)
+                .map(|r| (0..cols_per_row).map(|_| Value::Int(r as i64)).collect())
+                .collect(),
+            rows_affected: rows as u64,
+            elapsed_ms: 0,
+        }
+    }
+
+    /// 受け入れ条件: 同一クエリの再表示で `fetch` (= 実際の DB 実行) が省略される。
+    #[tokio::test]
+    async fn read_only_sql_hits_cache_on_second_call() {
+        let cache = test_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        for _ in 0..3 {
+            let calls = calls.clone();
+            let result = cache
+                .get_or_fetch(
+                    DriverKind::Sqlite,
+                    Some("main"),
+                    "SELECT * FROM t",
+                    || async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(result_with(2, 1))
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.rows.len(), 2);
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "2 回目以降はキャッシュから返り、fetch は最初の 1 回だけのはず"
+        );
+    }
+
+    /// キー設計: `database` が違えば同じ SQL 文字列でも独立にキャッシュされる。
+    #[tokio::test]
+    async fn different_databases_are_cached_independently() {
+        let cache = test_cache();
+
+        let a = cache
+            .get_or_fetch(DriverKind::Sqlite, Some("db_a"), "SELECT 1", || async {
+                Ok(result_with(1, 1))
+            })
+            .await
+            .unwrap();
+        assert_eq!(a.rows.len(), 1);
+
+        // 同じ SQL でも database が違うのでキャッシュミスし、別の (3行の) 結果
+        // が返るはず — 混同していれば a と同じ 1 行が返ってしまう。
+        let b = cache
+            .get_or_fetch(DriverKind::Sqlite, Some("db_b"), "SELECT 1", || async {
+                Ok(result_with(3, 1))
+            })
+            .await
+            .unwrap();
+        assert_eq!(b.rows.len(), 3);
+    }
+
+    /// 対象外の条件 1: 読み取り専用でない SQL (INSERT/UPDATE/DELETE/DDL) は
+    /// キャッシュへ一切触れず、毎回 `fetch` が実行される。
+    #[tokio::test]
+    async fn non_read_only_sql_is_never_cached() {
+        let cache = test_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        for sql in [
+            "INSERT INTO t VALUES (1)",
+            "UPDATE t SET x = 1",
+            "DELETE FROM t",
+            "CREATE TABLE t2 (id INTEGER)",
+        ] {
+            let calls1 = calls.clone();
+            cache
+                .get_or_fetch(DriverKind::Sqlite, None, sql, || async move {
+                    calls1.fetch_add(1, Ordering::SeqCst);
+                    Ok(QueryResult::empty(1, 0))
+                })
+                .await
+                .unwrap();
+            // 同じ書き込み文をもう一度: キャッシュされていれば呼ばれないはず
+            // だが、書き込みは対象外なので必ずもう一度呼ばれる。
+            let calls2 = calls.clone();
+            cache
+                .get_or_fetch(DriverKind::Sqlite, None, sql, || async move {
+                    calls2.fetch_add(1, Ordering::SeqCst);
+                    Ok(QueryResult::empty(1, 0))
+                })
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            8,
+            "書き込み文は毎回 fetch が実行され、一度もキャッシュされないこと"
+        );
+    }
+
+    /// 対象外の条件 2: 行数の上限を超える結果はキャッシュされない。
+    #[tokio::test]
+    async fn oversized_row_count_is_not_cached() {
+        let cache = QueryResultCache::new(
+            Duration::from_secs(300),
+            20,
+            /* max_rows */ 5,
+            1024 * 1024,
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        for _ in 0..2 {
+            let calls = calls.clone();
+            cache
+                .get_or_fetch(
+                    DriverKind::Sqlite,
+                    None,
+                    "SELECT * FROM big",
+                    || async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(result_with(6, 1)) // 上限 5 行を超える
+                    },
+                )
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "行数上限を超える結果は insert されず、次回も fetch が走ること"
+        );
+    }
+
+    /// 対象外の条件 3: バイト数の上限を超える結果はキャッシュされない
+    /// (行数は上限内でも、大きな文字列 1 個で超過しうる)。
+    #[tokio::test]
+    async fn oversized_byte_size_is_not_cached() {
+        let cache =
+            QueryResultCache::new(Duration::from_secs(300), 20, 1000, /* max_bytes */ 100);
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        for _ in 0..2 {
+            let calls = calls.clone();
+            cache
+                .get_or_fetch(
+                    DriverKind::Sqlite,
+                    None,
+                    "SELECT big_text FROM t",
+                    || async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(QueryResult {
+                            columns: vec![Column {
+                                name: "big_text".to_string(),
+                                type_name: "text".to_string(),
+                            }],
+                            rows: vec![vec![Value::String("x".repeat(1000))]], // 100 バイト上限を大きく超過
+                            rows_affected: 1,
+                            elapsed_ms: 0,
+                        })
+                    },
+                )
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "バイト数上限を超える結果は insert されず、次回も fetch が走ること"
+        );
+    }
+
+    /// TTL が経過したエントリはヒットとみなさず再取得すること。
+    #[tokio::test]
+    async fn expired_entry_is_refetched() {
+        let cache = QueryResultCache::new(Duration::from_millis(20), 20, 1000, 1024 * 1024);
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        {
+            let calls = calls.clone();
+            cache
+                .get_or_fetch(DriverKind::Sqlite, None, "SELECT 1", || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(result_with(1, 1))
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        tokio::time::sleep(Duration::from_millis(40)).await;
+
+        {
+            let calls = calls.clone();
+            cache
+                .get_or_fetch(DriverKind::Sqlite, None, "SELECT 1", || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(result_with(1, 1))
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "TTL 経過後は再度 fetch が走ること"
+        );
+    }
+
+    /// 容量上限を超えたら、次の挿入前に丸ごとクリアされること。
+    #[tokio::test]
+    async fn exceeding_capacity_clears_before_inserting() {
+        let cache = QueryResultCache::new(
+            Duration::from_secs(300),
+            /* max_entries */ 2,
+            1000,
+            1024 * 1024,
+        );
+
+        cache
+            .get_or_fetch(DriverKind::Sqlite, None, "SELECT 1", || async {
+                Ok(result_with(1, 1))
+            })
+            .await
+            .unwrap();
+        cache
+            .get_or_fetch(DriverKind::Sqlite, None, "SELECT 2", || async {
+                Ok(result_with(1, 1))
+            })
+            .await
+            .unwrap();
+        assert_eq!(cache.entries.read().await.len(), 2);
+
+        cache
+            .get_or_fetch(DriverKind::Sqlite, None, "SELECT 3", || async {
+                Ok(result_with(1, 1))
+            })
+            .await
+            .unwrap();
+        let map = cache.entries.read().await;
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key(&(None, "SELECT 3".to_string())));
+    }
+
+    /// `fetch` がエラーを返したときはキャッシュへ何も書き込まれないこと。
+    #[tokio::test]
+    async fn fetch_error_is_not_cached() {
+        let cache = test_cache();
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        {
+            let calls = calls.clone();
+            let err = cache
+                .get_or_fetch(DriverKind::Sqlite, None, "SELECT 1", || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Err(AppError::InvalidInput("boom".into()))
+                })
+                .await;
+            assert!(err.is_err());
+        }
+        {
+            let calls = calls.clone();
+            cache
+                .get_or_fetch(DriverKind::Sqlite, None, "SELECT 1", || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(result_with(1, 1))
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "エラー後も再取得が走ること"
+        );
+    }
+
+    /// 受け入れ条件: 書き込み後に stale な結果が返らないこと (invalidate_all)。
+    #[tokio::test]
+    async fn invalidate_all_forces_refetch() {
+        let cache = test_cache();
+
+        let before = cache
+            .get_or_fetch(DriverKind::Sqlite, None, "SELECT * FROM t", || async {
+                Ok(result_with(1, 1))
+            })
+            .await
+            .unwrap();
+        assert_eq!(before.rows.len(), 1);
+
+        // 書き込み相当: 明示的に invalidate してから再取得する。
+        cache.invalidate_all().await;
+
+        let after = cache
+            .get_or_fetch(DriverKind::Sqlite, None, "SELECT * FROM t", || async {
+                Ok(result_with(5, 1))
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            after.rows.len(),
+            5,
+            "invalidate 後は再取得され、更新後の行数が反映されること"
+        );
+    }
+
+    /// レビュー指摘 (PR #1101) と同型の競合: `invalidate_all()` と in-flight
+    /// fetch の競合。fetch クロージャの中で直接 `invalidate_all()` を呼ぶことで
+    /// sleep なしで決定的に再現する (`SchemaCache` の同名テストと同じ手法)。
+    #[tokio::test]
+    async fn invalidate_during_fetch_does_not_resurrect_the_stale_value() {
+        let cache = test_cache();
+
+        let stale = cache
+            .get_or_fetch(DriverKind::Sqlite, None, "SELECT * FROM t", || async {
+                cache.invalidate_all().await;
+                Ok(result_with(1, 1)) // "stale" 相当 (1 行)
+            })
+            .await
+            .unwrap();
+        assert_eq!(stale.rows.len(), 1);
+
+        // invalidate 後の cache に古い値が残っていないこと — 次の呼び出しで
+        // 必ず fetch が再実行されること。
+        let calls = Arc::new(AtomicUsize::new(0));
+        {
+            let calls = calls.clone();
+            cache
+                .get_or_fetch(DriverKind::Sqlite, None, "SELECT * FROM t", || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(result_with(9, 1)) // "fresh" 相当
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "invalidate と競合した古い fetch の結果が cache に居座ってはいけない"
+        );
+    }
+
+    /// 上と同じ競合を、2 つの独立したタスクを実際に並行実行させる形でも固定する
+    /// (`SchemaCache` の `concurrent_invalidate_during_an_in_flight_fetch_...`
+    /// と同じ手法 — oneshot channel による決定的な同期、sleep には頼らない)。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_invalidate_during_an_in_flight_fetch_does_not_resurrect_stale_value() {
+        let cache = Arc::new(test_cache());
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let (invalidated_tx, invalidated_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let cache_for_fetch = cache.clone();
+        let fetch_task = tokio::spawn(async move {
+            cache_for_fetch
+                .get_or_fetch(
+                    DriverKind::Sqlite,
+                    None,
+                    "SELECT * FROM t",
+                    move || async move {
+                        started_tx
+                            .send(())
+                            .expect("test still waiting on started_rx");
+                        invalidated_rx.await.expect("invalidated_tx must fire");
+                        Ok(result_with(1, 1)) // stale
+                    },
+                )
+                .await
+        });
+
+        started_rx.await.expect("fetch task must signal start");
+        cache.invalidate_all().await;
+        invalidated_tx
+            .send(())
+            .expect("fetch task must still be awaiting the signal");
+
+        let stale = fetch_task
+            .await
+            .expect("fetch task must not panic")
+            .expect("fetch itself must succeed");
+        assert_eq!(stale.rows.len(), 1);
+
+        assert!(
+            cache.entries.read().await.is_empty(),
+            "invalidate と競合した fetch の結果が cache に書き戻ってはいけない"
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        {
+            let calls = calls.clone();
+            cache
+                .get_or_fetch(DriverKind::Sqlite, None, "SELECT * FROM t", || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(result_with(9, 1)) // fresh
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "cache に stale な値が残っていなければ、次のアクセスで必ず再取得が走るはず"
+        );
     }
 }

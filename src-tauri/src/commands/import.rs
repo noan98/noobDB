@@ -642,6 +642,15 @@ async fn spawn_import(
     )
     .await;
 
+    // Query Result Cache (#1097): インポートはバルク書き込みなので、対象
+    // テーブルの行が実際に増えていた場合 (skip モードの部分成功も含む) は
+    // このセッションのクエリ結果キャッシュを丸ごと invalidate する。
+    if let Ok(ImportRun::Ok { inserted, .. }) = &result {
+        if *inserted > 0 {
+            session.query_cache.invalidate_all().await;
+        }
+    }
+
     // A CSV import is a bulk write; record it to history like the edit-Apply
     // path so destructive imports are auditable (skip_history honoured). A
     // skip-mode run that dropped rows is recorded as a success with the count;

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
 
-use crate::cache::SchemaCache;
+use crate::cache::{QueryResultCache, SchemaCache};
 use crate::db::{Connection, DbConnectOptions};
 use crate::ssh::{SshConfig, SshTunnel};
 
@@ -108,6 +108,12 @@ pub struct Session {
     /// 書き換えず新しい `Session` を作って差し替えるため、再接続のたびにこの
     /// フィールドも自動的に空へ戻る (詳細は `cache` モジュールのドキュメント参照)。
     pub schema_cache: SchemaCache,
+    /// このセッション (接続) だけが持つクエリ結果キャッシュ (#1097)。
+    /// `schema_cache` と同じ理由・同じ仕組みで `Session` のフィールドとして持ち、
+    /// 「接続をまたいだキャッシュ汚染がない」ことを型で保証する。設計方針
+    /// (対象・invalidate 条件・機微データの保存方針) は `cache` モジュールの
+    /// ドキュメントコメント参照。
+    pub query_cache: QueryResultCache,
 }
 
 impl Session {

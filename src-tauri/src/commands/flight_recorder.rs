@@ -99,6 +99,13 @@ pub(crate) async fn run_captured_write_inner(
         }
     }
 
+    // Query Result Cache (#1097): この経路は capture 対象 (単文の
+    // INSERT/UPDATE/DELETE) の書き込みが実際に成功した場合のみ、判定を挟まず
+    // 常に invalidate する (`commands::query::spawn_captured_write` と同じ理由)。
+    if outcome.is_ok() {
+        session.query_cache.invalidate_all().await;
+    }
+
     let (result, capture) = outcome?;
 
     let capture_id = persist_capture(
