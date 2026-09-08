@@ -312,6 +312,7 @@ pub async fn create_local_session_inner(state: &AppState) -> Result<SessionId> {
         _tunnel: None,
         local_temp_file: Some(path),
         schema_cache: crate::cache::SchemaCache::default(),
+        query_cache: crate::cache::QueryResultCache::default(),
     };
     let id = state.insert(session).await;
     tracing::info!(session_id = %id, "local session created");
@@ -373,6 +374,10 @@ pub async fn register_local_table_inner(
         .conn
         .register_local_table(&meta, &req.columns, &req.rows)
         .await?;
+    // Query Result Cache (#1097): テーブルの登録 (新規作成/上書き) はこの
+    // ローカルセッション自身のデータを変えるので、そのセッションのクエリ結果
+    // キャッシュを丸ごと invalidate する。
+    session.query_cache.invalidate_all().await;
     tracing::info!(
         session_id = %req.session_id,
         table = %meta.name,
@@ -416,7 +421,13 @@ pub async fn drop_local_table_inner(
 ) -> Result<()> {
     validate_table_name(table_name)?;
     let session = get_local_session(state, session_id).await?;
-    session.conn.drop_local_table(table_name).await
+    let result = session.conn.drop_local_table(table_name).await;
+    // Query Result Cache (#1097): 対象テーブルの削除もこのローカルセッションの
+    // データを変えるので、成功時はキャッシュを丸ごと invalidate する。
+    if result.is_ok() {
+        session.query_cache.invalidate_all().await;
+    }
+    result
 }
 
 /// ローカル DB を丸ごと 1 ファイルへ永続化する ("ファイルに保存")。セッション自体は

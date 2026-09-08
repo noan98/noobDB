@@ -169,10 +169,19 @@ pub(crate) async fn run_query_inner(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     ensure_allowed_for_session(&session, sql)?;
+    let driver = session.conn.driver_kind();
     // 計測 (#1094): SQL 実行 + Rust 側デコードの所要時間を perf ログへ (計測 OFF
     // なら Span::start が Instant::now すら呼ばず、log_query_execute も即 return)。
     let perf_span = perf::Span::start();
-    let result = session.conn.execute(sql, database).await;
+    // Query Result Cache (#1097): 読み取り専用と判定できる SQL だけがキャッシュを
+    // consult する (`QueryResultCache::get_or_fetch` 内部の判定)。書き込み文は
+    // 素通しでそのまま実行される — 対象・キー設計はモジュールドキュメント参照。
+    let result = session
+        .query_cache
+        .get_or_fetch(driver, database, sql, || {
+            session.conn.execute(sql, database)
+        })
+        .await;
     if let Ok(r) = &result {
         perf::log_query_execute(
             &session.id,
@@ -181,11 +190,19 @@ pub(crate) async fn run_query_inner(
             r.columns.len(),
         );
     }
-    // Schema Cache (#1097): DDL 相当の SQL が成功したら、このセッションの
-    // スキーマキャッシュを丸ごと invalidate する。判定は実行前ではなく成功後に
-    // 行う — 失敗した DDL (構文エラー等) でキャッシュを無駄に破棄しないため。
-    if result.is_ok() && crate::db::sql_may_change_schema(session.conn.driver_kind(), sql) {
-        session.schema_cache.invalidate_all().await;
+    if result.is_ok() {
+        // Schema Cache (#1097): DDL 相当の SQL が成功したら、このセッションの
+        // スキーマキャッシュを丸ごと invalidate する。判定は実行前ではなく成功後に
+        // 行う — 失敗した DDL (構文エラー等) でキャッシュを無駄に破棄しないため。
+        if crate::db::sql_may_change_schema(driver, sql) {
+            session.schema_cache.invalidate_all().await;
+        }
+        // Query Result Cache (#1097): DDL/DML を問わず書き込みが成功したら、
+        // このセッションのクエリ結果キャッシュを丸ごと invalidate する
+        // (Schema Cache と違い DML でも stale になるため対象が広い)。
+        if !crate::db::is_read_only_sql_for(driver, sql) {
+            session.query_cache.invalidate_all().await;
+        }
     }
     result
 }
@@ -286,6 +303,16 @@ pub(crate) async fn run_query_transaction_inner(
         {
             session.schema_cache.invalidate_all().await;
         }
+        // Query Result Cache (#1097): 束ねた文のいずれか 1 つでも書き込み
+        // (DDL/DML 問わず) なら丸ごと invalidate する。cell-edit の Apply は
+        // 通常 DML のみだが、Schema Cache と違い DML でも対象になるため、ここは
+        // 「DDL 相当」ではなく「読み取り専用でない」で判定する。
+        if statements
+            .iter()
+            .any(|sql| !crate::db::is_read_only_sql_for(driver, sql))
+        {
+            session.query_cache.invalidate_all().await;
+        }
     }
     let affected = result?;
     Ok(QueryResult::empty(affected, elapsed_ms))
@@ -320,20 +347,41 @@ pub async fn run_in_transaction(
     sql: String,
     state: State<'_, AppState>,
 ) -> Result<QueryResult> {
+    run_in_transaction_inner(state.inner(), &session_id, &sql).await
+}
+
+/// Core of [`run_in_transaction`] decoupled from Tauri's `State` wrapper so
+/// integration tests can drive the exact command path (session lookup +
+/// read-only guard + execute + cache invalidation) without standing up a
+/// Tauri runtime. See [`run_query_inner`]'s doc comment for the pattern.
+pub(crate) async fn run_in_transaction_inner(
+    state: &AppState,
+    session_id: &str,
+    sql: &str,
+) -> Result<QueryResult> {
     let session = state
-        .get(&session_id)
+        .get(session_id)
         .await
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    ensure_allowed_for_session(&session, &sql)?;
-    let result = session.conn.execute_in_transaction(&sql).await;
-    // Schema Cache (#1097): 明示トランザクション内の DDL は、後で ROLLBACK
-    // される可能性があるため理論上は invalidate しすぎ (無駄な再取得 1 回) に
-    // なり得るが、COMMIT を待って invalidate すると `finish_transaction` 側で
-    // どの文が DDL だったかを覚えておく必要が生じ複雑化するため、fail-closed
-    // (stale を残さない) を優先してここで即時 invalidate する。ROLLBACK 時の
-    // 「無駄な 1 回の再取得」は安全側のコストとして許容する。
-    if result.is_ok() && crate::db::sql_may_change_schema(session.conn.driver_kind(), &sql) {
-        session.schema_cache.invalidate_all().await;
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    ensure_allowed_for_session(&session, sql)?;
+    let result = session.conn.execute_in_transaction(sql).await;
+    if result.is_ok() {
+        let driver = session.conn.driver_kind();
+        // Schema Cache (#1097): 明示トランザクション内の DDL は、後で ROLLBACK
+        // される可能性があるため理論上は invalidate しすぎ (無駄な再取得 1 回) に
+        // なり得るが、COMMIT を待って invalidate すると `finish_transaction` 側で
+        // どの文が DDL だったかを覚えておく必要が生じ複雑化するため、fail-closed
+        // (stale を残さない) を優先してここで即時 invalidate する。ROLLBACK 時の
+        // 「無駄な 1 回の再取得」は安全側のコストとして許容する。
+        if crate::db::sql_may_change_schema(driver, sql) {
+            session.schema_cache.invalidate_all().await;
+        }
+        // Query Result Cache (#1097): 同じ理由・同じ fail-closed 方針で、
+        // 読み取り専用でない SQL (DDL/DML 問わず) は COMMIT を待たず即時
+        // invalidate する。
+        if !crate::db::is_read_only_sql_for(driver, sql) {
+            session.query_cache.invalidate_all().await;
+        }
     }
     result
 }
@@ -726,6 +774,16 @@ async fn spawn_query_stream(
         _ => exec.await,
     };
 
+    // Query Result Cache (#1097): このストリーミング経路自体はキャッシュを
+    // 読み書きしない (Epic #1093 の「大量データを無制限に保持しない」方針との
+    // 衝突を避けるため — モジュールドキュメント参照) が、書き込み文をここ経由で
+    // 実行できる以上、`run_query` 側がキャッシュした結果を stale にしうるため
+    // invalidate だけは行う。判定は元の `sql` (auto-limit 適用前) で行う —
+    // LIMIT の注入は read-only 判定を変えないため `effective_sql` と等価。
+    if result.is_ok() && !crate::db::is_read_only_sql_for(session.conn.driver_kind(), &sql) {
+        session.query_cache.invalidate_all().await;
+    }
+
     match &result {
         Ok(res) => {
             tracing::debug!(
@@ -861,6 +919,14 @@ async fn spawn_captured_write(
         _ => exec.await,
     };
     let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    // Query Result Cache (#1097): capture 対象は呼び出し元 (`run_query_stream`)
+    // が `classify_write_kind_for != Other` を確認済み — つまり単文の
+    // INSERT/UPDATE/DELETE であることが保証されているため、判定を挟まず成功時は
+    // 常に invalidate する。
+    if outcome.is_ok() {
+        session.query_cache.invalidate_all().await;
+    }
 
     match &outcome {
         Ok((result, capture)) => {

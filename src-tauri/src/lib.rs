@@ -195,6 +195,7 @@ pub mod __test_api {
             _tunnel: None,
             local_temp_file: None,
             schema_cache: crate::cache::SchemaCache::default(),
+            query_cache: crate::cache::QueryResultCache::default(),
         }
     }
 
@@ -243,6 +244,18 @@ pub mod __test_api {
             database.map(str::to_string),
         )
         .await
+    }
+
+    /// Drives the `run_in_transaction` IPC command's core path (session lookup,
+    /// read-only guard, execute-in-transaction, cache invalidation) without a
+    /// Tauri runtime (#1097's Query Result Cache eager-invalidate path — see
+    /// `commands::query::run_in_transaction_inner`'s doc comment).
+    pub async fn run_in_transaction_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+    ) -> crate::error::Result<QueryResult> {
+        crate::commands::query::run_in_transaction_inner(state, session_id, sql).await
     }
 
     /// The read-only guard the `import_csv` IPC command applies before any CSV
