@@ -45,6 +45,15 @@ const sources = Object.entries(modules).filter(
   ([path]) => !path.startsWith("./") && !path.startsWith("../__tests__/"),
 );
 
+/**
+ * `import.meta.glob` のキー (`../components/Icon.tsx`) を、エディタから辿れる
+ * リポジトリ相対パス (`src/components/Icon.tsx`) へ直す。キーは必ず `../` 始まりで、
+ * 置き換えるのは**先頭の 1 つだけ**なので、その意図を先頭アンカーで明示する。
+ */
+function toDisplayPath(globKey: string): string {
+  return globKey.replace(/^\.\.\//, "src/");
+}
+
 /** `path:line: 該当テキスト` の形で違反を集める。 */
 function findViolations(
   pattern: RegExp,
@@ -59,7 +68,7 @@ function findViolations(
       const re = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
       let m: RegExpExecArray | null;
       while ((m = re.exec(line))) {
-        if (isViolation(m)) out.push(`${path.replace("../", "src/")}:${i + 1}: ${m[0]}`);
+        if (isViolation(m)) out.push(`${toDisplayPath(path)}:${i + 1}: ${m[0]}`);
       }
     });
   }
