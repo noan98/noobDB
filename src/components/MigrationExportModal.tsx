@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { chakra } from "@chakra-ui/react";
+import { AnimatePresence, motion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { dirname, downloadDir, join } from "@tauri-apps/api/path";
 import { api, type ConnectionProfile, type SyncPlan } from "../api/tauri";
 import { useT } from "../i18n";
+import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Select } from "./ui";
 import { LoadingButton } from "./LoadingButton";
@@ -253,23 +255,53 @@ export function MigrationExportModal({
           </chakra.pre>
         </FormSection>
 
-        {downState.kind === "loading" && (
-          <chakra.div fontSize="sm" color="app.textSecondary">
-            {t("schemaCompareMigrationLoadingDown")}
-          </chakra.div>
-        )}
-        {downState.kind === "error" && (
-          <ErrorNote>{t("schemaCompareMigrationDownError", { error: downState.message })}</ErrorNote>
-        )}
-        {downState.kind === "ready" && (
-          <chakra.div fontSize="xs" color="app.textMuted">
-            {t("schemaCompareMigrationSummary", {
-              upCount: plan.statements.length,
-              downCount: downState.plan.statements.length,
-              warnings: plan.warnings.length + downState.plan.warnings.length,
-            })}
-          </chakra.div>
-        )}
+        {/* down マイグレーションの取得は非同期 (loading → ready/error) なので、
+            結果表示の差し替えをクロスフェードする (#1025)。この区間はどれも
+            フォーカス可能な入力を持たないため、退出アニメ中のフォーカス喪失は
+            起きない。 */}
+        <AnimatePresence mode="wait" initial={false}>
+          {downState.kind === "loading" && (
+            <motion.div
+              key="migration-down-loading"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <chakra.div fontSize="sm" color="app.textSecondary">
+                {t("schemaCompareMigrationLoadingDown")}
+              </chakra.div>
+            </motion.div>
+          )}
+          {downState.kind === "error" && (
+            <motion.div
+              key="migration-down-error"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <ErrorNote>{t("schemaCompareMigrationDownError", { error: downState.message })}</ErrorNote>
+            </motion.div>
+          )}
+          {downState.kind === "ready" && (
+            <motion.div
+              key="migration-down-ready"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <chakra.div fontSize="xs" color="app.textMuted">
+                {t("schemaCompareMigrationSummary", {
+                  upCount: plan.statements.length,
+                  downCount: downState.plan.statements.length,
+                  warnings: plan.warnings.length + downState.plan.warnings.length,
+                })}
+              </chakra.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {status.kind === "error" && (
           <ErrorNote>{t("schemaCompareMigrationError", { error: status.message })}</ErrorNote>

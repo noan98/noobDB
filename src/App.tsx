@@ -31,6 +31,9 @@ import { SandboxReviewModal } from "./components/SandboxReviewModal";
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { sqlSaveFileName } from "./sqlFileIO";
+// 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみで、計測ロジック
+// 本体は perf.ts に閉じる。
+import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
@@ -278,6 +281,7 @@ import { semanticColorToken, semanticColorVar } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
+import { workspaceViewKey } from "./components/workspaceView";
 import {
   useSettings,
   getSettings,
@@ -289,7 +293,13 @@ import {
   recordCommandPaletteUsage,
   pruneCommandPaletteMru,
   type TabRestoreMode,
+  type Density,
 } from "./settings";
+import {
+  DENSITY_TRANSITION_ATTR,
+  DENSITY_TRANSITION_MS,
+  densityTransitionDirection,
+} from "./densityTransition";
 import { ThemeTransition } from "./components/ThemeTransition";
 import { AccentWash } from "./components/AccentWash";
 import { accentVars } from "./accent";
@@ -1310,6 +1320,25 @@ export default function App() {
     // OS の prefers-reduced-motion にそのまま従う (どのセレクタにも一致しない)。
     root.setAttribute("data-motion", settings.motionPreference);
   }, [settings, theme]);
+
+  // 密度変更の遷移演出 (#1023)。settings.density が実際に変わった瞬間だけ、
+  // 一時的な data-density-transition 属性 ("grow"/"shrink") を立てて App.css /
+  // ResultGrid の GRID_CSS 側のスコープ付き一度きりアニメーションを有効化し、
+  // DENSITY_TRANSITION_MS 後に自動で外す (詳細な設計判断は densityTransition.ts
+  // のモジュール doc を参照)。上の効果とは別の effect にしているのは、密度以外の
+  // 設定変更のたびに再評価させないため (依存配列を settings.density だけに絞る)。
+  const prevDensityRef = useRef<Density | null>(null);
+  useEffect(() => {
+    const direction = densityTransitionDirection(prevDensityRef.current, settings.density);
+    prevDensityRef.current = settings.density;
+    if (!direction) return;
+    const root = document.documentElement;
+    root.setAttribute(DENSITY_TRANSITION_ATTR, direction);
+    const timer = window.setTimeout(() => {
+      root.removeAttribute(DENSITY_TRANSITION_ATTR);
+    }, DENSITY_TRANSITION_MS);
+    return () => window.clearTimeout(timer);
+  }, [settings.density]);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
@@ -3337,6 +3366,8 @@ export default function App() {
     streamIdRef.current.set(tabId, streamId);
     const startedAt = Date.now();
     runStartRef.current.set(tabId, startedAt);
+    markQueryStart(streamId); // 計測 (#1094): 既定 OFF なら即 no-op
+    let perfColumnCount = 0; // 計測 (#1094): onColumns で更新し、onDone に渡す
     setStatus({ kind: "key", key: "statusRunningQuery" });
     // 結果差分ハイライト (#597): 直前の結果行とその SQL を退避しておき、同一クエリの
     // 再実行 (prevResultSql === 今回 sql) のときだけ ResultGrid 側で差分計算に使う。
@@ -3380,12 +3411,14 @@ export default function App() {
 
     const unlisten = await listenQueryStream(streamId, {
       onColumns: ({ columns }) => {
+        perfColumnCount = columns.length; // 計測 (#1094): onDone 時点の列数として使う
         patchTab(tabId, (tt) => ({
           ...tt,
           result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
         }));
       },
       onRows: ({ rows }) => {
+        markFirstRow(streamId); // 計測 (#1094): Time to First Row (2 回目以降は no-op)
         patchTab(tabId, (tt) => {
           if (!tt.result) return tt;
           return {
@@ -3411,6 +3444,12 @@ export default function App() {
         });
       },
       onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit }) => {
+        // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
+        markQueryDone(streamId, {
+          rows: hasColumns ? totalRows : rowsAffected,
+          columns: perfColumnCount,
+          elapsedMs,
+        });
         patchTab(tabId, (tt) => {
           if (!hasColumns) {
             return {
@@ -3448,7 +3487,7 @@ export default function App() {
         // for the database this statement ran against (the executing tab's, or
         // the profile default when the tab pins no database), leaving other
         // panes' cached schemas untouched.
-        if (isSchemaMutatingSql(sql)) {
+        if (isSchemaMutatingSql(sql, selectedProfile?.driver)) {
           invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
         }
         finalize();
@@ -3535,7 +3574,10 @@ export default function App() {
         autoRefresh,
         // DML フライトレコーダ (#735): 単文の INSERT/UPDATE/DELETE のみ対象。
         // 自動リフレッシュ (常に読み取り専用) は対象外。
-        capture: settings.flightRecorderEnabled && !autoRefresh && isSingleCapturableStatement(sql),
+        capture:
+          settings.flightRecorderEnabled &&
+          !autoRefresh &&
+          isSingleCapturableStatement(sql, selectedProfile?.driver),
         captureRowCap: settings.flightRecorderRowCap,
         captureRetentionDays: settings.flightRecorderRetentionDays,
       });
@@ -4114,7 +4156,7 @@ export default function App() {
     if (!tab) return;
     // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
     if (tab.batchRunning || tab.streaming) return;
-    const statements = splitSqlStatements(sql);
+    const statements = splitSqlStatements(sql, selectedProfile?.driver);
     if (statements.length === 0) return;
     const db = tab.database ?? selectedProfile?.database ?? null;
     const MAX_PREVIEW_ROWS = 200;
@@ -4166,7 +4208,7 @@ export default function App() {
       vars: { ok: okCount, errors: errCount, total: results.length },
       error: errCount > 0,
     });
-  }, [sessionId, selectedProfile?.database, patchTab]);
+  }, [sessionId, selectedProfile?.database, selectedProfile?.driver, patchTab]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -4266,9 +4308,13 @@ export default function App() {
     const requireWriteApproval =
       isProduction && (selectedProfile?.confirm_writes ?? false) && !sessionReadOnly;
     // 複数文スクリプトはバッチ実行に振り分ける。auto LIMIT は付けない。
-    const batch = target.kind === "query" && isMultiStatement(sql);
+    // 文分割・危険判定・読み取り専用判定 (下の isReadOnlySql) は同じ driver を参照
+    // し、1 回の実行ゲート内でマスク解釈が食い違わないようにする (#852、#1004)。
+    const batch = target.kind === "query" && isMultiStatement(sql, selectedProfile?.driver);
     const findings =
-      isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
+      isProduction || settings.confirmDangerousQueries
+        ? analyzeDangerousSql(sql, selectedProfile?.driver)
+        : [];
     // 緊急クエリ実行モード中の書き込みは、本番の confirm_writes と同じく毎回
     // 確認を要求する (read-only と明示した接続への書き込みは常に例外的な操作)。
     const needsWriteApproval =
@@ -7096,7 +7142,7 @@ export default function App() {
                         sessionId &&
                         !readOnly &&
                         tab.lastExecutedSql &&
-                        isCtasEligibleSql(tab.lastExecutedSql) &&
+                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
                         (tab.database ?? selectedProfile?.database)
                           ? () =>
                               setSaveAsTableRequest({
@@ -7109,7 +7155,7 @@ export default function App() {
                         sessionId &&
                         !readOnly &&
                         tab.lastExecutedSql &&
-                        isCtasEligibleSql(tab.lastExecutedSql) &&
+                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
                         (tab.database ?? selectedProfile?.database)
                           ? () =>
                               setSaveAsViewRequest({
@@ -7248,6 +7294,31 @@ export default function App() {
           status: connectionStatus,
         }
       : null;
+
+  // メイン領域が「今どの全画面サーフェスを表示しているか」の判別子 (#1020)。
+  // 下の `<main>` 直下の三項チェーンと**同順・同条件**で判定する純関数
+  // (`components/workspaceView.ts`) に委譲し、これを `AnimatePresence
+  // mode="wait"` の key にすることでワークスペース切替 (例: グリッド ⇔
+  // プロセス監視、Server Info ⇔ Advisor) に控えめなクロスフェードを添える。
+  // 結果パネル側 (#788 の `contentMode`) と同じ発想・同じ尺
+  // (`variants.fade` + `transitions.enter`) で、モーション量はルートの
+  // `MotionConfig reducedMotion` が自動抑制する。
+  const workspaceView = workspaceViewKey({
+    showCompare,
+    showErd,
+    showProcesses,
+    showUsers,
+    showServerInfo,
+    showQueryInspector,
+    showAdvisor,
+    showSizes,
+    showCompareResults,
+    showForm,
+    showSnippetForm,
+    sessionId,
+    advisorDatabase: activeTab?.database ?? selectedProfile?.database,
+    sizesTarget,
+  });
 
   return (
     <Flex
@@ -7715,6 +7786,35 @@ export default function App() {
             : undefined
         }
       >
+        {/* 全画面サーフェスの切替クロスフェード (#1020)。key は上で組み立てた
+            `workspaceView` で、結果パネル (#788) と同じ `variants.fade` +
+            `transitions.enter` を流用する (尺を二重定義しない)。
+            `initial={false}` で初回描画のフェードインは抑える (起動直後に
+            画面全体がふわっと出るのを避けるため)。reduced-motion は
+            ルートの `MotionConfig reducedMotion` が自動で静止化する。
+
+            **Suspense は AnimatePresence の外ではなく motion.div の内側**に
+            置く。外側に 1 つだけ置くと、遅延ロードされたビュー (lazy) が
+            サスペンドした瞬間に「退出中の旧ビューを含む部分木ごと」フォール
+            バックへ差し替わり、退出アニメーションが途中で消える。ビュー単位の
+            境界にしておけば、新ビューのロード待ちは新ビュー側のスピナーに
+            閉じ込められ、旧ビューの退出は最後まで再生される。 */}
+        <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={workspaceView}
+          initial={variants.fade.initial}
+          animate={variants.fade.animate}
+          exit={variants.fade.exit}
+          transition={transitions.enter}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
         <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
         {showCompare ? (
           <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
@@ -8008,6 +8108,8 @@ export default function App() {
           </>
         )}
         </Suspense>
+        </motion.div>
+        </AnimatePresence>
 
         {!statusDismissed && status.kind !== "idle" && (() => {
           const tone = statusTone(status);

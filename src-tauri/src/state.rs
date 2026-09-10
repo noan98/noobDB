@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
 
+use crate::cache::{QueryResultCache, SchemaCache};
 use crate::db::{Connection, DbConnectOptions};
 use crate::ssh::{SshConfig, SshTunnel};
 
@@ -38,6 +39,19 @@ pub struct StreamHandle {
     pub abort: AbortHandle,
     pub delivered_rows: Arc<AtomicU64>,
     pub kind: StreamKind,
+    /// Called by `cancel_stream` (see `commands::query`) with the final
+    /// `delivered_rows` count when this stream's transport isn't the generic
+    /// `app.emit()` `<kind>-stream:cancelled` event. `run_query_stream` /
+    /// `preview_query_stream` (#1096) set this to a closure that sends a
+    /// `Cancelled` message down the Tauri Channel the rest of that stream
+    /// used, so cancellation stays on the same per-stream transport as
+    /// columns/rows/done/error instead of falling back to a broadcast event.
+    /// `None` for streams still on the legacy event-based transport
+    /// (Export/Dump/Import), which `cancel_stream` notifies via `app.emit()`
+    /// as before. Boxed rather than generic so this struct (and the
+    /// `AppState.streams` map holding it) stays transport-agnostic — state.rs
+    /// doesn't need to know about `commands::query`'s message enum types.
+    pub on_cancel: Option<Box<dyn Fn(u64) + Send + Sync>>,
 }
 
 pub struct Session {
@@ -87,6 +101,19 @@ pub struct Session {
     /// (`vacuum_into` / "ファイルに保存", which writes an independent file and
     /// does not change this session's own volatility).
     pub local_temp_file: Option<std::path::PathBuf>,
+    /// このセッション (接続) だけが持つスキーマ introspection キャッシュ (#1097)。
+    /// `Session` のフィールドとして持つことで「接続をまたいだキャッシュ汚染がない」
+    /// ことを型で保証する — 別セッションの `SchemaCache` へは決して到達できない。
+    /// `reconnect` (`commands::connection::reconnect_inner`) は既存のセッションを
+    /// 書き換えず新しい `Session` を作って差し替えるため、再接続のたびにこの
+    /// フィールドも自動的に空へ戻る (詳細は `cache` モジュールのドキュメント参照)。
+    pub schema_cache: SchemaCache,
+    /// このセッション (接続) だけが持つクエリ結果キャッシュ (#1097)。
+    /// `schema_cache` と同じ理由・同じ仕組みで `Session` のフィールドとして持ち、
+    /// 「接続をまたいだキャッシュ汚染がない」ことを型で保証する。設計方針
+    /// (対象・invalidate 条件・機微データの保存方針) は `cache` モジュールの
+    /// ドキュメントコメント参照。
+    pub query_cache: QueryResultCache,
 }
 
 impl Session {
@@ -249,16 +276,22 @@ impl AppState {
     }
 
     /// Aborts the task registered for `stream_id` and returns the number of
-    /// rows it had delivered so far together with which command registered it,
-    /// or `None` when no such stream is running (already finished, or never
-    /// existed). The caller (the `cancel_stream` IPC command) uses the kind to
-    /// emit the matching `<kind>-stream:cancelled` event.
-    pub async fn cancel_stream(&self, stream_id: &str) -> Option<(u64, StreamKind)> {
+    /// rows it had delivered so far, together with which command registered
+    /// it and (when set) its `on_cancel` notifier, or `None` when no such
+    /// stream is running (already finished, or never existed). The caller
+    /// (the `cancel_stream` IPC command) calls `on_cancel` when present
+    /// (Query/Preview, #1096) or otherwise falls back to emitting the
+    /// matching `<kind>-stream:cancelled` event (Export/Dump/Import).
+    #[allow(clippy::type_complexity)] // 呼び出し元は 1 箇所 (`cancel_stream`) のみ。
+    pub async fn cancel_stream(
+        &self,
+        stream_id: &str,
+    ) -> Option<(u64, StreamKind, Option<Box<dyn Fn(u64) + Send + Sync>>)> {
         if let Some((_, h)) = self.streams.write().await.remove(stream_id) {
             h.abort.abort();
             let delivered_rows = h.delivered_rows.load(Ordering::SeqCst);
             tracing::debug!(stream_id = %stream_id, delivered_rows, "stream cancelled");
-            Some((delivered_rows, h.kind))
+            Some((delivered_rows, h.kind, h.on_cancel))
         } else {
             tracing::debug!(stream_id = %stream_id, "cancel: no such stream");
             None
@@ -296,6 +329,7 @@ mod tests {
             abort: jh.abort_handle(),
             delivered_rows: Arc::new(AtomicU64::new(0)),
             kind,
+            on_cancel: None,
         }
     }
 

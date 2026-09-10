@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
+import { AnimatePresence, motion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api/tauri";
 import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
+import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Radio } from "./ui";
 import { LoadingButton } from "./LoadingButton";
@@ -488,40 +490,54 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
           </chakra.div>
         </FormSection>
 
-        {format === "sql" && (
-          <FormSection>
-            <chakra.div display="flex" gap="3" flexWrap="wrap">
-              <chakra.div flex="1" minW="200px">
-                <FieldLabel htmlFor="export-sql-table">{t("exportSqlTable")}</FieldLabel>
-                <Input
-                  id="export-sql-table"
-                  type="text"
-                  value={sqlTable}
-                  onChange={(e) => setSqlTable(e.target.value)}
-                  placeholder={t("exportSqlTablePlaceholder")}
-                  disabled={isSaving}
-                />
-              </chakra.div>
-              <chakra.div w="140px">
-                <FieldLabel htmlFor="export-sql-batch">{t("exportSqlBatch")}</FieldLabel>
-                <Input
-                  id="export-sql-batch"
-                  type="number"
-                  min={1}
-                  value={sqlBatch}
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value, 10);
-                    setSqlBatch(Number.isFinite(n) && n > 0 ? n : DEFAULT_SQL_BATCH);
-                  }}
-                  disabled={isSaving}
-                />
-              </chakra.div>
-            </chakra.div>
-            <chakra.div fontSize="xs" color="app.textMuted" mt="1">
-              {t("exportSqlHint")}
-            </chakra.div>
-          </FormSection>
-        )}
+        {/* 形式 (CSV/JSON/SQL 等) の切替でオプション群が瞬間的に差し替わらない
+            よう、SQL 専用フィールドの出入りをクロスフェードする (#1025)。
+            トリガーはラジオボタン (このセクションの外) のクリックなので、
+            退出アニメ中にこのセクション内のフォーカスが失われる心配はない。 */}
+        <AnimatePresence mode="wait" initial={false}>
+          {format === "sql" && (
+            <motion.div
+              key="export-sql-options"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <FormSection>
+                <chakra.div display="flex" gap="3" flexWrap="wrap">
+                  <chakra.div flex="1" minW="200px">
+                    <FieldLabel htmlFor="export-sql-table">{t("exportSqlTable")}</FieldLabel>
+                    <Input
+                      id="export-sql-table"
+                      type="text"
+                      value={sqlTable}
+                      onChange={(e) => setSqlTable(e.target.value)}
+                      placeholder={t("exportSqlTablePlaceholder")}
+                      disabled={isSaving}
+                    />
+                  </chakra.div>
+                  <chakra.div w="140px">
+                    <FieldLabel htmlFor="export-sql-batch">{t("exportSqlBatch")}</FieldLabel>
+                    <Input
+                      id="export-sql-batch"
+                      type="number"
+                      min={1}
+                      value={sqlBatch}
+                      onChange={(e) => {
+                        const n = parseInt(e.target.value, 10);
+                        setSqlBatch(Number.isFinite(n) && n > 0 ? n : DEFAULT_SQL_BATCH);
+                      }}
+                      disabled={isSaving}
+                    />
+                  </chakra.div>
+                </chakra.div>
+                <chakra.div fontSize="xs" color="app.textMuted" mt="1">
+                  {t("exportSqlHint")}
+                </chakra.div>
+              </FormSection>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <FormSection>
           <FieldLabel htmlFor="export-path">{t("exportSavePath")}</FieldLabel>

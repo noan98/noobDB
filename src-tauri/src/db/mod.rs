@@ -1565,7 +1565,32 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 /// Returns true when `sql` is shaped like a read-only statement that the
 /// read-only profile gate is willing to let through.
 ///
-/// Allow list: `SELECT` / `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `WITH`.
+/// Allow list: `SELECT` / `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `WITH`
+/// for every driver, plus two driver-conditioned extensions (#1005):
+///
+/// * **`VALUES` / `TABLE`, all drivers.** `VALUES (1),(2)` (a bare row
+///   constructor) and `TABLE t` (PostgreSQL/DuckDB/MySQL 8.0.19+ shorthand for
+///   `SELECT * FROM t`) can only ever produce a result set — neither syntax
+///   has a form that mutates data — so allowing them is safe regardless of
+///   whether the connected driver actually supports the statement (an
+///   unsupported driver just fails at the database with a syntax error, which
+///   is not a safety concern).
+/// * **DuckDB only: `FROM` / `SUMMARIZE` / query-shaped `PRAGMA`.** DuckDB's
+///   `FROM t` (FROM-first shorthand for `SELECT * FROM t`) and `SUMMARIZE t`
+///   (read-only column statistics) are always read-only. `PRAGMA`, however,
+///   has both a query form (`PRAGMA database_list`, `PRAGMA table_info('t')`)
+///   and a *setting* form that changes session/database configuration
+///   (`PRAGMA memory_limit='1GB'`, `PRAGMA threads=4`) — the latter is a
+///   write in spirit even though it isn't `INSERT`/`UPDATE`/`DELETE`/DDL, so
+///   `PRAGMA` is only allowed for DuckDB, and only when the masked body
+///   contains no `=` (the setting form's syntax always has one; the query
+///   form never does — see [`is_read_only_sql_masked`]). SQLite's own
+///   `PRAGMA foreign_keys=ON` is exactly this setting form, and SQLite has no
+///   query-only `PRAGMA` use case that would be lost by leaving it off the
+///   allow list entirely, so `PRAGMA` stays unlisted for every driver other
+///   than DuckDB (fail-closed, per the project's default policy — see
+///   `CLAUDE.md`'s "読み取り専用ガードと自動 LIMIT").
+///
 /// Trailing semicolons and whitespace are tolerated. `SELECT ... FOR UPDATE`,
 /// `FOR SHARE`, `FOR NO KEY UPDATE`, `FOR KEY SHARE` and the MySQL
 /// `LOCK IN SHARE MODE` form — including their `NOWAIT` / `SKIP LOCKED` /
@@ -1599,23 +1624,28 @@ pub(crate) fn pk_order_clause(pk_cols: &[String], quote: fn(&str) -> String) -> 
 /// MySQL keeps its own escaping rules. See [`mask_for_driver`] (#852).
 pub fn is_read_only_sql(sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    is_read_only_sql_masked(&mask_for_analysis_conservative(&orig))
+    // ドライバ不明のときは #1005 の DuckDB 限定拡張 (`FROM`/`SUMMARIZE`/`PRAGMA`)
+    // を許可しない — `VALUES`/`TABLE` は全ドライバ共通なので `None` でも通す。
+    is_read_only_sql_masked(None, &mask_for_analysis_conservative(&orig))
 }
 
 /// Driver-aware entry point for [`is_read_only_sql`] (#852): masks string
 /// literals with `driver`'s own escaping rules (see [`mask_for_driver`]) so
 /// PostgreSQL / SQLite / DuckDB / MSSQL are not analysed with MySQL's
 /// backslash-escape reading, which fails open on payloads like
-/// `SELECT '\'; DELETE FROM t; --'`.
+/// `SELECT '\'; DELETE FROM t; --'`. Also unlocks the DuckDB-only allow-list
+/// extensions documented on [`is_read_only_sql`] (#1005).
 pub fn is_read_only_sql_for(driver: DriverKind, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
-    is_read_only_sql_masked(&mask_for_driver(driver, &orig))
+    is_read_only_sql_masked(Some(driver), &mask_for_driver(driver, &orig))
 }
 
 /// Shared body of [`is_read_only_sql`] / [`is_read_only_sql_for`], operating on
 /// an already-masked statement so the two entry points differ only in which
-/// masking rules they applied.
-fn is_read_only_sql_masked(masked: &[char]) -> bool {
+/// masking rules they applied. `driver` is `None` for the driver-less entry
+/// point, which keeps the DuckDB-only extensions (`FROM` / `SUMMARIZE` /
+/// `PRAGMA`) turned off since it cannot know whether they're safe.
+fn is_read_only_sql_masked(driver: Option<DriverKind>, masked: &[char]) -> bool {
     let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
     let body = masked_lower
         .trim()
@@ -1624,12 +1654,27 @@ fn is_read_only_sql_masked(masked: &[char]) -> bool {
     if body.is_empty() {
         return false;
     }
-    let allowed_prefix = starts_with_word(body, "select")
+    let mut allowed_prefix = starts_with_word(body, "select")
         || starts_with_word(body, "show")
         || starts_with_word(body, "describe")
         || starts_with_word(body, "desc")
         || starts_with_word(body, "explain")
-        || starts_with_word(body, "with");
+        || starts_with_word(body, "with")
+        // `VALUES (1),(2)` / `TABLE t`: 全ドライバ共通で安全 (書き込みへ転じる
+        // 構文が存在しない。#1005 のドキュメントコメント参照)。
+        || starts_with_word(body, "values")
+        || starts_with_word(body, "table");
+    if !allowed_prefix && driver == Some(DriverKind::DuckDb) {
+        // DuckDB 限定の読み取り構文 (#1005)。
+        allowed_prefix = starts_with_word(body, "from") || starts_with_word(body, "summarize");
+        if !allowed_prefix && starts_with_word(body, "pragma") {
+            // PRAGMA は照会形 (`PRAGMA database_list`) と設定形
+            // (`PRAGMA memory_limit='1GB'`) の両方を持つ。設定形は構文上必ず
+            // `=` を含む一方、照会形は含まないため、`=` の有無で近似する
+            // (issue #1005 の提案どおり)。
+            allowed_prefix = !body.contains('=');
+        }
+    }
     if !allowed_prefix {
         return false;
     }
@@ -1683,6 +1728,32 @@ fn is_read_only_sql_masked(masked: &[char]) -> bool {
         return false;
     }
     true
+}
+
+/// `sql` が DDL 相当 (`CREATE` / `ALTER` / `DROP` / `TRUNCATE` / `RENAME`) を
+/// 含み、Schema Cache (#1097) を invalidate すべきかどうかの簡易判定。
+///
+/// [`is_read_only_sql_for`] とは独立した別のヒューリスティックであり、読み取り
+/// 専用ガードの正しさには一切影響しない (invalidate 判定にのみ使う)。
+///
+/// - **先頭キーワードだけでなく本文全体を走査する。** マルチステートメントの
+///   2 文目以降や、DDL を伴う CTE (`WITH ... AS (...) CREATE ...` のような
+///   エンジン拡張、あるいは `run_query_transaction` が渡す複数文のうち一部だけ
+///   が DDL であるケース) も拾うため。
+/// - **誤検知 (DDL でないのに true) は安全側。** invalidate は「次の 1 回だけ
+///   再取得が走る」というコストに留まり、正しさを壊さない。逆に見逃し (DDL な
+///   のに false) は stale なキャッシュを残す実害に直結するため、この関数は
+///   fail-closed (広めに検出する) 方向に倒す。
+/// - コメント/文字列リテラルは [`mask_for_driver`] で空白化してから走査するので、
+///   `SELECT 'please alter this row'` のような値の中の同綴りキーワードには
+///   反応しない。
+pub fn sql_may_change_schema(driver: DriverKind, sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    let masked = mask_for_driver(driver, &orig);
+    let masked_lower: String = masked.iter().collect::<String>().to_ascii_lowercase();
+    ["create", "alter", "drop", "truncate", "rename"]
+        .iter()
+        .any(|kw| contains_word(&masked_lower, kw))
 }
 
 /// Row-locking clause phrases recognised by [`has_locking_clause`]: `SELECT
@@ -2275,7 +2346,11 @@ fn sets_no_backslash_escapes_mode(orig_segment: &str) -> bool {
 /// [`has_stacked_statements`], [`apply_auto_limit`], [`classify_write_kind`],
 /// [`is_session_init_sql`]). Callers holding a [`DriverKind`] should use
 /// [`mask_for_driver`] so MySQL keeps its own rules.
-fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
+///
+/// `pub(crate)` (rather than private) so `lib.rs::__test_api` can re-export a
+/// thin `&str -> String` wrapper for the shared frontend/backend masking
+/// golden (`tests/mask_golden.rs`, #988).
+pub(crate) fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
     mask_for_analysis_impl(src, false)
 }
 
@@ -2308,7 +2383,11 @@ fn driver_backslash_escapes(driver: DriverKind) -> bool {
 /// entry points; the driver-less variants deliberately fall back to the
 /// stricter [`mask_for_analysis_conservative`] reading (see
 /// [`is_read_only_sql`]).
-fn mask_for_driver(driver: DriverKind, src: &[char]) -> Vec<char> {
+///
+/// `pub(crate)` (rather than private) for the same reason as
+/// [`mask_for_analysis_conservative`] — re-exported for `tests/mask_golden.rs`
+/// (#988).
+pub(crate) fn mask_for_driver(driver: DriverKind, src: &[char]) -> Vec<char> {
     mask_for_analysis_impl(src, driver_backslash_escapes(driver))
 }
 
@@ -2770,7 +2849,7 @@ mod tests {
         apply_auto_limit, apply_auto_limit_for, apply_auto_limit_mssql, classify_write_kind,
         classify_write_kind_for, has_stacked_statements, has_stacked_statements_for,
         is_read_only_sql, is_read_only_sql_for, is_session_init_sql, mask_sensitive_var,
-        sum_size_parts, DriverKind, SslMode, WriteKind,
+        sql_may_change_schema, sum_size_parts, DriverKind, SslMode, WriteKind,
     };
 
     /// Drivers whose string literals follow the standard reading (`\` is an
@@ -3011,6 +3090,224 @@ mod tests {
         }
     }
 
+    /// #1005: `VALUES (1),(2)` and `TABLE t` can only ever produce a result
+    /// set (neither has a form that mutates data), so they're allowed for
+    /// every driver — including the driver-less entry point — regardless of
+    /// whether that driver's SQL dialect actually implements the statement.
+    #[test]
+    fn read_only_allows_values_and_table_for_every_driver() {
+        for sql in [
+            "VALUES (1), (2)",
+            "VALUES (1)",
+            "TABLE users",
+            "TABLE users;",
+        ] {
+            assert!(is_read_only_sql(sql), "driver-less must accept {sql:?}");
+            for driver in STANDARD_DRIVERS {
+                assert!(
+                    is_read_only_sql_for(driver, sql),
+                    "{driver:?} must accept {sql:?}"
+                );
+            }
+            assert!(
+                is_read_only_sql_for(DriverKind::Mysql, sql),
+                "Mysql must accept {sql:?}"
+            );
+        }
+    }
+
+    /// A statement hiding behind `VALUES`/`TABLE` is still a stacked second
+    /// statement (#1005) — the new prefixes don't bypass the existing `;`
+    /// check.
+    #[test]
+    fn read_only_rejects_stacked_statement_behind_values_and_table() {
+        for sql in [
+            "VALUES (1); DELETE FROM users",
+            "TABLE users; DROP TABLE users",
+        ] {
+            assert!(!is_read_only_sql(sql), "must reject stacked {sql:?}");
+            for driver in STANDARD_DRIVERS {
+                assert!(
+                    !is_read_only_sql_for(driver, sql),
+                    "{driver:?} must reject stacked {sql:?}"
+                );
+            }
+        }
+    }
+
+    /// #1005: DuckDB's FROM-first shorthand (`FROM t` for `SELECT * FROM t`)
+    /// and `SUMMARIZE t` (read-only column statistics) are always read-only,
+    /// but only DuckDB actually has this syntax — every other driver keeps
+    /// rejecting it (fail-closed; `FROM`/`SUMMARIZE` simply aren't in their
+    /// allow list, mirroring the fact that these dialects don't support the
+    /// statement at all).
+    #[test]
+    fn read_only_duckdb_allows_from_and_summarize_only_for_duckdb() {
+        for sql in ["FROM users", "FROM users LIMIT 10", "SUMMARIZE users"] {
+            assert!(
+                is_read_only_sql_for(DriverKind::DuckDb, sql),
+                "DuckDB must accept {sql:?}"
+            );
+            for driver in STANDARD_DRIVERS {
+                if driver == DriverKind::DuckDb {
+                    continue;
+                }
+                assert!(
+                    !is_read_only_sql_for(driver, sql),
+                    "{driver:?} must still reject {sql:?} (not its syntax)"
+                );
+            }
+            assert!(
+                !is_read_only_sql_for(DriverKind::Mysql, sql),
+                "Mysql must still reject {sql:?}"
+            );
+            assert!(!is_read_only_sql(sql), "driver-less must reject {sql:?}");
+        }
+        // Stacking behind the DuckDB-only prefixes is still caught.
+        for sql in [
+            "FROM users; DROP TABLE users",
+            "SUMMARIZE users; DROP TABLE users",
+        ] {
+            assert!(
+                !is_read_only_sql_for(DriverKind::DuckDb, sql),
+                "DuckDB must reject stacked {sql:?}"
+            );
+        }
+    }
+
+    /// #1005: DuckDB's `PRAGMA` has both a query form (`PRAGMA database_list`,
+    /// `PRAGMA table_info('t')` — read-only) and a setting form
+    /// (`PRAGMA memory_limit='1GB'`, `PRAGMA threads=4` — changes session
+    /// configuration, a write in spirit). The gate approximates the
+    /// distinction by rejecting any masked body containing `=`, since the
+    /// setting form's syntax always has one and the query form never does.
+    /// SQLite's own setting-form `PRAGMA foreign_keys=ON` is exactly this
+    /// shape, which is why `PRAGMA` stays unlisted for every driver other
+    /// than DuckDB rather than trying to replicate the query/setting split
+    /// per dialect (see the allow-list doc comment on `is_read_only_sql`).
+    #[test]
+    fn read_only_duckdb_pragma_query_form_allowed_setting_form_rejected() {
+        for sql in ["PRAGMA database_list", "PRAGMA table_info('users')"] {
+            assert!(
+                is_read_only_sql_for(DriverKind::DuckDb, sql),
+                "DuckDB must accept query-form {sql:?}"
+            );
+        }
+        for sql in ["PRAGMA memory_limit='1GB'", "PRAGMA threads=4"] {
+            assert!(
+                !is_read_only_sql_for(DriverKind::DuckDb, sql),
+                "DuckDB must reject setting-form {sql:?} (contains '=')"
+            );
+        }
+        // No driver (DuckDB included) treats SQLite's classic setting-form
+        // PRAGMA as read-only.
+        for driver in STANDARD_DRIVERS {
+            assert!(
+                !is_read_only_sql_for(driver, "PRAGMA foreign_keys=ON"),
+                "{driver:?} must reject PRAGMA foreign_keys=ON"
+            );
+        }
+    }
+
+    /// Core of #1005: every leading keyword that `db::duckdb::is_query_shape`
+    /// (`src-tauri/src/db/duckdb.rs`) treats as query-shaped — routing the
+    /// statement to the result-set-returning `query` path rather than
+    /// `execute` — must also be read-only-eligible for DuckDB here, or a
+    /// read-only session would reject a statement the driver itself is happy
+    /// to run as a query. `is_query_shape` is a private helper owned by a
+    /// concurrently in-flight branch (#971), so this pins the *keyword list*
+    /// (read directly from its source, `with` / `select` / `show` /
+    /// `describe` / `desc` / `explain` / `pragma` / `summarize` / `values`)
+    /// with one representative read-only statement per keyword, rather than
+    /// calling the private function directly.
+    ///
+    /// One deliberate, documented exception: `is_query_shape` treats *every*
+    /// `PRAGMA` statement — including the setting form — as query-shaped
+    /// (it only decides which `duckdb`-crate call to make, not whether the
+    /// statement is safe to run in a read-only session), whereas the
+    /// read-only gate must reject the setting form. That half of `PRAGMA` is
+    /// intentionally excluded from this alignment check and is covered
+    /// instead by `read_only_duckdb_pragma_query_form_allowed_setting_form_rejected`.
+    #[test]
+    fn read_only_duckdb_allows_every_is_query_shape_keyword() {
+        let representative_read_only_statements = [
+            ("with", "WITH t AS (SELECT 1) SELECT * FROM t"),
+            ("select", "SELECT * FROM t"),
+            ("show", "SHOW TABLES"),
+            ("describe", "DESCRIBE t"),
+            ("desc", "DESC t"),
+            ("explain", "EXPLAIN SELECT 1"),
+            ("pragma", "PRAGMA version"),
+            ("summarize", "SUMMARIZE t"),
+            ("values", "VALUES (1), (2)"),
+        ];
+        for (keyword, sql) in representative_read_only_statements {
+            assert!(
+                is_read_only_sql_for(DriverKind::DuckDb, sql),
+                "is_query_shape keyword {keyword:?} ({sql:?}) must be read-only-eligible for DuckDB"
+            );
+        }
+    }
+
+    /// Schema Cache (#1097) の invalidate 判定: DDL キーワードを含む文は検出
+    /// され、通常の DML / SELECT は検出されないこと。
+    #[test]
+    fn sql_may_change_schema_detects_ddl_keywords() {
+        let ddl = [
+            "CREATE TABLE t (id INT)",
+            "ALTER TABLE t ADD COLUMN c INT",
+            "DROP TABLE t",
+            "TRUNCATE TABLE t",
+            "RENAME TABLE t TO t2",
+            "CREATE INDEX idx ON t (c)",
+            "DROP VIEW v",
+            "CREATE OR REPLACE FUNCTION f() RETURNS INT AS $$ SELECT 1 $$ LANGUAGE sql",
+        ];
+        for sql in ddl {
+            for driver in STANDARD_DRIVERS {
+                assert!(
+                    sql_may_change_schema(driver, sql),
+                    "{driver:?} を DDL として検出できていない: {sql:?}"
+                );
+            }
+        }
+
+        let non_ddl = [
+            "SELECT * FROM t",
+            "INSERT INTO t (id) VALUES (1)",
+            "UPDATE t SET id = 1",
+            "DELETE FROM t WHERE id = 1",
+            "SELECT * FROM t WHERE note = 'please alter this later'",
+        ];
+        for sql in non_ddl {
+            for driver in STANDARD_DRIVERS {
+                assert!(
+                    !sql_may_change_schema(driver, sql),
+                    "{driver:?} が DML/SELECT を誤って DDL 判定した: {sql:?}"
+                );
+            }
+        }
+    }
+
+    /// マルチステートメントのうち後段だけが DDL でも検出できること
+    /// (`run_query_transaction` が渡す文配列の各要素がこの経路を通る想定)。
+    #[test]
+    fn sql_may_change_schema_scans_the_whole_body_not_just_the_leading_keyword() {
+        assert!(sql_may_change_schema(
+            DriverKind::Mysql,
+            "SELECT 1; ALTER TABLE t ADD COLUMN c INT"
+        ));
+    }
+
+    /// 文字列リテラルの中身は DDL 判定に影響しない (マスク経由で走査するため)。
+    #[test]
+    fn sql_may_change_schema_ignores_keywords_inside_string_literals() {
+        assert!(!sql_may_change_schema(
+            DriverKind::Postgres,
+            "SELECT 'drop everything' AS warning"
+        ));
+    }
+
     /// The same fail-open shape, but through the dry-run preview's
     /// stacked-statement gate (#852). A DDL stacked behind a DML escapes the
     /// rollback that makes the preview safe.
@@ -3155,6 +3452,44 @@ mod tests {
         // `persist` で始まる**変数名**は永続化構文ではないので通す
         // (`SET persistent_foo = 1` のような設定を巻き込まないこと)。
         assert!(is_session_init_sql("SET persistent_foo = 1"));
+    }
+
+    /// #1051 の調査結果を固定する: `with_cte_is_mutation` (実行経路の振り分け)
+    /// が MySQL 流のバックスラッシュ解釈を全ドライバへ適用していた間も、
+    /// **読み取り専用ガードはこの入力でフェイルオープンしていなかった**。
+    /// 両者は独立した安全網であり、`is_read_only_sql_for` は
+    ///
+    /// * #852 で既にドライバ別マスク ([`mask_for_driver`]) へ切り替え済みで、
+    /// * データ変更 CTE を「主文の位置」ではなく **本文のどこかに書き込み
+    ///   キーワードが露出しているか** で弾く
+    ///
+    /// ため、`\` をただの文字として読む 4 方言では `delete` がそのまま見えて
+    /// 拒否される。MySQL だけはマスクが実サーバと同じく「閉じない文字列」と
+    /// 読むので `delete` は現れず true を返すが、そのとき実サーバも同じ理由で
+    /// この文を構文エラーにするため書き込みは起きない (安全網とサーバの解釈が
+    /// 一致している状態であって、見逃しではない)。
+    ///
+    /// つまり #1051 で直したのは「データ変更が空の 0 件グリッドとして表示され
+    /// `rows_affected` が失われる」実行経路の誤りであって、権限の穴ではない。
+    #[test]
+    fn read_only_guard_rejects_backslash_cte_on_standard_dialects() {
+        let sql = r"WITH t AS (SELECT '\' AS x) DELETE FROM y";
+        for driver in [
+            DriverKind::Postgres,
+            DriverKind::Sqlite,
+            DriverKind::DuckDb,
+            DriverKind::Mssql,
+        ] {
+            assert!(
+                !is_read_only_sql_for(driver, sql),
+                "{driver:?} must not accept a data-modifying CTE in a read-only session"
+            );
+        }
+        // ドライバ非依存の呼び出し口 (保守的マスク = `\` はただの文字) でも拒否。
+        assert!(!is_read_only_sql(sql));
+        // MySQL は実サーバと同じく「閉じない文字列リテラル」と読むため、
+        // 書き込みキーワードは現れない (この文自体が MySQL では構文エラー)。
+        assert!(is_read_only_sql_for(DriverKind::Mysql, sql));
     }
 
     #[test]

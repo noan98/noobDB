@@ -3,12 +3,14 @@
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod cache;
 mod commands;
 mod db;
 mod error;
 mod flight_recorder;
 mod history;
 mod logs;
+mod perf;
 mod profiles;
 mod sandboxes;
 mod snippets;
@@ -52,6 +54,31 @@ pub mod __test_api {
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
+    // コメント/リテラル・マスキングの実装横断ゴールデン (#988)。read-only 判定・
+    // auto-limit・stacked 検出・危険 SQL 検出など全安全網が乗る「マスクしてから
+    // キーワード走査」という共通土台そのものを固定する。マスク関数
+    // (`db::mod::mask_for_analysis_conservative` / `mask_for_driver`) は
+    // `Vec<char>` を受け取り `Vec<char>` を返すため、JSON フィクスチャとの
+    // 突き合わせに使いやすい `&str -> String` の薄いラッパーをここで公開する
+    // (`quote_ident` / `sql_literal` と同じ理由・同じパターン)。
+    /// ドライバ非依存の呼び出し口 (`is_read_only_sql` 等) が使う保守的マスク。
+    /// バックスラッシュを文字列エスケープと見なさない標準解釈。
+    pub fn mask_for_analysis_conservative(sql: &str) -> String {
+        let chars: Vec<char> = sql.chars().collect();
+        crate::db::mask_for_analysis_conservative(&chars)
+            .into_iter()
+            .collect()
+    }
+
+    /// `driver` の文字列エスケープ規則でマスクする (#852)。MySQL だけ `\` を
+    /// エスケープ文字として扱う。
+    pub fn mask_for_driver(driver: DriverKind, sql: &str) -> String {
+        let chars: Vec<char> = sql.chars().collect();
+        crate::db::mask_for_driver(driver, &chars)
+            .into_iter()
+            .collect()
+    }
+
     // zod ⇔ serde ゴールデン (#824) が代表インスタンスを組み立てるための追加の
     // レスポンス/永続化型の再エクスポート。いずれも非公開モジュール配下にあるため、
     // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
@@ -80,9 +107,12 @@ pub mod __test_api {
     };
 
     // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
-    // 生成専用のピンポイント再エクスポート。`preview_query_stream` の行イベント
-    // (PreviewRowsEvent) は `StreamRowsEvent` と同一シェイプのため個別公開せず、
-    // フィクスチャは共有する (前者は非公開のまま)。
+    // 生成専用のピンポイント再エクスポート。
+    //
+    // `commands::query` の Query/Preview ストリーム (#1096) は `app.emit()` の
+    // 個別イベント構造体ではなく、Tauri Channel で送る 1 本のタグ付き enum
+    // (`QueryStreamMessage` / `PreviewStreamMessage`) に統合済み。Export/Dump/
+    // Import は引き続き個別の emit ペイロード構造体のまま。
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
@@ -90,8 +120,7 @@ pub mod __test_api {
         ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
     };
     pub use crate::commands::query::{
-        PreviewDoneEvent, PreviewMetaEvent, StreamCancelledEvent, StreamColumnsEvent,
-        StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
+        PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
     };
 
     /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
@@ -165,6 +194,8 @@ pub mod __test_api {
             reconnect_ssh: None,
             _tunnel: None,
             local_temp_file: None,
+            schema_cache: crate::cache::SchemaCache::default(),
+            query_cache: crate::cache::QueryResultCache::default(),
         }
     }
 
@@ -213,6 +244,18 @@ pub mod __test_api {
             database.map(str::to_string),
         )
         .await
+    }
+
+    /// Drives the `run_in_transaction` IPC command's core path (session lookup,
+    /// read-only guard, execute-in-transaction, cache invalidation) without a
+    /// Tauri runtime (#1097's Query Result Cache eager-invalidate path — see
+    /// `commands::query::run_in_transaction_inner`'s doc comment).
+    pub async fn run_in_transaction_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+    ) -> crate::error::Result<QueryResult> {
+        crate::commands::query::run_in_transaction_inner(state, session_id, sql).await
     }
 
     /// The read-only guard the `import_csv` IPC command applies before any CSV
@@ -313,6 +356,17 @@ pub mod __test_api {
             &s,
             &t,
         ))
+    }
+
+    /// Drives the `refresh_schema_cache` IPC command's core path (session
+    /// lookup + `SchemaCache::invalidate_all`) without a Tauri runtime (#1097),
+    /// so integration tests can exercise the explicit-Refresh path the same
+    /// way the frontend's Schema Browser refresh button does.
+    pub async fn refresh_schema_cache_via_command(
+        state: &AppState,
+        session_id: &str,
+    ) -> crate::error::Result<()> {
+        crate::commands::schema::refresh_schema_cache_inner(state, session_id).await
     }
 
     /// Drives the `apply_sync_sql` IPC command's core path (session lookup +
@@ -571,6 +625,29 @@ pub mod __test_api {
             init_sql: None,
         })
     }
+
+    // `is_query_shape` の実装横断ゴールデンテスト (#971)。ストリーミング実行器が
+    // fetch 経路 (結果セットを返す) と execute 経路 (rows_affected のみ) の
+    // どちらを通すかを決める判定は、`is_read_only_sql` (#444) とは異なり
+    // 共有関数ではなく sqlite/mysql/postgres/duckdb/mssql の各モジュールに
+    // それぞれ private 関数として個別実装されている。5 実装が一致すべき境界
+    // ケースをこの下のディスパッチャ経由で `tests/query_shape_golden.rs` へ
+    // 通す。各モジュール本体の関数は挙動を変えず `pub(crate)` へ引き上げただけ
+    // (`pub use` では再公開できないため、`quote_ident`/`sql_literal` と同じく
+    // 薄いラッパー関数でここへ集約する)。
+
+    /// `db::{driver}::is_query_shape` へディスパッチする。ストリーミング実行器
+    /// の fetch/execute 経路振り分けそのものであり、判定ロジックはここでは
+    /// 一切変更しない (5 モジュールの private 関数をそのまま呼ぶだけ)。
+    pub fn is_query_shape(driver: DriverKind, sql: &str) -> bool {
+        match driver {
+            DriverKind::Mysql => crate::db::mysql::is_query_shape(sql),
+            DriverKind::Postgres => crate::db::postgres::is_query_shape(sql),
+            DriverKind::Sqlite => crate::db::sqlite::is_query_shape(sql),
+            DriverKind::DuckDb => crate::db::duckdb::is_query_shape(sql),
+            DriverKind::Mssql => crate::db::mssql::is_query_shape(sql),
+        }
+    }
 }
 
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -727,6 +804,7 @@ pub fn run() {
             commands::tasks::clear_task_runs,
             commands::tasks::get_scheduler_settings,
             commands::tasks::set_scheduler_settings,
+            commands::schema::refresh_schema_cache,
         ])
         .run(tauri::generate_context!());
 

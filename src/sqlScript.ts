@@ -10,7 +10,20 @@
 // '{a}' FROM t; DELETE FROM t` のような入力で両者の判定が食い違って危険な DELETE
 // を見逃す事故を防ぐ (#J3)。PostgreSQL では `#`/`#>>` は実際には演算子であり、
 // 実行結果とは乖離する既知の限界だが、安全側 (見逃さない) を優先する。
+//
+// **文字列内のバックスラッシュも同じ理由でドライバ対応にする (#1004)。**
+// `'\'` を含む文字列がどこで閉じるかは MySQL/MariaDB だけ `\` をエスケープ文字
+// として読む解釈で変わる (`dangerousSql.ts` の `driverBackslashEscapes`、バックの
+// `driver_backslash_escapes`、#852)。ここが `analyzeDangerousSql` /
+// `isReadOnlySql` のマスクと食い違うと、`SELECT '\' AS x; DROP TABLE t` の
+// ような PostgreSQL/SQLite/DuckDB/MSSQL 向け入力で文分割だけが「まだ文字列の
+// 中」と誤読し、`statementAtOffset` (#555 のカーソル文実行) が DROP を含む
+// ブロック全体を返しうる。呼び出し口の `driver?` は省略可能で、省略時は
+// `driverBackslashEscapes(undefined)` と同じ保守的 (非 MySQL) 解釈になる。
+//
 // 副作用が無いので Vitest でユニットテストする。
+
+import { driverBackslashEscapes } from "./dangerousSql";
 
 /**
  * 1 文の範囲。`from` / `to` は元の `sql` 内における**トリム済み本文**の絶対
@@ -28,8 +41,11 @@ export interface StatementRange {
  * `sql` をトップレベルの `;` で分割し、空文・コメントのみの断片を除いた各文を
  * **範囲付き**で返す。文字列 (`'...'` / `"..."` / `` `...` ``)・行/ブロック
  * コメント・ドル引用の内側のセミコロンでは分割しない。
+ *
+ * `driver` は `'...'` 内のバックスラッシュ解釈を選ぶ (#852、#1004)。省略時は
+ * `driverBackslashEscapes(undefined)` と同じ保守的 (非 MySQL) 解釈になる。
  */
-export function splitSqlStatementRanges(sql: string): StatementRange[] {
+export function splitSqlStatementRanges(sql: string, driver?: string): StatementRange[] {
   const ranges: StatementRange[] = [];
   let segStart = 0;
   let i = 0;
@@ -76,7 +92,7 @@ export function splitSqlStatementRanges(sql: string): StatementRange[] {
     }
     // 文字列 / 識別子クオート: ' " `
     if (ch === "'" || ch === '"' || ch === "`") {
-      i = scanQuoted(sql, i, ch);
+      i = scanQuoted(sql, i, ch, driver);
       continue;
     }
     // ドル引用 $tag$ ... $tag$ (PostgreSQL)。tag は省略可 ($$)。直前が単語文字の
@@ -105,10 +121,10 @@ export function splitSqlStatementRanges(sql: string): StatementRange[] {
 /**
  * `sql` をトップレベルの `;` で分割し、空文を除いた各文 (末尾セミコロンなし) を返す。
  * 文字列 (`'...'` / `"..."` / `` `...` ``)・行/ブロックコメント・ドル引用の内側の
- * セミコロンでは分割しない。
+ * セミコロンでは分割しない。`driver` は `splitSqlStatementRanges` と同じ (#1004)。
  */
-export function splitSqlStatements(sql: string): string[] {
-  return splitSqlStatementRanges(sql).map((r) => r.text);
+export function splitSqlStatements(sql: string, driver?: string): string[] {
+  return splitSqlStatementRanges(sql, driver).map((r) => r.text);
 }
 
 /**
@@ -118,10 +134,10 @@ export function splitSqlStatements(sql: string): string[] {
  * カーソルはトリム前の文セグメント (前後の空白・コメント込み) に属するものとして
  * 帰属させる: 「`offset <= 文の末尾` を満たす最初の文」を選び、どれにも満たない
  * (= 末尾の空白/コメント上) ときは最後の文へフォールバックする。実行可能な文が
- * 一つも無ければ `null`。
+ * 一つも無ければ `null`。`driver` は `splitSqlStatementRanges` と同じ (#1004)。
  */
-export function statementAtOffset(sql: string, offset: number): StatementRange | null {
-  const ranges = splitSqlStatementRanges(sql);
+export function statementAtOffset(sql: string, offset: number, driver?: string): StatementRange | null {
+  const ranges = splitSqlStatementRanges(sql, driver);
   if (ranges.length === 0) return null;
   for (const r of ranges) {
     if (offset <= r.to) return r;
@@ -139,9 +155,12 @@ function hasExecutableSql(fragment: string): boolean {
   return stripped.length > 0;
 }
 
-/** `sql` が複数の実行可能文を含むか (バッチ実行を提案する判定に使う)。 */
-export function isMultiStatement(sql: string): boolean {
-  return splitSqlStatements(sql).length > 1;
+/**
+ * `sql` が複数の実行可能文を含むか (バッチ実行を提案する判定に使う)。`driver` は
+ * `splitSqlStatements` と同じ (#1004)。
+ */
+export function isMultiStatement(sql: string, driver?: string): boolean {
+  return splitSqlStatements(sql, driver).length > 1;
 }
 
 import type { CellValue, Column } from "./api/tauri";
@@ -163,8 +182,15 @@ export interface BatchStatementResult {
   error?: string;
 }
 
-/** 開始クオート `start` (= sql[i]) の対応する閉じ位置の次のインデックスを返す。 */
-function scanQuoted(sql: string, i: number, quote: string): number {
+/**
+ * 開始クオート `start` (= sql[i]) の対応する閉じ位置の次のインデックスを返す。
+ * `driver` が `driverBackslashEscapes` で MySQL/MariaDB と判定されたときだけ
+ * `'...'` 内のバックスラッシュをエスケープとして尊重する (#852、#1004) —
+ * `dangerousSql.ts` の `maskLiterals` と同じ規則を共有し、文分割と危険 SQL
+ * 判定が同じ位置で文字列を閉じるようにする。
+ */
+function scanQuoted(sql: string, i: number, quote: string, driver?: string): number {
+  const backslashEscapes = quote === "'" && driverBackslashEscapes(driver);
   let j = i + 1;
   const n = sql.length;
   while (j < n) {
@@ -177,8 +203,7 @@ function scanQuoted(sql: string, i: number, quote: string): number {
       }
       return j + 1;
     }
-    // MySQL の文字列ではバックスラッシュエスケープを尊重 (識別子クオートでは無視)。
-    if (c === "\\" && quote === "'") {
+    if (c === "\\" && backslashEscapes) {
       j += 2;
       continue;
     }

@@ -215,18 +215,14 @@ impl SshTunnel {
             None => None,
         };
 
-        let dial_host;
-        let dial_port;
-        match &upstream {
-            Some(u) => {
-                dial_host = "127.0.0.1".to_string();
-                dial_port = u.local_port;
-            }
-            None => {
-                dial_host = cfg.host.clone();
-                dial_port = cfg.port;
-            }
-        }
+        // 踏み台がある場合はその**ローカル転送ポート**へダイヤルし、無い場合は
+        // 最終ホップの実アドレスへ直接ダイヤルする。ホスト鍵の検証/記録には
+        // ここではなく後段 `HopSpec` の実 `host`/`port` を使う (ダイヤル先と
+        // 識別子を分離する多段トンネルの設計。CLAUDE.md 参照)。
+        let (dial_host, dial_port) = match &upstream {
+            Some(u) => ("127.0.0.1".to_string(), u.local_port),
+            None => (cfg.host.clone(), cfg.port),
+        };
 
         let spec = HopSpec {
             host: &cfg.host,

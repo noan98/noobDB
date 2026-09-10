@@ -1,6 +1,6 @@
 {
   "description": "読み取り専用判定 (read-only ガード) のフロント/バック共有ゴールデンベクタ (#444)。各ケースの sql に対する期待値 readOnly を、フロント src/dangerousSql.ts の isReadOnlySql と、バック src-tauri/src/db/mod.rs の is_read_only_sql の双方が満たすことを検証する。片方だけロジックを変えると判定がズレてこのテストが落ちる。新しい境界ケースはこの 1 ファイルに追記すれば両言語に反映される。",
-  "driverDimension": "readOnly は「標準的な文字列リテラル解釈」(バックスラッシュをエスケープと見なさない = PostgreSQL / SQLite / DuckDB / MSSQL、およびドライバ非依存の呼び出し口) での期待値 (#852)。MySQL だけは \\' を引用符のエスケープとして扱うため判定が変わりうる。異なる場合のみ readOnlyMysql を書く (省略時は readOnly と同じ)。MySQL のマスクは標準解釈より多くを文字列内へ隠すため、readOnlyMysql が readOnly より厳しくなる (true→false) ことはない。",
+  "driverDimension": "readOnly は「標準的な文字列リテラル解釈」(バックスラッシュをエスケープと見なさない = PostgreSQL / SQLite / MSSQL、およびドライバ非依存の呼び出し口) での期待値 (#852)。MySQL だけは \\' を引用符のエスケープとして扱うため判定が変わりうる。異なる場合のみ readOnlyMysql を書く (省略時は readOnly と同じ)。MySQL のマスクは標準解釈より多くを文字列内へ隠すため、readOnlyMysql が readOnly より厳しくなる (true→false) ことはない。DuckDB は文字列リテラル解釈こそ標準組だが、#1005 で FROM 先頭構文・SUMMARIZE・照会形 PRAGMA という DuckDB 固有の読み取り専用許可を追加したため、これらを使うケースだけ readOnlyDuckdb を書く (省略時は readOnly と同じ)。DuckDB の許可は追加のみで既存判定を狭めないため、readOnlyDuckdb が readOnly より厳しくなる (true→false) ことはない。",
   "cases": [
     { "sql": "SELECT * FROM users", "readOnly": true, "note": "素の SELECT" },
     { "sql": "  select 1  ", "readOnly": true, "note": "前後空白・小文字" },
@@ -113,6 +113,26 @@
     { "sql": "SELECT /*!50000 * FROM users */ ", "readOnly": true, "note": "#mysql-versioned-comment: バージョン限定コメント自体は無害な SELECT を包むだけなので読み取り専用" },
     { "sql": "SELECT 1 /*!50000 , (SELECT DELETE FROM users) */", "readOnly": false, "note": "#mysql-versioned-comment: /*!...*/ は MySQL では条件付き実行構文でありコメントではないため中身を空白化してはいけない (隠れた DELETE が露出する)" },
     { "sql": "SELECT 1 /*! UNION SELECT password FROM users */", "readOnly": true, "note": "#mysql-versioned-comment: 中身が読み取り専用なら通る (バージョン番号省略形 /*! も対象)" },
-    { "sql": "SELECT 1 /* normal comment with DELETE inside */", "readOnly": true, "note": "#mysql-versioned-comment: 通常のブロックコメント (! 無し) は従来どおりマスクされる" }
+    { "sql": "SELECT 1 /* normal comment with DELETE inside */", "readOnly": true, "note": "#mysql-versioned-comment: 通常のブロックコメント (! 無し) は従来どおりマスクされる" },
+
+    { "sql": "TABLE users", "readOnly": true, "note": "#1005: TABLE t は SELECT * FROM t の短縮形 (PostgreSQL/DuckDB/MySQL 8.0.19+)。書き込みに転じる構文が無いため全ドライバで許可" },
+    { "sql": "TABLE users;", "readOnly": true, "note": "#1005: TABLE + 末尾セミコロンは許容" },
+    { "sql": "VALUES (1), (2)", "readOnly": true, "note": "#1005: 裸の VALUES 行コンストラクタは結果セットを返すのみで書き込みに転じない。全ドライバで許可" },
+    { "sql": "VALUES (1)", "readOnly": true, "note": "#1005: 単一行の VALUES" },
+    { "sql": "TABLE users; DROP TABLE users", "readOnly": false, "note": "#1005: TABLE の後ろに隠れた DDL (スタック) は従来どおり拒否" },
+    { "sql": "VALUES (1); DELETE FROM users", "readOnly": false, "note": "#1005: VALUES の後ろに隠れた DELETE (スタック) は従来どおり拒否" },
+    { "sql": "TABLE users FOR UPDATE", "readOnly": false, "note": "#1005: TABLE でもロック句 (FOR UPDATE) は拒否 (has_locking_clause は先頭キーワードに依存しない)" },
+
+    { "sql": "FROM users", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の FROM 先頭省略構文 (SELECT * FROM users と同義)。他ドライバはこの構文自体をサポートせず許可プレフィックスにも無いため拒否のまま" },
+    { "sql": "FROM users LIMIT 10", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の FROM 先頭 + LIMIT" },
+    { "sql": "FROM users; DROP TABLE users", "readOnly": false, "note": "#1005: DuckDB でも FROM の後ろに隠れた DDL (スタック) は拒否" },
+    { "sql": "SUMMARIZE users", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の SUMMARIZE は列統計を返す読み取り専用の擬似文" },
+    { "sql": "SUMMARIZE users; DROP TABLE users", "readOnly": false, "note": "#1005: DuckDB でも SUMMARIZE の後ろに隠れた DDL (スタック) は拒否" },
+
+    { "sql": "PRAGMA database_list", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の引数無し PRAGMA (照会形) — 設定を読むだけで変更しない" },
+    { "sql": "PRAGMA table_info('users')", "readOnly": false, "readOnlyDuckdb": true, "note": "#1005: DuckDB の関数呼び出し形 PRAGMA (照会形、'=' を含まない)" },
+    { "sql": "PRAGMA memory_limit='1GB'", "readOnly": false, "note": "#1005: PRAGMA の設定形 (代入 '=' を含む) は書き込みに準じるため DuckDB でも拒否" },
+    { "sql": "PRAGMA threads=4", "readOnly": false, "note": "#1005: PRAGMA 設定形の別例。'=' の有無で照会形と区別する" },
+    { "sql": "PRAGMA foreign_keys=ON", "readOnly": false, "note": "#1005: SQLite の PRAGMA 設定形の代表例。PRAGMA は DuckDB 以外では許可プレフィックスに無いため常に拒否 (SQLite で '=' の無い PRAGMA も同様に拒否のまま — 照会/設定の区別を持ち込まない)" }
   ]
 }

@@ -55,26 +55,41 @@ describe("icon lexicon (#489)", () => {
   });
 
   it("renders ICON_SIZES tokens as their calc(--font-scale) CSS value verbatim (#818)", () => {
-    // Chakra (emotion) は `width`/`height` をインラインスタイル/属性ではなく生成
-    // した CSS クラスへ解決するため、実際に発行されたスタイルシートのルールを見て
-    // calc() 式 (= --font-scale 追従) が Chakra のスタイル props パイプラインを
-    // 通っても変質せず残ることを確認する。
+    // 寸法は SVG の width/height 属性 (= Tabler の `size` prop) ではなくインライン
+    // スタイルで与える (calc() は属性としては不正で、CSS プロパティとしてのみ有効。
+    // 詳細は Icon.tsx のコメント)。ここでは calc() 式が変質せず DOM まで届くこと
+    // = 設定のフォントサイズへの追従が生きていることを直接固定する。
     const { container, unmount } = renderWithProviders(<Icon name="table" size={ICON_SIZES.md} />);
     const svg = container.querySelector("svg");
-    const className = svg?.getAttribute("class");
-    expect(className, "Icon should render with a generated class name").toBeTruthy();
-    const rule = Array.from(document.styleSheets)
-      .flatMap((sheet) => {
-        try {
-          return Array.from(sheet.cssRules);
-        } catch {
-          return [];
-        }
-      })
-      .find((r) => r.cssText.includes(`.${className}`));
-    expect(rule, `no stylesheet rule found for class "${className}"`).toBeTruthy();
-    expect(rule?.cssText).toContain(`width: ${ICON_SIZES.md}`);
-    expect(rule?.cssText).toContain(`height: ${ICON_SIZES.md}`);
+    const style = svg?.getAttribute("style") ?? "";
+    expect(style).toContain(`width: ${ICON_SIZES.md}`);
+    expect(style).toContain(`height: ${ICON_SIZES.md}`);
+    unmount();
+  });
+
+  it("keeps driver brand logos as filled glyphs", () => {
+    // ブランドロゴだけは Tabler の外 (simple-icons 由来の単一パス) に残す例外経路。
+    // 塗り glyph としてのレンダリングと、他のアイコンと同じサイズ規約の適用を固定する。
+    for (const name of ["mysql", "postgres", "sqlite"] as const) {
+      const { container, unmount } = renderWithProviders(<Icon name={name} size={ICON_SIZES.sm} />);
+      const svg = container.querySelector("svg");
+      expect(svg?.getAttribute("fill"), `brand icon "${name}" should be filled`).toBe(
+        "currentColor",
+      );
+      expect(svg?.querySelector("path")).toBeTruthy();
+      expect(svg?.getAttribute("style") ?? "").toContain(`width: ${ICON_SIZES.sm}`);
+      unmount();
+    }
+  });
+
+  it("maps the stroke token onto the rendered stroke width", () => {
+    // ストローク幅は Tabler の `stroke` prop (色ではなく線幅) 経由で渡している。
+    const { container, unmount } = renderWithProviders(
+      <Icon name="table" strokeWidth={ICON_STROKE.bold} />,
+    );
+    expect(container.querySelector("svg")?.getAttribute("stroke-width")).toBe(
+      String(ICON_STROKE.bold),
+    );
     unmount();
   });
 });

@@ -68,6 +68,15 @@ import type { Transition, Variants } from "motion/react";
  *   種類 (contentMode) にしているため、table ⇔ query タブ切替のように両者とも
  *   グリッドのままなら再生されず、重い `ResultGrid` をフェードのために再マウント
  *   しない (#788)。設定 / ヘルプ画面の開閉は `Modal` (上記) 経由で既にフェードする。
+ * - ワークスペースの全画面ビュー切替 (`App` — `AnimatePresence mode="wait"` +
+ *   `variants.fade`)。スキーマ比較 / ER 図 / プロセス監視 / ユーザ管理 /
+ *   Server Info / クエリインスペクタ / Advisor / 接続フォームのように「メイン
+ *   領域を丸ごと占有するサーフェス」が入れ替わるとき、上記 #788 と**同じ尺**
+ *   (`transitions.enter`) でクロスフェードする (#1020)。key は `workspaceView`
+ *   判別子で、同じビューのまま props だけが変わるケースでは再生されない。
+ *   遅延ロード (`React.lazy`) されたビューがサスペンドしても退出中の旧ビューを
+ *   巻き込まないよう、`Suspense` は `AnimatePresence` の外ではなく各
+ *   `motion.div` の内側に置く。
  */
 
 /** cubic-bezier カーブ。CSS の `--ease` / `--ease-out` と同じ値。 */

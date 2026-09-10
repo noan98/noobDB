@@ -132,6 +132,34 @@ describe("analyzeDangerousSql", () => {
       { kind: "deleteNoWhere", target: "a$b" },
     ]);
   });
+
+  describe("driver-aware backslash escaping (#852, #1004)", () => {
+    // `note = '\'` — a `'` string containing a single backslash, followed by
+    // a real ` WHERE id = 1` clause. Only MySQL/MariaDB reads `\` as an
+    // escape character inside `'...'` (`driverBackslashEscapes`); on every
+    // other supported driver the backslash is an ordinary character, so the
+    // `'` right after it closes the string and the WHERE that follows is a
+    // real top-level guard. On MySQL the same `'` is escaped away, the
+    // string never closes, and the WHERE keyword is swallowed as (masked)
+    // string content — so the UPDATE looks unguarded.
+    const sql = "UPDATE t SET note = '\\' WHERE id = 1";
+
+    it("finds no finding on non-MySQL drivers (WHERE is a real top-level guard)", () => {
+      for (const driver of ["postgres", "sqlite", "duckdb", "mssql"]) {
+        expect(analyzeDangerousSql(sql, driver)).toEqual([]);
+      }
+    });
+
+    it("finds no finding when the driver is omitted (conservative fallback)", () => {
+      expect(analyzeDangerousSql(sql)).toEqual([]);
+    });
+
+    it("flags updateNoWhere on mysql (the trailing WHERE is masked into the unterminated string)", () => {
+      expect(analyzeDangerousSql(sql, "mysql")).toEqual([
+        { kind: "updateNoWhere", target: "t" },
+      ]);
+    });
+  });
 });
 
 describe("isReadOnlySql", () => {

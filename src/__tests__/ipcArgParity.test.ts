@@ -404,6 +404,9 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
       ["attemptId", "req", "timeoutSecs"].sort(),
     );
     // `run_query_stream` は #[allow(...)] を挟んだ複数行シグネチャで、末尾に State を持つ。
+    // `onEvent` (Rust 側は `Channel<QueryStreamMessage>`, #1096) は State/AppHandle
+    // のような注入型ではなく、フロントが `invoke` 前に生成して渡す通常の引数なので
+    // ここにも現れる。
     expect(backendParams.get("run_query_stream")?.slice().sort()).toEqual(
       [
         "sessionId",
@@ -419,6 +422,7 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
         "capture",
         "captureRowCap",
         "captureRetentionDays",
+        "onEvent",
       ].sort(),
     );
     // `export_query_result` は引数の間にコメント行を挟む。コメント除去が効いているか確認。
