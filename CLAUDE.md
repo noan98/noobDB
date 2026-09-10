@@ -111,5 +111,7 @@ noobDB は MySQL / PostgreSQL / SQLite / DuckDB / Microsoft SQL Server 対応の
   秘密鍵を Secrets `TAURI_SIGNING_PRIVATE_KEY` に登録する (`noobdb-features` スキル)。
 - **ビジュアルベースライン更新**: Secrets `VISUAL_BASELINE_PAT` の登録を推奨
   (`noobdb-testing` スキル)。
-- **CodeRabbit レビュー起動**: PAT (`CODERABBIT_PAT`) が無い間は no-op
+- **Codex 再レビューの自動依頼**: PAT (`CODEX_PAT`) が無い間は `@codex review` を
+  投稿しないため、修正 push 後に PR が automerge で止まります。手動で
+  `@codex review` とコメントするか `automerge-without-codex` ラベルで免除します
   (`noobdb-ci` スキル)。
