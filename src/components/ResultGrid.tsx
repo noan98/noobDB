@@ -1,7 +1,9 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
+// 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみ。
+import { markGridCommit } from "../perf";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
@@ -19,6 +21,7 @@ import {
   type PaginationState,
   type SortingFn,
   type SortingState,
+  type Cell,
   type Row,
   type VisibilityState,
 } from "@tanstack/react-table";
@@ -2469,7 +2472,16 @@ function ColumnStatsMenu({
 /** Pseudo-random width percentages for skeleton shimmer bars (cycles by column index). */
 const SKELETON_WIDTHS = [68, 85, 52, 90, 72, 58];
 
-export function DataGrid({
+// `React.memo` でラップする (#1098)。呼び出し元の `ResultGrid` は
+// ストリーミング経過時間表示 (200ms ごとに tick する `useStreamingElapsed`) や
+// 検索バー/ページネーションの UI state を自身の state として持っており、
+// それらが変化しても `DataGrid` に渡す props (columns/rows/pendingEdits 等) は
+// 何も変わらない。memo が無いと、その props 不変の再レンダリングのたびに
+// 数千行規模の本コンポーネントの本体 (state 読み出し・仮想化計算・可視行分の
+// セル JSX 組み立て) が丸ごと再実行されてしまう。shallow 比較のみで独自の
+// 比較関数は使わないため、常に props 参照の同一性判定のみで安全にスキップ判定
+// できる (stale な比較ロジックによる誤バイパスのリスクはない)。
+export const DataGrid = memo(function DataGrid({
   columns,
   rows,
   enableColumnControls = true,
@@ -2732,6 +2744,19 @@ export function DataGrid({
       ),
     [columnKinds, rows],
   );
+  // `columnStats` は行が届くたびに (ストリーミング中は 1 バッチごとに) 作り直る。
+  // これを下の `tableColumns` の依存配列に直接含めると、実際にはセルの描画関数
+  // (`cell`) 自身は変わらないのに ColumnDef 配列全体が新しい参照になり、
+  // react-table 側の列モデル (ヘッダー/フッターグループ、可視列一覧 等) まで
+  // 総入れ替えになってしまう (#1098)。データバー/ヒートマップの条件付き書式は
+  // `colFormats` で明示的に有効化された列でしか参照しない (renderNumeric 内)
+  // ので、ref 経由の最新値参照に切り替えて `tableColumns` の再構築対象から外す。
+  // `cell` 関数は行データ (`data`) の変化のたびにどのみち呼び直されるため、
+  // 表示値が古くなることはない。
+  const columnStatsRef = useRef(columnStats);
+  useEffect(() => {
+    columnStatsRef.current = columnStats;
+  }, [columnStats]);
 
   // --- Sort & column filters, persisted per result shape (#677) ---
   // Column widths/order/visibility were already persisted (#616); sort and
@@ -3035,7 +3060,9 @@ export function DataGrid({
           // ヒートマップを背景に描く。NULL/非数値は対象外 (上で弾き済み or num===null)。
           const renderNumeric = (display: string, extraClass: string, title?: string) => {
             const mode = colFormats[i] ?? "off";
-            const stats = columnStats[i];
+            // `columnStats` 自体は tableColumns の依存配列から意図的に外している
+            // (上のコメント参照) ため、ここは常に最新値を持つ ref から読む。
+            const stats = columnStatsRef.current[i];
             const num = toNumber(v);
             if (mode === "off" || !stats || num === null) {
               return (
@@ -3182,6 +3209,10 @@ export function DataGrid({
         },
       };
     });
+    // `columnStats` は意図的に外している (上のコメント参照) — 依存に含めると
+    // ストリーミングの行バッチごとに ColumnDef 配列 (延いては react-table の
+    // 列モデル全体) が作り直されてしまう。値自体は `columnStatsRef` 経由で
+    // 常に最新を参照するので、表示の鮮度は落ちない。
   }, [
     columns,
     columnKinds,
@@ -3191,16 +3222,39 @@ export function DataGrid({
     richCellRendering,
     locale,
     colFormats,
-    columnStats,
     heatPaletteKey,
   ]);
 
+  // ストリーミング中は 1 行バッチが届くたびに呼び出し元 (App.tsx) が
+  // `[...prev, ...next]` で `rows` を丸ごと新しい配列参照に作り直す。ここで
+  // 毎回 `rows` 全件を RowShape へ変換し直すと、1 バッチあたり O(既読み込み
+  // 行数) かかり、ストリーム全体では O(行数²) の無駄な変換になってしまう
+  // (#1098)。実際には既存行はそのまま (同じ要素参照で) 前に付いているだけ
+  // なので、「前回の変換結果 + 新しく増えた末尾ぶんだけ変換」で済ませる。
+  // 判定は必要十分ではなく安全側の簡易チェック — 先頭と末尾の要素参照が
+  // 前回と一致するときだけ「単純な追記」とみなし、それ以外 (新しいクエリの
+  // 実行・行の丸ごと差し替えなど) は無条件に全件変換へフォールバックする
+  // ので、誤って古い変換結果を返すことはない。
+  const dataCacheRef = useRef<{ rows: CellValue[][]; data: RowShape[] }>({ rows: [], data: [] });
   const data = useMemo<RowShape[]>(() => {
-    return rows.map((r) => {
+    const toRowShape = (r: CellValue[]): RowShape => {
       const o: RowShape = {};
       r.forEach((v, i) => (o[String(i)] = v));
       return o;
-    });
+    };
+    const prev = dataCacheRef.current;
+    const isAppendOnly =
+      prev.rows.length > 0 &&
+      rows.length >= prev.rows.length &&
+      rows[0] === prev.rows[0] &&
+      rows[prev.rows.length - 1] === prev.rows[prev.rows.length - 1];
+    const next = isAppendOnly
+      ? rows.length === prev.rows.length
+        ? prev.data
+        : prev.data.concat(rows.slice(prev.rows.length).map(toRowShape))
+      : rows.map(toRowShape);
+    dataCacheRef.current = { rows, data: next };
+    return next;
   }, [rows]);
 
   const table = useReactTable({
@@ -3558,12 +3612,13 @@ export function DataGrid({
   });
 
   // Move keyboard focus to the given cell (original row index + column index).
-  // Scrolls the virtualizer when the target row is off-screen.
+  // Scrolls the row/column virtualizers when the target is off-screen.
   const navigateCell = (newRowIdx: number, newColIdx: number) => {
     const visIdx = visibleRows.findIndex((r) => r.index === newRowIdx);
     if (visIdx >= 0 && virtualize) {
       rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
     }
+    if (virtualize) scrollColumnIntoView(newColIdx);
     setActiveCell({ rowIdx: newRowIdx, colIdx: newColIdx });
     pendingFocusRef.current = { rowIdx: newRowIdx, colIdx: newColIdx };
   };
@@ -3725,6 +3780,78 @@ export function DataGrid({
   // the virtual spacer span.
   const totalColCount = visibleColIds.length + 2;
 
+  // Column virtualization (#1095). A wide result can have hundreds of
+  // columns; each *rendered* row would mount a `<td>` per column, multiplying
+  // against the viewport-sized row count row virtualization already limits
+  // us to. We window the *center* (unpinned) columns the same way rows are
+  // windowed, and always mount pinned columns (sticky, and typically few).
+  // The header/footer stay fully rendered — one row each, so their cost never
+  // multiplies — and remain aligned with windowed body rows regardless:
+  // `<colgroup>` declares every column's width once, and a `colSpan` spacer
+  // `<td>` simply occupies the combined width of the columns it skips (same
+  // mechanism as the vertical spacer rows below).
+  const leafColumnsForPin = table.getVisibleLeafColumns();
+  const leftPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "left");
+  const rightPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "right");
+  const leftPinnedCount = leftPinnedColumns.length;
+  const rightPinnedCount = rightPinnedColumns.length;
+  const centerColumns = leafColumnsForPin.filter((c) => !c.getIsPinned());
+  // Sticky "dead zones" the scroll container's own clientWidth doesn't
+  // account for: the always-sticky row-index cell (`ROW_INDEX_WIDTH`, not a
+  // tracked column — see its `left`/`right` offset math elsewhere in this
+  // file) plus the *pixel* width of pinned columns, not just their count.
+  // Left-pinned columns sit in front of every center column in table flow,
+  // so a center column's real (scroll-content) x-coordinate is offset by
+  // `leftDeadZone`, not 0 — `scrollMargin` corrects the virtualizer's own
+  // coordinate space to match. Right-pinned columns don't shift center
+  // columns' start (they trail after), but still cover the last
+  // `rightDeadZone` px of the viewport visually.
+  const leftDeadZone =
+    ROW_INDEX_WIDTH + leftPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
+  const rightDeadZone = rightPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: centerColumns.length,
+    getScrollElement: () => scrollContainerRef?.current ?? null,
+    // Column widths are exact (table state), not DOM-measured, so seed the
+    // real size directly instead of a rough estimate.
+    estimateSize: (index) => centerColumns[index]?.getSize() ?? defaultColumnSize("string"),
+    overscan: 6,
+    // Align the virtualizer's coordinate space with the real scroll offset
+    // (see `leftDeadZone` above) so both the mounted window during plain
+    // scrolling and `scrollToIndex`'s target offset are computed against the
+    // column's true position, not an offset that starts at 0.
+    scrollMargin: leftDeadZone,
+    // Reserve room at both ends so `scrollToIndex`/`align: "auto"` never
+    // aligns a column flush with the container edge — which would land it
+    // underneath the sticky row-index/pinned columns instead of just past
+    // them (#1099 review: keyboard/find nav could focus an invisible cell).
+    scrollPaddingStart: leftDeadZone,
+    scrollPaddingEnd: rightDeadZone,
+  });
+  // Sizing/order/pinning/visibility can all change which column sits at a
+  // given center index (and, via `leftDeadZone`/`rightDeadZone` above,
+  // `scrollMargin`/`scrollPaddingStart`/`scrollPaddingEnd` themselves); re-run
+  // the (exact) estimate so the virtualizer's cached offsets follow instead
+  // of lagging by a paint — mirrors the density re-measure above. Note:
+  // `scrollMargin`/`scrollPadding*` are plain options virtual-core re-reads
+  // every render (and `scrollMargin` is itself a dependency of its internal
+  // measurements memo), so they don't strictly need this `.measure()` kick —
+  // it's here for `estimateSize`'s per-index *values* (opaque to virtual-core
+  // until asked to remeasure), which the same state changes also affect.
+  useEffect(() => {
+    if (virtualize) columnVirtualizer.measure();
+  }, [virtualize, columnVirtualizer, columnSizing, columnOrder, columnPinning, columnVisibility]);
+  const columnVirtualItems = virtualize ? columnVirtualizer.getVirtualItems() : [];
+  // Given an *original* column index, scroll it into view when it currently
+  // sits outside the mounted column window (off-screen pinned columns are
+  // always mounted, so only center columns need this). Mirrors
+  // `rowVirtualizer.scrollToIndex` for keyboard/find navigation.
+  const scrollColumnIntoView = (colIdx: number) => {
+    const centerPos = centerColumns.findIndex((c) => Number(c.id) === colIdx);
+    if (centerPos >= 0) columnVirtualizer.scrollToIndex(centerPos, { align: "auto" });
+  };
+
   // ── 結果内検索 (#644) のナビゲーション ──
   // 要求はワンショットの prop (`findNav`) で届く。ページング表示ではヒットの
   // 属するページへ先に移動する必要があり、ページ切替後の再レンダーを待ってから
@@ -3764,7 +3891,10 @@ export function DataGrid({
       return;
     }
     pendingFindNavRef.current = null;
-    if (virtualize) rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
+    if (virtualize) {
+      rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
+      scrollColumnIntoView(nav.colIdx);
+    }
     if (nav.select) {
       setSelection(null);
       setActiveCell({ rowIdx: nav.rowIdx, colIdx: nav.colIdx });
@@ -3981,7 +4111,17 @@ export function DataGrid({
       data-index={measureIndex}
     >
       <td className="row-index">{rowIdx + 1}</td>
-      {row.getVisibleCells().map((cell) => {
+      {(() => {
+        // Split into pinned-left / center / pinned-right, matching the
+        // colgroup order (`row.getVisibleCells()` already groups pinned
+        // columns to the ends). Only the (usually much larger) center group
+        // gets windowed; pinned columns are always mounted.
+        const cells = row.getVisibleCells();
+        const leftCells = leftPinnedCount > 0 ? cells.slice(0, leftPinnedCount) : [];
+        const rightCells = rightPinnedCount > 0 ? cells.slice(cells.length - rightPinnedCount) : [];
+        const centerCells = cells.slice(leftPinnedCount, cells.length - rightPinnedCount);
+        const windowed = columnVirtualItems.length > 0;
+        const renderCell = (cell: Cell<RowShape, unknown>) => {
         // Resolve original column index from the column id so reorder/hide
         // and pinning don't misalign per-column lookups.
         const colIdx = Number(cell.column.id);
@@ -4221,7 +4361,38 @@ export function DataGrid({
             )}
           </td>
         );
-      })}
+        };
+        const firstCenterIdx = windowed ? columnVirtualItems[0].index : 0;
+        const lastCenterIdx = windowed
+          ? columnVirtualItems[columnVirtualItems.length - 1].index
+          : centerCells.length - 1;
+        return (
+          <>
+            {leftCells.map(renderCell)}
+            {/* Spacer <td>s absorb the off-screen width of skipped center
+                columns so scroll width / sticky offsets stay correct — the
+                horizontal analogue of the vertical spacer <tr>s above. */}
+            {windowed && firstCenterIdx > 0 && (
+              <td
+                aria-hidden
+                colSpan={firstCenterIdx}
+                style={{ padding: 0, border: 0, background: "transparent" }}
+              />
+            )}
+            {(windowed ? columnVirtualItems.map((vi) => centerCells[vi.index]) : centerCells).map(
+              renderCell,
+            )}
+            {windowed && lastCenterIdx < centerCells.length - 1 && (
+              <td
+                aria-hidden
+                colSpan={centerCells.length - 1 - lastCenterIdx}
+                style={{ padding: 0, border: 0, background: "transparent" }}
+              />
+            )}
+            {rightCells.map(renderCell)}
+          </>
+        );
+      })()}
       <td className="col-filler" aria-hidden />
     </tr>
     );
@@ -5309,7 +5480,7 @@ export function DataGrid({
       )}
     </>
   );
-}
+});
 
 /**
  * ストリーミング実行中の経過時間 (ms) を実時間でライブに刻む。
@@ -5553,6 +5724,12 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
   useEffect(() => {
     if (!streaming) setConfirmedRowCount(rowCount);
   }, [streaming, rowCount]);
+  // 計測 (#1094): クエリ完了後、グリッドが新しい結果セットをコミット (描画) した
+  // タイミングを記録する (Time to Interactive 相当)。既定 OFF なら markGridCommit
+  // は即 no-op。
+  useLayoutEffect(() => {
+    if (!streaming) markGridCommit(rowCount);
+  }, [streaming, rowCount]);
   const [showExport, setShowExport] = useState(false);
   // 右クリック「選択範囲をエクスポート」(#917) で `DataGrid` から一度きり渡される
   // 選択範囲の列/行部分集合。モーダルを閉じたら破棄し、次に (右クリック経由でなく)
@@ -5562,6 +5739,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     columns: Column[];
     rows: CellValue[][];
   } | null>(null);
+  // `DataGrid` は React.memo でラップされている (#1098) ため、ここで毎レンダー
+  // 新しい無名関数を渡すと props の shallow 比較が常に不一致になり memo が
+  // 無意味になる。setState はどれも同一性の保証されたセッターなので依存配列は
+  // 空でよい。
+  const handleExportSelection = useCallback((data: { columns: Column[]; rows: CellValue[][] }) => {
+    setSelectionExport(data);
+    setShowExport(true);
+  }, []);
   const [search, setSearch] = useState("");
   // Interval the toggle will use when switched on. Seeded from the persisted
   // default and from the live cadence so the selector reflects the active poll.
@@ -6796,10 +6981,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}
           onSelectionSummary={setSelSummary}
-          onExportSelection={(data) => {
-            setSelectionExport(data);
-            setShowExport(true);
-          }}
+          onExportSelection={handleExportSelection}
           onRunStatsQuery={onRunStatsQuery}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}

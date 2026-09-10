@@ -76,6 +76,7 @@ async fn cancel_stream_then_same_pool_succeeds() {
                 abort: handle.abort_handle(),
                 delivered_rows: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 kind: t::StreamKind::Query,
+                on_cancel: None,
             },
         )
         .await;
