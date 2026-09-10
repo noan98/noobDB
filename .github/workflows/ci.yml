@@ -52,7 +52,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 2
 
-      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -483,7 +483,7 @@ jobs:
 
       - name: Cache cargo
         id: rust-cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: clippy
@@ -682,7 +682,7 @@ jobs:
 
       - name: Cache cargo
         id: rust-cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: test
@@ -896,7 +896,7 @@ jobs:
 
       - name: Cache cargo
         id: rust-cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: windows-clippy
@@ -989,7 +989,7 @@ jobs:
 
       - name: Cache cargo
         id: rust-cache
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: windows-test

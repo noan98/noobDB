@@ -1,6 +1,7 @@
 name: automerge
 
-# CI が成功し、未解決のレビュースレッドが無い open PR を自動で main へマージする。
+# CI が成功し、Codex のレビューが完了して未解決のレビュースレッドが無い open PR を
+# 自動で main へマージする。
 # noobGit リポジトリの automerge ワークフローを参考に、noobDB 向けに移植したもの。
 #
 # 設計方針:
@@ -8,28 +9,95 @@ name: automerge
 #     (フォークからの PR でも PR 由来のコードを実行しないため安全)。
 #   - ブランチ保護に依存しない。CI の成功 (ci.yml の最新 run が success) を
 #     自前で再確認し、mergeable / mergeStateStatus を見てからマージする。
-#   - レビュー承認は要求しない。未解決のレビュースレッド (CodeRabbit 等の指摘) が
-#     0 件であることだけを条件にする。レビューが無い PR はそのまま通過する。
-#   - ただし CodeRabbit のレビューが進行中の場合はマージしない (レビューを待たずに
-#     マージしてしまう事故を防ぐ)。レートリミットでスキップされている場合は、待っても
-#     進まないためマージを許可する。判定は coderabbitai[bot] の自動生成コメントの
-#     状態マーカー (review in progress / rate limited) に加え、現在の head SHA に対する
-#     CodeRabbit の "レビュー提出" の有無で行う。サマリコメントの進行中マーカーは
-#     実レビュー提出より早く消えるため、マーカーだけだと指摘が届く前にマージできて
-#     しまう (PR #277 の取りこぼし)。レビュー提出をもう一段の確定信号として待つ。
-#   - CodeRabbit が "レビューを省略した" と宣言している場合 (star 数が閾値未満の
-#     OSS リポジトリで自動レビューが恒久的に無効) も、待っても状況が変わらないため
-#     マージは継続する。ただし黙っては通さず、"レビューゲートが素通りした" ことを
-#     ::warning:: と Job Summary で可視化する (#1055)。当初は明示起動した
-#     `@coderabbitai review` の結果を猶予時間だけ待つ設計にしたが、CodeRabbit は
-#     GITHUB_TOKEN 由来のコマンドコメントに反応しないことが実地で判明したため、
-#     待ちは撤廃した。詳細は Step 5a のコメントを参照。
+#   - 人間のレビュー承認は要求しない。レビュー層はレビュー bot が担い、次の 2 段で
+#     判定する:
+#       (1) Codex (`chatgpt-codex-connector[bot]`) が **現在の head SHA を**
+#           レビュー済みであること (Step 5)
+#       (2) 未解決のレビュースレッドが 0 件であること (Step 6)
+#     レビューが 1 件も付かない PR を素通しにはしない (Step 5 が止める)。
+#
+# レビュー基盤の CodeRabbit → Codex 移行 (#1109):
+#   以前のレビュー層は CodeRabbit だったが、レートリミットが厳しく実用に耐えな
+#   かったため GitHub App をアンインストールし、Codex へ移行した。CodeRabbit 専用の
+#   `coderabbit-request-review.yml` / `coderabbit-fallback-approve.yml` は削除済みで、
+#   本ファイルからも CodeRabbit 依存を撤去した。CodeRabbit が過去に出した指摘が
+#   未解決スレッドとして残っている場合は、投稿者を問わない Step 6 が拾う。
+#   先行して同じ移行を済ませた VeloX リポジトリの `auto-merge.yml` /
+#   `check_review_gate.py` を参照して判定方式を揃えている。
+#
+# Codex の実測挙動 (#1099〜#1106 と VeloX での観測。ここが判定方式の根拠):
+#   a. 指摘があるとき: `state: COMMENTED` のレビューを提出し、`commit_id` に
+#      レビュー対象の head SHA が入る (PR #1099 で `94ffecb29779...` を確認)。
+#      レビュー本文にも `**Reviewed commit:** \`94ffecb297\`` という定型行が入る。
+#   b. **指摘が無いとき: レビューを提出せず、PR 本体に 👍 リアクションだけを付ける。**
+#      Codex 自身の案内文 "If Codex has suggestions, it will comment; otherwise it
+#      will react with 👍." のとおりで、VeloX の PR #191 (0 バイトのファイル追加のみ)
+#      で実測済み。**付く場所は PR 本体への issue reaction** (`THUMBS_UP`)。
+#      → これを完了信号に含めないと、クリーンな PR が永久にマージされない。
+#   c. 利用上限に達したとき: issue comment で
+#      `You have reached your Codex usage limits for code reviews.` を投稿し、
+#      レビューは 1 件も提出しない (#1101 / #1105 / #1106 で確認)。
+#   d. **push では再レビューしない。** 起動条件は「PR を open する」「draft を
+#      ready にする」「`@codex review` とコメントする」の 3 つだけで push は
+#      含まれない。つまり指摘に対応して push しただけでは head SHA は永遠に
+#      未レビューのままになる → Step 5 が `@codex review` を自動投稿して補う。
+#
+# Step 5 の判定方式と、そう決めた理由:
+#   - **「現在の head SHA に対する Codex の完了信号」を待つ。** サマリコメント等の
+#     進行中マーカーだけで判定すると、マーカーが消えてから実レビューが提出される
+#     までの窓で「未解決スレッド 0 件」も同時に成立し、指摘が届く前にマージできて
+#     しまう (CodeRabbit 時代の PR #277 の取りこぼし)。Codex に置き換えても同じ穴を
+#     開けないよう、確定信号は上記 a / b の 3 つの OR とする:
+#       (a-1) Codex のレビューの `commit_id` が head SHA と完全一致
+#       (a-2) レビュー本文の `Reviewed commit: <短縮SHA>` が head SHA と前方一致
+#       (b)   Codex の 👍 リアクションが **head の push 観測時刻以降**に付いている
+#     「Codex のレビューが存在する」だけでは不十分で、古いコミットへのレビューが
+#     残っているだけのケースを (a-1)/(a-2) で弾く必要がある。
+#   - **`push 観測時刻` に git の committer date を使わない。** committer date は
+#     「commit をローカルで作った時刻」であり push 時刻ではない。cherry-pick や
+#     rebase で容易に過去の日時になるため、(b) の 👍 が古い head 向けのものでも
+#     「レビュー済み」と誤判定できてしまう。GitHub がサーバ側で観測した時刻として
+#     head SHA の check-suite の作成時刻 (最小値) を使い、取れなければ安全側で
+#     スキップする (committer date へのフォールバックは同じ穴を再現するので禁止)。
+#   - **利用上限 (c) に達している場合は緩和して通す。** 待っても状況が変わらず、
+#     何もしないと PR が永久に停止する。ただし黙っては通さず ::warning:: と
+#     Job Summary で「レビューゲートが素通りした」ことを可視化する — CodeRabbit の
+#     恒久 skip に対して #1055 で採った扱いと同じ方針。
+#   - **head が未レビューのまま一定時間 (CODEX_REREVIEW_DELAY_MINUTES) 経ったら
+#     `@codex review` を 1 回だけ自動投稿する** (上記 d への対処)。head SHA を
+#     埋めたマーカー `<!-- automerge:codex-review-request:<sha> -->` で重複投稿を
+#     防ぐ。**投稿できなかったときはマーカーを一切残さないこと** — マーカーだけが
+#     残ると、その head SHA には二度と依頼が飛ばず永久に停止する。
+#     投稿には Secrets `CODEX_PAT` (人間ユーザの PAT) が必要。GITHUB_TOKEN
+#     (= github-actions[bot]) 由来のコマンドコメントにレビュー bot が反応しない
+#     ことは CodeRabbit で実測済み (PR #1059) で、VeloX でも `@codex review` に
+#     ついて同じ結果 (PR #200) が出ている。
+#   - **それでも head が未レビューなら「マージしない」で止める。** 失敗側の安全性で
+#     選ぶ方針 (「レビューなしでマージする」より「マージしない」を選ぶ)。ただし
+#     Codex 側の障害・文言変更で全 PR が永久停止しないよう、逃げ道を 2 つ用意する:
+#       - 過去に利用上限メッセージが 1 度でも観測されていれば緩和して通す (警告付き)
+#       - `automerge-without-codex` ラベルで Codex 要件だけを免除する (警告付き)
+#     どちらも **Step 6 の未解決スレッド判定は免除しない** (人間 / bot の明示的な
+#     指摘を尊重するため)。
+#
+# 既知の残課題:
+#   - 通常コメント (issue comment) での「修正してから merge」は Step 6 の
+#     未解決スレッド判定では拾えない (#1108)。本ファイルの同じゲート設計を触る
+#     ため、#1109 (本移行) とは分けて対応する。
 #
 # トリガ:
 #   - ci ワークフローが完了したとき (workflow_run) — CI 成功を起点に再評価する。
-#   - レビューが提出されたとき (pull_request_review) — スレッド解消を起点に再評価。
-#   - CodeRabbit のコメントが更新されたとき (issue_comment) — レビュー進行中→完了の
-#     遷移を起点に再評価する (完了時に承認レビューを出さないケースを取りこぼさない)。
+#   - レビューが提出されたとき (pull_request_review) — Codex のレビュー提出 /
+#     スレッド解消を起点に再評価。
+#   - PR にコメントが付いたとき (issue_comment) — Codex の利用上限メッセージや
+#     `@codex review` への応答を起点に再評価する (Codex はレビューを出さずに
+#     コメントだけを返す経路があるため、これが無いと取りこぼす)。
+#
+# なお **Codex の 👍 リアクションはイベントを生まない**ため、それだけを待って
+# 再評価する経路は無い。実運用では CI (数十分) の完了が Codex の応答 (数分) より
+# 遅いため workflow_run で拾えるが、取りこぼした場合は PR に何かコメントすれば
+# 再評価される (下の `if` が OWNER / MEMBER / COLLABORATOR のコメントを通すのは
+# この再評価の手段も兼ねている)。
 
 on:
   pull_request_review:
@@ -49,10 +117,29 @@ concurrency:
 
 # GITHUB_TOKEN に必要な書き込み権限。リポジトリの Actions 設定で
 # 「Read and write permissions」が有効でないとマージできない点に注意。
+# `checks: read` は head SHA の push 観測時刻 (check-suite の作成時刻) を
+# 取得するために必要 (Step 5)。
 permissions:
   contents: write
   pull-requests: write
   issues: write
+  checks: read
+
+env:
+  # Codex アプリのログイン名。**完全一致で照合する** —
+  # `chatgpt-codex-connector-review` のような別名アカウントが前方一致で
+  # すり抜けないようにするため (VeloX の PR #192 の指摘と同じ穴を作らない)。
+  CODEX_LOGIN: chatgpt-codex-connector[bot]
+  # head SHA の push 観測時刻からこの分数が経過しても Codex の完了信号が
+  # 無ければ `@codex review` を 1 回だけ自動投稿する。Codex は PR の open /
+  # draft → ready では自動レビューするので、それが飛んでくるまでの待ち時間。
+  # 実測では数分以内に応答するため 5 分。短すぎると自動レビューと依頼が
+  # 二重に走り、長すぎると修正 push 後の停止時間が伸びる。
+  CODEX_REREVIEW_DELAY_MINUTES: 5
+  # このラベルが付いた PR は **Codex のレビュー要件だけを** 免除する
+  # (Step 6 の未解決スレッド判定は免除しない)。Codex 側の障害・クォータ切れ・
+  # 応答文言の変更で全 PR が永久停止しないための最終手段の保険。
+  CODEX_BYPASS_LABEL: automerge-without-codex
 
 jobs:
   automerge:
@@ -61,16 +148,37 @@ jobs:
     # 外部 API 待ち (mergeable 判定リトライ・指数バックオフ) が積み上がっても
     # ランナーを占有し続けないよう上限を付ける (正常時は影響なし)。
     timeout-minutes: 10
-    # CI 成功 (pull_request 由来) / レビュー提出 / CodeRabbit の PR コメント更新の
-    # ときだけ走らせる。issue_comment は PR への coderabbitai[bot] コメントに限定する。
+    # CI 成功 (pull_request 由来) / レビュー提出 / PR へのコメントのときだけ走らせる。
+    #
+    # **投稿者を絞る理由**: 本リポジトリは public なので、レビューもコメントも
+    # GitHub の任意のユーザが投稿できる。`contents: write` とマージ権限を持つ
+    # ジョブを誰でも起動できる状態にはしない。通すのは
+    #   - `author_association` が OWNER / MEMBER / COLLABORATOR、または
+    #   - ログイン名が Codex bot と完全一致
+    # のいずれかを満たす場合のみ。bot のログイン名は `[` `]` を含み GitHub の
+    # ユーザ名として作成できないため、一般ユーザが一致を偽装することはできない
+    # (bot の `author_association` は NONE / CONTRIBUTOR になりうるので、
+    # ログイン名の一致を別に見る必要がある)。
+    #
+    # なお **このジョブはコメント本文やレビュー本文を判定に一切使わない**。
+    # 起動後は PR を API から取り直し、CI・Codex の完了信号・レビュースレッドを
+    # 一から評価する。したがってコメントでできるのは「判定をやり直させる」ことだけで、
+    # 判定結果を変えることはできない。上の絞り込みは多層防御 + 空振り実行の削減。
+    #
+    # 自分が投稿した `@codex review` 依頼コメント (マーカー入り) では起動しない
+    # (判定材料が増えていないので空振りするだけ)。
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event == 'pull_request' &&
        github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'pull_request_review') ||
+      (github.event_name == 'pull_request_review' &&
+       (contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.review.author_association) ||
+        github.event.review.user.login == 'chatgpt-codex-connector[bot]')) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
-       github.event.comment.user.login == 'coderabbitai[bot]')
+       !contains(github.event.comment.body, '<!-- automerge:') &&
+       (contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) ||
+        github.event.comment.user.login == 'chatgpt-codex-connector[bot]'))
     steps:
       - name: Check conditions and auto-merge
         env:
@@ -80,6 +188,11 @@ jobs:
           REVIEW_PR: ${{ github.event.pull_request.number }}
           ISSUE_PR: ${{ github.event.issue.number }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          # `@codex review` の自動投稿専用の PAT (人間ユーザのもの)。**未設定なら
+          # 投稿しない。** GITHUB_TOKEN (= github-actions[bot]) で投稿しても
+          # レビュー bot は反応しないため、空打ちして「依頼が届いた」と誤認させる
+          # より投稿しない方が安全側 (CodeRabbit の PR #1059 / VeloX の PR #200)。
+          CODEX_PAT: ${{ secrets.CODEX_PAT }}
         run: |
           set -euo pipefail
 
@@ -105,9 +218,9 @@ jobs:
 
           # 2. PR メタデータを取得。mergeable は非同期計算で UNKNOWN になりうるので
           #    確定するまで最大 5 回 (3 秒間隔) リトライする。
-          state=""; isDraft=""; baseRef=""; headSha=""; mergeable=""
+          state=""; isDraft=""; baseRef=""; headSha=""; mergeable=""; meta=""
           for i in 1 2 3 4 5; do
-            meta="$(gh pr view "$PR" --json state,isDraft,baseRefName,headRefOid,mergeable)"
+            meta="$(gh pr view "$PR" --json state,isDraft,baseRefName,headRefOid,mergeable,labels)"
             state="$(echo "$meta" | jq -r '.state')"
             isDraft="$(echo "$meta" | jq -r '.isDraft')"
             baseRef="$(echo "$meta" | jq -r '.baseRefName')"
@@ -136,128 +249,178 @@ jobs:
             exit 0
           fi
 
-          # 5. CodeRabbit のレビュー状態を確認する。レビューが進行中の場合は、完了を
-          #    待つためマージしない (レビューを待たずにマージしてしまう事故を防ぐ)。
-          #    レートリミットでスキップされている場合は、待っても進まないためマージを
-          #    許可する。判定は coderabbitai[bot] が投稿/編集する自動生成コメントに
-          #    埋め込まれた状態マーカーで行う:
-          #      "... review in progress by coderabbit.ai" → 進行中なのでスキップ
-          #      "... rate limited by coderabbit.ai"       → レートリミットなので継続
-          #      "... skip review by coderabbit.ai"        → レビュー省略なので継続
-          #    CodeRabbit はメインの状態コメントを進行中→完了 (summarize) と in-place で
-          #    編集するため、現在のコメント本文にマーカーが残っていれば進行中とみなせる。
-          #    CodeRabbit のコメントが 1 件も無い PR (CodeRabbit 未適用等) はそのまま通過。
-          cr_comments="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
-            --jq '.[] | select(.user.login == "coderabbitai[bot]") | .body' || true)"
+          # 5. Codex のレビューゲート (#1109)。判定方式とその根拠はファイル冒頭の
+          #    「Step 5 の判定方式と、そう決めた理由」を参照。要点だけ再掲すると、
+          #    現在の head SHA に対する Codex の完了信号 (レビュー提出 or 👍) を
+          #    待ち、利用上限に達している場合だけ警告付きで緩和する。
+          codex_bypass="$(echo "$meta" | jq -r --arg l "$CODEX_BYPASS_LABEL" \
+            '[.labels[].name] | index($l) != null')"
 
-          # CodeRabbit が当該 PR で稼働しているか (= サマリ等のコメントを 1 件以上
-          # 投稿済みか)。未稼働なら以降の CodeRabbit 待ちはスキップして通過する。
-          cr_active="false"
-          if printf '%s' "$cr_comments" | grep -q .; then
-            cr_active="true"
-          fi
-
-          if printf '%s' "$cr_comments" | grep -qi "review in progress by coderabbit"; then
-            echo "CodeRabbit のレビューが進行中です。完了を待つためスキップ。"
-            exit 0
-          fi
-
-          cr_rate_limited="false"
-          if printf '%s' "$cr_comments" | grep -qi "rate limited by coderabbit"; then
-            echo "CodeRabbit がレートリミットでレビューをスキップ中です。マージを継続します。"
-            cr_rate_limited="true"
-          fi
-
-          # 5a. CodeRabbit が「レビューを省略した」と宣言している場合の扱い (#1055)。
-          #     代表例は star 数が閾値未満の OSS リポジトリに対する手動レビュー要求:
-          #       「This repository does not receive automatic reviews because it
-          #         has fewer than 10 stars」(コミットステータスの description は
-          #         "Review skipped: manual review required for this OSS repository")
-          #     この状態では coderabbitai[bot] はサマリコメントだけを投稿して
-          #     レビュー本体を一切提出しないため、後続の 5b (head へのレビュー提出を
-          #     待つ) は永久に成立しない。判定は自動生成コメントに埋め込まれた
-          #     機械可読マーカー "<!-- ...: skip review by coderabbit.ai -->" で行う。
-          #     進行中マーカー ("review in progress") とは別物なので、上の進行中判定を
-          #     弱めない (進行中の PR は 5 で既に exit 済み)。
-          #
-          #     **レートリミットと原因は違うが、扱いは同じ「待たずに通す」。**
-          #     レートリミットは一過性で待てば解消するのに対し、star 数に基づく skip は
-          #     恒久的で待っても永遠にレビューは来ない。#1055 では前者と後者を区別し、
-          #     `coderabbit-request-review.yml` が投稿する `@coderabbitai review` の
-          #     結果を猶予時間だけ待つ設計にしたが、**実地検証の結果 CodeRabbit は
-          #     GITHUB_TOKEN (github-actions[bot]) 由来のコマンドコメントに一切
-          #     反応しない**ことが分かった (PR #1059 で 40 分以上待っても
-          #     レビュー提出・返信ともに無し)。待っても状況は変わらず、猶予切れ後に
-          #     automerge を再評価するイベントも来ないため、PR が無期限に停止する
-          #     副作用だけが残った。そのため猶予待ちは撤廃し、**マージは止めずに
-          #     「レビューゲートが素通りしている」ことを警告として可視化する**
-          #     (#1055 の「黙って通さない」という主目的はこれで満たされる)。
-          #
-          #     レビューを実際に走らせたい場合は、`coderabbit-request-review.yml` の
-          #     投稿を GITHUB_TOKEN ではなく人間ユーザの PAT で行う必要がある
-          #     (同ワークフローのコメント参照)。その構成にすると head へのレビューが
-          #     提出されるようになり、下の分岐が自動的に通常経路へ倒れる。
-          cr_review_skipped="false"
-          if printf '%s' "$cr_comments" | grep -qi "skip review by coderabbit"; then
-            cr_review_skipped="true"
-          fi
-
-          if [ "$cr_review_skipped" = "true" ]; then
-            echo "CodeRabbit が自動レビューを省略しています (手動トリガ要求等)。"
-
-            # 現在の head に対する CodeRabbit のレビュー提出があれば、(PAT 構成などで)
-            # レビューが実際に走ったということ。skip フラグを下ろし、5b の通常経路
-            # (head へのレビュー提出を確認) と 6 のスレッド判定に委ねる。
-            cr_reviews_for_head="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
-              --jq '.[] | select(.user.login == "coderabbitai[bot]") | .commit_id' \
-              | grep -Fxc "$headSha" || true)"
-
-            if [ "${cr_reviews_for_head:-0}" -gt 0 ]; then
-              echo "head ($headSha) へのレビューが提出済みです。通常経路で継続します。"
-              cr_review_skipped="false"
-            else
-              # 5a-warn. ここに来た = レビュー層が無いまま自動マージへ進む。
-              #     マージは止めない (方針) が、気付けるように警告として残す。
-              echo "::warning title=CodeRabbit のレビューゲートが素通りしています::PR #$PR (head=$headSha) は CodeRabbit の自動レビュー対象外で、レビュー提出が 1 件もないまま自動マージされます。"
-              {
-                echo "### :warning: CodeRabbit のレビューゲートが素通りしています"
-                echo ""
-                echo "- 対象 PR: #$PR (head \`$headSha\`)"
-                echo "- CodeRabbit の自動レビューが省略されており (star 数が閾値未満の OSS リポジトリ)、"
-                echo "  この PR は **CodeRabbit のレビューを 1 件も受けずに** 自動マージされます (CI は通過済み)。"
-                echo "- レビューを実際に走らせるには \`coderabbit-request-review.yml\` の投稿を"
-                echo "  GITHUB_TOKEN ではなく人間ユーザの PAT で行う必要があります"
-                echo "  (CodeRabbit は github-actions[bot] 由来のコマンドコメントに反応しません)。"
-                echo ""
-              } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$codex_bypass" = "true" ]; then
+            # 5-0. 明示的な免除ラベル。Codex 要件だけを飛ばして Step 6 へ進む。
+            echo "::warning title=Codex のレビューゲートを免除しました::PR #$PR に '$CODEX_BYPASS_LABEL' ラベルが付いているため、Codex のレビュー要件を免除して自動マージします (未解決レビュースレッドの判定は免除されません)。"
+            {
+              echo "### :warning: Codex のレビューゲートを免除しました"
+              echo ""
+              echo "- 対象 PR: #$PR (head \`$headSha\`)"
+              echo "- \`$CODEX_BYPASS_LABEL\` ラベルにより **Codex のレビュー要件を免除**しました。"
+              echo "- 未解決レビュースレッドの判定 (Step 6) は免除していません。"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            # 5-1. head SHA の push 観測時刻。GitHub がサーバ側で観測した時刻として
+            #      head SHA に対する check-suite の作成時刻の最小値を使う。
+            #      **git の committer date にフォールバックしてはいけない**
+            #      (冒頭の設計方針を参照)。取れなければ安全側でスキップする。
+            push_observed_at=""
+            if ! push_observed_at="$(gh api "repos/$GH_REPO/commits/$headSha/check-suites" \
+                 --jq '[.check_suites[].created_at] | sort | .[0] // empty' 2>&1)"; then
+              echo "::warning::head commit ($headSha) の check-suites (push 観測時刻の代替) の取得に失敗しました: $push_observed_at"
+              push_observed_at=""
             fi
-          fi
-
-          # 5b. サマリコメントの "進行中" マーカーだけでは不十分。CodeRabbit はサマリ
-          #     コメントを完了形 (summarize) へ in-place 編集してから、レビュー本体
-          #     (インラインのレビュースレッドを含む) を提出するまでに十数〜数十秒の差が
-          #     ある。この窓ではマーカーが既に消えており、かつ未解決スレッドもまだ 0 件
-          #     なので、Step 5/6 だけだとレビュー指摘が届く前にマージできてしまう
-          #     (PR #277 の取りこぼしの原因)。レビューとそのスレッドは "レビュー提出"
-          #     時にアトミックに作られるため、CodeRabbit が稼働している PR では現在の
-          #     head SHA に対する coderabbitai[bot] のレビュー提出を完了の確定信号として
-          #     待つ。レートリミット時とレビュー省略時 (5a) はレビューが提出されない
-          #     ので待たない。
-          #     (トレードオフ: CodeRabbit がインクリメンタルレビューを提出しない構成だと
-          #      新コミットで待ち続けるが、その場合の失敗側は "自動マージしない" で安全。)
-          if [ "$cr_active" = "true" ] && [ "$cr_rate_limited" = "false" ] && [ "$cr_review_skipped" = "false" ]; then
-            cr_reviews_for_head="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
-              --jq '.[] | select(.user.login == "coderabbitai[bot]") | .commit_id' \
-              | grep -Fxc "$headSha" || true)"
-            if [ "${cr_reviews_for_head:-0}" -eq 0 ]; then
-              echo "CodeRabbit はコメント済みですが、head ($headSha) に対するレビュー提出がまだありません。完了を待つためスキップ。"
+            if [ -z "$push_observed_at" ]; then
+              echo "head ($headSha) の push 観測時刻を決定できませんでした。安全側でスキップ。"
               exit 0
             fi
-            echo "CodeRabbit のレビュー (head=$headSha) を確認しました。"
+            echo "head ($headSha) の push 観測時刻: $push_observed_at"
+
+            # 5-2. Codex のレビュー提出 (シグナル a-1 / a-2)。
+            codex_reviews="$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate --jq '.[]' \
+              | jq -s --arg login "$CODEX_LOGIN" '[.[] | select(.user.login == $login)]')"
+
+            codex_reviewed_head="false"
+            codex_signal=""
+
+            if [ "$(printf '%s' "$codex_reviews" \
+                 | jq -r --arg sha "$headSha" '[.[] | select(.commit_id == $sha)] | length')" -gt 0 ]; then
+              codex_reviewed_head="true"
+              codex_signal="レビューの commit_id が head と一致"
+            fi
+
+            if [ "$codex_reviewed_head" = "false" ]; then
+              # レビュー本文の定型行 (例: `**Reviewed commit:** \`94ffecb297\`) から
+              # 短縮 SHA を取り出し、head SHA の接頭辞と一致するかを見る。太字
+              # マークアップやコロンの有無のゆらぎを許容する。
+              reviewed_shas="$(printf '%s' "$codex_reviews" \
+                | jq -r '.[] | ((.body // "") | capture("Reviewed commit:?\\**\\s*`?(?<sha>[0-9a-fA-F]{7,40})`?"; "i") | .sha)?' \
+                | tr 'A-Z' 'a-z' | sort -u || true)"
+              head_lower="$(printf '%s' "$headSha" | tr 'A-Z' 'a-z')"
+              for s in $reviewed_shas; do
+                case "$head_lower" in
+                  "$s"*)
+                    codex_reviewed_head="true"
+                    codex_signal="レビュー本文の 'Reviewed commit: $s' が head と前方一致"
+                    ;;
+                esac
+              done
+            fi
+
+            # 5-3. 指摘ゼロのときの完了信号 (シグナル b): PR 本体への 👍 リアクション。
+            #      **リアクションはコミットに紐付かない** (1 ユーザ 1 個) ため、
+            #      「どの push に対する 👍 か」は厳密には特定できない。push 観測時刻
+            #      以降に付いていることを「この head に対する反応」の代理指標として
+            #      扱う。この弱さを committer date で更に弱めないために、5-1 では
+            #      サーバ側の観測時刻だけを使っている。
+            if [ "$codex_reviewed_head" = "false" ]; then
+              codex_thumbs="$(gh api "repos/$GH_REPO/issues/$PR/reactions" --paginate --jq '.[]' \
+                | jq -s --arg login "$CODEX_LOGIN" --arg since "$push_observed_at" \
+                    '[.[] | select(.user.login == $login and .content == "+1" and .created_at >= $since)] | length')"
+              if [ "${codex_thumbs:-0}" -gt 0 ]; then
+                codex_reviewed_head="true"
+                codex_signal="push 観測時刻以降の 👍 リアクション (指摘なしで完了)"
+              fi
+            fi
+
+            # 5-4. issue comment 側のシグナル: 利用上限メッセージと、自分が投稿した
+            #      `@codex review` 依頼マーカー。
+            codex_request_marker="<!-- automerge:codex-review-request:$headSha -->"
+            pr_comments="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq '.[]' | jq -s '.')"
+            codex_limit_for_head="$(printf '%s' "$pr_comments" \
+              | jq -r --arg login "$CODEX_LOGIN" --arg since "$push_observed_at" \
+                  '[.[] | select(.user.login == $login
+                                 and ((.body // "") | ascii_downcase | contains("reached your codex usage limits"))
+                                 and .created_at >= $since)] | length')"
+            codex_limit_any="$(printf '%s' "$pr_comments" \
+              | jq -r --arg login "$CODEX_LOGIN" \
+                  '[.[] | select(.user.login == $login
+                                 and ((.body // "") | ascii_downcase | contains("reached your codex usage limits")))] | length')"
+            codex_request_posted="$(printf '%s' "$pr_comments" \
+              | jq -r --arg m "$codex_request_marker" '[.[] | select((.body // "") | contains($m))] | length')"
+
+            if [ "$codex_reviewed_head" = "true" ]; then
+              echo "Codex のレビュー完了を確認しました (head=$headSha, 根拠: $codex_signal)。"
+            elif [ "${codex_limit_for_head:-0}" -gt 0 ]; then
+              # 5-5. この head に対して Codex が「利用上限」と返答済み。待っても
+              #      レビューは来ないので緩和して通すが、黙っては通さない。
+              echo "::warning title=Codex が利用上限でレビューを提出できていません::PR #$PR (head=$headSha) に対し Codex は利用上限メッセージを返しており、レビューが 1 件もないまま自動マージされます。"
+              {
+                echo "### :warning: Codex が利用上限でレビューを提出できていません"
+                echo ""
+                echo "- 対象 PR: #$PR (head \`$headSha\`)"
+                echo "- Codex は \`You have reached your Codex usage limits for code reviews.\` を返しており、"
+                echo "  この head に対する **レビューを 1 件も提出していません**。"
+                echo "- 待っても状況が変わらず PR が永久に停止するため、**マージは継続**します (CI は通過済み)。"
+                echo ""
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              # 5-6. head が未レビュー。まずは Codex の自動レビュー (open /
+              #      draft → ready で走る) の到着を待ち、それでも来なければ
+              #      `@codex review` を 1 回だけ依頼する (Codex は push では
+              #      再レビューしないため)。
+              now_epoch="$(date -u +%s)"
+              observed_epoch="$(date -u -d "$push_observed_at" +%s)"
+              elapsed=$(( now_epoch - observed_epoch ))
+              delay=$(( CODEX_REREVIEW_DELAY_MINUTES * 60 ))
+
+              if [ "$elapsed" -lt "$delay" ]; then
+                echo "Codex は head ($headSha) をまだレビューしていません。自動レビューの到着を待つためスキップ (経過 ${elapsed}s / ${delay}s)。"
+                exit 0
+              fi
+
+              if [ "${codex_request_posted:-0}" -eq 0 ]; then
+                if [ -n "${CODEX_PAT:-}" ]; then
+                  # **投稿が成功したときにしかマーカーは残らない** (マーカーは
+                  # コメント本文の中にしか存在しない)。マーカーだけ残すと、その
+                  # head SHA には二度と依頼が飛ばず永久に停止する。
+                  request_body="$(printf '%s\n\n%s\n<sub>automerge (#1109): Codex がこの head SHA をまだレビューしていないため自動的にリクエストしました。</sub>\n' \
+                    '@codex review' "$codex_request_marker")"
+                  if printf '%s' "$request_body" \
+                     | GH_TOKEN="$CODEX_PAT" gh pr comment "$PR" --body-file - >/dev/null; then
+                    echo "PR #$PR に @codex review を自動投稿しました (head=$headSha)。応答を待つためスキップ。"
+                    exit 0
+                  fi
+                  echo "::warning::PR #$PR への @codex review の自動投稿に失敗しました (head=$headSha)。"
+                else
+                  echo "::warning title=CODEX_PAT が未設定のため @codex review を投稿できません::PR #$PR (head=$headSha) は Codex に未レビューですが、Secrets CODEX_PAT が無いため再レビューを依頼できません。GITHUB_TOKEN (github-actions[bot]) 由来のコメントにレビュー bot は反応しないため空打ちはしません。手動で '@codex review' とコメントするか、'$CODEX_BYPASS_LABEL' ラベルでの免除を検討してください。"
+                fi
+              fi
+
+              if [ "${codex_limit_any:-0}" -gt 0 ]; then
+                # 5-7. 依頼を出せない / 出したが応答が無い状態で、この PR では過去に
+                #      利用上限メッセージが観測されている。永久停止を避けるため
+                #      緩和して通す (警告付き)。
+                echo "::warning title=Codex のレビューゲートが素通りしています::PR #$PR (head=$headSha) はこの head に対する Codex のレビューが無いまま自動マージされます (この PR では過去に Codex の利用上限メッセージを観測済みで、待っても状況が変わらないと判断)。"
+                {
+                  echo "### :warning: Codex のレビューゲートが素通りしています"
+                  echo ""
+                  echo "- 対象 PR: #$PR (head \`$headSha\`)"
+                  echo "- この head に対する Codex のレビューはありません。"
+                  echo "- この PR では過去に **Codex の利用上限メッセージ**を観測しており、"
+                  echo "  待っても状況が変わらず PR が永久に停止するため **マージは継続**します。"
+                  echo "- 再レビューを自動で依頼するには Secrets \`CODEX_PAT\` (人間ユーザの PAT) の登録が必要です。"
+                  echo ""
+                } >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "Codex の head ($headSha) に対するレビューがまだありません。完了を待つためスキップ。"
+                echo "  (恒久的に来ない場合は '@codex review' を手動投稿するか、'$CODEX_BYPASS_LABEL' ラベルで免除してください)"
+                exit 0
+              fi
+            fi
           fi
 
-          # 6. 未解決のレビュースレッドが無いことを確認する。スレッドが多すぎる
-          #    (>100) 場合は取りこぼしを避けるため安全側でスキップする。
+          # 6. 未解決のレビュースレッドが無いことを確認する。投稿者は問わない
+          #    (Codex・人間・過去の CodeRabbit の指摘をすべて対象にする)。
+          #    スレッドが多すぎる (>100) 場合は取りこぼしを避けるため安全側でスキップする。
           threads_json="$(gh api graphql -f query='
             query($owner:String!, $repo:String!, $pr:Int!) {
               repository(owner:$owner, name:$repo) {
