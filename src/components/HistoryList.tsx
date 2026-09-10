@@ -432,7 +432,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
                     </chakra.span>
                   </TreeRow>
                 </Tooltip>
-                <Box pt="0" pr="1.5" pb="1" pl="28px" fontSize="2xs" color="app.textMuted">
+                <Box pt="0" pr="1.5" pb="1" pl="7" fontSize="2xs" color="app.textMuted">
                   {formatTime(h.executed_at)}
                 </Box>
               </MotionTreeNode>

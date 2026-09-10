@@ -63,7 +63,7 @@ function formatValue(n: number | null): string {
 
 const cellCss: SystemStyleObject = {
   border: "1px solid var(--border-subtle, var(--border))",
-  padding: "4px 10px",
+  padding: "var(--space-1) var(--space-2-5)",
   fontSize: "var(--text-sm)",
   fontFamily: "var(--font-mono)",
   color: "var(--text)",

@@ -68,7 +68,7 @@ export const shimmerAfterCss = {
 export const Skeleton = chakra("div", {
   base: {
     ...shimmerContainerCss,
-    borderRadius: "2px",
+    borderRadius: "var(--radius-xs)",
     "&::after": shimmerAfterCss,
   },
 });
@@ -121,7 +121,7 @@ export function SkeletonTableRows({
       {Array.from({ length: rows }, (_, ri) => (
         <tr key={ri} aria-hidden style={{ opacity: 1 - ri * 0.12 }}>
           {Array.from({ length: columns }, (_, ci) => (
-            <td key={ci} style={{ padding: "5px 10px" }}>
+            <td key={ci} style={{ padding: "var(--space-1-25) var(--space-2-5)" }}>
               <Skeleton
                 height="13px"
                 style={{

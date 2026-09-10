@@ -22,7 +22,7 @@ const Option = chakra("label", {
     gap: "2",
     px: "2.5",
     py: "2",
-    borderRadius: "8px",
+    borderRadius: "var(--radius-lg)",
     cursor: "pointer",
     borderWidth: "1px",
     borderColor: "app.border",
@@ -60,7 +60,7 @@ export function ProfileImportDialog({ onConfirm, onCancel }: Props) {
                 name="profile-import-strategy"
                 checked={strategy === o.value}
                 onChange={() => setStrategy(o.value)}
-                mt="3px"
+                mt="0.75"
               />
               <chakra.span display="flex" flexDirection="column">
                 <chakra.span textStyle="subheading">

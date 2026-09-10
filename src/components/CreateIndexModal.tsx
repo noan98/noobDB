@@ -138,7 +138,7 @@ export function CreateIndexModal({
                 bg="app.surface"
                 borderWidth="1px"
                 borderColor="app.border"
-                borderRadius="8px"
+                borderRadius="lg"
                 p="2.5"
                 overflowX="auto"
                 whiteSpace="pre"

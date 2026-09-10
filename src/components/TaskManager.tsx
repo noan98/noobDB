@@ -597,7 +597,7 @@ function TaskForm({
   };
 
   return (
-    <chakra.div display="flex" flexDirection="column" gap="14px">
+    <chakra.div display="flex" flexDirection="column" gap="3.5">
       <FormSection>
         <FieldLabel htmlFor="task-name">{t("taskFormName")}</FieldLabel>
         <Input id="task-name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />

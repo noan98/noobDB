@@ -51,7 +51,7 @@ export function DropInsertionMarker({ visible, orientation }: DropInsertionMarke
           bottom={vertical ? "2px" : undefined}
           w={vertical ? "2px" : undefined}
           h={vertical ? undefined : "2px"}
-          borderRadius="1px"
+          borderRadius="pill"
           bg="var(--ws-accent, var(--accent))"
           zIndex={4}
           aria-hidden

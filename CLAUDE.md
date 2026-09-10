@@ -58,7 +58,11 @@
 - **共有ゴールデンベクタ (`src/__tests__/fixtures/*.json`) を経由する判定ロジックを
   変えるときは、必ず JSON に境界ケースを追記する** — Rust とフロントの二重実装が
   ズレると片方のテストが落ちます。
-- 詳細: `.claude/rules/code-conventions.md`
+- **UI に px 直値・色リテラルを書かない。** 余白/文字サイズ/角丸/色は `App.css` の
+  CSS 変数 → `theme.ts` の Chakra トークン経由でのみ参照する (px 直値はフォント拡大
+  設定に追従せず、色リテラルはダーク系テーマプリセットで破綻する)。ベタ塗りの上の
+  文字色は `#fff` ではなく `app.onSolid`。`designTokens.test.ts` が CI で強制。
+- 詳細: `.claude/rules/code-conventions.md` / `.claude/rules/ui-design-system.md`
 
 ## よく使うコマンド
 

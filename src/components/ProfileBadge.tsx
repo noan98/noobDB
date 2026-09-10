@@ -67,7 +67,7 @@ export function ProductionBadge({
           fontSize={compact ? "2xs" : "xs"}
           fontWeight={700}
           px={compact ? "1.5" : "2"}
-          py={compact ? "1px" : "0.5"}
+          py={compact ? "0.25" : "0.5"}
           {...rest}
         >
           <Icon name="warning" size={ICON_SIZES.sm} />
@@ -104,7 +104,7 @@ export function ReadOnlyBadge({
           fontSize={compact ? "2xs" : "xs"}
           fontWeight={700}
           px={compact ? "1.5" : "2"}
-          py={compact ? "1px" : "0.5"}
+          py={compact ? "0.25" : "0.5"}
           {...rest}
         >
           <Icon name="key" size={ICON_SIZES.sm} />
@@ -141,13 +141,13 @@ export function SandboxBadge({
           display="inline-flex"
           alignItems="center"
           gap="1"
-          bg="rgba(139, 92, 246, 0.16)"
-          color="#8b5cf6"
-          borderColor="rgba(139, 92, 246, 0.5)"
+          bg="app.sandbox.subtle"
+          color="app.sandbox.solid"
+          borderColor="app.sandbox.border"
           fontSize={compact ? "2xs" : "xs"}
           fontWeight={700}
           px={compact ? "1.5" : "2"}
-          py={compact ? "1px" : "0.5"}
+          py={compact ? "0.25" : "0.5"}
           {...rest}
         >
           <Icon name="flask" size={ICON_SIZES.sm} />
@@ -249,7 +249,7 @@ export function GroupAvatar({ name, size = 18 }: { name: string; size?: number }
       boxSize={`${size}px`}
       borderRadius="sm"
       flexShrink={0}
-      fontSize="9px"
+      fontSize="3xs"
       fontWeight={700}
       lineHeight="1"
       textTransform="none"

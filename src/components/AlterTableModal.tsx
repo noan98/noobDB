@@ -340,7 +340,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                   p="2"
                   borderWidth="1px"
                   borderColor="app.border"
-                  borderRadius="8px"
+                  borderRadius="lg"
                 >
                   <Flex gap="1.5" align="center">
                     <Input
@@ -391,7 +391,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             </chakra.div>
 
             {unsupported.length > 0 && (
-              <chakra.div display="flex" flexDirection="column" gap="1" p="2" borderWidth="1px" borderColor="app.border" borderRadius="8px">
+              <chakra.div display="flex" flexDirection="column" gap="1" p="2" borderWidth="1px" borderColor="app.border" borderRadius="lg">
                 <Flex align="center" gap="1.5" color="app.textSecondary" fontSize="sm" fontWeight="600">
                   <Icon name="warning" />
                   {t("alterTableUnsupportedTitle")}
@@ -414,7 +414,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                 bg="app.surface"
                 borderWidth="1px"
                 borderColor="app.border"
-                borderRadius="8px"
+                borderRadius="lg"
                 p="2.5"
                 overflowX="auto"
                 whiteSpace="pre"

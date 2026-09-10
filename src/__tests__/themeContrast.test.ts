@@ -108,6 +108,23 @@ const AA_UI = 3;
 /** 高コントラストプリセットの主要前景/背景に課す AAA 閾値 (#558)。 */
 const AAA_TEXT = 7;
 
+/**
+ * `--on-solid` (ベタ塗りの上の文字/アイコン色、#1111) を載せる塗り面の一覧。
+ * 意味色ファミリの `*-solid` と、接続状態の `--status-*` のうち実際にバッジの
+ * 地として使われるものを対象にする (`--status-idle` はドット表示専用で、文字を
+ * 載せないため含めない)。
+ */
+const ON_SOLID_SURFACES = [
+  "info-solid",
+  "success-solid",
+  "warning-solid",
+  "error-solid",
+  "status-error",
+  "status-warning",
+  "status-connected",
+  "status-connecting",
+] as const;
+
 describe("WCAG AA contrast for core tokens (#326)", () => {
   describe.each([
     ["light", light],
@@ -198,6 +215,15 @@ describe("WCAG AA contrast for core tokens (#326)", () => {
       ]) {
         check(vars, c, "bg-elevated", AA_TEXT);
       }
+    });
+
+    it("--on-solid meets AA on every filled semantic/status surface (#1111)", () => {
+      // ベタ塗りバッジ (本番バッジ・未読カウント・再接続中チップ・EXPLAIN の警告印・
+      // セル編集エラーの吹き出し) の文字色。以前は各所で `#fff` を直書きしていたが、
+      // ダーク系テーマでは *-solid / status-* が明色になるため白文字が判読できな
+      // かった。テーマごとに 1 つの --on-solid へ集約し、塗り面すべてで AA を
+      // 満たすことをここで固定する。
+      for (const bg of ON_SOLID_SURFACES) check(vars, "on-solid", bg, AA_TEXT);
     });
 
     it("PK key accent color meets AA on the tree/ER surfaces (#717)", () => {
@@ -293,6 +319,9 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
       check(vars, "status-warning", "bg", AA_UI);
       check(vars, "status-idle", "bg", AA_UI);
       check(vars, "status-info", "bg", AA_UI);
+    });
+    it("--on-solid meets AA on every filled semantic/status surface (#1111)", () => {
+      for (const bg of ON_SOLID_SURFACES) check(vars, "on-solid", bg, AA_TEXT);
     });
     it("semantic family text meets AA on default + subtle surfaces (#476/#664)", () => {
       // info/success/warning/error の 4 段階トークンは #664 でこのプリセットにも

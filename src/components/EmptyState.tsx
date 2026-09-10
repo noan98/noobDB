@@ -73,9 +73,9 @@ export function EmptyState({
       flexDirection="column"
       alignItems={compact ? "flex-start" : "center"}
       justifyContent="center"
-      gap={compact ? "6px" : "2"}
-      px={compact ? "16px" : "20px"}
-      py={compact ? "20px" : "32px"}
+      gap={compact ? "1.5" : "2"}
+      px={compact ? "4" : "5"}
+      py={compact ? "5" : "8"}
       textAlign={compact ? "left" : "center"}
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}

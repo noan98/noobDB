@@ -93,7 +93,7 @@ const thCss: SystemStyleObject = {
   zIndex: 1,
   background: "var(--bg-muted)",
   borderBottom: "1px solid var(--border)",
-  padding: "6px 10px",
+  padding: "var(--space-1-5) var(--space-2-5)",
   textAlign: "left",
   textStyle: "overline",
   color: "var(--text-secondary)",
@@ -101,7 +101,7 @@ const thCss: SystemStyleObject = {
 };
 const tdCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border-subtle, var(--border))",
-  padding: "5px 10px",
+  padding: "var(--space-1-25) var(--space-2-5)",
   fontSize: "var(--text-sm)",
   color: "var(--text)",
   whiteSpace: "nowrap",
@@ -412,7 +412,7 @@ export function UsersPanel({
   }, [selected, newPassword, driver, confirm, t, sessionId, database, toast]);
 
   return (
-    <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="14px">
+    <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
       <chakra.header
         display="flex"
         alignItems="center"
@@ -472,7 +472,7 @@ export function UsersPanel({
           </Tooltip>
 
           {showCreate && (
-            <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "8px" }}>
+            <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)" }}>
               <FieldLabel htmlFor="users-create-name">{t("usersCreateNameLabel")}</FieldLabel>
               <Input
                 id="users-create-name"
@@ -604,7 +604,7 @@ export function UsersPanel({
               </Flex>
 
               {showPassword && (
-                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "8px", maxWidth: "360px" }}>
+                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "360px" }}>
                   <FieldLabel htmlFor="users-new-password">{t("usersPasswordLabel")}</FieldLabel>
                   <Input
                     id="users-new-password"

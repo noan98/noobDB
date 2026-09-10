@@ -206,7 +206,7 @@ export const SnippetList = memo(function SnippetList({
             <TreeLabel>{s.name}</TreeLabel>
             {isFavorite && (
               <Tooltip label={t("snippetFavoriteBadge")}>
-                <TreeIcon color="#eab308" aria-label={t("snippetFavoriteBadge")}>
+                <TreeIcon color="app.favorite" aria-label={t("snippetFavoriteBadge")}>
                   <Icon name="star-filled" />
                 </TreeIcon>
               </Tooltip>
@@ -255,8 +255,8 @@ export const SnippetList = memo(function SnippetList({
                       display="inline-flex"
                       alignItems="center"
                       justifyContent="center"
-                      color={isFavorite ? "#eab308" : "app.textSecondary"}
-                      _hover={{ color: "#eab308" }}
+                      color={isFavorite ? "app.favorite" : "app.textSecondary"}
+                      _hover={{ color: "app.favorite" }}
                       aria-label={isFavorite ? t("snippetMenuUnfavorite") : t("snippetMenuFavorite")}
                       onClick={(e) => {
                         e.stopPropagation();

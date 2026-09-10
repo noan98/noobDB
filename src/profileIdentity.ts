@@ -164,6 +164,36 @@ export function driverIconName(driver: string): "mysql" | "postgres" | "sqlite" 
   }
 }
 
+/**
+ * プロファイルのカラーチップとしてユーザが選べるプリセット (#1111)。
+ *
+ * これらは「テーマのデザイントークン」ではなく**ユーザが選ぶデータ値**で、
+ * `profiles.json` にそのまま保存され `<input type="color">` にも渡るため、
+ * CSS 変数ではなく具体的な hex でなければならない。以前は `ConnectionForm.tsx`
+ * に直書きされていたが、ドライバ色・グループアバター色と同じ「プロファイルの
+ * 視覚的アイデンティティ」の一部なので、このモジュールへ集約して単一ソースに
+ * する (UI 側に色リテラルを残さない)。
+ */
+export const PROFILE_COLOR_PRESETS: readonly string[] = [
+  "#dc2626", // red — production
+  "#ea580c", // orange — staging
+  "#ca8a04", // yellow — sandbox
+  "#16a34a", // green — development
+  "#2563eb", // blue — read replica
+  "#7c3aed", // purple — misc
+];
+
+/** `is_production` を有効にしたときに自動で入るチップ色 (赤)。 */
+export const DEFAULT_PRODUCTION_COLOR = PROFILE_COLOR_PRESETS[0];
+
+/** 色未設定のときに `<input type="color">` へ渡す中立値。ネイティブの色入力は
+ *  `null` や CSS 変数を受け付けないため、具体的な hex が要る。 */
+export const COLOR_INPUT_FALLBACK = "#888888";
+
+/** ローカル横断クエリ用の合成プロファイル (実接続を持たない) のチップ色。
+ *  どのドライバのブランド色とも被らないニュートラルなスレートを使う。 */
+export const LOCAL_PROFILE_CHIP_COLOR = "#64748b";
+
 /** ドライバごとのブランドアクセント色。ライト/ダーク両テーマで視認できる中間色を
  *  選んでいる (暗い純正色だとダークテーマで沈むため)。 */
 export function driverColor(driver: string): string {

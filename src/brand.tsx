@@ -123,7 +123,7 @@ export function Wordmark({ twoTone = true, ...rest }: WordmarkProps) {
   return (
     <chakra.span
       fontWeight="700"
-      letterSpacing="-0.01em"
+      letterSpacing="tight"
       lineHeight="1"
       whiteSpace="nowrap"
       css={{ userSelect: "none" }}

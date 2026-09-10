@@ -69,11 +69,11 @@ function scoreBadgeCss(band: ScoreBand): SystemStyleObject {
   const base: SystemStyleObject = {
     display: "inline-flex",
     alignItems: "center",
-    gap: "5px",
+    gap: "var(--space-1-25)",
     fontSize: "var(--text-sm)",
     fontWeight: 700,
     lineHeight: 1,
-    padding: "3px 9px",
+    padding: "var(--space-0-75) var(--space-2-5)",
     borderRadius: "var(--radius-pill)",
     border: "1px solid",
     cursor: "default",
@@ -124,7 +124,7 @@ const treeCss: SystemStyleObject = {
   flex: 1,
   overflow: "auto",
   minHeight: 0,
-  padding: "4px 0",
+  padding: "var(--space-1) 0",
   fontFamily: "var(--font-mono)",
   fontSize: "var(--text-sm)",
 };
@@ -135,7 +135,7 @@ function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
     display: "flex",
     alignItems: "center",
     gap: "1.5",
-    padding: "3px 10px 3px 0",
+    padding: "var(--space-0-75) var(--space-2-5) var(--space-0-75) 0",
     cursor: "pointer",
     whiteSpace: "nowrap",
     borderLeft: "2px solid transparent",
@@ -203,7 +203,7 @@ const nodeBadgesCss: SystemStyleObject = {
 const badgeBaseCss: SystemStyleObject = {
   fontSize: "var(--text-2xs)",
   lineHeight: 1,
-  padding: "2px 5px",
+  padding: "var(--space-0-5) var(--space-1-25)",
   borderRadius: "var(--radius-sm)",
   background: "var(--bg-muted)",
   border: "1px solid var(--border)",
@@ -283,7 +283,7 @@ function hintBadgeCss(sev: "caution" | "warning"): SystemStyleObject {
 
 const hintsListCss: SystemStyleObject = {
   listStyle: "none",
-  margin: "0 0 10px",
+  margin: "0 0 var(--space-2-5)",
   padding: 0,
   display: "flex",
   flexDirection: "column",
@@ -296,8 +296,8 @@ function hintItemCss(sev: HintSeverity): SystemStyleObject {
   return {
     display: "flex",
     flexDirection: "column",
-    gap: "3px",
-    padding: "7px 9px",
+    gap: "var(--space-0-75)",
+    padding: "var(--space-1-75) var(--space-2-5)",
     borderRadius: "var(--radius-sm)",
     border: "1px solid var(--border)",
     borderLeftWidth: "3px",
@@ -362,7 +362,7 @@ const detailTableCss: SystemStyleObject = {
   "& th, & td": {
     textAlign: "left",
     verticalAlign: "top",
-    padding: "3px 6px",
+    padding: "var(--space-0-75) var(--space-1-5)",
     borderBottom: "1px solid var(--border-subtle)",
     wordBreak: "break-word",
   },

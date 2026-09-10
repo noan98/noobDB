@@ -49,7 +49,7 @@ const sidesCss: SystemStyleObject = {
   display: "flex",
   alignItems: "flex-end",
   gap: "3",
-  margin: "16px 0",
+  margin: "var(--space-4) 0",
   flexWrap: "wrap",
 };
 const sideCss: SystemStyleObject = {
@@ -68,25 +68,25 @@ const sideErrorCss: SystemStyleObject = {
   fontSize: "var(--text-xs)",
   color: semanticColorVar("danger", "text"),
 };
-const actionsCss: SystemStyleObject = { margin: "12px 0" };
+const actionsCss: SystemStyleObject = { margin: "var(--space-3) 0" };
 // 変数名は "warning" だが実際は接続/比較エラー文言に使われるため danger 役割へ
 // マッピングする (#1009)。
 const warningCss: SystemStyleObject = {
   color: semanticColorVar("danger", "text"),
   fontSize: "var(--text-sm)",
-  margin: "8px 0",
+  margin: "var(--space-2) 0",
 };
 const emptyCss: SystemStyleObject = {
   color: "var(--text-muted)",
   fontSize: "var(--text-sm)",
-  margin: "16px 0",
+  margin: "var(--space-4) 0",
 };
 const summaryCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
   gap: "2",
   flexWrap: "wrap",
-  margin: "16px 0 10px",
+  margin: "var(--space-4) 0 var(--space-2-5)",
 };
 const hideSameCss: SystemStyleObject = {
   display: "inline-flex",
@@ -145,7 +145,7 @@ const colcountCss: SystemStyleObject = {
 const columnsCss: SystemStyleObject = {
   listStyle: "none",
   margin: 0,
-  padding: "0 12px 10px 12px",
+  padding: "0 var(--space-3) var(--space-2-5) var(--space-3)",
   display: "flex",
   flexDirection: "column",
   gap: "1",
@@ -157,7 +157,7 @@ const columnCss: SystemStyleObject = {
   alignItems: "baseline",
   gap: "2",
   fontSize: "var(--text-sm)",
-  padding: "3px 0 3px 8px",
+  padding: "var(--space-0-75) 0 var(--space-0-75) var(--space-2)",
   borderTop: "1px solid var(--border-subtle)",
   borderLeftWidth: "3px",
 };
@@ -185,13 +185,13 @@ const syncCss: SystemStyleObject = {
   paddingTop: "4",
   borderTop: "1px solid var(--border)",
 };
-const syncTitleCss: SystemStyleObject = { margin: "0 0 4px", fontSize: "var(--text-md)" };
+const syncTitleCss: SystemStyleObject = { margin: "0 0 var(--space-1)", fontSize: "var(--text-md)" };
 const syncControlsCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
   gap: "3",
   flexWrap: "wrap",
-  margin: "10px 0",
+  margin: "var(--space-2-5) 0",
 };
 const destructiveCss: SystemStyleObject = {
   display: "inline-flex",
@@ -204,11 +204,11 @@ const destructiveCss: SystemStyleObject = {
 const successCss: SystemStyleObject = {
   color: semanticColorVar("success", "text"),
   fontSize: "var(--text-sm)",
-  margin: "8px 0",
+  margin: "var(--space-2) 0",
 };
 const statementsCss: SystemStyleObject = {
   listStyle: "none",
-  margin: "8px 0",
+  margin: "var(--space-2) 0",
   padding: 0,
   display: "flex",
   flexDirection: "column",
@@ -236,11 +236,11 @@ const sqlCss: SystemStyleObject = {
 const backupCss: SystemStyleObject = {
   fontSize: "var(--text-sm)",
   color: semanticColorVar("warning", "text"),
-  margin: "10px 0",
+  margin: "var(--space-2-5) 0",
 };
 const planWarningsCss: SystemStyleObject = {
-  margin: "10px 0 0",
-  paddingLeft: "18px",
+  margin: "var(--space-2-5) 0 0",
+  paddingLeft: "var(--space-4-5)",
   fontSize: "var(--text-sm)",
   color: "var(--text-muted)",
 };
@@ -258,7 +258,7 @@ const limitCss: SystemStyleObject = {
 function chipCss(status: DiffStatus): SystemStyleObject {
   return {
     textStyle: "overline",
-    padding: "3px 10px",
+    padding: "var(--space-0-75) var(--space-2-5)",
     borderRadius: "var(--radius-pill)",
     border: "1px solid var(--border)",
     background: "var(--bg-muted)",
@@ -270,7 +270,7 @@ function chipCss(status: DiffStatus): SystemStyleObject {
 function badgeCss(status: DiffStatus): SystemStyleObject {
   return {
     textStyle: "overline",
-    padding: "1px 8px",
+    padding: "var(--space-0-25) var(--space-2)",
     borderRadius: "var(--radius-pill)",
     whiteSpace: "nowrap",
     border: "1px solid transparent",
@@ -305,7 +305,7 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
 function kindCss(kind: SyncKind): SystemStyleObject {
   return {
     textStyle: "overline",
-    padding: "1px 8px",
+    padding: "var(--space-0-25) var(--space-2)",
     borderRadius: "var(--radius-pill)",
     border: "1px solid var(--border)",
     ...kindColors(kind),
@@ -797,7 +797,7 @@ export function SchemaCompareView({
       py="5" px="6"
       display="flex"
       flexDirection="column"
-      gap="18px"
+      gap="4.5"
     >
       <chakra.header
         display="flex"

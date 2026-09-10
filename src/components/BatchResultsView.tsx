@@ -76,7 +76,7 @@ function StatementCard({
         ? semanticColorVar("danger", "solid")
         : "var(--text-muted)";
   return (
-    <chakra.div borderWidth="1px" borderColor="app.border" borderRadius="8px" overflow="hidden">
+    <chakra.div borderWidth="1px" borderColor="app.border" borderRadius="lg" overflow="hidden">
       <Flex align="center" gap="2" px="2.5" py="1.5" bg="app.surface" borderBottomWidth="1px" borderBottomColor="app.border">
         <chakra.span fontSize="xs" color="app.textMuted" fontFamily="mono">#{index}</chakra.span>
         <chakra.span w="9px" h="9px" borderRadius="full" bg={tone} flexShrink={0} />
@@ -126,7 +126,7 @@ function MiniTable({ columns, rows }: { columns: string[]; rows: CellValue[][] }
         {rows.map((row, ri) => (
           <tr key={ri}>
             {columns.map((_, ci) => (
-              <chakra.td key={ci} px="2" py="3px" borderBottomWidth="1px" borderColor="app.border" fontFamily="mono" color="app.text" whiteSpace="nowrap">
+              <chakra.td key={ci} px="2" py="0.75" borderBottomWidth="1px" borderColor="app.border" fontFamily="mono" color="app.text" whiteSpace="nowrap">
                 {cellText(row[ci])}
               </chakra.td>
             ))}

@@ -130,7 +130,7 @@ function ActivityRow({
       <chakra.span
         display="inline-flex"
         flexShrink={0}
-        mt="2px"
+        mt="0.5"
         color={semanticColorToken(role, "text")}
         aria-hidden
       >
@@ -458,16 +458,16 @@ export function ActivityCenter() {
                 right="7px"
                 minWidth="14px"
                 height="14px"
-                px="3px"
+                px="0.75"
                 display="inline-flex"
                 alignItems="center"
                 justifyContent="center"
-                fontSize="9px"
+                fontSize="3xs"
                 fontWeight={700}
                 lineHeight={1}
-                borderRadius="7px"
+                borderRadius="pill"
                 bg={semanticColorToken("danger", "solid")}
-                color="#fff"
+                color="app.onSolid"
                 aria-hidden
               >
                 {unread > 9 ? "9+" : unread}

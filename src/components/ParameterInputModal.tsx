@@ -55,7 +55,7 @@ function writeCache(next: Cache): void {
 }
 
 const FIELD_CSS: SystemStyleObject = {
-  padding: "5px 8px",
+  padding: "var(--space-1-25) var(--space-2)",
   fontSize: "var(--text-sm)",
   fontFamily: "var(--font-mono)",
   color: "var(--text)",
@@ -199,7 +199,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
           })}
         </chakra.div>
 
-        <chakra.div display="flex" flexDirection="column" gap="3px">
+        <chakra.div display="flex" flexDirection="column" gap="0.75">
           <chakra.span textStyle="overline">
             {t("parameterInputPreviewLabel")}
           </chakra.span>

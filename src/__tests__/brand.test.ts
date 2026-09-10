@@ -9,6 +9,7 @@ import {
   BRAND_VIOLET,
   BRAND_GRADIENT_STOPS,
 } from "../brand";
+import { SANDBOX_BAND_COLOR } from "../sandbox";
 
 /**
  * ブランドカラー (#619) の整合性を固定する。色値は 3 か所に出る:
@@ -35,6 +36,15 @@ describe("brand colors (#619)", () => {
     expect(brandCss).toContain(`--brand-blue: ${BRAND_BLUE}`);
     expect(brandCss).toContain(`--brand-indigo: ${BRAND_INDIGO}`);
     expect(brandCss).toContain(`--brand-violet: ${BRAND_VIOLET}`);
+  });
+
+  it("sandbox band color stays in sync with the brand violet (#1111)", () => {
+    // サンドボックス (ローカルコピー) の帯色は brand violet と同一色相で運用する。
+    // `sandbox.ts` の定数 (TitleBar の帯がインラインスタイルで参照) と App.css の
+    // `--sandbox-solid` (ProfileBadge が Chakra トークン経由で参照) が別々の値に
+    // ドリフトすると、同じ「サンドボックス」を指す UI が 2 色に割れる。
+    expect(SANDBOX_BAND_COLOR).toBe(BRAND_VIOLET);
+    expect(brandCss).toContain("--sandbox-solid: var(--brand-violet)");
   });
 
   it("matches the favicon gradient stops", () => {

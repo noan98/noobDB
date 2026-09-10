@@ -129,8 +129,8 @@ function HighlightText({ text, query }: { text: string; query: string }) {
       <chakra.mark
         bg="color-mix(in srgb, var(--accent) 35%, transparent)"
         color="inherit"
-        borderRadius="2px"
-        px="1px"
+        borderRadius="xs"
+        px="0.25"
       >
         {text.slice(idx, idx + query.length)}
       </chakra.mark>
@@ -1356,7 +1356,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         _hover={{ bg: "app.rowHover" }}
       >
         <TreeChevron aria-hidden style={{ visibility: "hidden" }}>▸</TreeChevron>
-        <TreeIcon color={star ? "#eab308" : "app.textSecondary"} aria-hidden>
+        <TreeIcon color={star ? "app.favorite" : "app.textSecondary"} aria-hidden>
           <Icon name={star ? "star-filled" : "clock"} />
         </TreeIcon>
         <TreeLabel fontWeight={400}>
@@ -1532,10 +1532,10 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             if (el) profileRowRefs.current.set(p.id, el);
             else profileRowRefs.current.delete(p.id);
           }}
-          pt="5px"
-          pb="5px"
+          pt="1.25"
+          pb="1.25"
           pr="2.5"
-          pl="5px"
+          pl="1.25"
           // プロファイルカラー / 本番 / アクティブを左端のアクセントバーで示す。
           // 識別性を上げるため 4px に。全行で同一幅 (色なしは transparent) にして
           // 行頭テキストの揃えを保つ。
@@ -1582,7 +1582,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
             display="flex"
             flexDirection="column"
             justifyContent="center"
-            gap="1px"
+            gap="0.25"
             flex="1"
             minWidth={0}
             lineHeight="1.25"
@@ -1692,7 +1692,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                       {...treeTooltipProps(db)}
                     >
                       <TreeChevron transform={dbOpen ? "rotate(90deg)" : undefined} aria-hidden>▸</TreeChevron>
-                      <TreeIcon color="#0ea5e9" aria-hidden><Icon name="database" /></TreeIcon>
+                      <TreeIcon color="app.dbAccent" aria-hidden><Icon name="database" /></TreeIcon>
                       <TreeLabel fontWeight={400}><HighlightText text={db} query={q} /></TreeLabel>
                     </TreeRow>
                     <TreeCollapse open={dbOpen}>
@@ -1803,8 +1803,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                         return (
                                           <TreeRow
                                             key={col.name}
-                                            pt="3px"
-                                            pb="3px"
+                                            pt="0.75"
+                                            pb="0.75"
                                             cursor="default"
                                             fontSize="sm"
                                             role="treeitem"
@@ -1843,8 +1843,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                         {tableIndexes[tKey].map((idx) => (
                                           <TreeRow
                                             key={`idx:${idx.name}`}
-                                            pt="3px"
-                                            pb="3px"
+                                            pt="0.75"
+                                            pb="0.75"
                                             cursor="default"
                                             fontSize="sm"
                                             role="treeitem"
@@ -1902,7 +1902,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         <Input
           ref={filterInputRef}
           type="search"
-          py="5px"
+          py="1.25"
           fontSize="sm"
           placeholder={t("listSearchPlaceholder")}
           value={filter}
