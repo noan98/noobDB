@@ -49,11 +49,11 @@ const HelpFeatureHead = chakra("div", {
 });
 
 const HelpFeatureDesc = chakra("p", {
-  base: { margin: "8px 0 0", fontSize: "sm", lineHeight: "1.55", color: "app.text" },
+  base: { margin: "var(--space-2) 0 0", fontSize: "sm", lineHeight: "var(--leading-normal)", color: "app.text" },
 });
 
 const HelpUsageTitle = chakra("p", {
-  base: { margin: "10px 0 2px", textStyle: "subheading" },
+  base: { margin: "var(--space-2-5) 0 var(--space-0-5)", textStyle: "subheading" },
 });
 
 const HelpSteps = chakra("ol", {
@@ -61,15 +61,15 @@ const HelpSteps = chakra("ol", {
     margin: 0,
     pl: "5",
     fontSize: "sm",
-    lineHeight: "1.55",
+    lineHeight: "var(--leading-normal)",
     color: "app.text",
-    "& li": { margin: "2px 0" },
+    "& li": { margin: "var(--space-0-5) 0" },
   },
 });
 
 const HelpNote = chakra("p", {
   base: {
-    margin: "10px 0 0",
+    margin: "var(--space-2-5) 0 0",
     fontSize: "sm",
     lineHeight: "1.5",
     color: "app.textMuted",
@@ -200,7 +200,7 @@ function DbImpactBadge({ impact }: { impact: Impact }) {
       className="help-impact-badge"
       display="inline-flex"
       alignItems="center"
-      gap="5px"
+      gap="1.25"
       px="2"
       py="0.5"
       borderRadius="pill"
@@ -229,7 +229,7 @@ export function HelpView({ onClose }: { onClose: () => void }) {
         {t("helpTitle")}
       </ModalHeader>
       <ModalBody>
-        <chakra.div display="flex" flexDirection="column" gap="18px">
+        <chakra.div display="flex" flexDirection="column" gap="4.5">
       <SettingsHelp fontSize="md" lineHeight="1.5">{t("helpIntro")}</SettingsHelp>
 
       {SECTIONS.map((section) => (

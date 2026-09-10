@@ -235,7 +235,7 @@ export const GRID_CSS: SystemStyleObject = {
     display: "inline-flex",
     flexDirection: "column",
     lineHeight: 1.2,
-    gap: "1px",
+    gap: "var(--space-0-25)",
   },
   // 型アイコン + 名前を横並びにする行。
   "& th .th-label-row": {
@@ -253,7 +253,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& th .th-name": {
     fontWeight: 600,
     color: "var(--text)",
-    letterSpacing: "0.01em",
+    letterSpacing: "var(--tracking-wide)",
     overflow: "hidden",
     textOverflow: "ellipsis",
   },
@@ -263,12 +263,12 @@ export const GRID_CSS: SystemStyleObject = {
     fontFamily: "var(--font-mono)",
     color: "var(--text-muted)",
     textTransform: "lowercase",
-    letterSpacing: "0.01em",
+    letterSpacing: "var(--tracking-wide)",
     opacity: 0.85,
   },
   "& th .th-fk-badge": {
     display: "inline-block",
-    padding: "0 4px",
+    padding: "0 var(--space-1)",
     fontSize: "var(--text-2xs)",
     fontWeight: 700,
     fontFamily: "var(--font-sans, sans-serif)",
@@ -339,7 +339,7 @@ export const GRID_CSS: SystemStyleObject = {
   // ライト/ダーク両テーマで一貫する。
   "& .cell-null": {
     display: "inline-block",
-    padding: "0 5px",
+    padding: "0 var(--space-1-25)",
     fontSize: "var(--text-2xs)",
     fontWeight: 600,
     fontStyle: "normal",
@@ -355,7 +355,7 @@ export const GRID_CSS: SystemStyleObject = {
   // 「NULL ではないが空」であることを区別できるようにする。
   "& .cell-empty": {
     display: "inline-block",
-    padding: "0 5px",
+    padding: "0 var(--space-1-25)",
     fontFamily: "var(--font-mono)",
     fontSize: "var(--text-2xs)",
     fontWeight: 600,
@@ -404,7 +404,7 @@ export const GRID_CSS: SystemStyleObject = {
   // --cell-bool-* トークン参照なのでライト/ダーク両テーマで一貫する。
   "& .cell-bool.cell-bool-badge": {
     display: "inline-block",
-    padding: "0 6px",
+    padding: "0 var(--space-1-5)",
     fontSize: "var(--text-2xs)",
     lineHeight: 1.5,
     letterSpacing: "var(--tracking-wider)",
@@ -426,14 +426,14 @@ export const GRID_CSS: SystemStyleObject = {
   "& .cell-enum-badge": {
     display: "inline-block",
     maxWidth: "100%",
-    padding: "0 6px",
+    padding: "0 var(--space-1-5)",
     overflow: "hidden",
     textOverflow: "ellipsis",
     verticalAlign: "bottom",
     fontSize: "var(--text-2xs)",
     fontWeight: 600,
     lineHeight: 1.6,
-    letterSpacing: "0.02em",
+    letterSpacing: "var(--tracking-wide)",
     borderRadius: "var(--radius-sm)",
     color: "hsl(var(--enum-hue, 0) var(--cell-enum-s) var(--cell-enum-l))",
     background: "hsl(var(--enum-hue, 0) var(--cell-enum-s) var(--cell-enum-l) / 0.12)",
@@ -445,7 +445,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& .cell-binary-tag": {
     display: "inline-block",
     marginRight: "1.5",
-    padding: "0 5px",
+    padding: "0 var(--space-1-25)",
     fontSize: "var(--text-2xs)",
     fontWeight: 600,
     fontStyle: "normal",
@@ -515,13 +515,13 @@ export const GRID_CSS: SystemStyleObject = {
     minWidth: "14px",
     height: "14px",
     marginLeft: "0.5",
-    padding: "0 3px",
-    fontSize: "9px",
+    padding: "0 var(--space-0-75)",
+    fontSize: "var(--text-3xs)",
     fontWeight: 700,
     lineHeight: 1,
     color: "var(--bg)",
     background: "var(--accent)",
-    borderRadius: "7px",
+    borderRadius: "var(--radius-pill)",
   },
   // 列ヘッダのフィルタアイコン。クリックで条件ポップアップ (ColumnFilterMenu) を開く。
   // 常時表示だと全列にアイコンと区切り線が並んでヘッダがごちゃつくため、ドラッグ
@@ -533,7 +533,7 @@ export const GRID_CSS: SystemStyleObject = {
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    padding: "0 7px",
+    padding: "0 var(--space-1-75)",
     marginRight: "1",
     background: "transparent",
     border: "none",
@@ -609,7 +609,7 @@ export const GRID_CSS: SystemStyleObject = {
     display: "flex",
     alignItems: "baseline",
     justifyContent: "space-between",
-    gap: "var(--space-2, 8px)",
+    gap: "var(--space-2)",
   },
   "& tfoot .grid-footer-fn": { textStyle: "overline" },
   "& tfoot .grid-footer-val": { fontVariantNumeric: "tabular-nums", fontWeight: 600 },
@@ -629,7 +629,7 @@ export const GRID_CSS: SystemStyleObject = {
   "& td.grid-skeleton-cell > div": {
     ...shimmerContainerCss,
     height: "10px",
-    borderRadius: "2px",
+    borderRadius: "var(--radius-xs)",
   },
   "& td.grid-skeleton-cell > div::after": shimmerAfterCss,
   "& .grid-filter-summary": {
@@ -811,8 +811,8 @@ export const GRID_CSS: SystemStyleObject = {
   "& .cell-edit-input": {
     width: "100%",
     boxSizing: "border-box",
-    margin: "-3px -6px",
-    padding: "3px 6px",
+    margin: "calc(var(--space-0-75) * -1) calc(var(--space-1-5) * -1)",
+    padding: "var(--space-0-75) var(--space-1-5)",
     fontFamily: "inherit",
     fontSize: "inherit",
     color: "var(--text)",
@@ -832,10 +832,10 @@ export const GRID_CSS: SystemStyleObject = {
     left: "-6px",
     zIndex: 5,
     maxWidth: "280px",
-    padding: "3px 7px",
+    padding: "var(--space-0-75) var(--space-1-75)",
     fontSize: "var(--text-xs)",
     fontWeight: 500,
-    color: "#fff",
+    color: "var(--on-solid)",
     background: semanticColorVar("danger", "solid"),
     borderRadius: "var(--radius-sm)",
     boxShadow: "var(--shadow-md, 0 2px 6px rgb(0 0 0 / 0.3))",
@@ -1767,7 +1767,7 @@ function ColumnFilterMenu({
         </chakra.div>
       </Tooltip>
 
-      <chakra.label display="flex" flexDirection="column" gap="3px">
+      <chakra.label display="flex" flexDirection="column" gap="0.75">
         <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
           {t("gridFilterOperatorLabel")}
         </chakra.span>
@@ -1821,7 +1821,7 @@ function ColumnFilterMenu({
         />
       )}
 
-      <chakra.label display="flex" flexDirection="column" gap="3px">
+      <chakra.label display="flex" flexDirection="column" gap="0.75">
         <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
           {t("gridFilterNullLabel")}
         </chakra.span>
@@ -1920,7 +1920,7 @@ function ColumnFilterMenu({
       )}
 
       {formatSupported && (
-        <chakra.label display="flex" flexDirection="column" gap="3px">
+        <chakra.label display="flex" flexDirection="column" gap="0.75">
           <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
             {t("gridCondFormatLabel")}
           </chakra.span>
@@ -1952,7 +1952,7 @@ function ColumnFilterMenu({
       )}
 
       {onPin && (
-        <chakra.label display="flex" flexDirection="column" gap="3px">
+        <chakra.label display="flex" flexDirection="column" gap="0.75">
           <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
             {t("gridPinLabel")}
           </chakra.span>
@@ -7081,7 +7081,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
               flexWrap="wrap"
               gap="1.5"
               px="2.5"
-              py="5px"
+              py="1.25"
               fontSize="xs"
               color="app.textMuted"
               borderTop="1px solid"

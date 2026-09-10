@@ -61,9 +61,9 @@ const cardBaseCss: SystemStyleObject = {
   height: "100%",
   display: "flex",
   flexDirection: "column",
-  gap: "3px",
+  gap: "var(--space-0-75)",
   justifyContent: "center",
-  padding: "8px 10px",
+  padding: "var(--space-2) var(--space-2-5)",
   border: "1px solid var(--border)",
   borderRadius: "var(--radius-md)",
   boxShadow: "var(--shadow-sm)",
@@ -83,7 +83,7 @@ const labelCss: SystemStyleObject = {
 const metaCss: SystemStyleObject = {
   display: "flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "var(--space-1-5)",
   fontSize: "var(--text-2xs)",
   fontVariantNumeric: "tabular-nums",
 };
@@ -112,14 +112,14 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
           {data.worstHint && data.worstHint !== "info" && (
             <chakra.span
               fontWeight={700}
-              px="4px"
+              px="1"
               borderRadius="var(--radius-sm)"
               background={
                 data.worstHint === "warning"
                   ? semanticColorVar("danger", "solid")
                   : semanticColorVar("warning", "solid")
               }
-              color="#fff"
+              color="app.onSolid"
             >
               !
             </chakra.span>

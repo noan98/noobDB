@@ -329,7 +329,7 @@ function CommandRow({
             <Icon name={item.icon} size={ICON_SIZES.md} />
           </Box>
         )}
-        <Flex direction="column" minW={0} flex="1" gap="1px">
+        <Flex direction="column" minW={0} flex="1" gap="0.25">
           <chakra.span
             fontSize="sm"
             overflow="hidden"
@@ -381,7 +381,7 @@ function Badge({ children }: { children: ReactNode }) {
     <chakra.span
       textStyle="overline"
       px="1.5"
-      py="1px"
+      py="0.25"
       borderRadius="pill"
       borderWidth="1px"
       borderColor="app.border"

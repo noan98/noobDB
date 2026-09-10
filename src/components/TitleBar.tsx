@@ -89,7 +89,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
         <chakra.span
           fontSize="var(--text-sm)"
           fontWeight="600"
-          letterSpacing="0.02em"
+          letterSpacing="wide"
           color="app.textSecondary"
           flexShrink={0}
         >
@@ -129,14 +129,14 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
                 <chakra.span
                   display="inline-flex"
                   alignItems="center"
-                  gap="3px"
+                  gap="0.75"
                   flexShrink={0}
                   textStyle="overline"
                   px="1.5"
-                  py="1px"
+                  py="0.25"
                   borderRadius="pill"
                   bg="app.status.warning"
-                  color="#fff"
+                  color="app.onSolid"
                 >
                   <Icon name="refresh" size={ICON_SIZES.sm} />
                   {t("statusReconnecting")}
@@ -192,7 +192,7 @@ export function TitleBar({ connection }: { connection?: TitleBarConnection | nul
           onClick={() => appWindow.close()}
           title={t("titleBarClose")}
           aria-label={t("titleBarClose")}
-          _hover={{ bg: "#e81123", color: "#ffffff" }}
+          _hover={{ bg: "app.titlebarCloseHover.bg", color: "app.titlebarCloseHover.fg" }}
         >
           <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden>
             <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" strokeWidth="1" />

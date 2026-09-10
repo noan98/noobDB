@@ -397,7 +397,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                     checked={scope === sc}
                     onChange={() => setScope(sc)}
                     disabled={isSaving}
-                    mt="3px"
+                    mt="0.75"
                   />
                   <chakra.span display="flex" flexDirection="column">
                     <chakra.span fontSize="md">

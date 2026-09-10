@@ -41,7 +41,7 @@ const NavButton = chakra("button", {
     minW: "calc(28px * var(--font-scale))",
     minH: CONTROL_H,
     px: "1.5",
-    borderRadius: "6px",
+    borderRadius: "var(--radius-md)",
     borderWidth: 0,
     color: "app.text",
     bg: "transparent",
@@ -83,7 +83,7 @@ export function PaginationBar({
       align="center"
       gap="2"
       px="2.5"
-      py="5px"
+      py="1.25"
       borderTopWidth="1px"
       borderTopColor="app.border"
       bg="app.surface"
@@ -160,7 +160,7 @@ export function PaginationBar({
           px="1.5"
           borderWidth="1px"
           borderColor="app.border"
-          borderRadius="6px"
+          borderRadius="md"
           bg="app.surface"
           color="app.text"
         />
@@ -180,7 +180,7 @@ export function PaginationBar({
           pr="5"
           borderWidth="1px"
           borderColor="app.border"
-          borderRadius="6px"
+          borderRadius="md"
           bg="app.surface"
           color="app.text"
         >

@@ -132,7 +132,7 @@ const selectedColsCss: SystemStyleObject = {
   width: "max-content",
   minWidth: "100%",
   "& td": {
-    padding: "4px 6px 4px 10px",
+    padding: "var(--space-1) var(--space-1-5) var(--space-1) var(--space-2-5)",
     borderRight: "1px solid var(--border)",
     fontSize: "var(--text-sm)",
     color: "var(--text)",
@@ -143,7 +143,7 @@ const selectedColsCss: SystemStyleObject = {
 };
 const selectedColNameCss: SystemStyleObject = { marginRight: "1.5" };
 const chipRemoveCss: SystemStyleObject = {
-  padding: "0 6px",
+  padding: "0 var(--space-1-5)",
   fontSize: "var(--text-xs)",
   lineHeight: 1.4,
   border: "1px solid transparent",
@@ -154,7 +154,7 @@ const chipRemoveCss: SystemStyleObject = {
   _hover: { color: "var(--text-error)", borderColor: "var(--text-error)" },
 };
 const smallBtnCss: SystemStyleObject = {
-  padding: "3px 10px",
+  padding: "var(--space-0-75) var(--space-2-5)",
   fontSize: "var(--text-xs)",
   borderRadius: "var(--radius-sm)",
 };
@@ -255,7 +255,7 @@ const previewCss: SystemStyleObject = {
   },
   "& .cm-editor.cm-focused": { outline: "none" },
   "& .cm-scroller": { fontFamily: "inherit", overflow: "auto" },
-  "& .cm-content": { padding: "10px 40px 10px 12px" },
+  "& .cm-content": { padding: "var(--space-2-5) var(--space-10) var(--space-2-5) var(--space-3)" },
   "& .cm-line": { padding: 0 },
 };
 
@@ -1009,7 +1009,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                       </chakra.table>
                     </Box>
                   ) : (
-                    <chakra.span color="app.textMuted" fontSize="12px">
+                    <chakra.span color="app.textMuted" fontSize="sm">
                       {tableColumns.length === 0 && !loadingColumns
                         ? t("qbPickTableFirst")
                         : t("qbNoSelectedColumns")}
@@ -1238,7 +1238,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                 </chakra.button>
               </Box>
               {orderBy.length === 0 ? (
-                <chakra.span color="app.textMuted" fontSize="12px">
+                <chakra.span color="app.textMuted" fontSize="sm">
                   {t("qbNoOrderBy")}
                 </chakra.span>
               ) : (

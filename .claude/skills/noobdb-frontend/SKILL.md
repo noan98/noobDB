@@ -25,6 +25,10 @@ React 19 + TypeScript + Vite + Chakra UI。ルートは `App.tsx`、Chakra シ�
   | 状態色 | `semanticColors.ts` の `SemanticRole` | 個別の色定義 |
   | ショートカット | `shortcuts.ts` (単一ソース) | 個別のキーハンドラ定義 |
 
+- **px 直値・色リテラルを書かない。** 余白 (`gap`/`p*`/`m*`)・`fontSize`・
+  `borderRadius`・色は `App.css` の CSS 変数 → `theme.ts` のトークン経由で参照する。
+  運用ルールと利用可能なトークン一覧は **`.claude/rules/ui-design-system.md`**
+  (Epic #1110 Phase 1)。逸脱は `__tests__/designTokens.test.ts` が CI で落とす。
 - **サイズ・ストロークはトークンのみ** (`ICON_SIZES` / `ICON_STROKE`)。ピクセル直値は
   使いません。
 - **DB への新しい書き込み経路を増やさない。** クイックセット・貼り付け一括編集などは
@@ -37,6 +41,7 @@ React 19 + TypeScript + Vite + Chakra UI。ルートは `App.tsx`、Chakra シ�
 | `references/components.md` | `App.tsx` / `api/tauri.ts` / 接続・クエリ系と発展機能のコンポーネント一覧 |
 | `references/grid-and-cells.md` | セル整形、クイックフィルタ/セット、貼り付け一括編集、選択サマリ、集計フッター、NULL 率ミニバー、アクティビティセンター |
 | `references/ui-foundation.md` | アイコン、ツールチップ、コンテキストメニュー、配色スケール、基盤モジュール |
+| `.claude/rules/ui-design-system.md` | Design Token の一覧と UI 変更時の遵守ルール (#1110 Phase 1) |
 | `references/settings-and-editor.md` | `settings.ts` の設定項目、`dangerousSql.ts`、`sqlLint.ts`、`i18n.ts` |
 
 安全網の判定ロジック (`dangerousSql.ts` の `isReadOnlySql` / `maskLiterals`) は

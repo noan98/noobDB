@@ -31,6 +31,7 @@
      "font size" setting; every --text-* below multiplies through it so the
      whole interface scales uniformly. */
   --font-scale: 1;
+  --text-3xs: calc(9px * var(--font-scale));
   --text-2xs: calc(10px * var(--font-scale));
   --text-xs: calc(11px * var(--font-scale));
   --text-sm: calc(12px * var(--font-scale));
@@ -69,18 +70,32 @@
      同じ係数で乗算することで、UI 全体が一様にスケールしてレイアウトの均衡を保つ。
      theme.ts の Chakra spacing トークン (`spacing.0.5`〜`6`) がこれらを参照するため、
      `gap`/`p`/`m` などトークン経由の余白も自動的に追従する。
-     ハーフステップ (2/6/10/14px) は密度の高い UI (ツールバー・グリッド・モーダル
-     フッター等) で多用される中間値で、px 直書きを排除するためスケールに含める。 */
+     ハーフステップ (2/6/10/14/18/22px) とクォーターステップ (1/3/5/7px) は、
+     密度の高いデスクトップ UI (ツールバー・ツリー行・グリッド・バッジ・モーダル
+     フッター等) で実際に多用される中間値で、px 直書きを排除するためスケールに
+     含める。**新しい余白は必ずこのスケールから選ぶ** — px 直値は --font-scale に
+     追従しないため、フォント拡大設定でレイアウトが崩れる (#818)。逸脱は
+     `__tests__/designTokens.test.ts` が検出する。 */
+  --space-0-25: calc(1px * var(--font-scale));
   --space-0-5: calc(2px * var(--font-scale));
+  --space-0-75: calc(3px * var(--font-scale));
   --space-1: calc(4px * var(--font-scale));
+  --space-1-25: calc(5px * var(--font-scale));
   --space-1-5: calc(6px * var(--font-scale));
+  --space-1-75: calc(7px * var(--font-scale));
   --space-2: calc(8px * var(--font-scale));
   --space-2-5: calc(10px * var(--font-scale));
   --space-3: calc(12px * var(--font-scale));
   --space-3-5: calc(14px * var(--font-scale));
   --space-4: calc(16px * var(--font-scale));
+  --space-4-5: calc(18px * var(--font-scale));
   --space-5: calc(20px * var(--font-scale));
+  --space-5-5: calc(22px * var(--font-scale));
   --space-6: calc(24px * var(--font-scale));
+  --space-7: calc(28px * var(--font-scale));
+  --space-8: calc(32px * var(--font-scale));
+  --space-10: calc(40px * var(--font-scale));
+  --space-12: calc(48px * var(--font-scale));
 
   /* Display density (#410, #620). An axis independent of the font scale: it
      tunes the result grid's cell padding / row height so the same font can be
@@ -120,9 +135,11 @@
   --field-py: calc(8px * var(--font-scale) * var(--density-control-scale));
 
   /* Radius scale */
+  --radius-xs: 2px;
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
+  --radius-xl: 16px;
   --radius-pill: 999px;
 
   /* Elevation (light) */
@@ -268,6 +285,38 @@
   --neutral-900: #1a2330;
   --neutral-950: #0d1117;
 
+  /* ── 塗りつぶし面の前景色 / 汎用アクセント (#1111) ────────────────────
+     --on-solid : *-solid / --status-* のベタ塗りの**上**に載せる文字・アイコン色。
+       ライト系テーマでは solid 群が濃色なので白、ダーク系テーマでは solid 群が
+       明色なので暗色になる。以前は各所で `color="#fff"` を直書きしていたが、
+       ダーク系プリセットでは明るい solid の上に白文字が載ってしまい
+       (例: dracula の警告色は #f1fa8c) 判読できなかった。テーマごとに
+       1 つだけ定義すれば足りるのは、同一テーマ内の solid 群が一様に濃い/明るい
+       ため。全テーマでの AA 適合は `__tests__/themeContrast.test.ts` が固定する。
+     --favorite : お気に入り (★) を示す色。接続ツリーとスニペット一覧が共有する。 */
+  --on-solid: #ffffff;
+  --favorite: #eab308;
+
+  /* ── オブジェクト種別 / サンドボックスの意味色 (#1111) ─────────────────
+     --db-accent : Database Explorer でデータベースノードを示すアイコン色。
+       `--key-accent` (主キー) と同じく「オブジェクト種別を表す単目的トークン」で、
+       アクセント色 (接続ごとに動的) やセマンティック状態色とは別軸。
+     --sandbox-* : サンドボックス (ローカルコピー) を示す violet 系の面/枠/文字。
+       ブランド violet と同じ色相で、`sandbox.ts` の SANDBOX_BAND_COLOR
+       (TitleBar の帯) と揃える (一致は `__tests__/brand.test.ts` が固定)。
+       濃度は color-mix で派生させ、値の二重管理を避ける。 */
+  --db-accent: #0ea5e9;
+
+  /* Windows のウィンドウ操作ボタン「閉じる」のホバー色 (#1111)。Fluent の
+     慣習色で、OS の見た目に合わせるため**テーマを跨いで固定**する
+     (ブランド色と同じ扱い)。ここに置くのは、コンポーネント側に色リテラルを
+     残さないため。 */
+  --titlebar-close-hover-bg: #e81123;
+  --titlebar-close-hover-fg: #ffffff;
+  --sandbox-solid: var(--brand-violet);
+  --sandbox-subtle: color-mix(in srgb, var(--brand-violet) 16%, transparent);
+  --sandbox-border: color-mix(in srgb, var(--brand-violet) 50%, transparent);
+
   /* ── Semantic color families (#476) ───────────────────────────────────
      状態色 (info/success/warning/error) を役割別に展開する。色だけに依存
      しない運用 (アイコン/形状/テキストラベル併用) を前提とする — 赤緑色弱でも
@@ -326,7 +375,10 @@
   --status-connected: #15803d; /* 4.67:1 (AA text) — 旧 #16a34a は 3.07:1 */
   --status-connecting: #b45309; /* 4.68:1 (AA text) — 旧 #f59e0b は 2.00:1 */
   --status-error: #d42323;      /* 4.81:1 (AA text) — 旧 #dc2626 は 4.50:1 ちょうどで境界 */
-  --status-warning: #b86409;    /* 4.02:1 (>=3:1 UI dot) — 旧 #d97706 は 2.97:1 */
+  --status-warning: #a85c08;    /* on --bg 4.66:1 / 白文字 5.00:1 — #1111 で
+                                   ドット専用の #b86409 (白文字 4.32:1) から暗色化。
+                                   TitleBar の「再接続中」チップが --on-solid の
+                                   文字を載せるため、AA(4.5:1) を満たす必要がある。 */
   --status-success: #15803d;    /* 4.67:1 (AA text) — 旧 #16a34a は 3.07:1 */
   --status-info: #2563eb;       /* 4.82:1 */
   --status-idle: #7d8693;       /* 3.43:1 (>=3:1 UI dot) — 旧 #9ca3af は 2.37:1 */
@@ -361,6 +413,8 @@
   --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.7);
 
   --bg: #0d1117;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #0d1117;
   --bg-elevated: #161b22;
   --bg-muted: #1a212b;
   --bg-hover: #222b37;
@@ -495,6 +549,8 @@
   --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.72);
 
   --bg: #282a36;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #282a36;
   --bg-elevated: #343746;
   --bg-muted: #21222c;
   --bg-hover: #3b3e4f;
@@ -695,6 +751,8 @@
   --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.85);
 
   --bg: #000000;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #000000;
   --bg-elevated: #121212;
   --bg-muted: #1a1a1a;
   --bg-hover: #262626;
@@ -887,6 +945,8 @@
   --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.7);
 
   --bg: #0d1117;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #0d1117;
   --bg-elevated: #161b22;
   --bg-muted: #1a212b;
   --bg-hover: #222b37;
@@ -989,6 +1049,8 @@
   --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.7);
 
   --bg: #2e3440;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #2e3440;
   --bg-elevated: #3b4252;
   --bg-muted: #272c36;
   --bg-hover: #434c5e;
@@ -1126,7 +1188,7 @@
   --success-text: #5d6b00;
   --warning-subtle: #f9f1de;
   --warning-border: #c6ad64;
-  --warning-solid: #9c7600;
+  --warning-solid: #8d6a00;  /* 白文字 5.01:1 — 旧 #9c7600 は 4.20:1 で AA 未達 (#1111) */
   --warning-text: #8a6900;
   --error-subtle: #fbeae5;
   --error-border: #db7e7a;
@@ -1156,7 +1218,7 @@
   --status-connected: #5d6b00;
   --status-connecting: #8a6900;
   --status-error: #c02622;
-  --status-warning: #9c7600;
+  --status-warning: #8d6a00; /* 白文字 5.01:1 — 旧 #9c7600 は 4.20:1 で AA 未達 (#1111) */
   --status-success: #5d6b00;
   --status-info: #1e6ea5;
   --status-idle: #6f7f86;
@@ -1184,6 +1246,8 @@
   --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.7);
 
   --bg: #002b36;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #002b36;
   --bg-elevated: #073642;
   --bg-muted: #00252e;
   --bg-hover: #12414d;
@@ -1284,6 +1348,8 @@
   --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.72);
 
   --bg: #282c34;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #282c34;
   --bg-elevated: #2f343e;
   --bg-muted: #21252b;
   --bg-hover: #333842;

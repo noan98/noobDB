@@ -112,7 +112,7 @@ import {
   setTabRestoreMode,
   useSettings,
 } from "../settings";
-import { ACCENT_PRESETS } from "../accent";
+import { ACCENT_INPUT_FALLBACK, ACCENT_PRESETS } from "../accent";
 import { checkForAppUpdate, getCurrentAppVersion } from "../updater";
 import { displayVersion } from "../updaterFormat";
 import { confirmAndInstallUpdate } from "./updatePrompt";
@@ -264,7 +264,7 @@ const SettingsTimeoutAux = chakra("div", {
   base: {
     display: "flex",
     flexDirection: "column",
-    gap: "3px",
+    gap: "var(--space-0-75)",
     alignItems: "flex-start",
     minWidth: 0,
   },
@@ -280,7 +280,7 @@ const SettingsUnlimitedBadge = chakra("span", {
     fontWeight: 600,
     color: "app.accentText",
     bg: "app.accent",
-    borderRadius: "999px",
+    borderRadius: "var(--radius-pill)",
   },
 });
 
@@ -359,7 +359,7 @@ const SettingsSwatch = chakra("button", {
     width: "26px",
     height: "26px",
     p: 0,
-    borderRadius: "999px",
+    borderRadius: "var(--radius-pill)",
     border: "2px solid",
     borderColor: "app.borderStrong",
     background: "app.surfaceMuted",
@@ -970,7 +970,7 @@ export function SettingsView({ theme, onClose }: Props) {
         {t("settingsTitle")}
       </ModalHeader>
       <ModalBody onScroll={handleModalBodyScroll}>
-        <chakra.div display="flex" gap="16px" alignItems="flex-start">
+        <chakra.div display="flex" gap="4" alignItems="flex-start">
         <SettingsNavAside aria-label={t("settingsNavAria")}>
           <Input
             value={navQuery}
@@ -995,7 +995,7 @@ export function SettingsView({ theme, onClose }: Props) {
             </SettingsNavList>
           )}
         </SettingsNavAside>
-        <chakra.div display="flex" flexDirection="column" gap="18px" flex="1" minW={0}>
+        <chakra.div display="flex" flexDirection="column" gap="4.5" flex="1" minW={0}>
       <SettingsSection id="settings-sec-language" scrollMarginTop="8px">
         <SettingsSectionHeader>
           <chakra.h3>{t("settingsLanguage")}</chakra.h3>
@@ -1131,7 +1131,7 @@ export function SettingsView({ theme, onClose }: Props) {
               <SettingsColorInput
                 type="color"
                 aria-label={t("settingsAccentCustom")}
-                value={settings.accentColor ?? "#2563eb"}
+                value={settings.accentColor ?? ACCENT_INPUT_FALLBACK}
                 onChange={(e) => setAccentColor(e.target.value)}
               />
             </Tooltip>

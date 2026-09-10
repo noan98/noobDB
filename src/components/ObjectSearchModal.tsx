@@ -160,7 +160,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
         />
         {loading && <Spinner size={14} />}
         {currentDatabase && (
-          <chakra.div display="inline-flex" borderRadius="6px" overflow="hidden" borderWidth="1px" borderColor="app.border" flexShrink={0}>
+          <chakra.div display="inline-flex" borderRadius="md" overflow="hidden" borderWidth="1px" borderColor="app.border" flexShrink={0}>
             <ScopeButton active={scope === "current"} onClick={() => setScope("current")}>
               {t("objSearchScopeCurrent")}
             </ScopeButton>
@@ -225,7 +225,7 @@ function ScopeButton({
       type="button"
       onClick={onClick}
       px="2"
-      py="3px"
+      py="0.75"
       fontSize="xs"
       cursor="pointer"
       bg={active ? "app.active" : "transparent"}
@@ -261,7 +261,7 @@ function ResultRow({ entry, active, onMouseMove, onClick, ref }: RowProps) {
       w="100%"
       textAlign="left"
       px="4"
-      py="7px"
+      py="1.75"
       border="none"
       cursor="pointer"
       bg={active ? "app.active" : "transparent"}
@@ -271,7 +271,7 @@ function ResultRow({ entry, active, onMouseMove, onClick, ref }: RowProps) {
       <Box color="app.textMuted" flexShrink={0} display="inline-flex">
         <Icon name={entry.kind === "column" ? "columns" : "table"} size={ICON_SIZES.md} />
       </Box>
-      <Flex direction="column" minW={0} flex="1" gap="1px">
+      <Flex direction="column" minW={0} flex="1" gap="0.25">
         <chakra.span fontSize="sm" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
           {entry.kind === "column" ? entry.column : entry.table}
         </chakra.span>

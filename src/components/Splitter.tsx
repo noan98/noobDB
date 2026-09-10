@@ -238,7 +238,7 @@ export function Splitter({
             zIndex: 1,
             display: "flex",
             flexDirection: isRow ? "column" : "row",
-            gap: "3px",
+            gap: "var(--space-0-75)",
             opacity: 0,
             transition: "opacity var(--dur-fast) var(--ease)",
           },

@@ -59,6 +59,7 @@ const config = defineConfig({
       // フォントサイズは `--font-scale` を内包する `--text-*` をそのまま参照し、
       // UI 全体のフォント拡大設定に追従させる。
       fontSizes: {
+        "3xs": { value: "var(--text-3xs)" },
         "2xs": { value: "var(--text-2xs)" },
         xs: { value: "var(--text-xs)" },
         sm: { value: "var(--text-sm)" },
@@ -85,21 +86,33 @@ const config = defineConfig({
       // 4px リズムの余白スケール。ハーフステップ (0.5/1.5/2.5/3.5) は密度の高い
       // UI で多用される中間値 (2/6/10/14px) のブリッジで、px 直書きを排除する。
       spacing: {
+        "0.25": { value: "var(--space-0-25)" },
         "0.5": { value: "var(--space-0-5)" },
+        "0.75": { value: "var(--space-0-75)" },
         1: { value: "var(--space-1)" },
+        "1.25": { value: "var(--space-1-25)" },
         "1.5": { value: "var(--space-1-5)" },
+        "1.75": { value: "var(--space-1-75)" },
         2: { value: "var(--space-2)" },
         "2.5": { value: "var(--space-2-5)" },
         3: { value: "var(--space-3)" },
         "3.5": { value: "var(--space-3-5)" },
         4: { value: "var(--space-4)" },
+        "4.5": { value: "var(--space-4-5)" },
         5: { value: "var(--space-5)" },
+        "5.5": { value: "var(--space-5-5)" },
         6: { value: "var(--space-6)" },
+        7: { value: "var(--space-7)" },
+        8: { value: "var(--space-8)" },
+        10: { value: "var(--space-10)" },
+        12: { value: "var(--space-12)" },
       },
       radii: {
+        xs: { value: "var(--radius-xs)" },
         sm: { value: "var(--radius-sm)" },
         md: { value: "var(--radius-md)" },
         lg: { value: "var(--radius-lg)" },
+        xl: { value: "var(--radius-xl)" },
         pill: { value: "var(--radius-pill)" },
       },
       // レイヤリング。`zIndex="popover"` 等の名前で参照でき、App.css の
@@ -149,6 +162,26 @@ const config = defineConfig({
           accent: { value: "var(--accent)" },
           accentHover: { value: "var(--accent-hover)" },
           accentText: { value: "var(--accent-text)" },
+          // ベタ塗り (app.*.solid / app.status.*) の**上**に載せる前景色 (#1111)。
+          // ライト系テーマでは白、ダーク系テーマでは暗色になる。バッジ・チップ・
+          // インジケータの文字/アイコンは `color="#fff"` ではなくこれを使う。
+          onSolid: { value: "var(--on-solid)" },
+          // お気に入り (★) を示す色。接続ツリーとスニペット一覧が共有する (#1111)。
+          favorite: { value: "var(--favorite)" },
+          // Database Explorer のデータベースノード色 (#1111)。keyAccent と同じく
+          // 「オブジェクト種別を表す単目的トークン」。
+          dbAccent: { value: "var(--db-accent)" },
+          // Windows のウィンドウ「閉じる」ボタンのホバー色 (OS 慣習色、テーマ固定)。
+          titlebarCloseHover: {
+            bg: { value: "var(--titlebar-close-hover-bg)" },
+            fg: { value: "var(--titlebar-close-hover-fg)" },
+          },
+          // サンドボックス (ローカルコピー) を示す violet 系 (#1111)。
+          sandbox: {
+            subtle: { value: "var(--sandbox-subtle)" },
+            border: { value: "var(--sandbox-border)" },
+            solid: { value: "var(--sandbox-solid)" },
+          },
           // 主キー (PK) 表示専用の意味トークン (#717)。以前は --cell-date (日付型
           // セル色) を PK アイコンに流用していたが、日付表示調整が PK 表示へ波及
           // する意図しない結合を避けるため分離した。

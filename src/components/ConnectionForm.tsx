@@ -19,6 +19,11 @@ import { LoadingButton } from "./LoadingButton";
 import { Tooltip } from "./Tooltip";
 import { transitions, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
+import {
+  COLOR_INPUT_FALLBACK,
+  DEFAULT_PRODUCTION_COLOR,
+  PROFILE_COLOR_PRESETS,
+} from "../profileIdentity";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value is not part of the profile payload,
@@ -233,12 +238,12 @@ function PasswordInput({
       </Box>
       {revealError && (
         // クリック後に非同期で現れるため、支援技術へ通知する (role="alert")。
-        <Text role="alert" color="app.textError" fontSize="11px" mt="1" mb="0">
+        <Text role="alert" color="app.textError" fontSize="xs" mt="1" mb="0">
           {revealError}
         </Text>
       )}
       {revealed !== null && (
-        <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+        <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
           {t("formPasswordRevealNote", { seconds: REVEAL_TIMEOUT_MS / 1000 })}
         </Text>
       )}
@@ -253,15 +258,6 @@ interface Props {
   onCancel: () => void;
 }
 
-const DEFAULT_PROD_COLOR = "#dc2626";
-const COLOR_PRESETS = [
-  "#dc2626", // red — production
-  "#ea580c", // orange — staging
-  "#ca8a04", // yellow — sandbox
-  "#16a34a", // green — development
-  "#2563eb", // blue — read replica
-  "#7c3aed", // purple — misc
-];
 
 function defaultPortFor(driver: DriverKind): number {
   switch (driver) {
@@ -354,7 +350,7 @@ function ResultBanner({ tone, children }: { tone: "success" | "danger"; children
       bg={semanticColorToken(tone, "subtle")}
       color={semanticColorToken(tone, "text")}
       borderRadius="md"
-      fontSize="13px"
+      fontSize="md"
     >
       <Icon name={tone === "success" ? "check" : "warning"} size={ICON_SIZES.md} />
       <Box as="span">{children}</Box>
@@ -376,10 +372,10 @@ function CheckboxRow({
 }) {
   return (
     <Box>
-      <Flex display="inline-flex" align="center" gap="1.5" fontSize="12px">
+      <Flex display="inline-flex" align="center" gap="1.5" fontSize="sm">
         <Switch checked={checked} onChange={onChange} size="sm" label={label} />
       </Flex>
-      <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+      <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
         {help}
       </Text>
     </Box>
@@ -658,7 +654,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
   const toggleProduction = (checked: boolean) => {
     setIsProduction(checked);
-    if (checked && !color) setColor(DEFAULT_PROD_COLOR);
+    if (checked && !color) setColor(DEFAULT_PRODUCTION_COLOR);
     // The write-approval option is a child of "production"; clear it when the
     // parent is unchecked so a hidden, stale value can't be persisted.
     if (!checked) setConfirmWrites(false);
@@ -833,7 +829,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               />
               <Button type="button" onClick={pickDbFile}>{t("formBrowse")}</Button>
             </Flex>
-            <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+            <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
               {driver === "duckdb" ? t("formDuckDbFilePathHelp") : t("formSqliteFilePathHelp")}
             </Text>
           </Box>
@@ -866,7 +862,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 }}
               />
               {portError && (
-                <Text role="alert" color="app.textError" fontSize="11px" mt="1" mb="0">
+                <Text role="alert" color="app.textError" fontSize="xs" mt="1" mb="0">
                   {portError}
                 </Text>
               )}
@@ -908,13 +904,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <option value="verify_ca">{t("formTlsModeVerifyCa")}</option>
               <option value="verify_full">{t("formTlsModeVerifyFull")}</option>
             </Select>
-            <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+            <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
               {t("formTlsModeHelp")}
             </Text>
           </Box>
           {isProduction &&
             (sslMode === "disable" || sslMode === "prefer" || sslMode === "require") && (
-              <Text color="app.textWarning" fontSize="11px" mt="2" mb="0">
+              <Text color="app.textWarning" fontSize="xs" mt="2" mb="0">
                 {t("formTlsProductionHint")}
               </Text>
             )}
@@ -931,7 +927,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 {t("formBrowse")}
               </Button>
             </Flex>
-            <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+            <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
               {t("formTlsRootCertHelp")}
             </Text>
           </Box>
@@ -962,12 +958,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 {t("formBrowse")}
               </Button>
             </Flex>
-            <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+            <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
               {t("formTlsClientHelp")}
             </Text>
           </Box>
           {useSsh && (
-            <Text color="app.textMuted" fontSize="11px" mt="2" mb="0">
+            <Text color="app.textMuted" fontSize="xs" mt="2" mb="0">
               {t("formTlsSshHint")}
             </Text>
           )}
@@ -988,7 +984,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <option key={g} value={g} />
             ))}
           </datalist>
-          <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+          <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
             {t("formGroupHelp")}
           </Text>
         </Box>
@@ -1000,7 +996,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <Box>
             <label htmlFor={`${fid}-color`}>{t("formColor")}</label>
             <Flex align="center" gap="2" flexWrap="wrap">
-              {COLOR_PRESETS.map((c) => (
+              {PROFILE_COLOR_PRESETS.map((c) => (
                 <Tooltip key={c} label={c}>
                   <chakra.button
                     type="button"
@@ -1024,7 +1020,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <input
                 id={`${fid}-color`}
                 type="color"
-                value={color ?? "#888888"}
+                value={color ?? COLOR_INPUT_FALLBACK}
                 onChange={(e) => setColor(e.target.value)}
                 style={{ width: 42, padding: 0, height: 28 }}
               />
@@ -1043,7 +1039,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               help={t("formIsProductionHelp")}
             />
             {isProduction && (
-              <Box ml="22px" mt="2">
+              <Box ml="5.5" mt="2">
                 <CheckboxRow
                   checked={confirmWrites}
                   onChange={setConfirmWrites}
@@ -1071,7 +1067,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       {!isFileBacked && (
         <Fieldset>
           <Legend>
-            <Flex display="inline-flex" align="center" gap="1.5" fontSize="12px">
+            <Flex display="inline-flex" align="center" gap="1.5" fontSize="sm">
               <Switch checked={useSsh} onChange={setUseSsh} size="sm" label={t("formUseSsh")} />
             </Flex>
           </Legend>
@@ -1108,7 +1104,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                     }}
                   />
                   {sshPortError && (
-                    <Text role="alert" color="app.textError" fontSize="11px" mt="1" mb="0">
+                    <Text role="alert" color="app.textError" fontSize="xs" mt="1" mb="0">
                       {sshPortError}
                     </Text>
                   )}
@@ -1166,16 +1162,16 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 </Box>
               )}
               {sshAuthMethod === "agent" && (
-                <Text color="app.textMuted" fontSize="11px" mt="2" mb="0">
+                <Text color="app.textMuted" fontSize="xs" mt="2" mb="0">
                   {t("formSshAgentHelp")}
                 </Text>
               )}
 
               <Box mt="3" pt="3" borderTop="1px solid" borderColor="app.border">
-                <Flex display="inline-flex" align="center" gap="1.5" fontSize="12px">
+                <Flex display="inline-flex" align="center" gap="1.5" fontSize="sm">
                   <Switch checked={useSshJump} onChange={setUseSshJump} size="sm" label={t("formUseSshJump")} />
                 </Flex>
-                <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+                <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
                   {t("formSshJumpHelp")}
                 </Text>
                 {useSshJump && (
@@ -1203,7 +1199,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                           }}
                         />
                         {sshJumpPortError && (
-                          <Text role="alert" color="app.textError" fontSize="11px" mt="1" mb="0">
+                          <Text role="alert" color="app.textError" fontSize="xs" mt="1" mb="0">
                             {sshJumpPortError}
                           </Text>
                         )}
@@ -1270,7 +1266,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                       </Box>
                     )}
                     {sshJumpAuthMethod === "agent" && (
-                      <Text color="app.textMuted" fontSize="11px" mt="2" mb="0">
+                      <Text color="app.textMuted" fontSize="xs" mt="2" mb="0">
                         {t("formSshAgentHelp")}
                       </Text>
                     )}
@@ -1298,7 +1294,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             rows={3}
             css={{ fontFamily: "var(--font-mono)", resize: "vertical", width: "100%" }}
           />
-          <Text color="app.textMuted" fontSize="11px" mt="1" mb="0">
+          <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
             {t("formInitSqlHelp")}
           </Text>
         </Box>

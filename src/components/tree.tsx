@@ -167,7 +167,7 @@ export const ScopeToggle = chakra("label", {
     display: "inline-flex",
     alignItems: "center",
     gap: "1.5",
-    margin: "6px 0 0",
+    margin: "var(--space-1-5) 0 0",
     fontSize: "xs",
     fontWeight: 400,
     color: "app.textMuted",

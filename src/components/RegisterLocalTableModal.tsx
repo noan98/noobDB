@@ -87,7 +87,7 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
           bg="app.surface"
           borderWidth="1px"
           borderColor="app.borderSubtle"
-          borderRadius="8px"
+          borderRadius="lg"
           p="2.5"
         >
           <chakra.span>{t("localRegisterPrivacyNote")}</chakra.span>

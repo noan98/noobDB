@@ -70,8 +70,8 @@ export function Segmented<T extends string>({ value, options, onChange, ariaLabe
       display="inline-flex"
       alignItems="stretch"
       flexShrink={0}
-      gap="1px"
-      p="2px"
+      gap="0.25"
+      p="0.5"
       border="1px solid"
       borderColor="app.borderStrong"
       borderRadius="md"

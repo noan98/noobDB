@@ -265,13 +265,13 @@ export function ChartView({ result, sourceSql, onChangeView }: Props) {
       {config.type !== "pie" && model.series.length > 0 && (
         <Flex gap="3" px="3" py="1" flex="none" flexWrap="wrap" fontSize="xs" color="app.textSecondary">
           {model.series.map((s, i) => (
-            <Flex key={s.name} align="center" gap="5px">
+            <Flex key={s.name} align="center" gap="1.25">
               {/* 値で着色しているときは単色の見本が実態と食い違うため、ランプの
                   勾配そのものを見本にする (読み上げ向けの説明は aria-label)。 */}
               <chakra.span
                 w={legendGradient ? "22px" : "10px"}
                 h="10px"
-                borderRadius="2px"
+                borderRadius="xs"
                 bg={legendGradient ?? seriesColors[i]}
                 role={legendGradient ? "img" : undefined}
                 aria-label={legendGradient ? t("chartPaletteValueColoring") : undefined}

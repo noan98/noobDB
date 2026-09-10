@@ -47,7 +47,7 @@ const thBase: SystemStyleObject = {
   zIndex: 1,
   background: "var(--bg-muted)",
   borderBottom: "1px solid var(--border)",
-  padding: "6px 10px",
+  padding: "var(--space-1-5) var(--space-2-5)",
   textStyle: "overline",
   color: "var(--text-secondary)",
   whiteSpace: "nowrap",
@@ -56,7 +56,7 @@ const thBase: SystemStyleObject = {
 };
 const tdCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border-subtle, var(--border))",
-  padding: "5px 10px",
+  padding: "var(--space-1-25) var(--space-2-5)",
   fontSize: "var(--text-sm)",
   fontFamily: "var(--font-mono)",
   color: "var(--text)",
@@ -187,7 +187,7 @@ export function TableStatisticsPanel({
     has == null ? "—" : has ? t("sizePkYes") : t("sizePkNo");
 
   return (
-    <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="14px">
+    <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
       <chakra.header
         display="flex"
         alignItems="center"
@@ -229,7 +229,7 @@ export function TableStatisticsPanel({
           placeholder={t("sizeFilterName")}
           aria-label={t("sizeFilterName")}
           css={{
-            padding: "5px 9px",
+            padding: "var(--space-1-25) var(--space-2-5)",
             fontSize: "var(--text-sm)",
             border: "1px solid var(--border)",
             borderRadius: "var(--radius-sm)",

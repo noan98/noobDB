@@ -276,7 +276,7 @@ import {
 import { incomingForeignKeys } from "./fkNavigation";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
-import { workspaceSpineColor } from "./profileIdentity";
+import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
 import { semanticColorToken, semanticColorVar } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
@@ -387,6 +387,17 @@ function readInitialTheme(): Theme {
 
 const SIDEBAR_WIDTH_KEY = "noobdb.sidebarWidth";
 const SIDEBAR_COLLAPSED_KEY = "noobdb.sidebarCollapsed";
+
+/** 折りたたみ時に出る「サイドバーを開く」ボタンの一辺 (正方形)。 */
+const SIDEBAR_EXPAND_BUTTON_SIZE = "28px";
+/**
+ * サイドバー折りたたみ時にヘッダ左端へ空けるクリアランス (#873)。
+ * 展開ボタンの左位置 (--space-2) + ボタン幅 + ボタン右の余白 (--space-2-5) の和で、
+ * 以前は合計値の `46px` を直書きしていた。トークン式にすることで、フォント拡大
+ * 設定でボタンの余白が広がってもヘッダのテキストが重ならない。
+ */
+const SIDEBAR_EXPAND_CLEARANCE =
+  `calc(var(--space-2) + ${SIDEBAR_EXPAND_BUTTON_SIZE} + var(--space-2-5))`;
 const SIDEBAR_MIN_WIDTH = 200;
 const SIDEBAR_MAX_WIDTH = 560;
 const SIDEBAR_DEFAULT_WIDTH = 300;
@@ -549,7 +560,7 @@ const SidebarTabButton = forwardRef<
       borderBottomColor={active ? "app.accent" : "transparent"}
       borderRadius="0"
       px="2"
-      py="7px"
+      py="1.75"
       fontSize="sm"
       fontWeight={600}
       color={active ? "app.text" : "app.textMuted"}
@@ -1127,7 +1138,7 @@ function makeLocalProfile(name: string): ConnectionProfile {
     database: null,
     ssh: null,
     group: null,
-    color: "#64748b",
+    color: LOCAL_PROFILE_CHIP_COLOR,
     is_production: false,
     confirm_writes: false,
     read_only: false,
@@ -7441,7 +7452,7 @@ export default function App() {
           <chakra.span
             flex="1"
             fontSize="md"
-            letterSpacing="0.02em"
+            letterSpacing="wide"
             color="app.text"
             overflow="hidden"
             textOverflow="ellipsis"
@@ -7733,15 +7744,15 @@ export default function App() {
           animate={variants.fadeScale.animate}
           exit={variants.fadeScale.exit}
           transition={transitions.enter}
-          style={{ position: "absolute", top: "9px", left: "8px", zIndex: 46 }}
+          style={{ position: "absolute", top: "9px", left: "var(--space-2)", zIndex: 46 }}
         >
         <Tooltip label={t("sidebarExpand")}>
           <chakra.button
             display="inline-flex"
             alignItems="center"
             justifyContent="center"
-            width="28px"
-            height="28px"
+            width={SIDEBAR_EXPAND_BUTTON_SIZE}
+            height={SIDEBAR_EXPAND_BUTTON_SIZE}
             p="0"
             borderWidth="1px"
             borderStyle="solid"
@@ -7909,7 +7920,7 @@ export default function App() {
             <Flex
               align="center"
               gap="3"
-              pl={sidebarCollapsed ? "46px" : "14px"}
+              pl={sidebarCollapsed ? SIDEBAR_EXPAND_CLEARANCE : "3.5"}
               pr="3.5"
               py="2"
               borderBottomWidth={selectedProfile?.is_production ? "2px" : "1px"}
@@ -7925,7 +7936,7 @@ export default function App() {
                   ? `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 16%, var(--bg-elevated))`
                   : "color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated))"
               }
-              // padding-left はサイドバー折りたたみ (#873) で 46px ↔ 14px に
+              // padding-left はサイドバー折りたたみ (#873) でクリアランス ↔ 通常余白に
               // 変わるため、トラック幅の補間と同じ時間で滑らかに追従させる。
               transition="background var(--dur-med) var(--ease), border-color var(--dur-med) var(--ease), padding-left var(--dur-med) var(--ease)"
               css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
@@ -7947,7 +7958,7 @@ export default function App() {
                           py="0.5"
                           borderRadius="pill"
                           bg="app.status.error"
-                          color="#fff"
+                          color="app.onSolid"
                           borderWidth="1px"
                           borderStyle="solid"
                           borderColor="app.status.error"
@@ -8009,10 +8020,10 @@ export default function App() {
                         <chakra.span
                           fontSize="2xs"
                           fontWeight={700}
-                          letterSpacing="0.06em"
+                          letterSpacing="wider"
                           px="1.5"
                           py="0.5"
-                          borderRadius="4px"
+                          borderRadius="sm"
                           bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 18%, transparent)`}
                           color="var(--text-warning)"
                         >
@@ -8139,7 +8150,7 @@ export default function App() {
               align="center"
               gap="2"
               px="3.5"
-              py="5px"
+              py="1.25"
               bg={
                 isError
                   ? semanticColorToken("danger", "subtle")
@@ -8185,7 +8196,7 @@ export default function App() {
                   flexShrink="0"
                   textStyle="overline"
                   fontWeight={700}
-                  px="7px"
+                  px="1.75"
                   py="0.5"
                   borderRadius="sm"
                   bg="app.dangerBg"
@@ -8200,7 +8211,7 @@ export default function App() {
                   // 実際のエラー本文 (シンタックスエラーの箇所など具体的な値) を常に
                   // 併記する。閉じる操作はステータスバー右端の X に一本化し、ここには
                   // 個別の閉じるボタンを置かない (閉じるボタンの二重表示を避ける)。
-                  <Flex direction="column" gap="3px">
+                  <Flex direction="column" gap="0.75">
                     <Flex align="baseline" gap="1.5">
                       {/* text 色を地・subtle 色を文字にした反転チップ。コントラスト
                           比は前景/背景の入替に対して対称なので、themeContrast.test.ts
@@ -8211,7 +8222,7 @@ export default function App() {
                         fontWeight={600}
                         fontSize="xs"
                         px="1.5"
-                        py="1px"
+                        py="0.25"
                         borderRadius="sm"
                         bg={semanticColorToken("danger", "text")}
                         color={semanticColorToken("danger", "subtle")}
@@ -8282,7 +8293,7 @@ export default function App() {
                     opacity={0.85}
                     display="inline-flex"
                     alignItems="center"
-                    gap="5px"
+                    gap="1.25"
                   >
                     <Spinner size={12} />
                     {t(connectPhaseI18nKey(connectAttempt.phase))}
@@ -8292,7 +8303,7 @@ export default function App() {
                       type="button"
                       flexShrink="0"
                       px="2.5"
-                      py="3px"
+                      py="0.75"
                       fontSize="xs"
                       fontWeight={500}
                       border="1px solid"
@@ -8878,9 +8889,9 @@ export default function App() {
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                gap: "12px",
-                padding: "32px 48px",
-                borderRadius: "16px",
+                gap: "var(--space-3)",
+                padding: "var(--space-8) var(--space-12)",
+                borderRadius: "var(--radius-xl)",
                 border: `2px dashed ${dragFeedback.accept ? "var(--accent)" : semanticColorVar("danger", "solid")}`,
                 background: "var(--bg-elevated, var(--bg))",
                 color: dragFeedback.accept ? "var(--accent)" : semanticColorVar("danger", "solid"),

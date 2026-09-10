@@ -164,7 +164,7 @@ function MetricChart({
                 display="inline-block"
                 width="10px"
                 height="10px"
-                borderRadius="2px"
+                borderRadius="xs"
                 style={{ background: categoricalColor(s.colorIndex) }}
               />
               {t(s.labelKey)}

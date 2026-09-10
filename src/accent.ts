@@ -67,6 +67,11 @@ export const ACCENT_PRESETS: AccentPreset[] = [
   { key: "rose", hex: "#e11d48" },
 ];
 
+/** アクセント未設定 (テーマ既定) のときに `<input type="color">` へ渡す値。
+ *  ネイティブの色入力は `null` や CSS 変数を受け付けないため、プリセットの
+ *  "blue" を具体的な hex として使う (#1111)。 */
+export const ACCENT_INPUT_FALLBACK = "#2563eb";
+
 function clampByte(n: number): number {
   if (n < 0) return 0;
   if (n > 255) return 255;
