@@ -17,10 +17,11 @@ noobDB は MySQL / PostgreSQL / SQLite / DuckDB (#709) / Microsoft SQL Server (#
 | ディレクトリ | 役割 | 詳しいスキル |
 |---|---|---|
 | `db/` | ドライバ層。`enum Connection` でディスパッチ。安全網 (`is_read_only_sql` / `apply_auto_limit`) もここ | `noobdb-db-layer` / `noobdb-sql-safety` |
-| `commands/` | IPC ハンドラ (98 コマンド)。薄いラッパーに徹し、コアは `*_inner` に切る | `noobdb-ipc` / `noobdb-features` |
+| `commands/` | IPC ハンドラ (99 コマンド)。薄いラッパーに徹し、コアは `*_inner` に切る | `noobdb-ipc` / `noobdb-features` |
 | `ssh/` | トンネル、ホスト鍵検証 (TOFU)、`~/.ssh/config` パーサ | `noobdb-sessions` |
 | `profiles/` `snippets/` `sandboxes/` `tasks/` | JSON ストア 4 種 (並行書き込み対策が必須) | `noobdb-storage` |
 | `history/` `flight_recorder/` | ローカル SQLite ストア | `noobdb-storage` / `noobdb-features` |
+| `cache/` | `Session` 単位の Schema Cache (`SchemaCache`、#1097)。DDL/明示 Refresh で invalidate | `noobdb-db-layer` |
 | `state.rs` | `AppState` — セッション / ストリーム / 接続試行のレジストリ | `noobdb-sessions` |
 | `error.rs` | `AppError` と構造化された `kind` | `noobdb-ipc` |
 | `logs.rs` | ファイルバックドのログシンク | `noobdb-storage` |

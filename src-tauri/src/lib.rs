@@ -3,12 +3,14 @@
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod cache;
 mod commands;
 mod db;
 mod error;
 mod flight_recorder;
 mod history;
 mod logs;
+mod perf;
 mod profiles;
 mod sandboxes;
 mod snippets;
@@ -105,9 +107,12 @@ pub mod __test_api {
     };
 
     // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
-    // 生成専用のピンポイント再エクスポート。`preview_query_stream` の行イベント
-    // (PreviewRowsEvent) は `StreamRowsEvent` と同一シェイプのため個別公開せず、
-    // フィクスチャは共有する (前者は非公開のまま)。
+    // 生成専用のピンポイント再エクスポート。
+    //
+    // `commands::query` の Query/Preview ストリーム (#1096) は `app.emit()` の
+    // 個別イベント構造体ではなく、Tauri Channel で送る 1 本のタグ付き enum
+    // (`QueryStreamMessage` / `PreviewStreamMessage`) に統合済み。Export/Dump/
+    // Import は引き続き個別の emit ペイロード構造体のまま。
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
@@ -115,8 +120,7 @@ pub mod __test_api {
         ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
     };
     pub use crate::commands::query::{
-        PreviewDoneEvent, PreviewMetaEvent, StreamCancelledEvent, StreamColumnsEvent,
-        StreamDoneEvent, StreamErrorEvent, StreamRowsEvent,
+        PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
     };
 
     /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
@@ -190,6 +194,8 @@ pub mod __test_api {
             reconnect_ssh: None,
             _tunnel: None,
             local_temp_file: None,
+            schema_cache: crate::cache::SchemaCache::default(),
+            query_cache: crate::cache::QueryResultCache::default(),
         }
     }
 
@@ -238,6 +244,18 @@ pub mod __test_api {
             database.map(str::to_string),
         )
         .await
+    }
+
+    /// Drives the `run_in_transaction` IPC command's core path (session lookup,
+    /// read-only guard, execute-in-transaction, cache invalidation) without a
+    /// Tauri runtime (#1097's Query Result Cache eager-invalidate path — see
+    /// `commands::query::run_in_transaction_inner`'s doc comment).
+    pub async fn run_in_transaction_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+    ) -> crate::error::Result<QueryResult> {
+        crate::commands::query::run_in_transaction_inner(state, session_id, sql).await
     }
 
     /// The read-only guard the `import_csv` IPC command applies before any CSV
@@ -338,6 +356,17 @@ pub mod __test_api {
             &s,
             &t,
         ))
+    }
+
+    /// Drives the `refresh_schema_cache` IPC command's core path (session
+    /// lookup + `SchemaCache::invalidate_all`) without a Tauri runtime (#1097),
+    /// so integration tests can exercise the explicit-Refresh path the same
+    /// way the frontend's Schema Browser refresh button does.
+    pub async fn refresh_schema_cache_via_command(
+        state: &AppState,
+        session_id: &str,
+    ) -> crate::error::Result<()> {
+        crate::commands::schema::refresh_schema_cache_inner(state, session_id).await
     }
 
     /// Drives the `apply_sync_sql` IPC command's core path (session lookup +
@@ -775,6 +804,7 @@ pub fn run() {
             commands::tasks::clear_task_runs,
             commands::tasks::get_scheduler_settings,
             commands::tasks::set_scheduler_settings,
+            commands::schema::refresh_schema_cache,
         ])
         .run(tauri::generate_context!());
 

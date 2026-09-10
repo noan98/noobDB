@@ -598,6 +598,10 @@ pub async fn import_csv(
                 // `skip` mode; `abort` mode rolls back and leaves this at 0.
                 delivered_rows: committed,
                 kind: StreamKind::Import,
+                // #1096: Import ストリームは引き続き `app.emit()` の名前付き
+                // イベント (`csv-import:cancelled`) 経由でキャンセルを通知する
+                // (query/preview だけが Channel 経由の `on_cancel` を使う)。
+                on_cancel: None,
             },
         )
         .await;
@@ -637,6 +641,15 @@ async fn spawn_import(
         &app, &session, &stream_id, database, table, path, options, mapping, batch_size, committed,
     )
     .await;
+
+    // Query Result Cache (#1097): インポートはバルク書き込みなので、対象
+    // テーブルの行が実際に増えていた場合 (skip モードの部分成功も含む) は
+    // このセッションのクエリ結果キャッシュを丸ごと invalidate する。
+    if let Ok(ImportRun::Ok { inserted, .. }) = &result {
+        if *inserted > 0 {
+            session.query_cache.invalidate_all().await;
+        }
+    }
 
     // A CSV import is a bulk write; record it to history like the edit-Apply
     // path so destructive imports are auditable (skip_history honoured). A
