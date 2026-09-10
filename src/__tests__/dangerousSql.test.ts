@@ -132,6 +132,34 @@ describe("analyzeDangerousSql", () => {
       { kind: "deleteNoWhere", target: "a$b" },
     ]);
   });
+
+  describe("driver-aware backslash escaping (#852, #1004)", () => {
+    // `note = '\'` — a `'` string containing a single backslash, followed by
+    // a real ` WHERE id = 1` clause. Only MySQL/MariaDB reads `\` as an
+    // escape character inside `'...'` (`driverBackslashEscapes`); on every
+    // other supported driver the backslash is an ordinary character, so the
+    // `'` right after it closes the string and the WHERE that follows is a
+    // real top-level guard. On MySQL the same `'` is escaped away, the
+    // string never closes, and the WHERE keyword is swallowed as (masked)
+    // string content — so the UPDATE looks unguarded.
+    const sql = "UPDATE t SET note = '\\' WHERE id = 1";
+
+    it("finds no finding on non-MySQL drivers (WHERE is a real top-level guard)", () => {
+      for (const driver of ["postgres", "sqlite", "duckdb", "mssql"]) {
+        expect(analyzeDangerousSql(sql, driver)).toEqual([]);
+      }
+    });
+
+    it("finds no finding when the driver is omitted (conservative fallback)", () => {
+      expect(analyzeDangerousSql(sql)).toEqual([]);
+    });
+
+    it("flags updateNoWhere on mysql (the trailing WHERE is masked into the unterminated string)", () => {
+      expect(analyzeDangerousSql(sql, "mysql")).toEqual([
+        { kind: "updateNoWhere", target: "t" },
+      ]);
+    });
+  });
 });
 
 describe("isReadOnlySql", () => {
@@ -202,6 +230,47 @@ describe("isReadOnlySql", () => {
     expect(isReadOnlySql("")).toBe(false);
     expect(isReadOnlySql("   ")).toBe(false);
     expect(isReadOnlySql("(SELECT 1)")).toBe(false);
+  });
+
+  it("rejects cross-engine write passthrough functions hidden in a SELECT", () => {
+    // The statement itself is a plain top-level SELECT, so it passes the
+    // prefix check; the actual write lives inside a string-literal argument
+    // that maskLiterals blanks, so only the function name being on the
+    // WRITE_KEYWORDS list catches it. Mirrors backend
+    // `is_read_only_sql_masked` (src-tauri/src/db/mod.rs).
+    expect(
+      isReadOnlySql(
+        "SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE t SET a=1') AS r",
+      ),
+    ).toBe(false);
+    expect(
+      isReadOnlySql("SELECT * FROM OPENQUERY(linked_srv, 'DELETE FROM accounts')"),
+    ).toBe(false);
+    expect(
+      isReadOnlySql("SELECT dblink_exec('dbname=other','DELETE FROM accounts')"),
+    ).toBe(false);
+    expect(isReadOnlySql("SELECT dblink('dbname=other','SELECT 1')")).toBe(false);
+    expect(isReadOnlySql("SELECT load_extension('/tmp/evil.so')")).toBe(false);
+    // Fail-closed: a column merely named after one of these functions is also
+    // rejected (over-detection is cheap, under-detection is not).
+    expect(isReadOnlySql("SELECT openrowset FROM t")).toBe(false);
+  });
+
+  it("reveals the contents of a MySQL versioned comment (/*! ... */) instead of masking it", () => {
+    // `/*! ... */` is not a comment on MySQL — its body executes on servers
+    // new enough to satisfy the optional version gate — so it must not be
+    // blanked the way a plain `/* ... */` block comment is.
+    expect(isReadOnlySql("SELECT /*!50000 * FROM users */ ")).toBe(true);
+    expect(
+      isReadOnlySql("SELECT 1 /*! UNION SELECT password FROM users */"),
+    ).toBe(true);
+    expect(
+      isReadOnlySql("SELECT 1 /*!50000 , (SELECT DELETE FROM users) */"),
+    ).toBe(false);
+    // An ordinary block comment (no `!`) is unaffected.
+    expect(
+      isReadOnlySql("SELECT 1 /* normal comment with DELETE inside */"),
+    ).toBe(true);
   });
 });
 

@@ -12,6 +12,7 @@ import {
 } from "../profileIdentity";
 import { CATEGORICAL } from "../colorScale";
 import { ACCENT_FG_DARK, ACCENT_FG_LIGHT } from "../accent";
+import { semanticColorVar } from "../semanticColors";
 
 // 接続プロファイルのビジュアルアイデンティティ (#663) の純ロジック検証。
 // ConnectionList / TitleBar / 本番接続確認ダイアログが共有する色/イニシャル
@@ -155,10 +156,9 @@ describe("workspaceSpineColor (#791)", () => {
   });
 
   it("always uses the danger token for production, overriding any custom color", () => {
-    expect(workspaceSpineColor({ is_production: true, color: "#22c55e" })).toBe(
-      "var(--status-error)",
-    );
-    expect(workspaceSpineColor({ is_production: true, color: null })).toBe("var(--status-error)");
+    const danger = semanticColorVar("danger", "solid");
+    expect(workspaceSpineColor({ is_production: true, color: "#22c55e" })).toBe(danger);
+    expect(workspaceSpineColor({ is_production: true, color: null })).toBe(danger);
   });
 });
 

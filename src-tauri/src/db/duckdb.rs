@@ -500,11 +500,25 @@ impl DuckDbConn {
                 // channel closing when the worker finishes.
             }
         }
-        let inserted = run_blocking_join(worker).await?;
+        // Await the join *before* deciding which error to surface — the
+        // worker/transaction must be allowed to fully wind down (ROLLBACK
+        // issued) before this function returns, regardless of which error
+        // wins below. But once `on_progress` has failed (`abort_err` set,
+        // `interrupt.interrupt()` already called above), that failure is
+        // the real reason this import stopped, and it must take priority
+        // over whatever `run_blocking_join` returns: an interrupted
+        // `execute_batch` call surfaces DuckDB's own generic "interrupted"
+        // error, which carries no information about *why* — checking
+        // `abort_err` first (rather than `?`-propagating the join result
+        // immediately) is what lets the caller's actual cancellation reason
+        // reach them instead of being silently replaced by that generic
+        // message. This mirrors the other three drivers' `on_progress(..)?`
+        // contract, where the callback's own error is what propagates.
+        let join_result = run_blocking_join(worker).await;
         if let Some(e) = abort_err {
             return Err(e);
         }
-        Ok(inserted)
+        join_result
     }
 
     /// Auto-commit insert of one chunk (no wrapping transaction). See
@@ -1059,11 +1073,30 @@ async fn run_blocking_join<T>(handle: tokio::task::JoinHandle<Result<T>>) -> Res
 /// query-shaped statements largely mirror PostgreSQL/SQLite: `SELECT`,
 /// non-mutating `WITH ... SELECT`, and the introspection pseudo-statements
 /// `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `PRAGMA` / `SUMMARIZE`.
-fn is_query_shape(sql: &str) -> bool {
+/// `WITH` は `db::mysql` 共有の `with_cte_is_mutation` へ委譲する。そのキーワード
+/// 列挙は方言非依存だが、コメント/リテラルのマスクだけはドライバ別なので自分の
+/// `DriverKind` を渡す (#1051 — DuckDB は `\` をただの文字として扱う)。
+///
+/// `FROM tbl` / `FROM tbl SELECT ...` (DuckDB's `FROM`-first shorthand) and
+/// `TABLE tbl` (the PostgreSQL/DuckDB `SELECT * FROM tbl` shorthand) were
+/// already added to the read-only allow-list in
+/// [`super::is_read_only_sql_masked`] (#1005), but not here — so both passed
+/// the read-only guard and then fell through to the `execute` branch below,
+/// silently returning an empty result instead of the statement's rows
+/// (#1054). Unlike the plain-prefix checks above, both are matched with
+/// [`super::starts_with_word`] rather than `str::starts_with`: `from` in
+/// particular is a common enough leading substring (e.g. an identifier like
+/// `FROMAGE`) that a bare prefix check could misroute a non-`FROM` statement
+/// into the query path, so the match requires the keyword to end at a
+/// word boundary.
+/// `pub(crate)` (raised from private) so the cross-driver golden test
+/// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
+/// without changing its behaviour.
+pub(crate) fn is_query_shape(sql: &str) -> bool {
     let cleaned = strip_sql_comments(sql);
     let trimmed = cleaned.trim_start().to_ascii_lowercase();
     if trimmed.starts_with("with") {
-        return !super::mysql::with_cte_is_mutation(sql);
+        return !super::mysql::with_cte_is_mutation(super::DriverKind::DuckDb, sql);
     }
     trimmed.starts_with("select")
         || trimmed.starts_with("show")
@@ -1073,6 +1106,8 @@ fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("pragma")
         || trimmed.starts_with("summarize")
         || trimmed.starts_with("values")
+        || super::starts_with_word(&trimmed, "from")
+        || super::starts_with_word(&trimmed, "table")
 }
 
 fn strip_sql_comments(sql: &str) -> String {
@@ -1162,13 +1197,19 @@ fn duckdb_value_to_value(v: DuckValue) -> Value {
         DuckValue::TinyInt(n) => Value::Int(n as i64),
         DuckValue::SmallInt(n) => Value::Int(n as i64),
         DuckValue::Int(n) => Value::Int(n as i64),
-        DuckValue::BigInt(n) => Value::Int(n),
-        DuckValue::HugeInt(n) => i128_to_value(n),
-        DuckValue::UHugeInt(n) => u128_to_value(n),
+        // BIGINT/UBIGINT/HUGEINT/UHUGEINT are the widths that can actually
+        // exceed JS's safe integer range (2^53-1) — TinyInt/SmallInt/Int and
+        // their unsigned counterparts above always fit, so they stay as
+        // plain `Value::Int` unconditionally. Route the wide ones through
+        // the lossless helpers (`Value::from_i64_lossless` etc., #precision)
+        // rather than a bare `Value::Int`/`Value::UInt`.
+        DuckValue::BigInt(n) => Value::from_i64_lossless(n),
+        DuckValue::HugeInt(n) => Value::from_i128_lossless(n),
+        DuckValue::UHugeInt(n) => Value::from_u128_lossless(n),
         DuckValue::UTinyInt(n) => Value::Int(n as i64),
         DuckValue::USmallInt(n) => Value::Int(n as i64),
         DuckValue::UInt(n) => Value::Int(n as i64),
-        DuckValue::UBigInt(n) => Value::UInt(n),
+        DuckValue::UBigInt(n) => Value::from_u64_lossless(n),
         DuckValue::Float(f) => Value::Float(f as f64),
         DuckValue::Double(f) => Value::Float(f),
         DuckValue::Decimal(d) => Value::String(d.to_string()),
@@ -1194,18 +1235,6 @@ fn duckdb_value_to_value(v: DuckValue) -> Value {
         // for any variant added by a future duckdb crate upgrade.
         other => Value::String(format!("{other:?}")),
     }
-}
-
-fn i128_to_value(n: i128) -> Value {
-    i64::try_from(n)
-        .map(Value::Int)
-        .unwrap_or_else(|_| Value::String(n.to_string()))
-}
-
-fn u128_to_value(n: u128) -> Value {
-    u64::try_from(n)
-        .map(Value::UInt)
-        .unwrap_or_else(|_| Value::String(n.to_string()))
 }
 
 /// Renders a nested DuckDB container value (`LIST`/`STRUCT`/`ARRAY`/`MAP`) as
@@ -1626,6 +1655,23 @@ mod tests {
     }
 
     #[test]
+    fn query_shape_recognises_from_and_table_shorthand() {
+        // #1054: `FROM`-first shorthand and `TABLE` are read-only per
+        // `is_read_only_sql_masked` (#1005) but must also route through the
+        // query path here, or the statement's rows are silently dropped.
+        assert!(is_query_shape("FROM tbl"));
+        assert!(is_query_shape("FROM tbl SELECT x"));
+        assert!(is_query_shape("TABLE tbl"));
+        // A plain `SELECT * FROM t` must still be recognised via the
+        // `SELECT` branch, not be mistaken for `FROM`-first shorthand.
+        assert!(is_query_shape("SELECT * FROM t"));
+        // `FROMAGE` merely starts with the same 4 letters as `FROM`; the
+        // word-boundary check in `starts_with_word` must not treat this
+        // identifier-led (non-SQL) input as `FROM`-first shorthand.
+        assert!(!is_query_shape("FROMAGE tbl"));
+    }
+
+    #[test]
     fn query_shape_treats_plain_dml_as_execute() {
         assert!(!is_query_shape("INSERT INTO t VALUES (1)"));
         assert!(!is_query_shape("UPDATE t SET x = 1"));
@@ -1783,9 +1829,73 @@ mod tests {
             duckdb_value_to_value(DuckValue::Text("hi".into())),
             Value::String("hi".into())
         );
+        // `u64::MAX` is nowhere near JS's safe integer range (2^53-1), so —
+        // unlike the old unconditional `Value::UInt` mapping — this must now
+        // fall back to an exact decimal string (#precision).
         assert_eq!(
             duckdb_value_to_value(DuckValue::UBigInt(u64::MAX)),
-            Value::UInt(u64::MAX)
+            Value::String(u64::MAX.to_string())
+        );
+    }
+
+    /// #precision: BIGINT/UBIGINT/HUGEINT/UHUGEINT must stay lossless across
+    /// JS's `Number.MAX_SAFE_INTEGER` (2^53-1) boundary — narrower than each
+    /// type's own native range (`i64`/`u64`/`i128`/`u128`), so a value can
+    /// fit comfortably in the DuckDB type yet still need to fall back to a
+    /// string. Mirrors `Value::from_*_lossless`'s own boundary tests in
+    /// `db/types.rs`, applied through the DuckDB decode path specifically.
+    #[test]
+    fn value_conversion_stays_lossless_across_js_safe_boundary() {
+        const MAX_SAFE: i64 = 9_007_199_254_740_991;
+
+        // BIGINT: exactly at the boundary stays a number; one past it (still
+        // comfortably an `i64`) must become a string.
+        assert_eq!(
+            duckdb_value_to_value(DuckValue::BigInt(MAX_SAFE)),
+            Value::Int(MAX_SAFE)
+        );
+        assert_eq!(
+            duckdb_value_to_value(DuckValue::BigInt(MAX_SAFE + 1)),
+            Value::String((MAX_SAFE + 1).to_string())
+        );
+        assert_eq!(
+            duckdb_value_to_value(DuckValue::BigInt(-(MAX_SAFE + 1))),
+            Value::String((-(MAX_SAFE + 1)).to_string())
+        );
+
+        // UBIGINT: same boundary, unsigned side.
+        assert_eq!(
+            duckdb_value_to_value(DuckValue::UBigInt(MAX_SAFE as u64)),
+            Value::UInt(MAX_SAFE as u64)
+        );
+        assert_eq!(
+            duckdb_value_to_value(DuckValue::UBigInt(MAX_SAFE as u64 + 1)),
+            Value::String((MAX_SAFE as u64 + 1).to_string())
+        );
+
+        // HUGEINT: a value that fits comfortably in `i64` (so the *old*
+        // "does it fit in i64" threshold would have kept it a number) but
+        // exceeds 2^53 must still fall back to a string under the new,
+        // narrower threshold.
+        let hugeint_in_i64_but_unsafe = (MAX_SAFE as i128) + 1;
+        assert_eq!(
+            duckdb_value_to_value(DuckValue::HugeInt(hugeint_in_i64_but_unsafe)),
+            Value::String(hugeint_in_i64_but_unsafe.to_string())
+        );
+        assert_eq!(
+            duckdb_value_to_value(DuckValue::HugeInt(MAX_SAFE as i128)),
+            Value::Int(MAX_SAFE)
+        );
+
+        // UHUGEINT: same "fits in u64 but exceeds 2^53" case.
+        let uhugeint_in_u64_but_unsafe = (MAX_SAFE as u128) + 1;
+        assert_eq!(
+            duckdb_value_to_value(DuckValue::UHugeInt(uhugeint_in_u64_but_unsafe)),
+            Value::String(uhugeint_in_u64_but_unsafe.to_string())
+        );
+        assert_eq!(
+            duckdb_value_to_value(DuckValue::UHugeInt(MAX_SAFE as u128)),
+            Value::UInt(MAX_SAFE as u64)
         );
     }
 

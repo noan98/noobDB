@@ -4,6 +4,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import type { QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
+import { semanticColorToken } from "../semanticColors";
 import { Button, Checkbox, Select } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
@@ -279,7 +280,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
         {model.truncated && (
           <>
             {" "}
-            <chakra.span color="var(--status-warning, var(--text-secondary))">
+            <chakra.span color={semanticColorToken("warning", "text")}>
               {t("pivotTruncated", { rows: model.rowKeys.length, cols: model.colKeys.length })}
             </chakra.span>
           </>

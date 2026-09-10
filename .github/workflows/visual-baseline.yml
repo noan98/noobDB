@@ -16,6 +16,26 @@ name: visual baseline update
 # されている (`Changes must be made through a pull request`) ため、スクリーンショット
 # の生成まで成功しても最後の push が `GH013` で必ず失敗する。見た目を変える作業
 # ブランチ上で実行し、生成されたベースラインをその変更と同じ PR に含めてマージする。
+#
+# ## push に使うトークン: Secrets `VISUAL_BASELINE_PAT` (任意だが強く推奨)
+#
+# GitHub は **`GITHUB_TOKEN` で push したコミットからは新しいワークフロー実行を
+# 起動しない** (再帰防止の仕様)。PR ブランチへこのワークフローが push すると、
+# 新しい head に対して作られる `ci` / `pr-conflict` / `codeql` の実行はいずれも
+# **`action_required` (承認待ち) のまま 1 ジョブも走らずに完了扱い**になり、PR の
+# 必須チェックが永久に「待機中」で止まる (実例: PR #1083)。人が Actions タブから
+# 各実行を再実行すれば解消するが、気付きにくく毎回手作業が要る。
+#
+# そこで push 用トークンを Secrets `VISUAL_BASELINE_PAT` から取り、**あれば
+# そちらを使う**ようにしている。PAT で push したコミットは通常どおりワークフローを
+# 起動するため、ベースライン更新後の CI が自動で走る。
+#
+# セットアップ (メンテナ作業): 本リポジトリへの **Contents: Read and write** 権限を
+# 持つ fine-grained PAT (classic なら `repo` スコープ) を発行し、Secrets に
+# `VISUAL_BASELINE_PAT` として登録する。ワークフローファイル自体は push しないので
+# `workflow` スコープは不要。**未登録でもこのワークフローは従来どおり動く**が、
+# その場合は上記の承認待ちが起きることを Job Summary に警告として出す (黙って
+# 詰まらせない)。
 
 on:
   workflow_dispatch:
@@ -36,12 +56,22 @@ jobs:
     runs-on: ubuntu-latest
     # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ (正常時は影響なし)。
     timeout-minutes: 20
+    env:
+      # PAT が登録されているか (真偽の文字列)。secrets コンテキストはジョブレベルの
+      # env では使えるが、ワークフローレベルの env では使えないためここに置く。
+      # 値そのものは参照せず「有無」だけを見るのでログに秘密は出ない。
+      HAS_PUSH_PAT: ${{ secrets.VISUAL_BASELINE_PAT != '' }}
     steps:
       # ベースライン PNG をコミットして push し返すため、認証情報を保持する
-      # (persist-credentials: true / 既定)。GITHUB_TOKEN の contents: write で足りる。
+      # (persist-credentials: true / 既定)。
+      #
+      # トークンは PAT があればそれを、無ければ GITHUB_TOKEN を使う。GITHUB_TOKEN の
+      # contents: write でも push 自体は通るが、その push は新しいワークフロー実行を
+      # 起動しない (冒頭のコメント参照)。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.ref }}
+          token: ${{ secrets.VISUAL_BASELINE_PAT || github.token }}
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -82,10 +112,38 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -n "$(git status --porcelain -- 'src/__tests__/browser')" ]; then
-            git add src/__tests__/browser
-            git commit -m "test(visual): ビジュアル回帰ベースラインを更新 (#306)"
-            git push origin HEAD:${{ github.ref_name }}
+          if [ -z "$(git status --porcelain -- 'src/__tests__/browser')" ]; then
+            echo "ベースラインに変更はありません。" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git add src/__tests__/browser
+          git commit -m "test(visual): ビジュアル回帰ベースラインを更新 (#306)"
+          git push origin HEAD:${{ github.ref_name }}
+
+          # push 後に、この push が下流の CI を起動するかどうかを明示する。
+          # 起動しない場合 (GITHUB_TOKEN) は放置すると PR のチェックが承認待ちで
+          # 止まり続けるため、対処法まで書いて黙って詰まらせない。
+          {
+            echo "## ビジュアル回帰ベースラインを更新しました"
+            echo
+            echo "ブランチ \`${{ github.ref_name }}\` へ push しました。"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$HAS_PUSH_PAT" = "true" ]; then
+            echo "\`VISUAL_BASELINE_PAT\` で push したため、新しい head の CI は自動で起動します。" \
+              >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "ベースラインに変更はありません。"
+            echo "::warning::VISUAL_BASELINE_PAT が未登録のため GITHUB_TOKEN で push しました。この push では下流のワークフローが起動しません — 対象 PR の ci / pr-conflict / codeql の実行が action_required (承認待ち) のままになるので、Actions タブから手動で再実行してください。"
+            {
+              echo "> [!WARNING]"
+              echo "> Secrets \`VISUAL_BASELINE_PAT\` が未登録のため \`GITHUB_TOKEN\` で push しました。"
+              echo "> GitHub の再帰防止仕様により、**この push は下流のワークフローを起動しません**。"
+              echo "> 対象 PR の \`ci\` / \`pr-conflict\` / \`codeql\` は \`action_required\` (承認待ち) のまま"
+              echo "> 1 ジョブも走らずに完了扱いとなり、必須チェックが「待機中」で止まります。"
+              echo ">"
+              echo "> **対処**: Actions タブで対象 PR の各実行を手動で再実行するか、"
+              echo "> Contents: Read and write 権限の PAT を Secrets \`VISUAL_BASELINE_PAT\` に登録してください"
+              echo "> (登録すれば以降は自動で起動します)。"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi

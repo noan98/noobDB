@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
+import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import {
   REBINDABLE_SHORTCUTS,
   resolveShortcutBindings,
@@ -68,7 +69,12 @@ const CategoryHeading = chakra("div", {
 });
 
 const ConflictNote = chakra("span", {
-  base: { fontSize: "xs", fontWeight: 600, color: "var(--status-error)", whiteSpace: "nowrap" },
+  base: {
+    fontSize: "xs",
+    fontWeight: 600,
+    color: semanticColorVar("danger", "text"),
+    whiteSpace: "nowrap",
+  },
 });
 
 /**
@@ -144,7 +150,7 @@ export function KeybindingSettings() {
                   <RowLabel>{t(s.descKey)}</RowLabel>
                   {conflicting && <ConflictNote>{t("settingsShortcutConflict")}</ConflictNote>}
                   <ComboKbd
-                    borderColor={conflicting ? "var(--status-error)" : "app.border"}
+                    borderColor={conflicting ? semanticColorToken("danger", "text") : "app.border"}
                   >
                     {formatCombo(resolved[s.id])}
                   </ComboKbd>

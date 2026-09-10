@@ -148,6 +148,73 @@ describe("normalizePersistedWorkspace", () => {
     expect(ws.panes[0].tabs[0].builderSnapshot).toBeUndefined();
   });
 
+  // #ORDER BY 回帰テスト: orderBy フィールド追加前の永続化済みスナップショット
+  // (フィールド自体が無い) を、追加後のコードでも壊さず復元できること。
+  it("restores an older builderSnapshot with no orderBy field (backward compat)", () => {
+    const snapshot = {
+      kind: "SELECT",
+      database: "db",
+      table: "users",
+      selectAll: true,
+      selectColumns: [],
+      whereConditions: [],
+      limit: "100",
+      setPairs: [],
+      insertPairs: [],
+    };
+    const ws = normalizePersistedWorkspace([
+      { kind: "query", title: "Q", sql: "SELECT 1", builderSnapshot: snapshot },
+    ]);
+    expect(ws.panes[0].tabs[0].builderSnapshot).toEqual(snapshot);
+    expect(ws.panes[0].tabs[0].builderSnapshot?.orderBy).toBeUndefined();
+  });
+
+  it("keeps a valid builderSnapshot with orderBy terms", () => {
+    const snapshot = {
+      kind: "SELECT",
+      database: "db",
+      table: "users",
+      selectAll: true,
+      selectColumns: [],
+      whereConditions: [],
+      orderBy: [
+        { column: "name", direction: "ASC" },
+        { column: "created_at", direction: "DESC" },
+      ],
+      limit: "100",
+      setPairs: [],
+      insertPairs: [],
+    };
+    const ws = normalizePersistedWorkspace([
+      { kind: "query", title: "Q", sql: "SELECT 1", builderSnapshot: snapshot },
+    ]);
+    expect(ws.panes[0].tabs[0].builderSnapshot).toEqual(snapshot);
+  });
+
+  it("drops a builderSnapshot whose orderBy has an invalid direction", () => {
+    const ws = normalizePersistedWorkspace([
+      {
+        kind: "query",
+        title: "Q",
+        sql: "SELECT 1",
+        builderSnapshot: {
+          kind: "SELECT",
+          database: "db",
+          table: "users",
+          selectAll: true,
+          selectColumns: [],
+          whereConditions: [],
+          orderBy: [{ column: "name", direction: "SIDEWAYS" }],
+          limit: "100",
+          setPairs: [],
+          insertPairs: [],
+        },
+      },
+    ]);
+    expect(ws.panes[0].tabs).toHaveLength(1);
+    expect(ws.panes[0].tabs[0].builderSnapshot).toBeUndefined();
+  });
+
   it("drops a builderSnapshot with an unknown kind", () => {
     const ws = normalizePersistedWorkspace([
       {

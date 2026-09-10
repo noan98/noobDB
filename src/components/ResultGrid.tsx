@@ -1,7 +1,9 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
+// 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみ。
+import { markGridCommit } from "../perf";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
@@ -19,11 +21,13 @@ import {
   type PaginationState,
   type SortingFn,
   type SortingState,
+  type Cell,
   type Row,
   type VisibilityState,
 } from "@tanstack/react-table";
 import { CellValue, Column, QueryResult, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
+import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
 import { comboMatchesEvent, formatCombo } from "../shortcutKeys";
 import { enumBadgeHue, formatDateTimeDisplay, formatJsonCompact, rawValueTitle } from "./cellFormat";
@@ -37,7 +41,12 @@ import { CellValueViewer } from "./CellValueViewer";
 import { RowInspector } from "./RowInspector";
 import { copyToClipboard } from "./clipboard";
 import { useConfirm } from "./ConfirmDialog";
-import { ContextMenu } from "./ContextMenu";
+import {
+  ContextMenu,
+  submenuOrFlat,
+  SUBMENU_THRESHOLD,
+  type ContextMenuEntry,
+} from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -62,6 +71,8 @@ import {
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
 import { accentFill, ACCENT_FILL_STOPS, readableInk } from "../colorScale";
+import { CountUp } from "./CountUp";
+import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -172,6 +183,22 @@ const DENSITY_ROW_ESTIMATE: Record<Density, number> = {
 };
 
 export const GRID_CSS: SystemStyleObject = {
+  // 密度変更の遷移演出 (#1023)。この Box 自身 (スクロール枠) へ、密度が実際に
+  // 変わった瞬間だけ App.css 側の density-settle-grow/shrink keyframes を 1 回
+  // 重ねる。scale/opacity のみの compositor アニメーションで実レイアウトには
+  // 影響しないため、仮想スクロールの行位置 (rowVirtualizer)・ピン留め列・
+  // <tfoot> 集計行は同じ枠の中で一体としてスケールし、互いにズレない。属性が
+  // 立っていない定常状態ではマッチしないので、行数に関わらずコストは増えない
+  // (詳細な設計判断は App.css の同ブロック直前のコメントと `densityTransition.ts`
+  // のモジュール doc を参照)。
+  "[data-density-transition='grow'] &": {
+    animation: "density-settle-grow var(--dur-med, 200ms) var(--ease-out, ease-out)",
+    transformOrigin: "top left",
+  },
+  "[data-density-transition='shrink'] &": {
+    animation: "density-settle-shrink var(--dur-med, 200ms) var(--ease-out, ease-out)",
+    transformOrigin: "top left",
+  },
   "& table": {
     borderCollapse: "separate",
     borderSpacing: 0,
@@ -697,16 +724,16 @@ export const GRID_CSS: SystemStyleObject = {
   // 流用し、追加行は緑で示す (削除行は今回結果に無いためツールバーの件数で示す)。
   // 緑は色覚に配慮しつつ「追加=増加」の直感に沿う。reduced-motion 時も色は残る。
   "& tbody tr.grid-row-added td.row-index": {
-    boxShadow: "inset 3px 0 0 var(--status-success)",
+    boxShadow: `inset 3px 0 0 ${semanticColorVar("success", "solid")}`,
   },
   "& tbody tr.grid-row-added td": {
-    background: "color-mix(in srgb, var(--status-success) 12%, transparent)",
+    background: `color-mix(in srgb, ${semanticColorVar("success", "solid")} 12%, transparent)`,
   },
   "& tbody tr.grid-row-added.grid-row-stripe td": {
-    background: "color-mix(in srgb, var(--status-success) 16%, transparent)",
+    background: `color-mix(in srgb, ${semanticColorVar("success", "solid")} 16%, transparent)`,
   },
   "& tbody tr.grid-row-added:hover td": {
-    background: "color-mix(in srgb, var(--status-success) 20%, transparent)",
+    background: `color-mix(in srgb, ${semanticColorVar("success", "solid")} 20%, transparent)`,
   },
   // インラインセル編集 (ResultGrid のみ出現)
   "& td.is-pending-edit": {
@@ -772,14 +799,13 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow:
       "inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--accent) 45%, transparent)",
   },
-  "& td.is-invalid-edit": { boxShadow: "inset 2px 0 0 var(--status-error)" },
+  "& td.is-invalid-edit": { boxShadow: `inset 2px 0 0 ${semanticColorVar("danger", "solid")}` },
   "& td.is-invalid-edit.is-pending-edit": {
-    background: "color-mix(in srgb, var(--status-error) 12%, transparent)",
+    background: `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 12%, transparent)`,
   },
   // アクティブセルが invalid-edit のとき: 左端エラーバー + inset エラーリングを重ねる。
   "& td.is-invalid-edit.is-active-cell:not(:focus-within)": {
-    boxShadow:
-      "inset 2px 0 0 var(--status-error), inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--status-error) 55%, transparent)",
+    boxShadow: `inset 2px 0 0 ${semanticColorVar("danger", "solid")}, inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, ${semanticColorVar("danger", "solid")} 55%, transparent)`,
   },
   "& .cell-edit-wrap": { position: "relative" },
   "& .cell-edit-input": {
@@ -810,7 +836,7 @@ export const GRID_CSS: SystemStyleObject = {
     fontSize: "var(--text-xs)",
     fontWeight: 500,
     color: "#fff",
-    background: "var(--status-error)",
+    background: semanticColorVar("danger", "solid"),
     borderRadius: "var(--radius-sm)",
     boxShadow: "var(--shadow-md, 0 2px 6px rgb(0 0 0 / 0.3))",
     whiteSpace: "normal",
@@ -826,15 +852,15 @@ export const GRID_CSS: SystemStyleObject = {
   // 塗りにする。ストライプ/ホバーの行背景より優先する。
   "& tbody td.is-find-hit, & tbody tr.grid-row-stripe td.is-find-hit, & tbody tr:hover td.is-find-hit":
     {
-      background: "color-mix(in srgb, var(--status-warning) 22%, var(--bg))",
+      background: `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 22%, var(--bg))`,
     },
   // 現在ヒット: 濃い塗り + inset リング。ジャンプ時は App.css の
   // @keyframes find-current-pulse で一瞬リングを太らせて着地を示す
   // (reduced-motion では App.css 末尾のメディアクエリで静止化)。
   "& tbody td.is-find-current, & tbody tr.grid-row-stripe td.is-find-current, & tbody tr:hover td.is-find-current":
     {
-      background: "color-mix(in srgb, var(--status-warning) 38%, var(--bg))",
-      boxShadow: "inset 0 0 0 2px var(--status-warning)",
+      background: `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 38%, var(--bg))`,
+      boxShadow: `inset 0 0 0 2px ${semanticColorVar("warning", "solid")}`,
       animation: "find-current-pulse 0.45s var(--ease-out)",
     },
 };
@@ -1124,6 +1150,14 @@ function formatNumber(v: number): string {
   if (!Number.isFinite(v)) return String(v);
   if (Number.isInteger(v)) return intFormatter.format(v);
   return v.toString();
+}
+
+/**
+ * `resultStatusBar` の結果件数は元々 `.toLocaleString()` を通さず生の桁で表示
+ * していた (#977 のカウントアップ導入前と同じ見た目を保つための整形関数)。
+ */
+function formatCountUpPlainInt(n: number): string {
+  return String(Math.round(n));
 }
 
 /**
@@ -2269,16 +2303,27 @@ function ColumnStatsMenu({
       <Box display="flex" flexDirection="column" gap="1">
         <StatRow
           label={t("gridCountLabel")}
-          value={`${stats.nonNullCount.toLocaleString()} / ${stats.count.toLocaleString()}`}
+          value={
+            <>
+              <CountUp value={stats.nonNullCount} />
+              {" / "}
+              <CountUp value={stats.count} />
+            </>
+          }
         />
         <Box display="flex" flexDirection="column" gap="0.5">
           <StatRow
             label={t("gridNullLabel")}
-            value={`${stats.nullCount.toLocaleString()} (${nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0)}%)`}
+            value={
+              <>
+                <CountUp value={stats.nullCount} />
+                {` (${nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0)}%)`}
+              </>
+            }
           />
           {nullBar}
         </Box>
-        <StatRow label={t("gridDistinctLabel")} value={stats.distinctCount.toLocaleString()} />
+        <StatRow label={t("gridDistinctLabel")} value={<CountUp value={stats.distinctCount} />} />
         {numeric ? (
           <>
             <StatRow label={t("gridMinLabel")} value={fmtStatNum(stats.min)} />
@@ -2357,13 +2402,19 @@ function ColumnStatsMenu({
               </chakra.span>
               <StatRow
                 label={t("gridCountLabel")}
-                value={`${full.nonNull.toLocaleString()} / ${full.total.toLocaleString()}`}
+                value={
+                  <>
+                    <CountUp value={full.nonNull} />
+                    {" / "}
+                    <CountUp value={full.total} />
+                  </>
+                }
               />
               <StatRow
                 label={t("gridNullLabel")}
-                value={full.nullCount.toLocaleString()}
+                value={<CountUp value={full.nullCount} />}
               />
-              <StatRow label={t("gridDistinctLabel")} value={full.distinct.toLocaleString()} />
+              <StatRow label={t("gridDistinctLabel")} value={<CountUp value={full.distinct} />} />
               <StatRow label={t("gridMinLabel")} value={fmtStatCell(full.min)} title={fmtStatCell(full.min)} />
               <StatRow label={t("gridMaxLabel")} value={fmtStatCell(full.max)} title={fmtStatCell(full.max)} />
               {numeric && (
@@ -2387,7 +2438,7 @@ function ColumnStatsMenu({
             <chakra.span
               role="alert"
               fontSize="var(--text-xs)"
-              color="var(--status-error)"
+              color={semanticColorToken("danger", "text")}
               whiteSpace="normal"
             >
               {fullError}
@@ -2421,7 +2472,16 @@ function ColumnStatsMenu({
 /** Pseudo-random width percentages for skeleton shimmer bars (cycles by column index). */
 const SKELETON_WIDTHS = [68, 85, 52, 90, 72, 58];
 
-export function DataGrid({
+// `React.memo` でラップする (#1098)。呼び出し元の `ResultGrid` は
+// ストリーミング経過時間表示 (200ms ごとに tick する `useStreamingElapsed`) や
+// 検索バー/ページネーションの UI state を自身の state として持っており、
+// それらが変化しても `DataGrid` に渡す props (columns/rows/pendingEdits 等) は
+// 何も変わらない。memo が無いと、その props 不変の再レンダリングのたびに
+// 数千行規模の本コンポーネントの本体 (state 読み出し・仮想化計算・可視行分の
+// セル JSX 組み立て) が丸ごと再実行されてしまう。shallow 比較のみで独自の
+// 比較関数は使わないため、常に props 参照の同一性判定のみで安全にスキップ判定
+// できる (stale な比較ロジックによる誤バイパスのリスクはない)。
+export const DataGrid = memo(function DataGrid({
   columns,
   rows,
   enableColumnControls = true,
@@ -2684,6 +2744,19 @@ export function DataGrid({
       ),
     [columnKinds, rows],
   );
+  // `columnStats` は行が届くたびに (ストリーミング中は 1 バッチごとに) 作り直る。
+  // これを下の `tableColumns` の依存配列に直接含めると、実際にはセルの描画関数
+  // (`cell`) 自身は変わらないのに ColumnDef 配列全体が新しい参照になり、
+  // react-table 側の列モデル (ヘッダー/フッターグループ、可視列一覧 等) まで
+  // 総入れ替えになってしまう (#1098)。データバー/ヒートマップの条件付き書式は
+  // `colFormats` で明示的に有効化された列でしか参照しない (renderNumeric 内)
+  // ので、ref 経由の最新値参照に切り替えて `tableColumns` の再構築対象から外す。
+  // `cell` 関数は行データ (`data`) の変化のたびにどのみち呼び直されるため、
+  // 表示値が古くなることはない。
+  const columnStatsRef = useRef(columnStats);
+  useEffect(() => {
+    columnStatsRef.current = columnStats;
+  }, [columnStats]);
 
   // --- Sort & column filters, persisted per result shape (#677) ---
   // Column widths/order/visibility were already persisted (#616); sort and
@@ -2987,7 +3060,9 @@ export function DataGrid({
           // ヒートマップを背景に描く。NULL/非数値は対象外 (上で弾き済み or num===null)。
           const renderNumeric = (display: string, extraClass: string, title?: string) => {
             const mode = colFormats[i] ?? "off";
-            const stats = columnStats[i];
+            // `columnStats` 自体は tableColumns の依存配列から意図的に外している
+            // (上のコメント参照) ため、ここは常に最新値を持つ ref から読む。
+            const stats = columnStatsRef.current[i];
             const num = toNumber(v);
             if (mode === "off" || !stats || num === null) {
               return (
@@ -3134,6 +3209,10 @@ export function DataGrid({
         },
       };
     });
+    // `columnStats` は意図的に外している (上のコメント参照) — 依存に含めると
+    // ストリーミングの行バッチごとに ColumnDef 配列 (延いては react-table の
+    // 列モデル全体) が作り直されてしまう。値自体は `columnStatsRef` 経由で
+    // 常に最新を参照するので、表示の鮮度は落ちない。
   }, [
     columns,
     columnKinds,
@@ -3143,16 +3222,39 @@ export function DataGrid({
     richCellRendering,
     locale,
     colFormats,
-    columnStats,
     heatPaletteKey,
   ]);
 
+  // ストリーミング中は 1 行バッチが届くたびに呼び出し元 (App.tsx) が
+  // `[...prev, ...next]` で `rows` を丸ごと新しい配列参照に作り直す。ここで
+  // 毎回 `rows` 全件を RowShape へ変換し直すと、1 バッチあたり O(既読み込み
+  // 行数) かかり、ストリーム全体では O(行数²) の無駄な変換になってしまう
+  // (#1098)。実際には既存行はそのまま (同じ要素参照で) 前に付いているだけ
+  // なので、「前回の変換結果 + 新しく増えた末尾ぶんだけ変換」で済ませる。
+  // 判定は必要十分ではなく安全側の簡易チェック — 先頭と末尾の要素参照が
+  // 前回と一致するときだけ「単純な追記」とみなし、それ以外 (新しいクエリの
+  // 実行・行の丸ごと差し替えなど) は無条件に全件変換へフォールバックする
+  // ので、誤って古い変換結果を返すことはない。
+  const dataCacheRef = useRef<{ rows: CellValue[][]; data: RowShape[] }>({ rows: [], data: [] });
   const data = useMemo<RowShape[]>(() => {
-    return rows.map((r) => {
+    const toRowShape = (r: CellValue[]): RowShape => {
       const o: RowShape = {};
       r.forEach((v, i) => (o[String(i)] = v));
       return o;
-    });
+    };
+    const prev = dataCacheRef.current;
+    const isAppendOnly =
+      prev.rows.length > 0 &&
+      rows.length >= prev.rows.length &&
+      rows[0] === prev.rows[0] &&
+      rows[prev.rows.length - 1] === prev.rows[prev.rows.length - 1];
+    const next = isAppendOnly
+      ? rows.length === prev.rows.length
+        ? prev.data
+        : prev.data.concat(rows.slice(prev.rows.length).map(toRowShape))
+      : rows.map(toRowShape);
+    dataCacheRef.current = { rows, data: next };
+    return next;
   }, [rows]);
 
   const table = useReactTable({
@@ -3510,12 +3612,13 @@ export function DataGrid({
   });
 
   // Move keyboard focus to the given cell (original row index + column index).
-  // Scrolls the virtualizer when the target row is off-screen.
+  // Scrolls the row/column virtualizers when the target is off-screen.
   const navigateCell = (newRowIdx: number, newColIdx: number) => {
     const visIdx = visibleRows.findIndex((r) => r.index === newRowIdx);
     if (visIdx >= 0 && virtualize) {
       rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
     }
+    if (virtualize) scrollColumnIntoView(newColIdx);
     setActiveCell({ rowIdx: newRowIdx, colIdx: newColIdx });
     pendingFocusRef.current = { rowIdx: newRowIdx, colIdx: newColIdx };
   };
@@ -3677,6 +3780,78 @@ export function DataGrid({
   // the virtual spacer span.
   const totalColCount = visibleColIds.length + 2;
 
+  // Column virtualization (#1095). A wide result can have hundreds of
+  // columns; each *rendered* row would mount a `<td>` per column, multiplying
+  // against the viewport-sized row count row virtualization already limits
+  // us to. We window the *center* (unpinned) columns the same way rows are
+  // windowed, and always mount pinned columns (sticky, and typically few).
+  // The header/footer stay fully rendered — one row each, so their cost never
+  // multiplies — and remain aligned with windowed body rows regardless:
+  // `<colgroup>` declares every column's width once, and a `colSpan` spacer
+  // `<td>` simply occupies the combined width of the columns it skips (same
+  // mechanism as the vertical spacer rows below).
+  const leafColumnsForPin = table.getVisibleLeafColumns();
+  const leftPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "left");
+  const rightPinnedColumns = leafColumnsForPin.filter((c) => c.getIsPinned() === "right");
+  const leftPinnedCount = leftPinnedColumns.length;
+  const rightPinnedCount = rightPinnedColumns.length;
+  const centerColumns = leafColumnsForPin.filter((c) => !c.getIsPinned());
+  // Sticky "dead zones" the scroll container's own clientWidth doesn't
+  // account for: the always-sticky row-index cell (`ROW_INDEX_WIDTH`, not a
+  // tracked column — see its `left`/`right` offset math elsewhere in this
+  // file) plus the *pixel* width of pinned columns, not just their count.
+  // Left-pinned columns sit in front of every center column in table flow,
+  // so a center column's real (scroll-content) x-coordinate is offset by
+  // `leftDeadZone`, not 0 — `scrollMargin` corrects the virtualizer's own
+  // coordinate space to match. Right-pinned columns don't shift center
+  // columns' start (they trail after), but still cover the last
+  // `rightDeadZone` px of the viewport visually.
+  const leftDeadZone =
+    ROW_INDEX_WIDTH + leftPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
+  const rightDeadZone = rightPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: centerColumns.length,
+    getScrollElement: () => scrollContainerRef?.current ?? null,
+    // Column widths are exact (table state), not DOM-measured, so seed the
+    // real size directly instead of a rough estimate.
+    estimateSize: (index) => centerColumns[index]?.getSize() ?? defaultColumnSize("string"),
+    overscan: 6,
+    // Align the virtualizer's coordinate space with the real scroll offset
+    // (see `leftDeadZone` above) so both the mounted window during plain
+    // scrolling and `scrollToIndex`'s target offset are computed against the
+    // column's true position, not an offset that starts at 0.
+    scrollMargin: leftDeadZone,
+    // Reserve room at both ends so `scrollToIndex`/`align: "auto"` never
+    // aligns a column flush with the container edge — which would land it
+    // underneath the sticky row-index/pinned columns instead of just past
+    // them (#1099 review: keyboard/find nav could focus an invisible cell).
+    scrollPaddingStart: leftDeadZone,
+    scrollPaddingEnd: rightDeadZone,
+  });
+  // Sizing/order/pinning/visibility can all change which column sits at a
+  // given center index (and, via `leftDeadZone`/`rightDeadZone` above,
+  // `scrollMargin`/`scrollPaddingStart`/`scrollPaddingEnd` themselves); re-run
+  // the (exact) estimate so the virtualizer's cached offsets follow instead
+  // of lagging by a paint — mirrors the density re-measure above. Note:
+  // `scrollMargin`/`scrollPadding*` are plain options virtual-core re-reads
+  // every render (and `scrollMargin` is itself a dependency of its internal
+  // measurements memo), so they don't strictly need this `.measure()` kick —
+  // it's here for `estimateSize`'s per-index *values* (opaque to virtual-core
+  // until asked to remeasure), which the same state changes also affect.
+  useEffect(() => {
+    if (virtualize) columnVirtualizer.measure();
+  }, [virtualize, columnVirtualizer, columnSizing, columnOrder, columnPinning, columnVisibility]);
+  const columnVirtualItems = virtualize ? columnVirtualizer.getVirtualItems() : [];
+  // Given an *original* column index, scroll it into view when it currently
+  // sits outside the mounted column window (off-screen pinned columns are
+  // always mounted, so only center columns need this). Mirrors
+  // `rowVirtualizer.scrollToIndex` for keyboard/find navigation.
+  const scrollColumnIntoView = (colIdx: number) => {
+    const centerPos = centerColumns.findIndex((c) => Number(c.id) === colIdx);
+    if (centerPos >= 0) columnVirtualizer.scrollToIndex(centerPos, { align: "auto" });
+  };
+
   // ── 結果内検索 (#644) のナビゲーション ──
   // 要求はワンショットの prop (`findNav`) で届く。ページング表示ではヒットの
   // 属するページへ先に移動する必要があり、ページ切替後の再レンダーを待ってから
@@ -3716,7 +3891,10 @@ export function DataGrid({
       return;
     }
     pendingFindNavRef.current = null;
-    if (virtualize) rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
+    if (virtualize) {
+      rowVirtualizer.scrollToIndex(visIdx, { align: "auto" });
+      scrollColumnIntoView(nav.colIdx);
+    }
     if (nav.select) {
       setSelection(null);
       setActiveCell({ rowIdx: nav.rowIdx, colIdx: nav.colIdx });
@@ -3933,7 +4111,17 @@ export function DataGrid({
       data-index={measureIndex}
     >
       <td className="row-index">{rowIdx + 1}</td>
-      {row.getVisibleCells().map((cell) => {
+      {(() => {
+        // Split into pinned-left / center / pinned-right, matching the
+        // colgroup order (`row.getVisibleCells()` already groups pinned
+        // columns to the ends). Only the (usually much larger) center group
+        // gets windowed; pinned columns are always mounted.
+        const cells = row.getVisibleCells();
+        const leftCells = leftPinnedCount > 0 ? cells.slice(0, leftPinnedCount) : [];
+        const rightCells = rightPinnedCount > 0 ? cells.slice(cells.length - rightPinnedCount) : [];
+        const centerCells = cells.slice(leftPinnedCount, cells.length - rightPinnedCount);
+        const windowed = columnVirtualItems.length > 0;
+        const renderCell = (cell: Cell<RowShape, unknown>) => {
         // Resolve original column index from the column id so reorder/hide
         // and pinning don't misalign per-column lookups.
         const colIdx = Number(cell.column.id);
@@ -4173,7 +4361,38 @@ export function DataGrid({
             )}
           </td>
         );
-      })}
+        };
+        const firstCenterIdx = windowed ? columnVirtualItems[0].index : 0;
+        const lastCenterIdx = windowed
+          ? columnVirtualItems[columnVirtualItems.length - 1].index
+          : centerCells.length - 1;
+        return (
+          <>
+            {leftCells.map(renderCell)}
+            {/* Spacer <td>s absorb the off-screen width of skipped center
+                columns so scroll width / sticky offsets stay correct — the
+                horizontal analogue of the vertical spacer <tr>s above. */}
+            {windowed && firstCenterIdx > 0 && (
+              <td
+                aria-hidden
+                colSpan={firstCenterIdx}
+                style={{ padding: 0, border: 0, background: "transparent" }}
+              />
+            )}
+            {(windowed ? columnVirtualItems.map((vi) => centerCells[vi.index]) : centerCells).map(
+              renderCell,
+            )}
+            {windowed && lastCenterIdx < centerCells.length - 1 && (
+              <td
+                aria-hidden
+                colSpan={centerCells.length - 1 - lastCenterIdx}
+                style={{ padding: 0, border: 0, background: "transparent" }}
+              />
+            )}
+            {rightCells.map(renderCell)}
+          </>
+        );
+      })()}
       <td className="col-filler" aria-hidden />
     </tr>
     );
@@ -4575,12 +4794,71 @@ export function DataGrid({
               shortcut: formatCombo(effectiveGridBindings.gridCopy),
               onSelect: () => copyCell(copyMenu.rowIdx, copyMenu.colIdx),
             },
-            { label: t("gridCopyRow"), onSelect: () => copyRow(copyMenu.rowIdx) },
-            {
-              label: t("gridCopyRowWithHeaders"),
-              shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
-              onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
-            },
+            // コピーの派生 (行 / 列名付き / SQL 文) はまとめてサブメニューへ畳む
+            // (#1018)。単発で最頻用の「値をコピー」だけはトップレベルに残す。
+            ...submenuOrFlat(
+              t("gridCopyGroup"),
+              (() => {
+                // "Copy as INSERT" (#601): operates on every row covered by an
+                // active multi-row range selection, or just the clicked row
+                // when there is none/it's a single row. Unlike UPDATE/DELETE
+                // it stays available even without a resolved target table —
+                // `copyRowsAsInsert` falls back to a placeholder name and warns
+                // instead.
+                const insertRowIndices =
+                  selectionRect && selectionRect.rowIndexSet.size > 1
+                    ? Array.from(selectionRect.rowIndexSet)
+                    : [copyMenu.rowIdx];
+                const multiRow = insertRowIndices.length > 1;
+                return [
+                  { label: t("gridCopyRow"), onSelect: () => copyRow(copyMenu.rowIdx) },
+                  {
+                    label: t("gridCopyRowWithHeaders"),
+                    shortcut: formatCombo(effectiveGridBindings.gridCopyHeaders),
+                    onSelect: () => copyRowWithHeaders(copyMenu.rowIdx),
+                  },
+                  { separator: true as const },
+                  multiRow
+                    ? {
+                        label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
+                        title: t("gridCopyAsInsertRowsTitle"),
+                        onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                      }
+                    : {
+                        label: t("gridCopyAsInsert"),
+                        onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                      },
+                  ...(multiRow
+                    ? [
+                        {
+                          label: t("gridCopyAsInsertRowsCombined", {
+                            count: insertRowIndices.length,
+                          }),
+                          title: t("gridCopyAsInsertRowsCombinedTitle"),
+                          onSelect: () => copyRowsAsInsert(insertRowIndices, true),
+                        },
+                      ]
+                    : []),
+                  ...(rowSqlAvailable
+                    ? [
+                        {
+                          label: t("gridCopyAsUpdate"),
+                          onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
+                          disabled: !rowSqlHasPk,
+                          title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                        },
+                        {
+                          label: t("gridCopyAsDelete"),
+                          onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
+                          disabled: !rowSqlHasPk,
+                          title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
+                        },
+                      ]
+                    : []),
+                ];
+              })(),
+              { icon: "copy" },
+            ),
             // 選択範囲のエクスポート/コピー (#917): 矩形選択が 2 セル以上を
             // 覆っているときだけ出す (単一セルは上の「値をコピー」で足りる)。
             // 選択範囲の列/行部分集合を一度だけ `onExportSelection` へ渡し、
@@ -4657,59 +4935,6 @@ export function DataGrid({
                 },
               ];
             })(),
-            ...(() => {
-              // "Copy as INSERT" (#601): operates on every row covered by an
-              // active multi-row range selection, or just the clicked row
-              // when there is none/it's a single row. Unlike UPDATE/DELETE
-              // (below) it stays available even without a resolved target
-              // table — `copyRowsAsInsert` falls back to a placeholder name
-              // and warns instead.
-              const insertRowIndices =
-                selectionRect && selectionRect.rowIndexSet.size > 1
-                  ? Array.from(selectionRect.rowIndexSet)
-                  : [copyMenu.rowIdx];
-              const multiRow = insertRowIndices.length > 1;
-              return [
-                { separator: true as const },
-                multiRow
-                  ? {
-                      label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
-                      title: t("gridCopyAsInsertRowsTitle"),
-                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
-                    }
-                  : {
-                      label: t("gridCopyAsInsert"),
-                      onSelect: () => copyRowsAsInsert(insertRowIndices, false),
-                    },
-                ...(multiRow
-                  ? [
-                      {
-                        label: t("gridCopyAsInsertRowsCombined", {
-                          count: insertRowIndices.length,
-                        }),
-                        title: t("gridCopyAsInsertRowsCombinedTitle"),
-                        onSelect: () => copyRowsAsInsert(insertRowIndices, true),
-                      },
-                    ]
-                  : []),
-                ...(rowSqlAvailable
-                  ? [
-                      {
-                        label: t("gridCopyAsUpdate"),
-                        onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
-                        disabled: !rowSqlHasPk,
-                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                      },
-                      {
-                        label: t("gridCopyAsDelete"),
-                        onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
-                        disabled: !rowSqlHasPk,
-                        title: rowSqlHasPk ? undefined : t("gridCopyAsSqlNoPk"),
-                      },
-                    ]
-                  : []),
-              ];
-            })(),
             // 行の複製 (#820): クリックした行の値を種に行追加モーダルを開く。
             // `onRequestInsertRow` と同じ表示条件 (編集可能なテーブルタブ) で
             // App から渡される。
@@ -4782,19 +5007,28 @@ export function DataGrid({
                 pkIndices ?? [],
                 copyMenu.rowIdx,
               );
-              if (pendingEdits?.[rowKey]?.[copyMenu.colIdx] !== undefined) {
-                items.push({
-                  label: t("gridQuickSetRevert"),
-                  title: undefined,
-                  disabled: false,
-                  onSelect: () => {
-                    const ck = copyMenu.colIdx;
-                    setCopyMenu(null);
-                    onSetCellEdit?.(rowKey, ck, null);
-                  },
-                });
-              }
-              return [{ separator: true as const }, ...items];
+              const revert: ContextMenuEntry[] =
+                pendingEdits?.[rowKey]?.[copyMenu.colIdx] !== undefined
+                  ? [
+                      {
+                        label: t("gridQuickSetRevert"),
+                        onSelect: () => {
+                          const ck = copyMenu.colIdx;
+                          setCopyMenu(null);
+                          onSetCellEdit?.(rowKey, ck, null);
+                        },
+                      },
+                    ]
+                  : [];
+              if (items.length === 0 && revert.length === 0) return [];
+              return [
+                { separator: true as const },
+                // 定番値のセットは列の型によって 1〜6 項目に増減するので、
+                // 2 件以上ならサブメニューへ畳む (#1018)。「このセルの編集を
+                // 取り消す」は値のセットとは別の操作なのでトップレベルに残す。
+                ...submenuOrFlat(t("gridQuickSetGroup"), items),
+                ...revert,
+              ];
             })(),
             // 一括編集 (#596): 矩形選択がある編集可能なテーブルでのみ、
             // 「選択セルに値を設定」を出す。PK が無いテーブルは行を特定できないため非表示。
@@ -4824,7 +5058,8 @@ export function DataGrid({
             ...(() => {
               if (!onFkJump) return [];
               const driver = rowSqlDriver ?? "mysql";
-              const items: { label: string; title: string; onSelect: () => void }[] = [];
+              const items: ContextMenuEntry[] = [];
+              const reverse: ContextMenuEntry[] = [];
 
               // 順方向: クリックしたセルが FK なら参照先テーブルへジャンプ。
               const fkMeta = columnMeta?.find(
@@ -4848,9 +5083,17 @@ export function DataGrid({
 
               // 逆方向: この行を参照している子テーブルの行一覧を辿る。参照先カラムが
               // 結果に含まれていない場合 (キー値を取れない) は対象から外す。
-              for (const inc of incomingFks ?? []) {
+              // 参照元は子テーブルの数だけ増え、実際に画面高いっぱいのメニューに
+              // なるため、2 件以上ならサブメニューへ畳む (#1018)。畳んだときは
+              // 親項目が「参照元を表示」を担うので、子項目は `table.column` だけの
+              // 短いラベルにする。
+              const candidates = (incomingFks ?? []).flatMap((inc) => {
                 const refColIdx = columns.findIndex((c) => c.name === inc.referencedColumn);
-                if (refColIdx < 0) continue;
+                if (refColIdx < 0) return [];
+                return [{ inc, refColIdx }];
+              });
+              const grouped = candidates.length >= SUBMENU_THRESHOLD;
+              for (const { inc, refColIdx } of candidates) {
                 const value = rows[copyMenu.rowIdx]?.[refColIdx] ?? null;
                 const sql = buildReverseRefSql({
                   driver,
@@ -4859,12 +5102,21 @@ export function DataGrid({
                   childColumn: inc.column,
                   value,
                 });
-                items.push({
-                  label: t("gridFkReverse", { table: inc.table, column: inc.column }),
+                reverse.push({
+                  label: grouped
+                    ? t("gridFkReverseChild", { table: inc.table, column: inc.column })
+                    : t("gridFkReverse", { table: inc.table, column: inc.column }),
                   title: t("gridFkReverseTitle"),
                   onSelect: () => { setCopyMenu(null); onFkJump(sql); },
                 });
               }
+              items.push(
+                ...submenuOrFlat(
+                  t("gridFkReverseGroup", { count: reverse.length }),
+                  reverse,
+                  { icon: "link", title: t("gridFkReverseTitle") },
+                ),
+              );
 
               if (items.length === 0) return [];
               return [{ separator: true as const }, ...items];
@@ -5228,7 +5480,7 @@ export function DataGrid({
       )}
     </>
   );
-}
+});
 
 /**
  * ストリーミング実行中の経過時間 (ms) を実時間でライブに刻む。
@@ -5295,8 +5547,16 @@ function StreamingBanner({
       color="app.textMuted"
       flexShrink={0}
       borderBottom="1px solid"
-      borderColor={approaching ? "color-mix(in srgb, var(--status-warning) 45%, var(--border))" : "app.borderSubtle"}
-      bg={approaching ? "color-mix(in srgb, var(--status-warning) 12%, var(--bg-muted))" : "app.surfaceMuted"}
+      borderColor={
+        approaching
+          ? `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 45%, var(--border))`
+          : "app.borderSubtle"
+      }
+      bg={
+        approaching
+          ? `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 12%, var(--bg-muted))`
+          : "app.surfaceMuted"
+      }
     >
       <chakra.span
         aria-hidden
@@ -5304,7 +5564,9 @@ function StreamingBanner({
         height="8px"
         borderRadius="50%"
         flexShrink={0}
-        background={approaching ? "var(--status-error)" : "var(--status-warning)"}
+        background={
+          approaching ? semanticColorVar("danger", "solid") : semanticColorVar("warning", "solid")
+        }
         animation="streaming-pulse 1s ease-in-out infinite"
       />
       <chakra.span flex="1" display="inline-flex" alignItems="center" gap="2" minW={0} overflow="hidden">
@@ -5453,6 +5715,21 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     // A shrink (new query) resets; a grow (load more) keeps the current page.
     if (rowCount < prev) setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [rowCount]);
+  // 確定した結果件数のカウントアップ (#977)。ストリーミング中は行数が絶えず増える
+  // ため、その途中経過をカウントアップさせるとチカチカするだけで逆効果 — なので
+  // `streaming` が真の間は前回の確定値に据え置き、完了した瞬間にだけ新しい値へ
+  // 遷移させる (これにより `useCountUp` 自身の「意味のある差分か」判定にも確定値
+  // 同士の差分だけが渡る)。
+  const [confirmedRowCount, setConfirmedRowCount] = useState(rowCount);
+  useEffect(() => {
+    if (!streaming) setConfirmedRowCount(rowCount);
+  }, [streaming, rowCount]);
+  // 計測 (#1094): クエリ完了後、グリッドが新しい結果セットをコミット (描画) した
+  // タイミングを記録する (Time to Interactive 相当)。既定 OFF なら markGridCommit
+  // は即 no-op。
+  useLayoutEffect(() => {
+    if (!streaming) markGridCommit(rowCount);
+  }, [streaming, rowCount]);
   const [showExport, setShowExport] = useState(false);
   // 右クリック「選択範囲をエクスポート」(#917) で `DataGrid` から一度きり渡される
   // 選択範囲の列/行部分集合。モーダルを閉じたら破棄し、次に (右クリック経由でなく)
@@ -5462,6 +5739,14 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     columns: Column[];
     rows: CellValue[][];
   } | null>(null);
+  // `DataGrid` は React.memo でラップされている (#1098) ため、ここで毎レンダー
+  // 新しい無名関数を渡すと props の shallow 比較が常に不一致になり memo が
+  // 無意味になる。setState はどれも同一性の保証されたセッターなので依存配列は
+  // 空でよい。
+  const handleExportSelection = useCallback((data: { columns: Column[]; rows: CellValue[][] }) => {
+    setSelectionExport(data);
+    setShowExport(true);
+  }, []);
   const [search, setSearch] = useState("");
   // Interval the toggle will use when switched on. Seeded from the persisted
   // default and from the live cadence so the selector reflects the active poll.
@@ -5889,6 +6174,17 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
     hasPendingEdits && editedRowCount === 1 && !streaming && !hasInvalidEdit;
   const canApply = hasPendingEdits && !streaming && !hasInvalidEdit;
 
+  // `resultStatusBar` は "{rows} 件 · {ms} ms" 形式の 1 文を `t()` で組み立てるため、
+  // 件数だけをアニメーションさせるには展開済み文字列からプレースホルダの前後を
+  // 逆算して分割する (#977)。テンプレート自体・i18n 実装には触れず、どの言語でも
+  // 動く。
+  const statusBarParts =
+    !streaming && result.elapsed_ms != null && result.columns.length > 0
+      ? splitAroundCountUpToken(
+          t("resultStatusBar", { rows: COUNT_UP_TOKEN, ms: result.elapsed_ms }),
+        )
+      : null;
+
   return (
     <Box
       display="flex"
@@ -5932,7 +6228,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           color="app.text"
           borderBottom="1px solid"
           borderColor="app.borderSubtle"
-          background="color-mix(in srgb, var(--status-warning) 14%, var(--bg-muted))"
+          background={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
         >
           <chakra.span flex="1">
             {t("autoLimitApplied", { limit: autoLimitApplied! })}
@@ -6398,7 +6694,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             )}
           </chakra.span>
         )}
-        {!streaming && result.elapsed_ms != null && result.columns.length > 0 && (
+        {statusBarParts && (
           <chakra.span
             marginLeft={selSummary ? "4" : "auto"}
             fontSize="xs"
@@ -6407,7 +6703,9 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
             fontFamily="mono"
             aria-live="polite"
           >
-            {t("resultStatusBar", { rows: result.rows.length, ms: result.elapsed_ms })}
+            {statusBarParts[0]}
+            <CountUp value={confirmedRowCount} formatter={formatCountUpPlainInt} />
+            {statusBarParts[1]}
             {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
               <Tooltip label={t("autoLimitApplied", { limit: autoLimitApplied })}>
                 <chakra.span color="var(--text-warning)" marginLeft="6px">
@@ -6434,7 +6732,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
         <chakra.input
           ref={searchInputRef}
           type="search"
-          marginLeft={selSummary || (!streaming && result.elapsed_ms != null && result.columns.length > 0) ? "8px" : "auto"}
+          marginLeft={selSummary || statusBarParts ? "8px" : "auto"}
           width="220px"
           padding="3px 8px"
           fontSize="sm"
@@ -6683,10 +6981,7 @@ export const ResultGrid = forwardRef<ResultGridHandle, Props>(function ResultGri
           columnSizingStorageKey={columnSizingStorageKey}
           skeleton={!!streaming}
           onSelectionSummary={setSelSummary}
-          onExportSelection={(data) => {
-            setSelectionExport(data);
-            setShowExport(true);
-          }}
+          onExportSelection={handleExportSelection}
           onRunStatsQuery={onRunStatsQuery}
           paginationState={paginateMode ? pagination : undefined}
           onPaginationChange={paginateMode ? setPagination : undefined}

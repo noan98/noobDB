@@ -5,10 +5,11 @@ import App from "../../App";
 import { t } from "../../i18n";
 import { setQueryTimeoutSecs, setTabRestoreMode } from "../../settings";
 import {
-  emitTauriEvent,
+  emitChannelMessage,
   installTauriMock,
   invocationsOf,
   onCommand,
+  type ChannelLike,
 } from "./tauriMock";
 import type { CellValue, Column, ConnectionProfile, TableColumnInfo } from "../../api/tauri";
 
@@ -20,9 +21,10 @@ import type { CellValue, Column, ConnectionProfile, TableColumnInfo } from "../.
 // 退行が対象。
 //
 // バックエンドは `tauriMock.ts` のフェイク Tauri ランタイムで差し替える。
-// `api/tauri.ts` の型付きラッパ・zod 検証・`listenQueryStream` の streamId
-// フィルタは実コードのまま通り、テストは `emitTauriEvent` で `query-stream:*`
-// イベントを任意のタイミングで注入できる (実 DB 不要)。
+// `api/tauri.ts` の型付きラッパ・zod 検証・`listenQueryStream` の Channel
+// レジストリは実コードのまま通り、テストは `emitChannelMessage` で
+// `run_query_stream` の Channel (#1096) へ columns/rows/done メッセージを任意
+// のタイミングで注入できる (実 DB 不要)。
 
 // ---- フィクスチャ ----------------------------------------------------------
 
@@ -113,11 +115,11 @@ function registerBaseHandlers() {
 }
 
 /** ストリーミング一式 (columns → rows → done) を 1 ストリーム分注入する。 */
-function emitQueryStreamResult(streamId: string, rows: CellValue[][]) {
-  emitTauriEvent("query-stream:columns", { streamId, columns: FRUIT_COLUMNS });
-  emitTauriEvent("query-stream:rows", { streamId, rows });
-  emitTauriEvent("query-stream:done", {
-    streamId,
+function emitQueryStreamResult(channel: ChannelLike, rows: CellValue[][]) {
+  emitChannelMessage(channel, { kind: "columns", columns: FRUIT_COLUMNS });
+  emitChannelMessage(channel, { kind: "rows", rows });
+  emitChannelMessage(channel, {
+    kind: "done",
     totalRows: rows.length,
     rowsAffected: 0,
     elapsedMs: 5,
@@ -129,9 +131,9 @@ function emitQueryStreamResult(streamId: string, rows: CellValue[][]) {
 /** `run_query_stream` を「即座に全件返るクエリ」として自動応答させる。 */
 function registerAutoStream() {
   onCommand("run_query_stream", (args) => {
-    const streamId = args.streamId as string;
+    const channel = args.onEvent as ChannelLike;
     // invoke の解決後にイベントが届く実機の順序を再現する。
-    window.setTimeout(() => emitQueryStreamResult(streamId, fruitsRows), 0);
+    window.setTimeout(() => emitQueryStreamResult(channel, fruitsRows), 0);
     return null;
   });
 }
@@ -166,9 +168,9 @@ beforeEach(() => {
 
 describe("シナリオ: ストリーミング実行とキャンセル (実ブラウザ)", () => {
   it("ストリーミング結果が段階的に表示され、完了でステータスが確定する", async () => {
-    let capturedStreamId: string | null = null;
+    let capturedChannel: ChannelLike | null = null;
     onCommand("run_query_stream", (args) => {
-      capturedStreamId = args.streamId as string;
+      capturedChannel = args.onEvent as ChannelLike;
       return null; // イベントはテスト側が手動で注入する
     });
 
@@ -177,27 +179,27 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     await openFruitsTable(screen);
 
     await vi.waitFor(() => {
-      if (!capturedStreamId) throw new Error("run_query_stream not invoked yet");
+      if (!capturedChannel) throw new Error("run_query_stream not invoked yet");
     }, { timeout: 5000 });
-    const streamId = capturedStreamId!;
+    const channel = capturedChannel!;
 
     // 1 バッチ目: 列定義 + 1 行。到着分が即座に描画される
     // (カラム未着の間はスケルトン表示で、グリッドはまだ出ない)。
-    emitTauriEvent("query-stream:columns", { streamId, columns: FRUIT_COLUMNS });
-    emitTauriEvent("query-stream:rows", { streamId, rows: [[1, "apple", 5]] });
+    emitChannelMessage(channel, { kind: "columns", columns: FRUIT_COLUMNS });
+    emitChannelMessage(channel, { kind: "rows", rows: [[1, "apple", 5]] });
     await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();
 
     // 実行中はストリーミングバナーと停止ボタンが出ている。
     await expect.element(screen.getByRole("button", { name: t("gridStopButton") })).toBeVisible();
 
     // 2 バッチ目が追記され、既存行は残る。
-    emitTauriEvent("query-stream:rows", { streamId, rows: [[2, "banana", 3]] });
+    emitChannelMessage(channel, { kind: "rows", rows: [[2, "banana", 3]] });
     await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
     await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();
 
     // done で確定: 完了ステータスが出てバナー (停止ボタン) は消える。
-    emitTauriEvent("query-stream:done", {
-      streamId,
+    emitChannelMessage(channel, {
+      kind: "done",
       totalRows: 2,
       rowsAffected: 0,
       elapsedMs: 5,
@@ -214,8 +216,10 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
 
   it("停止ボタンでキャンセルすると取得済み行は残り、以降のイベントは無視される", async () => {
     let capturedStreamId: string | null = null;
+    let capturedChannel: ChannelLike | null = null;
     onCommand("run_query_stream", (args) => {
       capturedStreamId = args.streamId as string;
+      capturedChannel = args.onEvent as ChannelLike;
       return null;
     });
 
@@ -227,9 +231,10 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
       if (!capturedStreamId) throw new Error("run_query_stream not invoked yet");
     }, { timeout: 5000 });
     const streamId = capturedStreamId!;
+    const channel = capturedChannel!;
 
-    emitTauriEvent("query-stream:columns", { streamId, columns: FRUIT_COLUMNS });
-    emitTauriEvent("query-stream:rows", { streamId, rows: [[1, "apple", 5]] });
+    emitChannelMessage(channel, { kind: "columns", columns: FRUIT_COLUMNS });
+    emitChannelMessage(channel, { kind: "rows", rows: [[1, "apple", 5]] });
     await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();
 
     await screen.getByRole("button", { name: t("gridStopButton") }).click();
@@ -247,14 +252,14 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
 
     // キャンセル後に届いた行イベントは購読解除済みのため反映されない
     // (cancel はリスナーを同期的に外すので、この emit の時点で配送先はない)。
-    emitTauriEvent("query-stream:rows", { streamId, rows: [[2, "banana", 3]] });
+    emitChannelMessage(channel, { kind: "rows", rows: [[2, "banana", 3]] });
     expect(screen.getByRole("gridcell", { name: "banana", exact: true }).query()).toBeNull();
   });
 
   it("カラム到着前のスケルトン段階でも停止ボタン (キャンセル導線) が出る", async () => {
-    let capturedStreamId: string | null = null;
+    let capturedChannel: ChannelLike | null = null;
     onCommand("run_query_stream", (args) => {
-      capturedStreamId = args.streamId as string;
+      capturedChannel = args.onEvent as ChannelLike;
       return null; // 列イベントは送らず、スケルトン段階に留める
     });
 
@@ -263,7 +268,7 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     await openFruitsTable(screen);
 
     await vi.waitFor(() => {
-      if (!capturedStreamId) throw new Error("run_query_stream not invoked yet");
+      if (!capturedChannel) throw new Error("run_query_stream not invoked yet");
     }, { timeout: 5000 });
 
     // 列未着の「無の時間」でもバナーの停止ボタンが出ており、すぐにキャンセルできる。
@@ -274,9 +279,9 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     expect(screen.getByRole("gridcell", { name: "apple", exact: true }).query()).toBeNull();
 
     // 列 + 行が届くとスケルトンからグリッドへ切り替わり、停止ボタンは残る。
-    const streamId = capturedStreamId!;
-    emitTauriEvent("query-stream:columns", { streamId, columns: FRUIT_COLUMNS });
-    emitTauriEvent("query-stream:rows", { streamId, rows: [[1, "apple", 5]] });
+    const channel = capturedChannel!;
+    emitChannelMessage(channel, { kind: "columns", columns: FRUIT_COLUMNS });
+    emitChannelMessage(channel, { kind: "rows", rows: [[1, "apple", 5]] });
     await expect
       .element(screen.getByRole("gridcell", { name: "apple", exact: true }))
       .toBeVisible();

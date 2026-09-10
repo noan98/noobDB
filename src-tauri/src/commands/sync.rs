@@ -70,8 +70,21 @@ pub(crate) async fn apply_sync_sql_inner(
         ));
     }
 
-    session
+    let result = session
         .conn
         .execute_transaction(&statements, database.as_deref())
-        .await
+        .await;
+    if result.is_ok() {
+        // Schema Cache (#1097): このコマンドの目的自体が「対象スキーマをソースに
+        // 合わせて変更する」ことなので、渡された文の内容を判定せず常に
+        // invalidate する (`sql_may_change_schema` による判定は不要 — ここに来る
+        // `statements` は事実上すべて DDL)。
+        session.schema_cache.invalidate_all().await;
+        // Query Result Cache (#1097): `apply_sync_sql` はスキーマ同期だけでなく
+        // データ同期 (`generate_data_sync_sql` が生成する INSERT/UPDATE/DELETE)
+        // の適用にも使われる共通の apply エンドポイントなので、こちらも常に
+        // invalidate する。
+        session.query_cache.invalidate_all().await;
+    }
+    result
 }

@@ -34,7 +34,14 @@ export interface DangerFinding {
  * quotes, double quotes, backticks, dollar-quoted strings, line comments
  * (`--` / `#`) and block comments, so clause keywords (`WHERE`, `ORDER BY`, …)
  * survive while a `where` hiding inside a string or a quoted identifier named
- * `` `order` `` does not.
+ * `` `order` `` does not. One deliberate exception: a MySQL versioned comment
+ * — opened with `/*!`, optionally followed by a version number, e.g.
+ * `/*!50000` — is *not* blanked like an ordinary block comment, because
+ * MySQL actually executes its body. See the `/*!` branch below.
+ *
+ * Mirrors the backend `mask_for_analysis_impl` (`src-tauri/src/db/mod.rs`)
+ * closely enough that a shared golden (`fixtures/maskVectors.json`, #988)
+ * pins both implementations to the same output for the same input.
  */
 export function maskLiterals(sql: string, driver?: string): string {
   const backslashEscapes = driverBackslashEscapes(driver);
@@ -59,6 +66,26 @@ export function maskLiterals(sql: string, driver?: string): string {
     if (c === "#") {
       let j = i + 1;
       while (j < n && sql[j] !== "\n") j++;
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    if (c === "/" && c2 === "*" && sql[i + 2] === "!") {
+      // MySQL "version comment" `/*! ... */` (optionally `/*!50000 ... */`):
+      // despite the `/*` spelling this is not a comment on MySQL — its body
+      // *executes* on servers new enough to satisfy the optional version
+      // gate — so blanking the interior the way a normal `/* ... */` block
+      // comment is blanked below would hide real, executable SQL from every
+      // keyword scan built on this mask. Only the opening delimiter (`/*!`
+      // plus any immediately-following digits) is blanked here; the body is
+      // left for the main loop to keep scanning normally from here (so a
+      // quote or nested comment inside it is still masked correctly), and
+      // the closing `*/` — which nothing else in this loop specially
+      // recognises — just passes through unchanged as two ordinary
+      // characters (harmless: neither is a word character). Mirrors the
+      // backend `mask_for_analysis_impl` (src-tauri/src/db/mod.rs).
+      let j = i + 3;
+      while (j < n && /[0-9]/.test(sql[j])) j++;
       blank(i, j);
       i = j;
       continue;
@@ -93,6 +120,7 @@ export function maskLiterals(sql: string, driver?: string): string {
     if (c === "'" || c === '"' || c === "`") {
       const quote = c;
       let j = i + 1;
+      let closed = false;
       while (j < n) {
         if (sql[j] === quote) {
           // Doubled quote is an escaped delimiter, not the end.
@@ -100,19 +128,31 @@ export function maskLiterals(sql: string, driver?: string): string {
             j += 2;
             continue;
           }
+          closed = true;
           j++;
           break;
         }
         // Backslash escapes apply inside MySQL strings but not in `` `ident` ``
         // — and not at all on the other dialects (see `driverBackslashEscapes`).
-        if (backslashEscapes && sql[j] === "\\" && quote !== "`") {
+        // Guarded by `j + 1 < n` (mirrors the backend `mask_for_analysis_impl`,
+        // #988): a backslash as the very last character of the input has
+        // nothing left to escape, so it falls through to the plain
+        // `j++` below instead of consuming a character past the end.
+        if (backslashEscapes && sql[j] === "\\" && quote !== "`" && j + 1 < n) {
           j += 2;
           continue;
         }
         j++;
       }
-      // Blank the contents but keep the delimiters so token boundaries survive.
-      blank(i + 1, j - 1);
+      // Blank the contents but keep the delimiters so token boundaries
+      // survive. When the literal never closes — it runs off the end of the
+      // input instead of hitting a real closing delimiter — there is no
+      // trailing delimiter to preserve, so mask all the way through EOF
+      // (`j`, not `j - 1`) rather than leaving the very last character of the
+      // input unmasked. Fail-closed, mirrors the backend
+      // `mask_for_analysis_impl`, which masks every remaining character up to
+      // EOF for an unterminated literal (#988).
+      blank(i + 1, closed ? j - 1 : j);
       i = j;
       continue;
     }
@@ -147,8 +187,13 @@ function matchDollarQuoteTag(sql: string, i: number): string | null {
  * rather than to MySQL: a string literal can then only close earlier than
  * MySQL would judge, never later, so keywords are revealed rather than hidden
  * and every check built on the mask errs toward "this is a write".
+ *
+ * Exported so `sqlScript.ts`'s statement splitter (`scanQuoted`) can share the
+ * exact same rule — statement boundaries and the danger/read-only masks must
+ * agree on where a `'...'` literal closes, or a hidden second statement can
+ * slip past one check while the other still sees it (#1004).
  */
-function driverBackslashEscapes(driver?: string): boolean {
+export function driverBackslashEscapes(driver?: string): boolean {
   return driver === "mysql";
 }
 
@@ -245,9 +290,12 @@ function classifyStatement(masked: string, raw: string): DangerFinding | null {
  * Scans `sql` (which may contain several `;`-separated statements) and returns
  * one finding per destructive statement detected. An empty array means nothing
  * dangerous was recognized.
+ *
+ * `driver` selects the string-escaping rules used while masking (#852, #1004).
+ * Omit it only where the driver is genuinely unknown — see `isReadOnlySql`.
  */
-export function analyzeDangerousSql(sql: string): DangerFinding[] {
-  const masked = maskLiterals(sql);
+export function analyzeDangerousSql(sql: string, driver?: string): DangerFinding[] {
+  const masked = maskLiterals(sql, driver);
   const findings: DangerFinding[] = [];
   let start = 0;
   for (let i = 0; i <= masked.length; i++) {
@@ -262,6 +310,26 @@ export function analyzeDangerousSql(sql: string): DangerFinding[] {
 
 const READ_ONLY_PREFIXES = ["select", "show", "describe", "desc", "explain", "with"];
 
+/**
+ * `VALUES (1),(2)` (a bare row constructor) and `TABLE t`
+ * (PostgreSQL/DuckDB/MySQL 8.0.19+ shorthand for `SELECT * FROM t`) can only
+ * ever produce a result set — neither has a form that mutates data — so they
+ * are allowed for every driver regardless of whether it actually supports the
+ * statement (an unsupported driver just fails with a syntax error, not a
+ * safety concern). Mirrors the backend `is_read_only_sql_masked`
+ * (`src-tauri/src/db/mod.rs`, #1005).
+ */
+const READ_ONLY_PREFIXES_ALL_DRIVERS = ["values", "table"];
+
+/**
+ * DuckDB-only read-only prefixes (#1005): `FROM t` (FROM-first shorthand for
+ * `SELECT * FROM t`) and `SUMMARIZE t` (read-only column statistics). Kept
+ * separate from `READ_ONLY_PREFIXES_ALL_DRIVERS` because these two are only
+ * meaningful DuckDB syntax — `PRAGMA` is handled separately below since it
+ * additionally needs the setting-form exclusion (see `isReadOnlySql`).
+ */
+const READ_ONLY_PREFIXES_DUCKDB = ["from", "summarize"];
+
 const WRITE_KEYWORDS = [
   "insert",
   "update",
@@ -275,6 +343,23 @@ const WRITE_KEYWORDS = [
   "merge",
   "grant",
   "revoke",
+  // 別エンジンへの書き込みパススルー関数群。文全体は `SELECT ...` のままなので
+  // READ_ONLY_PREFIXES は通過するが、実際の書き込み SQL は引数の文字列リテラルの
+  // 中に埋め込まれ maskLiterals で空白化されるため、通常のキーワード走査には
+  // 引っかからない (`SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE ...')`、
+  // `SELECT dblink_exec('dbname=other','DELETE FROM accounts')`)。
+  // `openrowset`/`openquery`/`opendatasource` は MSSQL のリンクサーバ経由
+  // パススルー、`dblink`/`dblink_exec` は PostgreSQL の他 DB へのクエリ実行、
+  // `load_extension` は SQLite のネイティブ拡張ロード (任意コード実行)。バックの
+  // `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と同じく全ドライバ共通で
+  // 拒否する (fail-closed。正当な識別子としてこれらの名前が現れる可能性は極めて
+  // 低い)。
+  "openrowset",
+  "openquery",
+  "opendatasource",
+  "dblink",
+  "dblink_exec",
+  "load_extension",
 ];
 
 /**
@@ -386,11 +471,17 @@ function hasLockingTableHint(body: string): boolean {
  * the statements a read-only session would reject. When in doubt it returns
  * false (treats the statement as a write), erring toward asking.
  *
- * `driver` selects the string-escaping rules used while masking (#852). Omit
- * it only where the driver is genuinely unknown: the fallback is the stricter
- * non-MySQL reading, which can classify a legitimate MySQL statement using
- * `\'` inside a literal as a write (an extra confirmation prompt, never a
- * missed one). See `driverBackslashEscapes`.
+ * `driver` selects the string-escaping rules used while masking (#852), and
+ * also gates the DuckDB-only allow-list extensions (#1005): `FROM` (FROM-first
+ * shorthand) / `SUMMARIZE` / query-shaped `PRAGMA` are only recognized when
+ * `driver === "duckdb"`, since they're only safe (or only meaningful) syntax
+ * on that dialect. `VALUES` / `TABLE` are recognized for every driver
+ * (including when `driver` is omitted) because neither has a form that
+ * mutates data. Omit `driver` only where it is genuinely unknown: the
+ * fallback is the stricter non-MySQL string-escaping reading, which can
+ * classify a legitimate MySQL statement using `\'` inside a literal as a
+ * write (an extra confirmation prompt, never a missed one). See
+ * `driverBackslashEscapes`.
  */
 export function isReadOnlySql(sql: string, driver?: string): boolean {
   const masked = maskLiterals(sql, driver);
@@ -399,7 +490,19 @@ export function isReadOnlySql(sql: string, driver?: string): boolean {
     .replace(/[;\s]+$/, "")
     .replace(/^\s+/, "");
   if (!body) return false;
-  if (!READ_ONLY_PREFIXES.some((kw) => startsWithKeyword(body, kw))) return false;
+  let allowedPrefix =
+    READ_ONLY_PREFIXES.some((kw) => startsWithKeyword(body, kw)) ||
+    READ_ONLY_PREFIXES_ALL_DRIVERS.some((kw) => startsWithKeyword(body, kw));
+  if (!allowedPrefix && driver === "duckdb") {
+    allowedPrefix = READ_ONLY_PREFIXES_DUCKDB.some((kw) => startsWithKeyword(body, kw));
+    if (!allowedPrefix && startsWithKeyword(body, "pragma")) {
+      // PRAGMA には照会形 (`PRAGMA database_list`) と設定形
+      // (`PRAGMA memory_limit='1GB'`) があり、後者だけ構文上必ず `=` を含む。
+      // バックの is_read_only_sql_masked (#1005) と同じ近似を使う。
+      allowedPrefix = !body.includes("=");
+    }
+  }
+  if (!allowedPrefix) return false;
   // Trailing separators were stripped, so a remaining `;` hides a 2nd statement.
   if (body.includes(";")) return false;
   if (WRITE_KEYWORDS.some((kw) => containsWord(body, kw))) return false;
@@ -429,9 +532,12 @@ const SCHEMA_MUTATING_PREFIXES = [
  * `create` / `alter` / `drop` already cover the compound DDL forms the verb
  * leads — `CREATE INDEX`, `DROP INDEX`, `ALTER TABLE ... RENAME COLUMN`,
  * `ALTER TABLE ... RENAME TO` — because only the leading keyword is matched.
+ *
+ * `driver` selects the string-escaping rules used while masking (#852, #1004).
+ * Omit it only where the driver is genuinely unknown — see `isReadOnlySql`.
  */
-export function isSchemaMutatingSql(sql: string): boolean {
-  const masked = maskLiterals(sql);
+export function isSchemaMutatingSql(sql: string, driver?: string): boolean {
+  const masked = maskLiterals(sql, driver);
   let start = 0;
   for (let i = 0; i <= masked.length; i++) {
     if (i === masked.length || masked[i] === ";") {

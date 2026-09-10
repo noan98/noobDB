@@ -3,6 +3,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type DriverKind, type ProcessInfo } from "../api/tauri";
 import { useT } from "../i18n";
+import { semanticColorToken } from "../semanticColors";
 import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import { formatProcessTime, pruneSelection, summarizeQuery } from "./processList";
 import { ServerMetricsPanel } from "./ServerMetricsPanel";
@@ -166,7 +167,7 @@ export function ProcessListPanel({
             })}
           </chakra.p>
           {includesSelf && (
-            <chakra.p marginTop="2" marginBottom={0} color="var(--status-error)" fontWeight={600}>
+            <chakra.p marginTop="2" marginBottom={0} color={semanticColorToken("danger", "text")} fontWeight={600}>
               {t("processKillSelfWarning")}
             </chakra.p>
           )}

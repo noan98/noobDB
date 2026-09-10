@@ -122,11 +122,34 @@ fn pg_literal(s: &str) -> String {
 }
 
 /// `db.table` / `db.*` for MySQL's `GRANT ... ON` target.
+///
+/// **`table: None` (`db.*`) だけ、DB 名の `_`/`%` をエスケープする (#H6).**
+/// `GRANT ... ON db.*` の DB 名は `mysql.db` 権限テーブルの `Db` 列に対する
+/// **パターン**として評価される (`_`/`%` は `LIKE` と同じワイルドカード)。
+/// DB 名をそのままバッククォート引用しただけでは、`_`/`%` を含む名前が
+/// 1 文字違い/任意文字列違いの別 DB にも意図せず一致してしまい、最小権限
+/// 原則が崩れる。MySQL 公式ドキュメント (Reference Manual の GRANT Statement
+/// ページ、ワイルドカードに関する注記) はこの評価がバッククォート引用した
+/// 識別子の中でも `\_`/`\%` エスケープで無効化できることを、DB 名
+/// `test_underscore` を厳密に指定する例
+/// (`` GRANT ... ON `test\_underscore`.* TO ... ``) つきで明示している。
+/// バックスラッシュ自体は先にエスケープしてから `_`/`%` を置換する
+/// (順序を逆にすると、新たに挿入したエスケープ用のバックスラッシュまで
+/// 二重化してしまう)。テーブルを明示する `db.table` 形式
+/// (`mysql.tables_priv`) はこのパターン評価を受けないため対象外。
 fn mysql_target(database: &str, table: Option<&str>) -> String {
-    let db = quote_ident(DriverKind::Mysql, database);
     match table {
-        Some(t) => format!("{db}.{}", quote_ident(DriverKind::Mysql, t)),
-        None => format!("{db}.*"),
+        Some(t) => {
+            let db = quote_ident(DriverKind::Mysql, database);
+            format!("{db}.{}", quote_ident(DriverKind::Mysql, t))
+        }
+        None => {
+            let escaped = database
+                .replace('\\', "\\\\")
+                .replace('_', "\\_")
+                .replace('%', "\\%");
+            format!("{}.*", quote_ident(DriverKind::Mysql, &escaped))
+        }
     }
 }
 
@@ -515,6 +538,122 @@ mod tests {
         assert!(flags(false, false, false, false, false).is_empty());
         assert!(!flags(true, false, false, false, false).is_empty());
         assert!(!flags(false, false, false, false, true).is_empty());
+    }
+
+    // --- #H6: `GRANT/REVOKE ... ON db.*` の DB 名ワイルドカード対策 ---------
+
+    #[test]
+    fn mysql_grant_whole_database_escapes_underscore_and_percent() {
+        let spec = GrantSpec {
+            user: "alice".into(),
+            host: None,
+            database: "foo_bar".into(),
+            table: None,
+            flags: flags(true, false, false, false, false),
+        };
+        assert_eq!(
+            generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
+            Some("GRANT SELECT ON `foo\\_bar`.* TO 'alice'@'%'"),
+            "'_' は LIKE ワイルドカードとして解釈されるため \\_ にエスケープされるべき"
+        );
+
+        let spec_percent = GrantSpec {
+            database: "foo%bar".into(),
+            ..spec
+        };
+        assert_eq!(
+            generate_grant_sql(DriverKind::Mysql, &spec_percent).as_deref(),
+            Some("GRANT SELECT ON `foo\\%bar`.* TO 'alice'@'%'")
+        );
+    }
+
+    #[test]
+    fn mysql_revoke_whole_database_uses_the_same_escaped_pattern_as_grant() {
+        // REVOKE は GRANT 時に mysql.db に保存されたパターンと厳密一致で
+        // 照合するため、GRANT と全く同じエスケープ済み文字列を使う必要がある。
+        let spec = GrantSpec {
+            user: "alice".into(),
+            host: None,
+            database: "foo_bar".into(),
+            table: None,
+            flags: flags(true, false, false, false, false),
+        };
+        assert_eq!(
+            generate_revoke_sql(DriverKind::Mysql, &spec).as_deref(),
+            Some("REVOKE SELECT ON `foo\\_bar`.* FROM 'alice'@'%'")
+        );
+    }
+
+    #[test]
+    fn mysql_grant_single_table_does_not_escape_database_wildcards() {
+        // `db.table` 形式は mysql.tables_priv 相手で、Db 列のパターン評価を
+        // 受けないため DB 名はそのままでよい (エスケープすると DB 名自体が
+        // 変わってしまい、逆に誤り)。
+        let spec = GrantSpec {
+            user: "alice".into(),
+            host: None,
+            database: "foo_bar".into(),
+            table: Some("orders".into()),
+            flags: flags(true, false, false, false, false),
+        };
+        assert_eq!(
+            generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
+            Some("GRANT SELECT ON `foo_bar`.`orders` TO 'alice'@'%'")
+        );
+    }
+
+    #[test]
+    fn mysql_grant_whole_database_escapes_literal_backslash_before_wildcards() {
+        // バックスラッシュは先に二重化してから `_`/`%` を置換する。順序を
+        // 逆にすると、置換で新たに挿入したエスケープ用のバックスラッシュまで
+        // 二重化されてしまい `\\_` (エスケープされたバックスラッシュ + 生の
+        // '_') のような意図しない文字列になる。
+        let spec = GrantSpec {
+            user: "alice".into(),
+            host: None,
+            database: r"foo\_bar".into(),
+            table: None,
+            flags: flags(true, false, false, false, false),
+        };
+        assert_eq!(
+            generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
+            Some(r"GRANT SELECT ON `foo\\\_bar`.* TO 'alice'@'%'")
+        );
+    }
+
+    // --- mysql_escape / pg_literal の境界ケース (#H6) -----------------------
+    //
+    // ユーザ名・ホスト名・パスワードが通る経路だが、`db::data_diff::sql_literal`
+    // と違って共有ゴールデン (#880) の対象外で無テストだった。NUL・非 BMP・
+    // 空文字列・バックスラッシュとクオートの混在を固定する。
+
+    #[test]
+    fn mysql_escape_handles_boundary_cases() {
+        assert_eq!(mysql_escape(""), "");
+        assert_eq!(mysql_escape("plain"), "plain");
+        // NUL バイトはそのまま通す (呼び出し側のバイナリセーフ性は
+        // `mysql_account`/`generate_*` の責務外。二重クオート化だけがここの
+        // 責務)。
+        assert_eq!(mysql_escape("a\0b"), "a\0b");
+        // 非 BMP 文字 (絵文字) はエスケープ対象文字を含まないのでそのまま。
+        assert_eq!(mysql_escape("a😀b"), "a😀b");
+        // バックスラッシュとクオートが混在する場合、両方が独立に二重化される。
+        assert_eq!(mysql_escape(r"\'"), r"\\''");
+        assert_eq!(mysql_escape(r"back\slash"), r"back\\slash");
+        assert_eq!(mysql_escape("it's"), "it''s");
+    }
+
+    #[test]
+    fn pg_literal_handles_boundary_cases() {
+        assert_eq!(pg_literal(""), "''");
+        assert_eq!(pg_literal("plain"), "'plain'");
+        // PostgreSQL の標準文字列リテラルはバックスラッシュを特別扱いしない
+        // (standard_conforming_strings=on 前提。CLAUDE.md のマスク方針と同じ
+        // 前提) ので、二重化されず素通しする。
+        assert_eq!(pg_literal(r"back\slash"), r"'back\slash'");
+        assert_eq!(pg_literal("a\0b"), "'a\0b'");
+        assert_eq!(pg_literal("a😀b"), "'a😀b'");
+        assert_eq!(pg_literal("it's"), "'it''s'");
     }
 
     #[test]

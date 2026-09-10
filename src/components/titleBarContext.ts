@@ -6,6 +6,7 @@
 
 import type { ConnectionStatus } from "../reconnect";
 import { SANDBOX_BAND_COLOR } from "../sandbox";
+import { semanticColorVar } from "../semanticColors";
 
 export interface TitleBarConnection {
   name: string;
@@ -33,8 +34,8 @@ export interface TitleBarConnection {
  * 再接続中・サンドボックスはテキストラベルを併用する (描画側)。
  */
 export function connectionBandColor(connection: TitleBarConnection | null | undefined): string {
-  if (connection?.status === "reconnecting") return "var(--status-warning)";
-  if (connection?.isProduction) return "var(--status-error)";
+  if (connection?.status === "reconnecting") return semanticColorVar("warning", "solid");
+  if (connection?.isProduction) return semanticColorVar("danger", "solid");
   if (connection?.isSandbox) return SANDBOX_BAND_COLOR;
   if (connection) return connection.color ?? "var(--ws-accent)";
   return "transparent";

@@ -4,6 +4,7 @@ import { Box, Flex, chakra } from "@chakra-ui/react";
 import type { QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { resultsComparable, type PinnedResult } from "../pinnedCompare";
+import { semanticColorToken } from "../semanticColors";
 import { Tooltip } from "./Tooltip";
 import { Button, Heading, Select } from "./ui";
 import { Switch } from "./Switch";
@@ -164,7 +165,7 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
           label={t("pinCompareDiff")}
         />
         {left && right && !comparable && (
-          <chakra.span fontSize="sm" color="var(--status-warning)">
+          <chakra.span fontSize="sm" color={semanticColorToken("warning", "text")}>
             {t("pinCompareNotComparable")}
           </chakra.span>
         )}

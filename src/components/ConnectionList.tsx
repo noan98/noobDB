@@ -1,6 +1,6 @@
-import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, Text, VisuallyHidden } from "@chakra-ui/react";
-import { AnimatePresence, Reorder } from "motion/react";
+import { AnimatePresence, motion, Reorder } from "motion/react";
 import { api, ConnectionProfile, IndexInfo, SandboxRecord, SchemaObject, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
 import { tableRefEquals } from "../tableQuickAccess";
@@ -10,14 +10,16 @@ import { loadSchemaTree, saveSchemaTree } from "../schemaTreeState";
 import { formatRowEstimate } from "./rowEstimate";
 import { useT } from "../i18n";
 import { springs, transitions, variants } from "../motion";
+import { semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
-import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
-import { computeTooltipPosition } from "./tooltipPosition";
-import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
+import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
+import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
+import { Tooltip, TooltipBubble, useDelegatedHover, useDelegatedTooltip } from "./Tooltip";
+import { DropInsertionMarker } from "./DropInsertionMarker";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
 import { driverColor, driverIconName, normalizeChipColor } from "../profileIdentity";
 import {
@@ -94,6 +96,18 @@ const MotionReorderNode = chakra(
   { base: { display: "flex", flexDirection: "column" } },
   { forwardProps: ["transition"] },
 );
+
+/**
+ * 現在開いているテーブル行を示すアクセントスパイン (#982)。`TabBar` の
+ * アクティブインジケータ (`MotionIndicator`) と同じパターン
+ * (`motion.span` + `forwardProps: ["transition"]`) をそのまま踏襲する新規の
+ * Motion 基盤ではない薄いラッパで、ツリー全体で 1 つの `layoutId` を共有する。
+ * アクティブなテーブル行が切り替わるたびに、前の行から新しい行へ spring で
+ * 移動する (TabBar と同じ `transitions.emphasized`)。reduced-motion は
+ * ルートの `<MotionConfig reducedMotion="user">` (src/main.tsx) が自動で
+ * 即時化する。
+ */
+const MotionActiveIndicator = chakra(motion.span, {}, { forwardProps: ["transition"] });
 
 /** サイドバーフィルタで公開するハンドル型。App.tsx が Cmd/Ctrl+P でフォーカスを当てるために使う。 */
 export interface ConnectionListHandle {
@@ -211,6 +225,12 @@ const STATUS_DOT_STYLE = {
 interface Props {
   profiles: ConnectionProfile[];
   activeProfileId: string | null;
+  /**
+   * 現在アクティブなタブが開いている (database, table)。table タブ以外
+   * (query/explain) や未接続時は null。一致するスキーマツリーの行に
+   * `aria-current` + アクセントスパインを付与する「現在地」表示 (#982) に使う。
+   */
+  activeTable?: { database: string; table: string } | null;
   sessionId: string | null;
   connectingId: string | null;
   errorProfileId: string | null;
@@ -315,6 +335,7 @@ interface MenuState {
 export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(function ConnectionList({
   profiles,
   activeProfileId,
+  activeTable,
   sessionId,
   connectingId,
   errorProfileId,
@@ -359,6 +380,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   onToggleFavorite,
 }, ref) {
   const t = useT();
+  // アクティブテーブル行のスパインが共有する layoutId (#982)。`TabBar` の
+  // `indicatorId` と同じ理由でコンポーネントインスタンスごとにスコープする。
+  const activeTableIndicatorId = `tree-active-table-indicator-${useId()}`;
   const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
   const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
@@ -385,9 +409,12 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   const filterInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [hoveredColumn, setHoveredColumn] = useState<{ col: TableColumnInfo; rect: DOMRect } | null>(
-    null,
-  );
+  // カラム行の詳細ホバーカード (`ColumnTooltip`)。単純テキストではないので
+  // `useDelegatedTooltip` ではなくその一般形 `useDelegatedHover` に載せ、hover
+  // 遅延・「同時に見えるのは 1 つ」の登録簿・スクロール連動非表示を他の
+  // ツールチップと共有する。
+  const { hovered: hoveredColumn, bind: columnTooltipProps } =
+    useDelegatedHover<TableColumnInfo>();
   // スキーマツリー行 (DB/テーブル/インデックス/オブジェクト) の単純テキスト
   // ツールチップは、`hoveredColumn`/`ColumnTooltip` と同じ「1 つの共有ツールチップ +
   // イベント委譲」方式を汎用化した `useDelegatedTooltip` (`Tooltip.tsx`、#884) に
@@ -594,6 +621,14 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     setRefreshingSession(targetSessionId);
     setError(null);
     try {
+      // 明示的な Refresh (#1097): バックエンドの Schema Cache を無効化してから
+      // 再取得する。無効化に失敗しても (セッション消失など) 通常のフローで
+      // エラーになるだけなので、以降の再取得自体は続行する。
+      try {
+        await api.refreshSchemaCache(targetSessionId);
+      } catch {
+        // ignore — 下の listDatabases がセッション消失を検知してエラー表示する。
+      }
       const dbs = await api.listDatabases(targetSessionId);
       const openDbs = Object.keys(expandedDbs).filter(
         (db) => expandedDbs[db] && dbs.includes(db),
@@ -712,19 +747,6 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       // ストレージ不可環境では永続化を諦める (セッション内の動作には影響しない)。
     }
   }, [groupOrder]);
-
-  // The column tooltip is anchored to a snapshot of the row's position, so it
-  // would detach if the tree scrolls or the window resizes under the pointer.
-  useEffect(() => {
-    if (!hoveredColumn) return;
-    const clear = () => setHoveredColumn(null);
-    window.addEventListener("scroll", clear, true);
-    window.addEventListener("resize", clear);
-    return () => {
-      window.removeEventListener("scroll", clear, true);
-      window.removeEventListener("resize", clear);
-    };
-  }, [hoveredColumn]);
 
   // このツリーの行 (DB/テーブル/インデックス/オブジェクト) は現状 `tabIndex` を
   // 持たず (別 Issue のキーボードナビゲーション改善のスコープ)、`treeTooltipProps`
@@ -969,14 +991,20 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       if (commands.length > 0) {
         const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
         items.push({ separator: true });
-        for (const command of commands) {
-          items.push({
-            label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
-            onSelect: () => onRunTableMaintenance(db, tbl, command),
-            disabled: activeReadOnly,
-            title: roTitle,
-          });
-        }
+        // 保守コマンドはドライバによって 1〜4 件に増減し、それ自体は日常操作では
+        // ないので 2 件以上ならサブメニューへ畳む (#1018)。
+        items.push(
+          ...submenuOrFlat(
+            t("contextMenuMaintenanceGroup"),
+            commands.map((command) => ({
+              label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
+              onSelect: () => onRunTableMaintenance(db, tbl, command),
+              disabled: activeReadOnly,
+              title: roTitle,
+            })),
+            { icon: "tools" },
+          ),
+        );
       }
     }
     setMenu({ x: e.clientX, y: e.clientY, items });
@@ -1064,14 +1092,18 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       if (commands.length > 0) {
         const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
         items.push({ separator: true });
-        for (const command of commands) {
-          items.push({
-            label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
-            onSelect: () => onRunDatabaseMaintenance(db, command),
-            disabled: activeReadOnly,
-            title: roTitle,
-          });
-        }
+        items.push(
+          ...submenuOrFlat(
+            t("contextMenuMaintenanceGroup"),
+            commands.map((command) => ({
+              label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
+              onSelect: () => onRunDatabaseMaintenance(db, command),
+              disabled: activeReadOnly,
+              title: roTitle,
+            })),
+            { icon: "tools" },
+          ),
+        );
       }
     }
     setMenu({ x: e.clientX, y: e.clientY, items });
@@ -1455,10 +1487,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
     let borderLeftColor: string;
     let rowBg: string | undefined;
     if (p.is_production) {
-      borderLeftColor = "var(--status-error)";
+      const danger = semanticColorVar("danger", "solid");
+      borderLeftColor = danger;
       rowBg = isActive
-        ? "color-mix(in srgb, var(--status-error) 12%, var(--bg-active))"
-        : "color-mix(in srgb, var(--status-error) 6%, transparent)";
+        ? `color-mix(in srgb, ${danger} 12%, var(--bg-active))`
+        : `color-mix(in srgb, ${danger} 6%, transparent)`;
     } else if (accent) {
       borderLeftColor = accent;
       rowBg = isActive ? "var(--bg-active)" : undefined;
@@ -1509,9 +1542,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           borderLeftWidth="4px"
           borderLeftColor={borderLeftColor}
           bg={rowBg}
-          // 並べ替え (ドラッグ中/キーボード移動直後) の着地位置を上端のインセット
-          // アクセントバーで示す。TabBar の挿入マーカーと同じ役割。
-          boxShadow={dropIndicator === p.id ? "inset 0 2px 0 0 var(--accent)" : undefined}
+          // `DropInsertionMarker` (下記) を絶対配置するための基準。
+          position="relative"
           _hover={{ bg: rowBg ?? "app.hover" }}
           // ホバーで控えめに拡大 + 影を出すモーション。
           // prefers-reduced-motion はルートの MotionConfig が自動抑制する。
@@ -1630,6 +1662,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               aria-label={statusLabel(status)}
             />
           </Tooltip>
+          {/* 並べ替え (ドラッグ中/キーボード移動直後) の着地位置マーカー。TabBar と
+              同じ共有実装 (#1007)。 */}
+          <DropInsertionMarker orientation="horizontal" visible={dropIndicator === p.id} />
         </MotionTreeRow>
 
         <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
@@ -1679,6 +1714,11 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                             const rowEst = rowEstimates[db]?.[tbl];
                             const rowEstLabel =
                               typeof rowEst === "number" ? formatRowEstimate(rowEst) : "";
+                            // 現在結果パネルに開いているテーブルかどうか (#982)。
+                            // ツリーはアクティブ接続のみを表示するので db/table の
+                            // 一致だけで十分 (プロファイル跨ぎの衝突はない)。
+                            const isActiveTable =
+                              !!activeTable && activeTable.database === db && activeTable.table === tbl;
                             return (
                               <TreeNode key={tbl}>
                                 <TreeRow
@@ -1690,11 +1730,31 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                      ロール検索 (テスト含む) が不安定になるため。 */
                                   aria-label={tbl}
                                   aria-expanded={tOpen}
+                                  // 「現在地」表示 (#982): SR には aria-current、視覚には
+                                  // 下の共有 layoutId インジケータ (アクセントスパイン) で
+                                  // 示す。position: relative はインジケータの絶対配置の
+                                  // 基準になるが、非アクティブ行では不要なので付けない。
+                                  aria-current={isActiveTable ? "true" : undefined}
+                                  position={isActiveTable ? "relative" : undefined}
+                                  bg={isActiveTable ? "var(--bg-active)" : undefined}
                                   onDoubleClick={() => onPickTable(db, tbl)}
                                   onContextMenu={(e) => handleTableContextMenu(e, db, tbl)}
                                   {...treeTooltipProps(t("treeTableTitle"))}
-                                  _hover={{ bg: "app.rowHover" }}
+                                  _hover={{ bg: isActiveTable ? "var(--bg-active)" : "app.rowHover" }}
                                 >
+                                  {isActiveTable && (
+                                    <MotionActiveIndicator
+                                      layoutId={activeTableIndicatorId}
+                                      transition={transitions.emphasized}
+                                      position="absolute"
+                                      left="0"
+                                      top="0"
+                                      bottom="0"
+                                      width="2px"
+                                      bg="var(--accent)"
+                                      aria-hidden
+                                    />
+                                  )}
                                   {/* カラム展開のトグルはチェブロンのみ。行クリックに置くと
                                       ダブルクリック (テーブルを開く) の前に click が 2 回発火して
                                       カラム一覧まで同時に開いてしまう。stopPropagation はチェブロンの
@@ -1748,15 +1808,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                                             cursor="default"
                                             fontSize="sm"
                                             role="treeitem"
-                                            onMouseEnter={(e) =>
-                                              setHoveredColumn({
-                                                col,
-                                                rect: e.currentTarget.getBoundingClientRect(),
-                                              })
-                                            }
-                                            onMouseLeave={() =>
-                                              setHoveredColumn((cur) => (cur?.col === col ? null : cur))
-                                            }
+                                            {...columnTooltipProps(col)}
                                           >
                                             <TreeChevron visibility="hidden" aria-hidden />
                                             {/* PK/FK アイコンと型バッジの native title は削除(#884)。行に
@@ -1950,7 +2002,8 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                         borderBottom="1px solid"
                         borderBottomColor="app.borderSubtle"
                         borderLeft="2px solid transparent"
-                        boxShadow={dropIndicator === `group:${key}` ? "inset 0 2px 0 0 var(--accent)" : undefined}
+                        // `DropInsertionMarker` (下記) を絶対配置するための基準。
+                        position="relative"
                         transitionProperty="background, color, border-color, box-shadow"
                         transitionDuration="var(--dur-fast)"
                         transitionTimingFunction="var(--ease)"
@@ -1970,6 +2023,9 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
                           {g.name}
                         </chakra.span>
                         <TreeBadge textTransform="none" letterSpacing="0">{g.profiles.length}</TreeBadge>
+                        {/* 並べ替え (ドラッグ中/キーボード移動直後) の着地位置マーカー。
+                            TabBar と同じ共有実装 (#1007)。 */}
+                        <DropInsertionMarker orientation="horizontal" visible={dropIndicator === `group:${key}`} />
                       </Box>
                       <TreeCollapse open={groupOpen}>
                         <Reorder.Group
@@ -2085,7 +2141,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
 
-      {hoveredColumn && <ColumnTooltip col={hoveredColumn.col} anchor={hoveredColumn.rect} />}
+      {hoveredColumn && <ColumnTooltip col={hoveredColumn.value} anchor={hoveredColumn.rect} />}
       {hoveredLabel && <TooltipBubble label={hoveredLabel.label} anchor={hoveredLabel.rect} maxWidth="320px" />}
     </Flex>
   );
@@ -2101,7 +2157,7 @@ const TooltipDd = chakra("dd", { base: { m: 0, fontFamily: "mono", wordBreak: "b
  * left / clamping to the viewport when it would overflow. Rendered invisibly on
  * the first frame so it can measure itself before committing a position.
  */
-function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: DOMRect }) {
+function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: TooltipRect }) {
   const t = useT();
   const ref = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);

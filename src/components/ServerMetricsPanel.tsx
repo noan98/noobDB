@@ -20,6 +20,7 @@ import {
   type MetricSeriesKey,
 } from "./serverMetrics";
 import { Checkbox, Heading, Select } from "./ui";
+import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Skeleton } from "./Skeleton";
@@ -168,7 +169,15 @@ function MetricChart({
               />
               {t(s.labelKey)}
               <chakra.span fontFamily="var(--font-mono)" color="app.text">
-                {isRate ? formatRate(latest) : formatCount(latest)}
+                {latest == null ? (
+                  isRate ? (
+                    formatRate(latest)
+                  ) : (
+                    formatCount(latest)
+                  )
+                ) : (
+                  <CountUp value={latest} formatter={isRate ? formatRate : formatCount} />
+                )}
               </chakra.span>
             </Flex>
           );

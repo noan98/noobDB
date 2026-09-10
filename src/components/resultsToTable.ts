@@ -18,9 +18,12 @@ import { quoteIdentFor } from "./sqlDialect";
  * `sql` が単一の `SELECT` / `WITH ...` 文であり、CTAS のソースとして妥当かを判定する。
  * `SHOW` / `DESCRIBE` / `EXPLAIN` は読み取り専用だが `CREATE TABLE ... AS` の
  * ソースにはなれないため対象外。スタック文 (末尾以外に `;` を含む) も拒否する。
+ *
+ * `driver` は `maskLiterals` の文字列エスケープ規則を選ぶ (#852、#1004)。省略時は
+ * 保守的な非 MySQL 解釈になる。
  */
-export function isCtasEligibleSql(sql: string): boolean {
-  const masked = maskLiterals(sql);
+export function isCtasEligibleSql(sql: string, driver?: string): boolean {
+  const masked = maskLiterals(sql, driver);
   const body = masked.trim().replace(/;\s*$/, "");
   if (!body) return false;
   // 末尾の 1 個を剥がした後にまだ `;` が残っていれば、隠れた 2 文目がある。

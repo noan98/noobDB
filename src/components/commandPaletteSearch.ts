@@ -247,6 +247,23 @@ export function flattenGroups(grouped: GroupedCommands[]): ScoredItem[] {
   return grouped.flatMap((g) => g.items);
 }
 
+/**
+ * 出現スタッガー (#976) を掛ける対象の上限件数。`motion.ts` の `staggerTiming.each`
+ * (35ms) は件数に比例して最後の行の出現が遅れていくため、大量結果 (絞り込み前の
+ * 全候補表示など) でこの上限を設けずに全行へ適用すると体感の遅延になる。上限を
+ * 超えた行は `shouldStaggerEntrance` が false を返し、`CommandPalette` はその行に
+ * stagger 用の variants を渡さず遅延なく即時表示する。
+ */
+export const MAX_STAGGER_ITEMS = 20;
+
+/**
+ * `flatIndex` (`flattenGroups` が付ける表示順インデックス) がスタッガー出現の対象
+ * かどうかを判定する純粋関数。負のインデックス (未検出) は対象外。
+ */
+export function shouldStaggerEntrance(flatIndex: number): boolean {
+  return flatIndex >= 0 && flatIndex < MAX_STAGGER_ITEMS;
+}
+
 /** ラベルをマッチ範囲で分割する。`highlighted` が true の断片を強調表示する。 */
 export interface LabelSegment {
   text: string;

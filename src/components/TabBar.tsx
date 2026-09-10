@@ -6,6 +6,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { transitions, variants } from "../motion";
 import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
+import { DropInsertionMarker } from "./DropInsertionMarker";
 
 // キーボードフォーカスリング (App.css のフォーカス表現と一致、動的アクセントへ追従)。
 const focusRing = "0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)";
@@ -412,6 +413,13 @@ export function TabBar({
                   color={isActive ? "var(--ws-accent)" : "app.textMuted"}
                   flexShrink={0}
                   aria-hidden
+                  // 接続切替 (#978) で `--ws-accent` が変わったときになめらかに
+                  // 追従させる。単純な色 transition なので CSS のままでよい
+                  // (motion.ts の方針)。reduced-motion は App.css のグローバル
+                  // メディアクエリが自動で抑制する。
+                  transitionProperty="color"
+                  transitionDuration="var(--dur-med)"
+                  transitionTimingFunction="var(--ease)"
                 >
                   <Icon name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"} />
                 </chakra.span>
@@ -474,32 +482,20 @@ export function TabBar({
                     top="-2px"
                     h="2px"
                     bg="var(--ws-accent, var(--accent))"
+                    // 接続切替 (#978) での `--ws-accent` の変化になめらかに追従
+                    // させる (位置の移動は上の `transition` prop = motion layout
+                    // アニメが担う。こちらは色のみの単純遷移なので CSS のまま)。
+                    transitionProperty="background"
+                    transitionDuration="var(--dur-med)"
+                    transitionTimingFunction="var(--ease)"
                     aria-hidden
                   />
                 )}
                 {/* Drop-position marker: a vertical accent bar on the tab's
                     leading edge shown while it is dragged / just after a
-                    keyboard move, indicating where the tab lands. */}
-                <AnimatePresence>
-                  {dropIndicator === tab.id && (
-                    <MotionIndicator
-                      key="drop"
-                      initial={{ opacity: 0, scaleY: 0.4 }}
-                      animate={{ opacity: 1, scaleY: 1 }}
-                      exit={{ opacity: 0, scaleY: 0.4 }}
-                      transition={transitions.crossfade}
-                      position="absolute"
-                      left="-1px"
-                      top="2px"
-                      bottom="2px"
-                      w="2px"
-                      borderRadius="1px"
-                      bg="var(--ws-accent, var(--accent))"
-                      zIndex={4}
-                      aria-hidden
-                    />
-                  )}
-                </AnimatePresence>
+                    keyboard move, indicating where the tab lands. Shared
+                    implementation (#1007) also used by `ConnectionList`. */}
+                <DropInsertionMarker orientation="vertical" visible={dropIndicator === tab.id} />
               </MotionTab>
             );
           })}

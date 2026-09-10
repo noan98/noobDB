@@ -31,6 +31,9 @@ import { SandboxReviewModal } from "./components/SandboxReviewModal";
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { sqlSaveFileName } from "./sqlFileIO";
+// 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみで、計測ロジック
+// 本体は perf.ts に閉じる。
+import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
@@ -91,7 +94,7 @@ import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
 import type { ResultGridHandle } from "./components/ResultGrid";
 import type { ResultViewKind } from "./components/ResultViewSwitch";
 import { TabBar } from "./components/TabBar";
-import { TitleBar } from "./components/TitleBar";
+import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
@@ -274,10 +277,11 @@ import { incomingForeignKeys } from "./fkNavigation";
 import { addPinned, type PinnedResult } from "./pinnedCompare";
 import { transitions, variants } from "./motion";
 import { workspaceSpineColor } from "./profileIdentity";
-import { semanticColorToken } from "./semanticColors";
+import { semanticColorToken, semanticColorVar } from "./semanticColors";
 import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
+import { workspaceViewKey } from "./components/workspaceView";
 import {
   useSettings,
   getSettings,
@@ -289,8 +293,15 @@ import {
   recordCommandPaletteUsage,
   pruneCommandPaletteMru,
   type TabRestoreMode,
+  type Density,
 } from "./settings";
+import {
+  DENSITY_TRANSITION_ATTR,
+  DENSITY_TRANSITION_MS,
+  densityTransitionDirection,
+} from "./densityTransition";
 import { ThemeTransition } from "./components/ThemeTransition";
+import { AccentWash } from "./components/AccentWash";
 import { accentVars } from "./accent";
 import {
   clearPersistedTabs,
@@ -1310,6 +1321,25 @@ export default function App() {
     root.setAttribute("data-motion", settings.motionPreference);
   }, [settings, theme]);
 
+  // 密度変更の遷移演出 (#1023)。settings.density が実際に変わった瞬間だけ、
+  // 一時的な data-density-transition 属性 ("grow"/"shrink") を立てて App.css /
+  // ResultGrid の GRID_CSS 側のスコープ付き一度きりアニメーションを有効化し、
+  // DENSITY_TRANSITION_MS 後に自動で外す (詳細な設計判断は densityTransition.ts
+  // のモジュール doc を参照)。上の効果とは別の effect にしているのは、密度以外の
+  // 設定変更のたびに再評価させないため (依存配列を settings.density だけに絞る)。
+  const prevDensityRef = useRef<Density | null>(null);
+  useEffect(() => {
+    const direction = densityTransitionDirection(prevDensityRef.current, settings.density);
+    prevDensityRef.current = settings.density;
+    if (!direction) return;
+    const root = document.documentElement;
+    root.setAttribute(DENSITY_TRANSITION_ATTR, direction);
+    const timer = window.setTimeout(() => {
+      root.removeAttribute(DENSITY_TRANSITION_ATTR);
+    }, DENSITY_TRANSITION_MS);
+    return () => window.clearTimeout(timer);
+  }, [settings.density]);
+
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
@@ -1822,6 +1852,17 @@ export default function App() {
   // アクティブタブを ref でも参照できるようにする (ドロップ時の最新値読み取り用)。
   const activeTabRef = useRef<Tab | null>(activeTab);
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+
+  // スキーマツリーの「現在地」表示 (#982) 用に、アクティブタブが開いている
+  // (db, table) だけを取り出す。table タブでも database/table が未確定な
+  // 過渡状態 (作成直後など) は null にして、ツリー側で誤って光らせない。
+  const activeTreeTable = useMemo(
+    () =>
+      activeTab && activeTab.kind === "table" && activeTab.database && activeTab.table
+        ? { database: activeTab.database, table: activeTab.table }
+        : null,
+    [activeTab],
+  );
 
   // 読み取り専用判定 (`isReadOnlySql`) はドライバごとの文字列エスケープ規則に
   // 依存する (#852)。自動リフレッシュの tick やブロードキャスト要求は deps を
@@ -3325,6 +3366,8 @@ export default function App() {
     streamIdRef.current.set(tabId, streamId);
     const startedAt = Date.now();
     runStartRef.current.set(tabId, startedAt);
+    markQueryStart(streamId); // 計測 (#1094): 既定 OFF なら即 no-op
+    let perfColumnCount = 0; // 計測 (#1094): onColumns で更新し、onDone に渡す
     setStatus({ kind: "key", key: "statusRunningQuery" });
     // 結果差分ハイライト (#597): 直前の結果行とその SQL を退避しておき、同一クエリの
     // 再実行 (prevResultSql === 今回 sql) のときだけ ResultGrid 側で差分計算に使う。
@@ -3368,12 +3411,14 @@ export default function App() {
 
     const unlisten = await listenQueryStream(streamId, {
       onColumns: ({ columns }) => {
+        perfColumnCount = columns.length; // 計測 (#1094): onDone 時点の列数として使う
         patchTab(tabId, (tt) => ({
           ...tt,
           result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
         }));
       },
       onRows: ({ rows }) => {
+        markFirstRow(streamId); // 計測 (#1094): Time to First Row (2 回目以降は no-op)
         patchTab(tabId, (tt) => {
           if (!tt.result) return tt;
           return {
@@ -3399,6 +3444,12 @@ export default function App() {
         });
       },
       onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit }) => {
+        // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
+        markQueryDone(streamId, {
+          rows: hasColumns ? totalRows : rowsAffected,
+          columns: perfColumnCount,
+          elapsedMs,
+        });
         patchTab(tabId, (tt) => {
           if (!hasColumns) {
             return {
@@ -3436,7 +3487,7 @@ export default function App() {
         // for the database this statement ran against (the executing tab's, or
         // the profile default when the tab pins no database), leaving other
         // panes' cached schemas untouched.
-        if (isSchemaMutatingSql(sql)) {
+        if (isSchemaMutatingSql(sql, selectedProfile?.driver)) {
           invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
         }
         finalize();
@@ -3523,7 +3574,10 @@ export default function App() {
         autoRefresh,
         // DML フライトレコーダ (#735): 単文の INSERT/UPDATE/DELETE のみ対象。
         // 自動リフレッシュ (常に読み取り専用) は対象外。
-        capture: settings.flightRecorderEnabled && !autoRefresh && isSingleCapturableStatement(sql),
+        capture:
+          settings.flightRecorderEnabled &&
+          !autoRefresh &&
+          isSingleCapturableStatement(sql, selectedProfile?.driver),
         captureRowCap: settings.flightRecorderRowCap,
         captureRetentionDays: settings.flightRecorderRetentionDays,
       });
@@ -3901,6 +3955,8 @@ export default function App() {
         database: tab?.database ?? null,
         rowLimit,
         chunkSize: settings.streamPrefetchSize,
+        // runQueryInTab (通常実行) と同じ設定値を渡す (#I2)。
+        queryTimeoutSecs: settings.queryTimeoutSecs,
       });
     } catch (e) {
       patchTab(tabId, (tt) => ({
@@ -3921,6 +3977,7 @@ export default function App() {
     cancelStreamForTab,
     settings.defaultDisplayCount,
     settings.streamPrefetchSize,
+    settings.queryTimeoutSecs,
   ]);
 
   const loadMoreInTab = useCallback(async (tabId: string) => {
@@ -4099,7 +4156,7 @@ export default function App() {
     if (!tab) return;
     // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
     if (tab.batchRunning || tab.streaming) return;
-    const statements = splitSqlStatements(sql);
+    const statements = splitSqlStatements(sql, selectedProfile?.driver);
     if (statements.length === 0) return;
     const db = tab.database ?? selectedProfile?.database ?? null;
     const MAX_PREVIEW_ROWS = 200;
@@ -4151,7 +4208,7 @@ export default function App() {
       vars: { ok: okCount, errors: errCount, total: results.length },
       error: errCount > 0,
     });
-  }, [sessionId, selectedProfile?.database, patchTab]);
+  }, [sessionId, selectedProfile?.database, selectedProfile?.driver, patchTab]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -4251,9 +4308,13 @@ export default function App() {
     const requireWriteApproval =
       isProduction && (selectedProfile?.confirm_writes ?? false) && !sessionReadOnly;
     // 複数文スクリプトはバッチ実行に振り分ける。auto LIMIT は付けない。
-    const batch = target.kind === "query" && isMultiStatement(sql);
+    // 文分割・危険判定・読み取り専用判定 (下の isReadOnlySql) は同じ driver を参照
+    // し、1 回の実行ゲート内でマスク解釈が食い違わないようにする (#852、#1004)。
+    const batch = target.kind === "query" && isMultiStatement(sql, selectedProfile?.driver);
     const findings =
-      isProduction || settings.confirmDangerousQueries ? analyzeDangerousSql(sql) : [];
+      isProduction || settings.confirmDangerousQueries
+        ? analyzeDangerousSql(sql, selectedProfile?.driver)
+        : [];
     // 緊急クエリ実行モード中の書き込みは、本番の confirm_writes と同じく毎回
     // 確認を要求する (read-only と明示した接続への書き込みは常に例外的な操作)。
     const needsWriteApproval =
@@ -7081,7 +7142,7 @@ export default function App() {
                         sessionId &&
                         !readOnly &&
                         tab.lastExecutedSql &&
-                        isCtasEligibleSql(tab.lastExecutedSql) &&
+                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
                         (tab.database ?? selectedProfile?.database)
                           ? () =>
                               setSaveAsTableRequest({
@@ -7094,7 +7155,7 @@ export default function App() {
                         sessionId &&
                         !readOnly &&
                         tab.lastExecutedSql &&
-                        isCtasEligibleSql(tab.lastExecutedSql) &&
+                        isCtasEligibleSql(tab.lastExecutedSql, selectedProfile?.driver) &&
                         (tab.database ?? selectedProfile?.database)
                           ? () =>
                               setSaveAsViewRequest({
@@ -7219,6 +7280,46 @@ export default function App() {
     );
   };
 
+  // タイトルバー帯とアクセントウォッシュ (#978) が共有する「今アクティブな接続」
+  // の要約。両者とも `titleBarContext.connectionBandColor` と同じ優先順位
+  // (本番=危険色 / サンドボックス=violet / 通常=プロファイル色) で色を決めるため、
+  // 二重に組み立てずここで 1 つにまとめる。
+  const titleBarConnection: TitleBarConnection | null =
+    sessionId && selectedProfile
+      ? {
+          name: selectedProfile.name,
+          color: selectedProfile.color ?? null,
+          isProduction: selectedProfile.is_production,
+          isSandbox: isSandboxProfileId(selectedProfile.id),
+          status: connectionStatus,
+        }
+      : null;
+
+  // メイン領域が「今どの全画面サーフェスを表示しているか」の判別子 (#1020)。
+  // 下の `<main>` 直下の三項チェーンと**同順・同条件**で判定する純関数
+  // (`components/workspaceView.ts`) に委譲し、これを `AnimatePresence
+  // mode="wait"` の key にすることでワークスペース切替 (例: グリッド ⇔
+  // プロセス監視、Server Info ⇔ Advisor) に控えめなクロスフェードを添える。
+  // 結果パネル側 (#788 の `contentMode`) と同じ発想・同じ尺
+  // (`variants.fade` + `transitions.enter`) で、モーション量はルートの
+  // `MotionConfig reducedMotion` が自動抑制する。
+  const workspaceView = workspaceViewKey({
+    showCompare,
+    showErd,
+    showProcesses,
+    showUsers,
+    showServerInfo,
+    showQueryInspector,
+    showAdvisor,
+    showSizes,
+    showCompareResults,
+    showForm,
+    showSnippetForm,
+    sessionId,
+    advisorDatabase: activeTab?.database ?? selectedProfile?.database,
+    sizesTarget,
+  });
+
   return (
     <Flex
       direction="column"
@@ -7232,21 +7333,12 @@ export default function App() {
       }
     >
       <ThemeTransition themeKey={dataTheme} />
+      {/* 接続切替時の環境ウォッシュ (#978)。`sessionId` (接続の同一性キー) が
+          実際に変化したときだけ発火し、同一接続内の再描画では発火しない。 */}
+      <AccentWash connectionKey={sessionId} connection={titleBarConnection} />
       {/* 起動スプラッシュ (#619)。ブート完了でアンマウントしフェードアウトする。 */}
       <AnimatePresence>{!booted && <SplashScreen />}</AnimatePresence>
-      <TitleBar
-        connection={
-          sessionId && selectedProfile
-            ? {
-                name: selectedProfile.name,
-                color: selectedProfile.color ?? null,
-                isProduction: selectedProfile.is_production,
-                isSandbox: isSandboxProfileId(selectedProfile.id),
-                status: connectionStatus,
-              }
-            : null
-        }
-      />
+      <TitleBar connection={titleBarConnection} />
       <Grid
         templateColumns={
           sidebarCollapsed || (narrow && narrowSidebarOpen)
@@ -7464,6 +7556,7 @@ export default function App() {
             ref={connectionListRef}
             profiles={visibleProfiles}
             activeProfileId={selectedProfile?.id ?? null}
+            activeTable={activeTreeTable}
             sessionId={sessionId}
             connectingId={connectingId}
             errorProfileId={errorProfileId}
@@ -7693,6 +7786,35 @@ export default function App() {
             : undefined
         }
       >
+        {/* 全画面サーフェスの切替クロスフェード (#1020)。key は上で組み立てた
+            `workspaceView` で、結果パネル (#788) と同じ `variants.fade` +
+            `transitions.enter` を流用する (尺を二重定義しない)。
+            `initial={false}` で初回描画のフェードインは抑える (起動直後に
+            画面全体がふわっと出るのを避けるため)。reduced-motion は
+            ルートの `MotionConfig reducedMotion` が自動で静止化する。
+
+            **Suspense は AnimatePresence の外ではなく motion.div の内側**に
+            置く。外側に 1 つだけ置くと、遅延ロードされたビュー (lazy) が
+            サスペンドした瞬間に「退出中の旧ビューを含む部分木ごと」フォール
+            バックへ差し替わり、退出アニメーションが途中で消える。ビュー単位の
+            境界にしておけば、新ビューのロード待ちは新ビュー側のスピナーに
+            閉じ込められ、旧ビューの退出は最後まで再生される。 */}
+        <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={workspaceView}
+          initial={variants.fade.initial}
+          animate={variants.fade.animate}
+          exit={variants.fade.exit}
+          transition={transitions.enter}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
         <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
         {showCompare ? (
           <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
@@ -7791,14 +7913,16 @@ export default function App() {
               pr="3.5"
               py="2"
               borderBottomWidth={selectedProfile?.is_production ? "2px" : "1px"}
-              borderBottomColor={selectedProfile?.is_production ? "app.status.error" : "app.border"}
+              borderBottomColor={
+                selectedProfile?.is_production ? semanticColorToken("danger", "solid") : "app.border"
+              }
               minH="42px"
               // 本番接続は `--ws-accent` (プロファイルのカスタム色) ではなく常に危険色
               // トークンで塗る。カスタム色に紛れて「本番らしさ」が薄まるのを防ぐため
               // (#791)。非本番は従来どおり控えめなワークスペースアクセントの色付け。
               bg={
                 selectedProfile?.is_production
-                  ? "color-mix(in srgb, var(--status-error) 16%, var(--bg-elevated))"
+                  ? `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 16%, var(--bg-elevated))`
                   : "color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated))"
               }
               // padding-left はサイドバー折りたたみ (#873) で 46px ↔ 14px に
@@ -7845,7 +7969,7 @@ export default function App() {
                           px="2"
                           py="0.5"
                           borderRadius="pill"
-                          bg="var(--status-info, var(--bg-muted))"
+                          bg={semanticColorToken("info", "subtle")}
                           color="app.text"
                           borderWidth="1px"
                           borderStyle="solid"
@@ -7889,7 +8013,7 @@ export default function App() {
                           px="1.5"
                           py="0.5"
                           borderRadius="4px"
-                          bg="color-mix(in srgb, var(--status-warning) 18%, transparent)"
+                          bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 18%, transparent)`}
                           color="var(--text-warning)"
                         >
                           {t("txActiveBadge")}
@@ -7984,6 +8108,8 @@ export default function App() {
           </>
         )}
         </Suspense>
+        </motion.div>
+        </AnimatePresence>
 
         {!statusDismissed && status.kind !== "idle" && (() => {
           const tone = statusTone(status);
@@ -8755,9 +8881,9 @@ export default function App() {
                 gap: "12px",
                 padding: "32px 48px",
                 borderRadius: "16px",
-                border: `2px dashed ${dragFeedback.accept ? "var(--accent)" : "var(--status-error)"}`,
+                border: `2px dashed ${dragFeedback.accept ? "var(--accent)" : semanticColorVar("danger", "solid")}`,
                 background: "var(--bg-elevated, var(--bg))",
-                color: dragFeedback.accept ? "var(--accent)" : "var(--status-error)",
+                color: dragFeedback.accept ? "var(--accent)" : semanticColorVar("danger", "solid"),
                 boxShadow: "var(--shadow-lg, 0 12px 40px rgba(0,0,0,0.3))",
               }}
             >

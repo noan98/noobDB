@@ -12,9 +12,11 @@
 //! 取り込む (リポジトリ内の単一ソースを両言語が参照する構成)。
 //!
 //! ベクタは**ドライバ次元**を持つ (#852): `readOnly` はバックスラッシュを文字列
-//! エスケープと見なさない標準解釈 (PostgreSQL / SQLite / DuckDB / MSSQL、および
+//! エスケープと見なさない標準解釈 (PostgreSQL / SQLite / MSSQL、および
 //! ドライバを渡さない `is_read_only_sql`) での期待値で、MySQL だけ判定が変わる
-//! ケースのみ `readOnlyMysql` を持つ。
+//! ケースのみ `readOnlyMysql` を持つ。DuckDB は文字列エスケープこそ標準組だが、
+//! #1005 で FROM 先頭構文・SUMMARIZE・照会形 PRAGMA という DuckDB 固有の読み取り
+//! 許可を追加したため、これらを使うケースだけ `readOnlyDuckdb` を持つ。
 
 use noobdb_lib::__test_api as t;
 use serde::Deserialize;
@@ -36,14 +38,17 @@ struct VectorCase {
     /// MySQL のバックスラッシュエスケープ解釈での期待値 (省略時は `read_only`)。
     #[serde(rename = "readOnlyMysql", default)]
     read_only_mysql: Option<bool>,
+    /// DuckDB 固有の許可拡張 (#1005) を踏まえた期待値 (省略時は `read_only`)。
+    #[serde(rename = "readOnlyDuckdb", default)]
+    read_only_duckdb: Option<bool>,
     note: String,
 }
 
-/// 標準的な文字列リテラル解釈を採るドライバ (= `readOnly` がそのまま期待値)。
-const STANDARD_DRIVERS: [t::DriverKind; 4] = [
+/// 標準的な文字列リテラル解釈を採り、DuckDB 固有拡張 (#1005) の対象外なドライバ
+/// (= `readOnly` がそのまま期待値)。
+const STANDARD_DRIVERS: [t::DriverKind; 3] = [
     t::DriverKind::Postgres,
     t::DriverKind::Sqlite,
-    t::DriverKind::DuckDb,
     t::DriverKind::Mssql,
 ];
 
@@ -65,8 +70,9 @@ fn read_only_golden_matches_shared_vectors() {
     let mut failures = Vec::new();
     for case in &vectors.cases {
         let mysql_expected = case.read_only_mysql.unwrap_or(case.read_only);
+        let duckdb_expected = case.read_only_duckdb.unwrap_or(case.read_only);
 
-        // ドライバ非依存の呼び出し口は保守的 (標準解釈) 側に倒れる。
+        // ドライバ非依存の呼び出し口は保守的 (標準解釈、DuckDB 拡張なし) 側に倒れる。
         let actual = t::is_read_only_sql(&case.sql);
         if actual != case.read_only {
             failures.push(format!(
@@ -87,6 +93,13 @@ fn read_only_golden_matches_shared_vectors() {
         if actual != mysql_expected {
             failures.push(format!(
                 "  - {:?} (note: {}) [Mysql]: expected read_only={mysql_expected}, got {actual}",
+                case.sql, case.note
+            ));
+        }
+        let actual = t::is_read_only_sql_for(t::DriverKind::DuckDb, &case.sql);
+        if actual != duckdb_expected {
+            failures.push(format!(
+                "  - {:?} (note: {}) [DuckDb]: expected read_only={duckdb_expected}, got {actual}",
                 case.sql, case.note
             ));
         }
@@ -111,5 +124,21 @@ fn read_only_golden_exercises_the_driver_dimension() {
             .any(|c| c.read_only_mysql.is_some_and(|m| m != c.read_only)),
         "shared vectors must keep at least one case where MySQL's backslash-escape \
          reading diverges from the standard one (#852)"
+    );
+}
+
+/// DuckDB 次元 (#1005) が形骸化していないことの確認。FROM 先頭構文・SUMMARIZE・
+/// 照会形 PRAGMA など DuckDB だけ判定が分かれるケースが 1 件も無くなると、この
+/// 次元が形骸化していることに気付けない。
+#[test]
+fn read_only_golden_exercises_the_duckdb_dimension() {
+    let vectors = load();
+    assert!(
+        vectors
+            .cases
+            .iter()
+            .any(|c| c.read_only_duckdb.is_some_and(|d| d != c.read_only)),
+        "shared vectors must keep at least one case where DuckDB's read-only \
+         allow-list extension (#1005) diverges from the standard one"
     );
 }

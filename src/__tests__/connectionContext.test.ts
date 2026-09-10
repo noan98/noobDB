@@ -1,11 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { connectionBandColor } from "../components/titleBarContext";
+import { semanticColorVar } from "../semanticColors";
 
 /**
  * アクティブ接続コンテキストの常時可視化。タイトルバーの帯色ロジックが、
  * 本番接続を危険色で最優先し、通常接続はプロファイル色、未接続は透明にすることを
  * 固定する。
  */
+const DANGER = semanticColorVar("danger", "solid");
+const WARNING = semanticColorVar("warning", "solid");
+
 describe("connectionBandColor (#466)", () => {
   it("is transparent when not connected", () => {
     expect(connectionBandColor(null)).toBe("transparent");
@@ -27,17 +31,17 @@ describe("connectionBandColor (#466)", () => {
   it("always uses the danger color for production, even with a custom color", () => {
     expect(
       connectionBandColor({ name: "prod", color: "#22c55e", isProduction: true }),
-    ).toBe("var(--status-error)");
+    ).toBe(DANGER);
   });
 
   it("uses the warning color while reconnecting, overriding production (#600)", () => {
     expect(
       connectionBandColor({ name: "dev", color: "#22c55e", isProduction: false, status: "reconnecting" }),
-    ).toBe("var(--status-warning)");
+    ).toBe(WARNING);
     // 再接続中は本番の危険色より優先して状態を伝える。
     expect(
       connectionBandColor({ name: "prod", color: null, isProduction: true, status: "reconnecting" }),
-    ).toBe("var(--status-warning)");
+    ).toBe(WARNING);
   });
 
   it("treats connected / disconnected status like the status-less cases", () => {
@@ -46,7 +50,7 @@ describe("connectionBandColor (#466)", () => {
     ).toBe("#22c55e");
     expect(
       connectionBandColor({ name: "prod", color: null, isProduction: true, status: "disconnected" }),
-    ).toBe("var(--status-error)");
+    ).toBe(DANGER);
   });
 
   it("uses the sandbox color, overriding the profile color (#747)", () => {
@@ -69,6 +73,6 @@ describe("connectionBandColor (#466)", () => {
         isSandbox: true,
         status: "reconnecting",
       }),
-    ).toBe("var(--status-warning)");
+    ).toBe(WARNING);
   });
 });

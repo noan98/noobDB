@@ -420,11 +420,21 @@ fn column_def(driver: DriverKind, col: &TableColumnInfo) -> String {
 ///
 /// - `extra` に `DEFAULT_GENERATED` を含む場合 (`CURRENT_TIMESTAMP` や
 ///   MySQL 8.0 の式デフォルト `(expr)`) はクオートすると壊れるため逐語のまま
-///   出す。
-/// - 文字列系の型 (`char`/`varchar`/`*text`/`enum`/`set`。長さ付きも判定可)
-///   はクオートし直す — 空文字も `DEFAULT ''` として (消さずに) 出力する。
-/// - それ以外 (数値・真偽値・日時のキーワードデフォルトなど) は従来どおり
-///   逐語で出す。
+///   出す。**この分岐は下の型判定より先に評価される** — 呼び出し元
+///   (このセレクトを含むこの関数自体) が `extra` を先に見て早期リターンする
+///   ため、日時/バイナリ/JSON のような「式デフォルトが一般的な型」を下の
+///   `is_mysql_string_default_type` に加えても、式デフォルト
+///   (`CURRENT_TIMESTAMP` 等) は常にこの分岐で先に捕まり、二重クオート
+///   (`DEFAULT '(CURRENT_TIMESTAMP)'` のような壊れた DDL) にはならない。
+/// - 文字列リテラルとしてクオートし直すべき型
+///   (`char`/`varchar`/`*text`/`enum`/`set`、および `date`/`datetime`/
+///   `timestamp`/`time`/`year`/`binary`/`varbinary`/`*blob`/`json` —
+///   これらは `information_schema.COLUMNS.COLUMN_DEFAULT` がクオート無しの
+///   リテラル値をそのまま返す点で文字列型と同じ扱いが要る。例:
+///   `date` 列のデフォルト `2020-01-01` を逐語で `DEFAULT 2020-01-01` と
+///   出力すると構文エラーになる) はクオートし直す — 空文字も `DEFAULT ''`
+///   として (消さずに) 出力する。
+/// - それ以外 (数値・真偽値など) は従来どおり逐語で出す。
 ///
 /// PostgreSQL / SQLite の `column_default` は introspection が既に
 /// クオート/キャスト済みの式 (`'x'::character varying` 等) を返すため、
@@ -445,8 +455,17 @@ fn default_clause(driver: DriverKind, col: &TableColumnInfo) -> Option<String> {
 
 /// True if `data_type` (MySQL 表記。`varchar(50)` のように長さ付きでもよい)
 /// が、デフォルト値を文字列リテラルとしてクオートすべき型かどうか。
+///
+/// 文字型に加え、日付・時刻型 (`date`/`datetime`/`timestamp`/`time`/`year`) と
+/// バイナリ型 (`binary`/`varbinary`/`*blob`)・`json` も対象に含める。MySQL の
+/// `information_schema.COLUMNS.COLUMN_DEFAULT` はこれらもクオート無しのリテラル
+/// (例: `date` 列の `2020-01-01`) で返すため、文字列系と同じくクオートし直さ
+/// ないと `DEFAULT 2020-01-01` のような不正な DDL になる (#H5)。式デフォルト
+/// (`CURRENT_TIMESTAMP` 等) は呼び出し元 `default_clause` が `extra` の
+/// `DEFAULT_GENERATED` で先に弾くため、ここに含めても二重クオートにはならない
+/// (詳細は `default_clause` のドキュメントコメント参照)。
 fn is_mysql_string_default_type(data_type: &str) -> bool {
-    const STRING_PREFIXES: [&str; 7] = [
+    const STRING_PREFIXES: [&str; 18] = [
         "char",
         "varchar",
         "tinytext",
@@ -454,10 +473,24 @@ fn is_mysql_string_default_type(data_type: &str) -> bool {
         "longtext",
         "text",
         "enum",
+        "date",
+        "datetime",
+        "timestamp",
+        "time",
+        "year",
+        "binary",
+        "varbinary",
+        "tinyblob",
+        "mediumblob",
+        "longblob",
+        "blob",
     ];
     let lower = data_type.to_ascii_lowercase();
-    // "set('a','b')" も文字列扱い。
-    lower.starts_with("set") || STRING_PREFIXES.iter().any(|p| lower.starts_with(p))
+    // "set('a','b')" も文字列扱い。`json` は前置詞衝突 (`char` 等) が無いので
+    // 単体で判定する。
+    lower.starts_with("set")
+        || lower.starts_with("json")
+        || STRING_PREFIXES.iter().any(|p| lower.starts_with(p))
 }
 
 /// MySQL の文字列デフォルトをクオートする。シングルクオートを二重化し、
@@ -743,6 +776,98 @@ mod tests {
         c.default = Some("O'Brien".to_string());
         let sql = column_def(DriverKind::Mysql, &c);
         assert!(sql.contains("DEFAULT 'O''Brien'"), "got: {sql}");
+    }
+
+    // --- #H5: 日付・バイナリ・JSON も COLUMN_DEFAULT がクオート無しで返る -----
+
+    #[test]
+    fn mysql_date_default_is_quoted() {
+        // COLUMN_DEFAULT は 'date' 列の DEFAULT '2020-01-01' に対しても
+        // クオート無しの `2020-01-01` を返す。逐語出力だと `DEFAULT 2020-01-01`
+        // という構文エラーの DDL になっていた (#H5)。
+        let mut c = col("published_on", "date");
+        c.default = Some("2020-01-01".to_string());
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(
+            sql.contains("DEFAULT '2020-01-01'"),
+            "date のリテラルデフォルトはクオートされるはず: {sql}"
+        );
+    }
+
+    #[test]
+    fn mysql_datetime_and_timestamp_literal_defaults_are_quoted() {
+        let mut c = col("scheduled_at", "datetime");
+        c.default = Some("2020-01-01 00:00:00".to_string());
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(sql.contains("DEFAULT '2020-01-01 00:00:00'"), "got: {sql}");
+
+        let mut c2 = col("archived_at", "timestamp");
+        c2.default = Some("2020-01-01 00:00:00".to_string());
+        // `extra` が DEFAULT_GENERATED でない = リテラルデフォルト (式ではない)。
+        let sql2 = column_def(DriverKind::Mysql, &c2);
+        assert!(
+            sql2.contains("DEFAULT '2020-01-01 00:00:00'"),
+            "got: {sql2}"
+        );
+    }
+
+    #[test]
+    fn mysql_time_and_year_literal_defaults_are_quoted() {
+        let mut c = col("start_time", "time");
+        c.default = Some("09:00:00".to_string());
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(sql.contains("DEFAULT '09:00:00'"), "got: {sql}");
+
+        let mut c2 = col("fiscal_year", "year");
+        c2.default = Some("2020".to_string());
+        let sql2 = column_def(DriverKind::Mysql, &c2);
+        assert!(sql2.contains("DEFAULT '2020'"), "got: {sql2}");
+    }
+
+    #[test]
+    fn mysql_binary_and_blob_literal_defaults_are_quoted() {
+        let mut c = col("flag", "binary(4)");
+        c.default = Some("0000".to_string());
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(sql.contains("DEFAULT '0000'"), "got: {sql}");
+
+        let mut c2 = col("code", "varbinary(8)");
+        c2.default = Some("abc".to_string());
+        let sql2 = column_def(DriverKind::Mysql, &c2);
+        assert!(sql2.contains("DEFAULT 'abc'"), "got: {sql2}");
+
+        for ty in ["tinyblob", "blob", "mediumblob", "longblob"] {
+            let mut cb = col("data", ty);
+            cb.default = Some("x".to_string());
+            let sqlb = column_def(DriverKind::Mysql, &cb);
+            assert!(
+                sqlb.contains("DEFAULT 'x'"),
+                "{ty} のリテラルデフォルトはクオートされるはず: {sqlb}"
+            );
+        }
+    }
+
+    #[test]
+    fn mysql_json_literal_default_is_quoted() {
+        let mut c = col("meta", "json");
+        c.default = Some("{}".to_string());
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(sql.contains("DEFAULT '{}'"), "got: {sql}");
+    }
+
+    #[test]
+    fn mysql_date_default_generated_expression_stays_verbatim() {
+        // date/timestamp 系を is_mysql_string_default_type に追加しても、
+        // 式デフォルト (DEFAULT_GENERATED) は default_clause がそれより先に
+        // 判定するため二重クオートされない、という前提を固定する。
+        let mut c = col("created_on", "date");
+        c.default = Some("(CURRENT_DATE)".to_string());
+        c.extra = "DEFAULT_GENERATED".to_string();
+        let sql = column_def(DriverKind::Mysql, &c);
+        assert!(
+            sql.contains("DEFAULT (CURRENT_DATE)") && !sql.contains("'(CURRENT_DATE)'"),
+            "DEFAULT_GENERATED は date 型でも逐語のまま出すべき: {sql}"
+        );
     }
 
     #[test]

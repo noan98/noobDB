@@ -1,0 +1,128 @@
+{
+  "drivers": [
+    "mysql",
+    "postgres",
+    "sqlite",
+    "duckdb",
+    "mssql"
+  ],
+  "cases": [
+    {
+      "sql": "SELECT id, name FROM users WHERE id = 1",
+      "note": "マスク対象なしの平常な SQL (恒等関数のような回帰検出用ベースライン)",
+      "masked": "SELECT id, name FROM users WHERE id = 1"
+    },
+    {
+      "sql": "SELECT 'secret' FROM t",
+      "note": "単純な文字列リテラル (中身が空白化される)",
+      "masked": "SELECT '      ' FROM t"
+    },
+    {
+      "sql": "SELECT \"my col\" FROM \"my table\"",
+      "note": "二重引用符付き識別子 (postgres/mssql の identifier)",
+      "masked": "SELECT \"      \" FROM \"        \""
+    },
+    {
+      "sql": "SELECT `my col` FROM `my table`",
+      "note": "バッククォート識別子 (mysql/sqlite)",
+      "masked": "SELECT `      ` FROM `        `"
+    },
+    {
+      "sql": "SELECT $$hello; DELETE FROM t$$",
+      "note": "ドル引用 (タグなし $$...$$)",
+      "masked": "SELECT $$                    $$"
+    },
+    {
+      "sql": "SELECT $tag$it's a $$nested$$ test$tag$",
+      "note": "ドル引用 (タグ付き $tag$...$tag$、中に $$ を含む)",
+      "masked": "SELECT $tag$                      $tag$"
+    },
+    {
+      "sql": "SELECT $tag$broken and; DROP TABLE t",
+      "note": "ドル引用の閉じタグが無い (未終端。$ はそのまま露出しフェイルクローズ)",
+      "masked": "SELECT $tag$broken and; DROP TABLE t"
+    },
+    {
+      "sql": "SELECT $1 WHERE x = $2",
+      "note": "$ の直後が数字はパラメータプレースホルダでドル引用ではない",
+      "masked": "SELECT $1 WHERE x = $2"
+    },
+    {
+      "sql": "SELECT 1 -- DROP TABLE t\nFROM dual",
+      "note": "行コメント -- (改行で終端)",
+      "masked": "SELECT 1                \nFROM dual"
+    },
+    {
+      "sql": "SELECT 1 # DROP TABLE t\nFROM dual",
+      "note": "行コメント # (MySQL 由来だが両実装ともドライバ非依存で認識する)",
+      "masked": "SELECT 1               \nFROM dual"
+    },
+    {
+      "sql": "SELECT /* comment; DROP TABLE t */ 1",
+      "note": "通常のブロックコメント (閉じあり)",
+      "masked": "SELECT                             1"
+    },
+    {
+      "sql": "SELECT /* outer /* inner */ 1 FROM t */ x",
+      "note": "入れ子ブロックコメント: 最初の */ で閉じ、内側の残りが露出する (非入れ子仕様)",
+      "masked": "SELECT                      1 FROM t */ x"
+    },
+    {
+      "sql": "SELECT 1 /* never closes; DROP TABLE t",
+      "note": "未終端ブロックコメント (EOFまで全部マスク、最後の1文字も含む)",
+      "masked": "SELECT 1                              "
+    },
+    {
+      "sql": "SELECT * FROM t /*!50000 , (SELECT 1) */ WHERE 1=1",
+      "note": "MySQL 条件付き実行コメント /*!50000 ... */ は本文がキーワード走査対象のまま残る",
+      "masked": "SELECT * FROM t          , (SELECT 1) */ WHERE 1=1"
+    },
+    {
+      "sql": "SELECT /*! DROP TABLE t */ 1",
+      "note": "MySQL 条件付き実行コメント (バージョン番号なし)",
+      "masked": "SELECT     DROP TABLE t */ 1"
+    },
+    {
+      "sql": "SELECT 'unterminated\\",
+      "note": "EOF 直前のバックスラッシュ (エスケープ対象が無いので mysql/標準で収束する、#988 が指摘した箇所)",
+      "masked": "SELECT '             "
+    },
+    {
+      "sql": "SELECT 'a\\'; DROP TABLE t; --' FROM x",
+      "note": "文字列中のバックスラッシュ+終端引用符 (mysql は \\' をエスケープと読み未終端のまま続く。他方言は普通の閉じクォート)",
+      "masked": "SELECT '  '; DROP TABLE t;           ",
+      "maskedMysql": "SELECT '                     ' FROM x"
+    },
+    {
+      "sql": "SELECT `a\\` FROM t",
+      "note": "引用符付き識別子内のバックスラッシュ (バックティックはエスケープ対象外、ドライバ非依存で \\ の直後の ` で閉じる)",
+      "masked": "SELECT `  ` FROM t"
+    },
+    {
+      "sql": "SELECT \"a\\\" FROM t",
+      "note": "二重引用符識別子内のバックスラッシュ (mysqlはエスケープ扱いで未終端化、他方言は普通の文字として閉じる)",
+      "masked": "SELECT \"  \" FROM t",
+      "maskedMysql": "SELECT \"          "
+    },
+    {
+      "sql": "SELECT 'unterminated string",
+      "note": "未終端の単純文字列リテラル (最後の1文字も含めて全部マスクされる回帰ケース)",
+      "masked": "SELECT '                   "
+    },
+    {
+      "sql": "SELECT '' '' FROM t",
+      "note": "エスケープされた引用符の二重表記 ('' は空文字列として閉じる、継続する引用の一部と誤認しない)",
+      "masked": "SELECT '' '' FROM t"
+    },
+    {
+      "sql": "SELECT 1 -- it's a comment\nFROM t",
+      "note": "コメント内の引用符はコメントとして扱われ、後続の引用符対応を崩さない",
+      "masked": "SELECT 1                  \nFROM t"
+    },
+    {
+      "sql": "SELECT 'a; DROP TABLE t' FROM x",
+      "note": "正常に閉じた文字列内のセミコロン+DROP は隠れる (ベースラインの健全性チェック)",
+      "masked": "SELECT '               ' FROM x"
+    }
+  ]
+}

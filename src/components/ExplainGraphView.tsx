@@ -21,6 +21,7 @@ import "@xyflow/react/dist/style.css";
 import { useReducedMotion } from "motion/react";
 
 import { INK_DARK, INK_LIGHT, SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
+import { semanticColorVar } from "../semanticColors";
 import {
   buildPlanGraph,
   computeHints,
@@ -113,7 +114,11 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
               fontWeight={700}
               px="4px"
               borderRadius="var(--radius-sm)"
-              background={data.worstHint === "warning" ? "var(--status-error)" : "var(--status-warning)"}
+              background={
+                data.worstHint === "warning"
+                  ? semanticColorVar("danger", "solid")
+                  : semanticColorVar("warning", "solid")
+              }
               color="#fff"
             >
               !

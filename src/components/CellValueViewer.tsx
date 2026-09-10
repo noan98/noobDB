@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { CellValue } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
+import { semanticColorToken } from "../semanticColors";
 import { copyToClipboard } from "./clipboard";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -184,12 +185,12 @@ export function CellValueViewer({
               color="app.text"
               bg="app.bgInput"
               border="1px solid"
-              borderColor={validationError ? "var(--status-error)" : "app.border"}
+              borderColor={validationError ? semanticColorToken("danger", "text") : "app.border"}
               borderRadius="md"
               _disabled={{ opacity: 0.5, cursor: "not-allowed" }}
             />
             {validationError && (
-              <chakra.div role="alert" fontSize="sm" color="var(--status-error)">
+              <chakra.div role="alert" fontSize="sm" color={semanticColorToken("danger", "text")}>
                 {t(validationError)}
               </chakra.div>
             )}

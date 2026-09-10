@@ -17,6 +17,7 @@ import {
   type TableStatSortKey,
 } from "./tableSize";
 import { mapLimited } from "./mapLimited";
+import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
@@ -382,7 +383,9 @@ export function TableStatisticsPanel({
                 <chakra.td css={{ ...tfootTdCss, textAlign: "left" }}>
                   {t("sizeTotalsLabel", { count: totals.tableCount })}
                 </chakra.td>
-                <chakra.td css={tfootTdCss}>{formatRowCount(totals.rowEstimate)}</chakra.td>
+                <chakra.td css={tfootTdCss}>
+                  <CountUp value={totals.rowEstimate} formatter={formatRowCount} />
+                </chakra.td>
                 <chakra.td css={tfootTdCss} />
                 <chakra.td css={tfootTdCss} />
                 <chakra.td css={tfootTdCss} />

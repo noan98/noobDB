@@ -8,12 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Box, chakra } from "@chakra-ui/react";
 import { Icon, ICON_SIZES } from "./Icon";
 import { transitions } from "../motion";
-import { semanticColorToken, type SemanticRole } from "../semanticColors";
+import { semanticColorToken, semanticColorVar, type SemanticRole } from "../semanticColors";
 import { pushActivity, type ActivitySeverity } from "../activityLog";
+import { railDurationSeconds, railRatio } from "./toastProgress";
 
 export type ToastTone = "success" | "error" | "info";
 
@@ -78,6 +79,70 @@ interface ToastItem {
   message: string;
   tone: ToastTone;
   action?: ToastAction;
+  /**
+   * arm した自動消滅までの総時間 (ms、#983)。`duration <= 0` は「自動消滅なし」を
+   * 意味し、その場合プログレスレールは描画しない。`timerMeta` の `remaining` と
+   * 組み合わせてレールの開始比率/残り秒数を計算する (`toastProgress.ts`)。
+   */
+  duration: number;
+}
+
+/**
+ * アクション付きトースト (Undo 等、#676) の残り時間を可視化する細いレール
+ * (#983)。既存の `TONE_COLOR` をそのまま使い、新規の色トークンは追加しない。
+ * hover/focus による pause/resume は `Toast.tsx` 側の既存 `timerMeta` 機構を
+ * そのまま可視化するだけで、タイマーの意味論自体はここでは変更しない。
+ *
+ * 装飾要素のため `aria-hidden` — フォーカス順序を増やさず、読み上げにも乗らない。
+ *
+ * reduced-motion: レールの動きは「残り時間」という機能情報だが、Issue #983 の
+ * 指定に従い、連続的なカウントダウンのアニメーション自体は「誤解を招く動き」として
+ * 避ける — アニメを完全に止め、tone 色の静的なレール (幅固定) として表示する。
+ * pause/resume の状態そのものはこれまでどおり有効 (自動消滅の一時停止は動きとは
+ * 独立した機能)。
+ */
+function ToastProgressRail({
+  tone,
+  ratio,
+  seconds,
+  running,
+  reducedMotion,
+}: {
+  tone: ToastTone;
+  ratio: number;
+  seconds: number;
+  running: boolean;
+  reducedMotion: boolean;
+}) {
+  return (
+    <chakra.div
+      aria-hidden
+      position="absolute"
+      left="0"
+      right="0"
+      bottom="0"
+      height="2px"
+      overflow="hidden"
+      bg="app.border"
+      borderBottomRadius="md"
+    >
+      {reducedMotion ? (
+        <chakra.div position="absolute" inset="0" bg={TONE_COLOR[tone]} opacity={0.7} />
+      ) : (
+        <motion.div
+          initial={{ scaleX: 1 }}
+          animate={{ scaleX: running ? 0 : ratio }}
+          transition={running ? { duration: seconds, ease: "linear" } : { duration: 0 }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            transformOrigin: "left",
+            background: semanticColorVar(TONE_ROLE[tone], "text"),
+          }}
+        />
+      )}
+    </chakra.div>
+  );
 }
 
 interface ToastApi {
@@ -113,6 +178,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // できるよう、残り時間と現在の計測開始時刻を toast ごとに憶える。通常の
   // トーストは pause/resume を呼ぶ経路が無いので参照されないだけで挙動は不変。
   const timerMeta = useRef<Map<number, { remaining: number; startedAt: number }>>(new Map());
+  // プログレスレール (#983) の再描画トリガー。`timers`/`timerMeta` は ref なので
+  // 値を書き換えただけでは再描画されない — arm (初回/resume) と pause の瞬間だけ
+  // この state を 1 増やして、レールがその時点の remaining/running を拾い直す
+  // きっかけを作る。値そのものは使わず、`setRailTick` だけを消費する。
+  const [, setRailTick] = useState(0);
+  const reducedMotion = useReducedMotion() ?? false;
 
   // Clear any pending auto-dismiss timers if the provider unmounts so they
   // can't fire setState on a torn-down instance.
@@ -145,6 +216,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         id,
         setTimeout(() => dismiss(id), ms),
       );
+      // レールを「今の remaining から 0 へ」のアニメーションで再スタートさせる
+      // (初回 arm も resume も同じ経路)。
+      setRailTick((t) => t + 1);
     },
     [dismiss],
   );
@@ -161,6 +235,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const elapsed = Date.now() - meta.startedAt;
       meta.remaining = Math.max(0, meta.remaining - elapsed);
     }
+    // レール (#983) を凍結した remaining の位置で静止させる。
+    setRailTick((t) => t + 1);
   }, []);
 
   const resumeTimer = useCallback(
@@ -171,6 +247,27 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     },
     [armTimer],
   );
+
+  // プログレスレール (#983) の描画用データを ref (timers/timerMeta) から都度
+  // 組み立てる。アクション無し、または自動消滅なし (duration <= 0) のトーストは
+  // 描画しない。`setRailTick` で強制した再描画のたびにここが呼ばれ、
+  // arm/resume 直後は `running=true` (0 へ向けてアニメーション)、pause 直後は
+  // `running=false` (凍結した ratio で静止) を返す。
+  const renderRail = (toast: ToastItem) => {
+    if (!toast.action || !(toast.duration > 0)) return null;
+    const meta = timerMeta.current.get(toast.id);
+    const remainingMs = meta?.remaining ?? toast.duration;
+    const running = timers.current.has(toast.id);
+    return (
+      <ToastProgressRail
+        tone={toast.tone}
+        ratio={railRatio(remainingMs, toast.duration)}
+        seconds={railDurationSeconds(remainingMs)}
+        running={running}
+        reducedMotion={reducedMotion}
+      />
+    );
+  };
 
   const notify = useCallback(
     (opts: ToastOptions) => {
@@ -184,7 +281,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       // 残す。記録の入口をここ 1 か所にすることで、通知を出す側は従来どおり
       // toast を呼ぶだけで履歴に載る。
       pushActivity(opts.severity ?? TONE_SEVERITY[tone], opts.message);
-      setToasts((cur) => [...cur, { id, message: opts.message, tone, action: opts.action }]);
+      setToasts((cur) => [
+        ...cur,
+        { id, message: opts.message, tone, action: opts.action, duration },
+      ]);
       if (duration > 0) {
         armTimer(id, duration);
       }
@@ -234,6 +334,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             >
               <Box
                 role="status"
+                position="relative"
                 pointerEvents="auto"
                 display="flex"
                 alignItems="center"
@@ -323,6 +424,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 >
                   <Icon name="close" size={ICON_SIZES.sm} />
                 </chakra.button>
+                {renderRail(toast)}
               </Box>
             </motion.div>
           ))}

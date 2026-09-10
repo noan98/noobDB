@@ -2,6 +2,7 @@ import { useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import type { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
+import { semanticColorVar } from "../semanticColors";
 import type { BatchStatementResult } from "../sqlScript";
 import { Button, Switch } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -70,9 +71,9 @@ function StatementCard({
 }) {
   const tone =
     result.status === "ok"
-      ? "var(--status-success)"
+      ? semanticColorVar("success", "solid")
       : result.status === "error"
-        ? "var(--status-error)"
+        ? semanticColorVar("danger", "solid")
         : "var(--text-muted)";
   return (
     <chakra.div borderWidth="1px" borderColor="app.border" borderRadius="8px" overflow="hidden">

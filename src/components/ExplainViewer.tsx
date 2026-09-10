@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
+import { semanticColorVar } from "../semanticColors";
 import { Button } from "./ui";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
@@ -59,9 +60,10 @@ const totalCostCss: SystemStyleObject = {
 
 /**
  * 重さスコアのバッジ (0〜100)。band (low/mid/high) で配色を切り替える。
- * low は緑 (--status-success)、mid は warm (--status-warning)、high は hot
- * (--status-error) でヒート色と揃える。文字色は --text-warning / --text-success を
- * 使い、ライト/ダークの追従はトークン側に任せる (手書き _dark 分岐を持たない)。
+ * low は緑 (success)、mid は warm (warning)、high は hot (danger) でヒート色と
+ * 揃える (`semanticColors` の `solid` tier。#1009)。文字色は --text-warning /
+ * --text-success を使い、ライト/ダークの追従はトークン側に任せる (手書き _dark
+ * 分岐を持たない)。
  */
 function scoreBadgeCss(band: ScoreBand): SystemStyleObject {
   const base: SystemStyleObject = {
@@ -77,25 +79,28 @@ function scoreBadgeCss(band: ScoreBand): SystemStyleObject {
     cursor: "default",
   };
   if (band === "high") {
+    const c = semanticColorVar("danger", "solid");
     return {
       ...base,
-      background: "color-mix(in srgb, var(--status-error) 16%, transparent)",
-      borderColor: "color-mix(in srgb, var(--status-error) 45%, transparent)",
+      background: `color-mix(in srgb, ${c} 16%, transparent)`,
+      borderColor: `color-mix(in srgb, ${c} 45%, transparent)`,
       color: "var(--text-error)",
     };
   }
   if (band === "mid") {
+    const c = semanticColorVar("warning", "solid");
     return {
       ...base,
-      background: "color-mix(in srgb, var(--status-warning) 16%, transparent)",
-      borderColor: "color-mix(in srgb, var(--status-warning) 45%, transparent)",
+      background: `color-mix(in srgb, ${c} 16%, transparent)`,
+      borderColor: `color-mix(in srgb, ${c} 45%, transparent)`,
       color: "var(--text-warning)",
     };
   }
+  const c = semanticColorVar("success", "solid");
   return {
     ...base,
-    background: "color-mix(in srgb, var(--status-success) 16%, transparent)",
-    borderColor: "color-mix(in srgb, var(--status-success) 45%, transparent)",
+    background: `color-mix(in srgb, ${c} 16%, transparent)`,
+    borderColor: `color-mix(in srgb, ${c} 45%, transparent)`,
     color: "var(--text-success)",
   };
 }
@@ -138,25 +143,27 @@ function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
   if (selected) {
     const bg =
       heat === "hot"
-        ? "color-mix(in srgb, var(--status-error) 24%, var(--bg-active))"
+        ? `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 24%, var(--bg-active))`
         : heat === "warm"
-          ? "color-mix(in srgb, var(--status-warning) 22%, var(--bg-active))"
+          ? `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 22%, var(--bg-active))`
           : "var(--bg-active)";
     // 選択行はホバーしても選択色を維持する。
     return { ...base, background: bg, borderLeftColor: "var(--accent)", _hover: { background: bg } };
   }
   if (heat === "hot") {
+    const c = semanticColorVar("danger", "solid");
     return {
       ...base,
-      background: "color-mix(in srgb, var(--status-error) 16%, transparent)",
-      _hover: { background: "color-mix(in srgb, var(--status-error) 24%, transparent)" },
+      background: `color-mix(in srgb, ${c} 16%, transparent)`,
+      _hover: { background: `color-mix(in srgb, ${c} 24%, transparent)` },
     };
   }
   if (heat === "warm") {
+    const c = semanticColorVar("warning", "solid");
     return {
       ...base,
-      background: "color-mix(in srgb, var(--status-warning) 14%, transparent)",
-      _hover: { background: "color-mix(in srgb, var(--status-warning) 22%, transparent)" },
+      background: `color-mix(in srgb, ${c} 14%, transparent)`,
+      _hover: { background: `color-mix(in srgb, ${c} 22%, transparent)` },
     };
   }
   return { ...base, _hover: { background: "var(--bg-row-hover)" } };
@@ -207,8 +214,8 @@ type SeverityTone = "error" | "warning";
 
 /**
  * caution/warning (ヒートの warm/hot も同義) の重大度カテゴリから、状態バッジ・
- * ボーダーで使う色トークンをまとめて返す共通ヘルパー。`status` は生の
- * `--status-*` トークン (border-left など単色でそのまま使う箇所向け)、`text` は
+ * ボーダーで使う色トークンをまとめて返す共通ヘルパー。`status` は `semanticColors`
+ * の `solid` tier (border-left など単色でそのまま使う箇所向け。#1009)、`text` は
  * `--text-*` トークン、`bg`/`border` はバッジの背景/枠線用に `color-mix` で
  * 薄めた値 (枠線の混合率は呼び出し元で異なるため `borderPct` で指定、既定 40%)。
  * `accessBadgeCss` / `costBadgeCss` / `hintBadgeCss` / `hintItemCss` /
@@ -218,7 +225,8 @@ function severityTokens(
   tone: SeverityTone,
   borderPct = 40,
 ): { status: string; text: string; bg: string; border: string } {
-  const status = tone === "error" ? "var(--status-error)" : "var(--status-warning)";
+  const status =
+    tone === "error" ? semanticColorVar("danger", "solid") : semanticColorVar("warning", "solid");
   const text = tone === "error" ? "var(--text-error)" : "var(--text-warning)";
   return {
     status,

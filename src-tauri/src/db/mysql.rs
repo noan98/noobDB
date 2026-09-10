@@ -348,26 +348,19 @@ impl MySqlConn {
         // BEFORE query, and a WHERE-filtered re-run would return a
         // different row set after the UPDATE (e.g. `... SET flag=0 WHERE
         // flag=1` matches nothing once committed), breaking the pairing.
-        let where_clause = if !primary_key.is_empty()
-            && (trimmed.starts_with("update") || trimmed.starts_with("delete"))
-        {
-            extract_where_and_after(sql)
-        } else {
-            None
-        };
+        //
+        // 判定と切り出しはドライバ非依存の純ロジック (`db::preview`) を共有する
+        // — PostgreSQL 側にも同じ取りこぼしがあったため。
+        let where_clause =
+            super::preview::before_where_clause(sql, super::SqlFlavor::MySql, &primary_key);
 
         let before_sql = target.as_ref().map(|t| match &where_clause {
             // The user's clause is appended verbatim — it already includes
             // any ORDER BY / LIMIT they wrote. We don't add our own LIMIT
             // here (their LIMIT would clash); the fetch below caps the
             // collected rows at `row_limit + 1` instead.
-            Some(w) => format!("SELECT * FROM {} {}", t, w),
-            None => format!(
-                "SELECT * FROM {}{} LIMIT {}",
-                t,
-                order_clause,
-                row_limit + 1
-            ),
+            Some(w) => super::preview::build_snapshot_sql(t, Some(w), "", None),
+            None => super::preview::build_snapshot_sql(t, None, &order_clause, Some(row_limit + 1)),
         });
 
         let mut tx = conn.begin().await?;
@@ -1744,7 +1737,12 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
         &["TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "YEAR"],
     ) {
         if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
-            return v.map(Value::Int).unwrap_or(Value::Null);
+            // BIGINT は 2^53 を超えうる。`Value` は `#[serde(untagged)]` なので
+            // そのまま `Value::Int` にすると JSON の素の数値として送られ、
+            // フロントの `JSON.parse` で丸められて**別の値**になる (表示だけで
+            // なく、インラインセル編集が組み立てる `WHERE pk = …` まで狂う)。
+            // 安全整数の外は十進文字列へ退避する。
+            return v.map(Value::from_i64_lossless).unwrap_or(Value::Null);
         }
     }
     if ti(
@@ -1758,7 +1756,9 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
         ],
     ) {
         if let Ok(v) = row.try_get::<Option<u64>, _>(i) {
-            return v.map(Value::UInt).unwrap_or(Value::Null);
+            // BIGINT UNSIGNED も同様に安全整数を超えうる
+            // (`Value::from_i64_lossless` の符号なし版へ)。
+            return v.map(Value::from_u64_lossless).unwrap_or(Value::Null);
         }
     }
     if ti(type_name, &["FLOAT", "DOUBLE"]) {
@@ -1823,6 +1823,15 @@ fn decode_cell(row: &MySqlRow, i: usize) -> Value {
         }
     }
     if ti(type_name, &["JSON"]) {
+        // `serde_json::Value` を経由した再シリアライズはオブジェクトのキーを
+        // 並べ替える (`preserve_order` 無効の既定では `Map` が `BTreeMap` =
+        // 辞書順)。PostgreSQL 側 (`db::postgres`) ではこれが実害になるため
+        // サーバの返す JSON テキストをそのまま返すよう直したが、**MySQL は
+        // 現状維持**とする: MySQL は JSON 型を保存時にバイナリ表現へ正規化
+        // し、その際オブジェクトのキーを (長さ → バイト順で) 並べ替えるため、
+        // 著者が書いた順序はサーバ到達時点で既に失われており、クライアント側で
+        // 復元する術が無い。並べ替えの規則が MySQL の正規化順と厳密には
+        // 一致しない点は許容する (JSON としての等価性は保たれる)。
         if let Ok(v) = row.try_get::<Option<serde_json::Value>, _>(i) {
             return v
                 .map(|j| Value::String(j.to_string()))
@@ -1894,94 +1903,6 @@ fn extract_target_table(sql: &str) -> Option<String> {
         }
         _ => None,
     }
-}
-
-/// Returns the substring of `sql` starting at the outermost `WHERE`
-/// keyword (inclusive), or `None` if the statement has no top-level
-/// `WHERE`. Comments are stripped first; string and identifier quoting
-/// (`'...'`, `"..."`, `` `...` ``) plus parenthesis depth are tracked so
-/// a `WHERE` nested in a subquery — e.g. inside the `SET` expression of
-/// an `UPDATE` — is not mistaken for the outer clause.
-///
-/// Any trailing statement terminator (`;`) is stripped from the result so
-/// the value can be concatenated directly into a wrapper SELECT. ORDER BY
-/// and LIMIT clauses that the user wrote after WHERE are preserved
-/// verbatim, so the BEFORE snapshot honours them too.
-fn extract_where_and_after(sql: &str) -> Option<String> {
-    let cleaned = strip_sql_comments(sql);
-    let bytes = cleaned.as_bytes();
-    let n = bytes.len();
-    let mut depth: i32 = 0;
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_backtick = false;
-    let mut i: usize = 0;
-    while i < n {
-        let c = bytes[i];
-        if in_single {
-            if c == b'\\' && i + 1 < n {
-                i += 2;
-                continue;
-            }
-            if c == b'\'' {
-                // Doubled '' inside '...' is an escaped quote, not the end.
-                if i + 1 < n && bytes[i + 1] == b'\'' {
-                    i += 2;
-                    continue;
-                }
-                in_single = false;
-            }
-        } else if in_double {
-            if c == b'\\' && i + 1 < n {
-                i += 2;
-                continue;
-            }
-            if c == b'"' {
-                if i + 1 < n && bytes[i + 1] == b'"' {
-                    i += 2;
-                    continue;
-                }
-                in_double = false;
-            }
-        } else if in_backtick {
-            if c == b'`' {
-                in_backtick = false;
-            }
-        } else {
-            match c {
-                b'\'' => in_single = true,
-                b'"' => in_double = true,
-                b'`' => in_backtick = true,
-                b'(' => depth += 1,
-                b')' if depth > 0 => {
-                    depth -= 1;
-                }
-                _ if depth == 0
-                    && i + 5 <= n
-                    && bytes[i..i + 5].eq_ignore_ascii_case(b"where")
-                    && (i == 0 || !is_ident_byte(bytes[i - 1]))
-                    && (i + 5 == n || !is_ident_byte(bytes[i + 5])) =>
-                {
-                    let mut tail = cleaned[i..].trim();
-                    if let Some(stripped) = tail.strip_suffix(';') {
-                        tail = stripped.trim_end();
-                    }
-                    return if tail.is_empty() {
-                        None
-                    } else {
-                        Some(tail.to_string())
-                    };
-                }
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-fn is_ident_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
 }
 
 /// Backtick-quotes a single identifier, doubling any embedded backticks.
@@ -2118,37 +2039,24 @@ async fn fetch_after_by_pk(
     if captured_pks.is_empty() {
         return Ok(Vec::new());
     }
-    let pk_idents: Vec<String> = pk_cols
-        .iter()
-        .map(|c| format!("`{}`", c.replace('`', "``")))
-        .collect();
     // Single-column PK → `WHERE pk IN (?, ?, ...)`. Composite PK →
     // `WHERE (a,b) IN ((?,?), (?,?), ...)`. MySQL supports the row-constructor
-    // form natively, so we don't need to fall back to OR chains.
-    let row_placeholder = if pk_idents.len() == 1 {
-        "?".to_string()
-    } else {
-        format!(
-            "({})",
-            std::iter::repeat("?")
-                .take(pk_idents.len())
-                .collect::<Vec<_>>()
-                .join(",")
-        )
+    // form natively, so we don't need to fall back to OR chains. 組み立ては
+    // ドライバ非依存の `db::preview` と共有し、ここでは MySQL の位置
+    // パラメータ (`?`) を値の数だけ並べて後段で bind する。
+    let fragments: Vec<Vec<String>> = captured_pks
+        .iter()
+        .map(|_| vec!["?".to_string(); pk_cols.len()])
+        .collect();
+    let Some(sql) = super::preview::build_after_by_pk_sql(
+        target,
+        pk_cols,
+        &fragments,
+        order_clause,
+        quote_ident,
+    ) else {
+        return Ok(Vec::new());
     };
-    let placeholders = std::iter::repeat(row_placeholder.as_str())
-        .take(captured_pks.len())
-        .collect::<Vec<_>>()
-        .join(",");
-    let lhs = if pk_idents.len() == 1 {
-        pk_idents[0].clone()
-    } else {
-        format!("({})", pk_idents.join(","))
-    };
-    let sql = format!(
-        "SELECT * FROM {} WHERE {} IN ({}){}",
-        target, lhs, placeholders, order_clause
-    );
     let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     for row_pks in captured_pks {
         for v in row_pks {
@@ -2199,19 +2107,28 @@ fn strip_sql_comments(sql: &str) -> String {
 /// whether it returns a result set, so it gets its own path keyed off
 /// [`is_call_shape`] and `fetch_many` rather than being forced down either
 /// branch here.
-fn is_query_shape(sql: &str) -> bool {
+/// `pub(crate)` (raised from private) so the cross-driver golden test
+/// (`tests/query_shape_golden.rs`, #971) can drive it via `__test_api`
+/// without changing its behaviour.
+pub(crate) fn is_query_shape(sql: &str) -> bool {
     // Leading comments/whitespace must be skipped before the keyword check, or
     // a perfectly normal `/* hint */ SELECT ...` / `-- note\nWITH ...` would
     // miss the prefix match and get misrouted to the execute path.
     let trimmed = skip_leading_comments_and_ws(sql).to_ascii_lowercase();
     if trimmed.starts_with("with") {
-        return !with_cte_is_mutation(sql);
+        return !with_cte_is_mutation(super::DriverKind::Mysql, sql);
     }
     trimmed.starts_with("select")
         || trimmed.starts_with("show")
         || trimmed.starts_with("describe")
         || trimmed.starts_with("desc ")
         || trimmed.starts_with("explain")
+        // MySQL 8.0.19+ supports a bare `VALUES ROW(...), ROW(...)` statement
+        // that returns a result set (#1052). Other drivers already treat a
+        // leading VALUES as query-shaped (see postgres.rs/sqlite.rs/duckdb.rs/
+        // mssql.rs); MySQL lacked the branch, so the statement was routed to
+        // the execute path and its rows were silently dropped.
+        || trimmed.starts_with("values")
 }
 
 /// True when `sql`'s first keyword is `CALL` (a stored-procedure invocation),
@@ -2325,72 +2242,57 @@ fn skip_leading_comments_and_ws(sql: &str) -> &str {
 /// statement's leading keyword is the first statement keyword we encounter at
 /// parenthesis depth 0 — any SELECT inside a CTE body sits at depth > 0 and is
 /// skipped. Comments and quoted text (`'...'`, `"..."`, `` `...` ``) are
-/// ignored so a keyword inside a literal or identifier isn't mistaken for the
-/// main statement. If no decisive keyword is found (e.g. `WITH ... TABLE t`),
-/// the statement is treated as query-shaped.
+/// blanked out before the scan (see below) so a keyword inside a literal or
+/// identifier isn't mistaken for the main statement. If no decisive keyword is
+/// found (e.g. `WITH ... TABLE t`), the statement is treated as query-shaped.
 ///
-/// この判定はキーワード列挙のみで方言非依存 (MySQL/PostgreSQL 双方の DML
-/// キーワードを含む) なので、`db/postgres.rs` / `db/sqlite.rs` の
-/// `is_query_shape` からも `super::mysql::with_cte_is_mutation` として共有
-/// する (`pub(crate)`)。
-pub(crate) fn with_cte_is_mutation(sql: &str) -> bool {
+/// キーワード列挙そのものは方言非依存 (MySQL/PostgreSQL 双方の DML キーワードを
+/// 含む) なので、`db/postgres.rs` / `db/sqlite.rs` / `db/duckdb.rs` /
+/// `db/mssql.rs` の `is_query_shape` からも `super::mysql::with_cte_is_mutation`
+/// として共有する (`pub(crate)`)。
+///
+/// **`driver` を受け取る理由 (#1051)**: コメント/リテラルの読み飛ばしだけは
+/// 方言依存で、`\` を文字列リテラルのエスケープ文字と見なすのは MySQL/MariaDB
+/// だけである。以前はこの関数が自前の走査で `\` を無条件にエスケープ扱いして
+/// いたため、`WITH t AS (SELECT '\' AS x) DELETE FROM y` を PostgreSQL /
+/// SQLite / DuckDB / MSSQL でも「文字列が閉じない」と誤読し、CTE の閉じ括弧ごと
+/// リテラルへ飲み込んで主文の `DELETE` に到達できず「データ変更ではない」= fetch
+/// 経路と判定していた (実サーバは 2 個目の `'` で文字列を閉じ、`DELETE` を実行
+/// する)。#852 が `is_read_only_sql_for` /
+/// `has_stacked_statements_for` / `apply_auto_limit_for` /
+/// `classify_write_kind_for` に対して行ったドライバ別マスクへの切り替えを、
+/// ここへ横展開したもの。マスク処理は再実装せず
+/// [`super::mask_for_driver`] へ委譲する。
+///
+/// ドライバを知らない呼び出し口が将来増えた場合は、#852 と同じ fail-closed
+/// 方針で [`super::mask_for_analysis_conservative`] (= `\` を通常文字として
+/// 読む、リテラルが早く閉じる側) を使ってここへ渡すこと。現在の呼び出し口は
+/// 5 ドライバの `is_query_shape` だけで、いずれも自分の `DriverKind` を持つ。
+///
+/// 共有マスクへ委譲したことによる副次的な挙動差 (いずれも fail-closed 方向、
+/// または実サーバの解釈に近づく方向):
+///
+/// * MySQL の `/*! … */` は**コメントではなく条件付き実行構文**なので、
+///   [`super::mask_for_driver`] は中身を空白化せずキーワード走査へ残す。
+///   実際に実行される `DELETE` などがここでも見えるようになる。
+/// * PostgreSQL / DuckDB のドル引用文字列 (`$$…$$` / `$tag$…$tag$`) の中身が
+///   リテラルとして正しく伏せられる (以前は素通しだった)。
+pub(crate) fn with_cte_is_mutation(driver: super::DriverKind, sql: &str) -> bool {
+    let orig: Vec<char> = sql.chars().collect();
+    main_statement_is_mutation(&super::mask_for_driver(driver, &orig))
+}
+
+/// [`with_cte_is_mutation`] の本体。すでにコメント/リテラルがマスク済み
+/// (= 空白へ置換済み、文字数と括弧は原文のまま) の文字列を走査し、括弧深さ 0 に
+/// 最初に現れる文キーワードで判定する。マスクが引用/コメントの状態管理を
+/// 済ませているため、ここは「深さの追跡」と「単語の切り出し」だけを行う。
+fn main_statement_is_mutation(masked: &[char]) -> bool {
     let mut depth: i32 = 0;
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_backtick = false;
     let mut word = String::new();
 
-    let mut chars = sql.chars().peekable();
-    loop {
-        let next = chars.next();
-        if in_single {
-            match next {
-                Some('\\') => {
-                    chars.next();
-                }
-                Some('\'') => {
-                    if chars.peek() == Some(&'\'') {
-                        chars.next();
-                    } else {
-                        in_single = false;
-                    }
-                }
-                Some(_) => {}
-                None => break,
-            }
-            continue;
-        }
-        if in_double {
-            match next {
-                Some('\\') => {
-                    chars.next();
-                }
-                Some('"') => {
-                    if chars.peek() == Some(&'"') {
-                        chars.next();
-                    } else {
-                        in_double = false;
-                    }
-                }
-                Some(_) => {}
-                None => break,
-            }
-            continue;
-        }
-        if in_backtick {
-            match next {
-                Some('`') => in_backtick = false,
-                Some(_) => {}
-                None => break,
-            }
-            continue;
-        }
-
-        let is_word_char = matches!(next, Some(c) if c.is_alphanumeric() || c == '_' || c == '$');
-        if is_word_char {
-            // is_word_char が真のときは matches! マクロにより next が Some であることが保証されている。
-            #[allow(clippy::unwrap_used)]
-            word.push(next.unwrap());
+    for &c in masked {
+        if c.is_alphanumeric() || c == '_' || c == '$' {
+            word.push(c);
             continue;
         }
 
@@ -2408,48 +2310,15 @@ pub(crate) fn with_cte_is_mutation(sql: &str) -> bool {
             word.clear();
         }
 
-        match next {
-            Some('\'') => in_single = true,
-            Some('"') => in_double = true,
-            Some('`') => in_backtick = true,
-            // Comments are handled inline (rather than pre-stripping) so the
-            // quote state above protects comment markers that appear inside
-            // string/identifier literals, e.g. `SELECT '-- keep'`.
-            Some('-') if chars.peek() == Some(&'-') => {
-                chars.next();
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
-                }
-            }
-            Some('#') => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
-                }
-            }
-            Some('/') if chars.peek() == Some(&'*') => {
-                chars.next();
-                let mut prev = '\0';
-                for c in chars.by_ref() {
-                    if prev == '*' && c == '/' {
-                        break;
-                    }
-                    prev = c;
-                }
-            }
-            Some('(') => depth += 1,
-            Some(')') => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
-            Some(_) => {}
-            None => break,
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
         }
     }
+    // 末尾に区切り文字なしで終わった単語は、元の実装と同じく判定に使わない
+    // (`WITH … DELETE` のような文末が裸のキーワードで終わる形は SQL として
+    // 成立しないため、挙動を変えずに据え置く)。
     false
 }
 
@@ -2546,6 +2415,19 @@ mod tests {
     }
 
     #[test]
+    fn query_shape_recognises_bare_values_statement() {
+        // MySQL 8.0.19+ supports a bare `VALUES ROW(...), ROW(...)` statement
+        // that returns a result set (#1052). It must be routed to the fetch
+        // path like the other drivers (postgres/sqlite/duckdb/mssql).
+        assert!(is_query_shape("VALUES ROW(1)"));
+        assert!(is_query_shape("VALUES ROW(1, 'a'), ROW(2, 'b')"));
+        assert!(is_query_shape("  values row(1)"));
+        // `INSERT INTO t VALUES (1)` must NOT be misdetected as a leading
+        // VALUES statement — only the statement's own first keyword counts.
+        assert!(!is_query_shape("INSERT INTO t VALUES (1)"));
+    }
+
+    #[test]
     fn query_shape_keeps_with_select_as_query() {
         assert!(is_query_shape(
             "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte"
@@ -2605,6 +2487,86 @@ mod tests {
         // skipped so the DELETE is still detected.
         assert!(!is_query_shape(
             "WITH c AS (SELECT 1) -- pick\n DELETE FROM t WHERE id = 1"
+        ));
+    }
+
+    /// #1051 の回帰テスト: `with_cte_is_mutation` の文字列リテラル解釈が接続先の
+    /// 方言に追従すること。`\` をエスケープ文字と見なすのは MySQL/MariaDB だけで、
+    /// 他方言では 2 個目の `'` で文字列が閉じて主文の `DELETE` が露出する。
+    /// 以前は全ドライバで MySQL 流に読んでいたため、PostgreSQL 等でも「文字列が
+    /// 閉じない」と誤読して CTE の閉じ括弧ごと飲み込み、データ変更を fetch 経路
+    /// (空の 0 件グリッド) へ流していた。
+    #[test]
+    fn with_cte_backslash_literal_follows_driver_escaping() {
+        use crate::db::DriverKind;
+
+        let sql = r"WITH t AS (SELECT '\' AS x) DELETE FROM y";
+        // MySQL: `\'` はエスケープされた引用符なので文字列が閉じず、主文の
+        // DELETE へ到達しない (= 非データ変更)。実サーバの解釈と一致する。
+        assert!(!with_cte_is_mutation(DriverKind::Mysql, sql));
+        // それ以外の 4 方言では `\` はただの文字。文字列は閉じ、DELETE が露出する。
+        for driver in [
+            DriverKind::Postgres,
+            DriverKind::Sqlite,
+            DriverKind::DuckDb,
+            DriverKind::Mssql,
+        ] {
+            assert!(
+                with_cte_is_mutation(driver, sql),
+                "{driver:?} must see the DELETE that follows the closed literal"
+            );
+        }
+        // MySQL 経路の `is_query_shape` 側から見た表現 (fetch 経路のまま)。
+        assert!(is_query_shape(sql));
+    }
+
+    /// 上のケースと対になる確認: `\\` (エスケープされたバックスラッシュ 1 個) なら
+    /// MySQL でも文字列は 2 個目の `'` で閉じるので、全方言でデータ変更と判定する。
+    /// 「MySQL では常に検出できない」のではなく「マスク規則が違うだけ」であることを
+    /// 固定する。
+    #[test]
+    fn with_cte_escaped_backslash_closes_literal_on_every_driver() {
+        use crate::db::DriverKind;
+
+        let sql = r"WITH t AS (SELECT 'a\\' AS x) DELETE FROM y";
+        for driver in [
+            DriverKind::Mysql,
+            DriverKind::Postgres,
+            DriverKind::Sqlite,
+            DriverKind::DuckDb,
+            DriverKind::Mssql,
+        ] {
+            assert!(
+                with_cte_is_mutation(driver, sql),
+                "{driver:?} must treat the escaped backslash as closing the literal"
+            );
+        }
+    }
+
+    /// 共有マスク (`db::mask_for_driver`) への委譲で変わった/変わらない挙動
+    /// (#1051)。
+    #[test]
+    fn with_cte_shares_the_analysis_mask_semantics() {
+        use crate::db::DriverKind;
+
+        // MySQL の `/*! … */` はコメントではなく条件付き実行構文なので、共有
+        // マスクは中身をキーワード走査へ残す → 実際に実行される DELETE を
+        // 見逃さない (以前は普通のブロックコメントとして読み飛ばしていた。
+        // fail-closed 方向の変化)。
+        assert!(with_cte_is_mutation(
+            DriverKind::Mysql,
+            "WITH c AS (SELECT 1) /*!50000 DELETE */ FROM t"
+        ));
+        // 通常のブロックコメント / 行コメントは従来どおり読み飛ばし、その先の
+        // 主文キーワードに到達する。
+        assert!(with_cte_is_mutation(
+            DriverKind::Postgres,
+            "WITH c AS (SELECT 1) /* pick */ -- go\n DELETE FROM t"
+        ));
+        // 文字列リテラルの中のキーワードは従来どおり無視。
+        assert!(!with_cte_is_mutation(
+            DriverKind::Postgres,
+            "WITH c AS (SELECT 'delete me' AS note) SELECT * FROM c"
         ));
     }
 
@@ -2670,93 +2632,10 @@ mod tests {
         assert_eq!(extract_target_table(sql), Some("users".into()));
     }
 
-    #[test]
-    fn extracts_outer_where_from_update() {
-        assert_eq!(
-            extract_where_and_after("UPDATE users SET name = 'a' WHERE id = 1"),
-            Some("WHERE id = 1".into())
-        );
-    }
-
-    #[test]
-    fn extracts_outer_where_from_delete() {
-        assert_eq!(
-            extract_where_and_after("DELETE FROM orders WHERE total > 100"),
-            Some("WHERE total > 100".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_returns_none_when_absent() {
-        assert!(extract_where_and_after("UPDATE t SET x = 1").is_none());
-        assert!(extract_where_and_after("DELETE FROM t").is_none());
-    }
-
-    #[test]
-    fn extract_where_ignores_inner_where_in_subquery() {
-        // The WHERE inside the SET subquery is at paren depth > 0 and must
-        // be skipped — otherwise we'd build the BEFORE snapshot from the
-        // subquery's filter instead of the outer one.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET x = (SELECT y FROM s WHERE z = 1) WHERE id = 5"),
-            Some("WHERE id = 5".into())
-        );
-        assert!(
-            extract_where_and_after("UPDATE t SET x = (SELECT y FROM s WHERE z = 1)").is_none()
-        );
-    }
-
-    #[test]
-    fn extract_where_ignores_keyword_in_string_literal() {
-        // 'WHERE' inside a single-quoted literal must not be picked up as
-        // the outer keyword.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET x = 'WHERE' WHERE id = 1"),
-            Some("WHERE id = 1".into())
-        );
-        // Doubled-quote escape '' inside the string must not prematurely
-        // close it.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET x = 'a''b WHERE c' WHERE id = 1"),
-            Some("WHERE id = 1".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_ignores_keyword_in_backtick_identifier() {
-        // A column literally named `where` must not be picked up as the
-        // keyword. We then expect the real keyword that follows.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET `where` = 1 WHERE id = 2"),
-            Some("WHERE id = 2".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_preserves_trailing_clauses() {
-        // ORDER BY / LIMIT after WHERE belong to the user's mutation and
-        // should be reused verbatim by the BEFORE-snapshot SELECT.
-        assert_eq!(
-            extract_where_and_after("DELETE FROM t WHERE y = 2 ORDER BY id DESC LIMIT 10"),
-            Some("WHERE y = 2 ORDER BY id DESC LIMIT 10".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_strips_trailing_semicolon() {
-        // A trailing `;` would break the wrapper SELECT it gets spliced
-        // into, so the extractor drops it.
-        assert_eq!(
-            extract_where_and_after("UPDATE t SET x=1 WHERE id=1;"),
-            Some("WHERE id=1".into())
-        );
-    }
-
-    #[test]
-    fn extract_where_ignores_identifier_prefixed_with_where() {
-        // `whereabouts` starts with "where" but is not the keyword.
-        assert!(extract_where_and_after("UPDATE t SET whereabouts = 'home'").is_none());
-    }
+    // NOTE: `extract_where_and_after` の単体テストは `db::preview` へ移設した
+    // (PostgreSQL と共有する純ロジックになったため)。MySQL 方言の解釈が
+    // 変わっていないことは、移設先で `SqlFlavor::MySql` を指定した同じ
+    // ケース群が引き続き固定している。
 
     #[test]
     fn quotes_identifiers_with_backticks() {

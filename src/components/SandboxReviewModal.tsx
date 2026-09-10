@@ -18,6 +18,7 @@ import {
   type SandboxConflictResolution,
 } from "../sandbox";
 import { useConfirm } from "./ConfirmDialog";
+import { statusColors } from "./diffStatusColors";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote } from "./modalForm";
@@ -320,14 +321,33 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         {schema && schema.desired.tables.some((tb) => tb.status !== "same") && (
           <chakra.div fontSize="sm">
             <chakra.strong>{t("sandboxReviewSchemaChanges")}</chakra.strong>
-            <chakra.ul margin="4px 0 0" paddingLeft="18px">
+            {/* `DiffStatus` の色語彙は `diffStatusColors.ts` の `statusColors`
+                (semanticColors 経由、#664) を `SchemaCompareView` と共有し、状態色を
+                二重管理しない (#1008)。左端の 3px スパインも同ビューのテーブル/
+                カラム差分行と同じ手法。 */}
+            <chakra.ul margin="4px 0 0" paddingLeft="0" listStyleType="none" display="flex" flexDirection="column" gap="1">
               {schema.desired.tables
                 .filter((tb) => tb.status !== "same")
-                .map((tb) => (
-                  <chakra.li key={tb.name} fontFamily="mono">
-                    {tb.name} ({schemaStatusLabel(tb.status, t)})
-                  </chakra.li>
-                ))}
+                .map((tb) => {
+                  const { color } = statusColors(tb.status);
+                  return (
+                    <chakra.li
+                      key={tb.name}
+                      display="flex"
+                      alignItems="center"
+                      gap="2"
+                      py="0.5"
+                      pl="2"
+                      borderLeftWidth="3px"
+                      borderLeftColor={color}
+                    >
+                      <chakra.span color={color} fontWeight={600} whiteSpace="nowrap">
+                        {schemaStatusLabel(tb.status, t)}
+                      </chakra.span>
+                      <chakra.span fontFamily="mono">{tb.name}</chakra.span>
+                    </chakra.li>
+                  );
+                })}
             </chakra.ul>
             <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" mt="1.5" cursor="pointer">
               <Checkbox checked={allowDestructive} onChange={(e) => setAllowDestructive(e.target.checked)} />

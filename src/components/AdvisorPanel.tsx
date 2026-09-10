@@ -256,7 +256,7 @@ export function AdvisorPanel({
                       <chakra.div
                         marginTop="1.5"
                         fontSize="var(--text-xs)"
-                        color="var(--status-warning, var(--text-secondary))"
+                        color={semanticColorToken("warning", "text")}
                       >
                         {t("advisorStatisticalNote")}
                       </chakra.div>

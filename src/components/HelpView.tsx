@@ -1,5 +1,6 @@
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
+import { semanticColorVar } from "../semanticColors";
 import { resolveShortcutBindings, SHORTCUTS, type ShortcutId } from "../shortcuts";
 import { formatCombo } from "../shortcutKeys";
 import { useSettings } from "../settings";
@@ -191,7 +192,7 @@ const SECTIONS: Section[] = [
 function DbImpactBadge({ impact }: { impact: Impact }) {
   const t = useT();
   const writes = impact === "yes";
-  const tone = writes ? "var(--status-error)" : "var(--status-connected)";
+  const tone = writes ? semanticColorVar("danger", "solid") : semanticColorVar("success", "solid");
   return (
     <chakra.span
       // a11y ベースライン (a11y.browser.test.tsx) が対象ノードを特定する

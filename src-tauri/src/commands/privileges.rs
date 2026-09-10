@@ -136,6 +136,11 @@ pub(crate) async fn apply_privilege_sql_inner(
         ));
     }
 
+    // Schema Cache / Query Result Cache (#1097) のどちらも invalidate しない:
+    // GRANT/REVOKE/CREATE USER/DROP USER/ALTER PASSWORD はユーザ・権限を変える
+    // だけで、テーブル/カラム/PK/FK/index/view・routine といったスキーマ構造にも
+    // テーブルの行データにも一切影響しないため (キャッシュ済みの SELECT 結果は
+    // 権限変更後も変わらず正しい)。
     session
         .conn
         .execute_transaction(&statements, database.as_deref())

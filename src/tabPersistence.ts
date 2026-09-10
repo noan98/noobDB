@@ -58,6 +58,12 @@ function isStringArray(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((x) => typeof x === "string");
 }
 
+function isOrderByItem(v: unknown): v is { column: string; direction: "ASC" | "DESC" } {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.column === "string" && (o.direction === "ASC" || o.direction === "DESC");
+}
+
 function isValidBuilderSnapshot(v: unknown): v is QueryBuilderSnapshot {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
@@ -72,6 +78,12 @@ function isValidBuilderSnapshot(v: unknown): v is QueryBuilderSnapshot {
   // that omit them (they default to enabled when restored) but reject wrong types.
   if (o.whereEnabled !== undefined && typeof o.whereEnabled !== "boolean") return false;
   if (o.limitEnabled !== undefined && typeof o.limitEnabled !== "boolean") return false;
+  // `orderBy` is likewise a later addition (ORDER BY builder support) — an
+  // older persisted snapshot simply has no `orderBy` key at all, and must
+  // keep restoring rather than being rejected wholesale.
+  if (o.orderBy !== undefined && (!Array.isArray(o.orderBy) || !o.orderBy.every(isOrderByItem))) {
+    return false;
+  }
   if (!isStringArray(o.selectColumns)) return false;
   if (!Array.isArray(o.whereConditions) || !o.whereConditions.every(isWhereCondition)) return false;
   if (!Array.isArray(o.setPairs) || !o.setPairs.every(isStringPair)) return false;

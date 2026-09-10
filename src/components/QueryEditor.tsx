@@ -534,7 +534,12 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
       flashStatement(view, sel.from, sel.to);
       return true;
     }
-    const range = statementAtOffset(view.state.doc.toString(), sel.head);
+    // driverRef 経由 (keymap は Compartment に一度だけ構築されるため、直接
+    // `driver` を読むとリコンフィグ前は接続切替前のドライバのまま固定される —
+    // 同じ理由で下の format アクションも driverRef.current を使っている)。
+    // 文分割の解釈 (バックスラッシュエスケープ、#852/#1004) を実行ゲート
+    // (`App.tsx` の `analyzeDangerousSql`/`isReadOnlySql`) と揃える。
+    const range = statementAtOffset(view.state.doc.toString(), sel.head, driverRef.current);
     if (!range) return true;
     resetHistoryNav();
     onRunRef.current(range.text);
@@ -769,23 +774,30 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
     sessionId: sessionId ?? null,
     database: defaultDatabase ?? null,
     enabled: settings.preflightImpactEnabled && !disabled,
+    driver,
   });
   // 結果が変わるたび親へ通知 (危険クエリ確認ダイアログへの件数引き継ぎ用)。
   useEffect(() => {
     onPreflightImpactRef.current?.(preflight);
   }, [preflight]);
 
+  // カーソル位置 (選択があれば選択を置換) へテキストを挿入する共通処理。
+  // `QueryEditorHandle.insertText` (親からの外部呼び出し) と、Query Builder の
+  // 「エディタに挿入」(`onInsertToEditor`、本コンポーネント内で完結する呼び出し)
+  // の両方が使う — 挿入先はどちらも同じエディタなので経路を分けない。
+  const insertAtCursor = (text: string) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const sel = view.state.selection.main;
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: text },
+      selection: { anchor: sel.from + text.length },
+    });
+    view.focus();
+  };
+
   useImperativeHandle(ref, () => ({
-    insertText: (text: string) => {
-      const view = viewRef.current;
-      if (!view) return;
-      const sel = view.state.selection.main;
-      view.dispatch({
-        changes: { from: sel.from, to: sel.to, insert: text },
-        selection: { anchor: sel.from + text.length },
-      });
-      view.focus();
-    },
+    insertText: insertAtCursor,
     setText: (text: string) => {
       const view = viewRef.current;
       if (!view) return;
@@ -1142,6 +1154,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, Props>(function QueryEd
             onExecute={(builtSql) => onRun(builtSql)}
             onPreview={onPreview ? (builtSql) => onPreview(builtSql) : undefined}
             onPersist={onBuilderPersist}
+            onInsertToEditor={insertAtCursor}
             onClose={() => setShowBuilder(false)}
           />
         )}

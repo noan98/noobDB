@@ -1,0 +1,34 @@
+# cargo-nextest の設定 (CI の `rust (test)` / `rust (windows test)` が使う)。
+#
+# nextest は**テストごとにプロセスを分けて**並列実行する。これは各テストを
+# 隔離できる利点がある一方、「プロセス内の Mutex による直列化」がまったく効か
+# ないことを意味する — `cargo test` (単一プロセス + スレッド並列) では守れて
+# いた不変条件が、nextest では破れる。
+#
+# `sandbox_integration` の各テストは実際のユーザデータディレクトリにある
+# `sandboxes.json` を共有する。ストア側 (`sandboxes/store.rs`) は
+# `load_all` → 変更 → `save_all` をプロセス内 Mutex で直列化しているが、
+# プロセスを跨ぐ並列実行ではそれが効かず、互いのレコードを上書きし合って
+# `sandbox '<id>' not found` で落ちる。テスト同士の衝突なので、このバイナリの
+# テストは 1 本ずつ走らせる (プロダクションコードは「1 プロセス = 1 アプリ
+# インスタンス」前提のままでよい)。
+#
+# `commands::dump::tests` も同じ理由で直列化する。
+# `cleanup_stale_dump_credential_files` は OS 標準の一時ディレクトリを走査して
+# `noobdb-dump-*.cnf` / `.pgpass` を消す (これは本番の意図した挙動) ため、その
+# テストと、実物の資格情報ファイルを作って `Drop` での削除を確かめる
+# `defaults_file_is_removed_on_drop` / `pgpass_file_is_removed_on_drop` が
+# 同時に走ると、前者が後者のファイルを消してしまう。モジュール内の
+# `CRED_FILE_TEST_LOCK` が `cargo test` (スレッド並列) では防いでいるが、
+# nextest のプロセス並列には効かないので、ここでも 1 本ずつに落とす。
+[test-groups]
+sandbox-store = { max-threads = 1 }
+dump-temp-files = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(sandbox_integration)'
+test-group = 'sandbox-store'
+
+[[profile.default.overrides]]
+filter = 'test(commands::dump::tests::)'
+test-group = 'dump-temp-files'

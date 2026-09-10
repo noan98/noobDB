@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,19 @@ struct SandboxFile {
     sandboxes: Vec<SandboxRecord>,
 }
 
+/// `sandboxes.json` への read-modify-write を直列化するロック。
+/// `profiles::store::STORE_LOCK` / `ssh::known_hosts::KNOWN_HOSTS_LOCK` と同じ
+/// 設計・同じ理由: Tauri の `async fn` コマンドはプロセス内で並行実行されるため、
+/// `upsert`/`delete` の「読み → 変更 → 書き」を無防備にすると後勝ちの `save_all` が
+/// 他方の変更を消す。poisoning は `into_inner` で回復する — パニック時点の書きかけ
+/// 内容は `write_atomic` の一時ファイル側にしか無く、本ファイルは直前の一貫した
+/// 状態のままなので安全。
+static STORE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_store() -> std::sync::MutexGuard<'static, ()> {
+    STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 pub fn data_dir() -> Option<PathBuf> {
     ProjectDirs::from(QUALIFIER, ORG, APP).map(|p| p.data_dir().to_path_buf())
 }
@@ -38,7 +52,9 @@ pub fn sandbox_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-pub fn load_all() -> Result<Vec<SandboxRecord>> {
+/// 実際のファイル読み込み (ロック非取得)。`upsert`/`delete` のようにロックを跨いだ
+/// 複合操作から使うための内部版。
+fn load_all_locked() -> Result<Vec<SandboxRecord>> {
     let path = sandboxes_path()?;
     if !path.exists() {
         return Ok(Vec::new());
@@ -51,7 +67,8 @@ pub fn load_all() -> Result<Vec<SandboxRecord>> {
     Ok(file.sandboxes)
 }
 
-pub fn save_all(sandboxes: &[SandboxRecord]) -> Result<()> {
+/// 実際のファイル書き込み (ロック非取得)。`load_all_locked` と対。
+fn save_all_locked(sandboxes: &[SandboxRecord]) -> Result<()> {
     let path = sandboxes_path()?;
     let file = SandboxFile {
         sandboxes: sandboxes.to_vec(),
@@ -61,42 +78,78 @@ pub fn save_all(sandboxes: &[SandboxRecord]) -> Result<()> {
     Ok(())
 }
 
+pub fn load_all() -> Result<Vec<SandboxRecord>> {
+    let _guard = lock_store();
+    load_all_locked()
+}
+
 /// `path` をアトミックに (全体差し替えで) 書き込む。`snippets::store::write_atomic`
 /// と同じ理由 (書き込み途中のクラッシュ/電源断/ディスクフルで JSON が半端に残り、
 /// 以後パース失敗で全サンドボックスのメタデータが読めなくなる事態を防ぐ) で、同じ
 /// ディレクトリに一時ファイルを書いて `sync_all` してから `rename` する。
 fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    // PID だけでは同一プロセス内の並行呼び出し (Tauri の `async fn` コマンドは
+    // プロセス内で並行実行される) を区別できないため、プロセス内で単調増加する
+    // カウンタも足して一時ファイル名を一意にする。
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp_path = dir.join(format!(
-        ".{}.tmp.{}",
+        ".{}.tmp.{}.{}",
         path.file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "sandboxes.json".to_string()),
-        std::process::id()
+        std::process::id(),
+        seq
     ));
-    {
-        let mut f = std::fs::File::create(&tmp_path)?;
-        f.write_all(content)?;
-        f.sync_all()?;
+    // `create` (`O_CREAT|O_TRUNC`) は既存エントリを開いてしまい、
+    // シンボリックリンクなら**その指す先**を切り詰める。一時ファイル名は
+    // PID + プロセス内カウンタで衝突しない前提だが、data_dir へ書ける
+    // 別プロセスが候補パスを先回りして作れる以上、`create_new`
+    // (`O_CREAT|O_EXCL`) で排他予約する (`commands::dump` の資格情報
+    // ファイル / 一時ダンプファイルと同じ防御に揃える)。
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)?;
+    // ここから先は「自分が排他予約に成功した」一時ファイルなので、途中で
+    // 失敗したら必ず消してから抜ける。`create_new` にした以上、残骸を放置すると
+    // PID が再利用された次回起動 (プロセス内カウンタは 0 から振り直される) で
+    // 同じ候補パスに当たり、`AlreadyExists` で保存が**恒久的に**失敗しうる
+    // (`create` だった頃は残骸を切り詰めて上書きするので無害だった)。
+    //
+    // **`open` 自体の失敗時に消さないのは意図的**: `AlreadyExists` は他プロセスの
+    // 書きかけを指しうるので、それを消すと `create_new` による排他予約の意味が
+    // 無くなる (消してよいのは自分が作ったものだけ)。
+    let written = f.write_all(content).and_then(|()| f.sync_all());
+    // Windows は開いたままのファイルを rename できないため、先に閉じる。
+    drop(f);
+    let written = written.and_then(|()| std::fs::rename(&tmp_path, path));
+    if written.is_err() {
+        // 後始末自体の失敗は握り潰す (呼び出し側には元のエラーを返したい)。
+        let _ = std::fs::remove_file(&tmp_path);
     }
-    std::fs::rename(&tmp_path, path)?;
-    Ok(())
+    written
 }
 
 pub fn upsert(record: SandboxRecord) -> Result<()> {
-    let mut all = load_all()?;
+    // 読み→書きの全体でロックを保持するため、ロックを取らない内部版を直接使う。
+    let _guard = lock_store();
+    let mut all = load_all_locked()?;
     if let Some(existing) = all.iter_mut().find(|s| s.id == record.id) {
         *existing = record;
     } else {
         all.push(record);
     }
-    save_all(&all)
+    save_all_locked(&all)
 }
 
 pub fn delete(id: &str) -> Result<()> {
-    let mut all = load_all()?;
+    let _guard = lock_store();
+    let mut all = load_all_locked()?;
     all.retain(|s| s.id != id);
-    save_all(&all)
+    save_all_locked(&all)
 }
 
 pub fn new_sandbox_id() -> String {
@@ -137,6 +190,42 @@ mod tests {
             created_at: "2026-01-01T00:00:00Z".to_string(),
             truncated_tables: Vec::new(),
         }
+    }
+
+    // 同一プロセス内で `write_atomic` を並行に呼んでも一時ファイル名が衝突しない
+    // こと (`profiles::store` と同じ回帰テスト)。
+    #[test]
+    fn write_atomic_is_safe_under_same_process_concurrency() {
+        let dir = scratch_dir("atomic_concurrent");
+        let path = dir.join("sandboxes.json");
+        let path = std::sync::Arc::new(path);
+
+        let handles: Vec<_> = (0..16)
+            .map(|i| {
+                let path = std::sync::Arc::clone(&path);
+                std::thread::spawn(move || {
+                    let content = format!("payload-{i}");
+                    write_atomic(&path, content.as_bytes()).unwrap();
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let final_content = std::fs::read_to_string(&*path).unwrap();
+        assert!(final_content.starts_with("payload-"));
+
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "sandboxes.json")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp file was left behind: {leftovers:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
