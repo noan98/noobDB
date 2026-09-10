@@ -1,6 +1,6 @@
 ---
 name: noobdb-ci
-description: noobDB の CI が落ちたとき、GitHub Actions ワークフローを変更するとき、必須チェック名・キャッシュ戦略・依存関係の自動更新 (Dependabot / cargo-deny / pnpm audit)・CodeRabbit レビューゲート・Rust ビルドの高速化設定 (mold / sccache / LTO) を調べるときに読む。
+description: noobDB の CI が落ちたとき、GitHub Actions ワークフローを変更するとき、必須チェック名・キャッシュ戦略・依存関係の自動更新 (Dependabot / cargo-deny / pnpm audit)・Codex レビューゲートと automerge・Rust ビルドの高速化設定 (mold / sccache / LTO) を調べるときに読む。
 ---
 
 # noobDB の CI / リリース / ビルド設定
@@ -28,7 +28,7 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 | `references/ci-workflow.md` | `ci.yml` — paths-filter によるジョブ出し分け、frontend / crosslang parity / rust 系 6 ジョブ、カバレッジ閾値 |
 | `references/release-workflow.md` | `release.yml` — タグビルド、キャッシュ温めの paths ゲート、`releaseDraft: false` の理由 |
 | `references/dependencies.md` | Dependabot / cargo-deny / pnpm audit の役割分担 |
-| `references/coderabbit.md` | レビューゲートの 3 ワークフロー連携と「恒久 skip」の落とし穴 |
+| `references/codex.md` | `automerge.yml` の Codex レビューゲート — 完了信号の取り方、CodeRabbit からの移行 (#1109)、`CODEX_PAT` |
 | `references/build-performance.md` | `mold` / `lld-link` / sccache / LTO 設定。**Linux では `clang` と `mold` が必須** |
 
 ## 落とし穴
@@ -37,5 +37,8 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
   (`references/build-performance.md`)。
 - **`releaseDraft: true` に戻さない** — 成果物が不可視のドラフトへ迷子になります
   (`references/release-workflow.md`)。
-- **`skip review` マーカーの扱いを変えるときは 3 ファイルを揃えて直す**
-  (`references/coderabbit.md`)。
+- **`automerge.yml` の Codex 完了信号 (レビュー提出 / 👍 リアクション) を減らさない**
+  — 指摘ゼロの PR が永久にマージされなくなる、または指摘が届く前にマージされる
+  (`references/codex.md`)。
+- **push 観測時刻に git の committer date を使わない** — 👍 判定と待ち時間の
+  2 つの防御が同時に破られます (`references/codex.md`)。
