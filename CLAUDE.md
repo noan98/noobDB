@@ -63,6 +63,11 @@
   (danger は常に白・warning は常に濃茶) なので、面の上のエラー文に使うとライトテーマで
   白地に白文字になり消える。面の上の意味色テキストは `app.textError` /
   `app.textWarning` / `app.textSuccess`。`designTokens.test.ts` が CI で強制。
+- **新しい画面は「Modal / Bottom Panel / 全画面サーフェス」のどれかに正しく置く。**
+  SQL を書きながら参照する情報 (アドバイザ・インスペクタ・プロセス監視など) は
+  Bottom Panel (`BottomPanel.tsx` + `bottomPanelTabs.ts`)。`<main>` を丸ごと置き換える
+  全画面サーフェスは「その画面自体が作業対象」のときだけ (ER 図・スキーマ比較など)。
+  上下の配分は `WorkspaceSplit` が既存の `Splitter` へ委ねる (リサイズを再実装しない)。
 - **モーダル内のフィールドラベル・バリデーションエラー・コードプレビューを手書き
   しない。** `components/modalForm.tsx` の `FieldLabel` / `FieldError` /
   `CodePreview` / `FormSection` / `ErrorNote` を使う (`designTokens.test.ts` が

@@ -5,8 +5,12 @@ import type { ProcessInfo } from "../api/tauri";
 
 /**
  * プロセス監視パネル (#604)。マウント時に `api.listProcesses()` を呼び (以降ポーリング)、
- * モックして実 Tauri なしでレンダリングできるようにする。タイトルが可視であること・
- * 閉じるボタンで `onClose` が呼ばれることを固定する。
+ * モックして実 Tauri なしでレンダリングできるようにする。
+ *
+ * #1112 でこのパネルはボトムパネルの中身になり、見出しと閉じるボタンはシェル
+ * (`BottomPanel`) 側へ移した。ここで固定するのは「中身が実際に描画に入ること」
+ * (= ツールバーの更新ボタンが出ること) までで、タイトル/閉じるの検証は
+ * `bottomPanelShell.test.tsx` が持つ。
  */
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -27,23 +31,13 @@ beforeEach(() => {
 });
 
 describe("ProcessListPanel render smoke (#604)", () => {
-  it("mounts and shows the process-list title", async () => {
+  it("mounts and renders its toolbar", async () => {
     renderWithProviders(
-      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} onClose={() => {}} />,
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
     );
-    expect(screen.getByText(t("processTitle"))).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: t("processClose") })).toBeInTheDocument(),
+      expect(screen.getByRole("button", { name: t("processRefresh") })).toBeInTheDocument(),
     );
-  });
-
-  it("invokes onClose when the close control is activated", async () => {
-    const onClose = vi.fn();
-    renderWithProviders(
-      <ProcessListPanel sessionId="s1" driver="mysql" readOnly onClose={onClose} />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: t("processClose") }));
-    expect(onClose).toHaveBeenCalledOnce();
   });
 });
 
@@ -55,7 +49,7 @@ describe("ProcessListPanel render smoke (#604)", () => {
 describe("ProcessListPanel empty state (#847)", () => {
   it("shows the shared EmptyState (with its title) when there are no processes", async () => {
     renderWithProviders(
-      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} onClose={() => {}} />,
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
     );
     await waitFor(() => {
       expect(screen.getByText(t("processEmpty"))).toBeInTheDocument();
@@ -76,7 +70,7 @@ describe("ProcessListPanel loading skeleton (#846)", () => {
     vi.mocked(api.listProcesses).mockReturnValueOnce(pending);
 
     const { container } = renderWithProviders(
-      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} onClose={() => {}} />,
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
     );
 
     await waitFor(() => {
@@ -118,7 +112,7 @@ describe("ProcessListPanel error state (#848)", () => {
     vi.mocked(api.listProcesses).mockRejectedValueOnce(new Error("connection lost"));
 
     renderWithProviders(
-      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} onClose={() => {}} />,
+      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
     );
 
     await waitFor(() => {

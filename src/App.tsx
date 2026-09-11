@@ -282,6 +282,13 @@ import { resolveShortcutBindings } from "./shortcuts";
 import { comboMatchesEvent, formatCombo } from "./shortcutKeys";
 import { parseLayoutMode, toggleLayoutMode, type LayoutMode } from "./components/paneLayout";
 import { workspaceViewKey } from "./components/workspaceView";
+import { BottomPanel, WorkspaceSplit } from "./components/BottomPanel";
+import {
+  availableBottomPanelTabs,
+  resolveBottomPanelTab,
+  toggleBottomPanelTab,
+  type BottomPanelTab,
+} from "./components/bottomPanelTabs";
 import {
   useSettings,
   getSettings,
@@ -1223,17 +1230,21 @@ export default function App() {
   const [broadcastRequest, setBroadcastRequest] = useState<
     { sql: string; tableColumns: TableColumnInfo[] | null } | null
   >(null);
-  // プロセスモニタパネル (processlist / pg_stat_activity + KILL) の開閉。
-  const [showProcesses, setShowProcesses] = useState(false);
+  /**
+   * ボトムパネル (#1112) で開いているタブ。null = 閉じている。
+   *
+   * アドバイザ / クエリインスペクタ / プロセスモニタは #1112 以前、それぞれ独立した
+   * `showXxx` フラグを持つ**全画面サーフェス**で、開くと SQL エディタと結果が画面から
+   * 消えていた。3 つとも「SQL を書きながら参照する」情報なのでボトムパネルへ移し、
+   * 排他なタブ 1 つの state に統合した (フラグが 3 つ別々にあると、下にある「全画面
+   * サーフェスを全部閉じる」定型のすべてに毎回追従させる必要があった)。
+   */
+  const [bottomPanelTab, setBottomPanelTab] = useState<BottomPanelTab | null>(null);
   // ユーザ / 権限管理パネル (MySQL ユーザ・PostgreSQL ロールの一覧と GRANT/REVOKE
   // 編集) の開閉。#732。ユーザ概念を持たない SQLite では導線を出さない。
   const [showUsers, setShowUsers] = useState(false);
   // サーバ情報パネル (バージョン・設定変数) の開閉。#563。
   const [showServerInfo, setShowServerInfo] = useState(false);
-  // ライブクエリ・インスペクタ (ライブテール + digest 集計) の開閉。#746。
-  const [showQueryInspector, setShowQueryInspector] = useState(false);
-  // スキーマ健全性アドバイザ (ルールベース診断) の開閉。#741。
-  const [showAdvisor, setShowAdvisor] = useState(false);
   // サイズ・統計ダッシュボードの対象データベース (null = 非表示)。#562。
   const [sizesTarget, setSizesTarget] = useState<string | null>(null);
   const showSizes = sizesTarget !== null;
@@ -1707,7 +1718,7 @@ export default function App() {
   useEffect(() => {
     overlayOpenRef.current =
       showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
-      showProcesses || showUsers || showServerInfo || showQueryInspector || showSizes || showSnippetForm ||
+      showUsers || showServerInfo || showSizes || showSnippetForm ||
       showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
   });
   // アクティブになったタブがクエリタブのときだけ、次フレームでエディタへ
@@ -4593,8 +4604,8 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
+    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -4606,8 +4617,8 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
+    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -5549,8 +5560,8 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false);
+    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowServerInfo(false);
     setShowSnippetForm(false);
     setSizesTarget(database);
   }, []);
@@ -5586,8 +5597,8 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
+    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowSnippetForm(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -5598,8 +5609,8 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
+    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -5612,8 +5623,8 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
+    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -5747,8 +5758,8 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
+    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -5761,8 +5772,8 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
+    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowForm(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
@@ -5991,7 +6002,7 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showUsers || showServerInfo || showQueryInspector || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
+    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes || showSnippetForm || showCommandPalette || showCheatSheet) return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -6123,7 +6134,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showProcesses, showUsers, showServerInfo, showQueryInspector, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
+  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showUsers, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showCheatSheet, handleNewTab, selectTab, goToPageInTab]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -6170,7 +6181,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showUsers || showServerInfo || showQueryInspector || showSizes ||
+        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet
       ) {
         return;
@@ -6212,10 +6223,8 @@ export default function App() {
     showCompare,
     showCompareResults,
     showErd,
-    showProcesses,
     showUsers,
     showServerInfo,
-    showQueryInspector,
     showSizes,
     showSnippetForm,
     showCommandPalette,
@@ -6303,7 +6312,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
-        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showProcesses || showUsers || showServerInfo || showQueryInspector || showSizes ||
+        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes ||
         showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
@@ -6346,10 +6355,8 @@ export default function App() {
     showCompare,
     showCompareResults,
     showErd,
-    showProcesses,
     showUsers,
     showServerInfo,
-    showQueryInspector,
     showSizes,
     showSnippetForm,
     showCommandPalette,
@@ -6367,31 +6374,38 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "tasks" | "help" | "compare" | "erDiagram" | "processes" | "users" | "serverInfo" | "queryInspector" | "advisor" | "compareResults" | "newConnection") => {
+  const openFullView = useCallback((view: "settings" | "tasks" | "help" | "compare" | "erDiagram" | "users" | "serverInfo" | "compareResults" | "newConnection") => {
     setEditing(null);
     setShowForm(false);
     setShowSettings(false);
     setShowTasks(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null);
+    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowServerInfo(false); setSizesTarget(null);
     setShowSnippetForm(false);
     if (view === "settings") setShowSettings(true);
     else if (view === "tasks") setShowTasks(true);
     else if (view === "help") setShowHelp(true);
     else if (view === "compare") setShowCompare(true);
     else if (view === "erDiagram") setShowErd(true);
-    else if (view === "processes") setShowProcesses(true);
     else if (view === "users") setShowUsers(true);
     else if (view === "serverInfo") setShowServerInfo(true);
-    else if (view === "queryInspector") setShowQueryInspector(true);
-    else if (view === "advisor") setShowAdvisor(true);
     else if (view === "compareResults") setShowCompareResults(true);
     else if (view === "newConnection") {
       setShowForm(true);
       setFormInstanceId((n) => n + 1);
     }
+  }, []);
+
+  /**
+   * ボトムパネル (#1112) のタブを開く / 閉じる。ツールメニュー・コマンドパレット
+   * からの唯一の入口で、**同じタブをもう一度選ぶと閉じる** (`toggleBottomPanelTab`)。
+   * 全画面サーフェス (`openFullView`) とは違いワークスペースを置き換えないので、
+   * 開いている全画面ビューを畳む必要はない。
+   */
+  const toggleBottomPanel = useCallback((tab: BottomPanelTab) => {
+    setBottomPanelTab((current) => toggleBottomPanelTab(current, tab));
   }, []);
 
   // 設定/ヘルプを開く・テーマ切替・サイドバー開閉 (#681)。コマンドパレットと
@@ -6561,7 +6575,7 @@ export default function App() {
         label: t("appAdvisor"),
         icon: "warning",
         keywords: "advisor schema health index lint 健全性 診断 インデックス",
-        run: () => openFullView("advisor"),
+        run: () => toggleBottomPanel("advisor"),
       });
     }
     if (sessionId) {
@@ -7317,19 +7331,28 @@ export default function App() {
   const workspaceView = workspaceViewKey({
     showCompare,
     showErd,
-    showProcesses,
     showUsers,
     showServerInfo,
-    showQueryInspector,
-    showAdvisor,
     showSizes,
     showCompareResults,
     showForm,
     showSnippetForm,
     sessionId,
-    advisorDatabase: activeTab?.database ?? selectedProfile?.database,
     sizesTarget,
   });
+
+  // ボトムパネル (#1112) の文脈。アドバイザだけは診断対象のデータベースを要求する
+  // ため、`workspaceViewKey` と同じ解決順 (アクティブタブ → プロファイル既定) を使う。
+  const bottomPanelCtx = {
+    sessionId,
+    advisorDatabase: activeTab?.database ?? selectedProfile?.database,
+  };
+  const bottomPanelTabs = availableBottomPanelTabs(bottomPanelCtx);
+  // 切断やタブ切替で開けなくなったタブはここで閉じる。描画側はこの解決済みの値
+  // だけを見るので、「state は advisor のままだが対象 DB が無い」状態が表に出ない。
+  const activeBottomPanelTab = resolveBottomPanelTab(bottomPanelTab, bottomPanelCtx);
+  const bottomPanelLabel = (tab: BottomPanelTab) =>
+    tab === "advisor" ? t("advisorTitle") : tab === "inspector" ? t("inspectorTitle") : t("processTitle");
 
   return (
     <Flex
@@ -7500,7 +7523,7 @@ export default function App() {
                   <Icon name="transfer" />
                 </IconButton>
                 <IconButton
-                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowProcesses(false); setShowUsers(false); setShowCompareResults(false); setShowServerInfo(false); setShowQueryInspector(false); setShowAdvisor(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
+                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowUsers(false); setShowCompareResults(false); setShowServerInfo(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
                   title={t("appNew")}
                   aria-label={t("appNew")}
                 >
@@ -7810,6 +7833,46 @@ export default function App() {
             バックへ差し替わり、退出アニメーションが途中で消える。ビュー単位の
             境界にしておけば、新ビューのロード待ちは新ビュー側のスピナーに
             閉じ込められ、旧ビューの退出は最後まで再生される。 */}
+        {/* ワークスペース (全画面サーフェス) とボトムパネルの縦分割 (#1112)。
+            アドバイザ / クエリインスペクタ / プロセスモニタは以前この下の
+            チェーンに並ぶ全画面サーフェスで、開くと SQL エディタと結果が画面から
+            消えていた。3 つとも「SQL を書きながら参照する」情報なのでここへ移し、
+            ワークスペースと同時に見られるようにした。閉じているときは
+            `WorkspaceSplit` が分割そのものを作らず素通しする。 */}
+        <WorkspaceSplit
+          bottom={
+            activeBottomPanelTab && sessionId ? (
+              <BottomPanel
+                tab={activeBottomPanelTab}
+                tabs={bottomPanelTabs}
+                label={bottomPanelLabel}
+                onSelect={setBottomPanelTab}
+                onClose={() => setBottomPanelTab(null)}
+              >
+                <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
+                  {activeBottomPanelTab === "processes" ? (
+                    <ProcessListPanel
+                      sessionId={sessionId}
+                      driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                      readOnly={selectedProfile?.read_only ?? false}
+                    />
+                  ) : activeBottomPanelTab === "inspector" ? (
+                    <QueryInspectorPanel
+                      sessionId={sessionId}
+                      driver={selectedProfile?.driver ?? "mysql"}
+                    />
+                  ) : bottomPanelCtx.advisorDatabase ? (
+                    <AdvisorPanel
+                      sessionId={sessionId}
+                      database={bottomPanelCtx.advisorDatabase}
+                      onInsertSql={handleInsertAdvisorSql}
+                    />
+                  ) : null}
+                </Suspense>
+              </BottomPanel>
+            ) : null
+          }
+        >
         <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={workspaceView}
@@ -7837,13 +7900,6 @@ export default function App() {
             onOpenTable={handleOpenTable}
             onClose={() => setShowErd(false)}
           />
-        ) : showProcesses && sessionId ? (
-          <ProcessListPanel
-            sessionId={sessionId}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            readOnly={selectedProfile?.read_only ?? false}
-            onClose={() => setShowProcesses(false)}
-          />
         ) : showUsers && sessionId ? (
           <UsersPanel
             sessionId={sessionId}
@@ -7854,19 +7910,6 @@ export default function App() {
           />
         ) : showServerInfo && sessionId ? (
           <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
-        ) : showQueryInspector && sessionId ? (
-          <QueryInspectorPanel
-            sessionId={sessionId}
-            driver={selectedProfile?.driver ?? "mysql"}
-            onClose={() => setShowQueryInspector(false)}
-          />
-        ) : showAdvisor && sessionId && (activeTab?.database ?? selectedProfile?.database) ? (
-          <AdvisorPanel
-            sessionId={sessionId}
-            database={(activeTab?.database ?? selectedProfile?.database) as string}
-            onInsertSql={handleInsertAdvisorSql}
-            onClose={() => setShowAdvisor(false)}
-          />
         ) : showSizes && sizesTarget && sessionId ? (
           <TableStatisticsPanel
             sessionId={sessionId}
@@ -8121,6 +8164,7 @@ export default function App() {
         </Suspense>
         </motion.div>
         </AnimatePresence>
+        </WorkspaceSplit>
 
         {!statusDismissed && status.kind !== "idle" && (() => {
           const tone = statusTone(status);
@@ -8707,7 +8751,7 @@ export default function App() {
             },
             {
               label: t("appProcesses"),
-              onSelect: () => openFullView("processes"),
+              onSelect: () => toggleBottomPanel("processes"),
               disabled: !sessionId || selectedProfile?.driver === "sqlite",
               title: !sessionId
                 ? t("appToolsNeedsSession")
@@ -8737,7 +8781,7 @@ export default function App() {
             },
             {
               label: t("appQueryInspector"),
-              onSelect: () => openFullView("queryInspector"),
+              onSelect: () => toggleBottomPanel("inspector"),
               // SQLite はサーバ統計を持たず非対応のため導線を出さない (#746)。
               disabled: !sessionId || selectedProfile?.driver === "sqlite",
               title: !sessionId
@@ -8748,7 +8792,7 @@ export default function App() {
             },
             {
               label: t("appAdvisor"),
-              onSelect: () => openFullView("advisor"),
+              onSelect: () => toggleBottomPanel("advisor"),
               // 全ドライバ対応 (SQLite も方言ルールあり)。DB コンテキストが必要。
               disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
               title: !sessionId

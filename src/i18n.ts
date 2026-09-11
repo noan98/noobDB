@@ -51,6 +51,10 @@ const en = {
   sidebarTablistAria: "Sidebar sections",
   sidebarCollapse: "Collapse sidebar",
   sidebarExpand: "Expand sidebar",
+
+  bottomPanelTablistAria: "Bottom panel sections",
+  bottomPanelClose: "Close panel",
+  bottomPanelResizeAria: "Resize the bottom panel",
   statusFailedLoadSnippets: "Failed to load snippets: {error}",
 
   historySearchPlaceholder: "Search history...",
@@ -2238,7 +2242,6 @@ const en = {
   appProcesses: "Process monitor",
   appUsers: "Users & permissions",
   processTitle: "Process monitor",
-  processClose: "Close process monitor",
   processDesc:
     "Server-side connections and their running statements (MySQL processlist / PostgreSQL pg_stat_activity). Listing reads in-memory server state only, so polling is cheap. Select processes and kill them to terminate the connection.",
   processRefresh: "Refresh",
@@ -2360,7 +2363,6 @@ const en = {
   appQueryInspector: "Query inspector",
   appQueryInspectorUnsupported: "Not available for SQLite connections",
   inspectorTitle: "Query inspector",
-  inspectorClose: "Close query inspector",
   inspectorDesc:
     "Watch the queries your application (ORM) is sending to this database. Recording polls read-only server statistics (MySQL performance_schema / PostgreSQL pg_stat_activity + pg_stat_statements) — no agent, no server configuration change, and no persistence: collected data stays in memory only. Queries from this app are excluded.",
   inspectorStart: "Start recording",
@@ -2431,7 +2433,6 @@ const en = {
   appAdvisor: "Schema health advisor",
   appAdvisorUnsupported: "Connect to a database first",
   advisorTitle: "Schema health advisor",
-  advisorClose: "Close schema health advisor",
   advisorDesc:
     "Run deterministic, rule-based checks against this database's schema to catch classic design pitfalls — foreign keys without an index, duplicate or unused indexes, tables with no primary key, and mismatched key types. Everything here is read-only introspection; suggested fix DDL is inserted into the editor, never run automatically.",
   advisorRun: "Run diagnosis",
@@ -2844,6 +2845,10 @@ const ja: Dict = {
   sidebarTablistAria: "サイドバーのセクション",
   sidebarCollapse: "サイドバーを折りたたむ",
   sidebarExpand: "サイドバーを開く",
+
+  bottomPanelTablistAria: "下部パネルのセクション",
+  bottomPanelClose: "パネルを閉じる",
+  bottomPanelResizeAria: "下部パネルの高さを変更",
   statusFailedLoadSnippets: "スニペットの読み込みに失敗しました: {error}",
 
   historySearchPlaceholder: "履歴を検索...",
@@ -5024,7 +5029,6 @@ const ja: Dict = {
   appProcesses: "プロセスモニタ",
   appUsers: "ユーザ / 権限管理",
   processTitle: "プロセスモニタ",
-  processClose: "プロセスモニタを閉じる",
   processDesc:
     "サーバ側の接続と実行中ステートメントの一覧です (MySQL processlist / PostgreSQL pg_stat_activity)。一覧の取得はサーバのメモリ上の状態を読むだけなので、ポーリングしても負荷はごく小さいです。プロセスを選択して kill すると接続を強制終了できます。",
   processRefresh: "更新",
@@ -5146,7 +5150,6 @@ const ja: Dict = {
   appQueryInspector: "クエリインスペクタ",
   appQueryInspectorUnsupported: "SQLite 接続では使用できません",
   inspectorTitle: "クエリインスペクタ",
-  inspectorClose: "クエリインスペクタを閉じる",
   inspectorDesc:
     "アプリケーション (ORM) がこの DB に投げているクエリを観測します。記録中は読み取り専用のサーバ統計 (MySQL performance_schema / PostgreSQL pg_stat_activity + pg_stat_statements) をポーリングするだけで、エージェント常駐やサーバ設定変更は不要です。収集データは在メモリのみで保存されません。このアプリ自身のクエリは除外されます。",
   inspectorStart: "記録開始",
@@ -5218,7 +5221,6 @@ const ja: Dict = {
   appAdvisor: "スキーマ健全性アドバイザ",
   appAdvisorUnsupported: "先にデータベースへ接続してください",
   advisorTitle: "スキーマ健全性アドバイザ",
-  advisorClose: "スキーマ健全性アドバイザを閉じる",
   advisorDesc:
     "決定的なルールベースでスキーマを診断し、設計の定番の落とし穴を洗い出します — インデックスの無い外部キー、重複・未使用インデックス、PK の無いテーブル、キーの型不一致など。すべて読み取りの introspection で、修正 DDL はエディタに挿入するだけです (自動実行はしません)。",
   advisorRun: "診断を実行",

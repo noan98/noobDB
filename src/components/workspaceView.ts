@@ -1,10 +1,13 @@
 /**
  * メイン領域が「今どの全画面サーフェスを表示しているか」の判別子 (#1020)。
  *
- * `App.tsx` の `<main>` 直下は、スキーマ比較 / ER 図 / プロセス監視 / ユーザ管理 /
- * Server Info / クエリインスペクタ / Advisor / テーブル統計 / 結果比較 / 接続
- * フォーム / スニペットフォーム / 通常ワークスペースという**互いに排他な全画面
- * サーフェス**の三項チェーンになっている。この関数はそのチェーンと同順・同条件で
+ * `App.tsx` の `<main>` 直下は、スキーマ比較 / ER 図 / ユーザ管理 / Server Info /
+ * テーブル統計 / 結果比較 / 接続フォーム / スニペットフォーム / 通常ワークスペース
+ * という**互いに排他な全画面サーフェス**の三項チェーンになっている。
+ *
+ * プロセス監視 / クエリインスペクタ / アドバイザは #1112 (Epic #1110 Phase 2) で
+ * **ボトムパネル**へ移した — ワークスペースを置き換えず同時に見えるため、全画面
+ * サーフェスの排他集合には属さない (状態は `bottomPanelTabs.ts` が持つ)。この関数はそのチェーンと同順・同条件で
  * 「今どれか」を 1 つの文字列へ畳み、`AnimatePresence mode="wait"` の `key` として
  * 使う — 結果パネル側のクロスフェード (#788 の `contentMode`) と同じ発想で、
  * ビューが入れ替わるときだけ控えめにフェードを添えるための判別子である。
@@ -23,11 +26,8 @@
 export type WorkspaceViewKey =
   | "compare"
   | "erd"
-  | "processes"
   | "users"
   | "serverInfo"
-  | "queryInspector"
-  | "advisor"
   | "sizes"
   | "compareResults"
   | "form"
@@ -38,22 +38,17 @@ export type WorkspaceViewKey =
 export type WorkspaceViewInput = {
   showCompare: boolean;
   showErd: boolean;
-  showProcesses: boolean;
   showUsers: boolean;
   showServerInfo: boolean;
-  showQueryInspector: boolean;
-  showAdvisor: boolean;
   showSizes: boolean;
   showCompareResults: boolean;
   showForm: boolean;
   showSnippetForm: boolean;
   /**
-   * 接続中セッション。接続スコープのパネル (ER 図 / プロセス監視 / ユーザ管理 /
-   * Server Info / インスペクタ / Advisor / テーブル統計) はこれが無いと開けない。
+   * 接続中セッション。接続スコープのサーフェス (ER 図 / ユーザ管理 / Server Info /
+   * テーブル統計) はこれが無いと開けない。
    */
   sessionId: string | null;
-  /** Advisor の対象 DB (アクティブタブ → プロファイル既定の順で解決済み)。 */
-  advisorDatabase: string | null | undefined;
   /** テーブル統計パネルの対象 DB。 */
   sizesTarget: string | null;
 };
@@ -66,11 +61,8 @@ export function workspaceViewKey(input: WorkspaceViewInput): WorkspaceViewKey {
   const connected = !!input.sessionId;
   if (input.showCompare) return "compare";
   if (input.showErd && connected) return "erd";
-  if (input.showProcesses && connected) return "processes";
   if (input.showUsers && connected) return "users";
   if (input.showServerInfo && connected) return "serverInfo";
-  if (input.showQueryInspector && connected) return "queryInspector";
-  if (input.showAdvisor && connected && !!input.advisorDatabase) return "advisor";
   if (input.showSizes && !!input.sizesTarget && connected) return "sizes";
   if (input.showCompareResults) return "compareResults";
   if (input.showForm) return "form";

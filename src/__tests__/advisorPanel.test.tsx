@@ -30,7 +30,7 @@ describe("AdvisorPanel error state (#848)", () => {
     vi.mocked(api.analyzeSchemaHealth).mockRejectedValueOnce(new Error("access denied"));
 
     renderWithProviders(
-      <AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} onClose={() => {}} />,
+      <AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />,
     );
 
     fireEvent.click(screen.getByText(t("advisorRun")));
