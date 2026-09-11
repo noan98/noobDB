@@ -9,7 +9,7 @@ import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Select } from "./ui";
 import { LoadingButton } from "./LoadingButton";
-import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { useToast } from "./Toast";
 import { coerceDriver } from "./SchemaCompareView";
 import {
@@ -238,21 +238,9 @@ export function MigrationExportModal({
 
         <FormSection>
           <FieldLabel as="div">{t("schemaCompareMigrationFiles")}</FieldLabel>
-          <chakra.pre
-            m={0}
-            p="2.5"
-            bg="app.bgInput"
-            border="1px solid"
-            borderColor="app.border"
-            borderRadius="md"
-            fontFamily="mono"
-            fontSize="xs"
-            color="app.text"
-            whiteSpace="pre-wrap"
-            wordBreak="break-word"
-          >
+          <CodePreview wrap>
             {`up:   ${fileNames.up}\ndown: ${fileNames.down}`}
-          </chakra.pre>
+          </CodePreview>
         </FormSection>
 
         {/* down マイグレーションの取得は非同期 (loading → ready/error) なので、

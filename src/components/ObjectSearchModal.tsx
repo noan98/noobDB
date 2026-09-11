@@ -173,7 +173,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
 
       <Box id="object-search-list" role="listbox" maxH="min(440px, 62vh)" overflowY="auto" py="1.5">
         {error ? (
-          <Box px="4" py="5" textAlign="center" color="app.dangerFg" fontSize="sm">
+          <Box px="4" py="5" textAlign="center" color="app.textError" fontSize="sm" role="alert">
             {error}
           </Box>
         ) : results.length === 0 ? (

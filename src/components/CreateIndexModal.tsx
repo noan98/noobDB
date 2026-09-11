@@ -4,6 +4,7 @@ import { useT } from "../i18n";
 import { api, type DriverKind, type TableColumnInfo } from "../api/tauri";
 import { buildCreateIndexSql } from "./tableMaintenance";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 
 /**
@@ -91,18 +92,15 @@ export function CreateIndexModal({
             {t("alterTableLoading")}
           </chakra.span>
         )}
-        {loadError && (
-          <chakra.span fontSize="sm" color="app.dangerFg">
-            {t("alterTableLoadError", { error: loadError })}
-          </chakra.span>
-        )}
+        {loadError && <ErrorNote>{t("alterTableLoadError", { error: loadError })}</ErrorNote>}
         {!loading && !loadError && (
           <>
             <Flex align="center" gap="2">
-              <chakra.label fontSize="sm" color="app.textSecondary" minW="90px">
+              <FieldLabel htmlFor="create-index-name" minW="90px">
                 {t("createIndexName")}
-              </chakra.label>
+              </FieldLabel>
               <Input
+                id="create-index-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t("createIndexNamePlaceholder")}
@@ -110,10 +108,8 @@ export function CreateIndexModal({
               />
             </Flex>
             <Switch checked={unique} onChange={() => setUnique(!unique)} label={t("createTableColUnique")} />
-            <chakra.div display="flex" flexDirection="column" gap="1.5">
-              <chakra.span fontSize="xs" fontWeight="600" color="app.textMuted">
-                {t("createIndexColumns")}
-              </chakra.span>
+            <FormSection>
+              <FieldLabel as="div">{t("createIndexColumns")}</FieldLabel>
               <Flex gap="3" wrap="wrap">
                 {columns.length === 0 && (
                   <chakra.span fontSize="xs" color="app.textMuted">
@@ -127,32 +123,12 @@ export function CreateIndexModal({
                   </chakra.label>
                 ))}
               </Flex>
-            </chakra.div>
-            <chakra.div display="flex" flexDirection="column" gap="1">
-              <chakra.span fontSize="xs" color="app.textMuted">
-                {t("createTablePreview")}
-              </chakra.span>
-              <chakra.pre
-                fontFamily="mono"
-                fontSize="sm"
-                bg="app.surface"
-                borderWidth="1px"
-                borderColor="app.border"
-                borderRadius="lg"
-                p="2.5"
-                overflowX="auto"
-                whiteSpace="pre"
-                color="app.text"
-                minH="48px"
-              >
-                {sql || t("createIndexPreviewEmpty")}
-              </chakra.pre>
-            </chakra.div>
-            {readOnly && (
-              <chakra.span fontSize="xs" color="app.dangerFg">
-                {t("createTableReadOnly")}
-              </chakra.span>
-            )}
+            </FormSection>
+            <FormSection>
+              <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
+              <CodePreview minH="48px">{sql || t("createIndexPreviewEmpty")}</CodePreview>
+            </FormSection>
+            {readOnly && <FieldError>{t("createTableReadOnly")}</FieldError>}
           </>
         )}
       </ModalBody>

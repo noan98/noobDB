@@ -14,6 +14,7 @@ import {
 } from "./alterTable";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -194,9 +195,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               exit={variants.fade.exit}
               transition={transitions.crossfade}
             >
-              <chakra.span fontSize="sm" color="app.dangerFg">
-                {t("alterTableLoadError", { error: loadError })}
-              </chakra.span>
+              <ErrorNote>{t("alterTableLoadError", { error: loadError })}</ErrorNote>
             </motion.div>
           )}
           {!loading && !loadError && (
@@ -209,9 +208,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
             >
             <chakra.div display="flex" flexDirection="column" gap="1.5">
-              <chakra.span fontSize="xs" fontWeight="600" color="app.textMuted">
-                {t("alterTableExistingSection")}
-              </chakra.span>
+              <FieldLabel as="div">{t("alterTableExistingSection")}</FieldLabel>
               {driver === "mysql" && (
                 <chakra.span fontSize="xs" color="app.textMuted">
                   {t("alterTableMysqlExtraNote")}
@@ -221,8 +218,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                 display="grid"
                 gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr auto"
                 gap="1.5"
-                fontSize="xs"
-                color="app.textMuted"
+                textStyle="overline"
                 px="0.5"
               >
                 <span>{t("createTableColName")}</span>
@@ -273,8 +269,8 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                       type="button"
                       onClick={() => toggleDrop(i)}
                       aria-label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}
-                      color={row.drop ? "app.dangerFg" : "app.textMuted"}
-                      _hover={{ color: "app.dangerFg" }}
+                      color={row.drop ? "app.textError" : "app.textMuted"}
+                      _hover={{ color: "app.textError" }}
                       px="1"
                     >
                       <Icon name={row.drop ? "undo" : "close"} />
@@ -285,9 +281,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             </chakra.div>
 
             <chakra.div display="flex" flexDirection="column" gap="1.5">
-              <chakra.span fontSize="xs" fontWeight="600" color="app.textMuted">
-                {t("alterTableAddedSection")}
-              </chakra.span>
+              <FieldLabel as="div">{t("alterTableAddedSection")}</FieldLabel>
               {added.map((c, i) => (
                 <chakra.div
                   key={c.id}
@@ -313,7 +307,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                     onClick={() => removeNewColumn(i)}
                     aria-label={t("createTableRemoveCol")}
                     color="app.textMuted"
-                    _hover={{ color: "app.dangerFg" }}
+                    _hover={{ color: "app.textError" }}
                     px="1"
                   >
                     <Icon name="close" />
@@ -328,9 +322,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             </chakra.div>
 
             <chakra.div display="flex" flexDirection="column" gap="1.5">
-              <chakra.span fontSize="xs" fontWeight="600" color="app.textMuted">
-                {t("indexesLabel")}
-              </chakra.span>
+              <FieldLabel as="div">{t("indexesLabel")}</FieldLabel>
               {indexes.map((idx, i) => (
                 <chakra.div
                   key={idx.id}
@@ -359,7 +351,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
                       onClick={() => removeIndex(i)}
                       aria-label={t("alterTableRemoveIndex")}
                       color="app.textMuted"
-                      _hover={{ color: "app.dangerFg" }}
+                      _hover={{ color: "app.textError" }}
                       px="1"
                     >
                       <Icon name="close" />
@@ -404,29 +396,11 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               </chakra.div>
             )}
 
-            <chakra.div display="flex" flexDirection="column" gap="1">
-              <chakra.span fontSize="xs" color="app.textMuted">
-                {t("alterTablePreview")}
-              </chakra.span>
-              <chakra.pre
-                fontFamily="mono"
-                fontSize="sm"
-                bg="app.surface"
-                borderWidth="1px"
-                borderColor="app.border"
-                borderRadius="lg"
-                p="2.5"
-                overflowX="auto"
-                whiteSpace="pre"
-                color="app.text"
-                minH="60px"
-              >
-                {sqlPreview || t("alterTablePreviewEmpty")}
-              </chakra.pre>
-            </chakra.div>
-            {readOnly && (
-              <chakra.span fontSize="xs" color="app.dangerFg">{t("alterTableReadOnly")}</chakra.span>
-            )}
+            <FormSection>
+              <FieldLabel as="div">{t("alterTablePreview")}</FieldLabel>
+              <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
+            </FormSection>
+            {readOnly && <FieldError>{t("alterTableReadOnly")}</FieldError>}
             </motion.div>
           )}
         </AnimatePresence>

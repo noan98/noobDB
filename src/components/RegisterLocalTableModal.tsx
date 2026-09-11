@@ -4,6 +4,7 @@ import { useT } from "../i18n";
 import { tableNameCollides } from "./resultsToTable";
 import { MAX_LOCAL_TABLE_ROWS, suggestLocalTableName } from "./localQuery";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton } from "./ui";
 
 /**
@@ -45,11 +46,10 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
         {t("localRegisterTitle")}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
-        <chakra.div display="flex" flexDirection="column" gap="1.5">
-          <chakra.label fontSize="sm" color="app.textSecondary">
-            {t("localRegisterNameLabel")}
-          </chakra.label>
+        <FormSection>
+          <FieldLabel htmlFor="local-register-name">{t("localRegisterNameLabel")}</FieldLabel>
           <Input
+            id="local-register-name"
             ref={inputRef}
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -59,18 +59,18 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
             }}
           />
           {trimmed.length > 0 && collides && (
-            <chakra.span fontSize="xs" color="app.warningFg">
+            <FieldError tone="warning">
               {t("localRegisterNameExists", { table: trimmed })}
-            </chakra.span>
+            </FieldError>
           )}
-        </chakra.div>
+        </FormSection>
 
         <Flex direction="column" gap="1.5" fontSize="sm" color="app.text">
-          <chakra.span fontWeight={600} color={overCap ? "app.dangerFg" : "app.text"}>
+          <chakra.span fontWeight={600} color={overCap ? "app.textError" : "app.text"}>
             {t("localRegisterRowCount", { rows: rowCount })}
           </chakra.span>
           {overCap && (
-            <chakra.span fontSize="xs" color="app.dangerFg">
+            <chakra.span fontSize="xs" color="app.textError">
               {t("localRegisterRowCapExceeded", { max: MAX_LOCAL_TABLE_ROWS })}
             </chakra.span>
           )}

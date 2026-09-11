@@ -4,6 +4,7 @@ import { api, type DriverKind } from "../api/tauri";
 import { useT } from "../i18n";
 import { buildCreateTableAsSql, tableNameCollides } from "./resultsToTable";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton } from "./ui";
 import { Spinner } from "./Spinner";
 
@@ -75,12 +76,11 @@ export function SaveAsTableModal({ sessionId, driver, database, sourceSql, onCon
         {t("saveAsTableTitle")}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
-        <chakra.div display="flex" flexDirection="column" gap="1.5">
-          <chakra.label fontSize="sm" color="app.textSecondary">
-            {t("saveAsTableNameLabel")}
-          </chakra.label>
+        <FormSection>
+          <FieldLabel htmlFor="save-as-table-name">{t("saveAsTableNameLabel")}</FieldLabel>
           <Flex align="center" gap="2">
             <Input
+              id="save-as-table-name"
               ref={inputRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -93,37 +93,19 @@ export function SaveAsTableModal({ sessionId, driver, database, sourceSql, onCon
             {loading && <Spinner size={14} />}
           </Flex>
           {trimmed.length > 0 && collides && (
-            <chakra.span fontSize="xs" color="app.dangerFg">
-              {t("saveAsTableNameExists", { table: trimmed })}
-            </chakra.span>
+            <FieldError>{t("saveAsTableNameExists", { table: trimmed })}</FieldError>
           )}
           {listError && (
             <chakra.span fontSize="xs" color="app.textMuted">
               {t("saveAsTableListError", { error: listError })}
             </chakra.span>
           )}
-        </chakra.div>
+        </FormSection>
 
-        <chakra.div display="flex" flexDirection="column" gap="1">
-          <chakra.span fontSize="xs" color="app.textMuted">
-            {t("saveAsTablePreview")}
-          </chakra.span>
-          <chakra.pre
-            fontFamily="mono"
-            fontSize="sm"
-            bg="app.surface"
-            borderWidth="1px"
-            borderColor="app.border"
-            borderRadius="lg"
-            p="2.5"
-            overflowX="auto"
-            whiteSpace="pre"
-            color="app.text"
-            minH="60px"
-          >
-            {sql || t("saveAsTablePreviewEmpty")}
-          </chakra.pre>
-        </chakra.div>
+        <FormSection>
+          <FieldLabel as="div">{t("saveAsTablePreview")}</FieldLabel>
+          <CodePreview minH="60px">{sql || t("saveAsTablePreviewEmpty")}</CodePreview>
+        </FormSection>
       </ModalBody>
       <ModalFooter>
         <Button type="button" variant="secondary" onClick={onClose}>

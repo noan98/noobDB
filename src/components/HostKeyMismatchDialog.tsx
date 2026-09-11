@@ -2,6 +2,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { ConnectionProfile } from "../api/tauri";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { CodePreview } from "./modalForm";
 import { Button, PressableButton } from "./ui";
 import { parseHostKeyFingerprints } from "./hostKeyFingerprints";
 
@@ -47,17 +48,7 @@ export function HostKeyMismatchDialog({ profile, message, busy, onReTrust, onCan
               <FingerprintRow label={t("hostKeyMismatchPresented")} value={fps.actual} />
             </Flex>
           ) : (
-            <chakra.pre
-              whiteSpace="pre-wrap"
-              wordBreak="break-word"
-              fontFamily="var(--font-mono)"
-              fontSize="xs"
-              p="2"
-              borderRadius="sm"
-              bg="app.surfaceMuted"
-            >
-              {message}
-            </chakra.pre>
+            <CodePreview wrap>{message}</CodePreview>
           )}
           <chakra.p
             p="2"

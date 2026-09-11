@@ -247,6 +247,91 @@ describe("design tokens: theme.ts ⇔ App.css のパリティ", () => {
   });
 });
 
+describe("design tokens: ベタ塗り専用の前景色", () => {
+  /**
+   * `app.dangerFg` / `app.warningFg` / `app.successFg` / `app.infoFg` は
+   * **同名のベタ塗り (`app.*Bg`) の上に載せるための前景色**で、テーマに追従しない
+   * 固定値を持つ (danger/info は常に白、warning は常に濃茶)。面 (`app.surface` 等)
+   * の上のテキストに使うと次の実害が出る:
+   *
+   * - `app.dangerFg` (= 白) をライトテーマの面に置く → **白地に白文字で完全に消える**
+   * - `app.warningFg` (= 濃茶) をダークテーマの面に置く → 暗地に暗文字で読めない
+   *
+   * 面の上の意味色テキストは `app.textError` / `app.textWarning` /
+   * `app.textSuccess` (テーマごとにコントラストを取った文字色) を使う。
+   * #1114 時点で 10 箇所がこの取り違えをしていた (エラー文・警告文・削除ボタンの
+   * ホバー色)。
+   *
+   * 判定は「同じ要素の指定」を近傍 3 行で近似する (JSX の属性は複数行に分かれるが、
+   * `bg` と `color` が 3 行以上離れることは実際には無い)。コメント行は除外する。
+   */
+  const PAIRED_WINDOW = 3;
+
+  it("意味色の前景トークンは同名のベタ塗り指定とセットでのみ使う", () => {
+    const offenders: string[] = [];
+    for (const [path, content] of sources) {
+      if (path === "../theme.ts") continue; // トークン定義そのもの
+      const lines = content.split("\n");
+      lines.forEach((line, i) => {
+        // コメント行 (説明文でトークン名に言及するだけ) は対象外。
+        if (/^\s*(?:\/\/|\*|\/\*)/.test(line)) return;
+        const m = /app\.(danger|warning|success|info)Fg/.exec(line);
+        if (!m) return;
+        const solid = `app.${m[1]}Bg`;
+        const window = lines
+          .slice(Math.max(0, i - PAIRED_WINDOW), i + PAIRED_WINDOW + 1)
+          .join("\n");
+        if (!window.includes(solid)) {
+          offenders.push(`${toDisplayPath(path)}:${i + 1}: ${m[0]}`);
+        }
+      });
+    }
+    expect(
+      offenders,
+      "app.*Fg はベタ塗り app.*Bg の上の前景色。面の上の意味色テキストは " +
+        "app.textError / app.textWarning / app.textSuccess を使う " +
+        "(app.dangerFg は常に白のため、ライトテーマで白地に白文字になる)。",
+    ).toEqual([]);
+  });
+});
+
+describe("フォーム / モーダルの共通プリミティブ", () => {
+  /** モーダルとダイアログ (= `modalForm.tsx` のプリミティブを使う画面)。 */
+  const isModalSource = (path: string) =>
+    /^\.\.\/components\/\w+(?:Modal|Dialog)\.tsx$/.test(path);
+
+  it("モーダル内のコード / SQL プレビューは CodePreview を使う", () => {
+    // 手書きの `<pre>` は #1114 以前、地の色 (surface / bgInput / toolbar)・角丸
+    // (md / lg)・文字サイズ (xs / sm) が 3 通りに割れたまま 8 箇所へ複製されていた。
+    const offenders = findViolations(
+      /<chakra\.pre|\bas="pre"/,
+      () => true,
+      isModalSource,
+    );
+    expect(
+      offenders,
+      "読み取り専用のコード表示は modalForm.tsx の <CodePreview> を使う " +
+        "(折り返したい場合は wrap、高さは minH / maxH で渡す)。",
+    ).toEqual([]);
+  });
+
+  it("モーダル内のフィールドラベルは FieldLabel を使う", () => {
+    // 入力欄の見出しを `<chakra.label fontSize=... color="app.textSecondary">` と
+    // 手書きすると、同じ役割のラベルがモーダルごとに別の文字サイズ・色で出る。
+    // チェックボックス/ラジオを包む `<label>` (本文サイズが正しい) は
+    // `app.textSecondary` を指定しないため、この条件では拾われない。
+    const offenders = findViolations(
+      /<chakra\.label[^>]*color="app\.textSecondary"/,
+      () => true,
+      isModalSource,
+    );
+    expect(
+      offenders,
+      "入力欄の見出しは modalForm.tsx の <FieldLabel> (textStyle=\"overline\") を使う。",
+    ).toEqual([]);
+  });
+});
+
 describe("共通コンポーネントの迂回", () => {
   it("アイコンは Icon.tsx 以外から @tabler/icons-react を直接 import しない", () => {
     const offenders = findViolations(
