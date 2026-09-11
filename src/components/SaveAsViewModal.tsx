@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 import { tableNameCollides } from "./resultsToTable";
 import { buildCreateViewSql, buildReplaceViewSql } from "./viewMaintenance";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { CodePreview, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton } from "./ui";
 import { Spinner } from "./Spinner";
 
@@ -93,12 +94,11 @@ export function SaveAsViewModal({
         {t("saveAsViewTitle")}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
-        <chakra.div display="flex" flexDirection="column" gap="1.5">
-          <chakra.label fontSize="sm" color="app.textSecondary">
-            {t("saveAsViewNameLabel")}
-          </chakra.label>
+        <FormSection>
+          <FieldLabel htmlFor="save-as-view-name">{t("saveAsViewNameLabel")}</FieldLabel>
           <Flex align="center" gap="2">
             <Input
+              id="save-as-view-name"
               ref={inputRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -120,28 +120,12 @@ export function SaveAsViewModal({
               {t("saveAsViewListError", { error: listError })}
             </chakra.span>
           )}
-        </chakra.div>
+        </FormSection>
 
-        <chakra.div display="flex" flexDirection="column" gap="1">
-          <chakra.span fontSize="xs" color="app.textMuted">
-            {t("saveAsViewPreview")}
-          </chakra.span>
-          <chakra.pre
-            fontFamily="mono"
-            fontSize="sm"
-            bg="app.surface"
-            borderWidth="1px"
-            borderColor="app.border"
-            borderRadius="lg"
-            p="2.5"
-            overflowX="auto"
-            whiteSpace="pre"
-            color="app.text"
-            minH="60px"
-          >
-            {sql || t("saveAsViewPreviewEmpty")}
-          </chakra.pre>
-        </chakra.div>
+        <FormSection>
+          <FieldLabel as="div">{t("saveAsViewPreview")}</FieldLabel>
+          <CodePreview minH="60px">{sql || t("saveAsViewPreviewEmpty")}</CodePreview>
+        </FormSection>
       </ModalBody>
       <ModalFooter>
         <Button type="button" variant="secondary" onClick={onClose}>

@@ -58,6 +58,15 @@
 - **共有ゴールデンベクタ (`src/__tests__/fixtures/*.json`) を経由する判定ロジックを
   変えるときは、必ず JSON に境界ケースを追記する** — Rust とフロントの二重実装が
   ズレると片方のテストが落ちます。
+- **意味色の前景トークン (`app.dangerFg` / `app.warningFg` など) は、同名のベタ塗り
+  (`app.dangerBg` など) の上に載せるときだけ使う。** これらはテーマに追従しない固定値
+  (danger は常に白・warning は常に濃茶) なので、面の上のエラー文に使うとライトテーマで
+  白地に白文字になり消える。面の上の意味色テキストは `app.textError` /
+  `app.textWarning` / `app.textSuccess`。`designTokens.test.ts` が CI で強制。
+- **モーダル内のフィールドラベル・バリデーションエラー・コードプレビューを手書き
+  しない。** `components/modalForm.tsx` の `FieldLabel` / `FieldError` /
+  `CodePreview` / `FormSection` / `ErrorNote` を使う (`designTokens.test.ts` が
+  `*Modal.tsx` / `*Dialog.tsx` 内の手書き `<pre>` とラベルを検出する)。
 - **UI に px 直値・色リテラルを書かない。** 余白/文字サイズ/角丸/色は `App.css` の
   CSS 変数 → `theme.ts` の Chakra トークン経由でのみ参照する (px 直値はフォント拡大
   設定に追従せず、色リテラルはダーク系テーマプリセットで破綻する)。ベタ塗りの上の

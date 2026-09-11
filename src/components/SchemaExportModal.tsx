@@ -7,7 +7,7 @@ import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, Radio, Switch } from "./ui";
 import { LoadingButton } from "./LoadingButton";
-import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 import { Icon, ICON_SIZES } from "./Icon";
 import { copyToClipboard } from "./clipboard";
@@ -420,25 +420,10 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
                   </chakra.button>
                 </Tooltip>
               </chakra.div>
-              <chakra.pre
-                aria-label={t("exportPreview")}
-                m={0}
-                maxH="220px"
-                overflow="auto"
-                p="2.5"
-                bg="app.bgInput"
-                border="1px solid"
-                borderColor="app.border"
-                borderRadius="md"
-                fontFamily="mono"
-                fontSize="xs"
-                lineHeight={1.5}
-                color="app.text"
-                whiteSpace="pre"
-              >
+              <CodePreview aria-label={t("exportPreview")} maxH="220px">
                 {previewContent ||
                   (emptySelection ? t("schemaExportNoSelection") : t("exportNoData"))}
-              </chakra.pre>
+              </CodePreview>
               {previewTruncated && (
                 <chakra.div fontSize="xs" color="app.textMuted">
                   {t("schemaExportPreviewTruncated", {

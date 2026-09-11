@@ -10,7 +10,7 @@ import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, Radio } from "./ui";
 import { LoadingButton } from "./LoadingButton";
-import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 import { Icon, ICON_SIZES } from "./Icon";
 import { copyToClipboard } from "./clipboard";
@@ -592,24 +592,9 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
               </chakra.button>
             </Tooltip>
           </chakra.div>
-          <chakra.pre
-            aria-label={t("exportPreview")}
-            m={0}
-            maxH="180px"
-            overflow="auto"
-            p="2.5"
-            bg="app.bgInput"
-            border="1px solid"
-            borderColor="app.border"
-            borderRadius="md"
-            fontFamily="mono"
-            fontSize="xs"
-            lineHeight={1.5}
-            color="app.text"
-            whiteSpace="pre"
-          >
+          <CodePreview aria-label={t("exportPreview")} maxH="180px">
             {previewContent || t("exportNoData")}
-          </chakra.pre>
+          </CodePreview>
           {previewTruncated && (
             <chakra.div fontSize="xs" color="app.textMuted">
               {t("exportPreviewTruncated", { shown: PREVIEW_ROWS, total: effectiveRows.length })}

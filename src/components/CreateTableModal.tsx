@@ -4,6 +4,7 @@ import { useT } from "../i18n";
 import type { DriverKind } from "../api/tauri";
 import { buildCreateTableSql, type ColumnDef } from "./createTable";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -88,10 +89,11 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
         <Flex align="center" gap="2">
-          <chakra.label fontSize="sm" color="app.textSecondary" minW="90px">
+          <FieldLabel htmlFor="create-table-name" minW="90px">
             {t("createTableName")}
-          </chakra.label>
+          </FieldLabel>
           <Input
+            id="create-table-name"
             value={table}
             onChange={(e) => setTable(e.target.value)}
             placeholder={t("createTableNamePlaceholder")}
@@ -106,7 +108,7 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
         </datalist>
 
         <chakra.div display="flex" flexDirection="column" gap="1.5">
-          <chakra.div display="grid" gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto" gap="1.5" fontSize="xs" color="app.textMuted" px="0.5">
+          <chakra.div display="grid" gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto" gap="1.5" textStyle="overline" px="0.5">
             <span>{t("createTableColName")}</span>
             <span>{t("createTableColType")}</span>
             <span>{t("createTableColNotNull")}</span>
@@ -131,7 +133,7 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
                   onClick={() => removeCol(i)}
                   aria-label={t("createTableRemoveCol")}
                   color="app.textMuted"
-                  _hover={{ color: "app.dangerFg" }}
+                  _hover={{ color: "app.textError" }}
                   disabled={columns.length <= 1}
                   px="1"
                 >
@@ -147,27 +149,11 @@ export function CreateTableModal({ driver, database, readOnly, onRun, onSendToEd
           </Flex>
         </chakra.div>
 
-        <chakra.div display="flex" flexDirection="column" gap="1">
-          <chakra.span fontSize="xs" color="app.textMuted">{t("createTablePreview")}</chakra.span>
-          <chakra.pre
-            fontFamily="mono"
-            fontSize="sm"
-            bg="app.surface"
-            borderWidth="1px"
-            borderColor="app.border"
-            borderRadius="lg"
-            p="2.5"
-            overflowX="auto"
-            whiteSpace="pre"
-            color="app.text"
-            minH="60px"
-          >
-            {sql || t("createTablePreviewEmpty")}
-          </chakra.pre>
-        </chakra.div>
-        {readOnly && (
-          <chakra.span fontSize="xs" color="app.dangerFg">{t("createTableReadOnly")}</chakra.span>
-        )}
+        <FormSection>
+          <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
+          <CodePreview minH="60px">{sql || t("createTablePreviewEmpty")}</CodePreview>
+        </FormSection>
+        {readOnly && <FieldError>{t("createTableReadOnly")}</FieldError>}
       </ModalBody>
       <ModalFooter>
         <Button type="button" variant="secondary" onClick={onClose}>

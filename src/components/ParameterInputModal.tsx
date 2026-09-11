@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DriverKind } from "../api/tauri";
 import {
@@ -9,6 +9,7 @@ import {
   type ParamType,
 } from "../queryParams";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, PressableButton } from "./ui";
 import { Tooltip } from "./Tooltip";
 
@@ -188,44 +189,22 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                       }
                     }}
                   />
-                  {err && (
-                    <chakra.span fontSize="xs" color="app.textError" role="alert">
-                      {t(err)}
-                    </chakra.span>
-                  )}
+                  {err && <FieldError>{t(err)}</FieldError>}
                 </chakra.div>
               </chakra.div>
             );
           })}
         </chakra.div>
 
-        <chakra.div display="flex" flexDirection="column" gap="0.75">
-          <chakra.span textStyle="overline">
-            {t("parameterInputPreviewLabel")}
-          </chakra.span>
-          <Box
-            as="pre"
-            m={0}
-            py="2"
-            px="2.5"
-            maxHeight="160px"
-            overflow="auto"
-            fontSize="sm"
-            fontFamily="mono"
-            color="app.text"
-            bg="app.toolbar"
-            border="1px solid"
-            borderColor="app.border"
-            borderRadius="md"
-            whiteSpace="pre-wrap"
-            wordBreak="break-word"
-          >
+        <FormSection>
+          <FieldLabel as="div">{t("parameterInputPreviewLabel")}</FieldLabel>
+          <CodePreview wrap maxH="160px">
             {preview}
-          </Box>
+          </CodePreview>
           <chakra.span fontSize="xs" color="app.textMuted">
             {t("parameterInputEscapeNote")}
           </chakra.span>
-        </chakra.div>
+        </FormSection>
       </ModalBody>
 
       <ModalFooter>

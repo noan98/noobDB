@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
-import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { FieldLabel } from "./modalForm";
 import { Button, Input, PressableButton } from "./ui";
 
 /**
@@ -31,10 +31,11 @@ export function RenameTableDialog({ table, onConfirm, onCancel }: Props) {
         {t("renameTableTitle")}
       </ModalHeader>
       <ModalBody>
-        <chakra.label display="block" mb="1.5" fontSize="sm">
+        <FieldLabel display="block" mb="1.5" htmlFor="rename-table-name">
           {t("renameTableLabel", { table })}
-        </chakra.label>
+        </FieldLabel>
         <Input
+          id="rename-table-name"
           ref={inputRef}
           value={name}
           onChange={(e) => setName(e.target.value)}

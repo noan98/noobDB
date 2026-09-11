@@ -21,7 +21,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { ErrorNote } from "./modalForm";
+import { ErrorNote, FieldLabel } from "./modalForm";
 import { Button, Checkbox, Radio, Select } from "./ui";
 
 interface Props {
@@ -293,9 +293,7 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         </chakra.div>
 
         <chakra.div display="flex" alignItems="center" gap="2.5" flexWrap="wrap">
-          <chakra.label fontSize="sm" color="app.textSecondary" htmlFor="sandbox-review-target">
-            {t("sandboxReviewTarget")}
-          </chakra.label>
+          <FieldLabel htmlFor="sandbox-review-target">{t("sandboxReviewTarget")}</FieldLabel>
           {candidates.length > 0 ? (
             <Select
               id="sandbox-review-target"
