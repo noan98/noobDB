@@ -18,7 +18,7 @@ import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
-import { Button, Heading } from "./ui";
+import { Button } from "./ui";
 import { useToast } from "./Toast";
 
 /**
@@ -87,12 +87,10 @@ export function AdvisorPanel({
   sessionId,
   database,
   onInsertSql,
-  onClose,
 }: {
   sessionId: string;
   database: string;
   onInsertSql: (sql: string) => void;
-  onClose: () => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -132,31 +130,7 @@ export function AdvisorPanel({
   );
 
   return (
-    <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
-      <chakra.header
-        display="flex"
-        alignItems="center"
-        justifyContent="space-between"
-        gap="3"
-        borderBottom="1px solid"
-        borderColor="app.border"
-        paddingBottom="2.5"
-      >
-        <Heading>{t("advisorTitle")}</Heading>
-        <Tooltip label={t("advisorClose")}>
-          <Button
-            minWidth="28px"
-            px="2"
-            py="1"
-            fontSize="base"
-            lineHeight={1}
-            onClick={onClose}
-            aria-label={t("advisorClose")}
-          >
-            <Icon name="close" size={ICON_SIZES.sm} />
-          </Button>
-        </Tooltip>
-      </chakra.header>
+    <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
         {t("advisorDesc")}

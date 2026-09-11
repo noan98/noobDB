@@ -36,7 +36,7 @@ beforeEach(() => {
 describe("QueryInspectorPanel empty state (#847)", () => {
   it("shows the shared EmptyState idle title on the live-tail tab before recording starts", async () => {
     renderWithProviders(
-      <QueryInspectorPanel sessionId="s1" driver="mysql" onClose={() => {}} />,
+      <QueryInspectorPanel sessionId="s1" driver="mysql" />,
     );
     await waitFor(() => {
       expect(screen.getByText(t("inspectorTailIdle"))).toBeInTheDocument();
@@ -45,7 +45,7 @@ describe("QueryInspectorPanel empty state (#847)", () => {
 
   it("shows the shared EmptyState idle title on the statement-stats tab before recording starts", async () => {
     renderWithProviders(
-      <QueryInspectorPanel sessionId="s1" driver="mysql" onClose={() => {}} />,
+      <QueryInspectorPanel sessionId="s1" driver="mysql" />,
     );
     await waitFor(() => {
       expect(screen.getByText(t("inspectorTailIdle"))).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe("QueryInspectorPanel error state (#848)", () => {
     vi.mocked(api.queryStatsSupport).mockRejectedValueOnce(new Error("connection refused"));
 
     renderWithProviders(
-      <QueryInspectorPanel sessionId="s1" driver="mysql" onClose={() => {}} />,
+      <QueryInspectorPanel sessionId="s1" driver="mysql" />,
     );
 
     await waitFor(() => {
@@ -92,7 +92,7 @@ describe("QueryInspectorPanel error state (#848)", () => {
     vi.mocked(api.sampleLiveQueries).mockRejectedValueOnce(new Error("lost connection"));
 
     renderWithProviders(
-      <QueryInspectorPanel sessionId="s1" driver="mysql" onClose={() => {}} />,
+      <QueryInspectorPanel sessionId="s1" driver="mysql" />,
     );
     await waitFor(() => {
       expect(screen.getByText(t("inspectorStart"))).toBeInTheDocument();

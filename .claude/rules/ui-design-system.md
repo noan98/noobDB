@@ -182,17 +182,39 @@ theme.ts (Chakra トークン)
 
 ## 7. フォーム・モーダル・パネル (Phase 4 / #1114)
 
-### 7.1 Modal と Panel の責務
+### 7.1 Modal / Panel / 全画面サーフェスの責務
 
-| 情報の寿命 | 置き場所 |
-|---|---|
-| 一時的な操作 (作成・変更・確認・エクスポート設定) | **Modal** |
-| 継続的に参照する情報 (出力・メッセージ・アクティビティ・アドバイザ) | **Panel** |
+App Shell は `Sidebar / Main Workspace / Bottom Panel` の 3 領域 (#1112)。
+新しい画面を足すときは、まずこの表でどこに置くかを決める。
+
+| 性質 | 置き場所 | 実体 |
+|---|---|---|
+| 一時的な操作 (作成・変更・確認・エクスポート設定) | **Modal** | `Modal.tsx` |
+| SQL を書きながら参照する情報 (アドバイザ・インスペクタ・プロセス監視) | **Bottom Panel** | `BottomPanel.tsx` + `bottomPanelTabs.ts` |
+| それ自体が作業対象で広い面積が要るもの (ER 図・スキーマ比較・ユーザ管理・結果比較) | **全画面サーフェス** | `App.tsx` の三項チェーン + `workspaceView.ts` |
 
 Modal は「開いて、決めて、閉じる」ものに限る。**閉じるまで作業が進まない**性質が
-あるため、見ながら SQL を書くような情報を Modal に置かない。逆に一度きりの確認を
-Panel に常駐させると、メインワークスペースが本来の用途 (SQL とその結果) から
-押し出される。
+あるため、見ながら SQL を書くような情報を Modal に置かない。
+
+全画面サーフェスは `<main>` を丸ごと置き換えるので、**開くと SQL エディタと結果が
+消える**。これは「その画面自体が作業対象」のときだけ許される。参照しながら手を動かす
+情報は必ず Bottom Panel へ置く (#1112 でアドバイザ・インスペクタ・プロセス監視の
+3 つを全画面から移したのがこの線引きの由来)。
+
+Bottom Panel に足すときは:
+
+1. `bottomPanelTabs.ts` の `BOTTOM_PANEL_TABS` にタブを追加する
+2. 開ける条件があれば `availableBottomPanelTabs` に足す (未接続・対象 DB 無しなど)
+3. `App.tsx` の `WorkspaceSplit` 内の分岐に中身を足す
+4. **中身のコンポーネントに見出しと閉じるボタンを持たせない** — タブバーが名前を、
+   シェルの × が閉じる操作を持つ (二重ヘッダを作らない)
+
+上下の配分は `WorkspaceSplit` が既存の `Splitter direction="column"` へ委ねる。
+リサイズ・キーボード操作・永続化・クランプを個別に実装しない。
+
+> **ガード**: `bottomPanelTabs.test.ts` (解決規則 + `App.tsx` への結線) /
+> `bottomPanelShell.test.tsx` (タブの WAI-ARIA 構造・閉じる導線) /
+> `workspaceView.test.ts` (全画面サーフェスの排他集合)
 
 ### 7.2 フォームの共通プリミティブ (`components/modalForm.tsx`)
 

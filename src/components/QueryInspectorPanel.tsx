@@ -28,7 +28,7 @@ import {
   type NPlusOneOptions,
 } from "./queryInspector";
 import { Spinner } from "./Spinner";
-import { Button, Checkbox, Heading, Input, Select } from "./ui";
+import { Button, Checkbox, Input, Select } from "./ui";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 
@@ -110,11 +110,9 @@ function NPlusOneBadge({ title }: { title: string }) {
 export function QueryInspectorPanel({
   sessionId,
   driver,
-  onClose,
 }: {
   sessionId: string;
   driver: string;
-  onClose: () => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -307,31 +305,7 @@ export function QueryInspectorPanel({
   const liveTailFinding = (fingerprint: string) => tailFindings.get(fingerprint);
 
   return (
-    <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
-      <chakra.header
-        display="flex"
-        alignItems="center"
-        justifyContent="space-between"
-        gap="3"
-        borderBottom="1px solid"
-        borderColor="app.border"
-        paddingBottom="2.5"
-      >
-        <Heading>{t("inspectorTitle")}</Heading>
-        <Tooltip label={t("inspectorClose")}>
-          <Button
-            minWidth="28px"
-            px="2"
-            py="1"
-            fontSize="base"
-            lineHeight={1}
-            onClick={onClose}
-            aria-label={t("inspectorClose")}
-          >
-            <Icon name="close" size={ICON_SIZES.sm} />
-          </Button>
-        </Tooltip>
-      </chakra.header>
+    <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
         {t("inspectorDesc")}

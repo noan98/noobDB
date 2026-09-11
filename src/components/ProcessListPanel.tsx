@@ -13,7 +13,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button, Checkbox, Heading, Select } from "./ui";
+import { Button, Checkbox, Select } from "./ui";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 
@@ -66,12 +66,10 @@ export function ProcessListPanel({
   sessionId,
   driver,
   readOnly,
-  onClose,
 }: {
   sessionId: string;
   driver: DriverKind;
   readOnly: boolean;
-  onClose: () => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -208,31 +206,7 @@ export function ProcessListPanel({
   }, [selected, killing, processes, confirm, t, sessionId, toast, load]);
 
   return (
-    <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
-      <chakra.header
-        display="flex"
-        alignItems="center"
-        justifyContent="space-between"
-        gap="3"
-        borderBottom="1px solid"
-        borderColor="app.border"
-        paddingBottom="2.5"
-      >
-        <Heading>{t("processTitle")}</Heading>
-        <Tooltip label={t("processClose")}>
-          <Button
-            minWidth="28px"
-            px="2"
-            py="1"
-            fontSize="base"
-            lineHeight={1}
-            onClick={onClose}
-            aria-label={t("processClose")}
-          >
-            <Icon name="close" size={ICON_SIZES.sm} />
-          </Button>
-        </Tooltip>
-      </chakra.header>
+    <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
 
       {showMetricsTab && (
         <Flex gap="1" borderBottom="1px solid" borderColor="app.border" role="tablist">

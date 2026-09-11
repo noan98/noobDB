@@ -9,6 +9,9 @@ import {
 /**
  * ワークスペースの全画面ビュー切替 (#1020)。
  *
+ * プロセス監視 / クエリインスペクタ / アドバイザは #1112 でボトムパネルへ移したため
+ * ここには現れない (それらの判定は `bottomPanelTabs.test.ts`)。
+ *
  * 判別子 (`workspaceViewKey`) はクロスフェードの `key` そのものなので、
  * 「排他なサーフェスがそれぞれ別の key になる」「同じサーフェスのまま props が
  * 変わっても key が変わらない」という 2 点が崩れると、切替が瞬間的に戻ったり
@@ -22,17 +25,13 @@ import {
 const base: WorkspaceViewInput = {
   showCompare: false,
   showErd: false,
-  showProcesses: false,
   showUsers: false,
   showServerInfo: false,
-  showQueryInspector: false,
-  showAdvisor: false,
   showSizes: false,
   showCompareResults: false,
   showForm: false,
   showSnippetForm: false,
   sessionId: null,
-  advisorDatabase: null,
   sizesTarget: null,
 };
 
@@ -45,44 +44,20 @@ describe("workspaceViewKey", () => {
     const connected = { ...base, sessionId: "sess1" };
     const keys: WorkspaceViewKey[] = [
       workspaceViewKey({ ...connected, showErd: true }),
-      workspaceViewKey({ ...connected, showProcesses: true }),
       workspaceViewKey({ ...connected, showUsers: true }),
       workspaceViewKey({ ...connected, showServerInfo: true }),
-      workspaceViewKey({ ...connected, showQueryInspector: true }),
-      workspaceViewKey({ ...connected, showAdvisor: true, advisorDatabase: "app" }),
       workspaceViewKey({ ...connected, showSizes: true, sizesTarget: "app" }),
     ];
-    expect(keys).toEqual([
-      "erd",
-      "processes",
-      "users",
-      "serverInfo",
-      "queryInspector",
-      "advisor",
-      "sizes",
-    ]);
+    expect(keys).toEqual(["erd", "users", "serverInfo", "sizes"]);
     // すべて相異なる = どの組み合わせの切替でも key が変わる。
     expect(new Set(keys).size).toBe(keys.length);
   });
 
   it("セッションが無いと接続スコープのパネルは開かず workspace のまま", () => {
     expect(workspaceViewKey({ ...base, showErd: true })).toBe("workspace");
-    expect(workspaceViewKey({ ...base, showProcesses: true })).toBe("workspace");
     expect(workspaceViewKey({ ...base, showUsers: true })).toBe("workspace");
     expect(workspaceViewKey({ ...base, showServerInfo: true })).toBe("workspace");
-    expect(workspaceViewKey({ ...base, showQueryInspector: true })).toBe("workspace");
-    expect(
-      workspaceViewKey({ ...base, showAdvisor: true, advisorDatabase: "app" }),
-    ).toBe("workspace");
     expect(workspaceViewKey({ ...base, showSizes: true, sizesTarget: "app" })).toBe("workspace");
-  });
-
-  it("Advisor は対象 DB が決まらなければ開かない", () => {
-    const connected = { ...base, sessionId: "sess1", showAdvisor: true };
-    expect(workspaceViewKey({ ...connected, advisorDatabase: null })).toBe("workspace");
-    expect(workspaceViewKey({ ...connected, advisorDatabase: undefined })).toBe("workspace");
-    expect(workspaceViewKey({ ...connected, advisorDatabase: "" })).toBe("workspace");
-    expect(workspaceViewKey({ ...connected, advisorDatabase: "app" })).toBe("advisor");
   });
 
   it("テーブル統計は対象 DB が無ければ開かない", () => {
@@ -104,8 +79,8 @@ describe("workspaceViewKey", () => {
     expect(
       workspaceViewKey({ ...connected, showCompare: true, showErd: true, showForm: true }),
     ).toBe("compare");
-    // erd は processes より前。
-    expect(workspaceViewKey({ ...connected, showErd: true, showProcesses: true })).toBe("erd");
+    // erd は users より前。
+    expect(workspaceViewKey({ ...connected, showErd: true, showUsers: true })).toBe("erd");
     // form は snippetForm より前。
     expect(workspaceViewKey({ ...base, showForm: true, showSnippetForm: true })).toBe("form");
     // 接続スコープのパネルは、開けないときだけ後続 (フォーム) へ落ちる。
@@ -116,14 +91,14 @@ describe("workspaceViewKey", () => {
     const a = workspaceViewKey({
       ...base,
       sessionId: "sess1",
-      showAdvisor: true,
-      advisorDatabase: "app",
+      showSizes: true,
+      sizesTarget: "app",
     });
     const b = workspaceViewKey({
       ...base,
       sessionId: "sess2",
-      showAdvisor: true,
-      advisorDatabase: "other",
+      showSizes: true,
+      sizesTarget: "other",
     });
     expect(a).toBe(b);
   });
